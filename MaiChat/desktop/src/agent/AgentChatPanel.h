@@ -42,8 +42,7 @@ public:
     explicit AgentChatPanel(AgentController& controller, QWidget* parent = nullptr);
     ~AgentChatPanel() override;
 
-    // 开一个会话。传空表示在当前目录建一个新的——界面上只有一个固定的
-    // AI 助手会话，所以正常路径是启动时建一次，之后一直用它。
+    // 开一个会话。传空表示在当前目录建一个新的。
     void openSession(const QString& sessionId = QString());
 
     // 上下文条上显示哪个模型。
@@ -54,6 +53,11 @@ public:
     void setModelLabel(const QString& model);
 
     QString sessionId() const;
+
+signals:
+    // 会话列表该重拉了。三种时机：新建了一个、标题被自动填上了、
+    // 一轮跑完（updated 变了，列表按它排序，位置会动）。
+    void sessionListChanged();
 
 private:
     // 这三个是这个面板专用的部件，别处用不上，所以做成嵌套私有类、定义在 .cpp 里。

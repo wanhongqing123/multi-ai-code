@@ -333,6 +333,8 @@ add_library(maichat_agent
   src/agent/AgentController.cpp
   src/agent/AgentChatPanel.h
   src/agent/AgentChatPanel.cpp
+  src/agent/AgentSessionList.h
+  src/agent/AgentSessionList.cpp
 )
 target_include_directories(maichat_agent PUBLIC src)
 target_link_libraries(maichat_agent PUBLIC Qt5::Core Qt5::Widgets maiagent)

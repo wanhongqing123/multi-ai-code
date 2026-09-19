@@ -118,6 +118,7 @@
 
 #include "agent/AgentChatPanel.h"
 #include "agent/AgentController.h"
+#include "agent/AgentSessionList.h"
 
 namespace {
 
@@ -885,6 +886,7 @@ enum class LineIconKind {
     ScreenConnecting,  // 连接中：显示器内三点
     ScreenDisconnect,  // 已连接，点击断开：显示器内叉
     Send,
+    Assistant,  // AI 助手：四角星（闪光），线上普遍用来表示"生成式 AI"
 };
 
 int lineIconKindValue(LineIconKind kind) {
@@ -910,6 +912,7 @@ LineIconKind lineIconKindFromValue(int value) {
         case LineIconKind::ScreenConnecting:
         case LineIconKind::ScreenDisconnect:
         case LineIconKind::Send:
+        case LineIconKind::Assistant:
             return static_cast<LineIconKind>(value);
     }
     return LineIconKind::Messages;
@@ -1051,6 +1054,29 @@ QIcon makeLineIcon(LineIconKind kind, const QColor& color) {
                 painter.drawPath(bend);
             }
             break;
+        case LineIconKind::Assistant: {
+            // 四角星（闪光）。纸飞机在这里是错的——它说的是"发送"，
+            // 而导航栏这一格是"AI 助手"，两个语义差得远。
+            //
+            // 一大一小两颗，是这个图形语言里表示"生成"的常见写法；
+            // 只画一颗会读成普通的星标/收藏。
+            const auto sparkle = [&painter](qreal cx, qreal cy, qreal r) {
+                QPainterPath path;
+                const qreal waist = r * 0.34;  // 腰身越细，星芒越尖
+                path.moveTo(cx, cy - r);
+                path.quadTo(cx + waist, cy - waist, cx + r, cy);
+                path.quadTo(cx + waist, cy + waist, cx, cy + r);
+                path.quadTo(cx - waist, cy + waist, cx - r, cy);
+                path.quadTo(cx - waist, cy - waist, cx, cy - r);
+                painter.drawPath(path);
+            };
+            sparkle(20, 22, 13);
+            QPen thin = painter.pen();
+            thin.setWidthF(3);
+            painter.setPen(thin);
+            sparkle(35, 36, 7);
+            break;
+        }
         case LineIconKind::Send:
             // 纸飞机：常见的消息发送语义，缩小到按钮尺寸后仍保持清晰轮廓。
             painter.drawPolygon(QPolygonF({
@@ -1652,7 +1678,7 @@ void MainWindow::buildUi() {
     remoteNavButton_->setProperty("navIconKind", lineIconKindValue(LineIconKind::Screen));
     settingsNavButton_->setProperty("navIconKind", lineIconKindValue(LineIconKind::Settings));
     // 没有这一句那一格就是空白——makeNavButton 只画文字，图标是靠这个属性来的。
-    agentNavButton_->setProperty("navIconKind", lineIconKindValue(LineIconKind::Send));
+    agentNavButton_->setProperty("navIconKind", lineIconKindValue(LineIconKind::Assistant));
     messageNavButton_->setProperty("selected", true);
     for (QPushButton* navButton :
          {messageNavButton_, contactsNavButton_, remoteNavButton_, settingsNavButton_,
@@ -2038,18 +2064,35 @@ void MainWindow::buildUi() {
     // 不参与它内部的任何事——这样将来要摘掉它，删这几行就够。
     agentPage_ = new QWidget(contentStack_);
     {
-        auto* agentLayout = new QVBoxLayout(agentPage_);
+        // 和消息页一样的两栏：左边会话列表，右边内容。这里不复用消息页那套——
+        // 那边一项是"一个人"（头像、未读数、在线状态），这边一项是"一段工作"
+        //（标题、工作目录），硬凑到一起两边都别扭。
+        auto* agentLayout = new QHBoxLayout(agentPage_);
         agentLayout->setContentsMargins(0, 0, 0, 0);
         agentLayout->setSpacing(0);
+
         const AgentController::ModelConfig modelConfig = loadAgentModelConfig();
         agentController_ = new AgentController(modelConfig, agentDatabasePath(), this);
+        agentSessions_ = new AgentSessionList(*agentController_, agentPage_);
         agentPanel_ = new AgentChatPanel(*agentController_, agentPage_);
         // 面板自己看不到"实际在用哪个模型"——会话上的 model 字段为空是常态，
         // 那表示"用 MaiAgent::Options 的默认值"。所以由这里告诉它。
         agentPanel_->setModelLabel(modelConfig.baseUrl.isEmpty()
                                        ? QStringLiteral("未配置模型")
                                        : modelConfig.modelName);
-        agentLayout->addWidget(agentPanel_);
+        agentLayout->addWidget(agentSessions_);
+        agentLayout->addWidget(agentPanel_, 1);
+
+        connect(agentSessions_, &AgentSessionList::selected, agentPanel_,
+                [this](const QString& sessionId) { agentPanel_->openSession(sessionId); });
+        connect(agentSessions_, &AgentSessionList::newSessionRequested, agentPanel_,
+                [this] { agentPanel_->openSession(); });
+        // 面板说"列表该重拉了"（新建、改标题、一轮跑完排序会动）。
+        // 重拉之后要把高亮放回当前这个，否则选中态会跑掉。
+        connect(agentPanel_, &AgentChatPanel::sessionListChanged, agentSessions_, [this] {
+            agentSessions_->refresh();
+            agentSessions_->setCurrent(agentPanel_->sessionId());
+        });
     }
 
     contentStack_->addWidget(messagesPage_);
@@ -3040,9 +3083,17 @@ void MainWindow::showRemotePage() {
 }
 
 void MainWindow::showAgentPage() {
-    // 会话只开一次，之后一直用它。核心本来支持多会话，但界面上这里只有一个
-    // 固定的 AI 助手——开第二个用户分不清自己在跟哪个说话。
-    if (agentPanel_->sessionId().isEmpty()) agentPanel_->openSession();
+    // 第一次进来才建会话：不进这一页的用户不该在库里留下一个空会话。
+    // 已经有历史的话挑最近动过的那个接着用（listSessions 按 updated 倒序）。
+    if (agentPanel_->sessionId().isEmpty()) {
+        const std::vector<MaiSession> existing = agentController_->agent().listSessions();
+        if (existing.empty()) {
+            agentPanel_->openSession();
+        } else {
+            agentPanel_->openSession(QString::fromUtf8(existing.front().id.data(),
+                                                       static_cast<int>(existing.front().id.size())));
+        }
+    }
     contentStack_->setCurrentWidget(agentPage_);
     syncNavigationSelection();
 }

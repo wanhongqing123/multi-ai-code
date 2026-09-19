@@ -3,6 +3,7 @@
 #include <QAbstractTextDocumentLayout>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QFontMetrics>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QKeyEvent>
@@ -529,6 +530,7 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
             [this](const QString& permissionId, const QString&) { showApproval(permissionId); });
     connect(&controller, &AgentController::turnFinished, this, [this](const QString&) {
         setRunning(false);
+        emit sessionListChanged();
         for (ThinkingLine* line : runtime_->thinking) line->settle();
         for (AnswerView* answer : runtime_->answers) answer->flush();
         refreshContextSize();
@@ -544,6 +546,7 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     connect(&controller, &AgentController::sessionTitleChanged, this,
             [this](const QString&, const QString& title) {
                 runtime_->title->setText(title.isEmpty() ? QStringLiteral("AI 助手") : title);
+                emit sessionListChanged();
             });
 }
 
@@ -573,6 +576,7 @@ void AgentChatPanel::openSession(const QString& sessionId) {
                                                       : fromUtf8(session.title));
     }
     reloadFromStore();
+    emit sessionListChanged();
 }
 
 // ── 重画 ────────────────────────────────────────────────────────
@@ -642,10 +646,22 @@ void AgentChatPanel::appendUserBubble(const QString& text) {
     // 只有用户这一侧保留气泡。人发的消息短，气泡合适；
     // 而且右侧那块蓝色让"谁说的"一眼可辨，不用头像也不用名字。
     auto* bubble = makeLabel(text, 13, "#ffffff");
+    const int padding = UiZoom::s(14) * 2;
     bubble->setStyleSheet(UiZoom::scaleQss(
         QStringLiteral("QLabel{background:%1;color:#ffffff;border-radius:12px;padding:9px 14px;}")
             .arg(kAccent)));
-    bubble->setMaximumWidth(UiZoom::s(kColumnWidth * 3 / 4));
+
+    // **宽度得自己量，不能交给 sizeHint。**
+    //
+    // 开了 wordWrap 的 QLabel，sizeHint 给的是一个偏窄的方块（Qt 想让它接近正方），
+    // 所以一句二十来字的话会被折成三行、右边空出一大片。上一版就是这样。
+    //
+    // 这里按"在上限宽度内真正排下来要多宽"来量：短句子就一行，长句子才到上限换行。
+    const int cap = UiZoom::s(kColumnWidth * 3 / 4);
+    const QFontMetrics metrics(bubble->font());
+    const QRect used = metrics.boundingRect(QRect(0, 0, cap - padding, 1 << 20),
+                                            Qt::TextWordWrap, text);
+    bubble->setFixedWidth(std::min(used.width() + padding, cap));
     addToStream(bubble, Qt::AlignRight);
 }
 

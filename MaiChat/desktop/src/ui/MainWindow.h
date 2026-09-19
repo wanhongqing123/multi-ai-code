@@ -23,6 +23,7 @@
 class SharingIndicatorBar;
 class AgentController;
 class AgentChatPanel;
+class AgentSessionList;
 class RemoteDesktopViewPanel;
 class QButtonGroup;
 class QCheckBox;
@@ -273,6 +274,7 @@ private:
     QPushButton* agentNavButton_ = nullptr;
     AgentController* agentController_ = nullptr;
     AgentChatPanel* agentPanel_ = nullptr;
+    AgentSessionList* agentSessions_ = nullptr;
     RemoteDesktopController* remoteDesktop_ = nullptr;
     bool remoteDesktopShutdown_ = false;
     bool remoteDesktopShutdownComplete_ = false;

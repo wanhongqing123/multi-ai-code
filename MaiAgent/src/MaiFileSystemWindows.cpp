@@ -4,6 +4,8 @@
 
 #include "MaiFilePath.h"
 #include "MaiFileSystem.h"
+#include "MaiBlockingCheck.h"
+#include "MaiThread.h"
 
 // Windows 实现：一律走**宽字符** API。
 //
@@ -131,6 +133,7 @@ MaiError MaiFileSystem::readFile(const MaiFilePath& path, std::string& contents,
     if (truncated) *truncated = false;
     if (path.isEmpty()) return MaiError::make(MaiErrorCode::InvalidInput, "empty path");
 
+    maiAssertBlockingAllowed("MaiFileSystem::readFile");
     // FILE_SHARE_READ | FILE_SHARE_WRITE：别人正开着这个文件时我们也能读。
     // 不给 SHARE_WRITE 的话，读一个编辑器正打开的文件会失败。
     const HANDLE handle = ::CreateFileW(path.value().c_str(), GENERIC_READ,
@@ -174,6 +177,7 @@ MaiError MaiFileSystem::readFile(const MaiFilePath& path, std::string& contents,
 MaiError MaiFileSystem::writeFile(const MaiFilePath& path, const std::string& contents) {
     if (path.isEmpty()) return MaiError::make(MaiErrorCode::InvalidInput, "empty path");
 
+    maiAssertBlockingAllowed("MaiFileSystem::writeFile");
     const HANDLE handle = ::CreateFileW(path.value().c_str(), GENERIC_WRITE, FILE_SHARE_READ,
                                         nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (handle == INVALID_HANDLE_VALUE) return lastErrorAs("cannot open file for writing");
@@ -348,4 +352,64 @@ void MaiFileSystem::removeRecursively(const MaiFilePath& path) {
     for (auto it = directories.rbegin(); it != directories.rend(); ++it)
         ::RemoveDirectoryW(it->value().c_str());
     ::RemoveDirectoryW(path.value().c_str());
+}
+
+// ── MaiThread ───────────────────────────────────────────────────
+// 放在这个文件里而不是单开一个：它就两个函数，而且和上面一样是
+// "平台相关的一小段"，单开文件反而让人多找一次。
+
+namespace {
+
+// 自己留一份。Windows 有 GetThreadDescription 可以读回来，但它是
+// Win10 1607+ 才有的，而且要 LocalFree 释放，为了一句日志不值当。
+thread_local std::string tThreadName;
+
+}  // namespace
+
+namespace {
+
+// 只收裸指针，函数体里不出现任何带析构函数的对象——否则 MSVC 报 C2712。
+void raiseThreadNameException(const char* name) {
+    constexpr DWORD kVisualStudioThreadNameException = 0x406D1388;
+#pragma pack(push, 8)
+    struct ThreadNameInfo {
+        DWORD type;      // 必须是 0x1000
+        LPCSTR name;     // 指向名字，窄字符
+        DWORD threadId;  // -1 表示当前线程
+        DWORD flags;     // 保留，必须是 0
+    };
+#pragma pack(pop)
+    ThreadNameInfo info{0x1000, name, static_cast<DWORD>(-1), 0};
+
+    __try {
+        ::RaiseException(kVisualStudioThreadNameException, 0, sizeof(info) / sizeof(ULONG_PTR),
+                         reinterpret_cast<const ULONG_PTR*>(&info));
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        // 没人接就算了
+    }
+}
+
+}  // namespace
+
+void MaiThread::setCurrentName(const std::string& name) {
+    tThreadName = name;
+
+    // SetThreadDescription 是 Win10 1607 才有的，动态取。
+    // 它的好处是**不挂调试器也生效**——抓 dump、看任务管理器、事后用
+    // WinDbg 打开都能看见名字。
+    using SetThreadDescriptionFn = HRESULT(WINAPI*)(HANDLE, PCWSTR);
+    static const auto setThreadDescription = reinterpret_cast<SetThreadDescriptionFn>(
+        ::GetProcAddress(::GetModuleHandleW(L"kernel32.dll"), "SetThreadDescription"));
+    if (setThreadDescription) {
+        setThreadDescription(::GetCurrentThread(), widen(name).c_str());
+    }
+
+    // 老系统上的兜底：MSVC 调试器约定的那个魔法异常。只有挂着调试器时
+    // 才有人接，没挂的话白抛一次，所以先问一句。
+    if (!::IsDebuggerPresent()) return;
+    raiseThreadNameException(name.c_str());
+}
+
+std::string MaiThread::currentName() {
+    return tThreadName;
 }

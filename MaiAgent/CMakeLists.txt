@@ -57,23 +57,25 @@ target_compile_definitions(mai_sqlite PUBLIC
 )
 # 不需要再给它补 /w：上面的告警选项本来就只加给 C++。
 
-# ── libcurl：源码引入，不用包管理器 ────────────────────────────
-# 为什么源码而不是系统库：这个项目要交叉编译到嵌入式和移动端，
-# 那些目标上没有现成的 libcurl 可链，版本也必须钉死。
+# ── libcurl：源码进仓库，和别的第三方一致 ─────────────────────
+# third_party/curl 是 curl 8.11.1 的裁剪版：只留了 lib/ include/ CMake/
+# 和顶层 CMakeLists。删掉的是 tests(11M)、docs(5.1M)、src/(命令行工具)
+# 和整套 autotools——我们只要 libcurl，不要 curl.exe。
 #
-# 离线构建：把 curl-8.11.1 解好放到某处，configure 时加
-#   -DFETCHCONTENT_SOURCE_DIR_CURL=/path/to/curl-8.11.1
+# 以前这里走的是 FetchContent（配置时去 curl.se 下载）。那和
+# third_party/README 里"没有网络的机器上也能构建"自相矛盾：交叉编译到
+# 嵌入式的那台机器多半没网，而配置阶段失败比编译失败更难查。
 #
 # TLS 后端按平台挑，不是一律 OpenSSL：
 #   Windows  Schannel —— 零额外依赖，走系统证书库，公司代理的证书自动认
 #   Linux    OpenSSL  —— 发行版自带
 #   嵌入式   mbedTLS  —— OpenSSL 三五兆，mbedTLS 两百来 K
-include(FetchContent)
-
 set(BUILD_CURL_EXE      OFF CACHE BOOL "" FORCE)
 set(BUILD_SHARED_LIBS   OFF CACHE BOOL "" FORCE)
 set(BUILD_STATIC_LIBS   ON  CACHE BOOL "" FORCE)
+set(BUILD_EXAMPLES      OFF CACHE BOOL "" FORCE)  # docs/examples 没进仓库
 set(BUILD_TESTING       OFF CACHE BOOL "" FORCE)
+set(CURL_BUILD_TESTING  OFF CACHE BOOL "" FORCE)  # tests/ 没进仓库
 set(BUILD_LIBCURL_DOCS  OFF CACHE BOOL "" FORCE)
 set(ENABLE_CURL_MANUAL  OFF CACHE BOOL "" FORCE)
 set(CURL_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
@@ -92,12 +94,8 @@ else()
   set(CURL_USE_OPENSSL  ON  CACHE BOOL "" FORCE)
 endif()
 
-FetchContent_Declare(curl
-  URL       https://curl.se/download/curl-8.11.1.tar.gz
-  URL_HASH  SHA256=a889ac9dbba3644271bd9d1302b5c22a088893719b72be3487bc3d401e5c4e80
-  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-)
-FetchContent_MakeAvailable(curl)
+# EXCLUDE_FROM_ALL：curl 自己那些辅助目标不要跟着我们的 all 一起构建。
+add_subdirectory(third_party/curl EXCLUDE_FROM_ALL)
 
 find_package(Threads REQUIRED)
 
@@ -116,6 +114,7 @@ add_library(maiagent STATIC
   # 路径与文件系统：不用 std::filesystem，走系统 API。
   # 纯词法的那一半（MaiFilePath.cpp）是可移植的；真正调系统调用的那一半
   # 按平台各一份。形状参考 chromium 的 base/files。
+  src/MaiBlockingCheck.cpp
   src/MaiFilePath.cpp
   src/MaiPathGuard.cpp
   src/MaiTool.cpp

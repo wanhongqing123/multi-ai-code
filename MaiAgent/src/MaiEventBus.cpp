@@ -1,5 +1,7 @@
 #include "MaiEventBus.h"
 
+#include "MaiBlockingCheck.h"
+
 #include <atomic>
 #include <mutex>
 #include <shared_mutex>
@@ -56,6 +58,10 @@ void MaiEventBus::publish(const MaiEvent& event) {
         snapshot.reserve(mSubscribers->handlers.size());
         for (const auto& [_, handler] : mSubscribers->handlers) snapshot.push_back(handler);
     }
+    // 处理函数在**这个线程上同步跑**，流式期间那就是网络读线程。
+    // 在里面读文件或写库会直接拖慢模型吐字，而症状（"吐字变卡了"）
+    // 没人会联想到事件总线。以前这只是句注释，现在有人守着了。
+    MaiScopedDisallowBlocking noBlocking;
     for (const auto& handler : snapshot) handler(event);
 }
 

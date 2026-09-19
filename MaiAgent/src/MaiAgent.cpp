@@ -6,6 +6,7 @@
 #include <unordered_map>
 
 #include "MaiIdGenerator.h"
+#include "MaiThread.h"
 
 #include "MaiContextBuilder.h"
 #include "MaiEventEmitter.h"
@@ -237,6 +238,10 @@ MaiResult<std::string> MaiAgent::submit(const MaiOperation& operation) {
                 const std::string sessionId = operation.sessionId;
                 auto dependencies = mRuntime->dependencies();
                 turn->worker = std::thread([this, sessionId, turn, dependencies, assistant] {
+                    // 给线程起名字。抓 dump 或者挂调试器时，一堆并发的轮次
+                    // 才分得清谁是谁——否则只有一串线程 ID。
+                    // Linux 上限 15 字节，所以名字要短。
+                    MaiThread::setCurrentName("mai-turn");
                     MaiTurnRunner runner(dependencies, sessionId, assistant);
                     runner.run(turn->cancel);
                     mRuntime->retire(sessionId, turn);

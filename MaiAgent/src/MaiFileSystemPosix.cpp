@@ -1,3 +1,5 @@
+#include <pthread.h>
+
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -12,6 +14,8 @@
 
 #include "MaiFilePath.h"
 #include "MaiFileSystem.h"
+#include "MaiBlockingCheck.h"
+#include "MaiThread.h"
 
 // POSIX 实现。
 //
@@ -94,6 +98,7 @@ MaiError MaiFileSystem::readFile(const MaiFilePath& path, std::string& contents,
     if (truncated) *truncated = false;
     if (path.isEmpty()) return MaiError::make(MaiErrorCode::InvalidInput, "empty path");
 
+    maiAssertBlockingAllowed("MaiFileSystem::readFile");
     const int fd = ::open(path.value().c_str(), O_RDONLY | O_CLOEXEC);
     if (fd < 0) return errnoAs("cannot open file for reading");
 
@@ -136,6 +141,7 @@ MaiError MaiFileSystem::readFile(const MaiFilePath& path, std::string& contents,
 MaiError MaiFileSystem::writeFile(const MaiFilePath& path, const std::string& contents) {
     if (path.isEmpty()) return MaiError::make(MaiErrorCode::InvalidInput, "empty path");
 
+    maiAssertBlockingAllowed("MaiFileSystem::writeFile");
     const int fd = ::open(path.value().c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
     if (fd < 0) return errnoAs("cannot open file for writing");
 
@@ -263,4 +269,29 @@ void MaiFileSystem::removeRecursively(const MaiFilePath& path) {
     for (auto it = directories.rbegin(); it != directories.rend(); ++it)
         ::rmdir(it->value().c_str());
     ::rmdir(path.value().c_str());
+}
+
+// ── MaiThread ───────────────────────────────────────────────────
+
+namespace {
+thread_local std::string tThreadName;
+}  // namespace
+
+void MaiThread::setCurrentName(const std::string& name) {
+    tThreadName = name;
+
+#if defined(__APPLE__)
+    // macOS 的是单参数版，只能给自己起名；上限 63 字节。
+    ::pthread_setname_np(name.substr(0, 63).c_str());
+#elif defined(__linux__)
+    // Linux 上限是 **15 字节 + NUL**，超了整个调用会失败（不是截断），
+    // 所以这里先自己截。
+    ::pthread_setname_np(::pthread_self(), name.substr(0, 15).c_str());
+#else
+    (void)name;
+#endif
+}
+
+std::string MaiThread::currentName() {
+    return tThreadName;
 }

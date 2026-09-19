@@ -81,6 +81,10 @@ python tests/e2e/m5_persistence.py
 
 Windows 上要先进 MSVC 环境（`vcvars64.bat`）。
 
+**构建不需要网络。** 第三方依赖（nlohmann / cpp-httplib / sqlite3 / libcurl）
+全部在 `third_party/` 里，没有下载步骤——这个项目要交叉编译到嵌入式设备，
+那边通常没网，而配置阶段失败比编译失败更难查。
+
 ## 进度
 
 - [x] **M1 空转骨架** — health / session 增删查 / SSE 事件流（含心跳）

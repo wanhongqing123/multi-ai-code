@@ -1,9 +1,12 @@
 #include <cassert>
 #include <cstdio>
 #include <string>
+#include <thread>
 #include <set>
 
+#include "MaiBlockingCheck.h"
 #include "MaiIdGenerator.h"
+#include "MaiThread.h"
 #include "MaiAgent.h"
 
 static int failures = 0;
@@ -76,6 +79,61 @@ static void test_session_crud_and_events() {
     CHECK(deleted == 1);
 }
 
+// 事件处理函数里不许做慢活——而且这条要真的被装上，不能只是注释。
+//
+// 不能直接测"违反了会炸"：那会终止进程，测试框架接不住。所以退一步，
+// 测**守卫确实在生效**：处理函数里问一句"现在允许慢活吗"，答案必须是否。
+// 这就足以说明 MaiFileSystem 里那几个断言会在这条路径上被触发。
+static void test_event_handlers_run_with_blocking_disallowed() {
+    MaiEventBus bus;
+
+    bool allowedInsideHandler = true;
+    bus.subscribe([&](const MaiEvent&) { allowedInsideHandler = maiIsBlockingAllowed(); });
+
+    // 发之前是允许的：工作线程本来就要读文件、写库
+    CHECK(maiIsBlockingAllowed());
+
+    MaiEvent event;
+    event.type = MaiEventType::SessionIdle;
+    bus.publish(event);
+
+    CHECK(!allowedInsideHandler);
+    // 发完要恢复，不能把整个线程一直摁住
+    CHECK(maiIsBlockingAllowed());
+}
+
+static void test_blocking_scopes_nest() {
+    CHECK(maiIsBlockingAllowed());
+    {
+        MaiScopedDisallowBlocking outer;
+        CHECK(!maiIsBlockingAllowed());
+        {
+            // 明确开一个口子
+            MaiScopedAllowBlocking inner;
+            CHECK(maiIsBlockingAllowed());
+        }
+        // 内层退出时要恢复成**进来之前**的状态，不是无条件放开——
+        // 无条件放开的话，一次嵌套就把外层的限制悄悄拆了。
+        CHECK(!maiIsBlockingAllowed());
+    }
+    CHECK(maiIsBlockingAllowed());
+}
+
+static void test_thread_name() {
+    MaiThread::setCurrentName("mai-test");
+    CHECK(MaiThread::currentName() == "mai-test");
+
+    // 别的线程互不影响（thread_local）
+    std::string fromOtherThread = "not set";
+    std::thread worker([&] {
+        fromOtherThread = MaiThread::currentName();
+        MaiThread::setCurrentName("mai-other");
+    });
+    worker.join();
+    CHECK(fromOtherThread.empty());
+    CHECK(MaiThread::currentName() == "mai-test");
+}
+
 static void test_unsubscribe() {
     MaiAgent agent(makeMaiMemoryStore(), nullptr, nullptr);
     int n = 0;
@@ -91,6 +149,9 @@ static void test_unsubscribe() {
 int main() {
     test_id_prefix_and_monotonic();
     test_session_crud_and_events();
+    test_event_handlers_run_with_blocking_disallowed();
+    test_blocking_scopes_nest();
+    test_thread_name();
     test_unsubscribe();
     if (failures == 0) std::printf("all tests passed\n");
     return failures == 0 ? 0 : 1;

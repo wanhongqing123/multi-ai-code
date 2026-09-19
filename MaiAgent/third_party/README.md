@@ -11,6 +11,7 @@
 | `nlohmann/json.hpp` | https://github.com/nlohmann/json | v3.11.3 |
 | `httplib/httplib.h` | https://github.com/yhirose/cpp-httplib | v0.18.3 |
 | `sqlite/sqlite3.{c,h}` | https://sqlite.org/ | 3.49.1（amalgamation） |
+| `curl/` | https://curl.se/ | 8.11.1（裁剪版） |
 
 ## 用法边界
 
@@ -37,6 +38,28 @@ SQLite 有个历史怪癖——双引号括起来的东西如果不是已知列�
 
 ## libcurl
 
-不在这个目录，走 CMake 的 FetchContent（见顶层 CMakeLists，URL + SHA256
-都钉死了）。注意它是 HTTP **客户端**，和这里的 httplib（HTTP **服务端**）
-是两回事，两个都要。
+`curl/` 是 curl 8.11.1 的裁剪版，只留了构建 libcurl 必需的部分：
+
+    lib/         库源码
+    include/     公开头
+    CMake/       它自己的 CMake 模块
+    CMakeLists.txt
+    COPYING RELEASE-NOTES
+
+删掉的（原始包 29M，留下 6.9M）：
+
+    tests/       11M，curl 自己的测试套件
+    docs/        5.1M
+    src/         1.8M，**curl 命令行工具**——我们只要库
+    configure / m4/ / ltmain.sh / ...  整套 autotools，我们走 CMake
+
+顶层 CMakeLists 里要把 `BUILD_EXAMPLES` 和 `CURL_BUILD_TESTING` 显式关掉：
+它们默认是 ON，而 `docs/examples` 和 `tests` 没进仓库，不关的话
+`add_subdirectory` 会找不到目录。
+
+以前这里走的是 CMake FetchContent（配置时去 curl.se 下载）。那和这份
+README 开头说的"没有网络的机器上也能构建"自相矛盾——交叉编译到嵌入式的
+那台机器多半没网，而**配置阶段失败比编译失败更难查**。
+
+注意它是 HTTP **客户端**，和这里的 httplib（HTTP **服务端**）是两回事，
+两个都要。

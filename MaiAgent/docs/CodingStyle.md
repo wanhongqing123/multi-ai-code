@@ -502,6 +502,48 @@ if (resolved != rootPath && !rootPath.isParentOf(resolved)) return {};  // 逐�
 编码转换整个写错了也能自洽，测试一路绿，而别的程序建的文件我们全读不了。
 那正是当初那个中文路径 bug 的形状。
 
+## 12.6 线程要有名字，契约要有人守
+
+两件从 chromium 的 `base/threading` 借来的事。
+
+### 起名字
+
+`MaiThread::setCurrentName("mai-turn")`。agent 是多会话并发的，一个进程里
+同时跑着好几个轮次的工作线程；出问题抓一个 dump，没名字的话调试器里只有
+一串线程 ID，得靠调用栈一个个认。
+
+Windows 上走 `SetThreadDescription`（Win10 1607+，动态取），**不挂调试器
+也生效**——任务管理器、事后用 WinDbg 打开 dump 都看得见。老系统降级成
+MSVC 那套魔法异常（`RaiseException(0x406D1388)`），只在挂着调试器时有用。
+
+名字要短：Linux 的 `prctl(PR_SET_NAME)` **上限 15 字节**，超了会被截断。
+
+> 踩过的坑：`__try` 不能写在"需要对象展开的函数"里（MSVC 报 C2712）。
+> 把它单独拎成一个只收裸指针的函数。chromium 的
+> `platform_thread_win.cc` 里那条注释就写着这件事，我读到了却没照做，
+> 编译器当场教育了一遍。
+
+### 契约要有人守
+
+这个工程里有条约定一直只写在注释里：
+
+> MaiEventBus 的处理函数**在 publish 的那个线程上同步调用**，流式期间
+> 那就是网络读线程。处理函数里不要做慢活。
+
+光靠注释守不住。以后有人在事件处理函数里顺手读个文件、写一次库，表现
+出来不是崩溃，是"模型吐字变卡了"——这种症状没人会联想到事件总线。
+
+现在 `MaiEventBus::publish` 调处理函数时套上 `MaiScopedDisallowBlocking`，
+而 `MaiFileSystem` 的读写会先问一句 `maiAssertBlockingAllowed()`。
+违反了当场终止，并打印一段说清楚"为什么不行、该怎么改"的话。
+
+**不做成 Debug-only**：这个项目的测试是 Release 构建的，只在 Debug 里查
+等于自己的测试永远查不到。检查本身是读一个 `thread_local` 的 bool，
+和它守着的那些系统调用比可以忽略。
+
+确实必须在那儿做慢活时，用 `MaiScopedAllowBlocking` 明确开口子——
+但先想想能不能把慢活挪出去（HTTP 适配器的 SSE 就是塞队列换线程做的）。
+
 ## 13. 验证之前先问"这套观测能不能看见目标"
 
 报"全绿"或者"发现 bug"之前，先确认你的观测手段真的能看见要看的东西。

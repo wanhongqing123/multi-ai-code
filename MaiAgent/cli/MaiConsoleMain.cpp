@@ -355,7 +355,12 @@ std::string MaiConsoleRenderer::formatPartUpdated(const MaiEvent& event) {
     if (const auto* reasoning = std::get_if<MaiReasoningPart>(&part.body)) {
         (void)reasoning;
         mParts[event.partId].kind = PartMemo::Kind::Reasoning;
-        return mShowReasoning ? atLineStart(mAtLineStart, "[thinking] ") : std::string{};
+        // 不显示思考内容的时候也要说一声"它在想"。
+        //
+        // 真实的推理模型（GLM-5.3）思考期能有十几秒，这段时间里 content 一个字都不吐——
+        // 把 reasoning 藏掉之后，屏幕上就是**完全没有反应**，和卡死分不开。
+        // 这是拿真模型跑出来的：假模型根本不发 reasoning_content，测不到这个。
+        return atLineStart(mAtLineStart, mShowReasoning ? "[thinking] " : "[thinking...]\n");
     }
     if (std::get_if<MaiTextPart>(&part.body) != nullptr) {
         mParts[event.partId].kind = PartMemo::Kind::Text;

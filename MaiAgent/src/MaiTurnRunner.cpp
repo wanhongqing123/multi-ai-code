@@ -106,8 +106,7 @@ std::vector<MaiToolInvocation> MaiTurnRunner::requestCompletion(const MaiModelRe
     sink.onText = [&](std::string_view chunk) {
         if (!textStarted) {
             textStarted = true;
-            mDependencies.emitter->emitPart(MaiEventType::MessagePartUpdated, mSessionId,
-                                            mAssistant.id, mTextPartId);
+            beginStreamedPart(mTextPartId, MaiTextPart{});
         }
         mText.append(chunk);
         mDependencies.emitter->emitDelta(mSessionId, mAssistant.id, mTextPartId, "text", chunk);
@@ -115,8 +114,7 @@ std::vector<MaiToolInvocation> MaiTurnRunner::requestCompletion(const MaiModelRe
     sink.onReasoning = [&](std::string_view chunk) {
         if (!reasoningStarted) {
             reasoningStarted = true;
-            mDependencies.emitter->emitPart(MaiEventType::MessagePartUpdated, mSessionId,
-                                            mAssistant.id, mReasoningPartId);
+            beginStreamedPart(mReasoningPartId, MaiReasoningPart{});
         }
         mReasoning.append(chunk);
         mDependencies.emitter->emitDelta(mSessionId, mAssistant.id, mReasoningPartId, "text",
@@ -279,24 +277,43 @@ MaiToolResult MaiTurnRunner::checkPermission(const MaiToolInvocation& call,
     return {};
 }
 
+void MaiTurnRunner::beginStreamedPart(const std::string& partId, MaiMessagePartBody body) {
+    MaiMessagePart part;
+    part.id = partId;
+    part.body = std::move(body);  // 先空着，内容在 commitStreamedParts 里填
+    part.created = MaiTime::getCurrentTime();
+    mAssistant.parts.push_back(std::move(part));
+
+    // 先落库，再广播。理由见头文件里这个函数的注释——这里错了的话，
+    // 界面分不出正文和思考过程，会把模型的草稿当答案显示出来。
+    mDependencies.store->putMessage(mSessionId, mAssistant);
+    mDependencies.emitter->emitPart(MaiEventType::MessagePartUpdated, mSessionId, mAssistant.id,
+                                    partId);
+}
+
 void MaiTurnRunner::commitStreamedParts() {
-    // 落库只在这里做。每个 delta 落一次盘等于每秒几十次 fsync。
-    if (!mReasoning.empty()) {
-        MaiMessagePart part;
-        part.id = mReasoningPartId;
-        part.body = MaiReasoningPart{mReasoning};
-        part.created = MaiTime::getCurrentTime();
-        mAssistant.parts.push_back(std::move(part));
-        mReasoning.clear();
+    // 内容落库只在这里做。每个 delta 落一次盘等于每秒几十次 fsync。
+    // （part 本身早在第一个 chunk 到达时就占位入库了，见 beginStreamedPart。）
+    //
+    // 按实际到达顺序填：思考过程一般先来，正文在后。
+    fillStreamedPart(mReasoningPartId, mReasoning);
+    fillStreamedPart(mTextPartId, mText);
+}
+
+void MaiTurnRunner::fillStreamedPart(const std::string& partId, std::string& buffer) {
+    if (buffer.empty()) return;
+    for (MaiMessagePart& part : mAssistant.parts) {
+        if (part.id != partId) continue;
+        if (auto* text = std::get_if<MaiTextPart>(&part.body)) {
+            text->text = buffer;
+        } else if (auto* reasoning = std::get_if<MaiReasoningPart>(&part.body)) {
+            reasoning->text = buffer;
+        }
+        break;
     }
-    if (!mText.empty()) {
-        MaiMessagePart part;
-        part.id = mTextPartId;
-        part.body = MaiTextPart{mText};
-        part.created = MaiTime::getCurrentTime();
-        mAssistant.parts.push_back(std::move(part));
-        mText.clear();
-    }
+    // 找不到对应的 part 说明占位那一步没跑过（理论上不可能：有内容就一定先有第一个
+    // chunk）。清掉缓冲而不是把它留到下一圈——留着会让下一圈的 part 带上这一圈的尾巴。
+    buffer.clear();
 }
 
 void MaiTurnRunner::finish(const std::atomic<bool>& cancel) {

@@ -70,7 +70,8 @@ say("")
 
 
 # ── 假模型：按剧本依次返回"要调 write"和"最终回答" ────────────
-SCRIPTS = []          # 每个元素: (text, tool_name, tool_args)
+# 每个元素: (text, tool_name, tool_args) 或 (text, tool_name, tool_args, reasoning)
+SCRIPTS = []
 served = {"n": 0}
 served_lock = threading.Lock()
 
@@ -90,11 +91,21 @@ class ModelHandler(BaseHTTPRequestHandler):
             idx = served["n"]
             served["n"] += 1
             ModelHandler.bodies.append(body)
-        text, tool, args = SCRIPTS[idx] if idx < len(SCRIPTS) else ("", "", "")
+        entry = SCRIPTS[idx] if idx < len(SCRIPTS) else ("", "", "")
+        text, tool, args = entry[0], entry[1], entry[2]
+        # 第四项是思考过程，走 reasoning_content——真实的推理模型就是这么发的
+        # （拿 GLM-5.3 抓过：先几百帧 reasoning_content，再开始 content）。
+        reasoning = entry[3] if len(entry) > 3 else ""
 
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.end_headers()
+        if reasoning:
+            for piece in reasoning:
+                frame = {"choices": [{"delta": {"reasoning_content": piece}}]}
+                self.wfile.write(("data: " + json.dumps(frame, ensure_ascii=False) + "\n\n")
+                                 .encode("utf-8"))
+            self.wfile.flush()
         if tool:
             frame = {"choices": [{"delta": {"tool_calls": [{
                 "index": 0,
@@ -378,6 +389,44 @@ check("output stopped well before the answer would have finished",
 check("the rest never came out", "nine ten" not in text()[mark:],
       repr(text()[mark:][-80:]))
 char_delay["s"] = 0.0
+
+# ── 思考过程不能当答案打出来 ──────────────────────────────
+# 这一段是拿真实 GLM-5.3 跑出来的 bug 变成的回归用例。
+#
+# 当时的症状：模型的英文思考过程被原样打成了正文，还和答案直接粘在一起。
+# 根因在核心不在控制台——MaiTurnRunner 广播 message.part.updated 时，
+# 那个 part 还没入库（规范第 10 节"先落库再广播"只在工具那条路径上落实了）。
+# 订阅方拿 id 去查查不到，就分不出这是正文还是思考——两者的增量 field 都是 "text"。
+#
+# 假模型以前不发 reasoning_content，所以这个洞测不到。现在发了。
+DRAFT = "I should answer briefly. No tools needed here."
+ANSWER = "Briefly: yes."
+with served_lock:
+    served["n"] = 0
+SCRIPTS[:] = [(ANSWER, "", "", DRAFT)]
+
+mark = len(text())
+turns = prompts_seen()
+send("think before you answer")
+check("the answer came out", wait_after(ANSWER, mark))
+check("that turn went idle", wait_prompts(turns + 1))
+check("the draft was NOT printed as the answer", DRAFT not in text()[mark:],
+      repr(text()[mark:][:160]))
+check("but it did say the model is thinking", "[thinking...]" in text()[mark:])
+
+# 反过来：开了 --reasoning 就该看得见。不验这一条的话，
+# "没打出来"可能只是因为核心根本没把 reasoning 传上来——那是另一种坏法。
+with served_lock:
+    served["n"] = 0
+SCRIPTS[:] = [(ANSWER, "", "", DRAFT)]
+with_reasoning = subprocess.run(
+    [CONSOLE, "--dir", workspace, "--model-url", "http://127.0.0.1:%d" % model_port,
+     "--model-key", "fake", "--reasoning"],
+    input="think before you answer\n/quit\n".encode("utf-8"),
+    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
+shown = with_reasoning.stdout.decode("utf-8", "replace")
+check("--reasoning shows the draft", DRAFT in shown, repr(shown[-200:]))
+check("--reasoning still shows the answer", ANSWER in shown)
 
 # ── 查询类命令 ────────────────────────────────────────────
 mark = len(text())

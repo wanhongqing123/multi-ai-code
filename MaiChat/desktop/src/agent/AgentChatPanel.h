@@ -9,23 +9,31 @@ class QLabel;
 
 // AI 助手的聊天页。
 //
-// 它不是「跟人聊天那个页面换个头像」。三处不一样，每一处都有具体理由：
+// ── 为什么不能照搬「跟人聊天」那一页 ──────────────────────────────
 //
-//   输入区   表情 / 图片 / 附件全去掉——agent 不吃这些，留着就是点了没反应的死按钮。
-//            换成「@ 引用文件」（只插路径，不上传）和一条常驻的上下文条：
-//            **工作目录和模型一直摆在那儿**。目录是它能碰到什么的边界，
-//            越界会被核心的 maiResolvePathWithinRoot 挡掉，这种东西藏进菜单就没人看了。
-//            输入框三行起：一行高的框会逼着人把任务写短，而任务写短的直接后果是它猜错。
+// 交互对齐 Codex 桌面端。差别不是审美偏好，是内容性质决定的：
 //
-//   对话流   除了气泡还有两种东西：思考条和工具卡。它们**不是气泡**——
-//            气泡表示「谁说了句话」，这两个表示「发生了一件事」。
-//            混成气泡的话，一轮对话读起来像三个人在说话。
+//   **助手的回答不是气泡。** 人发的消息短，气泡合适；模型的回答动辄几百字带列表和代码，
+//   塞进一个 520px 的窄气泡里就是一根面条，读起来极累。所以回答是整列宽的正文，
+//   走 Markdown 渲染（复用 MaiChat 自己的 MarkdownRenderer），只有**用户**那一侧保留气泡。
 //
-//   顶上     一条「攒了多少字 · 清空重来」。协议是无状态的，历史每一轮都要全量重发，
-//            聊得越久每句话越贵越慢。把这个数摆出来，用户才有理由去点清空。
+//   **正文有一个居中的阅读列。** 窗口拉到 2000px 宽时正文不该跟着拉那么宽——
+//   一行太长，眼睛回扫会丢行。
 //
-// 线程：这个类只在主线程上跑。AgentController 已经把核心的事件排队搬过来了，
-// 这里收到的信号全部在主线程上——查存储、刷部件都随意。
+//   **输入区是一张卡，控件在卡里。** 工作目录、模型、发送都在同一个圆角容器的底边，
+//   而不是散成三条横栏。目录是 agent 能碰到什么的边界，必须一直看得见，
+//   但它不该占掉一整行。
+//
+// ── 另外两种非气泡的东西 ────────────────────────────────────────
+//
+//   思考条   一行淡色文字（「思考了 3 秒 ›」），点开看草稿。默认收着但**要动**——
+//            真实的推理模型思考期能有十几秒，那段时间一个正文字都不会来，
+//            屏幕上完全没反应的话和卡死分不开。
+//   工具卡   一张窄卡。它表示「发生了一件事」，不是「谁说了句话」；做成气泡的话
+//            一轮对话读起来像三个人在说话。等授权时就地长出按钮，不弹对话框——
+//            弹窗会打断阅读，而且会训练用户条件反射点「允许」。
+//
+// 线程：只在主线程上跑。AgentController 已经把核心的事件排队搬过来了。
 class AgentChatPanel final : public QWidget {
     Q_OBJECT
 
@@ -41,28 +49,28 @@ public:
     // 上下文条上显示哪个模型。
     //
     // **刻意让调用方给**，不在这儿写死一个名字当兜底：会话上的 model 字段为空是常态
-    // （那表示"用 MaiAgent::Options 里的默认值"），而面板看不见那个默认值。
+    //（那表示「用 MaiAgent::Options 里的默认值」），而面板看不见那个默认值。
     // 自己编一个名字显示出去，用户看到的就可能不是实际在跑的那个。
     void setModelLabel(const QString& model);
 
     QString sessionId() const;
 
 private:
-    // 这两个是这个面板专用的部件，别处用不上，所以做成嵌套私有类、定义在 .cpp 里。
-    // 放全局会白白占掉 ThinkingStrip / ToolCard 这两个挺通用的名字。
-    class ThinkingStrip;
+    // 这三个是这个面板专用的部件，别处用不上，所以做成嵌套私有类、定义在 .cpp 里。
+    class AnswerView;
+    class ThinkingLine;
     class ToolCard;
 
     // 把整个对话从存储里重画一遍。用在打开会话和清空之后——
-    // 流式期间**不要**调它，那会把正在长的气泡整个换掉，界面会闪。
+    // 流式期间**不要**调它，那会把正在长的正文整个换掉，界面会闪。
     void reloadFromStore();
 
     void onSend();
     void onClear();
 
     // 流式期间按 partId 找（或建）对应的部件，只追加不重画。
-    QLabel* textBubbleFor(const QString& partId);
-    ThinkingStrip* thinkingStripFor(const QString& partId);
+    AnswerView* answerViewFor(const QString& partId);
+    ThinkingLine* thinkingLineFor(const QString& partId);
     ToolCard* toolCardFor(const QString& partId);
     void refreshToolCard(const QString& messageId, const QString& partId);
     void showApproval(const QString& permissionId);

@@ -679,8 +679,14 @@ int main(int argc, char** argv) {
                 }
             } else if (command == "/interrupt") {
                 MaiResult<std::string> stopped = agent.submit(MaiInterrupt{sessionId});
-                if (!stopped) renderer.say("[console] " + stopped.error().message() + "\n");
-                continue;  // 打断之后还会来一条 SessionIdle，提示符交给它
+                if (stopped) {
+                    continue;  // 打断成功之后还会来一条 SessionIdle，提示符交给它
+                }
+                // 失败的路上没有 SessionIdle，提示符得自己打。不打的话用户会停在
+                // 一个没有提示符的屏幕上，以为控制台卡死了——最常见的情况就是
+                // 手快按了两次 /interrupt。
+                renderer.say("[console] " + stopped.error().message() + "\n> ");
+                continue;
             } else {
                 renderer.say("[console] unknown command " + command + ", try /help\n");
             }

@@ -74,6 +74,10 @@ SCRIPTS = []          # 每个元素: (text, tool_name, tool_args)
 served = {"n": 0}
 served_lock = threading.Lock()
 
+# 每个字之间停多久。默认 0（跑得越快越好），验 busy 和 interrupt 时调大——
+# 那两件事都要求"一轮正在跑"这个状态能持续到下一条命令送进去。
+char_delay = {"s": 0.0}
+
 
 class ModelHandler(BaseHTTPRequestHandler):
     def log_message(self, *a):
@@ -103,9 +107,15 @@ class ModelHandler(BaseHTTPRequestHandler):
             # 一个字一个字吐，顺便验多字节字符被切在 chunk 边界上还能拼回来。
             for piece in text:
                 frame = {"choices": [{"delta": {"content": piece}}]}
-                self.wfile.write(("data: " + json.dumps(frame, ensure_ascii=False) + "\n\n")
-                                 .encode("utf-8"))
-                self.wfile.flush()
+                try:
+                    self.wfile.write(("data: " + json.dumps(frame, ensure_ascii=False) + "\n\n")
+                                     .encode("utf-8"))
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+                    # 被 /interrupt 掐断了。核心把连接关掉正是它该做的事，
+                    # 这里不是失败——假模型安静退出就行，别把栈打到屏幕上。
+                    return
+                time.sleep(char_delay["s"])
         self.wfile.write(b"data: [DONE]\n\n")
         self.wfile.flush()
 
@@ -183,6 +193,52 @@ def wait_after(needle, mark, timeout=20):
     return False
 
 
+def prompts_seen():
+    """屏幕上出现过几个提示符。
+
+    控制台每收到一条 SessionIdle 就打一个提示符，所以数提示符就是数轮次——
+    m2 里那个 wait_turns 数的是 session.idle 事件，这里数的是它在屏幕上的投影。
+
+    **要数个数，不能搜"有没有"。** 提示符不止轮次结束时会打：命令执行完打一个，
+    prompt 被 Busy 顶回去也打一个。搜的话会撞上更早的那些，检查立刻为真，
+    而轮次还在跑——下一条命令就被 Busy 顶回去，症状是"没反应"。踩过一次。"""
+    return text().count("\n> ")
+
+
+def wait_prompts(target, timeout=20):
+    """等提示符个数涨到 target。
+
+    不能拿"答案的最后几个字出现了"当轮次结束：那时 turn 还在收尾
+    （落库、起标题、销毁工作线程），会话仍然是"在跑"。"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if prompts_seen() >= target:
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def wait_quiet(seconds=0.5, timeout=25):
+    """等输出安静下来，返回最后一次有新字节的时刻。
+
+    判断"一轮是不是被打断了"必须用它，不能用"等提示符"。红测里发现提示符
+    不是独占信号：/help 这类命令执行完也会打一个。把 /interrupt 换成 /help
+    之后，"等到提示符了"照样为真——轮次其实一直在跑，检查什么都没验到。
+    输出停没停是骗不了的。"""
+    deadline = time.time() + timeout
+    last_len = len(text())
+    last_change = time.time()
+    while time.time() < deadline:
+        now_len = len(text())
+        if now_len != last_len:
+            last_len = now_len
+            last_change = time.time()
+        elif time.time() - last_change >= seconds:
+            return last_change
+        time.sleep(0.05)
+    return time.time()
+
+
 def send(line):
     proc.stdin.write((line + "\n").encode("utf-8"))
     proc.stdin.flush()
@@ -225,6 +281,103 @@ if len(bodies) == 3:
     fed = json.loads(bodies[2].decode("utf-8"))
     roles = [m.get("role") for m in fed.get("messages", [])]
     check("the tool result was fed back", "tool" in roles, repr(roles))
+
+# ── 上下文是累积的 ────────────────────────────────────────
+# 模型拿到的不能只是最新那一句。这条以前在 m2 里，靠翻 REST 请求体验；
+# 现在直接翻假模型收到的请求体，和界面无关。
+with served_lock:
+    # SCRIPTS 重新编号了，索引必须跟着归零——不归零的话 idx 直接越界，
+    # 假模型走"剧本用完"那条分支返回空答案，而症状是"模型不说话"，很难一眼看出。
+    served["n"] = 0
+SCRIPTS[:] = [("I still remember.", "", "")]
+
+mark = len(text())
+turns = prompts_seen()
+send("what did you say first")
+check("third turn answered", wait_after("I still remember.", mark))
+
+with served_lock:
+    latest = json.loads(ModelHandler.bodies[-1].decode("utf-8"))
+contents = [m.get("content", "") for m in latest.get("messages", [])]
+check("history carries the first answer", GREETING in contents,
+      "%d messages" % len(contents))
+check("history carries the latest prompt", "what did you say first" in contents)
+check("third turn went idle", wait_prompts(turns + 1))
+
+# ── /a 之后不再问 ─────────────────────────────────────────
+# "本会话都允许"必须真的止住后续的询问，否则这个选项只是换了种说法的"允许一次"。
+with served_lock:
+    # SCRIPTS 重新编号了，索引必须跟着归零——不归零的话 idx 直接越界，
+    # 假模型走"剧本用完"那条分支返回空答案，而症状是"模型不说话"，很难一眼看出。
+    served["n"] = 0
+SCRIPTS[:] = [
+    ("", "write", json.dumps({"path": "always-1.txt", "content": "first"})),
+    ("First one done.", "", ""),
+    ("", "write", json.dumps({"path": "always-2.txt", "content": "second"})),
+    ("Second one done.", "", ""),
+]
+
+mark = len(text())
+turns = prompts_seen()
+send("write always-1.txt")
+check("it asks the first time", wait_after("needs approval", mark))
+mark = len(text())
+send("/a")
+check("first write went through", wait_after("First one done.", mark))
+check("that turn went idle", wait_prompts(turns + 1))
+
+mark = len(text())
+turns = prompts_seen()
+send("write always-2.txt")
+check("second write finished", wait_after("Second one done.", mark))
+check("and it did NOT ask again", "needs approval" not in text()[mark:])
+check("the second file is really there",
+      os.path.exists(os.path.join(workspace, "always-2.txt")))
+check("the always-turn went idle", wait_prompts(turns + 1))
+
+# ── 一轮在跑的时候不收第二条 ──────────────────────────────
+# 不排队是故意的：排队的消息在界面上和"发出去了"长得一模一样，用户会以为丢了。
+with served_lock:
+    # SCRIPTS 重新编号了，索引必须跟着归零——不归零的话 idx 直接越界，
+    # 假模型走"剧本用完"那条分支返回空答案，而症状是"模型不说话"，很难一眼看出。
+    served["n"] = 0
+SCRIPTS[:] = [("this answer comes out slowly, one character at a time", "", "")]
+char_delay["s"] = 0.08
+
+mark = len(text())
+turns = prompts_seen()
+send("answer slowly")
+check("the slow turn started", wait_after("this answer", mark))
+send("cut in line")
+check("the second prompt is rejected, not queued", wait_after("(try /interrupt)", mark))
+check("turn still finishes", wait_after("one character at a time", mark))
+# +2 而不是 +1：被顶回去的那条 prompt 自己也打了一个提示符。
+check("the slow turn went idle", wait_prompts(turns + 2))
+
+# ── /interrupt ────────────────────────────────────────────
+with served_lock:
+    # SCRIPTS 重新编号了，索引必须跟着归零——不归零的话 idx 直接越界，
+    # 假模型走"剧本用完"那条分支返回空答案，而症状是"模型不说话"，很难一眼看出。
+    served["n"] = 0
+SCRIPTS[:] = [("counting one two three four five six seven eight nine ten", "", "")]
+
+# 整段答案按 char_delay 算要 4 秒多，打断必须明显快于它。
+full_answer_seconds = len(SCRIPTS[0][0]) * char_delay["s"]
+
+mark = len(text())
+started = time.time()
+send("count for me")
+check("the turn to interrupt started", wait_after("counting", mark))
+send("/interrupt")
+
+# 量的是"输出什么时候停的"，不是"什么时候出现了提示符"——理由见 wait_quiet。
+stopped_at = wait_quiet()
+check("output stopped well before the answer would have finished",
+      stopped_at - started < full_answer_seconds * 0.7,
+      "%.1fs of %.1fs" % (stopped_at - started, full_answer_seconds))
+check("the rest never came out", "nine ten" not in text()[mark:],
+      repr(text()[mark:][-80:]))
+char_delay["s"] = 0.0
 
 # ── 查询类命令 ────────────────────────────────────────────
 mark = len(text())

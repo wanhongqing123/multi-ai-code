@@ -58,9 +58,13 @@ target_compile_definitions(mai_sqlite PUBLIC
 # 不需要再给它补 /w：上面的告警选项本来就只加给 C++。
 
 # ── libcurl：源码进仓库，和别的第三方一致 ─────────────────────
-# third_party/curl 是 curl 8.11.1 的裁剪版：只留了 lib/ include/ CMake/
-# 和顶层 CMakeLists。删掉的是 tests(11M)、docs(5.1M)、src/(命令行工具)
-# 和整套 autotools——我们只要 libcurl，不要 curl.exe。
+# third_party/curl 是 curl 8.11.1 的**完整发布包**，原样解开，一个文件
+# 没动（sha256 对得上官网：a889ac9dbba3644271bd9d1302b5c22a088893719b72be3487bc3d401e5c4e80）。
+#
+# 曾经想过只留 lib/ include/ 把 29M 压到 7M，但那样它就不再是"那个版本"
+# 了：升级时要重新做一遍裁剪决定，出问题时也没法直接和上游比对。
+# 完整放着还省掉一类怪事——构建里哪天需要某个被删掉的文件时，
+# 报错会离原因很远。
 #
 # 以前这里走的是 FetchContent（配置时去 curl.se 下载）。那和
 # third_party/README 里"没有网络的机器上也能构建"自相矛盾：交叉编译到
@@ -73,9 +77,9 @@ target_compile_definitions(mai_sqlite PUBLIC
 set(BUILD_CURL_EXE      OFF CACHE BOOL "" FORCE)
 set(BUILD_SHARED_LIBS   OFF CACHE BOOL "" FORCE)
 set(BUILD_STATIC_LIBS   ON  CACHE BOOL "" FORCE)
-set(BUILD_EXAMPLES      OFF CACHE BOOL "" FORCE)  # docs/examples 没进仓库
+set(BUILD_EXAMPLES      OFF CACHE BOOL "" FORCE)  # curl 自带的示例，不用编
 set(BUILD_TESTING       OFF CACHE BOOL "" FORCE)
-set(CURL_BUILD_TESTING  OFF CACHE BOOL "" FORCE)  # tests/ 没进仓库
+set(CURL_BUILD_TESTING  OFF CACHE BOOL "" FORCE)  # curl 自己的测试套件，不用跑
 set(BUILD_LIBCURL_DOCS  OFF CACHE BOOL "" FORCE)
 set(ENABLE_CURL_MANUAL  OFF CACHE BOOL "" FORCE)
 set(CURL_DISABLE_INSTALL ON CACHE BOOL "" FORCE)

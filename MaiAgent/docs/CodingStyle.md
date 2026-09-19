@@ -9,10 +9,12 @@
 
 # 一、命名与排版
 
-## 0. 拿不准的时候看 codex
+## 0. agent 相关的看 codex
 
-**参照系是 codex，不是 opencode。** 形状、命名、协议取值有疑问，先去
-`third_party/aicli/codex/codex-rs` 里看它怎么做的。
+**参照系是 codex，不是 opencode。** agent 的形状、命名、协议取值有疑问，
+先去 `third_party/aicli/codex/codex-rs` 里看它怎么做的。
+
+（通用基础组件看另一个参照系，见下一节。）
 
 已经照着它来的：
 
@@ -30,6 +32,81 @@
 
 抄之前先核对真实源码，别照着印象写。这条踩过坑：曾经把"codex 接不了智谱"
 当成事实讲出去，而实际上人家早就加了 Responses 端点。
+
+## 0.5 通用组件先看 chromium 的 base，别自己发挥
+
+路径、文件、线程、字符串、容器、时间、同步原语——**这类谁都要用的基础
+组件，动手之前先去 `E:\OpenSource\chromium\src\base` 看它怎么做的。**
+
+两个参照系分工不同：
+
+| 看哪个 | 管什么 |
+|---|---|
+| `third_party/aicli/codex/codex-rs` | agent 的形状、协议取值、词汇 |
+| `E:\OpenSource\chromium\src\base` | 通用基础组件 |
+
+### 为什么不能自由发挥
+
+这类东西看着简单，坑全在边角上，而且**坑的代价通常是"悄悄错"而不是
+"编译不过"**。base 是被几亿台设备、十几年、所有主流平台锤过的，
+它每个奇怪的决定背后都有一个我们还没遇到的 bug。
+
+这一节的两条都是这次现学现卖的教训：
+
+**一、路径为什么不能统一成 UTF-8**
+
+本来已经写好了一版 "内部一律 UTF-8 字符串" 的 `MaiPath`。翻
+`base/files/file_path.h` 的开头注释时看到这句：
+
+> ...has an impact on **correctness** on platforms that do not have
+> well-defined encodings for pathnames.
+
+POSIX 的文件名是**任意字节序列**，根本不保证是合法 UTF-8。Linux 上一个
+用 Latin-1 命名的文件，强行当 UTF-8 处理就会丢掉或改写它的名字。
+Windows 那边是 UTF-16，可能含未配对代理项，转一圈回不来。
+
+所以 base 的做法是内部存平台原生串，只在边界转。整版推倒重写，
+才有了现在的 `MaiFilePath`。**自己想是想不到这一层的**——在 Windows 上
+测永远不会发现。
+
+**二、`__try` 不能写在有析构对象的函数里**
+
+`platform_thread_win.cc` 里那段设置线程名的代码，上面明明白白写着：
+
+> This function has try handling, so it is separated out of its caller.
+
+我读到了这句，没当回事，照着自己的想法把 `__try` 写进了
+`setCurrentName`——MSVC 当场 C2712。它把那段单拎出来不是风格偏好，
+是语言限制。
+
+### "参考"是什么意思
+
+不是把 base 整个搬过来。base 自己的 README 就写着：
+
+> The bar for adding stuff to base is that it must have demonstrated wide
+> applicability. ... sometimes even duplication is OK and inevitable.
+
+做法是：**看懂它为什么那么做，取我们真正需要的那一小撮，把理由写进
+注释。** 现在这样借过的有：
+
+| 我们的 | 对应 base 里的 |
+|---|---|
+| `MaiFilePath` | `base::FilePath`（原生串、`GetComponents`、`IsParent`）|
+| `MaiFileSystem` | `base/files/file_util.h` + `file_enumerator.h` |
+| `MaiThread::setCurrentName` | `base::PlatformThread::SetName` |
+| `MaiScopedDisallowBlocking` | `base/threading/thread_restrictions.h` |
+
+以后可能会用上、但现在还不到时候的：
+
+    base/strings/        字符串工具、编码转换
+    base/containers/     flat_map / small_vector 这类
+    base/synchronization/ WaitableEvent、Lock
+    base/threading/sequence_bound.h   对象绑到某个线程（接 Qt 时会用上）
+    base/threading/hang_watcher.h     卡死检测（有线程池之后）
+    base/numerics/       安全的数值转换、溢出检查
+
+**抄之前先核对真实源码**，别照着印象写——这条在第 0 节也说过一次，
+是同一个道理。
 
 ## 1. 文件命名
 

@@ -38,24 +38,19 @@ SQLite 有个历史怪癖——双引号括起来的东西如果不是已知列�
 
 ## libcurl
 
-`curl/` 是 curl 8.11.1 的裁剪版，只留了构建 libcurl 必需的部分：
+`curl/` 是 curl 8.11.1 的**完整发布包**，原样解开，一个文件没动。
+sha256 和官网一致：
 
-    lib/         库源码
-    include/     公开头
-    CMake/       它自己的 CMake 模块
-    CMakeLists.txt
-    COPYING RELEASE-NOTES
+    a889ac9dbba3644271bd9d1302b5c22a088893719b72be3487bc3d401e5c4e80
 
-删掉的（原始包 29M，留下 6.9M）：
+曾经想过只留 `lib/` `include/`，把 29M 压到 7M。没这么做，因为裁剪过的
+依赖**就不再是"那个版本"了**：升级时要重新做一遍裁剪决定，出问题时也没法
+直接和上游比对；而且构建里哪天需要某个被删掉的文件，报错会离原因很远。
+体积换确定性，这笔划算。
 
-    tests/       11M，curl 自己的测试套件
-    docs/        5.1M
-    src/         1.8M，**curl 命令行工具**——我们只要库
-    configure / m4/ / ltmain.sh / ...  整套 autotools，我们走 CMake
-
-顶层 CMakeLists 里要把 `BUILD_EXAMPLES` 和 `CURL_BUILD_TESTING` 显式关掉：
-它们默认是 ON，而 `docs/examples` 和 `tests` 没进仓库，不关的话
-`add_subdirectory` 会找不到目录。
+构建时关掉的：`BUILD_CURL_EXE`（只要库，不要 curl.exe）、`BUILD_EXAMPLES`、
+`CURL_BUILD_TESTING`、文档。`HTTP_ONLY` 把 FTP/LDAP/SMTP/telnet 一律关掉——
+我们只打 HTTPS，少掉的这些既是体积也是攻击面。
 
 以前这里走的是 CMake FetchContent（配置时去 curl.se 下载）。那和这份
 README 开头说的"没有网络的机器上也能构建"自相矛盾——交叉编译到嵌入式的

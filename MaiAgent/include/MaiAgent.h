@@ -35,6 +35,22 @@ struct MaiDeleteSession {
     std::string sessionId;
 };
 
+// 清掉这个会话的聊天记录，**会话本身留着**。
+//
+// 为什么不用"删了再建一个"顶替：
+//
+//   1. 会换 id。界面上只有一个固定的 AI 助手会话，换 id 意味着它要重新去认。
+//   2. **会把"本会话都允许"那份授权记录一起丢掉**（MaiDeleteSession 里明确清了它）。
+//      用户点"清空重来"想丢的是聊天记录，不是他刚给过的授权——而这件事他感觉不到，
+//      只会发现它又开始一个一个问了。
+//
+// 正在跑的时候不让清（返回 Busy）：那一轮的 assistant 消息还在往库里写，
+// 清了它下一次 putMessage 又会把消息塞回来，最后剩一条来历不明的半截记录。
+// 界面应该先 MaiInterrupt，再清。
+struct MaiClearMessages {
+    std::string sessionId;
+};
+
 // 发一轮消息。**立刻返回**，真正的输出全部走事件流。
 struct MaiSendPrompt {
     std::string sessionId;
@@ -55,8 +71,9 @@ struct MaiReplyPermission {
     MaiPermissionDecision decision = MaiPermissionDecision::Denied;
 };
 
-using MaiOperation = std::variant<MaiCreateSession, MaiUpdateSession, MaiDeleteSession,
-                                  MaiSendPrompt, MaiInterrupt, MaiReplyPermission>;
+using MaiOperation =
+    std::variant<MaiCreateSession, MaiUpdateSession, MaiDeleteSession, MaiClearMessages,
+                 MaiSendPrompt, MaiInterrupt, MaiReplyPermission>;
 
 // ── 核心的门面 ──────────────────────────────────────────────────
 //

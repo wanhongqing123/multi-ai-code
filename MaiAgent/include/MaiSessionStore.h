@@ -24,6 +24,13 @@ public:
     virtual std::vector<MaiSession> listSessions() const = 0;  // 按 updated 倒序
     virtual bool removeSession(const std::string& id) = 0;
 
+    // 清掉一个会话的全部消息，**会话本身留着**。会话不存在返回 false。
+    //
+    // 和 removeSession 的区别不只是留不留会话：删会话会连带清掉闸门里"本会话都允许"
+    // 那份记录（MaiPermissionGate::forgetSession），而清空消息不碰它。
+    // 用户点"清空重来"想丢的是聊天记录，不是他刚给过的授权。
+    virtual bool clearMessages(const std::string& sessionId) = 0;
+
     virtual void putMessage(const std::string& sessionId, const MaiMessage& message) = 0;
     virtual std::vector<MaiMessage> listMessages(const std::string& sessionId) const = 0;
 

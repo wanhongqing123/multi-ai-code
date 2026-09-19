@@ -184,6 +184,31 @@ MaiResult<std::string> MaiAgent::submit(const MaiOperation& operation) {
                 mRuntime->emitter.emitSession(MaiEventType::SessionDeleted, operation.sessionId);
                 return operation.sessionId;
 
+            } else if constexpr (std::is_same_v<T, MaiClearMessages>) {
+                {
+                    std::lock_guard<std::mutex> lock(mRuntime->mutex);
+                    if (mRuntime->active.count(operation.sessionId))
+                        return {MaiErrorCode::Busy,
+                                "a turn is still running; interrupt it before clearing"};
+                }
+                if (!mRuntime->store->clearMessages(operation.sessionId))
+                    return {MaiErrorCode::NotFound, "session not found"};
+
+                // 标题是拿第一句话起的。记录清了标题还留着的话，头部会一直挂着一句
+                // 已经不存在的对话——所以一起清掉，让下一轮重新起名。
+                std::string title;
+                mRuntime->store->mutateSession(operation.sessionId, [](MaiSession& session) {
+                    session.title.clear();
+                    session.updated = MaiTime::getCurrentTime();
+                });
+
+                // **不逐条发 MessageRemoved。** 历史可能有几百条，那是几百条事件，
+                // 而界面要做的只有一件事：把列表清空。发一条会话级的更新，
+                // 界面照常去 listMessages 拉全量（这次拉到的是空的）。
+                mRuntime->emitter.emitSession(MaiEventType::SessionUpdated, operation.sessionId,
+                                              title);
+                return operation.sessionId;
+
             } else if constexpr (std::is_same_v<T, MaiSendPrompt>) {
                 if (operation.text.empty())
                     return {MaiErrorCode::InvalidInput, "prompt text must not be empty"};

@@ -450,6 +450,94 @@ void test_always_in_session_asks_only_once() {
     CHECK(recorder.count(MaiEventType::PermissionAsked) == 1);
 }
 
+// 清空聊天记录**不能**把"本会话都允许"一起清掉。
+//
+// 这就是 MaiClearMessages 存在的全部理由。界面上"清空重来"如果实现成
+// 删会话再建一个，授权记录会跟着 MaiDeleteSession 一起没（那边明确调了
+// forgetSession）。用户感觉不到自己丢了什么，只会发现它又开始一个一个问了——
+// 而他明明点过"本会话都允许"。
+void test_clearing_history_keeps_the_session_grant() {
+    Workspace workspace;
+    auto underTest = makeAgent({callTurn("write", R"({"path":"a.txt","content":"1"})", "call_1"),
+                                sayTurn("Wrote a.txt."),
+                                callTurn("write", R"({"path":"b.txt","content":"2"})", "call_2"),
+                                sayTurn("Wrote b.txt.")});
+    MaiAgent* agent = underTest.agent.get();
+    Recorder recorder;
+    recorder.attach(*agent);
+
+    const std::string sessionId =
+        agent->submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
+
+    // 第一轮：问一次，用户选"本会话都允许"。
+    agent->submit(MaiSendPrompt{sessionId, "write a.txt"});
+    CHECK(waitFor([&] { return agent->listPendingPermissions().size() == 1; }));
+    MaiReplyPermission reply;
+    reply.permissionId = agent->listPendingPermissions()[0].id;
+    reply.decision = MaiPermissionDecision::ApprovedForSession;
+    agent->submit(reply);
+    agent->waitIdle();
+    CHECK(workspace.has("a.txt"));
+    CHECK(recorder.count(MaiEventType::PermissionAsked) == 1);
+
+    // 清空聊天记录。
+    CHECK(agent->submit(MaiClearMessages{sessionId}).isOk());
+    CHECK(agent->listMessages(sessionId).empty());
+    // 会话还在——换了 id 的话界面上那个固定的 AI 助手就认不出来了。
+    MaiSession session;
+    CHECK(agent->getSession(sessionId, session));
+    // 标题一起清掉，让下一轮重新起名。留着的话头部会挂着一句已经不存在的对话。
+    CHECK(session.title.empty());
+
+    // 第二轮：**不该再问**。授权记录在闸门里，不在聊天记录里。
+    agent->submit(MaiSendPrompt{sessionId, "write b.txt"});
+
+    // 这里刻意**不用 waitIdle()**。授权记录要是丢了，这一轮会停在等授权上
+    // 永远不结束（permissionTimeoutMs = 0 是无限等），waitIdle 也就永远不返回——
+    // 用例变成挂死而不是报错。挂死比失败难查得多：看不到断言、看不到行号，
+    // 只有一个卡着不动的进程。有界等待会在超时后干脆地红掉。
+    CHECK(waitFor([&] { return workspace.has("b.txt"); }));
+    CHECK(recorder.count(MaiEventType::PermissionAsked) == 1);
+
+    // 收尾：万一它真的又问了（说明这个用例红了），把请求答掉再退出。
+    //
+    // 不能只靠 waitIdle()——那一轮正卡在等人裁决上，而这个 agent 是无限等的，
+    // waitIdle 会一直不返回，用例变成挂死。挂死比失败难查得多：
+    // 没有断言、没有行号，只有一个卡着不动的进程。
+    for (const MaiPermissionRequest& pending : agent->listPendingPermissions()) {
+        agent->submit(MaiReplyPermission{pending.id, MaiPermissionDecision::Denied});
+    }
+    agent->waitIdle();
+}
+
+// 正在跑的时候不让清。
+//
+// 清了也没用：那一轮的 assistant 消息还在往库里写，下一次 putMessage 会把它塞回来，
+// 最后剩一条来历不明的半截记录。界面该先 MaiInterrupt 再清。
+void test_clearing_a_busy_session_is_refused() {
+    Workspace workspace;
+    auto underTest =
+        makeAgent({callTurn("write", R"({"path":"slow.txt","content":"x"})"), sayTurn("done")});
+    MaiAgent* agent = underTest.agent.get();
+
+    const std::string sessionId =
+        agent->submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
+    agent->submit(MaiSendPrompt{sessionId, "write slow.txt"});
+
+    // 卡在等授权 = 这一轮还在跑。
+    CHECK(waitFor([&] { return agent->listPendingPermissions().size() == 1; }));
+
+    MaiResult<std::string> cleared = agent->submit(MaiClearMessages{sessionId});
+    CHECK(!cleared.isOk());
+    CHECK(cleared.error().code() == MaiErrorCode::Busy);
+    // 消息一条都没少。
+    CHECK(!agent->listMessages(sessionId).empty());
+
+    // 收尾，别让 agent 析构时还挂着一个等授权的轮次。
+    agent->submit(MaiInterrupt{sessionId});
+    agent->waitIdle();
+}
+
 void test_read_never_asks() {
     Workspace workspace;
     std::ofstream(workspace.root / "x.txt", std::ios::binary) << "some content";
@@ -542,6 +630,10 @@ int main() {
     test_rejected_repeat_does_not_ask_again();
     std::printf("-> test_always_in_session_asks_only_once\n");
     test_always_in_session_asks_only_once();
+    std::printf("-> test_clearing_history_keeps_the_session_grant\n");
+    test_clearing_history_keeps_the_session_grant();
+    std::printf("-> test_clearing_a_busy_session_is_refused\n");
+    test_clearing_a_busy_session_is_refused();
     std::printf("-> test_read_never_asks\n");
     test_read_never_asks();
     std::printf("-> test_interrupt_while_waiting_for_approval\n");

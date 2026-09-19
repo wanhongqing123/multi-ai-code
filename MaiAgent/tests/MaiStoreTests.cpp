@@ -231,6 +231,37 @@ void contract_remove_session_takes_messages(MaiSessionStore& store, const char* 
     CHECK(store.listMessages(sessionId).empty());
 }
 
+void contract_clear_messages_keeps_the_session(MaiSessionStore& store, const char* which) {
+    std::printf("   [%s] clearMessages drops the history, keeps the session\n", which);
+
+    const std::string sessionId = MaiIdGenerator::newSessionId();
+    store.putSession(makeSession(sessionId, "keep me", 7));
+    for (int i = 0; i < 3; ++i) {
+        MaiMessage message = makeMessage(MaiIdGenerator::newMessageId(), MaiRole::User);
+        message.parts.push_back(textPart(MaiIdGenerator::newPartId(), "say something"));
+        store.putMessage(sessionId, message);
+    }
+    CHECK(store.listMessages(sessionId).size() == 3);
+
+    CHECK(store.clearMessages(sessionId));
+    CHECK(store.listMessages(sessionId).empty());
+
+    // 和 removeSession 的**全部区别**就在下面这两条：会话还在，还能接着用。
+    MaiSession still;
+    CHECK(store.getSession(sessionId, still));
+    CHECK(still.title == "keep me");
+
+    // 清完之后还能正常写。SQLite 那边是在一个事务里逐级删的，
+    // 少了 COMMIT 的话后面的写会一直卡在锁上——这条盯着那个。
+    MaiMessage fresh = makeMessage(MaiIdGenerator::newMessageId(), MaiRole::User);
+    fresh.parts.push_back(textPart(MaiIdGenerator::newPartId(), "starting over"));
+    store.putMessage(sessionId, fresh);
+    CHECK(store.listMessages(sessionId).size() == 1);
+
+    // 不存在的会话要明确说"没有"，不能假装清成功了。
+    CHECK(!store.clearMessages("ses_does_not_exist"));
+}
+
 void contract_mutate_session(MaiSessionStore& store, const char* which) {
     std::printf("   [%s] mutateSession does read-modify-write\n", which);
 
@@ -322,6 +353,7 @@ void runContract(MaiSessionStore& store, const char* which) {
     contract_messages_and_parts(store, which);
     contract_put_message_replaces_parts(store, which);
     contract_remove_session_takes_messages(store, which);
+    contract_clear_messages_keeps_the_session(store, which);
     contract_mutate_session(store, which);
     contract_switch_model(store, which);
     contract_concurrent_writes(store, which);

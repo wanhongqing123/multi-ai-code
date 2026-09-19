@@ -132,6 +132,29 @@ public:
         return removed > 0;
     }
 
+    bool clearMessages(const std::string& sessionId) override {
+        std::lock_guard<std::mutex> lock(mMutex);
+
+        // 先确认会话存在。不确认的话，对着一个不存在的 id 清空会返回 true，
+        // 调用方以为清成功了，其实什么都没发生。
+        sqlite3_stmt* check = prepareLocked("SELECT 1 FROM sessions WHERE id = ?1");
+        if (check == nullptr) return false;
+        bindText(check, 1, sessionId);
+        const bool exists = sqlite3_step(check) == SQLITE_ROW;
+        sqlite3_reset(check);
+        if (!exists) return false;
+
+        if (!exec("BEGIN IMMEDIATE")) return false;
+        // 和 removeSession 一样显式逐级删，理由见那边的注释。
+        runWith(
+            "DELETE FROM parts WHERE message_id IN "
+            "(SELECT id FROM messages WHERE session_id = ?1)",
+            sessionId);
+        runWith("DELETE FROM messages WHERE session_id = ?1", sessionId);
+        exec("COMMIT");
+        return true;
+    }
+
     void putMessage(const std::string& sessionId, const MaiMessage& message) override {
         std::lock_guard<std::mutex> lock(mMutex);
         if (!exec("BEGIN IMMEDIATE")) return;

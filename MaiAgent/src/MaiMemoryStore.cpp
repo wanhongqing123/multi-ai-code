@@ -44,6 +44,13 @@ public:
         return mSessions.erase(id) > 0;
     }
 
+    bool clearMessages(const std::string& sessionId) override {
+        std::lock_guard<std::mutex> lock(mMutex);
+        if (mSessions.find(sessionId) == mSessions.end()) return false;
+        mMessages.erase(sessionId);
+        return true;
+    }
+
     bool mutateSession(const std::string& id,
                        const std::function<void(MaiSession&)>& mutator) override {
         // 读-改-写整个在锁内完成。调用方自己做这三步的话，

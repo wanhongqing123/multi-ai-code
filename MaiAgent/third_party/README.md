@@ -10,6 +10,7 @@
 |---|---|---|
 | `nlohmann/json.hpp` | https://github.com/nlohmann/json | v3.11.3 |
 | `httplib/httplib.h` | https://github.com/yhirose/cpp-httplib | v0.18.3 |
+| `sqlite/sqlite3.{c,h}` | https://sqlite.org/ | 3.49.1（amalgamation） |
 
 ## 用法边界
 
@@ -20,8 +21,22 @@
 当成内部数据结构用会很慢。把它关在边界里，既保住性能，也保住了
 以后换 simdjson / RapidJSON 时只改边界几个函数的退路。
 
-## 还没进来的
+## sqlite3
 
-- **sqlite3**：M5 落库时加（amalgamation，两个文件）。
-- **libcurl**：M2 接大模型时加。注意它是 HTTP **客户端**，
-  和这里的 httplib（HTTP **服务端**）是两回事，两个都要。
+amalgamation 只取两个文件：`sqlite3.c` 和 `sqlite3.h`。压缩包里另外那两个
+没要——`shell.c` 是命令行工具的 main，`sqlite3ext.h` 是写扩展用的。
+
+它是 **C** 不是 C++，所以在 CMake 里是单独一个目标（`mai_sqlite`）。
+顶层 `project()` 因此必须写 `LANGUAGES C CXX`；只写 CXX 的话 CMake 会在
+生成阶段说 `CMAKE_C_COMPILE_OBJECT` 没设，那个错误信息离真正原因很远。
+
+关掉的编译期开关见 CMakeLists，其中一个值得单独说：`SQLITE_DQS=0`。
+SQLite 有个历史怪癖——双引号括起来的东西如果不是已知列名，会被当成
+**字符串字面量**而不是报错。列名写错了不会有任何提示，查询静默返回空。
+关掉之后双引号只当标识符。
+
+## libcurl
+
+不在这个目录，走 CMake 的 FetchContent（见顶层 CMakeLists，URL + SHA256
+都钉死了）。注意它是 HTTP **客户端**，和这里的 httplib（HTTP **服务端**）
+是两回事，两个都要。

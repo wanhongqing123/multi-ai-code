@@ -60,6 +60,7 @@ cmake --build build
 ./build/bin/MaiToolTests            # 路径边界 + 四个内置工具
 ./build/bin/MaiToolLoopTests        # 工具循环：调用 -> 执行 -> 回灌 -> 再答
 ./build/bin/MaiPermissionTests      # 权限闸门：拦住 -> 等裁决 -> 放行或拒绝
+./build/bin/MaiStoreTests           # 存储契约：内存和 SQLite 行为必须一致
 
 # 只有 MaiModelClientTests 会起 socket——它测的就是传输和线格式。
 # 其余几套直接实现 MaiModelClient 接口（tests/support/MaiFakeModelClient），
@@ -68,10 +69,12 @@ cmake --build build
 # 端到端（会自己起假模型和 bridge，不需要 API key）
 python tests/e2e/m2_loop.py
 python tests/e2e/m4_permission.py
+python tests/e2e/m5_persistence.py
 
 # 手动起服务
 ./build/bin/maiagent-bridge --help
 ./build/bin/maiagent-bridge                              # 空转，不接模型
+./build/bin/maiagent-bridge --db ./agent.db              # 会话和消息落盘
 ./build/bin/maiagent-bridge --model-url http://127.0.0.1:11434/v1 --model qwen2.5
 ./build/bin/maiagent-bridge --model-url https://open.bigmodel.cn/api/paas/v4                            --model-key $MAIAGENT_API_KEY --model glm-5.3
 ```
@@ -84,7 +87,7 @@ Windows 上要先进 MSVC 环境（`vcvars64.bat`）。
 - [x] **M2 能聊天** — Chat Completions 流式客户端 + agent loop + prompt/interrupt
 - [x] **M3 能干活** — 工具注册表 + read/write/glob/grep + 工具循环
 - [x] **M4 权限闸门** — write 跑之前停下来等用户点头
-- [ ] M5 SQLite 持久化 + interrupt/切模型
+- [x] **M5 落库** — SQLite 持久化 + 切模型 + 写失败不再无声无息
 - [ ] M6 脱壳验证 — 摘掉 HTTP，写一个直接链库的 CLI
 
 ## 权限闸门
@@ -121,6 +124,37 @@ SSE 断开的那个窗口期里发出的 `permission.asked` 是看不到的，�
   会把用户烦死。同一轮里相同的 (工具, 参数) 直接回同样的拒绝。
 - **拒绝时告诉模型"不要重试"。** 不写这句，模型会把 12 圈全烧在同一个被拒的
   操作上，用户看到的是 agent 卡住了。
+
+## 落库
+
+默认**不落盘**。`maiagent-bridge` 不给 `--db` 就是纯内存，进程退出什么都不留。
+悄悄在用户机器上建个数据库文件不合适，要留历史就显式给路径：
+
+```bash
+./build/bin/maiagent-bridge --db ./agent.db
+```
+
+库里直接用是 `makeMaiSqliteStore(path)`，返回 `MaiResult`——打不开就是错误，
+不会给你一个用起来处处出错的半死对象。传 `":memory:"` 能拿到一个走完整 SQL
+路径但不落盘的库（测试里用它验 SQL 本身）。
+
+表结构是 `sessions` / `messages` / `parts` 三张，part 的三种形态展开成列而不是
+塞 JSON——这样 `sqlite3` 命令行能直接查，排障时看得见"那次 write 的 input
+到底是什么"，也不用把 nlohmann 拖进核心。
+
+消息和 part 的顺序靠 `ORDER BY id`。这不是偷懒：`MaiIdGenerator` 产出的 id 是
+定长的"时间戳 + 同毫秒序号 + 随机"，用的 base32 字母表在 ASCII 里递增，
+所以字典序就是生成顺序。`MaiStoreTests` 里有一条用例专门盯着这个性质。
+
+**备份注意**：开了 WAL，已提交的数据先落在 `<db>-wal` 里，要到 checkpoint
+才并回主文件。实测跑完一轮对话，`agent.db` 还是 4096 字节，数据全在
+`agent.db-wal`。所以只拷 `agent.db` 不算备份。进程被硬杀不会丢数据——
+下次打开时会从 `-wal` 恢复。
+
+**写失败不再无声无息**：存储的写接口返回 void（它们在流式热路径上，
+每次都检查会把代码淹掉），但每轮结束时 `MaiTurnRunner` 会查一次
+`lastWriteError()`，失败就把会话标成错误让界面看见。磁盘满了还假装存上了，
+是用户第二天打开发现对话没了的那种 bug。
 
 ## 三条铁律
 

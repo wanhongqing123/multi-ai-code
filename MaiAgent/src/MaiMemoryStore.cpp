@@ -13,6 +13,11 @@ public:
         mSessions[session.id] = session;
     }
 
+    // 纯内存，写不会失败——除非内存耗尽，那时候进程已经没了。
+    MaiError lastWriteError() const override {
+        return {};
+    }
+
     bool getSession(const std::string& id, MaiSession& out) const override {
         std::lock_guard<std::mutex> lock(mMutex);
         auto it = mSessions.find(id);

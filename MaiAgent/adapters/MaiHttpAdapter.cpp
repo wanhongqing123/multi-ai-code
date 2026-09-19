@@ -241,6 +241,39 @@ void MaiHttpAdapter::Listener::routes() {
         response.set_content(toJson(session).dump(), "application/json");
     });
 
+    // 改会话：切模型、改标题、换 agent。M5 要的"切模型"落在这里。
+    //
+    // 空字段表示"不改"而不是"改成空"——界面通常只送它动过的那一个字段，
+    // 把没送的当成清空会让用户改个模型就把标题弄丢了。
+    server.Post(R"(/api/session/([^/]+))", [this](const httplib::Request& request,
+                                                  httplib::Response& response) {
+        const json body = json::parse(request.body, nullptr, /*allow_exceptions=*/false);
+        if (!body.is_object()) {
+            response.status = 400;
+            response.set_content(json{{"error", "body must be a JSON object"}}.dump(),
+                                 "application/json");
+            return;
+        }
+        MaiUpdateSession operation;
+        operation.sessionId = request.matches[1];
+        operation.title = body.value("title", std::string{});
+        operation.model = body.value("model", std::string{});
+        operation.agent = body.value("agent", std::string{});
+
+        const auto updated = agent.submit(operation);
+        if (!updated) {
+            response.status = toHttpStatus(updated.error().code());
+            response.set_content(json{{"error", updated.error().message()},
+                                      {"code", maiErrorCodeToString(updated.error().code())}}
+                                     .dump(),
+                                 "application/json");
+            return;
+        }
+        MaiSession session;
+        agent.getSession(operation.sessionId, session);
+        response.set_content(toJson(session).dump(), "application/json");
+    });
+
     server.Get(R"(/api/session/([^/]+)/message)",
                [this](const httplib::Request& request, httplib::Response& response) {
                    json array = json::array();

@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
-project(MaiAgent VERSION 0.1.0 LANGUAGES CXX)
+# C 也要开：sqlite3 是 C 源码。只写 CXX 的话 CMake 生成到一半会说
+# CMAKE_C_COMPILE_OBJECT 没设，错误信息离真正原因很远。
+project(MaiAgent VERSION 0.1.0 LANGUAGES C CXX)
 
 # C++17 与 MaiChat/desktop 保持一致，方便以后两边互链。
 set(CMAKE_CXX_STANDARD 17)
@@ -14,11 +16,18 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 if(MSVC)
-  add_compile_options(/utf-8 /W4 /permissive- /EHsc)
-  add_compile_options(/wd4100 /wd4996)
+  add_compile_options(/utf-8 /permissive- /EHsc)
+  # 严格的告警级别只加给 C++。唯一的 C 源码是第三方的 sqlite3.c，
+  # 给它加 /W4 再补一个 /w 压住，cl 会报 D9025（"正在重写 /W4"）——
+  # 为了消掉第三方的噪音反而制造新噪音。一开始就别加。
+  add_compile_options($<$<COMPILE_LANGUAGE:CXX>:/W4>)
+  add_compile_options($<$<COMPILE_LANGUAGE:CXX>:/wd4100>)
+  add_compile_options($<$<COMPILE_LANGUAGE:CXX>:/wd4996>)
   add_compile_definitions(_CRT_SECURE_NO_WARNINGS NOMINMAX WIN32_LEAN_AND_MEAN)
 else()
-  add_compile_options(-Wall -Wextra -Wpedantic)
+  add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-Wall>)
+  add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-Wextra>)
+  add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-Wpedantic>)
 endif()
 
 # ── 第三方：全部单头文件，直接进仓库，不依赖包管理器 ──────────────
@@ -28,6 +37,25 @@ target_include_directories(mai_thirdparty INTERFACE
   ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nlohmann
   ${CMAKE_CURRENT_SOURCE_DIR}/third_party/httplib
 )
+
+# ── sqlite3：amalgamation 两个文件，直接进仓库 ─────────────────
+# 它是 C 不是 C++，所以单独一个目标；用 C++ 编译器去编 sqlite3.c 会出事。
+add_library(mai_sqlite STATIC third_party/sqlite/sqlite3.c)
+target_include_directories(mai_sqlite PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/sqlite)
+target_compile_definitions(mai_sqlite PUBLIC
+  # 用不到的功能一律关掉：既是体积也是攻击面。
+  SQLITE_OMIT_LOAD_EXTENSION      # 不允许加载 .so/.dll 扩展
+  SQLITE_OMIT_DEPRECATED
+  SQLITE_DQS=0                    # 双引号只当标识符，不当字符串——
+                                  # 这是 SQLite 的历史怪癖，写错列名会被
+                                  # 当成字符串字面量静默通过
+  SQLITE_DEFAULT_MEMSTATUS=0      # 省掉每次分配的统计
+  SQLITE_DEFAULT_FOREIGN_KEYS=0   # 我们显式逐级删，不靠外键
+  SQLITE_THREADSAFE=2             # 多线程，但同一个连接由调用方保证串行
+                                  # （我们在 SqliteStore 里整体加锁）
+  SQLITE_USE_URI=0
+)
+# 不需要再给它补 /w：上面的告警选项本来就只加给 C++。
 
 # ── libcurl：源码引入，不用包管理器 ────────────────────────────
 # 为什么源码而不是系统库：这个项目要交叉编译到嵌入式和移动端，
@@ -83,6 +111,7 @@ add_library(maiagent STATIC
   src/MaiIdGenerator.cpp
   src/MaiEventBus.cpp
   src/MaiMemoryStore.cpp
+  src/MaiSqliteStore.cpp
   src/MaiOpenAiClient.cpp
   src/MaiPathUtf8.cpp
   src/MaiPathGuard.cpp
@@ -103,7 +132,8 @@ target_include_directories(maiagent
 )
 # libcurl 是 HTTP **客户端**（核心用它调大模型），
 # 和适配器里的 cpp-httplib（HTTP **服务端**）是两回事，两个都要。
-target_link_libraries(maiagent PUBLIC Threads::Threads PRIVATE CURL::libcurl)
+# sqlite 和 libcurl 都是 PRIVATE：它们是实现细节，公开头里不出现。
+target_link_libraries(maiagent PUBLIC Threads::Threads PRIVATE CURL::libcurl mai_sqlite)
 
 # ── HTTP 适配器：把核心包成 REST + SSE，喂现有的 Electron 界面 ────
 add_library(maiagent_http_adapter STATIC
@@ -135,6 +165,7 @@ if(MAIAGENT_BUILD_TESTS)
   # 测试要碰内部头（MaiPathUtf8 等），所以也要 src 的 include 路径。
   foreach(test_name
       MaiCoreTests          # id / 会话 / 事件总线
+      MaiStoreTests         # 存储契约：内存和 SQLite 行为必须一致
       MaiModelClientTests   # 流式解析 + 工具调用分片聚合
       MaiTurnRunnerTests    # 一轮对话的完整生命周期
       MaiToolTests          # 路径边界 + 四个内置工具

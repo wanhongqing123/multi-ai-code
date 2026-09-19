@@ -24,6 +24,8 @@ void usage() {
         "                         http://127.0.0.1:11434/v1              (Ollama)\n"
         "  --model-key <key>    API key; MAIAGENT_API_KEY works too\n"
         "  --model <name>       Default model name, default glm-5.3\n"
+        "  --db <path>          SQLite file for sessions and messages.\n"
+        "                       Omitted means in-memory: everything is gone on exit.\n"
         "  --permission-timeout <ms>\n"
         "                       Milliseconds to wait for user approval. 0 (default) waits\n"
         "                       forever; a timeout counts as a denial. Only needed when\n"
@@ -46,6 +48,7 @@ int main(int argc, char** argv) {
     std::string modelKey = envOrEmpty("MAIAGENT_API_KEY");
     std::string modelName = "glm-5.3";
     MaiMillis permissionTimeoutMs = 0;
+    std::string databasePath;
 
     for (int i = 1; i < argc; ++i) {
         const std::string argument = argv[i];
@@ -63,6 +66,8 @@ int main(int argc, char** argv) {
             modelKey = argv[++i];
         } else if (argument == "--model" && hasNext) {
             modelName = argv[++i];
+        } else if (argument == "--db" && hasNext) {
+            databasePath = argv[++i];
         } else if (argument == "--permission-timeout" && hasNext) {
             permissionTimeoutMs = std::atoll(argv[++i]);
         } else {
@@ -85,10 +90,24 @@ int main(int argc, char** argv) {
     auto tools = std::make_unique<MaiToolRegistry>();
     registerMaiBuiltinTools(*tools);
 
+    // 不给 --db 就用内存存储。默认不落盘是有意的：这个 exe 是开发期的桥，
+    // 悄悄在用户机器上建个数据库文件不合适。真要留历史就显式给路径。
+    std::unique_ptr<MaiSessionStore> store;
+    if (databasePath.empty()) {
+        store = makeMaiMemoryStore();
+    } else {
+        auto opened = makeMaiSqliteStore(databasePath);
+        if (!opened) {
+            std::fprintf(stderr, "maiagent: %s\n", opened.error().message().c_str());
+            return 1;
+        }
+        store = std::move(opened.value());
+    }
+
     MaiAgent::Options agentOptions;
     agentOptions.defaultModel = modelName;
     agentOptions.permissionTimeoutMs = permissionTimeoutMs;
-    MaiAgent agent(makeMaiMemoryStore(), std::move(model), std::move(tools), agentOptions);
+    MaiAgent agent(std::move(store), std::move(model), std::move(tools), agentOptions);
     MaiHttpAdapter server(agent, options);
 
     if (!server.bind()) {
@@ -98,6 +117,8 @@ int main(int argc, char** argv) {
     }
     // 端口必须在开始阻塞之前打出来，否则 port=0 时没人知道它监听在哪。
     std::printf("maiagent listening on %s\n", server.baseUrl().c_str());
+    std::printf("  storage: %s\n", databasePath.empty() ? "in-memory (nothing is kept after exit)"
+                                                        : databasePath.c_str());
     std::printf("  permissions: write needs approval via POST /api/permission/<id>%s\n",
                 permissionTimeoutMs > 0 ? " (with timeout)" : " (no timeout, waits forever)");
     if (modelUrl.empty()) {

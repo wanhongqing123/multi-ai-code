@@ -316,6 +316,12 @@ void MaiTurnRunner::finish(const std::atomic<bool>& cancel) {
         }
     }
 
+    // 落库失败不能无声无息。磁盘满了还假装存上了，用户是第二天打开
+    // 发现对话没了才知道的。一轮查一次就够——写接口在热路径上，
+    // 每次都检查会把代码淹掉（见 MaiSessionStore::lastWriteError）。
+    const MaiError writeError = mDependencies.store->lastWriteError();
+    if (writeError.hasError() && !mError.hasError()) mError = writeError;
+
     // 主动中断不是故障：界面不该弹错误，已经吐出来的内容也照常保留。
     const bool canceled =
         cancel.load(std::memory_order_relaxed) || mError.code() == MaiErrorCode::Canceled;

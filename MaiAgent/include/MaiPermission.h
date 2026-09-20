@@ -43,6 +43,11 @@ struct MaiPermissionRequest {
     std::string partId;
     std::string toolName;
     std::string arguments;  // 参数 JSON 原文
+    // 「这个会话以后都允许」记的是这个键，不是工具名。空表示退回成工具名。
+    //
+    // 分开是为了 shell：给 `git status` 点一次「以后都允许」，不该连 `rm -rf` 一起放行。
+    // 键由工具自己给（MaiTool::approvalKey），闸门只管原样存和查。
+    std::string approvalKey;
     MaiMillis asked = 0;
 };
 
@@ -87,7 +92,8 @@ public:
     bool reply(const std::string& permissionId, MaiPermissionDecision decision);
 
     // 用户之前选了"本会话都允许"。
-    bool isAllowedInSession(const std::string& sessionId, const std::string& toolName) const;
+    // approvalKey 是 MaiTool::approvalKey() 给的那个键，不是工具名。
+    bool isAllowedInSession(const std::string& sessionId, const std::string& approvalKey) const;
 
     // 界面刷新后要能重新看到还在等什么。没有这个，
     // SSE 断开重连的那个窗口期里发出的 permission.asked 就永远看不到了，那一轮会一直挂着。

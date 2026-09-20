@@ -30,6 +30,10 @@ enum class MaiErrorCode {
     // 用户主动中断，或者授权超时。**这不是故障**——界面不该弹错误，已经吐出来的内容也要照常保留。
     // MaiTurnRunner::finish 专门判了这一条。
     Canceled,
+    // 这个平台上就没有这个能力。**和 NotConfigured 分开**：那个是"没装好，装上就有"，
+    // 这个是"装了也没有"。iOS 上跑不了外部进程（沙箱不允许 exec），
+    // 嵌入式上可能连文件系统都没有——对这两种情况说"没配置"会让人白找半天。
+    NotSupported,
     Internal,  // 剩下的。落库失败、curl 初始化失败之类
 };
 

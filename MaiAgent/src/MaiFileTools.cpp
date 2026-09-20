@@ -268,7 +268,8 @@ public:
                R"("required":["path","content"]})";
     }
     // 会改文件。M4 的闸门就位后这里会真正拦一道。
-    bool requiresApproval() const override {
+    bool requiresApproval(const std::string& argumentsJson) const override {
+        (void)argumentsJson;
         return true;
     }
 

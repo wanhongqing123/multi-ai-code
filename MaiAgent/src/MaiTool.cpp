@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "MaiProcess.h"
+
 // ── MaiToolContext ──────────────────────────────────────────────
 
 bool MaiToolContext::isCanceled() const {
@@ -41,7 +43,13 @@ bool MaiToolResult::hasError() const {
 
 // ── MaiTool ─────────────────────────────────────────────────────
 
-bool MaiTool::requiresApproval() const {
+std::string MaiTool::approvalKey(const std::string& argumentsJson) const {
+    (void)argumentsJson;
+    return name();
+}
+
+bool MaiTool::requiresApproval(const std::string& argumentsJson) const {
+    (void)argumentsJson;
     return false;
 }
 
@@ -88,6 +96,14 @@ std::vector<MaiToolSpec> MaiToolRegistry::specs() const {
 void registerMaiBuiltinTools(MaiToolRegistry& registry) {
     registry.add(makeMaiReadTool());
     registry.add(makeMaiWriteTool());
+    registry.add(makeMaiEditTool());
     registry.add(makeMaiGlobTool());
     registry.add(makeMaiGrepTool());
+    // shell 只在跑得了外部进程的平台上摆出来。
+    //
+    // **不支持就根本不注册，而不是注册一个总是失败的。** 摆出来的话模型会反复试，
+    // 而它收到的「失败」听起来像临时故障，于是它换个写法再试一遍，一轮对话就耗在这上面了。
+    // iOS 的沙箱不允许 exec，这是 App Store 的硬规矩（见 MaiProcess.h）。
+    if (maiIsProcessExecutionSupported()) registry.add(makeMaiShellTool());
+    registry.add(makeMaiCurrentTimeTool());
 }

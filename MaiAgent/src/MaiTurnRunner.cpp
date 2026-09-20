@@ -149,7 +149,7 @@ void MaiTurnRunner::executeTools(const std::vector<MaiToolInvocation>& calls,
         // 要审批的工具先挂在 Pending：界面靠这个状态显示"等待授权"，
         // 不用另外对着 permission.asked 事件维护一张表。
         MaiTool* tool = mDependencies.tools ? mDependencies.tools->find(call.name) : nullptr;
-        const bool needsApproval = tool && tool->requiresApproval();
+        const bool needsApproval = tool && tool->requiresApproval(call.arguments);
         body.state = needsApproval ? MaiToolState::Pending : MaiToolState::Running;
         part.body = body;
         mAssistant.parts.push_back(part);
@@ -216,7 +216,7 @@ MaiToolResult MaiTurnRunner::checkPermission(const MaiToolInvocation& call,
                                              const std::atomic<bool>& cancel) {
     allowed = true;
     MaiTool* tool = mDependencies.tools ? mDependencies.tools->find(call.name) : nullptr;
-    if (!tool || !tool->requiresApproval()) return {};
+    if (!tool || !tool->requiresApproval(call.arguments)) return {};
 
     // 模型被拒之后经常原样再试一次。第二次不再弹框，直接回同样的话。
     const std::string signature = call.name + std::string(1, '\0') + call.arguments;
@@ -235,8 +235,11 @@ MaiToolResult MaiTurnRunner::checkPermission(const MaiToolInvocation& call,
             "This tool requires user approval, but no permission gate is wired up.");
     }
 
-    // 用户之前对这个会话说过"以后都允许"。
-    if (mDependencies.permissions->isAllowedInSession(mSessionId, call.name)) return {};
+    // 用户之前对这个会话说过"以后都允许"。比的是工具给的键，不是工具名——
+    // shell 的键是 `shell:<程序名>`，所以放行的是「以后都允许跑 git」而不是
+    // 「以后都允许跑任何命令」。
+    const std::string approvalKey = tool->approvalKey(call.arguments);
+    if (mDependencies.permissions->isAllowedInSession(mSessionId, approvalKey)) return {};
 
     MaiPermissionRequest request;
     request.id = MaiIdGenerator::newPermissionId();
@@ -245,6 +248,7 @@ MaiToolResult MaiTurnRunner::checkPermission(const MaiToolInvocation& call,
     request.partId = partId;
     request.toolName = call.name;
     request.arguments = call.arguments;
+    request.approvalKey = approvalKey;
     request.asked = MaiTime::getCurrentTime();
 
     MaiEventEmitter* emitter = mDependencies.emitter;

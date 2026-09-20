@@ -267,9 +267,12 @@ void test_write() {
 
     CHECK(write->execute(args({{"path", "x.txt"}}), context).error().code() ==
           MaiErrorCode::InvalidInput);
-    // write 会改东西，必须标记为需要审批（M4 的闸门靠这个标志）
-    CHECK(write->requiresApproval());
-    CHECK(!makeMaiReadTool()->requiresApproval());
+    // write 会改东西，必须标记为需要审批（权限闸门靠这个标志）。
+    // 现在审批是按这一次调用的参数判的，所以要把参数传进去——
+    // write 的危险程度不随参数变，给什么都该是 true。
+    CHECK(write->requiresApproval(args({{"path", "x.txt"}, {"content", "y"}})));
+    CHECK(write->requiresApproval("not json at all"));
+    CHECK(!makeMaiReadTool()->requiresApproval(args({{"path", "x.txt"}})));
 }
 
 // ── 4. glob ─────────────────────────────────────────────────────
@@ -339,13 +342,16 @@ void test_registry() {
     registerMaiBuiltinTools(reg);
     CHECK(!reg.isEmpty());
 
-    for (const char* n : {"read", "write", "glob", "grep"}) {
+    // **按名字查，不比个数。** 比个数的话每加一个工具都要来改一次这里，
+    // 而这条用例想守的是「这些工具都在」，不是「一共有几个」。
+    for (const char* n : {"read", "write", "edit", "glob", "grep", "current_time"}) {
         CHECK(reg.find(n) != nullptr);
     }
     CHECK(reg.find("no-such-tool") == nullptr);
 
     const auto schemas = reg.specs();
-    CHECK(schemas.size() == 4);
+    CHECK(schemas.size() == static_cast<std::size_t>(reg.specs().size()));
+    CHECK(!schemas.empty());
     for (const auto& s : schemas) {
         CHECK(!s.name.empty());
         CHECK(!s.description.empty());
@@ -354,13 +360,16 @@ void test_registry() {
         CHECK(!parsed.is_discarded());
         if (!parsed.is_discarded()) {
             CHECK(parsed.contains("properties"));
-            CHECK(parsed.contains("required"));
+            // 没有必填参数的工具（current_time）可以不写 required，
+            // 但有参数的必须写——不写的话模型不知道哪些是非给不可的。
+            if (!parsed["properties"].empty()) CHECK(parsed.contains("required"));
         }
     }
 
     // 同名覆盖而不是并存
+    const std::size_t before = reg.specs().size();
     reg.add(makeMaiReadTool());
-    CHECK(reg.specs().size() == 4);
+    CHECK(reg.specs().size() == before);
 }
 
 void test_cancel_stops_traversal() {

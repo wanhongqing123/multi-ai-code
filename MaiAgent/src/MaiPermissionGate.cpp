@@ -126,7 +126,8 @@ MaiPermissionDecision MaiPermissionGate::ask(const MaiPermissionRequest& request
     }
 
     if (decision == MaiPermissionDecision::ApprovedForSession) {
-        mApprovals->sessionAllowlist[request.sessionId].insert(request.toolName);
+        mApprovals->sessionAllowlist[request.sessionId].insert(
+            request.approvalKey.empty() ? request.toolName : request.approvalKey);
     }
     return decision;
 }
@@ -145,10 +146,10 @@ bool MaiPermissionGate::reply(const std::string& permissionId, MaiPermissionDeci
 }
 
 bool MaiPermissionGate::isAllowedInSession(const std::string& sessionId,
-                                           const std::string& toolName) const {
+                                           const std::string& approvalKey) const {
     std::lock_guard<std::mutex> lock(mApprovals->mutex);
     auto it = mApprovals->sessionAllowlist.find(sessionId);
-    return it != mApprovals->sessionAllowlist.end() && it->second.count(toolName) > 0;
+    return it != mApprovals->sessionAllowlist.end() && it->second.count(approvalKey) > 0;
 }
 
 std::vector<MaiPermissionRequest> MaiPermissionGate::listPending() const {

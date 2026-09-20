@@ -144,6 +144,8 @@ add_library(maiagent STATIC
   src/MaiTool.cpp
   src/MaiPermissionGate.cpp
   src/MaiFileTools.cpp
+  src/MaiEditTool.cpp
+  src/MaiShellTool.cpp
   src/MaiAgent.cpp
   src/MaiTurnRunner.cpp
   src/MaiContextBuilder.cpp
@@ -152,9 +154,9 @@ add_library(maiagent STATIC
 )
 # 文件系统实现按平台挑一份。Windows 走宽字符 Win32 API，其余走 POSIX。
 if(WIN32)
-  target_sources(maiagent PRIVATE src/MaiFileSystemWindows.cpp)
+  target_sources(maiagent PRIVATE src/MaiFileSystemWindows.cpp src/MaiProcessWindows.cpp)
 else()
-  target_sources(maiagent PRIVATE src/MaiFileSystemPosix.cpp)
+  target_sources(maiagent PRIVATE src/MaiFileSystemPosix.cpp src/MaiProcessPosix.cpp)
 endif()
 
 target_include_directories(maiagent
@@ -217,7 +219,9 @@ if(MAIAGENT_BUILD_TESTS)
       MaiStoreTests         # 存储契约：内存和 SQLite 行为必须一致
       MaiModelClientTests   # 流式解析 + 工具调用分片聚合
       MaiTurnRunnerTests    # 一轮对话的完整生命周期
-      MaiToolTests          # 路径边界 + 四个内置工具
+      MaiToolTests          # 路径边界 + 内置工具
+      MaiEditToolTests      # edit：唯一匹配、替换全部、拒绝的那几种情况
+      MaiShellToolTests     # shell：审批粒度、超时、取消、输出上限
       MaiToolLoopTests      # 工具循环：调用 -> 执行 -> 回灌 -> 再答
       MaiPermissionTests)   # 权限闸门：拦住 -> 等裁决 -> 放行或拒绝
     add_executable(${test_name} tests/${test_name}.cpp)

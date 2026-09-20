@@ -82,14 +82,30 @@ public:
     // 给模型看的 JSON Schema 原文。
     virtual std::string parametersSchema() const = 0;
 
-    // 需要用户点头才能跑吗。
+    // 这一次调用需要用户点头吗。
     //
-    // read / glob / grep 这类只读的返回 false；write / edit / shell 会改东西或执行命令，返回 true。
-    // 权限闸门（MaiPermission.h）读这个标志决定要不要停下来问。
+    // **参数是要看的，不能只看工具名。** shell 最能说明问题：`git status` 和 `rm -rf /`
+    // 是同一个工具。只按工具名判的话只有两种结果——要么每次都弹框（用户很快被训练成
+    // 条件反射点「允许」，闸门就废了），要么永不弹（等于没有闸门）。
+    //
+    // read / glob / grep 这类只读的一律返回 false；write / edit 一律返回 true；
+    // shell 自己看命令决定。
     //
     // 默认 false。**加会改东西的新工具时别忘了覆盖它**——忘了的后果是模型可以不经用户同意改文件，
     // 而且没有任何报错。
-    virtual bool requiresApproval() const;
+    //
+    // argumentsJson 是模型给的原文，**可能不是合法 JSON**。解析不出来时要返回 true：
+    // 这一层的兜底方向永远是「不放行」，看不懂的东西不能当成安全的。
+    virtual bool requiresApproval(const std::string& argumentsJson) const;
+
+    // 用户选「这个会话以后都允许」时，记住的是哪一类调用。
+    //
+    // 默认就是工具名，对 write / edit 这种「危险程度不随参数变」的工具是对的。
+    // **shell 必须收窄**：给 `git status` 点一次「以后都允许」，不该连 `rm -rf` 一起放行。
+    // 它返回的是 `shell:<程序名>`，所以「以后都允许」的粒度是「以后都允许跑 git」。
+    //
+    // 返回值只当键用，不给人看；它会被原样存进会话白名单。
+    virtual std::string approvalKey(const std::string& argumentsJson) const;
 
     // 真正干活。
     //
@@ -119,12 +135,20 @@ private:
     std::vector<std::unique_ptr<MaiTool>> mTools;
 };
 
-// 第一批工具。read / glob / grep 是只读的；write 会改文件，标了需要审批，
-// 等权限闸门就位后会真正拦一道。
+// 内置工具。
+//
+// 只读的：read / glob / grep / current_time。
+//（没有单独的 list：glob 传 `*` 就是列目录。多一个工具每次请求都要多发一份 spec，
+//  而工具越多模型挑错的概率也越高。）
+// 会改东西的：write（整份覆写）、edit（按原文替换一处）。
+// shell 自己按命令决定要不要问。
 std::unique_ptr<MaiTool> makeMaiReadTool();
 std::unique_ptr<MaiTool> makeMaiWriteTool();
+std::unique_ptr<MaiTool> makeMaiEditTool();
 std::unique_ptr<MaiTool> makeMaiGlobTool();
 std::unique_ptr<MaiTool> makeMaiGrepTool();
+std::unique_ptr<MaiTool> makeMaiShellTool();
+std::unique_ptr<MaiTool> makeMaiCurrentTimeTool();
 
 void registerMaiBuiltinTools(MaiToolRegistry& registry);
 

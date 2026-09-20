@@ -10,6 +10,7 @@ const char* maiErrorCodeToString(MaiErrorCode code) {
         case MaiErrorCode::Network: return "network";
         case MaiErrorCode::Protocol: return "protocol";
         case MaiErrorCode::Canceled: return "canceled";
+        case MaiErrorCode::NotSupported: return "not_supported";
         case MaiErrorCode::Internal: return "internal";
     }
     return "internal";

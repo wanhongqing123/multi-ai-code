@@ -135,6 +135,14 @@ void MaiTurnRunner::executeTools(const std::vector<MaiToolInvocation>& calls,
     context.sessionId = mSessionId;
     context.root = session.directory;
     context.cancel = &cancel;
+    context.questions = mDependencies.questions;
+    context.messageId = mAssistant.id;
+    // 广播是在这儿绑的，而不是让工具自己去碰事件总线：工具层不该认识事件。
+    MaiEventEmitter* emitter = mDependencies.emitter;
+    const std::string sessionId = mSessionId;
+    context.announceQuestion = [emitter, sessionId](const MaiQuestionRequest& request) {
+        if (emitter != nullptr) emitter->emitQuestion(sessionId, request);
+    };
 
     for (const auto& call : calls) {
         if (cancel.load(std::memory_order_relaxed)) break;
@@ -188,6 +196,9 @@ void MaiTurnRunner::executeTools(const std::vector<MaiToolInvocation>& calls,
                     mDependencies.emitter->emitPart(MaiEventType::MessagePartUpdated, mSessionId,
                                                     mAssistant.id, part.id);
                 }
+                // partId 每次调用才知道。question 工具要把它带进提问里，
+                // 界面才认得出是哪一次调用在等回答。
+                context.partId = part.id;
                 result = tool->execute(call.arguments, context);
             }
         }

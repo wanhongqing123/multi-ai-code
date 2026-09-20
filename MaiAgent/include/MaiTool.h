@@ -7,6 +7,7 @@
 
 #include "MaiError.h"
 #include "MaiModelClient.h"
+#include "MaiQuestion.h"
 
 // 工具执行时能看到的环境。
 //
@@ -26,6 +27,17 @@ struct MaiToolContext {
     // 会话没设工作目录时这里是空的，
     // 文件类工具要明确拒绝而不是退回到当前目录——那会让模型读到进程的工作目录。
     std::string root;
+
+    // 这一次工具调用对应的消息和片段。question 工具要把它们带进提问里，
+    // 界面才知道是哪一次调用在等回答。
+    std::string messageId;
+    std::string partId;
+
+    // 中途问用户的闸门。**可能为空**：宿主没接问答时就是空的，
+    // question 工具据此明说「这里问不了」，而不是干等到超时。
+    MaiQuestionGate* questions = nullptr;
+    // 提问登记好之后拿它广播出去。空的话界面看不见这次提问，等于没问。
+    MaiQuestionGate::Announce announceQuestion;
 
     // 指向这一轮的取消标志。**可能为空**，用 isCanceled() 别直接解引用。
     //
@@ -137,7 +149,8 @@ private:
 
 // 内置工具。
 //
-// 只读的：read / glob / grep / current_time。
+// 只读的：read / glob / grep / current_time / todowrite。
+// 往外发数据的：webfetch（每个新域名都要点头）。
 //（没有单独的 list：glob 传 `*` 就是列目录。多一个工具每次请求都要多发一份 spec，
 //  而工具越多模型挑错的概率也越高。）
 // 会改东西的：write（整份覆写）、edit（按原文替换一处）。
@@ -146,6 +159,9 @@ std::unique_ptr<MaiTool> makeMaiReadTool();
 std::unique_ptr<MaiTool> makeMaiWriteTool();
 std::unique_ptr<MaiTool> makeMaiEditTool();
 std::unique_ptr<MaiTool> makeMaiApplyPatchTool();
+std::unique_ptr<MaiTool> makeMaiWebFetchTool();
+std::unique_ptr<MaiTool> makeMaiTodoWriteTool();
+std::unique_ptr<MaiTool> makeMaiQuestionTool();
 std::unique_ptr<MaiTool> makeMaiGlobTool();
 std::unique_ptr<MaiTool> makeMaiGrepTool();
 std::unique_ptr<MaiTool> makeMaiShellTool();

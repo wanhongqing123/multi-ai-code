@@ -27,6 +27,9 @@ enum class MaiEventType {
     MessagePartRemoved,
     PermissionAsked,
     PermissionReplied,
+    // 模型中途问了用户一句，正等着回答。
+    QuestionAsked,
+    QuestionAnswered,
 };
 
 // 转成 "message.part.delta" 这类线上字符串。
@@ -55,6 +58,11 @@ struct MaiEvent {
     // 请求的工具名和参数不放在这里：它们已经在 partId 指向的那个 MaiToolPart 上了，
     // 重复一份就会有两个真相。
     std::string permissionId;
+
+    // QuestionAsked / QuestionAnswered 用。和 permissionId 分开而不是共用一个
+    // "requestId"：两种请求的回答方式完全不同（一个是枚举一个是文字），
+    // 共用字段的话订阅方得先看 type 才知道这个 id 能拿去调哪个接口。
+    std::string questionId;
 
     // 其它事件的附带信息（错误文本、标题、权限裁决等）。
     std::string detail;

@@ -22,6 +22,8 @@ const char* maiEventTypeToString(MaiEventType type) {
         case MaiEventType::MessagePartRemoved: return "message.part.removed";
         case MaiEventType::PermissionAsked: return "permission.asked";
         case MaiEventType::PermissionReplied: return "permission.replied";
+        case MaiEventType::QuestionAsked: return "question.asked";
+        case MaiEventType::QuestionAnswered: return "question.answered";
     }
     return "session.status";
 }

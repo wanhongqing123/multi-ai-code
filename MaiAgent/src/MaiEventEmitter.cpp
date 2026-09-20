@@ -60,6 +60,25 @@ void MaiEventEmitter::emitPermissionAsked(const MaiPermissionRequest& request) {
     mBus.publish(event);
 }
 
+void MaiEventEmitter::emitQuestion(const std::string& sessionId,
+                                   const MaiQuestionRequest& request) {
+    MaiEvent event = makeEvent(MaiEventType::QuestionAsked, sessionId);
+    event.messageId = request.messageId;
+    event.partId = request.partId;
+    event.questionId = request.id;
+    // 问题本身不塞进事件：它已经在 partId 指向的那个工具 part 的参数里了，
+    // 重复一份就会有两个真相。
+    mBus.publish(event);
+}
+
+void MaiEventEmitter::emitQuestionAnswered(const MaiQuestionRequest& request) {
+    MaiEvent event = makeEvent(MaiEventType::QuestionAnswered, request.sessionId);
+    event.messageId = request.messageId;
+    event.partId = request.partId;
+    event.questionId = request.id;
+    mBus.publish(event);
+}
+
 void MaiEventEmitter::emitPermissionReplied(const MaiPermissionRequest& request,
                                             MaiPermissionDecision decision) {
     MaiEvent event = makeEvent(MaiEventType::PermissionReplied, request.sessionId);

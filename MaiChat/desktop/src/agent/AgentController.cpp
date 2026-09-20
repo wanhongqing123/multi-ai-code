@@ -194,6 +194,20 @@ bool AgentController::denyPermission(const QString& permissionId) {
     return true;
 }
 
+bool AgentController::answerQuestion(const QString& questionId, const QString& answer) {
+    MaiResult<std::string> replied =
+        runtime_->agent->submit(MaiReplyQuestion{toUtf8(questionId), toUtf8(answer)});
+    if (!replied) {
+        runtime_->lastError = fromUtf8(replied.error().message());
+        return false;
+    }
+    return true;
+}
+
+std::vector<MaiQuestionRequest> AgentController::pendingQuestions() const {
+    return runtime_->agent->listPendingQuestions();
+}
+
 // ---- 事件 ----
 
 void AgentController::rawEvent(const MaiEvent& event) {
@@ -280,6 +294,14 @@ void AgentController::onEventQueued(const MaiEvent& event) {
 
         case MaiEventType::PermissionReplied:
             emit permissionReplied(fromUtf8(event.permissionId), fromUtf8(event.detail));
+            return;
+
+        case MaiEventType::QuestionAsked:
+            emit questionAsked(fromUtf8(event.questionId), sessionId, fromUtf8(event.partId));
+            return;
+
+        case MaiEventType::QuestionAnswered:
+            emit questionAnswered(fromUtf8(event.questionId), sessionId);
             return;
 
         default:

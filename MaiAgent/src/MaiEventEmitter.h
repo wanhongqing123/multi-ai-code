@@ -5,6 +5,7 @@
 #include "MaiEventBus.h"
 #include "MaiError.h"
 #include "MaiPermission.h"
+#include "MaiQuestion.h"
 #include "MaiTime.h"
 
 // 把"构造事件并发布"这件事收在一处。
@@ -38,6 +39,13 @@ public:
     // 裁决落地了。界面据此把对话框关掉——**包括不是它发起的那次裁决**，
     // 多端同时开着的时候这一条是唯一的同步手段。
     void emitPermissionReplied(const MaiPermissionRequest& request, MaiPermissionDecision decision);
+
+    // 模型问了用户一句，正等着回答。
+    void emitQuestion(const std::string& sessionId, const MaiQuestionRequest& request);
+
+    // 回答落地了。界面据此把输入框收掉——**包括不是它发起的那次回答**，
+    // 多端同时开着的时候这一条是唯一的同步手段。
+    void emitQuestionAnswered(const MaiQuestionRequest& request);
 
 private:
     MaiEventBus& mBus;

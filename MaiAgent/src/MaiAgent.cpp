@@ -36,6 +36,7 @@ struct MaiAgent::Runtime {
     // 闸门归门面持有而不是归某一轮：用户的"本会话都允许"要跨轮活着，
     // 而且界面查"还有什么在等授权"时可能一轮都没在跑。
     std::unique_ptr<MaiPermissionGate> permissions;
+    std::unique_ptr<MaiQuestionGate> questions;
 
     mutable std::mutex mutex;
     std::condition_variable turnFinished;
@@ -72,6 +73,7 @@ struct MaiAgent::Runtime {
         dependencies.tools = tools.get();
         dependencies.titler = &titler;
         dependencies.permissions = permissions.get();
+        dependencies.questions = questions.get();
         dependencies.defaultModel = options.defaultModel;
         dependencies.maxIterations = options.maxToolIterations;
         return dependencies;
@@ -104,6 +106,8 @@ MaiAgent::MaiAgent(std::unique_ptr<MaiSessionStore> store, std::unique_ptr<MaiMo
     MaiPermissionGate::Options gateOptions;
     gateOptions.timeoutMs = mRuntime->options.permissionTimeoutMs;
     mRuntime->permissions = std::make_unique<MaiPermissionGate>(gateOptions);
+    // 问答不设超时：超时等于替用户做了决定，而用户可能只是走开了。
+    mRuntime->questions = std::make_unique<MaiQuestionGate>();
 }
 
 MaiAgent::~MaiAgent() = default;
@@ -122,6 +126,10 @@ std::vector<MaiMessage> MaiAgent::listMessages(const std::string& sessionId) con
 
 std::vector<MaiPermissionRequest> MaiAgent::listPendingPermissions() const {
     return mRuntime->permissions->listPending();
+}
+
+std::vector<MaiQuestionRequest> MaiAgent::listPendingQuestions() const {
+    return mRuntime->questions->listPending();
 }
 
 bool MaiAgent::isBusy(const std::string& sessionId) const {
@@ -284,7 +292,18 @@ MaiResult<std::string> MaiAgent::submit(const MaiOperation& operation) {
                 // 看不见这个标志，必须显式敲一下。（闸门那边还有个 250ms 的兜底轮询，但那是安全网，
                 // 不是主路径。）
                 mRuntime->permissions->cancelSession(operation.sessionId);
+                // 等回答的那一轮也睡在自己的 condition_variable 上，同样要敲一下。
+                mRuntime->questions->cancelSession(operation.sessionId);
                 return operation.sessionId;
+
+            } else if constexpr (std::is_same_v<T, MaiReplyQuestion>) {
+                if (operation.questionId.empty())
+                    return {MaiErrorCode::InvalidInput, "questionId is required"};
+                // 找不到就是找不到：界面重复回答、或者对着已经被中断的提问回答，
+                // 都会走到这里。不是故障，但也不能假装成功。
+                if (!mRuntime->questions->reply(operation.questionId, operation.answer))
+                    return {MaiErrorCode::NotFound, "question is no longer pending"};
+                return operation.questionId;
 
             } else if constexpr (std::is_same_v<T, MaiReplyPermission>) {
                 if (operation.permissionId.empty())

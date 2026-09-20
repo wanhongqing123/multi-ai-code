@@ -332,6 +332,10 @@ struct AgentChatPanel::Runtime {
     // 提示行（错误、说明）的 id 要唯一，它们不对应任何消息。
     int noticeSerial = 0;
 
+    // 模型正在等回答的那次提问。空表示没有——输入框据此决定回车是发 prompt
+    // 还是发答案。
+    QString pendingQuestionId;
+
     bool running = false;
 };
 
@@ -469,6 +473,12 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
             });
     connect(&controller, &AgentController::permissionAsked, this,
             [this](const QString& permissionId, const QString&) { showApproval(permissionId); });
+    connect(&controller, &AgentController::questionAsked, this,
+            [this](const QString& questionId, const QString&, const QString&) {
+                showQuestion(questionId);
+            });
+    connect(&controller, &AgentController::questionAnswered, this,
+            [this](const QString&, const QString&) { clearQuestion(); });
     connect(&controller, &AgentController::turnFinished, this, [this](const QString&) {
         setRunning(false);
         emit sessionListChanged();
@@ -682,6 +692,39 @@ void AgentChatPanel::refreshToolCard(const QString& messageId, const QString& pa
     }
 }
 
+void AgentChatPanel::showQuestion(const QString& questionId) {
+    // 问题文本不在事件里（它在那次工具调用的参数上，重复一份就有两个真相），
+    // 所以回核心取。
+    for (const MaiQuestionRequest& pending : runtime_->controller->pendingQuestions()) {
+        if (fromUtf8(pending.id) != questionId) continue;
+
+        QString text = fromUtf8(pending.question);
+        if (!pending.options.empty()) {
+            // 选项只是提示，用户照样可以回别的，所以摆成一行字而不是按钮——
+            // 做成按钮会让人以为只能选这几个。
+            QStringList options;
+            for (const std::string& option : pending.options) options << fromUtf8(option);
+            text += QStringLiteral("\n\n") + options.join(QStringLiteral(" · "));
+        }
+        runtime_->pendingQuestionId = questionId;
+        appendNotice(text, false);
+        runtime_->editor->setPlaceholderText(QStringLiteral("回答它…"));
+        runtime_->send->setText(QStringLiteral("回答"));
+        runtime_->hint->setText(QStringLiteral("它在等你回答"));
+        runtime_->editor->setFocus();
+        scrollToBottom();
+        return;
+    }
+}
+
+void AgentChatPanel::clearQuestion() {
+    if (runtime_->pendingQuestionId.isEmpty()) return;
+    runtime_->pendingQuestionId.clear();
+    runtime_->editor->setPlaceholderText(QStringLiteral("交给它做点什么…"));
+    // 按钮和提示交回给 setRunning 管：那一轮多半还在跑，回答完接着跑。
+    setRunning(runtime_->running);
+}
+
 void AgentChatPanel::showApproval(const QString& permissionId) {
     for (const MaiPermissionRequest& pending :
          runtime_->controller->agent().listPendingPermissions()) {
@@ -697,6 +740,24 @@ void AgentChatPanel::showApproval(const QString& permissionId) {
 // ── 动作 ────────────────────────────────────────────────────────
 
 void AgentChatPanel::onSend() {
+    // 正在等回答时，**先把这一句当答案送出去**。
+    //
+    // 这个判断要放在"跑着就是停止"前面：等回答的时候那一轮确实还在跑，
+    // 但用户按回车的意思显然是回答，不是中断。
+    if (!runtime_->pendingQuestionId.isEmpty()) {
+        const QString answer = runtime_->editor->toPlainText().trimmed();
+        if (answer.isEmpty()) return;
+        if (!runtime_->controller->answerQuestion(runtime_->pendingQuestionId, answer)) {
+            appendNotice(runtime_->controller->lastError(), true);
+            return;
+        }
+        runtime_->editor->clear();
+        appendUserBubble(answer);
+        clearQuestion();
+        scrollToBottom();
+        return;
+    }
+
     // 跑着的时候这个按钮是"停止"。
     if (runtime_->running) {
         runtime_->controller->interrupt(runtime_->sessionId);

@@ -74,3 +74,7 @@ std::string MaiIdGenerator::newEventId() {
 std::string MaiIdGenerator::newPermissionId() {
     return generate("per_");
 }
+
+std::string MaiIdGenerator::newQuestionId() {
+    return generate("qst_");
+}

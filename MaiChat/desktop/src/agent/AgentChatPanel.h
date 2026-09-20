@@ -87,6 +87,14 @@ private:
     void refreshToolCard(const QString& messageId, const QString& partId);
     void showApproval(const QString& permissionId);
 
+    // 模型中途问了一句。
+    //
+    // **不另起一个对话框，复用输入框。** 弹窗会打断阅读，而且这本来就是一次对话——
+    // 问题当成一条消息显示出来，用户照常在下面打字回答，只是这一次回车发的是答案
+    // 而不是新的 prompt。
+    void showQuestion(const QString& questionId);
+    void clearQuestion();
+
     // 按钮按下时才去查 permissionId。存一份在卡片上的话，
     // 多端同时开着时别人先裁决了，这里存的就是个过期的 id。
     void replyForPart(const QString& partId, bool forSession, bool approve);

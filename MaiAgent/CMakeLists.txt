@@ -143,9 +143,12 @@ add_library(maiagent STATIC
   src/MaiPathGuard.cpp
   src/MaiTool.cpp
   src/MaiPermissionGate.cpp
+  src/MaiQuestionGate.cpp
   src/MaiFileTools.cpp
   src/MaiEditTool.cpp
   src/MaiApplyPatchTool.cpp
+  src/MaiWebTools.cpp
+  src/MaiQuestionTool.cpp
   src/MaiShellTool.cpp
   src/MaiAgent.cpp
   src/MaiTurnRunner.cpp
@@ -223,6 +226,8 @@ if(MAIAGENT_BUILD_TESTS)
       MaiToolTests          # 路径边界 + 内置工具
       MaiEditToolTests      # edit：唯一匹配、替换全部、拒绝的那几种情况
       MaiApplyPatchToolTests  # apply_patch：多处/多文件、全有或全无、换行原样
+      MaiWebToolsTests      # webfetch 的 HTML 转文本和协议限制、todowrite 的校验
+      MaiQuestionTests      # 问答闸门 + question 工具：等不到答案时绝不能编一个
       MaiShellToolTests     # shell：审批粒度、超时、取消、输出上限
       MaiToolLoopTests      # 工具循环：调用 -> 执行 -> 回灌 -> 再答
       MaiPermissionTests)   # 权限闸门：拦住 -> 等裁决 -> 放行或拒绝

@@ -82,6 +82,15 @@ public:
     bool approvePermission(const QString& permissionId, bool approveForSession = false);
     bool denyPermission(const QString& permissionId);
 
+    // 回答模型中途问的那句话。
+    //
+    // **一定要接。** 不接的话 question 工具会一直等下去：用户看到的是「卡住了」，
+    // 而那一轮其实好好地停在闸门上。宁可不给模型这个工具，也不要给一个没人应答的。
+    bool answerQuestion(const QString& questionId, const QString& answer);
+
+    // 还在等回答的提问。界面重开后靠它把输入框摆回去。
+    std::vector<MaiQuestionRequest> pendingQuestions() const;
+
     QString lastError() const;
 
 signals:
@@ -101,6 +110,11 @@ signals:
 
     // 有一次工具调用在等用户点头。详情同样去查：agent().listPendingPermissions()。
     void permissionAsked(const QString& permissionId, const QString& sessionId);
+
+    // partId 指向那次 question 工具调用，界面据此知道把输入框摆在哪条下面。
+    void questionAsked(const QString& questionId, const QString& sessionId,
+                       const QString& partId);
+    void questionAnswered(const QString& questionId, const QString& sessionId);
     // 裁决落地了。**包括不是本界面发起的那次**——多端同时开着时这是唯一的同步手段。
     void permissionReplied(const QString& permissionId, const QString& decision);
 

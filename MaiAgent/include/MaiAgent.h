@@ -10,6 +10,7 @@
 #include "MaiMessage.h"
 #include "MaiModelClient.h"
 #include "MaiPermission.h"
+#include "MaiQuestion.h"
 #include "MaiSession.h"
 #include "MaiSessionStore.h"
 #include "MaiTool.h"
@@ -71,9 +72,18 @@ struct MaiReplyPermission {
     MaiPermissionDecision decision = MaiPermissionDecision::Denied;
 };
 
+// 回答模型中途问的那句话。
+//
+// 和裁决授权分开而不是共用一个「回复请求」：一个的答案是枚举、另一个是自由文字，
+// 合成一个操作的话调用方得先判断类型才知道该填哪个字段。
+struct MaiReplyQuestion {
+    std::string questionId;
+    std::string answer;
+};
+
 using MaiOperation =
     std::variant<MaiCreateSession, MaiUpdateSession, MaiDeleteSession, MaiClearMessages,
-                 MaiSendPrompt, MaiInterrupt, MaiReplyPermission>;
+                 MaiSendPrompt, MaiInterrupt, MaiReplyPermission, MaiReplyQuestion>;
 
 // ── 核心的门面 ──────────────────────────────────────────────────
 //
@@ -173,6 +183,10 @@ public:
     // 界面重连之后必须能补上这一份：SSE 断开的那个窗口期里发出的 permission.asked 是看不到的，
     // 没有这个查询，那一轮会一直挂着，而界面上什么都没显示。
     std::vector<MaiPermissionRequest> listPendingPermissions() const;
+
+    // 还在等回答的提问。界面刷新后靠它重新摆出输入框——
+    // 没有这个，断线重连窗口期里发出的提问就永远看不见了，那一轮会一直挂着。
+    std::vector<MaiQuestionRequest> listPendingQuestions() const;
 
     // ── 变更 ────────────────────────────────────────────────────
 

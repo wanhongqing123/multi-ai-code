@@ -336,6 +336,13 @@ std::string MaiConsoleRenderer::format(const MaiEvent& event) {
                                "/a approve for this session\n");
         case MaiEventType::PermissionReplied:
             return atLineStart(mAtLineStart, "       " + event.detail + "\n");
+        case MaiEventType::QuestionAsked:
+            // 问题本身不在事件里（它在那个工具 part 的参数上，重复一份就有两个真相），
+            // 所以这里只说怎么答。问题文本由 /ans 之前的那条 part 更新打出来。
+            return atLineStart(mAtLineStart,
+                               "       the model is asking -> /ans <your answer>\n");
+        case MaiEventType::QuestionAnswered:
+            return atLineStart(mAtLineStart, "       answered\n");
         default:
             // SessionCreated / SessionDeleted / MessageUpdated / MessageRemoved /
             // MessagePartRemoved / SessionStatus：控制台上没什么好说的。
@@ -449,6 +456,7 @@ void help() {
         "  /history               print the current session's messages\n"
         "  /interrupt             stop the running turn\n"
         "  /y  /n  /a             approve / deny / approve-for-session the oldest request\n"
+        "  /ans <text>            answer the question the model is waiting on\n"
         "  /quit                  leave\n"
         "\n"
         "  anything else is sent to the model as a prompt\n"
@@ -477,6 +485,26 @@ bool replyOldestPermission(MaiAgent& agent, MaiConsoleRenderer& renderer,
         if (request.asked < oldest->asked) oldest = &request;
     }
     MaiResult<std::string> replied = agent.submit(MaiReplyPermission{oldest->id, decision});
+    if (!replied) {
+        renderer.say("[console] " + replied.error().message() + "\n");
+        return false;
+    }
+    return true;
+}
+
+// 和授权一样，待回答的列表直接问核心，不在这边存一份——存一份就有两个真相。
+bool replyOldestQuestion(MaiAgent& agent, MaiConsoleRenderer& renderer,
+                         const std::string& answer) {
+    std::vector<MaiQuestionRequest> pending = agent.listPendingQuestions();
+    if (pending.empty()) {
+        renderer.say("[console] nothing is waiting for an answer\n");
+        return false;
+    }
+    const MaiQuestionRequest* oldest = &pending.front();
+    for (const MaiQuestionRequest& request : pending) {
+        if (request.asked < oldest->asked) oldest = &request;
+    }
+    MaiResult<std::string> replied = agent.submit(MaiReplyQuestion{oldest->id, answer});
     if (!replied) {
         renderer.say("[console] " + replied.error().message() + "\n");
         return false;
@@ -666,6 +694,11 @@ int main(int argc, char** argv) {
                 continue;
             } else if (command == "/a") {
                 replyOldestPermission(agent, renderer, MaiPermissionDecision::ApprovedForSession);
+                continue;
+            } else if (command == "/ans") {
+                // 空答案也送出去：用户可能就是想说「你看着办」。核心会把它换成
+                // 一句明确的话，所以模型不会把它和「没人回答」搞混。
+                replyOldestQuestion(agent, renderer, rest);
                 continue;
             } else if (command == "/sessions") {
                 printSessions(agent, renderer, sessionId);

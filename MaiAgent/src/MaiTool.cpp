@@ -98,6 +98,9 @@ void registerMaiBuiltinTools(MaiToolRegistry& registry) {
     registry.add(makeMaiWriteTool());
     registry.add(makeMaiEditTool());
     registry.add(makeMaiApplyPatchTool());
+    registry.add(makeMaiTodoWriteTool());
+    registry.add(makeMaiWebFetchTool());
+    registry.add(makeMaiQuestionTool());
     registry.add(makeMaiGlobTool());
     registry.add(makeMaiGrepTool());
     // shell 只在跑得了外部进程的平台上摆出来。

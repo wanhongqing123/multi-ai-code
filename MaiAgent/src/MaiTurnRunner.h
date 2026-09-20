@@ -36,6 +36,8 @@ public:
         // 可以为空：那样 requiresApproval() 的工具一律直接拒绝。
         // 不是"直接放行"——没装闸门就等于没人能点头，而不是所有人都点了头。
         MaiPermissionGate* permissions = nullptr;
+        // 可以为空：那样 question 工具会明说「这里问不了」，而不是干等。
+        MaiQuestionGate* questions = nullptr;
         std::string defaultModel;
         // 模型可以连着调工具，一轮对话因此会有多次请求。
         // 设上限是因为模型会绕圈——拿同样的参数反复调同一个工具，没有上限就一直烧钱。

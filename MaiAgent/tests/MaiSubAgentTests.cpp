@@ -17,9 +17,11 @@
 #include <json.hpp>
 
 #include "MaiAgent.h"
+#include "MaiMemoryStore.h"
 #include "MaiFakeModelClient.h"
 #include "MaiSessionStore.h"
 #include "MaiTool.h"
+#include "MaiSubAgentTools.h"
 
 using nlohmann::json;
 

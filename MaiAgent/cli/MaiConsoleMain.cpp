@@ -39,6 +39,9 @@
 #endif
 
 #include "MaiAgent.h"
+#include "MaiOpenAiClient.h"
+#include "MaiMemoryStore.h"
+#include "MaiSqliteStore.h"
 #include "MaiFilePath.h"
 #include "MaiFileSystem.h"
 #include "MaiThread.h"

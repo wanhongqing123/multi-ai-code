@@ -15,6 +15,8 @@
 #include <json.hpp>
 
 #include "MaiTool.h"
+#include "MaiEditTool.h"
+#include "MaiTimeTool.h"
 
 namespace fs = std::filesystem;
 using nlohmann::json;

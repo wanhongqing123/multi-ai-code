@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "MaiAgent.h"
+#include "MaiMemoryStore.h"
 #include "MaiFakeModelClient.h"
 
 static int failures = 0;

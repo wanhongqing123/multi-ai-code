@@ -17,6 +17,7 @@
 #include <json.hpp>
 
 #include "MaiModelClient.h"
+#include "MaiOpenAiClient.h"
 
 using nlohmann::json;
 

@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "MaiProcess.h"
-#include "MaiTool.h"
+#include "MaiShellTool.h"
 
 // shell 工具：跑一条命令，把它说的话给模型。
 //

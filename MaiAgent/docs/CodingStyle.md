@@ -15,7 +15,7 @@
 | # | 约束 | 细节 |
 |---|---|---|
 | 0 | agent 的形状、协议取值看 **codex**；通用基础组件看 **chromium 的 base**。不要自己发挥 | 0 / 0.5 |
-| 1 | 文件名大驼峰 + `Mai` 前缀，`.h`/`.cpp` 成对同名 | 1 |
+| 1 | 文件名大驼峰 + `Mai` 前缀；**头一律放 `include/`**，每个 `.cpp` 都有同名 `.h` | 1 |
 | 2 | 类型大驼峰 + `Mai` 前缀，**不用命名空间** | 2 |
 | 3 | 成员函数小驼峰；布尔查询 `is` / `has` 开头 | 3 |
 | 4 | 名字说清"角色"，不是只说"技术"；**不用晦涩简写** | 3.5 / 3.6 |
@@ -146,16 +146,76 @@ Windows 那边是 UTF-16，可能含未配对代理项，转一圈回不来。
 **抄之前先核对真实源码**，别照着印象写——这条在第 0 节也说过一次，
 是同一个道理。
 
-## 1. 文件命名
+## 1. 文件命名与摆放
 
-**大驼峰，`Mai` 前缀，`.h` / `.cpp` 成对同名。**
+**大驼峰，`Mai` 前缀，`.h` / `.cpp` 成对同名。头文件全部放 `include/`，
+实现全部放 `src/`。**
 
 ```
-MaiTime.h        MaiTime.cpp
-MaiError.h       MaiError.cpp
-MaiSessionStore.h
-MaiFilePath.h    MaiFilePath.cpp
+include/MaiTime.h        src/MaiTime.cpp
+include/MaiError.h       src/MaiError.cpp
+include/MaiSessionStore.h
+include/MaiFilePath.h    src/MaiFilePath.cpp
 ```
+
+### 1.1 头一律放 `include/`，`src/` 里不放 `.h`
+
+曾经有四个"内部头"放在 `src/` 里（`MaiTurnRunner.h` 这些），想法是
+"它们不是公开 API，别让外面看见"。代价比收益大：
+
+- 同样是头文件，找它的时候要猜在哪个目录——而猜错的成本是翻两遍目录树
+- 包含路径要分两套（`include/` 是 PUBLIC，`src/` 是 PRIVATE），
+  新加一个测试目标就要记得补上第二条，忘了就是一串 C1083
+- "不是公开 API"这件事**注释里说一句就够了**，不需要用目录来强制。
+  真要强制的话，靠目录也强制不住：谁都可以在 CMake 里把 `src/` 加进去
+
+所以现在只有一个规矩：**`.h` 在 `include/`，`.cpp` 在 `src/`**。
+不想被外面用的头，在文件开头写清楚"这是内部头，接口随时会变"。
+
+### 1.2 每个 `.cpp` 都要有同名 `.h`
+
+一个实现文件对外露出的东西，声明写在它自己的同名头里，不要塞进别人的头。
+
+```
+src/MaiEditTool.cpp      → include/MaiEditTool.h
+src/MaiShellTool.cpp     → include/MaiShellTool.h
+src/MaiSqliteStore.cpp   → include/MaiSqliteStore.h
+```
+
+反例是 `MaiTool.h` 曾经的样子：十六个工具的工厂函数全堆在那一个头里，
+而那个头是**所有工具实现都要包含**的。后果是加一个工具要动所有人都包含的文件，
+而且从头文件上看不出哪个声明对应哪个实现。
+
+同样的道理，**接口头里不要声明实现的工厂**：`MaiSessionStore.h` 是给
+"自己实现一个存储"的人看的，他不该被迫看见我们碰巧提供了哪两个实现。
+那两个工厂分别在 `MaiMemoryStore.h` 和 `MaiSqliteStore.h` 里。
+
+### 1.3 唯一的例外：一个头，两份平台实现
+
+```
+include/MaiFileSystem.h  ← src/MaiFileSystemPosix.cpp
+                           src/MaiFileSystemWindows.cpp
+include/MaiProcess.h     ← src/MaiProcessPosix.cpp
+                           src/MaiProcessWindows.cpp
+```
+
+这四个 `.cpp` **没有同名的头**，也不该有：它们是同一个接口的两份实现，
+CMake 按平台挑一份编。给它们各造一个头只会造出两个内容相同、永远不会被
+同时包含的文件。
+
+入口文件同理：`cli/MaiConsoleMain.cpp` 只有一个 `main()`，没有任何东西要
+露给别人，所以没有头。
+
+判断标准是：**"这个 .cpp 有没有自己独立的对外接口"**。有就配一个同名头；
+它只是某个已有接口的一种实现（平台分支、或者一个接口的具体实现类），
+就包那个接口的头。后者不是豁免——`MaiSqliteStore.cpp` 也是"一种实现"，
+但它有自己的工厂函数（`makeMaiSqliteStore`）要露出去，所以照样要有
+`MaiSqliteStore.h`。
+
+**这三条只管 `MaiAgent/`。** `MaiChat/desktop` 是另一套布局：头和实现挨着放在
+`src/` 的各个子目录里（`src/ui/`、`src/agent/`、`src/markdown/`），没有单独的
+`include/`。那边已经七十多个头这么摆着，改布局的收益抵不上一次全量改动的风险。
+两个工程在**命名**上保持一致（大驼峰、前缀、成对同名），目录各按各的。
 
 不要这样：
 

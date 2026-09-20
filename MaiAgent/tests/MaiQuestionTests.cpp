@@ -13,6 +13,7 @@
 #include "MaiIdGenerator.h"
 #include "MaiQuestion.h"
 #include "MaiTool.h"
+#include "MaiQuestionTool.h"
 
 using nlohmann::json;
 

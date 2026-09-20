@@ -1,4 +1,7 @@
 #include "agent/AgentController.h"
+#include "MaiOpenAiClient.h"
+#include "MaiMemoryStore.h"
+#include "MaiSqliteStore.h"
 
 #include <QHash>
 #include <QMetaType>

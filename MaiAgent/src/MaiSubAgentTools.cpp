@@ -3,7 +3,7 @@
 #include <string>
 
 #include "MaiSubAgent.h"
-#include "MaiTool.h"
+#include "MaiSubAgentTools.h"
 
 // 子 Agent 的五个工具：spawn / send / wait / list / close。
 //

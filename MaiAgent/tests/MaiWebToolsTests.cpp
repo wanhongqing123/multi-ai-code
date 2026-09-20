@@ -11,6 +11,8 @@
 #include <json.hpp>
 
 #include "MaiTool.h"
+#include "MaiWebFetchTool.h"
+#include "MaiTodoWriteTool.h"
 
 using nlohmann::json;
 

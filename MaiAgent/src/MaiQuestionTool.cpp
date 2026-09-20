@@ -5,7 +5,7 @@
 
 #include "MaiIdGenerator.h"
 #include "MaiTime.h"
-#include "MaiTool.h"
+#include "MaiQuestionTool.h"
 
 // question：中途问用户一句，等回答，然后接着干。
 //

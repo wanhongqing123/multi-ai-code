@@ -1,4 +1,4 @@
-#include "MaiModelClient.h"
+#include "MaiOpenAiClient.h"
 
 #include <curl/curl.h>
 #include <json.hpp>

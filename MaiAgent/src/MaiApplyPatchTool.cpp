@@ -7,7 +7,7 @@
 
 #include "MaiFilePath.h"
 #include "MaiFileSystem.h"
-#include "MaiTool.h"
+#include "MaiApplyPatchTool.h"
 
 // apply_patch：一次提交多处改动。
 //

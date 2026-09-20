@@ -12,6 +12,7 @@
 #include <json.hpp>
 
 #include "MaiTool.h"
+#include "MaiApplyPatchTool.h"
 
 namespace fs = std::filesystem;
 using nlohmann::json;

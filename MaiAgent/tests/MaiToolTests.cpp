@@ -21,6 +21,8 @@
 #include "MaiFilePath.h"
 #include "MaiFileSystem.h"
 #include "MaiTool.h"
+#include "MaiFileTools.h"
+#include "MaiPathGuard.h"
 
 namespace fs = std::filesystem;
 using nlohmann::json;

@@ -17,6 +17,7 @@
 
 #include "MaiProcess.h"
 #include "MaiTool.h"
+#include "MaiShellTool.h"
 
 namespace fs = std::filesystem;
 using nlohmann::json;

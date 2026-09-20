@@ -142,12 +142,14 @@ add_library(maiagent STATIC
   src/MaiFilePath.cpp
   src/MaiPathGuard.cpp
   src/MaiTool.cpp
-  src/MaiPermissionGate.cpp
-  src/MaiQuestionGate.cpp
+  src/MaiPermission.cpp
+  src/MaiQuestion.cpp
   src/MaiFileTools.cpp
   src/MaiEditTool.cpp
+  src/MaiTimeTool.cpp
   src/MaiApplyPatchTool.cpp
-  src/MaiWebTools.cpp
+  src/MaiWebFetchTool.cpp
+  src/MaiTodoWriteTool.cpp
   src/MaiQuestionTool.cpp
   src/MaiSubAgentTools.cpp
   src/MaiShellTool.cpp
@@ -165,9 +167,11 @@ else()
 endif()
 
 target_include_directories(maiagent
+  # 头全在 include/ 里，src/ 里一个 .h 都没有（见 docs/CodingStyle.md 第 1 节）。
+  # 以前 src/ 也在包含路径上，因为 MaiTurnRunner.h 这几个"内部头"放在那儿——
+  # 那套两个目录的分法要求每个新目标都记得补第二条包含路径，忘一次就是一串 C1083，
+  # 而它想守的"别当公开 API 用"靠注释说一句就够了。
   PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/include
-  # src 只对自己可见：内部头（MaiTurnRunner.h 等）不是公开 API。
-  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nlohmann
 )
 # libcurl 是 HTTP **客户端**（核心用它调大模型），
@@ -217,7 +221,6 @@ if(MAIAGENT_BUILD_TESTS)
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tests/support)
   target_link_libraries(maiagent_test_support PUBLIC maiagent)
 
-  # 测试要碰内部头（MaiPathUtf8 等），所以也要 src 的 include 路径。
   foreach(test_name
       MaiCoreTests          # id / 会话 / 事件总线
       MaiFilePathTests      # 路径词法 + 文件系统（走系统 API，不用 std::filesystem）
@@ -235,7 +238,6 @@ if(MAIAGENT_BUILD_TESTS)
       MaiPermissionTests)   # 权限闸门：拦住 -> 等裁决 -> 放行或拒绝
     add_executable(${test_name} tests/${test_name}.cpp)
     target_link_libraries(${test_name} PRIVATE maiagent maiagent_test_support mai_thirdparty_for_tests)
-    target_include_directories(${test_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     if(WIN32)
       target_link_libraries(${test_name} PRIVATE ws2_32 crypt32)
     endif()

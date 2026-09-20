@@ -19,6 +19,8 @@
 
 #include "MaiIdGenerator.h"
 #include "MaiSessionStore.h"
+#include "MaiMemoryStore.h"
+#include "MaiSqliteStore.h"
 #include "MaiTime.h"
 
 namespace fs = std::filesystem;

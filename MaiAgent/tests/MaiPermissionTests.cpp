@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "MaiAgent.h"
+#include "MaiMemoryStore.h"
 #include "MaiFakeModelClient.h"
 #include "MaiPermission.h"
 

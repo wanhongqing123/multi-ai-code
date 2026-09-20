@@ -7,7 +7,7 @@
 
 #include "MaiFilePath.h"
 #include "MaiFileSystem.h"
-#include "MaiSessionStore.h"
+#include "MaiSqliteStore.h"
 
 // SQLite 落库。
 //

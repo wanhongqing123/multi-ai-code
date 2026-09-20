@@ -8,6 +8,7 @@
 #include "MaiIdGenerator.h"
 #include "MaiThread.h"
 #include "MaiAgent.h"
+#include "MaiMemoryStore.h"
 
 static int failures = 0;
 #define CHECK(cond)                                                     \

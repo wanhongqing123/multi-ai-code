@@ -3,6 +3,15 @@
 #include <algorithm>
 
 #include "MaiProcess.h"
+#include "MaiApplyPatchTool.h"
+#include "MaiEditTool.h"
+#include "MaiFileTools.h"
+#include "MaiQuestionTool.h"
+#include "MaiShellTool.h"
+#include "MaiSubAgentTools.h"
+#include "MaiTimeTool.h"
+#include "MaiTodoWriteTool.h"
+#include "MaiWebFetchTool.h"
 
 // ── MaiToolContext ──────────────────────────────────────────────
 

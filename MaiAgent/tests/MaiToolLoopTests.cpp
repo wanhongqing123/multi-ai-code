@@ -12,6 +12,8 @@
 #include <vector>
 
 #include "MaiAgent.h"
+#include "MaiMemoryStore.h"
+#include "MaiFileTools.h"
 #include "MaiFakeModelClient.h"
 
 namespace fs = std::filesystem;

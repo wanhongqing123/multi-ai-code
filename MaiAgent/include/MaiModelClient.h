@@ -172,4 +172,5 @@ public:
     virtual MaiWireApi wireApi() const = 0;
 };
 
-std::unique_ptr<MaiModelClient> makeMaiModelClient(MaiModelConfig config);
+// 工厂在 MaiOpenAiClient.h——那是**实现**，这里是接口。
+// 自己接别的供应商的人只需要这个文件，不该被迫看见我们碰巧提供了哪一种实现。

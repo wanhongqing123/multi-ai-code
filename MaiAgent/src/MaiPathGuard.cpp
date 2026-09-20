@@ -1,6 +1,6 @@
 #include "MaiFilePath.h"
 #include "MaiFileSystem.h"
-#include "MaiTool.h"
+#include "MaiPathGuard.h"
 
 // ── 路径安全 ────────────────────────────────────────────────────
 //

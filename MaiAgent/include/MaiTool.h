@@ -7,6 +7,7 @@
 
 #include "MaiError.h"
 #include "MaiModelClient.h"
+#include "MaiPathGuard.h"
 #include "MaiQuestion.h"
 #include "MaiSubAgent.h"
 
@@ -152,37 +153,13 @@ private:
     std::vector<std::unique_ptr<MaiTool>> mTools;
 };
 
-// 内置工具。
+// 把所有内置工具装进清单。
 //
-// 只读的：read / glob / grep / current_time / todowrite。
-// 往外发数据的：webfetch（每个新域名都要点头）。
-//（没有单独的 list：glob 传 `*` 就是列目录。多一个工具每次请求都要多发一份 spec，
-//  而工具越多模型挑错的概率也越高。）
-// 会改东西的：write（整份覆写）、edit（按原文替换一处）。
-// shell 自己按命令决定要不要问。
-std::unique_ptr<MaiTool> makeMaiReadTool();
-std::unique_ptr<MaiTool> makeMaiWriteTool();
-std::unique_ptr<MaiTool> makeMaiEditTool();
-std::unique_ptr<MaiTool> makeMaiApplyPatchTool();
-std::unique_ptr<MaiTool> makeMaiWebFetchTool();
-std::unique_ptr<MaiTool> makeMaiTodoWriteTool();
-std::unique_ptr<MaiTool> makeMaiQuestionTool();
-
-// 子 Agent 那一组。名字照 codex 的 multi_agents，模型见过这套。
-std::unique_ptr<MaiTool> makeMaiSpawnAgentTool();
-std::unique_ptr<MaiTool> makeMaiWaitAgentTool();
-std::unique_ptr<MaiTool> makeMaiSendInputTool();
-std::unique_ptr<MaiTool> makeMaiListAgentsTool();
-std::unique_ptr<MaiTool> makeMaiCloseAgentTool();
-std::unique_ptr<MaiTool> makeMaiGlobTool();
-std::unique_ptr<MaiTool> makeMaiGrepTool();
-std::unique_ptr<MaiTool> makeMaiShellTool();
-std::unique_ptr<MaiTool> makeMaiCurrentTimeTool();
-
+// **工厂声明在各自的头里**（MaiEditTool.h、MaiShellTool.h 之类），不在这儿。
+// 都堆在这个头上的话，它会变成个杂货铺：改一个工具要动所有人都包含的文件，
+// 而且看不出哪个声明属于哪个实现。
+//
+// shell 只在跑得了外部进程的平台上注册，见 MaiProcess.h。
 void registerMaiBuiltinTools(MaiToolRegistry& registry);
 
-// 把用户给的路径解析成绝对路径，并确认它在 root 之内。失败返回空字符串。
-//
-// 单独暴露出来是为了能被单独测：它是整个工具层唯一的安全边界，混在各个工具里就没法保证每个都做对，
-// 也没法集中测 `..`、符号链接、同前缀同级目录这些绕过手法。
-std::string maiResolvePathWithinRoot(const std::string& root, const std::string& candidate);
+

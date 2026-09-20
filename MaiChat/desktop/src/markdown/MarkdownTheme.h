@@ -29,8 +29,11 @@ struct MarkdownTheme {
     // 空表示跟随应用默认字体。等宽字体按平台给，不写浏览器式的回退列表。
     QString bodyFamily;
     QString codeFamily;
-    int bodyPixelSize = 15;
+    int bodyPixelSize = 14;
+    // 行内代码和代码块**不是一个字号**：iOS 行内 13、块内 12。
+    // 行内代码嵌在正文里，小太多会显得塌下去；代码块整块都是等宽字，小一点更紧凑。
     int codePixelSize = 13;
+    int codeBlockPixelSize = 12;
     int tablePixelSize = 12;
     // 列表序号单独一个字号，比正文小一号并加粗——照 iOS 的 13 semibold。
     int listMarkerPixelSize = 13;
@@ -40,8 +43,12 @@ struct MarkdownTheme {
     int listBulletPixelSize = 16;
     int calloutTitlePixelSize = 13;
     int headingPixelSize[6] = {22, 18, 16, 14, 14, 14};
-    // 行高倍率。原来交给 QTextDocument 默认值，偏挤；聊天里长段落多，放宽一点。
-    qreal lineHeightRatio = 1.45;
+    // 行高倍率。
+    //
+    // iOS 是 14pt 字加 4pt 行距，算下来约 1.48。桌面的阅读列有 760px，
+    // 比手机宽一倍多，理论上该更松一点；但两端「公用一套」的前提下先对齐 iOS，
+    // 真读着累再单独给桌面加个系数。
+    qreal lineHeightRatio = 1.48;
 
     // ── 颜色 ────────────────────────────────────────────────
     QColor text;
@@ -54,6 +61,7 @@ struct MarkdownTheme {
     QColor inlineCodeBackground;
     QColor codeText;
     QColor codeBackground;
+    QColor codeBorder;
     QColor quoteAccent;
     QColor quoteBackground;
     QColor quoteText;
@@ -72,11 +80,13 @@ struct MarkdownTheme {
     QColor selectionText;
 
     // ── 间距 ────────────────────────────────────────────────
-    int blockSpacing = 10;
+    // 块与块之间。iOS 的 VStack 是 12。
+    int blockSpacing = 12;
     // 标题上下的留白。和 CSS 的 margin 一样会**合并**：相邻两块之间取两者的大值，
     // 不是相加——不然标题跟在段落后面时会空出一大块。
-    int headingSpacingAbove[6] = {0, 16, 12, 10, 10, 10};
-    int headingSpacingBelow[6] = {12, 10, 8, 8, 8, 6};
+    // iOS 是在 12 的块间距之上，给 h1/h2 再加 4、h3 往下再加 2。
+    int headingSpacingAbove[6] = {16, 16, 14, 14, 14, 14};
+    int headingSpacingBelow[6] = {12, 12, 12, 12, 12, 12};
     // 列表的三个横向量是分开的，别拿一个数兼着用：
     //   listIndent       每嵌套一层往右挪多少
     //   listMarkerWidth  标记列的宽度，标记在里面**右对齐**
@@ -88,12 +98,13 @@ struct MarkdownTheme {
     // 缩进封顶。再深就不往右挪了，否则窄一点的列宽下正文没地方站。
     int listMaxDepth = 4;
     int listItemSpacing = 8;
-    int codePadding = 10;
-    int codeRadius = 8;
+    int codePadding = 12;
+    int codeRadius = 10;
     int quoteBarWidth = 3;
-    int quotePadding = 10;
+    int quotePadding = 12;
     int quoteRadius = 8;
-    int dividerSpacing = 8;
+    // 分割线自己只要一点点留白，块间距已经给了 12。
+    int dividerSpacing = 3;
     // 单元格的横竖内边距不一样：横向要宽一点，列之间才分得开。
     int tableCellPaddingH = 12;
     int tableCellPaddingV = 10;

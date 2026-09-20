@@ -217,14 +217,13 @@ void MarkdownLayoutTest::listMarkersStayOutOfTheCopiedText() {
     // 标记列要按整张列表里最宽的那个标记撑开：16px 放不下「10.」，
     // 定宽的话它会被折成两行，而且同一张列表各项的正文左边对不齐。
     //
-    // 观察的是**正文那一列变窄了**：标记列宽一点，同样的文字就多折一行。
-    // 直接比「10.」有没有折行是看不出来的——标记的高度不参与行高计算。
-    const QString line = QStringLiteral("一段够长的文字用来把可用宽度撑满并折行");
-    const MarkdownLayout narrowMarker =
-        laidOut(QStringLiteral("1. %1").arg(line), 180);
-    const MarkdownLayout wideMarker =
-        laidOut(QStringLiteral("10. %1").arg(line), 180);
-    QVERIFY(wideMarker.height() > narrowMarker.height());
+    // 量的是**正文那一列往右挪了多少**（naturalWidth 里含每段的起点 x）。
+    // 不用高度：高度得靠折行数变化才看得出来，而那取决于字号和宽度凑得准不准，
+    // 字号一调断言就恒真了——正文从 15 改到 14 的时候就是这么失效的。
+    // 也不能直接比「10.」有没有折行：标记的高度根本不参与行高计算。
+    const MarkdownLayout narrowMarker = laidOut(QStringLiteral("1. 甲"), 400);
+    const MarkdownLayout wideMarker = laidOut(QStringLiteral("10. 甲"), 400);
+    QVERIFY(wideMarker.naturalWidth() > narrowMarker.naturalWidth());
 
     // 提示框的中文标题是生成出来的，同样不该混进复制的内容里。
     const MarkdownLayout callout =

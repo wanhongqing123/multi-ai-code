@@ -150,7 +150,7 @@ private:
     }
 
     QFont codeFont() const {
-        return monospace(theme_.codePixelSize);
+        return monospace(theme_.codeBlockPixelSize);
     }
 
     // 一行的实际行距。Qt 给的 line.height() 偏挤，按字号乘一个倍率抬一下；
@@ -463,7 +463,7 @@ private:
         y += theme_.codePadding;
 
         const QFont font = codeFont();
-        const qreal emptyLineHeight = theme_.codePixelSize * theme_.lineHeightRatio;
+        const qreal emptyLineHeight = theme_.codeBlockPixelSize * theme_.lineHeightRatio;
         QString code = block.code;
         // 围栏结束前的那个换行是语法的一部分，不是空行——留着会多出一行空白。
         if (code.endsWith(QLatin1Char('\n'))) code.chop(1);
@@ -483,6 +483,8 @@ private:
         Shape background;
         background.rect = QRectF(x, top, avail, y - top);
         background.fill = theme_.codeBackground;
+        // 一条极淡的描边。底色和页面背景差得很少，没有边的话块的范围看不清。
+        background.stroke = theme_.codeBorder;
         // 圆角——QTextDocument 的 CSS 子集画不出来，这是换掉它最直观的那一项。
         background.radius = theme_.codeRadius;
         out_.shapes[backgroundIndex] = background;

@@ -31,36 +31,33 @@ MarkdownTheme MarkdownTheme::standard(qreal zoom) {
     theme.codeFamily = monospaceFamily();
     // 标题字号按 20/17/15/14/14/14 收紧。老的 IM 值是 22/18/16，那是给
     // 「一两句话里偶尔一个标题」用的；长回答里 22px 的 h1 太抢眼。
-    theme.headingPixelSize[0] = 20;
-    theme.headingPixelSize[1] = 17;
-    theme.headingPixelSize[2] = 15;
-    // 行距放开。原来交给 QTextDocument 的默认值，中文在那个行距下挤成一坨，
-    // 长段落读起来很累。
-    theme.lineHeightRatio = 1.7;
 
-    theme.text = hex("#172033");
-    theme.strong = hex("#0f172a");
-    theme.emphasis = hex("#475569");
-    theme.strike = hex("#7c8798");
-    theme.link = hex("#0b67b7");
-    // **标题一律收回墨色，只靠字号分层级。**
+
+    theme.text = hex("#0e1525");
+    // **粗体、斜体、删除线都不改颜色。**
     //
-    // 老的 IM 样式里标题是分色的（h2 蓝 #1769be、h3 青 #176e83）。那套是按
-    // 「气泡里偶尔冒出一个标题」调的；模型的回答一屏能有五个标题，分色之后
-    // 整页像圣诞树，而且抢走了正文的注意力。agent 那边原先靠一段覆盖 CSS
-    // 盖掉这个，现在两边共用一套，就直接定在这儿。
-    theme.headingColor[0] = hex("#172033");
-    theme.headingColor[1] = hex("#172033");
-    theme.headingColor[2] = hex("#172033");
-    theme.headingColor[3] = hex("#475569");
-    theme.headingColor[4] = hex("#475569");
-    theme.headingColor[5] = hex("#667085");
-    // 行内代码改中性灰。原来是蓝底蓝字，一段话里出现七八个 `PRAGMA xxx`
-    // 的时候整段都在闪。
-    theme.inlineCodeText = hex("#475569");
-    theme.inlineCodeBackground = hex("#f1f5f9");
-    theme.codeText = hex("#454545");
-    theme.codeBackground = hex("#f7f7f7");
+    // iOS 那边只给行内代码换色，其余全靠字形本身的差别（粗、斜、删除线）。
+    // 颜色和字形双重编码没必要，而且一段话里深深浅浅好几种灰反而更花。
+    theme.strong = hex("#0e1525");
+    theme.emphasis = hex("#0e1525");
+    theme.strike = hex("#0e1525");
+    theme.link = hex("#0b67b7");
+    // 标题只有 h1/h2 上色，用一个沉的藏青；h3 往下就是正文墨色。
+    //
+    // 老的 IM 样式是 h2 亮蓝 #1769be、h3 青 #176e83，一屏五个标题就成了圣诞树。
+    // iOS 的做法是中间路线：只把最高的两级挑出来，而且颜色压得很沉。
+    theme.headingColor[0] = hex("#1c4f8a");
+    theme.headingColor[1] = hex("#1c4f8a");
+    theme.headingColor[2] = hex("#0e1525");
+    theme.headingColor[3] = hex("#0e1525");
+    theme.headingColor[4] = hex("#0e1525");
+    theme.headingColor[5] = hex("#0e1525");
+    // 行内代码是**紫**的，照 iOS。蓝色会和链接撞，中性灰又太弱看不出这是代码。
+    theme.inlineCodeText = hex("#6b3b97");
+    theme.inlineCodeBackground = hex("#f2edfa");
+    theme.codeText = hex("#0e1525");
+    theme.codeBackground = hex("#f4f6f9");
+    theme.codeBorder = hex("#e5ecf5");
     theme.quoteAccent = hex("#2873c7");
     theme.quoteBackground = hex("#eaf3fd");
     theme.quoteText = hex("#475569");
@@ -92,6 +89,7 @@ MarkdownTheme MarkdownTheme::standard(qreal zoom) {
     // 缩放放在最后统一做，上面那些值就能和 CSS 逐条对着看。
     theme.bodyPixelSize = scale(theme.bodyPixelSize, zoom);
     theme.codePixelSize = scale(theme.codePixelSize, zoom);
+    theme.codeBlockPixelSize = scale(theme.codeBlockPixelSize, zoom);
     theme.tablePixelSize = scale(theme.tablePixelSize, zoom);
     theme.listMarkerPixelSize = scale(theme.listMarkerPixelSize, zoom);
     theme.listBulletPixelSize = scale(theme.listBulletPixelSize, zoom);

@@ -139,8 +139,44 @@ private:
     void render() {
         // 渲染器输出的 HTML 内嵌固定 px 字号，整体缩放时要一并按倍率缩放——
         // 和 MainWindow 里 MarkdownMessageView 的做法一致。
-        setHtml(UiZoom::scaleQss(MarkdownRenderer::renderToHtml(source_)));
+        QString html = MarkdownRenderer::renderToHtml(source_);
+        // 在渲染器自己那段 CSS **之后**追加覆盖规则。同级选择器后来者胜，
+        // 所以插在 </style> 之前就能盖掉，而 MarkdownRenderer 一个字都不用改——
+        // 那份 CSS 是 IM 气泡在用的，动它会连带改掉聊天界面。
+        html.replace(QStringLiteral("</style>"), agentOverrides() + QStringLiteral("</style>"));
+        setHtml(UiZoom::scaleQss(html));
         fitHeight();
+    }
+
+    // 给长答案调的排版。
+    //
+    // 共用那份 CSS 是按 **IM 气泡**调的：一两句话、标题几乎用不上。
+    // 拿它排一篇带三级标题、列表和代码的回答就会露怯：
+    //
+    //   - **没有设行高**。中文在默认行距下挤成一坨，长段落读起来很累。
+    //   - 标题是蓝色和青色的（h2 #1769be / h3 #176e83）。气泡里偶尔出现一个还行，
+    //     一屏五个就成了圣诞树，而且抢了正文的注意力。
+    //   - 行内代码是蓝底蓝字。一段话里出现七八个 `PRAGMA xxx` 时整段都在闪。
+    //
+    // 所以这里只改三件事：把行距放开、标题收回墨色、代码块改成中性灰。
+    static QString agentOverrides() {
+        return QStringLiteral(
+            "body{font-size:14px;line-height:175%;color:#172033;}"
+            "p{margin:0 0 13px 0;}"
+            "h1{font-size:20px;color:#172033;margin:22px 0 10px 0;}"
+            "h2{font-size:17px;color:#172033;margin:22px 0 9px 0;}"
+            "h3{font-size:15px;color:#172033;margin:18px 0 8px 0;}"
+            "h4{font-size:14px;color:#475569;margin:14px 0 6px 0;}"
+            "h5{font-size:14px;color:#475569;margin:14px 0 6px 0;}"
+            "h6{font-size:14px;color:#667085;margin:14px 0 6px 0;}"
+            "ul{margin:0 0 13px 0;}"
+            "ol{margin:0 0 13px 0;}"
+            "li{margin:7px 0;}"
+            "strong{color:#0f172a;font-weight:600;}"
+            "em{color:#475569;}"
+            "code{background:#f1f5f9;color:#475569;font-size:13px;}"
+            "pre{margin:0 0 13px 0;}"
+            "a{color:#0b67b7;}");
     }
 
     // QTextBrowser 默认自己滚动。这里它嵌在外层的滚动区里，必须长到和内容一样高，

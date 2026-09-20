@@ -32,7 +32,16 @@ struct TextRun {
     QVector<Link> links;
 };
 
-// 文字底下的那些东西：底色、竖条、分割线、项目符号、复选框、表格线。
+// 圆哪几个角。表格是一块整体圆角，但它是**一行一行**画出来的：
+// 表头只圆上面两角、末行只圆下面两角，中间的行是方的。
+// 不分开的话方角会戳出整体的圆角外面。
+enum class Corners {
+    All,
+    Top,
+    Bottom,
+};
+
+// 文字底下的那些东西：底色、竖条、分割线、复选框、表格线。
 // 一种结构覆盖全部，比每样开一个类型省事得多。
 struct Shape {
     QRectF rect;
@@ -40,9 +49,42 @@ struct Shape {
     QColor stroke;
     qreal strokeWidth = 1;
     qreal radius = 0;
+    Corners corners = Corners::All;
     // 任务列表打的勾。用路径画而不是字符，字体里有没有 ✓ 不该影响显示。
     bool check = false;
 };
+
+// 只圆一侧角的矩形路径。Qt 的 drawRoundedRect 四个角是一起的，没有这个选项。
+QPainterPath cornerPath(const QRectF& rect, qreal radius, Corners corners) {
+    QPainterPath path;
+    if (corners == Corners::All) {
+        path.addRoundedRect(rect, radius, radius);
+        return path;
+    }
+    const qreal top = corners == Corners::Top ? radius : 0;
+    const qreal bottom = corners == Corners::Bottom ? radius : 0;
+    path.moveTo(rect.left(), rect.top() + top);
+    if (top > 0) {
+        path.arcTo(QRectF(rect.left(), rect.top(), top * 2, top * 2), 180, -90);
+    }
+    path.lineTo(rect.right() - top, rect.top());
+    if (top > 0) {
+        path.arcTo(QRectF(rect.right() - top * 2, rect.top(), top * 2, top * 2), 90, -90);
+    }
+    path.lineTo(rect.right(), rect.bottom() - bottom);
+    if (bottom > 0) {
+        path.arcTo(QRectF(rect.right() - bottom * 2, rect.bottom() - bottom * 2, bottom * 2,
+                          bottom * 2),
+                   0, -90);
+    }
+    path.lineTo(rect.left() + bottom, rect.bottom());
+    if (bottom > 0) {
+        path.arcTo(QRectF(rect.left(), rect.bottom() - bottom * 2, bottom * 2, bottom * 2), 270,
+                   -90);
+    }
+    path.closeSubpath();
+    return path;
+}
 
 struct RunMetrics {
     qreal height = 0;
@@ -180,9 +222,13 @@ private:
         return addLaidOutText(text, base, formats, links, codeRanges, x, y, avail, alignment);
     }
 
-    // 纯文字（代码行、列表序号、提示框标题）。没有片段，整段一个格式。
+    // 纯文字（代码行、列表标记、提示框标题）。没有片段，整段一个格式。
+    //
+    // selectable=false 的东西**不进可选文字**。列表标记就是这种：它是装饰，
+    // 不是内容。收进去的话复制一段列表，每个符号会单占一行。
     RunMetrics addPlainText(const QString& text, const QFont& font, const QColor& color, qreal x,
-                            qreal y, qreal avail, Qt::Alignment alignment = Qt::AlignLeft) {
+                            qreal y, qreal avail, Qt::Alignment alignment = Qt::AlignLeft,
+                            bool selectable = true) {
         if (text.isEmpty()) return {};
         QTextCharFormat format;
         format.setFont(font);
@@ -191,14 +237,14 @@ private:
         range.start = 0;
         range.length = text.size();
         range.format = format;
-        return addLaidOutText(text, font, {range}, {}, {}, x, y, avail, alignment);
+        return addLaidOutText(text, font, {range}, {}, {}, x, y, avail, alignment, selectable);
     }
 
     RunMetrics addLaidOutText(const QString& text, const QFont& base,
                               const QVector<QTextLayout::FormatRange>& formats,
                               const QVector<TextRun::Link>& links,
                               const QVector<QPair<int, int>>& codeRanges, qreal x, qreal y,
-                              qreal avail, Qt::Alignment alignment) {
+                              qreal avail, Qt::Alignment alignment, bool selectable = true) {
         TextRun run;
         run.layout = std::make_unique<QTextLayout>(text, base);
         run.position = QPointF(x, y);
@@ -233,8 +279,10 @@ private:
         }
 
         // 块之间补一个换行，复制出来才是分段的，不会糊成一行。
-        out_.text += text;
-        out_.text += QLatin1Char('\n');
+        if (selectable) {
+            out_.text += text;
+            out_.text += QLatin1Char('\n');
+        }
 
         out_.runs.push_back(std::move(run));
         return {height, firstLineHeight};
@@ -441,16 +489,47 @@ private:
         return y;
     }
 
+    QFont markerFont(bool bullet = false) const {
+        QFont font = bodyFont();
+        font.setPixelSize(bullet ? theme_.listBulletPixelSize : theme_.listMarkerPixelSize);
+        font.setWeight(QFont::DemiBold);
+        return font;
+    }
+
+    // 标记比正文小一号，直接顶对齐会浮在半空。按**基线**对齐：
+    // 两段都从各自的行顶往下 ascent 到基线，差多少就把标记往下推多少。
+    qreal markerBaselineOffset(bool bullet) const {
+        return qMax<qreal>(0, QFontMetricsF(bodyFont()).ascent() -
+                                  QFontMetricsF(markerFont(bullet)).ascent());
+    }
+
     qreal layoutList(const MarkdownBlock& block, const QColor& color, qreal x, qreal avail,
                      qreal y) {
         const QFont font = bodyFont();
+
+        // 标记列的宽度**先按整张列表算一遍**，取最宽的那个。
+        //
+        // 定宽 16 的话「10.」放不下，会被 QTextLayout 折成两行；而且同一张列表里
+        // 各项正文的左边必须对齐在一条线上，逐项算宽度就对不齐了。
+        // iOS 那边是 minWidth:16，同一个意思。
+        const QFontMetricsF markerMetrics(markerFont());
+        qreal markerColumn = theme_.listMarkerWidth;
+        for (const MarkdownListItem& item : block.items) {
+            if (item.hasCheckbox || item.number <= 0) continue;
+            markerColumn = qMax(markerColumn,
+                                markerMetrics.horizontalAdvance(
+                                    QStringLiteral("%1.").arg(item.number)));
+        }
+
         bool first = true;
         for (const MarkdownListItem& item : block.items) {
             if (!first) y += theme_.listItemSpacing;
             first = false;
 
-            const qreal itemX = x + item.depth * theme_.listIndent;
-            const qreal textX = itemX + theme_.listIndent;
+            // 缩进封顶：再深就不往右挪了，否则窄列宽下正文没地方站。
+            const int depth = qMin(item.depth, theme_.listMaxDepth);
+            const qreal itemX = x + depth * theme_.listIndent;
+            const qreal textX = itemX + markerColumn + theme_.listMarkerGap;
             const qreal textAvail = qMax<qreal>(avail - (textX - x), 1);
             const qreal top = y;
 
@@ -460,8 +539,10 @@ private:
                                             : theme_.bodyPixelSize * theme_.lineHeightRatio;
 
             if (item.hasCheckbox) {
+                // 复选框在标记列里也右对齐，和项目符号排在同一条竖线上。
                 Shape box;
-                box.rect = QRectF(itemX + 2, top + (firstLine - theme_.checkboxSize) / 2,
+                box.rect = QRectF(itemX + markerColumn - theme_.checkboxSize,
+                                  top + (firstLine - theme_.checkboxSize) / 2,
                                   theme_.checkboxSize, theme_.checkboxSize);
                 box.radius = qMax(2, theme_.checkboxSize / 4);
                 box.check = item.checked;
@@ -472,18 +553,15 @@ private:
                     box.stroke = theme_.checkboxOff;
                 }
                 out_.shapes.push_back(box);
-            } else if (item.number > 0) {
-                // 序号右对齐贴着正文，列表才是一条竖线对齐的。
-                const qreal gap = qMax<qreal>(6, theme_.listIndent / 4);
-                addPlainText(QStringLiteral("%1.").arg(item.number), font, theme_.emphasis, itemX,
-                             top, theme_.listIndent - gap, Qt::AlignRight);
             } else {
-                Shape dot;
-                const qreal radius = theme_.bulletRadius;
-                dot.rect = QRectF(itemX + 4, top + firstLine / 2 - radius, radius * 2, radius * 2);
-                dot.fill = theme_.bullet;
-                dot.radius = radius;
-                out_.shapes.push_back(dot);
+                // 项目符号用 • 这个**字形**，不是画一个圆：要和序号走同一条
+                // 右对齐的路，粗细和字号也才跟得上正文。
+                const bool bullet = item.number <= 0;
+                const QString marker =
+                    bullet ? QStringLiteral("•") : QStringLiteral("%1.").arg(item.number);
+                addPlainText(marker, markerFont(bullet), theme_.listMarker, itemX,
+                             top + markerBaselineOffset(bullet), markerColumn, Qt::AlignRight,
+                             false);
             }
 
             y = top + qMax(metrics.height, firstLine);
@@ -512,21 +590,22 @@ private:
             }
         }
 
-        const qreal padding = theme_.tableCellPadding;
+        const qreal padX = theme_.tableCellPaddingH;
+        const qreal padY = theme_.tableCellPaddingV;
         qreal total = 0;
-        for (int column = 0; column < columns; ++column) total += natural[column] + 2 * padding;
+        for (int column = 0; column < columns; ++column) total += natural[column] + 2 * padX;
 
         QVector<qreal> widths(columns, 0);
         const qreal minimum = qMin<qreal>(avail / columns, theme_.tablePixelSize * 4);
         if (total <= avail || total <= 0) {
             const qreal extra = (avail - total) / columns;
             for (int column = 0; column < columns; ++column) {
-                widths[column] = natural[column] + 2 * padding + qMax<qreal>(extra, 0);
+                widths[column] = natural[column] + 2 * padX + qMax<qreal>(extra, 0);
             }
         } else {
             const qreal scale = avail / total;
             for (int column = 0; column < columns; ++column) {
-                widths[column] = qMax(minimum, (natural[column] + 2 * padding) * scale);
+                widths[column] = qMax(minimum, (natural[column] + 2 * padX) * scale);
             }
             qreal scaled = 0;
             for (qreal value : widths) scaled += value;
@@ -535,7 +614,14 @@ private:
             }
         }
 
+        qreal tableWidth = 0;
+        for (qreal value : widths) tableWidth += value;
+
+        // 行与行之间的细线要画在**行底**，不是行顶：画在行顶的话表头和第一行
+        // 之间会多出一条，而那儿靠底色变化区分就够了。
         const qreal top = y;
+        const int lastRow = block.rows.size() - 1;
+        QVector<qreal> separators;
         for (int rowIndex = 0; rowIndex < block.rows.size(); ++rowIndex) {
             const QVector<QVector<MarkdownSpan>>& row = block.rows[rowIndex];
             const bool header = rowIndex == 0;
@@ -551,17 +637,22 @@ private:
                     if (header) cellFont.setWeight(QFont::DemiBold);
                     const RunMetrics metrics =
                         addSpans(row[column], cellFont,
-                                 header ? theme_.tableHeaderText : theme_.text, cellX + padding,
-                                 y + padding, qMax<qreal>(cellWidth - 2 * padding, 1));
+                                 header ? theme_.tableHeaderText : theme_.text, cellX + padX,
+                                 y + padY, qMax<qreal>(cellWidth - 2 * padX, 1));
                     rowHeight = qMax(rowHeight, metrics.height);
                 }
                 cellX += cellWidth;
             }
             if (rowHeight <= 0) rowHeight = theme_.tablePixelSize * theme_.lineHeightRatio;
-            const qreal fullHeight = rowHeight + 2 * padding;
+            const qreal fullHeight = rowHeight + 2 * padY;
 
             Shape background;
-            background.rect = QRectF(x, y, cellX - x, fullHeight);
+            background.rect = QRectF(x, y, tableWidth, fullHeight);
+            // 表头和末行要跟着整体的圆角裁，中间的行是方的——
+            // 不分开的话方角会戳出圆角外面。
+            background.radius = theme_.tableRadius;
+            background.corners = header ? Corners::Top : Corners::Bottom;
+            if (!header && rowIndex != lastRow) background.radius = 0;
             // 斑马纹用整行底色。原来靠给每个单元格上色模拟，因为
             // QTextDocument 不支持 nth-child；自己画就没这个问题了。
             background.fill = header ? theme_.tableHeaderBackground
@@ -569,20 +660,21 @@ private:
                                                           : theme_.tableRowAlternate);
             out_.shapes[backgroundIndex] = background;
 
-            if (!header) {
-                Shape separator;
-                separator.rect = QRectF(x, y, cellX - x, 1);
-                separator.fill = theme_.tableLine;
-                out_.shapes.push_back(separator);
-            }
             y += fullHeight;
+            if (!header && rowIndex != lastRow) separators.push_back(y);
+        }
+
+        for (qreal lineY : separators) {
+            Shape separator;
+            separator.rect = QRectF(x, lineY - 1, tableWidth, 1);
+            separator.fill = theme_.tableSeparator;
+            out_.shapes.push_back(separator);
         }
 
         Shape border;
-        qreal tableWidth = 0;
-        for (qreal value : widths) tableWidth += value;
         border.rect = QRectF(x, top, tableWidth, y - top);
         border.stroke = theme_.tableLine;
+        border.radius = theme_.tableRadius;
         out_.shapes.push_back(border);
         return y;
     }
@@ -659,7 +751,7 @@ void MarkdownLayout::paint(QPainter* painter, const QPointF& origin, const QRect
                                                : QPen(Qt::NoPen));
         painter->setBrush(shape.fill.isValid() ? QBrush(shape.fill) : QBrush(Qt::NoBrush));
         if (shape.radius > 0) {
-            painter->drawRoundedRect(rect, shape.radius, shape.radius);
+            painter->drawPath(cornerPath(rect, shape.radius, shape.corners));
         } else {
             painter->drawRect(rect);
         }

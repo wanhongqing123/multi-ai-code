@@ -35,6 +35,8 @@ private slots:
     void linkHitTestingFindsHref();
     void selectionReadsBackTheText();
     void paintsWithoutTouchingOutsideTheClip();
+    void listMarkersStayOutOfTheCopiedText();
+    void deepIndentStopsGrowing();
 };
 
 void MarkdownLayoutTest::emptyDocumentTakesNoSpace() {
@@ -197,6 +199,70 @@ void MarkdownLayoutTest::paintsWithoutTouchingOutsideTheClip() {
             QCOMPARE(below.pixel(x, y), qRgb(255, 255, 255));
         }
     }
+}
+
+void MarkdownLayoutTest::listMarkersStayOutOfTheCopiedText() {
+    // 项目符号和序号是**装饰**，不是内容。收进可选文字的话，
+    // 复制一段列表会变成每个符号单占一行——有序列表原来就是这样的。
+    const MarkdownLayout layout =
+        laidOut(QStringLiteral("- 第一项\n- 第二项\n\n1. 甲\n2. 乙"), 400);
+    const QString text = layout.selectableText();
+
+    QVERIFY(text.contains(QStringLiteral("第一项")));
+    QVERIFY(text.contains(QStringLiteral("乙")));
+    QVERIFY(!text.contains(QStringLiteral("•")));
+    QVERIFY(!text.contains(QStringLiteral("1.")));
+    QVERIFY(!text.contains(QStringLiteral("2.")));
+
+    // 标记列要按整张列表里最宽的那个标记撑开：16px 放不下「10.」，
+    // 定宽的话它会被折成两行，而且同一张列表各项的正文左边对不齐。
+    //
+    // 观察的是**正文那一列变窄了**：标记列宽一点，同样的文字就多折一行。
+    // 直接比「10.」有没有折行是看不出来的——标记的高度不参与行高计算。
+    const QString line = QStringLiteral("一段够长的文字用来把可用宽度撑满并折行");
+    const MarkdownLayout narrowMarker =
+        laidOut(QStringLiteral("1. %1").arg(line), 180);
+    const MarkdownLayout wideMarker =
+        laidOut(QStringLiteral("10. %1").arg(line), 180);
+    QVERIFY(wideMarker.height() > narrowMarker.height());
+
+    // 提示框的中文标题是生成出来的，同样不该混进复制的内容里。
+    const MarkdownLayout callout =
+        laidOut(QStringLiteral("> [!TIP]\n> 记得备份"), 400);
+    QVERIFY(callout.selectableText().contains(QStringLiteral("记得备份")));
+}
+
+void MarkdownLayoutTest::deepIndentStopsGrowing() {
+    // 缩进要封顶。不封的话十层嵌套会把正文推到列外面，每行只剩两三个字。
+    //
+    // 只断言「封顶以上高度相同」是不够的——叶子要是在两种宽度下都折成一样多行，
+    // 那条断言恒真。所以**成对**断言：封顶以下要变，封顶以上不变。
+
+    // 量某个深度下叶子那一项占了多高：整篇减去同样结构但叶子只有一个字的那篇。
+    const auto leafHeight = [](int depth, const QString& leaf) {
+        QString source;
+        for (int level = 0; level < depth; ++level) {
+            source += QString(level * 2, QLatin1Char(' ')) + QStringLiteral("- a%1").arg(level) +
+                      QLatin1Char('\n');
+        }
+        source += QString(depth * 2, QLatin1Char(' ')) + QStringLiteral("- ") + leaf;
+        // 宽度取窄：列越窄，每层缩进少掉的那 12px 占比越大，
+        // 行数差得出来。用 400 宽的话多缩进三层也还是折一样多行，断言就恒真了。
+        return laidOut(source, 180).height();
+    };
+
+    const QString leaf = QStringLiteral("一段够长的叶子节点文字用来看还剩多少宽度可用啊");
+    const QString tiny = QStringLiteral("x");
+
+    const qreal shallow = leafHeight(1, leaf) - leafHeight(1, tiny);
+    const qreal atCap = leafHeight(4, leaf) - leafHeight(4, tiny);
+    const qreal beyondCap = leafHeight(8, leaf) - leafHeight(8, tiny);
+
+    QVERIFY(shallow > 0);
+    // 封顶以下：越深越窄，叶子越高。这条保证上面那条不是恒真的。
+    QVERIFY(atCap > shallow);
+    // 封顶以上：不再变窄。
+    QCOMPARE(beyondCap, atCap);
 }
 
 QTEST_MAIN(MarkdownLayoutTest)

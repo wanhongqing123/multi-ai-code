@@ -31,7 +31,13 @@ struct MarkdownTheme {
     QString codeFamily;
     int bodyPixelSize = 15;
     int codePixelSize = 13;
-    int tablePixelSize = 13;
+    int tablePixelSize = 12;
+    // 列表序号单独一个字号，比正文小一号并加粗——照 iOS 的 13 semibold。
+    int listMarkerPixelSize = 13;
+    // 项目符号要比序号大一点。iOS 那边符号和序号同是 13，但 SF Pro 的 U+2022
+    // 比 Segoe UI 的粗不少，照搬字号出来的点发虚、在一堆黑字里看不见。
+    // 字号是为了配那个字体定的，要对齐的是**看起来一样重**，不是数字一样。
+    int listBulletPixelSize = 16;
     int calloutTitlePixelSize = 13;
     int headingPixelSize[6] = {22, 18, 16, 14, 14, 14};
     // 行高倍率。原来交给 QTextDocument 默认值，偏挤；聊天里长段落多，放宽一点。
@@ -57,9 +63,11 @@ struct MarkdownTheme {
     QColor tableRowAlternate;
     QColor tableLine;
     QColor divider;
-    QColor bullet;
+    // 项目符号和序号是**同一个颜色**（iOS 两者都用主蓝），不再分开。
+    QColor listMarker;
     QColor checkboxOn;
     QColor checkboxOff;
+    QColor tableSeparator;
     QColor selection;
     QColor selectionText;
 
@@ -69,17 +77,29 @@ struct MarkdownTheme {
     // 不是相加——不然标题跟在段落后面时会空出一大块。
     int headingSpacingAbove[6] = {0, 16, 12, 10, 10, 10};
     int headingSpacingBelow[6] = {12, 10, 8, 8, 8, 6};
-    int listIndent = 22;
-    int listItemSpacing = 4;
+    // 列表的三个横向量是分开的，别拿一个数兼着用：
+    //   listIndent       每嵌套一层往右挪多少
+    //   listMarkerWidth  标记列的宽度，标记在里面**右对齐**
+    //   listMarkerGap    标记列到正文的间隙
+    // 合成一个数的话，缩进一深正文就被推得老远——iOS 是 12 / 16 / 8。
+    int listIndent = 12;
+    int listMarkerWidth = 16;
+    int listMarkerGap = 8;
+    // 缩进封顶。再深就不往右挪了，否则窄一点的列宽下正文没地方站。
+    int listMaxDepth = 4;
+    int listItemSpacing = 8;
     int codePadding = 10;
     int codeRadius = 8;
     int quoteBarWidth = 3;
     int quotePadding = 10;
     int quoteRadius = 8;
     int dividerSpacing = 8;
-    int tableCellPadding = 8;
+    // 单元格的横竖内边距不一样：横向要宽一点，列之间才分得开。
+    int tableCellPaddingH = 12;
+    int tableCellPaddingV = 10;
+    // 表格整体圆角。表头和末行要**跟着裁**，不然方角会戳出圆角外面。
+    int tableRadius = 10;
     int checkboxSize = 13;
-    int bulletRadius = 3;
 
     // ── 消息列表（MarkdownView 用）────────────────────────
     //

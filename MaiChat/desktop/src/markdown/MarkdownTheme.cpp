@@ -64,15 +64,20 @@ MarkdownTheme MarkdownTheme::standard(qreal zoom) {
     theme.quoteAccent = hex("#2873c7");
     theme.quoteBackground = hex("#eaf3fd");
     theme.quoteText = hex("#475569");
-    theme.tableHeaderBackground = hex("#245995");
-    theme.tableHeaderText = hex("#ffffff");
+    // 表格对齐 iOS：**浅蓝灰表头配深色文字**，不是深蓝配白字。
+    // 深色表头在一屏里比正文还抢眼，而表格通常只是个附注。
+    theme.tableHeaderBackground = hex("#e8f0f7");
+    theme.tableHeaderText = hex("#0e1525");
     theme.tableRow = hex("#ffffff");
-    theme.tableRowAlternate = hex("#f7f7f7");
-    theme.tableLine = hex("#dbe3ec");
+    theme.tableRowAlternate = hex("#f5f7fa");
+    theme.tableLine = hex("#dae4f0");
+    // 行间那条线比外框还淡（iOS 是 border 的 60% 透明度压在白底上）。
+    theme.tableSeparator = hex("#e9eff6");
     theme.divider = hex("#e2e8f0");
-    theme.bullet = hex("#94a3b8");
-    theme.checkboxOn = hex("#16836b");
-    theme.checkboxOff = hex("#64748b");
+    // 项目符号和序号都用主蓝，和 iOS 一致。原来是灰点，在一堆黑字里看不见。
+    theme.listMarker = hex("#0f8ddd");
+    theme.checkboxOn = hex("#17826b");
+    theme.checkboxOff = hex("#64758f");
     theme.selection = hex("#b4d5fe");
     theme.selectionText = hex("#102a43");
     theme.bubbleBackground = hex("#e8f2ff");
@@ -88,6 +93,8 @@ MarkdownTheme MarkdownTheme::standard(qreal zoom) {
     theme.bodyPixelSize = scale(theme.bodyPixelSize, zoom);
     theme.codePixelSize = scale(theme.codePixelSize, zoom);
     theme.tablePixelSize = scale(theme.tablePixelSize, zoom);
+    theme.listMarkerPixelSize = scale(theme.listMarkerPixelSize, zoom);
+    theme.listBulletPixelSize = scale(theme.listBulletPixelSize, zoom);
     theme.calloutTitlePixelSize = scale(theme.calloutTitlePixelSize, zoom);
     for (int level = 0; level < 6; ++level) {
         theme.headingPixelSize[level] = scale(theme.headingPixelSize[level], zoom);
@@ -96,6 +103,8 @@ MarkdownTheme MarkdownTheme::standard(qreal zoom) {
     }
     theme.blockSpacing = scale(theme.blockSpacing, zoom);
     theme.listIndent = scale(theme.listIndent, zoom);
+    theme.listMarkerWidth = scale(theme.listMarkerWidth, zoom);
+    theme.listMarkerGap = scale(theme.listMarkerGap, zoom);
     theme.listItemSpacing = scale(theme.listItemSpacing, zoom);
     theme.codePadding = scale(theme.codePadding, zoom);
     theme.codeRadius = scale(theme.codeRadius, zoom);
@@ -103,9 +112,10 @@ MarkdownTheme MarkdownTheme::standard(qreal zoom) {
     theme.quotePadding = scale(theme.quotePadding, zoom);
     theme.quoteRadius = scale(theme.quoteRadius, zoom);
     theme.dividerSpacing = scale(theme.dividerSpacing, zoom);
-    theme.tableCellPadding = scale(theme.tableCellPadding, zoom);
+    theme.tableCellPaddingH = scale(theme.tableCellPaddingH, zoom);
+    theme.tableCellPaddingV = scale(theme.tableCellPaddingV, zoom);
+    theme.tableRadius = scale(theme.tableRadius, zoom);
     theme.checkboxSize = scale(theme.checkboxSize, zoom);
-    theme.bulletRadius = scale(theme.bulletRadius, zoom);
     theme.viewMargin = scale(theme.viewMargin, zoom);
     theme.scrollBarWidth = scale(theme.scrollBarWidth, zoom);
     theme.itemSpacing = scale(theme.itemSpacing, zoom);

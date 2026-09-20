@@ -189,10 +189,22 @@ public:
     // 主线程打印自己的东西也走这里，保证输出是单一写者。
     void say(std::string text);
 
+    // 用户现在在跟哪个会话说话。
+    //
+    // 子 Agent 跑在别的会话里，它的正文会和父的混在一起——不标出来的话
+    // 读起来像一个人精神分裂。知道当前是哪个，才能给别人的话加前缀。
+    // 切会话时（/new、/use）要跟着更新。
+    void setCurrentSession(std::string sessionId);
+
     // 停掉渲染线程，**把队列里剩下的都写完**再返回。
     void stop();
 
 private:
+    // 当前会话。只被主线程写、渲染线程读，所以要加锁——虽然只是个字符串，
+    // 但 std::string 的赋值不是原子的，边写边读会读到半截。
+    std::mutex mCurrentMutex;
+    std::string mCurrentSession;
+
     // 队列里的一项：要么是一条待排版的事件，要么是已经排好的一段文字。
     struct Entry {
         bool isEvent = false;
@@ -309,7 +321,32 @@ std::string atLineStart(bool alreadyThere, const std::string& line) {
     return alreadyThere ? line : "\n" + line;
 }
 
+void MaiConsoleRenderer::setCurrentSession(std::string sessionId) {
+    std::lock_guard<std::mutex> lock(mCurrentMutex);
+    mCurrentSession = std::move(sessionId);
+}
+
 std::string MaiConsoleRenderer::format(const MaiEvent& event) {
+    // 别的会话（子 Agent）在说话。**不把它的正文原样混进来**：
+    // 父和子的字会无缝拼在一起，读起来像一个人精神分裂。
+    // 只报「它动了」和「它完了」，它真正说了什么会通过 wait_agent 回到父这边。
+    {
+        std::lock_guard<std::mutex> lock(mCurrentMutex);
+        if (!mCurrentSession.empty() && event.sessionId != mCurrentSession) {
+            // 授权和提问是例外：子 Agent 没有自己的界面，这两条必须看得见，
+            // 否则它会永远挂在闸门上。
+            const bool needsUser = event.type == MaiEventType::PermissionAsked ||
+                                   event.type == MaiEventType::QuestionAsked;
+            if (!needsUser) {
+                if (event.type != MaiEventType::SessionIdle) return {};
+                return atLineStart(mAtLineStart,
+                                   "[sub-agent " + event.sessionId + "] finished\n");
+            }
+            return atLineStart(mAtLineStart, "[sub-agent " + event.sessionId + "] " +
+                                                 maiEventTypeToString(event.type) + "\n");
+        }
+    }
+
     switch (event.type) {
         case MaiEventType::MessagePartDelta: {
             auto found = mParts.find(event.partId);
@@ -560,6 +597,7 @@ bool switchSession(MaiAgent& agent, MaiConsoleRenderer& renderer, const std::str
         return false;
     }
     currentSessionId = matches.front();
+    renderer.setCurrentSession(currentSessionId);
     renderer.say("[console] now talking to " + currentSessionId + "\n");
     return true;
 }
@@ -652,6 +690,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     std::string sessionId = created.value();
+    renderer.setCurrentSession(sessionId);
 
     std::string banner =
         "\nmaiagent-console  (links maiagent only: no HTTP, no JSON, no sockets)\n";
@@ -713,6 +752,7 @@ int main(int argc, char** argv) {
                     renderer.say("[console] " + fresh.error().message() + "\n");
                 } else {
                     sessionId = fresh.value();
+                    renderer.setCurrentSession(sessionId);
                     directory = where;
                     renderer.say("[console] new session " + sessionId + " in " + where + "\n");
                 }

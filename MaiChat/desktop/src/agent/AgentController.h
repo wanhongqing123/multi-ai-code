@@ -91,6 +91,13 @@ public:
     // 还在等回答的提问。界面重开后靠它把输入框摆回去。
     std::vector<MaiQuestionRequest> pendingQuestions() const;
 
+    // 这个会话起过哪些子 Agent，含已经收掉的。界面靠它把子任务摆出来。
+    std::vector<MaiSubAgentInfo> subAgents(const QString& parentSessionId) const;
+
+    // 这个会话是不是那个会话的孩子。事件是按会话来的，面板拿它分辨
+    // 「这条是子任务在动」还是「这条不关我事」。
+    bool isChildOf(const QString& sessionId, const QString& parentSessionId) const;
+
     QString lastError() const;
 
 signals:

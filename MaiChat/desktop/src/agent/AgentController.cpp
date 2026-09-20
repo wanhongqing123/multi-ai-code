@@ -208,6 +208,17 @@ std::vector<MaiQuestionRequest> AgentController::pendingQuestions() const {
     return runtime_->agent->listPendingQuestions();
 }
 
+std::vector<MaiSubAgentInfo> AgentController::subAgents(const QString& parentSessionId) const {
+    return runtime_->agent->listSubAgents(toUtf8(parentSessionId));
+}
+
+bool AgentController::isChildOf(const QString& sessionId, const QString& parentSessionId) const {
+    if (sessionId.isEmpty() || parentSessionId.isEmpty()) return false;
+    MaiSession session;
+    if (!runtime_->agent->getSession(toUtf8(sessionId), session)) return false;
+    return fromUtf8(session.parentId) == parentSessionId;
+}
+
 // ---- 事件 ----
 
 void AgentController::rawEvent(const MaiEvent& event) {

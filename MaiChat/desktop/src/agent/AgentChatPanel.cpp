@@ -94,6 +94,71 @@ protected:
 //
 // 一行淡色文字，不是灰色药丸——对齐 Codex 那个「用时 1m 10s ›」。
 // 它是回答的注脚，不该有自己的容器和背景，那会让它看起来像一条独立消息。
+// ── 子任务 ──────────────────────────────────────────────────────
+//
+// 一个子 Agent 一张卡，**原地更新**，不往下刷新行。
+//
+// 为什么不把子任务的正文铺进主对话流：一屏里三个 agent 同时说话，谁也读不下去。
+// 而且那本来就不是父在说话——父要的是结论，结论会通过 wait_agent 回到父这边，
+// 正常出现在它的回答里。这张卡只回答一个问题：**它现在在干什么、干完没有。**
+class AgentChatPanel::SubAgentCard final : public QFrame {
+public:
+    explicit SubAgentCard(QWidget* parent = nullptr) : QFrame(parent) {
+        // 和 ToolCard 一样按 id 选：QLabel 本身是 QFrame 的子类，
+        // 按类型选会把卡里每个标签也套上边框。
+        setObjectName(QStringLiteral("agentSubTaskCard"));
+        setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
+        auto* column = new QVBoxLayout(this);
+        column->setContentsMargins(UiZoom::s(11), UiZoom::s(7), UiZoom::s(11), UiZoom::s(7));
+        column->setSpacing(UiZoom::s(4));
+
+        auto* head = new QHBoxLayout;
+        head->setSpacing(UiZoom::s(8));
+        name_ = makeLabel(QString(), 12, kInk, true);
+        name_->setWordWrap(false);
+        state_ = makeLabel(QString(), 11, kInkFaint);
+        state_->setWordWrap(false);
+        head->addWidget(name_);
+        head->addStretch(1);
+        head->addWidget(state_);
+        column->addLayout(head);
+
+        // 它最近说的一句。**只留一行**：这是个进度指示，不是第二个对话框。
+        latest_ = makeLabel(QString(), 12, kInkSoft);
+        latest_->setWordWrap(false);
+        column->addWidget(latest_);
+
+        setStyleSheet(UiZoom::scaleQss(
+            QStringLiteral("QFrame#agentSubTaskCard{background:#fbfcfe;border:1px solid %1;"
+                           "border-radius:8px;}")
+                .arg(kLine)));
+    }
+
+    void setTask(const QString& name) {
+        name_->setText(QStringLiteral("子任务 · ") + name);
+    }
+
+    void setState(const QString& state) {
+        state_->setText(state);
+    }
+
+    // 只显示最后一行，而且截断。子 Agent 可能吐几千字，
+    // 全塞进来的话这张卡会把主对话流挤没。
+    void setLatest(const QString& text) {
+        QString line = text.trimmed();
+        const int newline = line.lastIndexOf(QLatin1Char('\n'));
+        if (newline >= 0) line = line.mid(newline + 1).trimmed();
+        if (line.size() > 60) line = line.left(60) + QStringLiteral("…");
+        latest_->setText(line);
+        latest_->setVisible(!line.isEmpty());
+    }
+
+private:
+    QLabel* name_ = nullptr;
+    QLabel* state_ = nullptr;
+    QLabel* latest_ = nullptr;
+};
+
 class AgentChatPanel::ThinkingLine final : public QWidget {
 public:
     explicit ThinkingLine(QWidget* parent = nullptr) : QWidget(parent) {
@@ -319,6 +384,8 @@ struct AgentChatPanel::Runtime {
     // 由 MarkdownView 负责摆位置和跟着滚。
     QHash<QString, ThinkingLine*> thinking;
     QHash<QString, ToolCard*> toolCards;
+    // 子会话 id -> 那张子任务卡。
+    QHash<QString, SubAgentCard*> subAgentCards;
 
     // partId -> 已经攒到的 Markdown 原文。正文没有部件了，源在这儿。
     QHash<QString, QString> answers;
@@ -468,7 +535,10 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     connect(&controller, &AgentController::textDelta, this,
             [this](const QString& sessionId, const QString&, const QString& partId,
                    const QString& delta) {
-                if (!isCurrentSession(sessionId)) return;
+                if (!isCurrentSession(sessionId)) {
+                    noteOtherSession(sessionId, delta);
+                    return;
+                }
                 appendAnswerDelta(partId, delta);
             });
     connect(&controller, &AgentController::reasoningDelta, this,
@@ -498,7 +568,10 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     connect(&controller, &AgentController::questionAnswered, this,
             [this](const QString&, const QString&) { clearQuestion(); });
     connect(&controller, &AgentController::turnFinished, this, [this](const QString& sessionId) {
-        if (!isCurrentSession(sessionId)) return;
+        if (!isCurrentSession(sessionId)) {
+            noteOtherSession(sessionId, QString());
+            return;
+        }
         setRunning(false);
         emit sessionListChanged();
         for (ThinkingLine* line : runtime_->thinking) line->settle();
@@ -508,7 +581,10 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     });
     connect(&controller, &AgentController::turnFailed, this,
             [this](const QString& sessionId, const QString& message) {
-                if (!isCurrentSession(sessionId)) return;
+                if (!isCurrentSession(sessionId)) {
+                    noteOtherSession(sessionId, message);
+                    return;
+                }
                 setRunning(false);
                 for (ThinkingLine* line : runtime_->thinking) line->settle();
                 flushAnswers();
@@ -565,6 +641,7 @@ void AgentChatPanel::reloadFromStore() {
     runtime_->dirtyAnswers.clear();
     runtime_->thinking.clear();
     runtime_->toolCards.clear();
+    runtime_->subAgentCards.clear();
 
     for (const MaiMessage& message :
          runtime_->controller->agent().listMessages(toUtf8(runtime_->sessionId))) {
@@ -715,6 +792,38 @@ void AgentChatPanel::refreshToolCard(const QString& messageId, const QString& pa
         }
         return;
     }
+}
+
+void AgentChatPanel::noteOtherSession(const QString& sessionId, const QString& text) {
+    // 只认自己的孩子。别的根会话（用户在另一个标签页里开的）不关这儿的事。
+    if (!runtime_->controller->isChildOf(sessionId, runtime_->sessionId)) return;
+
+    SubAgentCard* card = subAgentCardFor(sessionId);
+    if (card == nullptr) return;
+    if (!text.isEmpty()) card->setLatest(text);
+
+    // 状态每次都从核心现取，不在这边推算：多端同时开着的时候，
+    // 推算出来的状态会和真实情况岔开。
+    for (const MaiSubAgentInfo& info : runtime_->controller->subAgents(runtime_->sessionId)) {
+        if (fromUtf8(info.sessionId) != sessionId) continue;
+        card->setTask(fromUtf8(info.taskName));
+        const std::string& status = info.status;
+        card->setState(status == "running"  ? QStringLiteral("在跑")
+                       : status == "closed" ? QStringLiteral("已收")
+                                            : QStringLiteral("完成"));
+        return;
+    }
+}
+
+AgentChatPanel::SubAgentCard* AgentChatPanel::subAgentCardFor(const QString& sessionId) {
+    auto found = runtime_->subAgentCards.constFind(sessionId);
+    if (found != runtime_->subAgentCards.constEnd()) return found.value();
+
+    auto* card = new SubAgentCard;
+    runtime_->view->addWidget(QStringLiteral("sub-") + sessionId, card);
+    runtime_->subAgentCards.insert(sessionId, card);
+    scrollToBottom();
+    return card;
 }
 
 void AgentChatPanel::showQuestion(const QString& questionId) {

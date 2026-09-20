@@ -68,6 +68,7 @@ private:
     // 它们要能点（展开、授权），画不出来，所以嵌进 MarkdownView 里当部件用。
     class ThinkingLine;
     class ToolCard;
+    class SubAgentCard;
 
     // 把整个对话从存储里重画一遍。用在打开会话和清空之后——
     // 流式期间**不要**调它，那会把正在长的正文整个换掉，界面会闪。
@@ -79,6 +80,14 @@ private:
     // 接进父的答案里。授权和提问是例外：子 Agent 没有自己的界面，滤掉的话
     // 它会永远挂在闸门上等一个永远不会来的点头。
     bool isCurrentSession(const QString& sessionId) const;
+
+    // 别的会话在动。是当前会话的子 Agent 就更新它那张卡，不是就丢掉。
+    //
+    // **子任务的正文不进主对话流**：那是它自己的活，父要的是结论，
+    // 而结论会通过 wait_agent 回到父这边、正常出现在回答里。全铺出来的话
+    // 一屏里三个 agent 同时说话，谁也读不下去。
+    void noteOtherSession(const QString& sessionId, const QString& text);
+    SubAgentCard* subAgentCardFor(const QString& sessionId);
 
     void onSend();
     void onClear();

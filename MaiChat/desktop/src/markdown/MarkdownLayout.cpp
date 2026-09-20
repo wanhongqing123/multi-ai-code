@@ -146,11 +146,28 @@ public:
 private:
     // ── 字体 ────────────────────────────────────────────────
 
+    // **字形提示只做竖直方向**，而且只在这儿做。
+    //
+    // Qt 在 Windows 上默认全提示：每个字形的步进被四舍五入到整像素，同一个词里
+    // 字距就忽宽忽窄——"QTextDocument" 会渲染成 "QTextDocum ent"，一眼看去像字
+    // 没连上。段落越长越明显，所以正文这条路要改。
+    //
+    // 只提示竖直方向：横向位置保留亚像素精度（字距变匀），竖直方向仍然对齐像素
+    // 栅格（横笔画还是锐的）。不选 PreferNoHinting 是因为那样小字号下横笔画发虚。
+    //
+    // **不要把这一条搬到 QApplication 的字体上**。试过，代价是按钮、列表、登录页
+    // 的标题一起失去横向提示，整个界面发虚——为一个只在长段落里看得出来的问题
+    // 换掉全产品的观感，不划算。
+    static QFont tuned(QFont font) {
+        font.setHintingPreference(QFont::PreferVerticalHinting);
+        return font;
+    }
+
     QFont bodyFont() const {
         QFont font;
         if (!theme_.bodyFamily.isEmpty()) font.setFamily(theme_.bodyFamily);
         font.setPixelSize(theme_.bodyPixelSize);
-        return font;
+        return tuned(font);
     }
 
     QFont headingFont(int level) const {
@@ -170,10 +187,12 @@ private:
     // 两个都设才盖得住。
     QFont monospace(int pixelSize) const {
         QFont font;
+        // 两个都要设：应用字体是用 setFamilies 设的，只设 setFamily 会被静默忽略，
+        // 代码块就还是正文字体。
         font.setFamilies({theme_.codeFamily});
         font.setFamily(theme_.codeFamily);
         font.setPixelSize(pixelSize);
-        return font;
+        return tuned(font);
     }
 
     QFont codeFont() const {

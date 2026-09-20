@@ -56,7 +56,6 @@ int main(int argc, char** argv) {
     appFont.setFamilies({QStringLiteral("Segoe UI"), QStringLiteral("Microsoft YaHei UI"),
                          QStringLiteral("Microsoft YaHei")});
     appFont.setPixelSize(13);
-    appFont.setHintingPreference(QFont::PreferVerticalHinting);
     app.setFont(appFont);
 #endif
     const QString output =

@@ -64,8 +64,6 @@ int main(int argc, char** argv) {
     appFont.setFamilies({QStringLiteral("Segoe UI"), QStringLiteral("Microsoft YaHei UI"),
                          QStringLiteral("Microsoft YaHei")});
     appFont.setPixelSize(13);
-    // 和 main.cpp 一致，否则截出来的图不代表真机（见那边的注释）。
-    appFont.setHintingPreference(QFont::PreferVerticalHinting);
     app.setFont(appFont);
 #endif
     const QString output =

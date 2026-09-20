@@ -369,6 +369,9 @@ target_link_libraries(markdown_layout_test PRIVATE maichat_markdown Qt5::Widgets
 add_executable(markdown_view_test tests/MarkdownViewTest.cpp)
 target_link_libraries(markdown_view_test PRIVATE maichat_markdown Qt5::Widgets Qt5::Test)
 
+add_executable(markdown_label_test tests/MarkdownLabelTest.cpp)
+target_link_libraries(markdown_label_test PRIVATE maichat_markdown Qt5::Widgets Qt5::Test)
+
 add_executable(agent_controller_test tests/AgentControllerTest.cpp)
 target_link_libraries(agent_controller_test PRIVATE maichat_agent Qt5::Test)
 
@@ -434,6 +437,10 @@ target_link_libraries(agent_page_visual_probe PRIVATE remote_im_desktop_ui remot
 
 add_executable(im_markdown_visual_probe tests/ImMarkdownVisualProbe.cpp)
 target_link_libraries(im_markdown_visual_probe PRIVATE remote_im_desktop_ui remote_im_desktop_app
+  remote_im_core maichat_markdown Qt5::Widgets Qt5::Test)
+
+add_executable(im_stress_probe tests/ImStressProbe.cpp)
+target_link_libraries(im_stress_probe PRIVATE remote_im_desktop_ui remote_im_desktop_app
   remote_im_core maichat_markdown Qt5::Widgets Qt5::Test)
 
 add_executable(markdown_text_probe tests/MarkdownTextProbe.cpp)
@@ -537,6 +544,7 @@ enable_testing()
 add_test(NAME markdown_document_test COMMAND markdown_document_test)
 add_test(NAME markdown_layout_test COMMAND markdown_layout_test)
 add_test(NAME markdown_view_test COMMAND markdown_view_test)
+add_test(NAME markdown_label_test COMMAND markdown_label_test)
 add_test(NAME agent_controller_test COMMAND agent_controller_test)
 add_test(NAME agent_panel_session_test COMMAND agent_panel_session_test)
 add_test(NAME performance_log_test COMMAND performance_log_test)

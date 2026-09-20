@@ -75,6 +75,10 @@ protected:
     void keyPressEvent(QKeyEvent* event) override;
 
 private:
+    // 按 width 排版；宽度没变就是空操作。
+    void ensureLayout(qreal width);
+    // 按**当前部件宽度**排版。量高度可能把版排到别的宽度上去了。
+    void ensureCurrentLayout() const;
     void relayout();
 
     struct Runtime;

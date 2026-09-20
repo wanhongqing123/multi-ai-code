@@ -95,6 +95,8 @@ QString MarkdownLabel::plainText() const {
 }
 
 int MarkdownLabel::contentHeight() const {
+    // 「当前宽度下的内容高度」——量高度可能把版排到别的宽度上去了，先纠回来。
+    ensureCurrentLayout();
     return qCeil(runtime_->layout.height());
 }
 
@@ -103,16 +105,9 @@ bool MarkdownLabel::hasHeightForWidth() const {
 }
 
 int MarkdownLabel::heightForWidth(int width) const {
-    const qreal target = qMax(width, kMinimumLayoutWidth);
-    if (!qFuzzyCompare(runtime_->laidOutWidth, target)) {
-        // 布局问高度时还没真的 resize，这里得按它问的宽度排一遍。
-        // const 的语义是「对外看不出变化」——排版结果只是缓存。
-        Runtime& runtime = *runtime_;
-        runtime.layout.setTrailingNote(runtime.noteText, runtime.noteColor, runtime.notePixelSize);
-        runtime.layout.layout(runtime.document, runtime.theme, target);
-        runtime.layout.setSelection(runtime.anchor, runtime.cursor);
-        runtime.laidOutWidth = target;
-    }
+    // 布局问高度时还没真的 resize，这里得按它问的宽度排一遍。
+    // const 的语义是「对外看不出变化」——排版结果只是缓存。
+    const_cast<MarkdownLabel*>(this)->ensureLayout(qMax(width, kMinimumLayoutWidth));
     return qCeil(runtime_->layout.height());
 }
 
@@ -127,6 +122,7 @@ QSize MarkdownLabel::minimumSizeHint() const {
 }
 
 QString MarkdownLabel::linkAt(const QPoint& point) const {
+    ensureCurrentLayout();
     return runtime_->layout.linkAt(QPointF(point));
 }
 
@@ -158,8 +154,10 @@ void MarkdownLabel::copySelection() {
     QApplication::clipboard()->setText(text);
 }
 
-void MarkdownLabel::relayout() {
-    const qreal width = qMax(this->width(), kMinimumLayoutWidth);
+// 保证这份版是按 width 排的。宽度没变就什么都不做——排版是这里最贵的一步，
+// 而 Qt 的布局会为同一个宽度反复问高度。
+void MarkdownLabel::ensureLayout(qreal width) {
+    if (qFuzzyCompare(runtime_->laidOutWidth, width)) return;
     runtime_->layout.setTrailingNote(runtime_->noteText, runtime_->noteColor,
                                      runtime_->notePixelSize);
     runtime_->layout.layout(runtime_->document, runtime_->theme, width);
@@ -167,7 +165,19 @@ void MarkdownLabel::relayout() {
     runtime_->laidOutWidth = width;
 }
 
+void MarkdownLabel::relayout() {
+    ensureLayout(qMax(this->width(), kMinimumLayoutWidth));
+}
+
 void MarkdownLabel::paintEvent(QPaintEvent* event) {
+    // **画之前先确认这份版是按自己当前宽度排的。**
+    //
+    // heightForWidth() 会把版排到调用方问的那个宽度上——Qt 的布局在定案之前
+    // 会拿好几个试探宽度来问。要是最后一次问的是 120，而部件实际有 600 宽，
+    // 这里直接画就会按 120 折行：一句话被切成好几行，右边大片空白。
+    // 缓存命中时这一句是免费的。
+    ensureLayout(qMax(width(), kMinimumLayoutWidth));
+
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
     runtime_->layout.paint(&painter, QPointF(0, 0), QRectF(event->rect()));
@@ -180,12 +190,18 @@ void MarkdownLabel::resizeEvent(QResizeEvent* event) {
     updateGeometry();
 }
 
+// 选区和命中测试也都要按当前宽度来：坐标是拿这份版算的。
+void MarkdownLabel::ensureCurrentLayout() const {
+    const_cast<MarkdownLabel*>(this)->ensureLayout(qMax(width(), kMinimumLayoutWidth));
+}
+
 void MarkdownLabel::mousePressEvent(QMouseEvent* event) {
     if (event->button() != Qt::LeftButton) {
         QWidget::mousePressEvent(event);
         return;
     }
     runtime_->pressPosition = event->pos();
+    ensureCurrentLayout();
     runtime_->anchor = runtime_->layout.positionAt(QPointF(event->pos()));
     runtime_->cursor = runtime_->anchor;
     runtime_->selecting = true;

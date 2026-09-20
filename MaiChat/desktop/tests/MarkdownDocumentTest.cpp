@@ -239,13 +239,39 @@ void MarkdownDocumentTest::recognizesCallouts() {
     // 标记本身不能显示出来。
     QCOMPARE(textOf(tip.blocks()[0].spans), QStringLiteral("记得先备份"));
 
-    // 只有**独占一行**的标记才算。行内出现的得原样留着，
-    // 否则一句正常的话里提到 [!TIP] 就会被吃掉。
-    const MarkdownDocument inline_ =
-        MarkdownDocument::parse(QStringLiteral("> [!TIP] 这句话里提到了它"));
-    QCOMPARE(inline_.blocks().size(), 1);
-    QCOMPARE(inline_.blocks()[0].callout, MarkdownCallout::None);
-    QVERIFY(textOf(inline_.blocks()[0].spans).startsWith(QStringLiteral("[!TIP]")));
+    // 标记和正文写在**同一行**也算。GFM 要求标记独占一行，但老的 HTML 渲染器
+    // 一直认这种写法（见 MainWindowLayoutTest 的 same-line-preview-callout），
+    // 自绘这边不认就是退化。
+    //
+    // 这条我一开始写反了：照着 GFM 的严格规则断言「同一行不算」，没去看 IM
+    // 那边已经有的用例。以线上行为为准。
+    const MarkdownDocument sameLine =
+        MarkdownDocument::parse(QStringLiteral("> [!TIP] 记得先备份"));
+    QCOMPARE(sameLine.blocks().size(), 1);
+    QCOMPARE(sameLine.blocks()[0].callout, MarkdownCallout::Tip);
+    QCOMPARE(textOf(sameLine.blocks()[0].spans), QStringLiteral("记得先备份"));
+
+    // 但标记后面必须**隔着空白**。`[!TIP]紧跟正文` 更像有人在写一段以方括号
+    // 开头的普通话，照原样留着。
+    const MarkdownDocument glued =
+        MarkdownDocument::parse(QStringLiteral("> [!TIP]这句话里提到了它"));
+    QCOMPARE(glued.blocks()[0].callout, MarkdownCallout::None);
+    QVERIFY(textOf(glued.blocks()[0].spans).startsWith(QStringLiteral("[!TIP]")));
+
+    // 不在段首的不算：一句话中间提到 [!TIP] 不该把整段变成提示框。
+    const MarkdownDocument midSentence =
+        MarkdownDocument::parse(QStringLiteral("> 文档里写的是 [!TIP] 这个写法"));
+    QCOMPARE(midSentence.blocks()[0].callout, MarkdownCallout::None);
+    QVERIFY(textOf(midSentence.blocks()[0].spans).contains(QStringLiteral("[!TIP]")));
+
+    // 链接和行内代码里的是**字面量**，不是标记。
+    const MarkdownDocument linked =
+        MarkdownDocument::parse(QStringLiteral("> [[!TIP]](https://example.com) 正文"));
+    QCOMPARE(linked.blocks()[0].callout, MarkdownCallout::None);
+    QVERIFY(textOf(linked.blocks()[0].spans).startsWith(QStringLiteral("[!TIP]")));
+    const MarkdownDocument coded = MarkdownDocument::parse(QStringLiteral("> `[!TIP]` 正文"));
+    QCOMPARE(coded.blocks()[0].callout, MarkdownCallout::None);
+    QVERIFY(textOf(coded.blocks()[0].spans).startsWith(QStringLiteral("[!TIP]")));
 
     // 不认识的标记不是提示框。
     const MarkdownDocument unknown =

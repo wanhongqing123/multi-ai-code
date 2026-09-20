@@ -116,6 +116,28 @@ struct Builder {
     // 只在引用里、段落刚开头的位置认标记。别处出现的 `[!TIP]` 是普通文字。
     bool tryHoldCallout(const QString& piece);
 
+    // 标记和正文在**同一段文字**里 —— `> [!TIP] 正文`。md4c 不会为了我们把它
+    // 拆成两段，整行就是一个 MD_TEXT_NORMAL，所以得自己在开头找标记。
+    bool tryStartCalloutInline(QString* piece);
+
+    // 认不认「标记后面紧跟正文」这件事，两条路共用一个判据。
+    bool calloutPositionAllowed() const;
+
+    // 标记后面在**同一行**上还有字 —— `> [!TIP] 正文`。GFM 要求标记独占一行，
+    // 但人就是会这么写，老的 HTML 渲染器也一直认这种形式，换成自绘不能退化。
+    //
+    // 判据是「后面那段字以空白开头」：`[!TIP] 正文` 认，`[!TIP]正文` 不认——
+    // 后者更像是有人在写一段以方括号开头的普通话。
+    bool tryFinishCalloutInline(QString* piece) {
+        if (pendingCallout == MarkdownCallout::None) return false;
+        if (piece->isEmpty() || !piece->at(0).isSpace()) return false;
+        commitPendingCallout();
+        int start = 0;
+        while (start < piece->size() && piece->at(start).isSpace()) ++start;
+        *piece = piece->mid(start);
+        return true;
+    }
+
     void addText(const QString& text) {
         QVector<MarkdownSpan>* target = sink();
         if (target == nullptr || text.isEmpty()) return;
@@ -150,19 +172,46 @@ MarkdownCallout calloutFor(const QString& marker) {
     return MarkdownCallout::None;
 }
 
-bool Builder::tryHoldCallout(const QString& piece) {
-    // 只在引用里、当前段落还一个字都没有的时候认。别处的 `[!TIP]` 是普通文字。
+// 只在引用里、当前段落还一个字都没有的时候认。别处的 `[!TIP]` 是普通文字。
+bool Builder::calloutPositionAllowed() const {
     if (pendingCallout != MarkdownCallout::None) return false;
     if (quoteDepth == 0 || quoteCallout.isEmpty()) return false;
     if (quoteCallout.last() != MarkdownCallout::None) return false;
     if (!inBlock || current.kind != MarkdownBlockKind::Paragraph) return false;
     if (!current.spans.isEmpty()) return false;
+    // 链接里的、行内代码里的 `[!TIP]` 是**写给人看的字面量**，不是标记。
+    // 没有这两条，`> [[!TIP]](url)` 和 `` > `[!TIP]` `` 会被当成提示框。
+    if (!linkStack.isEmpty()) return false;
+    if (currentStyles().testFlag(MarkdownStyle::Code)) return false;
+    return true;
+}
+
+bool Builder::tryHoldCallout(const QString& piece) {
+    if (!calloutPositionAllowed()) return false;
     if (!piece.startsWith(QLatin1String("[!")) || !piece.endsWith(QLatin1Char(']'))) return false;
 
     const MarkdownCallout kind = calloutFor(piece.mid(2, piece.size() - 3));
     if (kind == MarkdownCallout::None) return false;
     pendingCallout = kind;
     pendingCalloutText = piece;
+    return true;
+}
+
+bool Builder::tryStartCalloutInline(QString* piece) {
+    if (!calloutPositionAllowed()) return false;
+    if (!piece->startsWith(QLatin1String("[!"))) return false;
+    const int close = piece->indexOf(QLatin1Char(']'));
+    if (close < 0) return false;
+    // 标记后面必须**隔着空白**才算 —— `[!TIP] 正文` 认，`[!TIP]正文` 不认，
+    // 后者更像有人在写一段以方括号开头的普通话。
+    if (close + 1 >= piece->size() || !piece->at(close + 1).isSpace()) return false;
+
+    const MarkdownCallout kind = calloutFor(piece->mid(2, close - 2));
+    if (kind == MarkdownCallout::None) return false;
+    quoteCallout.last() = kind;
+    int start = close + 1;
+    while (start < piece->size() && piece->at(start).isSpace()) ++start;
+    *piece = piece->mid(start);
     return true;
 }
 
@@ -421,8 +470,14 @@ int onText(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* userdata) 
                 builder->current.code += fromMd(text, size);
                 break;
             }
-            builder->flushPendingCallout();
-            builder->addText(fromMd(text, size));
+            {
+                QString piece = fromMd(text, size);
+                if (!builder->tryFinishCalloutInline(&piece)) {
+                    builder->flushPendingCallout();
+                    builder->tryStartCalloutInline(&piece);
+                }
+                builder->addText(piece);
+            }
             break;
 
         case MD_TEXT_BR:
@@ -455,9 +510,12 @@ int onText(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* userdata) 
             break;
 
         default: {
-            const QString piece = fromMd(text, size);
+            QString piece = fromMd(text, size);
             if (builder->tryHoldCallout(piece)) break;
-            builder->flushPendingCallout();
+            if (!builder->tryFinishCalloutInline(&piece)) {
+                builder->flushPendingCallout();
+                builder->tryStartCalloutInline(&piece);
+            }
             builder->addText(piece);
             break;
         }
@@ -489,20 +547,61 @@ MarkdownDocument MarkdownDocument::parse(const QString& markdown) {
     return document;
 }
 
+QString markdownCalloutTitle(MarkdownCallout callout) {
+    switch (callout) {
+        case MarkdownCallout::Note:
+            return QStringLiteral("提示");
+        case MarkdownCallout::Tip:
+            return QStringLiteral("建议");
+        case MarkdownCallout::Important:
+            return QStringLiteral("重要");
+        case MarkdownCallout::Warning:
+            return QStringLiteral("注意");
+        case MarkdownCallout::Caution:
+            return QStringLiteral("警告");
+        case MarkdownCallout::None:
+            break;
+    }
+    return QString();
+}
+
 QString MarkdownDocument::plainText() const {
     QStringList pieces;
+    // 提示框的标题只在一组的**头一个块**前面加一次。同一个提示框里有三段的话，
+    // 「建议：」出现三遍会把这一行本来就不多的位置占满。
+    //
+    // 标题不单独成段，而是粘在后面第一段的前头：段与段之间是拿空格拼的，
+    // 单独成段会出来「建议： 正文」，冒号后面多一个空格。
+    MarkdownCallout openCallout = MarkdownCallout::None;
+    QVector<int> openQuote;
+    QString pendingTitle;
+    const auto push = [&pieces, &pendingTitle](const QString& piece) {
+        pieces.push_back(pendingTitle + piece);
+        pendingTitle.clear();
+    };
     for (const MarkdownBlock& block : mBlocks) {
+        if (block.callout != openCallout || block.quoteIds != openQuote) {
+            openCallout = block.callout;
+            openQuote = block.quoteIds;
+            const QString title = markdownCalloutTitle(block.callout);
+            pendingTitle = title.isEmpty() ? QString() : title + QStringLiteral("：");
+        }
         switch (block.kind) {
             case MarkdownBlockKind::Code:
-                pieces.push_back(block.code.trimmed());
+                push(block.code.trimmed());
                 break;
             case MarkdownBlockKind::Divider:
                 break;
             case MarkdownBlockKind::List:
                 for (const MarkdownListItem& item : block.items) {
                     QString line;
+                    // 任务列表在预览行里也要能看出勾没勾上——只剩文字的话，
+                    // 「完成 待办」读起来像两件都没做。
+                    if (item.hasCheckbox) {
+                        line += item.checked ? QStringLiteral("☑ ") : QStringLiteral("☐ ");
+                    }
                     for (const MarkdownSpan& span : item.spans) line += span.text;
-                    if (!line.isEmpty()) pieces.push_back(line);
+                    if (!line.trimmed().isEmpty()) push(line);
                 }
                 break;
             case MarkdownBlockKind::Table:
@@ -513,13 +612,13 @@ QString MarkdownDocument::plainText() const {
                         for (const MarkdownSpan& span : cell) text += span.text;
                         cells.push_back(text);
                     }
-                    pieces.push_back(cells.join(QStringLiteral(" ")));
+                    push(cells.join(QStringLiteral(" ")));
                 }
                 break;
             default: {
                 QString line;
                 for (const MarkdownSpan& span : block.spans) line += span.text;
-                if (!line.isEmpty()) pieces.push_back(line);
+                if (!line.isEmpty()) push(line);
                 break;
             }
         }

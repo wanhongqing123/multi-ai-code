@@ -41,6 +41,16 @@ public:
     MarkdownLayout(const MarkdownLayout&) = delete;
     MarkdownLayout& operator=(const MarkdownLayout&) = delete;
 
+    // 正文末尾那一小段附注。IM 的消息时间戳用它。
+    //
+    // **接在最后一行的末尾，不另起一行。** 另起一行的话，一条「好」这样的单行消息
+    // 会凭空多出一整行高，气泡看起来空荡荡的——原来那版用 QTextCursor 往文档尾巴上
+    // 插一段字来做这件事，换成自绘之后没有文档可插了，所以做成排版层的一个入参。
+    //
+    // 要在 layout() **之前**设好：它参与排版，不是画完再贴上去的。
+    // 附注算进可选文字，和原来 QTextBrowser 的行为一致（复制会带上时间）。
+    void setTrailingNote(const QString& text, const QColor& color, int pixelSize);
+
     // 按给定宽度排版。width 是**内容宽度**，不含调用方自己的外边距。
     void layout(const MarkdownDocument& document, const MarkdownTheme& theme, qreal width);
 

@@ -124,16 +124,18 @@ MarkdownTheme MarkdownTheme::standard(qreal zoom) {
 
 MarkdownCalloutStyle MarkdownTheme::calloutStyle(MarkdownCallout callout) const {
     switch (callout) {
+        // 标题不在这儿写死：会话列表的预览行也要同一串字，
+        // 两处各写一份迟早会对不上。
         case MarkdownCallout::Note:
-            return {hex("#1f64b0"), hex("#f0f5fb"), QStringLiteral("提示")};
+            return {hex("#1f64b0"), hex("#f0f5fb"), markdownCalloutTitle(callout)};
         case MarkdownCallout::Tip:
-            return {hex("#16836b"), hex("#eff7f4"), QStringLiteral("建议")};
+            return {hex("#16836b"), hex("#eff7f4"), markdownCalloutTitle(callout)};
         case MarkdownCallout::Important:
-            return {hex("#7547a8"), hex("#f5f1fa"), QStringLiteral("重要")};
+            return {hex("#7547a8"), hex("#f5f1fa"), markdownCalloutTitle(callout)};
         case MarkdownCallout::Warning:
-            return {hex("#9c640f"), hex("#fbf6ec"), QStringLiteral("注意")};
+            return {hex("#9c640f"), hex("#fbf6ec"), markdownCalloutTitle(callout)};
         case MarkdownCallout::Caution:
-            return {hex("#ba3d40"), hex("#fbf1f2"), QStringLiteral("警告")};
+            return {hex("#ba3d40"), hex("#fbf1f2"), markdownCalloutTitle(callout)};
         case MarkdownCallout::None:
             break;
     }

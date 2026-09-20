@@ -83,7 +83,10 @@
 
 #include "im/RemoteIMCredentialDefaults.h"
 #include "im/VideoFileMetadata.h"
+#include "markdown/MarkdownDocument.h"
+#include "markdown/MarkdownLabel.h"
 #include "markdown/MarkdownRenderer.h"
+#include "markdown/MarkdownTheme.h"
 #include "ui/AddContactDialog.h"
 #include "ui/AppMessageDialog.h"
 #include <QSystemTrayIcon>
@@ -159,157 +162,54 @@ void setMessageRowDivider(QWidget* row, bool visible) {
     row->update();
 }
 
-class MarkdownMessageView final : public QTextBrowser {
+// IM 的消息正文。**和 AI 助手页是同一套渲染**：都走 MarkdownDocument →
+// MarkdownLayout → 自己画，共用一份 MarkdownTheme。
+//
+// 原来这里是 QTextBrowser：MarkdownRenderer 出一段 HTML，交给 QTextDocument 排。
+// 那条路有两个绕不过去的问题——
+//
+//   外观受限   QTextDocument 只认 CSS 的一个子集：行内 padding、块级圆角、
+//              border-left、复选框全都没有。代码块和引用块只能拿表格去模拟。
+//   两套皮肤   AI 页换成自绘之后，同一段 markdown 在两边长得不一样，
+//              而且改一边另一边不会跟着变。
+//
+// 这个类现在只负责「IM 特有的那几件事」：右键菜单、回复/转发、复制原始数据、
+// 把时间戳接在正文末尾、以及按宽度定高。画字的活全在 MarkdownLabel 里。
+class MarkdownMessageView final : public MarkdownLabel {
 public:
-    explicit MarkdownMessageView(QWidget* parent = nullptr) : QTextBrowser(parent) {
+    explicit MarkdownMessageView(QWidget* parent = nullptr) : MarkdownLabel(parent) {
         setObjectName(QStringLiteral("messageMarkdownView"));
-        setFrameShape(QFrame::NoFrame);
-        setReadOnly(true);
-        setOpenExternalLinks(true);
-        setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-        setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        setTheme(MarkdownTheme::standard(UiZoom::factor()));
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        setWordWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
-        document()->setDocumentMargin(0);
-        // Leave room for the marker and its gap, including at non-default zoom.
-        document()->setIndentWidth(UiZoom::s(28));
-        viewport()->setAutoFillBackground(false);
-        // 对齐 Electron 端 .remote-im-bubble 正文：14px / #0f172a，链接 #2563eb。
-        setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
-            QTextBrowser {
-                background: transparent;
-                border: 0;
-                font-size: 15px;
-            }
-            QTextBrowser a {
-                color: #2563eb;
-            }
-        )")));
-
-        // Native Qt disc markers use palette Text, ignoring block foreground.
-        // Prose keeps its explicit HTML color; markers match iOS RemoteIMStyle.blue.
-        QPalette markerPalette = palette();
-        markerPalette.setColor(QPalette::Text, QColor::fromRgbF(0.059, 0.553, 0.867));
-        setPalette(markerPalette);
+        // 链接点开走系统浏览器，和原来 setOpenExternalLinks(true) 一样。
+        connect(this, &MarkdownLabel::linkActivated, this, [](const QString& href) {
+            QDesktopServices::openUrl(QUrl(href));
+        });
 
         copyOriginalDataAction_ = new QAction(QStringLiteral("复制原始数据"), this);
         copyOriginalDataAction_->setObjectName(QStringLiteral("copyOriginalDataAction"));
         connect(copyOriginalDataAction_, &QAction::triggered, this, [this]() {
-            QApplication::clipboard()->setText(sourceMarkdown_);
+            QApplication::clipboard()->setText(markdown());
         });
     }
 
     void setMessageMarkdown(const QString& markdown, const QString& timestamp = {}) {
-        // QTextDocument 只保留 Markdown 渲染后的富文本，无法无损还原标题、代码围栏、
-        // 链接目标等源语法；单独保存传入的规范化原文供“复制原始数据”使用。
-        sourceMarkdown_ = markdown;
-        // 渲染器输出的 HTML 内嵌固定 px 字号（正文 14px/h1 22px/code 13px…），
-        // 会盖过控件字体——整体缩放时须把这些 px 一并按倍率缩放。
-        setHtml(UiZoom::scaleQss(MarkdownRenderer::renderToHtml(markdown)));
-        // Qt paints list markers using the block's character format and uses
-        // the width of a space as the marker gap. Format only that marker;
-        // changing text runs would also widen spaces throughout the message.
-        for (auto block = document()->begin(); block.isValid(); block = block.next()) {
-            auto* list = block.textList();
-            if (!list) continue;
-            QTextCursor item(block);
-            QTextCharFormat marker = block.charFormat();
-            QFont markerFont = document()->defaultFont();
-            // Disc diameter is derived from this font's line spacing in Qt.
-            // Shrink only bullets; keep numbered markers and prose unchanged.
-            const bool disc = list->format().style() == QTextListFormat::ListDisc;
-            markerFont.setPixelSize(UiZoom::s(disc ? 11 : 15));
-            markerFont.setWeight(QFont::Normal);
-            markerFont.setWordSpacing(UiZoom::s(5));
-            marker.setFont(markerFont);
-            marker.setForeground(QColor::fromRgbF(0.059, 0.553, 0.867));
-            item.setBlockCharFormat(marker);
-            QTextBlockFormat spacing = block.blockFormat();
-            spacing.setTopMargin(UiZoom::s(5));
-            spacing.setBottomMargin(UiZoom::s(5));
-            item.setBlockFormat(spacing);
-        }
-        // Qt's HTML heading size adjustment can override CSS pixel sizes.
-        // Set actual heading runs explicitly, preserving inline code and emphasis.
-        for (auto block = document()->begin(); block.isValid(); block = block.next()) {
-            const int level = block.blockFormat().headingLevel();
-            if (level <= 0) continue;
-            const int size = level == 1 ? 22 : level == 2 ? 18 : level == 3 ? 16 : 14;
-            // Snapshot runs before editing their formats, which may merge runs.
-            struct HeadingRun {
-                int position;
-                int length;
-                QTextCharFormat format;
-            };
-            QList<HeadingRun> runs;
-            for (auto it = block.begin(); !it.atEnd(); ++it) {
-                const auto fragment = it.fragment();
-                if (fragment.isValid())
-                    runs.append({fragment.position(), fragment.length(), fragment.charFormat()});
-            }
-            for (auto& run : runs) {
-                const bool inlineCode = QFontInfo(run.format.font()).fixedPitch();
-                run.format.clearProperty(QTextFormat::FontSizeAdjustment);
-                run.format.setProperty(QTextFormat::FontPixelSize, UiZoom::s(inlineCode ? 13 : size));
-                if (inlineCode) run.format.setFontWeight(QFont::Normal);
-                else if (run.format.fontWeight() < QFont::Bold) {
-                    // CSS 500 can import as 62 instead of DemiBold (63). Use the
-                    // semantic Qt weight while preserving explicitly bold runs.
-                    run.format.setFontWeight(QFont::DemiBold);
-                }
-                QTextCursor heading(document());
-                heading.setPosition(run.position);
-                heading.setPosition(run.position + run.length, QTextCursor::KeepAnchor);
-                heading.setCharFormat(run.format);
-            }
-        }
         setProperty("messageTimestamp", timestamp);
-        if (!timestamp.isEmpty()) {
-            QTextCursor date(document());
-            date.movePosition(QTextCursor::End);
-            QTextCharFormat format;
-            format.setProperty(QTextFormat::FontPixelSize, UiZoom::s(11));
-            format.setFontWeight(QFont::DemiBold);
-            format.setForeground(QColor(QStringLiteral("#0f8ddd")));
-            format.setAnchor(false);
-            date.insertText(QStringLiteral("  · ") + timestamp, format);
-        }
-        // 与 iOS 的 4pt 行间距一致。155% 会把最后一行也拉高，
-        // 单行气泡的底部会额外多出约半行空白。
-        QTextCursor cursor(document());
-        cursor.select(QTextCursor::Document);
-        QTextBlockFormat lineHeight;
-        lineHeight.setLineHeight(UiZoom::s(4), QTextBlockFormat::LineDistanceHeight);
-        cursor.mergeBlockFormat(lineHeight);
-        // 段间距只留在正文内部；气泡边缘由外层布局统一留白。
-        QTextCursor first(document()->firstBlock());
-        QTextBlockFormat firstFormat = first.blockFormat();
-        firstFormat.setTopMargin(0);
-        first.setBlockFormat(firstFormat);
-        QTextCursor last(document()->lastBlock());
-        QTextBlockFormat lastFormat = last.blockFormat();
-        lastFormat.setBottomMargin(0);
-        // QTextDocument 会在结尾表格后附带一个空块，不让它占一整行。
-        // 必须只压真正空块；非空块（含图片对象）压到 1px 会裁切内容。
-        if (document()->blockCount() > 1 && last.block().text().isEmpty()) {
-            lastFormat.setTopMargin(0);
-            lastFormat.setLineHeight(1, QTextBlockFormat::FixedHeight);
-        }
-        last.setBlockFormat(lastFormat);
+        // 时间戳接在正文最后一行的末尾，不另起一行——另起一行的话，
+        // 一条「好」这样的单行消息会凭空多出一整行高。
+        setTrailingNote(timestamp.isEmpty() ? QString() : QStringLiteral("  \u00b7 ") + timestamp,
+                        QColor(QStringLiteral("#0f8ddd")), UiZoom::s(11));
+        setMarkdown(markdown);
         updateContentHeight();
-    }
-
-    QSize sizeHint() const override {
-        return QSize(360, qMax(UiZoom::s(20), qCeil(document()->size().height()) + 2));
     }
 
 protected:
     void resizeEvent(QResizeEvent* event) override {
-        QTextBrowser::resizeEvent(event);
+        MarkdownLabel::resizeEvent(event);
         updateContentHeight();
     }
 
-    // 替换 QTextBrowser 原生英文右键菜单（Copy/Copy Link Location/Select All），
+    // 替换原生英文右键菜单（Copy/Copy Link Location/Select All），
     // 换成与图片/文件气泡一致的飞书式中文菜单。定义在辅助函数之后（见文件下方）。
     void contextMenuEvent(QContextMenuEvent* event) override;
 
@@ -320,17 +220,15 @@ public:
     void setForwardHandler(std::function<void()> handler) { forwardHandler_ = std::move(handler); }
 
 private:
-    QString sourceMarkdown_;
     QAction* copyOriginalDataAction_ = nullptr;
     std::function<void()> replyHandler_;
     std::function<void()> forwardHandler_;
 
     void updateContentHeight() {
-        const int width = qMax(120, viewport()->width());
-        if (!qFuzzyCompare(document()->textWidth(), static_cast<qreal>(width))) {
-            document()->setTextWidth(width);
-        }
-        setFixedHeight(qMax(UiZoom::s(20), qCeil(document()->size().height()) + 2));
+        const int available = qMax(120, width());
+        const int wanted = qMax(UiZoom::s(20), heightForWidth(available));
+        if (height() == wanted && minimumHeight() == wanted) return;
+        setFixedHeight(wanted);
         updateGeometry();
     }
 };
@@ -1167,7 +1065,7 @@ void applyMessageContextMenuStyle(QMenu& menu) {
 void MarkdownMessageView::contextMenuEvent(QContextMenuEvent* event) {
     QMenu menu(this);
     applyMessageContextMenuStyle(menu);
-    const QString anchor = anchorAt(event->pos());
+    const QString anchor = linkAt(event->pos());
     QAction* replyAction = replyHandler_ ? menu.addAction(QStringLiteral("回复")) : nullptr;
     QAction* forwardAction = forwardHandler_
         ? menu.addAction(makeLineIcon(LineIconKind::Forward, kMenuIconColor),
@@ -1190,10 +1088,11 @@ void MarkdownMessageView::contextMenuEvent(QContextMenuEvent* event) {
     } else if (forwardAction != nullptr && chosen == forwardAction) {
         forwardHandler_();
     } else if (chosen == copyAction) {
-        if (textCursor().hasSelection()) {
-            copy();
+        // 没选中就整条复制，和原来 QTextBrowser 版本一致。
+        if (hasSelection()) {
+            copySelection();
         } else {
-            QApplication::clipboard()->setText(document()->toPlainText());
+            QApplication::clipboard()->setText(plainText());
         }
     } else if (copyLinkAction != nullptr && chosen == copyLinkAction) {
         QApplication::clipboard()->setText(anchor);
@@ -1241,11 +1140,6 @@ QString deliveryStatusIndicator(RemoteIMMessageStatus status) {
     return QString();
 }
 
-class PreviewTextDocument final : public QTextDocument {
-protected:
-    QVariant loadResource(int, const QUrl&) override { return {}; }
-};
-
 QString conversationMarkdownPreview(const QString& source) {
     // UI-thread only, outside the item delegate's paint path. Bound both parse
     // input and cache cost so long AICLI replies do not slow every list refresh.
@@ -1253,23 +1147,9 @@ QString conversationMarkdownPreview(const QString& source) {
     QString input = source.left(8192);
     if (!input.isEmpty() && QChar(input.back()).isHighSurrogate()) input.chop(1);
     if (const auto* cached = cache.object(input)) return *cached;
-    PreviewTextDocument document;
-    document.setHtml(MarkdownRenderer::renderPreviewHtml(input));
-    QStringList blocks;
-    for (auto block = document.begin(); block.isValid(); block = block.next()) {
-        QString text;
-        for (auto it = block.begin(); !it.atEnd(); ++it) {
-            const auto fragment = it.fragment();
-            if (!fragment.isValid()) continue;
-            if (fragment.charFormat().isImageFormat()) {
-                text += fragment.charFormat().stringProperty(QTextFormat::ImageAltText);
-            } else {
-                text += fragment.text();
-            }
-        }
-        blocks.append(text);
-    }
-    QString result = blocks.join(QLatin1Char(' ')).simplified();
+    // 原来是「渲染成 HTML → 塞进 QTextDocument → 再把文字抠出来」，绕了一大圈，
+    // 只为了把 **粗体** 的星号去掉。块树自己就能摊平成纯文本，少一条渲染路径。
+    QString result = MarkdownDocument::parse(input).plainText().simplified();
     result = PreviewText::truncate(result);
     cache.insert(input, new QString(result), (input.size() + result.size()) * 2 + 1);
     return result;

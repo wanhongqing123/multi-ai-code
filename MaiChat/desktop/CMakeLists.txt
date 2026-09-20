@@ -116,6 +116,8 @@ add_library(maichat_markdown
   src/markdown/MarkdownLayout.cpp
   src/markdown/MarkdownView.h
   src/markdown/MarkdownView.cpp
+  src/markdown/MarkdownLabel.h
+  src/markdown/MarkdownLabel.cpp
 )
 target_include_directories(maichat_markdown PUBLIC src)
 target_link_libraries(maichat_markdown PUBLIC Qt5::Core Qt5::Gui Qt5::Widgets PRIVATE md4c)
@@ -429,6 +431,13 @@ target_link_libraries(message_notification_test PRIVATE remote_im_core Qt5::Test
 add_executable(agent_page_visual_probe tests/AgentPageVisualProbe.cpp)
 target_link_libraries(agent_page_visual_probe PRIVATE remote_im_desktop_ui remote_im_desktop_app
   remote_im_core maichat_agent maichat_markdown Qt5::Widgets Qt5::Test)
+
+add_executable(im_markdown_visual_probe tests/ImMarkdownVisualProbe.cpp)
+target_link_libraries(im_markdown_visual_probe PRIVATE remote_im_desktop_ui remote_im_desktop_app
+  remote_im_core maichat_markdown Qt5::Widgets Qt5::Test)
+
+add_executable(markdown_text_probe tests/MarkdownTextProbe.cpp)
+target_link_libraries(markdown_text_probe PRIVATE maichat_markdown Qt5::Widgets)
 
 add_executable(markdown_visual_probe tests/MarkdownVisualProbe.cpp)
 target_link_libraries(markdown_visual_probe PRIVATE maichat_markdown Qt5::Widgets)

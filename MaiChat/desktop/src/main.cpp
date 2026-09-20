@@ -104,6 +104,19 @@ int main(int argc, char* argv[]) {
     // 登录窗保持设计尺寸（不随缩放倍率变化）：这里用基准 13px，
     // 进入主界面时才由 MainWindow 把全局字体切到倍率值。
     appFont.setPixelSize(13);
+    // **字形提示只做竖直方向。**
+    //
+    // Qt 在 Windows 上默认是全提示：每个字形的步进被四舍五入到整像素。
+    // 后果是同一个单词里字距忽宽忽窄——"QTextDocument" 会渲染成
+    // "QTextDocum ent"，一眼看去像字没连上。中文更明显，笔画间距也跟着抖。
+    //
+    // 只提示竖直方向：横向位置保留亚像素精度（字距变匀），竖直方向仍然对齐
+    // 像素栅格（横笔画还是锐的）。不选 PreferNoHinting 是因为那样小字号下
+    // 横笔画会发虚。
+    //
+    // 这一条**管整个应用**：IM 的消息走 QTextDocument、AI 页走自绘的
+    // MarkdownView，两条路都用这个字体，所以两边一起好。
+    appFont.setHintingPreference(QFont::PreferVerticalHinting);
     app.setFont(appFont);
 #endif
 

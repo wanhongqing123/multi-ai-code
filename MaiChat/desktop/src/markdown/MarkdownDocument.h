@@ -116,6 +116,10 @@ struct MarkdownBlock {
     }
 };
 
+// 提示框的中文标题：「建议」「注意」…… 绘制时画在框头上，
+// 会话列表的预览行也拿它当前缀。**只有这一份**，主题那边取的就是它。
+QString markdownCalloutTitle(MarkdownCallout callout);
+
 // 一整篇。
 class MarkdownDocument {
 public:

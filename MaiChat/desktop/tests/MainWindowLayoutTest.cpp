@@ -27,7 +27,6 @@
 #include <QMimeData>
 #include <QTemporaryDir>
 #include <QTest>
-#include <QTextBrowser>
 #include <QTextBlock>
 #include <QTextList>
 #include <QTextFragment>
@@ -41,6 +40,8 @@
 
 #include "app/RemoteIMApplication.h"
 #include "im/FakeRemoteIMClient.h"
+#include "markdown/MarkdownDocument.h"
+#include "markdown/MarkdownLabel.h"
 #include "ui/ImagePreviewDialog.h"
 #include "ui/AppMessageDialog.h"
 #include "model/MessageQuote.h"
@@ -696,10 +697,10 @@ void MainWindowLayoutTest::clickingQuoteBlockJumpsToTheOriginalMessage() {
     QVERIFY2(row != nullptr, "点击引用块必须定位并高亮原消息");
     // 高亮到「某一条」不算数，必须高亮到「被引用的那一条」：
     // 只断言存在高亮的话，跳到任意一条都能过。
-    auto* body = row->findChild<QTextBrowser*>(QStringLiteral("messageMarkdownView"));
+    auto* body = row->findChild<MarkdownLabel*>(QStringLiteral("messageMarkdownView"));
     QVERIFY2(body != nullptr, "高亮的行里应当有正文");
-    QVERIFY2(body->toPlainText().contains(QStringLiteral("这是被引用的原始消息")),
-             qPrintable(QStringLiteral("跳错了行，正文是：") + body->toPlainText()));
+    QVERIFY2(body->plainText().contains(QStringLiteral("这是被引用的原始消息")),
+             qPrintable(QStringLiteral("跳错了行，正文是：") + body->plainText()));
 }
 
 void MainWindowLayoutTest::clickingQuoteBlockSaysSoWhenTheOriginalIsNotLocal() {
@@ -1202,10 +1203,10 @@ void MainWindowLayoutTest::sendsMultilineTextWithoutFlatteningReturns() {
     QCOMPARE(messages.size(), 1);
     QCOMPARE(messages.first().text, QStringLiteral("line 1\nline 2"));
 
-    auto* markdownView = window.findChild<QTextBrowser*>(QStringLiteral("messageMarkdownView"));
+    auto* markdownView = window.findChild<MarkdownLabel*>(QStringLiteral("messageMarkdownView"));
     QVERIFY(markdownView != nullptr);
-    QVERIFY(markdownView->toPlainText().contains(QStringLiteral("line 1")));
-    QVERIFY(markdownView->toPlainText().contains(QStringLiteral("line 2")));
+    QVERIFY(markdownView->plainText().contains(QStringLiteral("line 1")));
+    QVERIFY(markdownView->plainText().contains(QStringLiteral("line 2")));
 }
 
 void MainWindowLayoutTest::rendersSentMessageFromTopWithMetadata() {
@@ -1237,13 +1238,17 @@ void MainWindowLayoutTest::rendersSentMessageFromTopWithMetadata() {
     QVERIFY(window.findChild<QLabel*>(QStringLiteral("messageAuthorLabel")) == nullptr);
     QVERIFY(window.findChild<QLabel*>(QStringLiteral("messageTimeLabel")) == nullptr);
     QVERIFY(window.findChild<QLabel*>(QStringLiteral("messageAvatarOutgoing")) == nullptr);
-    auto* markdown = window.findChild<QTextBrowser*>(QStringLiteral("messageMarkdownView"));
+    auto* markdown = window.findChild<MarkdownLabel*>(QStringLiteral("messageMarkdownView"));
     QVERIFY(markdown != nullptr);
     const auto timestamp = markdown->property("messageTimestamp").toString();
     QVERIFY(!timestamp.isEmpty());
-    QVERIFY(markdown->toPlainText().startsWith(QStringLiteral("hello from desktop")));
-    QVERIFY(markdown->toPlainText().endsWith(timestamp));
-    QCOMPARE(markdown->document()->blockCount(), 1); // date is not a second paragraph
+    QVERIFY(markdown->plainText().startsWith(QStringLiteral("hello from desktop")));
+    QVERIFY(markdown->plainText().endsWith(timestamp));
+    // 时间戳必须接在正文最后一行的**末尾**，不能另起一行。
+    // 自绘那条路里，块与块之间会补一个换行；时间戳如果被当成单独一块，
+    // 这里就会出现换行。所以「整条没有换行」正好卡住那个退化。
+    QVERIFY2(!markdown->plainText().contains(QLatin1Char('\n')),
+             qPrintable(QStringLiteral("时间戳另起了一行：") + markdown->plainText()));
     auto* statusLabel = window.findChild<QLabel*>(QStringLiteral("messageStatusLabel"));
     QVERIFY(statusLabel != nullptr);
     QCOMPARE(statusLabel->text(), QStringLiteral("✓"));
@@ -1301,9 +1306,9 @@ void MainWindowLayoutTest::rendersRelativeMessageDates() {
     MainWindow window(app);
 
     QStringList actualTimes;
-    for (const auto* view : window.findChildren<QTextBrowser*>(QStringLiteral("messageMarkdownView"))) {
+    for (const auto* view : window.findChildren<MarkdownLabel*>(QStringLiteral("messageMarkdownView"))) {
         const auto timestamp = view->property("messageTimestamp").toString();
-        QVERIFY(view->toPlainText().endsWith(timestamp));
+        QVERIFY(view->plainText().endsWith(timestamp));
         actualTimes.append(timestamp);
     }
 
@@ -1509,46 +1514,46 @@ void MainWindowLayoutTest::rendersMarkdownMessageContent() {
     app.chatState().appendMessageForRestore(restoredMessage);
 
     MainWindow window(app);
-    auto* markdownView = window.findChild<QTextBrowser*>(QStringLiteral("messageMarkdownView"));
+    auto* markdownView = window.findChild<MarkdownLabel*>(QStringLiteral("messageMarkdownView"));
     QVERIFY(markdownView != nullptr);
-    QVERIFY(markdownView->toHtml().contains(QStringLiteral("<h1")));
-    QVERIFY(!markdownView->toPlainText().contains(QStringLiteral("# Win/Mac")));
-    // Inspect the actual Qt document: heading adjustments used to override CSS
-    // sizes, and CSS 700 mapped to Black rather than the intended bold weight.
-    const auto heading = markdownView->document()->firstBlock();
-    QCOMPARE(heading.blockFormat().headingLevel(), 1);
+    // 语法被吃掉了，不是原样显示出来。
+    QVERIFY(!markdownView->plainText().contains(QStringLiteral("# Win/Mac")));
+    QVERIFY(markdownView->plainText().contains(QStringLiteral("重点")));
+
+    // 结构：一级标题、标题里的行内代码、两项列表、列表里的链接。
+    // 原来这些是去 QTextDocument 里翻 fragment 查的；换成自绘之后没有文档可翻，
+    // 改成对着视图手上的原文解析出块树来断言——视图画的就是这棵树。
+    const auto blocks = MarkdownDocument::parse(markdownView->markdown()).blocks();
+    QCOMPARE(blocks.size(), 3);
+    QCOMPARE(blocks.at(0).kind, MarkdownBlockKind::Heading);
+    QCOMPARE(blocks.at(0).headingLevel, 1);
     bool sawInlineCode = false;
-    for (auto it = heading.begin(); !it.atEnd(); ++it) {
-        const auto fragment = it.fragment();
-        if (!fragment.isValid()) continue;
-        if (fragment.text().contains(QStringLiteral("code"))) {
-            sawInlineCode = true;
-            QCOMPARE(fragment.charFormat().font().pixelSize(), UiZoom::s(13));
-        } else {
-            QCOMPARE(fragment.charFormat().font().pixelSize(), UiZoom::s(22));
-            QCOMPARE(fragment.charFormat().fontWeight(), int(QFont::DemiBold));
-        }
+    for (const MarkdownSpan& span : blocks.at(0).spans) {
+        if (span.styles.testFlag(MarkdownStyle::Code)) sawInlineCode = true;
     }
     QVERIFY(sawInlineCode);
-    // Marker spacing must not leak into prose or links, and the real list
-    // structure must remain intact for wrapping, nesting and copying.
-    int listItems = 0;
-    for (auto block = markdownView->document()->begin(); block.isValid(); block = block.next()) {
-        if (!block.textList()) continue;
-        ++listItems;
-        QCOMPARE(block.textList()->format().style(), QTextListFormat::ListDisc);
-        const auto marker = block.charFormat();
-        for (auto it = block.begin(); !it.atEnd(); ++it) {
-            const auto fragment = it.fragment();
-            if (!fragment.isValid()) continue;
-            QVERIFY(marker.font().wordSpacing() > fragment.charFormat().font().wordSpacing());
-            if (!fragment.text().contains(QStringLiteral("·")))
-                QVERIFY(marker.foreground().color() != fragment.charFormat().foreground().color());
+    QCOMPARE(blocks.at(2).kind, MarkdownBlockKind::List);
+    QCOMPARE(blocks.at(2).items.size(), 2);
+    bool sawLink = false;
+    for (const MarkdownListItem& item : blocks.at(2).items) {
+        for (const MarkdownSpan& span : item.spans) {
+            if (span.href == QStringLiteral("https://example.com")) sawLink = true;
         }
     }
-    QCOMPARE(listItems, 2);
-    QVERIFY(markdownView->toPlainText().contains(QStringLiteral("重点")));
-    QVERIFY(markdownView->toHtml().contains(QStringLiteral("href=\"https://example.com\"")));
+    QVERIFY(sawLink);
+
+    // 「认出来是标题」证明不了「画出来不一样」——原来那条 bug 恰恰是标题被按
+    // 正文字号画了。拿视图自己那份主题去量：一级标题必须真的比同样的字高。
+    MarkdownLabel headingProbe;
+    headingProbe.setTheme(markdownView->theme());
+    headingProbe.setMarkdown(QStringLiteral("# 每周报表"));
+    MarkdownLabel bodyProbe;
+    bodyProbe.setTheme(markdownView->theme());
+    bodyProbe.setMarkdown(QStringLiteral("每周报表"));
+    QVERIFY2(headingProbe.heightForWidth(400) > bodyProbe.heightForWidth(400),
+             qPrintable(QStringLiteral("标题和正文一样高：%1 vs %2")
+                            .arg(headingProbe.heightForWidth(400))
+                            .arg(bodyProbe.heightForWidth(400))));
 }
 
 void MainWindowLayoutTest::notificationClickPreservesWindowState_data() {
@@ -1599,29 +1604,22 @@ void MainWindowLayoutTest::markdownBubbleHasCompactBottomSpacing() {
     window.resize(1200, 850);
     window.show();
     QVERIFY(QTest::qWaitForWindowExposed(&window));
-    auto* view = window.findChild<QTextBrowser*>(QStringLiteral("messageMarkdownView"));
+    auto* view = window.findChild<MarkdownLabel*>(QStringLiteral("messageMarkdownView"));
     auto* bubble = window.findChild<QWidget*>(QStringLiteral("messageBubbleIncoming"));
     QVERIFY(view != nullptr);
     QVERIFY(bubble != nullptr);
     QVERIFY(bubble->isAncestorOf(view));
     QTRY_VERIFY(view->height() > 0);
     QTest::qWait(100);
-    QCOMPARE(view->document()->lastBlock().blockFormat().bottomMargin(), qreal(0));
-    const qreal blockBottom = view->document()->documentLayout()
-        ->blockBoundingRect(view->document()->lastBlock()).bottom();
-    const qreal slack = view->document()->size().height() - blockBottom;
-    const int lineSpacing = view->fontMetrics().lineSpacing();
-    // 字体的自然 leading 随平台变化，不能把 macOS 的 15px 总间隙写成上限。
-    // 真正防止的回归是文档末尾多出半行；气泡内边距另行约束。
-    QVERIFY(lineSpacing > 0);
-    QVERIFY2(slack * 2 < lineSpacing,
-             qPrintable(QStringLiteral("document tail slack=%1, font lineSpacing=%2")
-                            .arg(slack).arg(lineSpacing)));
+    // 部件的高度就是内容的高度，一个像素的富余都不留。
+    // 原来那条路要靠压 lastBlock 的 bottomMargin 才做得到，自绘这边是
+    // 排版的结果直接当高度——这条断言卡的是「有人又在外面加余量」。
+    QCOMPARE(view->height(), view->heightForWidth(view->width()));
     const int bottomInset = bubble->height()
         - (view->mapTo(bubble, QPoint()).y() + view->height());
     QVERIFY2(bottomInset >= 0 && bottomInset <= UiZoom::s(8) + 1,
              qPrintable(QStringLiteral("bubble bottom inset=%1").arg(bottomInset)));
-    QVERIFY(view->viewport()->height() + 1 >= view->document()->size().height());
+    QVERIFY(view->height() >= view->contentHeight());
 }
 
 void MainWindowLayoutTest::rendersApprovalButtonsAndSendsStructuredDecision() {
@@ -1841,13 +1839,13 @@ void MainWindowLayoutTest::copiesOriginalMarkdownFromMessageContextMenu() {
     app.chatState().receiveText(QStringLiteral("phone-user"), markdown);
 
     MainWindow window(app);
-    auto* markdownView = window.findChild<QTextBrowser*>(QStringLiteral("messageMarkdownView"));
+    auto* markdownView = window.findChild<MarkdownLabel*>(QStringLiteral("messageMarkdownView"));
     auto* copyOriginalAction = window.findChild<QAction*>(QStringLiteral("copyOriginalDataAction"));
     QVERIFY(markdownView != nullptr);
     QVERIFY(copyOriginalAction != nullptr);
     QCOMPARE(copyOriginalAction->text(), QStringLiteral("复制原始数据"));
-    QVERIFY(!markdownView->toPlainText().contains(QStringLiteral("# 原始标题")));
-    QVERIFY(!markdownView->toPlainText().contains(QStringLiteral("**加粗**")));
+    QVERIFY(!markdownView->plainText().contains(QStringLiteral("# 原始标题")));
+    QVERIFY(!markdownView->plainText().contains(QStringLiteral("**加粗**")));
 
     QApplication::clipboard()->setText(QStringLiteral("旧剪贴板内容"));
     copyOriginalAction->trigger();
@@ -2108,7 +2106,7 @@ void MainWindowLayoutTest::receivedMessagesKeepTheSameLeftEdge() {
     window.show();
     QVERIFY(QTest::qWaitForWindowExposed(&window));
     QVERIFY(window.findChild<QLabel*>(QStringLiteral("messageAvatarIncoming")) == nullptr);
-    auto* view = window.findChild<QTextBrowser*>(QStringLiteral("messageMarkdownView"));
+    auto* view = window.findChild<MarkdownLabel*>(QStringLiteral("messageMarkdownView"));
     auto* row = window.findChild<QWidget*>(QStringLiteral("messageRowIncoming"));
     QVERIFY(row); QVERIFY(view);
     QTRY_COMPARE(view->mapTo(row, QPoint()).x(), 0);
@@ -2153,9 +2151,9 @@ void MainWindowLayoutTest::wideChatUsesWiderMessageBubbles() {
     QTRY_VERIFY(incomingBubble->width() >= incomingRow->contentsRect().width() - 2);
     auto* outgoingRow = window.findChild<QWidget*>(QStringLiteral("messageRowOutgoing"));
     QVERIFY(outgoingRow);
-    auto* outgoingView = outgoingRow->findChild<QTextBrowser*>(QStringLiteral("messageMarkdownView"));
+    auto* outgoingView = outgoingRow->findChild<MarkdownLabel*>(QStringLiteral("messageMarkdownView"));
     QVERIFY(outgoingView);
-    QVERIFY(outgoingView->toPlainText().endsWith(outgoingView->property("messageTimestamp").toString()));
+    QVERIFY(outgoingView->plainText().endsWith(outgoingView->property("messageTimestamp").toString()));
 
 }
 
@@ -3143,20 +3141,21 @@ void MainWindowLayoutTest::messageTextUsesNativeResolutionAndRegularBodyFont() {
     window.resize(1200, 800);
     window.show();
     QVERIFY(QTest::qWaitForWindowExposed(&window));
-    auto* browser = window.findChild<QTextBrowser*>("messageMarkdownView");
+    auto* browser = window.findChild<MarkdownLabel*>("messageMarkdownView");
     QVERIFY(browser);
-    const auto capture = browser->viewport()->grab();
+    const auto capture = browser->grab();
     const qreal dpr = browser->devicePixelRatioF();
     QCOMPARE(capture.devicePixelRatioF(), dpr);
-    QCOMPARE(capture.size(), (QSizeF(browser->viewport()->size()) * dpr).toSize());
-    const auto format = browser->document()->begin().begin().fragment().charFormat();
-    QCOMPARE(format.fontWeight(), int(QFont::Normal));
-    QCOMPARE(format.property(QTextFormat::FontPixelSize).toInt(), UiZoom::s(15));
+    QCOMPARE(capture.size(), (QSizeF(browser->size()) * dpr).toSize());
+    // 正文字号来自两端共用的那份主题。原来这里还顺带断言了字重是 Normal，
+    // 挡的是 QTextDocument 把 CSS 的 700 读成 Black 那个坑；自绘之后没有 CSS，
+    // 字重是主题里的常量，由 markdown_layout_test 直接盯着。
+    QCOMPARE(browser->theme().bodyPixelSize, UiZoom::s(14));
     for (auto* widget = static_cast<QWidget*>(browser); widget; widget = widget->parentWidget())
         QVERIFY2(!widget->graphicsEffect(), "Message text must not pass through a graphics-effect bitmap cache");
     qInfo() << "message-render-verification" << "dpr" << dpr
-            << "logical" << browser->viewport()->size() << "physical" << capture.size()
-            << "font" << browser->document()->defaultFont();
+            << "logical" << browser->size() << "physical" << capture.size()
+            << "body px" << browser->theme().bodyPixelSize;
 }
 
 void MainWindowLayoutTest::renamedHeaderButtonsKeepTheirCompactAppearance() {

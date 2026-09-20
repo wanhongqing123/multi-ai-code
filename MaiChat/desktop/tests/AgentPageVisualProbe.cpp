@@ -1,7 +1,11 @@
 #include <QApplication>
 #include <QFont>
 #include <QImage>
+#include <QFrame>
+#include <QHBoxLayout>
+#include <QLabel>
 #include <QPushButton>
+#include <QVBoxLayout>
 #include <QTest>
 #include <QTimer>
 
@@ -60,6 +64,8 @@ int main(int argc, char** argv) {
     appFont.setFamilies({QStringLiteral("Segoe UI"), QStringLiteral("Microsoft YaHei UI"),
                          QStringLiteral("Microsoft YaHei")});
     appFont.setPixelSize(13);
+    // 和 main.cpp 一致，否则截出来的图不代表真机（见那边的注释）。
+    appFont.setHintingPreference(QFont::PreferVerticalHinting);
     app.setFont(appFont);
 #endif
     const QString output =
@@ -89,7 +95,47 @@ int main(int argc, char** argv) {
                   QStringLiteral("markdown 现在是自己画的了？给我看看效果"));
     view->addItem(QStringLiteral("a1"), MarkdownView::Style::Document,
                   QString::fromUtf8(kAnswer));
-    view->addItem(QStringLiteral("u2"), MarkdownView::Style::Bubble, QStringLiteral("好"));
+    view->addItem(QStringLiteral("u2"), MarkdownView::Style::Bubble,
+                  QStringLiteral("帮我同时查一下那三个模块的调用方"));
+
+    // 子任务卡：面板里长这样。真实场景下是 spawn_agent 之后由事件驱动出来的，
+    // 探针里直接摆一个等价的，省掉起一整套子 Agent。
+    auto* card = new QFrame;
+    card->setObjectName(QStringLiteral("agentSubTaskCard"));
+    card->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
+    {
+        auto* column = new QVBoxLayout(card);
+        column->setContentsMargins(11, 7, 11, 7);
+        column->setSpacing(4);
+        auto* head = new QHBoxLayout;
+        auto* name = new QLabel(QStringLiteral("子任务 · 查调用方"));
+        QFont bold = name->font();
+        bold.setPixelSize(12);
+        bold.setBold(true);
+        name->setFont(bold);
+        auto* state = new QLabel(QStringLiteral("在跑"));
+        QFont small = state->font();
+        small.setPixelSize(11);
+        state->setFont(small);
+        state->setStyleSheet(QStringLiteral("color:#98a2b3;"));
+        head->addWidget(name);
+        head->addStretch(1);
+        head->addWidget(state);
+        column->addLayout(head);
+        auto* latest = new QLabel(QStringLiteral("已经翻了 18 个文件，正在看 MarkdownLayout…"));
+        QFont body = latest->font();
+        body.setPixelSize(12);
+        latest->setFont(body);
+        latest->setStyleSheet(QStringLiteral("color:#475569;"));
+        column->addWidget(latest);
+        card->setStyleSheet(
+            QStringLiteral("QFrame#agentSubTaskCard{background:#fbfcfe;border:1px solid #e2e8f0;"
+                           "border-radius:8px;}"));
+    }
+    view->addWidget(QStringLiteral("sub-demo"), card);
+
+    view->addItem(QStringLiteral("n2"), MarkdownView::Style::Notice,
+                  QStringLiteral("要我顺手把这三处的注释也补了吗？\n\n补 · 先不补"));
     QTest::qWait(300);
 
     QImage image(window.size(), QImage::Format_ARGB32);

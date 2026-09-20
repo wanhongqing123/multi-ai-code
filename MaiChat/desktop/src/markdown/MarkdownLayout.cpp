@@ -93,8 +93,20 @@ struct RunMetrics {
 
 }  // namespace
 
+// 末尾附注：贴在正文最后一行后面的一小段字（IM 的时间戳）。
+struct TrailingNote {
+    QString text;
+    QColor color;
+    int pixelSize = 0;
+
+    bool isEmpty() const {
+        return text.isEmpty();
+    }
+};
+
 struct MarkdownLayout::Impl {
     MarkdownTheme theme;
+    TrailingNote trailingNote;
     qreal width = 0;
     qreal height = 0;
     std::vector<TextRun> runs;
@@ -112,7 +124,22 @@ public:
     Builder(MarkdownLayout::Impl& out, qreal width) : out_(out), theme_(out.theme), width_(width) {}
 
     void run(const QVector<MarkdownBlock>& blocks) {
-        const qreal bottom = layoutRange(blocks, 0, blocks.size(), 0, 0, width_, 0);
+        // 附注要贴给最后一个块。记地址不记下标：引用块会带着子区间递归进来，
+        // 下标的含义在递归里不变，但地址更直白，也不会被将来的重排弄错。
+        if (!blocks.isEmpty()) lastBlock_ = &blocks.last();
+        qreal bottom = layoutRange(blocks, 0, blocks.size(), 0, 0, width_, 0);
+
+        // 最后一个块不是段落（表格、代码块、分割线收尾），上面那条路贴不上去。
+        // 这时候让附注自己占一行——不这么做时间戳就直接丢了。
+        if (!out_.trailingNote.isEmpty() && !noteConsumed_) {
+            QFont font = bodyFont();
+            font.setPixelSize(out_.trailingNote.pixelSize);
+            font.setWeight(QFont::DemiBold);
+            bottom += theme_.blockSpacing;
+            bottom += addPlainText(out_.trailingNote.text, font, out_.trailingNote.color, 0, bottom,
+                                   width_)
+                          .height;
+        }
         out_.height = bottom;
     }
 
@@ -163,7 +190,8 @@ private:
 
     // 把一串片段排成一段。返回高度；文字为空时不产生任何东西。
     RunMetrics addSpans(const QVector<MarkdownSpan>& spans, const QFont& base, const QColor& color,
-                        qreal x, qreal y, qreal avail, Qt::Alignment alignment = Qt::AlignLeft) {
+                        qreal x, qreal y, qreal avail, Qt::Alignment alignment = Qt::AlignLeft,
+                        const TrailingNote* note = nullptr) {
         QString text;
         QVector<QTextLayout::FormatRange> formats;
         QVector<TextRun::Link> links;
@@ -216,6 +244,25 @@ private:
 
             if (isLink) links.push_back({start, span.text.size(), span.href});
             if (isCode) codeRanges.push_back({start, span.text.size()});
+        }
+
+        // 附注接在最后一段的最后面，和正文同一个 QTextLayout——
+        // 这样它才会跟着正文一起排，而不是另起一行。
+        if (note != nullptr && !note->isEmpty()) {
+            const int start = text.size();
+            text += note->text;
+            QFont font = base;
+            font.setPixelSize(note->pixelSize);
+            font.setWeight(QFont::DemiBold);
+            QTextCharFormat format;
+            format.setFont(font);
+            format.setForeground(note->color);
+            QTextLayout::FormatRange range;
+            range.start = start;
+            range.length = note->text.size();
+            range.format = format;
+            formats.push_back(range);
+            noteConsumed_ = true;
         }
 
         if (text.isEmpty()) return {};
@@ -420,11 +467,20 @@ private:
         return bottom;
     }
 
+    // 附注只贴给**最后一个块**，而且只贴段落。别的块型走 run() 里那条兜底。
+    const TrailingNote* noteForBlock(const MarkdownBlock& block) const {
+        if (out_.trailingNote.isEmpty()) return nullptr;
+        if (&block != lastBlock_) return nullptr;
+        return &out_.trailingNote;
+    }
+
     qreal layoutBlock(const MarkdownBlock& block, qreal x, qreal avail, qreal y) {
         const QColor color = block.quoteDepth() > 0 ? theme_.quoteText : theme_.text;
         switch (block.kind) {
             case MarkdownBlockKind::Paragraph:
-                return y + addSpans(block.spans, bodyFont(), color, x, y, avail).height;
+                return y + addSpans(block.spans, bodyFont(), color, x, y, avail, Qt::AlignLeft,
+                                    noteForBlock(block))
+                               .height;
 
             case MarkdownBlockKind::Heading: {
                 const int level = qBound(1, block.headingLevel, 6);
@@ -684,6 +740,9 @@ private:
     MarkdownLayout::Impl& out_;
     const MarkdownTheme& theme_;
     qreal width_;
+    // 最后一个块的地址，和「附注贴上去了没有」。见 run()。
+    const MarkdownBlock* lastBlock_ = nullptr;
+    bool noteConsumed_ = false;
 };
 
 }  // namespace
@@ -692,6 +751,12 @@ MarkdownLayout::MarkdownLayout() : impl_(std::make_unique<Impl>()) {}
 MarkdownLayout::~MarkdownLayout() = default;
 MarkdownLayout::MarkdownLayout(MarkdownLayout&&) noexcept = default;
 MarkdownLayout& MarkdownLayout::operator=(MarkdownLayout&&) noexcept = default;
+
+void MarkdownLayout::setTrailingNote(const QString& text, const QColor& color, int pixelSize) {
+    impl_->trailingNote.text = text;
+    impl_->trailingNote.color = color;
+    impl_->trailingNote.pixelSize = pixelSize;
+}
 
 void MarkdownLayout::layout(const MarkdownDocument& document, const MarkdownTheme& theme,
                             qreal width) {

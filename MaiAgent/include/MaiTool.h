@@ -145,6 +145,7 @@ private:
 std::unique_ptr<MaiTool> makeMaiReadTool();
 std::unique_ptr<MaiTool> makeMaiWriteTool();
 std::unique_ptr<MaiTool> makeMaiEditTool();
+std::unique_ptr<MaiTool> makeMaiApplyPatchTool();
 std::unique_ptr<MaiTool> makeMaiGlobTool();
 std::unique_ptr<MaiTool> makeMaiGrepTool();
 std::unique_ptr<MaiTool> makeMaiShellTool();

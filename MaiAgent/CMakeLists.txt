@@ -145,6 +145,7 @@ add_library(maiagent STATIC
   src/MaiPermissionGate.cpp
   src/MaiFileTools.cpp
   src/MaiEditTool.cpp
+  src/MaiApplyPatchTool.cpp
   src/MaiShellTool.cpp
   src/MaiAgent.cpp
   src/MaiTurnRunner.cpp
@@ -221,6 +222,7 @@ if(MAIAGENT_BUILD_TESTS)
       MaiTurnRunnerTests    # 一轮对话的完整生命周期
       MaiToolTests          # 路径边界 + 内置工具
       MaiEditToolTests      # edit：唯一匹配、替换全部、拒绝的那几种情况
+      MaiApplyPatchToolTests  # apply_patch：多处/多文件、全有或全无、换行原样
       MaiShellToolTests     # shell：审批粒度、超时、取消、输出上限
       MaiToolLoopTests      # 工具循环：调用 -> 执行 -> 回灌 -> 再答
       MaiPermissionTests)   # 权限闸门：拦住 -> 等裁决 -> 放行或拒绝

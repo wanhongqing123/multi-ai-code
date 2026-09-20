@@ -158,6 +158,14 @@ MaiError MaiFileSystem::writeFile(const MaiFilePath& path, const std::string& co
     return {};
 }
 
+MaiError MaiFileSystem::removeFile(const MaiFilePath& path) {
+    if (path.isEmpty()) return MaiError::make(MaiErrorCode::InvalidInput, "empty path");
+
+    maiAssertBlockingAllowed("MaiFileSystem::removeFile");
+    if (::unlink(path.value().c_str()) == 0) return {};
+    return errnoAs("cannot delete file");
+}
+
 MaiError MaiFileSystem::createDirectories(const MaiFilePath& path) {
     if (path.isEmpty()) return MaiError::make(MaiErrorCode::InvalidInput, "empty path");
     if (isDirectory(path)) return {};

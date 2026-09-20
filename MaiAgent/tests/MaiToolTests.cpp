@@ -344,7 +344,8 @@ void test_registry() {
 
     // **按名字查，不比个数。** 比个数的话每加一个工具都要来改一次这里，
     // 而这条用例想守的是「这些工具都在」，不是「一共有几个」。
-    for (const char* n : {"read", "write", "edit", "glob", "grep", "current_time"}) {
+    for (const char* n :
+         {"read", "write", "edit", "apply_patch", "glob", "grep", "current_time"}) {
         CHECK(reg.find(n) != nullptr);
     }
     CHECK(reg.find("no-such-tool") == nullptr);

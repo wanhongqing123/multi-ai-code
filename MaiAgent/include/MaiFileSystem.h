@@ -55,6 +55,12 @@ public:
     // 覆盖写。父目录不会自动创建，调用方自己先 createDirectories。
     static MaiError writeFile(const MaiFilePath& path, const std::string& contents);
 
+    // 删掉一个文件。**只删文件，不删目录**：递归删目录是另一种危险程度的操作，
+    // 要的时候单独加一个名字里说清楚的函数，不要让这个悄悄兼职。
+    // 文件本来就不存在时返回 NotFound，而不是当成成功——调用方据此能分清
+    // 「删掉了」和「压根没有」。
+    static MaiError removeFile(const MaiFilePath& path);
+
     // ── 目录 ────────────────────────────────────────────────────
     // 逐级创建，已存在不算错。
     static MaiError createDirectories(const MaiFilePath& path);

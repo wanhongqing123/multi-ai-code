@@ -11,6 +11,7 @@
 #include "MaiModelClient.h"
 #include "MaiPermission.h"
 #include "MaiQuestion.h"
+#include "MaiSubAgent.h"
 #include "MaiSession.h"
 #include "MaiSessionStore.h"
 #include "MaiTool.h"
@@ -138,7 +139,7 @@ using MaiOperation =
 // 不这么做的话工作线程会去访问已经销毁的 store 和 emitter。
 //
 // 推论：**事件订阅者必须活得比 MaiAgent 久**，否则析构过程中最后几条事件会调到悬空的处理函数上。
-class MaiAgent {
+class MaiAgent final : public MaiSubAgentHost {
 public:
     struct Options {
         // 会话没指定模型时用这个。会话上配了就用会话的（MaiUpdateSession）。
@@ -151,6 +152,14 @@ public:
         bool rejectWhenBusy = true;
         // 等用户授权的超时。0 = 无限等，理由见 MaiPermissionGate::Options。
         MaiMillis permissionTimeoutMs = 0;
+
+        // 子 Agent 最多能套多少层。根会话是 0，所以 2 表示「孙子辈就到头了」。
+        //
+        // **必须有上限。** 不封的话模型能把自己 fork 到爆：每一层都觉得
+        // 「这活该交出去」，而每一层都在烧钱。codex 也是这么卡的。
+        int maxSubAgentDepth = 2;
+        // 一棵会话树里同时开着的子 Agent 上限。收掉的不算。
+        int maxOpenSubAgents = 8;
     };
 
     // 三个依赖**都被接管所有权**，活到 MaiAgent 析构为止。
@@ -187,6 +196,23 @@ public:
     // 还在等回答的提问。界面刷新后靠它重新摆出输入框——
     // 没有这个，断线重连窗口期里发出的提问就永远看不见了，那一轮会一直挂着。
     std::vector<MaiQuestionRequest> listPendingQuestions() const;
+
+    // ── 子 Agent（MaiSubAgentHost）──────────────────────────────
+    //
+    // 这几个是给 spawn_agent 那组工具用的，不是给界面用的。界面要看子 Agent
+    // 的话走 listSessions()，那里已经把非根会话滤掉了。
+    MaiResult<std::string> spawnSubAgent(const std::string& parentSessionId,
+                                         const std::string& taskName,
+                                         const std::string& prompt) override;
+    MaiError sendToSubAgent(const std::string& parentSessionId,
+                            const std::string& childSessionId,
+                            const std::string& prompt) override;
+    bool waitForSubAgent(const std::string& parentSessionId, const std::string& childSessionId,
+                         MaiMillis timeoutMs, const std::atomic<bool>& cancel) override;
+    std::vector<MaiSubAgentInfo> listSubAgents(const std::string& parentSessionId) override;
+    MaiError closeSubAgent(const std::string& parentSessionId,
+                           const std::string& childSessionId) override;
+    std::string subAgentReport(const std::string& childSessionId) override;
 
     // ── 变更 ────────────────────────────────────────────────────
 

@@ -136,6 +136,7 @@ void MaiTurnRunner::executeTools(const std::vector<MaiToolInvocation>& calls,
     context.root = session.directory;
     context.cancel = &cancel;
     context.questions = mDependencies.questions;
+    context.subAgents = mDependencies.subAgents;
     context.messageId = mAssistant.id;
     // 广播是在这儿绑的，而不是让工具自己去碰事件总线：工具层不该认识事件。
     MaiEventEmitter* emitter = mDependencies.emitter;

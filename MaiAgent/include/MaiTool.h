@@ -8,6 +8,7 @@
 #include "MaiError.h"
 #include "MaiModelClient.h"
 #include "MaiQuestion.h"
+#include "MaiSubAgent.h"
 
 // 工具执行时能看到的环境。
 //
@@ -32,6 +33,10 @@ struct MaiToolContext {
     // 界面才知道是哪一次调用在等回答。
     std::string messageId;
     std::string partId;
+
+    // 子 Agent 的宿主。**可能为空**：宿主没接子 Agent 时就是空的，
+    // 那组工具据此明说「这儿起不了」，而不是失败得莫名其妙。
+    MaiSubAgentHost* subAgents = nullptr;
 
     // 中途问用户的闸门。**可能为空**：宿主没接问答时就是空的，
     // question 工具据此明说「这里问不了」，而不是干等到超时。
@@ -162,6 +167,13 @@ std::unique_ptr<MaiTool> makeMaiApplyPatchTool();
 std::unique_ptr<MaiTool> makeMaiWebFetchTool();
 std::unique_ptr<MaiTool> makeMaiTodoWriteTool();
 std::unique_ptr<MaiTool> makeMaiQuestionTool();
+
+// 子 Agent 那一组。名字照 codex 的 multi_agents，模型见过这套。
+std::unique_ptr<MaiTool> makeMaiSpawnAgentTool();
+std::unique_ptr<MaiTool> makeMaiWaitAgentTool();
+std::unique_ptr<MaiTool> makeMaiSendInputTool();
+std::unique_ptr<MaiTool> makeMaiListAgentsTool();
+std::unique_ptr<MaiTool> makeMaiCloseAgentTool();
 std::unique_ptr<MaiTool> makeMaiGlobTool();
 std::unique_ptr<MaiTool> makeMaiGrepTool();
 std::unique_ptr<MaiTool> makeMaiShellTool();

@@ -38,6 +38,8 @@ public:
         MaiPermissionGate* permissions = nullptr;
         // 可以为空：那样 question 工具会明说「这里问不了」，而不是干等。
         MaiQuestionGate* questions = nullptr;
+        // 可以为空：那样子 Agent 那组工具会明说「这儿起不了」。
+        MaiSubAgentHost* subAgents = nullptr;
         std::string defaultModel;
         // 模型可以连着调工具，一轮对话因此会有多次请求。
         // 设上限是因为模型会绕圈——拿同样的参数反复调同一个工具，没有上限就一直烧钱。

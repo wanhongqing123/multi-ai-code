@@ -92,7 +92,7 @@ public:
     bool getSession(const std::string& id, MaiSession& out) const override {
         std::lock_guard<std::mutex> lock(mMutex);
         sqlite3_stmt* statement = prepareLocked(
-            "SELECT id, title, directory, model, agent, created, updated "
+            "SELECT id, title, directory, model, agent, created, updated, parent_id, depth "
             "FROM sessions WHERE id = ?1");
         if (!statement) return false;
         Reset guard(statement);
@@ -106,7 +106,7 @@ public:
         std::lock_guard<std::mutex> lock(mMutex);
         std::vector<MaiSession> out;
         sqlite3_stmt* statement = prepareLocked(
-            "SELECT id, title, directory, model, agent, created, updated "
+            "SELECT id, title, directory, model, agent, created, updated, parent_id, depth "
             "FROM sessions ORDER BY updated DESC, id DESC");
         if (!statement) return out;
         Reset guard(statement);
@@ -220,7 +220,7 @@ public:
         MaiSession session;
         bool found = false;
         sqlite3_stmt* statement = prepareLocked(
-            "SELECT id, title, directory, model, agent, created, updated "
+            "SELECT id, title, directory, model, agent, created, updated, parent_id, depth "
             "FROM sessions WHERE id = ?1");
         if (statement) {
             Reset guard(statement);
@@ -260,6 +260,8 @@ private:
         session.directory = textColumn(statement, 2);
         session.model = textColumn(statement, 3);
         session.agent = textColumn(statement, 4);
+        session.parentId = textColumn(statement, 7);
+        session.depth = sqlite3_column_int(statement, 8);
         session.created = sqlite3_column_int64(statement, 5);
         session.updated = sqlite3_column_int64(statement, 6);
         return session;
@@ -267,8 +269,9 @@ private:
 
     void writeSessionLocked(const MaiSession& session) {
         sqlite3_stmt* statement = prepareLocked(
-            "INSERT INTO sessions(id, title, directory, model, agent, created, updated) "
-            "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7) "
+            "INSERT INTO sessions(id, title, directory, model, agent, created, updated, "
+            "                     parent_id, depth) "
+            "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) "
             "ON CONFLICT(id) DO UPDATE SET title=excluded.title, directory=excluded.directory, "
             "model=excluded.model, agent=excluded.agent, updated=excluded.updated");
         if (!statement) return;
@@ -278,6 +281,8 @@ private:
         bindText(statement, 3, session.directory);
         bindText(statement, 4, session.model);
         bindText(statement, 5, session.agent);
+        bindText(statement, 8, session.parentId);
+        sqlite3_bind_int(statement, 9, session.depth);
         sqlite3_bind_int64(statement, 6, session.created);
         sqlite3_bind_int64(statement, 7, session.updated);
         step(statement);
@@ -408,8 +413,9 @@ private:
     mutable MaiError mLastWriteError;
 };
 
-// v1 建表。以后改结构就往下追加 if (version < 2) { ... }，
-// 不要改这一段——已经落地的库是按 v1 建的。
+// v1 建表。**不要改这一段**——已经落地的库是按 v1 建的，改它等于让老库和新库
+// 的建表语句对不上，而 CREATE TABLE IF NOT EXISTS 不会去补列。
+// 改结构一律往 kMigrations 里追加。
 const char* kSchemaV1 =
     "CREATE TABLE IF NOT EXISTS sessions("
     "  id TEXT PRIMARY KEY,"
@@ -440,6 +446,16 @@ const char* kSchemaV1 =
     "  error TEXT NOT NULL DEFAULT '',"
     "  state INTEGER NOT NULL DEFAULT 0);"
     "CREATE INDEX IF NOT EXISTS parts_message ON parts(message_id, id);";
+
+// v2：会话加上父子关系。子 Agent 就是一个有 parent_id 的会话。
+//
+// 用 ALTER TABLE 加列而不是重建表：老库里已经有用户的对话，重建要搬数据，
+// 搬的过程中断电就全没了。加列是原子的，而且 SQLite 加带默认值的列不重写表。
+const char* kMigrationV2 =
+    "ALTER TABLE sessions ADD COLUMN parent_id TEXT NOT NULL DEFAULT '';"
+    "ALTER TABLE sessions ADD COLUMN depth INTEGER NOT NULL DEFAULT 0;"
+    // 按父查孩子是 list_agents 每次都要做的事。
+    "CREATE INDEX IF NOT EXISTS sessions_parent ON sessions(parent_id);";
 
 int readUserVersion(sqlite3* database) {
     sqlite3_stmt* statement = nullptr;
@@ -511,6 +527,17 @@ MaiResult<std::unique_ptr<MaiSessionStore>> makeMaiSqliteStore(
     }
     if (readUserVersion(database) < 1)
         sqlite3_exec(database, "PRAGMA user_version=1", nullptr, nullptr, nullptr);
+
+    if (readUserVersion(database) < 2) {
+        char* migrationError = nullptr;
+        if (sqlite3_exec(database, kMigrationV2, nullptr, nullptr, &migrationError) != SQLITE_OK) {
+            const std::string what = migrationError ? migrationError : "unknown error";
+            sqlite3_free(migrationError);
+            sqlite3_close(database);
+            return {MaiErrorCode::Internal, "cannot migrate schema to v2: " + what};
+        }
+        sqlite3_exec(database, "PRAGMA user_version=2", nullptr, nullptr, nullptr);
+    }
 
     return std::unique_ptr<MaiSessionStore>(new SqliteStore(database));
 }

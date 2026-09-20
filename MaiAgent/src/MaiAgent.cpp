@@ -1,7 +1,9 @@
 #include "MaiAgent.h"
 
+#include <chrono>
 #include <condition_variable>
 #include <mutex>
+#include <set>
 #include <thread>
 #include <unordered_map>
 
@@ -37,10 +39,15 @@ struct MaiAgent::Runtime {
     // 而且界面查"还有什么在等授权"时可能一轮都没在跑。
     std::unique_ptr<MaiPermissionGate> permissions;
     std::unique_ptr<MaiQuestionGate> questions;
+    // 指回门面。子 Agent 那组工具要通过它起会话、派活、等结果，
+    // 而那些动作只有门面做得了（要走 submit，才有 Busy 判断和事件）。
+    MaiSubAgentHost* owner = nullptr;
 
     mutable std::mutex mutex;
     std::condition_variable turnFinished;
     std::unordered_map<std::string, std::shared_ptr<ActiveTurn>> active;
+    // 被 close_agent 收掉的子 Agent。只是不再占名额，消息一条不删。
+    std::set<std::string> closedSubAgents;
 
     ~Runtime() {
         // 析构时把所有在跑的轮次叫停并等它们退出，否则工作线程会访问已经销毁的 store/emitter。
@@ -74,6 +81,7 @@ struct MaiAgent::Runtime {
         dependencies.titler = &titler;
         dependencies.permissions = permissions.get();
         dependencies.questions = questions.get();
+        dependencies.subAgents = owner;
         dependencies.defaultModel = options.defaultModel;
         dependencies.maxIterations = options.maxToolIterations;
         return dependencies;
@@ -98,6 +106,9 @@ struct MaiAgent::Runtime {
 MaiAgent::MaiAgent(std::unique_ptr<MaiSessionStore> store, std::unique_ptr<MaiModelClient> model,
                    std::unique_ptr<MaiToolRegistry> tools, Options options)
     : mRuntime(std::make_unique<Runtime>()) {
+    // 这个指针在构造函数里就设好：turn runner 每次都从 Runtime 现取依赖，
+    // 设晚了会有一轮拿到空的。
+    mRuntime->owner = this;
     mRuntime->store = std::move(store);
     mRuntime->model = std::move(model);
     mRuntime->tools = std::move(tools);
@@ -113,7 +124,157 @@ MaiAgent::MaiAgent(std::unique_ptr<MaiSessionStore> store, std::unique_ptr<MaiMo
 MaiAgent::~MaiAgent() = default;
 
 std::vector<MaiSession> MaiAgent::listSessions() const {
-    return mRuntime->store->listSessions();
+    // **只给根会话。** 子 Agent 也是会话，但用户没开过它们，
+    // 列出来只会让人以为自己漏了什么。要看子 Agent 走 listSubAgents()。
+    std::vector<MaiSession> all = mRuntime->store->listSessions();
+    std::vector<MaiSession> roots;
+    roots.reserve(all.size());
+    for (MaiSession& session : all) {
+        if (session.isRoot()) roots.push_back(std::move(session));
+    }
+    return roots;
+}
+
+// ── 子 Agent ────────────────────────────────────────────────────
+
+namespace {
+
+// 这个会话直接起过的孩子。
+std::vector<MaiSession> childrenOf(const MaiSessionStore& store, const std::string& parentId) {
+    std::vector<MaiSession> children;
+    for (MaiSession& session : store.listSessions()) {
+        if (session.parentId == parentId) children.push_back(std::move(session));
+    }
+    return children;
+}
+
+}  // namespace
+
+MaiResult<std::string> MaiAgent::spawnSubAgent(const std::string& parentSessionId,
+                                               const std::string& taskName,
+                                               const std::string& prompt) {
+    if (prompt.empty()) return {MaiErrorCode::InvalidInput, "the sub-agent needs something to do"};
+
+    MaiSession parent;
+    if (!mRuntime->store->getSession(parentSessionId, parent))
+        return {MaiErrorCode::NotFound, "session not found"};
+
+    // 深度和数量两条上限，**报错要分得开**：一个是「别再往下分了」，
+    // 一个是「先收掉几个」，模型的应对完全不一样。
+    if (parent.depth + 1 > mRuntime->options.maxSubAgentDepth) {
+        return {MaiErrorCode::InvalidInput,
+                "sub-agents are already nested " + std::to_string(parent.depth) +
+                    " deep, which is the limit. Do this part of the work yourself."};
+    }
+    int open = 0;
+    for (const MaiSession& child : childrenOf(*mRuntime->store, parentSessionId)) {
+        if (mRuntime->closedSubAgents.count(child.id) == 0) ++open;
+    }
+    if (open >= mRuntime->options.maxOpenSubAgents) {
+        return {MaiErrorCode::InvalidInput,
+                "there are already " + std::to_string(open) +
+                    " sub-agents open, which is the limit. Close the ones you are done with."};
+    }
+
+    MaiSession child;
+    child.id = MaiIdGenerator::newSessionId();
+    child.title = taskName.empty() ? std::string(kMaiDefaultSessionTitle) : taskName;
+    // **工作目录继承父的，没有参数能改。** 子能看见的文件因此是父的子集——
+    // 这是「子只能比父弱」落到实处的第一条。
+    child.directory = parent.directory;
+    child.model = parent.model;
+    child.agent = parent.agent;
+    child.parentId = parentSessionId;
+    child.depth = parent.depth + 1;
+    child.created = MaiTime::getCurrentTime();
+    child.updated = child.created;
+    mRuntime->store->putSession(child);
+
+    // 注意这里**没有**把父的会话级授权带过去。会话豁免是按 sessionId 记的，
+    // 子是新 id，天然不继承——父点过「以后都允许跑 rm」，子照样要重新问。
+    // 这条不是刻意写的代码，是数据结构自带的，所以写在这儿免得以后被"顺手"改掉。
+
+    MaiResult<std::string> started = submit(MaiSendPrompt{child.id, prompt});
+    if (!started) return started.error();
+    return child.id;
+}
+
+MaiError MaiAgent::sendToSubAgent(const std::string& parentSessionId,
+                                  const std::string& childSessionId, const std::string& prompt) {
+    MaiSession child;
+    if (!mRuntime->store->getSession(childSessionId, child))
+        return MaiError(MaiErrorCode::NotFound, "no such sub-agent");
+    // **只能戳自己的孩子。** 不查这一条的话，一个子 Agent 就能拿别人的会话 id
+    // 去给别人派活，那是横向越权。
+    if (child.parentId != parentSessionId)
+        return MaiError(MaiErrorCode::InvalidInput, "that sub-agent belongs to someone else");
+
+    MaiResult<std::string> sent = submit(MaiSendPrompt{childSessionId, prompt});
+    return sent ? MaiError() : sent.error();
+}
+
+bool MaiAgent::waitForSubAgent(const std::string& parentSessionId,
+                               const std::string& childSessionId, MaiMillis timeoutMs,
+                               const std::atomic<bool>& cancel) {
+    MaiSession child;
+    if (!mRuntime->store->getSession(childSessionId, child)) return false;
+    if (child.parentId != parentSessionId) return false;
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    std::unique_lock<std::mutex> lock(mRuntime->mutex);
+    while (mRuntime->active.count(childSessionId) > 0) {
+        // 中断时没人会 notify 这个 condvar，所以不能一睡到底，
+        // 得醒过来自己查一眼 cancel。和两个闸门一个路子。
+        if (cancel.load(std::memory_order_relaxed)) return false;
+        if (timeoutMs > 0 && std::chrono::steady_clock::now() >= deadline) return false;
+        mRuntime->turnFinished.wait_for(lock, std::chrono::milliseconds(100));
+    }
+    return true;
+}
+
+std::vector<MaiSubAgentInfo> MaiAgent::listSubAgents(const std::string& parentSessionId) {
+    std::vector<MaiSubAgentInfo> out;
+    for (const MaiSession& child : childrenOf(*mRuntime->store, parentSessionId)) {
+        MaiSubAgentInfo info;
+        info.sessionId = child.id;
+        info.taskName = child.title;
+        info.depth = child.depth;
+        if (mRuntime->closedSubAgents.count(child.id) > 0) {
+            info.status = "closed";
+        } else {
+            info.status = isBusy(child.id) ? "running" : "idle";
+        }
+        out.push_back(std::move(info));
+    }
+    return out;
+}
+
+MaiError MaiAgent::closeSubAgent(const std::string& parentSessionId,
+                                 const std::string& childSessionId) {
+    MaiSession child;
+    if (!mRuntime->store->getSession(childSessionId, child))
+        return MaiError(MaiErrorCode::NotFound, "no such sub-agent");
+    if (child.parentId != parentSessionId)
+        return MaiError(MaiErrorCode::InvalidInput, "that sub-agent belongs to someone else");
+
+    submit(MaiInterrupt{childSessionId});
+    {
+        std::lock_guard<std::mutex> lock(mRuntime->mutex);
+        mRuntime->closedSubAgents.insert(childSessionId);
+    }
+    // **消息不删。** 父之后还要能翻它说过什么，而且用户排障时那段历史是唯一的线索。
+    // 收掉只是把名额腾出来。
+    return MaiError();
+}
+
+std::string MaiAgent::subAgentReport(const std::string& childSessionId) {
+    const std::vector<MaiMessage> messages = mRuntime->store->listMessages(childSessionId);
+    for (auto it = messages.rbegin(); it != messages.rend(); ++it) {
+        if (it->role != MaiRole::Assistant) continue;
+        const std::string text = it->text();
+        if (!text.empty()) return text;
+    }
+    return std::string();
 }
 
 bool MaiAgent::getSession(const std::string& id, MaiSession& out) const {

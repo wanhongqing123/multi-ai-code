@@ -370,6 +370,11 @@ target_link_libraries(markdown_view_test PRIVATE maichat_markdown Qt5::Widgets Q
 add_executable(agent_controller_test tests/AgentControllerTest.cpp)
 target_link_libraries(agent_controller_test PRIVATE maichat_agent Qt5::Test)
 
+add_executable(agent_panel_session_test tests/AgentPanelSessionTest.cpp)
+# UiZoom 在 remote_im_desktop_ui 里，而 AgentChatPanel 用它做缩放，所以要一起链。
+target_link_libraries(agent_panel_session_test PRIVATE remote_im_desktop_ui remote_im_desktop_app
+  remote_im_core maichat_agent maichat_markdown Qt5::Widgets Qt5::Test)
+
 add_executable(remote_diagnostics_controller_test tests/RemoteDiagnosticsControllerTest.cpp)
 target_link_libraries(remote_diagnostics_controller_test PRIVATE remote_im_desktop_app Qt5::Test)
 target_compile_definitions(remote_diagnostics_controller_test PRIVATE
@@ -524,6 +529,7 @@ add_test(NAME markdown_document_test COMMAND markdown_document_test)
 add_test(NAME markdown_layout_test COMMAND markdown_layout_test)
 add_test(NAME markdown_view_test COMMAND markdown_view_test)
 add_test(NAME agent_controller_test COMMAND agent_controller_test)
+add_test(NAME agent_panel_session_test COMMAND agent_panel_session_test)
 add_test(NAME performance_log_test COMMAND performance_log_test)
 add_test(NAME remote_diagnostics_controller_test COMMAND remote_diagnostics_controller_test)
 add_test(NAME attachment_download_evidence_test COMMAND attachment_download_evidence_test)

@@ -73,6 +73,13 @@ private:
     // 流式期间**不要**调它，那会把正在长的正文整个换掉，界面会闪。
     void reloadFromStore();
 
+    // 这条事件是不是当前这个会话的。
+    //
+    // 子 Agent 并发跑在别的会话里，**正文类的事件必须滤掉**，否则它的回答会
+    // 接进父的答案里。授权和提问是例外：子 Agent 没有自己的界面，滤掉的话
+    // 它会永远挂在闸门上等一个永远不会来的点头。
+    bool isCurrentSession(const QString& sessionId) const;
+
     void onSend();
     void onClear();
 

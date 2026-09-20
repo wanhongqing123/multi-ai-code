@@ -458,28 +458,47 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     // ---- 接事件 ----
     // 这些信号全部已经在主线程上了（AgentController 负责把它们从核心的线程搬过来），
     // 所以这里查存储、改部件都随意。
+    // **每一条都要先认会话。**
+    //
+    // 子 Agent 是并发跑在另一个会话里的。不认的话它的正文会接进父的回答里、
+    // 它跑完会把发送按钮从「停止」翻回「发送」、它的标题会顶掉头部那一行——
+    // 而用户看到的是「AI 自己说了些我没问的话」。
+    //
+    // 以前只有一个会话在跑，忽略 sessionId 是无害的；现在不是了。
     connect(&controller, &AgentController::textDelta, this,
-            [this](const QString&, const QString&, const QString& partId, const QString& delta) {
+            [this](const QString& sessionId, const QString&, const QString& partId,
+                   const QString& delta) {
+                if (!isCurrentSession(sessionId)) return;
                 appendAnswerDelta(partId, delta);
             });
     connect(&controller, &AgentController::reasoningDelta, this,
-            [this](const QString&, const QString&, const QString& partId, const QString& delta) {
+            [this](const QString& sessionId, const QString&, const QString& partId,
+                   const QString& delta) {
+                if (!isCurrentSession(sessionId)) return;
                 thinkingLineFor(partId)->append(delta);
                 scrollToBottom();
             });
     connect(&controller, &AgentController::toolPartChanged, this,
-            [this](const QString&, const QString& messageId, const QString& partId) {
+            [this](const QString& sessionId, const QString& messageId, const QString& partId) {
+                if (!isCurrentSession(sessionId)) return;
                 refreshToolCard(messageId, partId);
             });
     connect(&controller, &AgentController::permissionAsked, this,
-            [this](const QString& permissionId, const QString&) { showApproval(permissionId); });
+            [this](const QString& permissionId, const QString& sessionId) {
+                // 授权**不按会话过滤**：子 Agent 也要用户点头，而它没有自己的界面。
+                // 滤掉的话它会永远挂在闸门上，用户只看到「一直在跑」。
+                (void)sessionId;
+                showApproval(permissionId);
+            });
     connect(&controller, &AgentController::questionAsked, this,
             [this](const QString& questionId, const QString&, const QString&) {
+                // 同授权：子 Agent 问的话也得有人答。
                 showQuestion(questionId);
             });
     connect(&controller, &AgentController::questionAnswered, this,
             [this](const QString&, const QString&) { clearQuestion(); });
-    connect(&controller, &AgentController::turnFinished, this, [this](const QString&) {
+    connect(&controller, &AgentController::turnFinished, this, [this](const QString& sessionId) {
+        if (!isCurrentSession(sessionId)) return;
         setRunning(false);
         emit sessionListChanged();
         for (ThinkingLine* line : runtime_->thinking) line->settle();
@@ -488,20 +507,26 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
         scrollToBottom();
     });
     connect(&controller, &AgentController::turnFailed, this,
-            [this](const QString&, const QString& message) {
+            [this](const QString& sessionId, const QString& message) {
+                if (!isCurrentSession(sessionId)) return;
                 setRunning(false);
                 for (ThinkingLine* line : runtime_->thinking) line->settle();
                 flushAnswers();
                 appendNotice(message, true);
             });
     connect(&controller, &AgentController::sessionTitleChanged, this,
-            [this](const QString&, const QString& title) {
+            [this](const QString& sessionId, const QString& title) {
+                if (!isCurrentSession(sessionId)) return;
                 runtime_->title->setText(title.isEmpty() ? QStringLiteral("AI 助手") : title);
                 emit sessionListChanged();
             });
 }
 
 AgentChatPanel::~AgentChatPanel() = default;
+
+bool AgentChatPanel::isCurrentSession(const QString& sessionId) const {
+    return sessionId == runtime_->sessionId;
+}
 
 QString AgentChatPanel::sessionId() const {
     return runtime_->sessionId;

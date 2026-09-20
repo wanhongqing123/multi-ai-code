@@ -1,6 +1,7 @@
 #include "agent/AgentChatPanel.h"
 
 #include <QAbstractTextDocumentLayout>
+#include <QDesktopServices>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFontMetrics>
@@ -9,18 +10,16 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QPushButton>
-#include <QScrollArea>
-#include <QScrollBar>
-#include <QTextBrowser>
 #include <QTextEdit>
 #include <QTimer>
+#include <QUrl>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <functional>
 #include <variant>
 
 #include "agent/AgentController.h"
-#include "markdown/MarkdownRenderer.h"
+#include "markdown/MarkdownView.h"
 #include "ui/UiZoom.h"
 
 namespace {
@@ -84,116 +83,12 @@ protected:
 
 }  // namespace
 
-// ── 助手的回答 ──────────────────────────────────────────────────
+// 助手的回答不再有自己的部件。
 //
-// **不是气泡，是整列宽的正文。** 模型的回答动辄几百字带列表和代码，
-// 塞进窄气泡里就是一根面条。
-//
-// Markdown 走 MaiChat 自己的 MarkdownRenderer，和 IM 那边渲染出来的东西一致——
-// 另起一套的话同一个应用里会有两种列表样式、两种代码块。
-class AgentChatPanel::AnswerView final : public QTextBrowser {
-public:
-    explicit AnswerView(QWidget* parent = nullptr) : QTextBrowser(parent) {
-        setFrameShape(QFrame::NoFrame);
-        setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-        setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-        setOpenExternalLinks(true);
-        setStyleSheet(QStringLiteral("QTextBrowser{background:transparent;border:none;}"));
-        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-
-        // 每来一个 delta 就重渲一次 Markdown 是 O(n²)：一段 3000 字的回答会重渲几百次。
-        // 攒一小会儿再渲，肉眼看不出延迟，CPU 差一个数量级。
-        repaintTimer_ = new QTimer(this);
-        repaintTimer_->setSingleShot(true);
-        repaintTimer_->setInterval(90);
-        QObject::connect(repaintTimer_, &QTimer::timeout, this, [this] { render(); });
-
-        QObject::connect(document()->documentLayout(),
-                         &QAbstractTextDocumentLayout::documentSizeChanged, this,
-                         [this](const QSizeF&) { fitHeight(); });
-    }
-
-    void append(const QString& delta) {
-        source_ += delta;
-        if (!repaintTimer_->isActive()) repaintTimer_->start();
-    }
-
-    void setMarkdown(const QString& markdown) {
-        source_ = markdown;
-        render();
-    }
-
-    // 流式结束：把攒着没渲的那一点补上。
-    void flush() {
-        repaintTimer_->stop();
-        render();
-    }
-
-protected:
-    void resizeEvent(QResizeEvent* event) override {
-        QTextBrowser::resizeEvent(event);
-        fitHeight();
-    }
-
-private:
-    void render() {
-        // 渲染器输出的 HTML 内嵌固定 px 字号，整体缩放时要一并按倍率缩放——
-        // 和 MainWindow 里 MarkdownMessageView 的做法一致。
-        QString html = MarkdownRenderer::renderToHtml(source_);
-        // 在渲染器自己那段 CSS **之后**追加覆盖规则。同级选择器后来者胜，
-        // 所以插在 </style> 之前就能盖掉，而 MarkdownRenderer 一个字都不用改——
-        // 那份 CSS 是 IM 气泡在用的，动它会连带改掉聊天界面。
-        html.replace(QStringLiteral("</style>"), agentOverrides() + QStringLiteral("</style>"));
-        setHtml(UiZoom::scaleQss(html));
-        fitHeight();
-    }
-
-    // 给长答案调的排版。
-    //
-    // 共用那份 CSS 是按 **IM 气泡**调的：一两句话、标题几乎用不上。
-    // 拿它排一篇带三级标题、列表和代码的回答就会露怯：
-    //
-    //   - **没有设行高**。中文在默认行距下挤成一坨，长段落读起来很累。
-    //   - 标题是蓝色和青色的（h2 #1769be / h3 #176e83）。气泡里偶尔出现一个还行，
-    //     一屏五个就成了圣诞树，而且抢了正文的注意力。
-    //   - 行内代码是蓝底蓝字。一段话里出现七八个 `PRAGMA xxx` 时整段都在闪。
-    //
-    // 所以这里只改三件事：把行距放开、标题收回墨色、代码块改成中性灰。
-    static QString agentOverrides() {
-        return QStringLiteral(
-            "body{font-size:14px;line-height:175%;color:#172033;}"
-            "p{margin:0 0 13px 0;}"
-            "h1{font-size:20px;color:#172033;margin:22px 0 10px 0;}"
-            "h2{font-size:17px;color:#172033;margin:22px 0 9px 0;}"
-            "h3{font-size:15px;color:#172033;margin:18px 0 8px 0;}"
-            "h4{font-size:14px;color:#475569;margin:14px 0 6px 0;}"
-            "h5{font-size:14px;color:#475569;margin:14px 0 6px 0;}"
-            "h6{font-size:14px;color:#667085;margin:14px 0 6px 0;}"
-            "ul{margin:0 0 13px 0;}"
-            "ol{margin:0 0 13px 0;}"
-            "li{margin:7px 0;}"
-            "strong{color:#0f172a;font-weight:600;}"
-            "em{color:#475569;}"
-            "code{background:#f1f5f9;color:#475569;font-size:13px;}"
-            "pre{margin:0 0 13px 0;}"
-            "a{color:#0b67b7;}");
-    }
-
-    // QTextBrowser 默认自己滚动。这里它嵌在外层的滚动区里，必须长到和内容一样高，
-    // 否则长回答会出现一个框里再套一个滚动条。
-    void fitHeight() {
-        document()->setTextWidth(viewport()->width());
-        const int wanted = static_cast<int>(document()->size().height()) + UiZoom::s(4);
-        if (wanted != height_) {
-            height_ = wanted;
-            setFixedHeight(wanted);
-        }
-    }
-
-    QString source_;
-    QTimer* repaintTimer_ = nullptr;
-    int height_ = 0;
-};
+// 原来每个回答是一个 QTextBrowser，走 MarkdownRenderer 出 HTML 交给 QTextDocument 排。
+// 那条路受 CSS 子集限制（行内 padding、块级圆角、border-left、复选框都不支持），
+// 而且每条消息一个部件，几百条之后滚动会卡。现在整个展示区是一个 MarkdownView，
+// 自己排自己画，按可见区裁剪。
 
 // ── 思考条 ──────────────────────────────────────────────────────
 //
@@ -415,17 +310,27 @@ struct AgentChatPanel::Runtime {
     QLabel* contextSize = nullptr;
     QLabel* dirChip = nullptr;
     QLabel* modelChip = nullptr;
-    QScrollArea* scroll = nullptr;
-    QVBoxLayout* stream = nullptr;
+    MarkdownView* view = nullptr;
     PromptEdit* editor = nullptr;
     QPushButton* send = nullptr;
     QLabel* hint = nullptr;
 
-    // partId -> 部件。流式期间靠它找到要追加的地方，而不是把整个对话重画一遍
-    //（重画会让正在长的正文闪）。
-    QHash<QString, AnswerView*> answers;
+    // partId -> 思考条 / 工具卡。这两样要能点，画不出来，所以还是部件，
+    // 由 MarkdownView 负责摆位置和跟着滚。
     QHash<QString, ThinkingLine*> thinking;
     QHash<QString, ToolCard*> toolCards;
+
+    // partId -> 已经攒到的 Markdown 原文。正文没有部件了，源在这儿。
+    QHash<QString, QString> answers;
+    // 攒着还没刷进视图的那些。
+    QSet<QString> dirtyAnswers;
+    // 每来一个 delta 就重排一次是 O(n^2)：一段 3000 字的回答会重排几百次。
+    // 攒一小会儿再刷，肉眼看不出延迟，CPU 差一个数量级。
+    // **定时器只有一个**，不是每条回答一个——原来那版是每个 AnswerView 自带一个。
+    QTimer* flushTimer = nullptr;
+
+    // 提示行（错误、说明）的 id 要唯一，它们不对应任何消息。
+    int noticeSerial = 0;
 
     bool running = false;
 };
@@ -469,30 +374,22 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     headRow->addWidget(clearButton);
     root->addWidget(head);
 
-    // ---- 对话流：一个居中的阅读列 ----
-    runtime_->scroll = new QScrollArea(this);
-    runtime_->scroll->setWidgetResizable(true);
-    runtime_->scroll->setFrameShape(QFrame::NoFrame);
-    runtime_->scroll->setStyleSheet(QStringLiteral("QScrollArea{background:#ffffff;border:none;}"));
-    auto* streamHost = new QWidget;
-    streamHost->setStyleSheet(QStringLiteral("background:#ffffff;"));
-    auto* hostRow = new QHBoxLayout(streamHost);
-    hostRow->setContentsMargins(UiZoom::s(20), UiZoom::s(18), UiZoom::s(20), UiZoom::s(18));
-    // 两侧的伸缩权重要**远小于**中间那一列，否则三个 1 会把宽度三等分——
-    // 阅读列只能拿到三分之一，两边空出一大片。给列一个大权重，
-    // 它先长到 maximumWidth，剩下的才分给两侧。
-    hostRow->addStretch(1);
-    auto* column = new QWidget;
-    column->setStyleSheet(QStringLiteral("background:transparent;"));
-    column->setMaximumWidth(UiZoom::s(kColumnWidth));
-    runtime_->stream = new QVBoxLayout(column);
-    runtime_->stream->setContentsMargins(0, 0, 0, 0);
-    runtime_->stream->setSpacing(UiZoom::s(14));
-    runtime_->stream->addStretch(1);
-    hostRow->addWidget(column, 20);
-    hostRow->addStretch(1);
-    runtime_->scroll->setWidget(streamHost);
-    root->addWidget(runtime_->scroll, 1);
+    // ---- 对话流：整片就是一个 MarkdownView ----
+    //
+    // 阅读列的居中和限宽由视图自己做。原来是 addStretch(1)/addWidget(列,20)/
+    // addStretch(1) 这种权重摆出来的，权重给错一次列就只剩三分之一宽。
+    runtime_->view = new MarkdownView(this);
+    runtime_->view->setTheme(MarkdownTheme::standard(UiZoom::factor()));
+    runtime_->view->setMaxContentWidth(UiZoom::s(kColumnWidth));
+    root->addWidget(runtime_->view, 1);
+
+    runtime_->flushTimer = new QTimer(this);
+    runtime_->flushTimer->setSingleShot(true);
+    runtime_->flushTimer->setInterval(90);
+    connect(runtime_->flushTimer, &QTimer::timeout, this, [this] { flushAnswers(); });
+
+    connect(runtime_->view, &MarkdownView::linkActivated, this,
+            [](const QString& href) { QDesktopServices::openUrl(QUrl(href)); });
 
     // ---- 输入区：一张卡，控件都在卡里 ----
     auto* composerHost = new QWidget(this);
@@ -559,8 +456,7 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     // 所以这里查存储、改部件都随意。
     connect(&controller, &AgentController::textDelta, this,
             [this](const QString&, const QString&, const QString& partId, const QString& delta) {
-                answerViewFor(partId)->append(delta);
-                scrollToBottom();
+                appendAnswerDelta(partId, delta);
             });
     connect(&controller, &AgentController::reasoningDelta, this,
             [this](const QString&, const QString&, const QString& partId, const QString& delta) {
@@ -577,7 +473,7 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
         setRunning(false);
         emit sessionListChanged();
         for (ThinkingLine* line : runtime_->thinking) line->settle();
-        for (AnswerView* answer : runtime_->answers) answer->flush();
+        flushAnswers();
         refreshContextSize();
         scrollToBottom();
     });
@@ -585,7 +481,7 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
             [this](const QString&, const QString& message) {
                 setRunning(false);
                 for (ThinkingLine* line : runtime_->thinking) line->settle();
-                for (AnswerView* answer : runtime_->answers) answer->flush();
+                flushAnswers();
                 appendNotice(message, true);
             });
     connect(&controller, &AgentController::sessionTitleChanged, this,
@@ -627,25 +523,29 @@ void AgentChatPanel::openSession(const QString& sessionId) {
 // ── 重画 ────────────────────────────────────────────────────────
 
 void AgentChatPanel::reloadFromStore() {
-    // 先把旧部件全拆掉。注意 takeAt(0) 会把最后那个 stretch 也取出来，所以后面要补回去。
-    while (QLayoutItem* item = runtime_->stream->takeAt(0)) {
-        if (QWidget* widget = item->widget()) widget->deleteLater();
-        delete item;
-    }
+    // 视图自己会把嵌进去的部件删掉，这儿只要把索引清干净。
+    runtime_->flushTimer->stop();
+    runtime_->view->clear();
     runtime_->answers.clear();
+    runtime_->dirtyAnswers.clear();
     runtime_->thinking.clear();
     runtime_->toolCards.clear();
 
     for (const MaiMessage& message :
          runtime_->controller->agent().listMessages(toUtf8(runtime_->sessionId))) {
         if (message.role == MaiRole::User) {
-            appendUserBubble(fromUtf8(message.text()));
+            // 历史里的气泡用消息 id：重开会话再画一遍时 id 要稳定，
+            // 不然同一条消息会被当成两条。
+            runtime_->view->addItem(fromUtf8(message.id), MarkdownView::Style::Bubble,
+                                    fromUtf8(message.text()));
             continue;
         }
         for (const MaiMessagePart& part : message.parts) {
             const QString partId = fromUtf8(part.id);
             if (const auto* text = std::get_if<MaiTextPart>(&part.body)) {
-                answerViewFor(partId)->setMarkdown(fromUtf8(text->text));
+                runtime_->answers.insert(partId, fromUtf8(text->text));
+                runtime_->view->addItem(partId, MarkdownView::Style::Document,
+                                        fromUtf8(text->text));
             } else if (const auto* reasoning = std::get_if<MaiReasoningPart>(&part.body)) {
                 ThinkingLine* line = thinkingLineFor(partId);
                 line->append(fromUtf8(reasoning->text));
@@ -657,84 +557,54 @@ void AgentChatPanel::reloadFromStore() {
             }
         }
     }
-    runtime_->stream->addStretch(1);
     refreshContextSize();
     scrollToBottom();
 }
 
-void AgentChatPanel::addToStream(QWidget* widget, Qt::Alignment alignment) {
-    // **不能直接用 alignment 把部件塞进竖直布局。**
-    //
-    // 带对齐标志时 QVBoxLayout 按 sizeHint 给尺寸，而一个开了 wordWrap 的 QLabel
-    // 的 sizeHint 是**不换行**那一行的宽度；再被 maximumWidth 卡住，高度却还是一行——
-    // 结果就是长文本被硬生生截断。踩过一次，两个气泡都只显示半句。
-    //
-    // 正确做法是给每条消息包一层横向行：行本身撑满列宽，内容在行里靠左或靠右。
-    auto* row = new QWidget;
-    row->setStyleSheet(QStringLiteral("background:transparent;"));
-    auto* rowLayout = new QHBoxLayout(row);
-    rowLayout->setContentsMargins(0, 0, 0, 0);
-    rowLayout->setSpacing(0);
-    if (alignment.testFlag(Qt::AlignRight)) {
-        rowLayout->addStretch(1);
-        rowLayout->addWidget(widget);
-    } else if (widget->sizePolicy().horizontalPolicy() == QSizePolicy::Maximum) {
-        // 不想撑满的东西（工具卡）：贴左，右边留白。
-        // 不补这条 stretch 的话 Qt 会把它**居中**——一张注记卡浮在正文中间很奇怪。
-        rowLayout->addWidget(widget);
-        rowLayout->addStretch(1);
-    } else {
-        // 助手的正文要占满整个阅读列，那正是它和气泡的区别。
-        rowLayout->addWidget(widget, 1);
+// 流式期间往某条回答后面追加。第一段到的时候先把条目建出来，
+// 用户立刻看得见有东西在长；后面的靠定时器攒着批量刷。
+void AgentChatPanel::appendAnswerDelta(const QString& partId, const QString& delta) {
+    QString& source = runtime_->answers[partId];
+    const bool isNew = source.isEmpty() && !runtime_->view->contains(partId);
+    source += delta;
+    if (isNew) {
+        runtime_->view->addItem(partId, MarkdownView::Style::Document, source);
+        scrollToBottom();
+        return;
     }
+    runtime_->dirtyAnswers.insert(partId);
+    if (!runtime_->flushTimer->isActive()) runtime_->flushTimer->start();
+}
 
-    const int insertAt = std::max(0, runtime_->stream->count() - 1);
-    runtime_->stream->insertWidget(insertAt, row);
+void AgentChatPanel::flushAnswers() {
+    runtime_->flushTimer->stop();
+    if (runtime_->dirtyAnswers.isEmpty()) return;
+    const bool wasAtBottom = runtime_->view->isAtBottom();
+    for (const QString& partId : runtime_->dirtyAnswers) {
+        runtime_->view->updateItem(partId, runtime_->answers.value(partId));
+    }
+    runtime_->dirtyAnswers.clear();
+    // 正在看历史的时候不要把人拽回底部。
+    if (wasAtBottom) runtime_->view->scrollToBottom();
 }
 
 void AgentChatPanel::appendUserBubble(const QString& text) {
     // 只有用户这一侧保留气泡。人发的消息短，气泡合适；
-    // 而且右侧那块蓝色让"谁说的"一眼可辨，不用头像也不用名字。
-    auto* bubble = makeLabel(text, 13, "#ffffff");
-    const int padding = UiZoom::s(14) * 2;
-    bubble->setStyleSheet(UiZoom::scaleQss(
-        QStringLiteral("QLabel{background:%1;color:#ffffff;border-radius:12px;padding:9px 14px;}")
-            .arg(kAccent)));
-
-    // **宽度得自己量，不能交给 sizeHint。**
+    // 而且右侧那块底色让"谁说的"一眼可辨，不用头像也不用名字。
     //
-    // 开了 wordWrap 的 QLabel，sizeHint 给的是一个偏窄的方块（Qt 想让它接近正方），
-    // 所以一句二十来字的话会被折成三行、右边空出一大片。
-    //
-    // 量法是"这句话排成一行要多宽"：放得下就给它那么宽，一个换行都不要；
-    // 放不下才用满上限，让它在上限处折。
-    //
-    // 最后那点余量不是玄学：QLabel 自己还有 contentsMargins 和边框，
-    // 样式表里的 padding 也是按整数像素缩放的。少算几个像素的后果不是"挤一点"，
-    // 而是**最后一个字被挤到下一行**——"你好"两个字排成两行就是这么来的。
-    const int cap = UiZoom::s(kColumnWidth * 3 / 4);
-    const QFontMetrics metrics(bubble->font());
-    const int oneLine = metrics.horizontalAdvance(text) + padding + UiZoom::s(8);
-    bubble->setFixedWidth(std::min(oneLine, cap));
-    addToStream(bubble, Qt::AlignRight);
+    // 宽度不用自己量了：视图先按上限排一遍、再按**量出来的**自然宽度收窄。
+    // 原来是拿 QFontMetrics 估的，估窄了最后一个字会被挤到下一行
+    //（"你好"两个字排成两行就是这么来的）。
+    runtime_->view->addItem(QStringLiteral("local-%1").arg(++runtime_->noticeSerial),
+                            MarkdownView::Style::Bubble, text);
+    scrollToBottom();
 }
 
 void AgentChatPanel::appendNotice(const QString& text, bool isError) {
-    auto* notice = makeLabel(text, 12, isError ? kDanger : kInkSoft);
-    notice->setStyleSheet(UiZoom::scaleQss(
-        QStringLiteral("QLabel{background:%1;color:%2;border-radius:6px;padding:6px 10px;}")
-            .arg(isError ? "#fef3f2" : kLineSoft, isError ? kDanger : kInkSoft)));
-    addToStream(notice, Qt::AlignLeft);
-}
-
-AgentChatPanel::AnswerView* AgentChatPanel::answerViewFor(const QString& partId) {
-    auto found = runtime_->answers.constFind(partId);
-    if (found != runtime_->answers.constEnd()) return found.value();
-
-    auto* answer = new AnswerView;
-    addToStream(answer, Qt::AlignLeft);
-    runtime_->answers.insert(partId, answer);
-    return answer;
+    runtime_->view->addItem(
+        QStringLiteral("notice-%1").arg(++runtime_->noticeSerial),
+        isError ? MarkdownView::Style::Error : MarkdownView::Style::Notice, text);
+    scrollToBottom();
 }
 
 AgentChatPanel::ThinkingLine* AgentChatPanel::thinkingLineFor(const QString& partId) {
@@ -742,7 +612,7 @@ AgentChatPanel::ThinkingLine* AgentChatPanel::thinkingLineFor(const QString& par
     if (found != runtime_->thinking.constEnd()) return found.value();
 
     auto* line = new ThinkingLine;
-    addToStream(line, Qt::AlignLeft);
+    runtime_->view->addWidget(partId, line);
     runtime_->thinking.insert(partId, line);
     return line;
 }
@@ -753,8 +623,9 @@ AgentChatPanel::ToolCard* AgentChatPanel::toolCardFor(const QString& partId) {
 
     auto* card = new ToolCard;
     // 不撑满整列：它是一条注记，不是正文。撑满会让它看起来比回答还重要。
+    // MarkdownView 认这个策略，按 sizeHint 给宽度并靠左摆。
     card->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
-    addToStream(card, Qt::AlignLeft);
+    runtime_->view->addWidget(partId, card);
     runtime_->toolCards.insert(partId, card);
 
     connect(card->allowButton(), &QPushButton::clicked, this,
@@ -872,11 +743,7 @@ void AgentChatPanel::setRunning(bool running) {
 }
 
 void AgentChatPanel::scrollToBottom() {
-    // 部件是这一拍刚加进去的，布局还没算完高度，直接滚会滚到旧的底部。
-    QTimer::singleShot(0, this, [this] {
-        QScrollBar* bar = runtime_->scroll->verticalScrollBar();
-        bar->setValue(bar->maximum());
-    });
+    runtime_->view->scrollToBottom();
 }
 
 void AgentChatPanel::refreshContextSize() {

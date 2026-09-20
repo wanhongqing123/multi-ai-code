@@ -15,7 +15,11 @@ class QLabel;
 //
 //   **助手的回答不是气泡。** 人发的消息短，气泡合适；模型的回答动辄几百字带列表和代码，
 //   塞进一个 520px 的窄气泡里就是一根面条，读起来极累。所以回答是整列宽的正文，
-//   走 Markdown 渲染（复用 MaiChat 自己的 MarkdownRenderer），只有**用户**那一侧保留气泡。
+//   只有**用户**那一侧保留气泡。
+//
+//   **整个展示区是一个 MarkdownView**，不是一条消息一个部件。它自己排版自己绘制，
+//   按可见区裁剪；跨消息选区、复制原始 Markdown、链接命中都在那一层。
+//   主题和 IM 共用一份 MarkdownTheme——外观要调只改一个地方。
 //
 //   **正文有一个居中的阅读列。** 窗口拉到 2000px 宽时正文不该跟着拉那么宽——
 //   一行太长，眼睛回扫会丢行。
@@ -60,8 +64,8 @@ signals:
     void sessionListChanged();
 
 private:
-    // 这三个是这个面板专用的部件，别处用不上，所以做成嵌套私有类、定义在 .cpp 里。
-    class AnswerView;
+    // 这两个是这个面板专用的部件，别处用不上，所以做成嵌套私有类、定义在 .cpp 里。
+    // 它们要能点（展开、授权），画不出来，所以嵌进 MarkdownView 里当部件用。
     class ThinkingLine;
     class ToolCard;
 
@@ -72,8 +76,12 @@ private:
     void onSend();
     void onClear();
 
+    // 流式期间往某条回答后面追加。攒一小会儿再刷进视图，
+    // 每个 delta 都重排是 O(n^2)。
+    void appendAnswerDelta(const QString& partId, const QString& delta);
+    void flushAnswers();
+
     // 流式期间按 partId 找（或建）对应的部件，只追加不重画。
-    AnswerView* answerViewFor(const QString& partId);
     ThinkingLine* thinkingLineFor(const QString& partId);
     ToolCard* toolCardFor(const QString& partId);
     void refreshToolCard(const QString& messageId, const QString& partId);
@@ -85,7 +93,6 @@ private:
 
     void appendUserBubble(const QString& text);
     void appendNotice(const QString& text, bool isError);
-    void addToStream(QWidget* widget, Qt::Alignment alignment);
     void setRunning(bool running);
     void scrollToBottom();
     void refreshContextSize();

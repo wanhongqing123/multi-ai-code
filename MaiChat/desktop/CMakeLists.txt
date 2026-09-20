@@ -101,6 +101,25 @@ add_library(md4c STATIC
 )
 target_include_directories(md4c PUBLIC third_party/md4c)
 
+# Markdown 的解析 + 排版 + 绘制。**两端共用这一套**（agent 和 IM）。
+#
+# 单独成库是被依赖方向逼出来的：绘制要 Qt5::Widgets，而 remote_im_core 是
+# Core/Network/Sql 的，给它加 Widgets 会把一批无头测试也拖进去要 QApplication。
+# 反过来它又不能放进 remote_im_desktop_ui——maichat_agent 在那一层下面，也要用。
+# 所以放在最底下，谁都能依赖，它谁也不依赖。
+add_library(maichat_markdown
+  src/markdown/MarkdownDocument.h
+  src/markdown/MarkdownDocument.cpp
+  src/markdown/MarkdownTheme.h
+  src/markdown/MarkdownTheme.cpp
+  src/markdown/MarkdownLayout.h
+  src/markdown/MarkdownLayout.cpp
+  src/markdown/MarkdownView.h
+  src/markdown/MarkdownView.cpp
+)
+target_include_directories(maichat_markdown PUBLIC src)
+target_link_libraries(maichat_markdown PUBLIC Qt5::Core Qt5::Gui Qt5::Widgets PRIVATE md4c)
+
 add_library(remote_im_core
   src/model/RemoteIMContact.h
   src/model/RemoteIMMessage.h
@@ -337,7 +356,16 @@ add_library(maichat_agent
   src/agent/AgentSessionList.cpp
 )
 target_include_directories(maichat_agent PUBLIC src)
-target_link_libraries(maichat_agent PUBLIC Qt5::Core Qt5::Widgets maiagent)
+target_link_libraries(maichat_agent PUBLIC Qt5::Core Qt5::Widgets maiagent maichat_markdown)
+
+add_executable(markdown_document_test tests/MarkdownDocumentTest.cpp)
+target_link_libraries(markdown_document_test PRIVATE maichat_markdown Qt5::Test)
+
+add_executable(markdown_layout_test tests/MarkdownLayoutTest.cpp)
+target_link_libraries(markdown_layout_test PRIVATE maichat_markdown Qt5::Widgets Qt5::Test)
+
+add_executable(markdown_view_test tests/MarkdownViewTest.cpp)
+target_link_libraries(markdown_view_test PRIVATE maichat_markdown Qt5::Widgets Qt5::Test)
 
 add_executable(agent_controller_test tests/AgentControllerTest.cpp)
 target_link_libraries(agent_controller_test PRIVATE maichat_agent Qt5::Test)
@@ -393,6 +421,13 @@ add_executable(message_notification_test tests/MessageNotificationTest.cpp)
 target_link_libraries(message_notification_test PRIVATE remote_im_core Qt5::Test)
 
 # 视觉自检程序：手工跑起来截图用，不进 ctest。
+add_executable(agent_page_visual_probe tests/AgentPageVisualProbe.cpp)
+target_link_libraries(agent_page_visual_probe PRIVATE remote_im_desktop_ui remote_im_desktop_app
+  remote_im_core maichat_agent maichat_markdown Qt5::Widgets Qt5::Test)
+
+add_executable(markdown_visual_probe tests/MarkdownVisualProbe.cpp)
+target_link_libraries(markdown_visual_probe PRIVATE maichat_markdown Qt5::Widgets)
+
 add_executable(quote_visual_probe tests/QuoteVisualProbe.cpp)
 target_link_libraries(quote_visual_probe PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets)
 
@@ -485,6 +520,9 @@ target_link_libraries(ui_zoom_test PRIVATE remote_im_desktop_ui remote_im_deskto
 add_executable(performance_log_test tests/PerformanceLogTest.cpp)
 target_link_libraries(performance_log_test PRIVATE remote_im_core Qt5::Test)
 enable_testing()
+add_test(NAME markdown_document_test COMMAND markdown_document_test)
+add_test(NAME markdown_layout_test COMMAND markdown_layout_test)
+add_test(NAME markdown_view_test COMMAND markdown_view_test)
 add_test(NAME agent_controller_test COMMAND agent_controller_test)
 add_test(NAME performance_log_test COMMAND performance_log_test)
 add_test(NAME remote_diagnostics_controller_test COMMAND remote_diagnostics_controller_test)

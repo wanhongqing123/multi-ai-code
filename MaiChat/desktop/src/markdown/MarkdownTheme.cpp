@@ -28,6 +28,8 @@ QString monospaceFamily() {
 
 MarkdownTheme MarkdownTheme::standard(qreal zoom) {
     MarkdownTheme theme;
+    // 记下倍率：它同时是这份皮肤的指纹，排版缓存靠它分辨两份皮肤。
+    theme.zoom = zoom;
     theme.codeFamily = monospaceFamily();
     // 标题字号按 20/17/15/14/14/14 收紧。老的 IM 值是 22/18/16，那是给
     // 「一两句话里偶尔一个标题」用的；长回答里 22px 的 h1 太抢眼。

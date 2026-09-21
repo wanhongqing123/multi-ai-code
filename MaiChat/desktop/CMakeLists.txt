@@ -114,6 +114,8 @@ add_library(maichat_markdown
   src/markdown/MarkdownTheme.cpp
   src/markdown/MarkdownLayout.h
   src/markdown/MarkdownLayout.cpp
+  src/markdown/MarkdownLayoutCache.h
+  src/markdown/MarkdownLayoutCache.cpp
   src/markdown/MarkdownView.h
   src/markdown/MarkdownView.cpp
   src/markdown/MarkdownLabel.h

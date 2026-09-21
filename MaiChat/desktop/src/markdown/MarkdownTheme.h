@@ -131,6 +131,13 @@ struct MarkdownTheme {
     // 气泡最宽占可用宽度的多少。人发的消息短，拉满一行反而难读。
     qreal bubbleMaxWidthRatio = 0.72;
 
+    // 造这份皮肤用的缩放倍率。**同时当这份皮肤的指纹**：排好的版按它缓存
+    // （见 MarkdownLayoutCache），两份皮肤只要这个数一样就会被当成同一份。
+    //
+    // 产品里所有主题都出自 standard(zoom)，所以这个数就够用了。要是哪天有人
+    // 手改了别的字段又不动这里，缓存会命中旧的那份——那就把这里也改掉。
+    qreal zoom = 1.0;
+
     // 标准主题。zoom 传 UiZoom::factor()；非界面场景（比如测量）传 1.0。
     static MarkdownTheme standard(qreal zoom);
 

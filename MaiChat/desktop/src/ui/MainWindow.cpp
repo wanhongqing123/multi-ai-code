@@ -225,8 +225,10 @@ private:
     std::function<void()> forwardHandler_;
 
     void updateContentHeight() {
-        const int available = qMax(120, width());
-        const int wanted = qMax(UiZoom::s(20), heightForWidth(available));
+        // 按**自己的宽度**量。原来这里有个 120 的下限（从 QTextBrowser 那版抄来的），
+        // 后果是部件还没拿到真实宽度时先按 120 量一次，拿到之后再排一次——
+        // 每条消息白排一次版。MarkdownLabel 自己有下限，这里不用再兜。
+        const int wanted = qMax(UiZoom::s(20), heightForWidth(width()));
         if (height() == wanted && minimumHeight() == wanted) return;
         setFixedHeight(wanted);
         updateGeometry();

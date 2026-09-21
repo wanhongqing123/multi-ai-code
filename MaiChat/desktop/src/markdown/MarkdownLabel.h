@@ -75,11 +75,15 @@ protected:
     void keyPressEvent(QKeyEvent* event) override;
 
 private:
+    // 内容或皮肤变了：只作废，不排版。真要用的时候再排。
+    void invalidate();
+    // 把排好的版交还给缓存，下次还能用上。
+    void returnLayoutToCache();
+    void returnProbeToCache();
     // 按 width 排版；宽度没变就是空操作。
     void ensureLayout(qreal width);
-    // 按**当前部件宽度**排版。量高度可能把版排到别的宽度上去了。
+    // 按**当前部件宽度**排版。量高度用的是另一份版，不会影响这份。
     void ensureCurrentLayout() const;
-    void relayout();
 
     struct Runtime;
     std::unique_ptr<Runtime> runtime_;

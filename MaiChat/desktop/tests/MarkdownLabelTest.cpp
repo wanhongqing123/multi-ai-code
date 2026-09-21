@@ -3,6 +3,8 @@
 #include <QWidget>
 
 #include "markdown/MarkdownLabel.h"
+#include "markdown/MarkdownDocument.h"
+#include "markdown/MarkdownLayoutCache.h"
 
 // MarkdownLabel：不滚动、高度跟着内容走的那一半（IM 的消息气泡用它）。
 //
@@ -18,6 +20,9 @@ private slots:
     void measuringAnotherWidthDoesNotStickToIt();
     void trailingNoteStaysOnTheLastLine();
     void plainTextDropsMarkup();
+    void reusesTheLayoutOfAnIdenticalMessage();
+    void neverServesAnotherMessagesLayout();
+    void comparesKeysNotJustHashes();
 };
 
 namespace {
@@ -96,6 +101,99 @@ void MarkdownLabelTest::plainTextDropsMarkup() {
     QVERIFY(label.plainText().contains(QStringLiteral("加粗")));
     // 原文要原样留着：「复制原始数据」复制的是它。
     QCOMPARE(label.markdown(), QStringLiteral("# 标题\n\n**加粗**与 `代码`"));
+}
+
+void MarkdownLabelTest::reusesTheLayoutOfAnIdenticalMessage() {
+    // 切会话会把整列消息拆掉重建，而那些消息一个字都没变。排版是整条链路上最贵
+    // 的一步（同一条消息：解析 0.01ms，排版 1.3ms），重排一遍纯属白干——
+    // 所以排好的版要留着，下一个部件直接拿。
+    //
+    // 一个部件手上会有**两份**版：量高度用的和绘制用的。两份都得还回去。
+    // Qt 的布局对每条消息至少会按两个不同宽度问高度，量用的那份被覆盖之前
+    // 不还回去，等于没有缓存（实测：一次切换白白多排三千次）。
+    MarkdownLayoutCache::clear();
+    const MarkdownTheme shared = theme();
+
+    {
+        MarkdownLabel first;
+        first.setTheme(shared);
+        first.setMarkdown(longText());
+        first.resize(600, 400);
+        QCoreApplication::sendPostedEvents(&first, QEvent::Resize);
+        // 两个宽度：第二次会把第一次那份量用的版挤掉。
+        QVERIFY(first.heightForWidth(300) > 0);
+        QVERIFY(first.heightForWidth(450) > 0);
+        // 这一下走的是绘制那条路，填的是另一份版。
+        QVERIFY(first.contentHeight() > 0);
+    }  // 析构：两份都交还给缓存
+
+    const int hitsBefore = MarkdownLayoutCache::hits();
+    MarkdownLabel second;
+    second.setTheme(shared);
+    second.setMarkdown(longText());
+    second.resize(600, 400);
+    QCoreApplication::sendPostedEvents(&second, QEvent::Resize);
+    QVERIFY(second.heightForWidth(300) > 0);
+    QVERIFY(second.heightForWidth(450) > 0);
+    QVERIFY(second.contentHeight() > 0);
+
+    // 三个宽度一次都不该重排。
+    QCOMPARE(MarkdownLayoutCache::hits() - hitsBefore, 3);
+}
+
+void MarkdownLabelTest::neverServesAnotherMessagesLayout() {
+    // 内容、宽度、附注、皮肤，任意一样不同就是另一份版。
+    MarkdownLayoutCache::clear();
+    const MarkdownTheme shared = theme();
+
+    MarkdownLabel warm;
+    warm.setTheme(shared);
+    warm.setMarkdown(longText());
+    const int tall = warm.heightForWidth(300);
+    const int wide = warm.heightForWidth(700);
+    QVERIFY(tall > wide);
+
+    MarkdownLabel other;
+    other.setTheme(shared);
+    other.setMarkdown(QStringLiteral("短"));
+    QVERIFY2(other.heightForWidth(300) < tall, "拿到了别人的版");
+
+    MarkdownLabel same;
+    same.setTheme(shared);
+    same.setMarkdown(longText());
+    QCOMPARE(same.heightForWidth(300), tall);
+    QCOMPARE(same.heightForWidth(700), wide);
+
+    MarkdownLabel noted;
+    noted.setTheme(shared);
+    noted.setTrailingNote(QStringLiteral("  · 16:13"), QColor(QStringLiteral("#0f8ddd")), 11);
+    noted.setMarkdown(longText());
+    QVERIFY(noted.heightForWidth(300) >= tall);
+
+    MarkdownLabel zoomed;
+    zoomed.setTheme(MarkdownTheme::standard(2.0));
+    zoomed.setMarkdown(longText());
+    QVERIFY2(zoomed.heightForWidth(300) > tall, "换了皮肤却拿到了旧皮肤的版");
+}
+
+void MarkdownLabelTest::comparesKeysNotJustHashes() {
+    // 缓存按哈希找桶，**哈希会撞**。撞上一次就是把别人的消息画到这条上，
+    // 那种 bug 找起来要命，所以命中之后还要把键逐项比一遍。
+    //
+    // 部件那一层撞不出来（它只给整数宽度），所以直接对着缓存测：
+    // 宽度取整到 1/16 之后 600.0 和 600.01 落进同一个桶，但它们不是同一个键。
+    MarkdownLayoutCache::clear();
+    const MarkdownTheme shared = theme();
+    const QString source = longText();
+
+    auto laid = std::make_unique<MarkdownLayout>();
+    laid->layout(MarkdownDocument::parse(source), shared, 600.0);
+    MarkdownLayoutCache::put(source, QString(), 0, 0, 600.0, shared.zoom, std::move(laid));
+
+    QVERIFY2(MarkdownLayoutCache::take(source, QString(), 0, 0, 600.01, shared.zoom) == nullptr,
+             "宽度不一样却把那份给出去了——说明只比了哈希没比键");
+    QVERIFY2(MarkdownLayoutCache::take(source, QString(), 0, 0, 600.0, shared.zoom) != nullptr,
+             "宽度一样反而没给");
 }
 
 QTEST_MAIN(MarkdownLabelTest)

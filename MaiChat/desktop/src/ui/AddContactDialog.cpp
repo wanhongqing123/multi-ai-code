@@ -110,7 +110,7 @@ void AddContactDialog::applyStyle() {
         #addContactTitle {
             color: #0e1628;
             font-size: 24px;
-            font-weight: 800;
+            font-weight: 700;
             background: transparent;
         }
         #addContactSubtitle {
@@ -122,7 +122,7 @@ void AddContactDialog::applyStyle() {
         #addContactFieldLabel {
             color: #172033;
             font-size: 15px;
-            font-weight: 800;
+            font-weight: 700;
             background: transparent;
         }
         #contactUserIdInput {
@@ -144,7 +144,7 @@ void AddContactDialog::applyStyle() {
             min-height: 40px;
             border-radius: 10px;
             font-size: 14px;
-            font-weight: 800;
+            font-weight: 700;
         }
         #addContactCancelButton {
             color: #66758c;

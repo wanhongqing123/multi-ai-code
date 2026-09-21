@@ -2218,7 +2218,7 @@ void MainWindow::applyStyle() {
         #settingsSectionTitle {
             color: #0f172a;
             font-size: 15px;
-            font-weight: 800;
+            font-weight: 700;
             padding: 6px 0 12px 18px;
         }
         #settingsRadio {
@@ -3156,7 +3156,7 @@ void MainWindow::rebuildMessageList(const QString& peerId, const QList<RemoteIMM
             #emptyMessageTitle {
                 color: #101828;
                 font-size: 16px;
-                font-weight: 800;
+                font-weight: 700;
                 background: transparent;
             }
             #emptyMessageSubtitle {
@@ -4261,7 +4261,7 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
                 background: transparent;
                 color: #12a150;
                 font-size: 11px;
-                font-weight: 800;
+                font-weight: 700;
                 padding: 0;
             }
         )")));
@@ -4708,7 +4708,7 @@ void MainWindow::showToast(const QString& text, int fontPx, int durationMs) {
             color: #ffffff;
             border-radius: 10px;
             font-size: %1px;
-            font-weight: 800;
+            font-weight: 700;
             padding: 12px 26px;
         }
     )").arg(fontPx)));

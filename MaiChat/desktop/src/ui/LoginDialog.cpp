@@ -113,7 +113,7 @@ void LoginDialog::applyStyle() {
         #welcomeTitle {
             color: #0f172a;
             font-size: 20px;
-            font-weight: 800;
+            font-weight: 700;
         }
         #userIdInput {
             border: 1px solid #d9e1ec;
@@ -133,7 +133,7 @@ void LoginDialog::applyStyle() {
             background: #2f81f7;
             color: #ffffff;
             font-size: 15px;
-            font-weight: 800;
+            font-weight: 700;
         }
         #loginButton:hover {
             background: #256fe0;
@@ -151,3 +151,4 @@ void LoginDialog::applyStyle() {
 void LoginDialog::updateLoginButton() {
     loginButton_->setEnabled(!userId().isEmpty());
 }
+

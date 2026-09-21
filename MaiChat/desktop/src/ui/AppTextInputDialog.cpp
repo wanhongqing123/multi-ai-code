@@ -102,7 +102,7 @@ void AppTextInputDialog::applyStyle() {
         #appTextInputTitle {
             color: #0f172a;
             font-size: 18px;
-            font-weight: 800;
+            font-weight: 700;
         }
         #appTextInputDescription {
             color: #667085;

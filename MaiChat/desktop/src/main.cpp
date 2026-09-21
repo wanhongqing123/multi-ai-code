@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QFont>
+#include <QFontDatabase>
 #include <QSslSocket>
 #include <QStandardPaths>
 #include <QTimer>
@@ -56,6 +57,17 @@ int main(int argc, char* argv[]) {
     if (qEnvironmentVariableIsEmpty("QT_MULTIMEDIA_PREFERRED_PLUGINS")) {
         qputenv("QT_MULTIMEDIA_PREFERRED_PLUGINS", "windowsmediafoundation");
     }
+
+    // 文字渲染走 DirectWrite，替换默认的 GDI 字体引擎。GDI 引擎只有 8 级
+    // 灰度抗锯齿，且在 150% 这类分数缩放下按浮点位置摆放字形（横向无
+    // hinting），黑字明显发灰发糊；DirectWrite 的栅格化质量对齐 Electron/
+    // 原生控件。仍然不是 ClearType 次像素渲染（Qt5 raster 管线做不到），
+    // 但已是 Qt5 下能拿到的最好结果。注意：QSS 里的 font-weight 也别超过
+    // 700——微软雅黑/Segoe UI 的真字面只到 Bold(700)，更高会触发合成假粗体，
+    // 笔画交汇处断裂、粗细不均。必须与上面一样在 QApplication 之前设置。
+    if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) {
+        qputenv("QT_QPA_PLATFORM", "windows:fontengine=directwrite");
+    }
 #endif
 
 #ifdef Q_OS_WIN
@@ -93,28 +105,57 @@ int main(int argc, char* argv[]) {
             "Ship libssl-1_1-x64.dll and libcrypto-1_1-x64.dll alongside the app.");
     }
 
-#ifdef Q_OS_WIN
-    // 对齐 Electron 端（--mac-font-sans：Inter/Segoe UI + Noto Sans SC/微软雅黑）：
-    // Qt 在中文 Windows 上默认落到宋体（衬线观感），与远程 IM 抽屉的无衬线风格
-    // 不一致。用 Segoe UI + 微软雅黑组合，像素字号与全局 QSS 的 px 体系保持一致。
+    // 字体栈对齐 Electron 端（MaiChatBuddy，maichatbuddy.css 的 --mcb-font-sans：
+    // "Inter", "Noto Sans SC", "PingFang SC", "Microsoft YaHei"）。
+    //
+    // Inter/Noto/JetBrains Mono 都随包打进资源（:/maichat/fonts/，SIL OFL 1.1），
+    // 不依赖系统装没装：Inter 拉丁字形的现代感是 Electron 观感的主要来源，
+    // Noto Sans SC 补上中文的 Medium(500)——雅黑只有 400/700 两档，500 会触发
+    // 假粗体；Noto 有真 Medium/Bold，QSS 与代码里设的字重都落在真实字面上。
+    // Inter/JetBrains Mono 是 latin 子集，缺的字形（箭头、全角标点等）由列表
+    // 后面的中文字体接住；雅黑/苹方垫底，字体注册万一失败也不至于开天窗。
+    const QString bundledFonts[] = {
+        QStringLiteral(":/maichat/fonts/Inter-latin-400.ttf"),
+        QStringLiteral(":/maichat/fonts/Inter-latin-500.ttf"),
+        QStringLiteral(":/maichat/fonts/Inter-latin-600.ttf"),
+        QStringLiteral(":/maichat/fonts/Inter-latin-700.ttf"),
+        QStringLiteral(":/maichat/fonts/NotoSansSC-Regular.otf"),
+        QStringLiteral(":/maichat/fonts/NotoSansSC-Medium.otf"),
+        QStringLiteral(":/maichat/fonts/NotoSansSC-Bold.otf"),
+        QStringLiteral(":/maichat/fonts/JetBrainsMono-latin-400.ttf"),
+        QStringLiteral(":/maichat/fonts/JetBrainsMono-latin-700.ttf"),
+    };
+    for (const QString& path : bundledFonts) {
+        if (QFontDatabase::addApplicationFont(path) < 0) {
+            qWarning().noquote() << QStringLiteral("[font] bundled font failed to load: %1").arg(path);
+        }
+    }
+
     QFont appFont;
-    appFont.setFamilies({QStringLiteral("Segoe UI"),
+    // 全局关闭字形提示（PreferNoHinting），这是和字体栈绑定的一条决策：
+    //
+    // Noto Sans SC 的 OTF 是 CFF 轮廓、**没有任何手工 hinting 指令**，DirectWrite
+    // 对它只能自动 hinting——小字号粗体上会产生「断墨」伪影：横画中段墨色变浅、
+    // 笔画宽度周期性波动，一眼看去笔画像断了。关掉 hinting 走纯抗锯齿后笔画
+    // 连续均匀（边缘略软，macOS 一贯就是这种风格，可接受）。
+    //
+    // 注意这条的前史：GDI 引擎 + 雅黑时代这里曾试过 PreferVerticalHinting 修拉丁
+    // 字距，结果全界面发虚，撤了；后来 markdown 里那条也在换 DirectWrite 后删了
+    // （见 MarkdownLayout.cpp）。**hinting 的取舍跟着「引擎 × 字体」组合走**：
+    //   GDI  + 雅黑（TrueType 手工 hinting） → 默认全提示最好
+    //   DW   + 雅黑                        → 默认即可
+    //   DW   + Noto CFF（无 hinting 指令）  → NoHinting 才不坏
+    // 换字体栈或引擎时，重验三件事：字距、粗体笔画连续性、小字锐度。
+    appFont.setHintingPreference(QFont::PreferNoHinting);
+    appFont.setFamilies({QStringLiteral("Inter"),
+                         QStringLiteral("Noto Sans SC"),
                          QStringLiteral("Microsoft YaHei UI"),
-                         QStringLiteral("Microsoft YaHei")});
+                         QStringLiteral("Microsoft YaHei"),
+                         QStringLiteral("PingFang SC")});
     // 登录窗保持设计尺寸（不随缩放倍率变化）：这里用基准 13px，
     // 进入主界面时才由 MainWindow 把全局字体切到倍率值。
     appFont.setPixelSize(13);
-    // 字形提示**保持 Qt 的默认（全提示）**，不要在这里动。
-    //
-    // 曾经在这儿改成过 PreferVerticalHinting，为的是修 markdown 里字距忽宽忽窄
-    // （"QTextDocument" 被渲染成 "QTextDocum ent"）。那个毛病是真的，但这个位置
-    // 改的是**整个应用的字体**：按钮、列表、登录页的标题全都不再做横向提示，
-    // 笔画不再对齐像素栅格，在 Windows 上一眼就是「发虚、发肉」。
-    // 为了一个只在长段落里才看得出来的问题，把全产品的字都换了个观感，不划算。
-    //
-    // 现在这一条只加在 MarkdownLayout 自己造的字体上（见那边的 tuned()）。
     app.setFont(appFont);
-#endif
 
     const QStringList arguments = QCoreApplication::arguments();
     const bool smokeMode = arguments.contains(QStringLiteral("--smoke"));

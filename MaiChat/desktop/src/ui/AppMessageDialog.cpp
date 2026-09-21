@@ -117,7 +117,7 @@ void AppMessageDialog::applyStyle() {
         }
         #appMessageTitle, #appMessageTitleWarning {
             font-size: 18px;
-            font-weight: 800;
+            font-weight: 700;
         }
         #appMessageTitle {
             color: #0f172a;

@@ -57,7 +57,7 @@ void RemoteDesktopViewPanel::applyStyle() {
         #remoteIdleTitle {
             color: #0f172a;
             font-size: 16px;
-            font-weight: 800;
+            font-weight: 700;
         }
         #remoteIdleHint {
             color: #94a3b8;

@@ -146,20 +146,20 @@ public:
 private:
     // ── 字体 ────────────────────────────────────────────────
 
-    // **字形提示只做竖直方向**，而且只在这儿做。
+    // markdown 这条路自己 new QFont，而 QFont 默认构造**不继承**应用字体的
+    // hinting 偏好——QLabel 那些靠控件继承的会带上 main.cpp 设的
+    // PreferNoHinting，这里不会，所以这条决策必须在这儿再落一次。
     //
-    // Qt 在 Windows 上默认全提示：每个字形的步进被四舍五入到整像素，同一个词里
-    // 字距就忽宽忽窄——"QTextDocument" 会渲染成 "QTextDocum ent"，一眼看去像字
-    // 没连上。段落越长越明显，所以正文这条路要改。
+    // 现在的中文是 Noto Sans SC 的 CFF 轮廓（无手工 hinting 指令），DirectWrite
+    // 对它只能自动 hinting，小字号粗体会「断墨」：横画中段墨色变浅、笔画宽度
+    // 周期性波动。PreferNoHinting 走纯抗锯齿，笔画连续均匀（边缘略软，可接受）。
     //
-    // 只提示竖直方向：横向位置保留亚像素精度（字距变匀），竖直方向仍然对齐像素
-    // 栅格（横笔画还是锐的）。不选 PreferNoHinting 是因为那样小字号下横笔画发虚。
-    //
-    // **不要把这一条搬到 QApplication 的字体上**。试过，代价是按钮、列表、登录页
-    // 的标题一起失去横向提示，整个界面发虚——为一个只在长段落里看得出来的问题
-    // 换掉全产品的观感，不划算。
+    // 这里曾经设的是 PreferVerticalHinting——GDI 引擎时代修拉丁字距忽宽忽窄
+    // （"QTextDocument" 渲染成 "QTextDocum ent"）的方子。DirectWrite 下那个
+    // 字距问题实测已不存在，而竖直提示在新引擎下反而毁粗体，已撤。
+    // 换字体栈或换引擎时，重验三件事：字距、粗体笔画连续性、小字锐度。
     static QFont tuned(QFont font) {
-        font.setHintingPreference(QFont::PreferVerticalHinting);
+        font.setHintingPreference(QFont::PreferNoHinting);
         return font;
     }
 
@@ -181,7 +181,7 @@ private:
 
     // 换等宽字体。
     //
-    // **setFamily 一个人不够。** 应用字体是用 setFamilies({Segoe UI, 微软雅黑, ...})
+    // **setFamily 一个人不够。** 应用字体是用 setFamilies({Inter, Noto Sans SC, ...})
     // 设的，而 QFont 默认构造会把那份列表带过来；列表非空时 Qt 按列表解析，
     // setFamily 设的那个名字直接被忽略——代码块看起来和正文一模一样。
     // 两个都设才盖得住。

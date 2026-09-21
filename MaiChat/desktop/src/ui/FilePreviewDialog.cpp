@@ -198,7 +198,7 @@ void FilePreviewDialog::applyStyle() {
         #filePreviewTitle {
             color: #0f172a;
             font-size: 17px;
-            font-weight: 800;
+            font-weight: 700;
         }
         /* 不在这里设 font-size：正文字号由 MarkdownRenderer 的 CSS 给出，
            并已被 UiZoom::scaleQss 按缩放倍率换算过，这里再设会把它顶掉。 */

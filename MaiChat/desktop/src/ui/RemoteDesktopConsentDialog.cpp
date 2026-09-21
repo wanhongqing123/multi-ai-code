@@ -106,7 +106,7 @@ void RemoteDesktopConsentDialog::applyStyle() {
         #remoteDesktopConsentTitle {
             color: #0f172a;
             font-size: 18px;
-            font-weight: 800;
+            font-weight: 700;
         }
         #remoteDesktopConsentBody {
             color: #334155;

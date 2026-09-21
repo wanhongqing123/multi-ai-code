@@ -12,16 +12,11 @@ QColor hex(const char* value) {
     return QColor(QString::fromLatin1(value));
 }
 
-// 等宽字体按平台给一个确定的名字。写成浏览器式的回退列表没用——
-// QFont 不解析那种写法，Qt 只认单个族名。
+// 等宽字体用随包注册的 JetBrains Mono（main.cpp 从 :/maichat/fonts/ 注册），
+// 与 Electron 端一致，跨平台同一副面孔，不随系统装的字体漂移。
+// 写成浏览器式的回退列表没用——QFont 不解析那种写法，Qt 只认单个族名。
 QString monospaceFamily() {
-#ifdef Q_OS_MAC
-    return QStringLiteral("Menlo");
-#elif defined(Q_OS_WIN)
-    return QStringLiteral("Consolas");
-#else
-    return QStringLiteral("monospace");
-#endif
+    return QStringLiteral("JetBrains Mono");
 }
 
 }  // namespace

@@ -7,6 +7,7 @@
 #include <QFontMetrics>
 #include <QFrame>
 #include <QHBoxLayout>
+#include <QDebug>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QPushButton>
@@ -159,12 +160,18 @@ private:
     QLabel* latest_ = nullptr;
 };
 
-class AgentChatPanel::ThinkingLine final : public QWidget {
+class AgentChatPanel::ThinkingLine final : public QFrame {
 public:
-    explicit ThinkingLine(QWidget* parent = nullptr) : QWidget(parent) {
+    explicit ThinkingLine(QWidget* parent = nullptr) : QFrame(parent) {
+        setObjectName(QStringLiteral("agentThinkingCard"));
         setCursor(Qt::PointingHandCursor);
+        // 和工具卡同一副面孔（白底、细边、左侧色条、圆角）——它是同一列里的
+        // 元素，裸文字夹在一堆卡片中间会显得像没画完。
+        setStyleSheet(UiZoom::scaleQss(QStringLiteral(
+            "QFrame#agentThinkingCard{background:#ffffff;border:1px solid %1;"
+            "border-left:3px solid %2;border-radius:7px;}").arg(kLine, kInkFaint)));
         auto* column = new QVBoxLayout(this);
-        column->setContentsMargins(0, 0, 0, 0);
+        column->setContentsMargins(UiZoom::s(10), UiZoom::s(6), UiZoom::s(10), UiZoom::s(6));
         column->setSpacing(UiZoom::s(4));
 
         caption_ = makeLabel(QStringLiteral("思考中"), 12, kInkFaint);
@@ -195,6 +202,14 @@ public:
         refreshCaption();
     }
 
+    // 历史恢复的思考条：时长没有落库，无从知晓——显示「思考过程」而不是
+    // 编一个「思考了 0 秒」（刚建好就 settle，计时器走的永远是 0）。
+    void settleRestored() {
+        ticker_->stop();
+        restored_ = true;
+        refreshCaption();
+    }
+
 protected:
     void mousePressEvent(QMouseEvent*) override {
         expanded_ = !expanded_;
@@ -211,6 +226,10 @@ private:
             return;
         }
         const QString caret = expanded_ ? QStringLiteral(" ⌄") : QStringLiteral(" ›");
+        if (restored_) {
+            caption_->setText(QStringLiteral("思考过程") + caret);
+            return;
+        }
         caption_->setText(QStringLiteral("思考了 %1 秒").arg(seconds_) + caret);
     }
 
@@ -220,6 +239,7 @@ private:
     QElapsedTimer elapsed_;
     QString text_;
     bool expanded_ = false;
+    bool restored_ = false;
     int dots_ = 0;
     int seconds_ = 0;
 };
@@ -659,9 +679,11 @@ void AgentChatPanel::reloadFromStore() {
                 runtime_->view->addItem(partId, MarkdownView::Style::Document,
                                         fromUtf8(text->text));
             } else if (const auto* reasoning = std::get_if<MaiReasoningPart>(&part.body)) {
+                // 空文本的思考片段没有可展开的内容，画出来就是个点不开的空壳。
+                if (reasoning->text.empty()) continue;
                 ThinkingLine* line = thinkingLineFor(partId);
                 line->append(fromUtf8(reasoning->text));
-                line->settle();  // 历史里的思考早就结束了，别让它转圈
+                line->settleRestored();  // 历史里的思考早就结束了；时长没落库，别编秒数
             } else if (const auto* tool = std::get_if<MaiToolPart>(&part.body)) {
                 ToolCard* card = toolCardFor(partId);
                 card->setCall(fromUtf8(tool->tool), fromUtf8(tool->input));

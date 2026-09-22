@@ -3,6 +3,7 @@
 #include <QPushButton>
 #include <QSignalSpy>
 #include <QDir>
+#include <QTextEdit>
 #include <QtTest>
 
 #include <atomic>
@@ -53,6 +54,7 @@ private slots:
     void anotherSessionFailingDoesNotShowAnError();
     void anotherSessionTitleDoesNotRenameTheHeader();
     void approvalFromAnotherSessionIsStillShown();
+    void thinkingLineExpandsLiveAndAfterRestore();
 };
 
 namespace {
@@ -177,6 +179,96 @@ void AgentPanelSessionTest::approvalFromAnotherSessionIsStillShown() {
     // 信号要到得了面板。面板拿这个 id 去核心查待裁决列表（那份列表是全局的，
     // 不分会话），所以子 Agent 的授权照样答得了。
     QCOMPARE(spy.count(), 1);
+}
+
+// 思考条要能点开，而且**展开后高度必须真的长出来**：
+// 之前出现过点击后正文露一条缝、卡片高度不动的情况（高度联动失效），
+// 视觉上就是「点不开」或「文字被裁」。恢复路径（重开会话）同样要过一遍——
+// 两条路建条目的方式不一样，坏一条不坏另一条是可能的。
+void AgentPanelSessionTest::thinkingLineExpandsLiveAndAfterRestore() {
+    // 会说话的假模型：一轮里给出一段够长的思考 + 一句正文。
+    class ReasoningModel final : public MaiModelClient {
+    public:
+        MaiError stream(const MaiModelRequest& request, const MaiStreamSink& sink,
+                        const std::atomic<bool>& cancel) override {
+            (void)request;
+            (void)cancel;
+            if (sink.onReasoning) {
+                for (int i = 0; i < 20; ++i) {
+                    sink.onReasoning("想一想，这段思考要足够长，展开后的高度变化才量得出来。");
+                }
+            }
+            if (sink.onText) sink.onText("回答完了。");
+            return {};
+        }
+        MaiWireApi wireApi() const override { return MaiWireApi::ChatCompletions; }
+    };
+
+    AgentController controller(std::make_unique<ReasoningModel>(), QString());
+    AgentChatPanel panel(controller);
+    panel.resize(700, 500);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    const QString mine = controller.createSession(QDir::currentPath());
+    panel.openSession(mine);
+
+    auto* editor = panel.findChild<QTextEdit*>();
+    QVERIFY(editor != nullptr);
+    editor->setPlainText(QStringLiteral("问点什么"));
+    auto* send = [this, &panel]() -> QPushButton* {
+        for (QPushButton* button : panel.findChildren<QPushButton*>()) {
+            if (button->text() == QStringLiteral("发送")) return button;
+        }
+        return nullptr;
+    }();
+    QVERIFY(send != nullptr);
+    QTest::mouseClick(send, Qt::LeftButton);
+
+    // 等这一轮结束：思考条出现并塌成「思考了 N 秒」。
+    QWidget* card = nullptr;
+    QTRY_VERIFY((card = panel.findChild<QWidget*>(QStringLiteral("agentThinkingCard"))) != nullptr);
+    QTRY_VERIFY(!card->findChildren<QLabel*>().isEmpty());
+
+    auto bodyOf = [](QWidget* cardWidget) -> QLabel* {
+        for (QLabel* label : cardWidget->findChildren<QLabel*>()) {
+            if (label->text().contains(QStringLiteral("想一想"))) return label;
+        }
+        return nullptr;
+    };
+
+    QLabel* body = bodyOf(card);
+    QVERIFY2(body != nullptr, "思考正文必须已经在条里（收起状态只是不可见）");
+    QTRY_VERIFY(!body->isVisible());
+
+    // ── 实时路径：点击展开，高度必须长出来 ──
+    const int collapsedHeight = card->height();
+    QTest::mouseClick(card, Qt::LeftButton, Qt::NoModifier, card->rect().center());
+    QTRY_VERIFY2(body->isVisible(), "点击后思考正文必须显示出来");
+    QTRY_VERIFY2(card->height() > collapsedHeight + 20,
+                 qPrintable(QStringLiteral("展开后卡片高度必须增长：收起 %1 → 展开 %2")
+                                .arg(collapsedHeight)
+                                .arg(card->height())));
+
+    // ── 恢复路径：切走再切回，重建的条目同样要能点开、能长高 ──
+    const QString other = controller.createSession(QDir::currentPath());
+    panel.openSession(other);
+    panel.openSession(mine);
+    // 旧条目走 deleteLater：必须等它真正销毁，否则 findChild 会撞上上一轮的
+    // （还挂在树上的）死部件——那份是展开状态，断言会被它骗过。
+    QWidget* restored = nullptr;
+    QTRY_COMPARE(panel.findChildren<QWidget*>(QStringLiteral("agentThinkingCard")).size(), 1);
+    restored = panel.findChild<QWidget*>(QStringLiteral("agentThinkingCard"));
+    QVERIFY(restored != nullptr);
+    QLabel* restoredBody = bodyOf(restored);
+    QVERIFY2(restoredBody != nullptr, "恢复后思考正文必须在");
+    QVERIFY(!restoredBody->isVisible());
+    const int restoredCollapsed = restored->height();
+    QTest::mouseClick(restored, Qt::LeftButton, Qt::NoModifier, restored->rect().center());
+    QTRY_VERIFY2(restoredBody->isVisible(), "恢复后点击必须能展开");
+    QTRY_VERIFY2(restored->height() > restoredCollapsed + 20,
+                 qPrintable(QStringLiteral("恢复后展开高度必须增长：%1 → %2")
+                                .arg(restoredCollapsed)
+                                .arg(restored->height())));
 }
 
 QTEST_MAIN(AgentPanelSessionTest)

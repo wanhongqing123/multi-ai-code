@@ -206,7 +206,12 @@ void MarkdownView::addWidget(const QString& id, QWidget* widget) {
 
 void MarkdownView::clear() {
     for (const std::unique_ptr<Item>& item : runtime_->items) {
-        if (item->widget != nullptr) item->widget->deleteLater();
+        if (item->widget == nullptr) continue;
+        // deleteLater 要等下一轮事件循环才真正销毁；不先 hide 的话，这段窗口期里
+        // 旧部件还盖在新画的内容上（切会话后立刻看到上一会话的残影/遮挡），
+        // 而且点击会落在这些死部件上，怎么点都没反应。hide 是同步的，立刻出视野。
+        item->widget->hide();
+        item->widget->deleteLater();
     }
     runtime_->items.clear();
     runtime_->anchor = 0;

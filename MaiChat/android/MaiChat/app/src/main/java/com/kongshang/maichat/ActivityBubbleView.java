@@ -37,22 +37,23 @@ final class ActivityBubbleView extends View {
     }
     @Override protected void onDraw(Canvas canvas) {
         paint.setStyle(Paint.Style.FILL);
-        paint.setTextSize(13 * getResources().getDisplayMetrics().scaledDensity);
+        paint.setTextSize(12 * getResources().getDisplayMetrics().scaledDensity);
         float width = kind == RemoteIMActivitySignal.Kind.HUMAN_TYPING ? 60 * scale : 48 * scale + paint.measureText(kind.label);
-        paint.setColor(MaiChatTheme.BLUE_SOFT);
-        canvas.drawRoundRect(new RectF(0, 6 * scale, width, 40 * scale), 15 * scale, 15 * scale, paint);
+        paint.setColor(android.graphics.Color.rgb(242, 242, 247));
+        canvas.drawRoundRect(new RectF(0, 3 * scale, width, 45 * scale), 21 * scale, 21 * scale, paint);
         paint.setColor(MaiChatTheme.BLUE);
         if (kind == RemoteIMActivitySignal.Kind.HUMAN_TYPING) {
             for (int i = 0; i < 3; i++) {
                 double wave = (1 + Math.sin((phase - i * .16) * 2 * Math.PI)) / 2;
                 paint.setAlpha((int) (80 + 175 * wave));
-                canvas.drawCircle((20 + i * 10) * scale, (24 - (float) wave * 2) * scale, 2.5f * scale, paint);
+                canvas.drawCircle((18 + i * 12) * scale, (24 - (float) wave * 2) * scale, 3.5f * scale, paint);
             }
             paint.setAlpha(255);
         } else {
             paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(1.8f * scale);
             canvas.drawArc(new RectF(13 * scale, 16 * scale, 27 * scale, 30 * scale), phase * 360, 260, false, paint);
             paint.setStyle(Paint.Style.FILL);
+            paint.setColor(MaiChatTheme.SECONDARY);
             canvas.drawText(kind.label, 36 * scale, 23 * scale - (paint.ascent() + paint.descent()) / 2, paint);
         }
     }

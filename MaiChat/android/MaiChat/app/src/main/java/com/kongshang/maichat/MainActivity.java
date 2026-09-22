@@ -1086,8 +1086,11 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         java.util.Set<String> needed = new java.util.LinkedHashSet<>();
         for (int index = Math.max(0, visible - 20); index < Math.min(values.size(), visible + 24); index++) needed.add(values.get(index).text());
         for (int index = Math.max(0, values.size() - 20); index < values.size(); index++) needed.add(values.get(index).text());
-        List<String> sources = new ArrayList<>(needed);
-        MarkdownRenderer.prepare(sources, () -> !destroyed && request == presentationRequest, () -> {
+        List<MarkdownRenderer.Presentation> sources = new ArrayList<>();
+        for (RemoteIMMessage message : values) if (needed.contains(message.text())) {
+            sources.add(new MarkdownRenderer.Presentation(message.text(), usesInlineDate(message) ? message.createdAtMillis() : null));
+        }
+        MarkdownRenderer.preparePresentations(sources, () -> !destroyed && request == presentationRequest, () -> {
             if (list != currentMessageList || !peer.equals(activeChatUserId)) return;
             RemoteIMActivitySignal activity = session.activity(peer);
             visibleApprovalStates = RemoteIMApprovalDisplayPolicy.statesFor(values);
@@ -1161,34 +1164,13 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         boolean outgoing = message.direction() == RemoteIMMessage.Direction.OUTGOING;
         LinearLayout outer = new LinearLayout(this);
         outer.setOrientation(LinearLayout.HORIZONTAL);
-        outer.setGravity((outgoing ? Gravity.END : Gravity.START) | Gravity.TOP);
-        outer.setPadding(0, dp(5), 0, dp(5));
-
-        View avatar = avatar(
-            outgoing
-                ? new RemoteIMContact(session.chatState().ownerUserId(), session.chatState().ownerUserId())
-                : peer,
-            outgoing,
-            34
-        );
+        outer.setGravity((outgoing ? Gravity.END : Gravity.START) | Gravity.BOTTOM);
+        outer.setPadding(0, dp(7), 0, dp(7));
 
         LinearLayout bubble = new LinearLayout(this);
         bubble.setOrientation(LinearLayout.VERTICAL);
-        bubble.setPadding(dp(12), dp(9), dp(12), dp(9));
-        bubble.setBackground(MaiChatTheme.bordered(
-            outgoing ? Color.WHITE : MaiChatTheme.YELLOW_SOFT,
-            outgoing ? MaiChatTheme.BORDER : MaiChatTheme.YELLOW_BORDER,
-            12,
-            this
-        ));
-
-        TextView meta = MaiChatTheme.text(
-            this,
-            (outgoing ? "我" : peer.displayName()) + "  " + timestamp(message.createdAtMillis()),
-            11,
-            MaiChatTheme.SECONDARY
-        );
-        bubble.addView(meta, match(dp(20)));
+        bubble.setPadding(dp(13), dp(11), dp(13), dp(11));
+        bubble.setBackground(MaiChatTheme.rounded(outgoing ? Color.rgb(234, 244, 255) : Color.TRANSPARENT, 10, this));
 
         if (message.quote() != null) {
             bubble.addView(quoteBlock(message.quote(), peer), matchWrap());
@@ -1219,11 +1201,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         } else if (message.fileAttachment() != null) {
             bubble.addView(fileMessageContent(message.fileAttachment()), matchWrap());
         } else {
-            TextView body = MaiChatTheme.text(this, "", 15, MaiChatTheme.TEXT);
-            body.setTextIsSelectable(true);
-            body.setLineSpacing(0, 1.15f);
-            body.setPadding(0, dp(5), 0, dp(2));
-            MarkdownRenderer.bind(body, message.text());
+            TextView body = MaiChatTypography.body(this);
+            MarkdownRenderer.bind(body, message.text(), usesInlineDate(message) ? message.createdAtMillis() : null);
             bubble.addView(body, matchWrap());
         }
 
@@ -1238,35 +1217,41 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             );
         }
 
-        if (outgoing) {
-            TextView status = MaiChatTheme.text(this, statusText(message.status()), 11, statusColor(message.status()));
-            status.setGravity(Gravity.END);
-            bubble.addView(status, matchWrap());
+        bubble.setOnLongClickListener(view -> { showMessageCopyDialog(message); return true; });
+        boolean compact = outgoing && usesInlineDate(message) && !message.text().contains("\n") && message.text().length() < 100;
+        LinearLayout.LayoutParams bubbleParams = compact
+            ? new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            : new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+        outer.addView(bubble, bubbleParams);
+        if (!usesInlineDate(message)) {
+            TextView date = MaiChatTheme.text(this, "· " + timestamp(message.createdAtMillis()), 11, MaiChatTheme.BLUE);
+            date.setTypeface(MaiChatTypography.semibold());
+            LinearLayout.LayoutParams dateParams = wrapWrap(); dateParams.setMargins(dp(6), 0, 0, dp(11));
+            outer.addView(date, dateParams);
         }
-        bubble.setOnLongClickListener(view -> {
-            showMessageCopyDialog(message);
-            return true;
-        });
+        if (outgoing) {
+            String icon = message.status() == RemoteIMMessage.Status.SENT ? "✓" : message.status() == RemoteIMMessage.Status.FAILED ? "!" : "◷";
+            TextView status = MaiChatTheme.label(this, icon, 13, statusColor(message.status()));
+            status.setContentDescription(statusText(message.status()));
+            LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(dp(18), dp(24));
+            statusParams.setMargins(dp(8), 0, 0, dp(6));
+            outer.addView(status, statusParams);
+        }
+        LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.VERTICAL);
+        row.addView(outer, matchWrap());
+        View separator = new View(this); separator.setBackgroundColor(MaiChatTheme.BORDER);
+        row.addView(separator, match(Math.max(1, dp(.5f))));
+        return row;
+    }
 
-        LinearLayout.LayoutParams bubbleParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.82f);
-        LinearLayout.LayoutParams avatarParams = new LinearLayout.LayoutParams(dp(34), dp(34));
-        if (outgoing) {
-            bubbleParams.setMargins(dp(42), 0, dp(8), 0);
-            outer.addView(bubble, bubbleParams);
-            outer.addView(avatar, avatarParams);
-        } else {
-            outer.addView(avatar, avatarParams);
-            bubbleParams.setMargins(dp(8), 0, dp(42), 0);
-            outer.addView(bubble, bubbleParams);
-        }
-        return outer;
+    private static boolean usesInlineDate(RemoteIMMessage message) {
+        return message.imageAttachment() == null && message.videoAttachment() == null
+            && message.voiceAttachment() == null && message.fileAttachment() == null && message.approvalRequest() == null;
     }
 
     private TextView attachmentCaptionView(String caption) {
-        TextView body = MaiChatTheme.text(this, "", 15, MaiChatTheme.TEXT);
-        body.setTextIsSelectable(true);
-        body.setLineSpacing(0, 1.15f);
-        body.setPadding(0, dp(5), 0, dp(5));
+        TextView body = MaiChatTypography.body(this);
+        body.setPadding(0, dp(4), 0, dp(4));
         MarkdownRenderer.bind(body, caption);
         return body;
     }

@@ -6,6 +6,7 @@
 
 class AgentController;
 class QLabel;
+enum class MaiApprovalPolicy;
 
 // AI 助手的聊天页。
 //
@@ -33,8 +34,8 @@ class QLabel;
 //   思考条   一行淡色文字（「思考了 3 秒 ›」），点开看草稿。默认收着但**要动**——
 //            真实的推理模型思考期能有十几秒，那段时间一个正文字都不会来，
 //            屏幕上完全没反应的话和卡死分不开。
-//   工具卡   一张窄卡。它表示「发生了一件事」，不是「谁说了句话」；做成气泡的话
-//            一轮对话读起来像三个人在说话。等授权时就地长出按钮，不弹对话框——
+//   工具行   默认只显示一行摘要，点开才看命令与输出。它表示「发生了一件事」，
+//            不是「谁说了句话」。等授权时就地长出按钮，不弹对话框——
 //            弹窗会打断阅读，而且会训练用户条件反射点「允许」。
 //
 // 线程：只在主线程上跑。AgentController 已经把核心的事件排队搬过来了。
@@ -62,6 +63,7 @@ signals:
     // 会话列表该重拉了。三种时机：新建了一个、标题被自动填上了、
     // 一轮跑完（updated 变了，列表按它排序，位置会动）。
     void sessionListChanged();
+    void modelConfigurationRequested();
 
 private:
     // 这两个是这个面板专用的部件，别处用不上，所以做成嵌套私有类、定义在 .cpp 里。
@@ -120,6 +122,8 @@ private:
     void setRunning(bool running);
     void scrollToBottom();
     void refreshContextSize();
+    void selectApprovalPolicy(MaiApprovalPolicy policy);
+    void updateApprovalPolicyUi();
 
     struct Runtime;
     std::unique_ptr<Runtime> runtime_;

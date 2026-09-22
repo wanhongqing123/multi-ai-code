@@ -39,6 +39,9 @@ struct FakeServer {
     int port = 0;
     std::string script;
     std::size_t chunk = 1;
+    int status = 200;
+    int transientFailures = 0;
+    std::atomic<int> requestCount{0};
 
     // 收到的请求体和鉴权头。测线格式要看**真正发出去的字节**，
     // 不能拿我们自己的结构体去对——那只能证明"符合我的理解"。
@@ -49,10 +52,22 @@ struct FakeServer {
     void start() {
         server.Post("/chat/completions", [this](const httplib::Request& request,
                                                 httplib::Response& response) {
+            const int requestNumber = ++requestCount;
             {
                 std::lock_guard<std::mutex> lock(mutex);
                 lastBody = request.body;
                 lastAuthorization = request.get_header_value("Authorization");
+            }
+            if (requestNumber <= transientFailures) {
+                response.status = 503;
+                response.set_content(R"({"error":{"message":"temporarily unavailable"}})",
+                                     "application/json");
+                return;
+            }
+            if (status != 200) {
+                response.status = status;
+                response.set_content(script, "application/json");
+                return;
             }
             auto text = std::make_shared<std::string>(script);
             auto pos = std::make_shared<std::size_t>(0);
@@ -330,6 +345,54 @@ void test_reasoning_delta() {
     CHECK(c.text == "the answer");
 }
 
+void test_http_error_preserves_provider_message() {
+    FakeServer fake;
+    fake.status = 429;
+    fake.script = json{{"error", {{"message", "quota exhausted"}, {"code", "usage_limit"}}}}.dump();
+    fake.start();
+
+    MaiModelRequest request;
+    request.model = "glm-5.3";
+    const Collected result = runAgainst(fake, request);
+    CHECK(result.code == MaiErrorCode::RateLimited);
+    CHECK(result.error.find("HTTP 429") != std::string::npos);
+    CHECK(result.error.find("quota exhausted") != std::string::npos);
+    CHECK(result.error.find("usage_limit") != std::string::npos);
+}
+
+void test_finish_reason_length_is_not_reported_as_success() {
+    json choice;
+    choice["delta"] = json::object();
+    choice["finish_reason"] = "length";
+    const Collected result = run(sse(json{{"choices", json::array({choice})}}) + kDone, 3);
+    CHECK(result.code == MaiErrorCode::Protocol);
+    CHECK(result.error.find("长度上限") != std::string::npos);
+}
+
+void test_final_unterminated_sse_line_is_processed() {
+    json root;
+    root["error"] = "last line error";
+    const std::string unterminated = "data: " + root.dump();
+    const Collected result = run(unterminated, 2);
+    CHECK(result.code == MaiErrorCode::Protocol);
+    CHECK(result.error == "last line error");
+}
+
+void test_transient_http_failure_retries_before_streaming() {
+    FakeServer fake;
+    fake.transientFailures = 1;
+    fake.script = text_delta("recovered") + kDone;
+    fake.chunk = 4;
+    fake.start();
+
+    MaiModelRequest request;
+    request.model = "glm-5.3";
+    const Collected result = runAgainst(fake, request);
+    CHECK(result.done);
+    CHECK(result.text == "recovered");
+    CHECK(fake.requestCount.load() == 2);
+}
+
 // ── 线格式 ──────────────────────────────────────────────────────
 //
 // 这一组断言的是**真正发到 socket 上的 JSON**，对照 OpenAI Chat Completions 的规范，
@@ -456,6 +519,10 @@ int main() {
     test_malformed_lines_are_ignored();
     test_server_error_inside_stream();
     test_reasoning_delta();
+    test_http_error_preserves_provider_message();
+    test_finish_reason_length_is_not_reported_as_success();
+    test_final_unterminated_sse_line_is_processed();
+    test_transient_http_failure_retries_before_streaming();
     test_wire_shape_of_request();
     test_no_tools_field_when_empty();
     if (failures == 0) std::printf("llm tests passed\n");

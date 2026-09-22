@@ -49,6 +49,7 @@ public:
         QString baseUrl;
         QString apiKey;
         QString modelName = QStringLiteral("glm-5.3");
+        MaiApprovalPolicy approvalPolicy = MaiApprovalPolicy::OnRequest;
     };
 
     // databasePath 为空表示纯内存：进程退出后会话和消息都不留。
@@ -77,6 +78,8 @@ public:
     QString createSession(const QString& directory, const QString& title = QString());
     bool sendPrompt(const QString& sessionId, const QString& text);
     bool interrupt(const QString& sessionId);
+    bool setApprovalPolicy(MaiApprovalPolicy policy);
+    MaiApprovalPolicy approvalPolicy() const;
 
     // approveForSession = true 表示"这个会话里这个工具以后别再问"。
     bool approvePermission(const QString& permissionId, bool approveForSession = false);

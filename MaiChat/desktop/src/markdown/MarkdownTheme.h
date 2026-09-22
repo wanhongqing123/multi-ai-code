@@ -37,10 +37,8 @@ struct MarkdownTheme {
     int tablePixelSize = 12;
     // 列表序号单独一个字号，比正文小一号并加粗——照 iOS 的 13 semibold。
     int listMarkerPixelSize = 13;
-    // 项目符号要比序号大一点。iOS 那边符号和序号同是 13，但 SF Pro 的 U+2022
-    // 比 Segoe UI 的粗不少，照搬字号出来的点发虚、在一堆黑字里看不见。
-    // 字号是为了配那个字体定的，要对齐的是**看起来一样重**，不是数字一样。
-    int listBulletPixelSize = 16;
+    // 项目符号保持小而实，避免大圆点比正文更抢眼。
+    int listBulletPixelSize = 13;
     int calloutTitlePixelSize = 13;
     int headingPixelSize[6] = {22, 18, 16, 14, 14, 14};
     // 行高倍率。
@@ -91,13 +89,13 @@ struct MarkdownTheme {
     //   listIndent       每嵌套一层往右挪多少
     //   listMarkerWidth  标记列的宽度，标记在里面**右对齐**
     //   listMarkerGap    标记列到正文的间隙
-    // 合成一个数的话，缩进一深正文就被推得老远——iOS 是 12 / 16 / 8。
-    int listIndent = 12;
+    // 12px 在桌面宽屏上几乎看不出层级；提高层级步进，标记列和正文间距不变。
+    int listIndent = 18;
     int listMarkerWidth = 16;
     int listMarkerGap = 8;
     // 缩进封顶。再深就不往右挪了，否则窄一点的列宽下正文没地方站。
     int listMaxDepth = 4;
-    int listItemSpacing = 8;
+    int listItemSpacing = 4;
     int codePadding = 12;
     int codeRadius = 10;
     int quoteBarWidth = 3;

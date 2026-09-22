@@ -256,7 +256,9 @@ struct AgentUnderTest {
     MaiFakeModelClient* model = nullptr;  // agent 持有，这里只是观察用
 };
 
-AgentUnderTest makeAgent(std::vector<MaiFakeModelClient::Turn> script) {
+AgentUnderTest makeAgent(
+    std::vector<MaiFakeModelClient::Turn> script,
+    MaiApprovalPolicy approvalPolicy = MaiApprovalPolicy::OnRequest) {
     auto model = std::make_unique<MaiFakeModelClient>(std::move(script));
     MaiFakeModelClient* observer = model.get();
 
@@ -265,6 +267,7 @@ AgentUnderTest makeAgent(std::vector<MaiFakeModelClient::Turn> script) {
 
     MaiAgent::Options options;
     options.defaultModel = "glm-5.3";
+    options.approvalPolicy = approvalPolicy;
     return {std::make_unique<MaiAgent>(makeMaiMemoryStore(), std::move(model), std::move(tools),
                                        options),
             observer};
@@ -557,6 +560,55 @@ void test_read_never_asks() {
     CHECK(agent->listPendingPermissions().empty());
 }
 
+void test_unless_trusted_auto_approves_workspace_edits() {
+    Workspace workspace;
+    auto underTest = makeAgent(
+        {callTurn("write", R"({"path":"trusted.txt","content":"ok"})"), sayTurn("Done.")},
+        MaiApprovalPolicy::UnlessTrusted);
+    Recorder recorder;
+    recorder.attach(*underTest.agent);
+    const std::string sessionId =
+        underTest.agent->submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
+    underTest.agent->submit(MaiSendPrompt{sessionId, "write trusted.txt"});
+    underTest.agent->waitIdle();
+
+    CHECK(workspace.has("trusted.txt"));
+    CHECK(recorder.count(MaiEventType::PermissionAsked) == 0);
+}
+
+void test_unless_trusted_still_asks_for_risky_shell() {
+    Workspace workspace;
+    auto underTest = makeAgent(
+        {callTurn("shell", R"({"command":"rm -rf build"})"), sayTurn("Skipped.")},
+        MaiApprovalPolicy::UnlessTrusted);
+    const std::string sessionId =
+        underTest.agent->submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
+    underTest.agent->submit(MaiSendPrompt{sessionId, "remove build"});
+
+    CHECK(waitFor([&] { return underTest.agent->listPendingPermissions().size() == 1; }));
+    CHECK(!underTest.agent->setApprovalPolicy(MaiApprovalPolicy::Never));
+    const std::string permissionId = underTest.agent->listPendingPermissions().front().id;
+    underTest.agent->submit(
+        MaiReplyPermission{permissionId, MaiPermissionDecision::Denied});
+    underTest.agent->waitIdle();
+}
+
+void test_never_policy_runs_without_prompting() {
+    Workspace workspace;
+    auto underTest = makeAgent(
+        {callTurn("write", R"({"path":"full.txt","content":"ok"})"), sayTurn("Done.")},
+        MaiApprovalPolicy::Never);
+    Recorder recorder;
+    recorder.attach(*underTest.agent);
+    const std::string sessionId =
+        underTest.agent->submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
+    underTest.agent->submit(MaiSendPrompt{sessionId, "write full.txt"});
+    underTest.agent->waitIdle();
+
+    CHECK(workspace.has("full.txt"));
+    CHECK(recorder.count(MaiEventType::PermissionAsked) == 0);
+}
+
 void test_interrupt_while_waiting_for_approval() {
     Workspace workspace;
     auto underTest = makeAgent(
@@ -637,6 +689,12 @@ int main() {
     test_clearing_a_busy_session_is_refused();
     std::printf("-> test_read_never_asks\n");
     test_read_never_asks();
+    std::printf("-> test_unless_trusted_auto_approves_workspace_edits\n");
+    test_unless_trusted_auto_approves_workspace_edits();
+    std::printf("-> test_unless_trusted_still_asks_for_risky_shell\n");
+    test_unless_trusted_still_asks_for_risky_shell();
+    std::printf("-> test_never_policy_runs_without_prompting\n");
+    test_never_policy_runs_without_prompting();
     std::printf("-> test_interrupt_while_waiting_for_approval\n");
     test_interrupt_while_waiting_for_approval();
     std::printf("-> test_reply_to_stale_permission_is_not_found\n");

@@ -8,9 +8,13 @@
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QDebug>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QMenu>
 #include <QPushButton>
+#include <QSettings>
 #include <QTextEdit>
 #include <QTimer>
 #include <QUrl>
@@ -32,7 +36,6 @@ const char* const kInkFaint = "#98a2b3";
 const char* const kLine = "#e2e8f0";
 const char* const kLineSoft = "#f1f5f9";
 const char* const kAccent = "#0b67b7";
-const char* const kGoldWash = "#fdf8ea";
 const char* const kDanger = "#b42318";
 
 // 正文的阅读宽度上限。窗口拉到 2000px 时正文不该跟着拉那么宽——
@@ -48,8 +51,40 @@ QString fromUtf8(const std::string& text) {
     return QString::fromUtf8(text.data(), static_cast<int>(text.size()));
 }
 
+QString toolPrimaryArgument(const QString& tool, const QString& arguments) {
+    const QJsonDocument document = QJsonDocument::fromJson(arguments.toUtf8());
+    if (!document.isObject()) return arguments.simplified();
+    const QJsonObject object = document.object();
+    const QString key = tool == QStringLiteral("shell")      ? QStringLiteral("command")
+                        : tool == QStringLiteral("glob")     ? QStringLiteral("pattern")
+                        : tool == QStringLiteral("grep")     ? QStringLiteral("pattern")
+                        : tool == QStringLiteral("webfetch") ? QStringLiteral("url")
+                                                               : QStringLiteral("path");
+    return object.value(key).toString().simplified();
+}
+
+QString toolActionText(const QString& tool, const QString& argument, MaiToolState state,
+                       bool waitingForUser) {
+    QString action;
+    if (waitingForUser) {
+        action = QStringLiteral("等待批准");
+    } else if (state == MaiToolState::Running || state == MaiToolState::Pending) {
+        action = QStringLiteral("正在运行");
+    } else if (state == MaiToolState::Error) {
+        action = QStringLiteral("运行失败");
+    } else {
+        action = QStringLiteral("已运行");
+    }
+
+    const QString target = argument.isEmpty() ? tool : argument;
+    QString text = action + QLatin1Char(' ') + target;
+    if (text.size() > 120) text = text.left(117) + QStringLiteral("…");
+    return text;
+}
+
 QLabel* makeLabel(const QString& text, int pixelSize, const char* color, bool bold = false) {
     auto* label = new QLabel(text);
+    label->setTextFormat(Qt::PlainText);
     label->setWordWrap(true);
     // 换行标签必须让布局按"给定宽度算高度"来量，否则它只按一行高算。
     label->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::MinimumExpanding);
@@ -165,20 +200,18 @@ public:
     explicit ThinkingLine(QWidget* parent = nullptr) : QFrame(parent) {
         setObjectName(QStringLiteral("agentThinkingCard"));
         setCursor(Qt::PointingHandCursor);
-        // 和工具卡同一副面孔（白底、细边、左侧色条、圆角）——它是同一列里的
-        // 元素，裸文字夹在一堆卡片中间会显得像没画完。
-        setStyleSheet(UiZoom::scaleQss(QStringLiteral(
-            "QFrame#agentThinkingCard{background:#ffffff;border:1px solid %1;"
-            "border-left:3px solid %2;border-radius:7px;}").arg(kLine, kInkFaint)));
+        setStyleSheet(QStringLiteral(
+            "QFrame#agentThinkingCard{background:transparent;border:none;}"));
         auto* column = new QVBoxLayout(this);
-        column->setContentsMargins(UiZoom::s(10), UiZoom::s(6), UiZoom::s(10), UiZoom::s(6));
+        column->setContentsMargins(0, UiZoom::s(2), 0, UiZoom::s(2));
         column->setSpacing(UiZoom::s(4));
 
-        caption_ = makeLabel(QStringLiteral("思考中"), 12, kInkFaint);
+        caption_ = makeLabel(QStringLiteral("正在思考"), 12, kInkFaint);
         caption_->setWordWrap(false);
         column->addWidget(caption_);
 
         body_ = makeLabel(QString(), 12, kInkFaint);
+        body_->setObjectName(QStringLiteral("agentThinkingBody"));
         body_->hide();
         column->addWidget(body_);
 
@@ -191,7 +224,9 @@ public:
 
     void append(const QString& delta) {
         text_ += delta;
-        body_->setText(text_);
+        // 默认收起时不让 QLabel 每个增量都重排一遍完整推理文本。
+        // 推理可以有几万字，这条旧路径是明显的 O(n²) 主线程开销。
+        if (expanded_) body_->setText(text_);
     }
 
     // 这一轮结束：停下动画，塌成"思考了 N 秒"。
@@ -213,6 +248,7 @@ public:
 protected:
     void mousePressEvent(QMouseEvent*) override {
         expanded_ = !expanded_;
+        if (expanded_) body_->setText(text_);
         body_->setVisible(expanded_ && !text_.isEmpty());
         refreshCaption();
     }
@@ -222,7 +258,7 @@ private:
         if (ticker_->isActive()) {
             // 收着也要动：那段时间一个正文字都不会来，完全没反应和卡死分不开。
             dots_ = (dots_ + 1) % 4;
-            caption_->setText(QStringLiteral("思考中") + QString(dots_, QChar('.')));
+            caption_->setText(QStringLiteral("正在思考") + QString(dots_, QChar('.')));
             return;
         }
         const QString caret = expanded_ ? QStringLiteral(" ⌄") : QStringLiteral(" ›");
@@ -230,7 +266,7 @@ private:
             caption_->setText(QStringLiteral("思考过程") + caret);
             return;
         }
-        caption_->setText(QStringLiteral("思考了 %1 秒").arg(seconds_) + caret);
+        caption_->setText(QStringLiteral("已处理 %1 秒").arg(seconds_) + caret);
     }
 
     QLabel* caption_ = nullptr;
@@ -260,24 +296,43 @@ public:
         // 按 id 选只命中这张卡本身。
         setObjectName(QStringLiteral("agentToolCard"));
         auto* column = new QVBoxLayout(this);
-        column->setContentsMargins(UiZoom::s(11), UiZoom::s(7), UiZoom::s(11), UiZoom::s(7));
-        column->setSpacing(UiZoom::s(6));
+        column->setContentsMargins(0, UiZoom::s(2), 0, UiZoom::s(2));
+        column->setSpacing(UiZoom::s(5));
 
         auto* head = new QHBoxLayout;
         head->setSpacing(UiZoom::s(8));
-        name_ = makeLabel(QString(), 12, kInk, true);
+        icon_ = makeLabel(QStringLiteral("⌘"), 12, kInkFaint);
+        icon_->setWordWrap(false);
+        name_ = makeLabel(QString(), 12, kInkSoft);
         name_->setWordWrap(false);
-        args_ = makeLabel(QString(), 12, kInkSoft);
-        args_->setWordWrap(false);
         state_ = makeLabel(QString(), 11, kInkFaint);
         state_->setWordWrap(false);
+        expand_ = new QPushButton(QStringLiteral("›"));
+        expand_->setObjectName(QStringLiteral("agentToolDisclosure"));
+        expand_->setCursor(Qt::PointingHandCursor);
+        expand_->setFixedSize(UiZoom::s(22), UiZoom::s(22));
+        expand_->setStyleSheet(QStringLiteral(
+            "QPushButton{background:transparent;border:none;color:#98a2b3;padding:0;}"));
+        expand_->hide();
+        head->addWidget(icon_);
         head->addWidget(name_);
-        head->addWidget(args_);
-        // 伸缩放在参数和状态之间：参数按内容长，状态贴右边，
-        // 给参数 stretch 会让它撑满整行，看起来像个空输入框。
         head->addStretch(1);
         head->addWidget(state_);
+        head->addWidget(expand_);
         column->addLayout(head);
+
+        detail_ = makeLabel(QString(), 11, kInkSoft);
+        detail_->setObjectName(QStringLiteral("agentToolDetail"));
+        detail_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        QFont detailFont = detail_->font();
+        detailFont.setStyleHint(QFont::Monospace);
+        detailFont.setFamily(QStringLiteral("Menlo"));
+        detail_->setFont(detailFont);
+        detail_->setStyleSheet(UiZoom::scaleQss(QStringLiteral(
+            "QLabel#agentToolDetail{background:#f7f8fa;border:1px solid %1;"
+            "border-radius:7px;color:%2;padding:9px;}").arg(kLine, kInkSoft)));
+        detail_->hide();
+        column->addWidget(detail_);
 
         approval_ = new QWidget(this);
         auto* buttons = new QHBoxLayout(approval_);
@@ -309,21 +364,27 @@ public:
         approval_->hide();
         column->addWidget(approval_);
 
+        QObject::connect(expand_, &QPushButton::clicked, this, [this] {
+            expanded_ = !expanded_;
+            detail_->setVisible(expanded_ && !detailText_.isEmpty());
+            expand_->setText(expanded_ ? QStringLiteral("⌄") : QStringLiteral("›"));
+        });
+
         apply(MaiToolState::Pending, false);
     }
 
     void setCall(const QString& tool, const QString& arguments) {
-        name_->setText(tool);
-        // 参数可能很长（write 会带整篇内容）。截一段够用户判断该不该批就行，
-        // 塞全文会把卡片撑到半屏。
-        QString brief = arguments.simplified();
-        if (brief.size() > 88) brief = brief.left(85) + QStringLiteral("…");
-        args_->setText(brief);
+        tool_ = tool;
+        arguments_ = arguments;
+        primaryArgument_ = toolPrimaryArgument(tool, arguments);
+        refreshSummary();
     }
 
     void apply(MaiToolState toolState, bool waitingForUser) {
         const char* edge = kInkFaint;
         QString label;
+        stateValue_ = toolState;
+        waiting_ = waitingForUser;
         switch (toolState) {
             case MaiToolState::Pending:
                 edge = waitingForUser ? "#d9a441" : kInkFaint;
@@ -345,16 +406,30 @@ public:
         state_->setText(label);
         state_->setStyleSheet(QStringLiteral("color:%1;background:transparent;")
                                   .arg(toolState == MaiToolState::Error ? kDanger : kInkFaint));
-        setStyleSheet(UiZoom::scaleQss(
-            QStringLiteral("QFrame#agentToolCard{background:%1;border:1px solid %2;"
-                           "border-left:3px solid %3;border-radius:7px;}")
-                .arg(waitingForUser ? kGoldWash : "#ffffff", kLine, edge)));
+        setStyleSheet(QStringLiteral(
+            "QFrame#agentToolCard{background:transparent;border:none;}"));
+        icon_->setStyleSheet(QStringLiteral("color:%1;background:transparent;").arg(edge));
         approval_->setVisible(waitingForUser);
-        waiting_ = waitingForUser;
+        refreshSummary();
     }
 
     void setDetail(const QString& text) {
-        state_->setText(text);
+        QString rendered;
+        if (tool_ == QStringLiteral("shell") && !primaryArgument_.isEmpty()) {
+            rendered = QStringLiteral("$ ") + primaryArgument_;
+            if (!text.trimmed().isEmpty()) rendered += QStringLiteral("\n\n") + text.trimmed();
+        } else {
+            rendered = arguments_.trimmed();
+            if (!text.trimmed().isEmpty()) rendered += QStringLiteral("\n\n") + text.trimmed();
+        }
+        constexpr int kMaxDetailCharacters = 12000;
+        if (rendered.size() > kMaxDetailCharacters) {
+            rendered = rendered.left(kMaxDetailCharacters) +
+                       QStringLiteral("\n\n…（输出过长，已截断显示）");
+        }
+        detailText_ = rendered;
+        detail_->setText(detailText_);
+        expand_->setVisible(!detailText_.isEmpty());
     }
 
     // 卡片自己记着在不在等人点头。
@@ -377,14 +452,26 @@ public:
     }
 
 private:
+    void refreshSummary() {
+        name_->setText(toolActionText(tool_, primaryArgument_, stateValue_, waiting_));
+    }
+
+    QLabel* icon_ = nullptr;
     QLabel* name_ = nullptr;
-    QLabel* args_ = nullptr;
     QLabel* state_ = nullptr;
+    QLabel* detail_ = nullptr;
+    QPushButton* expand_ = nullptr;
     QWidget* approval_ = nullptr;
     QPushButton* allow_ = nullptr;
     QPushButton* deny_ = nullptr;
     QPushButton* always_ = nullptr;
+    QString tool_;
+    QString arguments_;
+    QString primaryArgument_;
+    QString detailText_;
+    MaiToolState stateValue_ = MaiToolState::Pending;
     bool waiting_ = false;
+    bool expanded_ = false;
 };
 
 struct AgentChatPanel::Runtime {
@@ -394,11 +481,11 @@ struct AgentChatPanel::Runtime {
     QLabel* title = nullptr;
     QLabel* contextSize = nullptr;
     QLabel* dirChip = nullptr;
-    QLabel* modelChip = nullptr;
+    QPushButton* modelChip = nullptr;
     MarkdownView* view = nullptr;
     PromptEdit* editor = nullptr;
     QPushButton* send = nullptr;
-    QLabel* hint = nullptr;
+    QPushButton* hint = nullptr;
 
     // partId -> 思考条 / 工具卡。这两样要能点，画不出来，所以还是部件，
     // 由 MarkdownView 负责摆位置和跟着滚。
@@ -424,6 +511,7 @@ struct AgentChatPanel::Runtime {
     QString pendingQuestionId;
 
     bool running = false;
+    bool modelConfigured = true;
 };
 
 AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
@@ -517,14 +605,47 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     foot->setSpacing(UiZoom::s(10));
     runtime_->dirChip = makeLabel(QString(), 11, kInkSoft);
     runtime_->dirChip->setWordWrap(false);
-    runtime_->modelChip = makeLabel(QString(), 11, kAccent);
-    runtime_->modelChip->setWordWrap(false);
+    runtime_->modelChip = new QPushButton;
+    runtime_->modelChip->setObjectName(QStringLiteral("agentModelChip"));
+    runtime_->modelChip->setCursor(Qt::PointingHandCursor);
+    runtime_->modelChip->setStyleSheet(QStringLiteral(
+        "QPushButton{background:transparent;border:none;color:#0b67b7;padding:0;}"));
+    QFont modelFont = runtime_->modelChip->font();
+    modelFont.setPixelSize(UiZoom::s(11));
+    runtime_->modelChip->setFont(modelFont);
     foot->addWidget(runtime_->dirChip);
     foot->addWidget(runtime_->modelChip);
     foot->addStretch(1);
     // 这句常驻。它是这套东西最重要的一句承诺，写在文档里没人看。
-    runtime_->hint = makeLabel(QStringLiteral("改东西前会先问你"), 11, kInkFaint);
-    runtime_->hint->setWordWrap(false);
+    runtime_->hint = new QPushButton;
+    runtime_->hint->setObjectName(QStringLiteral("agentApprovalPolicy"));
+    runtime_->hint->setCursor(Qt::PointingHandCursor);
+    runtime_->hint->setStyleSheet(QStringLiteral(
+        "QPushButton{background:transparent;border:none;color:#b54708;padding:0 3px;}"));
+    QFont policyFont = runtime_->hint->font();
+    policyFont.setPixelSize(UiZoom::s(11));
+    runtime_->hint->setFont(policyFont);
+    auto* policyMenu = new QMenu(runtime_->hint);
+    auto addPolicy = [policyMenu](const QString& title, const QString& detail,
+                                  MaiApprovalPolicy policy) {
+        QAction* action = policyMenu->addAction(title + QStringLiteral(" — ") + detail);
+        action->setData(static_cast<int>(policy));
+        action->setCheckable(true);
+    };
+    addPolicy(QStringLiteral("请求批准"),
+              QStringLiteral("修改文件、访问网络或执行高风险命令时询问"),
+              MaiApprovalPolicy::OnRequest);
+    addPolicy(QStringLiteral("帮我批准"),
+              QStringLiteral("工作区文件修改自动批准；网络和高风险命令仍询问"),
+              MaiApprovalPolicy::UnlessTrusted);
+    addPolicy(QStringLiteral("完全访问"),
+              QStringLiteral("不逐次询问；终端和网络调用会直接执行"),
+              MaiApprovalPolicy::Never);
+    runtime_->hint->setMenu(policyMenu);
+    connect(policyMenu, &QMenu::triggered, this, [this](QAction* action) {
+        selectApprovalPolicy(static_cast<MaiApprovalPolicy>(action->data().toInt()));
+    });
+    updateApprovalPolicyUi();
     foot->addWidget(runtime_->hint);
     runtime_->send = new QPushButton(QStringLiteral("发送"));
     runtime_->send->setCursor(Qt::PointingHandCursor);
@@ -540,6 +661,8 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
 
     setRunning(false);
     connect(runtime_->send, &QPushButton::clicked, this, &AgentChatPanel::onSend);
+    connect(runtime_->modelChip, &QPushButton::clicked, this,
+            &AgentChatPanel::modelConfigurationRequested);
     connect(clearButton, &QPushButton::clicked, this, &AgentChatPanel::onClear);
 
     // ---- 接事件 ----
@@ -566,7 +689,6 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
                    const QString& delta) {
                 if (!isCurrentSession(sessionId)) return;
                 thinkingLineFor(partId)->append(delta);
-                scrollToBottom();
             });
     connect(&controller, &AgentController::toolPartChanged, this,
             [this](const QString& sessionId, const QString& messageId, const QString& partId) {
@@ -630,6 +752,43 @@ QString AgentChatPanel::sessionId() const {
 
 void AgentChatPanel::setModelLabel(const QString& model) {
     runtime_->modelChip->setText(model);
+    runtime_->modelConfigured = model != QStringLiteral("未配置模型") && !model.trimmed().isEmpty();
+}
+
+void AgentChatPanel::selectApprovalPolicy(MaiApprovalPolicy policy) {
+    if (!runtime_->controller->setApprovalPolicy(policy)) {
+        appendNotice(runtime_->controller->lastError(), true);
+        return;
+    }
+    QSettings settings;
+    settings.setValue(QStringLiteral("agent/approvalPolicy"),
+                      policy == MaiApprovalPolicy::Never
+                          ? QStringLiteral("never")
+                      : policy == MaiApprovalPolicy::UnlessTrusted
+                          ? QStringLiteral("unless_trusted")
+                          : QStringLiteral("on_request"));
+    settings.sync();
+    updateApprovalPolicyUi();
+}
+
+void AgentChatPanel::updateApprovalPolicyUi() {
+    const MaiApprovalPolicy policy = runtime_->controller->approvalPolicy();
+    for (QAction* action : runtime_->hint->menu()->actions()) {
+        action->setChecked(action->data().toInt() == static_cast<int>(policy));
+    }
+    if (policy == MaiApprovalPolicy::Never) {
+        runtime_->hint->setText(QStringLiteral("完全访问"));
+        runtime_->hint->setToolTip(
+            QStringLiteral("不逐次询问；终端和网络调用会直接执行。"));
+    } else if (policy == MaiApprovalPolicy::UnlessTrusted) {
+        runtime_->hint->setText(QStringLiteral("帮我批准"));
+        runtime_->hint->setToolTip(
+            QStringLiteral("工作区文件修改自动批准；访问网络和高风险命令仍会询问。"));
+    } else {
+        runtime_->hint->setText(QStringLiteral("请求批准"));
+        runtime_->hint->setToolTip(
+            QStringLiteral("修改文件、访问网络或执行高风险命令前都会询问。"));
+    }
 }
 
 void AgentChatPanel::openSession(const QString& sessionId) {
@@ -688,6 +847,8 @@ void AgentChatPanel::reloadFromStore() {
                 ToolCard* card = toolCardFor(partId);
                 card->setCall(fromUtf8(tool->tool), fromUtf8(tool->input));
                 card->apply(tool->state, false);
+                card->setDetail(tool->state == MaiToolState::Error ? fromUtf8(tool->error)
+                                                                   : fromUtf8(tool->output));
             }
         }
     }
@@ -748,6 +909,7 @@ AgentChatPanel::ThinkingLine* AgentChatPanel::thinkingLineFor(const QString& par
     auto* line = new ThinkingLine;
     runtime_->view->addWidget(partId, line);
     runtime_->thinking.insert(partId, line);
+    scrollToBottom();
     return line;
 }
 
@@ -804,8 +966,7 @@ void AgentChatPanel::refreshToolCard(const QString& messageId, const QString& pa
             const bool waiting = card->isWaitingForUser();
             card->apply(tool->state, waiting && tool->state == MaiToolState::Pending);
             if (tool->state == MaiToolState::Completed && !tool->output.empty()) {
-                card->setDetail(
-                    QStringLiteral("完成 · %1 字节").arg(static_cast<int>(tool->output.size())));
+                card->setDetail(fromUtf8(tool->output));
             } else if (tool->state == MaiToolState::Error) {
                 card->setDetail(fromUtf8(tool->error));
             }
@@ -921,6 +1082,10 @@ void AgentChatPanel::onSend() {
     }
     const QString text = runtime_->editor->toPlainText().trimmed();
     if (text.isEmpty()) return;
+    if (!runtime_->modelConfigured) {
+        emit modelConfigurationRequested();
+        return;
+    }
 
     if (!runtime_->controller->sendPrompt(runtime_->sessionId, text)) {
         appendNotice(runtime_->controller->lastError(), true);
@@ -955,8 +1120,12 @@ void AgentChatPanel::setRunning(bool running) {
                 : QStringLiteral("QPushButton{background:%1;color:#ffffff;border:none;"
                                  "border-radius:6px;padding:5px 17px;}")
                       .arg(kAccent)));
-    runtime_->hint->setText(running ? QStringLiteral("在跑 · 随时可以停")
-                                    : QStringLiteral("改东西前会先问你"));
+    runtime_->hint->setEnabled(!running);
+    if (running) {
+        runtime_->hint->setText(QStringLiteral("正在执行"));
+    } else {
+        updateApprovalPolicyUi();
+    }
 }
 
 void AgentChatPanel::scrollToBottom() {

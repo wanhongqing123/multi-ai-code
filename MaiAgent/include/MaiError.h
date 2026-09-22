@@ -26,6 +26,7 @@ enum class MaiErrorCode {
     InvalidInput,   // 参数不合法：空 prompt、越界路径、认不出的 decision。HTTP 400
     NotConfigured,  // 没有配模型客户端，或者鉴权没通过。HTTP 503
     Network,        // 连不上、超时、TLS 握手失败。HTTP 502
+    RateLimited,    // 供应商额度耗尽或请求频率受限。界面应直接展示供应商给的原因
     Protocol,       // 对端返回了看不懂的东西（不是合法 SSE、缺字段）。HTTP 502
     // 用户主动中断，或者授权超时。**这不是故障**——界面不该弹错误，已经吐出来的内容也要照常保留。
     // MaiTurnRunner::finish 专门判了这一条。

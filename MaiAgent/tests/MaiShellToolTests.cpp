@@ -75,7 +75,7 @@ void test_read_only_commands_run_without_asking() {
     auto tool = makeMaiShellTool();
     const char* const safe[] = {
         "ls -la", "pwd", "echo hello", "cat README.md", "grep -rn foo src", "which git",
-        "git status", "git log --oneline -5", "git diff", "git branch",
+        "git status", "git rev-parse HEAD", "git ls-files", "git describe --always",
     };
     for (const char* command : safe) {
         CHECK(!tool->requiresApproval(args({{"command", command}})));
@@ -89,11 +89,29 @@ void test_anything_that_can_change_things_asks_first() {
         "npm install",
         "make",
         "python setup.py install",
+        "find . -delete",
+        "find . -exec rm {} ;",
+        "env rm -rf build",
+        "tree -o inventory.txt",
+        "diff --output=changes.patch old new",
+        "rg --pre 'rm -rf build' needle",
+        "date -s tomorrow",
+        "hostname changed-host",
+        "file -C -m custom.magic",
         // git 不是整个放行的：只读子命令放行，写操作照样问。
         "git push",
         "git commit -m x",
         "git reset --hard",
+        "git branch new-branch",
+        "git branch -D old-branch",
+        "git remote remove origin",
+        "git tag v1.0.0",
+        "git diff --output=changes.patch",
+        "git show --ext-diff HEAD",
+        "git log -p --ext-diff",
+        "git blame --contents replacement.txt file.txt",
         // 改配置是写操作，即使子命令名在只读名单里。
+        "git config user.email a@b.c",
         "git config --global user.email a@b.c",
     };
     for (const char* command : risky) {

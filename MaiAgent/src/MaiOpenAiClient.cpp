@@ -3,8 +3,11 @@
 #include <curl/curl.h>
 #include <json.hpp>
 
+#include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <map>
+#include <thread>
 
 namespace {
 
@@ -33,6 +36,15 @@ public:
         if (!out.empty() && out.back() == '\r') out.pop_back();
         mBuffer.erase(0, newlineAt + 1);
         mScanned = 0;
+        return true;
+    }
+
+    bool takeRemainder(std::string& out) {
+        if (mBuffer.empty()) return false;
+        out = std::move(mBuffer);
+        mBuffer.clear();
+        mScanned = 0;
+        if (!out.empty() && out.back() == '\r') out.pop_back();
         return true;
     }
 
@@ -149,13 +161,29 @@ std::string buildRequestBody(const MaiModelRequest& request) {
 
 // ── curl 回调的上下文 ───────────────────────────────────────────
 struct StreamCtx {
-    const MaiStreamSink* sink;
-    const std::atomic<bool>* cancel;
+    const MaiStreamSink* sink = nullptr;
+    const std::atomic<bool>* cancel = nullptr;
     LineBuffer lines;
     InvocationAccumulator tools;
     std::string error;
+    std::string rawBody;
+    std::string finishReason;
+    bool sawOutput = false;
     bool done = false;
 };
+
+std::string providerErrorMessage(const std::string& body) {
+    const json parsed = json::parse(body, nullptr, /*allow_exceptions=*/false);
+    if (parsed.is_discarded() || !parsed.is_object()) return {};
+    if (!parsed.contains("error")) return {};
+    const json& error = parsed["error"];
+    if (error.is_string()) return error.get<std::string>();
+    if (!error.is_object()) return error.dump();
+    const std::string message = error.value("message", std::string{});
+    const std::string code = error.value("code", std::string{});
+    if (message.empty()) return code;
+    return code.empty() ? message : message + " (" + code + ")";
+}
 
 void handleSseLine(StreamCtx& context, const std::string& line) {
     if (line.empty()) return;
@@ -183,21 +211,32 @@ void handleSseLine(StreamCtx& context, const std::string& line) {
     if (!parsed.contains("choices") || !parsed["choices"].is_array() || parsed["choices"].empty())
         return;
     const auto& choice = parsed["choices"][0];
+    if (choice.contains("finish_reason") && choice["finish_reason"].is_string())
+        context.finishReason = choice["finish_reason"].get<std::string>();
     if (!choice.contains("delta")) return;
     const auto& delta = choice["delta"];
 
     if (delta.contains("content") && delta["content"].is_string()) {
         const auto slot = delta["content"].get<std::string>();
-        if (!slot.empty() && context.sink->onText) context.sink->onText(slot);
+        if (!slot.empty()) {
+            context.sawOutput = true;
+            if (context.sink->onText) context.sink->onText(slot);
+        }
     }
     // 推理增量各家字段名不统一，这两个是见得最多的。
     for (const char* key : {"reasoning_content", "reasoning"}) {
         if (delta.contains(key) && delta[key].is_string()) {
             const auto slot = delta[key].get<std::string>();
-            if (!slot.empty() && context.sink->onReasoning) context.sink->onReasoning(slot);
+            if (!slot.empty()) {
+                context.sawOutput = true;
+                if (context.sink->onReasoning) context.sink->onReasoning(slot);
+            }
         }
     }
-    if (delta.contains("tool_calls")) context.tools.feed(delta["tool_calls"]);
+    if (delta.contains("tool_calls")) {
+        context.sawOutput = true;
+        context.tools.feed(delta["tool_calls"]);
+    }
 }
 
 std::size_t writeCallback(char* ptr, std::size_t size, std::size_t nmemb, void* userdata) {
@@ -207,10 +246,33 @@ std::size_t writeCallback(char* ptr, std::size_t size, std::size_t nmemb, void* 
     // 比等超时干净。
     if (context.cancel->load(std::memory_order_relaxed)) return 0;
 
+    constexpr std::size_t kMaxCapturedBody = 64 * 1024;
+    if (context.rawBody.size() < kMaxCapturedBody) {
+        const std::size_t remaining = kMaxCapturedBody - context.rawBody.size();
+        context.rawBody.append(ptr, std::min(total, remaining));
+    }
     context.lines.append(ptr, total);
     std::string line;
     while (context.lines.nextLine(line)) handleSseLine(context, line);
     return total;
+}
+
+bool isRetryableCurlError(CURLcode code) {
+    return code == CURLE_COULDNT_CONNECT || code == CURLE_COULDNT_RESOLVE_HOST ||
+           code == CURLE_OPERATION_TIMEDOUT || code == CURLE_RECV_ERROR ||
+           code == CURLE_SEND_ERROR || code == CURLE_GOT_NOTHING;
+}
+
+bool waitBeforeRetry(long delayMs, const std::atomic<bool>& cancel) {
+    constexpr long kSliceMs = 25;
+    long waited = 0;
+    while (waited < delayMs) {
+        if (cancel.load(std::memory_order_relaxed)) return false;
+        const long slice = std::min(kSliceMs, delayMs - waited);
+        std::this_thread::sleep_for(std::chrono::milliseconds(slice));
+        waited += slice;
+    }
+    return !cancel.load(std::memory_order_relaxed);
 }
 
 // Chat Completions 的实现。Responses 将来是同一个接口的另一个实现，
@@ -225,68 +287,94 @@ public:
 
     MaiError stream(const MaiModelRequest& request, const MaiStreamSink& sink,
                     const std::atomic<bool>& cancel) override {
-        CURL* curl = curl_easy_init();
-        if (!curl) return MaiError::make(MaiErrorCode::Internal, "curl_easy_init failed");
-
         std::string url = mConfig.baseUrl;
         if (!url.empty() && url.back() == '/') url.pop_back();
         url += "/chat/completions";
 
         const std::string body = buildRequestBody(request);
+        for (int attempt = 0;; ++attempt) {
+            CURL* curl = curl_easy_init();
+            if (!curl) return MaiError::make(MaiErrorCode::Internal, "curl_easy_init failed");
 
-        curl_slist* headers = nullptr;
-        headers = curl_slist_append(headers, "Content-Type: application/json");
-        headers = curl_slist_append(headers, "Accept: text/event-stream");
-        // 我们自己按行解析 SSE，不要中间层做任何缓冲/合并。
-        headers = curl_slist_append(headers, "Cache-Control: no-cache");
-        std::string auth;
-        if (!mConfig.apiKey.empty()) {
-            auth = "Authorization: Bearer " + mConfig.apiKey;
-            headers = curl_slist_append(headers, auth.c_str());
+            curl_slist* headers = nullptr;
+            headers = curl_slist_append(headers, "Content-Type: application/json");
+            headers = curl_slist_append(headers, "Accept: text/event-stream");
+            headers = curl_slist_append(headers, "Cache-Control: no-cache");
+            std::string auth;
+            if (!mConfig.apiKey.empty()) {
+                auth = "Authorization: Bearer " + mConfig.apiKey;
+                headers = curl_slist_append(headers, auth.c_str());
+            }
+
+            StreamCtx context;
+            context.sink = &sink;
+            context.cancel = &cancel;
+            curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+            curl_easy_setopt(curl, CURLOPT_POST, 1L);
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(body.size()));
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
+            curl_easy_setopt(curl, CURLOPT_WRITEDATA, &context);
+            curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, mConfig.connectTimeoutSeconds);
+            if (mConfig.totalTimeoutSeconds > 0)
+                curl_easy_setopt(curl, CURLOPT_TIMEOUT, mConfig.totalTimeoutSeconds);
+            curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+            curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+            curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");
+            curl_easy_setopt(curl, CURLOPT_USERAGENT, "MaiAgent/0.1");
+
+            const CURLcode curlResult = curl_easy_perform(curl);
+            std::string finalLine;
+            if (context.lines.takeRemainder(finalLine)) handleSseLine(context, finalLine);
+            long status = 0;
+            curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+            curl_slist_free_all(headers);
+            curl_easy_cleanup(curl);
+
+            if (cancel.load(std::memory_order_relaxed))
+                return MaiError::make(MaiErrorCode::Canceled, "canceled by user");
+
+            const bool transient =
+                curlResult != CURLE_OK ? isRetryableCurlError(curlResult)
+                                      : status == 408 || status >= 500;
+            if (transient && !context.sawOutput && attempt < mConfig.maxRetries) {
+                const long delay = mConfig.retryInitialDelayMs * (1L << attempt);
+                if (!waitBeforeRetry(delay, cancel))
+                    return MaiError::make(MaiErrorCode::Canceled, "canceled by user");
+                continue;
+            }
+
+            if (curlResult != CURLE_OK)
+                return MaiError::make(MaiErrorCode::Network,
+                                      std::string("curl: ") + curl_easy_strerror(curlResult));
+            if (status >= 400) {
+                const std::string provider = providerErrorMessage(context.rawBody);
+                std::string message = "HTTP " + std::to_string(status);
+                if (!provider.empty()) message += ": " + provider;
+                const MaiErrorCode code = status == 401 || status == 403
+                                              ? MaiErrorCode::NotConfigured
+                                          : status == 429
+                                              ? MaiErrorCode::RateLimited
+                                          : status >= 500
+                                              ? MaiErrorCode::Network
+                                              : MaiErrorCode::Protocol;
+                return MaiError::make(code, std::move(message));
+            }
+            if (!context.error.empty())
+                return MaiError::make(MaiErrorCode::Protocol, context.error);
+            if (context.finishReason == "length")
+                return MaiError::make(MaiErrorCode::Protocol,
+                                      "模型输出达到长度上限，回答可能不完整。");
+            if (context.finishReason == "content_filter")
+                return MaiError::make(MaiErrorCode::Protocol,
+                                      "模型供应商拦截了这次输出（content_filter）。");
+
+            if (sink.onToolCall) {
+                for (const auto& choice : context.tools.take()) sink.onToolCall(choice);
+            }
+            return MaiError::ok();
         }
-
-        StreamCtx context{&sink, &cancel, {}, {}, {}, false};
-
-        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-        curl_easy_setopt(curl, CURLOPT_POST, 1L);
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(body.size()));
-        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &context);
-        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, mConfig.connectTimeoutSeconds);
-        if (mConfig.totalTimeoutSeconds > 0)
-            curl_easy_setopt(curl, CURLOPT_TIMEOUT, mConfig.totalTimeoutSeconds);
-        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-        curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);         // 多线程下必须，否则 alarm 会乱
-        curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");  // 允许 gzip，省流量
-        curl_easy_setopt(curl, CURLOPT_USERAGENT, "MaiAgent/0.1");
-
-        const CURLcode curlResult = curl_easy_perform(curl);
-        long status = 0;
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
-        curl_slist_free_all(headers);
-        curl_easy_cleanup(curl);
-
-        // 主动取消**不是故障**：单独一个错误码，让上层能区分"用户按了停"和"网断了"，
-        // 界面才知道该不该弹错误。
-        if (cancel.load(std::memory_order_relaxed))
-            return MaiError::make(MaiErrorCode::Canceled, "canceled by user");
-
-        if (curlResult != CURLE_OK)
-            return MaiError::make(MaiErrorCode::Network,
-                                  std::string("curl: ") + curl_easy_strerror(curlResult));
-        if (status >= 400)
-            return MaiError::make(status == 401 || status == 403 ? MaiErrorCode::NotConfigured
-                                                                 : MaiErrorCode::Protocol,
-                                  "HTTP " + std::to_string(status));
-        if (!context.error.empty()) return MaiError::make(MaiErrorCode::Protocol, context.error);
-
-        // 工具调用攒到流结束才交付——中途交付会拿到半截 JSON。
-        if (sink.onToolCall) {
-            for (const auto& choice : context.tools.take()) sink.onToolCall(choice);
-        }
-        return MaiError::ok();
     }
 
 private:

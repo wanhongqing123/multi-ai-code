@@ -149,6 +149,9 @@ struct MaiModelConfig {
     // 0 = 不限。流式对话可能跑很久（模型想很长时间，或者输出很长），设了上限就会在半截把人掐掉。
     // 真要停用 cancel，那个干净得多。
     long totalTimeoutSeconds = 0;
+    // 只在还没有向调用方交付任何正文/思考/工具调用时重试，避免流式内容重复。
+    int maxRetries = 2;
+    long retryInitialDelayMs = 250;
 };
 
 // 模型客户端。一个接口，多个 wire 实现。

@@ -34,11 +34,13 @@
 #include <QTextFragment>
 #include <QDesktopServices>
 #include <QDialog>
+#include <QDialogButtonBox>
 #include <QEvent>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFont>
+#include <QFormLayout>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QIcon>
@@ -1282,9 +1284,8 @@ namespace {
 
 // AI 助手连哪个模型。
 //
-// **正式来源是设置页**（QSettings）。读不到时退回 opencode 的 auth.json——
-// 那是开发期的方便，不是设计：这台机器上已经有一份可用的智谱 key，
-// 不然每次跑起来都得先去界面里填一遍。设置页做好之后这一段就该删掉。
+// 唯一来源是设置页（QSettings）。不再偷读其它工具的认证文件：用户在 MaiChat
+// 里没配置过，就应当明确显示未配置，不能静默借用一把来历不明的 key。
 AgentController::ModelConfig loadAgentModelConfig() {
     AgentController::ModelConfig config;
 
@@ -1293,21 +1294,15 @@ AgentController::ModelConfig loadAgentModelConfig() {
     config.apiKey = settings.value(QStringLiteral("agent/apiKey")).toString();
     config.modelName =
         settings.value(QStringLiteral("agent/model"), QStringLiteral("glm-5.3")).toString();
-    if (!config.baseUrl.isEmpty() && !config.apiKey.isEmpty()) return config;
-
-    const QString authPath =
-        QDir::homePath() + QStringLiteral("/.local/share/opencode/auth.json");
-    QFile authFile(authPath);
-    if (!authFile.open(QIODevice::ReadOnly)) return config;
-    const QJsonObject root = QJsonDocument::fromJson(authFile.readAll()).object();
-    const QJsonObject entry = root.value(QStringLiteral("zhipuai-coding-plan")).toObject();
-    const QString key = entry.value(QStringLiteral("key")).toString();
-    if (key.isEmpty()) return config;
-
-    // 编程套餐走 /api/coding/paas/v4，不是普通的 /api/paas/v4。
-    // 打错那个地址会拿到 429，看着像限流，其实是端点不对。
-    config.baseUrl = QStringLiteral("https://open.bigmodel.cn/api/coding/paas/v4");
-    config.apiKey = key;
+    const QString policy = settings
+                               .value(QStringLiteral("agent/approvalPolicy"),
+                                      QStringLiteral("on_request"))
+                               .toString();
+    config.approvalPolicy = policy == QStringLiteral("never")
+                                ? MaiApprovalPolicy::Never
+                            : policy == QStringLiteral("unless_trusted")
+                                ? MaiApprovalPolicy::UnlessTrusted
+                                : MaiApprovalPolicy::OnRequest;
     return config;
 }
 
@@ -1925,11 +1920,23 @@ void MainWindow::buildUi() {
     settingsSdkAppIdValue_->setObjectName(QStringLiteral("settingsSdkAppIdValue"));
     auto* signatureValue = new QLabel(QStringLiteral("内置生成"), settingsPanel);
     signatureValue->setObjectName(QStringLiteral("settingsSignatureValue"));
+    settingsAgentModelValue_ = new QLabel(settingsPanel);
+    settingsAgentModelValue_->setObjectName(QStringLiteral("settingsAgentModelValue"));
 
     settingsPanelLayout->addWidget(createSettingsRow(QStringLiteral("当前账号"), settingsAccountValue_, QStringLiteral("用于登录桌面端 IM 的账号 ID。")));
     settingsPanelLayout->addWidget(createSettingsRow(QStringLiteral("连接状态"), settingsConnectionValue_, QStringLiteral("显示当前 SDK 登录状态。")));
     settingsPanelLayout->addWidget(createSettingsRow(QStringLiteral("SDK AppID"), settingsSdkAppIdValue_, QStringLiteral("和 iOS 使用同一套内置配置。")));
     settingsPanelLayout->addWidget(createSettingsRow(QStringLiteral("登录签名"), signatureValue, QStringLiteral("启动时自动生成，不需要用户手动填写。")));
+    auto* agentSettingsRow = createSettingsRow(
+        QStringLiteral("AI 助手模型"), settingsAgentModelValue_,
+        QStringLiteral("配置 OpenAI 兼容地址、模型名称和 API Key。Key 仅保存在当前系统用户的应用设置中。"));
+    auto* agentSettingsButton = new QPushButton(QStringLiteral("配置"), agentSettingsRow);
+    agentSettingsButton->setObjectName(QStringLiteral("settingsAgentModelButton"));
+    agentSettingsButton->setProperty("settingsRowButton", true);
+    qobject_cast<QHBoxLayout*>(agentSettingsRow->layout())->addWidget(agentSettingsButton);
+    connect(agentSettingsButton, &QPushButton::clicked, this,
+            &MainWindow::editAgentModelSettings);
+    settingsPanelLayout->addWidget(agentSettingsRow);
 
     settingsLayout->addWidget(settingsTitle);
     settingsLayout->addWidget(settingsSubtitle);
@@ -1962,28 +1969,7 @@ void MainWindow::buildUi() {
         agentLayout->setContentsMargins(0, 0, 0, 0);
         agentLayout->setSpacing(0);
 
-        const AgentController::ModelConfig modelConfig = loadAgentModelConfig();
-        agentController_ = new AgentController(modelConfig, agentDatabasePath(), this);
-        agentSessions_ = new AgentSessionList(*agentController_, agentPage_);
-        agentPanel_ = new AgentChatPanel(*agentController_, agentPage_);
-        // 面板自己看不到"实际在用哪个模型"——会话上的 model 字段为空是常态，
-        // 那表示"用 MaiAgent::Options 的默认值"。所以由这里告诉它。
-        agentPanel_->setModelLabel(modelConfig.baseUrl.isEmpty()
-                                       ? QStringLiteral("未配置模型")
-                                       : modelConfig.modelName);
-        agentLayout->addWidget(agentSessions_);
-        agentLayout->addWidget(agentPanel_, 1);
-
-        connect(agentSessions_, &AgentSessionList::selected, agentPanel_,
-                [this](const QString& sessionId) { agentPanel_->openSession(sessionId); });
-        connect(agentSessions_, &AgentSessionList::newSessionRequested, agentPanel_,
-                [this] { agentPanel_->openSession(); });
-        // 面板说"列表该重拉了"（新建、改标题、一轮跑完排序会动）。
-        // 重拉之后要把高亮放回当前这个，否则选中态会跑掉。
-        connect(agentPanel_, &AgentChatPanel::sessionListChanged, agentSessions_, [this] {
-            agentSessions_->refresh();
-            agentSessions_->setCurrent(agentPanel_->sessionId());
-        });
+        rebuildAgentPage();
     }
 
     contentStack_->addWidget(messagesPage_);
@@ -2887,6 +2873,144 @@ void MainWindow::refreshSettings() {
     settingsAccountValue_->setText(app_.chatState().ownerUserId());
     settingsConnectionValue_->setText(app_.isConnected() ? QStringLiteral("已连接") : QStringLiteral("未连接"));
     settingsSdkAppIdValue_->setText(QString::number(RemoteIMCredentialDefaults::sdkAppId));
+    const AgentController::ModelConfig model = loadAgentModelConfig();
+    settingsAgentModelValue_->setText(
+        model.baseUrl.isEmpty() || model.apiKey.isEmpty()
+            ? QStringLiteral("未配置")
+            : QStringLiteral("%1 · 已配置").arg(model.modelName));
+}
+
+void MainWindow::rebuildAgentPage() {
+    if (agentPage_ == nullptr || agentPage_->layout() == nullptr) return;
+
+    const QString sessionToRestore = agentPanel_ == nullptr ? QString() : agentPanel_->sessionId();
+
+    delete agentPanel_;
+    agentPanel_ = nullptr;
+    delete agentSessions_;
+    agentSessions_ = nullptr;
+    delete agentController_;
+    agentController_ = nullptr;
+
+    const AgentController::ModelConfig modelConfig = loadAgentModelConfig();
+    agentController_ = new AgentController(modelConfig, agentDatabasePath(), this);
+    agentSessions_ = new AgentSessionList(*agentController_, agentPage_);
+    agentPanel_ = new AgentChatPanel(*agentController_, agentPage_);
+    agentPanel_->setModelLabel(modelConfig.baseUrl.isEmpty() || modelConfig.apiKey.isEmpty()
+                                   ? QStringLiteral("未配置模型")
+                                   : modelConfig.modelName);
+    auto* layout = qobject_cast<QHBoxLayout*>(agentPage_->layout());
+    layout->addWidget(agentSessions_);
+    layout->addWidget(agentPanel_, 1);
+
+    connect(agentSessions_, &AgentSessionList::selected, agentPanel_,
+            [this](const QString& sessionId) { agentPanel_->openSession(sessionId); });
+    connect(agentSessions_, &AgentSessionList::newSessionRequested, agentPanel_,
+            [this] { agentPanel_->openSession(); });
+    connect(agentPanel_, &AgentChatPanel::sessionListChanged, agentSessions_, [this] {
+        agentSessions_->refresh();
+        agentSessions_->setCurrent(agentPanel_->sessionId());
+    });
+    connect(agentPanel_, &AgentChatPanel::modelConfigurationRequested, this,
+            &MainWindow::editAgentModelSettings);
+    if (!sessionToRestore.isEmpty()) agentPanel_->openSession(sessionToRestore);
+}
+
+void MainWindow::editAgentModelSettings() {
+    if (agentController_ != nullptr) {
+        const std::vector<MaiSession> sessions = agentController_->agent().listSessions();
+        const bool busy = std::any_of(sessions.cbegin(), sessions.cend(),
+                                     [this](const MaiSession& session) {
+                                         return agentController_->agent().isBusy(session.id);
+                                     });
+        if (busy) {
+            AppMessageDialog::show(this, AppMessageDialog::Kind::Warning,
+                                   QStringLiteral("AI 助手正在执行"),
+                                   QStringLiteral("请等待当前任务结束或先中断任务，再修改模型配置。"));
+            return;
+        }
+    }
+
+    QSettings settings;
+    const AgentController::ModelConfig current = loadAgentModelConfig();
+    QDialog dialog(this);
+    dialog.setObjectName(QStringLiteral("agentModelDialog"));
+    dialog.setWindowTitle(QStringLiteral("配置 AI 助手模型"));
+    dialog.setMinimumWidth(UiZoom::s(520));
+    auto* root = new QVBoxLayout(&dialog);
+    root->setContentsMargins(UiZoom::s(24), UiZoom::s(22), UiZoom::s(24), UiZoom::s(20));
+    root->setSpacing(UiZoom::s(16));
+
+    auto* form = new QFormLayout;
+    form->setHorizontalSpacing(UiZoom::s(14));
+    form->setVerticalSpacing(UiZoom::s(12));
+    auto* baseUrl = new QLineEdit(&dialog);
+    baseUrl->setObjectName(QStringLiteral("agentModelBaseUrl"));
+    baseUrl->setText(current.baseUrl.isEmpty()
+                         ? QStringLiteral("https://open.bigmodel.cn/api/coding/paas/v4")
+                         : current.baseUrl);
+    auto* model = new QLineEdit(&dialog);
+    model->setObjectName(QStringLiteral("agentModelName"));
+    model->setText(current.modelName.isEmpty() ? QStringLiteral("glm-5.3") : current.modelName);
+    auto* apiKey = new QLineEdit(&dialog);
+    apiKey->setObjectName(QStringLiteral("agentModelApiKey"));
+    apiKey->setEchoMode(QLineEdit::Password);
+    apiKey->setPlaceholderText(current.apiKey.isEmpty()
+                                   ? QStringLiteral("请输入 API Key")
+                                   : QStringLiteral("已配置；留空保持不变"));
+    form->addRow(QStringLiteral("接口地址"), baseUrl);
+    form->addRow(QStringLiteral("模型"), model);
+    form->addRow(QStringLiteral("API Key"), apiKey);
+    root->addLayout(form);
+
+    auto* error = new QLabel(&dialog);
+    error->setObjectName(QStringLiteral("agentModelError"));
+    error->setStyleSheet(QStringLiteral("color:#c0392b;"));
+    error->setWordWrap(true);
+    root->addWidget(error);
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel | QDialogButtonBox::Save,
+                                         Qt::Horizontal, &dialog);
+    buttons->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("取消"));
+    buttons->button(QDialogButtonBox::Save)->setText(QStringLiteral("保存"));
+    buttons->button(QDialogButtonBox::Save)->setObjectName(QStringLiteral("agentModelSave"));
+    root->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
+        QString url = baseUrl->text().trimmed();
+        while (url.endsWith(QLatin1Char('/'))) url.chop(1);
+        const QString modelName = model->text().trimmed();
+        const QString enteredKey = apiKey->text().trimmed();
+        const QString key = enteredKey.isEmpty() ? current.apiKey : enteredKey;
+        const QUrl parsed(url);
+        if (!parsed.isValid() || (parsed.scheme() != QStringLiteral("https") &&
+                                  parsed.scheme() != QStringLiteral("http"))) {
+            error->setText(QStringLiteral("接口地址必须是完整的 http:// 或 https:// 地址。"));
+            return;
+        }
+        if (modelName.isEmpty()) {
+            error->setText(QStringLiteral("请填写模型名称。"));
+            return;
+        }
+        if (key.isEmpty()) {
+            error->setText(QStringLiteral("请填写 API Key。"));
+            return;
+        }
+        settings.setValue(QStringLiteral("agent/baseUrl"), url);
+        settings.setValue(QStringLiteral("agent/model"), modelName);
+        settings.setValue(QStringLiteral("agent/apiKey"), key);
+        settings.sync();
+        if (settings.status() != QSettings::NoError) {
+            error->setText(QStringLiteral("模型配置保存失败，请检查当前用户的设置目录权限。"));
+            return;
+        }
+        dialog.accept();
+    });
+
+    if (dialog.exec() != QDialog::Accepted) return;
+    rebuildAgentPage();
+    refreshSettings();
+    showToast(QStringLiteral("AI 模型配置已保存"), 13, 1800);
 }
 
 void MainWindow::setUpMessageNotifications() {

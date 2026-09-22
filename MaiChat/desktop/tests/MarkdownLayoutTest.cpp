@@ -31,6 +31,7 @@ private slots:
     void headingIsTallerThanBody();
     void codeBlockKeepsEveryLine();
     void listIndentsByDepth();
+    void nestedListsUseCompactDistinctHierarchy();
     void quoteIsTallerThanItsContent();
     void linkHitTestingFindsHref();
     void selectionReadsBackTheText();
@@ -88,6 +89,19 @@ void MarkdownLayoutTest::listIndentsByDepth() {
     const MarkdownLayout flatLayout = laidOut(flat, 220);
     const MarkdownLayout nestedLayout = laidOut(nested, 220);
     QVERIFY(nestedLayout.height() > flatLayout.height());
+}
+
+void MarkdownLayoutTest::nestedListsUseCompactDistinctHierarchy() {
+    const QString leaf = QStringLiteral("同一段列表明细文字");
+    const MarkdownLayout flat = laidOut(QStringLiteral("- ") + leaf, 600);
+    const MarkdownLayout nested = laidOut(QStringLiteral("- x\n  - ") + leaf, 600);
+    QVERIFY(nested.naturalWidth() - flat.naturalWidth() >= 16);
+
+    const MarkdownLayout compact =
+        laidOut(QStringLiteral("- 第一项\n- 第二项\n- 第三项\n- 第四项"), 600);
+    const MarkdownTheme theme = MarkdownTheme::standard(1.0);
+    const qreal fourLines = theme.bodyPixelSize * theme.lineHeightRatio * 4;
+    QVERIFY(compact.height() <= fourLines + 16);
 }
 
 void MarkdownLayoutTest::quoteIsTallerThanItsContent() {

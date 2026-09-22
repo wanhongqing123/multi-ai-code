@@ -44,6 +44,7 @@ public:
         // 模型可以连着调工具，一轮对话因此会有多次请求。
         // 设上限是因为模型会绕圈——拿同样的参数反复调同一个工具，没有上限就一直烧钱。
         int maxIterations = 12;
+        MaiApprovalPolicy approvalPolicy = MaiApprovalPolicy::OnRequest;
     };
 
     MaiTurnRunner(Dependencies dependencies, std::string sessionId, MaiMessage assistant);
@@ -64,6 +65,7 @@ private:
     // 非空就是要直接回灌给模型的失败结果。
     MaiToolResult checkPermission(const MaiToolInvocation& call, const std::string& partId,
                                   bool& allowed, const std::atomic<bool>& cancel);
+    bool toolNeedsApproval(const MaiToolInvocation& call) const;
 
     // 组装这一次要发给模型的请求。
     MaiModelRequest buildRequest(const std::string& modelName) const;

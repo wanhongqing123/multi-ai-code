@@ -63,9 +63,9 @@ std::string programOf(const std::string& command) {
 // 交给下面的子命令判断。
 bool isReadOnlyProgram(const std::string& program) {
     static const char* const kReadOnly[] = {
-        "ls",   "dir",  "pwd",  "echo", "cat",  "head", "tail", "wc",    "file",
-        "stat", "find", "grep", "rg",   "which", "where", "whoami", "date", "uname",
-        "df",   "du",   "env",  "printenv", "hostname", "tree", "diff", "cmp",
+        "ls",   "dir",  "pwd",  "echo", "cat",  "head", "tail", "wc",
+        "stat", "grep", "which", "where", "whoami", "uname", "df", "du",
+        "printenv", "cmp",
     };
     for (const char* candidate : kReadOnly) {
         if (program == candidate) return true;
@@ -77,8 +77,7 @@ bool isReadOnlyProgram(const std::string& program) {
 // 条件反射点「允许」，那时候真正危险的那次也会被一起放过。
 bool isReadOnlyGitCommand(const std::string& command) {
     static const char* const kReadOnlySubcommands[] = {
-        "status", "log", "diff", "show", "branch", "remote", "blame", "describe", "rev-parse",
-        "ls-files", "shortlog", "tag", "config",
+        "status", "describe", "rev-parse", "ls-files", "shortlog",
     };
     const std::size_t programEnd = command.find_first_of(" \t");
     if (programEnd == std::string::npos) return false;
@@ -87,12 +86,7 @@ bool isReadOnlyGitCommand(const std::string& command) {
     const std::size_t end = command.find_first_of(" \t", begin);
     const std::string sub = command.substr(begin, end == std::string::npos ? end : end - begin);
     for (const char* candidate : kReadOnlySubcommands) {
-        if (sub == candidate) {
-            // `git config --global user.email x` 是写操作。带 --global / --system 就不算只读。
-            return command.find("--global") == std::string::npos &&
-                   command.find("--system") == std::string::npos &&
-                   command.find("--replace-all") == std::string::npos;
-        }
+        if (sub == candidate) return true;
     }
     return false;
 }

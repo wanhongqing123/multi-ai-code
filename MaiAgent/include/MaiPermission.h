@@ -8,6 +8,13 @@
 
 #include "MaiTime.h"
 
+// 一轮里工具调用的审批策略。命名和 Codex 的 AskForApproval 对齐。
+enum class MaiApprovalPolicy {
+    OnRequest,      // 会改文件、访问网络或执行高风险命令时询问
+    UnlessTrusted,  // 工作区内文件修改自动批准；网络和高风险命令仍询问
+    Never,          // 不逐次询问；终端与网络调用会直接执行
+};
+
 // 用户对一次工具调用的裁决。
 //
 // 取值照抄 codex 的 ReviewDecision（codex-rs/protocol/src/protocol.rs）。

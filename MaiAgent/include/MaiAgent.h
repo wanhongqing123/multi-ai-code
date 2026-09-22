@@ -152,6 +152,7 @@ public:
         bool rejectWhenBusy = true;
         // 等用户授权的超时。0 = 无限等，理由见 MaiPermissionGate::Options。
         MaiMillis permissionTimeoutMs = 0;
+        MaiApprovalPolicy approvalPolicy = MaiApprovalPolicy::OnRequest;
 
         // 子 Agent 最多能套多少层。根会话是 0，所以 2 表示「孙子辈就到头了」。
         //
@@ -188,6 +189,8 @@ public:
     // 这个会话现在有没有一轮在跑。注意这是**那一瞬间**的答案，
     // 拿它去做"没跑就发消息"的判断是有竞态的——直接 submit，忙的话会返回 Busy，那个判断在锁里做。
     bool isBusy(const std::string& sessionId) const;
+    bool setApprovalPolicy(MaiApprovalPolicy policy);
+    MaiApprovalPolicy approvalPolicy() const;
 
     // 现在有哪些工具调用在等授权。
     //

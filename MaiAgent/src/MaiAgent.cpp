@@ -84,6 +84,7 @@ struct MaiAgent::Runtime {
         dependencies.subAgents = owner;
         dependencies.defaultModel = options.defaultModel;
         dependencies.maxIterations = options.maxToolIterations;
+        dependencies.approvalPolicy = options.approvalPolicy;
         return dependencies;
     }
 
@@ -300,6 +301,18 @@ std::vector<MaiQuestionRequest> MaiAgent::listPendingQuestions() const {
 bool MaiAgent::isBusy(const std::string& sessionId) const {
     std::lock_guard<std::mutex> lock(mRuntime->mutex);
     return mRuntime->active.count(sessionId) > 0;
+}
+
+bool MaiAgent::setApprovalPolicy(MaiApprovalPolicy policy) {
+    std::lock_guard<std::mutex> lock(mRuntime->mutex);
+    if (!mRuntime->active.empty()) return false;
+    mRuntime->options.approvalPolicy = policy;
+    return true;
+}
+
+MaiApprovalPolicy MaiAgent::approvalPolicy() const {
+    std::lock_guard<std::mutex> lock(mRuntime->mutex);
+    return mRuntime->options.approvalPolicy;
 }
 
 void MaiAgent::waitIdle() {

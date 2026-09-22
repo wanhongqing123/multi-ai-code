@@ -158,7 +158,7 @@ void MaiTurnRunner::executeTools(const std::vector<MaiToolInvocation>& calls,
         // 要审批的工具先挂在 Pending：界面靠这个状态显示"等待授权"，
         // 不用另外对着 permission.asked 事件维护一张表。
         MaiTool* tool = mDependencies.tools ? mDependencies.tools->find(call.name) : nullptr;
-        const bool needsApproval = tool && tool->requiresApproval(call.arguments);
+        const bool needsApproval = toolNeedsApproval(call);
         body.state = needsApproval ? MaiToolState::Pending : MaiToolState::Running;
         part.body = body;
         mAssistant.parts.push_back(part);
@@ -228,7 +228,7 @@ MaiToolResult MaiTurnRunner::checkPermission(const MaiToolInvocation& call,
                                              const std::atomic<bool>& cancel) {
     allowed = true;
     MaiTool* tool = mDependencies.tools ? mDependencies.tools->find(call.name) : nullptr;
-    if (!tool || !tool->requiresApproval(call.arguments)) return {};
+    if (!tool || !toolNeedsApproval(call)) return {};
 
     // 模型被拒之后经常原样再试一次。第二次不再弹框，直接回同样的话。
     const std::string signature = call.name + std::string(1, '\0') + call.arguments;
@@ -291,6 +291,18 @@ MaiToolResult MaiTurnRunner::checkPermission(const MaiToolInvocation& call,
         return MaiToolResult::failure(MaiErrorCode::Canceled, kDeniedHint);
     }
     return {};
+}
+
+bool MaiTurnRunner::toolNeedsApproval(const MaiToolInvocation& call) const {
+    MaiTool* tool = mDependencies.tools ? mDependencies.tools->find(call.name) : nullptr;
+    if (tool == nullptr || !tool->requiresApproval(call.arguments)) return false;
+    if (mDependencies.approvalPolicy == MaiApprovalPolicy::Never) return false;
+    if (mDependencies.approvalPolicy == MaiApprovalPolicy::UnlessTrusted) {
+        // 这些工具都受工作目录边界保护，且变更内容会完整进入工具调用记录。
+        // 未知的新工具保持询问，避免新增能力时被这一档静默放行。
+        return call.name != "write" && call.name != "edit" && call.name != "apply_patch";
+    }
+    return true;
 }
 
 void MaiTurnRunner::beginStreamedPart(const std::string& partId, MaiMessagePartBody body) {

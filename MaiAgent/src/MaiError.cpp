@@ -8,6 +8,7 @@ const char* maiErrorCodeToString(MaiErrorCode code) {
         case MaiErrorCode::InvalidInput: return "invalid_input";
         case MaiErrorCode::NotConfigured: return "not_configured";
         case MaiErrorCode::Network: return "network";
+        case MaiErrorCode::RateLimited: return "rate_limited";
         case MaiErrorCode::Protocol: return "protocol";
         case MaiErrorCode::Canceled: return "canceled";
         case MaiErrorCode::NotSupported: return "not_supported";

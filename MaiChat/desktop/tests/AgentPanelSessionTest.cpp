@@ -55,6 +55,7 @@ private slots:
     void anotherSessionTitleDoesNotRenameTheHeader();
     void approvalFromAnotherSessionIsStillShown();
     void thinkingLineExpandsLiveAndAfterRestore();
+    void unconfiguredModelOpensConfigurationInsteadOfFailingTurn();
 };
 
 namespace {
@@ -224,26 +225,25 @@ void AgentPanelSessionTest::thinkingLineExpandsLiveAndAfterRestore() {
     QVERIFY(send != nullptr);
     QTest::mouseClick(send, Qt::LeftButton);
 
-    // 等这一轮结束：思考条出现并塌成「思考了 N 秒」。
+    // 等这一轮结束：思考条出现并塌成「已处理 N 秒」。
     QWidget* card = nullptr;
     QTRY_VERIFY((card = panel.findChild<QWidget*>(QStringLiteral("agentThinkingCard"))) != nullptr);
     QTRY_VERIFY(!card->findChildren<QLabel*>().isEmpty());
 
     auto bodyOf = [](QWidget* cardWidget) -> QLabel* {
-        for (QLabel* label : cardWidget->findChildren<QLabel*>()) {
-            if (label->text().contains(QStringLiteral("想一想"))) return label;
-        }
-        return nullptr;
+        return cardWidget->findChild<QLabel*>(QStringLiteral("agentThinkingBody"));
     };
 
     QLabel* body = bodyOf(card);
-    QVERIFY2(body != nullptr, "思考正文必须已经在条里（收起状态只是不可见）");
+    QVERIFY2(body != nullptr, "思考正文标签必须已经在条里");
     QTRY_VERIFY(!body->isVisible());
+    QVERIFY2(body->text().isEmpty(), "收起状态不应反复排版完整思考正文");
 
     // ── 实时路径：点击展开，高度必须长出来 ──
     const int collapsedHeight = card->height();
     QTest::mouseClick(card, Qt::LeftButton, Qt::NoModifier, card->rect().center());
     QTRY_VERIFY2(body->isVisible(), "点击后思考正文必须显示出来");
+    QVERIFY(body->text().contains(QStringLiteral("想一想")));
     QTRY_VERIFY2(card->height() > collapsedHeight + 20,
                  qPrintable(QStringLiteral("展开后卡片高度必须增长：收起 %1 → 展开 %2")
                                 .arg(collapsedHeight)
@@ -269,6 +269,22 @@ void AgentPanelSessionTest::thinkingLineExpandsLiveAndAfterRestore() {
                  qPrintable(QStringLiteral("恢复后展开高度必须增长：%1 → %2")
                                 .arg(restoredCollapsed)
                                 .arg(restored->height())));
+}
+
+void AgentPanelSessionTest::unconfiguredModelOpensConfigurationInsteadOfFailingTurn() {
+    Harness harness;
+    QVERIFY(QTest::qWaitForWindowExposed(harness.panel.get()));
+    harness.panel->setModelLabel(QStringLiteral("未配置模型"));
+    QSignalSpy requested(harness.panel.get(), &AgentChatPanel::modelConfigurationRequested);
+    auto* editor = harness.panel->findChild<QTextEdit*>();
+    QVERIFY(editor != nullptr);
+    editor->setPlainText(QStringLiteral("你好"));
+    QPushButton* send = harness.sendButton();
+    QVERIFY(send != nullptr);
+    QTest::mouseClick(send, Qt::LeftButton);
+
+    QCOMPARE(requested.count(), 1);
+    QCOMPARE(editor->toPlainText(), QStringLiteral("你好"));
 }
 
 QTEST_MAIN(AgentPanelSessionTest)

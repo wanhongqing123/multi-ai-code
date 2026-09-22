@@ -53,7 +53,8 @@ std::unique_ptr<MaiSessionStore> openStore(const QString& databasePath, QString&
 
 std::unique_ptr<MaiAgent> buildAgent(std::unique_ptr<MaiModelClient> model,
                                      std::unique_ptr<MaiSessionStore> store,
-                                     const QString& defaultModel) {
+                                     const QString& defaultModel,
+                                     MaiApprovalPolicy approvalPolicy = MaiApprovalPolicy::OnRequest) {
     // 内置工具（read / write / glob / grep）总是装着。会话没有工作目录时工具层会明确拒绝，
     // 要不要把工具声明给模型看是 MaiContextBuilder 的事，不是这里的。
     auto tools = std::make_unique<MaiToolRegistry>();
@@ -63,6 +64,7 @@ std::unique_ptr<MaiAgent> buildAgent(std::unique_ptr<MaiModelClient> model,
     if (!defaultModel.isEmpty()) options.defaultModel = toUtf8(defaultModel);
     // 0 = 无限等。桌面端有人盯着，超时自动拒绝等于替用户做决定。
     options.permissionTimeoutMs = 0;
+    options.approvalPolicy = approvalPolicy;
 
     return std::make_unique<MaiAgent>(std::move(store), std::move(model), std::move(tools),
                                       options);
@@ -78,7 +80,7 @@ AgentController::AgentController(std::unique_ptr<MaiModelClient> model,
     qRegisterMetaType<MaiEvent>("MaiEvent");
 
     runtime_->agent = buildAgent(std::move(model), openStore(databasePath, runtime_->openError),
-                                 QString());
+                                 QString(), MaiApprovalPolicy::OnRequest);
 
     // **显式 QueuedConnection，不用 Auto。**
     //
@@ -110,7 +112,7 @@ AgentController::AgentController(const ModelConfig& model, const QString& databa
     }
 
     runtime_->agent = buildAgent(std::move(client), openStore(databasePath, runtime_->openError),
-                                 model.modelName);
+                                 model.modelName, model.approvalPolicy);
 
     connect(this, &AgentController::eventQueued, this, &AgentController::onEventQueued,
             Qt::QueuedConnection);
@@ -172,6 +174,18 @@ bool AgentController::interrupt(const QString& sessionId) {
         return false;
     }
     return true;
+}
+
+bool AgentController::setApprovalPolicy(MaiApprovalPolicy policy) {
+    if (!runtime_->agent->setApprovalPolicy(policy)) {
+        runtime_->lastError = QStringLiteral("请先停止正在执行的任务，再切换批准方式。");
+        return false;
+    }
+    return true;
+}
+
+MaiApprovalPolicy AgentController::approvalPolicy() const {
+    return runtime_->agent->approvalPolicy();
 }
 
 bool AgentController::approvePermission(const QString& permissionId, bool approveForSession) {

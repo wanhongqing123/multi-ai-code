@@ -3,6 +3,8 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QDateTime>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QLabel>
 #include <QListWidget>
 #include <QScrollBar>
@@ -13,6 +15,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSettings>
 #include <QSplitter>
 #include <QSplitterHandle>
 #include <QMouseEvent>
@@ -93,6 +96,8 @@ private slots:
     void contactsNavigationShowsContactsAndOpensChat();
     void contactsCurrentSelectionDoesNotLeaveContactsPage();
     void settingsNavigationShowsAccountAndSdkDefaults();
+    void agentSettingsDialogExposesSecureModelFields();
+    void agentSettingsSaveAppliesWithoutRestart();
     void leftNavigationRailIsResizableAndWider();
     void removesRedundantChromeLabels();
     void globalSearchFindsMatchesAcrossConversationsAndJumps();
@@ -1398,6 +1403,86 @@ void MainWindowLayoutTest::settingsNavigationShowsAccountAndSdkDefaults() {
     QCOMPARE(sdkAppIdValue->text(), QStringLiteral("1600148979"));
     // 设置页的值应是只读标签而非输入框；导航栏的搜索框是唯一合法的 QLineEdit。
     QVERIFY(settingsPage->findChildren<QLineEdit*>().isEmpty());
+}
+
+void MainWindowLayoutTest::agentSettingsDialogExposesSecureModelFields() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    MainWindow window(app);
+    auto* button =
+        window.findChild<QPushButton*>(QStringLiteral("settingsAgentModelButton"));
+    QVERIFY(button != nullptr);
+
+    bool sawDialog = false;
+    bool keyIsMasked = false;
+    QTimer::singleShot(100, [&] {
+        auto* dialog = window.findChild<QDialog*>(QStringLiteral("agentModelDialog"));
+        if (dialog == nullptr) return;
+        sawDialog = true;
+        auto* baseUrl =
+            dialog->findChild<QLineEdit*>(QStringLiteral("agentModelBaseUrl"));
+        auto* model = dialog->findChild<QLineEdit*>(QStringLiteral("agentModelName"));
+        auto* apiKey =
+            dialog->findChild<QLineEdit*>(QStringLiteral("agentModelApiKey"));
+        keyIsMasked = baseUrl != nullptr && model != nullptr && apiKey != nullptr &&
+                      apiKey->echoMode() == QLineEdit::Password;
+        dialog->reject();
+    });
+    button->click();
+
+    QVERIFY(sawDialog);
+    QVERIFY(keyIsMasked);
+}
+
+void MainWindowLayoutTest::agentSettingsSaveAppliesWithoutRestart() {
+    const QString originalOrganization = QCoreApplication::organizationName();
+    const QString originalApplication = QCoreApplication::applicationName();
+    QCoreApplication::setOrganizationName(QStringLiteral("MaiChatTests"));
+    QCoreApplication::setApplicationName(QStringLiteral("AgentSettingsSave"));
+    QSettings settings;
+    settings.clear();
+
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    MainWindow window(app);
+    auto* button =
+        window.findChild<QPushButton*>(QStringLiteral("settingsAgentModelButton"));
+    auto* value =
+        window.findChild<QLabel*>(QStringLiteral("settingsAgentModelValue"));
+    QVERIFY(button != nullptr);
+    QVERIFY(value != nullptr);
+
+    bool submitted = false;
+    QTimer::singleShot(100, [&] {
+        auto* dialog = window.findChild<QDialog*>(QStringLiteral("agentModelDialog"));
+        if (dialog == nullptr) return;
+        auto* baseUrl =
+            dialog->findChild<QLineEdit*>(QStringLiteral("agentModelBaseUrl"));
+        auto* model = dialog->findChild<QLineEdit*>(QStringLiteral("agentModelName"));
+        auto* apiKey =
+            dialog->findChild<QLineEdit*>(QStringLiteral("agentModelApiKey"));
+        auto* save = dialog->findChild<QPushButton*>(QStringLiteral("agentModelSave"));
+        if (baseUrl == nullptr || model == nullptr || apiKey == nullptr || save == nullptr) return;
+        baseUrl->setText(QStringLiteral("https://example.test/v1/"));
+        model->setText(QStringLiteral("test-model"));
+        apiKey->setText(QStringLiteral("test-key"));
+        submitted = true;
+        save->click();
+    });
+    button->click();
+
+    QVERIFY(submitted);
+    QCOMPARE(value->text(), QStringLiteral("test-model · 已配置"));
+    QCOMPARE(settings.value(QStringLiteral("agent/baseUrl")).toString(),
+             QStringLiteral("https://example.test/v1"));
+    QCOMPARE(settings.value(QStringLiteral("agent/model")).toString(),
+             QStringLiteral("test-model"));
+    QCOMPARE(settings.value(QStringLiteral("agent/apiKey")).toString(),
+             QStringLiteral("test-key"));
+
+    settings.clear();
+    QCoreApplication::setOrganizationName(originalOrganization);
+    QCoreApplication::setApplicationName(originalApplication);
 }
 
 void MainWindowLayoutTest::leftNavigationRailIsResizableAndWider() {

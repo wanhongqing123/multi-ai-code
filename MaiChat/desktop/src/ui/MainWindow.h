@@ -120,6 +120,8 @@ private:
     void showSettingsPage();
     void showRemotePage();
     void showAgentPage();
+    void rebuildAgentPage();
+    void editAgentModelSettings();
     void syncNavigationSelection();
     void updateNavigationSelection(QPushButton* selectedButton);
     void openAddContactDialog();
@@ -293,6 +295,7 @@ private:
     QLabel* settingsAccountValue_ = nullptr;
     QLabel* settingsConnectionValue_ = nullptr;
     QLabel* settingsSdkAppIdValue_ = nullptr;
+    QLabel* settingsAgentModelValue_ = nullptr;
     QScrollArea* messageScroll_ = nullptr;
     QWidget* messageContainer_ = nullptr;
     QVBoxLayout* messageLayout_ = nullptr;

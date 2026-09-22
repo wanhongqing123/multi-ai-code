@@ -12,6 +12,7 @@ import android.view.View;
 public final class MaiChatSymbolView extends View {
     public enum Symbol {
         MESSAGE,
+        ASSISTANT,
         CONTACTS,
         REMOTE,
         USER,
@@ -48,6 +49,18 @@ public final class MaiChatSymbolView extends View {
         float top = (height - size) / 2f;
         RectF bounds = new RectF(left, top, left + size, top + size);
         switch (symbol) {
+            case ASSISTANT:
+                Path star = new Path();
+                star.moveTo(bounds.centerX(), bounds.top);
+                star.lineTo(bounds.centerX()+size*.14f, bounds.centerY()-size*.14f);
+                star.lineTo(bounds.right, bounds.centerY());
+                star.lineTo(bounds.centerX()+size*.14f, bounds.centerY()+size*.14f);
+                star.lineTo(bounds.centerX(), bounds.bottom);
+                star.lineTo(bounds.centerX()-size*.14f, bounds.centerY()+size*.14f);
+                star.lineTo(bounds.left, bounds.centerY());
+                star.lineTo(bounds.centerX()-size*.14f, bounds.centerY()-size*.14f);
+                star.close(); canvas.drawPath(star, paint);
+                break;
             case MESSAGE:
                 drawMessage(canvas, bounds);
                 break;

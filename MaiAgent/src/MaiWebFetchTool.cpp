@@ -116,8 +116,8 @@ std::string htmlToText(std::string html) {
     removeElement(html, "svg");
 
     // 块级标签换成换行，正文才不会糊成一整段。
-    for (const char* tag : {"</p>", "</div>", "</li>", "</tr>", "</h1>", "</h2>", "</h3>",
-                            "</h4>", "</h5>", "</h6>", "<br>", "<br/>", "<br />"}) {
+    for (const char* tag : {"</p>", "</div>", "</li>", "</tr>", "</h1>", "</h2>", "</h3>", "</h4>",
+                            "</h5>", "</h6>", "<br>", "<br/>", "<br />"}) {
         replaceAll(html, tag, "\n");
     }
 
@@ -177,7 +177,10 @@ std::string htmlToText(std::string html) {
 }
 
 class WebFetchTool final : public MaiTool {
+    std::string mCaBundlePath;
+
 public:
+    explicit WebFetchTool(std::string caBundlePath) : mCaBundlePath(std::move(caBundlePath)) {}
     std::string name() const override {
         return "webfetch";
     }
@@ -216,8 +219,9 @@ public:
                                           "missing required parameter: url");
         }
         if (!isHttpUrl(url)) {
-            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
-                                          "only http and https URLs can be fetched, but got: " + url);
+            return MaiToolResult::failure(
+                MaiErrorCode::InvalidInput,
+                "only http and https URLs can be fetched, but got: " + url);
         }
 
         maiAssertBlockingAllowed("webfetch");
@@ -228,6 +232,7 @@ public:
 
         Download download;
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        if (!mCaBundlePath.empty()) curl_easy_setopt(curl, CURLOPT_CAINFO, mCaBundlePath.c_str());
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &download);
         curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, kConnectTimeoutSeconds);
@@ -256,15 +261,15 @@ public:
         curl_easy_cleanup(curl);
 
         if (code != CURLE_OK) {
-            return MaiToolResult::failure(MaiErrorCode::Network,
-                                          std::string("could not fetch the page: ") +
-                                              curl_easy_strerror(code));
+            return MaiToolResult::failure(
+                MaiErrorCode::Network,
+                std::string("could not fetch the page: ") + curl_easy_strerror(code));
         }
         if (status >= 400) {
             // 状态码本身就是有用的信息，别吞掉——404 和 403 的下一步完全不一样。
-            return MaiToolResult::failure(MaiErrorCode::Network,
-                                          "the server replied with HTTP " + std::to_string(status) +
-                                              " for " + landed);
+            return MaiToolResult::failure(
+                MaiErrorCode::Network,
+                "the server replied with HTTP " + std::to_string(status) + " for " + landed);
         }
 
         std::string text = htmlToText(download.body);
@@ -283,6 +288,6 @@ public:
 
 }  // namespace
 
-std::unique_ptr<MaiTool> makeMaiWebFetchTool() {
-    return std::make_unique<WebFetchTool>();
+std::unique_ptr<MaiTool> makeMaiWebFetchTool(std::string caBundlePath) {
+    return std::make_unique<WebFetchTool>(std::move(caBundlePath));
 }

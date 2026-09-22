@@ -306,10 +306,14 @@ public:
                 headers = curl_slist_append(headers, auth.c_str());
             }
 
+            char transportError[CURL_ERROR_SIZE] = {};
+            curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, transportError);
             StreamCtx context;
             context.sink = &sink;
             context.cancel = &cancel;
             curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+            if (!mConfig.caBundlePath.empty())
+                curl_easy_setopt(curl, CURLOPT_CAINFO, mConfig.caBundlePath.c_str());
             curl_easy_setopt(curl, CURLOPT_POST, 1L);
             curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
             curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(body.size()));
@@ -335,9 +339,8 @@ public:
             if (cancel.load(std::memory_order_relaxed))
                 return MaiError::make(MaiErrorCode::Canceled, "canceled by user");
 
-            const bool transient =
-                curlResult != CURLE_OK ? isRetryableCurlError(curlResult)
-                                      : status == 408 || status >= 500;
+            const bool transient = curlResult != CURLE_OK ? isRetryableCurlError(curlResult)
+                                                          : status == 408 || status >= 500;
             if (transient && !context.sawOutput && attempt < mConfig.maxRetries) {
                 const long delay = mConfig.retryInitialDelayMs * (1L << attempt);
                 if (!waitBeforeRetry(delay, cancel))
@@ -346,19 +349,21 @@ public:
             }
 
             if (curlResult != CURLE_OK)
-                return MaiError::make(MaiErrorCode::Network,
-                                      std::string("curl: ") + curl_easy_strerror(curlResult));
+                return MaiError::make(
+                    MaiErrorCode::Network,
+                    std::string("curl: ") +
+                        (curlResult == CURLE_PEER_FAILED_VERIFICATION && transportError[0]
+                             ? transportError
+                             : curl_easy_strerror(curlResult)));
             if (status >= 400) {
                 const std::string provider = providerErrorMessage(context.rawBody);
                 std::string message = "HTTP " + std::to_string(status);
                 if (!provider.empty()) message += ": " + provider;
                 const MaiErrorCode code = status == 401 || status == 403
                                               ? MaiErrorCode::NotConfigured
-                                          : status == 429
-                                              ? MaiErrorCode::RateLimited
-                                          : status >= 500
-                                              ? MaiErrorCode::Network
-                                              : MaiErrorCode::Protocol;
+                                          : status == 429 ? MaiErrorCode::RateLimited
+                                          : status >= 500 ? MaiErrorCode::Network
+                                                          : MaiErrorCode::Protocol;
                 return MaiError::make(code, std::move(message));
             }
             if (!context.error.empty())

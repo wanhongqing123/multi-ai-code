@@ -2,6 +2,7 @@ package com.kongshang.maichat;
 
 public enum RemoteIMTab {
     MESSAGES("消息"),
+    ASSISTANT("AI 助手"),
     CONTACTS("通讯录"),
     REMOTE("远程"),
     ME("我");

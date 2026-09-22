@@ -27,6 +27,7 @@ struct AIMessage: Codable, Identifiable, Sendable, Equatable {
     let role: String
     let created: Int64
     let completed: Int64
+    let active: Bool
     let parts: [AIPart]
     var text: String { parts.filter { $0.kind == "text" }.compactMap(\.text).joined(separator: "\n") }
 }

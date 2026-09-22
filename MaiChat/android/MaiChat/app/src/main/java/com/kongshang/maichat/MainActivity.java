@@ -93,6 +93,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
 
     private RemoteIMSessionController session;
     private RemoteIMMediaStore mediaStore;
+    private AIAssistantPanel aiAssistant;
     private RemoteIMTab activeTab = RemoteIMTab.MESSAGES;
     private LinearLayout root;
     private LinearLayout content;
@@ -190,6 +191,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     protected void onResume() {
         super.onResume();
         activityInForeground = true;
+        if (aiAssistant != null && aiAssistant.isAttachedToWindow()) aiAssistant.setForeground(true);
         if (diagnostics != null) diagnostics.foreground(true);
         if (pendingStateRefresh) { pendingStateRefresh = false; onStateChanged(); }
     }
@@ -197,6 +199,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     @Override
     protected void onPause() {
         activityInForeground = false;
+        if (aiAssistant != null) aiAssistant.setForeground(false);
         allowKeyboardLocation = false;
         if (diagnostics != null) diagnostics.foreground(false);
         if (session != null) session.stopHumanTyping();
@@ -306,6 +309,9 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (resultCode != RESULT_OK) return;
+        if (requestCode == AIAssistantPanel.REQUEST_FILE && aiAssistant != null && data != null && data.getData() != null) {
+            aiAssistant.importFile(data.getData()); return;
+        }
         if (requestCode == REQUEST_PICK_IMAGE && data != null && data.getData() != null) {
             sendPickedImage(data.getData());
         } else if (requestCode == REQUEST_PICK_FILE && data != null && data.getData() != null) {
@@ -490,6 +496,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             }
             return;
         }
+        if (activeTab == RemoteIMTab.ASSISTANT && activeChatUserId == null && aiAssistant != null
+                && aiAssistant.isAttachedToWindow() && !showInitialLogin && !session.requiresLogin()) return;
         currentMessageList = null;
         renderedChatUserId = null;
         messageInput = null;
@@ -573,6 +581,11 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             renderChatDetail(activeChatUserId);
         } else {
             switch (activeTab) {
+                case ASSISTANT:
+                    if (aiAssistant == null) aiAssistant = new AIAssistantPanel(this);
+                    if (aiAssistant.getParent() instanceof ViewGroup) ((ViewGroup) aiAssistant.getParent()).removeView(aiAssistant);
+                    content.addView(aiAssistant, matchMatch());
+                    break;
                 case CONTACTS:
                     renderContacts();
                     break;
@@ -735,6 +748,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         ));
         outside.addView(bar, matchMatch());
         bar.addView(tabButton(RemoteIMTab.MESSAGES, MaiChatSymbolView.Symbol.MESSAGE), weightMatch());
+        bar.addView(tabButton(RemoteIMTab.ASSISTANT, MaiChatSymbolView.Symbol.ASSISTANT), weightMatch());
         bar.addView(tabButton(RemoteIMTab.CONTACTS, MaiChatSymbolView.Symbol.CONTACTS), weightMatch());
         bar.addView(tabButton(RemoteIMTab.REMOTE, MaiChatSymbolView.Symbol.REMOTE), weightMatch());
         bar.addView(tabButton(RemoteIMTab.ME, MaiChatSymbolView.Symbol.USER), weightMatch());

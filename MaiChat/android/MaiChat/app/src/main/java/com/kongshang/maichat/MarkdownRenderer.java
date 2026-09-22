@@ -120,12 +120,14 @@ public final class MarkdownRenderer {
         });
     }
     public static void bind(TextView view, String value) { bind(view, value, null); }
-    static void bind(TextView view, String value, Long timestamp) {
+    static void bindStreaming(TextView view, String value) { bind(view, value, null, true); }
+    static void bind(TextView view, String value, Long timestamp) { bind(view, value, timestamp, false); }
+    private static void bind(TextView view, String value, Long timestamp, boolean retainPrevious) {
         String key = cacheKey(value, timestamp);
         Object token = new Object(); view.setTag(token);
         Spanned ready = cache.get(key);
         if (ready != null) { markwon.setParsedMarkdown(view, ready); return; }
-        view.setText(value);
+        if (!retainPrevious || view.length() == 0) view.setText(value);
         worker.execute(() -> {
             Spanned parsed = prepare(value, timestamp);
             main.post(() -> { if (view.getTag() == token) markwon.setParsedMarkdown(view, parsed); });

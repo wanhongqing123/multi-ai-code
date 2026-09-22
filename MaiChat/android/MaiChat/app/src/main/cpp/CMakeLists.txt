@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.22)
+project(MaiChatAndroidAgent LANGUAGES C CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+add_subdirectory(../../../../../../shared/agent mobile)
+add_library(maichat_agent SHARED MaiAgentJni.cpp)
+target_link_libraries(maichat_agent PRIVATE maichat_mobile)

@@ -15,6 +15,8 @@ def asrValue = { String key -> (asrProps.getProperty(key) ?: "").trim() }
 android {
     namespace "com.kongshang.maichat"
     compileSdk 34
+    ndkVersion "27.3.13750724"
+    externalNativeBuild { cmake { path "src/main/cpp/CMakeLists.txt"; version "3.22.1" } }
 
     defaultConfig {
         applicationId "com.kongshang.maichat"
@@ -28,6 +30,8 @@ android {
         buildConfigField "String", "TENCENT_ASR_APP_ID", "\"${asrValue('tencent.asr.appId')}\""
         buildConfigField "String", "TENCENT_ASR_SECRET_ID", "\"${asrValue('tencent.asr.secretId')}\""
         buildConfigField "String", "TENCENT_ASR_SECRET_KEY", "\"${asrValue('tencent.asr.secretKey')}\""
+
+        externalNativeBuild { cmake { arguments "-DANDROID_STL=c++_shared", "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON" } }
 
         ndk {
             abiFilters "armeabi-v7a", "arm64-v8a"

@@ -4,8 +4,8 @@
 
 1. Android 对齐 iOS 消息交互与后台处理：已完成（402bed2a）。
 2. Android 字体、Markdown 和消息布局对齐 iOS：已完成（e5115500）。
-3. iOS AI 助手：已完成。
-4. Android AI 助手：下一项，复用同一适配器。
+3. iOS AI 助手：已完成（c5e4781）。
+4. Android AI 助手：已完成。
 
 ## 共用核心
 
@@ -51,3 +51,29 @@ cmake -S MaiChat/shared/agent -B /tmp/mobile-agent-tests -DMAICHAT_MOBILE_TESTS=
 cmake --build /tmp/mobile-agent-tests --target MaiMobileAgentTests
 ctest --test-dir /tmp/mobile-agent-tests --output-on-failure
 ```
+
+
+## Android 界面与后台
+
+新增底部 AI 助手入口，具备与 iOS 相同的会话、模型/权限配置、流式回复、停止、文本导入、授权及提问功能。正文复用 IM 的 Markwon 渲染与第 2 项完成的 iOS 字体参数；思考和工具详情可以展开。最近 50 条 AI 消息先进入列表，用户可按需显示更早消息。
+
+Java 的 `MaiChat-Agent` HandlerThread 负责 JNI、请求/响应 JSON、SQLite、证书导出、密钥读写和导入文件；C++ 使用原有 MaiAgent 工作线程执行网络与工具。列表复用消息行，Markdown 解析使用既有后台队列；输入框不会跟着流式更新重建。页面退出时解除监听，应用内的会话核心保留。
+
+API Key 用 Android Keystore 的 AES-GCM 密钥加密，配置与会话在应用私有 no-backup 目录；包和源码不包含用户配置的模型密钥。切换服务商域名时需重新填写密钥。Android TLS 使用校验过 SHA-256 的 Mbed TLS 源码包，系统根证书分别传入模型请求和 webfetch；不能关闭校验绕过错误。
+
+Android 的测试使用 debug-only Activity 和独立临时工作区。Release 中没有测试 Activity 或测试入口。`mobile_model_server.py` 可通过 `adb reverse tcp:18189 tcp:18189` 供模拟器使用。HTTPS 测试使用无效测试 Key 检查握手后的 HTTP 错误，并确认过期证书被拒绝，不消耗用户模型额度。
+
+
+### 最终恢复与输入行为
+
+发送请求只禁用发送按钮，保持编辑框及键盘可用；请求确认期间继续输入的新草稿不会被清空。应用重启后，对没有实际运行任务的未完成回复显示“已中断”，保留已生成内容。单纯的历史 `completed=0` 不再被当作仍在思考。
+
+
+### Android 验证结果
+
+- arm64-v8a、armeabi-v7a 的 Debug 与 Release 构建通过。
+- 原有单元测试 113 项通过。
+- Android 原生集成用例 3 项通过：AI 对话（中文/emoji、授权写入、停止、键盘展开后的长回复底部定位、编辑框实例保留、Keystore 加密文件）；HTTPS 正常证书与过期证书；既有 IM 历史/键盘/右滑交互回归。
+- 共用 MaiAgent 原有 14 组测试、移动适配器集成用例通过，包含进程重启后遗留未完成消息的状态判断。
+- APK 仅供本地测试，未发布到 GitHub Release；当前本地构建会读取开发机的 ASR 配置，不能直接作为公开包上传。
+- 验证覆盖构建、模拟器与 TLS 实际网络。尚未做手机真机及手机—电脑双端联调。

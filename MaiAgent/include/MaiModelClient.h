@@ -152,6 +152,9 @@ struct MaiModelConfig {
     // 只在还没有向调用方交付任何正文/思考/工具调用时重试，避免流式内容重复。
     int maxRetries = 2;
     long retryInitialDelayMs = 250;
+    // 空时使用平台默认根证书；Android 宿主可传系统信任库导出的 PEM 文件。
+    // 只更换信任根来源，不能关闭证书或主机名校验。
+    std::string caBundlePath;
 };
 
 // 模型客户端。一个接口，多个 wire 实现。

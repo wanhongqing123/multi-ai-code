@@ -171,7 +171,7 @@ private struct AIMessageRow: View {
                         }.font(.caption).foregroundStyle(.secondary)
                     }
                 }
-                if message.completed == 0 {
+                if message.active {
                     TimelineView(.periodic(from: .now, by: 1)) { context in
                         HStack(spacing: 8) {
                             ProgressView().controlSize(.small)
@@ -180,7 +180,7 @@ private struct AIMessageRow: View {
                     }
                 } else {
                     HStack {
-                        Text("用时 \(max(0, (message.completed - message.created) / 1000)) 秒").font(.caption2)
+                        Text(message.completed == 0 ? "已中断" : "用时 \(max(0, (message.completed - message.created) / 1000)) 秒").font(.caption2)
                         Button { UIPasteboard.general.string = message.text } label: { Image(systemName: "doc.on.doc") }
                             .accessibilityLabel("复制回复")
                     }.foregroundStyle(.secondary).font(.caption)
@@ -201,7 +201,7 @@ private struct AIComposer: View {
     var body: some View {
         VStack(spacing: 10) {
             TextField("随心输入", text: $draft, axis: .vertical).lineLimit(1...6).focused($focused)
-                .disabled(model.isSubmitting).accessibilityIdentifier("ai-composer")
+                .accessibilityIdentifier("ai-composer")
             HStack {
                 Button { importing = true } label: { Image(systemName: "plus") }.accessibilityLabel("导入文本文件")
                 Menu {

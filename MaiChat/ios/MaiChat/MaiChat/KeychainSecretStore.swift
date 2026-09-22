@@ -14,7 +14,9 @@ enum KeychainSecretStoreError: Error, LocalizedError {
 
 final class KeychainSecretStore: Sendable {
     private let service = "com.kongshang.maichat"
-    private let account = "tencent-user-sig-secret-key"
+    private let account: String
+
+    init(account: String = "tencent-user-sig-secret-key") { self.account = account }
 
     func readSecretKey() -> String {
         var query = baseQuery()

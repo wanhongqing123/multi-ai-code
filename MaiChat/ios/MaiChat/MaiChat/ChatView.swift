@@ -3695,20 +3695,23 @@ enum MarkdownPreparation {
     }
 }
 
-private struct MarkdownLikeText: View {
+struct MarkdownLikeText: View {
     private let source: String
     @State private var prepared: PreparedMarkdown?
     private let trailingTimestamp: String?
 
-    init(_ text: String, trailingTimestamp: String? = nil) {
+    private let retainsPreviousWhilePreparing: Bool
+
+    init(_ text: String, trailingTimestamp: String? = nil, retainsPreviousWhilePreparing: Bool = false) {
+        self.retainsPreviousWhilePreparing = retainsPreviousWhilePreparing
         self.source = text
         _prepared = State(initialValue: MarkdownRenderCache.shared.cached(text))
         self.trailingTimestamp = trailingTimestamp
     }
 
     var body: some View {
-        let document = (prepared?.source == source ? prepared : nil) ?? MarkdownRenderCache.shared.cached(source)
-        let blocks = document?.source == source ? (document?.blocks ?? []) : []
+        let document = (prepared?.source == source ? prepared : nil) ?? MarkdownRenderCache.shared.cached(source) ?? (retainsPreviousWhilePreparing ? prepared : nil)
+        let blocks = document?.blocks ?? []
         return VStack(alignment: .leading, spacing: 12) {
             if document == nil { ProgressView() }
             if blocks.isEmpty, let trailingTimestamp {

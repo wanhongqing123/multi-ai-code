@@ -4,6 +4,7 @@ import UIKit
 
 enum AppTab {
     case messages
+    case assistant
     case contacts
     case remote
     case me
@@ -47,6 +48,8 @@ struct RootView: View {
                                     remoteDesktop: appState.remoteDesktop
                                 ))
                             )
+                        case .assistant:
+                            AIAssistantView()
                         case .contacts:
                             ContactsView(
                                 selectedTab: $selectedTab,
@@ -517,6 +520,9 @@ private struct CompactTabBar: View {
                 badgeCount: appState.totalUnreadCount
             ) {
                 selectedTab = .messages
+            }
+            TabButton(title: "AI 助手", systemImage: "sparkles", selected: selectedTab == .assistant) {
+                selectedTab = .assistant
             }
             TabButton(
                 title: "通讯录",

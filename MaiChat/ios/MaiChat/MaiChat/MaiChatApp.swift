@@ -227,19 +227,36 @@ struct MaiChatApp: App {
     var body: some Scene {
         WindowGroup {
             Group {
-                if let appState = bootstrap.appState {
-                    RootView().environmentObject(appState)
-                } else if let error = bootstrap.errorMessage {
-                    VStack(spacing: 12) {
-                        Text("加载失败")
-                        Text(error).font(.footnote)
-                        Button("重试") { Task { await bootstrap.load() } }
-                    }.padding()
+                #if targetEnvironment(simulator)
+                if ProcessInfo.processInfo.arguments.contains("--ai-ui-test") {
+                    AIAssistantView()
                 } else {
-                    ProgressView("正在加载")
+                    appContent
                 }
+                #else
+                appContent
+                #endif
             }
-            .task { await bootstrap.load() }
+            .task {
+                #if targetEnvironment(simulator)
+                if ProcessInfo.processInfo.arguments.contains("--ai-ui-test") { return }
+                #endif
+                await bootstrap.load()
+            }
+        }
+    }
+
+    @ViewBuilder private var appContent: some View {
+        if let appState = bootstrap.appState {
+            RootView().environmentObject(appState)
+        } else if let error = bootstrap.errorMessage {
+            VStack(spacing: 12) {
+                Text("加载失败")
+                Text(error).font(.footnote)
+                Button("重试") { Task { await bootstrap.load() } }
+            }.padding()
+        } else {
+            ProgressView("正在加载")
         }
     }
 }

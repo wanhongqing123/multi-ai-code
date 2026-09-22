@@ -7,57 +7,60 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0F886AE8DC89126801C2B512 /* MarkdownInlineStyling.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6751AF9977E6D10E1B65F9E8 /* MarkdownInlineStyling.swift */; };
 		1003B14C78530C6912622414 /* TencentIMClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F7C7C15F662BDB6F5A720CE /* TencentIMClient.swift */; };
+		194E338FF3D0DE993B165814 /* AIAssistantUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89FDF5DC4F6DB91F2A1B3FD5 /* AIAssistantUITests.swift */; };
+		194EF7AD3FFBA215E15BC6C2 /* remote-diagnostics-failure-receipts.json in Resources */ = {isa = PBXBuildFile; fileRef = 1F8D037EEC9C74A8F43E4083 /* remote-diagnostics-failure-receipts.json */; };
 		1A64DAEB06DA808D3F82C0D4 /* MaiChatCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 771AB137E6961E2B9187CFEB /* MaiChatCore.framework */; };
+		1B0DC102E851A3005DC43D69 /* RemoteDiagnosticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2ABED4C39BFBF823F387BE75 /* RemoteDiagnosticsTests.swift */; };
 		1D22F82E6F163B0AB9E8F98D /* RemoteDesktopSignal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1ECE96EA18C906CBFAAABCB2 /* RemoteDesktopSignal.swift */; };
+		2337DE88A57BE1ABD017F044 /* RemoteDiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A162658815E1ED0D47568A24 /* RemoteDiagnosticsView.swift */; };
 		2377E8DF39D78C16B0643C59 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14B73FB9EA5595A63DC567FC /* SettingsView.swift */; };
 		26B1704C44A6CCBD623B955E /* DiagnosticLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9FAB0891F5BEFFA9558439E /* DiagnosticLog.swift */; };
 		3C6DF0BD9610ACAE564EF27D /* MaiChatCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 771AB137E6961E2B9187CFEB /* MaiChatCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		3ED72F9BC221AED70A3677F5 /* MarkdownPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0194E7C7F438293A088E45E0 /* MarkdownPresentationTests.swift */; };
 		4213D8C4C34EA1026840453D /* ContactsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 982ED942EFC3EBB4726E7D3D /* ContactsView.swift */; };
 		50286CB0E1E8F7296338FFF6 /* RemoteIMClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F0A72E18F2D49F6FB7391C2 /* RemoteIMClient.swift */; };
 		563F2D96FC7FE65D52984507 /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCD4178AAA9A0B6146AFEFCD /* ChatView.swift */; };
 		58168A4613ACBE4B552E2D72 /* SpeechRecognizing.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6BCD17E8103F38288A8ECB9 /* SpeechRecognizing.swift */; };
 		5BFEB4C291120FC8B8A03DBB /* MasterChatStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 975D1B034E3ED14E787A9284 /* MasterChatStateTests.swift */; };
 		628718D30DBDE45071885452 /* LocalSettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C76501E25366F514A1D28CF5 /* LocalSettingsStore.swift */; };
+		678592B693D2A02D2B12A4BC /* remote-diagnostics-report.json in Resources */ = {isa = PBXBuildFile; fileRef = 8C57A0E06309C4F110DA1CBF /* remote-diagnostics-report.json */; };
 		680765EAD211490B1805DB83 /* RemoteIMAppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B6CA92849361265FD39D63B /* RemoteIMAppState.swift */; };
+		6B0D0AF95484C0D4BC05E363 /* MarkdownPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = D94EA580506BCF28D63739BF /* MarkdownPresentation.swift */; };
 		6C8CC7B0E521485EB1383FFA /* AppDiagnosticLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DF2A8369BE5503C5666FE18 /* AppDiagnosticLog.swift */; };
 		6F2E4A87EAF8DDB14F594D09 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91F415E51911E2415BB6BC93 /* RootView.swift */; };
 		79C230615F6A6FDCFA794F93 /* UserSigGeneratorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB7A934C4BF81309E2DC1AD1 /* UserSigGeneratorTests.swift */; };
-		7C8DA494F14DCC0C17F2C5DA /* Pods_MaiChat.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 23DC1B212E8DB764615836A8 /* Pods_MaiChat.framework */; };
 		7D4CFA9F7B5E149C92E099D4 /* LocalChatHistoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CB6E7BFFB4AF8BFC203BBFB /* LocalChatHistoryStore.swift */; };
 		84C6E03F0FB9AD9E1A903D91 /* RemoteInputPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AFF1CD5EF80428DA47C1703 /* RemoteInputPacket.swift */; };
+		8A3B76B3F5D189A4B1EEB33C /* AIAssistantView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C9893DE3EC5736AB5DC2BBD /* AIAssistantView.swift */; };
 		8C34368F48B3F479062382AD /* RemoteDesktopSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1779831AA39C911B9DDCF3C6 /* RemoteDesktopSession.swift */; };
+		8DE23018C9F89EEA4CE8F442 /* RemoteDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 551A36DB80C7A7F2663F229D /* RemoteDiagnostics.swift */; };
 		9647FC458C5CF43214B64E71 /* LocalChatHistoryStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59C1F4DABEBD721F3CB32385 /* LocalChatHistoryStoreTests.swift */; };
+		96997E102EEABB34268604D6 /* Pods_MaiChat.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 059076B3BD61CCF010AD3176 /* Pods_MaiChat.framework */; };
+		9BC6F4393E645EADBEEB0DAA /* MessageBubbleLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1AA724DDB60DCCDA741A912 /* MessageBubbleLayout.swift */; };
+		AE6AABB4C5BECA546A8F47F3 /* MarkdownInlineStyling.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6751AF9977E6D10E1B65F9E8 /* MarkdownInlineStyling.swift */; };
 		B026FD4170222BE676887F35 /* TencentSpeechRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB8F65F82E7D766F7DE33E1E /* TencentSpeechRecognizer.swift */; };
 		B0AD7763503D992983F88DAE /* LocalChatHistoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CB6E7BFFB4AF8BFC203BBFB /* LocalChatHistoryStore.swift */; };
 		B1A21D8A0C00E9FA9C4D0159 /* KeychainSecretStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77098CB4FAD4DDF16F02FA58 /* KeychainSecretStore.swift */; };
+		B42C17169CAC4866C7760281 /* MessageBubbleLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1AA724DDB60DCCDA741A912 /* MessageBubbleLayout.swift */; };
 		BD11A971CB6C4BAB96D400B4 /* MaiChatApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 197E4AB75717086188244F1A /* MaiChatApp.swift */; };
+		BE1624E8812BD281CEFC7857 /* RemoteDiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A162658815E1ED0D47568A24 /* RemoteDiagnosticsView.swift */; };
 		BE9564FF3CB798F45146F479 /* RemoteInputPacketTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 642E16B2EF5CA26E0EC53657 /* RemoteInputPacketTests.swift */; };
+		C4556B8090E97D7C16DFFED9 /* ComposerDraftState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2157C44C85C64AB0A01B39FD /* ComposerDraftState.swift */; };
 		C6A8FEC8A0213ED962099B8A /* RemoteDesktopView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62EB5A3A0F34A11982B0419E /* RemoteDesktopView.swift */; };
 		C996E00852A7E3E1174A15C8 /* DiagnosticLogFileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 770FE6D4DCC9CA17734123DF /* DiagnosticLogFileStore.swift */; };
+		D508A2AF3E620C81BA98B3B7 /* RemoteDiagnosticsCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B077B9622B5A8463AF4198D4 /* RemoteDiagnosticsCoordinator.swift */; };
+		D79CB827A60EA8988CA3F6DF /* RemoteDiagnosticsCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B077B9622B5A8463AF4198D4 /* RemoteDiagnosticsCoordinator.swift */; };
 		D8890915CD794198A0332BB2 /* MaiChatCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 771AB137E6961E2B9187CFEB /* MaiChatCore.framework */; };
+		DB478D0B814843F132B09893 /* ComposerDraftState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2157C44C85C64AB0A01B39FD /* ComposerDraftState.swift */; };
 		DEBCE768E14C523F47FC7CC5 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A6457534DA0479F3AD712C60 /* Assets.xcassets */; };
 		E08F17391BEC855D4D18BDF3 /* MasterChatState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DEB1B23B3415DFB7943237F /* MasterChatState.swift */; };
 		E5BF3394A45A4DA77030A3E9 /* RemoteDesktopSignalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF3AA66C952DF0D15005D6BE /* RemoteDesktopSignalTests.swift */; };
 		EA00C27B7280EF805853CF84 /* MaiChatCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 771AB137E6961E2B9187CFEB /* MaiChatCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		F0D9326831C7925F6C4FC5D6 /* DiagnosticLogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E85A5C5C020900B2D0178B0A /* DiagnosticLogTests.swift */; };
 		F77972F4F6E4F2EE31D12DD5 /* TencentUserSigGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F230EA47173B4DFF2C689B31 /* TencentUserSigGenerator.swift */; };
-		FEDCBA098765432100000002 /* MarkdownPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000001 /* MarkdownPresentation.swift */; };
-		FEDCBA098765432100000004 /* MarkdownPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000003 /* MarkdownPresentationTests.swift */; };
-		FEDCBA098765432100000006 /* MarkdownInlineStyling.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000005 /* MarkdownInlineStyling.swift */; };
-		FEDCBA098765432100000007 /* MarkdownInlineStyling.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000005 /* MarkdownInlineStyling.swift */; };
-		FEDCBA098765432100000009 /* MessageBubbleLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000008 /* MessageBubbleLayout.swift */; };
-		F0CD123456789ABC00000002 /* ComposerDraftState.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0CD123456789ABC00000001 /* ComposerDraftState.swift */; };
-		FEDCBA09876543210000000A /* MessageBubbleLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000008 /* MessageBubbleLayout.swift */; };
-		F0CD123456789ABC00000003 /* ComposerDraftState.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0CD123456789ABC00000001 /* ComposerDraftState.swift */; };
-		FEDCBA098765432100000102 /* RemoteDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000101 /* RemoteDiagnostics.swift */; };
-		FEDCBA098765432100000104 /* RemoteDiagnosticsCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000103 /* RemoteDiagnosticsCoordinator.swift */; };
-		FEDCBA098765432100000105 /* RemoteDiagnosticsCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000103 /* RemoteDiagnosticsCoordinator.swift */; };
-		FEDCBA098765432100000107 /* RemoteDiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000106 /* RemoteDiagnosticsView.swift */; };
-		FEDCBA098765432100000109 /* RemoteDiagnosticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000108 /* RemoteDiagnosticsTests.swift */; };
-		FEDCBA098765432100000110 /* RemoteDiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000106 /* RemoteDiagnosticsView.swift */; };
-		FEDCBA098765432100000112 /* ../../../tests/fixtures/remote-diagnostics-failure-receipts.json in Resources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000111 /* ../../../tests/fixtures/remote-diagnostics-failure-receipts.json */; };
-		FEDCBA098765432100000115 /* ../../../tests/fixtures/remote-diagnostics-report.json in Resources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000114 /* ../../../tests/fixtures/remote-diagnostics-report.json */; };
+		FE969C619521D3BEF76775AE /* AIAssistantModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 526904A96E6C39A06C68A18E /* AIAssistantModel.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -74,6 +77,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = AB419E14F801B114793FBE7B;
 			remoteInfo = MaiChatCore;
+		};
+		DACE557D30A6860475511149 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = F82FA16058FF7F7B6CF287F6 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = EF22154244DAC9372E230EE5;
+			remoteInfo = MaiChat;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -103,53 +113,58 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		0194E7C7F438293A088E45E0 /* MarkdownPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownPresentationTests.swift; sourceTree = "<group>"; };
+		059076B3BD61CCF010AD3176 /* Pods_MaiChat.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_MaiChat.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		14B73FB9EA5595A63DC567FC /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		1779831AA39C911B9DDCF3C6 /* RemoteDesktopSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDesktopSession.swift; sourceTree = "<group>"; };
 		197E4AB75717086188244F1A /* MaiChatApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MaiChatApp.swift; sourceTree = "<group>"; };
 		1ECE96EA18C906CBFAAABCB2 /* RemoteDesktopSignal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDesktopSignal.swift; sourceTree = "<group>"; };
-		23DC1B212E8DB764615836A8 /* Pods_MaiChat.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_MaiChat.framework; sourceTree = BUILT_PRODUCTS_DIR; };
-		2AF4D9C0BD1E990F8C3DAF26 /* MaiChat.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MaiChat.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		1F8D037EEC9C74A8F43E4083 /* remote-diagnostics-failure-receipts.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "remote-diagnostics-failure-receipts.json"; sourceTree = "<group>"; };
+		2157C44C85C64AB0A01B39FD /* ComposerDraftState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerDraftState.swift; sourceTree = "<group>"; };
+		2ABED4C39BFBF823F387BE75 /* RemoteDiagnosticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDiagnosticsTests.swift; sourceTree = "<group>"; };
+		2AF4D9C0BD1E990F8C3DAF26 /* MaiChat.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = MaiChat.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		2CB6E7BFFB4AF8BFC203BBFB /* LocalChatHistoryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalChatHistoryStore.swift; sourceTree = "<group>"; };
 		2F7C7C15F662BDB6F5A720CE /* TencentIMClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TencentIMClient.swift; sourceTree = "<group>"; };
 		42DFDC3E438CDFE0E82AB8E9 /* MaiChatTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = MaiChatTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		49A3C45F70F15C21D2674C70 /* Pods-MaiChat.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-MaiChat.debug.xcconfig"; path = "Target Support Files/Pods-MaiChat/Pods-MaiChat.debug.xcconfig"; sourceTree = "<group>"; };
 		4AFF1CD5EF80428DA47C1703 /* RemoteInputPacket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteInputPacket.swift; sourceTree = "<group>"; };
 		4DF2A8369BE5503C5666FE18 /* AppDiagnosticLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDiagnosticLog.swift; sourceTree = "<group>"; };
+		4E3D9F697A1737B461CCB2EB /* MaiChatUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = MaiChatUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		4F0A72E18F2D49F6FB7391C2 /* RemoteIMClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteIMClient.swift; sourceTree = "<group>"; };
-		525AF6C102D32018100882EA /* Pods-MaiChat.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-MaiChat.debug.xcconfig"; path = "Target Support Files/Pods-MaiChat/Pods-MaiChat.debug.xcconfig"; sourceTree = "<group>"; };
+		526904A96E6C39A06C68A18E /* AIAssistantModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAssistantModel.swift; sourceTree = "<group>"; };
+		551A36DB80C7A7F2663F229D /* RemoteDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDiagnostics.swift; sourceTree = "<group>"; };
 		59C1F4DABEBD721F3CB32385 /* LocalChatHistoryStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalChatHistoryStoreTests.swift; sourceTree = "<group>"; };
+		5C9893DE3EC5736AB5DC2BBD /* AIAssistantView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAssistantView.swift; sourceTree = "<group>"; };
 		5DEB1B23B3415DFB7943237F /* MasterChatState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MasterChatState.swift; sourceTree = "<group>"; };
 		62EB5A3A0F34A11982B0419E /* RemoteDesktopView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDesktopView.swift; sourceTree = "<group>"; };
 		642E16B2EF5CA26E0EC53657 /* RemoteInputPacketTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteInputPacketTests.swift; sourceTree = "<group>"; };
+		6751AF9977E6D10E1B65F9E8 /* MarkdownInlineStyling.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownInlineStyling.swift; sourceTree = "<group>"; };
 		77098CB4FAD4DDF16F02FA58 /* KeychainSecretStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainSecretStore.swift; sourceTree = "<group>"; };
 		770FE6D4DCC9CA17734123DF /* DiagnosticLogFileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticLogFileStore.swift; sourceTree = "<group>"; };
 		771AB137E6961E2B9187CFEB /* MaiChatCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = MaiChatCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		89FDF5DC4F6DB91F2A1B3FD5 /* AIAssistantUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAssistantUITests.swift; sourceTree = "<group>"; };
+		8C57A0E06309C4F110DA1CBF /* remote-diagnostics-report.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "remote-diagnostics-report.json"; sourceTree = "<group>"; };
 		91F415E51911E2415BB6BC93 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		975D1B034E3ED14E787A9284 /* MasterChatStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MasterChatStateTests.swift; sourceTree = "<group>"; };
 		982ED942EFC3EBB4726E7D3D /* ContactsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactsView.swift; sourceTree = "<group>"; };
-		9B3D9DD3FEAE85B6388EC6ED /* Pods-MaiChat.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-MaiChat.release.xcconfig"; path = "Target Support Files/Pods-MaiChat/Pods-MaiChat.release.xcconfig"; sourceTree = "<group>"; };
 		9B6CA92849361265FD39D63B /* RemoteIMAppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteIMAppState.swift; sourceTree = "<group>"; };
+		A162658815E1ED0D47568A24 /* RemoteDiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDiagnosticsView.swift; sourceTree = "<group>"; };
 		A6457534DA0479F3AD712C60 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		AE6737BFED0DFE1A50F676EE /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		B077B9622B5A8463AF4198D4 /* RemoteDiagnosticsCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDiagnosticsCoordinator.swift; sourceTree = "<group>"; };
+		B1AA724DDB60DCCDA741A912 /* MessageBubbleLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageBubbleLayout.swift; sourceTree = "<group>"; };
+		B50DFFBE34DBDEC32CFF76D2 /* MaiChat-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "MaiChat-Bridging-Header.h"; sourceTree = "<group>"; };
 		BF3AA66C952DF0D15005D6BE /* RemoteDesktopSignalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDesktopSignalTests.swift; sourceTree = "<group>"; };
 		C76501E25366F514A1D28CF5 /* LocalSettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalSettingsStore.swift; sourceTree = "<group>"; };
 		CCD4178AAA9A0B6146AFEFCD /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
 		D6BCD17E8103F38288A8ECB9 /* SpeechRecognizing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechRecognizing.swift; sourceTree = "<group>"; };
+		D94EA580506BCF28D63739BF /* MarkdownPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownPresentation.swift; sourceTree = "<group>"; };
 		E85A5C5C020900B2D0178B0A /* DiagnosticLogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticLogTests.swift; sourceTree = "<group>"; };
 		E9FAB0891F5BEFFA9558439E /* DiagnosticLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticLog.swift; sourceTree = "<group>"; };
 		F230EA47173B4DFF2C689B31 /* TencentUserSigGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TencentUserSigGenerator.swift; sourceTree = "<group>"; };
 		FB7A934C4BF81309E2DC1AD1 /* UserSigGeneratorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserSigGeneratorTests.swift; sourceTree = "<group>"; };
 		FB8F65F82E7D766F7DE33E1E /* TencentSpeechRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TencentSpeechRecognizer.swift; sourceTree = "<group>"; };
-		FEDCBA098765432100000001 /* MarkdownPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownPresentation.swift; sourceTree = "<group>"; };
-		FEDCBA098765432100000003 /* MarkdownPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownPresentationTests.swift; sourceTree = "<group>"; };
-		FEDCBA098765432100000005 /* MarkdownInlineStyling.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownInlineStyling.swift; sourceTree = "<group>"; };
-		FEDCBA098765432100000008 /* MessageBubbleLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageBubbleLayout.swift; sourceTree = "<group>"; };
-		F0CD123456789ABC00000001 /* ComposerDraftState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerDraftState.swift; sourceTree = "<group>"; };
-		FEDCBA098765432100000101 /* RemoteDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDiagnostics.swift; sourceTree = "<group>"; };
-		FEDCBA098765432100000103 /* RemoteDiagnosticsCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDiagnosticsCoordinator.swift; sourceTree = "<group>"; };
-		FEDCBA098765432100000106 /* RemoteDiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDiagnosticsView.swift; sourceTree = "<group>"; };
-		FEDCBA098765432100000108 /* RemoteDiagnosticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDiagnosticsTests.swift; sourceTree = "<group>"; };
-		FEDCBA098765432100000111 /* ../../../tests/fixtures/remote-diagnostics-failure-receipts.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "../../../tests/fixtures/remote-diagnostics-failure-receipts.json"; sourceTree = SOURCE_ROOT; };
-		FEDCBA098765432100000114 /* ../../../tests/fixtures/remote-diagnostics-report.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "../../../tests/fixtures/remote-diagnostics-report.json"; sourceTree = SOURCE_ROOT; };
+		FD9AAA6E78CC9D41B56C3552 /* Pods-MaiChat.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-MaiChat.release.xcconfig"; path = "Target Support Files/Pods-MaiChat/Pods-MaiChat.release.xcconfig"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -158,7 +173,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				D8890915CD794198A0332BB2 /* MaiChatCore.framework in Frameworks */,
-				7C8DA494F14DCC0C17F2C5DA /* Pods_MaiChat.framework in Frameworks */,
+				96997E102EEABB34268604D6 /* Pods_MaiChat.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -176,22 +191,25 @@
 		2AF428EE27AADAE407C2B3FE /* MaiChat */ = {
 			isa = PBXGroup;
 			children = (
+				526904A96E6C39A06C68A18E /* AIAssistantModel.swift */,
+				5C9893DE3EC5736AB5DC2BBD /* AIAssistantView.swift */,
 				4DF2A8369BE5503C5666FE18 /* AppDiagnosticLog.swift */,
-				FEDCBA098765432100000103 /* RemoteDiagnosticsCoordinator.swift */,
-				FEDCBA098765432100000106 /* RemoteDiagnosticsView.swift */,
 				A6457534DA0479F3AD712C60 /* Assets.xcassets */,
 				CCD4178AAA9A0B6146AFEFCD /* ChatView.swift */,
-				FEDCBA098765432100000005 /* MarkdownInlineStyling.swift */,
-				FEDCBA098765432100000008 /* MessageBubbleLayout.swift */,
-				F0CD123456789ABC00000001 /* ComposerDraftState.swift */,
+				2157C44C85C64AB0A01B39FD /* ComposerDraftState.swift */,
 				982ED942EFC3EBB4726E7D3D /* ContactsView.swift */,
 				AE6737BFED0DFE1A50F676EE /* Info.plist */,
 				77098CB4FAD4DDF16F02FA58 /* KeychainSecretStore.swift */,
 				2CB6E7BFFB4AF8BFC203BBFB /* LocalChatHistoryStore.swift */,
 				C76501E25366F514A1D28CF5 /* LocalSettingsStore.swift */,
+				B50DFFBE34DBDEC32CFF76D2 /* MaiChat-Bridging-Header.h */,
 				197E4AB75717086188244F1A /* MaiChatApp.swift */,
+				6751AF9977E6D10E1B65F9E8 /* MarkdownInlineStyling.swift */,
+				B1AA724DDB60DCCDA741A912 /* MessageBubbleLayout.swift */,
 				1779831AA39C911B9DDCF3C6 /* RemoteDesktopSession.swift */,
 				62EB5A3A0F34A11982B0419E /* RemoteDesktopView.swift */,
+				B077B9622B5A8463AF4198D4 /* RemoteDiagnosticsCoordinator.swift */,
+				A162658815E1ED0D47568A24 /* RemoteDiagnosticsView.swift */,
 				9B6CA92849361265FD39D63B /* RemoteIMAppState.swift */,
 				4F0A72E18F2D49F6FB7391C2 /* RemoteIMClient.swift */,
 				91F415E51911E2415BB6BC93 /* RootView.swift */,
@@ -203,12 +221,22 @@
 			path = MaiChat;
 			sourceTree = "<group>";
 		};
-		4DD5E25E190E35D4136B3F80 /* Frameworks */ = {
+		3CD4EF3DABF7B0B21E1E7C1C /* MaiChatUITests */ = {
 			isa = PBXGroup;
 			children = (
-				23DC1B212E8DB764615836A8 /* Pods_MaiChat.framework */,
+				89FDF5DC4F6DB91F2A1B3FD5 /* AIAssistantUITests.swift */,
 			);
-			name = Frameworks;
+			path = MaiChatUITests;
+			sourceTree = "<group>";
+		};
+		5B05726C2DC305E87DF922E6 /* fixtures */ = {
+			isa = PBXGroup;
+			children = (
+				1F8D037EEC9C74A8F43E4083 /* remote-diagnostics-failure-receipts.json */,
+				8C57A0E06309C4F110DA1CBF /* remote-diagnostics-report.json */,
+			);
+			name = fixtures;
+			path = ../../../tests/fixtures;
 			sourceTree = "<group>";
 		};
 		77FEC2B53DE369B0BBAE5A10 /* Products */ = {
@@ -217,6 +245,7 @@
 				2AF4D9C0BD1E990F8C3DAF26 /* MaiChat.app */,
 				771AB137E6961E2B9187CFEB /* MaiChatCore.framework */,
 				42DFDC3E438CDFE0E82AB8E9 /* MaiChatTests.xctest */,
+				4E3D9F697A1737B461CCB2EB /* MaiChatUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -224,29 +253,35 @@
 		963B8982A2C2F09901650272 /* MaiChatCore */ = {
 			isa = PBXGroup;
 			children = (
-				FEDCBA098765432100000001 /* MarkdownPresentation.swift */,
-				FEDCBA098765432100000101 /* RemoteDiagnostics.swift */,
 				E9FAB0891F5BEFFA9558439E /* DiagnosticLog.swift */,
 				770FE6D4DCC9CA17734123DF /* DiagnosticLogFileStore.swift */,
+				D94EA580506BCF28D63739BF /* MarkdownPresentation.swift */,
 				5DEB1B23B3415DFB7943237F /* MasterChatState.swift */,
 				1ECE96EA18C906CBFAAABCB2 /* RemoteDesktopSignal.swift */,
+				551A36DB80C7A7F2663F229D /* RemoteDiagnostics.swift */,
 				4AFF1CD5EF80428DA47C1703 /* RemoteInputPacket.swift */,
 				F230EA47173B4DFF2C689B31 /* TencentUserSigGenerator.swift */,
 			);
 			path = MaiChatCore;
 			sourceTree = "<group>";
 		};
+		98FACB682F135FB39F6C697D /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				059076B3BD61CCF010AD3176 /* Pods_MaiChat.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		B10C14934159C0FF468D3AB1 /* MaiChatTests */ = {
 			isa = PBXGroup;
 			children = (
-				FEDCBA098765432100000003 /* MarkdownPresentationTests.swift */,
-				FEDCBA098765432100000108 /* RemoteDiagnosticsTests.swift */,
-				FEDCBA098765432100000111 /* ../../../tests/fixtures/remote-diagnostics-failure-receipts.json */,
-				FEDCBA098765432100000114 /* ../../../tests/fixtures/remote-diagnostics-report.json */,
 				E85A5C5C020900B2D0178B0A /* DiagnosticLogTests.swift */,
 				59C1F4DABEBD721F3CB32385 /* LocalChatHistoryStoreTests.swift */,
+				0194E7C7F438293A088E45E0 /* MarkdownPresentationTests.swift */,
 				975D1B034E3ED14E787A9284 /* MasterChatStateTests.swift */,
 				BF3AA66C952DF0D15005D6BE /* RemoteDesktopSignalTests.swift */,
+				2ABED4C39BFBF823F387BE75 /* RemoteDiagnosticsTests.swift */,
 				642E16B2EF5CA26E0EC53657 /* RemoteInputPacketTests.swift */,
 				FB7A934C4BF81309E2DC1AD1 /* UserSigGeneratorTests.swift */,
 			);
@@ -256,33 +291,52 @@
 		E7962CFBC9970F3F3E757668 = {
 			isa = PBXGroup;
 			children = (
+				5B05726C2DC305E87DF922E6 /* fixtures */,
 				2AF428EE27AADAE407C2B3FE /* MaiChat */,
 				963B8982A2C2F09901650272 /* MaiChatCore */,
 				B10C14934159C0FF468D3AB1 /* MaiChatTests */,
-				4DD5E25E190E35D4136B3F80 /* Frameworks */,
+				3CD4EF3DABF7B0B21E1E7C1C /* MaiChatUITests */,
 				77FEC2B53DE369B0BBAE5A10 /* Products */,
-				EE62306DB6A74926741BBA7F /* Pods */,
+				F87B8402F0C23AD4EE1FA242 /* Pods */,
+				98FACB682F135FB39F6C697D /* Frameworks */,
 			);
 			sourceTree = "<group>";
 		};
-		EE62306DB6A74926741BBA7F /* Pods */ = {
+		F87B8402F0C23AD4EE1FA242 /* Pods */ = {
 			isa = PBXGroup;
 			children = (
-				525AF6C102D32018100882EA /* Pods-MaiChat.debug.xcconfig */,
-				9B3D9DD3FEAE85B6388EC6ED /* Pods-MaiChat.release.xcconfig */,
+				49A3C45F70F15C21D2674C70 /* Pods-MaiChat.debug.xcconfig */,
+				FD9AAA6E78CC9D41B56C3552 /* Pods-MaiChat.release.xcconfig */,
 			);
+			name = Pods;
 			path = Pods;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		00E10C62941DB99086B56B33 /* MaiChatUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 018346D0ACCADC6A9CB349AC /* Build configuration list for PBXNativeTarget "MaiChatUITests" */;
+			buildPhases = (
+				DD11A9D9A3B74872EB2165BF /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				7CF681CAF018B5CCBA0AFDD2 /* PBXTargetDependency */,
+			);
+			name = MaiChatUITests;
+			productName = MaiChatUITests;
+			productReference = 4E3D9F697A1737B461CCB2EB /* MaiChatUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 		93B5D72D6A27417C033FC716 /* MaiChatTests */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 16A6AC4CEE642186491D04BE /* Build configuration list for PBXNativeTarget "MaiChatTests" */;
 			buildPhases = (
 				5C1335D837886521E0D993B2 /* Sources */,
-				FEDCBA098765432100000113 /* Resources */,
+				12A01E1EFC2CE00E0A2A8D6C /* Resources */,
 				F6F6FE20C3212B0F514A202F /* Frameworks */,
 				CBB9844C81A8142E9CF9E905 /* Embed Frameworks */,
 			);
@@ -315,13 +369,14 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 0D9FD032A94C57101C76BCAD /* Build configuration list for PBXNativeTarget "MaiChat" */;
 			buildPhases = (
-				B646670F04F2C5B8142715CB /* [CP] Check Pods Manifest.lock */,
+				9D7A829F140DFB212263052C /* [CP] Check Pods Manifest.lock */,
+				FF8236E8DE97989BDFBD9493 /* Build MaiAgent */,
 				AC6ECB119E2A73D2BBDAE0EC /* Sources */,
 				3D122CAA634FBFB42F650CDF /* Resources */,
 				8E103EF7F186558DF147E3F6 /* Frameworks */,
 				FF4A677DEFE40393506C34EC /* Embed Frameworks */,
-				95669DF062B6A57BC15D246E /* [CP] Embed Pods Frameworks */,
-				0036C77D8CBDB68A4216B6BA /* [CP] Copy Pods Resources */,
+				D897605C4CC6148E54A58BF1 /* [CP] Embed Pods Frameworks */,
+				6D06F0BD167B1AF3FF17F964 /* [CP] Copy Pods Resources */,
 			);
 			buildRules = (
 			);
@@ -341,6 +396,11 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					00E10C62941DB99086B56B33 = {
+						TestTargetID = EF22154244DAC9372E230EE5;
+					};
+				};
 			};
 			buildConfigurationList = 9FA098ED094068012FDE59FC /* Build configuration list for PBXProject "MaiChat" */;
 			developmentRegion = en;
@@ -359,11 +419,21 @@
 				EF22154244DAC9372E230EE5 /* MaiChat */,
 				AB419E14F801B114793FBE7B /* MaiChatCore */,
 				93B5D72D6A27417C033FC716 /* MaiChatTests */,
+				00E10C62941DB99086B56B33 /* MaiChatUITests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		12A01E1EFC2CE00E0A2A8D6C /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				194EF7AD3FFBA215E15BC6C2 /* remote-diagnostics-failure-receipts.json in Resources */,
+				678592B693D2A02D2B12A4BC /* remote-diagnostics-report.json in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		3D122CAA634FBFB42F650CDF /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -372,19 +442,10 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		FEDCBA098765432100000113 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				FEDCBA098765432100000112 /* ../../../tests/fixtures/remote-diagnostics-failure-receipts.json in Resources */,
-				FEDCBA098765432100000115 /* ../../../tests/fixtures/remote-diagnostics-report.json in Resources */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		0036C77D8CBDB68A4216B6BA /* [CP] Copy Pods Resources */ = {
+		6D06F0BD167B1AF3FF17F964 /* [CP] Copy Pods Resources */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -392,41 +453,16 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-MaiChat/Pods-MaiChat-resources-${CONFIGURATION}-input-files.xcfilelist",
 			);
-			inputPaths = (
-			);
 			name = "[CP] Copy Pods Resources";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-MaiChat/Pods-MaiChat-resources-${CONFIGURATION}-output-files.xcfilelist",
-			);
-			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-MaiChat/Pods-MaiChat-resources.sh\"\n";
 			showEnvVarsInLog = 0;
 		};
-		95669DF062B6A57BC15D246E /* [CP] Embed Pods Frameworks */ = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-				"${PODS_ROOT}/Target Support Files/Pods-MaiChat/Pods-MaiChat-frameworks-${CONFIGURATION}-input-files.xcfilelist",
-			);
-			inputPaths = (
-			);
-			name = "[CP] Embed Pods Frameworks";
-			outputFileListPaths = (
-				"${PODS_ROOT}/Target Support Files/Pods-MaiChat/Pods-MaiChat-frameworks-${CONFIGURATION}-output-files.xcfilelist",
-			);
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-MaiChat/Pods-MaiChat-frameworks.sh\"\n";
-			showEnvVarsInLog = 0;
-		};
-		B646670F04F2C5B8142715CB /* [CP] Check Pods Manifest.lock */ = {
+		9D7A829F140DFB212263052C /* [CP] Check Pods Manifest.lock */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -448,6 +484,42 @@
 			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
 			showEnvVarsInLog = 0;
 		};
+		D897605C4CC6148E54A58BF1 /* [CP] Embed Pods Frameworks */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-MaiChat/Pods-MaiChat-frameworks-${CONFIGURATION}-input-files.xcfilelist",
+			);
+			name = "[CP] Embed Pods Frameworks";
+			outputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-MaiChat/Pods-MaiChat-frameworks-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-MaiChat/Pods-MaiChat-frameworks.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+		FF8236E8DE97989BDFBD9493 /* Build MaiAgent */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build MaiAgent";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "bash \"$PROJECT_DIR/scripts/build-mobile-agent.sh\"";
+		};
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -455,12 +527,12 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				FEDCBA098765432100000002 /* MarkdownPresentation.swift in Sources */,
-				FEDCBA098765432100000102 /* RemoteDiagnostics.swift in Sources */,
 				26B1704C44A6CCBD623B955E /* DiagnosticLog.swift in Sources */,
 				C996E00852A7E3E1174A15C8 /* DiagnosticLogFileStore.swift in Sources */,
+				6B0D0AF95484C0D4BC05E363 /* MarkdownPresentation.swift in Sources */,
 				E08F17391BEC855D4D18BDF3 /* MasterChatState.swift in Sources */,
 				1D22F82E6F163B0AB9E8F98D /* RemoteDesktopSignal.swift in Sources */,
+				8DE23018C9F89EEA4CE8F442 /* RemoteDiagnostics.swift in Sources */,
 				84C6E03F0FB9AD9E1A903D91 /* RemoteInputPacket.swift in Sources */,
 				F77972F4F6E4F2EE31D12DD5 /* TencentUserSigGenerator.swift in Sources */,
 			);
@@ -470,18 +542,18 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				FEDCBA098765432100000007 /* MarkdownInlineStyling.swift in Sources */,
-				FEDCBA09876543210000000A /* MessageBubbleLayout.swift in Sources */,
-				F0CD123456789ABC00000003 /* ComposerDraftState.swift in Sources */,
-				FEDCBA098765432100000105 /* RemoteDiagnosticsCoordinator.swift in Sources */,
-				FEDCBA098765432100000110 /* RemoteDiagnosticsView.swift in Sources */,
-				FEDCBA098765432100000004 /* MarkdownPresentationTests.swift in Sources */,
-				FEDCBA098765432100000109 /* RemoteDiagnosticsTests.swift in Sources */,
+				DB478D0B814843F132B09893 /* ComposerDraftState.swift in Sources */,
 				F0D9326831C7925F6C4FC5D6 /* DiagnosticLogTests.swift in Sources */,
 				B0AD7763503D992983F88DAE /* LocalChatHistoryStore.swift in Sources */,
 				9647FC458C5CF43214B64E71 /* LocalChatHistoryStoreTests.swift in Sources */,
+				0F886AE8DC89126801C2B512 /* MarkdownInlineStyling.swift in Sources */,
+				3ED72F9BC221AED70A3677F5 /* MarkdownPresentationTests.swift in Sources */,
 				5BFEB4C291120FC8B8A03DBB /* MasterChatStateTests.swift in Sources */,
+				B42C17169CAC4866C7760281 /* MessageBubbleLayout.swift in Sources */,
 				E5BF3394A45A4DA77030A3E9 /* RemoteDesktopSignalTests.swift in Sources */,
+				D508A2AF3E620C81BA98B3B7 /* RemoteDiagnosticsCoordinator.swift in Sources */,
+				1B0DC102E851A3005DC43D69 /* RemoteDiagnosticsTests.swift in Sources */,
+				2337DE88A57BE1ABD017F044 /* RemoteDiagnosticsView.swift in Sources */,
 				BE9564FF3CB798F45146F479 /* RemoteInputPacketTests.swift in Sources */,
 				79C230615F6A6FDCFA794F93 /* UserSigGeneratorTests.swift in Sources */,
 			);
@@ -491,20 +563,22 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				FEDCBA098765432100000006 /* MarkdownInlineStyling.swift in Sources */,
-				FEDCBA098765432100000009 /* MessageBubbleLayout.swift in Sources */,
-				F0CD123456789ABC00000002 /* ComposerDraftState.swift in Sources */,
-				FEDCBA098765432100000104 /* RemoteDiagnosticsCoordinator.swift in Sources */,
-				FEDCBA098765432100000107 /* RemoteDiagnosticsView.swift in Sources */,
+				FE969C619521D3BEF76775AE /* AIAssistantModel.swift in Sources */,
+				8A3B76B3F5D189A4B1EEB33C /* AIAssistantView.swift in Sources */,
 				6C8CC7B0E521485EB1383FFA /* AppDiagnosticLog.swift in Sources */,
 				563F2D96FC7FE65D52984507 /* ChatView.swift in Sources */,
+				C4556B8090E97D7C16DFFED9 /* ComposerDraftState.swift in Sources */,
 				4213D8C4C34EA1026840453D /* ContactsView.swift in Sources */,
 				B1A21D8A0C00E9FA9C4D0159 /* KeychainSecretStore.swift in Sources */,
 				7D4CFA9F7B5E149C92E099D4 /* LocalChatHistoryStore.swift in Sources */,
 				628718D30DBDE45071885452 /* LocalSettingsStore.swift in Sources */,
 				BD11A971CB6C4BAB96D400B4 /* MaiChatApp.swift in Sources */,
+				AE6AABB4C5BECA546A8F47F3 /* MarkdownInlineStyling.swift in Sources */,
+				9BC6F4393E645EADBEEB0DAA /* MessageBubbleLayout.swift in Sources */,
 				8C34368F48B3F479062382AD /* RemoteDesktopSession.swift in Sources */,
 				C6A8FEC8A0213ED962099B8A /* RemoteDesktopView.swift in Sources */,
+				D79CB827A60EA8988CA3F6DF /* RemoteDiagnosticsCoordinator.swift in Sources */,
+				BE1624E8812BD281CEFC7857 /* RemoteDiagnosticsView.swift in Sources */,
 				680765EAD211490B1805DB83 /* RemoteIMAppState.swift in Sources */,
 				50286CB0E1E8F7296338FFF6 /* RemoteIMClient.swift in Sources */,
 				6F2E4A87EAF8DDB14F594D09 /* RootView.swift in Sources */,
@@ -512,6 +586,14 @@
 				58168A4613ACBE4B552E2D72 /* SpeechRecognizing.swift in Sources */,
 				1003B14C78530C6912622414 /* TencentIMClient.swift in Sources */,
 				B026FD4170222BE676887F35 /* TencentSpeechRecognizer.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DD11A9D9A3B74872EB2165BF /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				194E338FF3D0DE993B165814 /* AIAssistantUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -523,6 +605,11 @@
 			target = AB419E14F801B114793FBE7B /* MaiChatCore */;
 			targetProxy = 5AE2411DAAF8178CADC1BA18 /* PBXContainerItemProxy */;
 		};
+		7CF681CAF018B5CCBA0AFDD2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = EF22154244DAC9372E230EE5 /* MaiChat */;
+			targetProxy = DACE557D30A6860475511149 /* PBXContainerItemProxy */;
+		};
 		F1B3ACD4DDCFD9A68F0DBBC1 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = AB419E14F801B114793FBE7B /* MaiChatCore */;
@@ -533,22 +620,30 @@
 /* Begin XCBuildConfiguration section */
 		02634FA75D1A47D3870F2CA0 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 9B3D9DD3FEAE85B6388EC6ED /* Pods-MaiChat.release.xcconfig */;
+			baseConfigurationReference = FD9AAA6E78CC9D41B56C3552 /* Pods-MaiChat.release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				DEVELOPMENT_TEAM = VLFG56JT33;
-				FRAMEWORK_SEARCH_PATHS = (
-					"$(inherited)",
-					"\"Frameworks\"",
-				);
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = MaiChat/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"$(DERIVED_FILE_DIR)/libMaiMobileAgent.a",
+					"-lc++",
+					"-framework",
+					Security,
+					"-framework",
+					CoreFoundation,
+					"-framework",
+					SystemConfiguration,
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.kongshang.maichat;
 				SDKROOT = iphoneos;
+				SWIFT_OBJC_BRIDGING_HEADER = "MaiChat/MaiChat-Bridging-Header.h";
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
@@ -638,7 +733,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_IDENTITY = "";
-				CURRENT_PROJECT_VERSION = 81;
+				CURRENT_PROJECT_VERSION = 1;
 				DEFINES_MODULE = YES;
 				DYLIB_COMPATIBILITY_VERSION = 1;
 				DYLIB_CURRENT_VERSION = 1;
@@ -656,6 +751,40 @@
 				VERSIONING_SYSTEM = "apple-generic";
 			};
 			name = Debug;
+		};
+		4B9E5259B987F0084F138696 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.kongshang.maichat.MaiChatUITests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = MaiChat;
+			};
+			name = Debug;
+		};
+		635F5A995F97791E6C3AA2E4 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.kongshang.maichat.MaiChatUITests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = MaiChat;
+			};
+			name = Release;
 		};
 		ADF5DD34C5A30BE3895A8EBD /* Release */ = {
 			isa = XCBuildConfiguration;
@@ -677,7 +806,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_IDENTITY = "";
-				CURRENT_PROJECT_VERSION = 81;
+				CURRENT_PROJECT_VERSION = 1;
 				DEFINES_MODULE = YES;
 				DYLIB_COMPATIBILITY_VERSION = 1;
 				DYLIB_CURRENT_VERSION = 1;
@@ -756,22 +885,30 @@
 		};
 		FA0BF934ACBC80911B021979 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 525AF6C102D32018100882EA /* Pods-MaiChat.debug.xcconfig */;
+			baseConfigurationReference = 49A3C45F70F15C21D2674C70 /* Pods-MaiChat.debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				DEVELOPMENT_TEAM = VLFG56JT33;
-				FRAMEWORK_SEARCH_PATHS = (
-					"$(inherited)",
-					"\"Frameworks\"",
-				);
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = MaiChat/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"$(DERIVED_FILE_DIR)/libMaiMobileAgent.a",
+					"-lc++",
+					"-framework",
+					Security,
+					"-framework",
+					CoreFoundation,
+					"-framework",
+					SystemConfiguration,
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.kongshang.maichat;
 				SDKROOT = iphoneos;
+				SWIFT_OBJC_BRIDGING_HEADER = "MaiChat/MaiChat-Bridging-Header.h";
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
@@ -779,6 +916,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		018346D0ACCADC6A9CB349AC /* Build configuration list for PBXNativeTarget "MaiChatUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4B9E5259B987F0084F138696 /* Debug */,
+				635F5A995F97791E6C3AA2E4 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		0D9FD032A94C57101C76BCAD /* Build configuration list for PBXNativeTarget "MaiChat" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

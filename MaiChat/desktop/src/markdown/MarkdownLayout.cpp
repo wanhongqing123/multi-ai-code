@@ -165,7 +165,15 @@ private:
 
     QFont bodyFont() const {
         QFont font;
-        if (!theme_.bodyFamily.isEmpty()) font.setFamily(theme_.bodyFamily);
+        // Use the bundled Windows typography on both platforms, even when a
+        // parent widget or native platform theme changes the application font.
+        if (!theme_.bodyFamily.isEmpty()) {
+            font.setFamilies({theme_.bodyFamily, QStringLiteral("Noto Sans SC")});
+            font.setFamily(theme_.bodyFamily);
+        }
+        font.setStyleName(QString());
+        font.setWeight(QFont::Normal);
+        font.setItalic(false);
         font.setPixelSize(theme_.bodyPixelSize);
         return tuned(font);
     }
@@ -189,8 +197,11 @@ private:
         QFont font;
         // 两个都要设：应用字体是用 setFamilies 设的，只设 setFamily 会被静默忽略，
         // 代码块就还是正文字体。
-        font.setFamilies({theme_.codeFamily});
+        font.setFamilies({theme_.codeFamily, QStringLiteral("Noto Sans SC")});
         font.setFamily(theme_.codeFamily);
+        font.setStyleName(QString());
+        font.setWeight(QFont::Normal);
+        font.setItalic(false);
         font.setPixelSize(pixelSize);
         return tuned(font);
     }

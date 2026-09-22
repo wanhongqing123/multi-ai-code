@@ -7,6 +7,7 @@ import type {
 } from '../../../electron/remote-im/types.js'
 import {
   connectTencentImClient,
+  createRemoteImActivityData,
   createRemoteImCloudCustomData,
   extractTencentImAudioMessages,
   extractTencentImFileMessages,
@@ -19,6 +20,7 @@ import {
   extractTencentImRoamedTextMessages,
   getSentRemoteMessageId,
   parseRemoteImCloudMetadata,
+  parseRemoteImActivityData,
   parseRemoteImMessageOrigin
 } from '../../../src/remote-im/tencentImClient.js'
 
@@ -51,6 +53,7 @@ const sdkMock = vi.hoisted(() => {
     createImageMessage: vi.fn((message: unknown) => message),
     createVideoMessage: vi.fn((message: unknown) => message),
     createTextMessage: vi.fn((message: unknown) => message),
+    createCustomMessage: vi.fn((message: unknown) => message),
     sendMessage: vi.fn(async () => ({ code: 0, message: 'OK' }))
   }
   const sdk = {
@@ -132,6 +135,40 @@ describe('tencent IM client helpers', () => {
     expect(parseRemoteImMessageOrigin('{"namespace":"multi-ai-code","version":1,"origin":"robot"}')).toBeUndefined()
     expect(parseRemoteImMessageOrigin('not-json')).toBeUndefined()
     expect(parseRemoteImMessageOrigin(undefined)).toBeUndefined()
+  })
+
+  it('round-trips bounded ephemeral activity signals', () => {
+    const encoded = createRemoteImActivityData({
+      activityId: 'turn:task-1',
+      sequence: 1,
+      kind: 'machine-tool',
+      active: true,
+      ttlMs: 12_000
+    })
+    expect(parseRemoteImActivityData(encoded)).toEqual({
+      activityId: 'turn:task-1',
+      sequence: 1,
+      kind: 'machine-tool',
+      active: true,
+      ttlMs: 12_000
+    })
+    expect(parseRemoteImActivityData(new TextEncoder().encode(encoded))).toEqual({
+      activityId: 'turn:task-1',
+      sequence: 1,
+      kind: 'machine-tool',
+      active: true,
+      ttlMs: 12_000
+    })
+    expect(parseRemoteImActivityData('{"namespace":"other"}')).toBeUndefined()
+    expect(parseRemoteImActivityData({
+      namespace: 'multi-ai-code-activity',
+      version: 1,
+      activityId: '../bad',
+      sequence: 1,
+      kind: 'human-typing',
+      active: true,
+      ttlMs: 12_000
+    })).toBeUndefined()
   })
 
   it('round-trips v2 approval interactions and rejects old or wrong-direction metadata', () => {
@@ -1085,6 +1122,55 @@ describe('tencent IM client helpers', () => {
     )
   })
 
+  it('delivers an activity custom message without treating it as chat text', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, json: async () => ({ userSig: 'sig-1' }) }))
+    )
+    const onIncomingText = vi.fn()
+    const onIncomingActivity = vi.fn()
+    const runtimePromise = connectTencentImClient({
+      projectId: 'project-1',
+      config: baseConfig(),
+      onIncomingText,
+      onIncomingActivity
+    })
+    await vi.waitFor(() => expect(sdkMock.chat.login).toHaveBeenCalled())
+    sdkMock.chat.isReady.mockReturnValue(true)
+    sdkMock.handlers.get('sdkReady')?.()
+    await runtimePromise
+
+    sdkMock.handlers.get('messageReceived')?.({
+      data: [{
+        ID: 'activity-1',
+        from: 'phone-user',
+        to: 'desktop-a',
+        type: 'TIMCustomElem',
+        payload: {
+          data: createRemoteImActivityData({
+            activityId: 'typing:1',
+      sequence: 1,
+            kind: 'human-typing',
+            active: true,
+            ttlMs: 12_000
+          })
+        }
+      }]
+    })
+
+    expect(onIncomingActivity).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      fromUserId: 'phone-user',
+      toUserId: 'desktop-a',
+      activityId: 'typing:1',
+      sequence: 1,
+      kind: 'human-typing',
+      active: true,
+      ttlMs: 12_000
+    })
+    expect(onIncomingText).not.toHaveBeenCalled()
+  })
+
   it('keeps the caption together with the video instead of delivering text alone', async () => {
     vi.stubGlobal(
       'fetch',
@@ -1670,6 +1756,35 @@ describe('tencent IM client helpers', () => {
       payload: { text: 'approval' },
       cloudCustomData: createRemoteImCloudCustomData('machine', approvalRequest)
     })
+
+    sdkMock.chat.createCustomMessage.mockClear()
+    sdkMock.chat.sendMessage.mockClear()
+    await runtime.sendActivity?.('desktop-b', {
+      activityId: 'turn:task-1',
+      sequence: 1,
+      kind: 'machine-thinking',
+      active: true,
+      ttlMs: 12_000
+    })
+    expect(sdkMock.chat.createCustomMessage).toHaveBeenCalledWith({
+      to: 'desktop-b',
+      conversationType: 'C2C',
+      payload: {
+        data: createRemoteImActivityData({
+          activityId: 'turn:task-1',
+      sequence: 1,
+          kind: 'machine-thinking',
+          active: true,
+          ttlMs: 12_000
+        }),
+        description: '',
+        extension: ''
+      }
+    })
+    expect(sdkMock.chat.sendMessage).toHaveBeenCalledWith(
+      expect.anything(),
+      { onlineUserOnly: true }
+    )
 
     expect(onRuntimeLog).toHaveBeenCalledWith(
       expect.objectContaining({

@@ -94,6 +94,7 @@ private:
     void prependRenderWindow(const QList<RemoteIMMessage>& messages, int newHeadIndex, bool keepViewport);
     bool ensureMessageRendered(const QString& messageId);
     void updateLoadEarlierVisibility();
+    void updateActivityBubble();
     void scrollMessagesToBottom();
     void applyConversationFilter();
     void applyContactFilter();
@@ -299,6 +300,7 @@ private:
     QScrollArea* messageScroll_ = nullptr;
     QWidget* messageContainer_ = nullptr;
     QVBoxLayout* messageLayout_ = nullptr;
+    QWidget* activityBubble_ = nullptr;
     // One-shot connection used to jump to the latest message once the message
     // list layout has settled (bubble heights depend on width / word wrap, so
     // the scrollbar range is only correct after a later layout pass).

@@ -1642,6 +1642,17 @@ struct RelationBadge: View {
     }
 }
 
+private enum MessageTimelineItem: Identifiable {
+    case message(RemoteIMMessage)
+    case activity(RemoteIMActivitySignal)
+    var id: String {
+        switch self {
+        case .message(let message): return message.id.uuidString
+        case .activity(let signal): return "activity-" + signal.activityID
+        }
+    }
+}
+
 private struct MessageListView: View {
     let peerUserID: String
     let messages: [RemoteIMMessage]
@@ -1691,13 +1702,20 @@ private struct MessageListView: View {
 
     var body: some View {
         let decisionStates = approvalDecisionStates
+        let activity = appState.activity(with: peerUserID)
+        let timeline: [MessageTimelineItem] = (activity.map { [.activity($0)] } ?? [])
+            + messages.reversed().map { .message($0) }
         ScrollViewReader { proxy in
             ScrollView {
                 // One lazy list preserves message identity across local sends and
                 // history changes without mounting all Markdown rows.
                 VStack(alignment: .leading, spacing: 14) {
-                    if !messages.isEmpty {
-                        MessageHistoryStack(items: Array(messages.reversed())) { message in
+                    if !timeline.isEmpty {
+                        MessageHistoryStack(items: timeline) { item in
+                            if case let .activity(signal) = item {
+                                RemoteIMActivityBubble(signal: signal)
+                                    .rotationEffect(.degrees(180))
+                            } else if case let .message(message) = item {
                             MessageBubbleView(
                                 message: message,
                                 approvalDecisionState: message.approvalRequest.map {
@@ -1767,6 +1785,7 @@ private struct MessageListView: View {
                                         "text_bytes": String(message.text.utf8.count)
                                     ])
                                 }
+                            }
                         }
                     }
                     if hasEarlierMessages {
@@ -1801,7 +1820,7 @@ private struct MessageListView: View {
             .scrollDismissesKeyboard(.interactively)
             .background(RemoteIMStyle.panelBackground)
             .overlay {
-                if messages.isEmpty {
+                if messages.isEmpty && activity == nil {
                     // Center in the visible message area, outside the inverted timeline.
                     EmptyMessagesView()
                         .allowsHitTesting(false)
@@ -1901,6 +1920,53 @@ private struct MessageListView: View {
         await loadEarlierMessages()
     }
 
+}
+
+private struct RemoteIMActivityBubble: View {
+    let signal: RemoteIMActivitySignal
+
+    var body: some View {
+        HStack(spacing: signal.kind == .humanTyping ? 7 : 9) {
+            if signal.kind == .humanTyping {
+                TimelineView(.animation(minimumInterval: 0.32)) { context in
+                    let phase = Int(context.date.timeIntervalSinceReferenceDate / 0.32) % 3
+                    HStack(spacing: 5) {
+                        ForEach(0..<3, id: \.self) { index in
+                            Circle()
+                                .fill(RemoteIMStyle.blue)
+                                .frame(width: 7, height: 7)
+                                .opacity(index == phase ? 1 : 0.38)
+                                .scaleEffect(index == phase ? 1.12 : 0.92)
+                        }
+                    }
+                }
+            } else {
+                ProgressView()
+                    .progressViewStyle(.circular)
+                    .tint(RemoteIMStyle.blue)
+                    .scaleEffect(0.72)
+                Text(machineStatusText)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(RemoteIMStyle.textSecondary)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, signal.kind == .humanTyping ? 14 : 12)
+        .frame(height: 42)
+        .background(Color(.secondarySystemBackground), in: Capsule())
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityLabel(signal.kind == .humanTyping ? "对方正在输入" : machineStatusText)
+    }
+
+    private var machineStatusText: String {
+        switch signal.kind {
+        case .machineThinking: return "思考中…"
+        case .machineTool: return "正在使用工具…"
+        case .machineWaiting: return "等待确认…"
+        case .machineWorking: return "正在执行…"
+        case .humanTyping: return ""
+        }
+    }
 }
 
 private struct ScrollViewKeyboardDismissInstaller: UIViewRepresentable {
@@ -4707,6 +4773,9 @@ private struct ComposerView: View {
                                     composerEditMenuState = nil
                                 }
                             },
+                            onTypingActivityChanged: { active in
+                                appState.updateHumanTyping(active, to: peerUserID)
+                            },
                             voiceTranscriptionEnabled: appState.canSendVoice && draft.text.isEmpty,
                             onVoiceLongPressChanged: { translation, location in
                                 handleVoicePressChanged(
@@ -4886,6 +4955,7 @@ private struct ComposerView: View {
             }
         }
         .onDisappear {
+            appState.updateHumanTyping(false, to: peerUserID)
             composerEditMenuState = nil
             realtimeSpeechRecognizer.onLiveTextUpdate = nil
             transcriptionPresentation.onCancel = nil
@@ -5005,6 +5075,7 @@ private struct ComposerView: View {
 
     private func submitDraft() {
         guard appState.canSend else { return }
+        appState.updateHumanTyping(false, to: peerUserID)
         Task { await appState.sendDraft(to: peerUserID) }
     }
 
@@ -5687,6 +5758,7 @@ private struct ComposerTextView: UIViewRepresentable {
     let editingController: ComposerTextEditingController
     let onEditMenuRequested: (ComposerEditMenuState) -> Void
     let onEditMenuDismissed: () -> Void
+    let onTypingActivityChanged: (Bool) -> Void
     let voiceTranscriptionEnabled: Bool
     let onVoiceLongPressChanged: (CGSize, CGPoint) -> Void
     let onVoiceLongPressEnded: (CGSize, CGPoint) -> Void
@@ -5904,11 +5976,15 @@ private struct ComposerTextView: UIViewRepresentable {
             if !isApplyingExternalText, parent.text != textView.text {
                 parent.text = textView.text
             }
+            parent.onTypingActivityChanged(
+                textView.isFirstResponder && !textView.text.isEmpty
+            )
             parent.onEditMenuDismissed()
             scheduleContentHeightRefresh(for: textView)
         }
 
         func textViewDidEndEditing(_ textView: UITextView) {
+            parent.onTypingActivityChanged(false)
             parent.onEditMenuDismissed()
         }
 

@@ -3,6 +3,7 @@
 #include <QSet>
 #include <QPointer>
 #include <QTimer>
+#include <QUuid>
 #include <memory>
 
 #include <QDir>
@@ -47,6 +48,19 @@ RemoteIMApplication::RemoteIMApplication(QString ownerUserId,
         throw std::invalid_argument("RemoteIMClient is required");
     }
     client_->setParent(this);
+    typingHeartbeat_ = new QTimer(this);
+    typingHeartbeat_->setInterval(3000);
+    typingIdle_ = new QTimer(this);
+    typingIdle_->setSingleShot(true);
+    typingIdle_->setInterval(4000);
+    connect(typingIdle_, &QTimer::timeout, this, [this] { setHumanTypingActive(false); });
+    connect(typingHeartbeat_, &QTimer::timeout, this, [this] {
+        if (typingPeerId_.isEmpty() || typingActivityId_.isEmpty()) return;
+        client_->sendActivity(typingPeerId_,
+                              RemoteIMActivitySignal{typingActivityId_,
+                                                     RemoteIMActivityKind::HumanTyping,
+                                                     true, 12000, ++typingSequence_}, {});
+    });
     bindClientSignals();
     // 登录前先把本地库的全部历史恢复进内存：消息列表不再依赖 SDK 漫游
     //（只有几条），漫游随后按 id 去重合并进来。
@@ -89,6 +103,95 @@ const ChatState& RemoteIMApplication::chatState() const { return state_; }
 ChatState& RemoteIMApplication::chatState() { return state_; }
 RemoteIMClient& RemoteIMApplication::client() { return *client_; }
 bool RemoteIMApplication::isConnected() const { return connected_; }
+RemoteIMActivitySignal RemoteIMApplication::activityForPeer(const QString& peerId) const {
+    return activityByPeer_.value(peerId.trimmed());
+}
+
+void RemoteIMApplication::rememberClosedActivity(const QString& identity) {
+    if (!closedActivities_.contains(identity)) closedActivities_.append(identity);
+    if (closedActivities_.size() > 256) closedActivities_.removeFirst();
+}
+
+void RemoteIMApplication::applyActivity(const QString& peerId,
+                                        const RemoteIMActivitySignal& signal) {
+    const QString cleanPeerId = peerId.trimmed();
+    bool knownPeer = false;
+    for (const auto& contact : state_.contacts()) {
+        if (contact.userId == cleanPeerId) knownPeer = true;
+    }
+    if (!knownPeer || cleanPeerId == state_.ownerUserId()) return;
+    const QString identity = cleanPeerId + QLatin1Char('|') + signal.activityId;
+    if (closedActivities_.contains(identity)) return;
+    const auto old = activityByPeer_.value(cleanPeerId);
+    if (!signal.active) {
+        rememberClosedActivity(identity);
+        if (old.activityId == signal.activityId) clearActivity(cleanPeerId);
+        return;
+    }
+    if (signal.sequence <= activitySequences_.value(identity, -1)) return;
+    if (activitySequences_.size() > 512) activitySequences_.clear();
+    activitySequences_.insert(identity, signal.sequence);
+    if (!old.activityId.isEmpty() && old.activityId != signal.activityId) {
+        rememberClosedActivity(cleanPeerId + QLatin1Char('|') + old.activityId);
+    }
+    if (QTimer* timer = activityExpiryTimers_.take(cleanPeerId)) { timer->stop(); timer->deleteLater(); }
+    activityByPeer_.insert(cleanPeerId, signal);
+    auto* expiry = new QTimer(this);
+    expiry->setSingleShot(true);
+    expiry->setInterval(qBound(1000, signal.ttlMs, 30000));
+    connect(expiry, &QTimer::timeout, this, [this, cleanPeerId, expiry] {
+        if (activityExpiryTimers_.value(cleanPeerId) != expiry) return;
+        activityExpiryTimers_.remove(cleanPeerId);
+        activityByPeer_.remove(cleanPeerId);
+        emit activityChanged(cleanPeerId);
+        expiry->deleteLater();
+    });
+    activityExpiryTimers_.insert(cleanPeerId, expiry);
+    expiry->start();
+    if (old.activityId != signal.activityId || old.kind != signal.kind) emit activityChanged(cleanPeerId);
+}
+
+void RemoteIMApplication::clearActivity(const QString& peerId) {
+    const QString cleanPeerId = peerId.trimmed();
+    if (QTimer* timer = activityExpiryTimers_.take(cleanPeerId)) { timer->stop(); timer->deleteLater(); }
+    const auto old = activityByPeer_.take(cleanPeerId);
+    if (!old.activityId.isEmpty()) {
+        rememberClosedActivity(cleanPeerId + QLatin1Char('|') + old.activityId);
+        emit activityChanged(cleanPeerId);
+    }
+}
+
+void RemoteIMApplication::setHumanTypingActive(bool active) {
+    const QString peerId = state_.selectedPeerId().trimmed();
+    if (!active || peerId.isEmpty()) {
+        typingHeartbeat_->stop();
+        typingIdle_->stop();
+        if (!typingPeerId_.isEmpty() && !typingActivityId_.isEmpty()) {
+            client_->sendActivity(typingPeerId_,
+                                  RemoteIMActivitySignal{typingActivityId_,
+                                                         RemoteIMActivityKind::HumanTyping,
+                                                         false, 1000, ++typingSequence_}, {});
+        }
+        typingPeerId_.clear();
+        typingActivityId_.clear();
+        return;
+    }
+    if (!connected_) return;
+    if (typingHeartbeat_->isActive() && typingPeerId_ == peerId) {
+        typingIdle_->start();
+        return;
+    }
+    setHumanTypingActive(false);
+    typingPeerId_ = peerId;
+    typingSequence_ = 0;
+    typingActivityId_ = QStringLiteral("typing:") + QUuid::createUuid().toString(QUuid::WithoutBraces);
+    client_->sendActivity(typingPeerId_,
+                          RemoteIMActivitySignal{typingActivityId_,
+                                                 RemoteIMActivityKind::HumanTyping,
+                                                 true, 12000, ++typingSequence_}, {});
+    typingHeartbeat_->start();
+    typingIdle_->start();
+}
 
 bool RemoteIMApplication::hasEarlierMessages(const QString& peerId) const {
     return hasEarlierMessages_.value(peerId.trimmed(), false);
@@ -153,6 +256,7 @@ void RemoteIMApplication::selectPeer(const QString& userId) {
     const QString peerId = userId.trimmed();
     if (peerId.isEmpty()) return;
     const QString previousPeerId = state_.selectedPeerId();
+    if (previousPeerId != peerId) setHumanTypingActive(false);
     const int previousUnreadCount = state_.unreadCount(peerId);
     bool knownContact = false;
     for (const RemoteIMContact& contact : state_.contacts()) {
@@ -175,6 +279,7 @@ void RemoteIMApplication::sendText(const QString& text,
                                    const RemoteIMQuote& quote,
                                    bool hasQuote) {
     if (text.trimmed().isEmpty() || state_.selectedPeerId().isEmpty()) return;
+    setHumanTypingActive(false);
     RemoteIMMessage message = state_.queueOutgoingText(text, quote, hasQuote);
     persistMessage(message);
     emit stateChanged();
@@ -602,12 +707,17 @@ void RemoteIMApplication::bindClientSignals() {
     connect(client_.get(), &RemoteIMClient::liveMessagesReceived, this, [this](const QList<RemoteIMMessage>& messages) {
         ingestMessages(messages, /*live=*/true);
     });
+    connect(client_.get(), &RemoteIMClient::activityReceived, this,
+            [this](const QString& fromUserId, const RemoteIMActivitySignal& signal) {
+        applyActivity(fromUserId, signal);
+    });
     connect(client_.get(), &RemoteIMClient::incomingText, this, [this](const QString& fromUserId, const QString& text) {
         // 远程桌面信令在入库前就分流出去：既不污染聊天记录，也不让房间号留在历史里。
         if (RemoteDesktopSignals::isSignalText(text)) {
             emit remoteDesktopSignalReceived(fromUserId, text);
             return;
         }
+        clearActivity(fromUserId);
         const RemoteIMMessage received = state_.receiveText(fromUserId, text);
         persistMessage(received);
         emit stateChanged();
@@ -618,6 +728,7 @@ void RemoteIMApplication::bindClientSignals() {
                                                                         int width,
                                                                         int height,
                                                                         qint64 sizeBytes) {
+        clearActivity(fromUserId);
         const RemoteIMMessage received = state_.receiveImage(fromUserId, localPath, width, height, sizeBytes);
         persistMessage(received);
         emit stateChanged();
@@ -626,6 +737,7 @@ void RemoteIMApplication::bindClientSignals() {
     connect(client_.get(), &RemoteIMClient::incomingVoice, this, [this](const QString& fromUserId,
                                                                         const QString& localPath,
                                                                         int durationSeconds) {
+        clearActivity(fromUserId);
         const RemoteIMMessage received = state_.receiveVoice(fromUserId, localPath, durationSeconds);
         persistMessage(received);
         emit stateChanged();
@@ -636,12 +748,19 @@ void RemoteIMApplication::bindClientSignals() {
                                                                        const QString& fileName,
                                                                        const QString& mimeType,
                                                                        qint64 sizeBytes) {
+        clearActivity(fromUserId);
         const RemoteIMMessage received = state_.receiveFile(fromUserId, localPath, fileName, mimeType, sizeBytes);
         persistMessage(received);
         emit stateChanged();
         emit incomingMessageArrived(fromUserId.trimmed(), received);
     });
     connect(client_.get(), &RemoteIMClient::disconnected, this, [this] {
+        setHumanTypingActive(false);
+        for (QTimer* timer : activityExpiryTimers_) timer->deleteLater();
+        activityExpiryTimers_.clear();
+        const QStringList peers = activityByPeer_.keys();
+        activityByPeer_.clear();
+        for (const QString& peer : peers) emit activityChanged(peer);
         connected_ = false;
         emit connectionChanged(false);
     });
@@ -659,6 +778,7 @@ void RemoteIMApplication::ingestMessages(const QList<RemoteIMMessage>& messages,
         }
         const QString peerId = peerOf(message);
         if (peerId.isEmpty()) continue;
+        if (live && message.direction == RemoteIMMessageDirection::Incoming) clearActivity(peerId);
         if (firstPeerId.isEmpty()) firstPeerId = peerId;
         state_.upsertContact(RemoteIMContact{peerId, peerId});
         // 首次入库才算「新消息」。漫游和实时两条路会投递同一条消息，

@@ -26,6 +26,7 @@ class MarkdownLayoutTest : public QObject {
     Q_OBJECT
 
 private slots:
+    void typographyDoesNotInheritPlatformApplicationFonts();
     void emptyDocumentTakesNoSpace();
     void narrowerWidthWrapsTaller();
     void headingIsTallerThanBody();
@@ -39,6 +40,20 @@ private slots:
     void listMarkersStayOutOfTheCopiedText();
     void deepIndentStopsGrowing();
 };
+
+void MarkdownLayoutTest::typographyDoesNotInheritPlatformApplicationFonts() {
+    const QFont original = QApplication::font();
+    const QString source = QStringLiteral("正文 and English **强调**\n\n`code 中文`\n\n- List");
+    const auto baseline = laidOut(source, 400);
+    QFont alternate(QStringLiteral("Times"));
+    alternate.setWeight(QFont::Black);
+    alternate.setItalic(true);
+    QApplication::setFont(alternate);
+    const auto changed = laidOut(source, 400);
+    QApplication::setFont(original);
+    QCOMPARE(changed.height(), baseline.height());
+    QCOMPARE(changed.naturalWidth(), baseline.naturalWidth());
+}
 
 void MarkdownLayoutTest::emptyDocumentTakesNoSpace() {
     const MarkdownLayout layout = laidOut(QString(), 400);

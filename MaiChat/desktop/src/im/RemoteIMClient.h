@@ -16,6 +16,22 @@ struct RemoteIMSendReceipt {
     qint64 createdAtMillis = 0;
 };
 
+enum class RemoteIMActivityKind {
+    HumanTyping,
+    MachineWorking,
+    MachineThinking,
+    MachineTool,
+    MachineWaiting,
+};
+
+struct RemoteIMActivitySignal {
+    QString activityId;
+    RemoteIMActivityKind kind = RemoteIMActivityKind::HumanTyping;
+    bool active = false;
+    int ttlMs = 12000;
+    qint64 sequence = 0;
+};
+
 // 发送类操作的回执：成功时带 SDK 确认的消息 id 和规范化时间。本地库据此
 // 替换临时 UUID，并与漫游/实时消息使用同一排序键。
 using RemoteIMSendCompletion =
@@ -39,6 +55,12 @@ public:
     virtual void disconnectFromService(RemoteIMCompletion completion) = 0;
     virtual void deleteContact(const QString& userId, RemoteIMCompletion completion) = 0;
     virtual void sendText(const QString& peerId, const QString& text, RemoteIMSendCompletion completion) = 0;
+    virtual void sendActivity(const QString& peerId, const RemoteIMActivitySignal& signal,
+                              RemoteIMCompletion completion) {
+        Q_UNUSED(peerId);
+        Q_UNUSED(signal);
+        if (completion) completion(false, QStringLiteral("当前 IM 客户端不支持活动状态"));
+    }
 
     // 带引用的文本发送。默认实现退化成普通发送并丢掉引用——这样实现方
     // （测试用的 Fake、将来可能新增的后端）不必被迫实现它，而真正支持引用的
@@ -123,6 +145,7 @@ signals:
     // 实时推送通道（RecvNewMsg）：与 messagesReceived 同构（携带稳定 SDK 消息 id
     // 供落库去重），区别是真正的新入站消息会累计会话未读红点。
     void liveMessagesReceived(const QList<RemoteIMMessage>& messages);
+    void activityReceived(const QString& fromUserId, const RemoteIMActivitySignal& signal);
     void incomingText(const QString& fromUserId, const QString& text);
     void incomingImage(const QString& fromUserId, const QString& localPath, int width, int height, qint64 sizeBytes);
     void incomingVoice(const QString& fromUserId, const QString& localPath, int durationSeconds);

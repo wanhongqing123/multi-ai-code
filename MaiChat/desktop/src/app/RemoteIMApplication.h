@@ -9,6 +9,8 @@
 #include "model/ChatState.h"
 #include "storage/LocalMessageDatabase.h"
 
+class QTimer;
+
 class RemoteIMApplication final : public QObject {
     Q_OBJECT
 
@@ -25,6 +27,7 @@ public:
     ChatState& chatState();
     RemoteIMClient& client();
     bool isConnected() const;
+    RemoteIMActivitySignal activityForPeer(const QString& peerId) const;
 
     // 会话是否还有未加载进内存的更早消息（分页启动只载每会话最近一页）。
     bool hasEarlierMessages(const QString& peerId) const;
@@ -49,6 +52,7 @@ public:
     void sendText(const QString& text,
                   const RemoteIMQuote& quote = RemoteIMQuote(),
                   bool hasQuote = false);
+    void setHumanTypingActive(bool active);
     // Explicit, persisted destinations for the user-confirmed diagnostics flow.
     // Never change selectedPeerId to send a background report.
     void sendDiagnosticTextTo(const QString& peerId, const QString& text, std::function<void(bool)> completion);
@@ -89,6 +93,7 @@ signals:
     // 远程桌面信令：借道 IM 文本通道，但不入库、不进消息列表、不计未读。
     // 由 UI 层转交给 RemoteDesktopController 处理。
     void remoteDesktopSignalReceived(const QString& fromUserId, const QString& text);
+    void activityChanged(const QString& peerId);
 
 private:
     void sendDiagnosticTo(const QString& peerId, const QString& text, const QString& path,
@@ -105,10 +110,22 @@ private:
                      const QString& localPath,
                      const QString& text,
                      bool captionAbove);
+    void applyActivity(const QString& peerId, const RemoteIMActivitySignal& signal);
+    void clearActivity(const QString& peerId);
 
     ChatState state_;
     QHash<QString, bool> hasEarlierMessages_;
     std::unique_ptr<RemoteIMClient> client_;
     std::unique_ptr<LocalMessageDatabase> database_;
     bool connected_ = false;
+    QHash<QString, RemoteIMActivitySignal> activityByPeer_;
+    QHash<QString, QTimer*> activityExpiryTimers_;
+    QTimer* typingHeartbeat_ = nullptr;
+    QTimer* typingIdle_ = nullptr;
+    qint64 typingSequence_ = 0;
+    QStringList closedActivities_;
+    QHash<QString, qint64> activitySequences_;
+    void rememberClosedActivity(const QString& identity);
+    QString typingPeerId_;
+    QString typingActivityId_;
 };

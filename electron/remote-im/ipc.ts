@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
-import { createHash } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import { promises as fs } from 'fs'
 import { basename, join } from 'path'
 import {
@@ -126,6 +126,8 @@ import type {
   RemoteImImageAttachment,
   RemoteImGitDiffArtifact,
   RemoteImMessageOrigin,
+  RemoteImActivityKind,
+  RemoteImActivitySignal,
   RemoteImTextInteraction,
   RemoteImRoamedTextMessage,
   RemoteImRuntimeIdentity,
@@ -176,8 +178,20 @@ const outputSessions = new Map<string, RemoteImAccountBoundOutputSessionState>()
 type RemoteImStructuredTaskState = RemoteImAccountBoundOutputSessionState & {
   executionIdle?: boolean
   taskId: string
+  activityEventIds?: Set<string>
 }
 const structuredOutputTasks = new RemoteImStructuredTaskRegistry<RemoteImStructuredTaskState>()
+const MACHINE_ACTIVITY_TTL_MS = 12_000
+const MACHINE_ACTIVITY_HEARTBEAT_MS = 5_000
+interface MachineActivityLease {
+  sessionId: string
+  state: RemoteImStructuredTaskState
+  kind: RemoteImActivityKind
+  activityId: string
+  sequence: number
+  timer: ReturnType<typeof setInterval>
+}
+const machineActivityLeases = new Map<string, MachineActivityLease>()
 const approvalDeliveryWaiters = new Map<
   number,
   (result: { ok: boolean; error?: string }) => void
@@ -431,6 +445,7 @@ function revokeRemoteImOutputRoutes(
 }
 
 async function invalidateRemoteImSecurityStateForAccountChange(): Promise<void> {
+  for (const lease of machineActivityLeases.values()) stopMachineActivity(lease.sessionId, lease.state)
   // Invalidate capabilities before the new credentials/profile become active.
   // The generation check closes races with an in-flight structured approval decision, while
   // local-takeover tombstones prevent another account from steering the same
@@ -531,6 +546,82 @@ function broadcastOutgoingText(
     messageId
   })
   return true
+}
+
+function broadcastOutgoingActivity(
+  state: RemoteImStructuredTaskState,
+  signal: RemoteImActivitySignal
+): boolean {
+  const runtimeIdentity = getRegisteredRemoteImRuntimeIdentity(state.projectId)
+  if (!runtimeIdentity || state.securityGeneration !== remoteImAccountSecurityGeneration) return false
+  if (signal.active && state.autoReplyToIm === false) return false
+  broadcast('remote-im:outgoing-activity', {
+    projectId: state.projectId,
+    toUserId: state.toUserId,
+    runtimeIdentity,
+    ...signal
+  })
+  return true
+}
+
+function machineActivityKey(sessionId: string, taskId: string): string {
+  return `${sessionId}\u0000${taskId}`
+}
+
+function sendMachineActivity(
+  sessionId: string,
+  state: RemoteImStructuredTaskState,
+  kind: RemoteImActivityKind
+): void {
+  const key = machineActivityKey(sessionId, state.taskId)
+  const current = machineActivityLeases.get(key)
+  if (current) {
+    clearInterval(current.timer)
+    machineActivityLeases.delete(key)
+  }
+  if (state.autoReplyToIm === false || state.securityGeneration !== remoteImAccountSecurityGeneration) return
+  const activityId = current?.activityId ?? `machine:${randomUUID()}`
+  const lease: MachineActivityLease = {
+    sessionId,
+    state,
+    kind,
+    activityId,
+    sequence: current?.sequence ?? 0,
+    timer: setInterval(emit, MACHINE_ACTIVITY_HEARTBEAT_MS)
+  }
+  function emit(): void {
+    if (state.autoReplyToIm === false || state.securityGeneration !== remoteImAccountSecurityGeneration
+        || state.executionIdle) {
+      stopMachineActivity(sessionId, state)
+      return
+    }
+    broadcastOutgoingActivity(state, {
+      activityId, sequence: ++lease.sequence, kind: lease.kind, active: true,
+      ttlMs: MACHINE_ACTIVITY_TTL_MS
+    })
+  }
+  machineActivityLeases.set(key, lease)
+  emit()
+}
+
+function stopMachineActivity(
+  sessionId: string,
+  state: RemoteImStructuredTaskState,
+  options: { replacedByContent?: boolean } = {}
+): void {
+  const key = machineActivityKey(sessionId, state.taskId)
+  const current = machineActivityLeases.get(key)
+  if (!current) return
+  clearInterval(current.timer)
+  machineActivityLeases.delete(key)
+  if (options.replacedByContent) return
+  broadcastOutgoingActivity(state, {
+    activityId: current.activityId,
+    sequence: ++current.sequence,
+    kind: current.kind,
+    active: false,
+    ttlMs: 1_000
+  })
 }
 
 function broadcastOutgoingImage(
@@ -2050,6 +2141,7 @@ function removeStructuredOutputTask(
   state: RemoteImStructuredTaskState,
   reason: string
 ): void {
+  stopMachineActivity(sessionId, state)
   if (state.timer) clearTimeout(state.timer)
   state.timer = null
   structuredOutputTasks.remove(sessionId, state.taskId)
@@ -2240,6 +2332,7 @@ function ensureSessionListeners(): void {
       const retainedRoutes = structuredOutputTasks.markLocalTakeover(sessionId)
       void getRemoteImApprovalCoordinator().cancelSession(sessionId)
       for (const state of retainedRoutes) {
+        stopMachineActivity(sessionId, state)
         if (state.executionIdle) removeStructuredOutputTask(sessionId, state, 'input-origin-changed')
         writeStructuredOutputRuntimeLog('aicli:route-deactivated', {
           sessionId,
@@ -2427,6 +2520,7 @@ function ensureSessionListeners(): void {
         }
       })
       if (kind === 'assistant_final' || kind === 'turn_error') {
+        stopMachineActivity(sessionId, state)
         removeStructuredOutputTask(sessionId, state, `local-takeover-${kind}`)
       }
       return
@@ -2444,15 +2538,34 @@ function ensureSessionListeners(): void {
       }
     })
     if (kind === 'task_started') {
+      if (messageId && state.activityEventIds?.has(messageId)) return
+      if (messageId) {
+        state.activityEventIds ??= new Set()
+        state.activityEventIds.add(messageId)
+      }
       if (!state.sourceStarted) state.forwardedStructuredAssistantTexts = []
       markStructuredTaskActive(state)
+      sendMachineActivity(sessionId, state, 'machine-working')
       return
     }
     if (kind === 'task_activity') {
+      if (messageId && state.activityEventIds?.has(messageId)) return
+      if (messageId) {
+        state.activityEventIds ??= new Set()
+        state.activityEventIds.add(messageId)
+        if (state.activityEventIds.size > 256) state.activityEventIds.delete(state.activityEventIds.values().next().value!)
+      }
       markStructuredTaskActive(state)
+      const activityKind: RemoteImActivityKind =
+        text === 'thinking' ? 'machine-thinking'
+        : text === 'tool' ? 'machine-tool'
+        : text === 'waiting' ? 'machine-waiting'
+        : 'machine-working'
+      sendMachineActivity(sessionId, state, activityKind)
       return
     }
     if (kind === 'turn_error') {
+      stopMachineActivity(sessionId, state)
       writeStructuredOutputRuntimeLog('aicli:turn-terminal', {
         sessionId,
         state,
@@ -2483,6 +2596,7 @@ function ensureSessionListeners(): void {
       return
     }
     if (kind === 'assistant_final') {
+      stopMachineActivity(sessionId, state)
       const resolved = resolveRemoteImStructuredFinalContent(text, state.replyId)
       const hadImmediateAssistantOutput =
         (state.forwardedStructuredAssistantTexts?.length ?? 0) > 0
@@ -2535,6 +2649,7 @@ function ensureSessionListeners(): void {
       return
     }
     if (kind && kind !== 'assistant_text') return
+    stopMachineActivity(sessionId, state, { replacedByContent: true })
     state.lastActivityAt = Date.now()
     const forwardedChunks = forwardRemoteImStructuredAssistantOutput(
       sessionId,
@@ -3595,6 +3710,24 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
       )
     }
   )
+
+  ipcMain.handle('remote-im:send-typing-activity', async (
+    _event, { projectId, toUserId, owner, signal }: {
+      projectId: string; toUserId: string; owner: string; signal: RemoteImActivitySignal
+    }
+  ) => withRemoteImAccountBoundOperation(async () => {
+    const config = await getRemoteImConfig(projectId)
+    const runtimeIdentity = getRegisteredRemoteImRuntimeIdentity(projectId)
+    if (!runtimeIdentity || runtimeIdentity.desktopUserId !== owner
+        || resolvePeerUserId(config, toUserId) !== toUserId
+        || signal?.kind !== 'human-typing' || typeof signal.active !== 'boolean'
+        || typeof signal.activityId !== 'string' || !/^[A-Za-z0-9._:-]{1,192}$/.test(signal.activityId)
+        || !Number.isSafeInteger(signal.sequence) || signal.sequence < 0) return { ok: false }
+    broadcast('remote-im:outgoing-activity', {
+      projectId, toUserId, runtimeIdentity, ...signal, ttlMs: 12000
+    })
+    return { ok: true }
+  }))
 
   ipcMain.handle(
     'remote-im:send-peer-image',

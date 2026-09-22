@@ -59,6 +59,7 @@ final class TencentIMClient:
     V2TIMAPNSListener
 {
     var onIncomingText: ((IncomingRemoteIMText) -> Void)?
+    var onIncomingActivity: ((IncomingRemoteIMActivity) -> Void)?
     var onIncomingVoice: ((IncomingRemoteIMVoice) -> Void)?
     var onIncomingImage: ((IncomingRemoteIMImage) -> Void)?
     var onIncomingFile: ((IncomingRemoteIMFile) -> Void)?
@@ -258,7 +259,8 @@ final class TencentIMClient:
     func subscribePresenceStatuses(userIDs: [String]) async throws {
         let cleanedUserIDs = Self.cleanUserIDs(userIDs)
         guard !cleanedUserIDs.isEmpty else { return }
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<Void, Error>) in
             Self.sdkQueue.async {
                 V2TIMManager.sharedInstance().subscribeUserStatus(
                     userIDList: cleanedUserIDs,
@@ -300,6 +302,46 @@ final class TencentIMClient:
             metadata: ["content_bytes": String(text.lengthOfBytes(using: .utf8))],
             failureDescription: "send text failed"
         )
+    }
+
+    func sendActivity(to userID: String, signal: RemoteIMActivitySignal) async throws {
+        guard let message = try await Self.makeMessage({
+            V2TIMManager.sharedInstance().createCustomMessage(
+                data: RemoteIMActivityCodec.encode(signal)
+            )
+        }) else {
+            Self.logMessageCreateFailure(kind: "activity", peerUserID: userID)
+            throw RemoteIMClientError.operationFailed(
+                code: -1,
+                description: "create activity message failed"
+            )
+        }
+        try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<Void, Error>) in
+            Self.sdkQueue.async {
+                guard message.account == Self.diagnosticAccountSnapshot.load() else {
+                    continuation.resume(throwing: CancellationError()); return
+                }
+                message.value.isExcludedFromUnreadCount = true
+                message.value.isExcludedFromLastMessage = true
+                V2TIMManager.sharedInstance().sendMessage(
+                    message: message.value,
+                    receiver: userID,
+                    groupID: nil,
+                    priority: V2TIMMessagePriority(rawValue: 0)!,
+                    onlineUserOnly: true,
+                    offlinePushInfo: nil,
+                    progress: nil,
+                    succ: { continuation.resume() },
+                    fail: { code, desc in
+                        continuation.resume(throwing: RemoteIMClientError.operationFailed(
+                            code: code,
+                            description: desc ?? "send activity failed"
+                        ))
+                    }
+                )
+            }
+        }
     }
 
     func sendApprovalDecision(
@@ -754,6 +796,17 @@ final class TencentIMClient:
                 event: "message-dropped",
                 fields: ["reason": "no-sender", "message": Self.messageTag(msg.msgID)]
             )
+            return
+        }
+
+        if let signal = RemoteIMActivityCodec.decode(msg.customElem?.data) {
+            let account = Self.diagnosticAccountSnapshot.load()
+            Task { @MainActor [weak self] in
+                guard account == Self.diagnosticAccountSnapshot.load() else { return }
+                self?.onIncomingActivity?(
+                    IncomingRemoteIMActivity(fromUserID: fromUserID, signal: signal)
+                )
+            }
             return
         }
 
@@ -1582,6 +1635,7 @@ final class TencentIMClient:
 #else
 final class TencentIMClient: RemoteIMClient {
     var onIncomingText: ((IncomingRemoteIMText) -> Void)?
+    var onIncomingActivity: ((IncomingRemoteIMActivity) -> Void)?
     var onIncomingVoice: ((IncomingRemoteIMVoice) -> Void)?
     var onIncomingImage: ((IncomingRemoteIMImage) -> Void)?
     var onIncomingFile: ((IncomingRemoteIMFile) -> Void)?
@@ -1600,6 +1654,10 @@ final class TencentIMClient: RemoteIMClient {
         origin: RemoteIMMessageOrigin,
         quote: RemoteIMQuote?
     ) async throws -> RemoteIMSendReceipt {
+        throw RemoteIMClientError.sdkNotIntegrated
+    }
+
+    func sendActivity(to userID: String, signal: RemoteIMActivitySignal) async throws {
         throw RemoteIMClientError.sdkNotIntegrated
     }
 

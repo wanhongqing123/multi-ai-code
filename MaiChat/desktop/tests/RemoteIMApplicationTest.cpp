@@ -13,6 +13,7 @@ class RemoteIMApplicationTest : public QObject {
     Q_OBJECT
 
 private slots:
+    void activityIsEphemeralAndStaleStopCannotCancelExpiry();
     void sendsTextThroughClientAndMarksSent();
     void sendsStructuredApprovalDecisionAndMarksSent();
     void sendsFileThroughClientAndMarksSent();
@@ -37,6 +38,33 @@ private slots:
     void rejectsInternalAttachmentPlaceholderAsPlainText();
     void rejectsUnsupportedVoiceBeforeQueueing();
 };
+
+void RemoteIMApplicationTest::activityIsEphemeralAndStaleStopCannotCancelExpiry() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fake = client.get();
+    RemoteIMApplication app(QStringLiteral("owner"), std::move(client));
+    app.addContact(QStringLiteral("peer"), QStringLiteral("Peer"));
+    QSignalSpy changed(&app, &RemoteIMApplication::activityChanged);
+    RemoteIMActivitySignal signal{QStringLiteral("run-1"), RemoteIMActivityKind::MachineThinking,
+                                  true, 1000, 1};
+    emit fake->activityReceived(QStringLiteral("peer"), signal);
+    QCOMPARE(app.activityForPeer(QStringLiteral("peer")).activityId, QStringLiteral("run-1"));
+    QVERIFY(app.chatState().messagesWith(QStringLiteral("peer")).isEmpty());
+    QCOMPARE(app.chatState().unreadCount(QStringLiteral("peer")), 0);
+    signal.sequence = 2;
+    emit fake->activityReceived(QStringLiteral("peer"), signal);
+    QCOMPARE(changed.size(), 1); // Heartbeats must not cause UI rebuilds.
+    emit fake->activityReceived(QStringLiteral("peer"),
+        RemoteIMActivitySignal{QStringLiteral("old-run"), RemoteIMActivityKind::HumanTyping, false, 1000, 3});
+    QTRY_VERIFY_WITH_TIMEOUT(app.activityForPeer(QStringLiteral("peer")).activityId.isEmpty(), 1800);
+    signal.activityId = QStringLiteral("run-2");
+    emit fake->activityReceived(QStringLiteral("peer"), signal);
+    emit fake->incomingText(QStringLiteral("peer"), QStringLiteral("answer"));
+    QVERIFY(app.activityForPeer(QStringLiteral("peer")).activityId.isEmpty());
+    signal.sequence = 3;
+    emit fake->activityReceived(QStringLiteral("peer"), signal);
+    QVERIFY(app.activityForPeer(QStringLiteral("peer")).activityId.isEmpty());
+}
 
 void RemoteIMApplicationTest::sendsTextThroughClientAndMarksSent() {
     auto client = std::make_unique<FakeRemoteIMClient>();

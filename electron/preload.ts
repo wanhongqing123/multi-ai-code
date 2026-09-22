@@ -51,6 +51,8 @@ import type {
   RemoteImMessageDirection,
   RemoteImMessageKind,
   RemoteImMessageOrigin,
+  RemoteImActivityKind,
+  RemoteImActivitySignal,
   RemoteImMessageQuote,
   RemoteImGitDiffArtifact,
   RemoteImApprovalAction,
@@ -66,6 +68,7 @@ import type {
   ReadRemoteImImagePreviewInput,
   ReadRemoteImImagePreviewResult,
   RemoteImIncomingTextMessage,
+  RemoteImIncomingActivityMessage,
   RemoteImRoamedTextMessage,
   RemoteImIncomingAudioMessage,
   RemoteImIncomingImageMessage,
@@ -87,6 +90,8 @@ export type {
   RemoteImMessageDirection,
   RemoteImMessageKind,
   RemoteImMessageOrigin,
+  RemoteImActivityKind,
+  RemoteImActivitySignal,
   RemoteImMessageQuote,
   RemoteImGitDiffArtifact,
   RemoteImApprovalAction,
@@ -102,6 +107,7 @@ export type {
   ReadRemoteImImagePreviewInput,
   ReadRemoteImImagePreviewResult,
   RemoteImIncomingTextMessage,
+  RemoteImIncomingActivityMessage,
   RemoteImRoamedTextMessage,
   RemoteImIncomingAudioMessage,
   RemoteImIncomingImageMessage,
@@ -133,6 +139,12 @@ export interface RemoteImOutgoingImageEvent {
   mimeType?: string | null
   fileBytes?: Uint8Array | ArrayBuffer | number[] | null
   messageId?: number | null
+}
+
+export interface RemoteImOutgoingActivityEvent extends RemoteImActivitySignal {
+  projectId: string
+  toUserId: string
+  runtimeIdentity: RemoteImRuntimeIdentity
 }
 
 export interface RemoteImOutgoingFileEvent {
@@ -481,6 +493,9 @@ const api = {
       ipcRenderer.invoke('remote-im:send-peer-message', { projectId, text, toUserId }) as Promise<
         { ok: boolean; error?: string; toUserId?: string }
       >,
+    sendTypingActivity: (projectId: string, toUserId: string, owner: string, signal: RemoteImActivitySignal) =>
+      ipcRenderer.invoke('remote-im:send-typing-activity', { projectId, toUserId, owner, signal }) as
+        Promise<{ ok: boolean }>,
     sendPeerImage: (projectId: string, file: File, image: RemoteImSendPeerImageInput) =>
       ipcRenderer.invoke('remote-im:send-peer-image', {
         projectId,
@@ -633,6 +648,14 @@ const api = {
       ) => cb(evt)
       ipcRenderer.on('remote-im:outgoing-text', handler)
       return () => ipcRenderer.removeListener('remote-im:outgoing-text', handler)
+    },
+    onOutgoingActivity: (cb: (evt: RemoteImOutgoingActivityEvent) => void) => {
+      const handler = (
+        _event: IpcRendererEvent,
+        evt: RemoteImOutgoingActivityEvent
+      ) => cb(evt)
+      ipcRenderer.on('remote-im:outgoing-activity', handler)
+      return () => ipcRenderer.removeListener('remote-im:outgoing-activity', handler)
     },
     onOutgoingImage: (
       cb: (evt: RemoteImOutgoingImageEvent) => void

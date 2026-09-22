@@ -14,6 +14,8 @@
 #include <QJsonObject>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QRegularExpression>
+#include <QtMath>
 #include <QStandardPaths>
 #include <QUrl>
 
@@ -25,6 +27,7 @@ constexpr int kConversationTypeC2C = 1;
 constexpr int kElemText = 0;
 constexpr int kElemImage = 1;
 constexpr int kElemSound = 2;
+constexpr int kElemCustom = 3;
 constexpr int kElemFile = 4;
 // TIMElemType 里 Video 排在 Text/Image/Sound/Custom/File/GroupTips/Face/Location/GroupReport
 // 之后，值为 9（见 vendor/tencent-im/.../TIMMessageManager.h 的 enum TIMElemType）。
@@ -34,6 +37,8 @@ constexpr int kFriendTypeBoth = 1;
 constexpr auto kCloudCustomDataKey = "message_cloud_custom_str";
 constexpr auto kMetadataNamespace = "multi-ai-code";
 constexpr int kMetadataVersion = 2;
+constexpr auto kActivityNamespace = "multi-ai-code-activity";
+constexpr int kActivityVersion = 1;
 // 引用块字段的长度上限。对端可以往 metadata 里塞任意长的串，
 // 不设上限等于让别人决定我们的内存占用和渲染耗时。
 constexpr int kQuoteFieldLimit = 256;
@@ -54,6 +59,60 @@ QString originName(RemoteIMMessageOrigin origin) {
     return origin == RemoteIMMessageOrigin::Human
                ? QStringLiteral("human")
                : QStringLiteral("machine");
+}
+
+QString activityKindName(RemoteIMActivityKind kind) {
+    switch (kind) {
+    case RemoteIMActivityKind::HumanTyping: return QStringLiteral("human-typing");
+    case RemoteIMActivityKind::MachineWorking: return QStringLiteral("machine-working");
+    case RemoteIMActivityKind::MachineThinking: return QStringLiteral("machine-thinking");
+    case RemoteIMActivityKind::MachineTool: return QStringLiteral("machine-tool");
+    case RemoteIMActivityKind::MachineWaiting: return QStringLiteral("machine-waiting");
+    }
+    return QStringLiteral("human-typing");
+}
+
+bool activityKindFromName(const QString& value, RemoteIMActivityKind* out) {
+    if (value == QStringLiteral("human-typing")) *out = RemoteIMActivityKind::HumanTyping;
+    else if (value == QStringLiteral("machine-working")) *out = RemoteIMActivityKind::MachineWorking;
+    else if (value == QStringLiteral("machine-thinking")) *out = RemoteIMActivityKind::MachineThinking;
+    else if (value == QStringLiteral("machine-tool")) *out = RemoteIMActivityKind::MachineTool;
+    else if (value == QStringLiteral("machine-waiting")) *out = RemoteIMActivityKind::MachineWaiting;
+    else return false;
+    return true;
+}
+
+QString activityData(const RemoteIMActivitySignal& signal) {
+    QJsonObject object;
+    object[QStringLiteral("namespace")] = QString::fromLatin1(kActivityNamespace);
+    object[QStringLiteral("version")] = kActivityVersion;
+    object[QStringLiteral("activityId")] = signal.activityId;
+    object[QStringLiteral("sequence")] = static_cast<double>(signal.sequence);
+    object[QStringLiteral("kind")] = activityKindName(signal.kind);
+    object[QStringLiteral("active")] = signal.active;
+    object[QStringLiteral("ttlMs")] = qBound(1000, signal.ttlMs, 30000);
+    return QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact));
+}
+
+bool parseActivityData(const QString& data, RemoteIMActivitySignal* out) {
+    const QJsonObject object = QJsonDocument::fromJson(data.toUtf8()).object();
+    if (object.value(QStringLiteral("namespace")).toString() != QLatin1String(kActivityNamespace)
+        || object.value(QStringLiteral("version")).toInt(-1) != kActivityVersion) return false;
+    const QString id = object.value(QStringLiteral("activityId")).toString();
+    static const QRegularExpression idPattern(QStringLiteral("^[A-Za-z0-9._:-]{1,192}$"));
+    if (!idPattern.match(id).hasMatch()) return false;
+    RemoteIMActivityKind kind;
+    if (!activityKindFromName(object.value(QStringLiteral("kind")).toString(), &kind)) return false;
+    if (!object.value(QStringLiteral("active")).isBool()
+        || !object.value(QStringLiteral("ttlMs")).isDouble()) return false;
+    const double sequence = object.value(QStringLiteral("sequence")).toDouble(-1);
+    if (sequence < 0 || sequence > 9007199254740991.0 || sequence != qFloor(sequence)) return false;
+    out->sequence = static_cast<qint64>(sequence);
+    out->activityId = id;
+    out->kind = kind;
+    out->active = object.value(QStringLiteral("active")).toBool();
+    out->ttlMs = qBound(1000, object.value(QStringLiteral("ttlMs")).toInt(), 30000);
+    return true;
 }
 
 // 引用块编码。msgId 为空时**整个键都不写**，而不是写一个空串：
@@ -589,6 +648,39 @@ void TimSdkRemoteIMClient::sendTextWithOrigin(const QString& peerId,
         completion(ok,
                    ok ? QString() : (description.isEmpty() ? QStringLiteral("IM SDK 操作失败：%1").arg(code) : description),
                    receipt);
+    });
+}
+
+void TimSdkRemoteIMClient::sendActivity(const QString& peerId,
+                                        const RemoteIMActivitySignal& signal,
+                                        RemoteIMCompletion completion) {
+    const QString cleanPeerId = peerId.trimmed();
+    static const QRegularExpression idPattern(QStringLiteral("^[A-Za-z0-9._:-]{1,192}$"));
+    if (cleanPeerId.isEmpty() || !idPattern.match(signal.activityId).hasMatch()) {
+        if (completion) completion(false, QStringLiteral("活动状态缺少接收人或有效 ID"));
+        return;
+    }
+    QJsonObject elem;
+    elem[QStringLiteral("elem_type")] = kElemCustom;
+    elem[QStringLiteral("custom_elem_data")] = activityData(signal);
+    elem[QStringLiteral("custom_elem_desc")] = QString();
+    elem[QStringLiteral("custom_elem_ext")] = QString();
+    QJsonObject message;
+    message[QStringLiteral("message_elem_array")] = QJsonArray{elem};
+    message[QStringLiteral("message_is_online_msg")] = true;
+    message[QStringLiteral("message_is_excluded_from_unread_count")] = true;
+    message[QStringLiteral("message_excluded_from_last_message")] = true;
+    api_->sendMessage(cleanPeerId, kConversationTypeC2C, compactJson(message),
+                      [completion = std::move(completion)](int code,
+                                                           const QString& description,
+                                                           const QString&) mutable {
+        if (completion) {
+            completion(code == 0,
+                       code == 0 ? QString()
+                                 : (description.isEmpty()
+                                        ? QStringLiteral("IM SDK 操作失败：%1").arg(code)
+                                        : description));
+        }
     });
 }
 
@@ -1159,6 +1251,15 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
     };
 
     const QJsonArray elems = message.value(QStringLiteral("message_elem_array")).toArray();
+    for (const QJsonValue& value : elems) {
+        const QJsonObject elem = value.toObject();
+        if (elem.value(QStringLiteral("elem_type")).toInt(-1) != kElemCustom) continue;
+        RemoteIMActivitySignal signal;
+        if (parseActivityData(elem.value(QStringLiteral("custom_elem_data")).toString(), &signal)) {
+            emit activityReceived(fromUserId, signal);
+            return;
+        }
+    }
 
     // 图片/文件 + 配文合并成「一条」消息：先取第一条非空文本作为附件配文，
     // 附件与配文共用同一条 RemoteIMMessage（稳定 id 锚定在附件元素上），

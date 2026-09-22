@@ -7,6 +7,8 @@ import type {
   RemoteImApprovalAction,
   RemoteImGitDiffArtifact,
   RemoteImMessageOrigin,
+  RemoteImActivitySignal,
+  RemoteImIncomingActivityMessage,
   RemoteImMessageQuote,
   RemoteImTextInteraction,
   RemoteImRuntimeLogEntryInput
@@ -14,6 +16,66 @@ import type {
 
 export const REMOTE_IM_CLOUD_METADATA_NAMESPACE = 'multi-ai-code'
 export const REMOTE_IM_CLOUD_METADATA_VERSION = 2
+export const REMOTE_IM_ACTIVITY_NAMESPACE = 'multi-ai-code-activity'
+export const REMOTE_IM_ACTIVITY_VERSION = 1
+const REMOTE_IM_ACTIVITY_KINDS = new Set([
+  'human-typing',
+  'machine-working',
+  'machine-thinking',
+  'machine-tool',
+  'machine-waiting'
+])
+const REMOTE_IM_ACTIVITY_ID_PATTERN = /^[A-Za-z0-9._:-]{1,192}$/
+
+export function createRemoteImActivityData(signal: RemoteImActivitySignal): string {
+  return JSON.stringify({
+    namespace: REMOTE_IM_ACTIVITY_NAMESPACE,
+    version: REMOTE_IM_ACTIVITY_VERSION,
+    activityId: signal.activityId,
+    sequence: signal.sequence,
+    kind: signal.kind,
+    active: signal.active,
+    ttlMs: Math.min(Math.max(Math.round(signal.ttlMs), 1_000), 30_000)
+  })
+}
+
+export function parseRemoteImActivityData(value: unknown): RemoteImActivitySignal | undefined {
+  try {
+    const text = typeof value === 'string'
+      ? value
+      : value instanceof ArrayBuffer
+        ? new TextDecoder().decode(new Uint8Array(value))
+        : ArrayBuffer.isView(value)
+          ? new TextDecoder().decode(
+              new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+            )
+          : null
+    const decoded = text === null ? value : JSON.parse(text)
+    if (!decoded || typeof decoded !== 'object') return undefined
+    const raw = decoded as Record<string, unknown>
+    if (
+      raw.namespace !== REMOTE_IM_ACTIVITY_NAMESPACE ||
+      !Number.isSafeInteger(raw.sequence) || Number(raw.sequence) < 0 ||
+      raw.version !== REMOTE_IM_ACTIVITY_VERSION ||
+      typeof raw.activityId !== 'string' ||
+      !REMOTE_IM_ACTIVITY_ID_PATTERN.test(raw.activityId) ||
+      typeof raw.kind !== 'string' ||
+      !REMOTE_IM_ACTIVITY_KINDS.has(raw.kind) ||
+      typeof raw.active !== 'boolean' ||
+      typeof raw.ttlMs !== 'number' ||
+      !Number.isFinite(raw.ttlMs)
+    ) return undefined
+    return {
+      activityId: raw.activityId,
+      sequence: raw.sequence as number,
+      kind: raw.kind as RemoteImActivitySignal['kind'],
+      active: raw.active,
+      ttlMs: Math.min(Math.max(Math.round(raw.ttlMs), 1_000), 30_000)
+    }
+  } catch {
+    return undefined
+  }
+}
 
 interface RemoteImCloudMetadata {
   namespace: typeof REMOTE_IM_CLOUD_METADATA_NAMESPACE
@@ -1202,6 +1264,10 @@ export interface TencentImRuntime {
     text: string,
     options?: TencentImSendTextOptions
   ): Promise<TencentImSendResult | void>
+  sendActivity?(
+    toUserId: string,
+    signal: RemoteImActivitySignal
+  ): Promise<TencentImSendResult | void>
   sendImage?(
     toUserId: string,
     file: File,
@@ -1284,6 +1350,7 @@ export async function connectTencentImClient(input: {
   projectId: string
   config: RemoteImConfig
   onIncomingText: (message: RemoteImIncomingTextMessage) => void
+  onIncomingActivity?: (message: RemoteImIncomingActivityMessage) => void
   onIncomingAudio?: (message: RemoteImIncomingAudioMessage) => void
   onIncomingImage?: (message: RemoteImIncomingImageMessage) => void
   onIncomingFile?: (message: RemoteImIncomingFileMessage) => void
@@ -1514,6 +1581,19 @@ export async function connectTencentImClient(input: {
       const metadata = messageMetadata(message)
       const origin = metadata?.origin
 
+      const activity = parseRemoteImActivityData(
+        (message.payload as { data?: unknown } | undefined)?.data
+      )
+      if (activity) {
+        input.onIncomingActivity?.({
+          projectId: input.projectId,
+          fromUserId,
+          toUserId,
+          ...activity
+        })
+        continue
+      }
+
       // 逐条消息按元素拆解：附件（图片/文件/语音）与配文来自「同一条」消息，
       // 图片 + 配文合并成一次 AICLI 投递。
       const parts = extractTencentImMessageParts(message)
@@ -1718,6 +1798,7 @@ export async function connectTencentImClient(input: {
     peerUserId: string
     messageId?: number | null
     createMessage: () => unknown
+    onlineUserOnly?: boolean
   }): Promise<unknown> {
     for (let attempt = 1; attempt <= 2; attempt++) {
       await ensureLoggedIn()
@@ -1728,7 +1809,9 @@ export async function connectTencentImClient(input: {
         detail: { ...summarizeTencentImMessage(message), attempt }
       })
       try {
-        const result = await chat.sendMessage(message)
+        const result = options.onlineUserOnly
+          ? await chat.sendMessage(message, { onlineUserOnly: true })
+          : await chat.sendMessage(message)
         const failure = getTencentImApiFailure('send', result)
         if (failure) {
           const error = new Error(failure) as Error & { code?: number }
@@ -1910,6 +1993,28 @@ export async function connectTencentImClient(input: {
         })
         throw err
       }
+    },
+    async sendActivity(toUserId: string, signal: RemoteImActivitySignal) {
+      emitRuntimeLog('send:activity:start', {
+        peerUserId: toUserId,
+        detail: { kind: signal.kind, active: signal.active }
+      })
+      const result = await sendMessageWithUserSigRetry({
+        eventPrefix: 'send:activity',
+        peerUserId: toUserId,
+        onlineUserOnly: true,
+        createMessage: () =>
+          chat.createCustomMessage({
+            to: toUserId,
+            conversationType: TencentCloudChat.TYPES?.CONV_C2C ?? 'C2C',
+            payload: {
+              data: createRemoteImActivityData(signal),
+              description: '',
+              extension: ''
+            }
+          })
+      })
+      return { remoteMessageId: getSentRemoteMessageId(result) }
     },
     async sendImage(toUserId: string, file: File, options: TencentImSendImageOptions = {}) {
       emitRuntimeLog('send:image:start', {

@@ -76,6 +76,7 @@ class MainWindowLayoutTest : public QObject {
     Q_OBJECT
 
 private slots:
+    void transientActivityBubbleIsReplacedByIncomingText();
     void videoCoverRetainsPhysicalPixels();
     void renamedHeaderButtonsKeepTheirCompactAppearance();
     void messageTextUsesNativeResolutionAndRegularBodyFont();
@@ -157,6 +158,23 @@ private slots:
     void conversationListBreaksTimeTiesByName();
     void droppingAnImageFileSendsTheOriginalFileAsAnImage();
 };
+
+void MainWindowLayoutTest::transientActivityBubbleIsReplacedByIncomingText() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fake = client.get();
+    RemoteIMApplication app(QStringLiteral("owner"), std::move(client));
+    app.addContact(QStringLiteral("peer"), QStringLiteral("Peer"));
+    MainWindow window(app);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    emit fake->activityReceived(QStringLiteral("peer"), RemoteIMActivitySignal{
+        QStringLiteral("machine:test"), RemoteIMActivityKind::MachineTool, true, 12000, 1});
+    QTRY_VERIFY(window.findChild<QWidget*>(QStringLiteral("remoteImActivityRow")) != nullptr);
+    QVERIFY(app.chatState().messagesWith(QStringLiteral("peer")).isEmpty());
+    emit fake->incomingText(QStringLiteral("peer"), QStringLiteral("真正的回复"));
+    QTRY_VERIFY(window.findChild<QWidget*>(QStringLiteral("remoteImActivityRow")) == nullptr);
+    QCOMPARE(app.chatState().messagesWith(QStringLiteral("peer")).size(), 1);
+}
 
 // 模拟一次真实拖放：Qt 的 drop 依赖前面的 dragEnter/dragMove 建立内部状态，
 // 只发 QDropEvent 会被直接丢掉。位置取 viewport 中心。

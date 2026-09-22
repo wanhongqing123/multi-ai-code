@@ -20,6 +20,8 @@ public:
     void disconnectFromService(RemoteIMCompletion completion) override;
     void deleteContact(const QString& userId, RemoteIMCompletion completion) override;
     void sendText(const QString& peerId, const QString& text, RemoteIMSendCompletion completion) override;
+    void sendActivity(const QString& peerId, const RemoteIMActivitySignal& signal,
+                      RemoteIMCompletion completion) override;
     void sendTextWithQuote(const QString& peerId, const QString& text,
                            const RemoteIMQuote& quote, bool hasQuote,
                            RemoteIMSendCompletion completion) override;

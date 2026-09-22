@@ -147,6 +147,78 @@ public enum RemoteIMMessageOrigin: String, Codable, Equatable, Sendable {
     case machine
 }
 
+public enum RemoteIMActivityKind: String, Codable, Equatable, Sendable {
+    case humanTyping = "human-typing"
+    case machineWorking = "machine-working"
+    case machineThinking = "machine-thinking"
+    case machineTool = "machine-tool"
+    case machineWaiting = "machine-waiting"
+}
+
+public struct RemoteIMActivitySignal: Codable, Equatable, Sendable {
+    public let activityID: String
+    public let sequence: Int
+    public let kind: RemoteIMActivityKind
+    public let active: Bool
+    public let ttlMilliseconds: Int
+
+    public init?(activityID: String, kind: RemoteIMActivityKind, active: Bool, ttlMilliseconds: Int, sequence: Int = 0) {
+        let id = activityID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._:-")
+        guard sequence >= 0, !id.isEmpty, id.utf8.count <= 192,
+              id.unicodeScalars.allSatisfy(allowed.contains)
+        else { return nil }
+        self.activityID = id
+        self.sequence = sequence
+        self.kind = kind
+        self.active = active
+        self.ttlMilliseconds = min(max(ttlMilliseconds, 1_000), 30_000)
+    }
+}
+
+public enum RemoteIMActivityCodec {
+    public static let namespace = "multi-ai-code-activity"
+    public static let version = 1
+
+    private struct Wire: Codable {
+        let namespace: String
+        let version: Int
+        let activityId: String
+        let sequence: Int
+        let kind: String
+        let active: Bool
+        let ttlMs: Int
+    }
+
+    public static func encode(_ signal: RemoteIMActivitySignal) -> Data {
+        try! JSONEncoder().encode(Wire(
+            namespace: namespace,
+            version: version,
+            activityId: signal.activityID,
+            sequence: signal.sequence,
+            kind: signal.kind.rawValue,
+            active: signal.active,
+            ttlMs: signal.ttlMilliseconds
+        ))
+    }
+
+    public static func decode(_ data: Data?) -> RemoteIMActivitySignal? {
+        guard let data,
+              let wire = try? JSONDecoder().decode(Wire.self, from: data),
+              wire.namespace == namespace,
+              wire.version == version,
+              let kind = RemoteIMActivityKind(rawValue: wire.kind)
+        else { return nil }
+        return RemoteIMActivitySignal(
+            activityID: wire.activityId,
+            kind: kind,
+            active: wire.active,
+            ttlMilliseconds: wire.ttlMs,
+            sequence: wire.sequence
+        )
+    }
+}
+
 public struct RemoteIMQuote: Codable, Equatable, Sendable {
     public let messageID: String
     public let senderID: String

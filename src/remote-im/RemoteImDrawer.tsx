@@ -9,6 +9,9 @@ import {
   useRef,
   useState
 } from 'react'
+import { useSyncExternalStore } from 'react'
+import { activityKey, getActivity, subscribeActivity } from './activityState.js'
+import { useTypingActivity } from './useTypingActivity.js'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type {
@@ -317,6 +320,10 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
     ? conversations.find((conversation) => conversation.userId === selectedPeerUserId)
     : null
   const selectedLatestMessageId = selectedMessages.at(-1)?.id ?? null
+  const peerActivityKey = activityKey(props.config.desktopUserId, selectedPeerUserId ?? '')
+  const activity = useSyncExternalStore(subscribeActivity, () => getActivity(peerActivityKey), () => undefined)
+  const typing = useTypingActivity(props.projectId, selectedPeerUserId,
+    props.open && props.status?.state === 'connected', props.config.desktopUserId)
   const inputDisabled =
     !selectedPeerUserId || !props.projectId || props.status?.state !== 'connected'
   const sendDisabled =
@@ -441,6 +448,7 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
 
   function handleSubmit(event: FormEvent): void {
     event.preventDefault()
+    typing.stop()
     if (!sendDisabled && selectedPeerUserId) props.onSend(selectedPeerUserId)
   }
 
@@ -645,7 +653,7 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
                   </button>
                 </div>
               ) : null}
-              {selectedMessages.length === 0 ? (
+              {selectedMessages.length === 0 && !activity ? (
                 <div className="remote-im-empty">还没有远程 IM 消息。</div>
               ) : (
                 selectedMessages.map((message) => {
@@ -686,6 +694,17 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
                   )
                 })
               )}
+              {activity ? (
+                <div className="remote-im-activity" role="status" aria-label="对方正在活动">
+                  {activity.kind === 'human-typing' ? (
+                    <span className="remote-im-typing-dots"><i /><i /><i /></span>
+                  ) : (<><span className="remote-im-activity-ring" /><span>{
+                    activity.kind === 'machine-thinking' ? '思考中…'
+                    : activity.kind === 'machine-tool' ? '正在使用工具…'
+                    : activity.kind === 'machine-waiting' ? '等待确认…' : '正在执行…'
+                  }</span></>)}
+                </div>
+              ) : null}
             </div>
 
             <form className="remote-im-composer" onSubmit={handleSubmit}>
@@ -710,7 +729,11 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
               />
               <input
                 value={props.input}
-                onChange={(event) => props.onInputChange(event.currentTarget.value)}
+                onChange={(event) => {
+                  props.onInputChange(event.currentTarget.value)
+                  typing.changed(event.currentTarget.value)
+                }}
+                onBlur={typing.stop}
                 disabled={inputDisabled}
                 placeholder={
                   selectedPeerUserId

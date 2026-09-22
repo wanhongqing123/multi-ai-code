@@ -150,6 +150,7 @@ class TimSdkRemoteIMClientTest : public QObject {
     Q_OBJECT
 
 private slots:
+    void activityUsesOnlineCustomTransportWithoutHistory();
     void connectsThroughSdkAndSendsTextAndImage();
     void sendsApprovalDecisionAsV2CloudInteraction();
     void sendsImageWithTextAsSingleMultiElemMessage();
@@ -170,6 +171,38 @@ private slots:
     void mergesCaptionIntoIncomingVideoMessage();
     void rejectsMissingCredentials();
 };
+
+void TimSdkRemoteIMClientTest::activityUsesOnlineCustomTransportWithoutHistory() {
+    auto api = std::make_unique<FakeTimSdkApi>();
+    auto* fake = api.get();
+    TimSdkRemoteIMClient client(std::move(api));
+    client.connectToService(123456, QStringLiteral("owner"), QStringLiteral("test-sig"), {});
+    client.sendActivity(QStringLiteral("peer"),
+        RemoteIMActivitySignal{QStringLiteral("typing:1"), RemoteIMActivityKind::HumanTyping,
+                                true, 12000, 1}, {});
+    auto wire = QJsonDocument::fromJson(fake->lastJsonMessage.toUtf8()).object();
+    QVERIFY(wire.value(QStringLiteral("message_is_online_msg")).toBool());
+    QVERIFY(wire.value(QStringLiteral("message_is_excluded_from_unread_count")).toBool());
+    QCOMPARE(firstElement(fake->lastJsonMessage).value(QStringLiteral("elem_type")).toInt(), 3);
+    // Independent wire fixture matches iOS/JS, not a self-roundtrip through our encoder.
+    QJsonObject element{{QStringLiteral("elem_type"), 3},
+        {QStringLiteral("custom_elem_data"), QStringLiteral(
+            "{\"namespace\":\"multi-ai-code-activity\",\"version\":1,\"activityId\":\"machine:1\","
+            "\"sequence\":1,\"kind\":\"machine-tool\",\"active\":true,\"ttlMs\":12000}")}};
+    wire[QStringLiteral("message_sender")] = QStringLiteral("peer");
+    wire[QStringLiteral("message_elem_array")] = QJsonArray{element};
+    int activityCount = 0;
+    connect(&client, &RemoteIMClient::activityReceived, this,
+            [&](const QString& peer, const RemoteIMActivitySignal& signal) {
+        QCOMPARE(peer, QStringLiteral("peer"));
+        QCOMPARE(signal.kind, RemoteIMActivityKind::MachineTool);
+        ++activityCount;
+    });
+    QSignalSpy messages(&client, &RemoteIMClient::liveMessagesReceived);
+    fake->receiveCallback(QString::fromUtf8(QJsonDocument(QJsonArray{wire}).toJson()));
+    QCOMPARE(activityCount, 1);
+    QCOMPARE(messages.size(), 0);
+}
 
 void TimSdkRemoteIMClientTest::connectsThroughSdkAndSendsTextAndImage() {
     auto api = std::make_unique<FakeTimSdkApi>();

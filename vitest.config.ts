@@ -16,6 +16,9 @@ export default defineConfig({
       'MaiChatBuddy/**',
       'MaiAgent/**',
       'desktop/**',
+      'MaiChat/**',
+      'release/**',
+      '.worktrees/**',
       'out/**'
     ],
   },

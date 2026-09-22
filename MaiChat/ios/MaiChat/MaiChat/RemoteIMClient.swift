@@ -12,6 +12,11 @@ struct IncomingRemoteIMText: Equatable {
     let createdAt: Date
 }
 
+struct IncomingRemoteIMActivity: Equatable {
+    let fromUserID: String
+    let signal: RemoteIMActivitySignal
+}
+
 struct IncomingRemoteIMVoice: Equatable {
     let fromUserID: String
     let fileURL: URL
@@ -129,6 +134,7 @@ enum RemoteIMClientError: Error, LocalizedError {
 @MainActor
 protocol RemoteIMClient: AnyObject {
     var onIncomingText: ((IncomingRemoteIMText) -> Void)? { get set }
+    var onIncomingActivity: ((IncomingRemoteIMActivity) -> Void)? { get set }
     var onIncomingVoice: ((IncomingRemoteIMVoice) -> Void)? { get set }
     var onIncomingImage: ((IncomingRemoteIMImage) -> Void)? { get set }
     var onIncomingFile: ((IncomingRemoteIMFile) -> Void)? { get set }
@@ -143,6 +149,10 @@ protocol RemoteIMClient: AnyObject {
         origin: RemoteIMMessageOrigin,
         quote: RemoteIMQuote?
     ) async throws -> RemoteIMSendReceipt
+    func sendActivity(
+        to userID: String,
+        signal: RemoteIMActivitySignal
+    ) async throws
     func sendApprovalDecision(
         to userID: String,
         token: String,

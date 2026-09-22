@@ -7457,3 +7457,14 @@ html, body, #root {
 .remote-desktop-sharing-bar__stop:hover {
   background: rgba(255, 255, 255, 0.15);
 }
+
+/* Transient activity lives outside message history. */
+.remote-im-activity { display:flex; align-items:center; gap:8px; width:fit-content; min-height:36px; padding:4px 14px; border-radius:20px; background:#eef3f8; color:#667085; font-size:12px; }
+.remote-im-typing-dots { display:flex; gap:5px; padding:8px 0; }
+.remote-im-typing-dots i { width:6px; height:6px; border-radius:50%; background:#0b8fe3; animation:remote-im-dot 1.2s infinite ease-in-out; }
+.remote-im-typing-dots i:nth-child(2) { animation-delay:.15s; }
+.remote-im-typing-dots i:nth-child(3) { animation-delay:.3s; }
+.remote-im-activity-ring { width:16px; height:16px; border:2px solid #cfdeeb; border-top-color:#0b8fe3; border-right-color:#0b8fe3; border-radius:50%; animation:remote-im-ring 1.2s infinite linear; }
+@keyframes remote-im-dot { 0%,70%,100% { opacity:.35; transform:translateY(0); } 35% { opacity:1; transform:translateY(-2px); } }
+@keyframes remote-im-ring { to { transform:rotate(360deg); } }
+@media (prefers-reduced-motion:reduce) { .remote-im-typing-dots i,.remote-im-activity-ring { animation:none; } }

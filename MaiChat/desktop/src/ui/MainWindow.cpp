@@ -169,6 +169,82 @@ void setMessageRowDivider(QWidget* row, bool visible) {
     row->update();
 }
 
+class RemoteIMActivityBubble final : public QWidget {
+public:
+    explicit RemoteIMActivityBubble(const RemoteIMActivitySignal& signal,
+                                    QWidget* parent = nullptr)
+        : QWidget(parent), signal_(signal) {
+        setObjectName(QStringLiteral("remoteImActivityBubble"));
+        setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+        setFixedSize(sizeHint());
+        ticker_.setInterval(180);
+        connect(&ticker_, &QTimer::timeout, this, [this] {
+            phase_ = (phase_ + 1) % 24;
+            update();
+        });
+        ticker_.start();
+    }
+
+    QSize sizeHint() const override {
+        return signal_.kind == RemoteIMActivityKind::HumanTyping
+                   ? QSize(UiZoom::s(74), UiZoom::s(38))
+                   : QSize(UiZoom::s(170), UiZoom::s(38));
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
+        const QRectF bubble = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(QStringLiteral("#f1f5f9")));
+        painter.drawRoundedRect(bubble, UiZoom::s(18), UiZoom::s(18));
+
+        if (signal_.kind == RemoteIMActivityKind::HumanTyping) {
+            for (int index = 0; index < 3; ++index) {
+                QColor dot(QStringLiteral("#0b8fe3"));
+                dot.setAlpha(index == (phase_ / 4) % 3 ? 255 : 100);
+                painter.setBrush(dot);
+                const qreal radius = (index == (phase_ / 4) % 3 ? 4.0 : 3.5)
+                                     * UiZoom::factor();
+                const QPointF center(UiZoom::s(25 + index * 13), height() / 2.0);
+                painter.drawEllipse(center, radius, radius);
+            }
+            return;
+        }
+
+        const QRectF ring(UiZoom::s(13), UiZoom::s(9), UiZoom::s(20), UiZoom::s(20));
+        QPen ringPen(QColor(QStringLiteral("#0b8fe3")), 2.2 * UiZoom::factor(),
+                     Qt::SolidLine, Qt::RoundCap);
+        painter.setPen(ringPen);
+        painter.setBrush(Qt::NoBrush);
+        painter.drawArc(ring, (90 - phase_ * 15) * 16, 235 * 16);
+
+        QFont font = painter.font();
+        font.setPixelSize(UiZoom::s(12));
+        painter.setFont(font);
+        painter.setPen(QColor(QStringLiteral("#667085")));
+        painter.drawText(QRectF(UiZoom::s(42), 0, width() - UiZoom::s(50), height()),
+                         Qt::AlignVCenter | Qt::AlignLeft, statusText());
+    }
+
+private:
+    QString statusText() const {
+        switch (signal_.kind) {
+        case RemoteIMActivityKind::MachineThinking: return QStringLiteral("思考中…");
+        case RemoteIMActivityKind::MachineTool: return QStringLiteral("正在使用工具…");
+        case RemoteIMActivityKind::MachineWaiting: return QStringLiteral("等待确认…");
+        case RemoteIMActivityKind::MachineWorking: return QStringLiteral("正在执行…");
+        case RemoteIMActivityKind::HumanTyping: return QString();
+        }
+        return QString();
+    }
+
+    RemoteIMActivitySignal signal_;
+    QTimer ticker_;
+    int phase_ = 0;
+};
+
 // IM 的消息正文。**和 AI 助手页是同一套渲染**：都走 MarkdownDocument →
 // MarkdownLayout → 自己画，共用一份 MarkdownTheme。
 //
@@ -1391,6 +1467,9 @@ void MainWindow::closeEvent(QCloseEvent* event) {
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == messageEditor_ && event->type() == QEvent::FocusOut) {
+        app_.setHumanTypingActive(false);
+    }
     if (watched == messageEditor_ && (event->type() == QEvent::KeyPress || event->type() == QEvent::InputMethod)) {
         auto clock = std::make_shared<QElapsedTimer>(); clock->start();
         const auto account = app_.client().currentAccount();
@@ -2430,10 +2509,16 @@ void MainWindow::bindSignals() {
     connect(messageEditor_, &QTextEdit::textChanged, this, [this] {
         RemoteDiagnostics::PerformanceSpan performance("composer-change");
         updateComposerState();
+        app_.setHumanTypingActive(messageEditor_->hasFocus() && !messageEditor_->toPlainText().isEmpty());
         // 组词期间不触发重建（由 InputMethod 事件在组词结束时再拉起）；否则重启防抖定时器：
         // 连续输入天然合并成一次重建，且始终落在按键/组词之外。
         if (imeComposing_) return;
         slashCommandUpdateTimer_->start();
+    });
+    connect(&app_, &RemoteIMApplication::activityChanged, this,
+            [this](const QString& peerId) {
+        if (peerId != app_.chatState().selectedPeerId()) return;
+        updateActivityBubble();
     });
     conversationList_->installEventFilter(this);
     contactsList_->installEventFilter(this);
@@ -3293,9 +3378,11 @@ void MainWindow::rebuildMessageList(const QString& peerId, const QList<RemoteIMM
     renderedStatusById_.clear();
     renderedApprovalStateById_.clear();
     loadEarlierButton_ = nullptr;
-    renderedEmptyView_ = messages.isEmpty();
+    activityBubble_ = nullptr;
+    const RemoteIMActivitySignal activity = app_.activityForPeer(peerId);
+    renderedEmptyView_ = messages.isEmpty() && activity.activityId.isEmpty();
 
-    if (messages.isEmpty()) {
+    if (renderedEmptyView_) {
         auto* emptyView = new QWidget(messageContainer_);
         emptyView->setObjectName(QStringLiteral("emptyMessagesView"));
         auto* emptyLayout = new QVBoxLayout(emptyView);
@@ -3409,6 +3496,7 @@ void MainWindow::rebuildMessageList(const QString& peerId, const QList<RemoteIMM
         }
     }
     messageLayout_->addStretch(1);
+    updateActivityBubble();
     updateLoadEarlierVisibility();
 
     QTimer::singleShot(0, this, [this, peerId, renderedApprovalIds] {
@@ -3652,6 +3740,41 @@ void MainWindow::updateLoadEarlierVisibility() {
     const bool unrenderedInMemory =
             app_.chatState().messageCountWith(peer) > renderedMessageIds_.size();
     loadEarlierButton_->setVisible(unrenderedInMemory || app_.hasEarlierMessages(peer));
+}
+
+void MainWindow::updateActivityBubble() {
+    const QString peerId = app_.chatState().selectedPeerId();
+    const RemoteIMActivitySignal activity = app_.activityForPeer(peerId);
+    const bool hasActivity = !activity.activityId.isEmpty();
+    if (renderedEmptyView_) {
+        if (hasActivity) rebuildMessageList(peerId, app_.chatState().messagesWith(peerId));
+        return;
+    }
+    if (activityBubble_) {
+        messageLayout_->removeWidget(activityBubble_);
+        activityBubble_->deleteLater();
+        activityBubble_ = nullptr;
+    }
+    if (!hasActivity) {
+        if (app_.chatState().messagesWith(peerId).isEmpty()) {
+            rebuildMessageList(peerId, {});
+        }
+        return;
+    }
+
+    const bool wasNearBottom = messageScroll_->verticalScrollBar()->maximum()
+                               - messageScroll_->verticalScrollBar()->value()
+                               <= UiZoom::s(40);
+    auto* row = new QWidget(messageContainer_);
+    row->setObjectName(QStringLiteral("remoteImActivityRow"));
+    auto* layout = new QHBoxLayout(row);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->addWidget(new RemoteIMActivityBubble(activity, row));
+    layout->addStretch(1);
+    activityBubble_ = row;
+    const int insertion = qMax(0, messageLayout_->count() - 1);
+    messageLayout_->insertWidget(insertion, row);
+    if (wasNearBottom) scrollMessagesToBottom();
 }
 
 void MainWindow::scrollMessagesToBottom() {

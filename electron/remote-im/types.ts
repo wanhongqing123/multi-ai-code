@@ -73,6 +73,22 @@ export type RemoteImMessageKind = 'text' | 'image' | 'file' | 'video'
  */
 export type RemoteImMessageOrigin = 'human' | 'machine'
 
+export type RemoteImActivityKind =
+  | 'human-typing'
+  | 'machine-working'
+  | 'machine-thinking'
+  | 'machine-tool'
+  | 'machine-waiting'
+
+/** Ephemeral online-only state. It is never inserted into message history. */
+export interface RemoteImActivitySignal {
+  activityId: string
+  sequence: number
+  kind: RemoteImActivityKind
+  active: boolean
+  ttlMs: number
+}
+
 export interface RemoteImGitDiffArtifactSource {
   kind: 'working' | 'commit' | 'range'
   label: string
@@ -261,6 +277,12 @@ export interface RemoteImIncomingTextMessage {
   /** Set when this message is a reply quoting an earlier one. */
   quote?: RemoteImMessageQuote
   createdAt?: number
+}
+
+export interface RemoteImIncomingActivityMessage extends RemoteImActivitySignal {
+  projectId: string
+  fromUserId: string
+  toUserId?: string | null
 }
 
 export interface RemoteImIncomingAudioMessage {

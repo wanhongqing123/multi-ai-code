@@ -2,6 +2,22 @@ import XCTest
 @testable import MaiChatCore
 
 final class MasterChatStateTests: XCTestCase {
+    func testActivitySignalRoundTripsAndClampsTTL() throws {
+        let signal = try XCTUnwrap(RemoteIMActivitySignal(
+            activityID: "turn:task-1",
+            kind: .machineTool,
+            active: true,
+            ttlMilliseconds: 60_000
+        ))
+        XCTAssertEqual(signal.ttlMilliseconds, 30_000)
+        XCTAssertEqual(RemoteIMActivityCodec.decode(RemoteIMActivityCodec.encode(signal)), signal)
+        XCTAssertNil(RemoteIMActivitySignal(
+            activityID: "../invalid",
+            kind: .humanTyping,
+            active: true,
+            ttlMilliseconds: 12_000
+        ))
+    }
     func testPreparedAttachmentsKeepOriginalRecipientAfterSelectionChanges() throws {
         var state = MasterChatState(ownerUserID: "owner")
         try state.upsertFriend(userID: "peer-a")

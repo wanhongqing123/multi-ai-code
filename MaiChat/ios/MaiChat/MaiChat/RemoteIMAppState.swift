@@ -56,6 +56,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     @Published private(set) var userProfileByUserID: [String: RemoteIMUserProfile] = [:]
     @Published private(set) var downloadingVideoKeys = Set<String>()
     @Published private(set) var mediaFileRevision: UInt64 = 0
+    @Published private(set) var activityByUserID: [String: RemoteIMActivitySignal] = [:]
 
     let remoteDesktop: RemoteDesktopSession
     let draft = RemoteIMDraftState()
@@ -82,6 +83,13 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     private var videoMetadataChecks: [String: UInt64] = [:]
     private var videoMetadataSequence: UInt64 = 0
     private var profileRefreshUserIDsInFlight = Set<String>()
+    private var activityExpiryTasks: [String: Task<Void, Never>] = [:]
+    private var outgoingTypingTasks: [String: Task<Void, Never>] = [:]
+    private var outgoingTypingIDs: [String: String] = [:]
+    private var typingSequence: [String: Int] = [:]
+    private var typingLastEdit: [String: Date] = [:]
+    private var closedActivityIDs: [String] = []
+    private var activitySequence: [String: Int] = [:]
     private let messagePageSize = 20
 
     init(
@@ -151,6 +159,9 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             Task { @MainActor in
                 await self?.receive(event)
             }
+        }
+        self.client.onIncomingActivity = { [weak self] event in
+            self?.receive(event)
         }
         self.client.onIncomingVoice = { [weak self] event in
             Task { @MainActor in
@@ -390,6 +401,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         )
         logIM(level: .info, event: "disconnect-start", userID: masterUserID)
         await remoteDesktop.stop(cause: "im-disconnect")
+        stopAllActivity()
         await client.disconnect()
         presenceStatusByUserID = [:]
         downloadingVideoKeys = []
@@ -400,6 +412,120 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             fields: ["duration_ms": elapsedMilliseconds(since: startedAt)],
             userID: masterUserID
         )
+    }
+
+    func activity(with userID: String) -> RemoteIMActivitySignal? {
+        activityByUserID[userID]
+    }
+
+    func updateHumanTyping(_ active: Bool, to userID: String) {
+        let peer = userID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !peer.isEmpty else { return }
+        if active {
+            guard connectionState == .connected else { return }
+            typingLastEdit[peer] = Date()
+            guard outgoingTypingTasks[peer] == nil else { return }
+            let activityID = "typing:\(UUID().uuidString.lowercased())"
+            outgoingTypingIDs[peer] = activityID
+            typingSequence[peer] = 0
+            outgoingTypingTasks[peer] = Task { @MainActor [weak self] in
+                var nextSend = Date.distantPast
+                while !Task.isCancelled {
+                    guard let self, self.outgoingTypingIDs[peer] == activityID else { return }
+                    if Date().timeIntervalSince(self.typingLastEdit[peer] ?? .distantPast) >= 4 {
+                        self.updateHumanTyping(false, to: peer)
+                        return
+                    }
+                    if Date() >= nextSend {
+                        self.typingSequence[peer, default: 0] += 1
+                        if let signal = RemoteIMActivitySignal(
+                            activityID: activityID, kind: .humanTyping, active: true,
+                            ttlMilliseconds: 12_000, sequence: self.typingSequence[peer] ?? 1
+                        ) {
+                            try? await self.client.sendActivity(to: peer, signal: signal)
+                        }
+                        nextSend = Date().addingTimeInterval(3)
+                    }
+                    do { try await Task.sleep(nanoseconds: 500_000_000) }
+                    catch { return }
+                }
+            }
+            return
+        }
+        let activityID = outgoingTypingIDs.removeValue(forKey: peer)
+        outgoingTypingTasks.removeValue(forKey: peer)?.cancel()
+        typingLastEdit.removeValue(forKey: peer)
+        let sequence = (typingSequence.removeValue(forKey: peer) ?? 0) + 1
+        guard let activityID,
+              let signal = RemoteIMActivitySignal(
+                activityID: activityID, kind: .humanTyping, active: false,
+                ttlMilliseconds: 1_000, sequence: sequence
+              ) else { return }
+        let account = remoteDiagnosticsIdentity
+        Task { [weak self] in
+            guard let self, self.remoteDiagnosticsIdentity == account else { return }
+            try? await self.client.sendActivity(to: peer, signal: signal)
+        }
+    }
+
+    private func receive(_ event: IncomingRemoteIMActivity) {
+        guard shouldAcceptIncomingSender(event.fromUserID, kind: "activity") else { return }
+        guard chatState.contacts.contains(where: { $0.userID == event.fromUserID }) else { return }
+        let userID = event.fromUserID
+        let identity = userID + "|" + event.signal.activityID
+        guard !closedActivityIDs.contains(identity) else { return }
+        if !event.signal.active {
+            rememberClosedActivity(identity)
+            if activityByUserID[userID]?.activityID == event.signal.activityID {
+                clearActivity(from: userID)
+            }
+            return
+        }
+        guard event.signal.sequence > (activitySequence[identity] ?? -1) else { return }
+        activitySequence[identity] = event.signal.sequence
+        if activitySequence.count > 512 { activitySequence = [identity: event.signal.sequence] }
+        activityExpiryTasks[userID]?.cancel()
+        if let old = activityByUserID[userID], old.activityID != event.signal.activityID {
+            rememberClosedActivity(userID + "|" + old.activityID)
+        }
+        let old = activityByUserID[userID]
+        if old?.activityID != event.signal.activityID || old?.kind != event.signal.kind {
+            activityByUserID[userID] = event.signal
+        }
+        let activityID = event.signal.activityID
+        let delay = UInt64(event.signal.ttlMilliseconds) * 1_000_000
+        activityExpiryTasks[userID] = Task { @MainActor [weak self] in
+            do { try await Task.sleep(nanoseconds: delay) } catch { return }
+            guard self?.activityByUserID[userID]?.activityID == activityID else { return }
+            self?.activityByUserID.removeValue(forKey: userID)
+            self?.activityExpiryTasks[userID] = nil
+        }
+    }
+
+    private func rememberClosedActivity(_ identity: String) {
+        if !closedActivityIDs.contains(identity) { closedActivityIDs.append(identity) }
+        if closedActivityIDs.count > 256 { closedActivityIDs.removeFirst() }
+    }
+
+    private func clearActivity(from userID: String) {
+        activityExpiryTasks.removeValue(forKey: userID)?.cancel()
+        if let old = activityByUserID[userID] {
+            rememberClosedActivity(userID + "|" + old.activityID)
+            activityByUserID.removeValue(forKey: userID)
+        }
+    }
+
+    private func stopAllActivity() {
+        for task in activityExpiryTasks.values { task.cancel() }
+        for task in outgoingTypingTasks.values { task.cancel() }
+        activityExpiryTasks.removeAll()
+        outgoingTypingTasks.removeAll()
+        outgoingTypingIDs.removeAll()
+        typingSequence.removeAll()
+        typingLastEdit.removeAll()
+        closedActivityIDs.removeAll()
+        activitySequence.removeAll()
+        activityByUserID.removeAll()
     }
 
     func addContact() {
@@ -1351,6 +1477,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         do { try await MarkdownPreparation.prepare([event.text]) }
         catch { return }
         guard remoteDiagnosticsIdentity == identity else { return }
+        clearActivity(from: event.fromUserID)
         let previousCount = chatState.messages.count
         let message = chatState.receiveText(
             event.text,
@@ -1389,6 +1516,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
 
     private func receive(_ event: IncomingRemoteIMVoice) async {
         guard shouldAcceptIncomingSender(event.fromUserID, kind: "voice") else { return }
+        clearActivity(from: event.fromUserID)
         guard await shouldAcceptIncomingMessage(remoteID: event.remoteID) else { return }
         let previousCount = chatState.messages.count
         let message = chatState.receiveVoice(
@@ -1423,6 +1551,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     private func receive(_ event: IncomingRemoteIMImage) async {
         mediaFileRevision &+= 1
         guard shouldAcceptIncomingSender(event.fromUserID, kind: "image") else { return }
+        clearActivity(from: event.fromUserID)
         guard await shouldAcceptIncomingMessage(remoteID: event.remoteID) else { return }
         let previousCount = chatState.messages.count
         let message = chatState.receiveImage(
@@ -1466,6 +1595,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         mediaFileRevision &+= 1
         guard !remoteDiagnosticsAccountTag.isEmpty, event.accountTag == remoteDiagnosticsAccountTag else { return }
         guard shouldAcceptIncomingSender(event.fromUserID, kind: "file") else { return }
+        clearActivity(from: event.fromUserID)
         guard await shouldAcceptIncomingMessage(remoteID: event.remoteID) else { return }
         // The history lookup suspends. An account change during that await must
         // not let the old account's completed download enter the new store.
@@ -1510,6 +1640,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     private func receive(_ event: IncomingRemoteIMVideo) async {
         mediaFileRevision &+= 1
         guard shouldAcceptIncomingSender(event.fromUserID, kind: "video") else { return }
+        clearActivity(from: event.fromUserID)
         let existingMessage = chatState.message(remoteID: event.remoteID)
         if existingMessage == nil {
             guard await shouldAcceptIncomingMessage(remoteID: event.remoteID) else { return }
@@ -1727,6 +1858,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     }
 
     private func rebuildChatStateForCurrentAccount() async -> Bool {
+        stopAllActivity()
         accountRebuildRequestGeneration &+= 1
         let requestGeneration = accountRebuildRequestGeneration
         let cleanMasterUserID = masterUserID.trimmingCharacters(in: .whitespacesAndNewlines)

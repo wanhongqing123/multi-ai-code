@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { activityKey, receiveActivity, clearActivity, clearAccountActivities } from './activityState.js'
 import type {
   RemoteImConfig,
   RemoteImLoginState,
@@ -213,6 +214,8 @@ export async function syncRemoteImContactsFromRuntime(input: {
 
 export default function RemoteImClientHost(props: RemoteImClientHostProps): null {
   const runtimeSlotRef = useRef(createRemoteImRuntimeSlot<TencentImRuntime>())
+  const currentContacts = useRef(props.config.friendUserIds)
+  currentContacts.current = props.config.friendUserIds
   const lifecycleQueueRef = useRef(createRemoteImLifecycleQueue())
   const onContactsSyncedRef = useRef(props.onContactsSynced)
   const onRemoteDesktopStateChangedRef = useRef(props.onRemoteDesktopStateChanged)
@@ -374,15 +377,24 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
             // 远程桌面信令在这里消费掉，绝不能继续往主进程转发——否则会被
             // router 当成普通消息喂给 AICLI。
             if (remoteDesktopHost.handleIncomingText(message)) return
+            clearActivity(activityKey(props.config.desktopUserId, message.fromUserId))
             void window.api.remoteIm.deliverIncomingText(message, runtimeIdentity)
           },
+          onIncomingActivity: (message) => {
+            if (cancelled || message.fromUserId === props.config.desktopUserId
+                || !currentContacts.current.includes(message.fromUserId)) return
+            receiveActivity(activityKey(props.config.desktopUserId, message.fromUserId), message)
+          },
           onIncomingAudio: (message) => {
+            if (!cancelled) clearActivity(activityKey(props.config.desktopUserId, message.fromUserId))
             if (!cancelled) void window.api.remoteIm.deliverIncomingAudio(message, runtimeIdentity)
           },
           onIncomingImage: (message) => {
+            if (!cancelled) clearActivity(activityKey(props.config.desktopUserId, message.fromUserId))
             if (!cancelled) void window.api.remoteIm.deliverIncomingImage(message, runtimeIdentity)
           },
           onIncomingFile: (message) => {
+            if (!cancelled) clearActivity(activityKey(props.config.desktopUserId, message.fromUserId))
             if (!cancelled) void window.api.remoteIm.deliverIncomingFile(message, runtimeIdentity)
           },
           onFriendListUpdated: () => {
@@ -518,6 +530,42 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
             event: 'send:runtime-wait-failed',
             detail: { error: err instanceof Error ? err.message : String(err) }
           })
+        }
+      })()
+    })
+
+    // Status is best-effort: keep only the newest queued state for an activity.
+    // Never wait for reconnection and then replay an already-expired indicator.
+    const pendingActivities = new Map<string, { event: import('../../electron/preload.js').RemoteImOutgoingActivityEvent; expiresAt: number }>()
+    let sendingActivity = false
+    const offOutgoingActivity = window.api.remoteIm.onOutgoingActivity((evt) => {
+      if (evt.projectId !== props.projectId || !ownedRuntime || cancelled) return
+      if (!isSameRemoteImRuntimeIdentity(evt.runtimeIdentity, runtimeIdentity)) return
+      pendingActivities.set(`${evt.toUserId}:${evt.activityId}`, {
+        event: evt, expiresAt: Date.now() + evt.ttlMs
+      })
+      if (sendingActivity) return
+      sendingActivity = true
+      void (async () => {
+        try {
+          while (!cancelled && pendingActivities.size) {
+            const key = pendingActivities.keys().next().value!
+            const next = pendingActivities.get(key)!
+            pendingActivities.delete(key)
+            if (Date.now() >= next.expiresAt || !ownedRuntime) continue
+            const { event } = next
+            try {
+              await ownedRuntime.sendActivity?.(event.toUserId, {
+                activityId: event.activityId, sequence: event.sequence,
+                kind: event.kind, active: event.active, ttlMs: event.ttlMs
+              })
+            } catch {
+              // Receiver expiry is the fallback; retrying old status resurrects it.
+            }
+          }
+        } finally {
+          sendingActivity = false
+          if (cancelled) pendingActivities.clear()
         }
       })()
     })
@@ -705,8 +753,10 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
 
     return () => {
       cancelled = true
+      clearAccountActivities(props.config.desktopUserId)
       cancelScheduledConnect()
       offOutgoing()
+      offOutgoingActivity()
       offOutgoingImage()
       offOutgoingFile()
       offOutgoingVideo()

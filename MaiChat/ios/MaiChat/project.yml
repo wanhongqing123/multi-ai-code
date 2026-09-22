@@ -38,6 +38,7 @@ targets:
       - path: MaiChat/LocalChatHistoryStore.swift
       - path: MaiChat/MarkdownInlineStyling.swift
       - path: MaiChat/MessageBubbleLayout.swift
+      - path: MaiChat/ComposerDraftState.swift
       - path: MaiChat/RemoteDiagnosticsCoordinator.swift
       - path: MaiChat/RemoteDiagnosticsView.swift
       - path: ../../../tests/fixtures/remote-diagnostics-failure-receipts.json

@@ -2,12 +2,6 @@ import Foundation
 import MaiChatCore
 import UIKit
 
-@MainActor
-final class RemoteIMDraftState: ObservableObject {
-    @Published var text = ""
-    @Published var quote: RemoteIMQuote?
-}
-
 struct RemoteIMBroadcastResult: Equatable {
     let total: Int
     let failedUserIDs: [String]
@@ -61,6 +55,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     }
     @Published private(set) var userProfileByUserID: [String: RemoteIMUserProfile] = [:]
     @Published private(set) var downloadingVideoKeys = Set<String>()
+    @Published private(set) var mediaFileRevision: UInt64 = 0
 
     let remoteDesktop: RemoteDesktopSession
     let draft = RemoteIMDraftState()
@@ -83,6 +78,9 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     private var pendingHistoryMutations: [LocalChatHistoryMutation] = []
     private var historySaveTask: Task<Void, Never>?
     private var pendingIncomingRemoteIDs = Set<String>()
+    private var replyPreparationTask: Task<Void, Never>?
+    private var videoMetadataChecks: [String: UInt64] = [:]
+    private var videoMetadataSequence: UInt64 = 0
     private var profileRefreshUserIDsInFlight = Set<String>()
     private let messagePageSize = 20
 
@@ -90,15 +88,17 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         settingsStore: LocalSettingsStore = LocalSettingsStore(),
         secretStore: KeychainSecretStore = KeychainSecretStore(),
         historyStore: LocalChatHistoryStore = LocalChatHistoryStore(),
-        client: RemoteIMClient = TencentIMClient()
+        client: RemoteIMClient = TencentIMClient(),
+        loadedSettings: StoredRemoteIMSettings,
+        loadedSecretKey: String
     ) {
         self.settingsStore = settingsStore
         self.secretStore = secretStore
         self.client = client
         self.remoteDesktop = RemoteDesktopSession(client: client)
 
-        var settings = settingsStore.load()
-        var loadedSecretKey = secretStore.readSecretKey()
+        var settings = loadedSettings
+        var loadedSecretKey = loadedSecretKey
         Self.applyCredentialDefaults(settings: &settings, secretKey: &loadedSecretKey)
         let debugRequestedAutoConnect = Self.applyDebugLaunchOverrides(
             settings: &settings,
@@ -248,7 +248,9 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     func saveSettings() async -> Bool {
         do {
             applyFixedCredential()
-            try secretStore.saveSecretKey(secretKey)
+            let store = secretStore
+            let value = secretKey
+            try await RemoteIMBackgroundWork.file { try store.saveSecretKey(value) }
             guard await rebuildChatStateForCurrentAccount() else { return false }
             settingsStore.save(currentStoredSettings())
             errorMessage = nil
@@ -329,11 +331,11 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 fields: ["sdk_app_id": String(sdkAppID)],
                 userID: cleanMasterUserID
             )
-            let userSig = try TencentUserSigGenerator.generate(
-                sdkAppID: sdkAppID,
-                userID: cleanMasterUserID,
-                secretKey: cleanSecretKey
-            )
+            let identity = remoteDiagnosticsIdentity
+            let userSig = try await RemoteIMBackgroundWork.parse {
+                try TencentUserSigGenerator.generate(sdkAppID: sdkAppID, userID: cleanMasterUserID, secretKey: cleanSecretKey)
+            }
+            guard remoteDiagnosticsIdentity == identity else { return }
             try await client.connect(
                 sdkAppID: sdkAppID,
                 userID: cleanMasterUserID,
@@ -532,7 +534,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
 
     func selectContact(_ contact: RemoteIMContact) {
         if chatState.selectedPeerID != contact.userID {
-            draft.quote = nil
+            cancelReply()
             chatState.selectPeer(userID: contact.userID)
         }
         if unreadCountByUserID.removeValue(forKey: contact.userID) != nil {
@@ -587,10 +589,20 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     }
 
     func beginReply(to message: RemoteIMMessage) {
-        draft.quote = RemoteIMMessageQuotePolicy.quote(for: message)
+        cancelReply()
+        let identity = remoteDiagnosticsIdentity
+        let peer = chatState.selectedPeerID
+        replyPreparationTask = Task { [weak self] in
+            guard let quote = try? await RemoteIMBackgroundWork.parse({ RemoteIMMessageQuotePolicy.quote(for: message) }),
+                  let self, !Task.isCancelled, self.remoteDiagnosticsIdentity == identity,
+                  self.chatState.selectedPeerID == peer else { return }
+            self.draft.quote = quote
+        }
     }
 
     func cancelReply() {
+        replyPreparationTask?.cancel()
+        replyPreparationTask = nil
         draft.quote = nil
     }
 
@@ -706,6 +718,8 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 before: nil,
                 limit: messagePageSize
             )
+            let historyReadDuration = elapsedMilliseconds(since: historyReadStart)
+            try await MarkdownPreparation.prepare(page.messages.map(\.text))
             guard isCurrentHistoryLoad(
                 account: account,
                 accountGeneration: accountGeneration,
@@ -715,7 +729,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             else { return }
             logIM(level: .info, event: "history-load-completed", fields: [
                 "peer": DiagnosticLogPrivacy.stableTag(cleanUserID, prefix: "u"),
-                "duration_ms": elapsedMilliseconds(since: historyReadStart),
+                "duration_ms": historyReadDuration,
                 "message_count": String(page.messages.count), "operation": "page-await"
             ])
             chatState.mergeMessages(page.messages)
@@ -737,6 +751,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             ) else { return }
             conversationHistoryStateByUserID[cleanUserID] = current
             objectWillChange.send()
+            if error is CancellationError { return }
             recordHistoryLoadFailure(error, operation: "initial-page")
         }
     }
@@ -772,6 +787,8 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 before: oldestLoadedCursor,
                 limit: messagePageSize
             )
+            let historyReadDuration = elapsedMilliseconds(since: historyReadStart)
+            try await MarkdownPreparation.prepare(page.messages.map(\.text))
             guard isCurrentHistoryLoad(
                 account: account,
                 accountGeneration: accountGeneration,
@@ -781,7 +798,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             else { return }
             logIM(level: .info, event: "history-load-completed", fields: [
                 "peer": DiagnosticLogPrivacy.stableTag(cleanUserID, prefix: "u"),
-                "duration_ms": elapsedMilliseconds(since: historyReadStart),
+                "duration_ms": historyReadDuration,
                 "message_count": String(page.messages.count), "operation": "page-await"
             ])
             chatState.mergeMessages(page.messages)
@@ -804,17 +821,18 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             ) else { return }
             state.isLoading = false
             conversationHistoryStateByUserID[cleanUserID] = state
+            if error is CancellationError { return }
             recordHistoryLoadFailure(error, operation: "earlier-page")
         }
     }
 
-    func sendDraft() async {
+    func sendDraft(to recipient: String? = nil) async {
         guard canSend else { return }
         let text = draft.text
         let quote = draft.quote
         draft.text = ""
-        draft.quote = nil
-        await sendText(text, quote: quote)
+        cancelReply()
+        await sendText(text, quote: quote, to: recipient)
     }
 
     var remoteDiagnosticsIdentity: String {
@@ -888,8 +906,8 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     /// 直接发一段文本（语音识别结果走这里）。与 sendDraft 共用同一套排队/落库/回执逻辑，
     /// 避免语音输入这条路径漏掉其中任何一步。
     @discardableResult
-    func sendText(_ text: String, quote: RemoteIMQuote? = nil) async -> Bool {
-        await sendQueuedText(text, quote: quote) { [client] userID, queuedText in
+    func sendText(_ text: String, quote: RemoteIMQuote? = nil, to recipient: String? = nil) async -> Bool {
+        await sendQueuedText(text, quote: quote, to: recipient) { [client] userID, queuedText in
             try await client.sendText(
                 to: userID,
                 text: queuedText,
@@ -949,7 +967,10 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             errorMessage = "当前无法转发消息"
             return false
         }
-        guard forwardAttachmentIsReady(source) else {
+        let identity = remoteDiagnosticsIdentity
+        let attachmentReady = (try? await RemoteIMBackgroundWork.metadata { Self.forwardAttachmentIsReady(source) }) ?? false
+        guard identity == remoteDiagnosticsIdentity, !Task.isCancelled else { return false }
+        guard attachmentReady else {
             errorMessage = "附件尚未下载完成，暂时无法转发"
             return false
         }
@@ -980,7 +1001,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         }
     }
 
-    private func forwardAttachmentIsReady(_ message: RemoteIMMessage) -> Bool {
+    nonisolated private static func forwardAttachmentIsReady(_ message: RemoteIMMessage) -> Bool {
         let manager = FileManager.default
         if let attachment = message.imageAttachment {
             return manager.fileExists(atPath: attachment.localFilePath)
@@ -1083,9 +1104,11 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         _ text: String,
         approvalDecision: RemoteIMApprovalDecision? = nil,
         quote: RemoteIMQuote? = nil,
+        to recipient: String? = nil,
         deliver: (String, String) async throws -> RemoteIMSendReceipt
     ) async -> Bool {
-        guard canSendVoice else { return false }   // 连接 + 已选联系人；正文非空由调用方保证
+        guard let peerID = outgoingRecipient(recipient) else { return false }   // 连接 + 已选联系人；正文非空由调用方保证
+        let identity = remoteDiagnosticsIdentity
         var queuedMessageID: UUID?
         do {
             let message = if let approvalDecision {
@@ -1094,12 +1117,15 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                     action: approvalDecision.action
                 )
             } else {
-                try chatState.queueOutgoingText(text, quote: quote)
+                try chatState.queueOutgoingText(to: peerID, text: text, quote: quote)
             }
             queuedMessageID = message.id
-            locallyQueuedMessageID = message.id
             enqueueHistoryUpsert(message)
+            try await MarkdownPreparation.prepare([message.text])
+            guard remoteDiagnosticsIdentity == identity else { return false }
+            locallyQueuedMessageID = message.id
             let receipt = try await deliver(message.toUserID, message.text)
+            guard remoteDiagnosticsIdentity == identity else { return false }
             try chatState.updateMessageDelivery(
                 id: message.id,
                 remoteID: receipt.remoteID,
@@ -1109,6 +1135,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             errorMessage = nil
             return true
         } catch {
+            guard remoteDiagnosticsIdentity == identity else { return false }
             if let queuedMessageID {
                 try? chatState.updateMessageStatus(id: queuedMessageID, status: .failed)
                 enqueueCurrentMessage(id: queuedMessageID)
@@ -1118,19 +1145,29 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         }
     }
 
-    func sendVoiceRecording(_ recording: RemoteIMVoiceRecording) async {
-        guard canSendVoice else { return }
+    private func outgoingRecipient(_ explicit: String?) -> String? {
+        guard connectionState == .connected,
+              let id = (explicit ?? selectedContact?.userID)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              chatState.contacts.contains(where: { $0.userID == id }) else { return nil }
+        return id
+    }
 
+    func sendVoiceRecording(_ recording: RemoteIMVoiceRecording, to recipient: String? = nil) async {
+        guard let peerID = outgoingRecipient(recipient) else { return }
+
+        let identity = remoteDiagnosticsIdentity
         var queuedMessageID: UUID?
         do {
             let message = try chatState.queueOutgoingVoice(
                 filePath: recording.fileURL.path,
-                durationSeconds: recording.durationSeconds
+                durationSeconds: recording.durationSeconds,
+                to: peerID
             )
             queuedMessageID = message.id
             locallyQueuedMessageID = message.id
             enqueueHistoryUpsert(message)
             let receipt = try await client.sendVoice(to: message.toUserID, recording: recording)
+            guard remoteDiagnosticsIdentity == identity else { return }
             try chatState.updateMessageDelivery(
                 id: message.id,
                 remoteID: receipt.remoteID,
@@ -1139,6 +1176,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             enqueueCurrentMessage(id: message.id)
             errorMessage = nil
         } catch {
+            guard remoteDiagnosticsIdentity == identity else { return }
             if let queuedMessageID {
                 try? chatState.updateMessageStatus(id: queuedMessageID, status: .failed)
                 enqueueCurrentMessage(id: queuedMessageID)
@@ -1147,21 +1185,24 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         }
     }
 
-    func sendImageFile(_ image: RemoteIMImageFile) async {
-        guard canSendImage else { return }
+    func sendImageFile(_ image: RemoteIMImageFile, to recipient: String? = nil) async {
+        guard let peerID = outgoingRecipient(recipient) else { return }
 
+        let identity = remoteDiagnosticsIdentity
         var queuedMessageID: UUID?
         do {
             let message = try chatState.queueOutgoingImage(
                 filePath: image.fileURL.path,
                 width: image.width,
                 height: image.height,
-                sizeBytes: image.sizeBytes
+                sizeBytes: image.sizeBytes,
+                to: peerID
             )
             queuedMessageID = message.id
             locallyQueuedMessageID = message.id
             enqueueHistoryUpsert(message)
             let receipt = try await client.sendImage(to: message.toUserID, image: image)
+            guard remoteDiagnosticsIdentity == identity else { return }
             try chatState.updateMessageDelivery(
                 id: message.id,
                 remoteID: receipt.remoteID,
@@ -1170,6 +1211,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             enqueueCurrentMessage(id: message.id)
             errorMessage = nil
         } catch {
+            guard remoteDiagnosticsIdentity == identity else { return }
             if let queuedMessageID {
                 try? chatState.updateMessageStatus(id: queuedMessageID, status: .failed)
                 enqueueCurrentMessage(id: queuedMessageID)
@@ -1178,9 +1220,10 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         }
     }
 
-    func sendVideoFile(_ video: RemoteIMVideoFile) async {
-        guard canSendVideo else { return }
+    func sendVideoFile(_ video: RemoteIMVideoFile, to recipient: String? = nil) async {
+        guard let peerID = outgoingRecipient(recipient) else { return }
 
+        let identity = remoteDiagnosticsIdentity
         var queuedMessageID: UUID?
         do {
             let message = try chatState.queueOutgoingVideo(
@@ -1189,12 +1232,14 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 durationSeconds: video.durationSeconds,
                 width: video.width,
                 height: video.height,
-                sizeBytes: video.sizeBytes
+                sizeBytes: video.sizeBytes,
+                to: peerID
             )
             queuedMessageID = message.id
             locallyQueuedMessageID = message.id
             enqueueHistoryUpsert(message)
             let receipt = try await client.sendVideo(to: message.toUserID, video: video)
+            guard remoteDiagnosticsIdentity == identity else { return }
             try chatState.updateMessageDelivery(
                 id: message.id,
                 remoteID: receipt.remoteID,
@@ -1203,6 +1248,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             enqueueCurrentMessage(id: message.id)
             errorMessage = nil
         } catch {
+            guard remoteDiagnosticsIdentity == identity else { return }
             if let queuedMessageID {
                 try? chatState.updateMessageStatus(id: queuedMessageID, status: .failed)
                 enqueueCurrentMessage(id: queuedMessageID)
@@ -1211,21 +1257,24 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         }
     }
 
-    func sendFile(_ file: RemoteIMFile) async {
-        guard canSendFile else { return }
+    func sendFile(_ file: RemoteIMFile, to recipient: String? = nil) async {
+        guard let peerID = outgoingRecipient(recipient) else { return }
 
+        let identity = remoteDiagnosticsIdentity
         var queuedMessageID: UUID?
         do {
             let message = try chatState.queueOutgoingFile(
                 filePath: file.fileURL.path,
                 fileName: file.fileName,
                 mimeType: file.mimeType,
-                sizeBytes: file.sizeBytes
+                sizeBytes: file.sizeBytes,
+                to: peerID
             )
             queuedMessageID = message.id
             locallyQueuedMessageID = message.id
             enqueueHistoryUpsert(message)
             let receipt = try await client.sendFile(to: message.toUserID, file: file)
+            guard remoteDiagnosticsIdentity == identity else { return }
             try chatState.updateMessageDelivery(
                 id: message.id,
                 remoteID: receipt.remoteID,
@@ -1234,6 +1283,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             enqueueCurrentMessage(id: message.id)
             errorMessage = nil
         } catch {
+            guard remoteDiagnosticsIdentity == identity else { return }
             if let queuedMessageID {
                 try? chatState.updateMessageStatus(id: queuedMessageID, status: .failed)
                 enqueueCurrentMessage(id: queuedMessageID)
@@ -1265,11 +1315,12 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         }
         let localUserID = masterUserID.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
-            let userSig = try TencentUserSigGenerator.generate(
-                sdkAppID: sdkAppID,
-                userID: localUserID,
-                secretKey: secretKey.trimmingCharacters(in: .whitespacesAndNewlines)
-            )
+            let identity = remoteDiagnosticsIdentity
+            let key = secretKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            let userSig = try await RemoteIMBackgroundWork.parse {
+                try TencentUserSigGenerator.generate(sdkAppID: sdkAppID, userID: localUserID, secretKey: key)
+            }
+            guard remoteDiagnosticsIdentity == identity else { return }
             await remoteDesktop.requestView(
                 peerUserID: contact.userID,
                 sdkAppID: sdkAppID,
@@ -1288,10 +1339,18 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
 
     private func receive(_ event: IncomingRemoteIMText) async {
         guard shouldAcceptIncomingSender(event.fromUserID, kind: "text") else { return }
-        if remoteDesktop.handleIncomingText(from: event.fromUserID, text: event.text) {
+        let receivingIdentity = remoteDiagnosticsIdentity
+        if await remoteDesktop.handleIncomingText(from: event.fromUserID, text: event.text,
+            shouldApply: { [weak self] in self?.remoteDiagnosticsIdentity == receivingIdentity }) {
             return
         }
-        guard await shouldAcceptIncomingMessage(remoteID: event.remoteID) else { return }
+        guard remoteDiagnosticsIdentity == receivingIdentity,
+              await shouldAcceptIncomingMessage(remoteID: event.remoteID) else { return }
+        guard remoteDiagnosticsIdentity == receivingIdentity else { return }
+        let identity = receivingIdentity
+        do { try await MarkdownPreparation.prepare([event.text]) }
+        catch { return }
+        guard remoteDiagnosticsIdentity == identity else { return }
         let previousCount = chatState.messages.count
         let message = chatState.receiveText(
             event.text,
@@ -1362,6 +1421,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     }
 
     private func receive(_ event: IncomingRemoteIMImage) async {
+        mediaFileRevision &+= 1
         guard shouldAcceptIncomingSender(event.fromUserID, kind: "image") else { return }
         guard await shouldAcceptIncomingMessage(remoteID: event.remoteID) else { return }
         let previousCount = chatState.messages.count
@@ -1403,6 +1463,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     }
 
     private func receive(_ event: IncomingRemoteIMFile) async {
+        mediaFileRevision &+= 1
         guard !remoteDiagnosticsAccountTag.isEmpty, event.accountTag == remoteDiagnosticsAccountTag else { return }
         guard shouldAcceptIncomingSender(event.fromUserID, kind: "file") else { return }
         guard await shouldAcceptIncomingMessage(remoteID: event.remoteID) else { return }
@@ -1447,6 +1508,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     }
 
     private func receive(_ event: IncomingRemoteIMVideo) async {
+        mediaFileRevision &+= 1
         guard shouldAcceptIncomingSender(event.fromUserID, kind: "video") else { return }
         let existingMessage = chatState.message(remoteID: event.remoteID)
         if existingMessage == nil {
@@ -1507,18 +1569,27 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     }
 
     private func updateVideoDownloadState(for event: IncomingRemoteIMVideo) {
-        let key = Self.videoDownloadKey(
-            remoteID: event.remoteID,
-            localPath: event.videoFileURL.path
-        )
-        let nextKeys = RemoteIMVideoDownloadTrackingPolicy.updatedKeys(
-            current: downloadingVideoKeys,
-            key: key,
-            stage: event.stage,
-            fileIsUsable: Self.isUsableLocalFile(event.videoFileURL)
-        )
-        if nextKeys != downloadingVideoKeys {
-            downloadingVideoKeys = nextKeys
+        let key = Self.videoDownloadKey(remoteID: event.remoteID, localPath: event.videoFileURL.path)
+        let next = RemoteIMVideoDownloadTrackingPolicy.updatedKeys(current: downloadingVideoKeys,
+            key: key, stage: event.stage, fileIsUsable: false)
+        if next != downloadingVideoKeys { downloadingVideoKeys = next }
+        if event.stage == .videoReady || event.stage == .videoFailed {
+            videoMetadataChecks[key] = nil
+        } else if event.stage == .metadata {
+            videoMetadataSequence &+= 1
+            let sequence = videoMetadataSequence
+            videoMetadataChecks[key] = sequence
+            let url = event.videoFileURL
+            let identity = remoteDiagnosticsIdentity
+            Task { [weak self] in
+                let usable = (try? await RemoteIMBackgroundWork.metadata { Self.isUsableLocalFile(url) }) ?? false
+                guard let self, self.remoteDiagnosticsIdentity == identity,
+                      self.videoMetadataChecks[key] == sequence else { return }
+                self.videoMetadataChecks[key] = nil
+                let next = RemoteIMVideoDownloadTrackingPolicy.updatedKeys(current: self.downloadingVideoKeys,
+                    key: key, stage: .metadata, fileIsUsable: usable)
+                if next != self.downloadingVideoKeys { self.downloadingVideoKeys = next }
+            }
         }
     }
 
@@ -1529,7 +1600,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             : cleanRemoteID
     }
 
-    private static func isUsableLocalFile(_ url: URL) -> Bool {
+    nonisolated private static func isUsableLocalFile(_ url: URL) -> Bool {
         guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]) else {
             return false
         }
@@ -1591,13 +1662,15 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         let badgeCount = RemoteIMNewMessageNotificationPolicy.systemBadgeCount(
             totalUnreadCount: totalUnreadCount
         )
+        let pendingCount = unreadCountByUserID[userID] ?? 1
+        let identity = remoteDiagnosticsIdentity
+        guard let body = try? await RemoteIMBackgroundWork.parse({
+            RemoteIMNewMessageNotificationPolicy.aggregatedPreview(for: message, pendingCount: pendingCount)
+        }), remoteDiagnosticsIdentity == identity else { return }
         let posted = await RemoteIMSystemNotificationCenter.shared.post(
             peerUserID: userID,
             title: profile.displayName,
-            body: RemoteIMNewMessageNotificationPolicy.aggregatedPreview(
-                for: message,
-                pendingCount: unreadCountByUserID[userID] ?? 1
-            ),
+            body: body,
             badgeCount: badgeCount
         )
         logIM(

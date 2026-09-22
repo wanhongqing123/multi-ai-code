@@ -2,6 +2,25 @@ import XCTest
 @testable import MaiChatCore
 
 final class MasterChatStateTests: XCTestCase {
+    func testPreparedAttachmentsKeepOriginalRecipientAfterSelectionChanges() throws {
+        var state = MasterChatState(ownerUserID: "owner")
+        try state.upsertFriend(userID: "peer-a")
+        try state.upsertFriend(userID: "peer-b")
+        state.selectPeer(userID: "peer-a")
+        let originalRecipient = try XCTUnwrap(state.selectedPeerID)
+        // Selection changes while attachment encoding or file copying is in progress.
+        state.selectPeer(userID: "peer-b")
+        let voice = try state.queueOutgoingVoice(filePath: "/tmp/voice.m4a", durationSeconds: 1, to: originalRecipient)
+        let image = try state.queueOutgoingImage(filePath: "/tmp/image.jpg", to: originalRecipient)
+        let video = try state.queueOutgoingVideo(filePath: "/tmp/video.mp4", coverPath: nil,
+            durationSeconds: 1, width: 20, height: 20, sizeBytes: 100, to: originalRecipient)
+        let file = try state.queueOutgoingFile(filePath: "/tmp/file.md", fileName: "file.md",
+            mimeType: "text/markdown", to: originalRecipient)
+        XCTAssertEqual([voice, image, video, file].map(\.toUserID), Array(repeating: "peer-a", count: 4))
+        XCTAssertTrue(state.messages(with: "peer-b").isEmpty)
+        XCTAssertEqual(state.selectedPeerID, "peer-b")
+    }
+
     func testGitDiffDisplayPolicyOnlyRecognizesGeneratedHtmlArtifacts() {
         let diff = RemoteIMFileAttachment(
             localFilePath: "/tmp/repo.diff.html",

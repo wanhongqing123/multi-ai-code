@@ -4,6 +4,71 @@ import Foundation
 import MaiChatCore
 @preconcurrency import QCloudRealTime
 
+/// The SDK instance is created, controlled and released on the shared audio queue.
+private final class SpeechEngineHandle: @unchecked Sendable {
+    private final class Storage: @unchecked Sendable {
+        var engine: QCloudRealTimeRecognizer?
+        init(_ engine: QCloudRealTimeRecognizer) { self.engine = engine }
+        func shutdown() {
+            RemoteIMBackgroundWork.audioQueue.assertCurrent()
+            engine?.delegate = nil
+            engine?.cancel()
+            engine = nil
+        }
+    }
+    let id: ObjectIdentifier
+    private let storage: Storage
+    private let cancellation = RemoteIMBackgroundWork.Cancellation()
+    private init(_ engine: QCloudRealTimeRecognizer) {
+        id = ObjectIdentifier(engine); storage = Storage(engine)
+    }
+    deinit {
+        let storage = storage
+        RemoteIMBackgroundWork.audioQueue.async { storage.shutdown() }
+    }
+    static func make(appId: String, secretId: String, secretKey: String) async throws -> SpeechEngineHandle {
+        try await RemoteIMBackgroundWork.audio {
+            let config = QCloudConfig(appId: appId, secretId: secretId, secretKey: secretKey, projectId: 0)
+            config.engineType = "16k_zh"
+            config.enableDetectVolume = false
+            config.endRecognizeWhenDetectSilence = false
+            config.endRecognizeWhenDetectSilenceAutoStop = false
+            config.needvad = 1; config.filterPunc = 0; config.convertNumMode = 1; config.requestTimeout = 20
+            return SpeechEngineHandle(QCloudRealTimeRecognizer(config: config))
+        }
+    }
+    @MainActor
+    func start(delegate: TencentRealtimeSpeechRecognizer) async throws -> (began: TimeInterval, returned: TimeInterval) {
+        let storage = storage, cancellation = cancellation
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<(TimeInterval, TimeInterval), Error>) in
+            RemoteIMBackgroundWork.audioQueue.async {
+                do {
+                    try cancellation.check()
+                    guard let engine = storage.engine else { throw CancellationError() }
+                    engine.delegate = delegate
+                    let began = ProcessInfo.processInfo.systemUptime
+                    engine.start()
+                    continuation.resume(returning: (began, ProcessInfo.processInfo.systemUptime))
+                } catch { continuation.resume(throwing: error) }
+            }
+        }
+    }
+    func stop(completion: @escaping @Sendable (Int, TimeInterval) -> Void) {
+        let storage = storage
+        RemoteIMBackgroundWork.audioQueue.async {
+            let began = ProcessInfo.processInfo.systemUptime
+            storage.engine?.stop()
+            let returned = ProcessInfo.processInfo.systemUptime
+            completion(Int((returned - began) * 1000), returned)
+        }
+    }
+    func cancel() {
+        cancellation.cancel()
+        let storage = storage
+        RemoteIMBackgroundWork.audioQueue.async { storage.shutdown() }
+    }
+}
+
 /// 腾讯云实时语音识别。
 ///
 /// 长按期间持续发布非稳态识别文本，松手后等待服务端的最终文本；SDK 使用内置录音器，
@@ -19,7 +84,7 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
     private let appId: String
     private let secretId: String
     private let secretKey: String
-    private var recognizer: QCloudRealTimeRecognizer?
+    private var recognizer: SpeechEngineHandle?
     private var recognizerID: ObjectIdentifier?
     private var stopContinuation: CheckedContinuation<String, Error>?
     private var stopTimeoutTask: Task<Void, Never>?
@@ -31,10 +96,7 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
     private var diagnosticFields: [String: String] = [:]
     private var stopRequestedUptime: TimeInterval?
     // 必须保持串行：取消与快速重启依赖 deactivate/activate 严格按入队顺序执行。
-    private nonisolated static let audioSessionQueue = DispatchQueue(
-        label: "com.kongshang.maichat.asr-audio-session",
-        qos: .userInitiated
-    )
+    private nonisolated static let audioSessionQueue = RemoteIMBackgroundWork.audioQueue
 
     init(appId: String, secretId: String, secretKey: String) {
         self.appId = appId.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -60,6 +122,7 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
         self.diagnosticFields = diagnosticFields
         stopRequestedUptime = nil
         sessionSequence &+= 1
+        let startingSequence = sessionSequence
         sessionStartedUptime = ProcessInfo.processInfo.systemUptime
         let audioSessionStartedAt = ProcessInfo.processInfo.systemUptime
         let audioTiming: AudioActivationTiming
@@ -67,37 +130,46 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
             audioTiming = try await Self.activateAudioSession()
             try Task.checkCancellation()
         } catch {
-            Self.deactivateAudioSession()
-            sessionStartedUptime = nil
+            if sessionSequence == startingSequence {
+                Self.deactivateAudioSession()
+                sessionStartedUptime = nil
+            }
             throw error
         }
         let audioSessionReadyAt = ProcessInfo.processInfo.systemUptime
 
-        let config = QCloudConfig(
-            appId: appId,
-            secretId: secretId,
-            secretKey: secretKey,
-            projectId: 0
-        )
-        config.engineType = "16k_zh"
-        config.enableDetectVolume = false
-        config.endRecognizeWhenDetectSilence = false
-        config.endRecognizeWhenDetectSilenceAutoStop = false
-        config.needvad = 1
-        config.filterPunc = 0
-        config.convertNumMode = 1
-        config.requestTimeout = 20
-
-        let nextRecognizer = QCloudRealTimeRecognizer(config: config)
-        nextRecognizer.delegate = self
+        let nextRecognizer: SpeechEngineHandle
+        do {
+            nextRecognizer = try await SpeechEngineHandle.make(appId: appId, secretId: secretId, secretKey: secretKey)
+        } catch {
+            if sessionSequence == startingSequence { Self.deactivateAudioSession() }
+            throw error
+        }
+        do {
+            try Task.checkCancellation()
+            guard sessionSequence == startingSequence else { throw CancellationError() }
+        } catch {
+            nextRecognizer.cancel()
+            if sessionSequence == startingSequence { Self.deactivateAudioSession() }
+            throw error
+        }
         recognizer = nextRecognizer
-        recognizerID = ObjectIdentifier(nextRecognizer)
+        recognizerID = nextRecognizer.id
         firstTextUptime = nil
         textUpdateCount = 0
         liveText = ""
         isRecognizing = true
         let sdkStartBeganAt = ProcessInfo.processInfo.systemUptime
-        nextRecognizer.start()
+        let timing: (began: TimeInterval, returned: TimeInterval)
+        do {
+            timing = try await nextRecognizer.start(delegate: self)
+            try Task.checkCancellation()
+            guard isCurrentRecognizer(nextRecognizer.id) else { throw CancellationError() }
+        } catch {
+            if recognizerID == nextRecognizer.id { cancelCurrentSession() }
+            else { nextRecognizer.cancel() }
+            throw error
+        }
         let sdkStartReturnedAt = ProcessInfo.processInfo.systemUptime
         log(
             level: .info,
@@ -113,9 +185,10 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
                 "audio_activate_ms": Self.milliseconds(from: audioTiming.configured, to: audioTiming.activated),
                 "audio_resume_ms": Self.milliseconds(from: audioTiming.activated, to: audioSessionReadyAt),
                 "sdk_start_call_ms": Self.milliseconds(
-                    from: sdkStartBeganAt,
-                    to: sdkStartReturnedAt
+                    from: timing.began, to: timing.returned
                 ),
+                "sdk_start_queue_ms": Self.milliseconds(from: sdkStartBeganAt, to: timing.began),
+                "sdk_start_resume_ms": Self.milliseconds(from: timing.returned, to: sdkStartReturnedAt),
             ]
         )
     }
@@ -135,15 +208,17 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
                     "elapsed_ms": elapsedMilliseconds(),
                 ]
             )
-            let stoppingID = ObjectIdentifier(recognizer)
-            let stopCallStarted = ProcessInfo.processInfo.systemUptime
-            recognizer.stop()
-            log(level: .info, event: "sdk-stop-returned", fields: [
-                "duration_ms": Self.milliseconds(from: stopCallStarted, to: ProcessInfo.processInfo.systemUptime)
-            ])
-            // stop() may complete synchronously via a delegate callback. Never
-            // create a late timeout for an already-finished (or replaced) session.
-            guard stopContinuation != nil, isCurrentRecognizer(stoppingID) else { return }
+            let stoppingID = recognizer.id
+            let fields = diagnosticFields
+            let session = sessionSequence
+            recognizer.stop { duration, returnedAt in
+                Task { @MainActor in
+                    AppDiagnosticLog.shared.record(level: .info, category: "asr", event: "sdk-stop-returned",
+                        fields: fields.merging(["duration_ms": String(duration), "session": String(session),
+                                                "executor": "audio-queue",
+                                                "ui_resume_ms": Self.milliseconds(from: returnedAt, to: ProcessInfo.processInfo.systemUptime)]) { _, value in value })
+                }
+            }
             stopTimeoutTask?.cancel()
             stopTimeoutTask = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(1))
@@ -338,7 +413,6 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
         stopContinuation = nil
         stopTimeoutTask?.cancel()
         stopTimeoutTask = nil
-        recognizer?.delegate = nil
         recognizer?.cancel()
         recognizer = nil
         recognizerID = nil
@@ -383,7 +457,6 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
 
     private func cancelCurrentSession() {
         let wasActive = recognizer != nil || isRecognizing
-        recognizer?.delegate = nil
         recognizer?.cancel()
         recognizer = nil
         recognizerID = nil

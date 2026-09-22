@@ -64,25 +64,38 @@ struct StoredRemoteIMSettings: Codable, Equatable, Sendable {
     }
 }
 
-final class LocalSettingsStore {
+final class LocalSettingsStore: @unchecked Sendable {
+    private static let writes = DispatchQueue(label: "MaiChat.SettingsWrites", qos: .utility)
     private let defaults: UserDefaults
     private let key = "maichat_settings"
+    private let lock = NSLock()
+    private var cached: StoredRemoteIMSettings?
+    private var revision = 0
 
-    init(defaults: UserDefaults = .standard) {
-        self.defaults = defaults
-    }
+    init(defaults: UserDefaults = .standard) { self.defaults = defaults }
 
     func load() -> StoredRemoteIMSettings {
-        guard let data = defaults.data(forKey: key),
-              let settings = try? JSONDecoder().decode(StoredRemoteIMSettings.self, from: data)
-        else {
-            return .empty
-        }
-        return settings
+        lock.lock(); let existing = cached; lock.unlock()
+        if let existing { return existing }
+        let loaded = defaults.data(forKey: key).flatMap {
+            try? JSONDecoder().decode(StoredRemoteIMSettings.self, from: $0)
+        } ?? .empty
+        lock.lock()
+        if cached == nil { cached = loaded }
+        let result = cached ?? loaded
+        lock.unlock()
+        return result
     }
 
     func save(_ settings: StoredRemoteIMSettings) {
-        guard let data = try? JSONEncoder().encode(settings) else { return }
-        defaults.set(data, forKey: key)
+        lock.lock(); cached = settings; revision &+= 1; let version = revision; lock.unlock()
+        Self.writes.async { [self] in
+            lock.lock(); let current = revision; lock.unlock()
+            guard current == version else { return }
+            autoreleasepool {
+                guard let data = try? JSONEncoder().encode(settings) else { return }
+                defaults.set(data, forKey: key)
+            }
+        }
     }
 }

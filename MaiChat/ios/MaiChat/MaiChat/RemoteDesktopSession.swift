@@ -246,10 +246,27 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
         }
     }
 
-    @discardableResult
-    func handleIncomingText(from userID: String, text: String) -> Bool {
+    private var inboundSignalTail: Task<Void, Never>?
+
+    func handleIncomingText(from userID: String, text: String,
+                            shouldApply: @escaping @MainActor () -> Bool) async -> Bool {
         guard RemoteDesktopSignal.isSignalText(text) else { return false }
-        guard let signal = RemoteDesktopSignal.decodeText(text) else {
+        let previous = inboundSignalTail
+        let task = Task { [weak self] in
+            await previous?.value
+            let signal = try? await RemoteIMBackgroundWork.parse { RemoteDesktopSignal.decodeText(text) }
+            guard let self, shouldApply() else { return }
+            _ = self.applyIncomingSignal(from: userID, text: text, decoded: signal)
+        }
+        inboundSignalTail = task
+        await task.value
+        return true
+    }
+
+    @discardableResult
+    private func applyIncomingSignal(from userID: String, text: String, decoded: RemoteDesktopSignal?) -> Bool {
+        guard RemoteDesktopSignal.isSignalText(text) else { return false }
+        guard let signal = decoded else {
             log(
                 level: .warning,
                 category: "remote-desktop",

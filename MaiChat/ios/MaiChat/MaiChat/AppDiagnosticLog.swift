@@ -48,6 +48,7 @@ final class AppDiagnosticLog: DiagnosticLogSink {
     private var lastPerformanceFlushUptime: TimeInterval = 0
     private var lastDelayLogUptime: TimeInterval = 0
     private var diagnosticExportCount = 0
+    private var exportTask: Task<URL, Error>?
 
     private static let timestampFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
@@ -123,6 +124,14 @@ final class AppDiagnosticLog: DiagnosticLogSink {
     }
 
     func makeExportSnapshot() async throws -> URL {
+        if let exportTask { return try await exportTask.value }
+        let task = Task { try await performExportSnapshot() }
+        exportTask = task
+        defer { exportTask = nil }
+        return try await task.value
+    }
+
+    private func performExportSnapshot() async throws -> URL {
         let started = ProcessInfo.processInfo.systemUptime
         let account = performanceAccountTag
         let operation = UUID().uuidString.lowercased()

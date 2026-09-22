@@ -3,6 +3,11 @@ import XCTest
 import SQLite3
 
 final class LocalChatHistoryStoreTests: XCTestCase {
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        try RemoteIMMediaStorage.prepareDirectories()
+    }
+
     private struct LegacyStoredChatHistory: Codable {
         let schemaVersion: Int
         let sdkAppID: Int?
@@ -1017,5 +1022,82 @@ final class LocalChatHistoryStoreTests: XCTestCase {
             status: .received,
             createdAt: Date(timeIntervalSince1970: time)
         )
+    }
+}
+
+final class BackgroundWorkTests: XCTestCase {
+    @MainActor
+    func testFileAndParsingWorkLeaveMainThreadResponsive() async throws {
+        let began = expectation(description: "file work began")
+        let mainResponded = expectation(description: "main responded while file worker was busy")
+        let release = DispatchSemaphore(value: 0)
+        let fileTask = Task {
+            try await RemoteIMBackgroundWork.file {
+                XCTAssertFalse(Thread.isMainThread)
+                began.fulfill()
+                XCTAssertEqual(release.wait(timeout: .now() + 5), .success)
+                return 42
+            }
+        }
+        await fulfillment(of: [began], timeout: 5)
+        DispatchQueue.main.async { mainResponded.fulfill(); release.signal() }
+        await fulfillment(of: [mainResponded], timeout: 5)
+        let value = try await fileTask.value
+        XCTAssertEqual(value, 42)
+        let parsingIsMain = try await RemoteIMBackgroundWork.parse { Thread.isMainThread }
+        let metadataIsMain = try await RemoteIMBackgroundWork.metadata { Thread.isMainThread }
+        XCTAssertFalse(parsingIsMain)
+        XCTAssertFalse(metadataIsMain)
+    }
+
+    @MainActor
+    func testCancellationPreventsObsoleteQueuedFileWork() async throws {
+        let began = expectation(description: "first file work began")
+        let release = DispatchSemaphore(value: 0)
+        let first = Task {
+            try await RemoteIMBackgroundWork.file {
+                began.fulfill()
+                XCTAssertEqual(release.wait(timeout: .now() + 5), .success)
+            }
+        }
+        await fulfillment(of: [began], timeout: 5)
+        let obsolete = Task {
+            try await RemoteIMBackgroundWork.file {
+                XCTFail("Cancelled work must not read or write files")
+            }
+        }
+        await Task.yield()
+        obsolete.cancel()
+        release.signal()
+        try await first.value
+        do { try await obsolete.value; XCTFail("Expected cancellation") }
+        catch is CancellationError { }
+    }
+
+    @MainActor
+    func testAudioWorkerHasRunningRunLoopAndPreservesControlOrder() async throws {
+        let began = expectation(description: "audio start began")
+        let stopped = expectation(description: "audio stop executed")
+        let timerFired = expectation(description: "audio run loop delivered timer")
+        let release = DispatchSemaphore(value: 0)
+        RemoteIMBackgroundWork.audioQueue.async {
+            XCTAssertFalse(Thread.isMainThread)
+            RemoteIMBackgroundWork.audioQueue.assertCurrent()
+            began.fulfill()
+            XCTAssertEqual(release.wait(timeout: .now() + 5), .success)
+        }
+        await fulfillment(of: [began], timeout: 5)
+        RemoteIMBackgroundWork.audioQueue.async {
+            RemoteIMBackgroundWork.audioQueue.assertCurrent()
+            stopped.fulfill()
+            Timer.scheduledTimer(withTimeInterval: 0.01, repeats: false) { _ in
+                XCTAssertFalse(Thread.isMainThread)
+                timerFired.fulfill()
+            }
+        }
+        release.signal()
+        await fulfillment(of: [stopped, timerFired], timeout: 5, enforceOrder: true)
+        let audioIsMain = try await RemoteIMBackgroundWork.audio { Thread.isMainThread }
+        XCTAssertFalse(audioIsMain)
     }
 }

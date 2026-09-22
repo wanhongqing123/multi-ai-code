@@ -128,9 +128,12 @@ final class RemoteDiagnosticsCoordinator: ObservableObject {
                         }
                         guard let file = message.fileAttachment,
                               file.fileName == RemoteDiagnosticsProtocol.reportFileName(id: requestID),
-                              !inspected.contains(message.id),
-                              FileManager.default.fileExists(atPath: file.localFilePath)
+                              !inspected.contains(message.id)
                         else { continue }
+                        let candidatePath = file.localFilePath
+                        guard (try? await RemoteIMBackgroundWork.metadata {
+                            FileManager.default.fileExists(atPath: candidatePath)
+                        }) == true else { continue }
                         inspected.insert(message.id)
                         do {
                             let path = file.localFilePath

@@ -12,7 +12,7 @@ enum KeychainSecretStoreError: Error, LocalizedError {
     }
 }
 
-final class KeychainSecretStore {
+final class KeychainSecretStore: Sendable {
     private let service = "com.kongshang.maichat"
     private let account = "tencent-user-sig-secret-key"
 

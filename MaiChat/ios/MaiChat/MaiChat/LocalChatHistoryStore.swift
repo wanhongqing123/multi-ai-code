@@ -2,8 +2,116 @@ import Foundation
 import MaiChatCore
 import SQLite3
 
+/// A single background audio thread also keeps a run loop for AVFoundation/SDK callbacks.
+final class RemoteIMAudioWorkQueue: @unchecked Sendable {
+    private final class State: @unchecked Sendable {
+        let lock = NSLock()
+        var loop: CFRunLoop?
+        var pending: [@Sendable () -> Void] = []
+        func enqueue(_ work: @escaping @Sendable () -> Void) {
+            lock.lock()
+            guard let loop else { pending.append(work); lock.unlock(); return }
+            CFRunLoopPerformBlock(loop, CFRunLoopMode.commonModes.rawValue, work)
+            lock.unlock()
+            CFRunLoopWakeUp(loop)
+        }
+        func run() {
+            Thread.current.threadDictionary["MaiChat.AudioWorker"] = true
+            let port = Port()
+            RunLoop.current.add(port, forMode: .default)
+            let loop = CFRunLoopGetCurrent()!
+            lock.lock()
+            self.loop = loop
+            for work in pending { CFRunLoopPerformBlock(loop, CFRunLoopMode.commonModes.rawValue, work) }
+            pending.removeAll()
+            lock.unlock()
+            CFRunLoopRun()
+        }
+    }
+    private let state = State()
+    private let thread: Thread
+    init() {
+        let state = state
+        thread = Thread { state.run() }
+        thread.name = "MaiChat.AudioWorker"
+        thread.qualityOfService = .userInitiated
+        thread.start()
+    }
+    func async(_ work: @escaping @Sendable () -> Void) { state.enqueue(work) }
+    func assertCurrent() { precondition(Thread.current.threadDictionary["MaiChat.AudioWorker"] as? Bool == true) }
+}
+
+/// Bounded work queues: CPU parsing and file I/O do not share the main executor.
+enum RemoteIMBackgroundWork {
+    static let audioQueue = RemoteIMAudioWorkQueue()
+    private static let fileQueue = DispatchQueue(label: "MaiChat.FileWork", qos: .userInitiated)
+    private static let metadataQueue = DispatchQueue(label: "MaiChat.FileMetadata", qos: .userInitiated)
+    private static let parsingQueue = DispatchQueue(label: "MaiChat.ParsingWork", qos: .userInitiated)
+
+    final class Cancellation: @unchecked Sendable {
+        private let lock = NSLock()
+        private var cancelled = false
+        func cancel() { lock.lock(); cancelled = true; lock.unlock() }
+        func check() throws {
+            lock.lock(); let value = cancelled; lock.unlock()
+            if value { throw CancellationError() }
+        }
+    }
+
+    static func audio<T: Sendable>(_ operation: @escaping @Sendable () throws -> T) async throws -> T {
+        try Task.checkCancellation()
+        let cancellation = Cancellation()
+        let result: T = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                audioQueue.async {
+                    continuation.resume(with: Result {
+                        try cancellation.check()
+                        return try autoreleasepool(invoking: operation)
+                    })
+                }
+            }
+        } onCancel: { cancellation.cancel() }
+        try Task.checkCancellation()
+        return result
+    }
+    static func file<T: Sendable>(_ operation: @escaping @Sendable () throws -> T) async throws -> T {
+        try await submit(to: fileQueue) { _ in try operation() }
+    }
+    static func metadata<T: Sendable>(_ operation: @escaping @Sendable () throws -> T) async throws -> T {
+        try await submit(to: metadataQueue) { _ in try operation() }
+    }
+    static func fileCancellable<T: Sendable>(_ operation: @escaping @Sendable (Cancellation) throws -> T) async throws -> T {
+        try await submit(to: fileQueue, operation)
+    }
+    static func parse<T: Sendable>(_ operation: @escaping @Sendable () throws -> T) async throws -> T {
+        try await submit(to: parsingQueue) { _ in try operation() }
+    }
+    static func parseCancellable<T: Sendable>(_ operation: @escaping @Sendable (Cancellation) throws -> T) async throws -> T {
+        try await submit(to: parsingQueue, operation)
+    }
+
+    private static func submit<T: Sendable>(to queue: DispatchQueue,
+        _ operation: @escaping @Sendable (Cancellation) throws -> T) async throws -> T {
+        try Task.checkCancellation()
+        let cancellation = Cancellation()
+        let result: T = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                queue.async {
+                    dispatchPrecondition(condition: .notOnQueue(.main))
+                    continuation.resume(with: Result {
+                        try cancellation.check()
+                        return try autoreleasepool { try operation(cancellation) }
+                    })
+                }
+            }
+        } onCancel: { cancellation.cancel() }
+        try Task.checkCancellation()
+        return result
+    }
+}
+
 enum RemoteIMMediaStorage {
-    enum Category: String {
+    enum Category: String, CaseIterable {
         case incomingImages = "Incoming/Images"
         case outgoingImages = "Outgoing/Images"
         case incomingVideos = "Incoming/Videos"
@@ -71,11 +179,6 @@ enum RemoteIMMediaStorage {
         let root = appSupport
             .appendingPathComponent("MaiChat", isDirectory: true)
             .appendingPathComponent("RemoteIMMedia", isDirectory: true)
-        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        var excludedRoot = root
-        var values = URLResourceValues()
-        values.isExcludedFromBackup = true
-        try? excludedRoot.setResourceValues(values)
         return root
     }
 
@@ -85,8 +188,19 @@ enum RemoteIMMediaStorage {
             .reduce(mediaRootURL()) { partialURL, component in
                 partialURL.appendingPathComponent(String(component), isDirectory: true)
             }
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
+    }
+
+    static func prepareDirectories() throws {
+        let root = mediaRootURL()
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        var excludedRoot = root
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try excludedRoot.setResourceValues(values)
+        for category in Category.allCases {
+            try FileManager.default.createDirectory(at: directoryURL(category: category), withIntermediateDirectories: true)
+        }
     }
 
     private static func sanitizedFileName(_ value: String) -> String {

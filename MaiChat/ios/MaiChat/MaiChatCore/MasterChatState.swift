@@ -1881,11 +1881,12 @@ public struct MasterChatState: Equatable {
     public mutating func queueOutgoingVoice(
         filePath: String,
         durationSeconds: Int,
+        to targetPeerID: String? = nil,
         now: Date = Date()
     ) throws -> RemoteIMMessage {
         let cleanFilePath = filePath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanFilePath.isEmpty else { throw MasterChatStateError.blankMessage }
-        guard let peerID = selectedPeerID, !peerID.isEmpty else {
+        guard let peerID = (targetPeerID ?? selectedPeerID)?.trimmingCharacters(in: .whitespacesAndNewlines), !peerID.isEmpty else {
             throw MasterChatStateError.noSelectedPeer
         }
         let voiceAttachment = RemoteIMVoiceAttachment(
@@ -1911,11 +1912,12 @@ public struct MasterChatState: Equatable {
         width: Int? = nil,
         height: Int? = nil,
         sizeBytes: Int? = nil,
+        to targetPeerID: String? = nil,
         now: Date = Date()
     ) throws -> RemoteIMMessage {
         let cleanFilePath = filePath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanFilePath.isEmpty else { throw MasterChatStateError.blankMessage }
-        guard let peerID = selectedPeerID, !peerID.isEmpty else {
+        guard let peerID = (targetPeerID ?? selectedPeerID)?.trimmingCharacters(in: .whitespacesAndNewlines), !peerID.isEmpty else {
             throw MasterChatStateError.noSelectedPeer
         }
         let imageAttachment = RemoteIMImageAttachment(
@@ -1945,11 +1947,12 @@ public struct MasterChatState: Equatable {
         width: Int,
         height: Int,
         sizeBytes: Int64,
+        to targetPeerID: String? = nil,
         now: Date = Date()
     ) throws -> RemoteIMMessage {
         let cleanFilePath = filePath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanFilePath.isEmpty else { throw MasterChatStateError.blankMessage }
-        guard let peerID = selectedPeerID, !peerID.isEmpty else {
+        guard let peerID = (targetPeerID ?? selectedPeerID)?.trimmingCharacters(in: .whitespacesAndNewlines), !peerID.isEmpty else {
             throw MasterChatStateError.noSelectedPeer
         }
         let videoAttachment = RemoteIMVideoAttachment(
@@ -1979,11 +1982,12 @@ public struct MasterChatState: Equatable {
         fileName: String,
         mimeType: String,
         sizeBytes: Int? = nil,
+        to targetPeerID: String? = nil,
         now: Date = Date()
     ) throws -> RemoteIMMessage {
         let cleanFilePath = filePath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanFilePath.isEmpty else { throw MasterChatStateError.blankMessage }
-        guard let peerID = selectedPeerID, !peerID.isEmpty else {
+        guard let peerID = (targetPeerID ?? selectedPeerID)?.trimmingCharacters(in: .whitespacesAndNewlines), !peerID.isEmpty else {
             throw MasterChatStateError.noSelectedPeer
         }
         let fileAttachment = RemoteIMFileAttachment(

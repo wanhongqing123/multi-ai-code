@@ -7,14 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		FEDCBA098765432100000112 /* remote-diagnostics-failure-receipts.json in Resources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000111 /* remote-diagnostics-failure-receipts.json */; };
-		FEDCBA098765432100000115 /* remote-diagnostics-report.json in Resources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000114 /* remote-diagnostics-report.json */; };
-		FEDCBA098765432100000110 /* RemoteDiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000106 /* RemoteDiagnosticsView.swift */; };
-		FEDCBA098765432100000109 /* RemoteDiagnosticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000108 /* RemoteDiagnosticsTests.swift */; };
-		FEDCBA098765432100000102 /* RemoteDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000101 /* RemoteDiagnostics.swift */; };
-		FEDCBA098765432100000104 /* RemoteDiagnosticsCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000103 /* RemoteDiagnosticsCoordinator.swift */; };
-		FEDCBA098765432100000105 /* RemoteDiagnosticsCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000103 /* RemoteDiagnosticsCoordinator.swift */; };
-		FEDCBA098765432100000107 /* RemoteDiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000106 /* RemoteDiagnosticsView.swift */; };
 		1003B14C78530C6912622414 /* TencentIMClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F7C7C15F662BDB6F5A720CE /* TencentIMClient.swift */; };
 		1A64DAEB06DA808D3F82C0D4 /* MaiChatCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 771AB137E6961E2B9187CFEB /* MaiChatCore.framework */; };
 		1D22F82E6F163B0AB9E8F98D /* RemoteDesktopSignal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1ECE96EA18C906CBFAAABCB2 /* RemoteDesktopSignal.swift */; };
@@ -55,7 +47,17 @@
 		FEDCBA098765432100000006 /* MarkdownInlineStyling.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000005 /* MarkdownInlineStyling.swift */; };
 		FEDCBA098765432100000007 /* MarkdownInlineStyling.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000005 /* MarkdownInlineStyling.swift */; };
 		FEDCBA098765432100000009 /* MessageBubbleLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000008 /* MessageBubbleLayout.swift */; };
+		F0CD123456789ABC00000002 /* ComposerDraftState.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0CD123456789ABC00000001 /* ComposerDraftState.swift */; };
 		FEDCBA09876543210000000A /* MessageBubbleLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000008 /* MessageBubbleLayout.swift */; };
+		F0CD123456789ABC00000003 /* ComposerDraftState.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0CD123456789ABC00000001 /* ComposerDraftState.swift */; };
+		FEDCBA098765432100000102 /* RemoteDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000101 /* RemoteDiagnostics.swift */; };
+		FEDCBA098765432100000104 /* RemoteDiagnosticsCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000103 /* RemoteDiagnosticsCoordinator.swift */; };
+		FEDCBA098765432100000105 /* RemoteDiagnosticsCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000103 /* RemoteDiagnosticsCoordinator.swift */; };
+		FEDCBA098765432100000107 /* RemoteDiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000106 /* RemoteDiagnosticsView.swift */; };
+		FEDCBA098765432100000109 /* RemoteDiagnosticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000108 /* RemoteDiagnosticsTests.swift */; };
+		FEDCBA098765432100000110 /* RemoteDiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000106 /* RemoteDiagnosticsView.swift */; };
+		FEDCBA098765432100000112 /* ../../../tests/fixtures/remote-diagnostics-failure-receipts.json in Resources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000111 /* ../../../tests/fixtures/remote-diagnostics-failure-receipts.json */; };
+		FEDCBA098765432100000115 /* ../../../tests/fixtures/remote-diagnostics-report.json in Resources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000114 /* ../../../tests/fixtures/remote-diagnostics-report.json */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -101,18 +103,12 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		FEDCBA098765432100000111 /* remote-diagnostics-failure-receipts.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "../../../tests/fixtures/remote-diagnostics-failure-receipts.json"; sourceTree = SOURCE_ROOT; };
-		FEDCBA098765432100000114 /* remote-diagnostics-report.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "../../../tests/fixtures/remote-diagnostics-report.json"; sourceTree = SOURCE_ROOT; };
-		FEDCBA098765432100000108 /* RemoteDiagnosticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDiagnosticsTests.swift; sourceTree = "<group>"; };
-		FEDCBA098765432100000101 /* RemoteDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDiagnostics.swift; sourceTree = "<group>"; };
-		FEDCBA098765432100000103 /* RemoteDiagnosticsCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDiagnosticsCoordinator.swift; sourceTree = "<group>"; };
-		FEDCBA098765432100000106 /* RemoteDiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDiagnosticsView.swift; sourceTree = "<group>"; };
 		14B73FB9EA5595A63DC567FC /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		1779831AA39C911B9DDCF3C6 /* RemoteDesktopSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDesktopSession.swift; sourceTree = "<group>"; };
 		197E4AB75717086188244F1A /* MaiChatApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MaiChatApp.swift; sourceTree = "<group>"; };
 		1ECE96EA18C906CBFAAABCB2 /* RemoteDesktopSignal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDesktopSignal.swift; sourceTree = "<group>"; };
 		23DC1B212E8DB764615836A8 /* Pods_MaiChat.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_MaiChat.framework; sourceTree = BUILT_PRODUCTS_DIR; };
-		2AF4D9C0BD1E990F8C3DAF26 /* MaiChat.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = MaiChat.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		2AF4D9C0BD1E990F8C3DAF26 /* MaiChat.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MaiChat.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		2CB6E7BFFB4AF8BFC203BBFB /* LocalChatHistoryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalChatHistoryStore.swift; sourceTree = "<group>"; };
 		2F7C7C15F662BDB6F5A720CE /* TencentIMClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TencentIMClient.swift; sourceTree = "<group>"; };
 		42DFDC3E438CDFE0E82AB8E9 /* MaiChatTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = MaiChatTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -147,6 +143,13 @@
 		FEDCBA098765432100000003 /* MarkdownPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownPresentationTests.swift; sourceTree = "<group>"; };
 		FEDCBA098765432100000005 /* MarkdownInlineStyling.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownInlineStyling.swift; sourceTree = "<group>"; };
 		FEDCBA098765432100000008 /* MessageBubbleLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageBubbleLayout.swift; sourceTree = "<group>"; };
+		F0CD123456789ABC00000001 /* ComposerDraftState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerDraftState.swift; sourceTree = "<group>"; };
+		FEDCBA098765432100000101 /* RemoteDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDiagnostics.swift; sourceTree = "<group>"; };
+		FEDCBA098765432100000103 /* RemoteDiagnosticsCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDiagnosticsCoordinator.swift; sourceTree = "<group>"; };
+		FEDCBA098765432100000106 /* RemoteDiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDiagnosticsView.swift; sourceTree = "<group>"; };
+		FEDCBA098765432100000108 /* RemoteDiagnosticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDiagnosticsTests.swift; sourceTree = "<group>"; };
+		FEDCBA098765432100000111 /* ../../../tests/fixtures/remote-diagnostics-failure-receipts.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "../../../tests/fixtures/remote-diagnostics-failure-receipts.json"; sourceTree = SOURCE_ROOT; };
+		FEDCBA098765432100000114 /* ../../../tests/fixtures/remote-diagnostics-report.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "../../../tests/fixtures/remote-diagnostics-report.json"; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -180,6 +183,7 @@
 				CCD4178AAA9A0B6146AFEFCD /* ChatView.swift */,
 				FEDCBA098765432100000005 /* MarkdownInlineStyling.swift */,
 				FEDCBA098765432100000008 /* MessageBubbleLayout.swift */,
+				F0CD123456789ABC00000001 /* ComposerDraftState.swift */,
 				982ED942EFC3EBB4726E7D3D /* ContactsView.swift */,
 				AE6737BFED0DFE1A50F676EE /* Info.plist */,
 				77098CB4FAD4DDF16F02FA58 /* KeychainSecretStore.swift */,
@@ -237,8 +241,8 @@
 			children = (
 				FEDCBA098765432100000003 /* MarkdownPresentationTests.swift */,
 				FEDCBA098765432100000108 /* RemoteDiagnosticsTests.swift */,
-				FEDCBA098765432100000111 /* remote-diagnostics-failure-receipts.json */,
-				FEDCBA098765432100000114 /* remote-diagnostics-report.json */,
+				FEDCBA098765432100000111 /* ../../../tests/fixtures/remote-diagnostics-failure-receipts.json */,
+				FEDCBA098765432100000114 /* ../../../tests/fixtures/remote-diagnostics-report.json */,
 				E85A5C5C020900B2D0178B0A /* DiagnosticLogTests.swift */,
 				59C1F4DABEBD721F3CB32385 /* LocalChatHistoryStoreTests.swift */,
 				975D1B034E3ED14E787A9284 /* MasterChatStateTests.swift */,
@@ -267,7 +271,6 @@
 				525AF6C102D32018100882EA /* Pods-MaiChat.debug.xcconfig */,
 				9B3D9DD3FEAE85B6388EC6ED /* Pods-MaiChat.release.xcconfig */,
 			);
-			name = Pods;
 			path = Pods;
 			sourceTree = "<group>";
 		};
@@ -338,8 +341,6 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
-				TargetAttributes = {
-				};
 			};
 			buildConfigurationList = 9FA098ED094068012FDE59FC /* Build configuration list for PBXProject "MaiChat" */;
 			developmentRegion = en;
@@ -363,12 +364,20 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		FEDCBA098765432100000113 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (FEDCBA098765432100000112 /* remote-diagnostics-failure-receipts.json in Resources */, FEDCBA098765432100000115 /* remote-diagnostics-report.json in Resources */, ); runOnlyForDeploymentPostprocessing = 0; };
 		3D122CAA634FBFB42F650CDF /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				DEBCE768E14C523F47FC7CC5 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FEDCBA098765432100000113 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FEDCBA098765432100000112 /* ../../../tests/fixtures/remote-diagnostics-failure-receipts.json in Resources */,
+				FEDCBA098765432100000115 /* ../../../tests/fixtures/remote-diagnostics-report.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -383,9 +392,13 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-MaiChat/Pods-MaiChat-resources-${CONFIGURATION}-input-files.xcfilelist",
 			);
+			inputPaths = (
+			);
 			name = "[CP] Copy Pods Resources";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-MaiChat/Pods-MaiChat-resources-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -400,9 +413,13 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-MaiChat/Pods-MaiChat-frameworks-${CONFIGURATION}-input-files.xcfilelist",
 			);
+			inputPaths = (
+			);
 			name = "[CP] Embed Pods Frameworks";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-MaiChat/Pods-MaiChat-frameworks-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -455,6 +472,7 @@
 			files = (
 				FEDCBA098765432100000007 /* MarkdownInlineStyling.swift in Sources */,
 				FEDCBA09876543210000000A /* MessageBubbleLayout.swift in Sources */,
+				F0CD123456789ABC00000003 /* ComposerDraftState.swift in Sources */,
 				FEDCBA098765432100000105 /* RemoteDiagnosticsCoordinator.swift in Sources */,
 				FEDCBA098765432100000110 /* RemoteDiagnosticsView.swift in Sources */,
 				FEDCBA098765432100000004 /* MarkdownPresentationTests.swift in Sources */,
@@ -475,6 +493,7 @@
 			files = (
 				FEDCBA098765432100000006 /* MarkdownInlineStyling.swift in Sources */,
 				FEDCBA098765432100000009 /* MessageBubbleLayout.swift in Sources */,
+				F0CD123456789ABC00000002 /* ComposerDraftState.swift in Sources */,
 				FEDCBA098765432100000104 /* RemoteDiagnosticsCoordinator.swift in Sources */,
 				FEDCBA098765432100000107 /* RemoteDiagnosticsView.swift in Sources */,
 				6C8CC7B0E521485EB1383FFA /* AppDiagnosticLog.swift in Sources */,
@@ -518,6 +537,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = VLFG56JT33;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"\"Frameworks\"",
@@ -740,6 +760,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = VLFG56JT33;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"\"Frameworks\"",

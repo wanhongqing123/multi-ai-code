@@ -188,9 +188,36 @@ final class RemoteIMSystemNotificationCenter: NSObject, ObservableObject, UNUser
     }
 }
 
+@MainActor
+private final class MaiChatBootstrap: ObservableObject {
+    @Published private(set) var appState: RemoteIMAppState?
+    @Published private(set) var errorMessage: String?
+    private var loading = false
+    func load() async {
+        guard appState == nil, !loading else { return }
+        loading = true
+        errorMessage = nil
+        defer { loading = false }
+        do {
+            let loaded = try await RemoteIMBackgroundWork.file {
+                _ = RemoteIMBackgroundWork.audioQueue
+                try RemoteIMMediaStorage.prepareDirectories()
+                let settings = LocalSettingsStore()
+                let secrets = KeychainSecretStore()
+                return (settings, secrets, settings.load(), secrets.readSecretKey())
+            }
+            guard !Task.isCancelled else { return }
+            appState = RemoteIMAppState(settingsStore: loaded.0, secretStore: loaded.1,
+                loadedSettings: loaded.2, loadedSecretKey: loaded.3)
+        } catch {
+            if !Task.isCancelled { errorMessage = error.localizedDescription }
+        }
+    }
+}
+
 @main
 struct MaiChatApp: App {
-    @StateObject private var appState = RemoteIMAppState()
+    @StateObject private var bootstrap = MaiChatBootstrap()
 
     init() {
         AppDiagnosticLog.shared.install()
@@ -199,8 +226,20 @@ struct MaiChatApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView()
-                .environmentObject(appState)
+            Group {
+                if let appState = bootstrap.appState {
+                    RootView().environmentObject(appState)
+                } else if let error = bootstrap.errorMessage {
+                    VStack(spacing: 12) {
+                        Text("加载失败")
+                        Text(error).font(.footnote)
+                        Button("重试") { Task { await bootstrap.load() } }
+                    }.padding()
+                } else {
+                    ProgressView("正在加载")
+                }
+            }
+            .task { await bootstrap.load() }
         }
     }
 }

@@ -65,6 +65,10 @@ private final class RemoteIMDecodedImageBox: @unchecked Sendable {
     }
 }
 
+private struct RemoteIMImageEncodingInput: @unchecked Sendable {
+    let image: UIImage
+}
+
 private struct RemoteIMImageDecodeOutcome: @unchecked Sendable {
     let image: RemoteIMDecodedImageBox?
     let durationMilliseconds: Int
@@ -213,33 +217,37 @@ private actor RemoteIMImagePipeline {
     }
 }
 
+private struct RemoteIMImageLoadKey: Hashable, Sendable {
+    let filePath: String?
+    let pixels: Int
+    let revision: UInt64
+}
+
 @MainActor
 private final class RemoteIMAsyncImageState: ObservableObject {
     @Published private(set) var image: UIImage?
     @Published private(set) var hasFinished = false
     private var activeRequest: RemoteIMImageRequest?
+    private var generation: UInt64 = 0
 
-    func load(_ request: RemoteIMImageRequest?) async {
-        if activeRequest == request, image != nil || hasFinished {
-            return
-        }
-        activeRequest = request
-        image = nil
-        hasFinished = false
-        guard let request else {
-            hasFinished = true
-            return
-        }
-
-        let result = await RemoteIMImagePipeline.shared.image(for: request)
-        guard !Task.isCancelled, activeRequest == request else {
-            if activeRequest == request {
-                activeRequest = nil
+    func load(_ key: RemoteIMImageLoadKey) async {
+        generation &+= 1
+        let generation = generation
+        do {
+            let request = try await RemoteIMBackgroundWork.metadata {
+                RemoteIMImageRequest(filePath: key.filePath, maximumPixelSize: CGFloat(key.pixels))
             }
-            return
-        }
-        image = result?.image
-        hasFinished = true
+            guard !Task.isCancelled, self.generation == generation else { return }
+            if activeRequest == request, image != nil || hasFinished { return }
+            activeRequest = request
+            image = nil
+            hasFinished = false
+            guard let request else { hasFinished = true; return }
+            let result = await RemoteIMImagePipeline.shared.image(for: request)
+            guard !Task.isCancelled, self.generation == generation else { return }
+            image = result?.image
+            hasFinished = true
+        } catch { }
     }
 }
 
@@ -249,26 +257,18 @@ private struct RemoteIMAsyncImage<Content: View, Placeholder: View>: View {
     @ViewBuilder let content: (UIImage) -> Content
     @ViewBuilder let placeholder: (_ hasFailed: Bool) -> Placeholder
     @Environment(\.displayScale) private var displayScale
+    @EnvironmentObject private var appState: RemoteIMAppState
     @StateObject private var state = RemoteIMAsyncImageState()
 
-    private var request: RemoteIMImageRequest? {
-        RemoteIMImageRequest(
-            filePath: filePath,
-            maximumPixelSize: max(maximumPointSize.width, maximumPointSize.height) * displayScale
-        )
-    }
-
     var body: some View {
-        Group {
-            if let image = state.image {
-                content(image)
-            } else {
-                placeholder(state.hasFinished)
-            }
+        let key = RemoteIMImageLoadKey(filePath: filePath,
+            pixels: max(1, Int((max(maximumPointSize.width, maximumPointSize.height) * displayScale).rounded(.up))),
+            revision: appState.mediaFileRevision)
+        return Group {
+            if let image = state.image { content(image) }
+            else { placeholder(state.hasFinished) }
         }
-        .task(id: request) {
-            await state.load(request)
-        }
+        .task(id: key) { await state.load(key) }
     }
 }
 
@@ -874,6 +874,28 @@ private struct EmptyMessageSearchView: View {
     }
 }
 
+private struct ConversationPreviewText: View {
+    let message: RemoteIMMessage?
+    @State private var preparedText: String?
+    @State private var preparedSource: String?
+    private var fallback: String {
+        guard let message else { return "暂无消息" }
+        return String(message.text.prefix(160)).replacingOccurrences(of: "\n", with: " ")
+    }
+    var body: some View {
+        Text(preparedSource == message?.text ? (preparedText ?? fallback) : fallback)
+            .task(id: message?.text) {
+                let message = message
+                do {
+                    let result = try await RemoteIMBackgroundWork.parse { MarkdownConversationPreview.text(for: message) }
+                    guard !Task.isCancelled else { return }
+                    preparedSource = message?.text
+                    preparedText = result
+                } catch { }
+            }
+    }
+}
+
 private struct ConversationRow: View {
     let contact: RemoteIMContact
     let latestMessage: RemoteIMMessage?
@@ -906,7 +928,7 @@ private struct ConversationRow: View {
                 }
 
                 HStack(spacing: 8) {
-                    Text(MarkdownConversationPreview.text(for: latestMessage))
+                    ConversationPreviewText(message: latestMessage)
                         .font(.system(size: 13))
                         .foregroundStyle(RemoteIMStyle.textSecondary)
                         .lineLimit(1)
@@ -957,40 +979,78 @@ private struct EmptyConversationListView: View {
     }
 }
 
-private final class VoiceMessagePlayer: NSObject, ObservableObject, AVAudioPlayerDelegate {
-    @Published var playingMessageID: UUID?
+private struct AudioPlayerReference: @unchecked Sendable { let value: AVAudioPlayer }
 
-    private var audioPlayer: AVAudioPlayer?
+private final class NativeVoicePlayer: NSObject, AVAudioPlayerDelegate, @unchecked Sendable {
+    private var player: AVAudioPlayer?
+    private var currentID: UUID?
+    private var completed: (@MainActor @Sendable (UUID) -> Void)?
+    deinit {
+        guard let player else { return }
+        let reference = AudioPlayerReference(value: player)
+        RemoteIMBackgroundWork.audioQueue.async { reference.value.delegate = nil; reference.value.stop() }
+    }
+    func play(url: URL, id: UUID, cancellation: RemoteIMBackgroundWork.Cancellation,
+              completed: @escaping @MainActor @Sendable (UUID) -> Void) {
+        RemoteIMBackgroundWork.audioQueue.async { [self] in
+            stopNative()
+            do {
+                try cancellation.check()
+                let session = AVAudioSession.sharedInstance()
+                try session.setCategory(.playback, mode: .spokenAudio)
+                try session.setActive(true)
+                try cancellation.check()
+                let next = try AVAudioPlayer(contentsOf: url)
+                next.prepareToPlay()
+                try cancellation.check()
+                player = next; currentID = id; self.completed = completed
+                next.delegate = self
+                guard next.play() else { throw VoiceRecorderError.startFailed }
+            } catch {
+                stopNative()
+                Task { @MainActor in completed(id) }
+            }
+        }
+    }
+    func stop() { RemoteIMBackgroundWork.audioQueue.async { [self] in stopNative() } }
+    private func stopNative() {
+        player?.delegate = nil; player?.stop(); player = nil; currentID = nil; completed = nil
+    }
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) { finish(player) }
+    func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) { finish(player) }
+    private func finish(_ player: AVAudioPlayer) {
+        let reference = AudioPlayerReference(value: player)
+        RemoteIMBackgroundWork.audioQueue.async { [self] in
+            guard self.player === reference.value, let id = currentID, let completed else { return }
+            stopNative()
+            Task { @MainActor in completed(id) }
+        }
+    }
+}
 
+@MainActor
+private final class VoiceMessagePlayer: ObservableObject {
+    @Published private(set) var playingMessageID: UUID?
+    private let native = NativeVoicePlayer()
+    private var cancellation: RemoteIMBackgroundWork.Cancellation?
     func toggle(message: RemoteIMMessage) {
         guard let attachment = message.voiceAttachment else { return }
-        if playingMessageID == message.id {
-            stop()
-            return
-        }
-
-        do {
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
-            try AVAudioSession.sharedInstance().setActive(true)
-            let nextPlayer = try AVAudioPlayer(contentsOf: URL(fileURLWithPath: attachment.localFilePath))
-            nextPlayer.delegate = self
-            nextPlayer.prepareToPlay()
-            audioPlayer = nextPlayer
-            playingMessageID = message.id
-            nextPlayer.play()
-        } catch {
-            stop()
-        }
-    }
-
-    func stop() {
-        audioPlayer?.stop()
-        audioPlayer = nil
-        playingMessageID = nil
-    }
-
-    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        if playingMessageID == message.id { stop(); return }
         stop()
+        let cancellation = RemoteIMBackgroundWork.Cancellation()
+        self.cancellation = cancellation
+        playingMessageID = message.id
+        native.play(url: URL(fileURLWithPath: attachment.localFilePath), id: message.id,
+                    cancellation: cancellation) { [weak self] id in
+            guard self?.playingMessageID == id else { return }
+            self?.playingMessageID = nil
+            self?.cancellation = nil
+        }
+    }
+    func stop() {
+        cancellation?.cancel(); cancellation = nil
+        playingMessageID = nil
+        native.stop()
     }
 }
 
@@ -1071,6 +1131,7 @@ private struct ChatDetailView: View {
                 )
                 .id(contact.userID)
                 ComposerView(
+                    peerUserID: contact.userID,
                     isAttachmentPanelPresented: $isAttachmentPanelPresented,
                     draft: appState.draft,
                     transcriptionPresentation: transcriptionPresentation
@@ -1635,11 +1696,7 @@ private struct MessageListView: View {
                 // One lazy list preserves message identity across local sends and
                 // history changes without mounting all Markdown rows.
                 VStack(alignment: .leading, spacing: 14) {
-                    if messages.isEmpty {
-                        EmptyMessagesView()
-                            .padding(.top, 72)
-                            .rotationEffect(.degrees(180))
-                    } else {
+                    if !messages.isEmpty {
                         MessageHistoryStack(items: Array(messages.reversed())) { message in
                             MessageBubbleView(
                                 message: message,
@@ -1743,6 +1800,13 @@ private struct MessageListView: View {
             .rotationEffect(.degrees(180))
             .scrollDismissesKeyboard(.interactively)
             .background(RemoteIMStyle.panelBackground)
+            .overlay {
+                if messages.isEmpty {
+                    // Center in the visible message area, outside the inverted timeline.
+                    EmptyMessagesView()
+                        .allowsHitTesting(false)
+                }
+            }
             .onAppear {
                 isVisible = true
                 navigationArrival.scrollIntent = scrollIntent
@@ -1750,6 +1814,7 @@ private struct MessageListView: View {
             }
             .onDisappear {
                 isVisible = false
+                voicePlayer.stop()
                 scrollIntent.cancelPendingPositioning()
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { notification in
@@ -2099,20 +2164,9 @@ private struct MessageBubbleView: View {
                     if let videoAttachment = message.videoAttachment {
                     VStack(alignment: .leading, spacing: 8) {
                         if message.captionAbove { attachmentCaptionView }
-                        let fileState = RemoteIMVideoFileState(
-                            attachment: videoAttachment,
-                            isDownloadingHint: isVideoDownloading
-                        )
-                        Button(action: previewVideo) {
-                            VideoBubbleContent(
-                                attachment: videoAttachment,
-                                isIncoming: message.direction == .incoming,
-                                fileState: fileState
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(!fileState.isPlayable)
-                        .accessibilityIdentifier("remote-im-video-bubble")
+                        RemoteIMVideoButton(attachment: videoAttachment,
+                            isIncoming: message.direction == .incoming,
+                            isDownloadingHint: isVideoDownloading, action: previewVideo)
                         if !message.captionAbove { attachmentCaptionView }
                     }
                 } else if let imageAttachment = message.imageAttachment {
@@ -3006,11 +3060,16 @@ private struct RemoteIMFilePreviewItem: Identifiable {
 private struct FullScreenFilePreviewView: View {
     let item: RemoteIMFilePreviewItem
     let close: () -> Void
+    @State private var loaded = false
+    @State private var integrityError: String?
+    @State private var previewText = ""
 
     var body: some View {
         NavigationStack {
             Group {
-                if let integrityError {
+                if !loaded {
+                    ProgressView("正在读取文件")
+                } else if let integrityError {
                     VStack(spacing: 12) {
                         Image(systemName: "exclamationmark.shield")
                             .font(.system(size: 34, weight: .semibold))
@@ -3023,11 +3082,11 @@ private struct FullScreenFilePreviewView: View {
                     }
                     .padding(24)
                 } else if item.attachment.mimeType == "text/html" {
-                    RemoteIMHTMLPreview(filePath: item.attachment.localFilePath)
+                    RemoteIMHTMLPreview(filePath: item.attachment.localFilePath, html: previewText)
                 } else if item.attachment.mimeType == "text/markdown" ||
                             item.attachment.fileName.lowercased().hasSuffix(".md")
                 {
-                    RemoteIMMarkdownFilePreview(filePath: item.attachment.localFilePath)
+                    RemoteIMMarkdownFilePreview(text: previewText)
                 } else {
                     RemoteIMQuickLookPreview(filePath: item.attachment.localFilePath)
                 }
@@ -3046,23 +3105,50 @@ private struct FullScreenFilePreviewView: View {
                 }
             }
         }
+        .task(id: item.attachment.localFilePath) { await loadPreview() }
     }
 
     private var isGitDiff: Bool {
         RemoteIMGitDiffDisplayPolicy.isGitDiff(item.attachment)
     }
 
-    private var integrityError: String? {
-        guard isGitDiff,
-              let expected = RemoteIMGitDiffDisplayPolicy.expectedSHA256(
-                  fileName: item.attachment.fileName
-              )
-        else { return nil }
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: item.attachment.localFilePath))
-        else { return "无法读取 Diff 文件。" }
-        let actual = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-        return actual == expected ? nil : "文件内容与发送方提供的 SHA256 不一致，已停止渲染。"
+    private func loadPreview() async {
+        loaded = false
+        let path = item.attachment.localFilePath
+        let expected = isGitDiff ? RemoteIMGitDiffDisplayPolicy.expectedSHA256(fileName: item.attachment.fileName) : nil
+        let readsText = item.attachment.mimeType == "text/html" || item.attachment.mimeType == "text/markdown"
+            || item.attachment.fileName.lowercased().hasSuffix(".md")
+        do {
+            let result = try await RemoteIMBackgroundWork.fileCancellable { cancellation -> (String?, String) in
+                let url = URL(fileURLWithPath: path)
+                if let expected {
+                    let handle = try FileHandle(forReadingFrom: url)
+                    defer { try? handle.close() }
+                    var hash = SHA256()
+                    while let chunk = try handle.read(upToCount: 64 * 1024), !chunk.isEmpty {
+                        try cancellation.check()
+                        hash.update(data: chunk)
+                    }
+                    let actual = hash.finalize().map { String(format: "%02x", $0) }.joined()
+                    if actual != expected { return ("文件内容与发送方提供的 SHA256 不一致，已停止渲染。", "") }
+                }
+                return (nil, readsText ? try String(contentsOf: url, encoding: .utf8) : "")
+            }
+            guard !Task.isCancelled else { return }
+            if result.0 == nil, readsText, item.attachment.mimeType != "text/html" {
+                try await MarkdownPreparation.prepare([result.1])
+            }
+            guard !Task.isCancelled else { return }
+            integrityError = result.0
+            previewText = result.1
+            loaded = true
+        } catch {
+            guard !Task.isCancelled else { return }
+            integrityError = "无法读取文件：" + error.localizedDescription
+            loaded = true
+        }
     }
+
 }
 
 private struct RemoteIMQuickLookPreview: UIViewControllerRepresentable {
@@ -3079,6 +3165,7 @@ private struct RemoteIMQuickLookPreview: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ controller: QLPreviewController, context: Context) {
+        guard context.coordinator.filePath != filePath else { return }
         context.coordinator.filePath = filePath
         controller.reloadData()
     }
@@ -3101,11 +3188,11 @@ private struct RemoteIMQuickLookPreview: UIViewControllerRepresentable {
 }
 
 private struct RemoteIMMarkdownFilePreview: View {
-    let filePath: String
+    let text: String
 
     var body: some View {
         ScrollView {
-            MarkdownLikeText(previewText)
+            MarkdownLikeText(text)
                 .font(.system(size: 14))
                 .padding(18)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -3113,13 +3200,17 @@ private struct RemoteIMMarkdownFilePreview: View {
         .background(RemoteIMStyle.panelBackground)
     }
 
-    private var previewText: String {
-        (try? String(contentsOfFile: filePath, encoding: .utf8)) ?? "文件暂不可预览"
-    }
+
 }
 
 private struct RemoteIMHTMLPreview: UIViewRepresentable {
     let filePath: String
+    let html: String
+    final class Coordinator {
+        var filePath: String?
+        var html: String?
+    }
+    func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeUIView(context _: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
@@ -3129,15 +3220,22 @@ private struct RemoteIMHTMLPreview: UIViewRepresentable {
         return webView
     }
 
-    func updateUIView(_ webView: WKWebView, context _: Context) {
-        let html = (try? String(contentsOfFile: filePath, encoding: .utf8)) ?? "<p>文件暂不可预览</p>"
+    func updateUIView(_ webView: WKWebView, context: Context) {
+        guard context.coordinator.filePath != filePath || context.coordinator.html != html else { return }
+        context.coordinator.filePath = filePath
+        context.coordinator.html = html
         webView.loadHTMLString(html, baseURL: URL(fileURLWithPath: filePath).deletingLastPathComponent())
     }
 }
 
-private struct RemoteIMVideoFileState: Equatable {
+private struct RemoteIMVideoFileState: Equatable, Sendable {
     let isPlayable: Bool
     let isDownloading: Bool
+
+    init(isPlayable: Bool, isDownloading: Bool) {
+        self.isPlayable = isPlayable
+        self.isDownloading = isDownloading
+    }
 
     init(attachment: RemoteIMVideoAttachment, isDownloadingHint: Bool) {
         guard !attachment.localPath.isEmpty else {
@@ -3155,6 +3253,41 @@ private struct RemoteIMVideoFileState: Equatable {
                 atPath: RemoteIMMediaStorage.partialDownloadURL(for: localURL).path
             )
         )
+    }
+}
+
+private struct RemoteIMVideoStatusKey: Equatable {
+    let attachment: RemoteIMVideoAttachment
+    let downloading: Bool
+    let revision: UInt64
+}
+
+private struct RemoteIMVideoButton: View {
+    let attachment: RemoteIMVideoAttachment
+    let isIncoming: Bool
+    let isDownloadingHint: Bool
+    let action: () -> Void
+    @EnvironmentObject private var appState: RemoteIMAppState
+    @State private var fileState = RemoteIMVideoFileState(isPlayable: false, isDownloading: true)
+    var body: some View {
+        Button(action: action) {
+            VideoBubbleContent(attachment: attachment, isIncoming: isIncoming, fileState: fileState)
+        }
+        .buttonStyle(.plain)
+        .disabled(!fileState.isPlayable)
+        .accessibilityIdentifier("remote-im-video-bubble")
+        .task(id: RemoteIMVideoStatusKey(attachment: attachment, downloading: isDownloadingHint,
+                                       revision: appState.mediaFileRevision)) {
+            let attachment = attachment
+            let hint = isDownloadingHint
+            do {
+                let result = try await RemoteIMBackgroundWork.metadata {
+                    RemoteIMVideoFileState(attachment: attachment, isDownloadingHint: hint)
+                }
+                guard !Task.isCancelled else { return }
+                fileState = result
+            } catch { }
+        }
     }
 }
 
@@ -3429,83 +3562,89 @@ private struct StatusIcon: View {
     }
 }
 
-private final class MarkdownBlocksBox {
-    let value: [MarkdownBlock]
-
-    init(_ value: [MarkdownBlock]) {
-        self.value = value
-    }
+private struct PreparedMarkdown: Sendable {
+    let source: String
+    let blocks: [MarkdownBlock]
+    let inline: [String: AttributedString]
 }
 
-private final class MarkdownAttributedTextBox {
-    let value: AttributedString?
+private final class PreparedMarkdownBox {
+    let value: PreparedMarkdown
+    init(_ value: PreparedMarkdown) { self.value = value }
+}
 
-    init(_ value: AttributedString?) {
-        self.value = value
+private struct PreparedMarkdownInlineKey: EnvironmentKey {
+    static let defaultValue: [String: AttributedString] = [:]
+}
+
+private extension EnvironmentValues {
+    var preparedMarkdownInline: [String: AttributedString] {
+        get { self[PreparedMarkdownInlineKey.self] }
+        set { self[PreparedMarkdownInlineKey.self] = newValue }
     }
 }
 
 private final class MarkdownRenderCache: @unchecked Sendable {
     static let shared = MarkdownRenderCache()
-
-    private let blocks = NSCache<NSString, MarkdownBlocksBox>()
-    private let attributedTexts = NSCache<NSString, MarkdownAttributedTextBox>()
-
-    private init() {
-        blocks.countLimit = 256
-        blocks.totalCostLimit = 2 * 1_024 * 1_024
-        attributedTexts.countLimit = 512
-        attributedTexts.totalCostLimit = 2 * 1_024 * 1_024
+    private let values = NSCache<NSString, PreparedMarkdownBox>()
+    private init() { values.countLimit = 256; values.totalCostLimit = 4 * 1024 * 1024 }
+    func cached(_ text: String) -> PreparedMarkdown? { values.object(forKey: text as NSString)?.value }
+    func prepare(_ text: String) -> PreparedMarkdown {
+        dispatchPrecondition(condition: .notOnQueue(.main))
+        if let cached = cached(text) { return cached }
+        let blocks = parseMarkdownBlocks(text)
+        var inline: [String: AttributedString] = [:]
+        func append(_ value: String) {
+            guard inline[value] == nil else { return }
+            let parsed = (try? AttributedString(markdown: value,
+                options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(value)
+            inline[value] = MarkdownInlineStyling.apply(to: parsed)
+        }
+        for block in blocks {
+            switch block.kind {
+            case .markdown(let value), .sourceNote(let value), .heading(_, let value): append(value)
+            case .list(let list): list.items.forEach { append($0.text) }
+            case .quote(let quote): append(quote.text)
+            case .table(let table):
+                table.headers.forEach(append)
+                table.rows.forEach { $0.forEach(append) }
+            case .code, .divider: break
+            }
+        }
+        let result = PreparedMarkdown(source: text, blocks: blocks, inline: inline)
+        let cost = text.utf8.count * 4 + inline.values.reduce(0) { $0 + $1.characters.count * 8 }
+        values.setObject(PreparedMarkdownBox(result), forKey: text as NSString, cost: cost)
+        return result
     }
+}
 
-    func blocks(for text: String) -> [MarkdownBlock] {
-        let key = text as NSString
-        if let cached = blocks.object(forKey: key) {
-            return cached.value
+enum MarkdownPreparation {
+    static func prepare(_ texts: [String]) async throws {
+        try await RemoteIMBackgroundWork.parseCancellable { cancellation in
+            for text in texts {
+                try cancellation.check()
+                _ = MarkdownRenderCache.shared.prepare(text)
+            }
         }
-        let parsed = parseMarkdownBlocks(text)
-        blocks.setObject(
-            MarkdownBlocksBox(parsed),
-            forKey: key,
-            cost: text.lengthOfBytes(using: .utf8)
-        )
-        return parsed
-    }
-
-    func attributedText(for text: String) -> AttributedString? {
-        let key = text as NSString
-        if let cached = attributedTexts.object(forKey: key) {
-            return cached.value
-        }
-        // Block layout is handled below; preserve line breaks within prose and list items.
-        var parsed = try? AttributedString(
-            markdown: text,
-            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        )
-        // Apply inline styling once per cached string, not on every scroll frame.
-        if let unstyled = parsed {
-            parsed = MarkdownInlineStyling.apply(to: unstyled)
-        }
-        attributedTexts.setObject(
-            MarkdownAttributedTextBox(parsed),
-            forKey: key,
-            cost: text.lengthOfBytes(using: .utf8)
-        )
-        return parsed
     }
 }
 
 private struct MarkdownLikeText: View {
-    private let blocks: [MarkdownBlock]
+    private let source: String
+    @State private var prepared: PreparedMarkdown?
     private let trailingTimestamp: String?
 
     init(_ text: String, trailingTimestamp: String? = nil) {
-        self.blocks = MarkdownRenderCache.shared.blocks(for: text)
+        self.source = text
+        _prepared = State(initialValue: MarkdownRenderCache.shared.cached(text))
         self.trailingTimestamp = trailingTimestamp
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        let document = (prepared?.source == source ? prepared : nil) ?? MarkdownRenderCache.shared.cached(source)
+        let blocks = document?.source == source ? (document?.blocks ?? []) : []
+        return VStack(alignment: .leading, spacing: 12) {
+            if document == nil { ProgressView() }
             if blocks.isEmpty, let trailingTimestamp {
                 MarkdownInlineText(text: "", trailingTimestamp: trailingTimestamp)
             }
@@ -3547,6 +3686,17 @@ private struct MarkdownLikeText: View {
         .tint(RemoteIMStyle.blue)
         .lineLimit(nil)
         .multilineTextAlignment(.leading)
+        .environment(\.preparedMarkdownInline, document?.inline ?? [:])
+        .task(id: source) {
+            if prepared?.source == source { return }
+            if let cached = MarkdownRenderCache.shared.cached(source) { prepared = cached; return }
+            do {
+                let source = source
+                let result = try await RemoteIMBackgroundWork.parse { MarkdownRenderCache.shared.prepare(source) }
+                guard !Task.isCancelled else { return }
+                prepared = result
+            } catch { }
+        }
         .fixedSize(horizontal: false, vertical: true)
         // 普通态长按统一交给 MessageActionDialog。这里启用系统选择会优先弹出
         // Copy / Share…，绕过 MaiChat 的自绘菜单；需要选字时由“选择”动作切换到
@@ -3554,12 +3704,12 @@ private struct MarkdownLikeText: View {
     }
 }
 
-private struct MarkdownBlock: Identifiable {
+private struct MarkdownBlock: Identifiable, Sendable {
     let id = UUID()
     let kind: MarkdownBlockKind
 }
 
-private enum MarkdownBlockKind {
+private enum MarkdownBlockKind: Sendable {
     case markdown(String)
     case sourceNote(String)
     case heading(level: Int, text: String)
@@ -3570,11 +3720,11 @@ private enum MarkdownBlockKind {
     case divider
 }
 
-private struct MarkdownList {
+private struct MarkdownList: Sendable {
     let items: [MarkdownListItem]
 }
 
-private struct MarkdownListItem: Identifiable {
+private struct MarkdownListItem: Identifiable, Sendable {
     let id = UUID()
     var text: String
     var marker: String = "•"
@@ -3582,9 +3732,23 @@ private struct MarkdownListItem: Identifiable {
     var isChecked: Bool? = nil
 }
 
-private struct MarkdownTable {
+private struct MarkdownTable: Sendable {
     let headers: [String]
     let rows: [[String]]
+    let columnWidths: [CGFloat]
+    init(headers: [String], rows: [[String]]) {
+        self.headers = headers
+        self.rows = rows
+        // Share column widths across rows; don't rescan the table for every cell.
+        let count = max(headers.count, rows.map(\.count).max() ?? 0)
+        self.columnWidths = (0..<count).map { column in
+            let values = [headers[safe: column] ?? ""] + rows.map { $0[safe: column] ?? "" }
+            let longest = values
+                .flatMap { $0.components(separatedBy: .newlines) }
+                .map(\.count).max() ?? 0
+            return min(190, max(88, CGFloat(longest) * 7 + 24))
+        }
+    }
 }
 
 private struct MarkdownTrailingDate<Content: View>: View {
@@ -3605,22 +3769,17 @@ private struct MarkdownTrailingDate<Content: View>: View {
 
 private struct MarkdownInlineText: View {
     let text: String
-    private let attributedText: AttributedString
-
-    init(text: String, trailingTimestamp: String? = nil) {
-        self.text = text
-        var rendered = MarkdownRenderCache.shared.attributedText(for: text) ?? AttributedString(text)
+    var trailingTimestamp: String? = nil
+    @Environment(\.preparedMarkdownInline) private var inline
+    var body: some View {
+        var rendered = inline[text] ?? AttributedString(text)
         if let trailingTimestamp {
             var date = AttributedString("  · " + trailingTimestamp)
             date.font = .system(size: 11, weight: .semibold)
             date.foregroundColor = RemoteIMStyle.blue
             rendered.append(date)
         }
-        self.attributedText = rendered
-    }
-
-    var body: some View {
-        Text(attributedText)
+        return Text(rendered)
             .lineLimit(nil)
             .multilineTextAlignment(.leading)
             .fixedSize(horizontal: false, vertical: true)
@@ -3782,15 +3941,7 @@ private struct MarkdownTableView: View {
 
     init(table: MarkdownTable) {
         self.table = table
-        // Share column widths across rows; don't rescan the table for every cell.
-        let count = max(table.headers.count, table.rows.map(\.count).max() ?? 0)
-        self.columnWidths = (0..<count).map { column in
-            let values = [table.headers[safe: column] ?? ""] + table.rows.map { $0[safe: column] ?? "" }
-            let longest = values
-                .flatMap { $0.components(separatedBy: .newlines) }
-                .map(\.count).max() ?? 0
-            return min(190, max(88, CGFloat(longest) * 7 + 24))
-        }
+        self.columnWidths = table.columnWidths
     }
 
     var body: some View {
@@ -4094,77 +4245,125 @@ private extension Array {
     }
 }
 
-@MainActor
-private final class VoiceMessageRecorder: NSObject, ObservableObject {
-    @Published var isRecording = false
+private struct AudioRecorderReference: @unchecked Sendable {
+    let value: AVAudioRecorder
+    let url: URL?
+}
 
+private final class NativeVoiceRecorder: @unchecked Sendable {
     private var recorder: AVAudioRecorder?
-    private var startedAt: Date?
     private var recordingURL: URL?
-
-    func start() async throws {
-        guard !isRecording else { return }
-        let granted = await requestRecordPermission()
-        guard granted else {
-            throw VoiceRecorderError.microphonePermissionDenied
+    private var startedAt: TimeInterval?
+    private var sessionID: UUID?
+    deinit {
+        guard let recorder else { return }
+        let reference = AudioRecorderReference(value: recorder, url: recordingURL)
+        RemoteIMBackgroundWork.audioQueue.async {
+            reference.value.stop()
+            if let url = reference.url { try? FileManager.default.removeItem(at: url) }
         }
-
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker])
-        try session.setActive(true)
-
-        let url = RemoteIMMediaStorage.fileURL(
-            category: .outgoingVoices,
-            stem: "remote-im-voice-\(UUID().uuidString)",
-            pathExtension: "m4a"
-        )
-        let settings: [String: Any] = [
-            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-            AVSampleRateKey: 16_000,
-            AVNumberOfChannelsKey: 1,
-            AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue
-        ]
-        let nextRecorder = try AVAudioRecorder(url: url, settings: settings)
-        nextRecorder.prepareToRecord()
-        guard nextRecorder.record() else {
-            throw VoiceRecorderError.startFailed
-        }
-
-        recorder = nextRecorder
-        recordingURL = url
-        startedAt = Date()
-        isRecording = true
     }
 
-    func stop() -> RemoteIMVoiceRecording? {
-        guard isRecording, let recorder, let recordingURL else { return nil }
-        recorder.stop()
-        self.recorder = nil
-        self.recordingURL = nil
-        isRecording = false
-        let duration = max(1, Int(ceil(Date().timeIntervalSince(startedAt ?? Date()))))
-        startedAt = nil
-        return RemoteIMVoiceRecording(fileURL: recordingURL, durationSeconds: duration)
+    @MainActor
+    func start(id: UUID, cancellation: RemoteIMBackgroundWork.Cancellation) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            RemoteIMBackgroundWork.audioQueue.async { [self] in
+                var pendingURL: URL?
+                var pendingRecorder: AVAudioRecorder?
+                do {
+                    try cancellation.check()
+                    let session = AVAudioSession.sharedInstance()
+                    try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker])
+                    try session.setActive(true)
+                    try cancellation.check()
+                    let url = RemoteIMMediaStorage.fileURL(category: .outgoingVoices,
+                        stem: "remote-im-voice-\(UUID().uuidString)", pathExtension: "m4a")
+                    pendingURL = url
+                    let settings: [String: Any] = [AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+                        AVSampleRateKey: 16_000, AVNumberOfChannelsKey: 1,
+                        AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue]
+                    let next = try AVAudioRecorder(url: url, settings: settings)
+                    pendingRecorder = next
+                    next.prepareToRecord()
+                    guard next.record() else { throw VoiceRecorderError.startFailed }
+                    try cancellation.check()
+                    recorder = next; recordingURL = url
+                    startedAt = ProcessInfo.processInfo.systemUptime; sessionID = id
+                    continuation.resume()
+                } catch {
+                    pendingRecorder?.stop()
+                    if let url = pendingURL { try? FileManager.default.removeItem(at: url) }
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    @MainActor
+    func stop(id: UUID) async -> RemoteIMVoiceRecording? {
+        await withCheckedContinuation { continuation in
+            RemoteIMBackgroundWork.audioQueue.async { [self] in
+                guard sessionID == id, let recorder, let url = recordingURL else {
+                    continuation.resume(returning: nil); return
+                }
+                recorder.stop()
+                let duration = max(1, Int(ceil(ProcessInfo.processInfo.systemUptime - (startedAt ?? ProcessInfo.processInfo.systemUptime))))
+                self.recorder = nil; recordingURL = nil; startedAt = nil; sessionID = nil
+                continuation.resume(returning: RemoteIMVoiceRecording(fileURL: url, durationSeconds: duration))
+            }
+        }
+    }
+
+    @MainActor
+    func cancel(id: UUID) {
+        RemoteIMBackgroundWork.audioQueue.async { [self] in
+            guard sessionID == id else { return }
+            recorder?.stop(); recorder = nil; sessionID = nil; startedAt = nil
+            if let url = recordingURL { try? FileManager.default.removeItem(at: url) }
+            recordingURL = nil
+        }
+    }
+}
+
+@MainActor
+private final class VoiceMessageRecorder: ObservableObject {
+    @Published private(set) var isRecording = false
+    private let native = NativeVoiceRecorder()
+    private var sessionID: UUID?
+    private var cancellation: RemoteIMBackgroundWork.Cancellation?
+
+    func start() async throws {
+        guard sessionID == nil else { return }
+        let id = UUID(), cancellation = RemoteIMBackgroundWork.Cancellation()
+        sessionID = id; self.cancellation = cancellation
+        do {
+            let granted = await withCheckedContinuation { continuation in
+                AVAudioSession.sharedInstance().requestRecordPermission { continuation.resume(returning: $0) }
+            }
+            guard granted else { throw VoiceRecorderError.microphonePermissionDenied }
+            try cancellation.check(); try Task.checkCancellation()
+            try await native.start(id: id, cancellation: cancellation)
+            guard sessionID == id, !Task.isCancelled else { native.cancel(id: id); throw CancellationError() }
+            isRecording = true
+        } catch {
+            native.cancel(id: id)
+            if sessionID == id { sessionID = nil; self.cancellation = nil; isRecording = false }
+            throw error
+        }
+    }
+
+    func stop() async -> RemoteIMVoiceRecording? {
+        guard let id = sessionID else { return nil }
+        cancellation?.cancel(); cancellation = nil
+        sessionID = nil; isRecording = false
+        return await native.stop(id: id)
     }
 
     func cancel() {
-        let url = recordingURL
-        recorder?.stop()
-        recorder = nil
-        recordingURL = nil
-        startedAt = nil
-        isRecording = false
-        if let url {
-            try? FileManager.default.removeItem(at: url)
-        }
-    }
-
-    private func requestRecordPermission() async -> Bool {
-        await withCheckedContinuation { continuation in
-            AVAudioSession.sharedInstance().requestRecordPermission { granted in
-                continuation.resume(returning: granted)
-            }
-        }
+        cancellation?.cancel(); cancellation = nil
+        guard let id = sessionID else { return }
+        sessionID = nil; isRecording = false
+        native.cancel(id: id)
     }
 }
 
@@ -4280,13 +4479,16 @@ private struct RemoteIMPickedVideoTransfer: Transferable, Sendable {
             SentTransferredFile(video.fileURL)
         } importing: { received in
             let sourceURL = received.file
-            let sourceExtension = sourceURL.pathExtension.trimmingCharacters(in: .whitespacesAndNewlines)
-            let targetURL = RemoteIMMediaStorage.fileURL(
-                category: .outgoingVideos,
-                stem: "remote-im-video-\(UUID().uuidString)",
-                pathExtension: sourceExtension.isEmpty ? "mov" : sourceExtension
-            )
-            try FileManager.default.copyItem(at: sourceURL, to: targetURL)
+            let targetURL = try await RemoteIMBackgroundWork.file {
+                let sourceExtension = sourceURL.pathExtension.trimmingCharacters(in: .whitespacesAndNewlines)
+                let targetURL = RemoteIMMediaStorage.fileURL(
+                    category: .outgoingVideos,
+                    stem: "remote-im-video-\(UUID().uuidString)",
+                    pathExtension: sourceExtension.isEmpty ? "mov" : sourceExtension
+                )
+                try FileManager.default.copyItem(at: sourceURL, to: targetURL)
+                return targetURL
+            }
             return RemoteIMPickedVideoTransfer(fileURL: targetURL)
         }
     }
@@ -4379,6 +4581,7 @@ private struct ComposerAttachmentPanel: View {
 }
 
 private struct ComposerView: View {
+    let peerUserID: String
     @Binding var isAttachmentPanelPresented: Bool
     @EnvironmentObject private var appState: RemoteIMAppState
     @ObservedObject var draft: RemoteIMDraftState
@@ -4484,7 +4687,10 @@ private struct ComposerView: View {
                 } else {
                     ZStack(alignment: .topLeading) {
                         ComposerTextView(
-                            text: $draft.text,
+                            text: Binding(
+                                get: { draft.text },
+                                set: { draft.updateFromEditor($0) }
+                            ),
                             onSubmit: submitDraft,
                             focusRequestGeneration: composerFocusRequestGeneration,
                             editingController: composerEditingController,
@@ -4799,7 +5005,7 @@ private struct ComposerView: View {
 
     private func submitDraft() {
         guard appState.canSend else { return }
-        Task { await appState.sendDraft() }
+        Task { await appState.sendDraft(to: peerUserID) }
     }
 
     private func updateKeyboardVisibleHeight(from notification: Notification) {
@@ -4879,8 +5085,8 @@ private struct ComposerView: View {
                 voiceRecorder.cancel()
                 return
             }
-            guard let recording = voiceRecorder.stop() else { return }
-            await appState.sendVoiceRecording(recording)
+            guard let recording = await voiceRecorder.stop() else { return }
+            await appState.sendVoiceRecording(recording, to: peerUserID)
             return
         }
 
@@ -4930,7 +5136,7 @@ private struct ComposerView: View {
                 draft.text = text
                 composerFocusRequestGeneration &+= 1
             } else {
-                await appState.sendText(text)
+                await appState.sendText(text, to: peerUserID)
             }
             AppDiagnosticLog.shared.record(
                 level: .info,
@@ -5009,6 +5215,7 @@ private struct ComposerView: View {
         do {
             try await voiceRecorder.start()
         } catch {
+            if error is CancellationError { return }
             transcriptionPresentation.target = nil
             isPressingVoice = false
             isCancellingVoice = false
@@ -5017,6 +5224,7 @@ private struct ComposerView: View {
     }
 
     private func sendSelectedMedia(_ items: [PhotosPickerItem]) async {
+        let identity = appState.remoteDiagnosticsIdentity
         defer { selectedMediaItems = [] }
         var sentCount = 0
         var failedReadCount = 0
@@ -5025,17 +5233,19 @@ private struct ComposerView: View {
             do {
                 if item.supportedContentTypes.contains(where: { $0.conforms(to: .movie) }) {
                     let video = try await preparePickedVideo(item)
-                    await appState.sendVideoFile(video)
+                    guard appState.remoteDiagnosticsIdentity == identity, !Task.isCancelled else { return }
+                    await appState.sendVideoFile(video, to: peerUserID)
                 } else {
                     guard let data = try await item.loadTransferable(type: Data.self) else {
                         failedReadCount += 1
                         continue
                     }
-                    let imageFile = try savePickedImage(
-                        data: data,
-                        contentTypes: item.supportedContentTypes
-                    )
-                    await appState.sendImageFile(imageFile)
+                    let contentTypes = item.supportedContentTypes
+                    let imageFile = try await RemoteIMBackgroundWork.file {
+                        try Self.savePickedImage(data: data, contentTypes: contentTypes)
+                    }
+                    guard appState.remoteDiagnosticsIdentity == identity, !Task.isCancelled else { return }
+                    await appState.sendImageFile(imageFile, to: peerUserID)
                 }
                 sentCount += 1
             } catch {
@@ -5080,53 +5290,56 @@ private struct ComposerView: View {
             preferredTimescale: 600
         )
         let generatedCover = try await imageGenerator.image(at: coverTime)
-        guard let coverData = UIImage(cgImage: generatedCover.image).jpegData(compressionQuality: 0.86) else {
-            throw RemoteIMPickedMediaError.coverGenerationFailed
+        let cover = RemoteIMImageEncodingInput(image: UIImage(cgImage: generatedCover.image))
+        return try await RemoteIMBackgroundWork.file {
+            guard let coverData = cover.image.jpegData(compressionQuality: 0.86) else {
+                throw RemoteIMPickedMediaError.coverGenerationFailed
+            }
+            let coverFileURL = RemoteIMMediaStorage.fileURL(
+                category: .outgoingVideoCovers,
+                stem: fileURL.deletingPathExtension().lastPathComponent,
+                pathExtension: "jpg"
+            )
+            try coverData.write(to: coverFileURL, options: .atomic)
+            let resourceValues = try fileURL.resourceValues(forKeys: [.fileSizeKey])
+            let fileType = fileURL.pathExtension.trimmingCharacters(in: .whitespacesAndNewlines)
+            return RemoteIMVideoFile(fileURL: fileURL, coverFileURL: coverFileURL,
+                fileType: fileType.isEmpty ? "mp4" : fileType.lowercased(),
+                durationSeconds: durationSeconds, width: width, height: height,
+                sizeBytes: Int64(max(0, resourceValues.fileSize ?? 0)))
         }
-        let coverFileURL = RemoteIMMediaStorage.fileURL(
-            category: .outgoingVideoCovers,
-            stem: fileURL.deletingPathExtension().lastPathComponent,
-            pathExtension: "jpg"
-        )
-        try coverData.write(to: coverFileURL, options: .atomic)
-
-        let resourceValues = try fileURL.resourceValues(forKeys: [.fileSizeKey])
-        let fileType = fileURL.pathExtension.trimmingCharacters(in: .whitespacesAndNewlines)
-        return RemoteIMVideoFile(
-            fileURL: fileURL,
-            coverFileURL: coverFileURL,
-            fileType: fileType.isEmpty ? "mp4" : fileType.lowercased(),
-            durationSeconds: durationSeconds,
-            width: width,
-            height: height,
-            sizeBytes: Int64(max(0, resourceValues.fileSize ?? 0))
-        )
     }
 
     private func sendCapturedPhoto(_ image: UIImage) async {
+        let identity = appState.remoteDiagnosticsIdentity
         do {
-            guard let data = image.jpegData(compressionQuality: 0.9) else {
-                appState.errorMessage = "拍摄的照片处理失败"
-                return
+            let input = RemoteIMImageEncodingInput(image: image)
+            let imageFile = try await RemoteIMBackgroundWork.file {
+                guard let data = input.image.jpegData(compressionQuality: 0.9) else {
+                    throw RemoteIMPickedMediaError.coverGenerationFailed
+                }
+                return try Self.savePickedImage(data: data, contentTypes: [.jpeg])
             }
-            let imageFile = try savePickedImage(data: data, contentTypes: [.jpeg])
-            await appState.sendImageFile(imageFile)
+            guard appState.remoteDiagnosticsIdentity == identity, !Task.isCancelled else { return }
+                    await appState.sendImageFile(imageFile, to: peerUserID)
         } catch {
             appState.errorMessage = error.localizedDescription
         }
     }
 
     private func sendSelectedFile(_ result: Result<[URL], Error>) async {
+        let identity = appState.remoteDiagnosticsIdentity
         do {
             guard let selectedURL = try result.get().first else { return }
-            let file = try copyImportedFileToCache(selectedURL)
-            await appState.sendFile(file)
+            let file = try await RemoteIMBackgroundWork.file { try Self.copyImportedFileToCache(selectedURL) }
+            guard appState.remoteDiagnosticsIdentity == identity, !Task.isCancelled else { return }
+                    await appState.sendFile(file, to: peerUserID)
         } catch {
             appState.errorMessage = error.localizedDescription
         }
     }
 
-    private func copyImportedFileToCache(_ sourceURL: URL) throws -> RemoteIMFile {
+    nonisolated private static func copyImportedFileToCache(_ sourceURL: URL) throws -> RemoteIMFile {
         let accessedSecurityScopedResource = sourceURL.startAccessingSecurityScopedResource()
         defer {
             if accessedSecurityScopedResource {
@@ -5153,7 +5366,7 @@ private struct ComposerView: View {
         )
     }
 
-    private func savePickedImage(
+    nonisolated private static func savePickedImage(
         data: Data,
         contentTypes: [UTType]
     ) throws -> RemoteIMImageFile {
@@ -5488,7 +5701,15 @@ private struct ComposerTextView: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> GrowingComposerUITextView {
-        let textView = GrowingComposerUITextView()
+        // The composer is plain text. Use TextKit 1 explicitly to avoid the
+        // TextKit 2 viewport/caret layout work measured during continuous input.
+        let textView = GrowingComposerUITextView(usingTextLayoutManager: false)
+        AppDiagnosticLog.shared.record(
+            level: .info,
+            category: "remote-im-ui",
+            event: "composer-created",
+            fields: ["layout_engine": "textkit1"]
+        )
         textView.delegate = context.coordinator
         textView.backgroundColor = .clear
         textView.font = .systemFont(ofSize: 14)

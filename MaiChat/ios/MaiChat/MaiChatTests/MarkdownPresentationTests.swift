@@ -1,4 +1,5 @@
 import XCTest
+import Combine
 import SwiftUI
 import UIKit
 @testable import MaiChatCore
@@ -992,5 +993,60 @@ final class MarkdownPresentationTests: XCTestCase {
         XCTAssertEqual(MarkdownTaskPresentation.parse("[x]")?.text, "")
         XCTAssertNil(MarkdownTaskPresentation.parse("[x](https://example.com)"))
         XCTAssertNil(MarkdownTaskPresentation.parse("普通 [x] 文字"))
+    }
+}
+
+final class ComposerDraftStateTests: XCTestCase {
+    @MainActor
+    func testTypingUpdatesFullTextWithoutInvalidatingSurroundingControlsForEveryKey() {
+        let draft = RemoteIMDraftState()
+        var updates = 0
+        let subscription = draft.objectWillChange.sink { updates += 1 }
+        for text in ["n", "ni", "你", "你好", "你好 👨‍👩‍👧‍👦", "你好 👨‍👩‍👧‍👦\n第二行"] {
+            draft.updateFromEditor(text)
+            XCTAssertEqual(draft.text, text)
+        }
+        XCTAssertEqual(updates, 1)
+        withExtendedLifetime(subscription) {}
+    }
+
+    @MainActor
+    func testBlankStateCommandsAndExternalReplacementsStillInvalidate() {
+        let draft = RemoteIMDraftState()
+        var updates = 0
+        let subscription = draft.objectWillChange.sink { updates += 1 }
+        draft.updateFromEditor(" ")
+        XCTAssertEqual(updates, 1) // Placeholder hides, still not sendable.
+        draft.updateFromEditor("  ")
+        XCTAssertEqual(updates, 1)
+        draft.updateFromEditor(" hi")
+        XCTAssertEqual(updates, 2) // Send button becomes enabled.
+        draft.updateFromEditor("/")
+        draft.updateFromEditor("/s")
+        XCTAssertEqual(updates, 4) // Slash suggestions follow each query.
+        draft.text = "语音识别结果"
+        XCTAssertEqual(updates, 5)
+        XCTAssertEqual(draft.text, "语音识别结果")
+        draft.text = "另一个非空草稿"
+        XCTAssertEqual(updates, 6) // External nonempty replacement reaches UITextView.
+        draft.text = ""
+        XCTAssertEqual(updates, 7) // Send clears the editor immediately.
+        draft.text = ""
+        XCTAssertEqual(updates, 7)
+        withExtendedLifetime(subscription) {}
+    }
+
+    @MainActor
+    func testQuoteUpdatesRemainObservableAndDoNotDropTypedText() {
+        let draft = RemoteIMDraftState()
+        draft.updateFromEditor("最新的正文")
+        var updates = 0
+        let subscription = draft.objectWillChange.sink { updates += 1 }
+        draft.quote = RemoteIMQuote(messageID: "message", senderID: "peer", digest: "引用", kind: "text")
+        XCTAssertEqual(updates, 1)
+        draft.quote = nil
+        XCTAssertEqual(updates, 2)
+        XCTAssertEqual(draft.text, "最新的正文")
+        withExtendedLifetime(subscription) {}
     }
 }

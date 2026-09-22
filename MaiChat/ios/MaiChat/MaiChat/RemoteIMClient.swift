@@ -69,26 +69,26 @@ struct IncomingRemoteIMVideo: Equatable {
     let stage: RemoteIMVideoDownloadStage
 }
 
-struct RemoteIMVoiceRecording: Equatable {
+struct RemoteIMVoiceRecording: Equatable, Sendable {
     let fileURL: URL
     let durationSeconds: Int
 }
 
-struct RemoteIMImageFile: Equatable {
+struct RemoteIMImageFile: Equatable, Sendable {
     let fileURL: URL
     let width: Int?
     let height: Int?
     let sizeBytes: Int?
 }
 
-struct RemoteIMFile: Equatable {
+struct RemoteIMFile: Equatable, Sendable {
     let fileURL: URL
     let fileName: String
     let mimeType: String
     let sizeBytes: Int?
 }
 
-struct RemoteIMVideoFile: Equatable {
+struct RemoteIMVideoFile: Equatable, Sendable {
     let fileURL: URL
     let coverFileURL: URL
     let fileType: String

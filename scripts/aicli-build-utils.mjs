@@ -58,7 +58,14 @@ export function stripArgsForPlatform(platform = process.platform) {
 
 export function stripReleaseExecutable(
   binaryPath,
-  { platform = process.platform, runCommand = run } = {}
+  {
+    platform = process.platform,
+    runCommand = run,
+    readXattrs = (path) => {
+      const result = spawnSync('xattr', [path], { encoding: 'utf8' })
+      return result.status === 0 ? result.stdout.split(/\r?\n/).filter(Boolean) : []
+    }
+  } = {}
 ) {
   const stripArgs = stripArgsForPlatform(platform)
   if (!stripArgs) return false
@@ -69,6 +76,13 @@ export function stripReleaseExecutable(
   // ad-hoc 签名，既保留去符号结果，也把签名收敛成可稳定执行的普通 ad-hoc 形态。
   if (platform === 'darwin') {
     runCommand('codesign', ['--force', '--sign', '-', binaryPath])
+    // Files copied out of a build tree can inherit Gatekeeper provenance. On
+    // this machine AMFI then kills the otherwise-valid ad-hoc-signed binary
+    // with SIGKILL. Remove only that generated provenance attribute; retain
+    // every other xattr and verify the executable immediately afterward.
+    if (readXattrs(binaryPath).includes('com.apple.provenance')) {
+      runCommand('xattr', ['-d', 'com.apple.provenance', binaryPath])
+    }
   }
   return true
 }

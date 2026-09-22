@@ -124,13 +124,15 @@ describe('AICLI build utilities', () => {
     const calls = []
     const stripped = stripReleaseExecutable('/tmp/codex', {
       platform: 'darwin',
-      runCommand: (command, args) => calls.push([command, args])
+      runCommand: (command, args) => calls.push([command, args]),
+      readXattrs: () => ['com.apple.provenance', 'user.keep-me']
     })
 
     expect(stripped).toBe(true)
     expect(calls).toEqual([
       ['strip', ['-S', '-x', '/tmp/codex']],
-      ['codesign', ['--force', '--sign', '-', '/tmp/codex']]
+      ['codesign', ['--force', '--sign', '-', '/tmp/codex']],
+      ['xattr', ['-d', 'com.apple.provenance', '/tmp/codex']]
     ])
 
     const linuxCalls = []

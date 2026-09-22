@@ -1,5 +1,7 @@
 #include "MaiSessionTitler.h"
 
+MaiSessionTitler::MaiSessionTitler() : MaiSessionTitler(Options{}) {}
+
 MaiSessionTitler::MaiSessionTitler(Options options) : mOptions(options) {}
 
 std::string MaiSessionTitler::makeTitle(const std::string& text) const {

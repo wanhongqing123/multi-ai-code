@@ -78,7 +78,8 @@ public:
         MaiMillis timeoutMs = 0;
     };
 
-    explicit MaiPermissionGate(Options options = {});
+    MaiPermissionGate();
+    explicit MaiPermissionGate(Options options);
     ~MaiPermissionGate();
     MaiPermissionGate(const MaiPermissionGate&) = delete;
     MaiPermissionGate& operator=(const MaiPermissionGate&) = delete;

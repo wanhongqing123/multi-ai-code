@@ -1,5 +1,7 @@
 #include "MaiContextBuilder.h"
 
+MaiContextBuilder::MaiContextBuilder() : MaiContextBuilder(Options{}) {}
+
 MaiContextBuilder::MaiContextBuilder(Options options) : mOptions(std::move(options)) {}
 
 std::vector<MaiModelMessage> MaiContextBuilder::build(

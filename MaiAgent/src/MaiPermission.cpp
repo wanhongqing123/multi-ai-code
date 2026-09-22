@@ -69,6 +69,8 @@ struct MaiPermissionGate::ApprovalTable {
     explicit ApprovalTable(Options options) : options(options) {}
 };
 
+MaiPermissionGate::MaiPermissionGate() : MaiPermissionGate(Options{}) {}
+
 MaiPermissionGate::MaiPermissionGate(Options options)
     : mApprovals(std::make_unique<ApprovalTable>(options)) {}
 

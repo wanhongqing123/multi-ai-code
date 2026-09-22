@@ -168,7 +168,9 @@ public:
     // 查历史这些照常（M1 的空转骨架就是这个配置）。tools 可以为空：那是纯对话模式，
     // 模型收不到任何工具声明。
     MaiAgent(std::unique_ptr<MaiSessionStore> store, std::unique_ptr<MaiModelClient> model,
-             std::unique_ptr<MaiToolRegistry> tools = nullptr, Options options = {});
+             std::unique_ptr<MaiToolRegistry> tools = nullptr);
+    MaiAgent(std::unique_ptr<MaiSessionStore> store, std::unique_ptr<MaiModelClient> model,
+             std::unique_ptr<MaiToolRegistry> tools, Options options);
     ~MaiAgent();
     MaiAgent(const MaiAgent&) = delete;
     MaiAgent& operator=(const MaiAgent&) = delete;
@@ -204,8 +206,7 @@ public:
     MaiResult<std::string> spawnSubAgent(const std::string& parentSessionId,
                                          const std::string& taskName,
                                          const std::string& prompt) override;
-    MaiError sendToSubAgent(const std::string& parentSessionId,
-                            const std::string& childSessionId,
+    MaiError sendToSubAgent(const std::string& parentSessionId, const std::string& childSessionId,
                             const std::string& prompt) override;
     bool waitForSubAgent(const std::string& parentSessionId, const std::string& childSessionId,
                          MaiMillis timeoutMs, const std::atomic<bool>& cancel) override;

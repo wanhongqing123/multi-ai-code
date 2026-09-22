@@ -104,6 +104,10 @@ struct MaiAgent::Runtime {
 };
 
 MaiAgent::MaiAgent(std::unique_ptr<MaiSessionStore> store, std::unique_ptr<MaiModelClient> model,
+                   std::unique_ptr<MaiToolRegistry> tools)
+    : MaiAgent(std::move(store), std::move(model), std::move(tools), Options{}) {}
+
+MaiAgent::MaiAgent(std::unique_ptr<MaiSessionStore> store, std::unique_ptr<MaiModelClient> model,
                    std::unique_ptr<MaiToolRegistry> tools, Options options)
     : mRuntime(std::make_unique<Runtime>()) {
     // 这个指针在构造函数里就设好：turn runner 每次都从 Runtime 现取依赖，

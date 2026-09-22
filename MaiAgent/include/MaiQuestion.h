@@ -61,7 +61,8 @@ public:
         MaiMillis timeoutMs = 0;
     };
 
-    explicit MaiQuestionGate(Options options = {});
+    MaiQuestionGate();
+    explicit MaiQuestionGate(Options options);
     ~MaiQuestionGate();
     MaiQuestionGate(const MaiQuestionGate&) = delete;
     MaiQuestionGate& operator=(const MaiQuestionGate&) = delete;

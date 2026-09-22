@@ -22,7 +22,8 @@ public:
         std::string systemPrompt;
     };
 
-    explicit MaiContextBuilder(Options options = {});
+    MaiContextBuilder();
+    explicit MaiContextBuilder(Options options);
 
     std::vector<MaiModelMessage> build(const std::vector<MaiMessage>& history) const;
 

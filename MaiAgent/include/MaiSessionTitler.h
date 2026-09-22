@@ -19,7 +19,8 @@ public:
         std::size_t maxBytes = 40;
     };
 
-    explicit MaiSessionTitler(Options options = {});
+    MaiSessionTitler();
+    explicit MaiSessionTitler(Options options);
 
     // 返回实际写入的标题；没改动（已有标题、或还没有用户消息）时返回空串。
     std::string apply(MaiSessionStore& store, const std::string& sessionId) const;

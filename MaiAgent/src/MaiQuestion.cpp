@@ -31,6 +31,8 @@ struct MaiQuestionGate::QuestionTable {
     explicit QuestionTable(Options options) : options(options) {}
 };
 
+MaiQuestionGate::MaiQuestionGate() : MaiQuestionGate(Options{}) {}
+
 MaiQuestionGate::MaiQuestionGate(Options options)
     : mQuestions(std::make_unique<QuestionTable>(options)) {}
 
@@ -85,8 +87,8 @@ bool MaiQuestionGate::reply(const std::string& questionId, const std::string& an
         if (it->second->settled) return false;  // 界面重复点
         // 空回答也算回答过了：用户可能就是想说「你看着办」。
         // 但不能让它和「没人回答」撞上，所以这里换成一句明确的话。
-        it->second->answer = answer.empty() ? std::string("(the user answered with nothing)")
-                                            : answer;
+        it->second->answer =
+            answer.empty() ? std::string("(the user answered with nothing)") : answer;
         it->second->settled = true;
     }
     mQuestions->answered.notify_all();

@@ -49,6 +49,10 @@ public final class RemoteIMMediaStore {
         );
     }
 
+    public File createRealtimeVoiceRecordingFile() throws IOException {
+        return new File(outgoing(RemoteIMMediaPaths.VOICES), "voice-" + java.util.UUID.randomUUID() + ".aac");
+    }
+
     /** 拍照的落点。相机通过 FileProvider 写入，所以必须在 file_paths.xml 覆盖的树里。 */
     public File createCameraPhotoFile() throws IOException {
         return new File(

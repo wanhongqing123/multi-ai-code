@@ -1,6 +1,7 @@
 package com.kongshang.maichat;
 
 import java.io.File;
+import java.util.UUID;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -306,6 +307,16 @@ public final class ChatState {
             null,
             attachment
         );
+        messages.add(message);
+        return message;
+    }
+
+    public RemoteIMMessage queueOutgoingVideoTo(String peer, RemoteIMVideoAttachment attachment) {
+        String target = clean(peer);
+        if (target.isEmpty() || attachment == null) throw new IllegalArgumentException("video and peer are required");
+        RemoteIMMessage message = new RemoteIMMessage(UUID.randomUUID().toString(), "", ownerUserId, target,
+            "[视频消息]", RemoteIMMessage.Direction.OUTGOING, RemoteIMMessage.Status.PENDING,
+            System.currentTimeMillis(), null, null, null, attachment, RemoteIMOrigin.HUMAN);
         messages.add(message);
         return message;
     }
@@ -684,6 +695,25 @@ public final class ChatState {
             if (existing.id().equals(message.id())) return;
         }
         messages.add(message);
+    }
+
+    public RemoteIMMessage updateVideoMedia(String remoteId, RemoteIMVideoAttachment attachment) {
+        for (int index = 0; index < messages.size(); index++) {
+            RemoteIMMessage message = messages.get(index);
+            if (message.remoteId().equals(remoteId) && message.videoAttachment() != null) {
+                RemoteIMMessage updated = message.withVideoAttachment(attachment);
+                messages.set(index, updated); return updated;
+            }
+        }
+        return null;
+    }
+
+    public void retainRecentMessages(String peer, int limit) {
+        List<RemoteIMMessage> values = messagesWith(peer);
+        if (values.size() <= limit) return;
+        java.util.Set<String> keep = new java.util.HashSet<>();
+        for (int index = values.size() - limit; index < values.size(); index++) keep.add(values.get(index).id());
+        messages.removeIf(message -> (peer.equals(message.fromUserId()) || peer.equals(message.toUserId())) && !keep.contains(message.id()));
     }
 
     public void mergeMessages(List<RemoteIMMessage> incoming) {

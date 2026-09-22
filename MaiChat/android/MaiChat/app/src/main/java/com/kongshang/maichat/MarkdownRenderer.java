@@ -1,113 +1,73 @@
 package com.kongshang.maichat;
 
-import android.graphics.Color;
-import android.graphics.Typeface;
-import android.text.Spannable;
-import android.text.SpannableStringBuilder;
-import android.text.style.BackgroundColorSpan;
-import android.text.style.ForegroundColorSpan;
-import android.text.style.RelativeSizeSpan;
-import android.text.style.StyleSpan;
-import android.text.style.TypefaceSpan;
+import android.content.Context;
+import android.os.Handler;
+import android.os.Looper;
+import android.text.Spanned;
+import android.util.LruCache;
+import android.widget.TextView;
+import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.function.BooleanSupplier;
+import io.noties.markwon.Markwon;
+import io.noties.markwon.ext.tables.TablePlugin;
+import io.noties.markwon.ext.tables.TableAwareMovementMethod;
+import io.noties.markwon.ext.strikethrough.StrikethroughPlugin;
+import io.noties.markwon.ext.tasklist.TaskListPlugin;
+import io.noties.markwon.linkify.LinkifyPlugin;
+import io.noties.markwon.movement.MovementMethodPlugin;
 
+/** CommonMark/GFM parsing is serialized off the UI thread; only applying spans touches views. */
 public final class MarkdownRenderer {
-    private MarkdownRenderer() {
+    private static final ExecutorService worker = Executors.newSingleThreadExecutor();
+    private static final Handler main = new Handler(Looper.getMainLooper());
+    private static volatile Markwon markwon;
+    private static final LruCache<String, Spanned> cache = new LruCache<String, Spanned>(2 * 1024 * 1024) {
+        @Override protected int sizeOf(String key, Spanned value) { return Math.max(1, (key.length() + value.length()) * 2); }
+    };
+    private MarkdownRenderer() { }
+    public static synchronized void initialize(Context context) {
+        if (markwon == null) markwon = Markwon.builder(context.getApplicationContext())
+            .usePlugin(TablePlugin.create(context.getApplicationContext()))
+            .usePlugin(StrikethroughPlugin.create())
+            .usePlugin(TaskListPlugin.create(context.getApplicationContext()))
+            .usePlugin(LinkifyPlugin.create())
+            .usePlugin(MovementMethodPlugin.create(TableAwareMovementMethod.create()))
+            .build();
     }
-
-    public static CharSequence render(String source) {
-        String normalized = source == null ? "" : source.replace("\\n", "\n");
-        SpannableStringBuilder output = new SpannableStringBuilder();
-        boolean inCode = false;
-        String[] lines = normalized.split("\n", -1);
-        for (int lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
-            String line = lines[lineIndex];
-            if (line.trim().startsWith("```")) {
-                inCode = !inCode;
-                continue;
+    private static String source(String value) { return value == null ? "" : value.replace("\r\n", "\n"); }
+    private static Spanned prepare(String value) {
+        if (Looper.myLooper() == Looper.getMainLooper()) throw new IllegalStateException("Markdown parsing on UI thread");
+        String key = source(value);
+        Spanned ready = cache.get(key);
+        if (ready == null) {
+            try { ready = markwon.toMarkdown(key); }
+            catch (RuntimeException | StackOverflowError error) {
+                android.util.Log.w("MaiChat.markdown", "Could not render message; showing plain text", error);
+                ready = new android.text.SpannedString(key);
             }
-            int start = output.length();
-            if (inCode) {
-                output.append(line);
-                int end = output.length();
-                output.setSpan(new TypefaceSpan("monospace"), start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
-                output.setSpan(new BackgroundColorSpan(Color.rgb(241, 245, 249)), start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
-            } else {
-                int headingLevel = headingLevel(line);
-                String content = headingLevel > 0 ? line.substring(headingLevel).trim() : line;
-                if (content.startsWith("- ") || content.startsWith("* ")) {
-                    output.append("• ");
-                    content = content.substring(2);
-                } else if (content.matches("^[0-9]+\\.\\s+.*")) {
-                    int separator = content.indexOf(' ');
-                    output.append(content, 0, separator + 1);
-                    content = content.substring(separator + 1);
-                } else if (content.startsWith("> ")) {
-                    output.append("▌ ");
-                    content = content.substring(2);
-                }
-                appendInline(output, content);
-                int end = output.length();
-                if (headingLevel > 0) {
-                    output.setSpan(new StyleSpan(Typeface.BOLD), start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
-                    output.setSpan(
-                        new RelativeSizeSpan(Math.max(1.05f, 1.34f - headingLevel * 0.06f)),
-                        start,
-                        end,
-                        Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
-                    );
-                }
-                if (line.startsWith("> ")) {
-                    output.setSpan(
-                        new ForegroundColorSpan(MaiChatTheme.SECONDARY),
-                        start,
-                        end,
-                        Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
-                    );
-                }
-            }
-            if (lineIndex < lines.length - 1) output.append('\n');
+            cache.put(key, ready);
         }
-        return output;
+        return ready;
     }
-
-    private static void appendInline(SpannableStringBuilder output, String line) {
-        int index = 0;
-        while (index < line.length()) {
-            if (line.startsWith("**", index)) {
-                int endMarker = line.indexOf("**", index + 2);
-                if (endMarker > index + 2) {
-                    int start = output.length();
-                    output.append(line, index + 2, endMarker);
-                    output.setSpan(
-                        new StyleSpan(Typeface.BOLD),
-                        start,
-                        output.length(),
-                        Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
-                    );
-                    index = endMarker + 2;
-                    continue;
-                }
-            }
-            if (line.charAt(index) == '`') {
-                int endMarker = line.indexOf('`', index + 1);
-                if (endMarker > index + 1) {
-                    int start = output.length();
-                    output.append(line, index + 1, endMarker);
-                    int end = output.length();
-                    output.setSpan(new TypefaceSpan("monospace"), start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
-                    output.setSpan(new BackgroundColorSpan(Color.rgb(226, 232, 240)), start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
-                    index = endMarker + 1;
-                    continue;
-                }
-            }
-            output.append(line.charAt(index));
-            index += 1;
-        }
+    public static void prepare(List<String> sources, BooleanSupplier current, Runnable completion) {
+        worker.execute(() -> {
+            for (String value : sources) { if (!current.getAsBoolean()) return; prepare(value); }
+            main.post(() -> { if (current.getAsBoolean()) completion.run(); });
+        });
     }
-
-    private static int headingLevel(String line) {
-        int level = 0;
-        while (level < line.length() && level < 6 && line.charAt(level) == '#') level += 1;
-        return level > 0 && level < line.length() && line.charAt(level) == ' ' ? level : 0;
+    public static void bind(TextView view, String value) {
+        String key = source(value);
+        Object token = new Object();
+        view.setTag(token);
+        Spanned ready = cache.get(key);
+        if (ready != null) { markwon.setParsedMarkdown(view, ready); return; }
+        // A recycled row may miss the bounded cache. Never parse synchronously as a fallback.
+        view.setText(value);
+        worker.execute(() -> {
+            Spanned parsed = prepare(key);
+            main.post(() -> { if (view.getTag() == token) markwon.setParsedMarkdown(view, parsed); });
+        });
     }
 }

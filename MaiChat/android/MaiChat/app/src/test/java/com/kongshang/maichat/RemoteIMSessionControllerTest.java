@@ -119,10 +119,12 @@ public class RemoteIMSessionControllerTest {
     }
 
     @Test
-    public void forwardingUnsupportedVideoFailsBeforeQueueing() throws Exception {
+    public void forwardingVideoRetainsItsAttachmentAndTarget() throws Exception {
         RemoteIMSessionController session = newSession();
         session.login("android-user");
         session.addContact("bob");
+        Path video = Files.createTempFile("maichat-forward", ".mp4");
+        Files.write(video, new byte[]{1, 2, 3});
         RemoteIMMessage source = new RemoteIMMessage(
             "video-local",
             "alice",
@@ -134,16 +136,15 @@ public class RemoteIMSessionControllerTest {
             null,
             null,
             null,
-            new RemoteIMVideoAttachment("/tmp/video.mp4", "/tmp/cover.jpg", 8, 640, 360, 1024)
+            new RemoteIMVideoAttachment(video.toString(), "", 8, 640, 360, 3)
         );
 
-        try {
-            session.forwardMessage(source, "bob");
-            throw new AssertionError("Android video forwarding must be rejected");
-        } catch (java.io.IOException error) {
-            assertTrue(error.getMessage().contains("暂不支持转发视频"));
-        }
-        assertTrue(session.chatState().messagesWith("bob").isEmpty());
+        RemoteIMMessage forwarded = session.forwardMessage(source, "bob");
+        assertEquals("bob", forwarded.toUserId());
+        assertEquals(source.videoAttachment(), forwarded.videoAttachment());
+        assertEquals(RemoteIMMessage.Status.SENT, forwarded.status());
+        assertEquals(1, session.chatState().messagesWith("bob").size());
+        Files.delete(video);
     }
 
     @Test

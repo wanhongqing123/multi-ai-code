@@ -32,9 +32,13 @@ public final class TencentSpeechRecognizer implements SpeechRecognizer {
     private final String appId;
     private final String secretId;
     private final String secretKey;
+    private final android.os.HandlerThread thread = new android.os.HandlerThread("MaiChat-ASR");
+    private final Handler worker;
+    private volatile boolean closed;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     public TencentSpeechRecognizer(String appId, String secretId, String secretKey) {
+        thread.start(); worker = new Handler(thread.getLooper());
         this.appId = appId == null ? "" : appId.trim();
         this.secretId = secretId == null ? "" : secretId.trim();
         this.secretKey = secretKey == null ? "" : secretKey.trim();
@@ -47,7 +51,17 @@ public final class TencentSpeechRecognizer implements SpeechRecognizer {
 
     @Override
     public void transcribe(File audioFile, String format, Callback callback) {
-        if (callback == null) return;
+        if (callback == null || closed) return;
+        worker.post(() -> transcribeOnWorker(audioFile, format, new Callback() {
+            @Override public void onText(String text) { mainHandler.post(() -> { if (!closed) callback.onText(text); }); }
+            @Override public void onError(String message) { mainHandler.post(() -> { if (!closed) callback.onError(message); }); }
+        }));
+    }
+
+    @Override public void close() { closed = true; thread.quitSafely(); }
+
+    private void transcribeOnWorker(File audioFile, String format, Callback callback) {
+        if (closed) return;
         if (!isAvailable()) {
             callback.onError("未配置语音识别凭证");
             return;
@@ -88,7 +102,8 @@ public final class TencentSpeechRecognizer implements SpeechRecognizer {
             @Override
             public void recognizeResult(QCloudOneSentenceRecognizer source, String result, Exception exception) {
                 // SDK 的回调线程不保证是主线程，统一切回主线程再交给调用方碰 UI。
-                mainHandler.post(() -> {
+                if (closed) return;
+                worker.post(() -> {
                     if (exception != null) {
                         callback.onError(describe(exception));
                         return;

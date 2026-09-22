@@ -18,8 +18,6 @@ import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
-import android.media.MediaPlayer;
-import android.media.MediaRecorder;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Build;
@@ -98,29 +96,53 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private RemoteIMTab activeTab = RemoteIMTab.MESSAGES;
     private LinearLayout root;
     private LinearLayout content;
+    private View chatBackdrop;
+    private RemoteIMTab returnTab = RemoteIMTab.MESSAGES;
+    private ChatSwipeBack swipeBack;
+    private FrameLayout insetsHost;
+    private boolean imeAnimating;
+    private androidx.core.view.WindowInsetsCompat latestInsets;
+    private MainThreadMonitor diagnostics;
+    private boolean pendingStateRefresh;
     private GrowingMessageEditText messageInput;
+    private View attachmentButton;
+    private TextView sendButton;
+    private final Map<String, String> draftsByPeer = new HashMap<>();
+    private String displayedOwner = "";
     private String activeChatUserId;
     private String draftText = "";
     private RemoteIMQuote pendingQuote;
-    private String historyAnchorMessageId;
     private String messageSearchTargetId;
     private boolean stickToLatestMessage = true;
-    private ScrollView currentMessageScroll;
-    private LinearLayout currentMessageContainer;
-    private String preservedScrollAnchorId;
-    private int preservedScrollAnchorOffset;
-    private String lastRenderedLatestMessageId;
-    private boolean hasUnseenLatestMessage;
+    private ChatMessageList currentMessageList;
+    private String renderedChatUserId;
+    private View chatEmptyState;
+    private View chatComposer;
+    private boolean renderedVoiceMode;
+    private RemoteIMQuote renderedQuote;
+    private boolean keyboardVisible;
+    private boolean allowKeyboardLocation = true;
+    private boolean browsingHistory;
+    private boolean waitingForChatEntry;
+    private Map<String, RemoteIMApprovalDisplayPolicy.State> visibleApprovalStates = Collections.emptyMap();
+    private volatile long presentationRequest;
+    private int messageWindowSize = 20;
+    private String messageWindowStartId;
+
     private boolean voiceMode;
-    private MediaRecorder recorder;
+    private boolean holdingVoice;
+    private long voiceUiGeneration;
+    private String speechText = "";
+    private TextView speechPreview;
+    private VoiceRecordingController voiceRecorder;
+    private final ExecutorService mediaExecutor = Executors.newSingleThreadExecutor();
+    private SendTarget pendingAttachmentTarget;
     private SpeechRecognizer speechRecognizer;
-    private File recordingFile;
-    private long recordingStartedAtMillis;
     private boolean cancelRecording;
-    private MediaPlayer mediaPlayer;
+    private VoicePlaybackController voicePlayback;
     private String playingMessageId;
     private File pendingCameraFile;
-    private boolean destroyed;
+    private volatile boolean destroyed;
     private boolean showInitialLogin;
     private boolean loginSubmitting;
     private String loginError = "";
@@ -139,11 +161,17 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        MarkdownRenderer.initialize(getApplicationContext());
+        diagnostics = new MainThreadMonitor(getWindow(), new File(getFilesDir(), "diagnostics"));
         getWindow().setStatusBarColor(Color.WHITE);
         getWindow().setNavigationBarColor(Color.WHITE);
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+        new androidx.core.view.WindowInsetsControllerCompat(getWindow(), getWindow().getDecorView()).setAppearanceLightNavigationBars(true);
         // 发出的媒体同样落持久目录，不放缓存：路径会进聊天记录并被长期引用。
         mediaStore = new RemoteIMMediaStore(RemoteIMMediaPaths.forApp(this));
+        voiceRecorder = new VoiceRecordingController(mediaStore, diagnostics::record);
+        voicePlayback = new VoicePlaybackController();
         // 凭证由 Gradle 从 local.properties 注入；没配时 isAvailable() 为 false，
         // 录音会照旧当语音消息发出去，不会因此报错。
         speechRecognizer = new TencentSpeechRecognizer(
@@ -162,11 +190,17 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     protected void onResume() {
         super.onResume();
         activityInForeground = true;
+        if (diagnostics != null) diagnostics.foreground(true);
+        if (pendingStateRefresh) { pendingStateRefresh = false; onStateChanged(); }
     }
 
     @Override
     protected void onPause() {
         activityInForeground = false;
+        allowKeyboardLocation = false;
+        if (diagnostics != null) diagnostics.foreground(false);
+        if (session != null) session.stopHumanTyping();
+        cancelVoiceRecording();
         super.onPause();
     }
 
@@ -180,9 +214,15 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     @Override
     protected void onDestroy() {
         destroyed = true;
+        if (swipeBack != null) swipeBack.dispose();
+        if (diagnostics != null) diagnostics.close();
         stopAudioPlayback();
         cancelVoiceRecording();
         messageSearchExecutor.shutdownNow();
+        mediaExecutor.shutdown();
+        if (voiceRecorder != null) voiceRecorder.close();
+        if (voicePlayback != null) voicePlayback.close();
+        if (speechRecognizer != null) speechRecognizer.close();
         if (session != null) session.destroy();
         super.onDestroy();
     }
@@ -190,12 +230,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     @Override
     public void onBackPressed() {
         if (activeChatUserId != null) {
-            hideKeyboard();
-            session.setConversationVisible(activeChatUserId, false);
-            activeChatUserId = null;
-            messageSearchTargetId = null;
-            pendingQuote = null;
-            render();
+            if (swipeBack != null) swipeBack.goBack();
             return;
         }
         if (activeTab == RemoteIMTab.REMOTE && session.remoteDesktop().isActive()) {
@@ -211,9 +246,24 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         super.onBackPressed();
     }
 
+    @Override public boolean dispatchTouchEvent(MotionEvent event) {
+        return swipeBack == null ? super.dispatchTouchEvent(event)
+            : swipeBack.dispatch(event, value -> super.dispatchTouchEvent(value));
+    }
+
+    private void finishChatBack() {
+        if (activeChatUserId == null) return;
+        rememberDraft();
+        session.setConversationVisible(activeChatUserId, false);
+        activeChatUserId = null; messageSearchTargetId = null; pendingQuote = null;
+        activeTab = returnTab; chatBackdrop = null; presentationRequest++;
+        render();
+    }
+
     @Override
     public void onStateChanged() {
         if (destroyed) return;
+        if (!activityInForeground) { pendingStateRefresh = true; return; }
         runOnUiThread(() -> {
             if (loginSubmitting) {
                 if (session.connectionState() == TencentIMClient.ConnectionState.CONNECTED) {
@@ -228,6 +278,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                     loginError = session.connectionDetail();
                 }
             }
+            if (!session.isRestoringAccount() && !session.requiresLogin() && !loginSubmitting) showInitialLogin = false;
             renderPreservingInput();
         });
     }
@@ -274,7 +325,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
         if (requestCode == REQUEST_RECORD_AUDIO) {
-            if (granted) startVoiceRecording();
+            if (granted) toast("麦克风已启用，请按住说话");
             else toast("没有麦克风权限，无法发送语音");
         } else if (requestCode == REQUEST_CAMERA_PERMISSION) {
             if (granted) openCamera();
@@ -379,10 +430,11 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     }
 
     private void renderPreservingInput() {
+        EditText previousInput = messageInput;
         boolean restoreFocus = messageInput != null && messageInput.hasFocus();
         if (messageInput != null) draftText = messageInput.getText().toString();
         render();
-        if (restoreFocus && messageInput != null) {
+        if (restoreFocus && messageInput != null && messageInput != previousInput) {
             messageInput.requestFocus();
             messageInput.setSelection(messageInput.length());
             messageInput.post(() -> {
@@ -392,35 +444,110 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         }
     }
 
-    private void captureCurrentMessagePosition() {
-        if (stickToLatestMessage
-            || historyAnchorMessageId != null
-            || currentMessageScroll == null
-            || currentMessageContainer == null) {
-            return;
-        }
-        int scrollY = currentMessageScroll.getScrollY();
-        for (int index = 0; index < currentMessageContainer.getChildCount(); index += 1) {
-            View child = currentMessageContainer.getChildAt(index);
-            if (child.getBottom() < scrollY) continue;
-            Object tag = child.getTag();
-            if (tag instanceof String) {
-                preservedScrollAnchorId = (String) tag;
-                preservedScrollAnchorOffset = child.getTop() - scrollY;
-            }
-            return;
-        }
+    @Override public void onActivityChanged(String peerId) {
+        if (!activityInForeground) { pendingStateRefresh = true; return; }
+        if (!destroyed && peerId.equals(activeChatUserId) && currentMessageList != null) refreshChatMessages();
+    }
+
+    private void rememberDraft() {
+        if (activeChatUserId == null || displayedOwner.isEmpty()) return;
+        String text = messageInput != null ? messageInput.getText().toString() : draftText;
+        String key = displayedOwner + "\0" + activeChatUserId;
+        if (text.isEmpty()) draftsByPeer.remove(key); else draftsByPeer.put(key, text);
+    }
+
+    private void updateComposerActions() {
+        if (sendButton == null || attachmentButton == null) return;
+        boolean canSend = !voiceMode && !draftText.trim().isEmpty();
+        sendButton.setVisibility(canSend ? View.VISIBLE : View.GONE);
+        attachmentButton.setVisibility(canSend ? View.GONE : View.VISIBLE);
     }
 
     private void render() {
         if (destroyed) return;
-        captureCurrentMessagePosition();
-        currentMessageScroll = null;
-        currentMessageContainer = null;
+        String owner = session.requiresLogin() ? "" : session.settings().loginUserId();
+        if (!owner.equals(displayedOwner)) {
+            rememberDraft();
+            if (!displayedOwner.isEmpty()) {
+                hideKeyboard(); activeChatUserId = null; renderedChatUserId = null;
+                chatBackdrop = null; draftText = ""; pendingQuote = null; presentationRequest++;
+            }
+            displayedOwner = owner;
+        }
+        if (activeChatUserId != null && contact(activeChatUserId) == null) {
+            activeChatUserId = null; chatBackdrop = null;
+        }
+        if (activeChatUserId != null && activeChatUserId.equals(renderedChatUserId)
+            && currentMessageList != null && !showInitialLogin && !session.requiresLogin()) {
+            refreshChatMessages();
+            if (renderedVoiceMode != voiceMode || !java.util.Objects.equals(renderedQuote, pendingQuote)) {
+                content.removeView(chatComposer);
+                session.stopHumanTyping();
+                messageInput = null;
+                chatComposer = composer();
+                content.addView(chatComposer, matchWrap());
+                renderedVoiceMode = voiceMode; renderedQuote = pendingQuote;
+            }
+            return;
+        }
+        currentMessageList = null;
+        renderedChatUserId = null;
+        messageInput = null;
         root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(MaiChatTheme.PAGE);
-        setContentView(root);
+        if (swipeBack != null) swipeBack.dispose();
+        FrameLayout navigation = new FrameLayout(this);
+        if (activeChatUserId != null && chatBackdrop != null) {
+            if (chatBackdrop.getParent() instanceof ViewGroup) ((ViewGroup) chatBackdrop.getParent()).removeView(chatBackdrop);
+            navigation.addView(chatBackdrop, new FrameLayout.LayoutParams(-1, -1));
+        }
+        navigation.addView(root, new FrameLayout.LayoutParams(-1, -1));
+        setContentView(navigation);
+        swipeBack = new ChatSwipeBack(new ChatSwipeBack.Host() {
+            @Override public View page() { return root; }
+            @Override public boolean canGoBack() { return !destroyed && activeChatUserId != null; }
+            @Override public boolean keyboardVisible() { return keyboardVisible; }
+            @Override public void began() {
+                session.stopHumanTyping(); cancelVoiceRecording();
+                if (currentMessageList != null) currentMessageList.cancelPositionIntent();
+                stickToLatestMessage = false;
+            }
+            @Override public void hideKeyboard() { MainActivity.this.hideKeyboard(); }
+            @Override public void completed() { finishChatBack(); }
+            @Override public void cancelled(boolean shown) { keyboardVisible = shown; }
+        });
+        insetsHost = navigation;
+        imeAnimating = false;
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(navigation, (view, insets) -> {
+            if (insetsHost != navigation) return insets;
+            latestInsets = insets;
+            boolean visible = insets.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime());
+            if (visible && !keyboardVisible && allowKeyboardLocation && (swipeBack == null || !swipeBack.active())
+                && currentMessageList != null && messageInput != null && messageInput.hasFocus()) {
+                if (imeAnimating) currentMessageList.beginKeyboardReveal(); else currentMessageList.showLatest();
+            }
+            keyboardVisible = visible;
+            if (!imeAnimating) applyChatInsets(navigation, insets);
+            return insets;
+        });
+        androidx.core.view.ViewCompat.setWindowInsetsAnimationCallback(navigation,
+            new androidx.core.view.WindowInsetsAnimationCompat.Callback(androidx.core.view.WindowInsetsAnimationCompat.Callback.DISPATCH_MODE_CONTINUE_ON_SUBTREE) {
+                @Override public void onPrepare(androidx.core.view.WindowInsetsAnimationCompat animation) {
+                    if (insetsHost == navigation && (animation.getTypeMask() & androidx.core.view.WindowInsetsCompat.Type.ime()) != 0) imeAnimating = true;
+                }
+                @Override public androidx.core.view.WindowInsetsCompat onProgress(androidx.core.view.WindowInsetsCompat insets, List<androidx.core.view.WindowInsetsAnimationCompat> running) {
+                    if (insetsHost == navigation) applyChatInsets(navigation, insets);
+                    return insets;
+                }
+                @Override public void onEnd(androidx.core.view.WindowInsetsAnimationCompat animation) {
+                    if (insetsHost != navigation || (animation.getTypeMask() & androidx.core.view.WindowInsetsCompat.Type.ime()) == 0) return;
+                    imeAnimating = false;
+                    if (latestInsets != null) applyChatInsets(navigation, latestInsets);
+                    if (currentMessageList != null) currentMessageList.endKeyboardReveal();
+                }
+            });
+        androidx.core.view.ViewCompat.requestApplyInsets(navigation);
 
         content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
@@ -431,6 +558,12 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             1
         ));
 
+        if (session.isRestoringAccount()) {
+            FrameLayout loading = new FrameLayout(this);
+            loading.addView(new android.widget.ProgressBar(this), new FrameLayout.LayoutParams(dp(32), dp(32), Gravity.CENTER));
+            content.addView(loading, matchMatch());
+            return;
+        }
         if (showInitialLogin || session.requiresLogin()) {
             renderLogin();
             return;
@@ -459,6 +592,14 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         boolean hideTabs = activeChatUserId != null
             || (activeTab == RemoteIMTab.REMOTE && session.remoteDesktop().isActive());
         if (!hideTabs) root.addView(bottomTabBar(), match(dp(72)));
+    }
+
+    private void applyChatInsets(FrameLayout target, androidx.core.view.WindowInsetsCompat insets) {
+        androidx.core.graphics.Insets bars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars() | androidx.core.view.WindowInsetsCompat.Type.displayCutout());
+        int bottom = Math.max(bars.bottom, insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime()).bottom);
+        if (target.getPaddingLeft() != bars.left || target.getPaddingTop() != bars.top || target.getPaddingRight() != bars.right || target.getPaddingBottom() != bottom) {
+            target.setPadding(bars.left, bars.top, bars.right, bottom);
+        }
     }
 
     private void renderLogin() {
@@ -851,149 +992,116 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     }
 
     private void openChat(String userId) {
+        allowKeyboardLocation = true;
+        rememberDraft();
+        draftText = draftsByPeer.getOrDefault(displayedOwner + "\0" + userId, "");
+        if (activeChatUserId == null) { chatBackdrop = root; returnTab = activeTab; }
         session.selectContact(userId);
         session.setConversationVisible(userId, true);
         session.loadInitialMessages(userId);
+        messageWindowSize = 20;
+        messageWindowStartId = null;
         activeChatUserId = userId;
         activeTab = RemoteIMTab.MESSAGES;
         stickToLatestMessage = true;
-        preservedScrollAnchorId = null;
-        historyAnchorMessageId = null;
         messageSearchTargetId = null;
         pendingQuote = null;
-        lastRenderedLatestMessageId = null;
-        hasUnseenLatestMessage = false;
         render();
     }
 
     private void openMessageSearchHit(RemoteIMMessageSearchHit hit) {
+        rememberDraft();
+        draftText = draftsByPeer.getOrDefault(displayedOwner + "\0" + hit.peerUserId(), "");
+        if (activeChatUserId == null) { chatBackdrop = root; returnTab = activeTab; }
         RemoteIMContact opened = session.openMessageSearchHit(hit);
         if (opened == null) return;
         session.setConversationVisible(opened.userId(), true);
         activeChatUserId = opened.userId();
         activeTab = RemoteIMTab.MESSAGES;
         stickToLatestMessage = false;
-        preservedScrollAnchorId = null;
-        historyAnchorMessageId = null;
         messageSearchTargetId = hit.message().id();
-        lastRenderedLatestMessageId = null;
-        hasUnseenLatestMessage = false;
         render();
     }
 
     private void renderChatDetail(String userId) {
-        RemoteIMContact contact = contact(userId);
-        if (contact == null) {
-            activeChatUserId = null;
-            renderConversationList();
-            return;
-        }
-        content.addView(chatDetailHeader(contact), match(dp(52)));
-
-        ScrollView messageScroll = new ScrollView(this);
-        messageScroll.setFillViewport(true);
-        LinearLayout messages = new LinearLayout(this);
-        messages.setOrientation(LinearLayout.VERTICAL);
-        messages.setPadding(dp(12), dp(10), dp(12), dp(10));
-        messageScroll.addView(messages, matchWrap());
-        currentMessageScroll = messageScroll;
-        currentMessageContainer = messages;
-        List<RemoteIMMessage> values = session.chatState().messagesWith(userId);
-        Map<String, RemoteIMApprovalDisplayPolicy.State> approvalStates =
-            RemoteIMApprovalDisplayPolicy.statesFor(values);
-        RemoteIMMessage latestMessage = values.isEmpty() ? null : values.get(values.size() - 1);
-        String nextLatestMessageId = latestMessage == null ? null : latestMessage.id();
-        if (lastRenderedLatestMessageId != null
-            && nextLatestMessageId != null
-            && !lastRenderedLatestMessageId.equals(nextLatestMessageId)) {
-            if (stickToLatestMessage
-                || latestMessage.direction() == RemoteIMMessage.Direction.OUTGOING) {
-                stickToLatestMessage = true;
-                hasUnseenLatestMessage = false;
-            } else {
-                hasUnseenLatestMessage = true;
+        RemoteIMContact peer = contact(userId);
+        if (peer == null) { activeChatUserId = null; renderConversationList(); return; }
+        renderedChatUserId = userId;
+        waitingForChatEntry = true;
+        content.addView(chatDetailHeader(peer), match(dp(52)));
+        currentMessageList = new ChatMessageList(this, message -> messageBubble(message, contact(userId),
+            RemoteIMApprovalDisplayPolicy.stateFor(message.approvalRequest(), visibleApprovalStates)));
+        currentMessageList.setPadding(dp(12), dp(8), dp(12), dp(8));
+        currentMessageList.setClipToPadding(false);
+        if (messageSearchTargetId != null) currentMessageList.showMessage(messageSearchTargetId);
+        else if (stickToLatestMessage) currentMessageList.requestLatestAfterUpdate();
+        stickToLatestMessage = false;
+        FrameLayout stage = new FrameLayout(this);
+        stage.setBackgroundColor(Color.WHITE);
+        stage.addView(currentMessageList, new FrameLayout.LayoutParams(-1, -1));
+        chatEmptyState = emptyState("◇", "暂无消息", "发送一条消息开始对话。");
+        stage.addView(chatEmptyState, new FrameLayout.LayoutParams(-1, -2, Gravity.CENTER));
+        content.addView(stage, new LinearLayout.LayoutParams(-1, 0, 1));
+        chatComposer = composer();
+        renderedVoiceMode = voiceMode; renderedQuote = pendingQuote;
+        content.addView(chatComposer, matchWrap());
+        currentMessageList.setOnScrollListener(new android.widget.AbsListView.OnScrollListener() {
+            @Override public void onScrollStateChanged(android.widget.AbsListView view, int state) {
+                browsingHistory = state == SCROLL_STATE_TOUCH_SCROLL;
+                if (browsingHistory) { currentMessageList.cancelPositionIntent(); stickToLatestMessage = false; }
             }
-        }
-        lastRenderedLatestMessageId = nextLatestMessageId;
-        if (values.isEmpty()) {
-            messages.addView(emptyState("◇", "暂无消息", "发送一条消息开始对话。"), match(dp(260)));
-        } else {
-            for (RemoteIMMessage message : values) {
-                View bubble = messageBubble(
-                    message,
-                    contact,
-                    RemoteIMApprovalDisplayPolicy.stateFor(
-                        message.approvalRequest(),
-                        approvalStates
-                    )
-                );
-                bubble.setTag(message.id());
-                messages.addView(bubble, matchWrap());
-            }
-        }
-        FrameLayout messageStage = new FrameLayout(this);
-        messageStage.addView(messageScroll, new FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT
-        ));
-        TextView unseenButton = MaiChatTheme.label(this, "↓  新消息", 12, Color.WHITE);
-        unseenButton.setGravity(Gravity.CENTER);
-        unseenButton.setPadding(dp(12), 0, dp(12), 0);
-        unseenButton.setBackground(MaiChatTheme.rounded(MaiChatTheme.BLUE, 17, this));
-        unseenButton.setVisibility(hasUnseenLatestMessage ? View.VISIBLE : View.GONE);
-        unseenButton.setOnClickListener(view -> {
-            stickToLatestMessage = true;
-            hasUnseenLatestMessage = false;
-            unseenButton.setVisibility(View.GONE);
-            messageScroll.post(() -> messageScroll.fullScroll(View.FOCUS_DOWN));
-        });
-        FrameLayout.LayoutParams unseenParams = new FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            dp(34),
-            Gravity.BOTTOM | Gravity.END
-        );
-        unseenParams.setMargins(0, 0, dp(12), dp(12));
-        messageStage.addView(unseenButton, unseenParams);
-        content.addView(messageStage, new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            0,
-            1
-        ));
-        content.addView(composer(), matchWrap());
-
-        messageScroll.setOnScrollChangeListener((view, scrollX, scrollY, oldX, oldY) -> {
-            int maximumScroll = Math.max(0, messages.getHeight() - messageScroll.getHeight());
-            stickToLatestMessage = maximumScroll - scrollY <= dp(48);
-            if (stickToLatestMessage && hasUnseenLatestMessage) {
-                hasUnseenLatestMessage = false;
-                unseenButton.setVisibility(View.GONE);
-            }
-            if (scrollY == 0 && oldY > 0 && session.hasEarlierMessages(userId) && !values.isEmpty()) {
-                historyAnchorMessageId = values.get(0).id();
-                session.loadEarlierMessages(userId);
+            @Override public void onScroll(android.widget.AbsListView view, int first, int visible, int total) {
+                if (browsingHistory && first == 0 && session.hasEarlierMessages(userId) && !session.isLoadingMessages(userId)) {
+                    messageWindowSize += 20;
+                    session.loadEarlierMessages(userId);
+                }
             }
         });
-        messageScroll.post(() -> {
+        refreshChatMessages();
+    }
+
+    private void refreshChatMessages() {
+        if (currentMessageList == null || activeChatUserId == null) return;
+        if (waitingForChatEntry && session.isLoadingMessages(activeChatUserId)) {
+            currentMessageList.setVisibility(View.INVISIBLE); chatEmptyState.setVisibility(View.GONE); return;
+        }
+        String peer = activeChatUserId;
+        ChatMessageList list = currentMessageList;
+        long request = ++presentationRequest;
+        List<RemoteIMMessage> all = session.chatState().messagesWith(peer);
+        List<RemoteIMMessage> values = new ArrayList<>();
+        int first = messageSearchTargetId != null ? 0 : Math.max(0, all.size() - messageWindowSize);
+        if (messageWindowStartId != null) {
+            for (int index = 0; index < all.size(); index++) if (messageWindowStartId.equals(all.get(index).id())) {
+                first = Math.min(first, index); break;
+            }
+        }
+        for (int index = first; index < all.size(); index++) values.add(all.get(index).snapshot());
+        int visible = Math.max(0, values.size() - 20);
+        String prepareTarget = messageSearchTargetId != null ? messageSearchTargetId : list.firstVisibleMessageId();
+        if (!stickToLatestMessage && prepareTarget != null) {
+            for (int index = 0; index < values.size(); index++) if (values.get(index).id().equals(prepareTarget)) { visible = index; break; }
+        }
+        // Prepare the viewport and a small prefetch window, not the whole accumulated history.
+        java.util.Set<String> needed = new java.util.LinkedHashSet<>();
+        for (int index = Math.max(0, visible - 20); index < Math.min(values.size(), visible + 24); index++) needed.add(values.get(index).text());
+        for (int index = Math.max(0, values.size() - 20); index < values.size(); index++) needed.add(values.get(index).text());
+        List<String> sources = new ArrayList<>(needed);
+        MarkdownRenderer.prepare(sources, () -> !destroyed && request == presentationRequest, () -> {
+            if (list != currentMessageList || !peer.equals(activeChatUserId)) return;
+            RemoteIMActivitySignal activity = session.activity(peer);
+            visibleApprovalStates = RemoteIMApprovalDisplayPolicy.statesFor(values);
+            list.update(values, activity, java.util.Objects.hash(visibleApprovalStates, playingMessageId, session.mediaRevision()));
+            list.setVisibility(View.VISIBLE);
+            if (diagnostics != null) diagnostics.context("chat rows=" + list.getCount() + " peerHash=" + peer.hashCode());
+            chatEmptyState.setVisibility(values.isEmpty() && activity == null ? View.VISIBLE : View.GONE);
+            waitingForChatEntry = false;
+            if (!values.isEmpty()) messageWindowStartId = values.get(0).id();
+            messageWindowSize = Math.max(messageWindowSize, values.size());
+            if (!session.isLoadingMessages(peer)) stickToLatestMessage = false;
             if (messageSearchTargetId != null) {
-                View target = messages.findViewWithTag(messageSearchTargetId);
-                if (target != null) {
-                    int offset = Math.max(0, (messageScroll.getHeight() - target.getHeight()) / 3);
-                    messageScroll.scrollTo(0, Math.max(0, target.getTop() - offset));
-                }
                 messageSearchTargetId = null;
-            } else if (historyAnchorMessageId != null) {
-                View anchor = messages.findViewWithTag(historyAnchorMessageId);
-                if (anchor != null) messageScroll.scrollTo(0, anchor.getTop());
-                historyAnchorMessageId = null;
-            } else if (preservedScrollAnchorId != null) {
-                View anchor = messages.findViewWithTag(preservedScrollAnchorId);
-                if (anchor != null) {
-                    messageScroll.scrollTo(0, anchor.getTop() - preservedScrollAnchorOffset);
-                }
-                preservedScrollAnchorId = null;
-                preservedScrollAnchorOffset = 0;
-            } else if (stickToLatestMessage) {
-                messageScroll.fullScroll(View.FOCUS_DOWN);
+                messageWindowSize = Math.max(messageWindowSize, all.size());
             }
         });
     }
@@ -1013,14 +1121,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             0
         );
         back.setContentDescription("返回会话列表");
-        back.setOnClickListener(view -> {
-            hideKeyboard();
-            session.setConversationVisible(contact.userId(), false);
-            activeChatUserId = null;
-            pendingQuote = null;
-            messageSearchTargetId = null;
-            render();
-        });
+        back.setOnClickListener(view -> { if (swipeBack != null) swipeBack.goBack(); });
         header.addView(back, new LinearLayout.LayoutParams(dp(38), dp(42)));
 
         TextView title = MaiChatTheme.label(this, contact.displayName(), 18, MaiChatTheme.TEXT);
@@ -1119,10 +1220,10 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             bubble.addView(fileMessageContent(message.fileAttachment()), matchWrap());
         } else {
             TextView body = MaiChatTheme.text(this, "", 15, MaiChatTheme.TEXT);
-            body.setText(MarkdownRenderer.render(message.text()));
             body.setTextIsSelectable(true);
             body.setLineSpacing(0, 1.15f);
             body.setPadding(0, dp(5), 0, dp(2));
+            MarkdownRenderer.bind(body, message.text());
             bubble.addView(body, matchWrap());
         }
 
@@ -1163,10 +1264,10 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
 
     private TextView attachmentCaptionView(String caption) {
         TextView body = MaiChatTheme.text(this, "", 15, MaiChatTheme.TEXT);
-        body.setText(MarkdownRenderer.render(caption));
         body.setTextIsSelectable(true);
         body.setLineSpacing(0, 1.15f);
         body.setPadding(0, dp(5), 0, dp(5));
+        MarkdownRenderer.bind(body, caption);
         return body;
     }
 
@@ -1245,14 +1346,17 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
 
     private void jumpToQuotedMessage(RemoteIMQuote quote) {
         if (activeChatUserId == null || quote == null || quote.messageId().isEmpty()) return;
-        RemoteIMMessage target = session.findQuotedMessage(activeChatUserId, quote.messageId());
-        if (target == null) {
-            toast("原消息不在本地记录中");
-            return;
-        }
-        messageSearchTargetId = target.id();
-        stickToLatestMessage = false;
-        render();
+        String peer = activeChatUserId;
+        ChatMessageList list = currentMessageList;
+        long intent = list.cancelPositionIntent();
+        session.findQuotedMessage(peer, quote.messageId(), target -> {
+            if (destroyed || list != currentMessageList || !peer.equals(activeChatUserId) || !list.acceptsIntent(intent)) return;
+            if (target == null) { toast("原消息不在本地记录中"); return; }
+            messageSearchTargetId = target.id();
+            list.showMessage(target.id());
+            stickToLatestMessage = false;
+            render();
+        });
     }
 
     private View approvalActions(
@@ -1374,6 +1478,13 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             wrapper.addView(pendingQuoteBar(pendingQuote), match(dp(42)));
         }
 
+        speechPreview = MaiChatTheme.text(this, speechText, 14, MaiChatTheme.BLUE_DARK);
+        speechPreview.setMaxLines(4);
+        speechPreview.setPadding(dp(12), dp(8), dp(12), dp(8));
+        speechPreview.setBackground(MaiChatTheme.rounded(MaiChatTheme.BLUE_SOFT, 12, this));
+        speechPreview.setVisibility(holdingVoice ? View.VISIBLE : View.GONE);
+        wrapper.addView(speechPreview, matchWrap());
+
         LinearLayout suggestions = new LinearLayout(this);
         suggestions.setOrientation(LinearLayout.VERTICAL);
         wrapper.addView(suggestions, matchWrap());
@@ -1398,7 +1509,14 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         voiceToggle.setContentDescription(voiceMode ? "切换键盘" : "切换语音");
         voiceToggle.setOnClickListener(view -> {
             voiceMode = !voiceMode;
+            if (!voiceMode) allowKeyboardLocation = true;
+            session.stopHumanTyping();
+            if (voiceMode) hideKeyboard();
             render();
+            if (!voiceMode && messageInput != null) {
+                messageInput.requestFocus();
+                ((InputMethodManager) getSystemService(INPUT_METHOD_SERVICE)).showSoftInput(messageInput, InputMethodManager.SHOW_IMPLICIT);
+            }
         });
         bar.addView(voiceToggle, new LinearLayout.LayoutParams(dp(44), dp(44)));
 
@@ -1419,7 +1537,15 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             messageInput.setTextColor(MaiChatTheme.TEXT);
             messageInput.setHintTextColor(MaiChatTheme.SECONDARY);
             messageInput.setBackground(MaiChatTheme.bordered(Color.WHITE, MaiChatTheme.BORDER, 14, this));
+            GrowingMessageEditText editor = messageInput;
+            editor.setOnTouchListener((view, event) -> {
+                if (event.getActionMasked() == MotionEvent.ACTION_DOWN) allowKeyboardLocation = true;
+                return false;
+            });
+            String editingPeer = activeChatUserId, editingOwner = displayedOwner;
             messageInput.setOnEditorActionListener((view, actionId, event) -> {
+                if (messageInput != editor || !java.util.Objects.equals(editingPeer, activeChatUserId) || !editingOwner.equals(displayedOwner)) return false;
+                if (event != null && (event.isShiftPressed() || android.view.inputmethod.BaseInputConnection.getComposingSpanStart(editor.getText()) >= 0)) return false;
                 if (actionId == EditorInfo.IME_ACTION_SEND
                     || (event != null && event.getKeyCode() == KeyEvent.KEYCODE_ENTER && event.getAction() == KeyEvent.ACTION_DOWN)) {
                     sendText();
@@ -1427,10 +1553,14 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                 }
                 return false;
             });
+            messageInput.setOnFocusChangeListener((view, focused) -> { if (!focused && messageInput == editor) session.stopHumanTyping(); });
             messageInput.addTextChangedListener(new SimpleTextWatcher() {
                 @Override
                 public void afterTextChanged(Editable editable) {
+                    if (messageInput != editor || !java.util.Objects.equals(editingPeer, activeChatUserId) || !editingOwner.equals(displayedOwner)) return;
                     draftText = editable.toString();
+                    rememberDraft(); updateComposerActions();
+                    session.updateHumanTyping(activeChatUserId, messageInput.hasFocus() && !draftText.isEmpty());
                     renderCommandSuggestions(suggestions, draftText);
                 }
             });
@@ -1450,14 +1580,26 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         plus.setBackground(MaiChatTheme.bordered(Color.WHITE, MaiChatTheme.BORDER, 14, this));
         plus.setContentDescription("添加图片或文件");
         plus.setOnClickListener(this::showAttachmentMenu);
-        bar.addView(plus, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        attachmentButton = plus;
+        FrameLayout action = new FrameLayout(this);
+        action.addView(plus, new FrameLayout.LayoutParams(-1, -1));
+        sendButton = MaiChatTheme.label(this, "↑", 24, Color.WHITE);
+        sendButton.setGravity(Gravity.CENTER);
+        sendButton.setContentDescription("发送消息");
+        sendButton.setBackground(MaiChatTheme.rounded(MaiChatTheme.BLUE, 22, this));
+        sendButton.setOnClickListener(view -> sendText());
+        action.addView(sendButton, new FrameLayout.LayoutParams(-1, -1));
+        bar.addView(action, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        updateComposerActions();
         wrapper.addView(bar, matchWrap());
         return wrapper;
     }
 
     private void renderCommandSuggestions(LinearLayout container, String value) {
-        container.removeAllViews();
         List<RemoteIMSlashCommand> commands = RemoteIMSlashCommandCatalog.suggestions(value);
+        if (commands.equals(container.getTag())) return;
+        container.setTag(new ArrayList<>(commands));
+        container.removeAllViews();
         if (commands.isEmpty()) return;
         int maximum = Math.min(commands.size(), 6);
         for (int index = 0; index < maximum; index += 1) {
@@ -1715,6 +1857,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         });
 
         dialog.setContentView(card);
+        allowKeyboardLocation = false;
         dialog.show();
         Window window = dialog.getWindow();
         if (window != null) {
@@ -1900,6 +2043,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                 if (moveUserId != null) session.setContactGroup(moveUserId, name);
                 dialog.dismiss();
             }));
+        allowKeyboardLocation = false;
         dialog.show();
     }
 
@@ -1985,6 +2129,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         });
         dialog.setContentView(card);
         dialog.setCanceledOnTouchOutside(true);
+        allowKeyboardLocation = false;
         dialog.show();
         Window window = dialog.getWindow();
         if (window != null) {
@@ -2250,6 +2395,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         actionsParams.setMargins(0, dp(10), 0, 0);
         card.addView(actions, actionsParams);
         dialog.setContentView(card);
+        allowKeyboardLocation = false;
         dialog.show();
         Window window = dialog.getWindow();
         if (window != null) {
@@ -2376,10 +2522,11 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         String text = messageInput.getText().toString().trim();
         if (text.isEmpty()) return;
         try {
-            session.sendTextMessage(text, pendingQuote);
+            RemoteIMMessage queued = session.sendTextMessage(text, pendingQuote);
+            if (currentMessageList != null) currentMessageList.requestMessageBottomAfterUpdate(queued.id());
             draftText = "";
+            if (messageInput != null) messageInput.setText("");
             pendingQuote = null;
-            stickToLatestMessage = true;
             render();
         } catch (IOException | IllegalStateException error) {
             toast(error.getMessage() == null ? "文本消息发送失败" : error.getMessage());
@@ -2417,110 +2564,119 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         }
     }
 
-    private void startVoiceRecording() {
-        if (recorder != null || session.chatState().selectedPeerId() == null) return;
-        try {
-            recordingFile = mediaStore.createVoiceRecordingFile();
-            recorder = new MediaRecorder();
-            recorder.setAudioSource(MediaRecorder.AudioSource.MIC);
-            recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
-            recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
-            recorder.setOutputFile(recordingFile.getAbsolutePath());
-            recorder.prepare();
-            recorder.start();
-            recordingStartedAtMillis = System.currentTimeMillis();
-        } catch (IOException | RuntimeException error) {
-            cancelVoiceRecording();
-            toast("录音启动失败");
+    private static final class SendTarget {
+        final String peer, owner;
+        final int generation;
+        final RemoteIMQuote quote;
+        SendTarget(RemoteIMSessionController session, String peer, RemoteIMQuote quote) {
+            this.peer = peer; this.owner = session.chatState().ownerUserId();
+            this.generation = session.accountGeneration(); this.quote = quote;
         }
     }
-
+    private SendTarget sendTarget() {
+        return activeChatUserId == null ? null : new SendTarget(session, activeChatUserId, pendingQuote);
+    }
+    private boolean canSend(SendTarget target) {
+        return !destroyed && target != null && session.acceptsOutgoing(target.generation, target.owner, target.peer);
+    }
+    private void didSend(SendTarget target, RemoteIMMessage message) {
+        if (target != null && target.peer.equals(activeChatUserId)) {
+            if (java.util.Objects.equals(pendingQuote, target.quote)) pendingQuote = null;
+            if (currentMessageList != null) currentMessageList.requestMessageBottomAfterUpdate(message.id());
+            if (activityInForeground) render(); else pendingStateRefresh = true;
+        }
+    }
+    private void updateSpeechPreview() {
+        if (speechPreview == null) return;
+        speechPreview.setText(speechText);
+        speechPreview.setVisibility(holdingVoice ? View.VISIBLE : View.GONE);
+    }
+    private void startVoiceRecording() {
+        SendTarget target = sendTarget();
+        if (!canSend(target)) return;
+        stopAudioPlayback();
+        holdingVoice = true; speechText = "开始说话…";
+        long uiGeneration = ++voiceUiGeneration;
+        updateSpeechPreview();
+        voiceRecorder.start(new VoiceRecordingController.Completion() {
+            @Override public void partial(String text) {
+                if (uiGeneration != voiceUiGeneration || !holdingVoice || !canSend(target)) return;
+                speechText = text.length() > 200 ? text.substring(text.offsetByCodePoints(0, Math.max(0, text.codePointCount(0, text.length()) - 160))) : text;
+                updateSpeechPreview(); session.updateHumanTyping(target.peer, true);
+            }
+            @Override public void recognized(String text, File file, int seconds) {
+                if (!canSend(target)) return;
+                try {
+                    didSend(target, session.sendTextMessageTo(target.peer, text, target.quote));
+                    mediaExecutor.execute(file::delete);
+                } catch (IOException | RuntimeException error) { sendVoiceFallback(file, seconds, target); }
+            }
+            @Override public void finished(File file, int seconds) { transcribeThenSend(file, seconds, target); }
+            @Override public void failed() {
+                if (destroyed) return;
+                if (uiGeneration == voiceUiGeneration) { holdingVoice = false; updateSpeechPreview(); }
+                toast("录音失败，请重试");
+            }
+        });
+    }
     private void finishVoiceRecording() {
-        if (recorder == null) return;
-        java.io.File finishedFile = null;
-        int duration = 1;
-        try {
-            recorder.stop();
-            duration = Math.max(1, (int) ((System.currentTimeMillis() - recordingStartedAtMillis) / 1000));
-            finishedFile = recordingFile;
-        } catch (RuntimeException error) {
-            if (recordingFile != null) recordingFile.delete();
-            toast("录音结束失败");
-        } finally {
-            recorder.release();
-            recorder = null;
-            recordingFile = null;
-        }
-        if (finishedFile == null) {
-            render();
-            return;
-        }
-        transcribeThenSend(finishedFile, duration);
+        holdingVoice = false; updateSpeechPreview(); session.stopHumanTyping();
+        if (voiceRecorder != null) voiceRecorder.finish(false);
     }
 
     /**
      * 录完先转文字发文字；识别不可用或失败时回退成发语音消息——用户说过的话不能因为
      * 识别这一环出问题就凭空消失。
      */
-    private void transcribeThenSend(java.io.File audioFile, int duration) {
+    private void transcribeThenSend(java.io.File audioFile, int duration, SendTarget target) {
+        if (!canSend(target)) return;
         if (speechRecognizer == null || !speechRecognizer.isAvailable()) {
-            sendVoiceFallback(audioFile, duration);
+            sendVoiceFallback(audioFile, duration, target);
             return;
         }
         toast("正在识别…");
-        speechRecognizer.transcribe(audioFile, "m4a", new SpeechRecognizer.Callback() {
+        speechRecognizer.transcribe(audioFile, audioFile.getName().endsWith(".aac") ? "aac" : "m4a", new SpeechRecognizer.Callback() {
             @Override
             public void onText(String text) {
+                if (!canSend(target)) return;
                 if (text == null || text.trim().isEmpty()) {
                     toast("没听清，已按语音发送");
-                    sendVoiceFallback(audioFile, duration);
+                    sendVoiceFallback(audioFile, duration, target);
                     return;
                 }
                 try {
-                    session.sendTextMessage(text.trim());
+                    RemoteIMMessage queued = session.sendTextMessageTo(target.peer, text.trim(), target.quote);
+                    didSend(target, queued);
                 } catch (RuntimeException | IOException error) {
                     toast("识别成功但发送失败，已按语音发送");
-                    sendVoiceFallback(audioFile, duration);
+                    sendVoiceFallback(audioFile, duration, target);
                     return;
                 }
-                audioFile.delete();
-                stickToLatestMessage = true;
-                render();
+                mediaExecutor.execute(audioFile::delete);
             }
 
             @Override
             public void onError(String message) {
+                if (!canSend(target)) return;
                 toast(message == null || message.isEmpty() ? "语音识别失败，已按语音发送" : message);
-                sendVoiceFallback(audioFile, duration);
+                sendVoiceFallback(audioFile, duration, target);
             }
         });
     }
 
-    private void sendVoiceFallback(java.io.File audioFile, int duration) {
-        try {
-            session.sendVoiceMessage(audioFile.getAbsolutePath(), duration);
-            stickToLatestMessage = true;
-        } catch (RuntimeException | IOException error) {
-            audioFile.delete();
-            toast("语音消息发送失败");
-        }
-        render();
+    private void sendVoiceFallback(File audioFile, int duration, SendTarget target) {
+        if (!canSend(target)) return;
+        try { didSend(target, session.sendVoiceMessageTo(target.peer, audioFile.getAbsolutePath(), duration, target.quote)); }
+        catch (RuntimeException | IOException error) { toast("语音消息发送失败"); }
     }
-
     private void cancelVoiceRecording() {
-        if (recorder != null) {
-            try {
-                recorder.stop();
-            } catch (RuntimeException ignored) {
-            }
-            recorder.release();
-            recorder = null;
-        }
-        if (recordingFile != null) recordingFile.delete();
-        recordingFile = null;
+        holdingVoice = false; voiceUiGeneration++; updateSpeechPreview();
+        if (session != null) session.stopHumanTyping();
+        if (voiceRecorder != null) voiceRecorder.finish(true);
     }
 
     private void showAttachmentMenu(View anchor) {
+        allowKeyboardLocation = false;
         LinearLayout menu = new LinearLayout(this);
         menu.setOrientation(LinearLayout.VERTICAL);
         menu.setPadding(dp(8), dp(8), dp(8), dp(8));
@@ -2552,13 +2708,16 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     }
 
     private void openImagePicker() {
+        pendingAttachmentTarget = sendTarget();
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("image/*");
+        intent.setType("*/*");
+        intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"image/*", "video/*"});
         startActivityForResult(intent, REQUEST_PICK_IMAGE);
     }
 
     private void openFilePicker() {
+        pendingAttachmentTarget = sendTarget();
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("*/*");
@@ -2566,6 +2725,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     }
 
     private void requestCamera() {
+        pendingAttachmentTarget = sendTarget();
         if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             openCamera();
         } else {
@@ -2574,58 +2734,99 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     }
 
     private void openCamera() {
-        try {
-            pendingCameraFile = mediaStore.createCameraPhotoFile();
-            Uri output = FileProvider.getUriForFile(this, getPackageName() + ".files", pendingCameraFile);
-            Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
-            intent.putExtra(MediaStore.EXTRA_OUTPUT, output);
-            intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            startActivityForResult(intent, REQUEST_TAKE_PHOTO);
-        } catch (IOException error) {
-            toast("无法创建拍照文件");
-        }
+        SendTarget target = pendingAttachmentTarget;
+        mediaExecutor.execute(() -> {
+            try {
+                File file = mediaStore.createCameraPhotoFile();
+                runOnUiThread(() -> {
+                    if (!canSend(target)) return;
+                    pendingCameraFile = file;
+                    Uri output = FileProvider.getUriForFile(this, getPackageName() + ".files", file);
+                    Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+                    intent.putExtra(MediaStore.EXTRA_OUTPUT, output);
+                    intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    startActivityForResult(intent, REQUEST_TAKE_PHOTO);
+                });
+            } catch (IOException error) { runOnUiThread(() -> { if (!destroyed) toast("无法创建拍照文件"); }); }
+        });
     }
 
     private void sendPickedImage(Uri uri) {
-        try (InputStream input = getContentResolver().openInputStream(uri)) {
-            File file = mediaStore.copyPickedImage(input, uri.getLastPathSegment());
-            sendImageFile(file);
-        } catch (IOException error) {
-            toast("图片读取失败");
-        }
+        SendTarget target = pendingAttachmentTarget;
+        mediaExecutor.execute(() -> {
+            try (InputStream input = getContentResolver().openInputStream(uri)) {
+                String mime = getContentResolver().getType(uri);
+                if (mime != null && mime.startsWith("video/")) {
+                    File file = mediaStore.createOutgoingFile(queryDisplayName(uri));
+                    copy(input, file); prepareVideo(file, target);
+                } else {
+                    File file = mediaStore.copyPickedImage(input, uri.getLastPathSegment());
+                    prepareImage(file, target);
+                }
+            } catch (IOException | RuntimeException error) { runOnUiThread(() -> { if (!destroyed) toast("图片读取失败"); }); }
+        });
     }
-
     private void sendImageFile(File file) {
+        SendTarget target = pendingAttachmentTarget;
+        mediaExecutor.execute(() -> prepareImage(file, target));
+    }
+    private void prepareImage(File file, SendTarget target) {
         BitmapFactory.Options options = new BitmapFactory.Options();
         options.inJustDecodeBounds = true;
         BitmapFactory.decodeFile(file.getAbsolutePath(), options);
+        long size = file.length();
+        runOnUiThread(() -> {
+            if (!canSend(target)) return;
+            try {
+                didSend(target, session.sendImageMessageTo(target.peer, file.getAbsolutePath(), Math.max(0, options.outWidth), Math.max(0, options.outHeight), size, target.quote));
+            } catch (IOException | IllegalStateException error) { toast("图片发送失败"); }
+        });
+    }
+    private void prepareVideo(File file, SendTarget target) throws IOException {
+        android.media.MediaMetadataRetriever retriever = new android.media.MediaMetadataRetriever();
+        Bitmap cover = null;
         try {
-            session.sendImageMessage(
-                file.getAbsolutePath(),
-                Math.max(0, options.outWidth),
-                Math.max(0, options.outHeight),
-                file.length()
-            );
-            stickToLatestMessage = true;
-            render();
-        } catch (IOException | IllegalStateException error) {
-            toast("图片发送失败");
+            retriever.setDataSource(file.getAbsolutePath());
+            int width = mediaNumber(retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH));
+            int height = mediaNumber(retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT));
+            int seconds = Math.max(1, mediaNumber(retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)) / 1000);
+            if (Build.VERSION.SDK_INT >= 27) cover = retriever.getScaledFrameAtTime(0,
+                android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 480, Math.max(1, Math.min(480, height * 480 / Math.max(1, width))));
+            if (cover == null) { cover = Bitmap.createBitmap(160, 90, Bitmap.Config.RGB_565); cover.eraseColor(MaiChatTheme.SECONDARY); }
+            File poster = mediaStore.createOutgoingFile("video-" + java.util.UUID.randomUUID() + ".jpg");
+            try (FileOutputStream output = new FileOutputStream(poster)) { cover.compress(Bitmap.CompressFormat.JPEG, 85, output); }
+            RemoteIMVideoAttachment attachment = new RemoteIMVideoAttachment(file.getAbsolutePath(), poster.getAbsolutePath(), seconds, width, height, file.length());
+            runOnUiThread(() -> {
+                if (!canSend(target)) return;
+                try { didSend(target, session.sendVideoMessageTo(target.peer, attachment, target.quote)); }
+                catch (IOException | RuntimeException error) { toast("视频发送失败"); }
+            });
+        } finally {
+            if (cover != null) cover.recycle();
+            retriever.release();
         }
+    }
+    private static int mediaNumber(String value) {
+        try { return value == null ? 0 : Integer.parseInt(value); } catch (NumberFormatException error) { return 0; }
     }
 
     private void sendPickedFile(Uri uri) {
-        String fileName = queryDisplayName(uri);
-        String mimeType = getContentResolver().getType(uri);
-        if (mimeType == null || mimeType.trim().isEmpty()) mimeType = "application/octet-stream";
-        try (InputStream input = getContentResolver().openInputStream(uri)) {
-            File target = mediaStore.createOutgoingFile(fileName);
-            copy(input, target);
-            session.sendFileMessage(target.getAbsolutePath(), fileName, mimeType, target.length());
-            stickToLatestMessage = true;
-            render();
-        } catch (IOException | IllegalStateException error) {
-            toast("文件发送失败");
-        }
+        SendTarget target = pendingAttachmentTarget;
+        mediaExecutor.execute(() -> {
+            String fileName = queryDisplayName(uri);
+            String type = getContentResolver().getType(uri);
+            String mimeType = type == null || type.trim().isEmpty() ? "application/octet-stream" : type;
+            try (InputStream input = getContentResolver().openInputStream(uri)) {
+                File file = mediaStore.createOutgoingFile(fileName);
+                copy(input, file);
+                long size = file.length();
+                runOnUiThread(() -> {
+                    if (!canSend(target)) return;
+                    try { didSend(target, session.sendFileMessageTo(target.peer, file.getAbsolutePath(), fileName, mimeType, size, target.quote)); }
+                    catch (IOException | RuntimeException error) { toast("文件发送失败"); }
+                });
+            } catch (IOException | RuntimeException error) { runOnUiThread(() -> { if (!destroyed) toast("文件读取失败"); }); }
+        });
     }
 
     private String queryDisplayName(Uri uri) {
@@ -2708,20 +2909,22 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             if (result.length() > 0) result.append("  ");
             result.append(attachment.width()).append('x').append(attachment.height());
         }
-        if (!new File(attachment.localPath()).exists()) {
-            // 封面先到、视频后到是常态，这里必须说清楚，否则用户点了没反应会以为坏了。
-            if (result.length() > 0) result.append("  ");
-            result.append("下载中…");
-        }
         return result.length() == 0 ? "视频" : result.toString();
     }
 
     private void showVideoPlayer(RemoteIMVideoAttachment attachment) {
-        File source = new File(attachment.localPath());
-        if (!source.exists()) {
-            toast("视频还在下载中，稍后再试");
-            return;
-        }
+        mediaExecutor.execute(() -> {
+            boolean exists = new File(attachment.localPath()).isFile();
+            runOnUiThread(() -> {
+                if (destroyed) return;
+                if (exists) openVideoPlayer(attachment.localPath());
+                else toast("视频还在下载中，稍后再试");
+            });
+        });
+    }
+
+    private void openVideoPlayer(String path) {
+        File source = new File(path);
         Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
         FrameLayout frame = new FrameLayout(this);
         frame.setBackgroundColor(Color.BLACK);
@@ -2755,6 +2958,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         // 不停就关的话解码器可能还占着文件句柄。
         dialog.setOnDismissListener(d -> video.stopPlayback());
         dialog.setContentView(frame);
+        allowKeyboardLocation = false;
         dialog.show();
     }
 
@@ -2805,6 +3009,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         closeParams.setMargins(0, dp(14), dp(14), 0);
         frame.addView(close, closeParams);
         dialog.setContentView(frame);
+        allowKeyboardLocation = false;
         dialog.show();
     }
 
@@ -2822,25 +3027,31 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             );
             WebView web = new WebView(this);
             web.getSettings().setJavaScriptEnabled(false);
-            web.loadDataWithBaseURL(
-                new File(attachment.localPath()).getParentFile().toURI().toString(),
-                readTextFile(attachment.localPath()),
-                "text/html",
-                "utf-8",
-                null
-            );
+            mediaExecutor.execute(() -> {
+                String html = readTextFile(attachment.localPath());
+                runOnUiThread(() -> {
+                    if (!destroyed && dialog.isShowing()) web.loadDataWithBaseURL(
+                        new File(attachment.localPath()).getParentFile().toURI().toString(), html, "text/html", "utf-8", null);
+                });
+            });
             addPreviewContent(dialog, web);
             return;
         }
         if (mime.contains("markdown") || name.endsWith(".md") || name.endsWith(".markdown") || mime.startsWith("text/")) {
             ScrollView scroll = new ScrollView(this);
             TextView text = MaiChatTheme.text(this, "", 14, MaiChatTheme.TEXT);
-            text.setText(MarkdownRenderer.render(readTextFile(attachment.localPath())));
+            text.setText("正在打开…");
             text.setTextIsSelectable(true);
             text.setPadding(dp(16), dp(14), dp(16), dp(18));
             scroll.addView(text, matchWrap());
             Dialog dialog = previewDialog(attachment.fileName());
             addPreviewContent(dialog, scroll);
+            mediaExecutor.execute(() -> {
+                String source = readTextFile(attachment.localPath());
+                MarkdownRenderer.prepare(Collections.singletonList(source), () -> !destroyed, () -> {
+                    if (dialog.isShowing()) MarkdownRenderer.bind(text, source);
+                });
+            });
             return;
         }
         try {
@@ -2869,6 +3080,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         header.setPadding(dp(16), 0, dp(16), 0);
         frame.addView(header, match(dp(52)));
         dialog.setContentView(frame);
+        allowKeyboardLocation = false;
         dialog.show();
         Window window = dialog.getWindow();
         if (window != null) {
@@ -2902,35 +3114,17 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
 
     private void toggleVoicePlayback(RemoteIMMessage message) {
         if (message.voiceAttachment() == null) return;
-        if (message.id().equals(playingMessageId)) {
-            stopAudioPlayback();
-            render();
-            return;
-        }
+        if (message.id().equals(playingMessageId)) { stopAudioPlayback(); render(); return; }
         stopAudioPlayback();
-        try {
-            mediaPlayer = new MediaPlayer();
-            mediaPlayer.setDataSource(message.voiceAttachment().localPath());
-            mediaPlayer.setOnCompletionListener(player -> {
-                stopAudioPlayback();
-                render();
-            });
-            mediaPlayer.prepare();
-            mediaPlayer.start();
-            playingMessageId = message.id();
-            render();
-        } catch (IOException error) {
-            stopAudioPlayback();
-            toast("语音暂时无法播放");
-        }
+        playingMessageId = message.id();
+        voicePlayback.play(message.voiceAttachment().localPath(), () -> {
+            if (destroyed || !message.id().equals(playingMessageId)) return;
+            playingMessageId = null; render();
+        });
+        render();
     }
-
     private void stopAudioPlayback() {
-        if (mediaPlayer != null) {
-            mediaPlayer.stop();
-            mediaPlayer.release();
-            mediaPlayer = null;
-        }
+        if (voicePlayback != null) voicePlayback.stop();
         playingMessageId = null;
     }
 
@@ -2971,6 +3165,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         card.addView(copy, match(dp(46)));
         card.addView(copyFull, match(dp(46)));
         dialog.setContentView(card);
+        allowKeyboardLocation = false;
         dialog.show();
         Window window = dialog.getWindow();
         if (window != null) {
@@ -3032,13 +3227,14 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                 row.addView(arrow, new LinearLayout.LayoutParams(dp(30), dp(44)));
                 row.setContentDescription("转发给 " + displayName);
                 row.setOnClickListener(view -> {
-                    try {
-                        session.forwardMessage(message, contact.userId());
-                        dialog.dismiss();
-                        toast("已转发给 " + displayName);
-                    } catch (IOException | IllegalArgumentException error) {
-                        toast(error.getMessage() == null ? "转发失败" : error.getMessage());
-                    }
+                    row.setEnabled(false);
+                    session.forwardMessageAsync(message, contact.userId(), forwarded -> {
+                        if (destroyed) return;
+                        dialog.dismiss(); toast("正在转发给 " + displayName);
+                        if (contact.userId().equals(activeChatUserId) && currentMessageList != null) {
+                            currentMessageList.requestMessageBottomAfterUpdate(forwarded.id()); refreshChatMessages();
+                        }
+                    }, error -> { row.setEnabled(true); if (!destroyed) toast(error == null ? "转发失败" : error); });
                 });
                 LinearLayout.LayoutParams rowParams = match(dp(58));
                 rowParams.setMargins(0, 0, 0, dp(8));
@@ -3059,6 +3255,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         refreshRows.run();
 
         dialog.setContentView(card);
+        allowKeyboardLocation = false;
         dialog.show();
         Window window = dialog.getWindow();
         if (window != null) {
@@ -3098,6 +3295,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         buttons.addView(confirm, confirmParams);
         card.addView(buttons, match(dp(42)));
         dialog.setContentView(card);
+        allowKeyboardLocation = false;
         dialog.show();
         Window window = dialog.getWindow();
         if (window != null) {
@@ -3406,29 +3604,20 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     }
 
     private void exportDiagnostics() {
-        try {
-            File directory = new File(getCacheDir(), "diagnostics");
-            if (!directory.exists() && !directory.mkdirs()) throw new IOException("create diagnostics failed");
-            File report = new File(directory, "MaiChat-Android-diagnostics.txt");
-            String text = "MaiChat Android\n"
-                + "version=0.1.51\n"
-                + "account=" + maskedAccount(session.settings().loginUserId()) + "\n"
-                + "connection=" + connectionText() + "\n"
-                + "contacts=" + session.chatState().contacts().size() + "\n"
-                + "messages_in_memory=" + session.chatState().messages().size() + "\n"
-                + "remote_state=" + session.remoteDesktop().state().name().toLowerCase(Locale.ROOT) + "\n";
-            try (FileOutputStream output = new FileOutputStream(report)) {
-                output.write(text.getBytes(StandardCharsets.UTF_8));
-            }
-            Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".files", report);
+        File report = new File(new File(getCacheDir(), "diagnostics"), "MaiChat-Android-diagnostics.txt");
+        String header = "MaiChat Android\nversion=" + BuildConfig.VERSION_NAME
+            + "\naccount=" + maskedAccount(session.settings().loginUserId())
+            + "\nconnection=" + connectionText()
+            + "\ncontacts=" + session.chatState().contacts().size()
+            + "\nmessages_in_memory=" + session.chatState().messages().size() + "\n";
+        diagnostics.export(report, header, file -> {
+            if (destroyed) return;
+            Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".files", file);
             Intent share = new Intent(Intent.ACTION_SEND);
-            share.setType("text/plain");
-            share.putExtra(Intent.EXTRA_STREAM, uri);
+            share.setType("text/plain"); share.putExtra(Intent.EXTRA_STREAM, uri);
             share.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
             startActivity(Intent.createChooser(share, "导出 MaiChat 排障信息"));
-        } catch (IOException error) {
-            toast("排障信息导出失败");
-        }
+        }, () -> toast("排障信息导出失败"));
     }
 
     private String maskedAccount(String value) {

@@ -22,6 +22,7 @@ public final class RemoteIMSessionController {
     public interface Listener {
         void onStateChanged();
         void onError(String message);
+        default void onActivityChanged(String peerId) { }
 
         default void onNewIncomingMessage(
             RemoteIMMessage message,
@@ -48,12 +49,30 @@ public final class RemoteIMSessionController {
     private final Map<String, String> oldestLoadedMessageIdByUserId = new HashMap<>();
     private final boolean productionMode;
 
-    private RemoteIMSettings settings;
-    private ChatState chatState;
+    private volatile RemoteIMSettings settings;
+    private volatile ChatState chatState;
+    private volatile boolean destroyed;
+    private int accountGeneration;
+    private final Map<String, RemoteIMVideoAttachment> pendingVideoMedia = new java.util.LinkedHashMap<>();
+    private int mediaRevision;
+    public int mediaRevision() { return mediaRevision; }
+    private boolean restoringAccount;
+    private final java.util.concurrent.ExecutorService ioExecutor = java.util.concurrent.Executors.newSingleThreadExecutor();
+    private final java.util.Set<String> loadingPeers = new java.util.HashSet<>();
+    private final Map<String, Integer> pageRequests = new HashMap<>();
+    private final Map<String, Integer> peerEpochs = new HashMap<>();
+    private interface IOAction { void run() throws Exception; }
+
     private TencentIMClient.ConnectionState connectionState = TencentIMClient.ConnectionState.DISCONNECTED;
     private String connectionDetail = "未连接";
     private String visibleConversationUserId = "";
     private Runnable pendingStateNotification;
+    private final RemoteIMActivityState activities = new RemoteIMActivityState();
+    private Runnable activityExpiry;
+    private Runnable typingIdle;
+    private String typingPeer = "", typingId = "";
+    private long typingSequence, typingLastSent;
+
 
     public RemoteIMSessionController(
         LocalSettingsStore settingsStore,
@@ -88,9 +107,132 @@ public final class RemoteIMSessionController {
             client,
             this::notifyStateChanged
         );
-        settings = loadSettings();
-        chatState = loadProductionChatState();
-        if (!requiresLogin()) connect();
+        settings = RemoteIMSettings.empty();
+        chatState = new ChatState(FALLBACK_OWNER_USER_ID);
+        restoringAccount = true;
+        int generation = ++accountGeneration;
+        enqueueIO(() -> {
+            RemoteIMSettings restoredSettings = loadSettings();
+            ChatState restored = readProductionChatState(restoredSettings);
+            runOnMain(() -> {
+                if (generation != accountGeneration) return;
+                settings = restoredSettings; chatState = restored; restoringAccount = false;
+                notifyStateChanged();
+                if (!requiresLogin()) connect();
+            });
+        });
+    }
+
+    int accountGeneration() { return accountGeneration; }
+    boolean acceptsOutgoing(int generation, String owner, String peer) {
+        return !destroyed && !requiresLogin() && generation == accountGeneration
+            && chatState.ownerUserId().equals(owner) && contactExists(peer);
+    }
+
+    public boolean isRestoringAccount() { return restoringAccount; }
+    public boolean isLoadingMessages(String peer) { return loadingPeers.contains(clean(peer)); }
+
+    private void enqueueIO(IOAction action) {
+        if (destroyed) return;
+        int generation = accountGeneration;
+        ioExecutor.execute(() -> {
+            try { action.run(); }
+            catch (Exception error) {
+                runOnMain(() -> {
+                    if (generation != accountGeneration) return;
+                    restoringAccount = false;
+                    reportError("本地数据操作失败：" + error.getMessage());
+                    notifyStateChanged();
+                });
+            }
+        });
+    }
+
+    private void switchAccount(RemoteIMSettings next) {
+        resetActivities();
+        int generation = ++accountGeneration;
+        settings = next;
+        chatState = new ChatState(next.requiresLogin() ? FALLBACK_OWNER_USER_ID : next.loginUserId());
+        unreadByUserId.clear(); presenceByUserId.clear(); hasEarlierByUserId.clear();
+        oldestLoadedCreatedAtByUserId.clear(); oldestLoadedMessageIdByUserId.clear();
+        loadingPeers.clear(); pageRequests.clear(); peerEpochs.clear(); pendingVideoMedia.clear(); mediaRevision++;
+        visibleConversationUserId = "";
+        restoringAccount = !next.requiresLogin();
+        if (next.requiresLogin()) {
+            if (remoteDesktop != null) remoteDesktop.stop();
+            client.disconnect(new EmptyOperationCompletion());
+            connectionState = TencentIMClient.ConnectionState.DISCONNECTED;
+            connectionDetail = "未连接";
+        }
+        enqueueIO(() -> {
+            settingsStore.save(next);
+            if (next.requiresLogin()) return;
+            ChatState restored = readProductionChatState(next);
+            runOnMain(() -> {
+                if (generation != accountGeneration) return;
+                chatState = restored; restoringAccount = false;
+                connect(); notifyStateChanged();
+            });
+        });
+        notifyStateChanged();
+    }
+
+    private void persistContact(RemoteIMContact contact) {
+        String owner = chatState.ownerUserId();
+        enqueueIO(() -> historyStore.upsertContact(owner, contact));
+    }
+
+    public RemoteIMActivitySignal activity(String peerId) { return activities.get(clean(peerId)); }
+
+    public void updateHumanTyping(String peerId, boolean active) {
+        if (!productionMode) return;
+        String peer = clean(peerId);
+        if (!active || !peer.equals(typingPeer)) stopHumanTyping();
+        if (!active || peer.isEmpty() || connectionState != TencentIMClient.ConnectionState.CONNECTED) return;
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (typingId.isEmpty()) {
+            typingId = "typing:" + java.util.UUID.randomUUID();
+            typingPeer = peer; typingSequence = 0; typingLastSent = now - 3000;
+        }
+        if (now - typingLastSent >= 3000) {
+            typingLastSent = now;
+            client.sendActivity(peer, new RemoteIMActivitySignal(typingId, ++typingSequence,
+                RemoteIMActivitySignal.Kind.HUMAN_TYPING, true, 12000));
+        }
+        if (typingIdle != null) mainHandler.removeCallbacks(typingIdle);
+        typingIdle = this::stopHumanTyping;
+        mainHandler.postDelayed(typingIdle, 4000);
+    }
+
+    public void stopHumanTyping() {
+        if (!productionMode) return;
+        if (typingIdle != null) mainHandler.removeCallbacks(typingIdle);
+        typingIdle = null;
+        if (!typingId.isEmpty() && connectionState == TencentIMClient.ConnectionState.CONNECTED) {
+            client.sendActivity(typingPeer, new RemoteIMActivitySignal(typingId, ++typingSequence,
+                RemoteIMActivitySignal.Kind.HUMAN_TYPING, false, 1000));
+        }
+        typingId = ""; typingPeer = "";
+    }
+
+    private void resetActivities() {
+        stopHumanTyping();
+        if (activityExpiry != null) mainHandler.removeCallbacks(activityExpiry);
+        activityExpiry = null;
+        activities.reset();
+    }
+
+    private void scheduleActivityExpiry() {
+        if (activityExpiry != null) mainHandler.removeCallbacks(activityExpiry);
+        long next = activities.nextExpiry();
+        if (next == Long.MAX_VALUE) { activityExpiry = null; return; }
+        activityExpiry = () -> {
+            for (String peer : activities.expire(android.os.SystemClock.elapsedRealtime())) {
+                if (listener != null) listener.onActivityChanged(peer);
+            }
+            scheduleActivityExpiry();
+        };
+        mainHandler.postDelayed(activityExpiry, Math.max(1, next - android.os.SystemClock.elapsedRealtime()));
     }
 
     public RemoteIMSettings settings() {
@@ -127,10 +269,11 @@ public final class RemoteIMSessionController {
     }
 
     public void login(String loginUserId) throws IOException {
+        if (productionMode) { switchAccount(new RemoteIMSettings(loginUserId)); return; }
         saveChatState();
         settings = new RemoteIMSettings(loginUserId);
         settingsStore.save(settings);
-        chatState = productionMode ? loadProductionChatState() : loadLegacyChatState();
+        chatState = loadLegacyChatState();
         unreadByUserId.clear();
         presenceByUserId.clear();
         hasEarlierByUserId.clear();
@@ -145,6 +288,7 @@ public final class RemoteIMSessionController {
     }
 
     public void logout() throws IOException {
+        if (productionMode) { switchAccount(RemoteIMSettings.empty()); return; }
         saveChatState();
         settings = RemoteIMSettings.empty();
         settingsStore.save(settings);
@@ -177,7 +321,7 @@ public final class RemoteIMSessionController {
         chatState.upsertContact(contact);
         chatState.selectPeer(cleanUserId);
         if (productionMode) {
-            historyStore.upsertContact(chatState.ownerUserId(), contact);
+            persistContact(contact);
             refreshContactMetadata(Collections.singletonList(cleanUserId));
         } else {
             try {
@@ -206,7 +350,10 @@ public final class RemoteIMSessionController {
                 runOnMain(() -> {
                     if (!ownerUserId.equals(chatState.ownerUserId())) return;
                     chatState.removeContact(cleanUserId);
-                    historyStore.deleteContact(chatState.ownerUserId(), cleanUserId);
+                    peerEpochs.put(cleanUserId, peerEpochs.getOrDefault(cleanUserId, 0) + 1);
+                    pageRequests.put(cleanUserId, pageRequests.getOrDefault(cleanUserId, 0) + 1);
+                    loadingPeers.remove(cleanUserId);
+                    enqueueIO(() -> historyStore.deleteContact(ownerUserId, cleanUserId));
                     unreadByUserId.remove(cleanUserId);
                     presenceByUserId.remove(cleanUserId);
                     hasEarlierByUserId.remove(cleanUserId);
@@ -229,11 +376,11 @@ public final class RemoteIMSessionController {
     public boolean createContactGroup(String name) {
         String cleanName = ContactGroups.normalize(name);
         if (!ContactGroups.isAcceptableName(cleanName) || requiresLogin()) return false;
-        boolean stored = productionMode
-            ? historyStore.createContactGroup(chatState.ownerUserId(), cleanName)
-            : chatState.addContactGroup(cleanName);
-        if (!stored) return false;
-        if (productionMode) chatState.addContactGroup(cleanName);
+        if (!chatState.addContactGroup(cleanName)) return false;
+        if (productionMode) {
+            String owner = chatState.ownerUserId();
+            enqueueIO(() -> historyStore.createContactGroup(owner, cleanName));
+        }
         persistLegacyAndNotify();
         return true;
     }
@@ -242,11 +389,11 @@ public final class RemoteIMSessionController {
         String oldName = ContactGroups.normalize(from);
         String newName = ContactGroups.normalize(to);
         if (!ContactGroups.isAcceptableName(newName) || requiresLogin()) return false;
-        boolean stored = productionMode
-            ? historyStore.renameContactGroup(chatState.ownerUserId(), oldName, newName)
-            : chatState.renameContactGroup(oldName, newName);
-        if (!stored) return false;
-        if (productionMode) chatState.renameContactGroup(oldName, newName);
+        if (!chatState.renameContactGroup(oldName, newName)) return false;
+        if (productionMode) {
+            String owner = chatState.ownerUserId();
+            enqueueIO(() -> historyStore.renameContactGroup(owner, oldName, newName));
+        }
         persistLegacyAndNotify();
         return true;
     }
@@ -254,11 +401,11 @@ public final class RemoteIMSessionController {
     public boolean deleteContactGroup(String name) {
         String cleanName = ContactGroups.normalize(name);
         if (cleanName.isEmpty() || requiresLogin()) return false;
-        boolean stored = productionMode
-            ? historyStore.deleteContactGroup(chatState.ownerUserId(), cleanName)
-            : chatState.removeContactGroup(cleanName);
-        if (!stored) return false;
-        if (productionMode) chatState.removeContactGroup(cleanName);
+        if (!chatState.removeContactGroup(cleanName)) return false;
+        if (productionMode) {
+            String owner = chatState.ownerUserId();
+            enqueueIO(() -> historyStore.deleteContactGroup(owner, cleanName));
+        }
         persistLegacyAndNotify();
         return true;
     }
@@ -266,12 +413,11 @@ public final class RemoteIMSessionController {
     public boolean setContactGroup(String userId, String groupName) {
         String cleanUserId = clean(userId);
         if (cleanUserId.isEmpty() || requiresLogin()) return false;
-        if (productionMode) {
-            if (!historyStore.setContactGroup(
-                chatState.ownerUserId(), cleanUserId, ContactGroups.normalize(groupName)
-            )) return false;
-        }
         if (!chatState.setContactGroup(cleanUserId, groupName)) return false;
+        if (productionMode) {
+            String owner = chatState.ownerUserId();
+            enqueueIO(() -> historyStore.setContactGroup(owner, cleanUserId, ContactGroups.normalize(groupName)));
+        }
         persistLegacyAndNotify();
         return true;
     }
@@ -304,7 +450,10 @@ public final class RemoteIMSessionController {
                 runOnMain(() -> {
                     if (!ownerUserId.equals(chatState.ownerUserId())) return;
                     chatState.removeMessagesWith(cleanUserId);
-                    historyStore.deleteConversation(chatState.ownerUserId(), cleanUserId);
+                    peerEpochs.put(cleanUserId, peerEpochs.getOrDefault(cleanUserId, 0) + 1);
+                    pageRequests.put(cleanUserId, pageRequests.getOrDefault(cleanUserId, 0) + 1);
+                    loadingPeers.remove(cleanUserId);
+                    enqueueIO(() -> historyStore.deleteConversation(ownerUserId, cleanUserId));
                     unreadByUserId.remove(cleanUserId);
                     hasEarlierByUserId.put(cleanUserId, false);
                     oldestLoadedCreatedAtByUserId.remove(cleanUserId);
@@ -328,7 +477,12 @@ public final class RemoteIMSessionController {
     }
 
     public RemoteIMMessage sendTextMessage(String text, RemoteIMQuote quote) throws IOException {
-        RemoteIMMessage message = chatState.queueOutgoingText(text);
+        return sendTextMessageTo(chatState.selectedPeerId(), text, quote);
+    }
+
+    public RemoteIMMessage sendTextMessageTo(String peer, String text, RemoteIMQuote quote) throws IOException {
+        stopHumanTyping();
+        RemoteIMMessage message = chatState.queueOutgoingTextTo(peer, text);
         message.setQuote(quote);
         if (!productionMode) {
             markMessageSentAndSave(message);
@@ -468,7 +622,16 @@ public final class RemoteIMSessionController {
         int height,
         long sizeBytes
     ) throws IOException {
-        RemoteIMMessage message = chatState.queueOutgoingImage(localPath, width, height, sizeBytes);
+        return sendImageMessageTo(chatState.selectedPeerId(), localPath, width, height, sizeBytes);
+    }
+
+    public RemoteIMMessage sendImageMessageTo(String peer, String localPath, int width, int height, long sizeBytes) throws IOException {
+        return sendImageMessageTo(peer, localPath, width, height, sizeBytes, null);
+    }
+
+    public RemoteIMMessage sendImageMessageTo(String peer, String localPath, int width, int height, long sizeBytes, RemoteIMQuote quote) throws IOException {
+        RemoteIMMessage message = chatState.queueOutgoingImageTo(peer, localPath, width, height, sizeBytes);
+        message.setQuote(quote);
         if (!productionMode) {
             markMessageSentAndSave(message);
             return message;
@@ -479,13 +642,23 @@ public final class RemoteIMSessionController {
             message.toUserId(),
             localPath,
             RemoteIMOrigin.HUMAN,
+            quote,
             sendCompletion(message)
         );
         return message;
     }
 
     public RemoteIMMessage sendVoiceMessage(String localPath, int durationSeconds) throws IOException {
-        RemoteIMMessage message = chatState.queueOutgoingVoice(localPath, durationSeconds);
+        return sendVoiceMessageTo(chatState.selectedPeerId(), localPath, durationSeconds);
+    }
+
+    public RemoteIMMessage sendVoiceMessageTo(String peer, String localPath, int durationSeconds) throws IOException {
+        return sendVoiceMessageTo(peer, localPath, durationSeconds, null);
+    }
+
+    public RemoteIMMessage sendVoiceMessageTo(String peer, String localPath, int durationSeconds, RemoteIMQuote quote) throws IOException {
+        RemoteIMMessage message = chatState.queueOutgoingVoiceTo(peer, localPath, durationSeconds);
+        message.setQuote(quote);
         if (!productionMode) {
             markMessageSentAndSave(message);
             return message;
@@ -497,6 +670,7 @@ public final class RemoteIMSessionController {
             localPath,
             durationSeconds,
             RemoteIMOrigin.HUMAN,
+            quote,
             sendCompletion(message)
         );
         return message;
@@ -508,12 +682,21 @@ public final class RemoteIMSessionController {
         String mimeType,
         long sizeBytes
     ) throws IOException {
-        RemoteIMMessage message = chatState.queueOutgoingFile(
-            localPath,
+        return sendFileMessageTo(chatState.selectedPeerId(), localPath, fileName, mimeType, sizeBytes);
+    }
+
+    public RemoteIMMessage sendFileMessageTo(String peer, String localPath, String fileName, String mimeType, long sizeBytes) throws IOException {
+        return sendFileMessageTo(peer, localPath, fileName, mimeType, sizeBytes, null);
+    }
+
+    public RemoteIMMessage sendFileMessageTo(String peer, String localPath, String fileName, String mimeType, long sizeBytes, RemoteIMQuote quote) throws IOException {
+        RemoteIMMessage message = chatState.queueOutgoingFileTo(
+            peer, localPath,
             fileName,
             mimeType,
             sizeBytes
         );
+        message.setQuote(quote);
         if (!productionMode) {
             markMessageSentAndSave(message);
             return message;
@@ -525,12 +708,49 @@ public final class RemoteIMSessionController {
             localPath,
             fileName,
             RemoteIMOrigin.HUMAN,
+            quote,
             sendCompletion(message)
         );
         return message;
     }
 
+    public RemoteIMMessage sendVideoMessageTo(String peer, RemoteIMVideoAttachment attachment) throws IOException {
+        return sendVideoMessageTo(peer, attachment, null);
+    }
+
+    public RemoteIMMessage sendVideoMessageTo(String peer, RemoteIMVideoAttachment attachment, RemoteIMQuote quote) throws IOException {
+        RemoteIMMessage message = chatState.queueOutgoingVideoTo(peer, attachment);
+        message.setQuote(quote);
+        if (!productionMode) { markMessageSentAndSave(message); return message; }
+        persistMessage(message); notifyStateChanged();
+        client.sendVideo(peer, attachment, RemoteIMOrigin.HUMAN, quote, sendCompletion(message));
+        return message;
+    }
+
+    public void forwardMessageAsync(RemoteIMMessage source, String targetUserId,
+        java.util.function.Consumer<RemoteIMMessage> completed, java.util.function.Consumer<String> failed) {
+        if (source == null) { failed.accept("消息不存在"); return; }
+        RemoteIMMessage snapshot = source.snapshot();
+        int generation = accountGeneration;
+        enqueueIO(() -> {
+            try {
+                if (snapshot.imageAttachment() != null) requireForwardingFile(snapshot.imageAttachment().localPath(), "图片");
+                if (snapshot.voiceAttachment() != null) requireForwardingFile(snapshot.voiceAttachment().localPath(), "语音");
+                if (snapshot.videoAttachment() != null) requireForwardingFile(snapshot.videoAttachment().localPath(), "视频");
+                if (snapshot.fileAttachment() != null) requireForwardingFile(snapshot.fileAttachment().localPath(), "文件");
+                runOnMain(() -> {
+                    if (generation != accountGeneration) return;
+                    try { completed.accept(forwardMessage(snapshot, targetUserId, true)); }
+                    catch (IOException | RuntimeException error) { failed.accept(error.getMessage()); }
+                });
+            } catch (Exception error) { runOnMain(() -> { if (generation == accountGeneration) failed.accept(error.getMessage()); }); }
+        });
+    }
+
     public RemoteIMMessage forwardMessage(RemoteIMMessage source, String targetUserId)
+        throws IOException { return forwardMessage(source, targetUserId, false); }
+
+    private RemoteIMMessage forwardMessage(RemoteIMMessage source, String targetUserId, boolean validated)
         throws IOException {
         if (source == null) throw new IllegalArgumentException("message is required");
         String target = clean(targetUserId);
@@ -541,7 +761,7 @@ public final class RemoteIMSessionController {
         RemoteIMMessage forwarded;
         if (source.imageAttachment() != null) {
             RemoteIMImageAttachment attachment = source.imageAttachment();
-            requireForwardingFile(attachment.localPath(), "图片");
+            if (!validated) requireForwardingFile(attachment.localPath(), "图片");
             forwarded = chatState.queueOutgoingImageTo(
                 target,
                 attachment.localPath(),
@@ -551,7 +771,7 @@ public final class RemoteIMSessionController {
             );
         } else if (source.voiceAttachment() != null) {
             RemoteIMVoiceAttachment attachment = source.voiceAttachment();
-            requireForwardingFile(attachment.localPath(), "语音");
+            if (!validated) requireForwardingFile(attachment.localPath(), "语音");
             forwarded = chatState.queueOutgoingVoiceTo(
                 target,
                 attachment.localPath(),
@@ -559,7 +779,7 @@ public final class RemoteIMSessionController {
             );
         } else if (source.fileAttachment() != null) {
             RemoteIMFileAttachment attachment = source.fileAttachment();
-            requireForwardingFile(attachment.localPath(), "文件");
+            if (!validated) requireForwardingFile(attachment.localPath(), "文件");
             forwarded = chatState.queueOutgoingFileTo(
                 target,
                 attachment.localPath(),
@@ -568,7 +788,9 @@ public final class RemoteIMSessionController {
                 attachment.sizeBytes()
             );
         } else if (source.videoAttachment() != null) {
-            throw new IOException("Android 暂不支持转发视频消息");
+            RemoteIMVideoAttachment attachment = source.videoAttachment();
+            if (!validated) requireForwardingFile(attachment.localPath(), "视频");
+            forwarded = chatState.queueOutgoingVideoTo(target, attachment);
         } else {
             forwarded = chatState.queueOutgoingTextTo(target, source.text());
         }
@@ -586,6 +808,8 @@ public final class RemoteIMSessionController {
         } else if (forwarded.voiceAttachment() != null) {
             client.sendVoice(target, forwarded.voiceAttachment().localPath(),
                 forwarded.voiceAttachment().durationSeconds(), RemoteIMOrigin.HUMAN, completion);
+        } else if (forwarded.videoAttachment() != null) {
+            client.sendVideo(target, forwarded.videoAttachment(), RemoteIMOrigin.HUMAN, completion);
         } else if (forwarded.fileAttachment() != null) {
             client.sendFile(target, forwarded.fileAttachment().localPath(),
                 forwarded.fileAttachment().fileName(), RemoteIMOrigin.HUMAN, completion);
@@ -608,12 +832,14 @@ public final class RemoteIMSessionController {
     }
 
     public void setConversationVisible(String userId, boolean visible) {
+        if (!visible || !clean(userId).equals(visibleConversationUserId)) stopHumanTyping();
         String cleanUserId = clean(userId);
         if (visible) {
             visibleConversationUserId = cleanUserId;
             unreadByUserId.remove(cleanUserId);
         } else if (visibleConversationUserId.equals(cleanUserId)) {
             visibleConversationUserId = "";
+            if (productionMode) chatState.retainRecentMessages(cleanUserId, 20);
         }
     }
 
@@ -631,38 +857,46 @@ public final class RemoteIMSessionController {
         return presenceByUserId.getOrDefault(clean(userId), TencentIMClient.PresenceStatus.UNKNOWN);
     }
 
-    public void loadInitialMessages(String userId) {
-        if (!productionMode) return;
-        String peerId = clean(userId);
-        AndroidChatHistoryStore.Page page = historyStore.loadConversationPage(
-            chatState.ownerUserId(),
-            peerId,
-            null,
-            null,
-            50
-        );
-        chatState.mergeMessages(page.messages());
-        hasEarlierByUserId.put(peerId, page.hasEarlier());
-        updateOldestLoadedCursor(peerId, page.messages());
-    }
+    public void loadInitialMessages(String userId) { loadMessagePage(userId, true); }
 
     public boolean loadEarlierMessages(String userId) {
-        if (!productionMode) return false;
-        String peerId = clean(userId);
-        Long oldestCreatedAt = oldestLoadedCreatedAtByUserId.get(peerId);
-        String oldestMessageId = oldestLoadedMessageIdByUserId.get(peerId);
-        AndroidChatHistoryStore.Page page = historyStore.loadConversationPage(
-            chatState.ownerUserId(),
-            peerId,
-            oldestCreatedAt,
-            oldestMessageId,
-            50
-        );
-        chatState.mergeMessages(page.messages());
-        hasEarlierByUserId.put(peerId, page.hasEarlier());
-        updateOldestLoadedCursor(peerId, page.messages());
-        notifyStateChanged();
-        return !page.messages().isEmpty();
+        if (!productionMode || isLoadingMessages(userId)) return false;
+        loadMessagePage(userId, false);
+        return true;
+    }
+
+    private void loadMessagePage(String userId, boolean initial) {
+        if (!productionMode || requiresLogin()) return;
+        String peer = clean(userId), owner = chatState.ownerUserId();
+        if (peer.isEmpty()) return;
+        int generation = accountGeneration;
+        int request = pageRequests.getOrDefault(peer, 0) + 1;
+        pageRequests.put(peer, request); loadingPeers.add(peer);
+        Long cursorTime = initial ? null : oldestLoadedCreatedAtByUserId.get(peer);
+        String cursorId = initial ? null : oldestLoadedMessageIdByUserId.get(peer);
+        enqueueIO(() -> {
+            AndroidChatHistoryStore.Page page;
+            try { page = historyStore.loadConversationPage(owner, peer, cursorTime, cursorId, 20); }
+            catch (RuntimeException error) {
+                runOnMain(() -> { if (generation == accountGeneration && pageRequests.getOrDefault(peer, 0) == request) loadingPeers.remove(peer); });
+                throw error;
+            }
+            runOnMain(() -> {
+                if (generation != accountGeneration || pageRequests.getOrDefault(peer, 0) != request) return;
+                loadingPeers.remove(peer);
+                java.util.Set<String> loadedIds = new java.util.HashSet<>();
+                for (RemoteIMMessage message : chatState.messages()) loadedIds.add(message.id());
+                List<RemoteIMMessage> additional = new ArrayList<>();
+                for (RemoteIMMessage message : page.messages()) {
+                    if (!loadedIds.contains(message.id()) && (message.remoteId().isEmpty()
+                        || chatState.messageWithRemoteId(message.remoteId()) == null)) additional.add(message);
+                }
+                chatState.mergeMessages(additional);
+                hasEarlierByUserId.put(peer, page.hasEarlier());
+                updateOldestLoadedCursor(peer, page.messages());
+                notifyStateChanged();
+            });
+        });
     }
 
     public List<RemoteIMMessageSearchHit> searchMessages(String query, int limit) {
@@ -712,13 +946,22 @@ public final class RemoteIMSessionController {
         RemoteIMMessage inMemory = chatState.messageWithRemoteId(cleanRemoteId);
         if (inMemory != null) return inMemory;
         if (!productionMode) return null;
-        RemoteIMMessage stored = historyStore.messageWithRemoteId(
-            chatState.ownerUserId(),
-            cleanPeerId,
-            cleanRemoteId
-        );
-        if (stored != null) chatState.mergeMessages(Collections.singletonList(stored));
-        return stored;
+        return null;
+    }
+
+    public void findQuotedMessage(String peer, String remoteId, java.util.function.Consumer<RemoteIMMessage> completion) {
+        RemoteIMMessage cached = findQuotedMessage(peer, remoteId);
+        if (cached != null || !productionMode) { completion.accept(cached); return; }
+        String owner = chatState.ownerUserId();
+        int generation = accountGeneration;
+        enqueueIO(() -> {
+            RemoteIMMessage stored = historyStore.messageWithRemoteId(owner, clean(peer), clean(remoteId));
+            runOnMain(() -> {
+                if (generation != accountGeneration) return;
+                if (stored != null) chatState.mergeMessages(Collections.singletonList(stored));
+                completion.accept(stored);
+            });
+        });
     }
 
     private void updateOldestLoadedCursor(String peerId, List<RemoteIMMessage> pageMessages) {
@@ -749,13 +992,16 @@ public final class RemoteIMSessionController {
 
     public void destroy() {
         if (!productionMode) return;
+        resetActivities();
         if (pendingStateNotification != null) {
             mainHandler.removeCallbacks(pendingStateNotification);
             pendingStateNotification = null;
         }
         if (remoteDesktop != null) remoteDesktop.destroy();
+        destroyed = true;
         client.destroy();
-        historyStore.close();
+        ioExecutor.execute(historyStore::close);
+        ioExecutor.shutdown();
     }
 
     private void connect() {
@@ -817,7 +1063,28 @@ public final class RemoteIMSessionController {
             && remoteDesktop.handleIncomingText(incoming.fromUserId(), incoming.text())) {
             return;
         }
-        if (historyStore.containsRemoteId(chatState.ownerUserId(), incoming.remoteId())) return;
+        String owner = chatState.ownerUserId();
+        int generation = accountGeneration;
+        int peerEpoch = peerEpochs.getOrDefault(incoming.fromUserId(), 0);
+        RemoteIMActivitySignal replacedActivity = activities.get(incoming.fromUserId());
+        enqueueIO(() -> {
+            boolean duplicate = !incoming.remoteId().isEmpty() && historyStore.containsRemoteId(owner, incoming.remoteId());
+            runOnMain(() -> {
+                if (duplicate || generation != accountGeneration
+                    || peerEpoch != peerEpochs.getOrDefault(incoming.fromUserId(), 0)) return;
+                if (!incoming.remoteId().isEmpty() && chatState.messageWithRemoteId(incoming.remoteId()) != null) return;
+                applyIncomingMessage(incoming, replacedActivity);
+            });
+        });
+    }
+
+    private void applyIncomingMessage(RemoteIMMessage incoming, RemoteIMActivitySignal replacedActivity) {
+        RemoteIMVideoAttachment preparedVideo = pendingVideoMedia.remove(incoming.remoteId());
+        if (preparedVideo != null && incoming.videoAttachment() != null) incoming = incoming.withVideoAttachment(preparedVideo);
+        RemoteIMActivitySignal currentActivity = activities.get(incoming.fromUserId());
+        if (replacedActivity != null && currentActivity != null && replacedActivity.activityId.equals(currentActivity.activityId)) {
+            activities.clear(incoming.fromUserId());
+        }
         boolean knownContact = contactExists(incoming.fromUserId());
         int previousMessageCount = chatState.messages().size();
 
@@ -887,9 +1154,10 @@ public final class RemoteIMSessionController {
                 incoming.approvalDecision()
             );
         }
+        message.setQuote(incoming.quote());
         boolean wasInserted = chatState.messages().size() > previousMessageCount;
         RemoteIMContact contact = findContact(incoming.fromUserId());
-        historyStore.upsertContact(chatState.ownerUserId(), contact);
+        persistContact(contact);
         persistMessage(message);
         if (!visibleConversationUserId.equals(incoming.fromUserId())) {
             unreadByUserId.put(
@@ -897,6 +1165,7 @@ public final class RemoteIMSessionController {
                 unreadByUserId.getOrDefault(incoming.fromUserId(), 0) + 1
             );
         }
+        if (!visibleConversationUserId.equals(incoming.fromUserId())) chatState.retainRecentMessages(incoming.fromUserId(), 20);
         if (!knownContact) {
             refreshContactMetadata(Collections.singletonList(incoming.fromUserId()));
         }
@@ -924,7 +1193,11 @@ public final class RemoteIMSessionController {
     }
 
     private void persistMessage(RemoteIMMessage message) {
-        if (productionMode) historyStore.upsertMessage(chatState.ownerUserId(), message);
+        if (productionMode) {
+            String owner = chatState.ownerUserId();
+            RemoteIMMessage snapshot = message.snapshot();
+            enqueueIO(() -> historyStore.upsertMessage(owner, snapshot));
+        }
     }
 
     private void markMessageSentAndSave(RemoteIMMessage message) throws IOException {
@@ -949,9 +1222,9 @@ public final class RemoteIMSessionController {
         }
     }
 
-    private ChatState loadProductionChatState() {
-        String ownerUserId = requiresLogin() ? FALLBACK_OWNER_USER_ID : settings.loginUserId();
-        if (requiresLogin()) return new ChatState(ownerUserId);
+    private ChatState readProductionChatState(RemoteIMSettings account) {
+        String ownerUserId = account.requiresLogin() ? FALLBACK_OWNER_USER_ID : account.loginUserId();
+        if (account.requiresLogin()) return new ChatState(ownerUserId);
         ChatState state = new ChatState(ownerUserId);
         state.setContactGroups(historyStore.loadContactGroups(ownerUserId));
         for (RemoteIMContact contact : historyStore.loadContacts(ownerUserId)) {
@@ -979,14 +1252,12 @@ public final class RemoteIMSessionController {
             return;
         }
         Runnable schedule = () -> {
-            if (pendingStateNotification != null) {
-                mainHandler.removeCallbacks(pendingStateNotification);
-            }
+            if (pendingStateNotification != null) return;
             pendingStateNotification = () -> {
                 pendingStateNotification = null;
                 listener.onStateChanged();
             };
-            mainHandler.postDelayed(pendingStateNotification, 100);
+            mainHandler.post(pendingStateNotification);
         };
         if (Looper.myLooper() == Looper.getMainLooper()) schedule.run();
         else mainHandler.post(schedule);
@@ -998,11 +1269,9 @@ public final class RemoteIMSessionController {
     }
 
     private void runOnMain(Runnable runnable) {
-        if (mainHandler == null || Looper.myLooper() == Looper.getMainLooper()) {
-            runnable.run();
-        } else {
-            mainHandler.post(runnable);
-        }
+        if (destroyed) return;
+        if (mainHandler == null || Looper.myLooper() == Looper.getMainLooper()) runnable.run();
+        else mainHandler.post(() -> { if (!destroyed) runnable.run(); });
     }
 
     private static String clean(String value) {
@@ -1016,10 +1285,44 @@ public final class RemoteIMSessionController {
             String detail
         ) {
             runOnMain(() -> {
+                if (state != TencentIMClient.ConnectionState.CONNECTED) {
+                    resetActivities();
+                    if (listener != null) listener.onActivityChanged(visibleConversationUserId);
+                }
                 connectionState = state;
                 connectionDetail = detail;
                 if (state == TencentIMClient.ConnectionState.CONNECTED) refreshContactMetadata();
                 notifyStateChanged();
+            });
+        }
+
+        @Override public void onVideoMediaUpdated(String sender, String recipient, String remoteId, RemoteIMVideoAttachment attachment) {
+            runOnMain(() -> {
+                if (requiresLogin() || !chatState.ownerUserId().equals(recipient)) return;
+                pendingVideoMedia.put(remoteId, attachment);
+                if (pendingVideoMedia.size() > 128) pendingVideoMedia.remove(pendingVideoMedia.keySet().iterator().next());
+                RemoteIMMessage current = chatState.updateVideoMedia(remoteId, attachment);
+                if (current != null) {
+                    pendingVideoMedia.remove(remoteId); persistMessage(current);
+                } else {
+                    enqueueIO(() -> {
+                        RemoteIMMessage stored = historyStore.messageWithRemoteId(recipient, sender, remoteId);
+                        if (stored != null) historyStore.upsertMessage(recipient, stored.withVideoAttachment(attachment));
+                    });
+                }
+                mediaRevision++; notifyStateChanged();
+            });
+        }
+
+        @Override
+        public void onIncomingActivity(String sender, String recipient, RemoteIMActivitySignal signal) {
+            runOnMain(() -> {
+                if (requiresLogin() || !chatState.ownerUserId().equals(recipient)
+                    || sender.equals(recipient) || !contactExists(sender)) return;
+                if (activities.receive(sender, signal, android.os.SystemClock.elapsedRealtime()) && listener != null) {
+                    listener.onActivityChanged(sender);
+                }
+                scheduleActivityExpiry();
             });
         }
 
@@ -1033,7 +1336,7 @@ public final class RemoteIMSessionController {
             runOnMain(() -> {
                 for (RemoteIMContact contact : contacts) {
                     chatState.upsertContact(contact);
-                    historyStore.upsertContact(chatState.ownerUserId(), contact);
+                    persistContact(contact);
                 }
                 notifyStateChanged();
             });

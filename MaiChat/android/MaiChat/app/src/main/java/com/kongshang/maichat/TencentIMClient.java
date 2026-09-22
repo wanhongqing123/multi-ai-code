@@ -51,6 +51,8 @@ public final class TencentIMClient {
     public interface Listener {
         void onConnectionStateChanged(ConnectionState state, String detail);
         void onIncomingMessage(RemoteIMMessage message);
+        default void onIncomingActivity(String sender, String recipient, RemoteIMActivitySignal signal) { }
+        default void onVideoMediaUpdated(String sender, String recipient, String remoteId, RemoteIMVideoAttachment attachment) { }
         void onProfilesUpdated(List<RemoteIMContact> contacts);
         void onPresenceUpdated(Map<String, PresenceStatus> statuses);
     }
@@ -68,14 +70,19 @@ public final class TencentIMClient {
     // 日志一律英文：logcat 在不同机器上的编码不一致，中文容易变成乱码，
     // 也不便直接贴进 issue 检索。桌面端 AppLog 用的是同一条约定。
     private static final String TAG = "MaiChat.im";
+    private static final java.util.concurrent.ExecutorService MEDIA_COMPLETION = java.util.concurrent.Executors.newSingleThreadExecutor();
 
+    private final android.os.HandlerThread sdkThread = new android.os.HandlerThread("MaiChat-IM");
+    private final android.os.Handler sdkHandler;
+    private volatile boolean closed;
     private final Context context;
     private final RemoteIMMediaPaths mediaPaths;
     private final Listener listener;
     private final V2TIMAdvancedMsgListener messageListener = new V2TIMAdvancedMsgListener() {
         @Override
         public void onRecvNewMessage(V2TIMMessage message) {
-            handleIncomingMessage(message);
+            String owner = currentUserId;
+            sdkHandler.post(() -> { if (!closed && owner.equals(currentUserId)) handleIncomingMessage(message); });
         }
     };
     private final V2TIMSDKListener sdkListener = new V2TIMSDKListener() {
@@ -114,12 +121,13 @@ public final class TencentIMClient {
     };
 
     private Integer initializedSdkAppId;
-    private String currentUserId = "";
+    private volatile String currentUserId = "";
     private String profileRequestKey = "";
     private String presenceRequestKey = "";
     private boolean presenceUnsupported;
 
     public TencentIMClient(Context context, Listener listener) {
+        sdkThread.start(); sdkHandler = new android.os.Handler(sdkThread.getLooper());
         this.context = context.getApplicationContext();
         this.listener = listener;
         // 收到的媒体必须落在持久目录：放缓存目录的话，系统清缓存或用户手动清除之后，
@@ -128,6 +136,10 @@ public final class TencentIMClient {
     }
 
     public void connect(int sdkAppId, String userId, String userSig) {
+        if (closed) return;
+        if (android.os.Looper.myLooper() != sdkThread.getLooper()) {
+            sdkHandler.post(() -> connect(sdkAppId, userId, userSig)); return;
+        }
         String cleanUserId = clean(userId);
         listener.onConnectionStateChanged(ConnectionState.CONNECTING, "连接中");
         if (initializedSdkAppId == null || initializedSdkAppId != sdkAppId) {
@@ -171,13 +183,23 @@ public final class TencentIMClient {
     }
 
     public void disconnect(OperationCompletion completion) {
+        if (closed) return;
+        if (android.os.Looper.myLooper() != sdkThread.getLooper()) {
+            sdkHandler.post(() -> disconnect(completion)); return;
+        }
         V2TIMManager.getInstance().logout(callback(completion));
         currentUserId = "";
     }
 
     public void destroy() {
-        V2TIMManager.getMessageManager().removeAdvancedMsgListener(messageListener);
-        V2TIMManager.getInstance().removeIMSDKListener(sdkListener);
+        closed = true; currentUserId = "";
+        sdkHandler.post(() -> {
+            if (initializedSdkAppId != null) {
+                V2TIMManager.getMessageManager().removeAdvancedMsgListener(messageListener);
+                V2TIMManager.getInstance().removeIMSDKListener(sdkListener);
+            }
+            sdkThread.quitSafely();
+        });
     }
 
     public void sendText(
@@ -186,6 +208,10 @@ public final class TencentIMClient {
         RemoteIMOrigin origin,
         SendCompletion completion
     ) {
+        if (closed) return;
+        if (android.os.Looper.myLooper() != sdkThread.getLooper()) {
+            sdkHandler.post(() -> sendText(peerId, text, origin, completion)); return;
+        }
         sendText(peerId, text, origin, null, completion);
     }
 
@@ -196,6 +222,10 @@ public final class TencentIMClient {
         RemoteIMQuote quote,
         SendCompletion completion
     ) {
+        if (closed) return;
+        if (android.os.Looper.myLooper() != sdkThread.getLooper()) {
+            sdkHandler.post(() -> sendText(peerId, text, origin, quote, completion)); return;
+        }
         V2TIMMessage message = V2TIMManager.getMessageManager().createTextMessage(text);
         send(message, peerId, RemoteIMProtocolMetadata.encode(origin, quote), completion);
     }
@@ -205,6 +235,10 @@ public final class TencentIMClient {
         RemoteIMApprovalDecision decision,
         SendCompletion completion
     ) {
+        if (closed) return;
+        if (android.os.Looper.myLooper() != sdkThread.getLooper()) {
+            sdkHandler.post(() -> sendApprovalDecision(peerId, decision, completion)); return;
+        }
         if (decision == null) {
             completion.onError(-1, "审批操作无效");
             return;
@@ -237,46 +271,70 @@ public final class TencentIMClient {
         );
     }
 
-    public void sendImage(
-        String peerId,
-        String path,
-        RemoteIMOrigin origin,
-        SendCompletion completion
-    ) {
+    public void sendImage(String peerId, String path, RemoteIMOrigin origin, SendCompletion completion) {
+        sendImage(peerId, path, origin, null, completion);
+    }
+    public void sendImage(String peerId, String path, RemoteIMOrigin origin, RemoteIMQuote quote, SendCompletion completion) {
+        if (closed) return;
+        if (android.os.Looper.myLooper() != sdkThread.getLooper()) {
+            sdkHandler.post(() -> sendImage(peerId, path, origin, quote, completion)); return;
+        }
         V2TIMMessage message = V2TIMManager.getMessageManager().createImageMessage(path);
-        send(message, peerId, origin, completion);
+        send(message, peerId, RemoteIMProtocolMetadata.encode(origin, quote), completion);
     }
 
-    public void sendVoice(
-        String peerId,
-        String path,
-        int durationSeconds,
-        RemoteIMOrigin origin,
-        SendCompletion completion
-    ) {
-        V2TIMMessage message = V2TIMManager.getMessageManager().createSoundMessage(
-            path,
-            Math.max(1, durationSeconds)
-        );
-        send(message, peerId, origin, completion);
+    public void sendVoice(String peerId, String path, int durationSeconds, RemoteIMOrigin origin, SendCompletion completion) {
+        sendVoice(peerId, path, durationSeconds, origin, null, completion);
+    }
+    public void sendVoice(String peerId, String path, int durationSeconds, RemoteIMOrigin origin, RemoteIMQuote quote, SendCompletion completion) {
+        if (closed) return;
+        if (android.os.Looper.myLooper() != sdkThread.getLooper()) {
+            sdkHandler.post(() -> sendVoice(peerId, path, durationSeconds, origin, quote, completion)); return;
+        }
+        V2TIMMessage message = V2TIMManager.getMessageManager().createSoundMessage(path, Math.max(1, durationSeconds));
+        send(message, peerId, RemoteIMProtocolMetadata.encode(origin, quote), completion);
     }
 
-    public void sendFile(
-        String peerId,
-        String path,
-        String fileName,
-        RemoteIMOrigin origin,
-        SendCompletion completion
-    ) {
+    public void sendFile(String peerId, String path, String fileName, RemoteIMOrigin origin, SendCompletion completion) {
+        sendFile(peerId, path, fileName, origin, null, completion);
+    }
+    public void sendFile(String peerId, String path, String fileName, RemoteIMOrigin origin, RemoteIMQuote quote, SendCompletion completion) {
+        if (closed) return;
+        if (android.os.Looper.myLooper() != sdkThread.getLooper()) {
+            sdkHandler.post(() -> sendFile(peerId, path, fileName, origin, quote, completion)); return;
+        }
         V2TIMMessage message = V2TIMManager.getMessageManager().createFileMessage(path, fileName);
-        send(message, peerId, origin, completion);
+        send(message, peerId, RemoteIMProtocolMetadata.encode(origin, quote), completion);
+    }
+
+    public void sendVideo(String peerId, RemoteIMVideoAttachment attachment, RemoteIMOrigin origin, SendCompletion completion) {
+        sendVideo(peerId, attachment, origin, null, completion);
+    }
+    public void sendVideo(String peerId, RemoteIMVideoAttachment attachment, RemoteIMOrigin origin, RemoteIMQuote quote, SendCompletion completion) {
+        if (closed) return;
+        if (android.os.Looper.myLooper() != sdkThread.getLooper()) {
+            sdkHandler.post(() -> sendVideo(peerId, attachment, origin, quote, completion)); return;
+        }
+        String path = attachment.localPath();
+        int dot = path.lastIndexOf('.');
+        String type = dot >= 0 ? path.substring(dot + 1).toLowerCase(Locale.ROOT) : "mp4";
+        V2TIMMessage message = V2TIMManager.getMessageManager().createVideoMessage(path, type, attachment.durationSeconds(), attachment.coverPath());
+        send(message, peerId, RemoteIMProtocolMetadata.encode(origin, quote), completion);
     }
 
     public void clearHistory(String peerId, OperationCompletion completion) {
+        if (closed) return;
+        if (android.os.Looper.myLooper() != sdkThread.getLooper()) {
+            sdkHandler.post(() -> clearHistory(peerId, completion)); return;
+        }
         V2TIMManager.getMessageManager().clearC2CHistoryMessage(peerId, callback(completion));
     }
 
     public void deleteContact(String peerId, OperationCompletion completion) {
+        if (closed) return;
+        if (android.os.Looper.myLooper() != sdkThread.getLooper()) {
+            sdkHandler.post(() -> deleteContact(peerId, completion)); return;
+        }
         V2TIMManager.getFriendshipManager().deleteFromFriendList(
             Collections.singletonList(peerId),
             V2TIMFriendInfo.V2TIM_FRIEND_TYPE_BOTH,
@@ -303,6 +361,10 @@ public final class TencentIMClient {
     }
 
     public void refreshProfiles(List<String> userIds) {
+        if (closed) return;
+        if (android.os.Looper.myLooper() != sdkThread.getLooper()) {
+            sdkHandler.post(() -> refreshProfiles(userIds)); return;
+        }
         List<String> cleaned = cleanUserIds(userIds);
         if (cleaned.isEmpty()) return;
         String accountAtRequest = currentUserId;
@@ -348,6 +410,10 @@ public final class TencentIMClient {
     }
 
     public void refreshAndSubscribePresence(List<String> userIds) {
+        if (closed) return;
+        if (android.os.Looper.myLooper() != sdkThread.getLooper()) {
+            sdkHandler.post(() -> refreshAndSubscribePresence(userIds)); return;
+        }
         List<String> cleaned = cleanUserIds(userIds);
         if (cleaned.isEmpty() || presenceUnsupported) return;
         String accountAtRequest = currentUserId;
@@ -390,6 +456,20 @@ public final class TencentIMClient {
                 }
             }
         });
+    }
+
+    public void sendActivity(String peerId, RemoteIMActivitySignal signal) {
+        if (closed) return;
+        if (android.os.Looper.myLooper() != sdkThread.getLooper()) {
+            sdkHandler.post(() -> sendActivity(peerId, signal)); return;
+        }
+        if (currentUserId.isEmpty() || clean(peerId).isEmpty()) return;
+        V2TIMMessage message = V2TIMManager.getMessageManager().createCustomMessage(signal.encode());
+        if (message == null) return;
+        message.setExcludedFromUnreadCount(true);
+        message.setExcludedFromLastMessage(true);
+        V2TIMManager.getMessageManager().sendMessage(message, clean(peerId), null,
+            V2TIMMessage.V2TIM_PRIORITY_DEFAULT, true, null, null);
     }
 
     private void send(
@@ -457,6 +537,14 @@ public final class TencentIMClient {
         if (fromUserId.isEmpty()) {
             Log.w(TAG, "recv: message has no sender id; dropped id="
                 + clean(sdkMessage.getMsgID()));
+            return;
+        }
+        if (sdkMessage.getElemType() == V2TIMMessage.V2TIM_ELEM_TYPE_CUSTOM) {
+            RemoteIMActivitySignal signal = sdkMessage.getCustomElem() == null ? null
+                : RemoteIMActivitySignal.decode(sdkMessage.getCustomElem().getData());
+            if (signal != null && clean(sdkMessage.getGroupID()).isEmpty()) {
+                listener.onIncomingActivity(fromUserId, currentUserId, signal);
+            }
             return;
         }
         long createdAt = sdkMessage.getTimestamp() > 0
@@ -711,7 +799,7 @@ public final class TencentIMClient {
         final File videoTarget = mediaFile(RemoteIMMediaPaths.VIDEOS, mediaId, extension(elem.getVideoPath(), "mp4"));
         // 先下到 .part 再改名：这样"目标文件存在"就等价于"已经下完"，界面只需判存在性，
         // 不会拿到一个下了一半的文件去播放。
-        final File videoPart = new File(videoTarget.getAbsolutePath() + ".part");
+        final File videoPart = new File(videoTarget.getAbsolutePath() + ".part-" + UUID.randomUUID());
         final File coverTarget = mediaFile(RemoteIMMediaPaths.VIDEO_COVERS, mediaId + "-cover", "jpg");
 
         final int duration = Math.max(0, (int) elem.getDuration());
@@ -731,13 +819,13 @@ public final class TencentIMClient {
 
             @Override
             public void onSuccess() {
-                if (delivered.compareAndSet(false, true)) {
-                    emitVideoMessage(
-                        finalMessageId, fromUserId, recipientUserId, createdAt, origin,
+                sdkHandler.post(() -> {
+                    if (closed || !recipientUserId.equals(currentUserId)) return;
+                    emitVideoMessage(finalMessageId, fromUserId, recipientUserId, createdAt, origin,
                         videoTarget.getAbsolutePath(), coverTarget.getAbsolutePath(),
-                        duration, width, height, sizeBytes, caption, captionAbove, quote
-                    );
-                }
+                        duration, width, height, sizeBytes, caption, captionAbove, quote,
+                        delivered.compareAndSet(false, true));
+                });
             }
 
             @Override
@@ -748,41 +836,28 @@ public final class TencentIMClient {
         });
 
         elem.downloadVideo(videoPart.getAbsolutePath(), new V2TIMDownloadCallback() {
-            @Override
-            public void onProgress(V2TIMElem.V2ProgressInfo progressInfo) {
+            @Override public void onProgress(V2TIMElem.V2ProgressInfo progressInfo) { }
+            @Override public void onSuccess() {
+                // Complete an accepted download even after its UI/client was disposed.
+                // Each attempt owns its partial file; publish it atomically.
+                MEDIA_COMPLETION.execute(() -> {
+                    try {
+                        java.nio.file.Files.move(videoPart.toPath(), videoTarget.toPath(),
+                            java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+                    } catch (java.io.IOException error) { Log.w(TAG, "Cannot finalize video download", error); return; }
+                    if (closed) return;
+                    sdkHandler.post(() -> {
+                        if (closed || !recipientUserId.equals(currentUserId)) return;
+                        emitVideoMessage(finalMessageId, fromUserId, recipientUserId, createdAt, origin,
+                            videoTarget.getAbsolutePath(), coverTarget.getAbsolutePath(),
+                            duration, width, height, sizeBytes, caption, captionAbove, quote,
+                            delivered.compareAndSet(false, true));
+                    });
+                });
             }
-
-            @Override
-            public void onSuccess() {
-                if (videoTarget.exists() && !videoTarget.delete()) {
-                    Log.w(TAG, "recv video: cannot replace existing file "
-                        + videoTarget.getAbsolutePath());
-                }
-                if (!videoPart.renameTo(videoTarget)) {
-                    Log.w(TAG, "recv video: rename failed, "
-                        + videoPart.getAbsolutePath() + " -> " + videoTarget.getAbsolutePath());
-                    return;
-                }
-                // 封面失败或还没回来时，这里兜底把消息投出去。
-                if (delivered.compareAndSet(false, true)) {
-                    emitVideoMessage(
-                        finalMessageId, fromUserId, recipientUserId, createdAt, origin,
-                        videoTarget.getAbsolutePath(),
-                        coverTarget.exists() ? coverTarget.getAbsolutePath() : "",
-                        duration, width, height, sizeBytes, caption, captionAbove, quote
-                    );
-                }
-            }
-
-            @Override
-            public void onError(int code, String description) {
-                Log.w(TAG, "download video failed: code=" + code + " " + description
-                    + " target=" + videoTarget.getAbsolutePath());
-                if (!videoPart.exists()) return;
-                if (!videoPart.delete()) {
-                    Log.w(TAG, "recv video: cannot delete partial file "
-                        + videoPart.getAbsolutePath());
-                }
+            @Override public void onError(int code, String description) {
+                Log.w(TAG, "download video failed: code=" + code);
+                MEDIA_COMPLETION.execute(videoPart::delete);
             }
         });
     }
@@ -801,7 +876,8 @@ public final class TencentIMClient {
         long sizeBytes,
         String caption,
         boolean captionAbove,
-        RemoteIMQuote quote
+        RemoteIMQuote quote,
+        boolean initial
     ) {
         RemoteIMVideoAttachment attachment = new RemoteIMVideoAttachment(
             videoPath, coverPath, duration, width, height, sizeBytes
@@ -823,7 +899,8 @@ public final class TencentIMClient {
         );
         incoming.setCaptionAbove(!caption.isEmpty() && captionAbove);
         incoming.setQuote(quote);
-        listener.onIncomingMessage(incoming);
+        if (initial) listener.onIncomingMessage(incoming);
+        else listener.onVideoMediaUpdated(fromUserId, recipientUserId, remoteId, attachment);
     }
 
     private void downloadFile(

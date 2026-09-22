@@ -244,6 +244,17 @@ public final class RemoteIMMessage {
         this.approvalDecision = approvalDecision;
     }
 
+    public RemoteIMMessage snapshot() { return withVideoAttachment(videoAttachment); }
+
+    public RemoteIMMessage withVideoAttachment(RemoteIMVideoAttachment video) {
+        RemoteIMMessage copy = new RemoteIMMessage(id, remoteId, fromUserId, toUserId, text,
+            direction, status, createdAtMillis, imageAttachment, voiceAttachment, fileAttachment,
+            video, origin, approvalRequest, approvalDecision);
+        copy.captionAbove = captionAbove;
+        copy.quote = quote;
+        return copy;
+    }
+
     public String id() {
         return id;
     }

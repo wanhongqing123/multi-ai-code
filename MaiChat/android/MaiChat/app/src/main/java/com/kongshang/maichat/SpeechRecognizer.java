@@ -10,6 +10,7 @@ import java.io.File;
  * MainActivity 不用动。
  */
 public interface SpeechRecognizer {
+    default void close() { }
 
     interface Callback {
         /** 识别成功。text 已 trim，可能为空串（对方没说话/全是噪音）。 */

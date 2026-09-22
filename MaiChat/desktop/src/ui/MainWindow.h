@@ -90,6 +90,9 @@ private:
     void refreshMessages();
     void rebuildMessageList(const QString& peerId, const QList<RemoteIMMessage>& messages);
     void applyIncrementalMessageUpdate(const QList<RemoteIMMessage>& messages);
+    // 渲染窗口（只画尾部一批，更早的由「加载更早」分批补；见 cpp 里的成本记录）。
+    void prependRenderWindow(const QList<RemoteIMMessage>& messages, int newHeadIndex, bool keepViewport);
+    bool ensureMessageRendered(const QString& messageId);
     void updateLoadEarlierVisibility();
     void scrollMessagesToBottom();
     void applyConversationFilter();
@@ -311,6 +314,8 @@ private:
     QSet<QString> resolvedApprovalTokens_;
     QSet<QString> autoDeclinedApprovalTokens_;
     QPushButton* loadEarlierButton_ = nullptr;
+    // 每个会话已渲染的窗口深度：记住用户翻过的位置，切走再切回不丢历史浏览进度。
+    QHash<QString, int> renderedWindowByPeer_;
     // 顶栏搜索。范围是所有会话里「已加载」的消息——没点过「加载更早」的历史
     // 不在 ChatState 里，也就搜不到，结果面板上要如实说清楚。
     QPushButton* headerSearchButton_ = nullptr;

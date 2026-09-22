@@ -126,6 +126,11 @@
 namespace {
 
 constexpr int UserIdRole = Qt::UserRole;
+
+// 切换会话时同步渲染的尾部消息条数。屏上可见的也就十几条；其余的排版纯是
+// 切换延迟——200 条长 markdown 的会话首切实测排版占 3.8s。更早的消息由
+// 「加载更早的消息」分批补渲染，布局缓存让补渲染接近免费。
+constexpr int kMessageRenderWindow = 30;
 constexpr int DisplayNameRole = Qt::UserRole + 1;
 constexpr int PreviewRole = Qt::UserRole + 2;
 constexpr int TimeRole = Qt::UserRole + 3;
@@ -1654,6 +1659,10 @@ void MainWindow::buildUi() {
     messageScroll_->setWidgetResizable(true);
     messageScroll_->setFrameShape(QFrame::NoFrame);
     messageScroll_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    // 滚动条常显：按需出现的话，内容一超高视口就变窄、全部气泡按新宽度重排一轮
+    // （首访时缓存全未命中），切换成本直接翻倍。常显让排版宽度恒定。样式在 QSS
+    // 里收成细条，不会占地方。
+    messageScroll_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
     messageScroll_->viewport()->installEventFilter(this);
     messageContainer_ = new QWidget(messageScroll_);
     messageContainer_->setObjectName(QStringLiteral("messageContainer"));
@@ -2083,7 +2092,8 @@ void MainWindow::applyStyle() {
         }
         /* 纯图标：不再留文字的左内边距，图标居中，宽高一致，
            否则一列图标会因为各自的留白不同而看起来大小不一。 */
-        #messagesNavButton, #contactsNavButton, #remoteNavButton, #settingsNavButton {
+        #messagesNavButton, #contactsNavButton, #remoteNavButton, #settingsNavButton,
+        #agentNavButton {
             min-width: 44px;
             max-width: 44px;
             min-height: 44px;
@@ -2093,7 +2103,9 @@ void MainWindow::applyStyle() {
             background: transparent;
             padding: 0;
         }
-        #messagesNavButton[selected="true"], #contactsNavButton[selected="true"], #remoteNavButton[selected="true"], #settingsNavButton[selected="true"] {
+        #messagesNavButton[selected="true"], #contactsNavButton[selected="true"],
+        #remoteNavButton[selected="true"], #settingsNavButton[selected="true"],
+        #agentNavButton[selected="true"] {
             background: #dff1ff;
             color: #0b67b7;
         }
@@ -2273,6 +2285,31 @@ void MainWindow::applyStyle() {
         }
         #messageScroll, #messageContainer {
             background: #ffffff;
+        }
+        /* 消息区滚动条常显（见构造处的说明），样式与左侧列表一致：细条、透明轨道、
+           无箭头按钮，常显也不碍眼。 */
+        #messageScroll QScrollBar:vertical {
+            background: transparent;
+            width: 8px;
+            margin: 0;
+        }
+        #messageScroll QScrollBar::handle:vertical {
+            background: #d3dae4;
+            border-radius: 4px;
+            min-height: 24px;
+        }
+        #messageScroll QScrollBar::handle:vertical:hover {
+            background: #b9c3d1;
+        }
+        #messageScroll QScrollBar::add-line:vertical,
+        #messageScroll QScrollBar::sub-line:vertical {
+            height: 0;
+            border: 0;
+            background: transparent;
+        }
+        #messageScroll QScrollBar::add-page:vertical,
+        #messageScroll QScrollBar::sub-page:vertical {
+            background: transparent;
         }
         #composerPanel {
             background: #ffffff;
@@ -2755,6 +2792,8 @@ QString MainWindow::bestSearchHitId(const QString& peerId, const QString& needle
 
 void MainWindow::highlightMessage(const QString& messageId) {
     clearMessageSearchHighlight();
+    // 命中可能在渲染窗口之外（更早的消息）：先把窗口扩到覆盖它，再谈定位。
+    ensureMessageRendered(messageId);
     QWidget* row = messageRowById_.value(messageId);
     if (!row) return;
     messageSearchHighlightedId_ = messageId;
@@ -3057,18 +3096,23 @@ void MainWindow::refreshMessages() {
     bool needFullRebuild = selectedPeer != renderedPeerId_
         || renderedEmptyView_ != messages.isEmpty()
         || messageLayout_->count() == 0;
-    if (!needFullRebuild && renderedMessageIds_.size() == messages.size()) {
-        QStringList nextIds;
-        nextIds.reserve(messages.size());
-        for (const RemoteIMMessage& message : messages) nextIds.append(message.id);
-        if (nextIds != renderedMessageIds_) {
-            QSet<QString> renderedIds;
-            QSet<QString> nextIdSet;
-            for (const QString& id : renderedMessageIds_) renderedIds.insert(id);
-            for (const QString& id : nextIds) nextIdSet.insert(id);
-            // 漫游记录为旧消息补齐规范化时间后，同一批消息可能需要原位重排。
-            // 增删仍走增量路径；仅集合相同但顺序变化时完整重建。
-            needFullRebuild = renderedIds == nextIdSet;
+    if (!needFullRebuild) {
+        // 渲染窗口只覆盖尾部一批，重排检测同样只对着窗口做：窗口内的尾部块与
+        // 已渲染的集合相同但顺序变化时才完整重建；增删交给增量路径。
+        const int renderedCount = renderedMessageIds_.size();
+        if (renderedCount > 0 && messages.size() >= renderedCount) {
+            QStringList tailIds;
+            tailIds.reserve(renderedCount);
+            for (int i = messages.size() - renderedCount; i < messages.size(); ++i) {
+                tailIds.append(messages.at(i).id);
+            }
+            if (tailIds != renderedMessageIds_) {
+                QSet<QString> renderedIds;
+                QSet<QString> tailIdSet;
+                for (const QString& id : renderedMessageIds_) renderedIds.insert(id);
+                for (const QString& id : tailIds) tailIdSet.insert(id);
+                needFullRebuild = renderedIds == tailIdSet;
+            }
         }
     }
     // Friend/profile callbacks can arrive after history messages. Rebuild only when
@@ -3188,7 +3232,23 @@ void MainWindow::rebuildMessageList(const QString& peerId, const QList<RemoteIMM
         }
     )")));
     connect(loadEarlierButton_, &QPushButton::clicked, this, [this] {
-        app_.loadEarlierMessages(app_.chatState().selectedPeerId());
+        const QString peer = app_.chatState().selectedPeerId();
+        // 内存里已有但没渲染的先补一批（便宜，布局有缓存）；内存用尽才向 DB 取下一页。
+        // 两条路最后都落在 prependRenderWindow——DB 页进来时落在渲染窗口之外，
+        // 增量路径不会给它们建行，必须由这里显式扩窗口。
+        if (app_.chatState().messageCountWith(peer) <= renderedMessageIds_.size()
+                && app_.loadEarlierMessages(peer) <= 0) {
+            return;
+        }
+        const QList<RemoteIMMessage> messages = app_.chatState().messagesWith(peer);
+        int head = messages.size();
+        for (int i = 0; i < messages.size(); ++i) {
+            if (messageRowById_.contains(messages.at(i).id)) {
+                head = i;
+                break;
+            }
+        }
+        prependRenderWindow(messages, qMax(0, head - kMessageRenderWindow), true);
     });
     auto* buttonRow = new QWidget(messageContainer_);
     auto* buttonRowLayout = new QHBoxLayout(buttonRow);
@@ -3198,10 +3258,23 @@ void MainWindow::rebuildMessageList(const QString& peerId, const QList<RemoteIMM
     buttonRowLayout->addStretch(1);
     messageLayout_->addWidget(buttonRow);
 
+    // 渲染窗口：只画尾部这批。深度取「默认窗口」和「本会话此前翻过的深度」的较大者，
+    // 用户往下翻过的历史在切走再切回时不丢。全量排版的首切成本见 kMessageRenderWindow。
+    const int total = messages.size();
+    const int remembered = renderedWindowByPeer_.value(peerId, 0);
+    const int window = qBound(0, qMax(kMessageRenderWindow, remembered), total);
+    // 首屏同步渲染的行数：AI 回答类的行一条就几百像素高，6 条足以铺满视口；
+    // 同步多排一行就多一拍点击延迟（富格式段落实测 7ms/块、列表 32ms/块，
+    // 长回答一条几十块）。窗口剩余部分在下方按小块分批补上。
+    constexpr int kMessageRenderSyncRows = 6;
+    const int syncRows = qMin(kMessageRenderSyncRows, window);
+    const int firstRendered = total - syncRows;
+    renderedWindowByPeer_.insert(peerId, window);
     QStringList renderedApprovalIds;
-    for (const RemoteIMMessage& message : messages) {
+    for (int i = firstRendered; i < total; ++i) {
+        const RemoteIMMessage& message = messages.at(i);
         QWidget* row = createMessageBubble(message);
-        setMessageRowDivider(row, message.id != messages.first().id);
+        setMessageRowDivider(row, i > 0);
         messageLayout_->addWidget(row);
         renderedMessageIds_.append(message.id);
         messageRowById_.insert(message.id, row);
@@ -3234,6 +3307,92 @@ void MainWindow::rebuildMessageList(const QString& peerId, const QList<RemoteIMM
             }
         });
     });
+
+    // 窗口剩余部分分块补渲染：每块走一轮事件循环，点击先出画面、补排版在后台
+    // 落地。块不能太大，否则单块又是一次可感知的停顿。
+    if (syncRows < window) {
+        constexpr int kFillChunkRows = 6;
+        const int targetRows = window;
+        auto fillStep = std::make_shared<std::function<void()>>();
+        *fillStep = [this, peerId, targetRows, fillStep, kFillChunkRows]() {
+            // 切走了/整屏重建了就停；窗口补满也停。
+            if (renderedPeerId_ != peerId || app_.chatState().selectedPeerId() != peerId) return;
+            if (renderedMessageIds_.size() >= targetRows) return;
+            const QList<RemoteIMMessage> messages = app_.chatState().messagesWith(peerId);
+            int head = messages.size();
+            for (int i = 0; i < messages.size(); ++i) {
+                if (messageRowById_.contains(messages.at(i).id)) {
+                    head = i;
+                    break;
+                }
+            }
+            prependRenderWindow(messages, qMax(0, head - kFillChunkRows), true);
+            QTimer::singleShot(0, this, *fillStep);
+        };
+        QTimer::singleShot(30, this, *fillStep);
+    }
+}
+
+// 把渲染窗口向上扩：给 [newHeadIndex, 当前窗口头) 的消息补建气泡行。
+// keepViewport=true 时锚定当前可视位置（头顶补内容视口不跳），跳转定位时传 false。
+void MainWindow::prependRenderWindow(const QList<RemoteIMMessage>& messages, int newHeadIndex,
+                                     bool keepViewport) {
+    int currentHead = messages.size();
+    for (int i = 0; i < messages.size(); ++i) {
+        if (messageRowById_.contains(messages.at(i).id)) {
+            currentHead = i;
+            break;
+        }
+    }
+    if (newHeadIndex >= currentHead || newHeadIndex < 0) return;
+
+    QScrollBar* bar = messageScroll_->verticalScrollBar();
+    const int oldMax = bar->maximum();
+    const int oldValue = bar->value();
+    constexpr int kLayoutBase = 1;  // [0] 是加载更早按钮行
+    QStringList newIds;
+    for (int i = newHeadIndex; i < currentHead; ++i) {
+        const RemoteIMMessage& message = messages.at(i);
+        QWidget* row = createMessageBubble(message);
+        setMessageRowDivider(row, i > 0);
+        messageLayout_->insertWidget(kLayoutBase + (i - newHeadIndex), row);
+        newIds.append(message.id);
+        messageRowById_.insert(message.id, row);
+        renderedStatusById_.insert(message.id, message.status);
+        renderedApprovalStateById_.insert(message.id, approvalDisplayState(message));
+    }
+    renderedMessageIds_ = newIds + renderedMessageIds_;
+    renderedWindowByPeer_.insert(app_.chatState().selectedPeerId(), renderedMessageIds_.size());
+    updateLoadEarlierVisibility();
+
+    if (!keepViewport) return;
+    // 高度要等下一轮布局才进滚动条范围，等 rangeChanged 再补偿，一次性触发。
+    QTimer::singleShot(0, this, [this, bar, oldMax, oldValue] {
+        QObject::disconnect(messageScrollToBottomConn_);
+        messageScrollToBottomConn_ = connect(
+            bar, &QAbstractSlider::rangeChanged, this,
+            [this, bar, oldMax, oldValue](int, int max) {
+                bar->setValue(oldValue + (max - oldMax));
+                QObject::disconnect(messageScrollToBottomConn_);
+            });
+        bar->setValue(oldValue + (bar->maximum() - oldMax));
+    });
+}
+
+// 目标消息在渲染窗口之外（更早的）时，把窗口扩到覆盖它。引用跳转/搜索定位用：
+// 定位的前提是那一行真的存在。
+bool MainWindow::ensureMessageRendered(const QString& messageId) {
+    if (messageRowById_.contains(messageId)) return true;
+    const QString peer = app_.chatState().selectedPeerId();
+    if (peer.isEmpty()) return false;
+    const QList<RemoteIMMessage> messages = app_.chatState().messagesWith(peer);
+    for (int i = 0; i < messages.size(); ++i) {
+        if (messages.at(i).id == messageId) {
+            prependRenderWindow(messages, i, false);
+            return messageRowById_.contains(messageId);
+        }
+    }
+    return false;
 }
 
 void MainWindow::applyIncrementalMessageUpdate(const QList<RemoteIMMessage>& messages) {
@@ -3276,8 +3435,8 @@ void MainWindow::applyIncrementalMessageUpdate(const QList<RemoteIMMessage>& mes
     resultIds.reserve(messages.size());
     for (int i = 0; i < messages.size(); ++i) {
         const RemoteIMMessage& message = messages.at(i);
-        resultIds.append(message.id);
         if (QWidget* existing = messageRowById_.value(message.id)) {
+            resultIds.append(message.id);
             setMessageRowDivider(existing, i > 0);
             const ApprovalDisplayState approvalState = approvalDisplayState(message);
             if (renderedStatusById_.value(message.id) != message.status
@@ -3295,6 +3454,13 @@ void MainWindow::applyIncrementalMessageUpdate(const QList<RemoteIMMessage>& mes
             }
             continue;
         }
+        // 渲染窗口之外的更早消息（DB 翻页进来的整页都落在窗口上方）：不由增量
+        // 路径建行——那是「加载更早」按钮和 ensureMessageRendered 的职责。
+        // 注意只在「确有已渲染行」时才跳过：一条行都没有（比如临时 id 被 SDK id
+        // 采纳、旧行刚退场）时 firstKeptIndex == size，这时必须走下面的建行，
+        // 否则消息列表会被清空。
+        if (firstKeptIndex < messages.size() && i < firstKeptIndex) continue;
+        resultIds.append(message.id);
         QWidget* row = createMessageBubble(message);
         setMessageRowDivider(row, i > 0);
         messageLayout_->insertWidget(kLayoutBase + i, row);
@@ -3357,7 +3523,11 @@ void MainWindow::applyIncrementalMessageUpdate(const QList<RemoteIMMessage>& mes
 
 void MainWindow::updateLoadEarlierVisibility() {
     if (!loadEarlierButton_) return;
-    loadEarlierButton_->setVisible(app_.hasEarlierMessages(app_.chatState().selectedPeerId()));
+    const QString peer = app_.chatState().selectedPeerId();
+    // 按钮承担两件事：补渲染内存里没画的窗口外消息，以及内存用尽后向 DB 翻页。
+    const bool unrenderedInMemory =
+            app_.chatState().messageCountWith(peer) > renderedMessageIds_.size();
+    loadEarlierButton_->setVisible(unrenderedInMemory || app_.hasEarlierMessages(peer));
 }
 
 void MainWindow::scrollMessagesToBottom() {
@@ -3724,22 +3894,27 @@ void MainWindow::jumpToQuotedMessage(const QString& sdkMsgId) {
     if (sdkMsgId.isEmpty()) return;
 
     // 本地主键是 <sdkMsgId>#<元素序号>：一条 SDK 消息可能拆成多行（图片 + 配文），
-    // 定位到序号最小的那一行，才是「原消息的开头」。
+    // 定位到序号最小的那一行，才是「原消息的开头」。在 ChatState 的会话列表里找，
+    // 不在已渲染的行里找——渲染窗口只覆盖尾部，更早的命中要等扩窗后才有行。
     const QString prefix = sdkMsgId + QLatin1Char('#');
-    const auto findLoadedRow = [this, &sdkMsgId, &prefix]() -> QString {
+    const auto findLoadedMessage = [this, &sdkMsgId, &prefix]() -> QString {
         QString best;
         int bestIndex = std::numeric_limits<int>::max();
-        for (auto it = messageRowById_.constBegin(); it != messageRowById_.constEnd(); ++it) {
-            const QString& id = it.key();
-            if (id == sdkMsgId) return id;
-            if (!id.startsWith(prefix)) continue;
-            bool ok = false;
-            const int index = QStringView(id).mid(prefix.size()).toInt(&ok);
-            if (ok && index < bestIndex) {
-                bestIndex = index;
-                best = id;
-            }
-        }
+        app_.chatState().forEachMessageWith(
+            app_.chatState().selectedPeerId(),
+            [&sdkMsgId, &prefix, &best, &bestIndex](const RemoteIMMessage& message) {
+                if (message.id == sdkMsgId) {
+                    best = message.id;
+                    return;
+                }
+                if (!message.id.startsWith(prefix)) return;
+                bool ok = false;
+                const int index = QStringView(message.id).mid(prefix.size()).toInt(&ok);
+                if (ok && index < bestIndex) {
+                    bestIndex = index;
+                    best = message.id;
+                }
+            });
         return best;
     };
 
@@ -3748,8 +3923,9 @@ void MainWindow::jumpToQuotedMessage(const QString& sdkMsgId) {
     constexpr int kMaxPagesToLoad = 20;
     const QString peerId = app_.chatState().selectedPeerId();
     for (int page = 0;; ++page) {
-        const QString hit = findLoadedRow();
+        const QString hit = findLoadedMessage();
         if (!hit.isEmpty()) {
+            // highlightMessage 内部会把渲染窗口扩到覆盖命中并滚动过去。
             highlightMessage(hit);
             return;
         }

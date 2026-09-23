@@ -68,7 +68,7 @@ private:
     bool toolNeedsApproval(const MaiToolInvocation& call) const;
 
     // 组装这一次要发给模型的请求。
-    MaiModelRequest buildRequest(const std::string& modelName) const;
+    MaiModelRequest buildRequest(const std::string& modelName, bool requireFinalAnswer) const;
 
     // 流式 part 刚冒头时：先在消息里占个位、落库，再广播。
     //

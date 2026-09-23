@@ -1,5 +1,9 @@
 #include "MaiTurnRunner.h"
 
+#include <algorithm>
+#include <cctype>
+#include <utility>
+
 #include "MaiIdGenerator.h"
 
 namespace {
@@ -17,6 +21,10 @@ constexpr const char* kDeniedHint =
 constexpr const char* kTimedOutHint =
     "The approval request timed out with no answer from the user. "
     "Do not retry; tell the user what you were about to do and wait for them.";
+
+constexpr const char* kFinalAnswerHint =
+    "Tool execution is complete. Use the tool results above to provide the user with a complete "
+    "final answer now. Do not return only reasoning or a description of the steps you took.";
 
 }  // namespace
 
@@ -48,17 +56,36 @@ void MaiTurnRunner::run(const std::atomic<bool>& cancel) {
     //
     // 每一圈都重新组装上下文，因为上一圈的工具结果已经作为 part 落在 mAssistant 上了，
     // MaiContextBuilder 会把它展开成模型认得的形状。
+    bool hasToolResults = false;
+    bool retriedMissingFinalAnswer = false;
     for (int iteration = 0; iteration < mDependencies.maxIterations; ++iteration) {
         if (cancel.load(std::memory_order_relaxed)) break;
 
-        const auto calls = requestCompletion(buildRequest(modelName), cancel);
+        const auto calls =
+            requestCompletion(buildRequest(modelName, retriedMissingFinalAnswer), cancel);
+        const bool producedVisibleText =
+            std::any_of(mText.begin(), mText.end(),
+                        [](unsigned char character) { return !std::isspace(character); });
         commitStreamedParts();
 
         if (mError) break;
-        if (calls.empty()) break;  // 模型不再要调工具，这一轮结束
+        if (calls.empty()) {
+            if (hasToolResults && !producedVisibleText) {
+                if (!retriedMissingFinalAnswer && iteration + 1 < mDependencies.maxIterations) {
+                    retriedMissingFinalAnswer = true;
+                    continue;
+                }
+                mError = MaiError::make(
+                    MaiErrorCode::Internal,
+                    "The model completed after tool execution without a final answer.");
+            }
+            break;
+        }
         if (cancel.load(std::memory_order_relaxed)) break;
 
+        retriedMissingFinalAnswer = false;
         executeTools(calls, cancel);
+        hasToolResults = true;
 
         // 到达上限还没收手：明确告诉用户，而不是悄悄停在半路让人以为跑完了。
         if (iteration + 1 >= mDependencies.maxIterations) {
@@ -72,7 +99,8 @@ void MaiTurnRunner::run(const std::atomic<bool>& cancel) {
     finish(cancel);
 }
 
-MaiModelRequest MaiTurnRunner::buildRequest(const std::string& modelName) const {
+MaiModelRequest MaiTurnRunner::buildRequest(const std::string& modelName,
+                                            bool requireFinalAnswer) const {
     MaiModelRequest request;
     request.model = modelName;
 
@@ -83,6 +111,12 @@ MaiModelRequest MaiTurnRunner::buildRequest(const std::string& modelName) const 
         if (message.id == mAssistant.id) message = mAssistant;
     }
     request.messages = mDependencies.context->build(history);
+    if (requireFinalAnswer) {
+        MaiModelMessage instruction;
+        instruction.role = MaiModelRole::System;
+        instruction.content = kFinalAnswerHint;
+        request.messages.push_back(std::move(instruction));
+    }
 
     if (mDependencies.tools && !mDependencies.tools->isEmpty())
         request.tools = mDependencies.tools->specs();

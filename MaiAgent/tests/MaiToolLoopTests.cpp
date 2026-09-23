@@ -51,6 +51,12 @@ MaiFakeModelClient::Turn callTurn(const std::string& tool, const std::string& ar
     return turn;
 }
 
+MaiFakeModelClient::Turn reasoningTurn(const std::string& text) {
+    MaiFakeModelClient::Turn turn;
+    turn.reasoning = text;
+    return turn;
+}
+
 struct Workspace {
     fs::path root;
     Workspace() {
@@ -183,6 +189,63 @@ void test_tool_loop_closes() {
     CHECK(partUpdates >= 2);  // 至少 running 和 completed 各一次
 }
 
+void test_reasoning_only_after_tools_retries_for_final_answer() {
+    Workspace workspace;
+    auto underTest = makeAgent({callTurn("read", R"({"path":"src/hello.txt"})", "call_read"),
+                                reasoningTurn("I should summarize the tool output."),
+                                sayTurn("The file has two lines.")});
+    MaiAgent& agent = *underTest.agent;
+    MaiFakeModelClient* model = underTest.model;
+    const std::string sessionId =
+        agent.submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
+    agent.submit(MaiSendPrompt{sessionId, "what is in src/hello.txt"});
+    agent.waitIdle();
+
+    CHECK(model->requestCount() == 3);
+    const MaiModelRequest finalRequest = model->request(2);
+    CHECK(!finalRequest.messages.empty());
+    if (!finalRequest.messages.empty()) {
+        const MaiModelMessage& instruction = finalRequest.messages.back();
+        CHECK(instruction.role == MaiModelRole::System);
+        CHECK(instruction.content.find("complete final answer") != std::string::npos);
+    }
+
+    bool foundFinalText = false;
+    const auto messages = agent.listMessages(sessionId);
+    if (messages.size() == 2) {
+        for (const auto& part : messages[1].parts) {
+            const auto* text = std::get_if<MaiTextPart>(&part.body);
+            if (text && text->text == "The file has two lines.") foundFinalText = true;
+        }
+    }
+    CHECK(foundFinalText);
+}
+
+void test_repeated_missing_final_answer_reports_error() {
+    Workspace workspace;
+    auto underTest = makeAgent({callTurn("read", R"({"path":"src/hello.txt"})"),
+                                reasoningTurn("I should summarize this."),
+                                reasoningTurn("I still did not provide the answer.")});
+    MaiAgent& agent = *underTest.agent;
+    MaiFakeModelClient* model = underTest.model;
+    Recorder recorder;
+    recorder.attach(agent);
+    const std::string sessionId =
+        agent.submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
+    agent.submit(MaiSendPrompt{sessionId, "what is in src/hello.txt"});
+    agent.waitIdle();
+
+    CHECK(model->requestCount() == 3);
+    bool foundError = false;
+    for (const auto& event : recorder.all()) {
+        if (event.type == MaiEventType::SessionError &&
+            event.detail.find("without a final answer") != std::string::npos) {
+            foundError = true;
+        }
+    }
+    CHECK(foundError);
+}
+
 void test_tool_error_is_fed_back() {
     Workspace workspace;
     // 模型要读一个不存在的文件，然后（拿到错误后）改口
@@ -307,6 +370,8 @@ void test_no_tools_means_no_tool_field() {
 
 int main() {
     test_tool_loop_closes();
+    test_reasoning_only_after_tools_retries_for_final_answer();
+    test_repeated_missing_final_answer_reports_error();
     test_tool_error_is_fed_back();
     test_unknown_tool_does_not_kill_the_turn();
     test_path_escape_through_model();

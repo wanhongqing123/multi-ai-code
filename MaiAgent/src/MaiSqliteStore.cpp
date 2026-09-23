@@ -1,5 +1,6 @@
 #include <sqlite3.h>
 
+#include <cstdint>
 #include <map>
 #include <mutex>
 #include <string>
@@ -67,11 +68,69 @@ std::string textColumn(sqlite3_stmt* statement, int index) {
                        static_cast<std::size_t>(sqlite3_column_bytes(statement, index)));
 }
 
+std::string sanitizeUtf8(const std::string& value) {
+    constexpr char kReplacement[] = "\xEF\xBF\xBD";
+    std::string out;
+    out.reserve(value.size());
+
+    std::size_t offset = 0;
+    while (offset < value.size()) {
+        const auto lead = static_cast<std::uint8_t>(value[offset]);
+        if (lead <= 0x7F) {
+            out.push_back(value[offset++]);
+            continue;
+        }
+
+        std::size_t length = 0;
+        std::uint32_t codePoint = 0;
+        std::uint32_t minimum = 0;
+        if (lead >= 0xC2 && lead <= 0xDF) {
+            length = 2;
+            codePoint = lead & 0x1F;
+            minimum = 0x80;
+        } else if (lead >= 0xE0 && lead <= 0xEF) {
+            length = 3;
+            codePoint = lead & 0x0F;
+            minimum = 0x800;
+        } else if (lead >= 0xF0 && lead <= 0xF4) {
+            length = 4;
+            codePoint = lead & 0x07;
+            minimum = 0x10000;
+        }
+
+        bool valid = length > 0 && offset + length <= value.size();
+        for (std::size_t index = 1; valid && index < length; ++index) {
+            const auto continuation = static_cast<std::uint8_t>(value[offset + index]);
+            if ((continuation & 0xC0) != 0x80) {
+                valid = false;
+                break;
+            }
+            codePoint = (codePoint << 6) | (continuation & 0x3F);
+        }
+        if (valid && (codePoint < minimum || codePoint > 0x10FFFF ||
+                      (codePoint >= 0xD800 && codePoint <= 0xDFFF))) {
+            valid = false;
+        }
+
+        if (valid) {
+            out.append(value, offset, length);
+            offset += length;
+        } else {
+            out.append(kReplacement);
+            ++offset;
+        }
+    }
+    return out;
+}
+
 // 绑定 std::string 时一律用 SQLITE_TRANSIENT：让 SQLite 自己拷一份。
 // 用 STATIC 的话要保证字符串活到 step 之后，而这里好几处绑的是临时量，那种错误不会立刻炸，
 // 会在某次 GC 时机变成读到垃圾。
 void bindText(sqlite3_stmt* statement, int index, const std::string& value) {
-    sqlite3_bind_text(statement, index, value.c_str(), static_cast<int>(value.size()),
+    // SQLite 不会替调用方验证 TEXT 的编码。所有字段都经过这个唯一入口，在最靠近数据库的
+    // 边界兜住非法字节，保证磁盘里的 TEXT 始终是 UTF-8。
+    const std::string sanitized = sanitizeUtf8(value);
+    sqlite3_bind_text(statement, index, sanitized.c_str(), static_cast<int>(sanitized.size()),
                       SQLITE_TRANSIENT);
 }
 

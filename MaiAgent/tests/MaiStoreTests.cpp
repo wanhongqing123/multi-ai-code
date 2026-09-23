@@ -17,6 +17,8 @@
 #include <thread>
 #include <vector>
 
+#include <json.hpp>
+
 #include "MaiIdGenerator.h"
 #include "MaiSessionStore.h"
 #include "MaiMemoryStore.h"
@@ -509,6 +511,80 @@ void test_non_ascii_round_trip() {
     }
 }
 
+void test_sqlite_sanitizes_invalid_utf8_before_write() {
+    std::printf("-> test_sqlite_sanitizes_invalid_utf8_before_write\n");
+    TempDir temp;
+    const std::string path = temp.file("utf8.db");
+    const std::string invalid("\xD5\xD2", 2);
+    std::string sessionId;
+    std::string messageId;
+
+    {
+        auto opened = makeMaiSqliteStore(path);
+        CHECK(opened.isOk());
+        if (!opened.isOk()) return;
+        auto store = std::move(opened.value());
+
+        sessionId = MaiIdGenerator::newSessionId();
+        MaiSession session = makeSession(sessionId, invalid, 1);
+        store->putSession(session);
+
+        MaiMessage message = makeMessage(MaiIdGenerator::newMessageId(), MaiRole::Assistant);
+        messageId = message.id;
+        message.parts.push_back(textPart(MaiIdGenerator::newPartId(), invalid));
+        MaiMessagePart toolPart;
+        toolPart.id = MaiIdGenerator::newPartId();
+        MaiToolPart tool;
+        tool.tool = "shell";
+        tool.callId = "call_invalid";
+        tool.input = invalid;
+        tool.output = invalid;
+        tool.error = invalid;
+        tool.state = MaiToolState::Error;
+        toolPart.body = std::move(tool);
+        message.parts.push_back(std::move(toolPart));
+        store->putMessage(sessionId, message);
+    }
+
+    auto reopened = makeMaiSqliteStore(path);
+    CHECK(reopened.isOk());
+    if (!reopened.isOk()) return;
+    auto store = std::move(reopened.value());
+    const auto isUtf8 = [](const std::string& value) {
+        try {
+            (void)nlohmann::json(value).dump();
+            return true;
+        } catch (...) {
+            return false;
+        }
+    };
+
+    MaiSession session;
+    CHECK(store->getSession(sessionId, session));
+    CHECK(isUtf8(session.title));
+    CHECK(session.title.find("\xEF\xBF\xBD") != std::string::npos);
+
+    const auto messages = store->listMessages(sessionId);
+    CHECK(messages.size() == 1);
+    if (messages.size() != 1 || messages[0].id != messageId || messages[0].parts.size() != 2)
+        return;
+    const auto* text = std::get_if<MaiTextPart>(&messages[0].parts[0].body);
+    CHECK(text != nullptr);
+    if (text == nullptr) return;
+    CHECK(isUtf8(text->text));
+    CHECK(text->text.find("\xEF\xBF\xBD") != std::string::npos);
+
+    const auto* tool = std::get_if<MaiToolPart>(&messages[0].parts[1].body);
+    CHECK(tool != nullptr);
+    if (tool == nullptr) return;
+    CHECK(isUtf8(tool->input));
+    CHECK(isUtf8(tool->output));
+    CHECK(isUtf8(tool->error));
+    CHECK(tool->input.find("\xEF\xBF\xBD") != std::string::npos);
+    CHECK(tool->output.find("\xEF\xBF\xBD") != std::string::npos);
+    CHECK(tool->error.find("\xEF\xBF\xBD") != std::string::npos);
+}
+
 }  // namespace
 
 int main() {
@@ -544,6 +620,7 @@ int main() {
     test_bad_path_reports_error();
     test_message_order_follows_id_order();
     test_non_ascii_round_trip();
+    test_sqlite_sanitizes_invalid_utf8_before_write();
 
     if (failures) {
         std::printf("\n%d checks failed\n", failures);

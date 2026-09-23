@@ -182,12 +182,24 @@ void MainWindowLayoutTest::transientActivityStaysAfterNewOutgoingMessage() {
     auto* fake = client.get();
     RemoteIMApplication app(QStringLiteral("owner"), std::move(client));
     app.addContact(QStringLiteral("peer"), QStringLiteral("Peer"));
+    // 超过默认渲染窗口，复现完整历史下标大于当前布局数量的长会话。
+    const qint64 historyStart = QDateTime::currentMSecsSinceEpoch() - 100000;
+    for (int i = 0; i < 140; ++i) {
+        RemoteIMMessage history;
+        history.id = QStringLiteral("history-%1").arg(i);
+        history.fromUserId = QStringLiteral("peer");
+        history.toUserId = QStringLiteral("owner");
+        history.text = QStringLiteral("history %1").arg(i);
+        history.createdAtMillis = historyStart + i;
+        app.chatState().appendMessageForRestore(history);
+    }
     MainWindow window(app);
     window.show();
     QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QVERIFY(!window.findChildren<QWidget*>(QStringLiteral("messageRowIncoming")).isEmpty());
 
     emit fake->activityReceived(QStringLiteral("peer"), RemoteIMActivitySignal{
-        QStringLiteral("machine:test"), RemoteIMActivityKind::MachineWorking, true, 12000, 1});
+        QStringLiteral("machine:test"), RemoteIMActivityKind::MachineWorking, true, 60000, 1});
     auto* activityRow = window.findChild<QWidget*>(QStringLiteral("remoteImActivityRow"));
     QTRY_VERIFY(activityRow != nullptr);
     auto* activityBubble =
@@ -196,9 +208,17 @@ void MainWindowLayoutTest::transientActivityStaysAfterNewOutgoingMessage() {
     QVERIFY(activityBubble->testAttribute(Qt::WA_TranslucentBackground));
     QVERIFY(!activityBubble->autoFillBackground());
 
+    QCOMPARE(app.chatState().selectedPeerId(), QStringLiteral("peer"));
     app.sendText(QStringLiteral("new prompt"));
+    const QList<RemoteIMMessage> updated = app.chatState().messagesWith(QStringLiteral("peer"));
+    QCOMPARE(updated.size(), 141);
+    bool hasOutgoing = false;
+    for (const RemoteIMMessage& message : updated) {
+        if (message.direction == RemoteIMMessageDirection::Outgoing) hasOutgoing = true;
+    }
+    QVERIFY(hasOutgoing);
+    QTRY_VERIFY(window.findChild<QWidget*>(QStringLiteral("messageRowOutgoing")) != nullptr);
     auto* outgoingRow = window.findChild<QWidget*>(QStringLiteral("messageRowOutgoing"));
-    QTRY_VERIFY(outgoingRow != nullptr);
     QLayout* messageLayout = activityRow->parentWidget()->layout();
     QVERIFY(messageLayout != nullptr);
     QVERIFY(messageLayout->indexOf(outgoingRow) < messageLayout->indexOf(activityRow));

@@ -215,8 +215,9 @@ protected:
         const QPointF center(UiZoom::s(23), height() / 2.0);
         const qreal innerRadius = UiZoom::s(4);
         const qreal outerRadius = UiZoom::s(9);
+        const int activeSpoke = phase_ % 12;
         for (int index = 0; index < 12; ++index) {
-            const int trail = (index - phase_ + 12) % 12;
+            const int trail = (index - activeSpoke + 12) % 12;
             QColor color(QStringLiteral("#0b8fe3"));
             color.setAlpha(255 - trail * 16);
             painter.setPen(QPen(color, 2.0 * UiZoom::factor(), Qt::SolidLine, Qt::RoundCap));
@@ -3678,10 +3679,14 @@ void MainWindow::applyIncrementalMessageUpdate(const QList<RemoteIMMessage>& mes
         // 采纳、旧行刚退场）时 firstKeptIndex == size，这时必须走下面的建行，
         // 否则消息列表会被清空。
         if (firstKeptIndex < messages.size() && i < firstKeptIndex) continue;
+        // i 是完整历史中的下标，不能直接当布局下标。长会话只渲染尾部窗口，
+        // 此时 i 可能远大于当前布局数量，QBoxLayout 会把控件追加到末尾弹簧后面。
+        // 使用已经确认保留/新增的渲染行数，始终把新消息插在活动状态与弹簧之前。
+        const int layoutIndex = kLayoutBase + resultIds.size();
         resultIds.append(message.id);
         QWidget* row = createMessageBubble(message);
         setMessageRowDivider(row, i > 0);
-        messageLayout_->insertWidget(kLayoutBase + i, row);
+        messageLayout_->insertWidget(layoutIndex, row);
         messageRowById_.insert(message.id, row);
         renderedStatusById_.insert(message.id, message.status);
         renderedApprovalStateById_.insert(message.id, approvalDisplayState(message));

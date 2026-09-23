@@ -51,6 +51,13 @@ module.exports = async function afterPack(context) {
     console.log(
       `[afterPack] Electron ABI ${nativeSummary.abi}; better-sqlite3 ${nativeSummary.sqliteVersion}; node-pty loaded`
     )
+    // Executing the packaged native modules can make endpoint security attach
+    // com.apple.provenance again after the earlier cleanup and signing step.
+    // Clear generated xattrs once more as the final action before electron-builder
+    // reads the app bundle into the DMG. These attributes are outside the code
+    // signature, so removing them does not invalidate the verified ad-hoc seal.
+    execFileSync('xattr', ['-cr', appBundle], { stdio: 'inherit' })
+    console.log(`[afterPack] macOS generated xattrs cleared before DMG creation: ${appBundle}`)
   }
   if (platform === 'win32') {
     // Windows 比 macOS 多两个原生模块：koffi（远程控制注入）和 TRTC SDK

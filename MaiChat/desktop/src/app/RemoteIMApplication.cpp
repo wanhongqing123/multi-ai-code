@@ -122,15 +122,15 @@ void RemoteIMApplication::applyActivity(const QString& peerId,
     if (!knownPeer || cleanPeerId == state_.ownerUserId()) return;
     const QString identity = cleanPeerId + QLatin1Char('|') + signal.activityId;
     if (closedActivities_.contains(identity)) return;
+    if (signal.sequence <= activitySequences_.value(identity, -1)) return;
+    if (activitySequences_.size() > 512) activitySequences_.clear();
+    activitySequences_.insert(identity, signal.sequence);
     const auto old = activityByPeer_.value(cleanPeerId);
     if (!signal.active) {
         rememberClosedActivity(identity);
         if (old.activityId == signal.activityId) clearActivity(cleanPeerId);
         return;
     }
-    if (signal.sequence <= activitySequences_.value(identity, -1)) return;
-    if (activitySequences_.size() > 512) activitySequences_.clear();
-    activitySequences_.insert(identity, signal.sequence);
     if (!old.activityId.isEmpty() && old.activityId != signal.activityId) {
         rememberClosedActivity(cleanPeerId + QLatin1Char('|') + old.activityId);
     }
@@ -717,7 +717,6 @@ void RemoteIMApplication::bindClientSignals() {
             emit remoteDesktopSignalReceived(fromUserId, text);
             return;
         }
-        clearActivity(fromUserId);
         const RemoteIMMessage received = state_.receiveText(fromUserId, text);
         persistMessage(received);
         emit stateChanged();
@@ -728,7 +727,6 @@ void RemoteIMApplication::bindClientSignals() {
                                                                         int width,
                                                                         int height,
                                                                         qint64 sizeBytes) {
-        clearActivity(fromUserId);
         const RemoteIMMessage received = state_.receiveImage(fromUserId, localPath, width, height, sizeBytes);
         persistMessage(received);
         emit stateChanged();
@@ -737,7 +735,6 @@ void RemoteIMApplication::bindClientSignals() {
     connect(client_.get(), &RemoteIMClient::incomingVoice, this, [this](const QString& fromUserId,
                                                                         const QString& localPath,
                                                                         int durationSeconds) {
-        clearActivity(fromUserId);
         const RemoteIMMessage received = state_.receiveVoice(fromUserId, localPath, durationSeconds);
         persistMessage(received);
         emit stateChanged();
@@ -748,7 +745,6 @@ void RemoteIMApplication::bindClientSignals() {
                                                                        const QString& fileName,
                                                                        const QString& mimeType,
                                                                        qint64 sizeBytes) {
-        clearActivity(fromUserId);
         const RemoteIMMessage received = state_.receiveFile(fromUserId, localPath, fileName, mimeType, sizeBytes);
         persistMessage(received);
         emit stateChanged();
@@ -778,7 +774,6 @@ void RemoteIMApplication::ingestMessages(const QList<RemoteIMMessage>& messages,
         }
         const QString peerId = peerOf(message);
         if (peerId.isEmpty()) continue;
-        if (live && message.direction == RemoteIMMessageDirection::Incoming) clearActivity(peerId);
         if (firstPeerId.isEmpty()) firstPeerId = peerId;
         state_.upsertContact(RemoteIMContact{peerId, peerId});
         // 首次入库才算「新消息」。漫游和实时两条路会投递同一条消息，

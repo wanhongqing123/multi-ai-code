@@ -11,6 +11,12 @@ final class MasterChatStateTests: XCTestCase {
         ))
         XCTAssertEqual(signal.ttlMilliseconds, 30_000)
         XCTAssertEqual(RemoteIMActivityCodec.decode(RemoteIMActivityCodec.encode(signal)), signal)
+        let legacy = Data("""
+            {"namespace":"multi-ai-code-activity","version":1,"activityId":"legacy:1",\
+            "sequence":1,"kind":"machine-thinking","active":true,"ttlMs":12000}
+            """.utf8)
+        let decodedLegacy = try XCTUnwrap(RemoteIMActivityCodec.decode(legacy))
+        XCTAssertGreaterThan(decodedLegacy.startedAtMilliseconds, 0)
         XCTAssertNil(RemoteIMActivitySignal(
             activityID: "../invalid",
             kind: .humanTyping,

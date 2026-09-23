@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { activityKey, receiveActivity, clearActivity, clearAccountActivities } from './activityState.js'
+import { activityKey, receiveActivity, clearAccountActivities } from './activityState.js'
 import type {
   RemoteImConfig,
   RemoteImLoginState,
@@ -377,7 +377,6 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
             // 远程桌面信令在这里消费掉，绝不能继续往主进程转发——否则会被
             // router 当成普通消息喂给 AICLI。
             if (remoteDesktopHost.handleIncomingText(message)) return
-            clearActivity(activityKey(props.config.desktopUserId, message.fromUserId))
             void window.api.remoteIm.deliverIncomingText(message, runtimeIdentity)
           },
           onIncomingActivity: (message) => {
@@ -386,15 +385,12 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
             receiveActivity(activityKey(props.config.desktopUserId, message.fromUserId), message)
           },
           onIncomingAudio: (message) => {
-            if (!cancelled) clearActivity(activityKey(props.config.desktopUserId, message.fromUserId))
             if (!cancelled) void window.api.remoteIm.deliverIncomingAudio(message, runtimeIdentity)
           },
           onIncomingImage: (message) => {
-            if (!cancelled) clearActivity(activityKey(props.config.desktopUserId, message.fromUserId))
             if (!cancelled) void window.api.remoteIm.deliverIncomingImage(message, runtimeIdentity)
           },
           onIncomingFile: (message) => {
-            if (!cancelled) clearActivity(activityKey(props.config.desktopUserId, message.fromUserId))
             if (!cancelled) void window.api.remoteIm.deliverIncomingFile(message, runtimeIdentity)
           },
           onFriendListUpdated: () => {
@@ -557,7 +553,8 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
             try {
               await ownedRuntime.sendActivity?.(event.toUserId, {
                 activityId: event.activityId, sequence: event.sequence,
-                kind: event.kind, active: event.active, ttlMs: event.ttlMs
+                kind: event.kind, active: event.active,
+                startedAtMs: event.startedAtMs, ttlMs: event.ttlMs
               })
             } catch {
               // Receiver expiry is the fallback; retrying old status resurrects it.

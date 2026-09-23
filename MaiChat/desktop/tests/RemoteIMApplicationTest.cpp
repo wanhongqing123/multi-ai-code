@@ -13,7 +13,7 @@ class RemoteIMApplicationTest : public QObject {
     Q_OBJECT
 
 private slots:
-    void activityIsEphemeralAndStaleStopCannotCancelExpiry();
+    void activityIsIndependentFromContentAndExplicitStopClosesIt();
     void sendsTextThroughClientAndMarksSent();
     void sendsStructuredApprovalDecisionAndMarksSent();
     void sendsFileThroughClientAndMarksSent();
@@ -39,7 +39,7 @@ private slots:
     void rejectsUnsupportedVoiceBeforeQueueing();
 };
 
-void RemoteIMApplicationTest::activityIsEphemeralAndStaleStopCannotCancelExpiry() {
+void RemoteIMApplicationTest::activityIsIndependentFromContentAndExplicitStopClosesIt() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     auto* fake = client.get();
     RemoteIMApplication app(QStringLiteral("owner"), std::move(client));
@@ -60,8 +60,19 @@ void RemoteIMApplicationTest::activityIsEphemeralAndStaleStopCannotCancelExpiry(
     signal.activityId = QStringLiteral("run-2");
     emit fake->activityReceived(QStringLiteral("peer"), signal);
     emit fake->incomingText(QStringLiteral("peer"), QStringLiteral("answer"));
-    QVERIFY(app.activityForPeer(QStringLiteral("peer")).activityId.isEmpty());
+    QCOMPARE(app.activityForPeer(QStringLiteral("peer")).activityId, QStringLiteral("run-2"));
     signal.sequence = 3;
+    emit fake->activityReceived(QStringLiteral("peer"), signal);
+    QCOMPARE(app.activityForPeer(QStringLiteral("peer")).activityId, QStringLiteral("run-2"));
+    emit fake->activityReceived(QStringLiteral("peer"),
+        RemoteIMActivitySignal{QStringLiteral("run-2"), RemoteIMActivityKind::MachineThinking,
+                               false, 1000, 2});
+    QCOMPARE(app.activityForPeer(QStringLiteral("peer")).activityId, QStringLiteral("run-2"));
+    emit fake->activityReceived(QStringLiteral("peer"),
+        RemoteIMActivitySignal{QStringLiteral("run-2"), RemoteIMActivityKind::MachineThinking,
+                               false, 1000, 4});
+    QVERIFY(app.activityForPeer(QStringLiteral("peer")).activityId.isEmpty());
+    signal.sequence = 5;
     emit fake->activityReceived(QStringLiteral("peer"), signal);
     QVERIFY(app.activityForPeer(QStringLiteral("peer")).activityId.isEmpty());
 }

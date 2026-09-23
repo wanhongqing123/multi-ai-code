@@ -1939,30 +1939,42 @@ private struct RemoteIMActivityBubble: View {
                     }
                 }
             } else {
-                ProgressView()
-                    .progressViewStyle(.circular)
-                    .tint(RemoteIMStyle.blue)
-                    .scaleEffect(0.72)
-                Text(machineStatusText)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(RemoteIMStyle.blue)
-                    .lineLimit(1)
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    HStack(spacing: 9) {
+                        ProgressView()
+                            .progressViewStyle(.circular)
+                            .tint(RemoteIMStyle.blue)
+                            .scaleEffect(0.72)
+                        Text(machineStatusText(at: context.date))
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(RemoteIMStyle.blue)
+                            .lineLimit(1)
+                    }
+                }
             }
         }
         .padding(.horizontal, signal.kind == .humanTyping ? 14 : 12)
         .frame(height: 42)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityLabel(signal.kind == .humanTyping ? "对方正在输入" : machineStatusText)
+        .accessibilityLabel(
+            signal.kind == .humanTyping ? "对方正在输入" : machineStatusText(at: Date())
+        )
     }
 
-    private var machineStatusText: String {
+    private func machineStatusText(at date: Date) -> String {
+        let startedAt = Date(
+            timeIntervalSince1970: TimeInterval(signal.startedAtMilliseconds) / 1_000
+        )
+        let elapsed = max(0, Int(date.timeIntervalSince(startedAt)))
+        let title: String
         switch signal.kind {
-        case .machineThinking: return "思考中…"
-        case .machineTool: return "正在使用工具…"
-        case .machineWaiting: return "等待确认…"
-        case .machineWorking: return "正在执行…"
+        case .machineThinking: title = "思考中"
+        case .machineTool: title = "正在使用工具"
+        case .machineWaiting: title = "等待确认"
+        case .machineWorking: title = "正在执行"
         case .humanTyping: return ""
         }
+        return "\(title) \(elapsed) 秒"
     }
 }
 

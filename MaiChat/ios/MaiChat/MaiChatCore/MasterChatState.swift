@@ -160,9 +160,17 @@ public struct RemoteIMActivitySignal: Codable, Equatable, Sendable {
     public let sequence: Int
     public let kind: RemoteIMActivityKind
     public let active: Bool
+    public let startedAtMilliseconds: Int64
     public let ttlMilliseconds: Int
 
-    public init?(activityID: String, kind: RemoteIMActivityKind, active: Bool, ttlMilliseconds: Int, sequence: Int = 0) {
+    public init?(
+        activityID: String,
+        kind: RemoteIMActivityKind,
+        active: Bool,
+        ttlMilliseconds: Int,
+        sequence: Int = 0,
+        startedAtMilliseconds: Int64 = 0
+    ) {
         let id = activityID.trimmingCharacters(in: .whitespacesAndNewlines)
         let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._:-")
         guard sequence >= 0, !id.isEmpty, id.utf8.count <= 192,
@@ -172,6 +180,9 @@ public struct RemoteIMActivitySignal: Codable, Equatable, Sendable {
         self.sequence = sequence
         self.kind = kind
         self.active = active
+        self.startedAtMilliseconds = startedAtMilliseconds > 0
+            ? startedAtMilliseconds
+            : Int64((Date().timeIntervalSince1970 * 1_000).rounded())
         self.ttlMilliseconds = min(max(ttlMilliseconds, 1_000), 30_000)
     }
 }
@@ -187,6 +198,7 @@ public enum RemoteIMActivityCodec {
         let sequence: Int
         let kind: String
         let active: Bool
+        let startedAtMs: Int64?
         let ttlMs: Int
     }
 
@@ -198,6 +210,7 @@ public enum RemoteIMActivityCodec {
             sequence: signal.sequence,
             kind: signal.kind.rawValue,
             active: signal.active,
+            startedAtMs: signal.startedAtMilliseconds,
             ttlMs: signal.ttlMilliseconds
         ))
     }
@@ -214,7 +227,8 @@ public enum RemoteIMActivityCodec {
             kind: kind,
             active: wire.active,
             ttlMilliseconds: wire.ttlMs,
-            sequence: wire.sequence
+            sequence: wire.sequence,
+            startedAtMilliseconds: wire.startedAtMs ?? 0
         )
     }
 }

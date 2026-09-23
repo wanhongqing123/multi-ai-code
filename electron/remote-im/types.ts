@@ -86,6 +86,8 @@ export interface RemoteImActivitySignal {
   sequence: number
   kind: RemoteImActivityKind
   active: boolean
+  /** Unix epoch milliseconds when the current activity kind began. */
+  startedAtMs: number
   ttlMs: number
 }
 

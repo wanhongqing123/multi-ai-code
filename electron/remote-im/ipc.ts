@@ -189,6 +189,7 @@ interface MachineActivityLease {
   kind: RemoteImActivityKind
   activityId: string
   sequence: number
+  startedAtMs: number
   timer: ReturnType<typeof setInterval>
 }
 const machineActivityLeases = new Map<string, MachineActivityLease>()
@@ -591,6 +592,7 @@ function sendMachineActivity(
     kind,
     activityId,
     sequence: current?.sequence ?? 0,
+    startedAtMs: Date.now(),
     timer: setInterval(emit, MACHINE_ACTIVITY_HEARTBEAT_MS)
   }
   function emit(): void {
@@ -601,6 +603,7 @@ function sendMachineActivity(
     }
     broadcastOutgoingActivity(state, {
       activityId, sequence: ++lease.sequence, kind: lease.kind, active: true,
+      startedAtMs: lease.startedAtMs,
       ttlMs: MACHINE_ACTIVITY_TTL_MS
     })
   }
@@ -610,20 +613,19 @@ function sendMachineActivity(
 
 function stopMachineActivity(
   sessionId: string,
-  state: RemoteImStructuredTaskState,
-  options: { replacedByContent?: boolean } = {}
+  state: RemoteImStructuredTaskState
 ): void {
   const key = machineActivityKey(sessionId, state.taskId)
   const current = machineActivityLeases.get(key)
   if (!current) return
   clearInterval(current.timer)
   machineActivityLeases.delete(key)
-  if (options.replacedByContent) return
   broadcastOutgoingActivity(state, {
     activityId: current.activityId,
     sequence: ++current.sequence,
     kind: current.kind,
     active: false,
+    startedAtMs: current.startedAtMs,
     ttlMs: 1_000
   })
 }
@@ -2653,7 +2655,8 @@ function ensureSessionListeners(): void {
       return
     }
     if (kind && kind !== 'assistant_text') return
-    stopMachineActivity(sessionId, state, { replacedByContent: true })
+    // Text and activity are independent protocol streams. Commentary must not
+    // stop the current lease; only a real activity change or turn terminal does.
     state.lastActivityAt = Date.now()
     const forwardedChunks = forwardRemoteImStructuredAssistantOutput(
       sessionId,
@@ -3726,6 +3729,7 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
         || resolvePeerUserId(config, toUserId) !== toUserId
         || signal?.kind !== 'human-typing' || typeof signal.active !== 'boolean'
         || typeof signal.activityId !== 'string' || !/^[A-Za-z0-9._:-]{1,192}$/.test(signal.activityId)
+        || !Number.isSafeInteger(signal.startedAtMs) || signal.startedAtMs <= 0
         || !Number.isSafeInteger(signal.sequence) || signal.sequence < 0) return { ok: false }
     broadcast('remote-im:outgoing-activity', {
       projectId, toUserId, runtimeIdentity, ...signal, ttlMs: 12000

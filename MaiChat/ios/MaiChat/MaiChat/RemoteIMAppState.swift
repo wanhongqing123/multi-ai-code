@@ -474,6 +474,9 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         let userID = event.fromUserID
         let identity = userID + "|" + event.signal.activityID
         guard !closedActivityIDs.contains(identity) else { return }
+        guard event.signal.sequence > (activitySequence[identity] ?? -1) else { return }
+        activitySequence[identity] = event.signal.sequence
+        if activitySequence.count > 512 { activitySequence = [identity: event.signal.sequence] }
         if !event.signal.active {
             rememberClosedActivity(identity)
             if activityByUserID[userID]?.activityID == event.signal.activityID {
@@ -481,9 +484,6 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             }
             return
         }
-        guard event.signal.sequence > (activitySequence[identity] ?? -1) else { return }
-        activitySequence[identity] = event.signal.sequence
-        if activitySequence.count > 512 { activitySequence = [identity: event.signal.sequence] }
         activityExpiryTasks[userID]?.cancel()
         if let old = activityByUserID[userID], old.activityID != event.signal.activityID {
             rememberClosedActivity(userID + "|" + old.activityID)
@@ -1477,7 +1477,6 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         do { try await MarkdownPreparation.prepare([event.text]) }
         catch { return }
         guard remoteDiagnosticsIdentity == identity else { return }
-        clearActivity(from: event.fromUserID)
         let previousCount = chatState.messages.count
         let message = chatState.receiveText(
             event.text,
@@ -1516,7 +1515,6 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
 
     private func receive(_ event: IncomingRemoteIMVoice) async {
         guard shouldAcceptIncomingSender(event.fromUserID, kind: "voice") else { return }
-        clearActivity(from: event.fromUserID)
         guard await shouldAcceptIncomingMessage(remoteID: event.remoteID) else { return }
         let previousCount = chatState.messages.count
         let message = chatState.receiveVoice(
@@ -1551,7 +1549,6 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     private func receive(_ event: IncomingRemoteIMImage) async {
         mediaFileRevision &+= 1
         guard shouldAcceptIncomingSender(event.fromUserID, kind: "image") else { return }
-        clearActivity(from: event.fromUserID)
         guard await shouldAcceptIncomingMessage(remoteID: event.remoteID) else { return }
         let previousCount = chatState.messages.count
         let message = chatState.receiveImage(
@@ -1595,7 +1592,6 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         mediaFileRevision &+= 1
         guard !remoteDiagnosticsAccountTag.isEmpty, event.accountTag == remoteDiagnosticsAccountTag else { return }
         guard shouldAcceptIncomingSender(event.fromUserID, kind: "file") else { return }
-        clearActivity(from: event.fromUserID)
         guard await shouldAcceptIncomingMessage(remoteID: event.remoteID) else { return }
         // The history lookup suspends. An account change during that await must
         // not let the old account's completed download enter the new store.
@@ -1640,7 +1636,6 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     private func receive(_ event: IncomingRemoteIMVideo) async {
         mediaFileRevision &+= 1
         guard shouldAcceptIncomingSender(event.fromUserID, kind: "video") else { return }
-        clearActivity(from: event.fromUserID)
         let existingMessage = chatState.message(remoteID: event.remoteID)
         if existingMessage == nil {
             guard await shouldAcceptIncomingMessage(remoteID: event.remoteID) else { return }

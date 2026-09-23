@@ -76,7 +76,7 @@ class MainWindowLayoutTest : public QObject {
     Q_OBJECT
 
 private slots:
-    void transientActivityBubbleIsReplacedByIncomingText();
+    void transientActivityFollowsOnlyActivityEventsAcrossConversationSwitches();
     void transientActivityStaysAfterNewOutgoingMessage();
     void videoCoverRetainsPhysicalPixels();
     void renamedHeaderButtonsKeepTheirCompactAppearance();
@@ -160,11 +160,13 @@ private slots:
     void droppingAnImageFileSendsTheOriginalFileAsAnImage();
 };
 
-void MainWindowLayoutTest::transientActivityBubbleIsReplacedByIncomingText() {
+void MainWindowLayoutTest::transientActivityFollowsOnlyActivityEventsAcrossConversationSwitches() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     auto* fake = client.get();
     RemoteIMApplication app(QStringLiteral("owner"), std::move(client));
     app.addContact(QStringLiteral("peer"), QStringLiteral("Peer"));
+    app.addContact(QStringLiteral("other"), QStringLiteral("Other"));
+    app.selectPeer(QStringLiteral("peer"));
     MainWindow window(app);
     window.show();
     QVERIFY(QTest::qWaitForWindowExposed(&window));
@@ -172,9 +174,16 @@ void MainWindowLayoutTest::transientActivityBubbleIsReplacedByIncomingText() {
         QStringLiteral("machine:test"), RemoteIMActivityKind::MachineTool, true, 12000, 1});
     QTRY_VERIFY(window.findChild<QWidget*>(QStringLiteral("remoteImActivityRow")) != nullptr);
     QVERIFY(app.chatState().messagesWith(QStringLiteral("peer")).isEmpty());
-    emit fake->incomingText(QStringLiteral("peer"), QStringLiteral("真正的回复"));
+    app.selectPeer(QStringLiteral("other"));
     QTRY_VERIFY(window.findChild<QWidget*>(QStringLiteral("remoteImActivityRow")) == nullptr);
+    app.selectPeer(QStringLiteral("peer"));
+    QTRY_VERIFY(window.findChild<QWidget*>(QStringLiteral("remoteImActivityRow")) != nullptr);
+    emit fake->incomingText(QStringLiteral("peer"), QStringLiteral("真正的回复"));
+    QTRY_VERIFY(window.findChild<QWidget*>(QStringLiteral("remoteImActivityRow")) != nullptr);
     QCOMPARE(app.chatState().messagesWith(QStringLiteral("peer")).size(), 1);
+    emit fake->activityReceived(QStringLiteral("peer"), RemoteIMActivitySignal{
+        QStringLiteral("machine:test"), RemoteIMActivityKind::MachineTool, false, 1000, 2});
+    QTRY_VERIFY(window.findChild<QWidget*>(QStringLiteral("remoteImActivityRow")) == nullptr);
 }
 
 void MainWindowLayoutTest::transientActivityStaysAfterNewOutgoingMessage() {

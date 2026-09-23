@@ -192,7 +192,7 @@ public:
     QSize sizeHint() const override {
         return signal_.kind == RemoteIMActivityKind::HumanTyping
                    ? QSize(UiZoom::s(74), UiZoom::s(38))
-                   : QSize(UiZoom::s(170), UiZoom::s(38));
+                   : QSize(UiZoom::s(200), UiZoom::s(38));
     }
 
 protected:
@@ -237,14 +237,20 @@ protected:
 
 private:
     QString statusText() const {
+        const qint64 startedAt = signal_.startedAtMs > 0
+            ? signal_.startedAtMs
+            : QDateTime::currentMSecsSinceEpoch();
+        const qint64 elapsedSeconds = qMax<qint64>(
+            0, (QDateTime::currentMSecsSinceEpoch() - startedAt) / 1000);
+        QString title;
         switch (signal_.kind) {
-        case RemoteIMActivityKind::MachineThinking: return QStringLiteral("思考中…");
-        case RemoteIMActivityKind::MachineTool: return QStringLiteral("正在使用工具…");
-        case RemoteIMActivityKind::MachineWaiting: return QStringLiteral("等待确认…");
-        case RemoteIMActivityKind::MachineWorking: return QStringLiteral("正在执行…");
+        case RemoteIMActivityKind::MachineThinking: title = QStringLiteral("思考中"); break;
+        case RemoteIMActivityKind::MachineTool: title = QStringLiteral("正在使用工具"); break;
+        case RemoteIMActivityKind::MachineWaiting: title = QStringLiteral("等待确认"); break;
+        case RemoteIMActivityKind::MachineWorking: title = QStringLiteral("正在执行"); break;
         case RemoteIMActivityKind::HumanTyping: return QString();
         }
-        return QString();
+        return QStringLiteral("%1 %2 秒").arg(title).arg(elapsedSeconds);
     }
 
     RemoteIMActivitySignal signal_;

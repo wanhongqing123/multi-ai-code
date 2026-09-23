@@ -188,7 +188,8 @@ void TimSdkRemoteIMClientTest::activityUsesOnlineCustomTransportWithoutHistory()
     QJsonObject element{{QStringLiteral("elem_type"), 3},
         {QStringLiteral("custom_elem_data"), QStringLiteral(
             "{\"namespace\":\"multi-ai-code-activity\",\"version\":1,\"activityId\":\"machine:1\","
-            "\"sequence\":1,\"kind\":\"machine-tool\",\"active\":true,\"ttlMs\":12000}")}};
+            "\"sequence\":1,\"kind\":\"machine-tool\",\"active\":true,"
+            "\"startedAtMs\":1700000000000,\"ttlMs\":12000}")}};
     wire[QStringLiteral("message_sender")] = QStringLiteral("peer");
     wire[QStringLiteral("message_elem_array")] = QJsonArray{element};
     int activityCount = 0;
@@ -196,6 +197,7 @@ void TimSdkRemoteIMClientTest::activityUsesOnlineCustomTransportWithoutHistory()
             [&](const QString& peer, const RemoteIMActivitySignal& signal) {
         QCOMPARE(peer, QStringLiteral("peer"));
         QCOMPARE(signal.kind, RemoteIMActivityKind::MachineTool);
+        QVERIFY(signal.startedAtMs > 0);
         ++activityCount;
     });
     QSignalSpy messages(&client, &RemoteIMClient::liveMessagesReceived);

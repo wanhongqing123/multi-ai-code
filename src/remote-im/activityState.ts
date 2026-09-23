@@ -32,6 +32,7 @@ export function receiveActivity(key: string, signal: RemoteImActivitySignal): vo
   if (closed.has(identity(key, signal.activityId))) return
   const current = entries.get(key)
   if (!signal.active) {
+    if (current?.activityId === signal.activityId && current.sequence >= signal.sequence) return
     rememberClosed(key, signal.activityId)
     if (current?.activityId === signal.activityId) clearActivity(key)
     return

@@ -16,7 +16,10 @@ struct AIAssistantView: View {
         ZStack(alignment: .topTrailing) {
             VStack(spacing: 0) {
                 AIHeader(
-                    openSessions: { composerFocused = false; showSessions = true },
+                    openSessions: {
+                        composerFocused = false
+                        withAnimation(.easeOut(duration: 0.2)) { showSessions = true }
+                    },
                     openActions: { composerFocused = false; showActions.toggle() }
                 )
                 Divider().overlay(Color.black.opacity(0.06))
@@ -100,15 +103,25 @@ struct AIAssistantView: View {
                     .onTapGesture { showActions = false }
                 AIActionPanel(
                     canClear: !model.busy && !model.selected.isEmpty,
-                    create: { showActions = false; Task { await model.create() } },
-                    settings: { showActions = false; model.showSettings = true },
                     clear: { showActions = false; confirmClear = true }
                 )
                 .padding(.top, 54).padding(.trailing, 14)
                 .transition(.scale(scale: 0.96, anchor: .topTrailing).combined(with: .opacity))
             }
+            if showSessions {
+                Color.black.opacity(0.16).ignoresSafeArea().contentShape(Rectangle())
+                    .onTapGesture { withAnimation(.easeOut(duration: 0.2)) { showSessions = false } }
+                    .transition(.opacity).zIndex(2)
+                GeometryReader { geometry in
+                    HStack(spacing: 0) {
+                        sessionList.frame(width: min(360, geometry.size.width * 0.86))
+                            .shadow(color: Color.black.opacity(0.18), radius: 22, x: 8)
+                            .transition(.move(edge: .leading))
+                        Spacer(minLength: 0)
+                    }
+                }.zIndex(3)
+            }
         }
-        .sheet(isPresented: $showSessions) { sessionList }
         .sheet(isPresented: $model.showSettings) { AISettingsView(model: model) }
         .confirmationDialog("清空当前对话的所有消息？", isPresented: $confirmClear, titleVisibility: .visible) {
             Button("清空消息", role: .destructive) { Task { await model.action("clear") } }
@@ -125,21 +138,10 @@ struct AIAssistantView: View {
             HStack {
                 Text("对话").font(.system(size: 20, weight: .bold))
                 Spacer()
-                Button("完成") { showSessions = false }
+                Button("完成") { withAnimation(.easeOut(duration: 0.2)) { showSessions = false } }
                     .font(.system(size: 14, weight: .semibold)).buttonStyle(.plain)
             }.padding(.horizontal, 20).padding(.vertical, 18)
             Divider().overlay(Color.black.opacity(0.06))
-            Button {
-                showSessions = false
-                Task { await model.create() }
-            } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: "plus").font(.system(size: 13, weight: .bold))
-                    Text("新对话").font(.system(size: 15, weight: .semibold))
-                    Spacer()
-                }.padding(.horizontal, 14).frame(height: 46)
-                    .background(Color.blue.opacity(0.09), in: RoundedRectangle(cornerRadius: 12))
-            }.buttonStyle(.plain).foregroundStyle(Color.blue).padding(16)
             ScrollView {
                 LazyVStack(spacing: 8) {
                 ForEach(model.sessions) { session in
@@ -172,7 +174,20 @@ struct AIAssistantView: View {
                 }
                 }.padding(.horizontal, 16)
             }
-        }.background(Color(uiColor: .systemBackground)).presentationDetents([.medium, .large])
+            HStack {
+                Button {
+                    withAnimation(.easeOut(duration: 0.2)) { showSessions = false }
+                    Task { await model.create() }
+                } label: {
+                    HStack(spacing: 9) {
+                        Image(systemName: "square.and.pencil").font(.system(size: 14, weight: .semibold))
+                        Text("新对话").font(.system(size: 14, weight: .semibold))
+                    }.foregroundStyle(Color.white).padding(.horizontal, 16).frame(height: 42)
+                        .background(Color.primary, in: Capsule())
+                }.buttonStyle(.plain)
+                Spacer()
+            }.padding(16).overlay(alignment: .top) { Divider().overlay(Color.black.opacity(0.06)) }
+        }.background(Color(uiColor: .systemBackground))
     }
 }
 
@@ -207,19 +222,13 @@ private struct AIHeaderButton: View {
 
 private struct AIActionPanel: View {
     let canClear: Bool
-    let create: () -> Void
-    let settings: () -> Void
     let clear: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
-            action("新对话", "plus", Color.primary, create)
-            Divider().padding(.leading, 42)
-            action("模型与权限", "slider.horizontal.3", Color.primary, settings)
-            Divider().padding(.leading, 42)
             action("清空当前对话", "trash", canClear ? Color.red : Color.secondary, clear)
                 .disabled(!canClear)
-        }.frame(width: 190).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+        }.frame(width: 176).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
             .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.black.opacity(0.08)))
             .shadow(color: Color.black.opacity(0.14), radius: 20, y: 8)
     }
@@ -323,9 +332,18 @@ private struct AIExpandableBlock<Content: View>: View {
 private struct AIComposer: View {
     @ObservedObject var model: AIAssistantModel
     @FocusState.Binding var focused: Bool
+    @StateObject private var speechRecognizer = TencentRealtimeSpeechRecognizer(
+        appId: TencentASRCredentials.appId,
+        secretId: TencentASRCredentials.secretId,
+        secretKey: TencentASRCredentials.secretKey
+    )
     @State private var draft = ""
     @State private var importing = false
     @State private var draftSession = ""
+    @State private var isPressingVoice = false
+    @State private var isCancellingVoice = false
+    @State private var voiceBaseDraft = ""
+    @State private var voiceStartTask: Task<Bool, Never>?
     var body: some View {
         VStack(spacing: 10) {
             TextField("随心输入", text: $draft, axis: .vertical).lineLimit(1...6).focused($focused)
@@ -334,6 +352,17 @@ private struct AIComposer: View {
                 Button { importing = true } label: {
                     Image(systemName: "plus").font(.system(size: 17, weight: .medium)).frame(width: 30, height: 30)
                 }.buttonStyle(.plain).foregroundStyle(Color.blue).accessibilityLabel("导入文本文件")
+                Image(systemName: isPressingVoice ? "waveform" : "mic")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(isCancellingVoice ? Color.red : isPressingVoice ? Color.white : Color.blue)
+                    .frame(width: 30, height: 30)
+                    .background(isCancellingVoice ? Color.red.opacity(0.12) : isPressingVoice ? Color.blue : Color.clear,
+                                in: Circle())
+                    .contentShape(Circle())
+                    .gesture(voiceGesture)
+                    .accessibilityLabel(isPressingVoice ? "松开完成语音转文字" : "按住转文字")
+                    .accessibilityIdentifier("ai-voice-input")
+                    .accessibilityAddTraits(.isButton)
                 Button { model.showSettings = true } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "shield")
@@ -374,14 +403,120 @@ private struct AIComposer: View {
                     }
                 }
             }
-            .onAppear { draftSession = model.selected; draft = model.drafts[draftSession] ?? "" }
-            .onDisappear { model.drafts[draftSession] = draft }
+            .onAppear {
+                draftSession = model.selected
+                draft = model.drafts[draftSession] ?? ""
+                speechRecognizer.onLiveTextUpdate = { text, _ in
+                    guard isPressingVoice else { return }
+                    draft = voiceText(base: voiceBaseDraft, transcript: text)
+                }
+            }
+            .onDisappear {
+                model.drafts[draftSession] = draft
+                voiceStartTask?.cancel()
+                voiceStartTask = nil
+                speechRecognizer.onLiveTextUpdate = nil
+                speechRecognizer.cancel()
+            }
             .onChange(of: model.selected) { selected in
+                cancelVoiceTranscription(restoresDraft: true)
                 model.drafts[draftSession] = draft
                 let sendingFirstMessage = model.isSubmitting && draftSession.isEmpty
                 draftSession = selected
                 if !sendingFirstMessage { draft = model.drafts[selected] ?? "" }
             }
+    }
+
+    private var voiceGesture: some Gesture {
+        LongPressGesture(minimumDuration: 0.25, maximumDistance: 60)
+            .sequenced(before: DragGesture(minimumDistance: 0))
+            .onChanged { phase in
+                switch phase {
+                case .first(true):
+                    beginVoiceTranscription()
+                case let .second(true, drag):
+                    beginVoiceTranscription()
+                    isCancellingVoice = (drag?.translation.height ?? 0) < -60
+                default:
+                    break
+                }
+            }
+            .onEnded { _ in
+                guard isPressingVoice else { return }
+                let cancel = isCancellingVoice
+                isPressingVoice = false
+                isCancellingVoice = false
+                if cancel {
+                    cancelVoiceTranscription(restoresDraft: true)
+                } else {
+                    finishVoiceTranscription()
+                }
+            }
+    }
+
+    private func beginVoiceTranscription() {
+        guard !isPressingVoice else { return }
+        guard speechRecognizer.isAvailable else {
+            model.error = "语音转文字凭证未配置"
+            return
+        }
+        focused = false
+        isPressingVoice = true
+        isCancellingVoice = false
+        voiceBaseDraft = draft
+        voiceStartTask = Task { @MainActor in
+            do {
+                try await speechRecognizer.start(diagnosticFields: [
+                    "surface": "ai-assistant",
+                    "session": model.selected,
+                ])
+                return true
+            } catch is CancellationError {
+                return false
+            } catch {
+                isPressingVoice = false
+                model.error = "语音转文字失败：\(error.localizedDescription)"
+                return false
+            }
+        }
+    }
+
+    private func finishVoiceTranscription() {
+        let startTask = voiceStartTask
+        voiceStartTask = nil
+        Task { @MainActor in
+            let didStart = await startTask?.value ?? speechRecognizer.isRecognizing
+            guard didStart, speechRecognizer.isRecognizing else { return }
+            do {
+                let text = try await speechRecognizer.stop()
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else {
+                    model.error = "没有识别到文字"
+                    return
+                }
+                draft = voiceText(base: voiceBaseDraft, transcript: text)
+            } catch is CancellationError {
+            } catch {
+                model.error = "语音转文字失败：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func cancelVoiceTranscription(restoresDraft: Bool) {
+        let hadActiveTranscription = isPressingVoice || speechRecognizer.isRecognizing || voiceStartTask != nil
+        voiceStartTask?.cancel()
+        voiceStartTask = nil
+        speechRecognizer.cancel()
+        isPressingVoice = false
+        isCancellingVoice = false
+        if restoresDraft, hadActiveTranscription { draft = voiceBaseDraft }
+    }
+
+    private func voiceText(base: String, transcript: String) -> String {
+        let cleaned = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !base.isEmpty, !cleaned.isEmpty else { return base.isEmpty ? cleaned : base }
+        let separator = base.last?.isWhitespace == true ? "" : " "
+        return base + separator + cleaned
     }
 }
 private struct AIPermissionCard: View {

@@ -1536,13 +1536,11 @@ private struct ChatDetailHeader: View {
 
             Button {
                 if session.state.isActive {
-                    Task { await appState.stopRemoteDesktopView() }
+                    showRemoteDesktop()
                 } else {
+                    showRemoteDesktop()
                     Task {
                         await appState.requestRemoteDesktopView(of: contact)
-                        if session.state.isActive {
-                            showRemoteDesktop()
-                        }
                     }
                 }
             } label: {
@@ -1600,7 +1598,7 @@ private struct ChatDetailHeader: View {
         case .inviting, .connecting:
             return .orange
         case .viewing:
-            return .red
+            return RemoteIMStyle.blue
         case .idle, .failed:
             return canUseRemoteButton ? RemoteIMStyle.blue : RemoteIMStyle.textSecondary
         }
@@ -1611,7 +1609,7 @@ private struct ChatDetailHeader: View {
         case .inviting, .connecting:
             return Color.orange.opacity(0.12)
         case .viewing:
-            return Color.red.opacity(0.1)
+            return RemoteIMStyle.blueSoft
         case .idle, .failed:
             return Color(.secondarySystemBackground)
         }
@@ -1620,9 +1618,9 @@ private struct ChatDetailHeader: View {
     private var remoteButtonAccessibilityLabel: String {
         switch session.state {
         case .inviting, .connecting:
-            return "取消远程连接"
+            return "查看远程连接进度"
         case .viewing:
-            return "断开远程桌面"
+            return "进入远程桌面"
         case .idle, .failed:
             return "远程控制 \(contact.displayName)"
         }

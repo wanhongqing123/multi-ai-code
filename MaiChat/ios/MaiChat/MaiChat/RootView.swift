@@ -532,15 +532,6 @@ private struct CompactTabBar: View {
                 selectedTab = .contacts
             }
             TabButton(
-                title: "远程",
-                // `display.fill` is not available on the iOS 16 deployment target and
-                // renders as an empty image. Selection is already conveyed by tint/background.
-                systemImage: "display",
-                selected: selectedTab == .remote
-            ) {
-                selectedTab = .remote
-            }
-            TabButton(
                 title: "我",
                 systemImage: selectedTab == .me ? "person.fill" : "person",
                 selected: selectedTab == .me

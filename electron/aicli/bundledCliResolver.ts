@@ -1,4 +1,5 @@
 import { existsSync, statSync } from 'fs'
+import { spawnSync } from 'child_process'
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'path'
 import { fileURLToPath } from 'url'
 
@@ -151,6 +152,25 @@ function defaultExistsFile(path: string): boolean {
   }
 }
 
+export function clearMacGeneratedProvenance(
+  paths: string[],
+  remove: (path: string) => void = (path) => {
+    spawnSync('/usr/bin/xattr', ['-d', 'com.apple.provenance', path], {
+      stdio: 'ignore',
+      shell: false
+    })
+  }
+): void {
+  for (const path of paths) {
+    try {
+      remove(path)
+    } catch {
+      // The attribute is optional, and read-only installations still report a
+      // useful launch error through the normal process-start path.
+    }
+  }
+}
+
 function resolveBundledCliForTool(
   tool: BundledCli,
   options: BundledCliResolverOptions = {}
@@ -163,7 +183,15 @@ function resolveBundledCliForTool(
 
   for (const root of options.roots ?? defaultRoots()) {
     const candidate = join(root, tool, platformArch, binary)
-    if (existsFile(candidate)) return candidate
+    if (existsFile(candidate)) {
+      if (platform === 'darwin') {
+        clearMacGeneratedProvenance([
+          candidate,
+          join(dirname(candidate), 'codex-code-mode-host')
+        ])
+      }
+      return candidate
+    }
   }
   return null
 }

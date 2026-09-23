@@ -3,12 +3,21 @@ import { join } from 'path'
 import {
   bundledCliFromCommand,
   bundledPlatformArch,
+  clearMacGeneratedProvenance,
   describeAicliLaunchCommand,
   resolveAicliCommand,
   resolveBundledCliCommand
 } from '../../../electron/aicli/bundledCliResolver.js'
 
 describe('bundledCliResolver', () => {
+  it('clears generated provenance from bundled macOS executables before launch', () => {
+    const cleared: string[] = []
+    clearMacGeneratedProvenance(['/app/codex', '/app/codex-code-mode-host'], (path) => {
+      cleared.push(path)
+    })
+    expect(cleared).toEqual(['/app/codex', '/app/codex-code-mode-host'])
+  })
+
   it('maps current platform and arch to a stable directory name', () => {
     expect(bundledPlatformArch('darwin', 'arm64')).toBe('darwin-arm64')
     expect(bundledPlatformArch('win32', 'x64')).toBe('win32-x64')

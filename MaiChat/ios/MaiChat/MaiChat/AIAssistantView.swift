@@ -5,6 +5,7 @@ struct AIAssistantView: View {
     @ObservedObject private var model = AIAssistantModel.shared
     @Environment(\.scenePhase) private var scenePhase
     @State private var showSessions = false
+    @State private var showActions = false
     @State private var confirmClear = false
     @State private var followsBottom = true
     @State private var userDragging = false
@@ -12,8 +13,13 @@ struct AIAssistantView: View {
     @FocusState private var composerFocused: Bool
 
     var body: some View {
-        NavigationStack {
+        ZStack(alignment: .topTrailing) {
             VStack(spacing: 0) {
+                AIHeader(
+                    openSessions: { composerFocused = false; showSessions = true },
+                    openActions: { composerFocused = false; showActions.toggle() }
+                )
+                Divider().overlay(Color.black.opacity(0.06))
                 if !model.ready {
                     ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
@@ -28,7 +34,10 @@ struct AIAssistantView: View {
                                             Text("可以聊天、分析文本和处理导入的文件。")
                                                 .font(.subheadline).foregroundStyle(.secondary)
                                             if !model.configured {
-                                                Button("配置模型", action: { model.showSettings = true }).buttonStyle(.borderedProminent)
+                                                Button("配置模型", action: { model.showSettings = true })
+                                                    .buttonStyle(.plain).font(.system(size: 14, weight: .semibold))
+                                                    .foregroundStyle(Color.white).padding(.horizontal, 16).frame(height: 38)
+                                                    .background(Color.blue, in: RoundedRectangle(cornerRadius: 10))
                                             }
                                         }.frame(maxWidth: .infinity).padding(.vertical, 70)
                                     }
@@ -86,26 +95,23 @@ struct AIAssistantView: View {
                     .padding(.horizontal, 12).padding(.vertical, 8)
             }
             .background(Color(uiColor: .systemBackground))
-            .navigationTitle("AI 助手")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button { showSessions = true } label: { Image(systemName: "sidebar.left") }
-                        .accessibilityLabel("对话列表")
-                }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Menu {
-                        Button("新对话", systemImage: "plus") { Task { await model.create() } }
-                        Button("模型与权限", systemImage: "slider.horizontal.3") { model.showSettings = true }
-                        Button("清空当前对话", role: .destructive) { confirmClear = true }.disabled(model.busy || model.selected.isEmpty)
-                    } label: { Image(systemName: "ellipsis.circle") }
-                }
+            if showActions {
+                Color.black.opacity(0.001).ignoresSafeArea().contentShape(Rectangle())
+                    .onTapGesture { showActions = false }
+                AIActionPanel(
+                    canClear: !model.busy && !model.selected.isEmpty,
+                    create: { showActions = false; Task { await model.create() } },
+                    settings: { showActions = false; model.showSettings = true },
+                    clear: { showActions = false; confirmClear = true }
+                )
+                .padding(.top, 54).padding(.trailing, 14)
+                .transition(.scale(scale: 0.96, anchor: .topTrailing).combined(with: .opacity))
             }
-            .sheet(isPresented: $showSessions) { sessionList }
-            .sheet(isPresented: $model.showSettings) { AISettingsView(model: model) }
-            .confirmationDialog("清空当前对话的所有消息？", isPresented: $confirmClear, titleVisibility: .visible) {
-                Button("清空消息", role: .destructive) { Task { await model.action("clear") } }
-            }
+        }
+        .sheet(isPresented: $showSessions) { sessionList }
+        .sheet(isPresented: $model.showSettings) { AISettingsView(model: model) }
+        .confirmationDialog("清空当前对话的所有消息？", isPresented: $confirmClear, titleVisibility: .visible) {
+            Button("清空消息", role: .destructive) { Task { await model.action("clear") } }
         }
         .onAppear { model.appear() }
         .onDisappear { model.disappear() }
@@ -115,30 +121,118 @@ struct AIAssistantView: View {
     }
 
     private var sessionList: some View {
-        NavigationStack {
-            List {
-                Button { showSessions = false; Task { await model.create() } } label: { Label("新对话", systemImage: "plus") }
+        VStack(spacing: 0) {
+            HStack {
+                Text("对话").font(.system(size: 20, weight: .bold))
+                Spacer()
+                Button("完成") { showSessions = false }
+                    .font(.system(size: 14, weight: .semibold)).buttonStyle(.plain)
+            }.padding(.horizontal, 20).padding(.vertical, 18)
+            Divider().overlay(Color.black.opacity(0.06))
+            Button {
+                showSessions = false
+                Task { await model.create() }
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "plus").font(.system(size: 13, weight: .bold))
+                    Text("新对话").font(.system(size: 15, weight: .semibold))
+                    Spacer()
+                }.padding(.horizontal, 14).frame(height: 46)
+                    .background(Color.blue.opacity(0.09), in: RoundedRectangle(cornerRadius: 12))
+            }.buttonStyle(.plain).foregroundStyle(Color.blue).padding(16)
+            ScrollView {
+                LazyVStack(spacing: 8) {
                 ForEach(model.sessions) { session in
-                    Button {
-                        showSessions = false
-                        Task { await model.select(session.id) }
-                    } label: {
-                        HStack {
-                            Text(session.displayTitle).lineLimit(2)
+                    HStack(spacing: 8) {
+                        Button {
+                            showSessions = false
+                            Task { await model.select(session.id) }
+                        } label: {
+                            HStack {
+                            Text(session.displayTitle).font(.system(size: 15, weight: .medium)).lineLimit(2)
                             Spacer()
                             if session.busy { ProgressView() }
-                            else if session.id == model.selected { Image(systemName: "checkmark") }
+                            else if session.id == model.selected {
+                                Image(systemName: "checkmark").foregroundStyle(Color.blue)
+                            }
+                            }
+                        }.buttonStyle(.plain).foregroundStyle(Color.primary)
+                        if !session.busy {
+                            Button {
+                                Task { await model.select(session.id); await model.action("delete") }
+                            } label: {
+                                Image(systemName: "trash").foregroundStyle(Color.secondary)
+                                    .frame(width: 32, height: 32)
+                            }.buttonStyle(.plain).accessibilityLabel("删除 \(session.displayTitle)")
                         }
                     }
-                    .swipeActions {
-                        Button("删除", role: .destructive) {
-                            Task { await model.select(session.id); await model.action("delete") }
-                        }.disabled(session.busy)
-                    }
+                    .padding(.horizontal, 14).padding(.vertical, 8)
+                    .background(session.id == model.selected ? Color.blue.opacity(0.08) : Color.clear,
+                                in: RoundedRectangle(cornerRadius: 12))
                 }
-            }.navigationTitle("对话")
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { showSessions = false } } }
-        }
+                }.padding(.horizontal, 16)
+            }
+        }.background(Color(uiColor: .systemBackground)).presentationDetents([.medium, .large])
+    }
+}
+
+private struct AIHeader: View {
+    let openSessions: () -> Void
+    let openActions: () -> Void
+
+    var body: some View {
+        HStack {
+            AIHeaderButton(systemImage: "sidebar.left", label: "对话列表", action: openSessions)
+            Spacer()
+            Text("AI 助手").font(.system(size: 18, weight: .bold))
+            Spacer()
+            AIHeaderButton(systemImage: "ellipsis", label: "更多", action: openActions)
+        }.padding(.horizontal, 16).frame(height: 54).background(Color(uiColor: .systemBackground))
+    }
+}
+
+private struct AIHeaderButton: View {
+    let systemImage: String
+    let label: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage).font(.system(size: 16, weight: .semibold))
+                .frame(width: 34, height: 34)
+                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
+        }.buttonStyle(.plain).foregroundStyle(Color.primary).accessibilityLabel(label)
+    }
+}
+
+private struct AIActionPanel: View {
+    let canClear: Bool
+    let create: () -> Void
+    let settings: () -> Void
+    let clear: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            action("新对话", "plus", Color.primary, create)
+            Divider().padding(.leading, 42)
+            action("模型与权限", "slider.horizontal.3", Color.primary, settings)
+            Divider().padding(.leading, 42)
+            action("清空当前对话", "trash", canClear ? Color.red : Color.secondary, clear)
+                .disabled(!canClear)
+        }.frame(width: 190).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.black.opacity(0.08)))
+            .shadow(color: Color.black.opacity(0.14), radius: 20, y: 8)
+    }
+
+    private func action(_ title: String, _ image: String, _ color: Color,
+                        _ handler: @escaping () -> Void) -> some View {
+        Button(action: handler) {
+            HStack(spacing: 12) {
+                Image(systemName: image).frame(width: 18)
+                Text(title).font(.system(size: 14, weight: .medium))
+                Spacer()
+            }.foregroundStyle(color).padding(.horizontal, 14).frame(height: 44)
+        }.buttonStyle(.plain)
     }
 }
 private struct AIBottomPreference: PreferenceKey {
@@ -160,19 +254,19 @@ private struct AIMessageRow: View {
                     if part.kind == "text", let text = part.text, !text.isEmpty {
                         MarkdownLikeText(text, retainsPreviousWhilePreparing: true)
                     } else if part.kind == "reasoning", let text = part.text, !text.isEmpty {
-                        DisclosureGroup("思考过程") { Text(text).font(.caption).textSelection(.enabled) }
-                            .font(.caption).foregroundStyle(.secondary)
+                        AIExpandableBlock(title: "思考过程", systemImage: "brain") {
+                            Text(text).font(.caption).textSelection(.enabled)
+                        }
                     } else if part.kind == "tool" {
-                        DisclosureGroup {
+                        AIExpandableBlock(title: "\(toolStatus(part.state)) \(part.tool ?? "")",
+                                          systemImage: "terminal") {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text(part.input ?? "").font(.system(.caption, design: .monospaced))
                                 if let output = part.output, !output.isEmpty { Text(output).font(.system(.caption, design: .monospaced)) }
                                 if let error = part.error, !error.isEmpty { Text(error).foregroundStyle(.red) }
                             }.textSelection(.enabled).padding(10).frame(maxWidth: .infinity, alignment: .leading)
                                 .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8))
-                        } label: {
-                            Label("\(toolStatus(part.state)) \(part.tool ?? "")", systemImage: "terminal")
-                        }.font(.caption).foregroundStyle(.secondary)
+                        }
                     }
                 }
                 if message.active {
@@ -196,6 +290,36 @@ private struct AIMessageRow: View {
         switch state { case "completed": return "已完成"; case "error": return "失败"; case "pending": return "等待授权"; default: return "正在运行" }
     }
 }
+
+private struct AIExpandableBlock<Content: View>: View {
+    let title: String
+    let systemImage: String
+    let content: Content
+    @State private var expanded = false
+
+    init(title: String, systemImage: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.systemImage = systemImage
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button { withAnimation(.easeOut(duration: 0.16)) { expanded.toggle() } } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: systemImage).frame(width: 16)
+                    Text(title).lineLimit(1)
+                    Spacer()
+                    Image(systemName: "chevron.right").rotationEffect(.degrees(expanded ? 90 : 0))
+                }.font(.system(size: 12, weight: .medium)).foregroundStyle(Color.secondary)
+                    .padding(.horizontal, 10).frame(height: 34)
+                    .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 9))
+            }.buttonStyle(.plain)
+            if expanded { content }
+        }
+    }
+}
+
 private struct AIComposer: View {
     @ObservedObject var model: AIAssistantModel
     @FocusState.Binding var focused: Bool
@@ -207,16 +331,23 @@ private struct AIComposer: View {
             TextField("随心输入", text: $draft, axis: .vertical).lineLimit(1...6).focused($focused)
                 .accessibilityIdentifier("ai-composer")
             HStack {
-                Button { importing = true } label: { Image(systemName: "plus") }.accessibilityLabel("导入文本文件")
-                Menu {
-                    Button("模型与权限设置") { model.showSettings = true }
-                } label: {
-                    Text(model.settings.policy == "never" ? "完全访问" : model.settings.policy == "unless-trusted" ? "帮我批准" : "请求批准")
-                        .font(.caption).foregroundStyle(model.settings.policy == "never" ? .orange : .secondary)
-                }
+                Button { importing = true } label: {
+                    Image(systemName: "plus").font(.system(size: 17, weight: .medium)).frame(width: 30, height: 30)
+                }.buttonStyle(.plain).foregroundStyle(Color.blue).accessibilityLabel("导入文本文件")
+                Button { model.showSettings = true } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "shield")
+                        Text(model.settings.policy == "never" ? "完全访问" : model.settings.policy == "unless-trusted" ? "帮我批准" : "请求批准")
+                    }.font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(model.settings.policy == "never" ? Color.orange : Color.secondary)
+                        .padding(.horizontal, 8).frame(height: 28)
+                        .background(Color(uiColor: .secondarySystemBackground), in: Capsule())
+                }.buttonStyle(.plain).accessibilityLabel("模型与权限设置")
                 Spacer(minLength: 4)
                 Button(model.configured ? model.settings.model : "未配置模型") { model.showSettings = true }
-                    .font(.caption).lineLimit(1)
+                    .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                    .foregroundStyle(Color.blue).padding(.horizontal, 8).frame(height: 28)
+                    .background(Color.blue.opacity(0.08), in: Capsule())
                 Button {
                     if model.busy { Task { await model.action("stop") } }
                     else {
@@ -264,11 +395,16 @@ private struct AIPermissionCard: View {
                 action("拒绝", "denied")
                 action("允许一次", "approved")
                 action("本会话允许", "approved_for_session")
-            }.buttonStyle(.bordered)
+            }
         }.padding().frame(maxWidth: .infinity, alignment: .leading).background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
     }
     private func action(_ title: String, _ decision: String) -> some View {
-        Button(title) { Task { await model.action("permission", values: ["id": permission.id, "decision": decision]) } }.font(.caption)
+        Button(title) { Task { await model.action("permission", values: ["id": permission.id, "decision": decision]) } }
+            .buttonStyle(.plain).font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(decision == "denied" ? Color.secondary : Color.orange)
+            .padding(.horizontal, 10).frame(height: 32)
+            .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.black.opacity(0.08)))
     }
 }
 private struct AIQuestionCard: View {
@@ -278,10 +414,19 @@ private struct AIQuestionCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(question.question).font(.subheadline.bold())
-            ForEach(question.options, id: \.self) { option in Button(option) { reply(option) }.buttonStyle(.bordered) }
+            ForEach(question.options, id: \.self) { option in
+                Button(option) { reply(option) }.buttonStyle(.plain).font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Color.blue).padding(.horizontal, 12).frame(minHeight: 34)
+                    .background(Color.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 9))
+            }
             HStack {
                 TextField("你的回答", text: $answer)
-                Button("回复") { reply(answer) }.disabled(answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .padding(.horizontal, 10).frame(height: 38)
+                    .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 9))
+                Button("回复") { reply(answer) }.buttonStyle(.plain).font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.white).padding(.horizontal, 12).frame(height: 38)
+                    .background(Color.blue, in: RoundedRectangle(cornerRadius: 9))
+                    .disabled(answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }.padding().background(Color.blue.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
     }
@@ -294,35 +439,83 @@ private struct AISettingsView: View {
     @State private var apiKey = ""
     @State private var saving = false
     var body: some View {
-        NavigationStack {
-            Form {
-                Section("模型") {
+        VStack(spacing: 0) {
+            HStack {
+                Button("取消") { dismiss() }.disabled(saving)
+                    .buttonStyle(.plain).font(.system(size: 14, weight: .medium))
+                Spacer()
+                Text("模型与权限").font(.system(size: 17, weight: .bold))
+                Spacer()
+                Button(saving ? "保存中" : "保存") {
+                    saving = true
+                    Task { if await model.save(settings, key: apiKey) { dismiss() }; saving = false }
+                }.disabled(saving || model.sessions.contains(where: \.busy))
+                    .buttonStyle(.plain).font(.system(size: 14, weight: .semibold)).foregroundStyle(Color.blue)
+            }.padding(.horizontal, 18).frame(height: 56)
+            Divider().overlay(Color.black.opacity(0.06))
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    settingsSection("模型") {
                     TextField("API 地址（以 /v4 或 /v1 结尾）", text: $settings.baseUrl)
                         .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .aiSettingsField()
                     TextField("模型名称", text: $settings.model).textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .aiSettingsField()
                     SecureField(model.configured ? "API Key（留空保留原密钥）" : "API Key", text: $apiKey)
-                    Text("支持兼容 Chat Completions 的接口。密钥仅保存在本机 Keychain。").font(.caption).foregroundStyle(.secondary)
-                }
-                Section("操作权限") {
-                    Picker("批准方式", selection: $settings.policy) {
-                        Text("请求批准").tag("on-request")
-                        Text("帮我批准").tag("unless-trusted")
-                        Text("完全访问").tag("never")
+                        .aiSettingsField()
+                    Text("支持兼容 Chat Completions 的接口。密钥仅保存在本机 Keychain。")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
                     }
-                    Text(settings.policy == "never" ? "自动执行手机工作区内的文件修改及网络请求。" : settings.policy == "unless-trusted" ? "允许工作区内文件修改，网络访问仍询问。" : "修改文件和访问网络前询问。")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                if !model.error.isEmpty { Text(model.error).foregroundStyle(.red).font(.caption) }
-            }.navigationTitle("模型与权限").navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() }.disabled(saving) }
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button(saving ? "保存中" : "保存") {
-                            saving = true
-                            Task { if await model.save(settings, key: apiKey) { dismiss() }; saving = false }
-                        }.disabled(saving || model.sessions.contains(where: \.busy))
+                    settingsSection("操作权限") {
+                        ForEach([
+                            ("on-request", "请求批准", "修改文件和访问网络前询问。"),
+                            ("unless-trusted", "帮我批准", "允许工作区内文件修改，网络访问仍询问。"),
+                            ("never", "完全访问", "自动执行手机工作区内的文件修改及网络请求。")
+                        ], id: \.0) { item in
+                            let (value, title, detail) = item
+                            Button {
+                                settings.policy = value
+                            } label: {
+                                HStack(alignment: .top, spacing: 12) {
+                                    Image(systemName: settings.policy == value ? "checkmark.circle.fill" : "circle")
+                                        .foregroundStyle(settings.policy == value ? Color.blue : Color.secondary)
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(title).font(.system(size: 14, weight: .semibold))
+                                        Text(detail).font(.system(size: 12)).foregroundStyle(.secondary)
+                                    }
+                                    Spacer(minLength: 0)
+                                }.padding(12)
+                                    .background(settings.policy == value ? Color.blue.opacity(0.07) : Color.clear,
+                                                in: RoundedRectangle(cornerRadius: 10))
+                            }.buttonStyle(.plain).foregroundStyle(Color.primary)
+                        }
+                    }
+                    if !model.error.isEmpty {
+                        Text(model.error).foregroundStyle(.red).font(.system(size: 12))
+                            .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.red.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
                     }
                 }
-        }.onAppear { settings = model.settings }
+                .padding(18)
+            }
+        }.background(Color(uiColor: .systemBackground)).onAppear { settings = model.settings }
+    }
+
+    private func settingsSection<Content: View>(_ title: String,
+                                                @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title).font(.system(size: 13, weight: .bold)).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 10) { content() }
+                .padding(12).background(Color(uiColor: .secondarySystemBackground),
+                                        in: RoundedRectangle(cornerRadius: 14))
+        }
+    }
+}
+
+private extension View {
+    func aiSettingsField() -> some View {
+        padding(.horizontal, 12).frame(minHeight: 42)
+            .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 9))
+            .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.black.opacity(0.07)))
     }
 }

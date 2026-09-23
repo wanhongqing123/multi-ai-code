@@ -29,4 +29,21 @@ final class AIAssistantUITests: XCTestCase {
         capture.lifetime = .keepAlways
         add(capture)
     }
+
+    func testTappingConversationDismissesKeyboard() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test"]
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+
+        let editor = app.descendants(matching: .any).matching(identifier: "ai-composer").firstMatch
+        XCTAssertTrue(editor.waitForExistence(timeout: 15))
+        editor.tap()
+        editor.typeText("dismiss keyboard")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 3))
+
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3)).tap()
+
+        XCTAssertFalse(app.keyboards.firstMatch.waitForExistence(timeout: 2))
+    }
 }

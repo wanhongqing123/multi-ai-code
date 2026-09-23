@@ -9,6 +9,7 @@ struct AIAssistantView: View {
     @State private var followsBottom = true
     @State private var userDragging = false
     @State private var latestY: CGFloat = 0
+    @FocusState private var composerFocused: Bool
 
     var body: some View {
         NavigationStack {
@@ -42,6 +43,8 @@ struct AIAssistantView: View {
                                 }.padding(18)
                             }
                             .coordinateSpace(name: "ai-scroll")
+                            .contentShape(Rectangle())
+                            .onTapGesture { composerFocused = false }
                             .onPreferenceChange(AIBottomPreference.self) { y in
                                 latestY = y
                                 let nearBottom = y < geometry.size.height + 40
@@ -79,7 +82,8 @@ struct AIAssistantView: View {
                         Button { model.error = "" } label: { Image(systemName: "xmark") }
                     }.foregroundStyle(.red).padding(12).background(Color.red.opacity(0.05))
                 }
-                AIComposer(model: model).padding(.horizontal, 12).padding(.vertical, 8)
+                AIComposer(model: model, focused: $composerFocused)
+                    .padding(.horizontal, 12).padding(.vertical, 8)
             }
             .background(Color(uiColor: .systemBackground))
             .navigationTitle("AI 助手")
@@ -194,10 +198,10 @@ private struct AIMessageRow: View {
 }
 private struct AIComposer: View {
     @ObservedObject var model: AIAssistantModel
+    @FocusState.Binding var focused: Bool
     @State private var draft = ""
     @State private var importing = false
     @State private var draftSession = ""
-    @FocusState private var focused: Bool
     var body: some View {
         VStack(spacing: 10) {
             TextField("随心输入", text: $draft, axis: .vertical).lineLimit(1...6).focused($focused)

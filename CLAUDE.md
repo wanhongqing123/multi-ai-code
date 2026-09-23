@@ -7,7 +7,6 @@
 |---|---|---|
 | `MaiAgent/` | agent 核心，纯 C++，可移植的库 | **`MaiAgent/CLAUDE.md`** → `MaiAgent/docs/CodingStyle.md` |
 | `MaiChat/` | Qt 桌面端（C++/Qt） | 无独立约定文件；风格照 `MaiChat/desktop/src` 现有代码 |
-| `MaiChatBuddy/` | Electron 界面，派生自 opencode（TS） | `MaiChatBuddy/AGENTS.md`（上游带的） |
 | `electron/` | 主仓库的 Electron 外壳（TS） | 无独立约定文件 |
 | `third_party/aicli/codex/` | codex 源码，**只读参考**，不要改 | 上游的 |
 
@@ -34,8 +33,7 @@
 ## 通用
 
 - 直接在 `main` 上开发，不要自作主张新建分支。
-- 子模块（`MaiChatBuddy/`、`third_party/aicli/`）有自己的提交历史，
-  改动要在子模块里单独提交并推送。
+- 子模块 `third_party/aicli/codex/` 有自己的提交历史，改动要在子模块里单独提交并推送。
 
 ---
 

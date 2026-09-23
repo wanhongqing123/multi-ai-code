@@ -105,8 +105,7 @@ int main(int argc, char* argv[]) {
             "Ship libssl-1_1-x64.dll and libcrypto-1_1-x64.dll alongside the app.");
     }
 
-    // 字体栈对齐 Electron 端（MaiChatBuddy，maichatbuddy.css 的 --mcb-font-sans：
-    // "Inter", "Noto Sans SC", "PingFang SC", "Microsoft YaHei"）。
+    // 桌面端字体栈使用 "Inter", "Noto Sans SC", "PingFang SC", "Microsoft YaHei"。
     //
     // Inter/Noto/JetBrains Mono 都随包打进资源（:/maichat/fonts/，SIL OFL 1.1），
     // 不依赖系统装没装：Inter 拉丁字形的现代感是 Electron 观感的主要来源，

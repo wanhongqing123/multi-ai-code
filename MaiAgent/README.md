@@ -1,6 +1,6 @@
 # MaiAgent
 
-MaiChatBuddy 的 agent 核心，纯 C++，可移植。
+Multi-AI Code 的 agent 核心，纯 C++，可移植。
 
 目标不是把 opencode 翻译成 C++，是**把 agent 核心做成一个能被到处链进去的库**——
 Qt 桌面、iOS/Android、Linux 服务器、嵌入式。

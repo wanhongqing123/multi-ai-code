@@ -2,8 +2,8 @@
   <qresource prefix="/maichat">
     <file alias="app-icon.png">macos/AppIcon-1024.png</file>
   </qresource>
-  <!-- 与 Electron 端（MaiChatBuddy）一致的字体栈：Inter（拉丁）+ Noto Sans SC（中文）
-       + JetBrains Mono（等宽）。许可均为 SIL OFL 1.1，文本在 fonts/ 下随包分发。 -->
+  <!-- 桌面端字体栈：Inter（拉丁）+ Noto Sans SC（中文）+ JetBrains Mono（等宽）。
+       许可均为 SIL OFL 1.1，文本在 fonts/ 下随包分发。 -->
   <qresource prefix="/maichat/fonts">
     <file alias="Inter-latin-400.ttf">fonts/Inter-latin-400.ttf</file>
     <file alias="Inter-latin-500.ttf">fonts/Inter-latin-500.ttf</file>

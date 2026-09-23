@@ -1,6 +1,6 @@
 # MaiAgent
 
-MaiChatBuddy 的 agent 核心，纯 C++，可移植。产物是 `maiagent` 这个库——
+Multi-AI Code 的 agent 核心，纯 C++，可移植。产物是 `maiagent` 这个库——
 `adapters/` 和 `cli/` 是可摘的壳，不是产物本身。
 
 ## 动代码之前先读编码规范

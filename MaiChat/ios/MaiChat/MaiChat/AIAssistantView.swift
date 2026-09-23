@@ -346,23 +346,17 @@ private struct AIComposer: View {
     @State private var voiceStartTask: Task<Bool, Never>?
     var body: some View {
         VStack(spacing: 10) {
-            TextField("随心输入", text: $draft, axis: .vertical).lineLimit(1...6).focused($focused)
+            TextField(composerPrompt, text: $draft, axis: .vertical).lineLimit(1...6).focused($focused)
+                .simultaneousGesture(
+                    voiceGesture,
+                    including: draft.isEmpty || isPressingVoice ? .all : .none
+                )
+                .accessibilityLabel("AI 助手输入框，可按住转文字")
                 .accessibilityIdentifier("ai-composer")
             HStack {
                 Button { importing = true } label: {
                     Image(systemName: "plus").font(.system(size: 17, weight: .medium)).frame(width: 30, height: 30)
                 }.buttonStyle(.plain).foregroundStyle(Color.blue).accessibilityLabel("导入文本文件")
-                Image(systemName: isPressingVoice ? "waveform" : "mic")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(isCancellingVoice ? Color.red : isPressingVoice ? Color.white : Color.blue)
-                    .frame(width: 30, height: 30)
-                    .background(isCancellingVoice ? Color.red.opacity(0.12) : isPressingVoice ? Color.blue : Color.clear,
-                                in: Circle())
-                    .contentShape(Circle())
-                    .gesture(voiceGesture)
-                    .accessibilityLabel(isPressingVoice ? "松开完成语音转文字" : "按住转文字")
-                    .accessibilityIdentifier("ai-voice-input")
-                    .accessibilityAddTraits(.isButton)
                 Button { model.showSettings = true } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "shield")
@@ -427,6 +421,12 @@ private struct AIComposer: View {
             }
     }
 
+    private var composerPrompt: String {
+        if isCancellingVoice { return "松开取消" }
+        if isPressingVoice { return "松开完成" }
+        return "可按住转文字"
+    }
+
     private var voiceGesture: some Gesture {
         LongPressGesture(minimumDuration: 0.25, maximumDistance: 60)
             .sequenced(before: DragGesture(minimumDistance: 0))
@@ -456,6 +456,7 @@ private struct AIComposer: View {
 
     private func beginVoiceTranscription() {
         guard !isPressingVoice else { return }
+        guard draft.isEmpty else { return }
         guard speechRecognizer.isAvailable else {
             model.error = "语音转文字凭证未配置"
             return

@@ -38,7 +38,7 @@ final class AIAssistantUITests: XCTestCase {
 
         let editor = app.descendants(matching: .any).matching(identifier: "ai-composer").firstMatch
         XCTAssertTrue(editor.waitForExistence(timeout: 15))
-        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "ai-voice-input").firstMatch.exists)
+        XCTAssertTrue(editor.label.contains("可按住转文字"))
         editor.tap()
         editor.typeText("dismiss keyboard")
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 3))

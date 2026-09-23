@@ -156,7 +156,10 @@ std::string buildRequestBody(const MaiModelRequest& request) {
         }
         body["tools"] = std::move(tools);
     }
-    return body.dump();
+    // 旧版本在 Windows 上曾把 cmd.exe 的本地代码页字节直接存进工具输出。那些历史记录
+    // 不是合法 UTF-8；默认 dump 会抛 type_error，而异常逃出轮次线程会终止整个进程。
+    // 边界层必须能读取旧数据：非法序列替换成 U+FFFD，保证发出去的 JSON 始终合法。
+    return body.dump(-1, ' ', false, json::error_handler_t::replace);
 }
 
 // ── curl 回调的上下文 ───────────────────────────────────────────

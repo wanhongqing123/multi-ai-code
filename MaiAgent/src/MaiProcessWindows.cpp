@@ -24,6 +24,34 @@ std::wstring toWide(const std::string& utf8) {
     return wide;
 }
 
+std::string normalizeOutputUtf8(const std::string& bytes) {
+    if (bytes.empty()) return {};
+
+    // 很多现代 CLI 直接写 UTF-8，先原样保留。不能无条件按 OEM 代码页转：那会把 git、
+    // Python 等工具本来正确的输出转成乱码。
+    if (::MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, bytes.data(),
+                              static_cast<int>(bytes.size()), nullptr, 0) > 0) {
+        return bytes;
+    }
+
+    // cmd.exe 的内建命令和错误信息在重定向后仍可能走 OEM 代码页；中文 Windows 上就是
+    // CP936。只有上面的严格 UTF-8 校验失败才走这里，既保留本地化文本，也保证入库的是 UTF-8。
+    const int wideLength = ::MultiByteToWideChar(CP_OEMCP, 0, bytes.data(),
+                                                 static_cast<int>(bytes.size()), nullptr, 0);
+    if (wideLength <= 0) return "[process output could not be decoded as UTF-8]";
+    std::wstring wide(static_cast<std::size_t>(wideLength), L'\0');
+    ::MultiByteToWideChar(CP_OEMCP, 0, bytes.data(), static_cast<int>(bytes.size()), wide.data(),
+                          wideLength);
+
+    const int utf8Length =
+        ::WideCharToMultiByte(CP_UTF8, 0, wide.data(), wideLength, nullptr, 0, nullptr, nullptr);
+    if (utf8Length <= 0) return "[process output could not be decoded as UTF-8]";
+    std::string utf8(static_cast<std::size_t>(utf8Length), '\0');
+    ::WideCharToMultiByte(CP_UTF8, 0, wide.data(), wideLength, utf8.data(), utf8Length, nullptr,
+                          nullptr);
+    return utf8;
+}
+
 // 一个参数在 Windows 命令行里的转义。
 //
 // Windows 没有 execv：CreateProcess 收的是**一整行字符串**，由子进程自己按
@@ -33,8 +61,7 @@ std::wstring toWide(const std::string& utf8) {
 // 规则来自 MSDN 的 "Parsing C++ Command-Line Arguments"：反斜杠只有在引号前面
 // 才需要翻倍。
 std::wstring quoteArgument(const std::wstring& argument) {
-    if (!argument.empty() &&
-        argument.find_first_of(L" \t\n\v\"") == std::wstring::npos) {
+    if (!argument.empty() && argument.find_first_of(L" \t\n\v\"") == std::wstring::npos) {
         return argument;
     }
     std::wstring quoted = L"\"";
@@ -101,7 +128,9 @@ MaiError maiRunProcess(const MaiProcessOptions& options, MaiProcessResult& resul
             if (i > 0) joined += ' ';
             joined += options.argv[i];
         }
-        commandLine = L"cmd.exe /c " + toWide(joined);
+        // /d 禁掉注册表 AutoRun，避免用户机器上的 shell 初始化脚本改变命令行为。输出可能
+        // 是 UTF-8，也可能是本机 OEM 代码页，收完后统一由 normalizeOutputUtf8 判别。
+        commandLine = L"cmd.exe /d /c " + toWide(joined);
     } else {
         for (std::size_t i = 0; i < options.argv.size(); ++i) {
             if (i > 0) commandLine.push_back(L' ');
@@ -115,8 +144,8 @@ MaiError maiRunProcess(const MaiProcessOptions& options, MaiProcessResult& resul
     startup.hStdOutput = writeEnd;
     startup.hStdError = writeEnd;
     // stdin 给一个空设备：子进程等输入时立刻拿到 EOF，而不是挂在那儿等超时。
-    HANDLE nullInput = ::CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ, &inherit, OPEN_EXISTING,
-                                     0, nullptr);
+    HANDLE nullInput =
+        ::CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ, &inherit, OPEN_EXISTING, 0, nullptr);
     startup.hStdInput = nullInput;
 
     const std::wstring workingDirectory = toWide(options.workingDirectory);
@@ -212,5 +241,6 @@ MaiError maiRunProcess(const MaiProcessOptions& options, MaiProcessResult& resul
     ::CloseHandle(process.hThread);
     ::CloseHandle(process.hProcess);
     if (job != nullptr) ::CloseHandle(job);
+    result.output = normalizeOutputUtf8(result.output);
     return MaiError();
 }

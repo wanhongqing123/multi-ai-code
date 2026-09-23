@@ -509,6 +509,45 @@ void test_no_tools_field_when_empty() {
     CHECK(!sent.is_discarded() && !sent.contains("tools"));
 }
 
+void test_invalid_utf8_history_is_replaced_before_serialization() {
+    FakeServer fake;
+    fake.script = text_delta("ok") + std::string(kDone);
+    fake.chunk = 100000;
+    fake.start();
+
+    MaiModelRequest request;
+    request.model = "glm-5.3";
+    MaiModelMessage toolResult;
+    toolResult.role = MaiModelRole::ToolResult;
+    toolResult.toolCallId = "call_legacy";
+    // GBK bytes for the beginning of a Windows shell error. Old databases may contain this
+    // exact shape because redirected cmd.exe output was stored without conversion to UTF-8.
+    toolResult.content.assign("\xCF\xB5\xCD\xB3\xD5\xD2", 6);
+    request.messages.push_back(toolResult);
+
+    bool threw = false;
+    Collected result;
+    try {
+        result = runAgainst(fake, request);
+    } catch (...) {
+        threw = true;
+    }
+
+    CHECK(!threw);
+    CHECK(result.done);
+    std::string body;
+    {
+        std::lock_guard<std::mutex> lock(fake.mutex);
+        body = fake.lastBody;
+    }
+    const json sent = json::parse(body, nullptr, false);
+    CHECK(!sent.is_discarded());
+    CHECK(sent["messages"].size() == 1);
+    CHECK(sent["messages"][0]["role"] == "tool");
+    CHECK(sent["messages"][0]["content"].get<std::string>().find("\xEF\xBF\xBD") !=
+          std::string::npos);
+}
+
 }  // namespace
 
 int main() {
@@ -525,6 +564,7 @@ int main() {
     test_transient_http_failure_retries_before_streaming();
     test_wire_shape_of_request();
     test_no_tools_field_when_empty();
+    test_invalid_utf8_history_is_replaced_before_serialization();
     if (failures == 0) std::printf("llm tests passed\n");
     return failures == 0 ? 0 : 1;
 }

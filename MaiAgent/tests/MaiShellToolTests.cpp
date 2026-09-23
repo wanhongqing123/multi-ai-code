@@ -74,8 +74,8 @@ struct Workspace {
 void test_read_only_commands_run_without_asking() {
     auto tool = makeMaiShellTool();
     const char* const safe[] = {
-        "ls -la", "pwd", "echo hello", "cat README.md", "grep -rn foo src", "which git",
-        "git status", "git rev-parse HEAD", "git ls-files", "git describe --always",
+        "ls -la",    "pwd",        "echo hello",         "cat README.md", "grep -rn foo src",
+        "which git", "git status", "git rev-parse HEAD", "git ls-files",  "git describe --always",
     };
     for (const char* command : safe) {
         CHECK(!tool->requiresApproval(args({{"command", command}})));
@@ -126,13 +126,8 @@ void test_shell_metacharacters_always_ask() {
     // 白名单就成了绕过通道——随便找个只读程序打头，后面接什么都放行。
     auto tool = makeMaiShellTool();
     const char* const sneaky[] = {
-        "ls; rm -rf .",
-        "echo hi && rm x",
-        "pwd | sh",
-        "cat x > y",
-        "echo `rm -rf .`",
-        "echo $(rm -rf .)",
-        "ls\nrm -rf .",
+        "ls; rm -rf .",    "echo hi && rm x",  "pwd | sh",     "cat x > y",
+        "echo `rm -rf .`", "echo $(rm -rf .)", "ls\nrm -rf .",
     };
     for (const char* command : sneaky) {
         CHECK(tool->requiresApproval(args({{"command", command}})));
@@ -299,6 +294,38 @@ void test_output_is_capped_and_says_so() {
     CHECK(result.output().size() < 64 * 1024);
 }
 
+void test_windows_shell_output_is_valid_utf8() {
+#if defined(_WIN32)
+    Workspace workspace;
+    auto tool = makeMaiShellTool();
+    const std::string command =
+        "powershell.exe -NoProfile -NonInteractive -Command "
+        R"MAI("$b=[byte[]](0xCF,0xB5,0xCD,0xB3,0xD5,0xD2);)MAI"
+        R"MAI([Console]::OpenStandardOutput().Write($b,0,$b.Length)")MAI";
+    const MaiToolResult result = tool->execute(args({{"command", command}}), workspace.context());
+    CHECK(!result.hasError());
+
+    bool serializable = true;
+    try {
+        (void)json(result.output()).dump();
+    } catch (...) {
+        serializable = false;
+    }
+    CHECK(serializable);
+#endif
+}
+
+void test_windows_localized_shell_output_is_preserved() {
+#if defined(_WIN32)
+    Workspace workspace;
+    auto tool = makeMaiShellTool();
+    const char* command = "echo \u7cfb\u7edf\u627e\u4e0d\u5230\u6307\u5b9a\u7684\u8def\u5f84";
+    const MaiToolResult result = tool->execute(args({{"command", command}}), workspace.context());
+    CHECK(!result.hasError());
+    CHECK(result.output().find("\u7cfb\u7edf\u627e\u4e0d\u5230") != std::string::npos);
+#endif
+}
+
 void test_shell_is_only_registered_where_processes_are_allowed() {
     // iOS 上跑不了外部进程。摆一个永远失败的工具比不摆更糟：模型会反复试，
     // 而它收到的「失败」听起来像临时故障，于是换个写法再试一遍。
@@ -336,6 +363,8 @@ int main() {
     RUN(test_a_hanging_command_is_killed_at_the_timeout);
     RUN(test_cancel_stops_a_running_command);
     RUN(test_output_is_capped_and_says_so);
+    RUN(test_windows_shell_output_is_valid_utf8);
+    RUN(test_windows_localized_shell_output_is_preserved);
     RUN(test_shell_is_only_registered_where_processes_are_allowed);
     if (failures == 0) std::printf("shell tool tests passed\n");
     return failures == 0 ? 0 : 1;

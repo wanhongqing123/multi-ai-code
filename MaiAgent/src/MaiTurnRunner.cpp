@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <exception>
 #include <utility>
 
 #include "MaiIdGenerator.h"
@@ -34,6 +35,19 @@ MaiTurnRunner::MaiTurnRunner(Dependencies dependencies, std::string sessionId, M
       mAssistant(std::move(assistant)) {}
 
 void MaiTurnRunner::run(const std::atomic<bool>& cancel) {
+    try {
+        runUnchecked(cancel);
+    } catch (const std::exception& error) {
+        mError = MaiError::make(MaiErrorCode::Internal,
+                                std::string("unexpected agent failure: ") + error.what());
+        finish(cancel);
+    } catch (...) {
+        mError = MaiError::make(MaiErrorCode::Internal, "unexpected agent failure");
+        finish(cancel);
+    }
+}
+
+void MaiTurnRunner::runUnchecked(const std::atomic<bool>& cancel) {
     if (!mDependencies.model) {
         mError = MaiError::make(MaiErrorCode::NotConfigured, "no model client configured");
         finish(cancel);

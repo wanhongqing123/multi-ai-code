@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -366,6 +367,39 @@ void test_no_tools_means_no_tool_field() {
     CHECK(model->request(0).tools.empty());
 }
 
+void test_model_exception_becomes_a_session_error() {
+    class ThrowingModel final : public MaiModelClient {
+    public:
+        MaiError stream(const MaiModelRequest&, const MaiStreamSink&,
+                        const std::atomic<bool>&) override {
+            throw std::runtime_error("model exploded");
+        }
+
+        MaiWireApi wireApi() const override {
+            return MaiWireApi::ChatCompletions;
+        }
+    };
+
+    Workspace workspace;
+    auto model = std::make_unique<ThrowingModel>();
+    MaiAgent agent(makeMaiMemoryStore(), std::move(model), nullptr);
+    Recorder recorder;
+    recorder.attach(agent);
+    const std::string sessionId =
+        agent.submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
+    agent.submit(MaiSendPrompt{sessionId, "trigger the model"});
+    agent.waitIdle();
+
+    bool reported = false;
+    for (const MaiEvent& event : recorder.all()) {
+        if (event.type == MaiEventType::SessionError &&
+            event.detail.find("model exploded") != std::string::npos) {
+            reported = true;
+        }
+    }
+    CHECK(reported);
+}
+
 }  // namespace
 
 int main() {
@@ -377,6 +411,7 @@ int main() {
     test_path_escape_through_model();
     test_iteration_cap();
     test_no_tools_means_no_tool_field();
+    test_model_exception_becomes_a_session_error();
     if (failures == 0) std::printf("tool loop tests passed\n");
     return failures == 0 ? 0 : 1;
 }

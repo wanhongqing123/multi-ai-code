@@ -53,6 +53,10 @@ public:
     void run(const std::atomic<bool>& cancel);
 
 private:
+    // run() 的实际工作。外层 run() 负责把任何未预期异常收敛成会话错误，不能让异常逃出
+    // std::thread 后触发 std::terminate，带着整个宿主进程一起退出。
+    void runUnchecked(const std::atomic<bool>& cancel);
+
     // 发一次请求并收完这一次的流。返回模型这次要调的工具（可能为空）。
     // 一轮对话里这个会被调用多次——每次工具执行完都要再问一遍模型。
     std::vector<MaiToolInvocation> requestCompletion(const MaiModelRequest& request,

@@ -113,6 +113,9 @@ actor AIAssistantBackend {
         }
         #endif
         try configure(settings, key: key)
+        #if targetEnvironment(simulator)
+        if uiTest { _ = try call("create") }
+        #endif
         initialized = true
         return settings
     }

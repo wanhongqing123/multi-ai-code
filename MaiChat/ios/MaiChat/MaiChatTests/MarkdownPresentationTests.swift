@@ -5,6 +5,32 @@ import UIKit
 @testable import MaiChatCore
 
 final class MarkdownPresentationTests: XCTestCase {
+    func testAIComposerReturnBuildsTheSubmittedText() {
+        XCTAssertEqual(
+            AIComposerSubmissionPolicy.submittedText(
+                currentText: "hello",
+                replacing: NSRange(location: 5, length: 0),
+                with: "\n"
+            ),
+            "hello"
+        )
+        XCTAssertEqual(
+            AIComposerSubmissionPolicy.submittedText(
+                currentText: "",
+                replacing: NSRange(location: 0, length: 0),
+                with: "你好\n"
+            ),
+            "你好"
+        )
+        XCTAssertNil(
+            AIComposerSubmissionPolicy.submittedText(
+                currentText: "hello",
+                replacing: NSRange(location: 5, length: 0),
+                with: "!"
+            )
+        )
+    }
+
     @MainActor
     private struct NavigationLifetimeHarness: View {
         @State private var selection: String? = "a"

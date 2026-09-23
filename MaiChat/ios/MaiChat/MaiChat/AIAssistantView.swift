@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 struct AIAssistantView: View {
@@ -10,6 +11,8 @@ struct AIAssistantView: View {
     @State private var followsBottom = true
     @State private var userDragging = false
     @State private var latestY: CGFloat = 0
+    @State private var sessionDrawerOffset: CGFloat = 0
+    @State private var sessionDrawerWidth: CGFloat = 320
     @FocusState private var composerFocused: Bool
 
     var body: some View {
@@ -18,7 +21,8 @@ struct AIAssistantView: View {
                 AIHeader(
                     openSessions: {
                         composerFocused = false
-                        withAnimation(.easeOut(duration: 0.2)) { showSessions = true }
+                        showActions = false
+                        openSessionDrawer()
                     },
                     openActions: { composerFocused = false; showActions.toggle() }
                 )
@@ -108,20 +112,30 @@ struct AIAssistantView: View {
                 .padding(.top, 54).padding(.trailing, 14)
                 .transition(.scale(scale: 0.96, anchor: .topTrailing).combined(with: .opacity))
             }
-            if showSessions {
-                Color.black.opacity(0.16).ignoresSafeArea().contentShape(Rectangle())
-                    .onTapGesture { withAnimation(.easeOut(duration: 0.2)) { showSessions = false } }
-                    .transition(.opacity).zIndex(2)
-                GeometryReader { geometry in
-                    HStack(spacing: 0) {
-                        sessionList.frame(width: min(360, geometry.size.width * 0.86))
-                            .shadow(color: Color.black.opacity(0.18), radius: 22, x: 8)
-                            .transition(.move(edge: .leading))
-                        Spacer(minLength: 0)
-                    }
-                }.zIndex(3)
+            GeometryReader { geometry in
+                let width = min(360, geometry.size.width * 0.86)
+                let offset = sessionDrawerX(width: width)
+                let progress = max(0, min(1, 1 + offset / width))
+                ZStack(alignment: .leading) {
+                    Color.black.opacity(0.16 * progress)
+                        .ignoresSafeArea()
+                        .contentShape(Rectangle())
+                        .onTapGesture { closeSessionDrawer() }
+                    sessionList
+                        .frame(width: width)
+                        .offset(x: offset)
+                        .shadow(color: Color.black.opacity(0.18 * progress), radius: 22, x: 8)
+                        .accessibilityHidden(!showSessions)
+                }
+                .onAppear { sessionDrawerWidth = width }
+                .onChange(of: geometry.size.width) { _ in sessionDrawerWidth = width }
+                .simultaneousGesture(sessionDrawerCloseGesture(width: width))
             }
+            .allowsHitTesting(showSessions)
+            .accessibilityHidden(!showSessions)
+            .zIndex(3)
         }
+        .simultaneousGesture(sessionDrawerOpenGesture)
         .sheet(isPresented: $model.showSettings) { AISettingsView(model: model) }
         .confirmationDialog("清空当前对话的所有消息？", isPresented: $confirmClear, titleVisibility: .visible) {
             Button("清空消息", role: .destructive) { Task { await model.action("clear") } }
@@ -133,12 +147,79 @@ struct AIAssistantView: View {
         }
     }
 
+    private var drawerAnimation: Animation {
+        .interactiveSpring(response: 0.28, dampingFraction: 0.9)
+    }
+
+    private var sessionDrawerOpenGesture: some Gesture {
+        DragGesture(minimumDistance: 12, coordinateSpace: .global)
+            .onChanged { value in
+                guard !showSessions,
+                      value.startLocation.x <= 32,
+                      value.translation.width > 0,
+                      abs(value.translation.width) > abs(value.translation.height)
+                else { return }
+                composerFocused = false
+                showActions = false
+                sessionDrawerOffset = min(sessionDrawerWidth, value.translation.width)
+            }
+            .onEnded { value in
+                guard !showSessions, sessionDrawerOffset > 0 else { return }
+                let shouldOpen = value.translation.width >= 72
+                    || value.predictedEndTranslation.width >= sessionDrawerWidth * 0.45
+                withAnimation(drawerAnimation) {
+                    showSessions = shouldOpen
+                    sessionDrawerOffset = 0
+                }
+            }
+    }
+
+    private func sessionDrawerCloseGesture(width: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 12, coordinateSpace: .global)
+            .onChanged { value in
+                guard showSessions,
+                      value.translation.width < 0,
+                      abs(value.translation.width) > abs(value.translation.height)
+                else { return }
+                sessionDrawerOffset = max(-width, value.translation.width)
+            }
+            .onEnded { value in
+                guard showSessions, sessionDrawerOffset < 0 else { return }
+                let shouldClose = value.translation.width <= -72
+                    || value.predictedEndTranslation.width <= -width * 0.45
+                if shouldClose {
+                    closeSessionDrawer()
+                } else {
+                    withAnimation(drawerAnimation) { sessionDrawerOffset = 0 }
+                }
+            }
+    }
+
+    private func sessionDrawerX(width: CGFloat) -> CGFloat {
+        if showSessions { return min(0, sessionDrawerOffset) }
+        return -width + max(0, min(width, sessionDrawerOffset))
+    }
+
+    private func openSessionDrawer() {
+        withAnimation(drawerAnimation) {
+            showSessions = true
+            sessionDrawerOffset = 0
+        }
+    }
+
+    private func closeSessionDrawer() {
+        withAnimation(drawerAnimation) {
+            showSessions = false
+            sessionDrawerOffset = 0
+        }
+    }
+
     private var sessionList: some View {
         VStack(spacing: 0) {
             HStack {
                 Text("对话").font(.system(size: 20, weight: .bold))
                 Spacer()
-                Button("完成") { withAnimation(.easeOut(duration: 0.2)) { showSessions = false } }
+                Button("完成") { closeSessionDrawer() }
                     .font(.system(size: 14, weight: .semibold)).buttonStyle(.plain)
             }.padding(.horizontal, 20).padding(.vertical, 18)
             Divider().overlay(Color.black.opacity(0.06))
@@ -147,24 +228,29 @@ struct AIAssistantView: View {
                 ForEach(model.sessions) { session in
                     HStack(spacing: 8) {
                         Button {
-                            showSessions = false
+                            closeSessionDrawer()
                             Task { await model.select(session.id) }
                         } label: {
                             HStack {
-                            Text(session.displayTitle).font(.system(size: 15, weight: .medium)).lineLimit(2)
-                            Spacer()
-                            if session.busy { ProgressView() }
-                            else if session.id == model.selected {
-                                Image(systemName: "checkmark").foregroundStyle(Color.blue)
+                                Text(session.displayTitle).font(.system(size: 15, weight: .medium)).lineLimit(2)
+                                Spacer(minLength: 12)
+                                if session.busy { ProgressView() }
+                                else if session.id == model.selected {
+                                    Image(systemName: "checkmark").foregroundStyle(Color.blue)
+                                }
                             }
-                            }
-                        }.buttonStyle(.plain).foregroundStyle(Color.primary)
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Color.primary)
+                        .accessibilityIdentifier("ai-conversation-\(session.id)")
                         if !session.busy {
                             Button {
                                 Task { await model.select(session.id); await model.action("delete") }
                             } label: {
                                 Image(systemName: "trash").foregroundStyle(Color.secondary)
-                                    .frame(width: 32, height: 32)
+                                    .frame(width: 44, height: 44)
                             }.buttonStyle(.plain).accessibilityLabel("删除 \(session.displayTitle)")
                         }
                     }
@@ -176,7 +262,7 @@ struct AIAssistantView: View {
             }
             HStack {
                 Button {
-                    withAnimation(.easeOut(duration: 0.2)) { showSessions = false }
+                    closeSessionDrawer()
                     Task { await model.create() }
                 } label: {
                     HStack(spacing: 9) {
@@ -187,7 +273,9 @@ struct AIAssistantView: View {
                 }.buttonStyle(.plain)
                 Spacer()
             }.padding(16).overlay(alignment: .top) { Divider().overlay(Color.black.opacity(0.06)) }
-        }.background(Color(uiColor: .systemBackground))
+        }
+        .background(Color(uiColor: .systemBackground))
+        .accessibilityIdentifier("ai-session-drawer")
     }
 }
 
@@ -346,13 +434,36 @@ private struct AIComposer: View {
     @State private var voiceStartTask: Task<Bool, Never>?
     var body: some View {
         VStack(spacing: 10) {
-            TextField(composerPrompt, text: $draft, axis: .vertical).lineLimit(1...6).focused($focused)
-                .simultaneousGesture(
-                    voiceGesture,
-                    including: draft.isEmpty || isPressingVoice ? .all : .none
+            ZStack(alignment: .topLeading) {
+                AIComposerTextView(
+                    text: $draft,
+                    focused: $focused,
+                    voiceTranscriptionEnabled: draft.isEmpty || isPressingVoice,
+                    onSubmit: { submitDraft($0) },
+                    onVoiceChanged: { translation in
+                        beginVoiceTranscription()
+                        isCancellingVoice = translation.height < -60
+                    },
+                    onVoiceEnded: { _ in finishVoiceGesture() },
+                    onVoiceCancelled: { cancelVoiceTranscription(restoresDraft: true) }
                 )
-                .accessibilityLabel("AI 助手输入框，可按住转文字")
-                .accessibilityIdentifier("ai-composer")
+                .onChange(of: draft) { updated in
+                    guard let submitted = AIComposerSubmissionPolicy.submittedText(
+                        currentText: "",
+                        replacing: NSRange(location: 0, length: 0),
+                        with: updated
+                    ) else { return }
+                    draft = submitted
+                    submitDraft(submitted)
+                }
+                if draft.isEmpty {
+                    Text(composerPrompt)
+                        .foregroundStyle(isCancellingVoice ? Color.red : Color.secondary)
+                        .font(.system(size: 17, weight: isPressingVoice ? .semibold : .regular))
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
             HStack {
                 Button { importing = true } label: {
                     Image(systemName: "plus").font(.system(size: 17, weight: .medium)).frame(width: 30, height: 30)
@@ -371,17 +482,14 @@ private struct AIComposer: View {
                     .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).lineLimit(1)
                     .foregroundStyle(Color.blue).padding(.horizontal, 8).frame(height: 28)
                     .background(Color.blue.opacity(0.08), in: Capsule())
-                Button {
-                    if model.busy { Task { await model.action("stop") } }
-                    else {
-                        let sent = draft
-                        Task { if await model.send(sent), draft == sent { draft = "" } }
+                if model.busy {
+                    Button { Task { await model.action("stop") } } label: {
+                        Image(systemName: "stop.fill").font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(.white).frame(width: 34, height: 34).background(.primary, in: Circle())
                     }
-                } label: {
-                    Image(systemName: model.busy ? "stop.fill" : "arrow.up").font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(.white).frame(width: 34, height: 34).background(.primary, in: Circle())
-                }.disabled(!model.ready || model.isSubmitting || (!model.busy && draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
-                    .accessibilityLabel(model.busy ? "停止" : "发送")
+                    .disabled(!model.ready || model.isSubmitting)
+                    .accessibilityLabel("停止")
+                }
             }
         }.padding(14).background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 20))
             .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.gray.opacity(0.22)))
@@ -390,9 +498,15 @@ private struct AIComposer: View {
                     let target = model.selected
                     Task {
                         if let name = await model.importFile(url) {
-                            let mention = "\n请查看文件：\(name)\n"
-                            if target == model.selected { draft += mention; focused = true }
-                            else { model.drafts[target, default: ""] += mention }
+                            if target == model.selected {
+                                draft += (draft.isEmpty ? "" : "\n") + "请查看文件：\(name)"
+                                focused = true
+                            } else {
+                                let previous = model.drafts[target, default: ""]
+                                model.drafts[target] = previous
+                                    + (previous.isEmpty ? "" : "\n")
+                                    + "请查看文件：\(name)"
+                            }
                         }
                     }
                 }
@@ -427,31 +541,25 @@ private struct AIComposer: View {
         return "可按住转文字"
     }
 
-    private var voiceGesture: some Gesture {
-        LongPressGesture(minimumDuration: 0.25, maximumDistance: 60)
-            .sequenced(before: DragGesture(minimumDistance: 0))
-            .onChanged { phase in
-                switch phase {
-                case .first(true):
-                    beginVoiceTranscription()
-                case let .second(true, drag):
-                    beginVoiceTranscription()
-                    isCancellingVoice = (drag?.translation.height ?? 0) < -60
-                default:
-                    break
-                }
-            }
-            .onEnded { _ in
-                guard isPressingVoice else { return }
-                let cancel = isCancellingVoice
-                isPressingVoice = false
-                isCancellingVoice = false
-                if cancel {
-                    cancelVoiceTranscription(restoresDraft: true)
-                } else {
-                    finishVoiceTranscription()
-                }
-            }
+    private func submitDraft(_ submittedText: String? = nil) {
+        guard model.ready, !model.busy, !model.isSubmitting else { return }
+        let sent = submittedText ?? draft
+        guard !sent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        Task {
+            if await model.send(sent), draft == sent { draft = "" }
+        }
+    }
+
+    private func finishVoiceGesture() {
+        guard isPressingVoice else { return }
+        let cancel = isCancellingVoice
+        isPressingVoice = false
+        isCancellingVoice = false
+        if cancel {
+            cancelVoiceTranscription(restoresDraft: true)
+        } else {
+            finishVoiceTranscription()
+        }
     }
 
     private func beginVoiceTranscription() {
@@ -520,6 +628,152 @@ private struct AIComposer: View {
         return base + separator + cleaned
     }
 }
+
+private struct AIComposerTextView: UIViewRepresentable {
+    @Binding var text: String
+    @FocusState.Binding var focused: Bool
+    let voiceTranscriptionEnabled: Bool
+    let onSubmit: (String) -> Void
+    let onVoiceChanged: (CGSize) -> Void
+    let onVoiceEnded: (CGSize) -> Void
+    let onVoiceCancelled: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func makeUIView(context: Context) -> UITextView {
+        let textView = UITextView(usingTextLayoutManager: false)
+        textView.delegate = context.coordinator
+        textView.backgroundColor = .clear
+        textView.font = .systemFont(ofSize: 17)
+        textView.textColor = .label
+        textView.tintColor = .systemBlue
+        textView.returnKeyType = .send
+        textView.enablesReturnKeyAutomatically = true
+        textView.textContainerInset = .zero
+        textView.textContainer.lineFragmentPadding = 0
+        textView.isScrollEnabled = true
+        textView.showsVerticalScrollIndicator = false
+        textView.accessibilityIdentifier = "ai-composer"
+        textView.accessibilityLabel = "AI 助手输入框，可按住转文字"
+
+        let voiceGesture = UILongPressGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleVoiceLongPress(_:))
+        )
+        voiceGesture.minimumPressDuration = 0.35
+        voiceGesture.allowableMovement = 400
+        voiceGesture.cancelsTouchesInView = true
+        voiceGesture.delegate = context.coordinator
+        textView.addGestureRecognizer(voiceGesture)
+        context.coordinator.voiceGesture = voiceGesture
+        return textView
+    }
+
+    func updateUIView(_ textView: UITextView, context: Context) {
+        context.coordinator.parent = self
+        if textView.text != text {
+            textView.text = text
+            textView.selectedRange = NSRange(location: (text as NSString).length, length: 0)
+            textView.invalidateIntrinsicContentSize()
+        }
+        if focused, !textView.isFirstResponder {
+            textView.becomeFirstResponder()
+        } else if !focused, textView.isFirstResponder {
+            textView.resignFirstResponder()
+        }
+    }
+
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        uiView textView: UITextView,
+        context _: Context
+    ) -> CGSize? {
+        guard let width = proposal.width, width.isFinite, width > 0 else { return nil }
+        let fitting = textView.sizeThatFits(
+            CGSize(width: width, height: .greatestFiniteMagnitude)
+        )
+        let lineHeight = textView.font?.lineHeight ?? 20
+        return CGSize(width: width, height: min(max(lineHeight, fitting.height), lineHeight * 6))
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, UITextViewDelegate, UIGestureRecognizerDelegate {
+        var parent: AIComposerTextView
+        weak var voiceGesture: UILongPressGestureRecognizer?
+        private var voiceOrigin: CGPoint?
+
+        init(parent: AIComposerTextView) {
+            self.parent = parent
+        }
+
+        func textViewDidBeginEditing(_: UITextView) {
+            parent.focused = true
+        }
+
+        func textViewDidEndEditing(_: UITextView) {
+            parent.focused = false
+        }
+
+        func textViewDidChange(_ textView: UITextView) {
+            if parent.text != textView.text { parent.text = textView.text }
+            textView.invalidateIntrinsicContentSize()
+        }
+
+        func textView(
+            _ textView: UITextView,
+            shouldChangeTextIn range: NSRange,
+            replacementText: String
+        ) -> Bool {
+            guard textView.markedTextRange == nil,
+                  let submitted = AIComposerSubmissionPolicy.submittedText(
+                      currentText: textView.text,
+                      replacing: range,
+                      with: replacementText
+                  )
+            else { return true }
+            parent.onSubmit(submitted)
+            return false
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard gestureRecognizer === voiceGesture else { return true }
+            return parent.voiceTranscriptionEnabled && parent.text.isEmpty
+        }
+
+        @objc func handleVoiceLongPress(_ gesture: UILongPressGestureRecognizer) {
+            let location = gesture.location(in: gesture.view?.window)
+            switch gesture.state {
+            case .began:
+                guard parent.voiceTranscriptionEnabled, parent.text.isEmpty else { return }
+                voiceOrigin = location
+                gesture.view?.resignFirstResponder()
+                parent.onVoiceChanged(.zero)
+            case .changed:
+                guard let origin = voiceOrigin else { return }
+                parent.onVoiceChanged(
+                    CGSize(width: location.x - origin.x, height: location.y - origin.y)
+                )
+            case .ended:
+                guard let origin = voiceOrigin else { return }
+                voiceOrigin = nil
+                parent.onVoiceEnded(
+                    CGSize(width: location.x - origin.x, height: location.y - origin.y)
+                )
+            case .cancelled, .failed:
+                voiceOrigin = nil
+                parent.onVoiceCancelled()
+            case .possible:
+                break
+            @unknown default:
+                voiceOrigin = nil
+                parent.onVoiceCancelled()
+            }
+        }
+    }
+}
+
 private struct AIPermissionCard: View {
     let permission: AIPermission
     @ObservedObject var model: AIAssistantModel

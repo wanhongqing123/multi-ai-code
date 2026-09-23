@@ -2,6 +2,23 @@ import Combine
 import Foundation
 import MaiChatCore
 
+enum AIComposerSubmissionPolicy {
+    static func submittedText(
+        currentText: String,
+        replacing range: NSRange,
+        with replacementText: String
+    ) -> String? {
+        guard replacementText.last?.isNewline == true else { return nil }
+        let current = currentText as NSString
+        guard range.location <= current.length,
+              range.length <= current.length - range.location
+        else { return nil }
+        var submitted = current.replacingCharacters(in: range, with: replacementText)
+        while submitted.last?.isNewline == true { submitted.removeLast() }
+        return submitted
+    }
+}
+
 /// UITextView owns live editing; surrounding SwiftUI controls observe only
 /// presentation changes. External replacements still invalidate the editor.
 @MainActor

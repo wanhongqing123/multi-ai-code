@@ -175,6 +175,8 @@ public:
                                     QWidget* parent = nullptr)
         : QWidget(parent), signal_(signal) {
         setObjectName(QStringLiteral("remoteImActivityBubble"));
+        setAttribute(Qt::WA_TranslucentBackground);
+        setAutoFillBackground(false);
         setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
         setFixedSize(sizeHint());
         ticker_.setInterval(180);
@@ -195,11 +197,6 @@ protected:
     void paintEvent(QPaintEvent*) override {
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing);
-        const QRectF bubble = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(QColor(QStringLiteral("#f1f5f9")));
-        painter.drawRoundedRect(bubble, UiZoom::s(18), UiZoom::s(18));
-
         if (signal_.kind == RemoteIMActivityKind::HumanTyping) {
             for (int index = 0; index < 3; ++index) {
                 QColor dot(QStringLiteral("#0b8fe3"));
@@ -3693,6 +3690,12 @@ void MainWindow::applyIncrementalMessageUpdate(const QList<RemoteIMMessage>& mes
         else appended = true;
     }
     renderedMessageIds_ = resultIds;
+    // 活动状态不是历史消息，它永远属于当前这一轮。实时追加消息时按消息索引插入，
+    // 会把既有状态行挤到新消息前面；增量更新结束后把它重新锚定到末尾弹簧之前。
+    if (activityBubble_) {
+        messageLayout_->removeWidget(activityBubble_);
+        messageLayout_->insertWidget(qMax(0, messageLayout_->count() - 1), activityBubble_);
+    }
     updateLoadEarlierVisibility();
 
     QTimer::singleShot(0, this, [this, prepended, appended, wasNearBottom, oldMax, oldValue,

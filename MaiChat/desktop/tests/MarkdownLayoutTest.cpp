@@ -33,6 +33,7 @@ private slots:
     void codeBlockKeepsEveryLine();
     void listIndentsByDepth();
     void nestedListsUseCompactDistinctHierarchy();
+    void unorderedListMarkersVaryByDepth();
     void quoteIsTallerThanItsContent();
     void linkHitTestingFindsHref();
     void selectionReadsBackTheText();
@@ -117,6 +118,14 @@ void MarkdownLayoutTest::nestedListsUseCompactDistinctHierarchy() {
     const MarkdownTheme theme = MarkdownTheme::standard(1.0);
     const qreal fourLines = theme.bodyPixelSize * theme.lineHeightRatio * 4;
     QVERIFY(compact.height() <= fourLines + 16);
+}
+
+void MarkdownLayoutTest::unorderedListMarkersVaryByDepth() {
+    const MarkdownTheme theme = MarkdownTheme::standard(1.0);
+    QCOMPARE(theme.listBulletForDepth(0), QStringLiteral("•"));
+    QCOMPARE(theme.listBulletForDepth(1), QStringLiteral("◦"));
+    QCOMPARE(theme.listBulletForDepth(2), QStringLiteral("▪"));
+    QCOMPARE(theme.listBulletForDepth(3), QStringLiteral("•"));
 }
 
 void MarkdownLayoutTest::quoteIsTallerThanItsContent() {

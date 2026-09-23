@@ -77,6 +77,7 @@ class MainWindowLayoutTest : public QObject {
 
 private slots:
     void transientActivityBubbleIsReplacedByIncomingText();
+    void transientActivityStaysAfterNewOutgoingMessage();
     void videoCoverRetainsPhysicalPixels();
     void renamedHeaderButtonsKeepTheirCompactAppearance();
     void messageTextUsesNativeResolutionAndRegularBodyFont();
@@ -174,6 +175,34 @@ void MainWindowLayoutTest::transientActivityBubbleIsReplacedByIncomingText() {
     emit fake->incomingText(QStringLiteral("peer"), QStringLiteral("真正的回复"));
     QTRY_VERIFY(window.findChild<QWidget*>(QStringLiteral("remoteImActivityRow")) == nullptr);
     QCOMPARE(app.chatState().messagesWith(QStringLiteral("peer")).size(), 1);
+}
+
+void MainWindowLayoutTest::transientActivityStaysAfterNewOutgoingMessage() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fake = client.get();
+    RemoteIMApplication app(QStringLiteral("owner"), std::move(client));
+    app.addContact(QStringLiteral("peer"), QStringLiteral("Peer"));
+    MainWindow window(app);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    emit fake->activityReceived(QStringLiteral("peer"), RemoteIMActivitySignal{
+        QStringLiteral("machine:test"), RemoteIMActivityKind::MachineWorking, true, 12000, 1});
+    auto* activityRow = window.findChild<QWidget*>(QStringLiteral("remoteImActivityRow"));
+    QTRY_VERIFY(activityRow != nullptr);
+    auto* activityBubble =
+        activityRow->findChild<QWidget*>(QStringLiteral("remoteImActivityBubble"));
+    QVERIFY(activityBubble != nullptr);
+    QVERIFY(activityBubble->testAttribute(Qt::WA_TranslucentBackground));
+    QVERIFY(!activityBubble->autoFillBackground());
+
+    app.sendText(QStringLiteral("new prompt"));
+    auto* outgoingRow = window.findChild<QWidget*>(QStringLiteral("messageRowOutgoing"));
+    QTRY_VERIFY(outgoingRow != nullptr);
+    QLayout* messageLayout = activityRow->parentWidget()->layout();
+    QVERIFY(messageLayout != nullptr);
+    QVERIFY(messageLayout->indexOf(outgoingRow) < messageLayout->indexOf(activityRow));
+    QCOMPARE(messageLayout->indexOf(activityRow), messageLayout->count() - 2);
 }
 
 // 模拟一次真实拖放：Qt 的 drop 依赖前面的 dragEnter/dragMove 建立内部状态，

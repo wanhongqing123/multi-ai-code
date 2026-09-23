@@ -120,6 +120,17 @@ MarkdownTheme MarkdownTheme::standard(qreal zoom) {
     return theme;
 }
 
+QString MarkdownTheme::listBulletForDepth(int depth) const {
+    switch (qMax(0, depth) % 3) {
+        case 1:
+            return QStringLiteral("◦");
+        case 2:
+            return QStringLiteral("▪");
+        default:
+            return QStringLiteral("•");
+    }
+}
+
 MarkdownCalloutStyle MarkdownTheme::calloutStyle(MarkdownCallout callout) const {
     switch (callout) {
         // 标题不在这儿写死：会话列表的预览行也要同一串字，

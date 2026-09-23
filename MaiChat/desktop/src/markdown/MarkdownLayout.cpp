@@ -645,8 +645,8 @@ private:
                 // 项目符号用 • 这个**字形**，不是画一个圆：要和序号走同一条
                 // 右对齐的路，粗细和字号也才跟得上正文。
                 const bool bullet = item.number <= 0;
-                const QString marker =
-                    bullet ? QStringLiteral("•") : QStringLiteral("%1.").arg(item.number);
+                const QString marker = bullet ? theme_.listBulletForDepth(item.depth)
+                                              : QStringLiteral("%1.").arg(item.number);
                 addPlainText(marker, markerFont(bullet), theme_.listMarker, itemX,
                              top + markerBaselineOffset(bullet), markerColumn, Qt::AlignRight,
                              false);

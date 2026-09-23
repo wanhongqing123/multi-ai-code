@@ -25,6 +25,10 @@ struct MarkdownCalloutStyle {
 };
 
 struct MarkdownTheme {
+    // 无序列表按层级循环使用实心圆、空心圆和方块，与浏览器默认的
+    // disc / circle / square 层级一致。绘制层不要把所有深度重新压成一种标记。
+    QString listBulletForDepth(int depth) const;
+
     // ── 字体 ────────────────────────────────────────────────
     // 空表示跟随应用默认字体。等宽字体按平台给，不写浏览器式的回退列表。
     QString bodyFamily;

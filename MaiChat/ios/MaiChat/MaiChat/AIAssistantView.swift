@@ -13,18 +13,18 @@ struct AIAssistantView: View {
     @State private var latestY: CGFloat = 0
     @State private var sessionDrawerOffset: CGFloat = 0
     @State private var sessionDrawerWidth: CGFloat = 320
-    @FocusState private var composerFocused: Bool
+    @State private var composerFocusController = AIComposerFocusController()
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
             VStack(spacing: 0) {
                 AIHeader(
                     openSessions: {
-                        composerFocused = false
+                        composerFocusController.dismiss()
                         showActions = false
                         openSessionDrawer()
                     },
-                    openActions: { composerFocused = false; showActions.toggle() }
+                    openActions: { composerFocusController.dismiss(); showActions.toggle() }
                 )
                 Divider().overlay(Color.black.opacity(0.06))
                 if !model.ready {
@@ -60,7 +60,7 @@ struct AIAssistantView: View {
                             }
                             .coordinateSpace(name: "ai-scroll")
                             .contentShape(Rectangle())
-                            .onTapGesture { composerFocused = false }
+                            .onTapGesture { composerFocusController.dismiss() }
                             .onPreferenceChange(AIBottomPreference.self) { y in
                                 latestY = y
                                 let nearBottom = y < geometry.size.height + 40
@@ -98,7 +98,7 @@ struct AIAssistantView: View {
                         Button { model.error = "" } label: { Image(systemName: "xmark") }
                     }.foregroundStyle(.red).padding(12).background(Color.red.opacity(0.05))
                 }
-                AIComposer(model: model, focused: $composerFocused)
+                AIComposer(model: model, focusController: composerFocusController)
                     .padding(.horizontal, 12).padding(.vertical, 8)
             }
             .background(Color(uiColor: .systemBackground))
@@ -107,6 +107,10 @@ struct AIAssistantView: View {
                     .onTapGesture { showActions = false }
                 AIActionPanel(
                     canClear: !model.busy && !model.selected.isEmpty,
+                    configureModel: {
+                        showActions = false
+                        model.showSettings = true
+                    },
                     clear: { showActions = false; confirmClear = true }
                 )
                 .padding(.top, 54).padding(.trailing, 14)
@@ -134,9 +138,13 @@ struct AIAssistantView: View {
             .allowsHitTesting(showSessions)
             .accessibilityHidden(!showSessions)
             .zIndex(3)
+            if model.showSettings {
+                AISettingsView(model: model) { model.showSettings = false }
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                    .zIndex(5)
+            }
         }
         .simultaneousGesture(sessionDrawerOpenGesture)
-        .sheet(isPresented: $model.showSettings) { AISettingsView(model: model) }
         .confirmationDialog("清空当前对话的所有消息？", isPresented: $confirmClear, titleVisibility: .visible) {
             Button("清空消息", role: .destructive) { Task { await model.action("clear") } }
         }
@@ -159,7 +167,7 @@ struct AIAssistantView: View {
                       value.translation.width > 0,
                       abs(value.translation.width) > abs(value.translation.height)
                 else { return }
-                composerFocused = false
+                composerFocusController.dismiss()
                 showActions = false
                 sessionDrawerOffset = min(sessionDrawerWidth, value.translation.width)
             }
@@ -310,10 +318,13 @@ private struct AIHeaderButton: View {
 
 private struct AIActionPanel: View {
     let canClear: Bool
+    let configureModel: () -> Void
     let clear: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
+            action("模型配置", "slider.horizontal.3", Color.primary, configureModel)
+            Divider().padding(.leading, 42)
             action("清空当前对话", "trash", canClear ? Color.red : Color.secondary, clear)
                 .disabled(!canClear)
         }.frame(width: 176).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
@@ -417,9 +428,17 @@ private struct AIExpandableBlock<Content: View>: View {
     }
 }
 
+@MainActor
+private final class AIComposerFocusController {
+    weak var textView: UITextView?
+
+    func focus() { textView?.becomeFirstResponder() }
+    func dismiss() { textView?.resignFirstResponder() }
+}
+
 private struct AIComposer: View {
     @ObservedObject var model: AIAssistantModel
-    @FocusState.Binding var focused: Bool
+    let focusController: AIComposerFocusController
     @StateObject private var speechRecognizer = TencentRealtimeSpeechRecognizer(
         appId: TencentASRCredentials.appId,
         secretId: TencentASRCredentials.secretId,
@@ -430,6 +449,7 @@ private struct AIComposer: View {
     @State private var draftSession = ""
     @State private var isPressingVoice = false
     @State private var isCancellingVoice = false
+    @State private var showPolicyMenu = false
     @State private var voiceBaseDraft = ""
     @State private var voiceStartTask: Task<Bool, Never>?
     var body: some View {
@@ -437,7 +457,7 @@ private struct AIComposer: View {
             ZStack(alignment: .topLeading) {
                 AIComposerTextView(
                     text: $draft,
-                    focused: $focused,
+                    focusController: focusController,
                     voiceTranscriptionEnabled: draft.isEmpty || isPressingVoice,
                     onSubmit: { submitDraft($0) },
                     onVoiceChanged: { translation in
@@ -468,7 +488,9 @@ private struct AIComposer: View {
                 Button { importing = true } label: {
                     Image(systemName: "plus").font(.system(size: 17, weight: .medium)).frame(width: 30, height: 30)
                 }.buttonStyle(.plain).foregroundStyle(Color.blue).accessibilityLabel("导入文本文件")
-                Button { model.showSettings = true } label: {
+                Button {
+                    withAnimation(.easeOut(duration: 0.14)) { showPolicyMenu.toggle() }
+                } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "shield")
                         Text(model.settings.policy == "never" ? "完全访问" : model.settings.policy == "unless-trusted" ? "帮我批准" : "请求批准")
@@ -476,10 +498,10 @@ private struct AIComposer: View {
                         .foregroundStyle(model.settings.policy == "never" ? Color.orange : Color.secondary)
                         .padding(.horizontal, 8).frame(height: 28)
                         .background(Color(uiColor: .secondarySystemBackground), in: Capsule())
-                }.buttonStyle(.plain).accessibilityLabel("模型与权限设置")
+                }.buttonStyle(.plain).accessibilityLabel("操作权限")
                 Spacer(minLength: 4)
-                Button(model.configured ? model.settings.model : "未配置模型") { model.showSettings = true }
-                    .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                Text(model.configured ? model.settings.model : "未配置模型")
+                    .font(.system(size: 12, weight: .medium)).lineLimit(1)
                     .foregroundStyle(Color.blue).padding(.horizontal, 8).frame(height: 28)
                     .background(Color.blue.opacity(0.08), in: Capsule())
                 if model.busy {
@@ -493,6 +515,20 @@ private struct AIComposer: View {
             }
         }.padding(14).background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 20))
             .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.gray.opacity(0.22)))
+            .overlay(alignment: .bottomLeading) {
+                if showPolicyMenu {
+                    AIPolicyMenu(selected: model.settings.policy) { policy in
+                        showPolicyMenu = false
+                        guard policy != model.settings.policy else { return }
+                        var next = model.settings
+                        next.policy = policy
+                        Task { _ = await model.save(next, key: "") }
+                    }
+                    .offset(x: 34, y: -48)
+                    .transition(.scale(scale: 0.96, anchor: .bottomLeading).combined(with: .opacity))
+                }
+            }
+            .zIndex(showPolicyMenu ? 4 : 0)
             .fileImporter(isPresented: $importing, allowedContentTypes: [.plainText, .sourceCode, .json]) { result in
                 if case let .success(url) = result {
                     let target = model.selected
@@ -500,7 +536,7 @@ private struct AIComposer: View {
                         if let name = await model.importFile(url) {
                             if target == model.selected {
                                 draft += (draft.isEmpty ? "" : "\n") + "请查看文件：\(name)"
-                                focused = true
+                                focusController.focus()
                             } else {
                                 let previous = model.drafts[target, default: ""]
                                 model.drafts[target] = previous
@@ -569,7 +605,7 @@ private struct AIComposer: View {
             model.error = "语音转文字凭证未配置"
             return
         }
-        focused = false
+        focusController.dismiss()
         isPressingVoice = true
         isCancellingVoice = false
         voiceBaseDraft = draft
@@ -629,9 +665,50 @@ private struct AIComposer: View {
     }
 }
 
+private struct AIPolicyMenu: View {
+    let selected: String
+    let select: (String) -> Void
+
+    private let options = [
+        ("on-request", "请求批准", "hand.raised"),
+        ("unless-trusted", "帮我批准", "checkmark.shield"),
+        ("never", "完全访问", "exclamationmark.shield")
+    ]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(options, id: \.0) { option in
+                Button { select(option.0) } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: option.2).frame(width: 18)
+                        Text(option.1).font(.system(size: 13, weight: .semibold))
+                        Spacer(minLength: 12)
+                        if selected == option.0 {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(Color.blue)
+                        }
+                    }
+                    .foregroundStyle(Color.primary)
+                    .padding(.horizontal, 12)
+                    .frame(height: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                if option.0 != options.last?.0 { Divider().padding(.leading, 40) }
+            }
+        }
+        .frame(width: 220)
+        .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 13))
+        .overlay(RoundedRectangle(cornerRadius: 13).stroke(Color.black.opacity(0.1)))
+        .shadow(color: Color.black.opacity(0.16), radius: 18, y: 8)
+        .accessibilityIdentifier("ai-policy-menu")
+    }
+}
+
 private struct AIComposerTextView: UIViewRepresentable {
     @Binding var text: String
-    @FocusState.Binding var focused: Bool
+    let focusController: AIComposerFocusController
     let voiceTranscriptionEnabled: Bool
     let onSubmit: (String) -> Void
     let onVoiceChanged: (CGSize) -> Void
@@ -657,6 +734,7 @@ private struct AIComposerTextView: UIViewRepresentable {
         textView.showsVerticalScrollIndicator = false
         textView.accessibilityIdentifier = "ai-composer"
         textView.accessibilityLabel = "AI 助手输入框，可按住转文字"
+        focusController.textView = textView
 
         let voiceGesture = UILongPressGestureRecognizer(
             target: context.coordinator,
@@ -673,15 +751,18 @@ private struct AIComposerTextView: UIViewRepresentable {
 
     func updateUIView(_ textView: UITextView, context: Context) {
         context.coordinator.parent = self
+        focusController.textView = textView
         if textView.text != text {
             textView.text = text
             textView.selectedRange = NSRange(location: (text as NSString).length, length: 0)
             textView.invalidateIntrinsicContentSize()
         }
-        if focused, !textView.isFirstResponder {
-            textView.becomeFirstResponder()
-        } else if !focused, textView.isFirstResponder {
-            textView.resignFirstResponder()
+    }
+
+    static func dismantleUIView(_ textView: UITextView, coordinator: Coordinator) {
+        textView.delegate = nil
+        if coordinator.parent.focusController.textView === textView {
+            coordinator.parent.focusController.textView = nil
         }
     }
 
@@ -706,14 +787,6 @@ private struct AIComposerTextView: UIViewRepresentable {
 
         init(parent: AIComposerTextView) {
             self.parent = parent
-        }
-
-        func textViewDidBeginEditing(_: UITextView) {
-            parent.focused = true
-        }
-
-        func textViewDidEndEditing(_: UITextView) {
-            parent.focused = false
         }
 
         func textViewDidChange(_ textView: UITextView) {
@@ -824,88 +897,107 @@ private struct AIQuestionCard: View {
 }
 private struct AISettingsView: View {
     @ObservedObject var model: AIAssistantModel
-    @Environment(\.dismiss) private var dismiss
+    let close: () -> Void
     @State private var settings = AIModelSettings()
     @State private var apiKey = ""
     @State private var saving = false
+
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Button("取消") { dismiss() }.disabled(saving)
-                    .buttonStyle(.plain).font(.system(size: 14, weight: .medium))
+                Button(action: close) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 14, weight: .bold))
+                        .frame(width: 36, height: 36)
+                        .background(Color.white, in: Circle())
+                        .overlay(Circle().stroke(Color.black.opacity(0.08)))
+                }
+                .buttonStyle(.plain)
+                .disabled(saving)
+                .accessibilityLabel("关闭模型配置")
                 Spacer()
-                Text("模型与权限").font(.system(size: 17, weight: .bold))
+                Text("模型配置").font(.system(size: 18, weight: .bold))
                 Spacer()
-                Button(saving ? "保存中" : "保存") {
-                    saving = true
-                    Task { if await model.save(settings, key: apiKey) { dismiss() }; saving = false }
-                }.disabled(saving || model.sessions.contains(where: \.busy))
-                    .buttonStyle(.plain).font(.system(size: 14, weight: .semibold)).foregroundStyle(Color.blue)
-            }.padding(.horizontal, 18).frame(height: 56)
-            Divider().overlay(Color.black.opacity(0.06))
+                Color.clear.frame(width: 36, height: 36)
+            }
+            .padding(.horizontal, 18)
+            .frame(height: 64)
+
             ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    settingsSection("模型") {
-                    TextField("API 地址（以 /v4 或 /v1 结尾）", text: $settings.baseUrl)
-                        .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
-                        .aiSettingsField()
-                    TextField("模型名称", text: $settings.model).textInputAutocapitalization(.never).autocorrectionDisabled()
-                        .aiSettingsField()
-                    SecureField(model.configured ? "API Key（留空保留原密钥）" : "API Key", text: $apiKey)
-                        .aiSettingsField()
-                    Text("支持兼容 Chat Completions 的接口。密钥仅保存在本机 Keychain。")
-                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 18) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("连接你的模型服务").font(.system(size: 22, weight: .bold))
+                        Text("支持兼容 Chat Completions 的接口，密钥只保存在本机 Keychain。")
+                            .font(.system(size: 13)).foregroundStyle(.secondary)
                     }
-                    settingsSection("操作权限") {
-                        ForEach([
-                            ("on-request", "请求批准", "修改文件和访问网络前询问。"),
-                            ("unless-trusted", "帮我批准", "允许工作区内文件修改，网络访问仍询问。"),
-                            ("never", "完全访问", "自动执行手机工作区内的文件修改及网络请求。")
-                        ], id: \.0) { item in
-                            let (value, title, detail) = item
-                            Button {
-                                settings.policy = value
-                            } label: {
-                                HStack(alignment: .top, spacing: 12) {
-                                    Image(systemName: settings.policy == value ? "checkmark.circle.fill" : "circle")
-                                        .foregroundStyle(settings.policy == value ? Color.blue : Color.secondary)
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(title).font(.system(size: 14, weight: .semibold))
-                                        Text(detail).font(.system(size: 12)).foregroundStyle(.secondary)
-                                    }
-                                    Spacer(minLength: 0)
-                                }.padding(12)
-                                    .background(settings.policy == value ? Color.blue.opacity(0.07) : Color.clear,
-                                                in: RoundedRectangle(cornerRadius: 10))
-                            }.buttonStyle(.plain).foregroundStyle(Color.primary)
-                        }
+
+                    settingsField("API 地址", systemImage: "link") {
+                        TextField("https://example.com/v1", text: $settings.baseUrl)
+                            .keyboardType(.URL)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .textFieldStyle(.plain)
+                    }
+                    settingsField("模型名称", systemImage: "cpu") {
+                        TextField("模型名称", text: $settings.model)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .textFieldStyle(.plain)
+                    }
+                    settingsField("API Key", systemImage: "key") {
+                        SecureField(model.configured ? "留空保留原密钥" : "输入 API Key", text: $apiKey)
+                            .textFieldStyle(.plain)
                     }
                     if !model.error.isEmpty {
                         Text(model.error).foregroundStyle(.red).font(.system(size: 12))
                             .padding(12).frame(maxWidth: .infinity, alignment: .leading)
                             .background(Color.red.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
                     }
+
+                    Button {
+                        saving = true
+                        Task {
+                            if await model.save(settings, key: apiKey) { close() }
+                            saving = false
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            if saving { ProgressView().tint(.white) }
+                            Text(saving ? "保存中" : "保存配置")
+                                .font(.system(size: 15, weight: .bold))
+                        }
+                        .foregroundStyle(Color.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 48)
+                        .background(Color.blue, in: RoundedRectangle(cornerRadius: 14))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(saving || model.sessions.contains(where: \.busy))
                 }
-                .padding(18)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 28)
             }
-        }.background(Color(uiColor: .systemBackground)).onAppear { settings = model.settings }
-    }
-
-    private func settingsSection<Content: View>(_ title: String,
-                                                @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title).font(.system(size: 13, weight: .bold)).foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 10) { content() }
-                .padding(12).background(Color(uiColor: .secondarySystemBackground),
-                                        in: RoundedRectangle(cornerRadius: 14))
         }
+        .background(Color(red: 0.97, green: 0.98, blue: 1.0).ignoresSafeArea())
+        .onAppear { settings = model.settings }
+        .accessibilityIdentifier("ai-model-settings")
     }
-}
 
-private extension View {
-    func aiSettingsField() -> some View {
-        padding(.horizontal, 12).frame(minHeight: 42)
-            .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 9))
-            .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.black.opacity(0.07)))
+    private func settingsField<Content: View>(
+        _ title: String,
+        systemImage: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(title, systemImage: systemImage)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color.secondary)
+            content()
+                .font(.system(size: 15))
+                .padding(.horizontal, 14)
+                .frame(minHeight: 48)
+                .background(Color.white, in: RoundedRectangle(cornerRadius: 13))
+                .overlay(RoundedRectangle(cornerRadius: 13).stroke(Color.black.opacity(0.08)))
+        }
     }
 }

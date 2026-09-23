@@ -71,6 +71,33 @@ final class AIAssistantUITests: XCTestCase {
         XCTAssertEqual(waitUntilNotHittable(app.buttons["新对话"]), .completed)
     }
 
+    func testPermissionUsesCompactMenuAndMoreOpensCustomModelSettings() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test"]
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+
+        let permission = app.buttons["操作权限"]
+        XCTAssertTrue(permission.waitForExistence(timeout: 15))
+        permission.tap()
+
+        let policyMenu = app.descendants(matching: .any)
+            .matching(identifier: "ai-policy-menu").firstMatch
+        XCTAssertTrue(policyMenu.waitForExistence(timeout: 3))
+        XCTAssertLessThan(policyMenu.frame.width, app.frame.width * 0.75)
+        app.buttons["完全访问"].tap()
+
+        app.buttons["更多"].tap()
+        XCTAssertTrue(app.buttons["模型配置"].waitForExistence(timeout: 3))
+        app.buttons["模型配置"].tap()
+
+        let settings = app.descendants(matching: .any)
+            .matching(identifier: "ai-model-settings").firstMatch
+        XCTAssertTrue(settings.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["关闭模型配置"].isHittable)
+        XCTAssertTrue(app.buttons["保存配置"].isHittable)
+    }
+
     private func waitUntilNotHittable(_ element: XCUIElement) -> XCTWaiter.Result {
         let expectation = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "hittable == false"),

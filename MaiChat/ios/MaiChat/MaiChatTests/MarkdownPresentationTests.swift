@@ -923,7 +923,7 @@ final class MarkdownPresentationTests: XCTestCase {
                 codeTexts.append(String(styled[run.range].characters))
                 XCTAssertEqual(run.font, MarkdownInlineStyling.codeFont)
                 XCTAssertEqual(run.foregroundColor, MarkdownInlineStyling.codeForeground)
-                XCTAssertEqual(run.backgroundColor, MarkdownInlineStyling.codeBackground)
+                XCTAssertNil(run.backgroundColor)
             } else {
                 XCTAssertNil(run.backgroundColor)
                 XCTAssertNil(run.font)
@@ -949,7 +949,7 @@ final class MarkdownPresentationTests: XCTestCase {
         for run in codeRuns {
             XCTAssertEqual(run.font, MarkdownInlineStyling.codeFont)
             XCTAssertEqual(run.foregroundColor, MarkdownInlineStyling.codeForeground)
-            XCTAssertEqual(run.backgroundColor, MarkdownInlineStyling.codeBackground)
+            XCTAssertNil(run.backgroundColor)
         }
     }
 

@@ -1944,14 +1944,13 @@ private struct RemoteIMActivityBubble: View {
                     .tint(RemoteIMStyle.blue)
                     .scaleEffect(0.72)
                 Text(machineStatusText)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(RemoteIMStyle.textSecondary)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(RemoteIMStyle.blue)
                     .lineLimit(1)
             }
         }
         .padding(.horizontal, signal.kind == .humanTyping ? 14 : 12)
         .frame(height: 42)
-        .background(Color(.secondarySystemBackground), in: Capsule())
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityLabel(signal.kind == .humanTyping ? "对方正在输入" : machineStatusText)
     }

@@ -60,7 +60,6 @@ struct MarkdownTheme {
     QColor link;
     QColor headingColor[6];
     QColor inlineCodeText;
-    QColor inlineCodeBackground;
     QColor codeText;
     QColor codeBackground;
     QColor codeBorder;

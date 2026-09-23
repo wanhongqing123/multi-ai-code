@@ -52,7 +52,6 @@ MarkdownTheme MarkdownTheme::standard(qreal zoom) {
     theme.headingColor[5] = hex("#0e1525");
     // 行内代码是**紫**的，照 iOS。蓝色会和链接撞，中性灰又太弱看不出这是代码。
     theme.inlineCodeText = hex("#6b3b97");
-    theme.inlineCodeBackground = hex("#f2edfa");
     theme.codeText = hex("#0e1525");
     theme.codeBackground = hex("#f4f6f9");
     theme.codeBorder = hex("#e5ecf5");

@@ -575,6 +575,10 @@ function sendMachineActivity(
 ): void {
   const key = machineActivityKey(sessionId, state.taskId)
   const current = machineActivityLeases.get(key)
+  // Reasoning deltas can arrive for every streamed token. The current lease already
+  // renews itself, so receiving the same visible state again must not restart it or
+  // emit another network activity packet.
+  if (current?.kind === kind) return
   if (current) {
     clearInterval(current.timer)
     machineActivityLeases.delete(key)

@@ -5,7 +5,6 @@ enum MarkdownInlineStyling {
     // appearance. If dark message surfaces are added, parameterize the palette
     // and include it in MarkdownRenderCache's key (or use dynamic colors).
     static let codeForeground = Color(red: 0.42, green: 0.23, blue: 0.59)
-    static let codeBackground = Color(red: 0.95, green: 0.93, blue: 0.98)
     static let codeFont = Font.system(size: 13, design: .monospaced)
 
     static func apply(to source: AttributedString) -> AttributedString {
@@ -18,7 +17,6 @@ enum MarkdownInlineStyling {
         for range in codeRanges {
             styled[range].font = codeFont
             styled[range].foregroundColor = codeForeground
-            styled[range].backgroundColor = codeBackground
         }
         return styled
     }

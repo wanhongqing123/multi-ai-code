@@ -179,7 +179,9 @@ public:
         setAutoFillBackground(false);
         setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
         setFixedSize(sizeHint());
-        ticker_.setInterval(180);
+        // 对齐 iOS ProgressView 的节奏：机器状态用十二段渐隐转圈；人工输入仍按
+        // 每四帧推进一个圆点，约 360ms 一步。
+        ticker_.setInterval(90);
         connect(&ticker_, &QTimer::timeout, this, [this] {
             phase_ = (phase_ + 1) % 24;
             update();
@@ -210,17 +212,24 @@ protected:
             return;
         }
 
-        const QRectF ring(UiZoom::s(13), UiZoom::s(9), UiZoom::s(20), UiZoom::s(20));
-        QPen ringPen(QColor(QStringLiteral("#0b8fe3")), 2.2 * UiZoom::factor(),
-                     Qt::SolidLine, Qt::RoundCap);
-        painter.setPen(ringPen);
-        painter.setBrush(Qt::NoBrush);
-        painter.drawArc(ring, (90 - phase_ * 15) * 16, 235 * 16);
+        const QPointF center(UiZoom::s(23), height() / 2.0);
+        const qreal innerRadius = UiZoom::s(4);
+        const qreal outerRadius = UiZoom::s(9);
+        for (int index = 0; index < 12; ++index) {
+            const int trail = (index - phase_ + 12) % 12;
+            QColor color(QStringLiteral("#0b8fe3"));
+            color.setAlpha(255 - trail * 16);
+            painter.setPen(QPen(color, 2.0 * UiZoom::factor(), Qt::SolidLine, Qt::RoundCap));
+            const qreal angle = qDegreesToRadians(static_cast<qreal>(index * 30 - 90));
+            const QPointF direction(qCos(angle), qSin(angle));
+            painter.drawLine(center + direction * innerRadius, center + direction * outerRadius);
+        }
 
         QFont font = painter.font();
         font.setPixelSize(UiZoom::s(12));
+        font.setWeight(QFont::DemiBold);
         painter.setFont(font);
-        painter.setPen(QColor(QStringLiteral("#667085")));
+        painter.setPen(QColor(QStringLiteral("#0b8fe3")));
         painter.drawText(QRectF(UiZoom::s(42), 0, width() - UiZoom::s(50), height()),
                          Qt::AlignVCenter | Qt::AlignLeft, statusText());
     }

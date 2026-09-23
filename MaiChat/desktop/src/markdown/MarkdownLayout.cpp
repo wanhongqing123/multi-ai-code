@@ -20,10 +20,6 @@ struct TextRun {
     qreal height = 0;
     // 这段文字在 selectableText 里的起点，选区和复制都按这个换算。
     int textStart = 0;
-    // 行内代码的胶囊底。**自己画**：QTextCharFormat 的背景是个贴着字的方块，
-    // 没有内边距也没有圆角，看起来很糙——这正是换掉 QTextDocument 的理由之一。
-    QVector<QRectF> chips;
-
     struct Link {
         int start = 0;
         int length = 0;
@@ -225,7 +221,6 @@ private:
         QString text;
         QVector<QTextLayout::FormatRange> formats;
         QVector<TextRun::Link> links;
-        QVector<QPair<int, int>> codeRanges;
 
         for (const MarkdownSpan& span : spans) {
             if (span.text.isEmpty()) continue;
@@ -273,7 +268,6 @@ private:
             formats.push_back(range);
 
             if (isLink) links.push_back({start, span.text.size(), span.href});
-            if (isCode) codeRanges.push_back({start, span.text.size()});
         }
 
         // 附注接在最后一段的最后面，和正文同一个 QTextLayout——
@@ -296,7 +290,7 @@ private:
         }
 
         if (text.isEmpty()) return {};
-        return addLaidOutText(text, base, formats, links, codeRanges, x, y, avail, alignment);
+        return addLaidOutText(text, base, formats, links, x, y, avail, alignment);
     }
 
     // 纯文字（代码行、列表标记、提示框标题）。没有片段，整段一个格式。
@@ -314,14 +308,13 @@ private:
         range.start = 0;
         range.length = text.size();
         range.format = format;
-        return addLaidOutText(text, font, {range}, {}, {}, x, y, avail, alignment, selectable);
+        return addLaidOutText(text, font, {range}, {}, x, y, avail, alignment, selectable);
     }
 
     RunMetrics addLaidOutText(const QString& text, const QFont& base,
                               const QVector<QTextLayout::FormatRange>& formats,
-                              const QVector<TextRun::Link>& links,
-                              const QVector<QPair<int, int>>& codeRanges, qreal x, qreal y,
-                              qreal avail, Qt::Alignment alignment, bool selectable = true) {
+                              const QVector<TextRun::Link>& links, qreal x, qreal y, qreal avail,
+                              Qt::Alignment alignment, bool selectable = true) {
         TextRun run;
         run.layout = std::make_unique<QTextLayout>(text, base);
         run.position = QPointF(x, y);
@@ -351,10 +344,6 @@ private:
         run.layout->endLayout();
         run.height = height;
 
-        for (const QPair<int, int>& range : codeRanges) {
-            appendChips(run, range.first, range.second);
-        }
-
         // 块之间补一个换行，复制出来才是分段的，不会糊成一行。
         if (selectable) {
             out_.text += text;
@@ -363,22 +352,6 @@ private:
 
         out_.runs.push_back(std::move(run));
         return {height, firstLineHeight};
-    }
-
-    // 行内代码的胶囊底。一段代码可能被折到两行，所以要逐行算 x 区间。
-    void appendChips(TextRun& run, int start, int length) {
-        const qreal padX = qMax(1, theme_.codePixelSize / 4);
-        for (int index = 0; index < run.layout->lineCount(); ++index) {
-            const QTextLine line = run.layout->lineAt(index);
-            const int from = qMax(start, line.textStart());
-            const int to = qMin(start + length, line.textStart() + line.textLength());
-            if (from >= to) continue;
-            const qreal left = line.cursorToX(from);
-            const qreal right = line.cursorToX(to);
-            run.chips.push_back(QRectF(qMin(left, right) - padX, line.y() + 1,
-                                       qAbs(right - left) + 2 * padX,
-                                       qMax<qreal>(line.height() - 2, 2)));
-        }
     }
 
     qreal measureSpans(const QVector<MarkdownSpan>& spans, const QFont& base) const {
@@ -872,15 +845,6 @@ void MarkdownLayout::paint(QPainter* painter, const QPointF& origin, const QRect
         const QPointF position = origin + run.position;
         const QRectF bounds(position, QSizeF(impl_->width, run.height));
         if (clipped && !clip.intersects(bounds)) continue;
-
-        if (!run.chips.isEmpty()) {
-            painter->setPen(Qt::NoPen);
-            painter->setBrush(impl_->theme.inlineCodeBackground);
-            const qreal radius = qMax(3, impl_->theme.codePixelSize / 3);
-            for (const QRectF& chip : run.chips) {
-                painter->drawRoundedRect(chip.translated(position), radius, radius);
-            }
-        }
 
         QVector<QTextLayout::FormatRange> selections;
         if (to > from) {

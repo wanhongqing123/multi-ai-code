@@ -23,7 +23,8 @@ public:
     std::string description() const override {
         return "Capture a display or a visible top-level window and inspect the returned image. "
                "Use mode=display for the display containing the mouse pointer. Use mode=window "
-               "with windowTitle when the user names a specific window.";
+               "with windowTitle when the user names a specific window; call list_windows first "
+               "when the exact title is unknown.";
     }
 
     std::string parametersSchema() const override {

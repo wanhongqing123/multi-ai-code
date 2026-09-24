@@ -38,3 +38,7 @@ bool maiIsScreenshotSupported();
 // 从 D3D11 纹理读取显示器或窗口画面；不依赖 Qt、窗口系统控件或外部进程。失败时 screenshot
 // 会保持为空，并返回可供模型纠正的错误。
 MaiError maiCaptureScreenshot(const MaiScreenshotRequest& request, MaiScreenshot& screenshot);
+
+// 枚举当前交互桌面上可按标题捕获的可见顶层窗口。成功但没有窗口时返回空数组；不支持时返回
+// NotSupported。标题统一转换为 UTF-8，顺序不保证稳定，调用方不能把位置当作窗口标识。
+MaiError maiListCaptureWindows(std::vector<std::string>& titles);

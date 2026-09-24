@@ -157,8 +157,13 @@ void test_session_approval_is_scoped_to_the_program() {
     CHECK(tool->approvalKey(args({{"command", "/usr/bin/git push"}})) == "shell:git");
     CHECK(tool->approvalKey(args({{"command", "C:\\\\tools\\\\git.exe push"}})) == "shell:git");
 
-    // 带控制字符的命令**永远进不了白名单**：它真正跑什么不由第一个词决定。
-    CHECK(tool->approvalKey(args({{"command", "ls; rm -rf ."}})) == "shell:<unsafe>");
+    // 带控制字符的命令按完整命令收窄，不能让一条复合命令的会话授权放行另一条。
+    const std::string firstCompound = tool->approvalKey(args({{"command", "ls; rm -rf ."}}));
+    const std::string secondCompound =
+        tool->approvalKey(args({{"command", "echo hi && rm other"}}));
+    CHECK(firstCompound.find("ls; rm -rf .") != std::string::npos);
+    CHECK(secondCompound.find("echo hi && rm other") != std::string::npos);
+    CHECK(firstCompound != secondCompound);
 }
 
 // ── 执行 ────────────────────────────────────────────────────────

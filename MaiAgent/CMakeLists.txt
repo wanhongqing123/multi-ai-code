@@ -161,6 +161,8 @@ add_library(maiagent STATIC
   src/MaiSubAgentTools.cpp
   src/MaiShellTool.cpp
   src/MaiScreenshotTool.cpp
+  src/MaiViewImageTool.cpp
+  src/MaiWindowListTool.cpp
   src/MaiAgent.cpp
   src/MaiTurnRunner.cpp
   src/MaiContextBuilder.cpp
@@ -254,6 +256,8 @@ if(MAIAGENT_BUILD_TESTS)
       MaiSubAgentTests      # 子 Agent：深度上限、数量上限、不能戳别人的会话
       MaiShellToolTests     # shell：审批粒度、超时、取消、输出上限
       MaiScreenshotToolTests  # screenshot：平台能力、审批、原生 PNG 捕获
+      MaiViewImageToolTests   # view_image：路径边界、图片识别、多模态回灌
+      MaiWindowListToolTests  # list_windows：平台能力、审批、可见窗口枚举
       MaiToolLoopTests      # 工具循环：调用 -> 执行 -> 回灌 -> 再答
       MaiPermissionTests)   # 权限闸门：拦住 -> 等裁决 -> 放行或拒绝
     add_executable(${test_name} tests/${test_name}.cpp)

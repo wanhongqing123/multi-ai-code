@@ -9,3 +9,9 @@ MaiError maiCaptureScreenshot(const MaiScreenshotRequest&, MaiScreenshot& screen
     return MaiError::make(MaiErrorCode::NotSupported,
                           "native screen capture is not supported on this platform");
 }
+
+MaiError maiListCaptureWindows(std::vector<std::string>& titles) {
+    titles.clear();
+    return MaiError::make(MaiErrorCode::NotSupported,
+                          "native window enumeration is not supported on this platform");
+}

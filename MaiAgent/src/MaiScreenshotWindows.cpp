@@ -54,6 +54,17 @@ std::wstring widen(const std::string& utf8) {
     return wide;
 }
 
+std::string narrow(const std::wstring& wide) {
+    if (wide.empty()) return {};
+    const int length = ::WideCharToMultiByte(CP_UTF8, 0, wide.data(), static_cast<int>(wide.size()),
+                                             nullptr, 0, nullptr, nullptr);
+    if (length <= 0) return {};
+    std::string utf8(static_cast<std::size_t>(length), '\0');
+    ::WideCharToMultiByte(CP_UTF8, 0, wide.data(), static_cast<int>(wide.size()), utf8.data(),
+                          length, nullptr, nullptr);
+    return utf8;
+}
+
 std::wstring lower(std::wstring text) {
     std::transform(text.begin(), text.end(), text.begin(), [](wchar_t character) {
         return static_cast<wchar_t>(std::towlower(character));
@@ -67,20 +78,36 @@ struct WindowSearch {
     std::vector<HWND> partial;
 };
 
+bool visibleWindowTitle(HWND window, std::wstring& title) {
+    if (!::IsWindowVisible(window) || ::IsIconic(window)) return false;
+    const int length = ::GetWindowTextLengthW(window);
+    if (length <= 0) return false;
+    title.assign(static_cast<std::size_t>(length) + 1, L'\0');
+    const int copied = ::GetWindowTextW(window, title.data(), static_cast<int>(title.size()));
+    if (copied <= 0) return false;
+    title.resize(static_cast<std::size_t>(copied));
+    return true;
+}
+
 BOOL CALLBACK collectMatchingWindows(HWND window, LPARAM parameter) {
     auto& search = *reinterpret_cast<WindowSearch*>(parameter);
-    if (!::IsWindowVisible(window) || ::IsIconic(window)) return TRUE;
-    const int length = ::GetWindowTextLengthW(window);
-    if (length <= 0) return TRUE;
-    std::wstring title(static_cast<std::size_t>(length) + 1, L'\0');
-    const int copied = ::GetWindowTextW(window, title.data(), static_cast<int>(title.size()));
-    if (copied <= 0) return TRUE;
-    title.resize(static_cast<std::size_t>(copied));
+    std::wstring title;
+    if (!visibleWindowTitle(window, title)) return TRUE;
     const std::wstring folded = lower(title);
     if (folded == search.expected) {
         search.exact.push_back(window);
     } else if (folded.find(search.expected) != std::wstring::npos) {
         search.partial.push_back(window);
+    }
+    return TRUE;
+}
+
+BOOL CALLBACK collectVisibleWindowTitles(HWND window, LPARAM parameter) {
+    auto& titles = *reinterpret_cast<std::vector<std::string>*>(parameter);
+    std::wstring title;
+    if (visibleWindowTitle(window, title)) {
+        std::string utf8 = narrow(title);
+        if (!utf8.empty()) titles.push_back(std::move(utf8));
     }
     return TRUE;
 }
@@ -389,4 +416,13 @@ MaiError maiCaptureScreenshot(const MaiScreenshotRequest& request, MaiScreenshot
         return captureWindow(request.windowTitle, screenshot);
     }
     return captureDisplay(screenshot);
+}
+
+MaiError maiListCaptureWindows(std::vector<std::string>& titles) {
+    titles.clear();
+    if (!::EnumWindows(collectVisibleWindowTitles, reinterpret_cast<LPARAM>(&titles))) {
+        return MaiError::make(MaiErrorCode::Internal, "EnumWindows failed");
+    }
+    std::sort(titles.begin(), titles.end());
+    return {};
 }

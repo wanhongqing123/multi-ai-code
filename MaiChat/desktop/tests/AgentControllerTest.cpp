@@ -259,10 +259,16 @@ void AgentControllerTest::registers_a_screenshot_tool_that_requires_approval() {
     QVERIFY(finished.wait(15000));
 
     bool foundScreenshot = false;
+    bool foundViewImage = false;
+    bool foundListWindows = false;
     for (const MaiToolSpec& tool : scripted->lastRequest().tools) {
         if (tool.name == "screenshot") foundScreenshot = true;
+        if (tool.name == "view_image") foundViewImage = true;
+        if (tool.name == "list_windows") foundListWindows = true;
     }
     QCOMPARE(foundScreenshot, maiIsScreenshotSupported());
+    QVERIFY(foundViewImage);
+    QCOMPARE(foundListWindows, maiIsScreenshotSupported());
 }
 
 QTEST_MAIN(AgentControllerTest)

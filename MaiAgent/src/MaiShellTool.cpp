@@ -140,9 +140,10 @@ public:
         const json args = parseArguments(argumentsJson);
         const std::string command = args.value("command", std::string{});
         const std::string program = programOf(command);
-        // 带控制字符的命令不给会话级豁免：它真正跑什么不由第一个词决定，
-        // 每一条都得单独问。给一个独一无二的键，等于这条永远进不了白名单。
-        if (program.empty() || hasShellControlCharacters(command)) return "shell:<unsafe>";
+        // 带控制字符时，真正执行的内容不由第一个词决定。按完整命令收窄会话授权：
+        // 用户允许 `npm test && echo done` 不能顺带放行 `npm test && del important.txt`。
+        if (program.empty() || hasShellControlCharacters(command))
+            return "shell:<compound>:" + command;
         return "shell:" + program;
     }
 

@@ -1,3 +1,6 @@
+import AVFoundation
+import Photos
+import PhotosUI
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
@@ -454,6 +457,10 @@ private struct AIComposer: View {
     )
     @State private var draft = ""
     @State private var importing = false
+    @State private var isAttachmentPanelPresented = false
+    @State private var isPhotoPickerPresented = false
+    @State private var isCameraPresented = false
+    @State private var selectedMediaItems: [PhotosPickerItem] = []
     @State private var draftSession = ""
     @State private var isPressingVoice = false
     @State private var showPolicyMenu = false
@@ -498,9 +505,20 @@ private struct AIComposer: View {
                 }
             }
             HStack {
-                Button { importing = true } label: {
-                    Image(systemName: "plus").font(.system(size: 17, weight: .medium)).frame(width: 30, height: 30)
-                }.buttonStyle(.plain).foregroundStyle(Color.blue).accessibilityLabel("导入文本文件")
+                Button {
+                    focusController.dismiss()
+                    withAnimation(.easeOut(duration: 0.18)) {
+                        isAttachmentPanelPresented.toggle()
+                    }
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 17, weight: .medium))
+                        .rotationEffect(.degrees(isAttachmentPanelPresented ? 45 : 0))
+                        .frame(width: 30, height: 30)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.blue)
+                .accessibilityLabel(isAttachmentPanelPresented ? "收起更多功能" : "展开更多功能")
                 Button {
                     withAnimation(.easeOut(duration: 0.14)) { showPolicyMenu.toggle() }
                 } label: {
@@ -526,6 +544,31 @@ private struct AIComposer: View {
                     .accessibilityLabel("停止")
                 }
             }
+            if isAttachmentPanelPresented {
+                Divider()
+                ComposerAttachmentPanel(
+                    canSendImage: true,
+                    canSendVideo: false,
+                    canSendFile: true,
+                    canSendVoice: false,
+                    openLibrary: {
+                        isAttachmentPanelPresented = false
+                        Task { await openPhotoPicker() }
+                    },
+                    openCamera: {
+                        isAttachmentPanelPresented = false
+                        Task { await openCamera() }
+                    },
+                    openFile: {
+                        isAttachmentPanelPresented = false
+                        importing = true
+                    },
+                    openVoiceInput: {},
+                    showsVoiceInput: false
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }.padding(14).background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 20))
             .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.gray.opacity(0.22)))
             .overlay(alignment: .bottomLeading) {
@@ -542,23 +585,41 @@ private struct AIComposer: View {
                 }
             }
             .zIndex(showPolicyMenu ? 4 : 0)
-            .fileImporter(isPresented: $importing, allowedContentTypes: [.plainText, .sourceCode, .json]) { result in
+            .animation(.easeOut(duration: 0.18), value: isAttachmentPanelPresented)
+            .photosPicker(
+                isPresented: $isPhotoPickerPresented,
+                selection: $selectedMediaItems,
+                maxSelectionCount: 10,
+                selectionBehavior: .ordered,
+                matching: .images,
+                photoLibrary: .shared()
+            )
+            .fullScreenCover(isPresented: $isCameraPresented) {
+                RemoteIMCameraPicker(
+                    onCapture: { image in
+                        isCameraPresented = false
+                        Task { await importCapturedImage(image) }
+                    },
+                    onCancel: { isCameraPresented = false }
+                )
+                .ignoresSafeArea()
+            }
+            .fileImporter(
+                isPresented: $importing,
+                allowedContentTypes: [.plainText, .sourceCode, .json, .image]
+            ) { result in
                 if case let .success(url) = result {
                     let target = model.selected
                     Task {
                         if let name = await model.importFile(url) {
-                            if target == model.selected {
-                                draft += (draft.isEmpty ? "" : "\n") + "请查看文件：\(name)"
-                                focusController.focus()
-                            } else {
-                                let previous = model.drafts[target, default: ""]
-                                model.drafts[target] = previous
-                                    + (previous.isEmpty ? "" : "\n")
-                                    + "请查看文件：\(name)"
-                            }
+                            appendImportedFile(name, to: target)
                         }
                     }
                 }
+            }
+            .onChange(of: selectedMediaItems) { items in
+                guard !items.isEmpty else { return }
+                Task { await importSelectedImages(items) }
             }
             .onAppear {
                 draftSession = model.selected
@@ -589,6 +650,8 @@ private struct AIComposer: View {
                 transcriptionPresentation.onEdit = nil
                 transcriptionPresentation.reset()
                 speechRecognizer.cancel()
+                isAttachmentPanelPresented = false
+                selectedMediaItems = []
             }
             .onChange(of: model.selected) { selected in
                 cancelVoiceTranscription(restoresDraft: true)
@@ -597,6 +660,155 @@ private struct AIComposer: View {
                 draftSession = selected
                 if !sendingFirstMessage { draft = model.drafts[selected] ?? "" }
             }
+    }
+
+    private func openPhotoPicker() async {
+        guard await requestPhotoLibraryPermission() else {
+            model.showTransientError("没有相册权限，请在系统设置中允许访问照片")
+            return
+        }
+        isPhotoPickerPresented = true
+    }
+
+    private func openCamera() async {
+        guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
+            model.showTransientError("当前设备不支持拍照")
+            return
+        }
+        guard await requestCameraPermission() else {
+            model.showTransientError("没有相机权限，请在系统设置中允许 MaiChat 使用相机")
+            return
+        }
+        isCameraPresented = true
+    }
+
+    private func requestCameraPermission() async -> Bool {
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            return true
+        case .notDetermined:
+            return await withCheckedContinuation { continuation in
+                AVCaptureDevice.requestAccess(for: .video) { granted in
+                    continuation.resume(returning: granted)
+                }
+            }
+        case .denied, .restricted:
+            return false
+        @unknown default:
+            return false
+        }
+    }
+
+    private func requestPhotoLibraryPermission() async -> Bool {
+        switch PHPhotoLibrary.authorizationStatus(for: .readWrite) {
+        case .authorized, .limited:
+            return true
+        case .notDetermined:
+            let status = await withCheckedContinuation { continuation in
+                PHPhotoLibrary.requestAuthorization(for: .readWrite) { status in
+                    continuation.resume(returning: status)
+                }
+            }
+            return status == .authorized || status == .limited
+        case .denied, .restricted:
+            return false
+        @unknown default:
+            return false
+        }
+    }
+
+    private func importSelectedImages(_ items: [PhotosPickerItem]) async {
+        let targetSession = model.selected
+        defer { selectedMediaItems = [] }
+        var importedCount = 0
+        var failedCount = 0
+        for item in items {
+            do {
+                guard let data = try await item.loadTransferable(type: Data.self),
+                      data.count <= 20 * 1024 * 1024
+                else {
+                    failedCount += 1
+                    continue
+                }
+                let type = item.supportedContentTypes.first { $0.conforms(to: .image) }
+                let temporaryURL = try await Self.writeTemporaryImage(
+                    data,
+                    pathExtension: type?.preferredFilenameExtension ?? "jpg"
+                )
+                defer { Task { await Self.removeTemporaryFile(temporaryURL) } }
+                guard let name = await model.importFile(temporaryURL) else {
+                    failedCount += 1
+                    continue
+                }
+                appendImportedFile(name, to: targetSession)
+                importedCount += 1
+            } catch {
+                failedCount += 1
+            }
+        }
+        if failedCount > 0 {
+            model.showTransientError(
+                importedCount > 0
+                    ? "已导入\(importedCount)张图片，另有\(failedCount)张失败"
+                    : "所选图片读取失败"
+            )
+        }
+    }
+
+    private func importCapturedImage(_ image: UIImage) async {
+        let targetSession = model.selected
+        guard let data = image.jpegData(compressionQuality: 0.9) else {
+            model.showTransientError("拍摄图片处理失败")
+            return
+        }
+        do {
+            let temporaryURL = try await Self.writeTemporaryImage(data, pathExtension: "jpg")
+            defer { Task { await Self.removeTemporaryFile(temporaryURL) } }
+            if let name = await model.importFile(temporaryURL) {
+                appendImportedFile(name, to: targetSession)
+            }
+        } catch {
+            model.showTransientError("拍摄图片导入失败")
+        }
+    }
+
+    private func appendImportedFile(_ name: String, to targetSession: String) {
+        let reference = "请查看文件：\(name)"
+        if targetSession == model.selected {
+            draft += (draft.isEmpty ? "" : "\n") + reference
+            focusController.focus()
+        } else {
+            let previous = model.drafts[targetSession, default: ""]
+            model.drafts[targetSession] = previous
+                + (previous.isEmpty ? "" : "\n")
+                + reference
+        }
+    }
+
+    nonisolated private static func writeTemporaryImage(
+        _ data: Data,
+        pathExtension: String
+    ) async throws -> URL {
+        try await RemoteIMBackgroundWork.file {
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("AIAssistantImports", isDirectory: true)
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true
+            )
+            let cleanExtension = pathExtension.trimmingCharacters(in: .whitespacesAndNewlines)
+            let target = directory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension(cleanExtension.isEmpty ? "jpg" : cleanExtension)
+            try data.write(to: target, options: .atomic)
+            return target
+        }
+    }
+
+    nonisolated private static func removeTemporaryFile(_ url: URL) async {
+        _ = try? await RemoteIMBackgroundWork.file {
+            try FileManager.default.removeItem(at: url)
+        }
     }
 
     private var composerPrompt: String {

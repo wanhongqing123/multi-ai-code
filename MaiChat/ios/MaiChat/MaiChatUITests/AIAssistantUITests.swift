@@ -40,6 +40,24 @@ final class AIAssistantUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [unfocused], timeout: 3), .completed)
     }
 
+    func testAttachmentPanelMatchesMessageComposerActions() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test"]
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+
+        let more = app.buttons["展开更多功能"]
+        XCTAssertTrue(more.waitForExistence(timeout: 15))
+        more.tap()
+        XCTAssertTrue(app.buttons["相册"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["拍摄"].isHittable)
+        XCTAssertTrue(app.buttons["文件"].isHittable)
+        XCTAssertFalse(app.buttons["语音输入"].exists)
+
+        app.buttons["收起更多功能"].tap()
+        XCTAssertEqual(waitUntilNotHittable(app.buttons["相册"]), .completed)
+    }
+
     func testConversationDrawerContainsNewConversationAction() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--ai-ui-test"]

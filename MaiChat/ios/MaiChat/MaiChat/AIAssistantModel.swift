@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct AIModelSettings: Codable, Sendable, Equatable {
     var baseUrl = "https://open.bigmodel.cn/api/coding/paas/v4"
@@ -163,10 +164,21 @@ actor AIAssistantBackend {
         guard let root else { throw AIBackendError(message: "AI 助手尚未准备好") }
         let scoped = source.startAccessingSecurityScopedResource()
         defer { if scoped { source.stopAccessingSecurityScopedResource() } }
-        let size = try source.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-        guard size <= 5 * 1024 * 1024 else { throw AIBackendError(message: "请选择不超过 5 MB 的文本文件") }
+        let values = try source.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey])
+        let contentType = values.contentType
+            ?? UTType(filenameExtension: source.pathExtension)
+        let isImage = contentType?.conforms(to: .image) == true
+        let size = values.fileSize ?? 0
+        let maximumSize = isImage ? 20 * 1024 * 1024 : 5 * 1024 * 1024
+        guard size <= maximumSize else {
+            throw AIBackendError(
+                message: isImage ? "请选择不超过 20 MB 的图片" : "请选择不超过 5 MB 的文本文件"
+            )
+        }
         let data = try Data(contentsOf: source)
-        guard String(data: data, encoding: .utf8) != nil else { throw AIBackendError(message: "目前支持 UTF-8 文本和代码文件") }
+        guard isImage || String(data: data, encoding: .utf8) != nil else {
+            throw AIBackendError(message: "目前支持 UTF-8 文本、代码文件和图片")
+        }
         let name = UUID().uuidString.prefix(8) + "-" + source.lastPathComponent
         let target = root.appendingPathComponent("Workspace").appendingPathComponent(String(name))
         try data.write(to: target, options: .atomic)

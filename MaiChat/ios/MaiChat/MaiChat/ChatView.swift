@@ -4576,7 +4576,7 @@ private struct RemoteIMPickedVideoTransfer: Transferable, Sendable {
     }
 }
 
-private struct ComposerAttachmentPanel: View {
+struct ComposerAttachmentPanel: View {
     let canSendImage: Bool
     let canSendVideo: Bool
     let canSendFile: Bool
@@ -4585,11 +4585,14 @@ private struct ComposerAttachmentPanel: View {
     let openCamera: () -> Void
     let openFile: () -> Void
     let openVoiceInput: () -> Void
+    var showsVoiceInput = true
 
-    private let columns = Array(
-        repeating: GridItem(.flexible(), spacing: 12, alignment: .top),
-        count: 4
-    )
+    private var columns: [GridItem] {
+        Array(
+            repeating: GridItem(.flexible(), spacing: 12, alignment: .top),
+            count: showsVoiceInput ? 4 : 3
+        )
+    }
 
     var body: some View {
         LazyVGrid(columns: columns, alignment: .center, spacing: 14) {
@@ -4611,12 +4614,14 @@ private struct ComposerAttachmentPanel: View {
                 enabled: canSendFile,
                 action: openFile
             )
-            actionButton(
-                title: "语音输入",
-                systemImage: "mic.fill",
-                enabled: canSendVoice,
-                action: openVoiceInput
-            )
+            if showsVoiceInput {
+                actionButton(
+                    title: "语音输入",
+                    systemImage: "mic.fill",
+                    enabled: canSendVoice,
+                    action: openVoiceInput
+                )
+            }
         }
         .padding(.horizontal, 18)
         .padding(.top, 18)
@@ -6204,7 +6209,7 @@ private struct ComposerTextView: UIViewRepresentable {
     }
 }
 
-private struct RemoteIMCameraPicker: UIViewControllerRepresentable {
+struct RemoteIMCameraPicker: UIViewControllerRepresentable {
     let onCapture: (UIImage) -> Void
     let onCancel: () -> Void
 

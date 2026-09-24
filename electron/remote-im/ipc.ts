@@ -67,6 +67,7 @@ import {
 import {
   RemoteImStructuredTaskRegistry
 } from './structuredTaskRegistry.js'
+import { beginMachineActivityPhase } from './machineActivity.js'
 import { getRemoteImAicliOutputSourceKind } from './aicliSourceKind.js'
 import {
   createPeerOutgoingFileMessageInput,
@@ -573,29 +574,34 @@ function machineActivityKey(sessionId: string, taskId: string): string {
 function sendMachineActivity(
   sessionId: string,
   state: RemoteImStructuredTaskState,
-  kind: RemoteImActivityKind
+  kind: RemoteImActivityKind,
+  startsNewTurn = false
 ): void {
   const key = machineActivityKey(sessionId, state.taskId)
   const current = machineActivityLeases.get(key)
   // Reasoning deltas can arrive for every streamed token. The current lease already
   // renews itself, so receiving the same visible state again must not restart it or
   // emit another network activity packet.
-  if (current?.kind === kind) return
+  if (!startsNewTurn && current?.kind === kind) return
   if (current) {
     clearInterval(current.timer)
     machineActivityLeases.delete(key)
   }
   if (state.autoReplyToIm === false || state.securityGeneration !== remoteImAccountSecurityGeneration) return
-  const activityId = current?.activityId ?? `machine:${randomUUID()}`
+  // task_started 是 Codex 发出的真实新 turn 边界。即便远程路由为了安全关联沿用
+  // 同一个 taskId，也必须生成新的活动 id 和计时起点，不能把上一轮耗时带过来。
   const startedAtMs = Date.now()
+  const clock = beginMachineActivityPhase(
+    current,
+    startsNewTurn,
+    startedAtMs,
+    () => `machine:${randomUUID()}`
+  )
   const lease: MachineActivityLease = {
     sessionId,
     state,
     kind,
-    activityId,
-    sequence: current?.sequence ?? 0,
-    startedAtMs,
-    taskStartedAtMs: current?.taskStartedAtMs ?? startedAtMs,
+    ...clock,
     timer: setInterval(emit, MACHINE_ACTIVITY_HEARTBEAT_MS)
   }
   function emit(): void {
@@ -605,7 +611,7 @@ function sendMachineActivity(
       return
     }
     broadcastOutgoingActivity(state, {
-      activityId, sequence: ++lease.sequence, kind: lease.kind, active: true,
+      activityId: lease.activityId, sequence: ++lease.sequence, kind: lease.kind, active: true,
       startedAtMs: lease.startedAtMs,
       taskStartedAtMs: lease.taskStartedAtMs,
       ttlMs: MACHINE_ACTIVITY_TTL_MS
@@ -2556,7 +2562,7 @@ function ensureSessionListeners(): void {
       }
       if (!state.sourceStarted) state.forwardedStructuredAssistantTexts = []
       markStructuredTaskActive(state)
-      sendMachineActivity(sessionId, state, 'machine-working')
+      sendMachineActivity(sessionId, state, 'machine-working', true)
       return
     }
     if (kind === 'task_activity') {

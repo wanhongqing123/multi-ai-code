@@ -560,6 +560,7 @@ private struct AIComposer: View {
     @State private var draftSession = ""
     @State private var isPressingVoice = false
     @State private var showPolicyMenu = false
+    @State private var showModelMenu = false
     @State private var voiceBaseDraft = ""
     @State private var voiceStartTask: Task<Bool, Never>?
     var body: some View {
@@ -616,7 +617,10 @@ private struct AIComposer: View {
                 .foregroundStyle(Color.blue)
                 .accessibilityLabel(isAttachmentPanelPresented ? "收起更多功能" : "展开更多功能")
                 Button {
-                    withAnimation(.easeOut(duration: 0.14)) { showPolicyMenu.toggle() }
+                    withAnimation(.easeOut(duration: 0.14)) {
+                        showModelMenu = false
+                        showPolicyMenu.toggle()
+                    }
                 } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "shield")
@@ -627,10 +631,20 @@ private struct AIComposer: View {
                         .background(Color(uiColor: .secondarySystemBackground), in: Capsule())
                 }.buttonStyle(.plain).accessibilityLabel("操作权限")
                 Spacer(minLength: 4)
-                Text(model.configured ? model.settings.model : "未配置模型")
-                    .font(.system(size: 12, weight: .medium)).lineLimit(1)
-                    .foregroundStyle(Color.blue).padding(.horizontal, 8).frame(height: 28)
-                    .background(Color.blue.opacity(0.08), in: Capsule())
+                Button {
+                    withAnimation(.easeOut(duration: 0.14)) {
+                        showPolicyMenu = false
+                        showModelMenu.toggle()
+                    }
+                } label: {
+                    Text(model.configured ? model.settings.model : "未配置模型")
+                        .font(.system(size: 12, weight: .medium)).lineLimit(1)
+                        .foregroundStyle(Color.blue).padding(.horizontal, 8).frame(height: 28)
+                        .background(Color.blue.opacity(0.08), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(!model.configured || model.busy || model.isSubmitting)
+                .accessibilityLabel("切换模型")
                 if model.busy {
                     Button { Task { await model.action("stop") } } label: {
                         Image(systemName: "stop.fill").font(.system(size: 15, weight: .bold))
@@ -680,7 +694,20 @@ private struct AIComposer: View {
                     .transition(.scale(scale: 0.96, anchor: .bottomLeading).combined(with: .opacity))
                 }
             }
-            .zIndex(showPolicyMenu ? 4 : 0)
+            .overlay(alignment: .bottomTrailing) {
+                if showModelMenu {
+                    AIModelMenu(selected: model.settings.model) { selected in
+                        showModelMenu = false
+                        guard selected != model.settings.model else { return }
+                        var next = model.settings
+                        next.model = selected
+                        Task { _ = await model.save(next, key: "") }
+                    }
+                    .offset(x: -42, y: -48)
+                    .transition(.scale(scale: 0.96, anchor: .bottomTrailing).combined(with: .opacity))
+                }
+            }
+            .zIndex(showPolicyMenu || showModelMenu ? 4 : 0)
             .animation(.easeOut(duration: 0.18), value: isAttachmentPanelPresented)
             .photosPicker(
                 isPresented: $isPhotoPickerPresented,
@@ -708,7 +735,11 @@ private struct AIComposer: View {
                     let target = model.selected
                     Task {
                         if let file = await model.importFile(url) {
-                            appendImportedFile(file, to: target)
+                            if file.isImage {
+                                await sendImportedImages([file], to: target)
+                            } else {
+                                appendImportedDocument(file, to: target)
+                            }
                         }
                     }
                 }
@@ -747,6 +778,8 @@ private struct AIComposer: View {
                 transcriptionPresentation.reset()
                 speechRecognizer.cancel()
                 isAttachmentPanelPresented = false
+                showPolicyMenu = false
+                showModelMenu = false
                 selectedMediaItems = []
             }
             .onChange(of: model.selected) { selected in
@@ -816,7 +849,7 @@ private struct AIComposer: View {
     private func importSelectedImages(_ items: [PhotosPickerItem]) async {
         let targetSession = model.selected
         defer { selectedMediaItems = [] }
-        var importedCount = 0
+        var imported: [AIImportedFile] = []
         var failedCount = 0
         for item in items {
             do {
@@ -836,16 +869,18 @@ private struct AIComposer: View {
                     failedCount += 1
                     continue
                 }
-                appendImportedFile(file, to: targetSession)
-                importedCount += 1
+                imported.append(file)
             } catch {
                 failedCount += 1
             }
         }
+        if !imported.isEmpty {
+            await sendImportedImages(imported, to: targetSession)
+        }
         if failedCount > 0 {
             model.showTransientError(
-                importedCount > 0
-                    ? "已导入\(importedCount)张图片，另有\(failedCount)张失败"
+                !imported.isEmpty
+                    ? "已发送\(imported.count)张图片，另有\(failedCount)张失败"
                     : "所选图片读取失败"
             )
         }
@@ -861,18 +896,38 @@ private struct AIComposer: View {
             let temporaryURL = try await Self.writeTemporaryImage(data, pathExtension: "jpg")
             defer { Task { await Self.removeTemporaryFile(temporaryURL) } }
             if let file = await model.importFile(temporaryURL) {
-                appendImportedFile(file, to: targetSession)
+                await sendImportedImages([file], to: targetSession)
             }
         } catch {
             model.showTransientError("拍摄图片导入失败")
         }
     }
 
-    private func appendImportedFile(_ file: AIImportedFile, to targetSession: String) {
+    private func sendImportedImages(_ files: [AIImportedFile], to targetSession: String) async {
+        guard !files.isEmpty else { return }
+        let existingDraft = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prompt = existingDraft.isEmpty
+            ? (files.count == 1 ? "请查看这张图片。" : "请查看这些图片。")
+            : draft
+        if await model.send(prompt, images: files, expectedSession: targetSession) {
+            if existingDraft.isEmpty || draft == prompt { draft = "" }
+            return
+        }
+
+        // 导入已经完成但发送条件在异步读取期间改变时，保留图片和提示，
+        // 让用户之后按回车重试，不能丢掉刚选中的内容。
+        for file in files { model.addAttachment(file, to: targetSession) }
+        if targetSession == model.selected {
+            if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { draft = prompt }
+        } else if model.drafts[targetSession, default: ""]
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            model.drafts[targetSession] = prompt
+        }
+    }
+
+    private func appendImportedDocument(_ file: AIImportedFile, to targetSession: String) {
         model.addAttachment(file, to: targetSession)
-        let reference = file.isImage
-            ? "图片附件（工作区相对路径）：\(file.relativePath)"
-            : "请查看工作区文件：\(file.relativePath)"
+        let reference = "请查看工作区文件：\(file.relativePath)"
         if targetSession == model.selected {
             draft += (draft.isEmpty ? "" : "\n") + reference
             focusController.focus()
@@ -1108,6 +1163,42 @@ private struct AIPolicyMenu: View {
         .overlay(RoundedRectangle(cornerRadius: 13).stroke(Color.black.opacity(0.1)))
         .shadow(color: Color.black.opacity(0.16), radius: 18, y: 8)
         .accessibilityIdentifier("ai-policy-menu")
+    }
+}
+
+private struct AIModelMenu: View {
+    let selected: String
+    let select: (String) -> Void
+
+    private let options = ["glm-5.3", "glm-5.3-flash"]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(options, id: \.self) { option in
+                Button { select(option) } label: {
+                    HStack(spacing: 10) {
+                        Text(option).font(.system(size: 13, weight: .semibold))
+                        Spacer(minLength: 12)
+                        if selected.caseInsensitiveCompare(option) == .orderedSame {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(Color.blue)
+                        }
+                    }
+                    .foregroundStyle(Color.primary)
+                    .padding(.horizontal, 12)
+                    .frame(height: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                if option != options.last { Divider().padding(.leading, 12) }
+            }
+        }
+        .frame(width: 188)
+        .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 13))
+        .overlay(RoundedRectangle(cornerRadius: 13).stroke(Color.black.opacity(0.1)))
+        .shadow(color: Color.black.opacity(0.16), radius: 18, y: 8)
+        .accessibilityIdentifier("ai-model-menu")
     }
 }
 

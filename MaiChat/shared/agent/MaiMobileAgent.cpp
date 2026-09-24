@@ -222,7 +222,9 @@ struct MaiMobileAgent {
             id = result(agent->submit(MaiCreateSession{workspace, "", model}));
         else if (op == "send") {
             if (!configured) throw std::runtime_error("Configure a model and API key first.");
-            result(agent->submit(MaiUpdateSession{session, "", model, ""}));
+            // iOS 在升级或恢复后可能给同一数据容器分配新的绝对路径。图片片段只保存
+            // 工作区相对路径，所以每轮发送前都把会话根目录迁到当前容器位置。
+            result(agent->submit(MaiUpdateSession{session, "", model, "", workspace}));
             {
                 std::lock_guard<std::mutex> lock(mutex);
                 errors.erase(session);

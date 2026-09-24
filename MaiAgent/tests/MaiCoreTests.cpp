@@ -56,10 +56,11 @@ static void test_session_crud_and_events() {
     CHECK(s.model == "glm-5.3");
     CHECK(s.agent == "build");
 
-    agent.submit(MaiUpdateSession{a, "Renamed", "", ""});
+    agent.submit(MaiUpdateSession{a, "Renamed", "", "", "/tmp/moved"});
     CHECK(updated == 1);
     CHECK(agent.getSession(a, s));
     CHECK(s.title == "Renamed");
+    CHECK(s.directory == "/tmp/moved");
 
     const std::string b = agent.submit(MaiCreateSession{"", "", ""}).value();
     CHECK(agent.getSession(b, s));

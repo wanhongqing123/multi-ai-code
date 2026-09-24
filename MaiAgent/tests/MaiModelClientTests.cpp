@@ -559,6 +559,132 @@ void test_user_image_is_sent_as_multimodal_content() {
     MaiFileSystem::removeRecursively(root);
 }
 
+void test_absolute_desktop_image_can_be_outside_the_workspace() {
+    FakeServer fake;
+    fake.script = text_delta("ok") + std::string(kDone);
+    fake.chunk = 100000;
+    fake.start();
+
+    const MaiFilePath temporary = MaiFileSystem::temporaryDirectory();
+    const MaiFilePath workspace =
+        temporary.append(MaiFilePath::fromUtf8("mai-model-absolute-image-workspace"));
+    const MaiFilePath external =
+        temporary.append(MaiFilePath::fromUtf8("mai-model-absolute-image-external"));
+    MaiFileSystem::removeRecursively(workspace);
+    MaiFileSystem::removeRecursively(external);
+    CHECK(!MaiFileSystem::createDirectories(workspace));
+    CHECK(!MaiFileSystem::createDirectories(external));
+    const MaiFilePath image = external.append(MaiFilePath::fromUtf8("photo.png"));
+    CHECK(!MaiFileSystem::writeFile(image, std::string("\x89PNG", 4)));
+
+    MaiModelRequest request;
+    request.model = "glm-5.3";
+    request.workingDirectory = workspace.toUtf8();
+    MaiModelMessage user;
+    user.role = MaiModelRole::User;
+    user.content = "inspect";
+    user.images.push_back({image.toUtf8(), "image/png"});
+    request.messages.push_back(user);
+
+    const Collected result = runAgainst(fake, request);
+    CHECK(result.done);
+    std::string body;
+    {
+        std::lock_guard<std::mutex> lock(fake.mutex);
+        body = fake.lastBody;
+    }
+    const json sent = json::parse(body, nullptr, false);
+    CHECK(!sent.is_discarded());
+    if (!sent.is_discarded()) {
+        const json& content = sent["messages"][0]["content"];
+        CHECK(content.is_array());
+        CHECK(content.size() == 2);
+        if (content.size() == 2)
+            CHECK(content[1]["image_url"]["url"] == "data:image/png;base64,iVBORw==");
+    }
+    MaiFileSystem::removeRecursively(workspace);
+    MaiFileSystem::removeRecursively(external);
+}
+
+void test_missing_historical_image_does_not_break_later_turns() {
+    FakeServer fake;
+    fake.script = text_delta("ok") + std::string(kDone);
+    fake.chunk = 100000;
+    fake.start();
+
+    const MaiFilePath root = MaiFileSystem::temporaryDirectory().append(
+        MaiFilePath::fromUtf8("mai-model-missing-history-image-test"));
+    MaiFileSystem::removeRecursively(root);
+    CHECK(!MaiFileSystem::createDirectories(root));
+
+    MaiModelRequest request;
+    request.model = "glm-5.3";
+    request.workingDirectory = root.toUtf8();
+    MaiModelMessage oldUser;
+    oldUser.role = MaiModelRole::User;
+    oldUser.content = "old image";
+    oldUser.images.push_back({"removed.png", "image/png"});
+    request.messages.push_back(oldUser);
+    MaiModelMessage assistant;
+    assistant.role = MaiModelRole::Assistant;
+    assistant.content = "previous response";
+    request.messages.push_back(assistant);
+    MaiModelMessage currentUser;
+    currentUser.role = MaiModelRole::User;
+    currentUser.content = "continue";
+    request.messages.push_back(currentUser);
+
+    const Collected result = runAgainst(fake, request);
+    CHECK(result.done);
+    std::string body;
+    {
+        std::lock_guard<std::mutex> lock(fake.mutex);
+        body = fake.lastBody;
+    }
+    const json sent = json::parse(body, nullptr, false);
+    CHECK(!sent.is_discarded());
+    if (!sent.is_discarded()) {
+        const json& content = sent["messages"][0]["content"];
+        CHECK(content.is_array());
+        CHECK(content.size() == 1);
+        if (content.size() == 1) {
+            CHECK(content[0]["type"] == "text");
+            CHECK(content[0]["text"].get<std::string>().find("no longer available") !=
+                  std::string::npos);
+        }
+        CHECK(sent["messages"].back()["content"] == "continue");
+    }
+    MaiFileSystem::removeRecursively(root);
+}
+
+void test_missing_current_image_is_reported() {
+    FakeServer fake;
+    fake.script = text_delta("unexpected") + std::string(kDone);
+    fake.chunk = 100000;
+    fake.start();
+
+    const MaiFilePath root = MaiFileSystem::temporaryDirectory().append(
+        MaiFilePath::fromUtf8("mai-model-missing-current-image-test"));
+    MaiFileSystem::removeRecursively(root);
+    CHECK(!MaiFileSystem::createDirectories(root));
+
+    MaiModelRequest request;
+    request.model = "glm-5.3";
+    request.workingDirectory = root.toUtf8();
+    MaiModelMessage user;
+    user.role = MaiModelRole::User;
+    user.content = "inspect";
+    user.images.push_back({"missing.png", "image/png"});
+    request.messages.push_back(user);
+
+    const Collected result = runAgainst(fake, request);
+    CHECK(!result.done);
+    CHECK(result.code != MaiErrorCode::Ok);
+    CHECK(result.error.find("cannot open file for reading") != std::string::npos);
+    CHECK(fake.requestCount.load() == 0);
+    MaiFileSystem::removeRecursively(root);
+}
+
 void test_invalid_utf8_history_is_replaced_before_serialization() {
     FakeServer fake;
     fake.script = text_delta("ok") + std::string(kDone);
@@ -615,6 +741,9 @@ int main() {
     test_wire_shape_of_request();
     test_no_tools_field_when_empty();
     test_user_image_is_sent_as_multimodal_content();
+    test_absolute_desktop_image_can_be_outside_the_workspace();
+    test_missing_historical_image_does_not_break_later_turns();
+    test_missing_current_image_is_reported();
     test_invalid_utf8_history_is_replaced_before_serialization();
     if (failures == 0) std::printf("llm tests passed\n");
     return failures == 0 ? 0 : 1;

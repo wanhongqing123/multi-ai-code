@@ -110,7 +110,8 @@ struct MaiModelRequest {
     // 模型的基础指令。它独立于历史：Chat Completions 在线协议边界转成首条 system 消息，
     // Responses 实现应直接映射到顶层 instructions 字段。
     std::string baseInstructions;
-    // 本地图片只能从这个目录读取。空目录与越界路径都必须拒绝。
+    // 相对图片路径从这个目录解析，且不能越过它。桌面端由用户明确选择的图片可以传绝对路径，
+    // 因而允许位于工作区之外；移动端应先复制进自己的稳定沙盒目录，再传相对路径。
     std::string workingDirectory;
     // 完整历史，按时间顺序。**每次都要带全**——协议是无状态的，少带了模型就没有上下文。
     std::vector<MaiModelMessage> messages;

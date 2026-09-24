@@ -89,6 +89,7 @@ private slots:
     void desktopAgentSuppliesMarkdownSystemPrompt();
     void composerUsesApplicationStyleWithoutInheritedLabelBorders();
     void pastedImageUsesTheSharedComposerAndReachesTheModel();
+    void modelChipOffersTheTextAndVisionModels();
 };
 
 namespace {
@@ -158,6 +159,25 @@ void AgentPanelSessionTest::answerFromAnotherSessionDoesNotLeakIn() {
     QCOMPARE(view->itemCount(), before);
     view->selectAll();
     QVERIFY(!view->selectedText().contains(QStringLiteral("子 Agent 说的话")));
+}
+
+void AgentPanelSessionTest::modelChipOffersTheTextAndVisionModels() {
+    Harness harness;
+    harness.panel->setModelLabel(QStringLiteral("glm-5.3"));
+    QPushButton* chip = harness.panel->findChild<QPushButton*>(QStringLiteral("agentModelChip"));
+    QVERIFY(chip != nullptr);
+    QVERIFY(chip->menu() != nullptr);
+    QCOMPARE(chip->menu()->actions().size(), 2);
+    QCOMPARE(chip->menu()->actions()[0]->text(), QStringLiteral("glm-5.3"));
+    QCOMPARE(chip->menu()->actions()[1]->text(), QStringLiteral("glm-5.3-flash"));
+
+    QSignalSpy selected(harness.panel.get(), &AgentChatPanel::modelSelected);
+    chip->menu()->actions()[1]->trigger();
+    QCOMPARE(selected.count(), 1);
+    QCOMPARE(selected.first().first().toString(), QStringLiteral("glm-5.3-flash"));
+    MaiSession session;
+    QVERIFY(harness.controller->agent().getSession(harness.mine.toStdString(), session));
+    QCOMPARE(QString::fromStdString(session.model), QStringLiteral("glm-5.3-flash"));
 }
 
 void AgentPanelSessionTest::anotherSessionFailingDoesNotShowAnError() {

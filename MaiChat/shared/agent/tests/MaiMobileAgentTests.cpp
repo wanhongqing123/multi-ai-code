@@ -145,10 +145,27 @@ int main() {
                     part["mimeType"] == "image/png")
                     foundImage = true;
         CHECK(foundImage);
+
+        // iOS 升级或恢复后，持久化数据库会跟着数据迁移，但应用容器的绝对路径
+        // 可能变化。把同一张相对路径图片放进新工作区，再确认下一轮会先迁移
+        // session.directory，历史图片不会继续从旧容器读取。
+        const std::string movedWorkspace = std::string(directory) + "/moved-workspace";
+        CHECK(!MaiFileSystem::createDirectories(MaiFilePath::fromUtf8(movedWorkspace)));
+        CHECK(!MaiFileSystem::writeFile(
+            MaiFilePath::fromUtf8(movedWorkspace + "/photo.png"), std::string("\x89PNG", 4)));
+        CHECK(!MaiFileSystem::removeFile(
+            MaiFilePath::fromUtf8(std::string(directory) + "/photo.png")));
+        config["workspace"] = movedWorkspace;
+        CHECK(call(agent, config)["ok"] == true);
+        CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "relocated"}})["ok"] ==
+              true);
+        const auto relocated = wait([](const Json& s) { return s["busy"] == false; });
+        CHECK(relocated.value("error", "").empty());
+
         CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "write"}})["ok"] == true);
         auto pending = wait([](const Json& s) { return !s["permissions"].empty(); });
         std::string permission = pending["permissions"][0]["id"];
-        CHECK(access((std::string(directory) + "/result.txt").c_str(), F_OK) != 0);
+        CHECK(access((movedWorkspace + "/result.txt").c_str(), F_OK) != 0);
         CHECK(call(agent,
                    {{"op", "permission"}, {"id", permission}, {"decision", "unknown"}})["ok"] ==
               false);
@@ -157,7 +174,7 @@ int main() {
                    {{"op", "permission"}, {"id", permission}, {"decision", "approved"}})["ok"] ==
               true);
         wait([](const Json& s) { return s["busy"] == false; });
-        CHECK(access((std::string(directory) + "/result.txt").c_str(), F_OK) == 0);
+        CHECK(access((movedWorkspace + "/result.txt").c_str(), F_OK) == 0);
         CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "stop"}})["ok"] == true);
         wait([](const Json& s) {
             return s["busy"] == true && !s["messages"].back()["parts"].empty();
@@ -199,6 +216,8 @@ int main() {
     maiMobileAgentDestroy(agent);
     server.stop();
     listener.join();
+    MaiFileSystem::removeRecursively(
+        MaiFilePath::fromUtf8(std::string(directory) + "/moved-workspace"));
     for (const auto* file : {"sessions.db", "sessions.db-shm", "sessions.db-wal", "result.txt"})
         unlink((std::string(directory) + "/" + file).c_str());
     rmdir(directory);

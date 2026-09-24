@@ -58,6 +58,22 @@ final class AIAssistantUITests: XCTestCase {
         XCTAssertEqual(waitUntilNotHittable(app.buttons["相册"]), .completed)
     }
 
+    func testModelChipOffersTextAndVisionModels() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test"]
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+
+        let model = app.buttons["切换模型"]
+        XCTAssertTrue(model.waitForExistence(timeout: 15))
+        model.tap()
+        let menu = app.descendants(matching: .any)
+            .matching(identifier: "ai-model-menu").firstMatch
+        XCTAssertTrue(menu.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["glm-5.3"].isHittable)
+        XCTAssertTrue(app.buttons["glm-5.3-flash"].isHittable)
+    }
+
     func testConversationDrawerContainsNewConversationAction() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--ai-ui-test"]

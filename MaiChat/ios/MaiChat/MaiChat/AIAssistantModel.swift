@@ -321,13 +321,24 @@ final class AIAssistantModel: ObservableObject {
             await select(result.id ?? "")
         } catch { self.error = error.localizedDescription }
     }
-    func send(_ text: String) async -> Bool {
+    func send(
+        _ text: String,
+        images: [AIImportedFile] = [],
+        expectedSession: String? = nil
+    ) async -> Bool {
         guard configured else { showSettings = true; return false }
         guard !isSubmitting, !busy, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
         isSubmitting = true
         defer { isSubmitting = false }
         let draftSession = selected
-        let attachments = pendingAttachments[draftSession, default: []]
+        guard expectedSession == nil || expectedSession == draftSession else { return false }
+        let attachments = pendingAttachments[draftSession, default: []] + images
+        if attachments.contains(where: \.isImage),
+           settings.model.trimmingCharacters(in: .whitespacesAndNewlines)
+               .caseInsensitiveCompare("glm-5.3") == .orderedSame {
+            showTransientError("glm-5.3 仅支持文本，请先切换到 glm-5.3-flash")
+            return false
+        }
         if selected.isEmpty { await create() }
         guard !selected.isEmpty else { return false }
         do {
@@ -344,6 +355,7 @@ final class AIAssistantModel: ObservableObject {
             return true
         } catch { self.error = error.localizedDescription; return false }
     }
+
     func action(_ op: String, values: [String: String] = [:]) async {
         let target = selected
         do {

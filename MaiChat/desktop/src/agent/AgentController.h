@@ -79,6 +79,7 @@ public:
     QString createSession(const QString& directory, const QString& title = QString());
     bool sendPrompt(const QString& sessionId, const QString& text);
     bool sendPrompt(const QString& sessionId, const QString& text, const QStringList& imagePaths);
+    bool setModel(const QString& sessionId, const QString& model);
     bool interrupt(const QString& sessionId);
     bool setApprovalPolicy(MaiApprovalPolicy policy);
     MaiApprovalPolicy approvalPolicy() const;

@@ -31,6 +31,9 @@ struct MaiUpdateSession {
     std::string title;  // 空表示不改
     std::string model;
     std::string agent;
+    // 移动端更新后，应用沙箱的绝对路径可能改变。调用方传入当前工作目录时，
+    // 必须同步修正持久化会话，否则历史图片仍会从旧容器路径读取。
+    std::string directory;
 };
 
 struct MaiDeleteSession {

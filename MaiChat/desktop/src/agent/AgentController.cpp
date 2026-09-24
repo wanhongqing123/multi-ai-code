@@ -40,6 +40,7 @@ struct AgentController::Runtime {
     QString lastError;
     // 只有主线程碰它：所有事件都排队到主线程之后才分类。
     QHash<QString, PartKind> partKinds;
+    QString modelName;
 };
 
 namespace {
@@ -121,6 +122,7 @@ AgentController::AgentController(const ModelConfig& model, const QString& databa
         client = makeMaiModelClient(config);
     }
 
+    runtime_->modelName = model.modelName;
     runtime_->agent = buildAgent(std::move(client), openStore(databasePath, runtime_->openError),
                                  model.modelName, model.approvalPolicy);
 
@@ -189,12 +191,29 @@ bool AgentController::sendPrompt(const QString& sessionId, const QString& text,
         }
         images.push_back({toUtf8(path), toUtf8(mimeType)});
     }
+    if (!runtime_->modelName.isEmpty() && !setModel(sessionId, runtime_->modelName)) return false;
     MaiResult<std::string> sent =
         runtime_->agent->submit(MaiSendPrompt{toUtf8(sessionId), toUtf8(text), std::move(images)});
     if (!sent) {
         runtime_->lastError = fromUtf8(sent.error().message());
         return false;
     }
+    return true;
+}
+
+bool AgentController::setModel(const QString& sessionId, const QString& model) {
+    const QString selected = model.trimmed();
+    if (sessionId.isEmpty() || selected.isEmpty()) {
+        runtime_->lastError = QStringLiteral("模型名称不能为空。");
+        return false;
+    }
+    MaiResult<std::string> updated = runtime_->agent->submit(
+        MaiUpdateSession{toUtf8(sessionId), "", toUtf8(selected), "", ""});
+    if (!updated) {
+        runtime_->lastError = fromUtf8(updated.error().message());
+        return false;
+    }
+    runtime_->modelName = selected;
     return true;
 }
 

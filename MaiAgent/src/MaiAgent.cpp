@@ -362,6 +362,7 @@ MaiResult<std::string> MaiAgent::submit(const MaiOperation& operation) {
                         if (!operation.title.empty()) session.title = operation.title;
                         if (!operation.model.empty()) session.model = operation.model;
                         if (!operation.agent.empty()) session.agent = operation.agent;
+                        if (!operation.directory.empty()) session.directory = operation.directory;
                         session.updated = MaiTime::getCurrentTime();
                         title = session.title;
                     });

@@ -698,10 +698,38 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
         QPushButton#agentModelChip:pressed {
             background: #d5e8fb;
         }
+        QPushButton#agentModelChip::menu-indicator {
+            image: none;
+            width: 0;
+        }
     )")));
     QFont modelFont = runtime_->modelChip->font();
     modelFont.setPixelSize(UiZoom::s(11));
     runtime_->modelChip->setFont(modelFont);
+    auto* modelMenu = new QMenu(runtime_->modelChip);
+    applyAgentMenuStyle(modelMenu);
+    for (const QString& model : {QStringLiteral("glm-5.3"),
+                                 QStringLiteral("glm-5.3-flash")}) {
+        QAction* action = modelMenu->addAction(model);
+        action->setData(model);
+        action->setCheckable(true);
+    }
+    connect(modelMenu, &QMenu::aboutToShow, this, [this, modelMenu] {
+        for (QAction* action : modelMenu->actions()) {
+            action->setChecked(action->data().toString().compare(
+                                   runtime_->modelChip->text(), Qt::CaseInsensitive) == 0);
+        }
+    });
+    connect(modelMenu, &QMenu::triggered, this, [this](QAction* action) {
+        const QString selected = action->data().toString();
+        if (!runtime_->controller->setModel(runtime_->sessionId, selected)) {
+            appendNotice(runtime_->controller->lastError(), true);
+            return;
+        }
+        setModelLabel(selected);
+        emit modelSelected(selected);
+    });
+    runtime_->modelChip->setMenu(modelMenu);
     foot->addWidget(runtime_->dirChip);
     foot->addWidget(runtime_->modelChip);
     foot->addStretch(1);
@@ -773,8 +801,6 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
 
     setRunning(false);
     connect(runtime_->send, &QPushButton::clicked, this, &AgentChatPanel::onSend);
-    connect(runtime_->modelChip, &QPushButton::clicked, this,
-            &AgentChatPanel::modelConfigurationRequested);
     connect(clearButton, &QPushButton::clicked, this, &AgentChatPanel::onClear);
 
     // ---- 接事件 ----
@@ -865,6 +891,7 @@ QString AgentChatPanel::sessionId() const {
 void AgentChatPanel::setModelLabel(const QString& model) {
     runtime_->modelChip->setText(model);
     runtime_->modelConfigured = model != QStringLiteral("未配置模型") && !model.trimmed().isEmpty();
+    runtime_->modelChip->setEnabled(runtime_->modelConfigured && !runtime_->running);
 }
 
 void AgentChatPanel::selectApprovalPolicy(MaiApprovalPolicy policy) {
@@ -1304,6 +1331,11 @@ void AgentChatPanel::onSend() {
         emit modelConfigurationRequested();
         return;
     }
+    if (!imagePaths.isEmpty() && runtime_->modelChip->text().compare(
+                                         QStringLiteral("glm-5.3"), Qt::CaseInsensitive) == 0) {
+        appendNotice(QStringLiteral("glm-5.3 仅支持文本，请先切换到 glm-5.3-flash。"), true);
+        return;
+    }
 
     if (!runtime_->controller->sendPrompt(runtime_->sessionId, text, imagePaths)) {
         appendNotice(runtime_->controller->lastError(), true);
@@ -1345,6 +1377,7 @@ void AgentChatPanel::setRunning(bool running) {
                                  "color:#eef6ff;}")
                       .arg(kAccent)));
     runtime_->hint->setEnabled(!running);
+    runtime_->modelChip->setEnabled(!running && runtime_->modelConfigured);
     if (running) {
         runtime_->hint->setText(QStringLiteral("正在执行"));
     } else {

@@ -2941,6 +2941,13 @@ void MainWindow::rebuildAgentPage() {
     });
     connect(agentPanel_, &AgentChatPanel::modelConfigurationRequested, this,
             &MainWindow::editAgentModelSettings);
+    connect(agentPanel_, &AgentChatPanel::modelSelected, this, [this](const QString& model) {
+        const QString selected = model.trimmed();
+        if (selected.isEmpty() || selected == loadAgentModelConfig().modelName) return;
+        QSettings settings;
+        settings.setValue(QStringLiteral("agent/model"), selected);
+        refreshSettings();
+    });
     if (!sessionToRestore.isEmpty()) agentPanel_->openSession(sessionToRestore);
 }
 

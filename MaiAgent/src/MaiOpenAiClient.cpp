@@ -177,19 +177,38 @@ MaiResult<std::string> buildRequestBody(const MaiModelRequest& request) {
     if (!request.baseInstructions.empty()) {
         msgs.push_back({{"role", "system"}, {"content", request.baseInstructions}});
     }
-    for (const auto& message : request.messages) {
+    std::size_t latestUserMessage = request.messages.size();
+    for (std::size_t index = 0; index < request.messages.size(); ++index) {
+        if (request.messages[index].role == MaiModelRole::User) latestUserMessage = index;
+    }
+    for (std::size_t index = 0; index < request.messages.size(); ++index) {
+        const auto& message = request.messages[index];
         json messageNode{{"role", toWireRole(message.role)}};
         // assistant 发起调用的那条，content 可以是 null，但必须带 tool_calls。
         if (!message.images.empty()) {
             json content = json::array();
-            if (!message.content.empty())
-                content.push_back({{"type", "text"}, {"text", message.content}});
+            std::string text = message.content;
+            bool skippedUnavailableHistoryImage = false;
+            json images = json::array();
             for (const auto& image : message.images) {
                 MaiResult<std::string> dataUrl = imageDataUrl(request, image);
-                if (!dataUrl) return dataUrl.error();
-                content.push_back(
+                if (!dataUrl) {
+                    // 当前输入的图片丢失必须明确失败，不能悄悄降级成纯文本。
+                    // 旧历史里的图片则可能因为移动端容器迁移或用户清理缓存而失效；
+                    // 它不应让这个会话此后的每一轮都永久失败。
+                    if (index == latestUserMessage) return dataUrl.error();
+                    skippedUnavailableHistoryImage = true;
+                    continue;
+                }
+                images.push_back(
                     {{"type", "image_url"}, {"image_url", {{"url", dataUrl.value()}}}});
             }
+            if (skippedUnavailableHistoryImage) {
+                if (!text.empty()) text += "\n";
+                text += "[One or more previously attached images are no longer available.]";
+            }
+            if (!text.empty()) content.push_back({{"type", "text"}, {"text", std::move(text)}});
+            for (auto& image : images) content.push_back(std::move(image));
             messageNode["content"] = std::move(content);
         } else if (!message.content.empty() || message.invocations.empty()) {
             messageNode["content"] = message.content;

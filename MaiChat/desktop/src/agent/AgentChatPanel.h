@@ -67,6 +67,7 @@ signals:
     // 一轮跑完（updated 变了，列表按它排序，位置会动）。
     void sessionListChanged();
     void modelConfigurationRequested();
+    void modelSelected(const QString& model);
 
 private:
     // 这两个是这个面板专用的部件，别处用不上，所以做成嵌套私有类、定义在 .cpp 里。

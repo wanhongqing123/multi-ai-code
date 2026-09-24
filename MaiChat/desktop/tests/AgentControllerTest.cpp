@@ -1,11 +1,14 @@
 #include <QCoreApplication>
+#include <QFile>
 #include <QSignalSpy>
+#include <QTemporaryDir>
 #include <QThread>
 #include <QtTest>
 
 #include <algorithm>
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -49,7 +52,10 @@ public:
 
     MaiError stream(const MaiModelRequest& request, const MaiStreamSink& sink,
                     const std::atomic<bool>& cancel) override {
-        (void)request;
+        {
+            std::lock_guard<std::mutex> lock(requestMutex_);
+            lastRequest_ = request;
+        }
         // 记下这一轮跑在哪个线程上。待会儿要和槽里看到的线程比对。
         workerThread_.store(QThread::currentThreadId(), std::memory_order_relaxed);
         requests_.fetch_add(1, std::memory_order_relaxed);
@@ -85,12 +91,18 @@ public:
     int requests() const {
         return requests_.load(std::memory_order_relaxed);
     }
+    MaiModelRequest lastRequest() const {
+        std::lock_guard<std::mutex> lock(requestMutex_);
+        return lastRequest_;
+    }
 
 private:
     std::string reasoning_;
     std::string text_;
     std::atomic<Qt::HANDLE> workerThread_{nullptr};
     std::atomic<int> requests_{0};
+    mutable std::mutex requestMutex_;
+    MaiModelRequest lastRequest_;
 };
 
 }  // namespace
@@ -102,6 +114,7 @@ private slots:
     void streams_on_the_main_thread();
     void separates_reasoning_from_text();
     void reports_a_missing_model_instead_of_hanging();
+    void sends_selected_images_as_multimodal_input();
 };
 
 // 载荷不是文案：中文 + emoji，验证 UTF-8 一路（回调 -> 事件 -> QString）不走样。
@@ -195,6 +208,31 @@ void AgentControllerTest::reports_a_missing_model_instead_of_hanging() {
     controller.sendPrompt(sessionId, QStringLiteral("hi"));
     QVERIFY(failed.wait(10000));
     QVERIFY(!failed.first().at(1).toString().isEmpty());
+}
+
+void AgentControllerTest::sends_selected_images_as_multimodal_input() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString imagePath = directory.filePath(QStringLiteral("photo.png"));
+    QFile image(imagePath);
+    QVERIFY(image.open(QIODevice::WriteOnly));
+    QCOMPARE(image.write("\x89PNG", 4), 4);
+    image.close();
+
+    auto model = std::make_unique<ScriptedModel>(std::string(), std::string(kText));
+    ScriptedModel* scripted = model.get();
+    AgentController controller(std::move(model), QString());
+    const QString sessionId = controller.createSession(directory.path());
+    QSignalSpy finished(&controller, &AgentController::turnFinished);
+    QVERIFY(controller.sendPrompt(sessionId, QStringLiteral("看图"), {imagePath}));
+    QVERIFY(finished.wait(15000));
+
+    const MaiModelRequest request = scripted->lastRequest();
+    QCOMPARE(request.messages.size(), std::size_t(1));
+    QCOMPARE(request.messages.back().images.size(), std::size_t(1));
+    QCOMPARE(QString::fromStdString(request.messages.back().images.front().path), imagePath);
+    QCOMPARE(QString::fromStdString(request.messages.back().images.front().mimeType),
+             QStringLiteral("image/png"));
 }
 
 QTEST_MAIN(AgentControllerTest)

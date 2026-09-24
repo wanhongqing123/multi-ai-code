@@ -26,7 +26,9 @@ constexpr auto kMarkdownBaseInstructions =
     "Write user-facing responses in valid GitHub-Flavored Markdown. Preserve real line breaks. "
     "For tables, put the header, separator, and every row on separate lines, with a blank line "
     "before and after the table. Use headings, lists, fenced code blocks, and tables only when "
-    "they improve readability. Never emit table pipes as one continuous line.";
+    "they improve readability. Never emit table pipes as one continuous line. Images included "
+    "in a user message are already available as visual input; analyze them directly and do not "
+    "call the read tool for image files.";
 
 }  // namespace
 
@@ -159,6 +161,10 @@ struct MaiMobileAgent {
                                           {"output", body.output},
                                           {"error", body.error},
                                           {"state", maiToolStateToString(body.state)}});
+                        } else if constexpr (std::is_same_v<T, MaiImagePart>) {
+                            value.update({{"kind", "image"},
+                                          {"path", body.path},
+                                          {"mimeType", body.mimeType}});
                         } else {
                             std::string text = body.text;
                             auto live = liveParts.find(part.id);
@@ -221,7 +227,20 @@ struct MaiMobileAgent {
                 std::lock_guard<std::mutex> lock(mutex);
                 errors.erase(session);
             }
-            id = result(agent->submit(MaiSendPrompt{session, r.at("text")}));
+            std::vector<MaiModelImage> images;
+            if (r.contains("images")) {
+                if (!r["images"].is_array() || r["images"].size() > 10)
+                    throw std::runtime_error("Images must be an array with at most 10 items.");
+                for (const auto& value : r["images"]) {
+                    if (!value.is_object() || !value.contains("path") ||
+                        !value["path"].is_string() || !value.contains("mimeType") ||
+                        !value["mimeType"].is_string())
+                        throw std::runtime_error("Each image needs path and mimeType strings.");
+                    images.push_back(
+                        {value["path"].get<std::string>(), value["mimeType"].get<std::string>()});
+                }
+            }
+            id = result(agent->submit(MaiSendPrompt{session, r.at("text"), std::move(images)}));
         } else if (op == "stop")
             result(agent->submit(MaiInterrupt{session}));
         else if (op == "delete")

@@ -60,6 +60,7 @@ void MaiTurnRunner::runUnchecked(const std::atomic<bool>& cancel) {
         finish(cancel);
         return;
     }
+    mWorkingDirectory = session.directory;
 
     const std::string modelName =
         session.model.empty() ? mDependencies.defaultModel : session.model;
@@ -126,6 +127,7 @@ MaiModelRequest MaiTurnRunner::buildRequest(const std::string& modelName,
         if (message.id == mAssistant.id) message = mAssistant;
     }
     request.messages = mDependencies.context->build(history);
+    request.workingDirectory = mWorkingDirectory;
     if (requireFinalAnswer) {
         MaiModelMessage instruction;
         instruction.role = MaiModelRole::System;

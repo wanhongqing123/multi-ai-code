@@ -18,6 +18,8 @@
 
 #include "MaiModelClient.h"
 #include "MaiOpenAiClient.h"
+#include "MaiFilePath.h"
+#include "MaiFileSystem.h"
 
 using nlohmann::json;
 
@@ -512,6 +514,51 @@ void test_no_tools_field_when_empty() {
     CHECK(!sent.is_discarded() && !sent.contains("tools"));
 }
 
+void test_user_image_is_sent_as_multimodal_content() {
+    FakeServer fake;
+    fake.script = text_delta("ok") + std::string(kDone);
+    fake.chunk = 100000;
+    fake.start();
+
+    const MaiFilePath root =
+        MaiFileSystem::temporaryDirectory().append(MaiFilePath::fromUtf8("mai-model-image-test"));
+    MaiFileSystem::removeRecursively(root);
+    CHECK(!MaiFileSystem::createDirectories(root));
+    const MaiFilePath image = root.append(MaiFilePath::fromUtf8("photo.png"));
+    CHECK(!MaiFileSystem::writeFile(image, std::string("\x89PNG", 4)));
+
+    MaiModelRequest request;
+    request.model = "glm-5.3";
+    request.workingDirectory = root.toUtf8();
+    MaiModelMessage user;
+    user.role = MaiModelRole::User;
+    user.content = "inspect";
+    user.images.push_back({"photo.png", "image/png"});
+    request.messages.push_back(user);
+
+    const Collected result = runAgainst(fake, request);
+    CHECK(result.done);
+    std::string body;
+    {
+        std::lock_guard<std::mutex> lock(fake.mutex);
+        body = fake.lastBody;
+    }
+    const json sent = json::parse(body, nullptr, false);
+    CHECK(!sent.is_discarded());
+    if (!sent.is_discarded()) {
+        const json& content = sent["messages"][0]["content"];
+        CHECK(content.is_array());
+        CHECK(content.size() == 2);
+        if (content.size() == 2) {
+            CHECK(content[0]["type"] == "text");
+            CHECK(content[0]["text"] == "inspect");
+            CHECK(content[1]["type"] == "image_url");
+            CHECK(content[1]["image_url"]["url"] == "data:image/png;base64,iVBORw==");
+        }
+    }
+    MaiFileSystem::removeRecursively(root);
+}
+
 void test_invalid_utf8_history_is_replaced_before_serialization() {
     FakeServer fake;
     fake.script = text_delta("ok") + std::string(kDone);
@@ -567,6 +614,7 @@ int main() {
     test_transient_http_failure_retries_before_streaming();
     test_wire_shape_of_request();
     test_no_tools_field_when_empty();
+    test_user_image_is_sent_as_multimodal_content();
     test_invalid_utf8_history_is_replaced_before_serialization();
     if (failures == 0) std::printf("llm tests passed\n");
     return failures == 0 ? 0 : 1;

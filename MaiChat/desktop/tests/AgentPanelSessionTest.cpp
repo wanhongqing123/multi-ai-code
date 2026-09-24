@@ -1,14 +1,20 @@
 #include <QApplication>
+#include <QClipboard>
+#include <QDir>
+#include <QImage>
 #include <QLabel>
 #include <QMenu>
+#include <QMimeData>
 #include <QPushButton>
 #include <QSignalSpy>
-#include <QDir>
+#include <QTemporaryDir>
 #include <QTextEdit>
+#include <QUrl>
 #include <QtTest>
 
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include <string>
 
 #include "agent/AgentChatPanel.h"
@@ -50,13 +56,22 @@ public:
     MaiError stream(const MaiModelRequest& request, const MaiStreamSink& sink,
                     const std::atomic<bool>& cancel) override {
         (void)cancel;
-        lastRequest = request;
-        if (sink.onText) sink.onText("Done");
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            request_ = request;
+        }
+        if (sink.onText) sink.onText("done");
         return {};
     }
     MaiWireApi wireApi() const override { return MaiWireApi::ChatCompletions; }
+    MaiModelRequest request() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return request_;
+    }
 
-    MaiModelRequest lastRequest;
+private:
+    mutable std::mutex mutex_;
+    MaiModelRequest request_;
 };
 
 }  // namespace
@@ -73,6 +88,7 @@ private slots:
     void unconfiguredModelOpensConfigurationInsteadOfFailingTurn();
     void desktopAgentSuppliesMarkdownSystemPrompt();
     void composerUsesApplicationStyleWithoutInheritedLabelBorders();
+    void pastedImageUsesTheSharedComposerAndReachesTheModel();
 };
 
 namespace {
@@ -288,6 +304,50 @@ void AgentPanelSessionTest::thinkingLineExpandsLiveAndAfterRestore() {
                                 .arg(restored->height())));
 }
 
+void AgentPanelSessionTest::pastedImageUsesTheSharedComposerAndReachesTheModel() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString imagePath = directory.filePath(QStringLiteral("pasted.png"));
+    QImage image(32, 24, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::blue);
+    QVERIFY(image.save(imagePath, "PNG"));
+
+    auto model = std::make_unique<CapturingModel>();
+    CapturingModel* captured = model.get();
+    AgentController controller(std::move(model), QString());
+    AgentChatPanel panel(controller);
+    panel.resize(700, 500);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    const QString sessionId = controller.createSession(directory.path());
+    panel.openSession(sessionId);
+
+    QTextEdit* editor = panel.findChild<QTextEdit*>();
+    QVERIFY(editor != nullptr);
+    auto* mime = new QMimeData;
+    mime->setUrls({QUrl::fromLocalFile(imagePath)});
+    QApplication::clipboard()->setMimeData(mime);
+    editor->setFocus();
+    QTest::keyClick(editor, Qt::Key_V, Qt::ControlModifier);
+    QTRY_VERIFY(editor->toPlainText().contains(QChar(0xFFFC)));
+
+    QPushButton* send = nullptr;
+    for (QPushButton* button : panel.findChildren<QPushButton*>())
+        if (button->text() == QStringLiteral("发送")) send = button;
+    QVERIFY(send != nullptr);
+    QSignalSpy finished(&controller, &AgentController::turnFinished);
+    QTest::mouseClick(send, Qt::LeftButton);
+    QVERIFY(finished.wait(15000));
+
+    const MaiModelRequest request = captured->request();
+    QVERIFY(!request.messages.empty());
+    QCOMPARE(request.messages.back().images.size(), std::size_t(1));
+    QCOMPARE(QString::fromStdString(request.messages.back().images.front().path), imagePath);
+    QVERIFY(panel.findChild<MarkdownView*>()->itemCount() >= 3);
+    panel.openSession(sessionId);
+    QVERIFY(panel.findChild<MarkdownView*>()->itemCount() >= 3);
+}
+
 void AgentPanelSessionTest::unconfiguredModelOpensConfigurationInsteadOfFailingTurn() {
     Harness harness;
     QVERIFY(QTest::qWaitForWindowExposed(harness.panel.get()));
@@ -312,9 +372,10 @@ void AgentPanelSessionTest::desktopAgentSuppliesMarkdownSystemPrompt() {
     QVERIFY(controller.sendPrompt(sessionId, QStringLiteral("show repositories")));
     controller.agent().waitIdle();
 
-    QVERIFY(!observer->lastRequest.messages.empty());
-    QCOMPARE(observer->lastRequest.messages.front().role, MaiModelRole::User);
-    const QString prompt = QString::fromStdString(observer->lastRequest.baseInstructions);
+    const MaiModelRequest request = observer->request();
+    QVERIFY(!request.messages.empty());
+    QCOMPARE(request.messages.front().role, MaiModelRole::User);
+    const QString prompt = QString::fromStdString(request.baseInstructions);
     QVERIFY(prompt.contains(QStringLiteral("GitHub Flavored Markdown")));
     QVERIFY(prompt.contains(QStringLiteral("table row")));
     QVERIFY(prompt.contains(QStringLiteral("delimiter row")));

@@ -14,7 +14,12 @@ std::vector<MaiModelMessage> MaiContextBuilder::build(
             MaiModelMessage modelMessage;
             modelMessage.role = MaiModelRole::User;
             modelMessage.content = message.text();
-            if (!modelMessage.content.empty()) out.push_back(std::move(modelMessage));
+            for (const auto& part : message.parts) {
+                if (const auto* image = std::get_if<MaiImagePart>(&part.body))
+                    modelMessage.images.push_back({image->path, image->mimeType});
+            }
+            if (!modelMessage.content.empty() || !modelMessage.images.empty())
+                out.push_back(std::move(modelMessage));
             continue;
         }
 

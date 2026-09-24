@@ -5,9 +5,14 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cstring>
 #include <map>
 #include <thread>
+
+#include "MaiFilePath.h"
+#include "MaiFileSystem.h"
+#include "MaiPathGuard.h"
 
 namespace {
 
@@ -115,8 +120,59 @@ const char* toWireRole(MaiModelRole role) {
     return "user";
 }
 
+constexpr std::uint64_t kMaxPromptImageBytes = 20u * 1024 * 1024;
+
+bool isSupportedImageMimeType(const std::string& value) {
+    return value == "image/jpeg" || value == "image/png" || value == "image/webp" ||
+           value == "image/gif";
+}
+
+std::string base64Encode(const std::string& input) {
+    constexpr char kAlphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string output;
+    output.reserve(((input.size() + 2) / 3) * 4);
+    for (std::size_t offset = 0; offset < input.size(); offset += 3) {
+        const auto first = static_cast<unsigned char>(input[offset]);
+        const auto second =
+            offset + 1 < input.size() ? static_cast<unsigned char>(input[offset + 1]) : 0;
+        const auto third =
+            offset + 2 < input.size() ? static_cast<unsigned char>(input[offset + 2]) : 0;
+        output.push_back(kAlphabet[first >> 2]);
+        output.push_back(kAlphabet[((first & 0x03) << 4) | (second >> 4)]);
+        output.push_back(
+            offset + 1 < input.size() ? kAlphabet[((second & 0x0F) << 2) | (third >> 6)] : '=');
+        output.push_back(offset + 2 < input.size() ? kAlphabet[third & 0x3F] : '=');
+    }
+    return output;
+}
+
+MaiResult<std::string> imageDataUrl(const MaiModelRequest& request, const MaiModelImage& image) {
+    if (request.workingDirectory.empty())
+        return {MaiErrorCode::InvalidInput,
+                "an image prompt requires a non-empty working directory"};
+    if (!isSupportedImageMimeType(image.mimeType))
+        return {MaiErrorCode::InvalidInput, "unsupported prompt image type: " + image.mimeType};
+    const MaiFilePath candidate = MaiFilePath::fromUtf8(image.path);
+    const std::string resolved =
+        candidate.isAbsolute() ? MaiFileSystem::resolve(candidate).toUtf8()
+                               : maiResolvePathWithinRoot(request.workingDirectory, image.path);
+    if (resolved.empty())
+        return {MaiErrorCode::InvalidInput,
+                "prompt image is outside the working directory: " + image.path};
+
+    std::string bytes;
+    bool truncated = false;
+    const MaiError readError = MaiFileSystem::readFile(MaiFilePath::fromUtf8(resolved), bytes,
+                                                       kMaxPromptImageBytes, &truncated);
+    if (readError) return readError;
+    if (truncated)
+        return {MaiErrorCode::InvalidInput, "prompt image exceeds the 20 MB limit: " + image.path};
+    if (bytes.empty()) return {MaiErrorCode::InvalidInput, "prompt image is empty: " + image.path};
+    return "data:" + image.mimeType + ";base64," + base64Encode(bytes);
+}
+
 // ── 请求体构造：中立结构 -> OpenAI 线格式 ─────────────────────
-std::string buildRequestBody(const MaiModelRequest& request) {
+MaiResult<std::string> buildRequestBody(const MaiModelRequest& request) {
     json msgs = json::array();
     if (!request.baseInstructions.empty()) {
         msgs.push_back({{"role", "system"}, {"content", request.baseInstructions}});
@@ -124,8 +180,20 @@ std::string buildRequestBody(const MaiModelRequest& request) {
     for (const auto& message : request.messages) {
         json messageNode{{"role", toWireRole(message.role)}};
         // assistant 发起调用的那条，content 可以是 null，但必须带 tool_calls。
-        if (!message.content.empty() || message.invocations.empty())
+        if (!message.images.empty()) {
+            json content = json::array();
+            if (!message.content.empty())
+                content.push_back({{"type", "text"}, {"text", message.content}});
+            for (const auto& image : message.images) {
+                MaiResult<std::string> dataUrl = imageDataUrl(request, image);
+                if (!dataUrl) return dataUrl.error();
+                content.push_back(
+                    {{"type", "image_url"}, {"image_url", {{"url", dataUrl.value()}}}});
+            }
+            messageNode["content"] = std::move(content);
+        } else if (!message.content.empty() || message.invocations.empty()) {
             messageNode["content"] = message.content;
+        }
         // 线上字段名是 tool_call_id（snake_case），不是我们结构体里那个 toolCallId。
         // 写错的话工具结果和它对应的调用就对不上——服务端要么直接 400，
         // 要么模型认不出这是哪次调用的结果，下一轮把同样的工具再调一遍。
@@ -297,7 +365,9 @@ public:
         if (!url.empty() && url.back() == '/') url.pop_back();
         url += "/chat/completions";
 
-        const std::string body = buildRequestBody(request);
+        MaiResult<std::string> builtBody = buildRequestBody(request);
+        if (!builtBody) return builtBody.error();
+        const std::string body = std::move(builtBody.value());
         for (int attempt = 0;; ++attempt) {
             CURL* curl = curl_easy_init();
             if (!curl) return MaiError::make(MaiErrorCode::Internal, "curl_easy_init failed");

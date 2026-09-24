@@ -69,11 +69,19 @@ enum class MaiModelRole {
 //
 // 谁来填：MaiContextBuilder 把历史 MaiMessage 翻成这个。谁来读：
 // 各个 wire 实现（现在只有 MaiOpenAiClient）翻成自家的线格式。
+struct MaiModelImage {
+    // 相对路径必须在工作目录内；绝对路径只允许宿主在用户明确选择附件后传入。
+    // 线格式实现负责读取并编码，模型与工具都不能创建这个字段。
+    std::string path;
+    std::string mimeType;
+};
+
 struct MaiModelMessage {
     MaiModelRole role = MaiModelRole::User;
     // 正文。assistant 发起工具调用的那条可以是空的（那时候 invocations 非空），
     // 线格式里对应 content: null。
     std::string content;
+    std::vector<MaiModelImage> images;
     // ToolResult 时**必填**：这条结果对应哪次调用。线上字段名是 tool_call_id（snake_case），
     // 别写成驼峰——那个 bug 犯过一次，见 MaiModelClientTests 里的线格式用例。
     std::string toolCallId;
@@ -102,6 +110,8 @@ struct MaiModelRequest {
     // 模型的基础指令。它独立于历史：Chat Completions 在线协议边界转成首条 system 消息，
     // Responses 实现应直接映射到顶层 instructions 字段。
     std::string baseInstructions;
+    // 本地图片只能从这个目录读取。空目录与越界路径都必须拒绝。
+    std::string workingDirectory;
     // 完整历史，按时间顺序。**每次都要带全**——协议是无状态的，少带了模型就没有上下文。
     std::vector<MaiModelMessage> messages;
     // 这一轮允许模型用的工具。空表示纯对话模式，

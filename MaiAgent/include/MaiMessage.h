@@ -46,6 +46,13 @@ struct MaiReasoningPart {
     std::string text;
 };
 
+// 用户明确附加到这一轮的图片。path 可以是工作目录相对路径，也可以是宿主文件选择器
+// 授权的绝对路径；只有模型线格式层读取它，文件工具无法凭空创建这种片段。
+struct MaiImagePart {
+    std::string path;
+    std::string mimeType;
+};
+
 // 一次工具调用走到哪一步了。
 //
 // 这几个值和 SQLite 里 parts.state 列的数字绑死（见 MaiSqliteStore.cpp），**不要改它们的顺序**，
@@ -79,7 +86,7 @@ struct MaiToolPart {
     MaiToolState state = MaiToolState::Pending;
 };
 
-using MaiMessagePartBody = std::variant<MaiTextPart, MaiReasoningPart, MaiToolPart>;
+using MaiMessagePartBody = std::variant<MaiTextPart, MaiReasoningPart, MaiImagePart, MaiToolPart>;
 
 struct MaiMessagePart {
     // prt_...，**创建后永不改变**。

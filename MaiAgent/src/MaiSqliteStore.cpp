@@ -40,7 +40,7 @@ MaiRole columnToRole(int value) {
     return value == 0 ? MaiRole::User : MaiRole::Assistant;
 }
 
-enum PartKind { kText = 0, kReasoning = 1, kTool = 2 };
+enum PartKind { kText = 0, kReasoning = 1, kTool = 2, kImage = 3 };
 
 int toolStateToColumn(MaiToolState state) {
     switch (state) {
@@ -366,6 +366,10 @@ private:
         } else if (const auto* reasoningBody = std::get_if<MaiReasoningPart>(&part.body)) {
             kind = kReasoning;
             text = reasoningBody->text;
+        } else if (const auto* imageBody = std::get_if<MaiImagePart>(&part.body)) {
+            kind = kImage;
+            text = imageBody->path;
+            output = imageBody->mimeType;
         } else if (const auto* toolBody = std::get_if<MaiToolPart>(&part.body)) {
             kind = kTool;
             tool = toolBody->tool;
@@ -405,6 +409,8 @@ private:
             part.created = sqlite3_column_int64(statement, 2);
             if (kind == kReasoning) {
                 part.body = MaiReasoningPart{textColumn(statement, 3)};
+            } else if (kind == kImage) {
+                part.body = MaiImagePart{textColumn(statement, 3), textColumn(statement, 7)};
             } else if (kind == kTool) {
                 MaiToolPart tool;
                 tool.tool = textColumn(statement, 4);

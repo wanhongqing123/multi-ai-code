@@ -103,6 +103,27 @@ AgentUnderTest makeAgent(MaiFakeModelClient::Turn repeating, MaiAgent::Options o
             observer};
 }
 
+void test_prompt_images_reach_the_current_user_message() {
+    auto underTest = makeAgent(defaultTurn());
+    MaiAgent* agent = underTest.agent.get();
+    const std::string sessionId = agent->submit(MaiCreateSession{"/tmp", "", ""}).value();
+    agent->submit(
+        MaiSendPrompt{sessionId, "inspect this image", {{"attachments/photo.png", "image/png"}}});
+    agent->waitIdle();
+
+    const MaiModelRequest request = underTest.model->lastRequest();
+    CHECK(request.workingDirectory == "/tmp");
+    CHECK(request.messages.size() == 1);
+    if (request.messages.size() == 1) {
+        CHECK(request.messages[0].role == MaiModelRole::User);
+        CHECK(request.messages[0].images.size() == 1);
+        if (request.messages[0].images.size() == 1) {
+            CHECK(request.messages[0].images[0].path == "attachments/photo.png");
+            CHECK(request.messages[0].images[0].mimeType == "image/png");
+        }
+    }
+}
+
 // ── 用例 ────────────────────────────────────────────────────────
 
 void test_full_turn() {
@@ -354,6 +375,7 @@ void test_concurrent_sessions() {
 
 int main() {
     test_full_turn();
+    test_prompt_images_reach_the_current_user_message();
     test_request_is_assembled_correctly();
     test_agent_options_supply_system_prompt();
     test_multi_turn_history();

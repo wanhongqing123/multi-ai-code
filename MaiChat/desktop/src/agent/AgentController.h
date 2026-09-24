@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 #include <memory>
 
@@ -77,6 +78,7 @@ public:
 
     QString createSession(const QString& directory, const QString& title = QString());
     bool sendPrompt(const QString& sessionId, const QString& text);
+    bool sendPrompt(const QString& sessionId, const QString& text, const QStringList& imagePaths);
     bool interrupt(const QString& sessionId);
     bool setApprovalPolicy(MaiApprovalPolicy policy);
     MaiApprovalPolicy approvalPolicy() const;

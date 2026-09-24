@@ -1,6 +1,8 @@
+#include "MaiFilePath.h"
+#include "MaiFileSystem.h"
+#include "MaiIdGenerator.h"
 #include "MaiMobileAgent.h"
 #include "MaiSqliteStore.h"
-#include "MaiIdGenerator.h"
 #include <chrono>
 #include <cstdio>
 #include <httplib.h>
@@ -37,7 +39,16 @@ int main() {
         // 移动端不能向模型宣称可以执行桌面 shell。
         for (const auto& tool : body["tools"]) CHECK(tool["function"]["name"] != "shell");
         const auto& last = body["messages"].back();
-        std::string input = last.value("content", "");
+        std::string input;
+        if (last["content"].is_string()) {
+            input = last["content"].get<std::string>();
+        } else if (last["content"].is_array()) {
+            for (const auto& part : last["content"]) {
+                if (part.value("type", "") == "text") input = part.value("text", "");
+                if (part.value("type", "") == "image_url")
+                    CHECK(part["image_url"].value("url", "") == "data:image/png;base64,iVBORw==");
+            }
+        }
         if (input == "error") {
             response.status = 429;
             response.set_content(R"({"error":{"message":"quota exhausted"}})", "application/json");
@@ -119,6 +130,21 @@ int main() {
                 CHECK(false);
         }
         CHECK(done.dump().find("test-key") == std::string::npos);
+        CHECK(
+            !MaiFileSystem::writeFile(MaiFilePath::fromUtf8(std::string(directory) + "/photo.png"),
+                                      std::string("\x89PNG", 4)));
+        Json imageRequest = {{"op", "send"}, {"session", session}, {"text", "image"}};
+        imageRequest["images"] =
+            Json::array({Json{{"path", "photo.png"}, {"mimeType", "image/png"}}});
+        CHECK(call(agent, imageRequest)["ok"] == true);
+        auto imageDone = wait([](const Json& s) { return s["busy"] == false; });
+        bool foundImage = false;
+        for (const auto& message : imageDone["messages"])
+            for (const auto& part : message["parts"])
+                if (part["kind"] == "image" && part["path"] == "photo.png" &&
+                    part["mimeType"] == "image/png")
+                    foundImage = true;
+        CHECK(foundImage);
         CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "write"}})["ok"] == true);
         auto pending = wait([](const Json& s) { return !s["permissions"].empty(); });
         std::string permission = pending["permissions"][0]["id"];

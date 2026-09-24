@@ -5,6 +5,7 @@
 
 #include <QHash>
 #include <QMetaType>
+#include <QMimeDatabase>
 #include <variant>
 
 namespace {
@@ -167,8 +168,29 @@ QString AgentController::createSession(const QString& directory, const QString& 
 }
 
 bool AgentController::sendPrompt(const QString& sessionId, const QString& text) {
+    return sendPrompt(sessionId, text, {});
+}
+
+bool AgentController::sendPrompt(const QString& sessionId, const QString& text,
+                                 const QStringList& imagePaths) {
+    if (imagePaths.size() > 10) {
+        runtime_->lastError = QStringLiteral("一次最多添加 10 张图片。");
+        return false;
+    }
+    std::vector<MaiModelImage> images;
+    images.reserve(static_cast<std::size_t>(imagePaths.size()));
+    QMimeDatabase mimeDatabase;
+    for (const QString& path : imagePaths) {
+        const QString mimeType = mimeDatabase.mimeTypeForFile(path).name().toLower();
+        if (mimeType != QStringLiteral("image/jpeg") && mimeType != QStringLiteral("image/png") &&
+            mimeType != QStringLiteral("image/webp") && mimeType != QStringLiteral("image/gif")) {
+            runtime_->lastError = QStringLiteral("暂不支持这种图片格式：%1").arg(mimeType);
+            return false;
+        }
+        images.push_back({toUtf8(path), toUtf8(mimeType)});
+    }
     MaiResult<std::string> sent =
-        runtime_->agent->submit(MaiSendPrompt{toUtf8(sessionId), toUtf8(text)});
+        runtime_->agent->submit(MaiSendPrompt{toUtf8(sessionId), toUtf8(text), std::move(images)});
     if (!sent) {
         runtime_->lastError = fromUtf8(sent.error().message());
         return false;

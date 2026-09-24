@@ -57,6 +57,10 @@ struct MaiClearMessages {
 struct MaiSendPrompt {
     std::string sessionId;
     std::string text;
+    std::vector<MaiModelImage> images;
+
+    MaiSendPrompt(std::string sessionId, std::string text);
+    MaiSendPrompt(std::string sessionId, std::string text, std::vector<MaiModelImage> images);
 };
 
 // 中断正在跑的那一轮。

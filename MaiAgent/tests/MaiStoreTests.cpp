@@ -142,6 +142,11 @@ void contract_messages_and_parts(MaiSessionStore& store, const char* which) {
 
     MaiMessage user = makeMessage(MaiIdGenerator::newMessageId(), MaiRole::User);
     user.parts.push_back(textPart(MaiIdGenerator::newPartId(), "hello"));
+    MaiMessagePart image;
+    image.id = MaiIdGenerator::newPartId();
+    image.created = 2000;
+    image.body = MaiImagePart{"photo.png", "image/png"};
+    user.parts.push_back(image);
     store.putMessage(sessionId, user);
 
     // assistant 消息把三种 part 都带上：文本、推理、工具
@@ -172,7 +177,12 @@ void contract_messages_and_parts(MaiSessionStore& store, const char* which) {
 
     CHECK(loaded[0].id == user.id);
     CHECK(loaded[0].role == MaiRole::User);
-    CHECK(loaded[0].parts.size() == 1);
+    CHECK(loaded[0].parts.size() == 2);
+    if (loaded[0].parts.size() == 2) {
+        const auto* readImage = std::get_if<MaiImagePart>(&loaded[0].parts[1].body);
+        CHECK(readImage && readImage->path == "photo.png");
+        CHECK(readImage && readImage->mimeType == "image/png");
+    }
 
     CHECK(loaded[1].id == assistant.id);
     CHECK(loaded[1].role == MaiRole::Assistant);

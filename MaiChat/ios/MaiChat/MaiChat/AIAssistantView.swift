@@ -1,4 +1,5 @@
 import AVFoundation
+import ImageIO
 import Photos
 import PhotosUI
 import SwiftUI
@@ -52,7 +53,9 @@ struct AIAssistantView: View {
                                             }
                                         }.frame(maxWidth: .infinity).padding(.vertical, 70)
                                     }
-                                    ForEach(model.messages) { message in AIMessageRow(message: message) }
+                                    ForEach(model.messages) { message in
+                                        AIMessageRow(message: message, workspacePath: model.workspacePath)
+                                    }
                                     ForEach(model.permissions) { permission in AIPermissionCard(permission: permission, model: model) }
                                     ForEach(model.questions) { question in AIQuestionCard(question: question, model: model) }
                                     Color.clear.frame(height: 1).id("bottom")
@@ -359,13 +362,20 @@ private struct AIBottomPreference: PreferenceKey {
 }
 private struct AIMessageRow: View {
     let message: AIMessage
+    let workspacePath: String
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             if message.role == "user" {
                 HStack {
                     Spacer(minLength: 30)
-                    Text(message.text).font(.system(size: 14)).textSelection(.enabled).padding(14)
-                        .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(message.text).font(.system(size: 14)).textSelection(.enabled)
+                        ForEach(Array(imagePaths.enumerated()), id: \.offset) { _, path in
+                            AIWorkspaceImage(filePath: path)
+                        }
+                    }
+                    .padding(14)
+                    .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))
                 }
             } else {
                 ForEach(message.parts.filter { $0.kind == "reasoning" } + message.parts.filter { $0.kind != "reasoning" }) { part in
@@ -404,9 +414,95 @@ private struct AIMessageRow: View {
             }
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
+    private var imagePaths: [String] {
+        guard !workspacePath.isEmpty else { return [] }
+        let root = URL(fileURLWithPath: workspacePath, isDirectory: true).standardizedFileURL
+        let rootPrefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
+        let stored = message.parts.compactMap { part -> String? in
+            guard part.kind == "image", part.mimeType?.hasPrefix("image/") == true else {
+                return nil
+            }
+            return part.path
+        }
+        let prefixes = ["图片附件（工作区相对路径）：", "请查看文件："]
+        let legacy = message.text.split(whereSeparator: \.isNewline).compactMap { line -> String? in
+            let value = String(line).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let prefix = prefixes.first(where: value.hasPrefix) else { return nil }
+            return String(value.dropFirst(prefix.count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        var seen = Set<String>()
+        return (stored + legacy).compactMap { path in
+            guard !(path as NSString).isAbsolutePath else { return nil }
+            let candidate = root.appendingPathComponent(path).standardizedFileURL
+            guard candidate.path.hasPrefix(rootPrefix), Self.isImage(candidate),
+                  seen.insert(candidate.path).inserted
+            else { return nil }
+            return candidate.path
+        }
+    }
+    private static func isImage(_ url: URL) -> Bool {
+        guard let type = UTType(filenameExtension: url.pathExtension) else { return false }
+        return type.conforms(to: .image)
+    }
     private func toolStatus(_ state: String?) -> String {
         switch state { case "completed": return "已完成"; case "error": return "失败"; case "pending": return "等待授权"; default: return "正在运行" }
     }
+}
+
+private struct AIWorkspaceImage: View {
+    let filePath: String
+    @StateObject private var state = AIWorkspaceImageState()
+
+    var body: some View {
+        Group {
+            if let image = state.image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: 240, maxHeight: 200)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .accessibilityLabel("AI 助手图片附件")
+            } else if state.hasFinished {
+                Label("图片无法显示", systemImage: "photo")
+                    .foregroundStyle(Color.secondary)
+                    .frame(width: 180, height: 120)
+            } else {
+                ProgressView().frame(width: 180, height: 120)
+            }
+        }
+        .task(id: filePath) { await state.load(filePath) }
+    }
+}
+
+@MainActor
+private final class AIWorkspaceImageState: ObservableObject {
+    @Published private(set) var image: UIImage?
+    @Published private(set) var hasFinished = false
+
+    func load(_ path: String) async {
+        image = nil
+        hasFinished = false
+        let decoded = await Task.detached(priority: .utility) { () -> AIWorkspaceImageBox? in
+            let url = URL(fileURLWithPath: path) as CFURL
+            guard let source = CGImageSourceCreateWithURL(url, nil),
+                  let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceThumbnailMaxPixelSize: 720
+                  ] as CFDictionary)
+            else { return nil }
+            return AIWorkspaceImageBox(UIImage(cgImage: cgImage))
+        }.value
+        guard !Task.isCancelled else { return }
+        image = decoded?.image
+        hasFinished = true
+    }
+}
+
+private final class AIWorkspaceImageBox: @unchecked Sendable {
+    let image: UIImage
+    init(_ image: UIImage) { self.image = image }
 }
 
 private struct AIExpandableBlock<Content: View>: View {
@@ -611,8 +707,8 @@ private struct AIComposer: View {
                 if case let .success(url) = result {
                     let target = model.selected
                     Task {
-                        if let name = await model.importFile(url) {
-                            appendImportedFile(name, to: target)
+                        if let file = await model.importFile(url) {
+                            appendImportedFile(file, to: target)
                         }
                     }
                 }
@@ -736,11 +832,11 @@ private struct AIComposer: View {
                     pathExtension: type?.preferredFilenameExtension ?? "jpg"
                 )
                 defer { Task { await Self.removeTemporaryFile(temporaryURL) } }
-                guard let name = await model.importFile(temporaryURL) else {
+                guard let file = await model.importFile(temporaryURL) else {
                     failedCount += 1
                     continue
                 }
-                appendImportedFile(name, to: targetSession)
+                appendImportedFile(file, to: targetSession)
                 importedCount += 1
             } catch {
                 failedCount += 1
@@ -764,16 +860,19 @@ private struct AIComposer: View {
         do {
             let temporaryURL = try await Self.writeTemporaryImage(data, pathExtension: "jpg")
             defer { Task { await Self.removeTemporaryFile(temporaryURL) } }
-            if let name = await model.importFile(temporaryURL) {
-                appendImportedFile(name, to: targetSession)
+            if let file = await model.importFile(temporaryURL) {
+                appendImportedFile(file, to: targetSession)
             }
         } catch {
             model.showTransientError("拍摄图片导入失败")
         }
     }
 
-    private func appendImportedFile(_ name: String, to targetSession: String) {
-        let reference = "请查看文件：\(name)"
+    private func appendImportedFile(_ file: AIImportedFile, to targetSession: String) {
+        model.addAttachment(file, to: targetSession)
+        let reference = file.isImage
+            ? "图片附件（工作区相对路径）：\(file.relativePath)"
+            : "请查看工作区文件：\(file.relativePath)"
         if targetSession == model.selected {
             draft += (draft.isEmpty ? "" : "\n") + reference
             focusController.focus()

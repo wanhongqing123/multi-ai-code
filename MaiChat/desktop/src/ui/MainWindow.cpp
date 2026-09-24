@@ -87,21 +87,22 @@
 #include "markdown/MarkdownLabel.h"
 #include "markdown/MarkdownRenderer.h"
 #include "markdown/MarkdownTheme.h"
+#include "markdown/PreviewText.h"
 #include "ui/AddContactDialog.h"
 #include "ui/AppMessageDialog.h"
-#include <QSystemTrayIcon>
-#include <QLoggingCategory>
-#include "ui/BroadcastDialog.h"
 #include "ui/AppTextInputDialog.h"
+#include "ui/BroadcastDialog.h"
+#include "ui/ComposerTextEdit.h"
 #include "ui/FilePreviewDialog.h"
 #include "ui/ImagePreviewDialog.h"
 #include "ui/VideoPreviewDialog.h"
 #include <QButtonGroup>
+#include <QCache>
 #include <QCheckBox>
+#include <QLoggingCategory>
 #include <QRadioButton>
 #include <QRegularExpression>
-#include <QCache>
-#include "markdown/PreviewText.h"
+#include <QSystemTrayIcon>
 
 #include "im/RemoteIMCredentialDefaults.h"
 #include "im/TencentUserSigGenerator.h"
@@ -791,82 +792,6 @@ protected:
 private:
     QString imagePath_;
     std::function<void(const QString&)> onClick_;
-};
-
-class ComposerTextEdit final : public QTextEdit {
-public:
-    explicit ComposerTextEdit(QWidget* parent = nullptr) : QTextEdit(parent) {
-        setAcceptDrops(true);
-    }
-
-    // 把「拖进来/粘进来的东西」交给 MainWindow 决定是否变成内联附件。
-    // 返回 true = 已消费，QTextEdit 不要再按默认方式插入。
-    void setMimeHandler(std::function<bool(const QMimeData*)> handler) {
-        mimeHandler_ = std::move(handler);
-    }
-
-    void setCornerAction(QWidget* action) {
-        cornerAction_ = action;
-        if (cornerAction_) {
-            cornerAction_->setParent(this);
-            positionCornerAction();
-        }
-    }
-
-    void positionCornerAction() {
-        if (!cornerAction_) return;
-        const int inset = qMax(UiZoom::s(6), cornerAction_->width() / 5);
-        cornerAction_->move(width() - cornerAction_->width() - inset,
-                            height() - cornerAction_->height() - inset);
-        cornerAction_->raise();
-    }
-
-protected:
-    void resizeEvent(QResizeEvent* event) override {
-        QTextEdit::resizeEvent(event);
-        positionCornerAction();
-    }
-
-    // QTextEdit 的拖放与粘贴最终都汇到这两个钩子。不覆写的话，拖一个文件进来
-    // 只会插入它的 file:/// URL 文本——用户看到的是一行路径，发出去的也是一行路径。
-    bool canInsertFromMimeData(const QMimeData* source) const override {
-        if (hasLocalFile(source)) return true;
-        return QTextEdit::canInsertFromMimeData(source);
-    }
-
-    void insertFromMimeData(const QMimeData* source) override {
-        if (mimeHandler_ && mimeHandler_(source)) return;
-        QTextEdit::insertFromMimeData(source);
-    }
-
-    // 拖到输入框上时给出「可以放」的反馈，否则 Windows 上是禁止光标。
-    void dragEnterEvent(QDragEnterEvent* event) override {
-        if (hasLocalFile(event->mimeData())) {
-            event->acceptProposedAction();
-            return;
-        }
-        QTextEdit::dragEnterEvent(event);
-    }
-
-    void dragMoveEvent(QDragMoveEvent* event) override {
-        if (hasLocalFile(event->mimeData())) {
-            event->acceptProposedAction();
-            return;
-        }
-        QTextEdit::dragMoveEvent(event);
-    }
-
-private:
-    static bool hasLocalFile(const QMimeData* source) {
-        if (!source || !source->hasUrls()) return false;
-        for (const QUrl& url : source->urls()) {
-            if (url.isLocalFile() && QFileInfo(url.toLocalFile()).isFile()) return true;
-        }
-        return false;
-    }
-
-    QWidget* cornerAction_ = nullptr;
-    std::function<bool(const QMimeData*)> mimeHandler_;
 };
 
 enum class LineIconKind {

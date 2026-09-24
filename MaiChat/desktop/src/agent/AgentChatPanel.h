@@ -1,11 +1,14 @@
 #pragma once
 
 #include <QString>
+#include <QStringList>
 #include <QWidget>
 #include <memory>
 
 class AgentController;
+class QImage;
 class QLabel;
+class QMimeData;
 enum class MaiApprovalPolicy;
 
 // AI 助手的聊天页。
@@ -93,6 +96,11 @@ private:
 
     void onSend();
     void onClear();
+    bool insertComposerMimeData(const QMimeData* mime);
+    void insertComposerImage(const QImage& image);
+    void insertComposerImageFile(const QString& path);
+    QStringList composerImagePaths() const;
+    void appendUserImages(const QStringList& paths);
 
     // 流式期间往某条回答后面追加。攒一小会儿再刷进视图，
     // 每个 delta 都重排是 O(n^2)。

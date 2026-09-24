@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 struct AIModelSettings: Codable, Sendable, Equatable {
@@ -22,6 +23,8 @@ struct AIPart: Codable, Identifiable, Sendable, Equatable {
     var output: String?
     var error: String?
     var state: String?
+    var path: String?
+    var mimeType: String?
 }
 struct AIMessage: Codable, Identifiable, Sendable, Equatable {
     let id: String
@@ -41,6 +44,15 @@ struct AIQuestion: Codable, Identifiable, Sendable, Equatable {
     let id: String
     let question: String
     let options: [String]
+}
+struct AIImportedFile: Sendable, Equatable {
+    let relativePath: String
+    let mimeType: String
+    let isImage: Bool
+}
+struct AIAssistantOpenResult: Sendable {
+    let settings: AIModelSettings
+    let workspacePath: String
 }
 struct AIResponse: Codable, Sendable {
     let ok: Bool
@@ -75,7 +87,7 @@ actor AIAssistantBackend {
         }
     }
 
-    private func call(_ op: String, values: [String: String] = [:], force: Bool = false) throws -> AIResponse {
+    private func call(_ op: String, values: [String: Any] = [:], force: Bool = false) throws -> AIResponse {
         var request: [String: Any] = values
         request["op"] = op
         request["force"] = force
@@ -90,8 +102,13 @@ actor AIAssistantBackend {
         return decoded
     }
 
-    func open() throws -> AIModelSettings {
-        if initialized { return settings }
+    func open() throws -> AIAssistantOpenResult {
+        if initialized {
+            return AIAssistantOpenResult(
+                settings: settings,
+                workspacePath: root!.appendingPathComponent("Workspace", isDirectory: true).path
+            )
+        }
         var directory = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
                                                      appropriateFor: nil, create: true).appendingPathComponent("AIAssistant")
         #if targetEnvironment(simulator)
@@ -118,7 +135,10 @@ actor AIAssistantBackend {
         if uiTest { _ = try call("create") }
         #endif
         initialized = true
-        return settings
+        return AIAssistantOpenResult(
+            settings: settings,
+            workspacePath: directory.appendingPathComponent("Workspace", isDirectory: true).path
+        )
     }
 
     private func configure(_ config: AIModelSettings, key: String) throws {
@@ -157,10 +177,18 @@ actor AIAssistantBackend {
     }
 
     func request(_ operation: String, values: [String: String] = [:], force: Bool = false) throws -> AIResponse {
-        try call(operation, values: values, force: force)
+        try call(operation, values: values.mapValues { $0 as Any }, force: force)
     }
 
-    func importDocument(_ source: URL) throws -> String {
+    func send(session: String, text: String, images: [AIImportedFile]) throws -> AIResponse {
+        try call("send", values: [
+            "session": session,
+            "text": text,
+            "images": images.map { ["path": $0.relativePath, "mimeType": $0.mimeType] }
+        ])
+    }
+
+    func importDocument(_ source: URL) throws -> AIImportedFile {
         guard let root else { throw AIBackendError(message: "AI 助手尚未准备好") }
         let scoped = source.startAccessingSecurityScopedResource()
         defer { if scoped { source.stopAccessingSecurityScopedResource() } }
@@ -175,14 +203,32 @@ actor AIAssistantBackend {
                 message: isImage ? "请选择不超过 20 MB 的图片" : "请选择不超过 5 MB 的文本文件"
             )
         }
-        let data = try Data(contentsOf: source)
+        var data = try Data(contentsOf: source)
         guard isImage || String(data: data, encoding: .utf8) != nil else {
             throw AIBackendError(message: "目前支持 UTF-8 文本、代码文件和图片")
         }
-        let name = UUID().uuidString.prefix(8) + "-" + source.lastPathComponent
+        var storedName = source.lastPathComponent
+        var mimeType = contentType?.preferredMIMEType ?? (isImage ? "image/jpeg" : "text/plain")
+        let supportedImageTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"]
+        if isImage, !supportedImageTypes.contains(mimeType) {
+            guard let image = UIImage(data: data),
+                  let jpeg = image.jpegData(compressionQuality: 0.92)
+            else { throw AIBackendError(message: "图片格式无法转换") }
+            data = jpeg
+            storedName = source.deletingPathExtension().lastPathComponent + ".jpg"
+            mimeType = "image/jpeg"
+        }
+        guard data.count <= maximumSize else {
+            throw AIBackendError(message: "转换后的图片超过 20 MB")
+        }
+        let name = UUID().uuidString.prefix(8) + "-" + storedName
         let target = root.appendingPathComponent("Workspace").appendingPathComponent(String(name))
         try data.write(to: target, options: .atomic)
-        return String(name)
+        return AIImportedFile(
+            relativePath: String(name),
+            mimeType: mimeType,
+            isImage: isImage
+        )
     }
 }
 
@@ -201,7 +247,9 @@ final class AIAssistantModel: ObservableObject {
     @Published var isSubmitting = false
     @Published var showSettings = false
     @Published var scrollRequest = 0
+    @Published private(set) var workspacePath = ""
     var drafts: [String: String] = [:]
+    private var pendingAttachments: [String: [AIImportedFile]] = [:]
     private let backend = AIAssistantBackend()
     private var poll: Task<Void, Never>?
     private var transientErrorTask: Task<Void, Never>?
@@ -227,7 +275,9 @@ final class AIAssistantModel: ObservableObject {
         Task {
             defer { opening = false }
             do {
-                settings = try await backend.open()
+                let opened = try await backend.open()
+                settings = opened.settings
+                workspacePath = opened.workspacePath
                 ready = true
                 await refresh(force: true)
                 if selected.isEmpty, let first = sessions.first { await select(first.id) }
@@ -276,10 +326,17 @@ final class AIAssistantModel: ObservableObject {
         guard !isSubmitting, !busy, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
         isSubmitting = true
         defer { isSubmitting = false }
+        let draftSession = selected
+        let attachments = pendingAttachments[draftSession, default: []]
         if selected.isEmpty { await create() }
         guard !selected.isEmpty else { return false }
         do {
-            _ = try await backend.request("send", values: ["session": selected, "text": text])
+            _ = try await backend.send(
+                session: selected,
+                text: text,
+                images: attachments.filter(\.isImage)
+            )
+            pendingAttachments.removeValue(forKey: draftSession)
             error = ""
             await refresh(force: true)
             scrollRequest += 1
@@ -304,7 +361,10 @@ final class AIAssistantModel: ObservableObject {
             return true
         } catch { self.error = error.localizedDescription; return false }
     }
-    func importFile(_ url: URL) async -> String? {
+    func addAttachment(_ file: AIImportedFile, to session: String) {
+        pendingAttachments[session, default: []].append(file)
+    }
+    func importFile(_ url: URL) async -> AIImportedFile? {
         do { return try await backend.importDocument(url) }
         catch { self.error = error.localizedDescription; return nil }
     }

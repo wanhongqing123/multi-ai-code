@@ -1,21 +1,33 @@
 #include "agent/AgentChatPanel.h"
 
 #include <QAbstractTextDocumentLayout>
+#include <QDateTime>
+#include <QDebug>
 #include <QDesktopServices>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QFontMetrics>
 #include <QFrame>
 #include <QHBoxLayout>
-#include <QDebug>
+#include <QImageReader>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QMenu>
+#include <QMimeData>
+#include <QPixmap>
 #include <QPushButton>
 #include <QSettings>
+#include <QStandardPaths>
+#include <QTextBlock>
+#include <QTextCursor>
+#include <QTextDocument>
 #include <QTextEdit>
+#include <QTextFragment>
+#include <QTextImageFormat>
 #include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -25,6 +37,7 @@
 
 #include "agent/AgentController.h"
 #include "markdown/MarkdownView.h"
+#include "ui/ComposerTextEdit.h"
 #include "ui/UiZoom.h"
 
 namespace {
@@ -141,9 +154,9 @@ void applyAgentMenuStyle(QMenu* menu) {
 //
 // 得自己拦 keyPressEvent：QTextEdit 默认把 Enter 当换行，而这个框是多行的，
 // 不拦的话用户每轮都得去点发送按钮。
-class PromptEdit final : public QTextEdit {
+class PromptEdit final : public ComposerTextEdit {
 public:
-    explicit PromptEdit(QWidget* parent = nullptr) : QTextEdit(parent) {}
+    explicit PromptEdit(QWidget* parent = nullptr) : ComposerTextEdit(parent) {}
     std::function<void()> onSubmit;
 
 protected:
@@ -638,6 +651,8 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     editorFont.setPixelSize(UiZoom::s(13));
     runtime_->editor->setFont(editorFont);
     runtime_->editor->onSubmit = [this] { onSend(); };
+    runtime_->editor->setMimeHandler(
+        [this](const QMimeData* mime) { return insertComposerMimeData(mime); });
     cardColumn->addWidget(runtime_->editor);
 
     // 卡片底边：左边是工作目录和模型（agent 能碰到什么的边界，必须一直看得见），
@@ -645,6 +660,23 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     auto* foot = new QHBoxLayout;
     foot->setContentsMargins(0, 0, 0, 0);
     foot->setSpacing(UiZoom::s(10));
+    auto* attachButton = new QPushButton(QStringLiteral("＋"));
+    attachButton->setObjectName(QStringLiteral("agentAttachImage"));
+    attachButton->setCursor(Qt::PointingHandCursor);
+    attachButton->setToolTip(QStringLiteral("添加图片（也可以拖入或粘贴）"));
+    attachButton->setStyleSheet(
+        QStringLiteral("QPushButton{background:transparent;border:none;color:#"
+                       "0b67b7;padding:0;}"));
+    QFont attachFont = attachButton->font();
+    attachFont.setPixelSize(UiZoom::s(18));
+    attachButton->setFont(attachFont);
+    connect(attachButton, &QPushButton::clicked, this, [this] {
+        const QStringList paths =
+            QFileDialog::getOpenFileNames(this, QStringLiteral("选择图片"), QString(),
+                                          QStringLiteral("图片 (*.png *.jpg *.jpeg *.webp *.gif)"));
+        for (const QString& path : paths) insertComposerImageFile(path);
+    });
+    foot->addWidget(attachButton);
     runtime_->dirChip = makeLabel(QString(), 11, kInkSoft);
     runtime_->dirChip->setObjectName(QStringLiteral("agentWorkingDirectory"));
     runtime_->dirChip->setWordWrap(false);
@@ -905,6 +937,9 @@ void AgentChatPanel::reloadFromStore() {
     runtime_->toolCards.clear();
     runtime_->subAgentCards.clear();
 
+    MaiSession selectedSession;
+    runtime_->controller->agent().getSession(toUtf8(runtime_->sessionId), selectedSession);
+
     for (const MaiMessage& message :
          runtime_->controller->agent().listMessages(toUtf8(runtime_->sessionId))) {
         if (message.role == MaiRole::User) {
@@ -912,6 +947,16 @@ void AgentChatPanel::reloadFromStore() {
             // 不然同一条消息会被当成两条。
             runtime_->view->addItem(fromUtf8(message.id), MarkdownView::Style::Bubble,
                                     fromUtf8(message.text()));
+            QStringList images;
+            for (const MaiMessagePart& part : message.parts) {
+                const auto* image = std::get_if<MaiImagePart>(&part.body);
+                if (!image) continue;
+                const QString stored = fromUtf8(image->path);
+                images.push_back(QFileInfo(stored).isAbsolute()
+                                     ? stored
+                                     : QDir(fromUtf8(selectedSession.directory)).filePath(stored));
+            }
+            appendUserImages(images);
             continue;
         }
         for (const MaiMessagePart& part : message.parts) {
@@ -1139,6 +1184,92 @@ void AgentChatPanel::showApproval(const QString& permissionId) {
 
 // ── 动作 ────────────────────────────────────────────────────────
 
+bool AgentChatPanel::insertComposerMimeData(const QMimeData* mime) {
+    if (!mime) return false;
+    bool inserted = false;
+    if (mime->hasUrls()) {
+        for (const QUrl& url : mime->urls()) {
+            if (!url.isLocalFile()) continue;
+            const QString path = url.toLocalFile();
+            if (!QFileInfo(path).isFile() || QImageReader::imageFormat(path).isEmpty()) continue;
+            insertComposerImageFile(path);
+            inserted = true;
+        }
+        if (inserted) return true;
+    }
+    if (mime->hasImage()) {
+        const QImage image = qvariant_cast<QImage>(mime->imageData());
+        if (!image.isNull()) {
+            insertComposerImage(image);
+            return true;
+        }
+    }
+    return false;
+}
+
+void AgentChatPanel::insertComposerImage(const QImage& image) {
+    const QString directory = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
+                                  .filePath(QStringLiteral("maichat-ai-paste"));
+    if (!QDir().mkpath(directory)) return;
+    const QString path = QDir(directory).filePath(
+        QStringLiteral("paste-%1.png").arg(QDateTime::currentMSecsSinceEpoch()));
+    if (!image.save(path, "PNG")) return;
+    insertComposerImageFile(path);
+}
+
+void AgentChatPanel::insertComposerImageFile(const QString& path) {
+    QImageReader reader(path);
+    const QSize size = reader.size();
+    if (!size.isValid() || size.isEmpty()) {
+        appendNotice(QStringLiteral("图片无法读取：%1").arg(QFileInfo(path).fileName()), true);
+        return;
+    }
+    QTextImageFormat format;
+    format.setName(QFileInfo(path).absoluteFilePath());
+    int width = size.width();
+    int height = size.height();
+    constexpr int kMaxWidth = 240;
+    if (width > kMaxWidth && width > 0) {
+        height = height * kMaxWidth / width;
+        width = kMaxWidth;
+    }
+    format.setWidth(width);
+    format.setHeight(height);
+    QTextCursor cursor = runtime_->editor->textCursor();
+    cursor.insertImage(format);
+    runtime_->editor->setTextCursor(cursor);
+    runtime_->editor->setFocus();
+}
+
+QStringList AgentChatPanel::composerImagePaths() const {
+    QStringList paths;
+    const QTextDocument* document = runtime_->editor->document();
+    for (QTextBlock block = document->begin(); block.isValid(); block = block.next()) {
+        for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+            const QTextFragment fragment = it.fragment();
+            if (!fragment.isValid() || !fragment.charFormat().isImageFormat()) continue;
+            const QString path = fragment.charFormat().toImageFormat().name();
+            if (QFileInfo(path).isFile() && !paths.contains(path)) paths.push_back(path);
+        }
+    }
+    return paths;
+}
+
+void AgentChatPanel::appendUserImages(const QStringList& paths) {
+    for (const QString& path : paths) {
+        QPixmap pixmap(path);
+        if (pixmap.isNull()) continue;
+        auto* preview = new QLabel;
+        preview->setPixmap(pixmap.scaled(UiZoom::s(280), UiZoom::s(210), Qt::KeepAspectRatio,
+                                         Qt::SmoothTransformation));
+        preview->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        preview->setStyleSheet(QStringLiteral("background:transparent;border:none;"));
+        preview->setToolTip(QFileInfo(path).fileName());
+        runtime_->view->addWidget(QStringLiteral("local-image-%1").arg(++runtime_->noticeSerial),
+                                  preview);
+    }
+}
+
 void AgentChatPanel::onSend() {
     // 正在等回答时，**先把这一句当答案送出去**。
     //
@@ -1163,19 +1294,24 @@ void AgentChatPanel::onSend() {
         runtime_->controller->interrupt(runtime_->sessionId);
         return;
     }
-    const QString text = runtime_->editor->toPlainText().trimmed();
-    if (text.isEmpty()) return;
+    QString text = runtime_->editor->toPlainText();
+    text.remove(QChar(0xFFFC));
+    text = text.trimmed();
+    const QStringList imagePaths = composerImagePaths();
+    if (text.isEmpty() && imagePaths.isEmpty()) return;
+    if (text.isEmpty()) text = QStringLiteral("请查看这些图片。");
     if (!runtime_->modelConfigured) {
         emit modelConfigurationRequested();
         return;
     }
 
-    if (!runtime_->controller->sendPrompt(runtime_->sessionId, text)) {
+    if (!runtime_->controller->sendPrompt(runtime_->sessionId, text, imagePaths)) {
         appendNotice(runtime_->controller->lastError(), true);
         return;
     }
     runtime_->editor->clear();
     appendUserBubble(text);
+    appendUserImages(imagePaths);
     setRunning(true);
     scrollToBottom();
 }

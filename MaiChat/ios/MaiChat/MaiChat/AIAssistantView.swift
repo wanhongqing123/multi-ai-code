@@ -14,6 +14,7 @@ struct AIAssistantView: View {
     @State private var sessionDrawerOffset: CGFloat = 0
     @State private var sessionDrawerWidth: CGFloat = 320
     @State private var composerFocusController = AIComposerFocusController()
+    @State private var transcriptionPresentation = VoiceTranscriptionPresentation()
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -98,7 +99,11 @@ struct AIAssistantView: View {
                         Button { model.error = "" } label: { Image(systemName: "xmark") }
                     }.foregroundStyle(.red).padding(12).background(Color.red.opacity(0.05))
                 }
-                AIComposer(model: model, focusController: composerFocusController)
+                AIComposer(
+                    model: model,
+                    focusController: composerFocusController,
+                    transcriptionPresentation: transcriptionPresentation
+                )
                     .padding(.horizontal, 12).padding(.vertical, 8)
             }
             .background(Color(uiColor: .systemBackground))
@@ -143,6 +148,8 @@ struct AIAssistantView: View {
                     .transition(.move(edge: .trailing).combined(with: .opacity))
                     .zIndex(5)
             }
+            VoiceTranscriptionHighlightHost(presentation: transcriptionPresentation)
+                .zIndex(20)
         }
         .simultaneousGesture(sessionDrawerOpenGesture)
         .confirmationDialog("清空当前对话的所有消息？", isPresented: $confirmClear, titleVisibility: .visible) {
@@ -439,6 +446,7 @@ private final class AIComposerFocusController {
 private struct AIComposer: View {
     @ObservedObject var model: AIAssistantModel
     let focusController: AIComposerFocusController
+    let transcriptionPresentation: VoiceTranscriptionPresentation
     @StateObject private var speechRecognizer = TencentRealtimeSpeechRecognizer(
         appId: TencentASRCredentials.appId,
         secretId: TencentASRCredentials.secretId,
@@ -448,7 +456,6 @@ private struct AIComposer: View {
     @State private var importing = false
     @State private var draftSession = ""
     @State private var isPressingVoice = false
-    @State private var isCancellingVoice = false
     @State private var showPolicyMenu = false
     @State private var voiceBaseDraft = ""
     @State private var voiceStartTask: Task<Bool, Never>?
@@ -458,13 +465,19 @@ private struct AIComposer: View {
                 AIComposerTextView(
                     text: $draft,
                     focusController: focusController,
-                    voiceTranscriptionEnabled: draft.isEmpty || isPressingVoice,
+                    voiceTranscriptionEnabled: canStartVoiceTranscription,
                     onSubmit: { submitDraft($0) },
-                    onVoiceChanged: { translation in
-                        beginVoiceTranscription()
-                        isCancellingVoice = translation.height < -60
+                    onVoiceChanged: { translation, location in
+                        handleVoiceGestureChanged(translation: translation, location: location)
                     },
-                    onVoiceEnded: { _ in finishVoiceGesture() },
+                    onVoiceEnded: { translation, location in
+                        Task {
+                            await finishVoiceGesture(
+                                translation: translation,
+                                location: location
+                            )
+                        }
+                    },
                     onVoiceCancelled: { cancelVoiceTranscription(restoresDraft: true) }
                 )
                 .onChange(of: draft) { updated in
@@ -478,7 +491,7 @@ private struct AIComposer: View {
                 }
                 if draft.isEmpty {
                     Text(composerPrompt)
-                        .foregroundStyle(isCancellingVoice ? Color.red : Color.secondary)
+                        .foregroundStyle(Color.secondary)
                         .font(.system(size: 17, weight: isPressingVoice ? .semibold : .regular))
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
@@ -550,9 +563,21 @@ private struct AIComposer: View {
             .onAppear {
                 draftSession = model.selected
                 draft = model.drafts[draftSession] ?? ""
-                speechRecognizer.onLiveTextUpdate = { text, _ in
+                transcriptionPresentation.onCancel = {
+                    cancelVoiceTranscription(restoresDraft: true)
+                }
+                transcriptionPresentation.onEdit = {
+                    Task {
+                        await finishVoiceGesture(
+                            translation: .zero,
+                            location: nil,
+                            explicitTarget: .edit
+                        )
+                    }
+                }
+                speechRecognizer.onLiveTextUpdate = { text, sessionID in
                     guard isPressingVoice else { return }
-                    draft = voiceText(base: voiceBaseDraft, transcript: text)
+                    transcriptionPresentation.updateLiveText(text, sessionID: sessionID)
                 }
             }
             .onDisappear {
@@ -560,6 +585,9 @@ private struct AIComposer: View {
                 voiceStartTask?.cancel()
                 voiceStartTask = nil
                 speechRecognizer.onLiveTextUpdate = nil
+                transcriptionPresentation.onCancel = nil
+                transcriptionPresentation.onEdit = nil
+                transcriptionPresentation.reset()
                 speechRecognizer.cancel()
             }
             .onChange(of: model.selected) { selected in
@@ -572,9 +600,13 @@ private struct AIComposer: View {
     }
 
     private var composerPrompt: String {
-        if isCancellingVoice { return "松开取消" }
-        if isPressingVoice { return "松开完成" }
         return "可按住转文字"
+    }
+
+    private var canStartVoiceTranscription: Bool {
+        isPressingVoice || (
+            model.ready && !model.busy && !model.isSubmitting && draft.isEmpty
+        )
     }
 
     private func submitDraft(_ submittedText: String? = nil) {
@@ -586,15 +618,13 @@ private struct AIComposer: View {
         }
     }
 
-    private func finishVoiceGesture() {
+    private func handleVoiceGestureChanged(translation: CGSize, location: CGPoint) {
+        guard canStartVoiceTranscription else { return }
+        if !isPressingVoice { beginVoiceTranscription() }
         guard isPressingVoice else { return }
-        let cancel = isCancellingVoice
-        isPressingVoice = false
-        isCancellingVoice = false
-        if cancel {
-            cancelVoiceTranscription(restoresDraft: true)
-        } else {
-            finishVoiceTranscription()
+        let target = transcriptionTarget(for: translation, location: location)
+        if transcriptionPresentation.target != target {
+            transcriptionPresentation.target = target
         }
     }
 
@@ -607,43 +637,95 @@ private struct AIComposer: View {
         }
         focusController.dismiss()
         isPressingVoice = true
-        isCancellingVoice = false
         voiceBaseDraft = draft
+        transcriptionPresentation.prepareForNewSession(
+            account: "ai-assistant",
+            peer: model.selected
+        )
+        transcriptionPresentation.target = .send
+        AppDiagnosticLog.shared.record(
+            level: .info,
+            category: "asr",
+            event: "gesture-started",
+            fields: ["mode": "ai-assistant-transcription"]
+                .merging(transcriptionPresentation.diagnosticFields) { _, context in context }
+        )
         voiceStartTask = Task { @MainActor in
             do {
-                try await speechRecognizer.start(diagnosticFields: [
-                    "surface": "ai-assistant",
-                    "session": model.selected,
-                ])
+                try await speechRecognizer.start(
+                    diagnosticFields: transcriptionPresentation.diagnosticFields
+                )
                 return true
             } catch is CancellationError {
                 return false
             } catch {
                 isPressingVoice = false
+                transcriptionPresentation.reset()
                 model.error = "语音转文字失败：\(error.localizedDescription)"
                 return false
             }
         }
     }
 
-    private func finishVoiceTranscription() {
+    private func finishVoiceGesture(
+        translation: CGSize,
+        location: CGPoint?,
+        explicitTarget: VoiceTranscriptionTarget? = nil
+    ) async {
+        guard isPressingVoice else { return }
+        isPressingVoice = false
+        let target = explicitTarget ?? transcriptionTarget(
+            for: translation,
+            location: location
+        )
+        let diagnosticFields = transcriptionPresentation.diagnosticFields
+        if target == .cancel {
+            AppDiagnosticLog.shared.record(
+                level: .info,
+                category: "asr",
+                event: "gesture-ended",
+                fields: ["action": "cancel"]
+                    .merging(diagnosticFields) { _, context in context }
+            )
+            cancelVoiceTranscription(restoresDraft: true)
+            return
+        }
+
+        let shouldEdit = target == .edit
+        transcriptionPresentation.target = shouldEdit ? .finishingEdit : .finishingSend
+        AppDiagnosticLog.shared.record(
+            level: .info,
+            category: "asr",
+            event: "gesture-ended",
+            fields: ["action": shouldEdit ? "edit" : "send"]
+                .merging(diagnosticFields) { _, context in context }
+        )
         let startTask = voiceStartTask
         voiceStartTask = nil
-        Task { @MainActor in
-            let didStart = await startTask?.value ?? speechRecognizer.isRecognizing
-            guard didStart, speechRecognizer.isRecognizing else { return }
-            do {
-                let text = try await speechRecognizer.stop()
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !text.isEmpty else {
-                    model.error = "没有识别到文字"
-                    return
-                }
-                draft = voiceText(base: voiceBaseDraft, transcript: text)
-            } catch is CancellationError {
-            } catch {
-                model.error = "语音转文字失败：\(error.localizedDescription)"
+        let didStart = await startTask?.value ?? speechRecognizer.isRecognizing
+        guard didStart, speechRecognizer.isRecognizing else {
+            transcriptionPresentation.reset()
+            return
+        }
+        do {
+            let text = try await speechRecognizer.stop()
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            transcriptionPresentation.reset()
+            guard !text.isEmpty else {
+                model.error = "没有识别到文字"
+                return
             }
+            if shouldEdit {
+                draft = voiceText(base: voiceBaseDraft, transcript: text)
+                focusController.focus()
+            } else {
+                _ = await model.send(text)
+            }
+        } catch is CancellationError {
+            transcriptionPresentation.reset()
+        } catch {
+            transcriptionPresentation.reset()
+            model.error = "语音转文字失败：\(error.localizedDescription)"
         }
     }
 
@@ -653,8 +735,20 @@ private struct AIComposer: View {
         voiceStartTask = nil
         speechRecognizer.cancel()
         isPressingVoice = false
-        isCancellingVoice = false
+        transcriptionPresentation.reset()
         if restoresDraft, hadActiveTranscription { draft = voiceBaseDraft }
+    }
+
+    private func transcriptionTarget(
+        for translation: CGSize,
+        location: CGPoint?
+    ) -> VoiceTranscriptionTarget {
+        VoiceTranscriptionHitTest.target(
+            translation: translation,
+            location: location,
+            cancelFrame: transcriptionPresentation.actionFrames[.cancel],
+            editFrame: transcriptionPresentation.actionFrames[.edit]
+        )
     }
 
     private func voiceText(base: String, transcript: String) -> String {
@@ -711,8 +805,8 @@ private struct AIComposerTextView: UIViewRepresentable {
     let focusController: AIComposerFocusController
     let voiceTranscriptionEnabled: Bool
     let onSubmit: (String) -> Void
-    let onVoiceChanged: (CGSize) -> Void
-    let onVoiceEnded: (CGSize) -> Void
+    let onVoiceChanged: (CGSize, CGPoint) -> Void
+    let onVoiceEnded: (CGSize, CGPoint) -> Void
     let onVoiceCancelled: () -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -822,17 +916,19 @@ private struct AIComposerTextView: UIViewRepresentable {
                 guard parent.voiceTranscriptionEnabled, parent.text.isEmpty else { return }
                 voiceOrigin = location
                 gesture.view?.resignFirstResponder()
-                parent.onVoiceChanged(.zero)
+                parent.onVoiceChanged(.zero, location)
             case .changed:
                 guard let origin = voiceOrigin else { return }
                 parent.onVoiceChanged(
-                    CGSize(width: location.x - origin.x, height: location.y - origin.y)
+                    CGSize(width: location.x - origin.x, height: location.y - origin.y),
+                    location
                 )
             case .ended:
                 guard let origin = voiceOrigin else { return }
                 voiceOrigin = nil
                 parent.onVoiceEnded(
-                    CGSize(width: location.x - origin.x, height: location.y - origin.y)
+                    CGSize(width: location.x - origin.x, height: location.y - origin.y),
+                    location
                 )
             case .cancelled, .failed:
                 voiceOrigin = nil

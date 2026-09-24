@@ -1282,7 +1282,7 @@ private struct ChatDetailView: View {
 
 }
 
-private struct VoiceActionFramesKey: PreferenceKey {
+struct VoiceActionFramesKey: PreferenceKey {
     static let defaultValue: [VoiceTranscriptionTarget: CGRect] = [:]
     static func reduce(value: inout [VoiceTranscriptionTarget: CGRect], nextValue: () -> [VoiceTranscriptionTarget: CGRect]) {
         value.merge(nextValue()) { _, new in new }
@@ -1290,7 +1290,7 @@ private struct VoiceActionFramesKey: PreferenceKey {
 }
 
 @MainActor
-private final class VoiceTranscriptionPresentation: ObservableObject {
+final class VoiceTranscriptionPresentation: ObservableObject {
     private struct PresentationState: Equatable {
         var target: VoiceTranscriptionTarget?
         var liveText = ""
@@ -1339,7 +1339,7 @@ private final class VoiceTranscriptionPresentation: ObservableObject {
     }
 }
 
-private struct VoiceTranscriptionHighlightHost: View {
+struct VoiceTranscriptionHighlightHost: View {
     @ObservedObject var presentation: VoiceTranscriptionPresentation
 
     var body: some View {

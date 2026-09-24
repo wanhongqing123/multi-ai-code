@@ -69,8 +69,8 @@ describe('withCodexHome', () => {
   })
 
   // 我们**不往共享目录写任何 config.toml**。曾经写过一份 `[windows] sandbox = "disabled"`
-  // 的默认值，那是错的：内核的 WindowsSandboxModeToml 只有 elevated / unelevated 两个变体，
-  // 写 "disabled" 会让整份配置解析失败、codex 直接起不来（见下面的内核回归）。
+  // 的默认值，那是错的：内核的 WindowsSandboxModeToml 不接受 disabled；它支持的具体沙箱
+  // 变体会随上游演进，写 "disabled" 始终会让配置解析失败、codex 直接起不来（见下面的内核回归）。
   // 「关闭沙箱」在内核里的正确表达是**不写这个键**——缺省即 WindowsSandboxLevel::Disabled。
   it('creates the shared home without planting any config file in it', () => {
     withTempHome((home) => {
@@ -109,7 +109,7 @@ describe.runIf(kernelAvailable)('bundled codex kernel: what it accepts for [wind
 
   it('rejects sandbox = "disabled" outright, so we must never write it', () => {
     expect(loadConfig('[windows]\nsandbox = "disabled"\n')).toMatch(
-      /unknown variant `disabled`, expected `elevated` or `unelevated`/
+      /unknown variant `disabled`, expected /
     )
   })
 

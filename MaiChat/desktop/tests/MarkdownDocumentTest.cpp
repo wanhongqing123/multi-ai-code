@@ -26,6 +26,7 @@ private slots:
     void parsesParagraphsAndHeadings();
     void stacksInlineStyles();
     void keepsCodeBlockVerbatim();
+    void keepsFencedCodeInsideListItem();
     void flattensNestedLists();
     void readsTaskListsAndOrderedNumbers();
     void dropsUnsafeLinkTargets();
@@ -90,6 +91,33 @@ void MarkdownDocumentTest::keepsCodeBlockVerbatim() {
     QCOMPARE(block.language, QStringLiteral("cpp"));
     // 里面的 ** 不是粗体，是代码。缩进也要原样保留。
     QCOMPARE(block.code, QStringLiteral("int main() {\n    return **0**;\n}\n"));
+}
+
+void MarkdownDocumentTest::keepsFencedCodeInsideListItem() {
+    const MarkdownDocument document = MarkdownDocument::parse(QStringLiteral(
+        "1. 调用驱动接口：\n\n"
+        "   ```cpp\n"
+        "   do {\n"
+        "       submit();\n"
+        "   } while (busy());\n"
+        "   ```\n\n"
+        "   代码块之后的说明仍属于这个列表项。\n\n"
+        "2. 第二项"));
+
+    QCOMPARE(document.blocks().size(), 1);
+    const MarkdownBlock& list = document.blocks().first();
+    QCOMPARE(list.kind, MarkdownBlockKind::List);
+    QCOMPARE(list.items.size(), 2);
+    const QString first = textOf(list.items[0].spans);
+    QVERIFY(first.contains(QStringLiteral("submit();")));
+    QVERIFY(first.contains(QStringLiteral("代码块之后的说明")));
+    QVERIFY(list.items[0].spans.constFirst().styles.testFlag(MarkdownStyle::Normal));
+    bool hasCode = false;
+    for (const MarkdownSpan& span : list.items[0].spans) {
+        if (span.styles.testFlag(MarkdownStyle::Code)) hasCode = true;
+    }
+    QVERIFY(hasCode);
+    QCOMPARE(textOf(list.items[1].spans), QStringLiteral("第二项"));
 }
 
 void MarkdownDocumentTest::flattensNestedLists() {

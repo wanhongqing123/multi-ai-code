@@ -31,6 +31,7 @@ struct Builder {
     int italic = 0;
     int code = 0;
     int strike = 0;
+    int listCodeBlockDepth = 0;
     QVector<QString> linkStack;
 
     // 列表状态。md4c 的列表是嵌套块，深度靠 enter/leave 配对数出来。
@@ -81,7 +82,11 @@ struct Builder {
     // 文字往哪儿落，取决于当前在什么结构里。
     QVector<MarkdownSpan>* sink() {
         if (inTableCell) return &currentCell;
-        if (!itemStack.isEmpty()) return &current.items[itemStack.last()].spans;
+        if (!itemStack.isEmpty()) {
+            const int index = itemStack.last();
+            if (index < 0 || index >= current.items.size()) return nullptr;
+            return &current.items[index].spans;
+        }
         if (inBlock) return &current.spans;
         return nullptr;
     }
@@ -249,6 +254,7 @@ int enterBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
             break;
 
         case MD_BLOCK_H: {
+            if (builder->inListItem()) break;
             builder->current = MarkdownBlock{};
             builder->current.kind = MarkdownBlockKind::Heading;
             builder->current.headingLevel = static_cast<MD_BLOCK_H_DETAIL*>(detail)->level;
@@ -257,6 +263,11 @@ int enterBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
         }
 
         case MD_BLOCK_CODE: {
+            if (builder->inListItem()) {
+                ++builder->listCodeBlockDepth;
+                ++builder->code;
+                break;
+            }
             builder->current = MarkdownBlock{};
             builder->current.kind = MarkdownBlockKind::Code;
             auto* codeDetail = static_cast<MD_BLOCK_CODE_DETAIL*>(detail);
@@ -351,7 +362,17 @@ int leaveBlock(MD_BLOCKTYPE type, void* /*detail*/, void* userdata) {
             break;
 
         case MD_BLOCK_H:
+            if (builder->inListItem()) break;
+            builder->emitBlock(builder->current);
+            builder->inBlock = false;
+            break;
+
         case MD_BLOCK_CODE:
+            if (builder->listCodeBlockDepth > 0) {
+                --builder->listCodeBlockDepth;
+                if (builder->code > 0) --builder->code;
+                break;
+            }
             builder->emitBlock(builder->current);
             builder->inBlock = false;
             break;
@@ -468,6 +489,10 @@ int onText(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* userdata) 
             // 复制按钮复制的就是它。
             if (builder->inBlock && builder->current.kind == MarkdownBlockKind::Code) {
                 builder->current.code += fromMd(text, size);
+                break;
+            }
+            if (builder->listCodeBlockDepth > 0) {
+                builder->addText(fromMd(text, size));
                 break;
             }
             {

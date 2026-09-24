@@ -20,6 +20,16 @@
 
 using Json = nlohmann::json;
 
+namespace {
+
+constexpr auto kMarkdownSystemPrompt =
+    "Write user-facing responses in valid GitHub-Flavored Markdown. Preserve real line breaks. "
+    "For tables, put the header, separator, and every row on separate lines, with a blank line "
+    "before and after the table. Use headings, lists, fenced code blocks, and tables only when "
+    "they improve readability. Never emit table pipes as one continuous line.";
+
+}  // namespace
+
 // 这是移动端适配器，JSON 只在语言边界，MaiAgent 的公开接口仍是领域对象。
 struct MaiMobileAgent {
     std::mutex mutex;
@@ -74,6 +84,7 @@ struct MaiMobileAgent {
         tools->add(makeMaiTodoWriteTool());
         MaiAgent::Options options;
         options.defaultModel = request.at("model").get<std::string>();
+        options.systemPrompt = kMarkdownSystemPrompt;
         const auto policy = request.value("policy", "on-request");
         if (policy == "never")
             options.approvalPolicy = MaiApprovalPolicy::Never;

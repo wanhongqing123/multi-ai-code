@@ -31,6 +31,9 @@ int main() {
                                         httplib::Response& response) {
         const Json body = Json::parse(request.body);
         CHECK(request.get_header_value("Authorization") == "Bearer test-key");
+        CHECK(body["messages"].front()["role"] == "system");
+        CHECK(body["messages"].front()["content"].get<std::string>().find(
+                  "GitHub-Flavored Markdown") != std::string::npos);
         // 移动端不能向模型宣称可以执行桌面 shell。
         for (const auto& tool : body["tools"]) CHECK(tool["function"]["name"] != "shell");
         const auto& last = body["messages"].back();

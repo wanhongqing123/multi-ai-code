@@ -118,6 +118,9 @@ MaiAgent::MaiAgent(std::unique_ptr<MaiSessionStore> store, std::unique_ptr<MaiMo
     mRuntime->model = std::move(model);
     mRuntime->tools = std::move(tools);
     mRuntime->options = std::move(options);
+    MaiContextBuilder::Options contextOptions;
+    contextOptions.systemPrompt = mRuntime->options.systemPrompt;
+    mRuntime->context = MaiContextBuilder(std::move(contextOptions));
 
     MaiPermissionGate::Options gateOptions;
     gateOptions.timeoutMs = mRuntime->options.permissionTimeoutMs;

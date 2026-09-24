@@ -18,6 +18,12 @@ QString fromUtf8(const std::string& text) {
     return QString::fromUtf8(text.data(), static_cast<int>(text.size()));
 }
 
+constexpr auto kMarkdownSystemPrompt =
+    "Write user-facing responses in valid GitHub-Flavored Markdown. Preserve real line breaks. "
+    "For tables, put the header, separator, and every row on separate lines, with a blank line "
+    "before and after the table. Use headings, lists, fenced code blocks, and tables only when "
+    "they improve readability. Never emit table pipes as one continuous line.";
+
 // 界面要知道一个片段是正文、思考还是工具卡。增量事件本身不带这个信息（见头文件里那一段），
 // 所以查一次记下来。
 enum class PartKind { Unknown, Text, Reasoning, Tool };
@@ -62,6 +68,7 @@ std::unique_ptr<MaiAgent> buildAgent(std::unique_ptr<MaiModelClient> model,
 
     MaiAgent::Options options;
     if (!defaultModel.isEmpty()) options.defaultModel = toUtf8(defaultModel);
+    options.systemPrompt = kMarkdownSystemPrompt;
     // 0 = 无限等。桌面端有人盯着，超时自动拒绝等于替用户做决定。
     options.permissionTimeoutMs = 0;
     options.approvalPolicy = approvalPolicy;

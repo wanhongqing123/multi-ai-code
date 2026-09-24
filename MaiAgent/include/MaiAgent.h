@@ -144,6 +144,8 @@ public:
     struct Options {
         // 会话没指定模型时用这个。会话上配了就用会话的（MaiUpdateSession）。
         std::string defaultModel = "glm-5.3";
+        // 每次请求最前面的系统提示词。空串表示不添加；它只参与模型上下文，不落入会话历史。
+        std::string systemPrompt;
         // 模型可以连着调工具，一轮对话因此会有多次请求。
         // 设上限是因为模型会绕圈——拿同样的参数反复调同一个工具，没上限就一直烧钱。
         int maxToolIterations = 12;

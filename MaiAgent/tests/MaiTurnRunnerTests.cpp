@@ -94,14 +94,32 @@ struct AgentUnderTest {
     MaiFakeModelClient* model = nullptr;
 };
 
-AgentUnderTest makeAgent(MaiFakeModelClient::Turn repeating) {
+AgentUnderTest makeAgent(MaiFakeModelClient::Turn repeating, MaiAgent::Options options = {}) {
     auto model = std::make_unique<MaiFakeModelClient>();
     model->setRepeatingTurn(std::move(repeating));
     MaiFakeModelClient* observer = model.get();
-    MaiAgent::Options options;
-    options.defaultModel = "glm-5.3";
+    if (options.defaultModel.empty()) options.defaultModel = "glm-5.3";
     return {std::make_unique<MaiAgent>(makeMaiMemoryStore(), std::move(model), nullptr, options),
             observer};
+}
+
+void test_system_prompt_precedes_history() {
+    MaiAgent::Options options;
+    options.systemPrompt = "Use valid Markdown with real line breaks.";
+    auto underTest = makeAgent(defaultTurn(), options);
+    MaiAgent* agent = underTest.agent.get();
+    const std::string sessionId = agent->submit(MaiCreateSession{"/tmp", "", ""}).value();
+    agent->submit(MaiSendPrompt{sessionId, "show a table"});
+    agent->waitIdle();
+
+    const MaiModelRequest request = underTest.model->lastRequest();
+    CHECK(request.messages.size() == 2);
+    if (request.messages.size() == 2) {
+        CHECK(request.messages[0].role == MaiModelRole::System);
+        CHECK(request.messages[0].content == options.systemPrompt);
+        CHECK(request.messages[1].role == MaiModelRole::User);
+        CHECK(request.messages[1].content == "show a table");
+    }
 }
 
 // ── 用例 ────────────────────────────────────────────────────────
@@ -334,6 +352,7 @@ void test_concurrent_sessions() {
 
 int main() {
     test_full_turn();
+    test_system_prompt_precedes_history();
     test_request_is_assembled_correctly();
     test_multi_turn_history();
     test_reasoning_goes_to_its_own_part();

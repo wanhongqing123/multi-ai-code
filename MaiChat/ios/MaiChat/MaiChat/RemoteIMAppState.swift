@@ -90,6 +90,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     private var typingLastEdit: [String: Date] = [:]
     private var closedActivityIDs: [String] = []
     private var activitySequence: [String: Int] = [:]
+    private var transientErrorTask: Task<Void, Never>?
     private let messagePageSize = 20
 
     init(
@@ -201,6 +202,17 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
 
     var totalUnreadCount: Int {
         unreadCountByUserID.values.reduce(0, +)
+    }
+
+    func showTransientError(_ message: String, duration: Duration = .seconds(3)) {
+        transientErrorTask?.cancel()
+        errorMessage = message
+        transientErrorTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: duration)
+            guard !Task.isCancelled, let self, self.errorMessage == message else { return }
+            self.errorMessage = nil
+            self.transientErrorTask = nil
+        }
     }
 
     func profile(for userID: String) -> RemoteIMUserProfile {

@@ -712,7 +712,7 @@ private struct AIComposer: View {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             transcriptionPresentation.reset()
             guard !text.isEmpty else {
-                model.error = "没有识别到文字"
+                model.showTransientError("没有识别到文字")
                 return
             }
             if shouldEdit {

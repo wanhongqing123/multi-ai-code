@@ -224,8 +224,15 @@ struct RootView: View {
                     .background(.red, in: Capsule())
                     .padding(.top, 8)
                     .padding(.horizontal, 16)
+                    .onTapGesture {
+                        if appState.errorMessage == errorMessage {
+                            appState.errorMessage = nil
+                        }
+                    }
+                    .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
+        .animation(.easeOut(duration: 0.18), value: appState.errorMessage)
     }
 
     private func offerNotificationPermissionIfNeeded() async {

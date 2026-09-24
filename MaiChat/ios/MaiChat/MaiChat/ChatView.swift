@@ -5212,7 +5212,7 @@ private struct ComposerView: View {
             guard !text.isEmpty else {
                 AppDiagnosticLog.shared.record(level: .info, category: "asr",
                     event: "transcription-empty", fields: diagnosticFields)
-                appState.errorMessage = "没有识别到文字，未发送"
+                appState.showTransientError("没有识别到文字，未发送")
                 return
             }
             if shouldEdit {

@@ -192,9 +192,21 @@ final class AIAssistantModel: ObservableObject {
     var drafts: [String: String] = [:]
     private let backend = AIAssistantBackend()
     private var poll: Task<Void, Never>?
+    private var transientErrorTask: Task<Void, Never>?
     private var opening = false
     private var visible = false
     var busy: Bool { sessions.first { $0.id == selected }?.busy == true }
+
+    func showTransientError(_ message: String, duration: Duration = .seconds(3)) {
+        transientErrorTask?.cancel()
+        error = message
+        transientErrorTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: duration)
+            guard !Task.isCancelled, let self, self.error == message else { return }
+            self.error = ""
+            self.transientErrorTask = nil
+        }
+    }
 
     func appear() {
         visible = true

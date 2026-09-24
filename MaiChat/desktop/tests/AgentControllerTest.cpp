@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "agent/AgentController.h"
+#include "agent/DesktopScreenshotTool.h"
 
 // AgentController 的活儿只有一件：把 MaiAgent 的事件从**核心的线程**搬到 Qt 主线程。
 // 所以这份用例的重点不是"信号发出来了没有"，而是"它们到达的时候人在哪个线程上"。
@@ -115,6 +116,7 @@ private slots:
     void separates_reasoning_from_text();
     void reports_a_missing_model_instead_of_hanging();
     void sends_selected_images_as_multimodal_input();
+    void registers_a_screenshot_tool_that_requires_approval();
 };
 
 // 载荷不是文案：中文 + emoji，验证 UTF-8 一路（回调 -> 事件 -> QString）不走样。
@@ -233,6 +235,26 @@ void AgentControllerTest::sends_selected_images_as_multimodal_input() {
     QCOMPARE(QString::fromStdString(request.messages.back().images.front().path), imagePath);
     QCOMPARE(QString::fromStdString(request.messages.back().images.front().mimeType),
              QStringLiteral("image/png"));
+}
+
+void AgentControllerTest::registers_a_screenshot_tool_that_requires_approval() {
+    std::unique_ptr<MaiTool> screenshot = makeDesktopScreenshotTool();
+    QCOMPARE(QString::fromStdString(screenshot->name()), QStringLiteral("screenshot"));
+    QVERIFY(screenshot->requiresApproval(QStringLiteral("{}").toStdString()));
+
+    auto model = std::make_unique<ScriptedModel>(std::string(), std::string(kText));
+    ScriptedModel* scripted = model.get();
+    AgentController controller(std::move(model), QString());
+    const QString sessionId = controller.createSession(QDir::currentPath());
+    QSignalSpy finished(&controller, &AgentController::turnFinished);
+    QVERIFY(controller.sendPrompt(sessionId, QStringLiteral("inspect the screen")));
+    QVERIFY(finished.wait(15000));
+
+    bool foundScreenshot = false;
+    for (const MaiToolSpec& tool : scripted->lastRequest().tools) {
+        if (tool.name == "screenshot") foundScreenshot = true;
+    }
+    QVERIFY(foundScreenshot);
 }
 
 QTEST_MAIN(AgentControllerTest)

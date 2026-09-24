@@ -70,8 +70,8 @@ enum class MaiModelRole {
 // 谁来填：MaiContextBuilder 把历史 MaiMessage 翻成这个。谁来读：
 // 各个 wire 实现（现在只有 MaiOpenAiClient）翻成自家的线格式。
 struct MaiModelImage {
-    // 相对路径必须在工作目录内；绝对路径只允许宿主在用户明确选择附件后传入。
-    // 线格式实现负责读取并编码，模型与工具都不能创建这个字段。
+    // 相对路径必须在工作目录内；绝对路径只允许宿主在用户明确选择附件后传入，
+    // 或由已获批准的宿主工具创建。线格式实现负责读取并编码。
     std::string path;
     std::string mimeType;
 };

@@ -1,4 +1,5 @@
 #include "agent/AgentController.h"
+#include "agent/DesktopScreenshotTool.h"
 #include "MaiOpenAiClient.h"
 #include "MaiMemoryStore.h"
 #include "MaiSqliteStore.h"
@@ -69,6 +70,7 @@ std::unique_ptr<MaiAgent> buildAgent(std::unique_ptr<MaiModelClient> model,
     // 要不要把工具声明给模型看是 MaiContextBuilder 的事，不是这里的。
     auto tools = std::make_unique<MaiToolRegistry>();
     registerMaiBuiltinTools(*tools);
+    tools->add(makeDesktopScreenshotTool());
 
     MaiAgent::Options options;
     if (!defaultModel.isEmpty()) options.defaultModel = toUtf8(defaultModel);

@@ -28,6 +28,14 @@ MaiToolResult MaiToolResult::success(std::string output, bool truncated) {
     return result;
 }
 
+MaiToolResult MaiToolResult::successWithImages(std::string output,
+                                               std::vector<MaiToolImage> images) {
+    MaiToolResult result;
+    result.mOutput = std::move(output);
+    result.mImages = std::move(images);
+    return result;
+}
+
 MaiToolResult MaiToolResult::failure(MaiErrorCode code, std::string message) {
     MaiToolResult result;
     result.mError = MaiError::make(code, std::move(message));
@@ -36,6 +44,10 @@ MaiToolResult MaiToolResult::failure(MaiErrorCode code, std::string message) {
 
 const std::string& MaiToolResult::output() const {
     return mOutput;
+}
+
+const std::vector<MaiToolImage>& MaiToolResult::images() const {
+    return mImages;
 }
 
 const MaiError& MaiToolResult::error() const {

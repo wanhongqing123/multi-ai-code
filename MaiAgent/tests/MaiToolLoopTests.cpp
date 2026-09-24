@@ -80,6 +80,44 @@ struct AgentUnderTest {
     MaiFakeModelClient* model = nullptr;  // agent 持有，这里只借着看
 };
 
+class ImageResultTool final : public MaiTool {
+public:
+    explicit ImageResultTool(std::string path) : mPath(std::move(path)) {}
+
+    std::string name() const override {
+        return "screenshot";
+    }
+    std::string description() const override {
+        return "Capture the current display.";
+    }
+    std::string parametersSchema() const override {
+        return R"({"type":"object","properties":{},"additionalProperties":false})";
+    }
+    MaiToolResult execute(const std::string&, const MaiToolContext&) override {
+        return MaiToolResult::successWithImages("Captured the current display.",
+                                                {MaiToolImage{mPath, "image/png"}});
+    }
+
+private:
+    std::string mPath;
+};
+
+class TextResultTool final : public MaiTool {
+public:
+    std::string name() const override {
+        return "status";
+    }
+    std::string description() const override {
+        return "Return a status value.";
+    }
+    std::string parametersSchema() const override {
+        return R"({"type":"object"})";
+    }
+    MaiToolResult execute(const std::string&, const MaiToolContext&) override {
+        return MaiToolResult::success("ready");
+    }
+};
+
 AgentUnderTest makeAgent(std::vector<MaiFakeModelClient::Turn> script,
                          MaiAgent::Options options = {}, bool withTools = true) {
     auto model = std::make_unique<MaiFakeModelClient>(std::move(script));
@@ -91,6 +129,20 @@ AgentUnderTest makeAgent(std::vector<MaiFakeModelClient::Turn> script,
         registerMaiBuiltinTools(*tools);
     }
     if (options.defaultModel.empty()) options.defaultModel = "glm-5.3";
+    return {std::make_unique<MaiAgent>(makeMaiMemoryStore(), std::move(model), std::move(tools),
+                                       options),
+            observer};
+}
+
+AgentUnderTest makeAgentWithImageTool(std::vector<MaiFakeModelClient::Turn> script,
+                                      const std::string& imagePath) {
+    auto model = std::make_unique<MaiFakeModelClient>(std::move(script));
+    MaiFakeModelClient* observer = model.get();
+    auto tools = std::make_unique<MaiToolRegistry>();
+    tools->add(std::make_unique<ImageResultTool>(imagePath));
+    tools->add(std::make_unique<TextResultTool>());
+    MaiAgent::Options options;
+    options.defaultModel = "glm-5.3";
     return {std::make_unique<MaiAgent>(makeMaiMemoryStore(), std::move(model), std::move(tools),
                                        options),
             observer};
@@ -188,6 +240,101 @@ void test_tool_loop_closes() {
     for (const auto& e : recorder.all())
         if (e.type == MaiEventType::MessagePartUpdated) ++partUpdates;
     CHECK(partUpdates >= 2);  // 至少 running 和 completed 各一次
+}
+
+void test_tool_image_is_persisted_and_fed_back_to_the_model() {
+    Workspace workspace;
+    const fs::path screenshot = workspace.root / "screenshot.png";
+    std::ofstream(screenshot, std::ios::binary) << "png";
+    auto underTest = makeAgentWithImageTool(
+        {callTurn("screenshot", R"({})", "call_screenshot"), sayTurn("I can see it.")},
+        screenshot.u8string());
+    MaiAgent& agent = *underTest.agent;
+    MaiFakeModelClient* model = underTest.model;
+    const std::string sessionId =
+        agent.submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
+
+    agent.submit(MaiSendPrompt{sessionId, "inspect my screen"});
+    agent.waitIdle();
+
+    CHECK(model->requestCount() == 2);
+    const MaiModelRequest second = model->request(1);
+    bool foundToolResult = false;
+    bool foundScreenshot = false;
+    std::size_t toolResultIndex = 0;
+    std::size_t screenshotIndex = 0;
+    for (std::size_t i = 0; i < second.messages.size(); ++i) {
+        const MaiModelMessage& message = second.messages[i];
+        if (message.role == MaiModelRole::ToolResult && message.toolCallId == "call_screenshot") {
+            foundToolResult = true;
+            toolResultIndex = i;
+        }
+        if (message.role == MaiModelRole::User && message.images.size() == 1 &&
+            message.images.front().path == screenshot.u8string()) {
+            foundScreenshot = true;
+            screenshotIndex = i;
+            CHECK(message.images.front().mimeType == "image/png");
+            CHECK(message.content.find("Image returned") != std::string::npos);
+        }
+    }
+    CHECK(foundToolResult);
+    CHECK(foundScreenshot);
+    CHECK(toolResultIndex < screenshotIndex);
+
+    bool persistedScreenshot = false;
+    for (const MaiMessage& message : agent.listMessages(sessionId)) {
+        for (const MaiMessagePart& part : message.parts) {
+            const auto* image = std::get_if<MaiImagePart>(&part.body);
+            if (image && image->path == screenshot.u8string() && image->mimeType == "image/png") {
+                persistedScreenshot = true;
+            }
+        }
+    }
+    CHECK(persistedScreenshot);
+}
+
+void test_tool_image_keeps_parallel_tool_calls_in_one_assistant_batch() {
+    Workspace workspace;
+    const fs::path screenshot = workspace.root / "batch-screenshot.png";
+    std::ofstream(screenshot, std::ios::binary) << "png";
+    MaiFakeModelClient::Turn calls;
+    calls.invocations = {MaiToolInvocation{"call_screenshot", "screenshot", R"({})"},
+                         MaiToolInvocation{"call_status", "status", R"({})"}};
+    auto underTest =
+        makeAgentWithImageTool({calls, sayTurn("Both results arrived.")}, screenshot.u8string());
+    MaiAgent& agent = *underTest.agent;
+    const std::string sessionId =
+        agent.submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
+
+    agent.submit(MaiSendPrompt{sessionId, "inspect and report status"});
+    agent.waitIdle();
+
+    const MaiModelRequest second = underTest.model->request(1);
+    std::size_t assistantBatches = 0;
+    std::size_t toolResults = 0;
+    std::size_t imageObservations = 0;
+    std::size_t batchIndex = 0;
+    std::size_t lastToolResultIndex = 0;
+    std::size_t imageIndex = 0;
+    for (std::size_t i = 0; i < second.messages.size(); ++i) {
+        const MaiModelMessage& message = second.messages[i];
+        if (message.role == MaiModelRole::Assistant && !message.invocations.empty()) {
+            ++assistantBatches;
+            batchIndex = i;
+            CHECK(message.invocations.size() == 2);
+        } else if (message.role == MaiModelRole::ToolResult) {
+            ++toolResults;
+            lastToolResultIndex = i;
+        } else if (!message.images.empty()) {
+            ++imageObservations;
+            imageIndex = i;
+        }
+    }
+    CHECK(assistantBatches == 1);
+    CHECK(toolResults == 2);
+    CHECK(imageObservations == 1);
+    CHECK(batchIndex < lastToolResultIndex);
+    CHECK(lastToolResultIndex < imageIndex);
 }
 
 void test_reasoning_only_after_tools_retries_for_final_answer() {
@@ -404,6 +551,8 @@ void test_model_exception_becomes_a_session_error() {
 
 int main() {
     test_tool_loop_closes();
+    test_tool_image_is_persisted_and_fed_back_to_the_model();
+    test_tool_image_keeps_parallel_tool_calls_in_one_assistant_batch();
     test_reasoning_only_after_tools_retries_for_final_answer();
     test_repeated_missing_final_answer_reports_error();
     test_tool_error_is_fed_back();

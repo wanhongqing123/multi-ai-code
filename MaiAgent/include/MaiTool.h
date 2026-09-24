@@ -53,6 +53,14 @@ struct MaiToolContext {
     bool isCanceled() const;
 };
 
+// 工具产生的图片附件。工具负责创建文件并保证路径在后续模型请求期间仍可读；agent 只把路径和
+// MIME 类型随 assistant 消息落库，线格式层随后读取并编码。绝对路径必须来自宿主工具创建或授权的
+// 文件，不能把模型参数未经校验地抄进来。
+struct MaiToolImage {
+    std::string path;
+    std::string mimeType;
+};
+
 // 一次工具执行的结果。
 //
 // **失败也是正常结果，不是异常。** 工具失败了要把原因告诉模型，
@@ -63,11 +71,15 @@ public:
     // 长了要自己截断并把 truncated 置位。
     static MaiToolResult success(std::string output, bool truncated = false);
 
+    // 图片会在同一批工具的全部文本结果之后，按原顺序作为多模态观察回灌给模型。
+    static MaiToolResult successWithImages(std::string output, std::vector<MaiToolImage> images);
+
     // message 同样是给模型看的，要写成**它能据此改正**的话。比如"路径超出工作目录，
     // 只能访问工作目录内的文件"比"权限不足"有用。
     static MaiToolResult failure(MaiErrorCode code, std::string message);
 
     const std::string& output() const;
+    const std::vector<MaiToolImage>& images() const;
     const MaiError& error() const;
 
     // 输出被截断过。**一定要如实置位**：
@@ -78,6 +90,7 @@ public:
 
 private:
     std::string mOutput;
+    std::vector<MaiToolImage> mImages;
     MaiError mError;
     bool mTruncated = false;
 };
@@ -161,5 +174,3 @@ private:
 //
 // shell 只在跑得了外部进程的平台上注册，见 MaiProcess.h。
 void registerMaiBuiltinTools(MaiToolRegistry& registry);
-
-

@@ -80,6 +80,16 @@ std::vector<MaiModelMessage> MaiContextBuilder::build(
                     toolPart->state == MaiToolState::Error) {
                     batch.push_back(toolPart);
                 }
+            } else if (const auto* image = std::get_if<MaiImagePart>(&part.body)) {
+                // Chat Completions only accepts image_url parts on a user message. Keep the tool
+                // result immediately after its assistant call, then add the captured image as the
+                // next observation so the model receives the actual pixels instead of a path.
+                flush_batch();
+                MaiModelMessage observation;
+                observation.role = MaiModelRole::User;
+                observation.content = "Image returned by the preceding tool.";
+                observation.images.push_back({image->path, image->mimeType});
+                out.push_back(std::move(observation));
             }
         }
         flush_batch();

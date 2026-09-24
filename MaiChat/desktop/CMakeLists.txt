@@ -356,6 +356,8 @@ add_library(maichat_agent
   src/ui/ComposerTextEdit.cpp
   src/agent/AgentController.h
   src/agent/AgentController.cpp
+  src/agent/DesktopScreenshotTool.h
+  src/agent/DesktopScreenshotTool.cpp
   src/agent/AgentChatPanel.h
   src/agent/AgentChatPanel.cpp
   src/agent/AgentSessionList.h

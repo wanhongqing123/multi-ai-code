@@ -46,8 +46,9 @@ struct MaiReasoningPart {
     std::string text;
 };
 
-// 用户明确附加到这一轮的图片。path 可以是工作目录相对路径，也可以是宿主文件选择器
-// 授权的绝对路径；只有模型线格式层读取它，文件工具无法凭空创建这种片段。
+// 一轮消息附带的图片。用户消息里的图片来自宿主文件选择器；assistant 消息里的图片来自
+// 已获批准的宿主工具。path 可以是工作目录相对路径，也可以是这两类可信来源给出的绝对路径；
+// 只有模型线格式层读取它，模型参数不能凭空创建这种片段。
 struct MaiImagePart {
     std::string path;
     std::string mimeType;

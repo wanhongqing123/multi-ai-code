@@ -195,6 +195,7 @@ void MaiTurnRunner::executeTools(const std::vector<MaiToolInvocation>& calls,
     context.announceQuestion = [emitter, sessionId](const MaiQuestionRequest& request) {
         if (emitter != nullptr) emitter->emitQuestion(sessionId, request);
     };
+    std::vector<MaiToolImage> resultImages;
 
     for (const auto& call : calls) {
         if (cancel.load(std::memory_order_relaxed)) break;
@@ -265,11 +266,27 @@ void MaiTurnRunner::executeTools(const std::vector<MaiToolInvocation>& calls,
             stored.state = MaiToolState::Completed;
             stored.output = result.output();
             if (result.isTruncated()) stored.output += "\n(output truncated)";
+
+            resultImages.insert(resultImages.end(), result.images().begin(), result.images().end());
         }
         mDependencies.emitter->emitPart(MaiEventType::MessagePartUpdated, mSessionId, mAssistant.id,
                                         part.id);
 
         // 每执行完一个工具就落一次库：工具可能跑很久，中途崩了不该丢掉已完成的部分。
+        mDependencies.store->putMessage(mSessionId, mAssistant);
+    }
+
+    // A single model response may request several tools at once. Keep their MaiToolPart entries
+    // adjacent so MaiContextBuilder can reconstruct one assistant tool_calls batch, then append all
+    // media observations after every textual tool result.
+    if (!resultImages.empty()) {
+        for (const MaiToolImage& image : resultImages) {
+            MaiMessagePart imagePart;
+            imagePart.id = MaiIdGenerator::newPartId();
+            imagePart.created = MaiTime::getCurrentTime();
+            imagePart.body = MaiImagePart{image.path, image.mimeType};
+            mAssistant.parts.push_back(std::move(imagePart));
+        }
         mDependencies.store->putMessage(mSessionId, mAssistant);
     }
 }

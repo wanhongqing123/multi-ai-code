@@ -1965,7 +1965,11 @@ private struct RemoteIMActivityBubble: View {
         let startedAt = Date(
             timeIntervalSince1970: TimeInterval(signal.startedAtMilliseconds) / 1_000
         )
+        let taskStartedAt = Date(
+            timeIntervalSince1970: TimeInterval(signal.taskStartedAtMilliseconds) / 1_000
+        )
         let elapsed = max(0, Int(date.timeIntervalSince(startedAt)))
+        let taskElapsed = max(elapsed, Int(date.timeIntervalSince(taskStartedAt)))
         let title: String
         switch signal.kind {
         case .machineThinking: title = "思考中"
@@ -1974,7 +1978,7 @@ private struct RemoteIMActivityBubble: View {
         case .machineWorking: title = "正在执行"
         case .humanTyping: return ""
         }
-        return "\(title) \(elapsed) 秒"
+        return "\(title)\(elapsed)秒，任务总耗时\(taskElapsed)秒"
     }
 }
 

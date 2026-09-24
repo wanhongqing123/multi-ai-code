@@ -7,15 +7,18 @@ it('ignores reordered stops and heartbeats, expires without touching history', (
   const key = activityKey('owner', 'peer')
   const signal = {
     activityId: 'id-one', sequence: 1, kind: 'machine-working' as const,
-    active: true, startedAtMs: 1_700_000_000_000, ttlMs: 12000
+    active: true, startedAtMs: 1_700_000_000_000,
+    taskStartedAtMs: 1_699_999_995_000, ttlMs: 12000
   }
   receiveActivity(key, signal)
   receiveActivity(key, { ...signal, sequence: 2, startedAtMs: 1_800_000_000_000 })
   expect(getActivity(key)?.startedAtMs).toBe(1_700_000_000_000)
+  expect(getActivity(key)?.taskStartedAtMs).toBe(1_699_999_995_000)
   receiveActivity(key, {
     ...signal, sequence: 3, kind: 'machine-tool', startedAtMs: 1_700_000_005_000
   })
   expect(getActivity(key)?.startedAtMs).toBe(1_700_000_005_000)
+  expect(getActivity(key)?.taskStartedAtMs).toBe(1_699_999_995_000)
   receiveActivity(key, { ...signal, sequence: 2, active: false })
   expect(getActivity(key)?.kind).toBe('machine-tool')
   receiveActivity(key, { ...signal, sequence: 2 })
@@ -31,7 +34,8 @@ it('explicit clearing closes the old activity and a later phase gets a new ident
   const key = activityKey('owner', 'other-peer')
   const signal = {
     activityId: 'id-two', sequence: 1, kind: 'human-typing' as const,
-    active: true, startedAtMs: 1_700_000_000_000, ttlMs: 12000
+    active: true, startedAtMs: 1_700_000_000_000,
+    taskStartedAtMs: 1_700_000_000_000, ttlMs: 12000
   }
   receiveActivity(key, signal)
   clearActivity(key)

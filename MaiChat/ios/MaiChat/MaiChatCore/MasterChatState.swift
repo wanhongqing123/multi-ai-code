@@ -161,6 +161,7 @@ public struct RemoteIMActivitySignal: Codable, Equatable, Sendable {
     public let kind: RemoteIMActivityKind
     public let active: Bool
     public let startedAtMilliseconds: Int64
+    public let taskStartedAtMilliseconds: Int64
     public let ttlMilliseconds: Int
 
     public init?(
@@ -169,7 +170,8 @@ public struct RemoteIMActivitySignal: Codable, Equatable, Sendable {
         active: Bool,
         ttlMilliseconds: Int,
         sequence: Int = 0,
-        startedAtMilliseconds: Int64 = 0
+        startedAtMilliseconds: Int64 = 0,
+        taskStartedAtMilliseconds: Int64 = 0
     ) {
         let id = activityID.trimmingCharacters(in: .whitespacesAndNewlines)
         let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._:-")
@@ -180,9 +182,13 @@ public struct RemoteIMActivitySignal: Codable, Equatable, Sendable {
         self.sequence = sequence
         self.kind = kind
         self.active = active
-        self.startedAtMilliseconds = startedAtMilliseconds > 0
+        let resolvedStartedAt = startedAtMilliseconds > 0
             ? startedAtMilliseconds
             : Int64((Date().timeIntervalSince1970 * 1_000).rounded())
+        self.startedAtMilliseconds = resolvedStartedAt
+        self.taskStartedAtMilliseconds = taskStartedAtMilliseconds > 0
+            ? min(taskStartedAtMilliseconds, resolvedStartedAt)
+            : resolvedStartedAt
         self.ttlMilliseconds = min(max(ttlMilliseconds, 1_000), 30_000)
     }
 }
@@ -199,6 +205,7 @@ public enum RemoteIMActivityCodec {
         let kind: String
         let active: Bool
         let startedAtMs: Int64?
+        let taskStartedAtMs: Int64?
         let ttlMs: Int
     }
 
@@ -211,6 +218,7 @@ public enum RemoteIMActivityCodec {
             kind: signal.kind.rawValue,
             active: signal.active,
             startedAtMs: signal.startedAtMilliseconds,
+            taskStartedAtMs: signal.taskStartedAtMilliseconds,
             ttlMs: signal.ttlMilliseconds
         ))
     }
@@ -228,7 +236,8 @@ public enum RemoteIMActivityCodec {
             active: wire.active,
             ttlMilliseconds: wire.ttlMs,
             sequence: wire.sequence,
-            startedAtMilliseconds: wire.startedAtMs ?? 0
+            startedAtMilliseconds: wire.startedAtMs ?? 0,
+            taskStartedAtMilliseconds: wire.taskStartedAtMs ?? wire.startedAtMs ?? 0
         )
     }
 }

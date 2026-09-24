@@ -83,6 +83,12 @@ bool activityKindFromName(const QString& value, RemoteIMActivityKind* out) {
 }
 
 QString activityData(const RemoteIMActivitySignal& signal) {
+    const qint64 startedAt = signal.startedAtMs > 0
+        ? signal.startedAtMs
+        : QDateTime::currentMSecsSinceEpoch();
+    const qint64 taskStartedAt = signal.taskStartedAtMs > 0
+        ? qMin(signal.taskStartedAtMs, startedAt)
+        : startedAt;
     QJsonObject object;
     object[QStringLiteral("namespace")] = QString::fromLatin1(kActivityNamespace);
     object[QStringLiteral("version")] = kActivityVersion;
@@ -90,8 +96,8 @@ QString activityData(const RemoteIMActivitySignal& signal) {
     object[QStringLiteral("sequence")] = static_cast<double>(signal.sequence);
     object[QStringLiteral("kind")] = activityKindName(signal.kind);
     object[QStringLiteral("active")] = signal.active;
-    object[QStringLiteral("startedAtMs")] = static_cast<double>(
-        signal.startedAtMs > 0 ? signal.startedAtMs : QDateTime::currentMSecsSinceEpoch());
+    object[QStringLiteral("startedAtMs")] = static_cast<double>(startedAt);
+    object[QStringLiteral("taskStartedAtMs")] = static_cast<double>(taskStartedAt);
     object[QStringLiteral("ttlMs")] = qBound(1000, signal.ttlMs, 30000);
     return QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact));
 }
@@ -117,11 +123,20 @@ bool parseActivityData(const QString& data, RemoteIMActivitySignal* out) {
         || startedAt != static_cast<double>(static_cast<qint64>(startedAt))) {
         return false;
     }
+    const QJsonValue taskStartedAtValue = object.value(QStringLiteral("taskStartedAtMs"));
+    const double taskStartedAt = taskStartedAtValue.isUndefined()
+        ? startedAt
+        : taskStartedAtValue.toDouble(-1);
+    if (taskStartedAt <= 0 || taskStartedAt > startedAt
+        || taskStartedAt != static_cast<double>(static_cast<qint64>(taskStartedAt))) {
+        return false;
+    }
     out->sequence = static_cast<qint64>(sequence);
     out->activityId = id;
     out->kind = kind;
     out->active = object.value(QStringLiteral("active")).toBool();
     out->startedAtMs = static_cast<qint64>(startedAt);
+    out->taskStartedAtMs = static_cast<qint64>(taskStartedAt);
     out->ttlMs = qBound(1000, object.value(QStringLiteral("ttlMs")).toInt(), 30000);
     return true;
 }

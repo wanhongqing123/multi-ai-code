@@ -36,6 +36,7 @@ export function createRemoteImActivityData(signal: RemoteImActivitySignal): stri
     kind: signal.kind,
     active: signal.active,
     startedAtMs: signal.startedAtMs,
+    taskStartedAtMs: signal.taskStartedAtMs,
     ttlMs: Math.min(Math.max(Math.round(signal.ttlMs), 1_000), 30_000)
   })
 }
@@ -65,15 +66,23 @@ export function parseRemoteImActivityData(value: unknown): RemoteImActivitySigna
       typeof raw.active !== 'boolean' ||
       (raw.startedAtMs !== undefined &&
         (!Number.isSafeInteger(raw.startedAtMs) || Number(raw.startedAtMs) <= 0)) ||
+      (raw.taskStartedAtMs !== undefined &&
+        (!Number.isSafeInteger(raw.taskStartedAtMs) || Number(raw.taskStartedAtMs) <= 0)) ||
       typeof raw.ttlMs !== 'number' ||
       !Number.isFinite(raw.ttlMs)
     ) return undefined
+    const startedAtMs = raw.startedAtMs === undefined ? Date.now() : raw.startedAtMs as number
+    const taskStartedAtMs = raw.taskStartedAtMs === undefined
+      ? startedAtMs
+      : raw.taskStartedAtMs as number
+    if (taskStartedAtMs > startedAtMs) return undefined
     return {
       activityId: raw.activityId,
       sequence: raw.sequence as number,
       kind: raw.kind as RemoteImActivitySignal['kind'],
       active: raw.active,
-      startedAtMs: raw.startedAtMs === undefined ? Date.now() : raw.startedAtMs as number,
+      startedAtMs,
+      taskStartedAtMs,
       ttlMs: Math.min(Math.max(Math.round(raw.ttlMs), 1_000), 30_000)
     }
   } catch {

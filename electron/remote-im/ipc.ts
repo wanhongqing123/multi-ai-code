@@ -190,6 +190,7 @@ interface MachineActivityLease {
   activityId: string
   sequence: number
   startedAtMs: number
+  taskStartedAtMs: number
   timer: ReturnType<typeof setInterval>
 }
 const machineActivityLeases = new Map<string, MachineActivityLease>()
@@ -586,13 +587,15 @@ function sendMachineActivity(
   }
   if (state.autoReplyToIm === false || state.securityGeneration !== remoteImAccountSecurityGeneration) return
   const activityId = current?.activityId ?? `machine:${randomUUID()}`
+  const startedAtMs = Date.now()
   const lease: MachineActivityLease = {
     sessionId,
     state,
     kind,
     activityId,
     sequence: current?.sequence ?? 0,
-    startedAtMs: Date.now(),
+    startedAtMs,
+    taskStartedAtMs: current?.taskStartedAtMs ?? startedAtMs,
     timer: setInterval(emit, MACHINE_ACTIVITY_HEARTBEAT_MS)
   }
   function emit(): void {
@@ -604,6 +607,7 @@ function sendMachineActivity(
     broadcastOutgoingActivity(state, {
       activityId, sequence: ++lease.sequence, kind: lease.kind, active: true,
       startedAtMs: lease.startedAtMs,
+      taskStartedAtMs: lease.taskStartedAtMs,
       ttlMs: MACHINE_ACTIVITY_TTL_MS
     })
   }
@@ -626,6 +630,7 @@ function stopMachineActivity(
     kind: current.kind,
     active: false,
     startedAtMs: current.startedAtMs,
+    taskStartedAtMs: current.taskStartedAtMs,
     ttlMs: 1_000
   })
 }
@@ -3730,6 +3735,7 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
         || signal?.kind !== 'human-typing' || typeof signal.active !== 'boolean'
         || typeof signal.activityId !== 'string' || !/^[A-Za-z0-9._:-]{1,192}$/.test(signal.activityId)
         || !Number.isSafeInteger(signal.startedAtMs) || signal.startedAtMs <= 0
+        || !Number.isSafeInteger(signal.taskStartedAtMs) || signal.taskStartedAtMs <= 0
         || !Number.isSafeInteger(signal.sequence) || signal.sequence < 0) return { ok: false }
     broadcast('remote-im:outgoing-activity', {
       projectId, toUserId, runtimeIdentity, ...signal, ttlMs: 12000

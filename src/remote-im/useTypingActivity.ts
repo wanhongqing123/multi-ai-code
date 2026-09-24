@@ -7,6 +7,7 @@ export function useTypingActivity(projectId: string | null, peer: string | null,
     sequence: number
     lastSent: number
     startedAtMs: number
+    taskStartedAtMs: number
   } | null>(null)
   const idle = useRef<ReturnType<typeof setTimeout>>()
   const stop = () => {
@@ -16,7 +17,8 @@ export function useTypingActivity(projectId: string | null, peer: string | null,
     if (current && projectId && peer) {
       void window.api.remoteIm.sendTypingActivity?.(projectId, peer, owner, {
         activityId: current.id, sequence: ++current.sequence, kind: 'human-typing',
-        active: false, startedAtMs: current.startedAtMs, ttlMs: 12000
+        active: false, startedAtMs: current.startedAtMs,
+        taskStartedAtMs: current.taskStartedAtMs, ttlMs: 12000
       }).catch(() => undefined)
     }
   }
@@ -25,9 +27,10 @@ export function useTypingActivity(projectId: string | null, peer: string | null,
     stop,
     changed(text: string) {
       if (!enabled || !text || !projectId || !peer) { stop(); return }
+      const now = Date.now()
       const current = state.current ?? {
         id: `typing:${crypto.randomUUID()}`, sequence: 0, lastSent: 0,
-        startedAtMs: Date.now()
+        startedAtMs: now, taskStartedAtMs: now
       }
       state.current = current
       clearTimeout(idle.current)
@@ -36,7 +39,8 @@ export function useTypingActivity(projectId: string | null, peer: string | null,
       current.lastSent = Date.now()
       const signal: RemoteImActivitySignal = {
         activityId: current.id, sequence: ++current.sequence, kind: 'human-typing',
-        active: true, startedAtMs: current.startedAtMs, ttlMs: 12000
+        active: true, startedAtMs: current.startedAtMs,
+        taskStartedAtMs: current.taskStartedAtMs, ttlMs: 12000
       }
       void window.api.remoteIm.sendTypingActivity?.(projectId, peer, owner, signal).catch(() => undefined)
     }

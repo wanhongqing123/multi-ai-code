@@ -7,7 +7,9 @@ final class MasterChatStateTests: XCTestCase {
             activityID: "turn:task-1",
             kind: .machineTool,
             active: true,
-            ttlMilliseconds: 60_000
+            ttlMilliseconds: 60_000,
+            startedAtMilliseconds: 1_700_000_000_000,
+            taskStartedAtMilliseconds: 1_699_999_995_000
         ))
         XCTAssertEqual(signal.ttlMilliseconds, 30_000)
         XCTAssertEqual(RemoteIMActivityCodec.decode(RemoteIMActivityCodec.encode(signal)), signal)
@@ -17,6 +19,10 @@ final class MasterChatStateTests: XCTestCase {
             """.utf8)
         let decodedLegacy = try XCTUnwrap(RemoteIMActivityCodec.decode(legacy))
         XCTAssertGreaterThan(decodedLegacy.startedAtMilliseconds, 0)
+        XCTAssertEqual(
+            decodedLegacy.taskStartedAtMilliseconds,
+            decodedLegacy.startedAtMilliseconds
+        )
         XCTAssertNil(RemoteIMActivitySignal(
             activityID: "../invalid",
             kind: .humanTyping,

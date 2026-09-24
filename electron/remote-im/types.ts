@@ -88,6 +88,8 @@ export interface RemoteImActivitySignal {
   active: boolean
   /** Unix epoch milliseconds when the current activity kind began. */
   startedAtMs: number
+  /** Unix epoch milliseconds when the whole task began. */
+  taskStartedAtMs: number
   ttlMs: number
 }
 

@@ -31,6 +31,7 @@ struct RemoteIMActivitySignal {
     int ttlMs = 12000;
     qint64 sequence = 0;
     qint64 startedAtMs = 0;
+    qint64 taskStartedAtMs = 0;
 };
 
 // 发送类操作的回执：成功时带 SDK 确认的消息 id 和规范化时间。本地库据此

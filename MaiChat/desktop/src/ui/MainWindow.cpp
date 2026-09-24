@@ -192,7 +192,7 @@ public:
     QSize sizeHint() const override {
         return signal_.kind == RemoteIMActivityKind::HumanTyping
                    ? QSize(UiZoom::s(74), UiZoom::s(38))
-                   : QSize(UiZoom::s(200), UiZoom::s(38));
+                   : QSize(UiZoom::s(300), UiZoom::s(38));
     }
 
 protected:
@@ -242,6 +242,12 @@ private:
             : QDateTime::currentMSecsSinceEpoch();
         const qint64 elapsedSeconds = qMax<qint64>(
             0, (QDateTime::currentMSecsSinceEpoch() - startedAt) / 1000);
+        const qint64 taskStartedAt = signal_.taskStartedAtMs > 0
+            ? signal_.taskStartedAtMs
+            : startedAt;
+        const qint64 taskElapsedSeconds = qMax(
+            elapsedSeconds,
+            (QDateTime::currentMSecsSinceEpoch() - taskStartedAt) / 1000);
         QString title;
         switch (signal_.kind) {
         case RemoteIMActivityKind::MachineThinking: title = QStringLiteral("思考中"); break;
@@ -250,7 +256,8 @@ private:
         case RemoteIMActivityKind::MachineWorking: title = QStringLiteral("正在执行"); break;
         case RemoteIMActivityKind::HumanTyping: return QString();
         }
-        return QStringLiteral("%1 %2 秒").arg(title).arg(elapsedSeconds);
+        return QStringLiteral("%1%2秒，任务总耗时%3秒")
+            .arg(title).arg(elapsedSeconds).arg(taskElapsedSeconds);
     }
 
     RemoteIMActivitySignal signal_;

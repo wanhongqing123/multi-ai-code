@@ -554,7 +554,9 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
               await ownedRuntime.sendActivity?.(event.toUserId, {
                 activityId: event.activityId, sequence: event.sequence,
                 kind: event.kind, active: event.active,
-                startedAtMs: event.startedAtMs, ttlMs: event.ttlMs
+                startedAtMs: event.startedAtMs,
+                taskStartedAtMs: event.taskStartedAtMs,
+                ttlMs: event.ttlMs
               })
             } catch {
               // Receiver expiry is the fallback; retrying old status resurrects it.

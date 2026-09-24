@@ -144,6 +144,7 @@ describe('tencent IM client helpers', () => {
       kind: 'machine-tool',
       active: true,
       startedAtMs: 1_700_000_000_000,
+      taskStartedAtMs: 1_699_999_995_000,
       ttlMs: 12_000
     })
     expect(parseRemoteImActivityData(encoded)).toEqual({
@@ -152,6 +153,7 @@ describe('tencent IM client helpers', () => {
       kind: 'machine-tool',
       active: true,
       startedAtMs: 1_700_000_000_000,
+      taskStartedAtMs: 1_699_999_995_000,
       ttlMs: 12_000
     })
     expect(parseRemoteImActivityData(new TextEncoder().encode(encoded))).toEqual({
@@ -160,6 +162,7 @@ describe('tencent IM client helpers', () => {
       kind: 'machine-tool',
       active: true,
       startedAtMs: 1_700_000_000_000,
+      taskStartedAtMs: 1_699_999_995_000,
       ttlMs: 12_000
     })
     const legacyStartedAtLowerBound = Date.now()
@@ -173,6 +176,7 @@ describe('tencent IM client helpers', () => {
       ttlMs: 12_000
     })
     expect(legacy?.startedAtMs).toBeGreaterThanOrEqual(legacyStartedAtLowerBound)
+    expect(legacy?.taskStartedAtMs).toBe(legacy?.startedAtMs)
     expect(parseRemoteImActivityData('{"namespace":"other"}')).toBeUndefined()
     expect(parseRemoteImActivityData({
       namespace: 'multi-ai-code-activity',
@@ -182,6 +186,7 @@ describe('tencent IM client helpers', () => {
       kind: 'human-typing',
       active: true,
       startedAtMs: 1_700_000_000_000,
+      taskStartedAtMs: 1_699_999_995_000,
       ttlMs: 12_000
     })).toBeUndefined()
   })
@@ -1168,6 +1173,7 @@ describe('tencent IM client helpers', () => {
             kind: 'human-typing',
             active: true,
             startedAtMs: 1_700_000_000_000,
+            taskStartedAtMs: 1_699_999_995_000,
             ttlMs: 12_000
           })
         }
@@ -1183,6 +1189,7 @@ describe('tencent IM client helpers', () => {
       kind: 'human-typing',
       active: true,
       startedAtMs: 1_700_000_000_000,
+      taskStartedAtMs: 1_699_999_995_000,
       ttlMs: 12_000
     })
     expect(onIncomingText).not.toHaveBeenCalled()
@@ -1782,6 +1789,7 @@ describe('tencent IM client helpers', () => {
       kind: 'machine-thinking',
       active: true,
       startedAtMs: 1_700_000_000_000,
+      taskStartedAtMs: 1_699_999_995_000,
       ttlMs: 12_000
     })
     expect(sdkMock.chat.createCustomMessage).toHaveBeenCalledWith({
@@ -1794,6 +1802,7 @@ describe('tencent IM client helpers', () => {
           kind: 'machine-thinking',
           active: true,
           startedAtMs: 1_700_000_000_000,
+          taskStartedAtMs: 1_699_999_995_000,
           ttlMs: 12_000
         }),
         description: '',

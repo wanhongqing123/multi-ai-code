@@ -160,17 +160,26 @@ add_library(maiagent STATIC
   src/MaiQuestionTool.cpp
   src/MaiSubAgentTools.cpp
   src/MaiShellTool.cpp
+  src/MaiScreenshotTool.cpp
   src/MaiAgent.cpp
   src/MaiTurnRunner.cpp
   src/MaiContextBuilder.cpp
   src/MaiEventEmitter.cpp
   src/MaiSessionTitler.cpp
 )
-# 文件系统实现按平台挑一份。Windows 走宽字符 Win32 API，其余走 POSIX。
+# 平台实现按目标挑选。文件系统走 Win32/POSIX；屏幕捕获目前只在 Windows 注册。
 if(WIN32)
-  target_sources(maiagent PRIVATE src/MaiFileSystemWindows.cpp src/MaiProcessWindows.cpp)
+  target_sources(maiagent PRIVATE
+    src/MaiFileSystemWindows.cpp
+    src/MaiProcessWindows.cpp
+    src/MaiScreenshotWindows.cpp
+  )
 else()
-  target_sources(maiagent PRIVATE src/MaiFileSystemPosix.cpp src/MaiProcessPosix.cpp)
+  target_sources(maiagent PRIVATE
+    src/MaiFileSystemPosix.cpp
+    src/MaiProcessPosix.cpp
+    src/MaiScreenshotUnsupported.cpp
+  )
 endif()
 
 target_include_directories(maiagent
@@ -185,6 +194,9 @@ target_include_directories(maiagent
 # 和适配器里的 cpp-httplib（HTTP **服务端**）是两回事，两个都要。
 # sqlite 和 libcurl 都是 PRIVATE：它们是实现细节，公开头里不出现。
 target_link_libraries(maiagent PUBLIC Threads::Threads PRIVATE CURL::libcurl mai_sqlite)
+if(WIN32)
+  target_link_libraries(maiagent PRIVATE d3d11 dxgi windowscodecs ole32 user32 windowsapp)
+endif()
 
 # 公开头里的中文注释要能被**别人**正确编译。
 #
@@ -241,6 +253,7 @@ if(MAIAGENT_BUILD_TESTS)
       MaiQuestionTests      # 问答闸门 + question 工具：等不到答案时绝不能编一个
       MaiSubAgentTests      # 子 Agent：深度上限、数量上限、不能戳别人的会话
       MaiShellToolTests     # shell：审批粒度、超时、取消、输出上限
+      MaiScreenshotToolTests  # screenshot：平台能力、审批、原生 PNG 捕获
       MaiToolLoopTests      # 工具循环：调用 -> 执行 -> 回灌 -> 再答
       MaiPermissionTests)   # 权限闸门：拦住 -> 等裁决 -> 放行或拒绝
     add_executable(${test_name} tests/${test_name}.cpp)

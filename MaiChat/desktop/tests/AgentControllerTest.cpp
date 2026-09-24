@@ -14,7 +14,8 @@
 #include <vector>
 
 #include "agent/AgentController.h"
-#include "agent/DesktopScreenshotTool.h"
+#include "MaiScreenshot.h"
+#include "MaiScreenshotTool.h"
 
 // AgentController 的活儿只有一件：把 MaiAgent 的事件从**核心的线程**搬到 Qt 主线程。
 // 所以这份用例的重点不是"信号发出来了没有"，而是"它们到达的时候人在哪个线程上"。
@@ -238,7 +239,7 @@ void AgentControllerTest::sends_selected_images_as_multimodal_input() {
 }
 
 void AgentControllerTest::registers_a_screenshot_tool_that_requires_approval() {
-    std::unique_ptr<MaiTool> screenshot = makeDesktopScreenshotTool();
+    std::unique_ptr<MaiTool> screenshot = makeMaiScreenshotTool();
     QCOMPARE(QString::fromStdString(screenshot->name()), QStringLiteral("screenshot"));
     QVERIFY(screenshot->requiresApproval(QStringLiteral("{}").toStdString()));
     MaiToolContext textModelContext;
@@ -261,7 +262,7 @@ void AgentControllerTest::registers_a_screenshot_tool_that_requires_approval() {
     for (const MaiToolSpec& tool : scripted->lastRequest().tools) {
         if (tool.name == "screenshot") foundScreenshot = true;
     }
-    QVERIFY(foundScreenshot);
+    QCOMPARE(foundScreenshot, maiIsScreenshotSupported());
 }
 
 QTEST_MAIN(AgentControllerTest)

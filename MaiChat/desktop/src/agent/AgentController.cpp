@@ -1,5 +1,4 @@
 #include "agent/AgentController.h"
-#include "agent/DesktopScreenshotTool.h"
 #include "MaiOpenAiClient.h"
 #include "MaiMemoryStore.h"
 #include "MaiSqliteStore.h"
@@ -66,11 +65,11 @@ std::unique_ptr<MaiAgent> buildAgent(std::unique_ptr<MaiModelClient> model,
                                      std::unique_ptr<MaiSessionStore> store,
                                      const QString& defaultModel,
                                      MaiApprovalPolicy approvalPolicy = MaiApprovalPolicy::OnRequest) {
-    // 内置工具（read / write / glob / grep）总是装着。会话没有工作目录时工具层会明确拒绝，
+    // MaiAgent 内置工具总是装着；平台不支持的能力由核心在注册时排除。
+    // 会话没有工作目录时工具层会明确拒绝，
     // 要不要把工具声明给模型看是 MaiContextBuilder 的事，不是这里的。
     auto tools = std::make_unique<MaiToolRegistry>();
     registerMaiBuiltinTools(*tools);
-    tools->add(makeDesktopScreenshotTool());
 
     MaiAgent::Options options;
     if (!defaultModel.isEmpty()) options.defaultModel = toUtf8(defaultModel);

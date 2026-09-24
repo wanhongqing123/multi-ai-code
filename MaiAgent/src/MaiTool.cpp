@@ -7,6 +7,8 @@
 #include "MaiEditTool.h"
 #include "MaiFileTools.h"
 #include "MaiQuestionTool.h"
+#include "MaiScreenshot.h"
+#include "MaiScreenshotTool.h"
 #include "MaiShellTool.h"
 #include "MaiSubAgentTools.h"
 #include "MaiTimeTool.h"
@@ -129,6 +131,7 @@ void registerMaiBuiltinTools(MaiToolRegistry& registry) {
     registry.add(makeMaiCloseAgentTool());
     registry.add(makeMaiGlobTool());
     registry.add(makeMaiGrepTool());
+    if (maiIsScreenshotSupported()) registry.add(makeMaiScreenshotTool());
     // shell 只在跑得了外部进程的平台上摆出来。
     //
     // **不支持就根本不注册，而不是注册一个总是失败的。** 摆出来的话模型会反复试，

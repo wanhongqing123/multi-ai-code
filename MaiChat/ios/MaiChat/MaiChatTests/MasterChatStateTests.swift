@@ -15,14 +15,15 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertEqual(RemoteIMActivityCodec.decode(RemoteIMActivityCodec.encode(signal)), signal)
         let legacy = Data("""
             {"namespace":"multi-ai-code-activity","version":1,"activityId":"legacy:1",\
+            "sequence":1,"kind":"machine-thinking","active":true,\
+            "startedAtMs":1700000000000,"taskStartedAtMs":1699999995000,"ttlMs":12000}
+            """.utf8)
+        XCTAssertNil(RemoteIMActivityCodec.decode(legacy))
+        let incompleteCurrent = Data("""
+            {"namespace":"multi-ai-code-activity","version":2,"activityId":"incomplete:1",\
             "sequence":1,"kind":"machine-thinking","active":true,"ttlMs":12000}
             """.utf8)
-        let decodedLegacy = try XCTUnwrap(RemoteIMActivityCodec.decode(legacy))
-        XCTAssertGreaterThan(decodedLegacy.startedAtMilliseconds, 0)
-        XCTAssertEqual(
-            decodedLegacy.taskStartedAtMilliseconds,
-            decodedLegacy.startedAtMilliseconds
-        )
+        XCTAssertNil(RemoteIMActivityCodec.decode(incompleteCurrent))
         XCTAssertNil(RemoteIMActivitySignal(
             activityID: "../invalid",
             kind: .humanTyping,

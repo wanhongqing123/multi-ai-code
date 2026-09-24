@@ -9,11 +9,15 @@ public class RemoteIMActivityTest {
         return new RemoteIMActivitySignal(id, sequence, kind, active, 12000);
     }
     @Test public void decodesTheDesktopAndIosWireFormat() {
-        String json = "{\"namespace\":\"multi-ai-code-activity\",\"version\":1,\"activityId\":\"machine:test\",\"sequence\":3,\"kind\":\"machine-tool\",\"active\":true,\"ttlMs\":12000}";
+        String json = "{\"namespace\":\"multi-ai-code-activity\",\"version\":2,\"activityId\":\"machine:test\",\"sequence\":3,\"kind\":\"machine-tool\",\"active\":true,\"startedAtMs\":1700000000000,\"taskStartedAtMs\":1699999995000,\"ttlMs\":12000}";
         RemoteIMActivitySignal value = RemoteIMActivitySignal.decode(json.getBytes(StandardCharsets.UTF_8));
         assertNotNull(value); assertEquals(RemoteIMActivitySignal.Kind.MACHINE_TOOL, value.kind);
         assertEquals(3, value.sequence); assertEquals("machine:test", value.activityId);
+        assertEquals(1700000000000L, value.startedAtMs);
+        assertEquals(1699999995000L, value.taskStartedAtMs);
         assertEquals(value.kind, RemoteIMActivitySignal.decode(value.encode()).kind);
+        assertNull(RemoteIMActivitySignal.decode(json.replace("\"version\":2", "\"version\":1").getBytes(StandardCharsets.UTF_8)));
+        assertNull(RemoteIMActivitySignal.decode(json.replace(",\"startedAtMs\":1700000000000,\"taskStartedAtMs\":1699999995000", "").getBytes(StandardCharsets.UTF_8)));
         assertNull(RemoteIMActivitySignal.decode(json.replace("\"active\":true", "\"active\":\"true\"").getBytes(StandardCharsets.UTF_8)));
         assertNull(RemoteIMActivitySignal.decode(json.replace("\"sequence\":3", "\"sequence\":3.5").getBytes(StandardCharsets.UTF_8)));
         assertNull(RemoteIMActivitySignal.decode(json.replace("machine:test", "bad id").getBytes(StandardCharsets.UTF_8)));

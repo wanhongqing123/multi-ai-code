@@ -165,22 +165,30 @@ describe('tencent IM client helpers', () => {
       taskStartedAtMs: 1_699_999_995_000,
       ttlMs: 12_000
     })
-    const legacyStartedAtLowerBound = Date.now()
-    const legacy = parseRemoteImActivityData({
+    expect(parseRemoteImActivityData({
       namespace: 'multi-ai-code-activity',
       version: 1,
       activityId: 'legacy:1',
       sequence: 1,
       kind: 'machine-thinking',
       active: true,
+      startedAtMs: 1_700_000_000_000,
+      taskStartedAtMs: 1_699_999_995_000,
       ttlMs: 12_000
-    })
-    expect(legacy?.startedAtMs).toBeGreaterThanOrEqual(legacyStartedAtLowerBound)
-    expect(legacy?.taskStartedAtMs).toBe(legacy?.startedAtMs)
+    })).toBeUndefined()
+    expect(parseRemoteImActivityData({
+      namespace: 'multi-ai-code-activity',
+      version: 2,
+      activityId: 'incomplete:1',
+      sequence: 1,
+      kind: 'machine-thinking',
+      active: true,
+      ttlMs: 12_000
+    })).toBeUndefined()
     expect(parseRemoteImActivityData('{"namespace":"other"}')).toBeUndefined()
     expect(parseRemoteImActivityData({
       namespace: 'multi-ai-code-activity',
-      version: 1,
+      version: 2,
       activityId: '../bad',
       sequence: 1,
       kind: 'human-typing',

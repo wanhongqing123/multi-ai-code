@@ -38,7 +38,7 @@ constexpr auto kCloudCustomDataKey = "message_cloud_custom_str";
 constexpr auto kMetadataNamespace = "multi-ai-code";
 constexpr int kMetadataVersion = 2;
 constexpr auto kActivityNamespace = "multi-ai-code-activity";
-constexpr int kActivityVersion = 1;
+constexpr int kActivityVersion = 2;
 // 引用块字段的长度上限。对端可以往 metadata 里塞任意长的串，
 // 不设上限等于让别人决定我们的内存占用和渲染耗时。
 constexpr int kQuoteFieldLimit = 256;
@@ -116,17 +116,15 @@ bool parseActivityData(const QString& data, RemoteIMActivitySignal* out) {
     const double sequence = object.value(QStringLiteral("sequence")).toDouble(-1);
     if (sequence < 0 || sequence > 9007199254740991.0 || sequence != qFloor(sequence)) return false;
     const QJsonValue startedAtValue = object.value(QStringLiteral("startedAtMs"));
-    const double startedAt = startedAtValue.isUndefined()
-        ? static_cast<double>(QDateTime::currentMSecsSinceEpoch())
-        : startedAtValue.toDouble(-1);
+    if (!startedAtValue.isDouble()) return false;
+    const double startedAt = startedAtValue.toDouble(-1);
     if (startedAt <= 0 || startedAt > 9007199254740991.0
         || startedAt != static_cast<double>(static_cast<qint64>(startedAt))) {
         return false;
     }
     const QJsonValue taskStartedAtValue = object.value(QStringLiteral("taskStartedAtMs"));
-    const double taskStartedAt = taskStartedAtValue.isUndefined()
-        ? startedAt
-        : taskStartedAtValue.toDouble(-1);
+    if (!taskStartedAtValue.isDouble()) return false;
+    const double taskStartedAt = taskStartedAtValue.toDouble(-1);
     if (taskStartedAt <= 0 || taskStartedAt > startedAt
         || taskStartedAt != static_cast<double>(static_cast<qint64>(taskStartedAt))) {
         return false;

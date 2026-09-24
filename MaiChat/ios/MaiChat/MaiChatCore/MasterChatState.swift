@@ -195,7 +195,7 @@ public struct RemoteIMActivitySignal: Codable, Equatable, Sendable {
 
 public enum RemoteIMActivityCodec {
     public static let namespace = "multi-ai-code-activity"
-    public static let version = 1
+    public static let version = 2
 
     private struct Wire: Codable {
         let namespace: String
@@ -204,8 +204,8 @@ public enum RemoteIMActivityCodec {
         let sequence: Int
         let kind: String
         let active: Bool
-        let startedAtMs: Int64?
-        let taskStartedAtMs: Int64?
+        let startedAtMs: Int64
+        let taskStartedAtMs: Int64
         let ttlMs: Int
     }
 
@@ -228,6 +228,9 @@ public enum RemoteIMActivityCodec {
               let wire = try? JSONDecoder().decode(Wire.self, from: data),
               wire.namespace == namespace,
               wire.version == version,
+              wire.startedAtMs > 0,
+              wire.taskStartedAtMs > 0,
+              wire.taskStartedAtMs <= wire.startedAtMs,
               let kind = RemoteIMActivityKind(rawValue: wire.kind)
         else { return nil }
         return RemoteIMActivitySignal(
@@ -236,8 +239,8 @@ public enum RemoteIMActivityCodec {
             active: wire.active,
             ttlMilliseconds: wire.ttlMs,
             sequence: wire.sequence,
-            startedAtMilliseconds: wire.startedAtMs ?? 0,
-            taskStartedAtMilliseconds: wire.taskStartedAtMs ?? wire.startedAtMs ?? 0
+            startedAtMilliseconds: wire.startedAtMs,
+            taskStartedAtMilliseconds: wire.taskStartedAtMs
         )
     }
 }

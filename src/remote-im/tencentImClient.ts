@@ -17,7 +17,7 @@ import type {
 export const REMOTE_IM_CLOUD_METADATA_NAMESPACE = 'multi-ai-code'
 export const REMOTE_IM_CLOUD_METADATA_VERSION = 2
 export const REMOTE_IM_ACTIVITY_NAMESPACE = 'multi-ai-code-activity'
-export const REMOTE_IM_ACTIVITY_VERSION = 1
+export const REMOTE_IM_ACTIVITY_VERSION = 2
 const REMOTE_IM_ACTIVITY_KINDS = new Set([
   'human-typing',
   'machine-working',
@@ -64,17 +64,13 @@ export function parseRemoteImActivityData(value: unknown): RemoteImActivitySigna
       typeof raw.kind !== 'string' ||
       !REMOTE_IM_ACTIVITY_KINDS.has(raw.kind) ||
       typeof raw.active !== 'boolean' ||
-      (raw.startedAtMs !== undefined &&
-        (!Number.isSafeInteger(raw.startedAtMs) || Number(raw.startedAtMs) <= 0)) ||
-      (raw.taskStartedAtMs !== undefined &&
-        (!Number.isSafeInteger(raw.taskStartedAtMs) || Number(raw.taskStartedAtMs) <= 0)) ||
+      !Number.isSafeInteger(raw.startedAtMs) || Number(raw.startedAtMs) <= 0 ||
+      !Number.isSafeInteger(raw.taskStartedAtMs) || Number(raw.taskStartedAtMs) <= 0 ||
       typeof raw.ttlMs !== 'number' ||
       !Number.isFinite(raw.ttlMs)
     ) return undefined
-    const startedAtMs = raw.startedAtMs === undefined ? Date.now() : raw.startedAtMs as number
-    const taskStartedAtMs = raw.taskStartedAtMs === undefined
-      ? startedAtMs
-      : raw.taskStartedAtMs as number
+    const startedAtMs = raw.startedAtMs as number
+    const taskStartedAtMs = raw.taskStartedAtMs as number
     if (taskStartedAtMs > startedAtMs) return undefined
     return {
       activityId: raw.activityId,

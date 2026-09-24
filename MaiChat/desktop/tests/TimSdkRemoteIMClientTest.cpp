@@ -187,7 +187,7 @@ void TimSdkRemoteIMClientTest::activityUsesOnlineCustomTransportWithoutHistory()
     // Independent wire fixture matches iOS/JS, not a self-roundtrip through our encoder.
     QJsonObject element{{QStringLiteral("elem_type"), 3},
         {QStringLiteral("custom_elem_data"), QStringLiteral(
-            "{\"namespace\":\"multi-ai-code-activity\",\"version\":1,\"activityId\":\"machine:1\","
+            "{\"namespace\":\"multi-ai-code-activity\",\"version\":2,\"activityId\":\"machine:1\","
             "\"sequence\":1,\"kind\":\"machine-tool\",\"active\":true,"
             "\"startedAtMs\":1700000000000,\"taskStartedAtMs\":1699999995000,"
             "\"ttlMs\":12000}")}};
@@ -206,6 +206,24 @@ void TimSdkRemoteIMClientTest::activityUsesOnlineCustomTransportWithoutHistory()
     fake->receiveCallback(QString::fromUtf8(QJsonDocument(QJsonArray{wire}).toJson()));
     QCOMPARE(activityCount, 1);
     QCOMPARE(messages.size(), 0);
+
+    // v1 and incomplete v2 frames belong to the retired activity protocol.
+    // Receivers must not manufacture timestamps for either shape.
+    element[QStringLiteral("custom_elem_data")] = QStringLiteral(
+        "{\"namespace\":\"multi-ai-code-activity\",\"version\":1,\"activityId\":\"machine:old\","
+        "\"sequence\":1,\"kind\":\"machine-thinking\",\"active\":true,"
+        "\"startedAtMs\":1700000000000,\"taskStartedAtMs\":1699999995000,"
+        "\"ttlMs\":12000}");
+    wire[QStringLiteral("message_elem_array")] = QJsonArray{element};
+    fake->receiveCallback(QString::fromUtf8(QJsonDocument(QJsonArray{wire}).toJson()));
+    QCOMPARE(activityCount, 1);
+
+    element[QStringLiteral("custom_elem_data")] = QStringLiteral(
+        "{\"namespace\":\"multi-ai-code-activity\",\"version\":2,\"activityId\":\"machine:incomplete\","
+        "\"sequence\":1,\"kind\":\"machine-thinking\",\"active\":true,\"ttlMs\":12000}");
+    wire[QStringLiteral("message_elem_array")] = QJsonArray{element};
+    fake->receiveCallback(QString::fromUtf8(QJsonDocument(QJsonArray{wire}).toJson()));
+    QCOMPARE(activityCount, 1);
 }
 
 void TimSdkRemoteIMClientTest::connectsThroughSdkAndSendsTextAndImage() {

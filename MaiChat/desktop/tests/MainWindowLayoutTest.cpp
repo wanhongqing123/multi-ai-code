@@ -100,6 +100,7 @@ private slots:
     void settingsNavigationShowsAccountAndSdkDefaults();
     void agentSettingsDialogExposesSecureModelFields();
     void agentSettingsSaveAppliesWithoutRestart();
+    void agentSettingsDialogUsesMaiChatVisualStyle();
     void leftNavigationRailIsResizableAndWider();
     void removesRedundantChromeLabels();
     void globalSearchFindsMatchesAcrossConversationsAndJumps();
@@ -1559,6 +1560,37 @@ void MainWindowLayoutTest::agentSettingsSaveAppliesWithoutRestart() {
     settings.clear();
     QCoreApplication::setOrganizationName(originalOrganization);
     QCoreApplication::setApplicationName(originalApplication);
+}
+
+void MainWindowLayoutTest::agentSettingsDialogUsesMaiChatVisualStyle() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    MainWindow window(app);
+    auto* button =
+        window.findChild<QPushButton*>(QStringLiteral("settingsAgentModelButton"));
+    QVERIFY(button != nullptr);
+
+    bool verified = false;
+    QTimer::singleShot(100, [&] {
+        auto* dialog = window.findChild<QDialog*>(QStringLiteral("agentModelDialog"));
+        if (dialog == nullptr) return;
+        auto* panel = dialog->findChild<QWidget*>(QStringLiteral("agentModelPanel"));
+        auto* title = dialog->findChild<QLabel*>(QStringLiteral("agentModelTitle"));
+        auto* subtitle = dialog->findChild<QLabel*>(QStringLiteral("agentModelSubtitle"));
+        auto* cancel = dialog->findChild<QPushButton*>(QStringLiteral("agentModelCancel"));
+        auto* save = dialog->findChild<QPushButton*>(QStringLiteral("agentModelSave"));
+        verified = panel != nullptr && title != nullptr && subtitle != nullptr && cancel != nullptr &&
+                   save != nullptr &&
+                   dialog->windowFlags().testFlag(Qt::FramelessWindowHint) &&
+                   dialog->testAttribute(Qt::WA_TranslucentBackground) &&
+                   dialog->styleSheet().contains(QStringLiteral("#agentModelPanel")) &&
+                   dialog->styleSheet().contains(QStringLiteral("#agentModelBaseUrl:focus")) &&
+                   dialog->styleSheet().contains(QStringLiteral("#agentModelSave:disabled"));
+        dialog->reject();
+    });
+    button->click();
+
+    QVERIFY(verified);
 }
 
 void MainWindowLayoutTest::leftNavigationRailIsResizableAndWider() {

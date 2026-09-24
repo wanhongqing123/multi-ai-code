@@ -97,6 +97,46 @@ QLabel* makeLabel(const QString& text, int pixelSize, const char* color, bool bo
     return label;
 }
 
+void applyAgentMenuStyle(QMenu* menu) {
+    if (menu == nullptr) return;
+    menu->setWindowFlags(menu->windowFlags() | Qt::FramelessWindowHint |
+                         Qt::NoDropShadowWindowHint);
+    menu->setAttribute(Qt::WA_TranslucentBackground);
+    menu->setToolTipsVisible(true);
+    menu->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
+        QMenu {
+            background: #ffffff;
+            border: 1px solid #dbe5f0;
+            border-radius: 10px;
+            padding: 6px;
+        }
+        QMenu::item {
+            background: transparent;
+            color: #344054;
+            font-size: 12px;
+            padding: 8px 34px 8px 12px;
+            border-radius: 6px;
+        }
+        QMenu::item:selected {
+            background: #eef6ff;
+            color: #0b67b7;
+        }
+        QMenu::item:checked {
+            color: #0b67b7;
+            font-weight: 700;
+        }
+        QMenu::indicator {
+            width: 8px;
+            height: 8px;
+            margin-left: 9px;
+        }
+        QMenu::indicator:checked {
+            background: #0b67b7;
+            border-radius: 4px;
+        }
+    )")));
+}
+
 // Enter 发送，Shift+Enter 换行。
 //
 // 得自己拦 keyPressEvent：QTextEdit 默认把 Enter 当换行，而这个框是多行的，
@@ -578,9 +618,11 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     composerRow->addStretch(1);
 
     auto* card = new QFrame;
+    card->setObjectName(QStringLiteral("agentComposerCard"));
     card->setMaximumWidth(UiZoom::s(kColumnWidth));
     card->setStyleSheet(UiZoom::scaleQss(
-        QStringLiteral("QFrame{background:#ffffff;border:1px solid %1;border-radius:12px;}")
+        QStringLiteral("QFrame#agentComposerCard{background:#ffffff;border:1px solid %1;"
+                       "border-radius:14px;}")
             .arg(kLine)));
     auto* cardColumn = new QVBoxLayout(card);
     cardColumn->setContentsMargins(UiZoom::s(14), UiZoom::s(10), UiZoom::s(10), UiZoom::s(8));
@@ -604,12 +646,27 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     foot->setContentsMargins(0, 0, 0, 0);
     foot->setSpacing(UiZoom::s(10));
     runtime_->dirChip = makeLabel(QString(), 11, kInkSoft);
+    runtime_->dirChip->setObjectName(QStringLiteral("agentWorkingDirectory"));
     runtime_->dirChip->setWordWrap(false);
     runtime_->modelChip = new QPushButton;
     runtime_->modelChip->setObjectName(QStringLiteral("agentModelChip"));
     runtime_->modelChip->setCursor(Qt::PointingHandCursor);
-    runtime_->modelChip->setStyleSheet(QStringLiteral(
-        "QPushButton{background:transparent;border:none;color:#0b67b7;padding:0;}"));
+    runtime_->modelChip->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
+        QPushButton#agentModelChip {
+            background: #eef6ff;
+            border: 1px solid #d5e8fb;
+            border-radius: 7px;
+            color: #0b67b7;
+            padding: 4px 8px;
+        }
+        QPushButton#agentModelChip:hover {
+            background: #e2f0ff;
+            border-color: #b9daf8;
+        }
+        QPushButton#agentModelChip:pressed {
+            background: #d5e8fb;
+        }
+    )")));
     QFont modelFont = runtime_->modelChip->font();
     modelFont.setPixelSize(UiZoom::s(11));
     runtime_->modelChip->setFont(modelFont);
@@ -620,17 +677,39 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     runtime_->hint = new QPushButton;
     runtime_->hint->setObjectName(QStringLiteral("agentApprovalPolicy"));
     runtime_->hint->setCursor(Qt::PointingHandCursor);
-    runtime_->hint->setStyleSheet(QStringLiteral(
-        "QPushButton{background:transparent;border:none;color:#b54708;padding:0 3px;}"));
+    runtime_->hint->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
+        QPushButton#agentApprovalPolicy {
+            background: #fff7ed;
+            border: 1px solid #fed7aa;
+            border-radius: 7px;
+            color: #b54708;
+            padding: 4px 9px;
+        }
+        QPushButton#agentApprovalPolicy:hover {
+            background: #ffedd5;
+            border-color: #fdba74;
+        }
+        QPushButton#agentApprovalPolicy:disabled {
+            background: #f8fafc;
+            border-color: #e2e8f0;
+            color: #98a2b3;
+        }
+        QPushButton#agentApprovalPolicy::menu-indicator {
+            image: none;
+            width: 0;
+        }
+    )")));
     QFont policyFont = runtime_->hint->font();
     policyFont.setPixelSize(UiZoom::s(11));
     runtime_->hint->setFont(policyFont);
     auto* policyMenu = new QMenu(runtime_->hint);
+    applyAgentMenuStyle(policyMenu);
     auto addPolicy = [policyMenu](const QString& title, const QString& detail,
                                   MaiApprovalPolicy policy) {
-        QAction* action = policyMenu->addAction(title + QStringLiteral(" — ") + detail);
+        QAction* action = policyMenu->addAction(title);
         action->setData(static_cast<int>(policy));
         action->setCheckable(true);
+        action->setToolTip(detail);
     };
     addPolicy(QStringLiteral("请求批准"),
               QStringLiteral("修改文件、访问网络或执行高风险命令时询问"),
@@ -648,6 +727,7 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     updateApprovalPolicyUi();
     foot->addWidget(runtime_->hint);
     runtime_->send = new QPushButton(QStringLiteral("发送"));
+    runtime_->send->setObjectName(QStringLiteral("agentSendButton"));
     runtime_->send->setCursor(Qt::PointingHandCursor);
     QFont sendFont = runtime_->send->font();
     sendFont.setPixelSize(UiZoom::s(12));
@@ -799,7 +879,10 @@ void AgentChatPanel::openSession(const QString& sessionId) {
     if (runtime_->controller->agent().getSession(toUtf8(runtime_->sessionId), session)) {
         const QString directory = fromUtf8(session.directory);
         // 不用文件夹 emoji：这台机器的界面字体里不一定有那个字形，渲染出来是个豆腐块。
-        runtime_->dirChip->setText(QDir(directory).dirName());
+        const QString directoryName = QDir(directory).dirName();
+        runtime_->dirChip->setText(directoryName.isEmpty()
+                                       ? QDir::toNativeSeparators(directory)
+                                       : directoryName);
         runtime_->dirChip->setToolTip(directory);
         // 用 isUntitled() 而不是 title.isEmpty()：核心给新会话填的是一个占位标题
         //（"New session"），不是空串。判空的话那串占位符会直接显示在头部。
@@ -1114,11 +1197,16 @@ void AgentChatPanel::setRunning(bool running) {
     runtime_->running = running;
     runtime_->send->setText(running ? QStringLiteral("停止") : QStringLiteral("发送"));
     runtime_->send->setStyleSheet(UiZoom::scaleQss(
-        running ? QStringLiteral("QPushButton{background:#ffffff;color:%1;"
-                                 "border:1px solid #f0c3bd;border-radius:6px;padding:5px 17px;}")
+        running ? QStringLiteral("QPushButton#agentSendButton{background:#fff5f3;color:%1;"
+                                 "border:1px solid #f0c3bd;border-radius:8px;padding:6px 18px;}"
+                                 "QPushButton#agentSendButton:hover{background:#fee4e2;}")
                       .arg(kDanger)
-                : QStringLiteral("QPushButton{background:%1;color:#ffffff;border:none;"
-                                 "border-radius:6px;padding:5px 17px;}")
+                : QStringLiteral("QPushButton#agentSendButton{background:%1;color:#ffffff;"
+                                 "border:none;border-radius:8px;padding:6px 18px;}"
+                                 "QPushButton#agentSendButton:hover{background:#095a9f;}"
+                                 "QPushButton#agentSendButton:pressed{background:#084d87;}"
+                                 "QPushButton#agentSendButton:disabled{background:#b8d3e8;"
+                                 "color:#eef6ff;}")
                       .arg(kAccent)));
     runtime_->hint->setEnabled(!running);
     if (running) {

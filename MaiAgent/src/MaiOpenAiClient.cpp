@@ -118,6 +118,9 @@ const char* toWireRole(MaiModelRole role) {
 // ── 请求体构造：中立结构 -> OpenAI 线格式 ─────────────────────
 std::string buildRequestBody(const MaiModelRequest& request) {
     json msgs = json::array();
+    if (!request.baseInstructions.empty()) {
+        msgs.push_back({{"role", "system"}, {"content", request.baseInstructions}});
+    }
     for (const auto& message : request.messages) {
         json messageNode{{"role", toWireRole(message.role)}};
         // assistant 发起调用的那条，content 可以是 null，但必须带 tool_calls。

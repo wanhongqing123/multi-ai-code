@@ -12,14 +12,13 @@
 //     要改成保留已序列化的前缀、每轮只追加——这是计划里的一号性能风险。
 //   - 上下文压缩：超长时把前面的对话摘要掉。
 //   - 裁剪：按 token 预算丢最老的。
-//   - 系统提示词、项目规则文件的注入。
+//   - 项目规则文件等随历史演进的上下文注入。稳定的基础指令属于 MaiModelRequest。
 // 混在 MaiAgent 里就没地方放这些，也没法单独测。
 class MaiContextBuilder {
 public:
     struct Options {
         // reasoning 不回灌。它是模型的草稿，回灌会污染下一轮上下文。
         bool includeReasoning = false;
-        std::string systemPrompt;
     };
 
     MaiContextBuilder();

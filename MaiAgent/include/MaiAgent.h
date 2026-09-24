@@ -144,8 +144,6 @@ public:
     struct Options {
         // 会话没指定模型时用这个。会话上配了就用会话的（MaiUpdateSession）。
         std::string defaultModel = "glm-5.3";
-        // 每次请求最前面的系统提示词。空串表示不添加；它只参与模型上下文，不落入会话历史。
-        std::string systemPrompt;
         // 模型可以连着调工具，一轮对话因此会有多次请求。
         // 设上限是因为模型会绕圈——拿同样的参数反复调同一个工具，没上限就一直烧钱。
         int maxToolIterations = 12;
@@ -155,6 +153,8 @@ public:
         // 等用户授权的超时。0 = 无限等，理由见 MaiPermissionGate::Options。
         MaiMillis permissionTimeoutMs = 0;
         MaiApprovalPolicy approvalPolicy = MaiApprovalPolicy::OnRequest;
+        // 模型的基础指令。和 Codex 的 base_instructions 一样独立于消息历史，空表示不注入。
+        std::string baseInstructions;
 
         // 子 Agent 最多能套多少层。根会话是 0，所以 2 表示「孙子辈就到头了」。
         //

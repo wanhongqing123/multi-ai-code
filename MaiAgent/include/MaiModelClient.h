@@ -51,10 +51,10 @@ struct MaiToolInvocation {
 // 发给模型的一条消息里，说话的是谁。
 //
 // 比 MaiRole（只有 User / Assistant）多两个，因为这是**模型看到的视角**：
-// 系统提示词和工具结果在协议里都是独立的一条消息，而在我们的领域模型里前者根本不存历史、
-// 后者是 assistant 消息里的一个片段。
+// 临时的系统指令和工具结果在协议里都是独立消息，而在我们的领域模型里前者根本不存历史、
+// 后者是 assistant 消息里的一个片段。稳定的基础指令单独放在 MaiModelRequest::baseInstructions。
 enum class MaiModelRole {
-    System,  // 系统提示词。MaiContextBuilder 临时加的，不属于对话历史
+    System,  // 某一圈临时追加的系统指令，不属于对话历史
     User,
     Assistant,
     ToolResult,  // 一次工具调用的结果。线格式里是 role="tool"
@@ -99,6 +99,9 @@ struct MaiToolSpec {
 struct MaiModelRequest {
     // 模型名。会话上配了就用会话的，否则用 MaiAgent::Options::defaultModel。
     std::string model;
+    // 模型的基础指令。它独立于历史：Chat Completions 在线协议边界转成首条 system 消息，
+    // Responses 实现应直接映射到顶层 instructions 字段。
+    std::string baseInstructions;
     // 完整历史，按时间顺序。**每次都要带全**——协议是无状态的，少带了模型就没有上下文。
     std::vector<MaiModelMessage> messages;
     // 这一轮允许模型用的工具。空表示纯对话模式，

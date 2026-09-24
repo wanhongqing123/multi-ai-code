@@ -410,6 +410,7 @@ void test_wire_shape_of_request() {
 
     MaiModelRequest request;
     request.model = "glm-4.6";
+    request.baseInstructions = "Return valid Markdown.";
 
     MaiModelMessage user;
     user.role = MaiModelRole::User;
@@ -450,13 +451,15 @@ void test_wire_shape_of_request() {
 
     CHECK(sent.value("model", "") == "glm-4.6");
     CHECK(sent.value("stream", false) == true);  // 不开流就收不到增量
-    CHECK(sent["messages"].size() == 3);
+    CHECK(sent["messages"].size() == 4);
 
-    CHECK(sent["messages"][0]["role"] == "user");
-    CHECK(sent["messages"][0]["content"] == "read a.txt");
+    CHECK(sent["messages"][0]["role"] == "system");
+    CHECK(sent["messages"][0]["content"] == request.baseInstructions);
+    CHECK(sent["messages"][1]["role"] == "user");
+    CHECK(sent["messages"][1]["content"] == "read a.txt");
 
     // assistant 发起调用那条：tool_calls 的嵌套必须对。
-    const json& call = sent["messages"][1];
+    const json& call = sent["messages"][2];
     CHECK(call["role"] == "assistant");
     CHECK(call["tool_calls"].size() == 1);
     if (call["tool_calls"].size() == 1) {
@@ -468,7 +471,7 @@ void test_wire_shape_of_request() {
     }
 
     // 工具结果那条：字段名是 tool_call_id，snake_case。
-    const json& result = sent["messages"][2];
+    const json& result = sent["messages"][3];
     CHECK(result["role"] == "tool");
     CHECK(result.contains("tool_call_id"));
     CHECK(result.value("tool_call_id", "") == "call_1");

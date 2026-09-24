@@ -19,7 +19,7 @@ MaiAgent currently creates `MaiContextBuilder` without a system prompt. The mode
 
 ### Markdown contract
 
-Add a configurable system prompt to `MaiAgent::Options` and pass it into `MaiContextBuilder`. The desktop `AgentController` will supply an English prompt that requires user-facing text to use valid GFM where structure helps, with these concrete constraints:
+Following Codex's separation between `base_instructions` and conversation `input`, add configurable `baseInstructions` to `MaiAgent::Options` and carry it separately on `MaiModelRequest`. The Chat Completions wire adapter serializes it as the first `role=system` message; a future Responses adapter can map it directly to the top-level `instructions` field. The desktop `AgentController` will supply an English prompt that requires user-facing text to use valid GFM where structure helps, with these concrete constraints:
 
 - Keep normal prose as Markdown paragraphs.
 - Use headings, lists, fenced code blocks, links, and tables only with valid GFM syntax.
@@ -41,7 +41,8 @@ Replace the stock form presentation with a frameless, translucent dialog contain
 
 ## Testing
 
-- A MaiAgent test captures the first model request and verifies that the configured system prompt is the first message.
+- A MaiAgent test captures the first model request and verifies that base instructions remain separate from conversation messages.
+- A wire-format test verifies that Chat Completions receives the base instructions as the first system message.
 - An AgentController test verifies that its prompt contains the GFM table contract.
 - Agent panel UI tests verify that the composer style is object-scoped, a root directory produces visible text, the policy menu has application styling, and the three policies remain selectable.
 - Main window UI tests verify the custom model dialog structure, field behavior, disabled/enabled save states, and persistence.

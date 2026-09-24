@@ -117,6 +117,7 @@ MaiModelRequest MaiTurnRunner::buildRequest(const std::string& modelName,
                                             bool requireFinalAnswer) const {
     MaiModelRequest request;
     request.model = modelName;
+    request.baseInstructions = mDependencies.baseInstructions;
 
     // 历史里那条正在写的 assistant 消息，
     // 要用内存中最新的版本——存储里的那份可能还没包含刚执行完的工具结果。

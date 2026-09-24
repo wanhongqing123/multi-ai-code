@@ -9,6 +9,14 @@
 
 namespace {
 
+const char* const kDesktopSystemPrompt = R"(You are the AI assistant embedded in MaiChat.
+Format every user-facing text response as valid GitHub Flavored Markdown (GFM), preserving actual
+line breaks. Plain prose is valid Markdown; use headings, lists, fenced code blocks, links, and
+tables only when they improve readability. Put a blank line before and after each table. Put the
+header, delimiter row, and every table row on separate lines, with one delimiter cell per column.
+Never imitate a table by writing pipe-separated rows in a single paragraph. Do not wrap the entire
+response in a code fence.)";
+
 std::string toUtf8(const QString& text) {
     const QByteArray bytes = text.toUtf8();
     return std::string(bytes.constData(), static_cast<std::size_t>(bytes.size()));
@@ -17,12 +25,6 @@ std::string toUtf8(const QString& text) {
 QString fromUtf8(const std::string& text) {
     return QString::fromUtf8(text.data(), static_cast<int>(text.size()));
 }
-
-constexpr auto kMarkdownSystemPrompt =
-    "Write user-facing responses in valid GitHub-Flavored Markdown. Preserve real line breaks. "
-    "For tables, put the header, separator, and every row on separate lines, with a blank line "
-    "before and after the table. Use headings, lists, fenced code blocks, and tables only when "
-    "they improve readability. Never emit table pipes as one continuous line.";
 
 // 界面要知道一个片段是正文、思考还是工具卡。增量事件本身不带这个信息（见头文件里那一段），
 // 所以查一次记下来。
@@ -68,10 +70,10 @@ std::unique_ptr<MaiAgent> buildAgent(std::unique_ptr<MaiModelClient> model,
 
     MaiAgent::Options options;
     if (!defaultModel.isEmpty()) options.defaultModel = toUtf8(defaultModel);
-    options.systemPrompt = kMarkdownSystemPrompt;
     // 0 = 无限等。桌面端有人盯着，超时自动拒绝等于替用户做决定。
     options.permissionTimeoutMs = 0;
     options.approvalPolicy = approvalPolicy;
+    options.baseInstructions = kDesktopSystemPrompt;
 
     return std::make_unique<MaiAgent>(std::move(store), std::move(model), std::move(tools),
                                       options);

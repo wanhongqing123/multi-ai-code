@@ -22,7 +22,7 @@ using Json = nlohmann::json;
 
 namespace {
 
-constexpr auto kMarkdownSystemPrompt =
+constexpr auto kMarkdownBaseInstructions =
     "Write user-facing responses in valid GitHub-Flavored Markdown. Preserve real line breaks. "
     "For tables, put the header, separator, and every row on separate lines, with a blank line "
     "before and after the table. Use headings, lists, fenced code blocks, and tables only when "
@@ -84,7 +84,7 @@ struct MaiMobileAgent {
         tools->add(makeMaiTodoWriteTool());
         MaiAgent::Options options;
         options.defaultModel = request.at("model").get<std::string>();
-        options.systemPrompt = kMarkdownSystemPrompt;
+        options.baseInstructions = kMarkdownBaseInstructions;
         const auto policy = request.value("policy", "on-request");
         if (policy == "never")
             options.approvalPolicy = MaiApprovalPolicy::Never;

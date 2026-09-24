@@ -1,5 +1,6 @@
 #include <QApplication>
 #include <QLabel>
+#include <QMenu>
 #include <QPushButton>
 #include <QSignalSpy>
 #include <QDir>
@@ -44,6 +45,20 @@ public:
     }
 };
 
+class CapturingModel final : public MaiModelClient {
+public:
+    MaiError stream(const MaiModelRequest& request, const MaiStreamSink& sink,
+                    const std::atomic<bool>& cancel) override {
+        (void)cancel;
+        lastRequest = request;
+        if (sink.onText) sink.onText("Done");
+        return {};
+    }
+    MaiWireApi wireApi() const override { return MaiWireApi::ChatCompletions; }
+
+    MaiModelRequest lastRequest;
+};
+
 }  // namespace
 
 class AgentPanelSessionTest : public QObject {
@@ -56,6 +71,8 @@ private slots:
     void approvalFromAnotherSessionIsStillShown();
     void thinkingLineExpandsLiveAndAfterRestore();
     void unconfiguredModelOpensConfigurationInsteadOfFailingTurn();
+    void desktopAgentSuppliesMarkdownSystemPrompt();
+    void composerUsesApplicationStyleWithoutInheritedLabelBorders();
 };
 
 namespace {
@@ -285,6 +302,50 @@ void AgentPanelSessionTest::unconfiguredModelOpensConfigurationInsteadOfFailingT
 
     QCOMPARE(requested.count(), 1);
     QCOMPARE(editor->toPlainText(), QStringLiteral("你好"));
+}
+
+void AgentPanelSessionTest::desktopAgentSuppliesMarkdownSystemPrompt() {
+    auto model = std::make_unique<CapturingModel>();
+    CapturingModel* observer = model.get();
+    AgentController controller(std::move(model), QString());
+    const QString sessionId = controller.createSession(QDir::currentPath());
+    QVERIFY(controller.sendPrompt(sessionId, QStringLiteral("show repositories")));
+    controller.agent().waitIdle();
+
+    QVERIFY(!observer->lastRequest.messages.empty());
+    QCOMPARE(observer->lastRequest.messages.front().role, MaiModelRole::User);
+    const QString prompt = QString::fromStdString(observer->lastRequest.baseInstructions);
+    QVERIFY(prompt.contains(QStringLiteral("GitHub Flavored Markdown")));
+    QVERIFY(prompt.contains(QStringLiteral("table row")));
+    QVERIFY(prompt.contains(QStringLiteral("delimiter row")));
+}
+
+void AgentPanelSessionTest::composerUsesApplicationStyleWithoutInheritedLabelBorders() {
+    Harness harness;
+    QVERIFY(QTest::qWaitForWindowExposed(harness.panel.get()));
+
+    auto* card = harness.panel->findChild<QWidget*>(QStringLiteral("agentComposerCard"));
+    auto* directory =
+        harness.panel->findChild<QLabel*>(QStringLiteral("agentWorkingDirectory"));
+    auto* policy =
+        harness.panel->findChild<QPushButton*>(QStringLiteral("agentApprovalPolicy"));
+    auto* send = harness.panel->findChild<QPushButton*>(QStringLiteral("agentSendButton"));
+    QVERIFY(card != nullptr);
+    QVERIFY(directory != nullptr);
+    QVERIFY(policy != nullptr);
+    QVERIFY(send != nullptr);
+    QVERIFY(card->styleSheet().contains(QStringLiteral("QFrame#agentComposerCard")));
+    QVERIFY(!card->styleSheet().contains(QStringLiteral("QFrame{")));
+    QVERIFY(policy->menu() != nullptr);
+    QVERIFY(policy->menu()->styleSheet().contains(QStringLiteral("QMenu::item:selected")));
+    QCOMPARE(policy->menu()->actions().size(), 3);
+    QCOMPARE(policy->menu()->actions()[0]->text(), QStringLiteral("请求批准"));
+    QCOMPARE(policy->menu()->actions()[1]->text(), QStringLiteral("帮我批准"));
+    QCOMPARE(policy->menu()->actions()[2]->text(), QStringLiteral("完全访问"));
+
+    const QString rootSession = harness.controller->createSession(QDir::rootPath());
+    harness.panel->openSession(rootSession);
+    QCOMPARE(directory->text(), QDir::toNativeSeparators(QDir::rootPath()));
 }
 
 QTEST_MAIN(AgentPanelSessionTest)

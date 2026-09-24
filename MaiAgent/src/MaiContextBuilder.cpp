@@ -7,14 +7,7 @@ MaiContextBuilder::MaiContextBuilder(Options options) : mOptions(std::move(optio
 std::vector<MaiModelMessage> MaiContextBuilder::build(
     const std::vector<MaiMessage>& history) const {
     std::vector<MaiModelMessage> out;
-    out.reserve(history.size() + 1);
-
-    if (!mOptions.systemPrompt.empty()) {
-        MaiModelMessage modelMessage;
-        modelMessage.role = MaiModelRole::System;
-        modelMessage.content = mOptions.systemPrompt;
-        out.push_back(std::move(modelMessage));
-    }
+    out.reserve(history.size());
 
     for (const auto& message : history) {
         if (message.role == MaiRole::User) {

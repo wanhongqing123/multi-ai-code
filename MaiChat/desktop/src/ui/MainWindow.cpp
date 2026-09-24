@@ -34,13 +34,11 @@
 #include <QTextFragment>
 #include <QDesktopServices>
 #include <QDialog>
-#include <QDialogButtonBox>
 #include <QEvent>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFont>
-#include <QFormLayout>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QIcon>
@@ -3041,47 +3039,178 @@ void MainWindow::editAgentModelSettings() {
     QDialog dialog(this);
     dialog.setObjectName(QStringLiteral("agentModelDialog"));
     dialog.setWindowTitle(QStringLiteral("配置 AI 助手模型"));
-    dialog.setMinimumWidth(UiZoom::s(520));
+    dialog.setModal(true);
+    dialog.setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);
+    dialog.setAttribute(Qt::WA_TranslucentBackground);
+    dialog.setMinimumWidth(UiZoom::s(560));
     auto* root = new QVBoxLayout(&dialog);
-    root->setContentsMargins(UiZoom::s(24), UiZoom::s(22), UiZoom::s(24), UiZoom::s(20));
-    root->setSpacing(UiZoom::s(16));
+    root->setContentsMargins(UiZoom::s(18), UiZoom::s(18), UiZoom::s(18), UiZoom::s(18));
+    root->setSpacing(0);
 
-    auto* form = new QFormLayout;
-    form->setHorizontalSpacing(UiZoom::s(14));
-    form->setVerticalSpacing(UiZoom::s(12));
-    auto* baseUrl = new QLineEdit(&dialog);
+    auto* panel = new QFrame(&dialog);
+    panel->setObjectName(QStringLiteral("agentModelPanel"));
+    root->addWidget(panel);
+    auto* content = new QVBoxLayout(panel);
+    content->setContentsMargins(UiZoom::s(30), UiZoom::s(26), UiZoom::s(30), UiZoom::s(24));
+    content->setSpacing(UiZoom::s(10));
+
+    auto* title = new QLabel(QStringLiteral("配置 AI 助手模型"), panel);
+    title->setObjectName(QStringLiteral("agentModelTitle"));
+    content->addWidget(title);
+    auto* subtitle = new QLabel(
+        QStringLiteral("连接兼容 OpenAI 接口的模型服务。API Key 只保存在本机设置中。"), panel);
+    subtitle->setObjectName(QStringLiteral("agentModelSubtitle"));
+    subtitle->setWordWrap(true);
+    content->addWidget(subtitle);
+    content->addSpacing(UiZoom::s(8));
+
+    auto* baseUrlLabel = new QLabel(QStringLiteral("接口地址"), panel);
+    baseUrlLabel->setObjectName(QStringLiteral("agentModelFieldLabel"));
+    content->addWidget(baseUrlLabel);
+    auto* baseUrl = new QLineEdit(panel);
     baseUrl->setObjectName(QStringLiteral("agentModelBaseUrl"));
     baseUrl->setText(current.baseUrl.isEmpty()
                          ? QStringLiteral("https://open.bigmodel.cn/api/coding/paas/v4")
                          : current.baseUrl);
-    auto* model = new QLineEdit(&dialog);
+    baseUrl->setClearButtonEnabled(true);
+    content->addWidget(baseUrl);
+
+    auto* modelLabel = new QLabel(QStringLiteral("模型"), panel);
+    modelLabel->setObjectName(QStringLiteral("agentModelFieldLabel"));
+    content->addWidget(modelLabel);
+    auto* model = new QLineEdit(panel);
     model->setObjectName(QStringLiteral("agentModelName"));
     model->setText(current.modelName.isEmpty() ? QStringLiteral("glm-5.3") : current.modelName);
-    auto* apiKey = new QLineEdit(&dialog);
+    model->setClearButtonEnabled(true);
+    content->addWidget(model);
+
+    auto* apiKeyLabel = new QLabel(QStringLiteral("API Key"), panel);
+    apiKeyLabel->setObjectName(QStringLiteral("agentModelFieldLabel"));
+    content->addWidget(apiKeyLabel);
+    auto* apiKey = new QLineEdit(panel);
     apiKey->setObjectName(QStringLiteral("agentModelApiKey"));
     apiKey->setEchoMode(QLineEdit::Password);
     apiKey->setPlaceholderText(current.apiKey.isEmpty()
                                    ? QStringLiteral("请输入 API Key")
                                    : QStringLiteral("已配置；留空保持不变"));
-    form->addRow(QStringLiteral("接口地址"), baseUrl);
-    form->addRow(QStringLiteral("模型"), model);
-    form->addRow(QStringLiteral("API Key"), apiKey);
-    root->addLayout(form);
+    content->addWidget(apiKey);
 
-    auto* error = new QLabel(&dialog);
+    auto* error = new QLabel(panel);
     error->setObjectName(QStringLiteral("agentModelError"));
-    error->setStyleSheet(QStringLiteral("color:#c0392b;"));
     error->setWordWrap(true);
-    root->addWidget(error);
+    error->hide();
+    content->addWidget(error);
 
-    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel | QDialogButtonBox::Save,
-                                         Qt::Horizontal, &dialog);
-    buttons->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("取消"));
-    buttons->button(QDialogButtonBox::Save)->setText(QStringLiteral("保存"));
-    buttons->button(QDialogButtonBox::Save)->setObjectName(QStringLiteral("agentModelSave"));
-    root->addWidget(buttons);
-    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
+    auto* actions = new QHBoxLayout;
+    actions->setContentsMargins(0, UiZoom::s(8), 0, 0);
+    actions->setSpacing(UiZoom::s(10));
+    actions->addStretch(1);
+    auto* cancel = new QPushButton(QStringLiteral("取消"), panel);
+    cancel->setObjectName(QStringLiteral("agentModelCancel"));
+    cancel->setCursor(Qt::PointingHandCursor);
+    actions->addWidget(cancel);
+    auto* save = new QPushButton(QStringLiteral("保存"), panel);
+    save->setObjectName(QStringLiteral("agentModelSave"));
+    save->setCursor(Qt::PointingHandCursor);
+    save->setDefault(true);
+    actions->addWidget(save);
+    content->addLayout(actions);
+
+    dialog.setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
+        QDialog#agentModelDialog {
+            background: transparent;
+        }
+        #agentModelPanel {
+            background: #ffffff;
+            border: 1px solid #dbe5f0;
+            border-radius: 18px;
+        }
+        #agentModelTitle {
+            background: transparent;
+            color: #172033;
+            font-size: 20px;
+            font-weight: 700;
+        }
+        #agentModelSubtitle {
+            background: transparent;
+            color: #667085;
+            font-size: 12px;
+        }
+        #agentModelFieldLabel {
+            background: transparent;
+            color: #344054;
+            font-size: 12px;
+            font-weight: 700;
+            margin-top: 5px;
+        }
+        #agentModelBaseUrl, #agentModelName, #agentModelApiKey {
+            min-height: 42px;
+            background: #ffffff;
+            border: 1px solid #d8e2ef;
+            border-radius: 9px;
+            color: #172033;
+            font-size: 13px;
+            padding: 0 12px;
+            selection-background-color: #cfe8ff;
+        }
+        #agentModelBaseUrl:focus, #agentModelName:focus, #agentModelApiKey:focus {
+            border: 1px solid #42a5e8;
+            background: #fbfdff;
+        }
+        #agentModelError {
+            background: #fff5f3;
+            border: 1px solid #fecdca;
+            border-radius: 8px;
+            color: #b42318;
+            font-size: 12px;
+            padding: 8px 10px;
+        }
+        #agentModelCancel, #agentModelSave {
+            min-width: 88px;
+            min-height: 38px;
+            border-radius: 9px;
+            font-size: 13px;
+            font-weight: 700;
+            padding: 0 16px;
+        }
+        #agentModelCancel {
+            background: #f6f8fb;
+            border: 1px solid #d8e2ef;
+            color: #475467;
+        }
+        #agentModelCancel:hover {
+            background: #edf2f7;
+        }
+        #agentModelSave {
+            background: #0b67b7;
+            border: 1px solid #0b67b7;
+            color: #ffffff;
+        }
+        #agentModelSave:hover {
+            background: #095a9f;
+            border-color: #095a9f;
+        }
+        #agentModelSave:pressed {
+            background: #084d87;
+            border-color: #084d87;
+        }
+        #agentModelSave:disabled {
+            background: #d7e4ef;
+            border-color: #d7e4ef;
+            color: #f8fafc;
+        }
+    )")));
+
+    const auto updateSave = [=] {
+        save->setEnabled(!baseUrl->text().trimmed().isEmpty() &&
+                         !model->text().trimmed().isEmpty() &&
+                         (!apiKey->text().trimmed().isEmpty() || !current.apiKey.isEmpty()));
+    };
+    connect(baseUrl, &QLineEdit::textChanged, &dialog, updateSave);
+    connect(model, &QLineEdit::textChanged, &dialog, updateSave);
+    connect(apiKey, &QLineEdit::textChanged, &dialog, updateSave);
+    connect(cancel, &QPushButton::clicked, &dialog, &QDialog::reject);
+    connect(save, &QPushButton::clicked, &dialog, [&] {
         QString url = baseUrl->text().trimmed();
         while (url.endsWith(QLatin1Char('/'))) url.chop(1);
         const QString modelName = model->text().trimmed();
@@ -3091,14 +3220,17 @@ void MainWindow::editAgentModelSettings() {
         if (!parsed.isValid() || (parsed.scheme() != QStringLiteral("https") &&
                                   parsed.scheme() != QStringLiteral("http"))) {
             error->setText(QStringLiteral("接口地址必须是完整的 http:// 或 https:// 地址。"));
+            error->show();
             return;
         }
         if (modelName.isEmpty()) {
             error->setText(QStringLiteral("请填写模型名称。"));
+            error->show();
             return;
         }
         if (key.isEmpty()) {
             error->setText(QStringLiteral("请填写 API Key。"));
+            error->show();
             return;
         }
         settings.setValue(QStringLiteral("agent/baseUrl"), url);
@@ -3107,10 +3239,12 @@ void MainWindow::editAgentModelSettings() {
         settings.sync();
         if (settings.status() != QSettings::NoError) {
             error->setText(QStringLiteral("模型配置保存失败，请检查当前用户的设置目录权限。"));
+            error->show();
             return;
         }
         dialog.accept();
     });
+    updateSave();
 
     if (dialog.exec() != QDialog::Accepted) return;
     rebuildAgentPage();

@@ -17,6 +17,8 @@
 // 轮次结束后就悬空了。
 struct MaiToolContext {
     std::string sessionId;
+    // 当前会话实际选中的模型名。宿主工具可据此拒绝模型不支持的媒体或平台能力。
+    std::string model;
 
     // 所有文件操作的根，UTF-8 绝对路径。
     //

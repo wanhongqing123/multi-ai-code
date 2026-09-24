@@ -241,6 +241,13 @@ void AgentControllerTest::registers_a_screenshot_tool_that_requires_approval() {
     std::unique_ptr<MaiTool> screenshot = makeDesktopScreenshotTool();
     QCOMPARE(QString::fromStdString(screenshot->name()), QStringLiteral("screenshot"));
     QVERIFY(screenshot->requiresApproval(QStringLiteral("{}").toStdString()));
+    MaiToolContext textModelContext;
+    textModelContext.model = "glm-5.3";
+    const MaiToolResult unsupported = screenshot->execute("{}", textModelContext);
+    QVERIFY(unsupported.hasError());
+    QCOMPARE(unsupported.error().code(), MaiErrorCode::NotSupported);
+    QVERIFY(QString::fromStdString(unsupported.error().message()).contains(
+        QStringLiteral("glm-5.3-flash")));
 
     auto model = std::make_unique<ScriptedModel>(std::string(), std::string(kText));
     ScriptedModel* scripted = model.get();

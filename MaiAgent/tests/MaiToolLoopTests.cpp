@@ -93,7 +93,11 @@ public:
     std::string parametersSchema() const override {
         return R"({"type":"object","properties":{},"additionalProperties":false})";
     }
-    MaiToolResult execute(const std::string&, const MaiToolContext&) override {
+    MaiToolResult execute(const std::string&, const MaiToolContext& context) override {
+        if (context.model != "glm-5.3") {
+            return MaiToolResult::failure(MaiErrorCode::Internal,
+                                          "tool did not receive the active model name");
+        }
         return MaiToolResult::successWithImages("Captured the current display.",
                                                 {MaiToolImage{mPath, "image/png"}});
     }

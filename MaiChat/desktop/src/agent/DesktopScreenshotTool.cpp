@@ -115,6 +115,12 @@ public:
         if (context.isCanceled()) {
             return MaiToolResult::failure(MaiErrorCode::Canceled, "screen capture was canceled");
         }
+        if (context.model == "glm-5.3") {
+            return MaiToolResult::failure(
+                MaiErrorCode::NotSupported,
+                "The current glm-5.3 model accepts text only. Ask the user to switch to "
+                "glm-5.3-flash before taking a screenshot.");
+        }
 
         QCoreApplication* application = QCoreApplication::instance();
         if (application == nullptr) {

@@ -62,8 +62,7 @@ void MaiTurnRunner::runUnchecked(const std::atomic<bool>& cancel) {
     }
     mWorkingDirectory = session.directory;
 
-    const std::string modelName =
-        session.model.empty() ? mDependencies.defaultModel : session.model;
+    mModelName = session.model.empty() ? mDependencies.defaultModel : session.model;
 
     // ── 工具循环 ──────────────────────────────────────────────────
     // 这是 agent 之所以是 agent 的地方：
@@ -77,7 +76,7 @@ void MaiTurnRunner::runUnchecked(const std::atomic<bool>& cancel) {
         if (cancel.load(std::memory_order_relaxed)) break;
 
         const auto calls =
-            requestCompletion(buildRequest(modelName, retriedMissingFinalAnswer), cancel);
+            requestCompletion(buildRequest(mModelName, retriedMissingFinalAnswer), cancel);
         const bool producedVisibleText =
             std::any_of(mText.begin(), mText.end(),
                         [](unsigned char character) { return !std::isspace(character); });
@@ -184,6 +183,7 @@ void MaiTurnRunner::executeTools(const std::vector<MaiToolInvocation>& calls,
 
     MaiToolContext context;
     context.sessionId = mSessionId;
+    context.model = mModelName;
     context.root = session.directory;
     context.cancel = &cancel;
     context.questions = mDependencies.questions;

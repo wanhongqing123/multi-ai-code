@@ -96,6 +96,7 @@ private:
     std::string mSessionId;
     MaiMessage mAssistant;
     std::string mWorkingDirectory;
+    std::string mModelName;
 
     // 每一圈的文本和推理各自是独立的 part——模型在工具调用前后说的话是两段不同的发言，
     // 混成一个 part 会让界面把工具卡夹在一段文字中间。

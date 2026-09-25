@@ -98,6 +98,14 @@ final class MessageScrollIntent: ObservableObject {
         generation &+= 1
     }
 
+    func followLatest() {
+        userBrowsedHistory = false
+    }
+
+    func didReachLatest() {
+        userBrowsedHistory = false
+    }
+
     func beginPositioning() -> Int {
         generation &+= 1
         return generation

@@ -1701,18 +1701,27 @@ private struct MessageListView: View {
     var body: some View {
         let decisionStates = approvalDecisionStates
         let activity = appState.activity(with: peerUserID)
-        let timeline: [MessageTimelineItem] = (activity.map { [.activity($0)] } ?? [])
-            + messages.reversed().map { .message($0) }
+        let timeline: [MessageTimelineItem] = messages.map { .message($0) }
+            + (activity.map { [.activity($0)] } ?? [])
         ScrollViewReader { proxy in
             ScrollView {
                 // One lazy list preserves message identity across local sends and
                 // history changes without mounting all Markdown rows.
                 VStack(alignment: .leading, spacing: 14) {
+                    if hasEarlierMessages {
+                        Button {
+                            Task { await loadEarlierMessagesIfNeeded() }
+                        } label: {
+                            if isLoadingEarlierMessages { ProgressView() }
+                            else { Text("加载更早消息").font(.caption) }
+                        }
+                        .disabled(isLoadingEarlierMessages)
+                        .frame(maxWidth: .infinity)
+                    }
                     if !timeline.isEmpty {
                         MessageHistoryStack(items: timeline) { item in
                             if case let .activity(signal) = item {
                                 RemoteIMActivityBubble(signal: signal)
-                                    .rotationEffect(.degrees(180))
                             } else if case let .message(message) = item {
                             MessageBubbleView(
                                 message: message,
@@ -1767,7 +1776,6 @@ private struct MessageListView: View {
                                             .accessibilityHidden(true)
                                     }
                                 }
-                                .rotationEffect(.degrees(180))
                                 .id(message.id)
                                 .onAppear {
                                     if message.id == appState.chatState.messages(with: peerUserID).first?.id, scrollIntent.userBrowsedHistory {
@@ -1786,22 +1794,19 @@ private struct MessageListView: View {
                             }
                         }
                     }
-                    if hasEarlierMessages {
-                        Button {
-                            Task { await loadEarlierMessagesIfNeeded() }
-                        } label: {
-                            if isLoadingEarlierMessages { ProgressView() }
-                            else { Text("加载更早消息").font(.caption) }
-                        }
-                        .disabled(isLoadingEarlierMessages)
-                        .frame(maxWidth: .infinity)
-                        .rotationEffect(.degrees(180))
-                    }
+                    Color.clear.frame(height: 1).id("message-list-bottom")
                 }
                 .padding(.horizontal, MessageBubbleMetrics.horizontalInset)
                 .padding(.vertical, 18)
-                .background(MessageScrollPositionReader(allowsBottomFollowing: false,
-                    onUserScroll: { scrollIntent.userDidScroll() }) { _ in })
+                .background(MessageScrollPositionReader(
+                    onViewportResizeNeedsBottom: {
+                        guard !scrollIntent.userBrowsedHistory else { return }
+                        proxy.scrollTo("message-list-bottom", anchor: .bottom)
+                    },
+                    onUserScroll: { scrollIntent.userDidScroll() }
+                ) { nearBottom in
+                    if nearBottom { scrollIntent.didReachLatest() }
+                })
                 .background(
                     ScrollViewKeyboardDismissInstaller { window in
                         dismissAttachmentPanel()
@@ -1812,14 +1817,12 @@ private struct MessageListView: View {
                     }
                 )
             }
-            // The native origin is the newest row. Resizing for the keyboard
-            // keeps that origin attached to the input area without a second jump.
-            .rotationEffect(.degrees(180))
+            .modifier(MessageInitialScrollAnchor())
             .scrollDismissesKeyboard(.interactively)
             .background(RemoteIMStyle.panelBackground)
             .overlay {
                 if messages.isEmpty && activity == nil {
-                    // Center in the visible message area, outside the inverted timeline.
+                    // Center in the visible message area, outside the timeline.
                     EmptyMessagesView()
                         .allowsHitTesting(false)
                 }
@@ -1838,8 +1841,12 @@ private struct MessageListView: View {
                 guard isVisible, !navigationArrival.isReturning, !keyboardIsVisible,
                       navigationArrival.composerView?.isFirstResponder == true else { return }
                 keyboardIsVisible = true
-                guard let targetID = messages.last?.id else { return }
-                scrollIntent.positionWithKeyboard(proxy: proxy, id: targetID, notification: notification, anchor: .top)
+                scrollIntent.positionWithKeyboard(
+                    proxy: proxy,
+                    id: "message-list-bottom",
+                    notification: notification,
+                    anchor: .bottom
+                )
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in
                 keyboardIsVisible = false
@@ -1849,7 +1856,18 @@ private struct MessageListView: View {
                 // against the current model, not that stale array snapshot.
                 guard isVisible, !navigationArrival.isReturning, let id,
                       appState.chatState.message(id: id)?.toUserID == peerUserID else { return }
-                scrollIntent.positionAtBottom(proxy: proxy, id: id, anchor: .top)
+                scrollIntent.followLatest()
+                scrollIntent.positionAtBottom(proxy: proxy, id: id, anchor: .bottom)
+            }
+            .onChange(of: messages.last?.id) { _ in
+                guard !scrollIntent.userBrowsedHistory else { return }
+                scrollIntent.positionAtBottom(
+                    proxy: proxy, id: "message-list-bottom", anchor: .bottom)
+            }
+            .onChange(of: activity?.activityID) { _ in
+                guard !scrollIntent.userBrowsedHistory else { return }
+                scrollIntent.positionAtBottom(
+                    proxy: proxy, id: "message-list-bottom", anchor: .bottom)
             }
             .onChange(of: messages.count) { _ in recordHistoryLayout() }
             .onChange(of: searchTargetMessageID) { targetID in
@@ -1884,7 +1902,7 @@ private struct MessageListView: View {
         AppDiagnosticLog.shared.record(level: .info, category: "remote-im-ui", event: "history-layout", fields: [
             "account": appState.remoteDiagnosticsAccountTag,
             "peer": DiagnosticLogPrivacy.stableTag(peer, prefix: "u"),
-            "layout": "bottom-origin-lazy-stack", "loaded_messages": String(messages.count)
+            "layout": "normal-origin-lazy-stack", "loaded_messages": String(messages.count)
         ])
     }
 
@@ -1904,8 +1922,10 @@ private struct MessageListView: View {
     }
 
     private func scrollToLatestMessage(proxy: ScrollViewProxy) {
-        guard let targetID = appState.chatState.latestMessage(with: peerUserID)?.id else { return }
-        scrollIntent.positionAtBottom(proxy: proxy, id: targetID, anchor: .top)
+        guard appState.chatState.latestMessage(with: peerUserID) != nil else { return }
+        scrollIntent.followLatest()
+        scrollIntent.positionAtBottom(
+            proxy: proxy, id: "message-list-bottom", anchor: .bottom)
     }
 
     @MainActor

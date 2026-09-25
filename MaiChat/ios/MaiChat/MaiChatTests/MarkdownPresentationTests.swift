@@ -707,80 +707,25 @@ final class MarkdownPresentationTests: XCTestCase {
     }
 
     @MainActor
-    private struct BottomTimelineHarness: View {
-        @ObservedObject var model: HistoryModel
-        let probe: HistoryProbe
-        @StateObject private var intent = MessageScrollIntent()
-        var body: some View {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    MessageHistoryStack(items: Array(model.items.reversed())) { item in
-                        Text(String(repeating: "消息 \(item.id)\n", count: abs(item.id) % 5 + 1))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background {
-                                GeometryReader { geometry in
-                                    Color.clear.onAppear {
-                                        probe.frames[item.id] = geometry.frame(in: .named("bottom-timeline"))
-                                    }.onChange(of: geometry.frame(in: .named("bottom-timeline"))) {
-                                        probe.frames[item.id] = $0
-                                    }
-                                }
-                            }
-                            .rotationEffect(.degrees(180))
-                            .id(item.id)
-                    }
-                }
-                .rotationEffect(.degrees(180))
-                .coordinateSpace(name: "bottom-timeline")
-                .onAppear { probe.proxy = proxy }
-                .onChange(of: model.locallyQueuedMessageID) { id in
-                    guard let id else { return }
-                    intent.positionAtBottom(proxy: proxy, id: id, anchor: .top)
-                }
-            }
-            .frame(width: 393, height: model.viewportHeight)
-            .ignoresSafeArea()
-        }
-    }
-
-    @MainActor
-    func testBottomTimelineKeepsLatestAttachedDuringViewportResize() async throws {
-        let model = HistoryModel(0..<350), probe = HistoryProbe()
-        let controller = UIHostingController(rootView: BottomTimelineHarness(model: model, probe: probe))
+    func testShortConversationStartsAtTheTopInsteadOfLeavingABlankScreen() async throws {
+        let model = HistoryModel(0..<2), probe = HistoryProbe()
+        let controller = UIHostingController(
+            rootView: EntryHistoryHarness(
+                model: model,
+                intent: MessageScrollIntent(),
+                probe: probe,
+                performsExplicitPositioning: false,
+                linesPerMessage: 2
+            ).environmentObject(ChatNavigationArrival())
+        )
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 640))
-        window.rootViewController = controller; window.makeKeyAndVisible()
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
         defer { window.isHidden = true; window.rootViewController = nil }
         try await Task.sleep(for: .milliseconds(150))
-        XCTAssertEqual(try XCTUnwrap(probe.frames[349]).maxY, 640, accuracy: 1)
-        for height: CGFloat in [550, 450, 360] {
-            model.viewportHeight = height
-            try await Task.sleep(for: .milliseconds(80))
-            XCTAssertEqual(try XCTUnwrap(probe.frames[349]).maxY, height, accuracy: 1,
-                "Viewport resize alone keeps the last message at its edge; no extra scroll command")
-        }
-    }
 
-    @MainActor
-    func testBottomTimelinePreservesHistoryForIncomingAndOlderPagesThenPositionsOwnSend() async throws {
-        let model = HistoryModel(0..<50), probe = HistoryProbe()
-        let controller = UIHostingController(rootView: BottomTimelineHarness(model: model, probe: probe))
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 640))
-        window.rootViewController = controller; window.makeKeyAndVisible()
-        defer { window.isHidden = true; window.rootViewController = nil }
-        try await Task.sleep(for: .milliseconds(150))
-        probe.proxy?.scrollTo(25, anchor: .center)
-        try await Task.sleep(for: .milliseconds(150))
-        let previous = try XCTUnwrap(probe.frames[25]).minY
-        model.items.append(HistoryItem(id: 50))
-        try await Task.sleep(for: .milliseconds(150))
-        XCTAssertEqual(try XCTUnwrap(probe.frames[25]).minY, previous, accuracy: 2)
-        model.items.insert(contentsOf: (-20..<0).map(HistoryItem.init), at: 0)
-        try await Task.sleep(for: .milliseconds(150))
-        XCTAssertEqual(try XCTUnwrap(probe.frames[25]).minY, previous, accuracy: 2)
-        model.items.append(HistoryItem(id: 51))
-        model.locallyQueuedMessageID = 51
-        try await Task.sleep(for: .milliseconds(200))
-        XCTAssertEqual(try XCTUnwrap(probe.frames[51]).maxY, 640, accuracy: 1)
+        XCTAssertEqual(try XCTUnwrap(probe.frames[0]).minY, 0, accuracy: 2)
+        XCTAssertLessThan(try XCTUnwrap(probe.frames[1]).maxY, 320)
     }
 
     @MainActor

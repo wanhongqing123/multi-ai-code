@@ -78,6 +78,7 @@ class MainWindowLayoutTest : public QObject {
 private slots:
     void transientActivityFollowsOnlyActivityEventsAcrossConversationSwitches();
     void transientActivityStaysAfterNewOutgoingMessage();
+    void activityDurationUsesMinutesAfterSixtySeconds();
     void videoCoverRetainsPhysicalPixels();
     void renamedHeaderButtonsKeepTheirCompactAppearance();
     void messageTextUsesNativeResolutionAndRegularBodyFont();
@@ -185,6 +186,26 @@ void MainWindowLayoutTest::transientActivityFollowsOnlyActivityEventsAcrossConve
     emit fake->activityReceived(QStringLiteral("peer"), RemoteIMActivitySignal{
         QStringLiteral("machine:test"), RemoteIMActivityKind::MachineTool, false, 1000, 2});
     QTRY_VERIFY(window.findChild<QWidget*>(QStringLiteral("remoteImActivityRow")) == nullptr);
+}
+
+void MainWindowLayoutTest::activityDurationUsesMinutesAfterSixtySeconds() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fake = client.get();
+    RemoteIMApplication app(QStringLiteral("owner"), std::move(client));
+    app.addContact(QStringLiteral("peer"), QStringLiteral("Peer"));
+    app.selectPeer(QStringLiteral("peer"));
+    MainWindow window(app);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    emit fake->activityReceived(QStringLiteral("peer"), RemoteIMActivitySignal{
+        QStringLiteral("machine:duration"), RemoteIMActivityKind::MachineWorking, true,
+        12000, 1, now - 62 * 1000, now - 417 * 1000});
+    auto* bubble = window.findChild<QWidget*>(QStringLiteral("remoteImActivityBubble"));
+    QTRY_VERIFY(bubble != nullptr);
+    QTRY_COMPARE(bubble->accessibleName(),
+                 QStringLiteral("正在执行1分2秒，任务总耗时6分57秒"));
 }
 
 void MainWindowLayoutTest::transientActivityStaysAfterNewOutgoingMessage() {

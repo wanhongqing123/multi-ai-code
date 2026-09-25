@@ -5,6 +5,14 @@ import UIKit
 @testable import MaiChatCore
 
 final class MarkdownPresentationTests: XCTestCase {
+    func testActivityDurationUsesMinutesAfterSixtySeconds() {
+        XCTAssertEqual(RemoteIMActivityDurationFormatter.text(seconds: 0), "0秒")
+        XCTAssertEqual(RemoteIMActivityDurationFormatter.text(seconds: 59), "59秒")
+        XCTAssertEqual(RemoteIMActivityDurationFormatter.text(seconds: 60), "1分0秒")
+        XCTAssertEqual(RemoteIMActivityDurationFormatter.text(seconds: 62), "1分2秒")
+        XCTAssertEqual(RemoteIMActivityDurationFormatter.text(seconds: 417), "6分57秒")
+    }
+
     func testAIComposerReturnBuildsTheSubmittedText() {
         XCTAssertEqual(
             AIComposerSubmissionPolicy.submittedText(

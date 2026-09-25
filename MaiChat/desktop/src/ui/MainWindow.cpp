@@ -168,6 +168,12 @@ void setMessageRowDivider(QWidget* row, bool visible) {
     row->update();
 }
 
+QString formatActivityDuration(qint64 seconds) {
+    const qint64 value = qMax<qint64>(0, seconds);
+    if (value < 60) return QStringLiteral("%1秒").arg(value);
+    return QStringLiteral("%1分%2秒").arg(value / 60).arg(value % 60);
+}
+
 class RemoteIMActivityBubble final : public QWidget {
 public:
     explicit RemoteIMActivityBubble(const RemoteIMActivitySignal& signal,
@@ -183,8 +189,10 @@ public:
         ticker_.setInterval(90);
         connect(&ticker_, &QTimer::timeout, this, [this] {
             phase_ = (phase_ + 1) % 24;
+            setAccessibleName(statusText());
             update();
         });
+        setAccessibleName(statusText());
         ticker_.start();
     }
 
@@ -255,8 +263,9 @@ private:
         case RemoteIMActivityKind::MachineWorking: title = QStringLiteral("正在执行"); break;
         case RemoteIMActivityKind::HumanTyping: return QString();
         }
-        return QStringLiteral("%1%2秒，任务总耗时%3秒")
-            .arg(title).arg(elapsedSeconds).arg(taskElapsedSeconds);
+        return QStringLiteral("%1%2，任务总耗时%3")
+            .arg(title, formatActivityDuration(elapsedSeconds),
+                 formatActivityDuration(taskElapsedSeconds));
     }
 
     RemoteIMActivitySignal signal_;

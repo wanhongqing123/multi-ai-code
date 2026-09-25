@@ -6,6 +6,14 @@ enum MessageBubbleMetrics {
     static let avatarSize: CGFloat = 28
 }
 
+enum RemoteIMActivityDurationFormatter {
+    static func text(seconds: Int) -> String {
+        let value = max(0, seconds)
+        guard value >= 60 else { return "\(value)秒" }
+        return "\(value / 60)分\(value % 60)秒"
+    }
+}
+
 /// Sender identity occupies a header row, not a column beside every line of text.
 /// Content keeps its intrinsic width for short messages, but can use the entire
 /// proposed width for long text, code and tables. No screen-global width lookup.

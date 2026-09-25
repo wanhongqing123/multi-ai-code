@@ -1998,7 +1998,9 @@ private struct RemoteIMActivityBubble: View {
         case .machineWorking: title = "正在执行"
         case .humanTyping: return ""
         }
-        return "\(title)\(elapsed)秒，任务总耗时\(taskElapsed)秒"
+        let phaseDuration = RemoteIMActivityDurationFormatter.text(seconds: elapsed)
+        let taskDuration = RemoteIMActivityDurationFormatter.text(seconds: taskElapsed)
+        return "\(title)\(phaseDuration)，任务总耗时\(taskDuration)"
     }
 }
 

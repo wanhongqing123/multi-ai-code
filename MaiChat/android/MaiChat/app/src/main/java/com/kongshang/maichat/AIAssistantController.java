@@ -237,6 +237,22 @@ final class AIAssistantController {
     void send(String text, Consumer<Boolean> completion) {
         send(text, java.util.Collections.emptyList(), completion);
     }
+    void suggestReplies(JSONArray messages, java.util.function.BiConsumer<JSONObject, String> completion) {
+        JSONArray context = messages == null ? new JSONArray() : messages;
+        worker.post(() -> {
+            JSONObject suggestions = null;
+            String failure = null;
+            try {
+                suggestions = call(new JSONObject().put("op", "suggest_replies")
+                    .put("messages", context));
+            } catch (Exception e) {
+                failure = safeMessage(e);
+            }
+            JSONObject result = suggestions;
+            String errorMessage = failure;
+            main.post(() -> completion.accept(result, errorMessage));
+        });
+    }
     void send(String text, java.util.List<ImportedFile> attachments, Consumer<Boolean> completion) {
         String intendedSession = state.selected;
         java.util.List<ImportedFile> intendedAttachments = new java.util.ArrayList<>(attachments);

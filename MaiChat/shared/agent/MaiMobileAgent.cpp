@@ -45,6 +45,7 @@ struct MaiMobileAgent {
     std::unordered_map<std::string, std::string> errors;
     std::string workspace;
     std::string model;
+    MaiModelConfig suggestionConfig;
     bool configured = false;
     // 最后销毁 agent：回调捕获的字段必须活到工作线程退出。
     std::unique_ptr<MaiAgent> agent;
@@ -73,6 +74,7 @@ struct MaiMobileAgent {
         config.baseUrl = request.at("baseUrl").get<std::string>();
         config.apiKey = request.value("apiKey", "");
         config.caBundlePath = request.value("caBundle", "");
+        suggestionConfig = config;
         auto tools = std::make_unique<MaiToolRegistry>();
         // 两个移动端只提供真实可用的本地文件和网络工具，不暴露桌面 shell。
         tools->add(makeMaiReadTool());
@@ -219,6 +221,48 @@ struct MaiMobileAgent {
         if (!agent) throw std::runtime_error("Agent is not initialized.");
         const std::string session = r.value("session", "");
         if (op == "snapshot") return snapshot(session, r.value("force", false));
+        if (op == "suggest_replies") {
+            if (!configured) throw std::runtime_error("Configure a model and API key first.");
+            if (!r.contains("messages") || !r["messages"].is_array() || r["messages"].empty() ||
+                r["messages"].size() > 30)
+                throw std::runtime_error("Messages must contain between 1 and 30 items.");
+            MaiModelRequest modelRequest;
+            modelRequest.model = model;
+            modelRequest.temperature = 0.5;
+            modelRequest.baseInstructions =
+                "You generate reply suggestions for a private chat. Return only one JSON object "
+                "with exactly these string fields: natural, casual, professional. Each value must "
+                "be a short reply in the conversation language. Do not send a message, call a "
+                "tool, use Markdown fences, or include explanations.";
+            MaiModelMessage context;
+            context.role = MaiModelRole::User;
+            context.content = "Recent conversation, oldest first:\n" + r["messages"].dump();
+            modelRequest.messages.push_back(std::move(context));
+            std::string response;
+            MaiStreamSink sink;
+            sink.onText = [&](std::string_view delta) {
+                response.append(delta.data(), delta.size());
+            };
+            std::atomic<bool> cancel{false};
+            const MaiError error =
+                makeMaiModelClient(suggestionConfig)->stream(modelRequest, sink, cancel);
+            if (error) throw std::runtime_error(error.message());
+            std::string clean = response;
+            const auto firstLine = clean.find('\n');
+            const auto closingFence = clean.rfind("```");
+            if (clean.rfind("```", 0) == 0 && firstLine != std::string::npos &&
+                closingFence > firstLine)
+                clean = clean.substr(firstLine + 1, closingFence - firstLine - 1);
+            const Json suggestions = Json::parse(clean);
+            for (const char* key : {"natural", "casual", "professional"})
+                if (!suggestions.contains(key) || !suggestions[key].is_string() ||
+                    suggestions[key].get<std::string>().empty())
+                    throw std::runtime_error("The model returned incomplete reply suggestions.");
+            return {{"ok", true},
+                    {"natural", suggestions["natural"]},
+                    {"casual", suggestions["casual"]},
+                    {"professional", suggestions["professional"]}};
+        }
         std::string id;
         if (op == "create")
             id = result(agent->submit(MaiCreateSession{workspace, "", model}));

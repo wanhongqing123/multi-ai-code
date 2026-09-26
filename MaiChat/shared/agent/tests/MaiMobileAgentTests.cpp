@@ -33,6 +33,18 @@ int main() {
         const Json body = Json::parse(request.body);
         CHECK(request.get_header_value("Authorization") == "Bearer test-key");
         CHECK(body["messages"].front()["role"] == "system");
+        const bool replySuggestion = body["messages"].front()["content"].get<std::string>().find(
+                                         "reply suggestions") != std::string::npos;
+        if (replySuggestion) {
+            CHECK(!body.contains("tools"));
+            response.set_content(
+                frame({{"content",
+                        R"({"natural":"好的","casual":"收到 😄","professional":"已收到，我会尽快处理。"})"}},
+                      "stop") +
+                    "data: [DONE]\n\n",
+                "text/event-stream");
+            return;
+        }
         CHECK(body["messages"].front()["content"].get<std::string>().find(
                   "GitHub-Flavored Markdown") != std::string::npos);
         // 移动端不能向模型宣称可以执行桌面 shell。
@@ -110,6 +122,13 @@ int main() {
             {"apiKey", "test-key"},   {"model", "test"},
             {"workspace", directory}, {"database", directory + "/sessions.db"}};
         CHECK(call(agent, config)["ok"] == true);
+        const Json suggestions = call(
+            agent,
+            {{"op", "suggest_replies"},
+             {"messages", Json::array({{{"speaker", "friend"}, {"text", "今天能完成吗？"}}})}});
+        CHECK(suggestions["natural"] == "好的");
+        CHECK(suggestions["casual"] == "收到 😄");
+        CHECK(suggestions["professional"] == "已收到，我会尽快处理。");
         std::string session = call(agent, {{"op", "create"}}).at("id");
         auto snapshot = [&] {
             return call(agent, {{"op", "snapshot"}, {"session", session}, {"force", true}});

@@ -54,6 +54,11 @@ struct AIAssistantOpenResult: Sendable {
     let settings: AIModelSettings
     let workspacePath: String
 }
+struct AIReplySuggestions: Codable, Sendable, Equatable {
+    let natural: String
+    let casual: String
+    let professional: String
+}
 struct AIResponse: Codable, Sendable {
     let ok: Bool
     var id: String?
@@ -65,6 +70,9 @@ struct AIResponse: Codable, Sendable {
     var questions: [AIQuestion]?
     var busy: Bool?
     var configured: Bool?
+    var natural: String?
+    var casual: String?
+    var professional: String?
 }
 private struct AIBackendError: LocalizedError {
     let message: String
@@ -188,6 +196,22 @@ actor AIAssistantBackend {
         ])
     }
 
+    func suggestReplies(messages: [[String: String]]) throws -> AIReplySuggestions {
+        _ = try open()
+        let response = try call("suggest_replies", values: ["messages": messages])
+        guard let natural = response.natural?.trimmingCharacters(in: .whitespacesAndNewlines),
+              let casual = response.casual?.trimmingCharacters(in: .whitespacesAndNewlines),
+              let professional = response.professional?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !natural.isEmpty, !casual.isEmpty, !professional.isEmpty else {
+            throw AIBackendError(message: "模型返回的三种回复不完整，请重试。")
+        }
+        return AIReplySuggestions(
+            natural: natural,
+            casual: casual,
+            professional: professional
+        )
+    }
+
     func importDocument(_ source: URL) throws -> AIImportedFile {
         guard let root else { throw AIBackendError(message: "AI 助手尚未准备好") }
         let scoped = source.startAccessingSecurityScopedResource()
@@ -256,6 +280,10 @@ final class AIAssistantModel: ObservableObject {
     private var opening = false
     private var visible = false
     var busy: Bool { sessions.first { $0.id == selected }?.busy == true }
+
+    func suggestReplies(messages: [[String: String]]) async throws -> AIReplySuggestions {
+        try await backend.suggestReplies(messages: messages)
+    }
 
     func showTransientError(_ message: String, duration: Duration = .seconds(3)) {
         transientErrorTask?.cancel()

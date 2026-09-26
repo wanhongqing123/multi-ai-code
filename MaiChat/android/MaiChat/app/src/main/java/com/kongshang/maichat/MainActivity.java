@@ -78,6 +78,9 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 public final class MainActivity extends Activity implements RemoteIMSessionController.Listener {
     private static final int REQUEST_PICK_IMAGE = 1001;
@@ -112,6 +115,10 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private String displayedOwner = "";
     private String activeChatUserId;
     private String draftText = "";
+    private List<String> aiReplySuggestions = new ArrayList<>();
+    private boolean aiReplySuggestionsLoading;
+    private String aiReplySuggestionsPeer = "";
+    private String aiReplySuggestionsLatestId = "";
     private RemoteIMQuote pendingQuote;
     private String messageSearchTargetId;
     private boolean stickToLatestMessage = true;
@@ -1501,6 +1508,11 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         speechPreview.setVisibility(holdingVoice ? View.VISIBLE : View.GONE);
         wrapper.addView(speechPreview, matchWrap());
 
+        LinearLayout replySuggestions = new LinearLayout(this);
+        replySuggestions.setOrientation(LinearLayout.VERTICAL);
+        renderAiReplySuggestions(replySuggestions);
+        wrapper.addView(replySuggestions, matchWrap());
+
         LinearLayout suggestions = new LinearLayout(this);
         suggestions.setOrientation(LinearLayout.VERTICAL);
         wrapper.addView(suggestions, matchWrap());
@@ -1609,6 +1621,107 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         updateComposerActions();
         wrapper.addView(bar, matchWrap());
         return wrapper;
+    }
+
+    private void renderAiReplySuggestions(LinearLayout container) {
+        String latestId = latestMessageId(activeChatUserId);
+        if (!java.util.Objects.equals(aiReplySuggestionsPeer, activeChatUserId)
+            || !java.util.Objects.equals(aiReplySuggestionsLatestId, latestId)) {
+            aiReplySuggestions = new ArrayList<>();
+            aiReplySuggestionsLoading = false;
+        }
+        if (!aiReplySuggestionsLoading && aiReplySuggestions.isEmpty()) return;
+
+        TextView title = MaiChatTheme.text(
+            this,
+            aiReplySuggestionsLoading ? "正在生成自然、轻松和专业回复…" : "AI 回复建议 · 点击后仍需手动发送",
+            12,
+            MaiChatTheme.SECONDARY
+        );
+        title.setPadding(dp(4), dp(4), dp(4), dp(5));
+        container.addView(title, matchWrap());
+        String[] labels = {"自然", "轻松", "专业"};
+        for (int index = 0; index < aiReplySuggestions.size(); index += 1) {
+            String suggestion = aiReplySuggestions.get(index);
+            TextView row = MaiChatTheme.text(
+                this,
+                labels[Math.min(index, labels.length - 1)] + " · " + suggestion,
+                14,
+                MaiChatTheme.TEXT
+            );
+            row.setPadding(dp(12), dp(8), dp(12), dp(8));
+            row.setBackground(MaiChatTheme.bordered(Color.WHITE, MaiChatTheme.BORDER, 10, this));
+            row.setOnClickListener(view -> {
+                draftText = suggestion;
+                rememberDraft();
+                aiReplySuggestions = new ArrayList<>();
+                aiReplySuggestionsLoading = false;
+                if (messageInput != null) {
+                    messageInput.setText(draftText);
+                    messageInput.setSelection(messageInput.length());
+                    messageInput.requestFocus();
+                }
+                render();
+            });
+            LinearLayout.LayoutParams params = matchWrap();
+            params.setMargins(0, 0, 0, dp(6));
+            container.addView(row, params);
+        }
+    }
+
+    private String latestMessageId(String peerId) {
+        if (session == null || peerId == null) return "";
+        List<RemoteIMMessage> messages = session.chatState().messagesWith(peerId);
+        return messages.isEmpty() ? "" : messages.get(messages.size() - 1).id();
+    }
+
+    private void requestAiReplySuggestions() {
+        if (session == null || activeChatUserId == null) return;
+        List<RemoteIMMessage> messages = session.chatState().recentMessagesWith(activeChatUserId, 24);
+        if (messages.isEmpty()) {
+            toast("当前会话还没有可参考的消息");
+            return;
+        }
+        JSONArray context = new JSONArray();
+        for (RemoteIMMessage message : messages) {
+            String text = message.text().trim();
+            if (text.isEmpty() || message.approvalRequest() != null ||
+                message.approvalDecision() != null) continue;
+            try {
+                context.put(new JSONObject()
+                    .put("speaker", message.direction() == RemoteIMMessage.Direction.OUTGOING ? "me" : "friend")
+                    .put("text", text));
+            } catch (JSONException ignored) {
+                // Both keys and values are local strings, so this branch is defensive only.
+            }
+        }
+        if (context.length() == 0) {
+            toast("当前会话没有可用于生成回复的文字");
+            return;
+        }
+        String peer = activeChatUserId;
+        String latestId = latestMessageId(peer);
+        aiReplySuggestionsPeer = peer;
+        aiReplySuggestionsLatestId = latestId;
+        aiReplySuggestions = new ArrayList<>();
+        aiReplySuggestionsLoading = true;
+        render();
+        AIAssistantController.shared(this).suggestReplies(context, (result, error) -> {
+            if (destroyed || !java.util.Objects.equals(peer, activeChatUserId)
+                || !java.util.Objects.equals(latestId, latestMessageId(peer))) return;
+            aiReplySuggestionsLoading = false;
+            if (result == null) {
+                toast(error == null || error.isEmpty() ? "AI 回复建议生成失败" : error);
+            } else {
+                aiReplySuggestions = new ArrayList<>(java.util.Arrays.asList(
+                    result.optString("natural"),
+                    result.optString("casual"),
+                    result.optString("professional")
+                ));
+                aiReplySuggestions.removeIf(String::isEmpty);
+            }
+            render();
+        });
     }
 
     private void renderCommandSuggestions(LinearLayout container, String value) {
@@ -2698,6 +2811,10 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         menu.setPadding(dp(8), dp(8), dp(8), dp(8));
         menu.setBackground(MaiChatTheme.bordered(Color.WHITE, MaiChatTheme.BORDER, 11, this));
         PopupWindow popup = new PopupWindow(menu, dp(190), ViewGroup.LayoutParams.WRAP_CONTENT, true);
+        addPopupAction(menu, "✨  AI 帮我回复", () -> {
+            popup.dismiss();
+            requestAiReplySuggestions();
+        });
         addPopupAction(menu, "▣  拍照发送", () -> {
             popup.dismiss();
             requestCamera();
@@ -2713,7 +2830,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         popup.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
         popup.setElevation(dp(10));
         popup.setOutsideTouchable(true);
-        popup.showAsDropDown(anchor, -dp(146), -dp(170));
+        popup.showAsDropDown(anchor, -dp(146), -dp(216));
     }
 
     private void addPopupAction(LinearLayout menu, String title, Runnable action) {

@@ -4866,6 +4866,7 @@ struct ComposerAttachmentPanel: View {
     let openCamera: () -> Void
     let openFile: () -> Void
     let openVoiceInput: () -> Void
+    let suggestReply: (() -> Void)? = nil
     var showsVoiceInput = true
 
     private var columns: [GridItem] {
@@ -4877,6 +4878,14 @@ struct ComposerAttachmentPanel: View {
 
     var body: some View {
         LazyVGrid(columns: columns, alignment: .center, spacing: 14) {
+            if let suggestReply {
+                actionButton(
+                    title: "AI 帮我回复",
+                    systemImage: "sparkles",
+                    enabled: true,
+                    action: suggestReply
+                )
+            }
             actionButton(
                 title: "相册",
                 systemImage: "photo",
@@ -4973,10 +4982,18 @@ private struct ComposerView: View {
     @State private var keyboardVisibleHeight = UIScreen.main.bounds.height
     @State private var composerEditingController = ComposerTextEditingController()
     @State private var composerEditMenuState: ComposerEditMenuState?
+    @State private var replySuggestions: AIReplySuggestions?
+    @State private var replySuggestionsLoading = false
+    @State private var replySuggestionError: String?
+    @State private var replySuggestionTask: Task<Void, Never>?
+    @ObservedObject private var aiAssistant = AIAssistantModel.shared
 
     var body: some View {
         VStack(spacing: 0) {
             VStack(spacing: 8) {
+                if replySuggestionsLoading || replySuggestions != nil || replySuggestionError != nil {
+                    aiReplySuggestionView
+                }
                 if !isVoiceMode && !commandSuggestions.isEmpty {
                     RemoteIMSlashCommandBar(
                         commands: commandSuggestions,
@@ -5189,6 +5206,9 @@ private struct ComposerView: View {
                     },
                     openVoiceInput: {
                         setVoiceMode(true)
+                    },
+                    suggestReply: {
+                        requestAIReplySuggestions()
                     }
                 )
                 .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -5199,6 +5219,13 @@ private struct ComposerView: View {
             if quote != nil {
                 composerFocusRequestGeneration &+= 1
             }
+        }
+        .onChange(of: latestMessageID) { _ in
+            replySuggestionTask?.cancel()
+            replySuggestionTask = nil
+            replySuggestions = nil
+            replySuggestionsLoading = false
+            replySuggestionError = nil
         }
         .background(RemoteIMStyle.panelBackground)
         .overlay(alignment: .top) {
@@ -5264,9 +5291,120 @@ private struct ComposerView: View {
             realtimeStartTask?.cancel()
             realtimeStartTask = nil
             realtimeSpeechRecognizer.cancel()
+            replySuggestionTask?.cancel()
+            replySuggestionTask = nil
+            replySuggestions = nil
+            replySuggestionsLoading = false
             voiceRecorder.cancel()
             transcriptionPresentation.reset()
             isAttachmentPanelPresented = false
+        }
+    }
+
+    @ViewBuilder
+    private var aiReplySuggestionView: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 8) {
+                if replySuggestionsLoading {
+                    ProgressView().controlSize(.small)
+                    Text("正在生成自然、轻松和专业回复…")
+                } else if let error = replySuggestionError {
+                    Text(error)
+                } else {
+                    Text("AI 回复建议 · 点击后仍需手动发送")
+                }
+                Spacer(minLength: 4)
+                if !replySuggestionsLoading {
+                    Button("换一批", action: requestAIReplySuggestions)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(RemoteIMStyle.blue)
+                }
+                Button {
+                    replySuggestionTask?.cancel()
+                    replySuggestionTask = nil
+                    replySuggestions = nil
+                    replySuggestionsLoading = false
+                    replySuggestionError = nil
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(RemoteIMStyle.textSecondary)
+            }
+            .font(.system(size: 12, weight: .medium))
+
+            if let suggestions = replySuggestions {
+                suggestionButton("自然", text: suggestions.natural)
+                suggestionButton("轻松", text: suggestions.casual)
+                suggestionButton("专业", text: suggestions.professional)
+            }
+        }
+        .padding(10)
+        .background(RemoteIMStyle.blueSoft, in: RoundedRectangle(cornerRadius: 11))
+        .overlay(
+            RoundedRectangle(cornerRadius: 11)
+                .stroke(RemoteIMStyle.border, lineWidth: 1)
+        )
+    }
+
+    private func suggestionButton(_ label: String, text: String) -> some View {
+        Button {
+            draft.text = text
+            replySuggestions = nil
+            replySuggestionError = nil
+            composerFocusRequestGeneration &+= 1
+        } label: {
+            Text("\(label) · \(text)")
+                .font(.system(size: 14))
+                .foregroundStyle(RemoteIMStyle.textPrimary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 8)
+                .background(Color.white, in: RoundedRectangle(cornerRadius: 9))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 9)
+                        .stroke(RemoteIMStyle.border, lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var latestMessageID: UUID? {
+        appState.visibleMessages(with: peerUserID).last?.id
+    }
+
+    private func requestAIReplySuggestions() {
+        isAttachmentPanelPresented = false
+        let messages = appState.visibleMessages(with: peerUserID).suffix(24)
+        let context = messages.compactMap { message -> [String: String]? in
+            let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty, message.approvalRequest == nil,
+                  message.approvalDecision == nil else { return nil }
+            return [
+                "speaker": message.direction == .outgoing ? "me" : "friend",
+                "text": text
+            ]
+        }
+        guard !context.isEmpty else {
+            replySuggestionError = "当前会话没有可用于生成回复的文字"
+            replySuggestions = nil
+            return
+        }
+        let requestLatest = latestMessageID
+        replySuggestionTask?.cancel()
+        replySuggestions = nil
+        replySuggestionError = nil
+        replySuggestionsLoading = true
+        replySuggestionTask = Task {
+            do {
+                let result = try await aiAssistant.suggestReplies(messages: context)
+                guard !Task.isCancelled, requestLatest == latestMessageID else { return }
+                replySuggestions = result
+            } catch {
+                guard !Task.isCancelled, requestLatest == latestMessageID else { return }
+                replySuggestionError = error.localizedDescription
+            }
+            replySuggestionsLoading = false
         }
     }
 

@@ -30,7 +30,6 @@ if (-not (Test-Path -LiteralPath $qtTestDll)) {
 # Every desktop test must enter through this script. Launching a test executable directly on
 # Windows can omit Qt's bin directory and display a blocking system error dialog for Qt5Test.dll.
 $env:PATH = "$qtBin;$env:PATH"
-$env:QT_QPA_PLATFORM = "offscreen"
 
 # Missing runtime DLLs and native crashes must be reported to the console, never as a modal system
 # dialog that blocks an unattended test run.

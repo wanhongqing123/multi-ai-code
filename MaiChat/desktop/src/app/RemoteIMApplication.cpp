@@ -278,9 +278,19 @@ void RemoteIMApplication::selectPeer(const QString& userId) {
 void RemoteIMApplication::sendText(const QString& text,
                                    const RemoteIMQuote& quote,
                                    bool hasQuote) {
-    if (text.trimmed().isEmpty() || state_.selectedPeerId().isEmpty()) return;
+    sendTextTo(state_.selectedPeerId(), text, quote, hasQuote);
+}
+
+bool RemoteIMApplication::sendTextTo(const QString& peerId, const QString& text,
+                                     const RemoteIMQuote& quote, bool hasQuote) {
+    const QString target = peerId.trimmed();
+    const QString cleanText = text.trimmed();
+    if (cleanText.isEmpty() || target.isEmpty() || target == state_.ownerUserId()) return false;
     setHumanTypingActive(false);
-    RemoteIMMessage message = state_.queueOutgoingText(text, quote, hasQuote);
+    RemoteIMMessage message = state_.queueOutgoingTextTo(target, cleanText);
+    message.quote = quote;
+    message.hasQuote = hasQuote;
+    if (hasQuote) state_.updateMessageQuote(message.id, quote);
     persistMessage(message);
     emit stateChanged();
 
@@ -296,6 +306,7 @@ void RemoteIMApplication::sendText(const QString& text,
         markMessage(effectiveId, ok ? RemoteIMMessageStatus::Sent : RemoteIMMessageStatus::Failed);
         if (!ok) emit errorMessage(error.isEmpty() ? QStringLiteral("文本消息发送失败") : error);
     });
+    return true;
 }
 
 void RemoteIMApplication::sendDiagnosticTextTo(const QString& peerId, const QString& text,

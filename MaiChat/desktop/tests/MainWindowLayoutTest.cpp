@@ -41,6 +41,7 @@
 #include <QWidget>
 #include <memory>
 
+#include "agent/ReplySuggestionController.h"
 #include "app/RemoteIMApplication.h"
 #include "im/FakeRemoteIMClient.h"
 #include "markdown/MarkdownDocument.h"
@@ -86,6 +87,7 @@ private slots:
     void conversationPreviewUsesPlainMarkdown_data();
     void conversationPreviewUsesPlainMarkdown();
     void composerUsesEmbeddedIconSendAction();
+    void aiReplySuggestionOnlyFillsComposer();
     void exposesResizableSplitters();
     void agentConversationListUsesResizableSplitter();
     void compactSplittersKeepDragTargets_data();
@@ -1074,6 +1076,72 @@ void MainWindowLayoutTest::composerUsesEmbeddedIconSendAction() {
     for (const QPushButton* button : buttons) {
         QVERIFY(button->toolTip() != QStringLiteral("语音消息"));
     }
+}
+
+void MainWindowLayoutTest::aiReplySuggestionOnlyFillsComposer() {
+    QSettings settings;
+    const bool hadBaseUrl = settings.contains(QStringLiteral("agent/baseUrl"));
+    const bool hadApiKey = settings.contains(QStringLiteral("agent/apiKey"));
+    const QVariant oldBaseUrl = settings.value(QStringLiteral("agent/baseUrl"));
+    const QVariant oldApiKey = settings.value(QStringLiteral("agent/apiKey"));
+    struct RestoreSettings {
+        QSettings* settings;
+        bool hadBaseUrl;
+        bool hadApiKey;
+        QVariant baseUrl;
+        QVariant apiKey;
+        ~RestoreSettings() {
+            if (hadBaseUrl) settings->setValue(QStringLiteral("agent/baseUrl"), baseUrl);
+            else settings->remove(QStringLiteral("agent/baseUrl"));
+            if (hadApiKey) settings->setValue(QStringLiteral("agent/apiKey"), apiKey);
+            else settings->remove(QStringLiteral("agent/apiKey"));
+        }
+    } restore{&settings, hadBaseUrl, hadApiKey, oldBaseUrl, oldApiKey};
+    settings.remove(QStringLiteral("agent/baseUrl"));
+    settings.remove(QStringLiteral("agent/apiKey"));
+
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fake = client.get();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+    fake->emitIncomingText(QStringLiteral("phone-user"), QStringLiteral("今天能审核完吗？"));
+    const QString latestId =
+        app.chatState().messagesWith(QStringLiteral("phone-user")).last().id;
+
+    MainWindow window(app);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto* editor = window.findChild<QTextEdit*>(QStringLiteral("messageEditor"));
+    auto* aiButton = window.findChild<QPushButton*>(QStringLiteral("aiReplyButton"));
+    auto* bar = window.findChild<QWidget*>(QStringLiteral("replySuggestionBar"));
+    auto* professional =
+        window.findChild<QPushButton*>(QStringLiteral("professionalReplySuggestion"));
+    auto* controller = window.findChild<ReplySuggestionController*>(
+        QStringLiteral("replySuggestionController"));
+    QVERIFY(editor != nullptr);
+    QVERIFY(aiButton != nullptr);
+    QVERIFY(bar != nullptr);
+    QVERIFY(professional != nullptr);
+    QVERIFY(controller != nullptr);
+    QCOMPARE(aiButton->parentWidget(), editor);
+    QVERIFY(editor->rect().contains(aiButton->geometry().bottomLeft()));
+
+    aiButton->click();
+    QVERIFY(bar->isVisible());
+    QVERIFY(QMetaObject::invokeMethod(
+        controller, "suggestionsReady", Qt::DirectConnection,
+        Q_ARG(quint64, quint64(1)), Q_ARG(QString, QStringLiteral("desktop-user")),
+        Q_ARG(QString, QStringLiteral("phone-user")), Q_ARG(QString, latestId),
+        Q_ARG(QString, QStringLiteral("好，我晚点看")),
+        Q_ARG(QString, QStringLiteral("收到，马上看 😄")),
+        Q_ARG(QString, QStringLiteral("已收到，我会在今天完成审核。"))));
+    QVERIFY(professional->isEnabled());
+    QCOMPARE(fake->lastText(), QString());
+
+    professional->click();
+    QCOMPARE(editor->toPlainText(), QStringLiteral("已收到，我会在今天完成审核。"));
+    QCOMPARE(fake->lastText(), QString());
+    QVERIFY(bar->isHidden());
 }
 
 void MainWindowLayoutTest::conversationPreviewUsesPlainMarkdown_data() {

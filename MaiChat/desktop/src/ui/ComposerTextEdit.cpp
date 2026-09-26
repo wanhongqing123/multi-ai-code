@@ -23,12 +23,28 @@ void ComposerTextEdit::setCornerAction(QWidget* action) {
     positionCornerAction();
 }
 
+void ComposerTextEdit::setLeadingAction(QWidget* action) {
+    leadingAction_ = action;
+    if (!leadingAction_) return;
+    leadingAction_->setParent(this);
+    positionCornerAction();
+}
+
 void ComposerTextEdit::positionCornerAction() {
-    if (!cornerAction_) return;
-    const int inset = qMax(UiZoom::s(6), cornerAction_->width() / 5);
-    cornerAction_->move(width() - cornerAction_->width() - inset,
-                        height() - cornerAction_->height() - inset);
-    cornerAction_->raise();
+    if (cornerAction_) {
+        const int inset = qMax(UiZoom::s(6), cornerAction_->width() / 5);
+        cornerAction_->move(width() - cornerAction_->width() - inset,
+                            height() - cornerAction_->height() - inset);
+        cornerAction_->raise();
+    }
+    if (leadingAction_) {
+        const int inset = qMax(UiZoom::s(6), leadingAction_->height() / 5);
+        setViewportMargins(0, 0, 0, leadingAction_->height() + UiZoom::s(10));
+        leadingAction_->move(inset, height() - leadingAction_->height() - inset);
+        leadingAction_->raise();
+    } else {
+        setViewportMargins(0, 0, 0, 0);
+    }
 }
 
 void ComposerTextEdit::resizeEvent(QResizeEvent* event) {

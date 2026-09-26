@@ -107,6 +107,18 @@ private:
     MaiModelRequest lastRequest_;
 };
 
+class HostProbeTool final : public MaiTool {
+public:
+    std::string name() const override { return "maichat_probe"; }
+    std::string description() const override { return "Probe a host-provided capability."; }
+    std::string parametersSchema() const override {
+        return R"({"type":"object","properties":{}})";
+    }
+    MaiToolResult execute(const std::string&, const MaiToolContext&) override {
+        return MaiToolResult::success("ok");
+    }
+};
+
 }  // namespace
 
 class AgentControllerTest : public QObject {
@@ -118,6 +130,7 @@ private slots:
     void reports_a_missing_model_instead_of_hanging();
     void sends_selected_images_as_multimodal_input();
     void registers_a_screenshot_tool_that_requires_approval();
+    void registers_host_tools_after_builtin_tools();
 };
 
 // 载荷不是文案：中文 + emoji，验证 UTF-8 一路（回调 -> 事件 -> QString）不走样。
@@ -269,6 +282,27 @@ void AgentControllerTest::registers_a_screenshot_tool_that_requires_approval() {
     QCOMPARE(foundScreenshot, maiIsScreenshotSupported());
     QVERIFY(foundViewImage);
     QCOMPARE(foundListWindows, maiIsScreenshotSupported());
+}
+
+void AgentControllerTest::registers_host_tools_after_builtin_tools() {
+    auto model = std::make_unique<ScriptedModel>(std::string(), std::string(kText));
+    ScriptedModel* scripted = model.get();
+    AgentController controller(
+        std::move(model), QString(),
+        [](MaiToolRegistry& registry) { registry.add(std::make_unique<HostProbeTool>()); });
+    const QString sessionId = controller.createSession(QDir::currentPath());
+    QSignalSpy finished(&controller, &AgentController::turnFinished);
+    QVERIFY(controller.sendPrompt(sessionId, QStringLiteral("use the host")));
+    QVERIFY(finished.wait(15000));
+
+    bool foundBuiltin = false;
+    bool foundHost = false;
+    for (const MaiToolSpec& tool : scripted->lastRequest().tools) {
+        if (tool.name == "read") foundBuiltin = true;
+        if (tool.name == "maichat_probe") foundHost = true;
+    }
+    QVERIFY(foundBuiltin);
+    QVERIFY(foundHost);
 }
 
 QTEST_MAIN(AgentControllerTest)

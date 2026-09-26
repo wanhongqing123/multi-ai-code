@@ -227,13 +227,15 @@ add_library(remote_im_desktop_app
   src/diagnostics/RemoteDiagnosticsController.cpp
   src/app/RemoteIMApplication.h
   src/app/RemoteIMApplication.cpp
+  src/app/MaiChatHostTools.h
+  src/app/MaiChatHostTools.cpp
   src/app/VideoCoverImage.h
   src/app/VideoCoverImage.cpp
 )
 target_include_directories(remote_im_desktop_app PUBLIC src)
 # Qt5::Gui：视频封面要用 QImage/QPainter 画（并在 Windows 上把系统缩略图的 HBITMAP
 # 转成 QImage）。remote_im_core 保持无 GUI 依赖，封面这层留在应用层。
-target_link_libraries(remote_im_desktop_app PUBLIC remote_im_core Qt5::Gui)
+target_link_libraries(remote_im_desktop_app PUBLIC remote_im_core Qt5::Gui maiagent)
 if(WIN32)
   # IShellItemImageFactory（资源管理器的缩略图提供程序）取视频首帧。
   target_link_libraries(remote_im_desktop_app PRIVATE shell32 ole32)
@@ -360,6 +362,8 @@ add_library(maichat_agent
   src/agent/AgentChatPanel.cpp
   src/agent/AgentSessionList.h
   src/agent/AgentSessionList.cpp
+  src/agent/ReplySuggestionController.h
+  src/agent/ReplySuggestionController.cpp
 )
 target_include_directories(maichat_agent PUBLIC src)
 target_link_libraries(maichat_agent PUBLIC Qt5::Core Qt5::Widgets maiagent maichat_markdown)
@@ -384,6 +388,9 @@ add_executable(agent_panel_session_test tests/AgentPanelSessionTest.cpp)
 # UiZoom 在 remote_im_desktop_ui 里，而 AgentChatPanel 用它做缩放，所以要一起链。
 target_link_libraries(agent_panel_session_test PRIVATE remote_im_desktop_ui remote_im_desktop_app
   remote_im_core maichat_agent maichat_markdown Qt5::Widgets Qt5::Test)
+
+add_executable(reply_suggestion_controller_test tests/ReplySuggestionControllerTest.cpp)
+target_link_libraries(reply_suggestion_controller_test PRIVATE maichat_agent Qt5::Test)
 
 add_executable(remote_diagnostics_controller_test tests/RemoteDiagnosticsControllerTest.cpp)
 target_link_libraries(remote_diagnostics_controller_test PRIVATE remote_im_desktop_app Qt5::Test)
@@ -425,6 +432,9 @@ target_link_libraries(local_message_database_test PRIVATE remote_im_core Qt5::Te
 
 add_executable(remote_im_application_test tests/RemoteIMApplicationTest.cpp)
 target_link_libraries(remote_im_application_test PRIVATE remote_im_desktop_app remote_im_core Qt5::Test)
+
+add_executable(maichat_host_tools_test tests/MaiChatHostToolsTest.cpp)
+target_link_libraries(maichat_host_tools_test PRIVATE remote_im_desktop_app remote_im_core maiagent Qt5::Test)
 
 add_executable(login_dialog_test tests/LoginDialogTest.cpp)
 target_link_libraries(login_dialog_test PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)
@@ -552,6 +562,7 @@ add_test(NAME markdown_view_test COMMAND markdown_view_test)
 add_test(NAME markdown_label_test COMMAND markdown_label_test)
 add_test(NAME agent_controller_test COMMAND agent_controller_test)
 add_test(NAME agent_panel_session_test COMMAND agent_panel_session_test)
+add_test(NAME reply_suggestion_controller_test COMMAND reply_suggestion_controller_test)
 add_test(NAME performance_log_test COMMAND performance_log_test)
 add_test(NAME remote_diagnostics_controller_test COMMAND remote_diagnostics_controller_test)
 add_test(NAME attachment_download_evidence_test COMMAND attachment_download_evidence_test)
@@ -568,6 +579,7 @@ add_test(NAME tim_sdk_remote_im_client_test COMMAND tim_sdk_remote_im_client_tes
 add_test(NAME markdown_renderer_test COMMAND markdown_renderer_test)
 add_test(NAME local_message_database_test COMMAND local_message_database_test)
 add_test(NAME remote_im_application_test COMMAND remote_im_application_test)
+add_test(NAME maichat_host_tools_test COMMAND maichat_host_tools_test)
 add_test(NAME login_dialog_test COMMAND login_dialog_test)
 add_test(NAME app_message_dialog_test COMMAND app_message_dialog_test)
 add_test(NAME app_text_input_dialog_test COMMAND app_text_input_dialog_test)

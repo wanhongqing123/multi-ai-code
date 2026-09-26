@@ -122,6 +122,8 @@
 
 #include "agent/AgentChatPanel.h"
 #include "agent/AgentController.h"
+#include "agent/ReplySuggestionController.h"
+#include "app/MaiChatHostTools.h"
 #include "agent/AgentSessionList.h"
 
 namespace {
@@ -1374,6 +1376,13 @@ MainWindow::MainWindow(RemoteIMApplication& app, QWidget* parent)
     performanceTimer->start();
     buildUi();
     applyStyle();
+    const AgentController::ModelConfig replyModel = loadAgentModelConfig();
+    ReplySuggestionController::Config replyConfig;
+    replyConfig.baseUrl = replyModel.baseUrl;
+    replyConfig.apiKey = replyModel.apiKey;
+    replyConfig.modelName = replyModel.modelName;
+    replySuggestionController_ = new ReplySuggestionController(replyConfig, this);
+    replySuggestionController_->setObjectName(QStringLiteral("replySuggestionController"));
     bindSignals();
     // 必须在 buildUi 之后：设置页的控件已建好，这里创建控制器并把当前配置
     // 回填到界面上。
@@ -1744,6 +1753,107 @@ void MainWindow::buildUi() {
     sendButton_->setAccessibleName(QStringLiteral("发送消息"));
     sendButton_->setCursor(Qt::PointingHandCursor);
     static_cast<ComposerTextEdit*>(messageEditor_)->setCornerAction(sendButton_);
+
+    aiReplyButton_ = new QPushButton(QStringLiteral("✨ AI 回复"), messageEditor_);
+    aiReplyButton_->setObjectName(QStringLiteral("aiReplyButton"));
+    aiReplyButton_->setFixedHeight(UiZoom::s(28));
+    aiReplyButton_->setCursor(Qt::PointingHandCursor);
+    aiReplyButton_->setToolTip(QStringLiteral("根据当前会话生成三条回复建议"));
+    aiReplyButton_->setAccessibleName(QStringLiteral("AI 回复"));
+    aiReplyButton_->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
+        QPushButton#aiReplyButton {
+            background: transparent;
+            border: none;
+            border-radius: 7px;
+            color: #168ad1;
+            padding: 3px 7px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        QPushButton#aiReplyButton:hover { background: #edf7ff; }
+        QPushButton#aiReplyButton:pressed { background: #dcefff; }
+        QPushButton#aiReplyButton:disabled { color: #aab8c6; background: transparent; }
+    )")));
+    static_cast<ComposerTextEdit*>(messageEditor_)->setLeadingAction(aiReplyButton_);
+
+    replySuggestionBar_ = new QWidget(composer);
+    replySuggestionBar_->setObjectName(QStringLiteral("replySuggestionBar"));
+    auto* suggestionLayout = new QVBoxLayout(replySuggestionBar_);
+    suggestionLayout->setContentsMargins(UiZoom::s(10), UiZoom::s(8), UiZoom::s(8),
+                                         UiZoom::s(8));
+    suggestionLayout->setSpacing(UiZoom::s(6));
+    auto* suggestionHeader = new QHBoxLayout();
+    suggestionHeader->setContentsMargins(0, 0, 0, 0);
+    replySuggestionStatus_ = new QLabel(QStringLiteral("正在生成回复建议…"), replySuggestionBar_);
+    replySuggestionStatus_->setObjectName(QStringLiteral("replySuggestionStatus"));
+    auto* refreshSuggestionButton = new QPushButton(QStringLiteral("换一批"), replySuggestionBar_);
+    refreshSuggestionButton->setObjectName(QStringLiteral("refreshReplySuggestions"));
+    auto* closeSuggestionButton = new QPushButton(QStringLiteral("×"), replySuggestionBar_);
+    closeSuggestionButton->setObjectName(QStringLiteral("closeReplySuggestions"));
+    closeSuggestionButton->setFixedSize(UiZoom::s(24), UiZoom::s(24));
+    suggestionHeader->addWidget(replySuggestionStatus_, 1);
+    suggestionHeader->addWidget(refreshSuggestionButton);
+    suggestionHeader->addWidget(closeSuggestionButton);
+    suggestionLayout->addLayout(suggestionHeader);
+
+    auto* choices = new QHBoxLayout();
+    choices->setContentsMargins(0, 0, 0, 0);
+    choices->setSpacing(UiZoom::s(8));
+    auto makeSuggestionButton = [this, choices](const QString& name, const QString& label) {
+        auto* button = new QPushButton(replySuggestionBar_);
+        button->setObjectName(name);
+        button->setProperty("styleLabel", label);
+        button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+        button->setCursor(Qt::PointingHandCursor);
+        button->setEnabled(false);
+        choices->addWidget(button, 1);
+        connect(button, &QPushButton::clicked, this,
+                [this, button] { applyReplySuggestion(button->property("replyText").toString()); });
+        return button;
+    };
+    naturalReplyButton_ =
+        makeSuggestionButton(QStringLiteral("naturalReplySuggestion"), QStringLiteral("自然"));
+    casualReplyButton_ =
+        makeSuggestionButton(QStringLiteral("casualReplySuggestion"), QStringLiteral("轻松"));
+    professionalReplyButton_ = makeSuggestionButton(
+        QStringLiteral("professionalReplySuggestion"), QStringLiteral("专业"));
+    suggestionLayout->addLayout(choices);
+    connect(refreshSuggestionButton, &QPushButton::clicked, this,
+            &MainWindow::requestReplySuggestions);
+    connect(closeSuggestionButton, &QPushButton::clicked, this,
+            &MainWindow::clearReplySuggestions);
+    replySuggestionBar_->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
+        #replySuggestionBar {
+            background: #f8fbff;
+            border: 1px solid #cfe5fb;
+            border-radius: 10px;
+        }
+        #replySuggestionStatus {
+            color: #52677d;
+            font-size: 12px;
+            background: transparent;
+        }
+        #replySuggestionBar QPushButton {
+            background: #ffffff;
+            border: 1px solid #d8e7f6;
+            border-radius: 8px;
+            color: #24364b;
+            padding: 6px 10px;
+            text-align: left;
+        }
+        #replySuggestionBar QPushButton:hover { border-color: #1597e5; background: #f2f9ff; }
+        #replySuggestionBar QPushButton:disabled { color: #8da0b5; background: #f5f8fb; }
+        #replySuggestionBar QPushButton#refreshReplySuggestions,
+        #replySuggestionBar QPushButton#closeReplySuggestions {
+            border: none;
+            background: transparent;
+            color: #168ad1;
+            text-align: center;
+            padding: 2px 6px;
+        }
+    )")));
+    replySuggestionBar_->hide();
+    composerLayout->addWidget(replySuggestionBar_);
 
     // 待回复提示条：显示「正在回复谁的哪句话」，右侧 ✕ 取消。
     // 放在输入框**上方**而不是下方——用户视线从提示条落到输入框，顺序才对。
@@ -2456,6 +2566,40 @@ void MainWindow::bindSignals() {
     connect(agentNavButton_, &QPushButton::clicked, this, [this] { showAgentPage(); });
     connect(contentStack_, &QStackedWidget::currentChanged, this, [this] { syncNavigationSelection(); });
     connect(sendButton_, &QPushButton::clicked, this, [this] { sendCurrentText(); });
+    connect(aiReplyButton_, &QPushButton::clicked, this, &MainWindow::requestReplySuggestions);
+    connect(replySuggestionController_, &ReplySuggestionController::suggestionsReady, this,
+            [this](quint64 requestId, const QString& accountId, const QString& peerId,
+                   const QString& latestMessageId, const QString& natural, const QString& casual,
+                   const QString& professional) {
+        if (requestId != activeReplySuggestionRequest_ ||
+            accountId != app_.chatState().ownerUserId() ||
+            peerId != app_.chatState().selectedPeerId() ||
+            latestMessageId != latestSelectedMessageId()) {
+            return;
+        }
+        replySuggestionStatus_->setText(QStringLiteral("选择一条填入输入框，仍需手动发送"));
+        const auto update = [](QPushButton* button, const QString& text) {
+            const QString label = button->property("styleLabel").toString();
+            button->setProperty("replyText", text);
+            button->setText(QStringLiteral("%1 · %2").arg(label, text));
+            button->setToolTip(text);
+            button->setEnabled(true);
+        };
+        update(naturalReplyButton_, natural);
+        update(casualReplyButton_, casual);
+        update(professionalReplyButton_, professional);
+    });
+    connect(replySuggestionController_, &ReplySuggestionController::suggestionsFailed, this,
+            [this](quint64 requestId, const QString& accountId, const QString& peerId,
+                   const QString& latestMessageId, const QString& message) {
+        if (requestId != activeReplySuggestionRequest_ ||
+            accountId != app_.chatState().ownerUserId() ||
+            peerId != app_.chatState().selectedPeerId() ||
+            latestMessageId != latestSelectedMessageId()) {
+            return;
+        }
+        replySuggestionStatus_->setText(message);
+    });
     // 命令提示条的重建（删除全部按钮、隐藏/抬升悬浮层）必须延后到事件循环下一轮，
     // 不能在 textChanged 里同步做——textChanged 是在 QTextEdit 的按键事件派发内部发出的，
     // 若此刻销毁 12 个按钮并隐藏被 raise() 的悬浮层，会吞掉紧随其后的 KeyRelease，
@@ -2941,7 +3085,17 @@ void MainWindow::rebuildAgentPage() {
     agentController_ = nullptr;
 
     const AgentController::ModelConfig modelConfig = loadAgentModelConfig();
-    agentController_ = new AgentController(modelConfig, agentDatabasePath(), this);
+    if (replySuggestionController_) {
+        ReplySuggestionController::Config replyConfig;
+        replyConfig.baseUrl = modelConfig.baseUrl;
+        replyConfig.apiKey = modelConfig.apiKey;
+        replyConfig.modelName = modelConfig.modelName;
+        clearReplySuggestions();
+        replySuggestionController_->setConfig(replyConfig);
+    }
+    agentController_ = new AgentController(
+        modelConfig, agentDatabasePath(),
+        [this](MaiToolRegistry& registry) { registerMaiChatHostTools(registry, app_); }, this);
     agentSessions_ = new AgentSessionList(*agentController_, agentSplitter);
     agentPanel_ = new AgentChatPanel(*agentController_, agentSplitter);
     agentPanel_->setModelLabel(modelConfig.baseUrl.isEmpty() || modelConfig.apiKey.isEmpty()
@@ -3398,6 +3552,11 @@ void MainWindow::refreshMessages() {
     updateComposerState();
 
     const QList<RemoteIMMessage> messages = app_.chatState().messagesWith(selectedPeer);
+    if (replySuggestionBar_ && replySuggestionBar_->isVisible() &&
+        (selectedPeer != replySuggestionPeerId_ ||
+         latestSelectedMessageId() != replySuggestionLatestMessageId_)) {
+        clearReplySuggestions();
+    }
     sentApprovalTokens_.clear();
     resolvedApprovalTokens_.clear();
     autoDeclinedApprovalTokens_.clear();
@@ -5063,6 +5222,74 @@ void MainWindow::sendCurrentText() {
     slashCommandUpdateTimer_->start();
 }
 
+QString MainWindow::latestSelectedMessageId() const {
+    const QString peerId = app_.chatState().selectedPeerId();
+    if (peerId.isEmpty()) return QString();
+    RemoteIMMessage latest;
+    return app_.chatState().latestMessageWith(peerId, &latest) ? latest.id : QString();
+}
+
+void MainWindow::requestReplySuggestions() {
+    const QString peerId = app_.chatState().selectedPeerId();
+    const QList<RemoteIMMessage> messages = app_.chatState().messagesWith(peerId);
+    if (peerId.isEmpty() || messages.isEmpty()) {
+        showToast(QStringLiteral("当前会话还没有可参考的消息"), 13, 1800);
+        return;
+    }
+
+    QVector<ReplySuggestionTurn> turns;
+    const int begin = std::max(0, messages.size() - 24);
+    turns.reserve(messages.size() - begin);
+    for (int i = begin; i < messages.size(); ++i) {
+        const RemoteIMMessage& message = messages.at(i);
+        if (message.hasApprovalRequest || message.hasApprovalDecision) continue;
+        QString text = message.text.trimmed();
+        if (text.isEmpty() &&
+            (message.hasImage || message.hasFile || message.hasVideo || message.hasVoice)) {
+            text = MessageQuote::digestOf(message);
+        }
+        if (text.isEmpty()) continue;
+        turns.append({message.direction == RemoteIMMessageDirection::Outgoing, text});
+    }
+    if (turns.isEmpty()) {
+        showToast(QStringLiteral("当前会话没有可用于生成回复的文字"), 13, 1800);
+        return;
+    }
+
+    replySuggestionPeerId_ = peerId;
+    replySuggestionLatestMessageId_ = latestSelectedMessageId();
+    replySuggestionStatus_->setText(QStringLiteral("正在生成自然、轻松和专业回复…"));
+    for (QPushButton* button :
+         {naturalReplyButton_, casualReplyButton_, professionalReplyButton_}) {
+        button->setText(button->property("styleLabel").toString());
+        button->setProperty("replyText", QString());
+        button->setToolTip(QString());
+        button->setEnabled(false);
+    }
+    replySuggestionBar_->show();
+    activeReplySuggestionRequest_ = replySuggestionController_->requestSuggestions(
+        app_.chatState().ownerUserId(), peerId, replySuggestionLatestMessageId_, turns);
+}
+
+void MainWindow::clearReplySuggestions() {
+    if (replySuggestionController_) replySuggestionController_->cancel();
+    activeReplySuggestionRequest_ = 0;
+    replySuggestionPeerId_.clear();
+    replySuggestionLatestMessageId_.clear();
+    if (replySuggestionBar_) replySuggestionBar_->hide();
+}
+
+void MainWindow::applyReplySuggestion(const QString& text) {
+    const QString suggestion = text.trimmed();
+    if (suggestion.isEmpty() || !messageEditor_) return;
+    messageEditor_->setPlainText(suggestion);
+    QTextCursor cursor = messageEditor_->textCursor();
+    cursor.movePosition(QTextCursor::End);
+    messageEditor_->setTextCursor(cursor);
+    messageEditor_->setFocus();
+    clearReplySuggestions();
+}
+
 void MainWindow::updateComposerState() {
     const bool hasPeer = !app_.chatState().selectedPeerId().isEmpty();
     QString plain = messageEditor_ ? messageEditor_->toPlainText() : QString();
@@ -5070,6 +5297,10 @@ void MainWindow::updateComposerState() {
     const bool hasText = !plain.trimmed().isEmpty();
     const bool hasAttachments = composerHasAttachments();
     messageEditor_->setEnabled(hasPeer);
+    if (aiReplyButton_) {
+        aiReplyButton_->setEnabled(hasPeer && app_.chatState().messageCountWith(
+                                               app_.chatState().selectedPeerId()) > 0);
+    }
     sendButton_->setEnabled(hasPeer && (hasText || hasAttachments));
 }
 
@@ -5219,6 +5450,7 @@ void MainWindow::applyScaledFixedGeometry() {
         pane->setMaximumWidth(UiZoom::s(420));
     }
     if (messageEditor_) messageEditor_->setMinimumHeight(UiZoom::s(64));
+    if (aiReplyButton_) aiReplyButton_->setFixedHeight(UiZoom::s(28));
     if (sendButton_) {
         sendButton_->setFixedSize(UiZoom::s(36), UiZoom::s(36));
         sendButton_->setIconSize(QSize(UiZoom::s(18), UiZoom::s(18)));

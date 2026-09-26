@@ -4,6 +4,7 @@
 #include <QString>
 #include <QStringList>
 #include <QVector>
+#include <functional>
 #include <memory>
 
 #include "MaiAgent.h"
@@ -43,6 +44,8 @@ class AgentController final : public QObject {
     Q_OBJECT
 
 public:
+    using ToolRegistrar = std::function<void(MaiToolRegistry&)>;
+
     struct ModelConfig {
         // 不带末尾斜杠，也不带具体路径。例如：
         //   https://open.bigmodel.cn/api/coding/paas/v4   GLM 编程套餐
@@ -59,10 +62,14 @@ public:
     // 界面还没配好模型时是这个状态。
     AgentController(const ModelConfig& model, const QString& databasePath,
                     QObject* parent = nullptr);
+    AgentController(const ModelConfig& model, const QString& databasePath,
+                    ToolRegistrar hostTools, QObject* parent = nullptr);
 
     // 自己塞一个模型实现进来。给测试用，也给以后接别的供应商留的口子。
     AgentController(std::unique_ptr<MaiModelClient> model, const QString& databasePath,
                     QObject* parent = nullptr);
+    AgentController(std::unique_ptr<MaiModelClient> model, const QString& databasePath,
+                    ToolRegistrar hostTools, QObject* parent = nullptr);
 
     ~AgentController() override;
 

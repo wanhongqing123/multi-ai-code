@@ -52,6 +52,10 @@ public:
     void sendText(const QString& text,
                   const RemoteIMQuote& quote = RemoteIMQuote(),
                   bool hasQuote = false);
+    // Send to an explicit peer without changing the active conversation. Returns false when the
+    // destination or text is invalid; successful return means the message was queued for delivery.
+    bool sendTextTo(const QString& peerId, const QString& text,
+                    const RemoteIMQuote& quote = RemoteIMQuote(), bool hasQuote = false);
     void setHumanTypingActive(bool active);
     // Explicit, persisted destinations for the user-confirmed diagnostics flow.
     // Never change selectedPeerId to send a background report.

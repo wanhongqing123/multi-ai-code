@@ -64,12 +64,14 @@ std::unique_ptr<MaiSessionStore> openStore(const QString& databasePath, QString&
 std::unique_ptr<MaiAgent> buildAgent(std::unique_ptr<MaiModelClient> model,
                                      std::unique_ptr<MaiSessionStore> store,
                                      const QString& defaultModel,
-                                     MaiApprovalPolicy approvalPolicy = MaiApprovalPolicy::OnRequest) {
+                                     MaiApprovalPolicy approvalPolicy,
+                                     const AgentController::ToolRegistrar& hostTools) {
     // MaiAgent 内置工具总是装着；平台不支持的能力由核心在注册时排除。
     // 会话没有工作目录时工具层会明确拒绝，
     // 要不要把工具声明给模型看是 MaiContextBuilder 的事，不是这里的。
     auto tools = std::make_unique<MaiToolRegistry>();
     registerMaiBuiltinTools(*tools);
+    if (hostTools) hostTools(*tools);
 
     MaiAgent::Options options;
     if (!defaultModel.isEmpty()) options.defaultModel = toUtf8(defaultModel);
@@ -86,13 +88,18 @@ std::unique_ptr<MaiAgent> buildAgent(std::unique_ptr<MaiModelClient> model,
 
 AgentController::AgentController(std::unique_ptr<MaiModelClient> model,
                                  const QString& databasePath, QObject* parent)
+    : AgentController(std::move(model), databasePath, ToolRegistrar(), parent) {}
+
+AgentController::AgentController(std::unique_ptr<MaiModelClient> model,
+                                 const QString& databasePath, ToolRegistrar hostTools,
+                                 QObject* parent)
     : QObject(parent), runtime_(std::make_unique<Runtime>()) {
     // 排队投递要求这个类型是注册过的。放在构造里而不是全局静态，是因为注册本身是幂等且线程安全的，
     // 而全局静态的初始化顺序不好讲。
     qRegisterMetaType<MaiEvent>("MaiEvent");
 
     runtime_->agent = buildAgent(std::move(model), openStore(databasePath, runtime_->openError),
-                                 QString(), MaiApprovalPolicy::OnRequest);
+                                 QString(), MaiApprovalPolicy::OnRequest, hostTools);
 
     // **显式 QueuedConnection，不用 Auto。**
     //
@@ -111,6 +118,10 @@ AgentController::AgentController(std::unique_ptr<MaiModelClient> model,
 
 AgentController::AgentController(const ModelConfig& model, const QString& databasePath,
                                  QObject* parent)
+    : AgentController(model, databasePath, ToolRegistrar(), parent) {}
+
+AgentController::AgentController(const ModelConfig& model, const QString& databasePath,
+                                 ToolRegistrar hostTools, QObject* parent)
     : QObject(parent), runtime_(std::make_unique<Runtime>()) {
     qRegisterMetaType<MaiEvent>("MaiEvent");
 
@@ -125,7 +136,7 @@ AgentController::AgentController(const ModelConfig& model, const QString& databa
 
     runtime_->modelName = model.modelName;
     runtime_->agent = buildAgent(std::move(client), openStore(databasePath, runtime_->openError),
-                                 model.modelName, model.approvalPolicy);
+                                 model.modelName, model.approvalPolicy, hostTools);
 
     connect(this, &AgentController::eventQueued, this, &AgentController::onEventQueued,
             Qt::QueuedConnection);

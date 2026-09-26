@@ -16,6 +16,7 @@ public:
     // 返回 true 表示附件已被业务层消费，不再执行 QTextEdit 的默认插入。
     void setMimeHandler(std::function<bool(const QMimeData*)> handler);
     void setCornerAction(QWidget* action);
+    void setLeadingAction(QWidget* action);
     void positionCornerAction();
 
 protected:
@@ -29,5 +30,6 @@ private:
     static bool hasLocalFile(const QMimeData* source);
 
     QWidget* cornerAction_ = nullptr;
+    QWidget* leadingAction_ = nullptr;
     std::function<bool(const QMimeData*)> mimeHandler_;
 };

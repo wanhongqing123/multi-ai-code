@@ -15,6 +15,7 @@ class RemoteIMApplicationTest : public QObject {
 private slots:
     void activityIsIndependentFromContentAndExplicitStopClosesIt();
     void sendsTextThroughClientAndMarksSent();
+    void sendsTextToExplicitPeerWithoutChangingSelection();
     void sendsStructuredApprovalDecisionAndMarksSent();
     void sendsFileThroughClientAndMarksSent();
     void sendsVideoWithParsedMetadataAndGeneratedCover();
@@ -92,6 +93,23 @@ void RemoteIMApplicationTest::sendsTextThroughClientAndMarksSent() {
     QCOMPARE(messages.size(), 1);
     QCOMPARE(messages.first().status, RemoteIMMessageStatus::Sent);
     QVERIFY(stateSpy.count() >= 2);
+}
+
+void RemoteIMApplicationTest::sendsTextToExplicitPeerWithoutChangingSelection() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fakeClient = client.get();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("selected"), QStringLiteral("Selected"));
+    app.addContact(QStringLiteral("target"), QStringLiteral("Target"));
+    app.selectPeer(QStringLiteral("selected"));
+
+    QVERIFY(app.sendTextTo(QStringLiteral("target"), QStringLiteral("hello target")));
+
+    QCOMPARE(app.chatState().selectedPeerId(), QStringLiteral("selected"));
+    QCOMPARE(fakeClient->lastTextPeerId(), QStringLiteral("target"));
+    QCOMPARE(fakeClient->lastText(), QStringLiteral("hello target"));
+    QCOMPARE(app.chatState().messagesWith(QStringLiteral("target")).size(), 1);
+    QVERIFY(app.chatState().messagesWith(QStringLiteral("selected")).isEmpty());
 }
 
 void RemoteIMApplicationTest::sendsStructuredApprovalDecisionAndMarksSent() {

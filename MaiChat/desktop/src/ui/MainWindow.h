@@ -24,6 +24,7 @@ class SharingIndicatorBar;
 class AgentController;
 class AgentChatPanel;
 class AgentSessionList;
+class ReplySuggestionController;
 class RemoteDesktopViewPanel;
 class QButtonGroup;
 class QCheckBox;
@@ -185,6 +186,10 @@ private:
     QWidget* createSettingsRow(const QString& title, QLabel* valueLabel, const QString& helperText);
     void sendCurrentText();
     void updateComposerState();
+    void requestReplySuggestions();
+    void clearReplySuggestions();
+    void applyReplySuggestion(const QString& text);
+    QString latestSelectedMessageId() const;
     void updateSlashCommandSuggestions();
     void positionSlashCommandBar();
     void selectSlashCommand(const QString& command);
@@ -334,7 +339,17 @@ private:
     bool renderedEmptyView_ = false;
     QPushButton* addContactButton_ = nullptr;
     QPushButton* sendButton_ = nullptr;
+    QPushButton* aiReplyButton_ = nullptr;
     QTextEdit* messageEditor_ = nullptr;
+    ReplySuggestionController* replySuggestionController_ = nullptr;
+    QWidget* replySuggestionBar_ = nullptr;
+    QLabel* replySuggestionStatus_ = nullptr;
+    QPushButton* naturalReplyButton_ = nullptr;
+    QPushButton* casualReplyButton_ = nullptr;
+    QPushButton* professionalReplyButton_ = nullptr;
+    quint64 activeReplySuggestionRequest_ = 0;
+    QString replySuggestionPeerId_;
+    QString replySuggestionLatestMessageId_;
     QWidget* slashCommandBar_ = nullptr;
     QVBoxLayout* slashCommandLayout_ = nullptr;
     // 命令提示条重建从 textChanged（键盘事件派发内）里剥离出来，改由防抖单次定时器

@@ -410,13 +410,23 @@ void AgentPanelSessionTest::composerUsesApplicationStyleWithoutInheritedLabelBor
         harness.panel->findChild<QLabel*>(QStringLiteral("agentWorkingDirectory"));
     auto* policy =
         harness.panel->findChild<QPushButton*>(QStringLiteral("agentApprovalPolicy"));
+    auto* model = harness.panel->findChild<QPushButton*>(QStringLiteral("agentModelChip"));
+    auto* more = harness.panel->findChild<QPushButton*>(QStringLiteral("agentMoreActions"));
     auto* send = harness.panel->findChild<QPushButton*>(QStringLiteral("agentSendButton"));
     QVERIFY(card != nullptr);
     QVERIFY(directory != nullptr);
     QVERIFY(policy != nullptr);
+    QVERIFY(model != nullptr);
+    QVERIFY(more != nullptr);
     QVERIFY(send != nullptr);
     QVERIFY(card->styleSheet().contains(QStringLiteral("QFrame#agentComposerCard")));
     QVERIFY(!card->styleSheet().contains(QStringLiteral("QFrame{")));
+    QVERIFY(!card->isAncestorOf(model));
+    QVERIFY(!card->isAncestorOf(policy));
+    QVERIFY(more->menu() != nullptr);
+    QCOMPARE(more->menu()->actions().size(), 2);
+    QCOMPARE(more->menu()->actions()[0]->text(), QStringLiteral("模型配置"));
+    QCOMPARE(more->menu()->actions()[1]->text(), QStringLiteral("清空当前对话"));
     QVERIFY(policy->menu() != nullptr);
     QVERIFY(policy->menu()->styleSheet().contains(QStringLiteral("QMenu::item:selected")));
     QCOMPARE(policy->menu()->actions().size(), 3);

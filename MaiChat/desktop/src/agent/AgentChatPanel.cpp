@@ -576,9 +576,8 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
 
-    // ---- 头部：标题 + 攒了多少 + 清空 ----
-    // 合成一条，不再占两行：清空是低频动作，"攒了多少"是它的理由，
-    // 两个都该靠边站，别抢正文的位置。
+    // ---- 头部：标题 + 模型/权限 + 上下文 + 更多 ----
+    // 模型、权限和低频配置属于页面级设置，不应挤在消息编辑框里。
     auto* head = new QWidget(this);
     head->setStyleSheet(UiZoom::scaleQss(
         QStringLiteral("QWidget{background:#ffffff;border-bottom:1px solid %1;}").arg(kLine)));
@@ -595,15 +594,20 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     runtime_->contextSize = makeLabel(QString(), 11, kInkFaint);
     runtime_->contextSize->setWordWrap(false);
     headRow->addWidget(runtime_->contextSize);
-    auto* clearButton = new QPushButton(QStringLiteral("清空重来"));
-    clearButton->setCursor(Qt::PointingHandCursor);
-    clearButton->setStyleSheet(UiZoom::scaleQss(
-        QStringLiteral("QPushButton{background:transparent;border:none;color:%1;padding:0 4px;}")
-            .arg(kInkFaint)));
-    QFont clearFont = clearButton->font();
-    clearFont.setPixelSize(UiZoom::s(11));
-    clearButton->setFont(clearFont);
-    headRow->addWidget(clearButton);
+    auto* moreButton = new QPushButton(QStringLiteral("•••"));
+    moreButton->setObjectName(QStringLiteral("agentMoreActions"));
+    moreButton->setAccessibleName(QStringLiteral("更多"));
+    moreButton->setCursor(Qt::PointingHandCursor);
+    moreButton->setStyleSheet(UiZoom::scaleQss(
+        QStringLiteral("QPushButton{background:#f5f7fa;border:none;border-radius:8px;"
+                       "color:%1;padding:5px 9px;}QPushButton:hover{background:#eef2f6;}")
+            .arg(kInkSoft)));
+    auto* moreMenu = new QMenu(moreButton);
+    applyAgentMenuStyle(moreMenu);
+    QAction* configureAction = moreMenu->addAction(QStringLiteral("模型配置"));
+    QAction* clearAction = moreMenu->addAction(QStringLiteral("清空当前对话"));
+    moreButton->setMenu(moreMenu);
+    headRow->addWidget(moreButton);
     root->addWidget(head);
 
     // ---- 对话流：整片就是一个 MarkdownView ----
@@ -655,8 +659,7 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
         [this](const QMimeData* mime) { return insertComposerMimeData(mime); });
     cardColumn->addWidget(runtime_->editor);
 
-    // 卡片底边：左边是工作目录和模型（agent 能碰到什么的边界，必须一直看得见），
-    // 右边是那句常驻承诺和发送。
+    // 卡片底边只留输入动作和工作目录。模型、权限已经移到页头。
     auto* foot = new QHBoxLayout;
     foot->setContentsMargins(0, 0, 0, 0);
     foot->setSpacing(UiZoom::s(10));
@@ -731,7 +734,7 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     });
     runtime_->modelChip->setMenu(modelMenu);
     foot->addWidget(runtime_->dirChip);
-    foot->addWidget(runtime_->modelChip);
+    headRow->insertWidget(1, runtime_->modelChip);
     foot->addStretch(1);
     // 这句常驻。它是这套东西最重要的一句承诺，写在文档里没人看。
     runtime_->hint = new QPushButton;
@@ -785,7 +788,7 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
         selectApprovalPolicy(static_cast<MaiApprovalPolicy>(action->data().toInt()));
     });
     updateApprovalPolicyUi();
-    foot->addWidget(runtime_->hint);
+    headRow->insertWidget(2, runtime_->hint);
     runtime_->send = new QPushButton(QStringLiteral("发送"));
     runtime_->send->setObjectName(QStringLiteral("agentSendButton"));
     runtime_->send->setCursor(Qt::PointingHandCursor);
@@ -801,7 +804,9 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
 
     setRunning(false);
     connect(runtime_->send, &QPushButton::clicked, this, &AgentChatPanel::onSend);
-    connect(clearButton, &QPushButton::clicked, this, &AgentChatPanel::onClear);
+    connect(configureAction, &QAction::triggered, this,
+            [this] { emit modelConfigurationRequested(); });
+    connect(clearAction, &QAction::triggered, this, &AgentChatPanel::onClear);
 
     // ---- 接事件 ----
     // 这些信号全部已经在主线程上了（AgentController 负责把它们从核心的线程搬过来），

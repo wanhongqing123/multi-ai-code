@@ -4695,6 +4695,7 @@ private struct ComposerView: View {
     let peerUserID: String
     @Binding var isAttachmentPanelPresented: Bool
     @EnvironmentObject private var appState: RemoteIMAppState
+    @EnvironmentObject private var navigationArrival: ChatNavigationArrival
     @ObservedObject var draft: RemoteIMDraftState
     let transcriptionPresentation: VoiceTranscriptionPresentation
     @StateObject private var voiceRecorder = VoiceMessageRecorder()
@@ -4838,7 +4839,10 @@ private struct ComposerView: View {
                                     )
                                 }
                             },
-                            onVoiceLongPressCancelled: cancelVoiceLongPress
+                            onVoiceLongPressCancelled: cancelVoiceLongPress,
+                            registerTextView: { navigationArrival.composerView = $0 },
+                            accessibilityIdentifier: "message-composer-text-view",
+                            accessibilityLabel: "消息输入框，长按语音转文字"
                         )
 
                         if draft.text.isEmpty {
@@ -5502,7 +5506,7 @@ private struct ComposerView: View {
     }
 }
 
-private enum ComposerEditAction: CaseIterable, Identifiable {
+enum ComposerEditAction: CaseIterable, Identifiable {
     case paste
     case select
     case selectAll
@@ -5538,7 +5542,7 @@ private enum ComposerEditAction: CaseIterable, Identifiable {
     }
 }
 
-private struct ComposerEditMenuState: Equatable {
+struct ComposerEditMenuState: Equatable {
     let actions: [ComposerEditAction]
     let disabledActions: Set<ComposerEditAction>
 
@@ -5550,7 +5554,7 @@ private struct ComposerEditMenuState: Equatable {
 }
 
 @MainActor
-private final class ComposerTextEditingController {
+final class ComposerTextEditingController {
     weak var textView: UITextView?
     private let speechSynthesizer = AVSpeechSynthesizer()
 
@@ -5631,7 +5635,7 @@ private final class ComposerTextEditingController {
     }
 }
 
-private struct ComposerEditActionBar: View {
+struct ComposerEditActionBar: View {
     let state: ComposerEditMenuState
     weak var pasteTarget: UITextView?
     let perform: (ComposerEditAction) -> Void
@@ -5721,7 +5725,7 @@ private struct ComposerPasteControl: UIViewRepresentable {
     }
 }
 
-private final class GrowingComposerUITextView: UITextView {
+final class GrowingComposerUITextView: UITextView {
     var onContentHeightChange: (() -> Void)?
 
     override func addInteraction(_ interaction: any UIInteraction) {
@@ -5762,8 +5766,7 @@ private final class GrowingComposerUITextView: UITextView {
     }
 }
 
-private struct ComposerTextView: UIViewRepresentable {
-    @EnvironmentObject private var navigationArrival: ChatNavigationArrival
+struct ComposerTextView: UIViewRepresentable {
     @Binding var text: String
     let onSubmit: () -> Void
     let focusRequestGeneration: Int
@@ -5775,6 +5778,9 @@ private struct ComposerTextView: UIViewRepresentable {
     let onVoiceLongPressChanged: (CGSize, CGPoint) -> Void
     let onVoiceLongPressEnded: (CGSize, CGPoint) -> Void
     let onVoiceLongPressCancelled: () -> Void
+    var registerTextView: (UITextView?) -> Void = { _ in }
+    var accessibilityIdentifier = "message-composer-text-view"
+    var accessibilityLabel = "消息输入框，长按语音转文字"
 
     private let minimumHeight: CGFloat = 44
     private let maximumLineCount: CGFloat = 5
@@ -5827,10 +5833,10 @@ private struct ComposerTextView: UIViewRepresentable {
         textView.alwaysBounceVertical = false
         textView.showsVerticalScrollIndicator = false
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        textView.accessibilityIdentifier = "message-composer-text-view"
-        textView.accessibilityLabel = "消息输入框，长按语音转文字"
+        textView.accessibilityIdentifier = accessibilityIdentifier
+        textView.accessibilityLabel = accessibilityLabel
         editingController.textView = textView
-        navigationArrival.composerView = textView
+        registerTextView(textView)
         let voiceLongPress = UILongPressGestureRecognizer(
             target: context.coordinator,
             action: #selector(Coordinator.handleVoiceLongPress(_:))
@@ -5873,7 +5879,7 @@ private struct ComposerTextView: UIViewRepresentable {
         defer { AppDiagnosticLog.shared.recordDuration(.composerUpdate, since: started) }
         context.coordinator.parent = self
         editingController.textView = textView
-        navigationArrival.composerView = textView
+        registerTextView(textView)
         if textView.text != text {
             let nextText = text
             context.coordinator.applyExternalText(nextText, to: textView)
@@ -5895,6 +5901,7 @@ private struct ComposerTextView: UIViewRepresentable {
         if coordinator.parent.editingController.textView === textView {
             coordinator.parent.editingController.textView = nil
         }
+        coordinator.parent.registerTextView(nil)
     }
 
     func sizeThatFits(

@@ -67,6 +67,7 @@ struct AIAssistantView: View {
                             }
                             .coordinateSpace(name: "ai-scroll")
                             .contentShape(Rectangle())
+                            .onAppear { scrollToLatest(proxy) }
                             .onTapGesture { composerFocusController.dismiss() }
                             .onPreferenceChange(AIBottomPreference.self) { y in
                                 latestY = y
@@ -83,7 +84,8 @@ struct AIAssistantView: View {
                             .onChange(of: geometry.size.height) { _ in
                                 if followsBottom { proxy.scrollTo("bottom", anchor: .bottom) }
                             }
-                            .onChange(of: model.scrollRequest) { _ in followsBottom = true; proxy.scrollTo("bottom", anchor: .bottom) }
+                            .onChange(of: model.scrollRequest) { _ in scrollToLatest(proxy) }
+                            .onChange(of: model.selected) { _ in scrollToLatest(proxy) }
                             .onChange(of: model.messages) { _ in
                                 if followsBottom { proxy.scrollTo("bottom", anchor: .bottom) }
                             }
@@ -110,14 +112,28 @@ struct AIAssistantView: View {
                     focusController: composerFocusController,
                     transcriptionPresentation: transcriptionPresentation
                 )
-                    .padding(.horizontal, 12).padding(.vertical, 8)
             }
             .background(Color(uiColor: .systemBackground))
             if showActions {
                 Color.black.opacity(0.001).ignoresSafeArea().contentShape(Rectangle())
                     .onTapGesture { showActions = false }
                 AIActionPanel(
+                    selectedModel: model.settings.model,
+                    selectedPolicy: model.settings.policy,
+                    canChangeSettings: model.configured && !model.busy && !model.isSubmitting,
                     canClear: !model.busy && !model.selected.isEmpty,
+                    selectModel: { selected in
+                        guard selected != model.settings.model else { return }
+                        var next = model.settings
+                        next.model = selected
+                        Task { _ = await model.save(next, key: "") }
+                    },
+                    selectPolicy: { policy in
+                        guard policy != model.settings.policy else { return }
+                        var next = model.settings
+                        next.policy = policy
+                        Task { _ = await model.save(next, key: "") }
+                    },
                     configureModel: {
                         showActions = false
                         model.showSettings = true
@@ -165,6 +181,16 @@ struct AIAssistantView: View {
         .onDisappear { model.disappear() }
         .onChange(of: scenePhase) { phase in
             if phase == .active { model.appear() } else { model.disappear() }
+        }
+    }
+
+    private func scrollToLatest(_ proxy: ScrollViewProxy) {
+        followsBottom = true
+        DispatchQueue.main.async {
+            proxy.scrollTo("bottom", anchor: .bottom)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            proxy.scrollTo("bottom", anchor: .bottom)
         }
     }
 
@@ -330,19 +356,138 @@ private struct AIHeaderButton: View {
 }
 
 private struct AIActionPanel: View {
+    let selectedModel: String
+    let selectedPolicy: String
+    let canChangeSettings: Bool
     let canClear: Bool
+    let selectModel: (String) -> Void
+    let selectPolicy: (String) -> Void
     let configureModel: () -> Void
     let clear: () -> Void
+    @State private var expandedSection: Section?
+
+    private enum Section: Equatable {
+        case model
+        case policy
+    }
 
     var body: some View {
         VStack(spacing: 0) {
+            expandableAction(
+                title: "模型",
+                value: selectedModel.isEmpty ? "未配置" : selectedModel,
+                image: "sparkles",
+                section: .model
+            )
+            if expandedSection == .model {
+                optionGroup(identifier: "ai-model-menu") {
+                    modelOption("glm-5.3")
+                    modelOption("glm-5.3-flash")
+                }
+            }
+            Divider().padding(.leading, 42)
+            expandableAction(
+                title: "操作权限",
+                value: policyTitle(selectedPolicy),
+                image: "shield",
+                section: .policy
+            )
+            if expandedSection == .policy {
+                optionGroup(identifier: "ai-policy-menu") {
+                    policyOption("请求批准", value: "on-request")
+                    policyOption("帮我批准", value: "unless-trusted")
+                    policyOption("完全访问", value: "never")
+                }
+            }
+            Divider().padding(.leading, 42)
             action("模型配置", "slider.horizontal.3", Color.primary, configureModel)
             Divider().padding(.leading, 42)
             action("清空当前对话", "trash", canClear ? Color.red : Color.secondary, clear)
                 .disabled(!canClear)
-        }.frame(width: 176).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+        }.frame(width: 264).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
             .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.black.opacity(0.08)))
             .shadow(color: Color.black.opacity(0.14), radius: 20, y: 8)
+    }
+
+    private func expandableAction(
+        title: String,
+        value: String,
+        image: String,
+        section: Section
+    ) -> some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.14)) {
+                expandedSection = expandedSection == section ? nil : section
+            }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: image).frame(width: 18)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.system(size: 14, weight: .medium))
+                    Text(value).font(.system(size: 11)).foregroundStyle(Color.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 6)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .rotationEffect(.degrees(expandedSection == section ? 90 : 0))
+            }
+            .foregroundStyle(Color.primary)
+            .padding(.horizontal, 14)
+            .frame(height: 52)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!canChangeSettings)
+        .opacity(canChangeSettings ? 1 : 0.5)
+        .accessibilityLabel(title)
+    }
+
+    private func optionGroup<Content: View>(
+        identifier: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(spacing: 0) { content() }
+            .padding(.vertical, 4)
+            .background(Color(uiColor: .secondarySystemBackground))
+            .accessibilityIdentifier(identifier)
+    }
+
+    private func modelOption(_ model: String) -> some View {
+        option(model, selected: selectedModel.caseInsensitiveCompare(model) == .orderedSame) {
+            selectModel(model)
+        }
+    }
+
+    private func policyOption(_ title: String, value: String) -> some View {
+        option(title, selected: selectedPolicy == value) { selectPolicy(value) }
+    }
+
+    private func option(_ title: String, selected: Bool, select: @escaping () -> Void) -> some View {
+        Button(action: select) {
+            HStack {
+                Text(title).font(.system(size: 13, weight: .medium))
+                Spacer()
+                if selected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Color.blue)
+                }
+            }
+            .foregroundStyle(Color.primary)
+            .padding(.horizontal, 44)
+            .frame(height: 38)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func policyTitle(_ policy: String) -> String {
+        switch policy {
+        case "never": return "完全访问"
+        case "unless-trusted": return "帮我批准"
+        default: return "请求批准"
+        }
     }
 
     private func action(_ title: String, _ image: String, _ color: Color,
@@ -560,104 +705,151 @@ private struct AIComposer: View {
     @State private var isCameraPresented = false
     @State private var selectedMediaItems: [PhotosPickerItem] = []
     @State private var draftSession = ""
+    @State private var isVoiceMode = false
     @State private var isPressingVoice = false
-    @State private var showPolicyMenu = false
-    @State private var showModelMenu = false
+    @State private var composerFocusRequestGeneration = 0
+    @State private var composerEditingController = ComposerTextEditingController()
+    @State private var composerEditMenuState: ComposerEditMenuState?
     @State private var voiceBaseDraft = ""
     @State private var voiceStartTask: Task<Bool, Never>?
     var body: some View {
-        VStack(spacing: 10) {
-            ZStack(alignment: .topLeading) {
-                AIComposerTextView(
-                    text: $draft,
-                    focusController: focusController,
-                    voiceTranscriptionEnabled: canStartVoiceTranscription,
-                    onSubmit: { submitDraft($0) },
-                    onVoiceChanged: { translation, location in
-                        handleVoiceGestureChanged(translation: translation, location: location)
-                    },
-                    onVoiceEnded: { translation, location in
-                        Task {
-                            await finishVoiceGesture(
-                                translation: translation,
-                                location: location
-                            )
-                        }
-                    },
-                    onVoiceCancelled: { cancelVoiceTranscription(restoresDraft: true) }
-                )
-                .onChange(of: draft) { updated in
-                    guard let submitted = AIComposerSubmissionPolicy.submittedText(
-                        currentText: "",
-                        replacing: NSRange(location: 0, length: 0),
-                        with: updated
-                    ) else { return }
-                    draft = submitted
-                    submitDraft(submitted)
-                }
-                if draft.isEmpty {
-                    Text(composerPrompt)
-                        .foregroundStyle(Color.secondary)
-                        .font(.system(size: 17, weight: isPressingVoice ? .semibold : .regular))
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true)
-                }
-            }
-            HStack {
+        VStack(spacing: 0) {
+            HStack(alignment: .bottom, spacing: 8) {
                 Button {
+                    composerEditMenuState = nil
+                    isAttachmentPanelPresented = false
                     focusController.dismiss()
-                    withAnimation(.easeOut(duration: 0.18)) {
-                        isAttachmentPanelPresented.toggle()
-                    }
+                    withAnimation(.easeOut(duration: 0.16)) { isVoiceMode.toggle() }
                 } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 17, weight: .medium))
-                        .rotationEffect(.degrees(isAttachmentPanelPresented ? 45 : 0))
-                        .frame(width: 30, height: 30)
+                    Image(systemName: isVoiceMode ? "keyboard" : "speaker.wave.2.fill")
+                        .font(.system(size: 18, weight: .bold))
+                        .frame(width: 44, height: 44)
+                        .background(RemoteIMStyle.blueSoft, in: Circle())
+                        .overlay(Circle().stroke(RemoteIMStyle.border, lineWidth: 1))
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(Color.blue)
-                .accessibilityLabel(isAttachmentPanelPresented ? "收起更多功能" : "展开更多功能")
+                .foregroundStyle(RemoteIMStyle.blue)
+                .accessibilityLabel(isVoiceMode ? "切换到键盘输入" : "切换到按住转文字")
+
+                if isVoiceMode {
+                    AITranscriptionButton(
+                        isPressing: isPressingVoice,
+                        isCancelling: transcriptionPresentation.target == .cancel,
+                        isEnabled: canStartVoiceTranscription,
+                        onChanged: { translation in
+                            handleVoiceGestureChanged(translation: translation, location: nil)
+                        },
+                        onEnded: { translation in
+                            Task {
+                                await finishVoiceGesture(translation: translation, location: nil)
+                            }
+                        }
+                    )
+                } else {
+                    ZStack(alignment: .topLeading) {
+                        ComposerTextView(
+                            text: $draft,
+                            onSubmit: { submitDraft() },
+                            focusRequestGeneration: composerFocusRequestGeneration,
+                            editingController: composerEditingController,
+                            onEditMenuRequested: { state in
+                                let next = state.hasActions ? state : nil
+                                guard composerEditMenuState != next else { return }
+                                withAnimation(.easeOut(duration: 0.1)) {
+                                    composerEditMenuState = next
+                                }
+                            },
+                            onEditMenuDismissed: {
+                                guard composerEditMenuState != nil else { return }
+                                withAnimation(.easeOut(duration: 0.08)) {
+                                    composerEditMenuState = nil
+                                }
+                            },
+                            onTypingActivityChanged: { _ in },
+                            voiceTranscriptionEnabled: canStartVoiceTranscription,
+                            onVoiceLongPressChanged: { translation, location in
+                                handleVoiceGestureChanged(
+                                    translation: translation,
+                                    location: location
+                                )
+                            },
+                            onVoiceLongPressEnded: { translation, location in
+                                Task {
+                                    await finishVoiceGesture(
+                                        translation: translation,
+                                        location: location
+                                    )
+                                }
+                            },
+                            onVoiceLongPressCancelled: {
+                                cancelVoiceTranscription(restoresDraft: true)
+                            },
+                            registerTextView: { focusController.textView = $0 },
+                            accessibilityIdentifier: "ai-composer",
+                            accessibilityLabel: "AI 助手输入框，可按住转文字"
+                        )
+                        if draft.isEmpty {
+                            Text(composerPrompt)
+                                .foregroundStyle(RemoteIMStyle.textSecondary)
+                                .font(.system(size: 14, weight: isPressingVoice ? .semibold : .regular))
+                                .padding(.horizontal, 13)
+                                .padding(.vertical, 13)
+                                .allowsHitTesting(false)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.white, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(model.ready ? RemoteIMStyle.blue : RemoteIMStyle.border,
+                                    lineWidth: model.ready ? 1.5 : 1)
+                    )
+                    .overlay(alignment: .topLeading) {
+                        if let state = composerEditMenuState {
+                            ComposerEditActionBar(
+                                state: state,
+                                pasteTarget: composerEditingController.textView,
+                                perform: performComposerEditAction
+                            )
+                            .offset(x: 4, y: -50)
+                            .transition(.opacity)
+                            .zIndex(20)
+                        }
+                    }
+                    .zIndex(composerEditMenuState == nil ? 0 : 20)
+                }
+
                 Button {
-                    withAnimation(.easeOut(duration: 0.14)) {
-                        showModelMenu = false
-                        showPolicyMenu.toggle()
+                    composerEditMenuState = nil
+                    if model.busy {
+                        Task { await model.action("stop") }
+                    } else if isAttachmentPanelPresented {
+                        isAttachmentPanelPresented = false
+                    } else {
+                        focusController.dismiss()
+                        isAttachmentPanelPresented = true
                     }
                 } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "shield")
-                        Text(model.settings.policy == "never" ? "完全访问" : model.settings.policy == "unless-trusted" ? "帮我批准" : "请求批准")
-                    }.font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(model.settings.policy == "never" ? Color.orange : Color.secondary)
-                        .padding(.horizontal, 8).frame(height: 28)
-                        .background(Color(uiColor: .secondarySystemBackground), in: Capsule())
-                }.buttonStyle(.plain).accessibilityLabel("操作权限")
-                Spacer(minLength: 4)
-                Button {
-                    withAnimation(.easeOut(duration: 0.14)) {
-                        showPolicyMenu = false
-                        showModelMenu.toggle()
-                    }
-                } label: {
-                    Text(model.configured ? model.settings.model : "未配置模型")
-                        .font(.system(size: 12, weight: .medium)).lineLimit(1)
-                        .foregroundStyle(Color.blue).padding(.horizontal, 8).frame(height: 28)
-                        .background(Color.blue.opacity(0.08), in: Capsule())
+                    Image(systemName: model.busy ? "stop.fill" : "plus")
+                        .font(.system(size: model.busy ? 16 : 20, weight: .semibold))
+                        .foregroundStyle(model.busy ? Color.white : RemoteIMStyle.textPrimary)
+                        .frame(width: 44, height: 44)
+                        .background(model.busy ? Color.primary : Color.white, in: Circle())
+                        .overlay(Circle().stroke(RemoteIMStyle.border, lineWidth: model.busy ? 0 : 1))
                 }
                 .buttonStyle(.plain)
-                .disabled(!model.configured || model.busy || model.isSubmitting)
-                .accessibilityLabel("切换模型")
-                if model.busy {
-                    Button { Task { await model.action("stop") } } label: {
-                        Image(systemName: "stop.fill").font(.system(size: 15, weight: .bold))
-                            .foregroundStyle(.white).frame(width: 34, height: 34).background(.primary, in: Circle())
-                    }
-                    .disabled(!model.ready || model.isSubmitting)
-                    .accessibilityLabel("停止")
-                }
+                .disabled(!model.ready || model.isSubmitting)
+                .accessibilityLabel(
+                    model.busy ? "停止" : (isAttachmentPanelPresented ? "收起更多功能" : "展开更多功能")
+                )
             }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 10)
+
             if isAttachmentPanelPresented {
-                Divider()
+                Divider().background(RemoteIMStyle.border)
                 ComposerAttachmentPanel(
                     canSendImage: true,
                     canSendVideo: false,
@@ -678,38 +870,11 @@ private struct AIComposer: View {
                     openVoiceInput: {},
                     showsVoiceInput: false
                 )
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
-        }.padding(14).background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 20))
-            .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.gray.opacity(0.22)))
-            .overlay(alignment: .bottomLeading) {
-                if showPolicyMenu {
-                    AIPolicyMenu(selected: model.settings.policy) { policy in
-                        showPolicyMenu = false
-                        guard policy != model.settings.policy else { return }
-                        var next = model.settings
-                        next.policy = policy
-                        Task { _ = await model.save(next, key: "") }
-                    }
-                    .offset(x: 34, y: -48)
-                    .transition(.scale(scale: 0.96, anchor: .bottomLeading).combined(with: .opacity))
-                }
-            }
-            .overlay(alignment: .bottomTrailing) {
-                if showModelMenu {
-                    AIModelMenu(selected: model.settings.model) { selected in
-                        showModelMenu = false
-                        guard selected != model.settings.model else { return }
-                        var next = model.settings
-                        next.model = selected
-                        Task { _ = await model.save(next, key: "") }
-                    }
-                    .offset(x: -42, y: -48)
-                    .transition(.scale(scale: 0.96, anchor: .bottomTrailing).combined(with: .opacity))
-                }
-            }
-            .zIndex(showPolicyMenu || showModelMenu ? 4 : 0)
+        }
+            .background(RemoteIMStyle.panelBackground)
+            .overlay(alignment: .top) { Divider().background(RemoteIMStyle.border) }
             .animation(.easeOut(duration: 0.18), value: isAttachmentPanelPresented)
             .photosPicker(
                 isPresented: $isPhotoPickerPresented,
@@ -780,8 +945,7 @@ private struct AIComposer: View {
                 transcriptionPresentation.reset()
                 speechRecognizer.cancel()
                 isAttachmentPanelPresented = false
-                showPolicyMenu = false
-                showModelMenu = false
+                composerEditMenuState = nil
                 selectedMediaItems = []
             }
             .onChange(of: model.selected) { selected in
@@ -986,7 +1150,18 @@ private struct AIComposer: View {
         }
     }
 
-    private func handleVoiceGestureChanged(translation: CGSize, location: CGPoint) {
+    private func performComposerEditAction(_ action: ComposerEditAction) {
+        composerEditingController.perform(action)
+        switch action {
+        case .select, .selectAll:
+            let next = composerEditingController.menuState()
+            composerEditMenuState = next.hasActions ? next : nil
+        case .paste, .cut, .copy, .readAloud, .newLine:
+            composerEditMenuState = nil
+        }
+    }
+
+    private func handleVoiceGestureChanged(translation: CGSize, location: CGPoint?) {
         guard canStartVoiceTranscription else { return }
         if !isPressingVoice { beginVoiceTranscription() }
         guard isPressingVoice else { return }
@@ -1127,223 +1302,48 @@ private struct AIComposer: View {
     }
 }
 
-private struct AIPolicyMenu: View {
-    let selected: String
-    let select: (String) -> Void
-
-    private let options = [
-        ("on-request", "请求批准", "hand.raised"),
-        ("unless-trusted", "帮我批准", "checkmark.shield"),
-        ("never", "完全访问", "exclamationmark.shield")
-    ]
+private struct AITranscriptionButton: View {
+    let isPressing: Bool
+    let isCancelling: Bool
+    let isEnabled: Bool
+    let onChanged: (CGSize) -> Void
+    let onEnded: (CGSize) -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            ForEach(options, id: \.0) { option in
-                Button { select(option.0) } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: option.2).frame(width: 18)
-                        Text(option.1).font(.system(size: 13, weight: .semibold))
-                        Spacer(minLength: 12)
-                        if selected == option.0 {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(Color.blue)
-                        }
-                    }
-                    .foregroundStyle(Color.primary)
-                    .padding(.horizontal, 12)
-                    .frame(height: 44)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                if option.0 != options.last?.0 { Divider().padding(.leading, 40) }
-            }
-        }
-        .frame(width: 220)
-        .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 13))
-        .overlay(RoundedRectangle(cornerRadius: 13).stroke(Color.black.opacity(0.1)))
-        .shadow(color: Color.black.opacity(0.16), radius: 18, y: 8)
-        .accessibilityIdentifier("ai-policy-menu")
-    }
-}
-
-private struct AIModelMenu: View {
-    let selected: String
-    let select: (String) -> Void
-
-    private let options = ["glm-5.3", "glm-5.3-flash"]
-
-    var body: some View {
-        VStack(spacing: 0) {
-            ForEach(options, id: \.self) { option in
-                Button { select(option) } label: {
-                    HStack(spacing: 10) {
-                        Text(option).font(.system(size: 13, weight: .semibold))
-                        Spacer(minLength: 12)
-                        if selected.caseInsensitiveCompare(option) == .orderedSame {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(Color.blue)
-                        }
-                    }
-                    .foregroundStyle(Color.primary)
-                    .padding(.horizontal, 12)
-                    .frame(height: 44)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                if option != options.last { Divider().padding(.leading, 12) }
-            }
-        }
-        .frame(width: 188)
-        .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 13))
-        .overlay(RoundedRectangle(cornerRadius: 13).stroke(Color.black.opacity(0.1)))
-        .shadow(color: Color.black.opacity(0.16), radius: 18, y: 8)
-        .accessibilityIdentifier("ai-model-menu")
-    }
-}
-
-private struct AIComposerTextView: UIViewRepresentable {
-    @Binding var text: String
-    let focusController: AIComposerFocusController
-    let voiceTranscriptionEnabled: Bool
-    let onSubmit: (String) -> Void
-    let onVoiceChanged: (CGSize, CGPoint) -> Void
-    let onVoiceEnded: (CGSize, CGPoint) -> Void
-    let onVoiceCancelled: () -> Void
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(parent: self)
+        Text(title)
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(isEnabled ? RemoteIMStyle.textPrimary : RemoteIMStyle.textSecondary)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(backgroundColor, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(borderColor, lineWidth: isPressing ? 1.5 : 1)
+            )
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { onChanged($0.translation) }
+                    .onEnded { onEnded($0.translation) }
+            )
+            .allowsHitTesting(isEnabled)
+            .accessibilityLabel("按住转文字")
     }
 
-    func makeUIView(context: Context) -> UITextView {
-        let textView = UITextView(usingTextLayoutManager: false)
-        textView.delegate = context.coordinator
-        textView.backgroundColor = .clear
-        textView.font = .systemFont(ofSize: 17)
-        textView.textColor = .label
-        textView.tintColor = .systemBlue
-        textView.returnKeyType = .send
-        textView.enablesReturnKeyAutomatically = true
-        textView.textContainerInset = .zero
-        textView.textContainer.lineFragmentPadding = 0
-        textView.isScrollEnabled = true
-        textView.showsVerticalScrollIndicator = false
-        textView.accessibilityIdentifier = "ai-composer"
-        textView.accessibilityLabel = "AI 助手输入框，可按住转文字"
-        focusController.textView = textView
-
-        let voiceGesture = UILongPressGestureRecognizer(
-            target: context.coordinator,
-            action: #selector(Coordinator.handleVoiceLongPress(_:))
-        )
-        voiceGesture.minimumPressDuration = 0.35
-        voiceGesture.allowableMovement = 400
-        voiceGesture.cancelsTouchesInView = true
-        voiceGesture.delegate = context.coordinator
-        textView.addGestureRecognizer(voiceGesture)
-        context.coordinator.voiceGesture = voiceGesture
-        return textView
+    private var title: String {
+        if !isEnabled { return "清空文字后可按住转文字" }
+        if isCancelling { return "松开取消" }
+        return isPressing ? "松开处理" : "按住 转文字"
     }
 
-    func updateUIView(_ textView: UITextView, context: Context) {
-        context.coordinator.parent = self
-        focusController.textView = textView
-        if textView.text != text {
-            textView.text = text
-            textView.selectedRange = NSRange(location: (text as NSString).length, length: 0)
-            textView.invalidateIntrinsicContentSize()
-        }
+    private var backgroundColor: Color {
+        if !isEnabled { return Color(uiColor: .secondarySystemBackground) }
+        if isCancelling { return Color.red.opacity(0.08) }
+        return isPressing ? RemoteIMStyle.blueSoft : Color.white
     }
 
-    static func dismantleUIView(_ textView: UITextView, coordinator: Coordinator) {
-        textView.delegate = nil
-        if coordinator.parent.focusController.textView === textView {
-            coordinator.parent.focusController.textView = nil
-        }
-    }
-
-    func sizeThatFits(
-        _ proposal: ProposedViewSize,
-        uiView textView: UITextView,
-        context _: Context
-    ) -> CGSize? {
-        guard let width = proposal.width, width.isFinite, width > 0 else { return nil }
-        let fitting = textView.sizeThatFits(
-            CGSize(width: width, height: .greatestFiniteMagnitude)
-        )
-        let lineHeight = textView.font?.lineHeight ?? 20
-        return CGSize(width: width, height: min(max(lineHeight, fitting.height), lineHeight * 6))
-    }
-
-    @MainActor
-    final class Coordinator: NSObject, UITextViewDelegate, UIGestureRecognizerDelegate {
-        var parent: AIComposerTextView
-        weak var voiceGesture: UILongPressGestureRecognizer?
-        private var voiceOrigin: CGPoint?
-
-        init(parent: AIComposerTextView) {
-            self.parent = parent
-        }
-
-        func textViewDidChange(_ textView: UITextView) {
-            if parent.text != textView.text { parent.text = textView.text }
-            textView.invalidateIntrinsicContentSize()
-        }
-
-        func textView(
-            _ textView: UITextView,
-            shouldChangeTextIn range: NSRange,
-            replacementText: String
-        ) -> Bool {
-            guard textView.markedTextRange == nil,
-                  let submitted = AIComposerSubmissionPolicy.submittedText(
-                      currentText: textView.text,
-                      replacing: range,
-                      with: replacementText
-                  )
-            else { return true }
-            parent.onSubmit(submitted)
-            return false
-        }
-
-        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-            guard gestureRecognizer === voiceGesture else { return true }
-            return parent.voiceTranscriptionEnabled && parent.text.isEmpty
-        }
-
-        @objc func handleVoiceLongPress(_ gesture: UILongPressGestureRecognizer) {
-            let location = gesture.location(in: gesture.view?.window)
-            switch gesture.state {
-            case .began:
-                guard parent.voiceTranscriptionEnabled, parent.text.isEmpty else { return }
-                voiceOrigin = location
-                gesture.view?.resignFirstResponder()
-                parent.onVoiceChanged(.zero, location)
-            case .changed:
-                guard let origin = voiceOrigin else { return }
-                parent.onVoiceChanged(
-                    CGSize(width: location.x - origin.x, height: location.y - origin.y),
-                    location
-                )
-            case .ended:
-                guard let origin = voiceOrigin else { return }
-                voiceOrigin = nil
-                parent.onVoiceEnded(
-                    CGSize(width: location.x - origin.x, height: location.y - origin.y),
-                    location
-                )
-            case .cancelled, .failed:
-                voiceOrigin = nil
-                parent.onVoiceCancelled()
-            case .possible:
-                break
-            @unknown default:
-                voiceOrigin = nil
-                parent.onVoiceCancelled()
-            }
-        }
+    private var borderColor: Color {
+        if isCancelling { return .red }
+        return isPressing ? RemoteIMStyle.blue : RemoteIMStyle.border
     }
 }
 

@@ -64,8 +64,10 @@ final class AIAssistantUITests: XCTestCase {
         app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
         app.launch()
 
-        let model = app.buttons["切换模型"]
-        XCTAssertTrue(model.waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["更多"].waitForExistence(timeout: 15))
+        app.buttons["更多"].tap()
+        let model = app.buttons["模型"]
+        XCTAssertTrue(model.waitForExistence(timeout: 3))
         model.tap()
         let menu = app.descendants(matching: .any)
             .matching(identifier: "ai-model-menu").firstMatch
@@ -111,8 +113,10 @@ final class AIAssistantUITests: XCTestCase {
         app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
         app.launch()
 
+        XCTAssertTrue(app.buttons["更多"].waitForExistence(timeout: 15))
+        app.buttons["更多"].tap()
         let permission = app.buttons["操作权限"]
-        XCTAssertTrue(permission.waitForExistence(timeout: 15))
+        XCTAssertTrue(permission.waitForExistence(timeout: 3))
         permission.tap()
 
         let policyMenu = app.descendants(matching: .any)
@@ -121,7 +125,6 @@ final class AIAssistantUITests: XCTestCase {
         XCTAssertLessThan(policyMenu.frame.width, app.frame.width * 0.75)
         app.buttons["完全访问"].tap()
 
-        app.buttons["更多"].tap()
         XCTAssertTrue(app.buttons["模型配置"].waitForExistence(timeout: 3))
         app.buttons["模型配置"].tap()
 

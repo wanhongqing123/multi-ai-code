@@ -2000,6 +2000,12 @@ void MainWindow::buildUi() {
         agentLayout->setContentsMargins(0, 0, 0, 0);
         agentLayout->setSpacing(0);
 
+        auto* agentSplitter = new QSplitter(Qt::Horizontal, agentPage_);
+        agentSplitter->setObjectName(QStringLiteral("agentContentSplitter"));
+        agentSplitter->setChildrenCollapsible(false);
+        agentSplitter->setHandleWidth(1);
+        agentLayout->addWidget(agentSplitter);
+
         rebuildAgentPage();
     }
 
@@ -2918,9 +2924,14 @@ void MainWindow::refreshSettings() {
 }
 
 void MainWindow::rebuildAgentPage() {
-    if (agentPage_ == nullptr || agentPage_->layout() == nullptr) return;
+    if (agentPage_ == nullptr) return;
+    auto* agentSplitter =
+        agentPage_->findChild<QSplitter*>(QStringLiteral("agentContentSplitter"),
+                                         Qt::FindDirectChildrenOnly);
+    if (agentSplitter == nullptr) return;
 
     const QString sessionToRestore = agentPanel_ == nullptr ? QString() : agentPanel_->sessionId();
+    const QList<int> sizesToRestore = agentSplitter->sizes();
 
     delete agentPanel_;
     agentPanel_ = nullptr;
@@ -2931,14 +2942,20 @@ void MainWindow::rebuildAgentPage() {
 
     const AgentController::ModelConfig modelConfig = loadAgentModelConfig();
     agentController_ = new AgentController(modelConfig, agentDatabasePath(), this);
-    agentSessions_ = new AgentSessionList(*agentController_, agentPage_);
-    agentPanel_ = new AgentChatPanel(*agentController_, agentPage_);
+    agentSessions_ = new AgentSessionList(*agentController_, agentSplitter);
+    agentPanel_ = new AgentChatPanel(*agentController_, agentSplitter);
     agentPanel_->setModelLabel(modelConfig.baseUrl.isEmpty() || modelConfig.apiKey.isEmpty()
                                    ? QStringLiteral("未配置模型")
                                    : modelConfig.modelName);
-    auto* layout = qobject_cast<QHBoxLayout*>(agentPage_->layout());
-    layout->addWidget(agentSessions_);
-    layout->addWidget(agentPanel_, 1);
+    agentSplitter->addWidget(agentSessions_);
+    agentSplitter->addWidget(agentPanel_);
+    agentSplitter->setStretchFactor(0, 0);
+    agentSplitter->setStretchFactor(1, 1);
+    if (sizesToRestore.size() == 2 && sizesToRestore.at(0) > 0 && sizesToRestore.at(1) > 0) {
+        agentSplitter->setSizes(sizesToRestore);
+    } else {
+        agentSplitter->setSizes(QList<int>() << UiZoom::s(300) << UiZoom::s(980));
+    }
 
     connect(agentSessions_, &AgentSessionList::selected, agentPanel_,
             [this](const QString& sessionId) { agentPanel_->openSession(sessionId); });

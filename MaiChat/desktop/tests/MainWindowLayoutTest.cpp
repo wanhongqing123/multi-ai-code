@@ -87,6 +87,7 @@ private slots:
     void conversationPreviewUsesPlainMarkdown();
     void composerUsesEmbeddedIconSendAction();
     void exposesResizableSplitters();
+    void agentConversationListUsesResizableSplitter();
     void compactSplittersKeepDragTargets_data();
     void compactSplittersKeepDragTargets();
     void rendersEmptyConversationState();
@@ -1208,6 +1209,40 @@ void MainWindowLayoutTest::exposesResizableSplitters() {
     QCOMPARE(messageComposerSplitter->orientation(), Qt::Vertical);
     QVERIFY(contentSplitter->childrenCollapsible() == false);
     QVERIFY(messageComposerSplitter->childrenCollapsible() == false);
+}
+
+void MainWindowLayoutTest::agentConversationListUsesResizableSplitter() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    MainWindow window(app);
+    window.resize(1400, 900);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    auto* agentButton =
+        window.findChild<QPushButton*>(QStringLiteral("agentNavButton"));
+    QVERIFY(agentButton != nullptr);
+    agentButton->click();
+
+    auto* splitter =
+        window.findChild<QSplitter*>(QStringLiteral("agentContentSplitter"));
+    QVERIFY(splitter != nullptr);
+    QCOMPARE(splitter->orientation(), Qt::Horizontal);
+    QCOMPARE(splitter->count(), 2);
+    QVERIFY(!splitter->childrenCollapsible());
+    QCOMPARE(splitter->handleWidth(), 1);
+
+    QSplitterHandle* handle = splitter->handle(1);
+    QVERIFY(handle != nullptr);
+    const int before = splitter->sizes().at(0);
+    const QPoint start = handle->rect().center();
+    const QPoint finish = start + QPoint(60, 0);
+    QTest::mousePress(handle, Qt::LeftButton, Qt::NoModifier, start);
+    QMouseEvent move(QEvent::MouseMove, QPointF(finish), QPointF(handle->mapToGlobal(finish)),
+                     Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(handle, &move);
+    QTest::mouseRelease(handle, Qt::LeftButton, Qt::NoModifier, finish);
+    QVERIFY(splitter->sizes().at(0) != before);
 }
 
 void MainWindowLayoutTest::rendersEmptyConversationState() {

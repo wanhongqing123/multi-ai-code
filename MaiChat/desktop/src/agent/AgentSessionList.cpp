@@ -36,7 +36,6 @@ AgentSessionList::AgentSessionList(AgentController& controller, QWidget* parent)
     : QWidget(parent), runtime_(std::make_unique<Runtime>()) {
     runtime_->controller = &controller;
     setMinimumWidth(UiZoom::s(210));
-    setMaximumWidth(UiZoom::s(300));
     setStyleSheet(UiZoom::scaleQss(
         QStringLiteral("QWidget{background:#fafbfd;border-right:1px solid %1;}").arg(kLine)));
 

@@ -6,7 +6,6 @@
 #include <QDesktopServices>
 #include <QDir>
 #include <QElapsedTimer>
-#include <QFileDialog>
 #include <QFileInfo>
 #include <QFontMetrics>
 #include <QFrame>
@@ -18,7 +17,9 @@
 #include <QLabel>
 #include <QMenu>
 #include <QMimeData>
+#include <QPainter>
 #include <QPixmap>
+#include <QPolygonF>
 #include <QPushButton>
 #include <QSettings>
 #include <QStandardPaths>
@@ -50,10 +51,6 @@ const char* const kLine = "#e2e8f0";
 const char* const kLineSoft = "#f1f5f9";
 const char* const kAccent = "#0b67b7";
 const char* const kDanger = "#b42318";
-
-// 正文的阅读宽度上限。窗口拉到 2000px 时正文不该跟着拉那么宽——
-// 一行太长，眼睛从行尾回到下一行行首会丢行。
-constexpr int kColumnWidth = 760;
 
 std::string toUtf8(const QString& text) {
     const QByteArray bytes = text.toUtf8();
@@ -148,6 +145,29 @@ void applyAgentMenuStyle(QMenu* menu) {
             border-radius: 4px;
         }
     )")));
+}
+
+QIcon makeComposerActionIcon(bool stop, const QColor& color) {
+    constexpr int kRender = 48;
+    QPixmap pixmap(kRender, kRender);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    QPen pen(color, 4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    painter.setPen(pen);
+    painter.setBrush(Qt::NoBrush);
+    if (stop) {
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(color);
+        painter.drawRoundedRect(QRectF(14, 14, 20, 20), 3, 3);
+    } else {
+        painter.drawPolygon(QPolygonF({QPointF(8, 22), QPointF(40, 8), QPointF(30, 40),
+                                       QPointF(23, 28)}));
+        painter.drawLine(QPointF(8, 22), QPointF(23, 28));
+        painter.drawLine(QPointF(23, 28), QPointF(40, 8));
+    }
+    painter.end();
+    return QIcon(pixmap);
 }
 
 // Enter 发送，Shift+Enter 换行。
@@ -533,7 +553,6 @@ struct AgentChatPanel::Runtime {
 
     QLabel* title = nullptr;
     QLabel* contextSize = nullptr;
-    QLabel* dirChip = nullptr;
     QPushButton* modelChip = nullptr;
     MarkdownView* view = nullptr;
     PromptEdit* editor = nullptr;
@@ -611,12 +630,9 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     root->addWidget(head);
 
     // ---- 对话流：整片就是一个 MarkdownView ----
-    //
-    // 阅读列的居中和限宽由视图自己做。原来是 addStretch(1)/addWidget(列,20)/
-    // addStretch(1) 这种权重摆出来的，权重给错一次列就只剩三分之一宽。
+    // AI 页面与 IM 一样使用窗口可用宽度，只保留 MarkdownView 自己的页边距。
     runtime_->view = new MarkdownView(this);
     runtime_->view->setTheme(MarkdownTheme::standard(UiZoom::factor()));
-    runtime_->view->setMaxContentWidth(UiZoom::s(kColumnWidth));
     root->addWidget(runtime_->view, 1);
 
     runtime_->flushTimer = new QTimer(this);
@@ -627,62 +643,39 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     connect(runtime_->view, &MarkdownView::linkActivated, this,
             [](const QString& href) { QDesktopServices::openUrl(QUrl(href)); });
 
-    // ---- 输入区：一张卡，控件都在卡里 ----
+    // ---- 输入区：与普通 IM 共用同一个 ComposerTextEdit 形状 ----
     auto* composerHost = new QWidget(this);
-    composerHost->setStyleSheet(QStringLiteral("background:#ffffff;"));
-    auto* composerRow = new QHBoxLayout(composerHost);
-    composerRow->setContentsMargins(UiZoom::s(20), 0, UiZoom::s(20), UiZoom::s(16));
-    composerRow->addStretch(1);
+    composerHost->setObjectName(QStringLiteral("agentComposerPanel"));
+    composerHost->setStyleSheet(UiZoom::scaleQss(QStringLiteral(
+        "QWidget#agentComposerPanel{background:#ffffff;border-top:1px solid %1;}"))
+                                    .arg(kLine));
+    auto* composerLayout = new QVBoxLayout(composerHost);
+    composerLayout->setContentsMargins(UiZoom::s(24), UiZoom::s(12), UiZoom::s(24),
+                                       UiZoom::s(14));
+    composerLayout->setSpacing(0);
 
-    auto* card = new QFrame;
-    card->setObjectName(QStringLiteral("agentComposerCard"));
-    card->setMaximumWidth(UiZoom::s(kColumnWidth));
-    card->setStyleSheet(UiZoom::scaleQss(
-        QStringLiteral("QFrame#agentComposerCard{background:#ffffff;border:1px solid %1;"
-                       "border-radius:14px;}")
-            .arg(kLine)));
-    auto* cardColumn = new QVBoxLayout(card);
-    cardColumn->setContentsMargins(UiZoom::s(14), UiZoom::s(10), UiZoom::s(10), UiZoom::s(8));
-    cardColumn->setSpacing(UiZoom::s(6));
-
-    // 输入框本身不画边框——边框是外面那张卡的。两层框会看起来像输入框里套输入框。
-    runtime_->editor = new PromptEdit(card);
+    runtime_->editor = new PromptEdit(composerHost);
+    runtime_->editor->setObjectName(QStringLiteral("agentPromptEditor"));
     runtime_->editor->setPlaceholderText(QStringLiteral("交给它做点什么…"));
-    runtime_->editor->setFixedHeight(UiZoom::s(62));
-    runtime_->editor->setStyleSheet(UiZoom::scaleQss(
-        QStringLiteral("QTextEdit{border:none;background:transparent;color:%1;}").arg(kInk)));
+    runtime_->editor->setFixedHeight(UiZoom::s(112));
+    runtime_->editor->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
+        QTextEdit#agentPromptEditor {
+            border:1px solid %1;
+            border-radius:14px;
+            background:#ffffff;
+            color:%2;
+            padding:10px 52px 46px 13px;
+        }
+        QTextEdit#agentPromptEditor:focus { border-color:#58b7ff; }
+    )").arg(kLine, kInk)));
     QFont editorFont = runtime_->editor->font();
-    editorFont.setPixelSize(UiZoom::s(13));
+    editorFont.setPixelSize(UiZoom::s(14));
     runtime_->editor->setFont(editorFont);
     runtime_->editor->onSubmit = [this] { onSend(); };
     runtime_->editor->setMimeHandler(
         [this](const QMimeData* mime) { return insertComposerMimeData(mime); });
-    cardColumn->addWidget(runtime_->editor);
+    composerLayout->addWidget(runtime_->editor);
 
-    // 卡片底边只留输入动作和工作目录。模型、权限已经移到页头。
-    auto* foot = new QHBoxLayout;
-    foot->setContentsMargins(0, 0, 0, 0);
-    foot->setSpacing(UiZoom::s(10));
-    auto* attachButton = new QPushButton(QStringLiteral("＋"));
-    attachButton->setObjectName(QStringLiteral("agentAttachImage"));
-    attachButton->setCursor(Qt::PointingHandCursor);
-    attachButton->setToolTip(QStringLiteral("添加图片（也可以拖入或粘贴）"));
-    attachButton->setStyleSheet(
-        QStringLiteral("QPushButton{background:transparent;border:none;color:#"
-                       "0b67b7;padding:0;}"));
-    QFont attachFont = attachButton->font();
-    attachFont.setPixelSize(UiZoom::s(18));
-    attachButton->setFont(attachFont);
-    connect(attachButton, &QPushButton::clicked, this, [this] {
-        const QStringList paths =
-            QFileDialog::getOpenFileNames(this, QStringLiteral("选择图片"), QString(),
-                                          QStringLiteral("图片 (*.png *.jpg *.jpeg *.webp *.gif)"));
-        for (const QString& path : paths) insertComposerImageFile(path);
-    });
-    foot->addWidget(attachButton);
-    runtime_->dirChip = makeLabel(QString(), 11, kInkSoft);
-    runtime_->dirChip->setObjectName(QStringLiteral("agentWorkingDirectory"));
-    runtime_->dirChip->setWordWrap(false);
     runtime_->modelChip = new QPushButton;
     runtime_->modelChip->setObjectName(QStringLiteral("agentModelChip"));
     runtime_->modelChip->setCursor(Qt::PointingHandCursor);
@@ -733,9 +726,7 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
         emit modelSelected(selected);
     });
     runtime_->modelChip->setMenu(modelMenu);
-    foot->addWidget(runtime_->dirChip);
     headRow->insertWidget(1, runtime_->modelChip);
-    foot->addStretch(1);
     // 这句常驻。它是这套东西最重要的一句承诺，写在文档里没人看。
     runtime_->hint = new QPushButton;
     runtime_->hint->setObjectName(QStringLiteral("agentApprovalPolicy"));
@@ -789,17 +780,12 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     });
     updateApprovalPolicyUi();
     headRow->insertWidget(2, runtime_->hint);
-    runtime_->send = new QPushButton(QStringLiteral("发送"));
+    runtime_->send = new QPushButton(runtime_->editor);
     runtime_->send->setObjectName(QStringLiteral("agentSendButton"));
     runtime_->send->setCursor(Qt::PointingHandCursor);
-    QFont sendFont = runtime_->send->font();
-    sendFont.setPixelSize(UiZoom::s(12));
-    runtime_->send->setFont(sendFont);
-    foot->addWidget(runtime_->send);
-    cardColumn->addLayout(foot);
-
-    composerRow->addWidget(card, 20);
-    composerRow->addStretch(1);
+    runtime_->send->setFixedSize(UiZoom::s(36), UiZoom::s(36));
+    runtime_->send->setIconSize(QSize(UiZoom::s(18), UiZoom::s(18)));
+    runtime_->editor->setCornerAction(runtime_->send);
     root->addWidget(composerHost);
 
     setRunning(false);
@@ -941,13 +927,6 @@ void AgentChatPanel::openSession(const QString& sessionId) {
 
     MaiSession session;
     if (runtime_->controller->agent().getSession(toUtf8(runtime_->sessionId), session)) {
-        const QString directory = fromUtf8(session.directory);
-        // 不用文件夹 emoji：这台机器的界面字体里不一定有那个字形，渲染出来是个豆腐块。
-        const QString directoryName = QDir(directory).dirName();
-        runtime_->dirChip->setText(directoryName.isEmpty()
-                                       ? QDir::toNativeSeparators(directory)
-                                       : directoryName);
-        runtime_->dirChip->setToolTip(directory);
         // 用 isUntitled() 而不是 title.isEmpty()：核心给新会话填的是一个占位标题
         //（"New session"），不是空串。判空的话那串占位符会直接显示在头部。
         runtime_->title->setText(session.isUntitled() ? QStringLiteral("AI 助手")
@@ -1368,14 +1347,18 @@ void AgentChatPanel::onClear() {
 
 void AgentChatPanel::setRunning(bool running) {
     runtime_->running = running;
-    runtime_->send->setText(running ? QStringLiteral("停止") : QStringLiteral("发送"));
+    runtime_->send->setText(QString());
+    runtime_->send->setIcon(makeComposerActionIcon(
+        running, QColor(QString::fromLatin1(running ? kDanger : "#ffffff"))));
+    runtime_->send->setToolTip(running ? QStringLiteral("停止任务") : QStringLiteral("发送消息"));
+    runtime_->send->setAccessibleName(runtime_->send->toolTip());
     runtime_->send->setStyleSheet(UiZoom::scaleQss(
         running ? QStringLiteral("QPushButton#agentSendButton{background:#fff5f3;color:%1;"
-                                 "border:1px solid #f0c3bd;border-radius:8px;padding:6px 18px;}"
+                                 "border:1px solid #f0c3bd;border-radius:8px;padding:0;}"
                                  "QPushButton#agentSendButton:hover{background:#fee4e2;}")
                       .arg(kDanger)
                 : QStringLiteral("QPushButton#agentSendButton{background:%1;color:#ffffff;"
-                                 "border:none;border-radius:8px;padding:6px 18px;}"
+                                 "border:none;border-radius:8px;padding:0;}"
                                  "QPushButton#agentSendButton:hover{background:#095a9f;}"
                                  "QPushButton#agentSendButton:pressed{background:#084d87;}"
                                  "QPushButton#agentSendButton:disabled{background:#b8d3e8;"

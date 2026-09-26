@@ -20,6 +20,8 @@
 #include "agent/AgentChatPanel.h"
 #include "agent/AgentController.h"
 #include "markdown/MarkdownView.h"
+#include "ui/ComposerTextEdit.h"
+#include "ui/UiZoom.h"
 
 // AI 面板：**别的会话说的话不能灌进这个会话的界面**。
 //
@@ -87,7 +89,8 @@ private slots:
     void thinkingLineExpandsLiveAndAfterRestore();
     void unconfiguredModelOpensConfigurationInsteadOfFailingTurn();
     void desktopAgentSuppliesMarkdownSystemPrompt();
-    void composerUsesApplicationStyleWithoutInheritedLabelBorders();
+    void composerMatchesImLayoutAndUsesEmbeddedSendAction();
+    void conversationUsesAvailableWidth();
     void pastedImageUsesTheSharedComposerAndReachesTheModel();
     void modelChipOffersTheTextAndVisionModels();
 };
@@ -117,13 +120,7 @@ struct Harness {
     }
 
     QPushButton* sendButton() const {
-        for (QPushButton* button : panel->findChildren<QPushButton*>()) {
-            if (button->text() == QStringLiteral("发送") ||
-                button->text() == QStringLiteral("停止")) {
-                return button;
-            }
-        }
-        return nullptr;
+        return panel->findChild<QPushButton*>(QStringLiteral("agentSendButton"));
     }
 
     // 直接往事件总线上发一条，模拟另一个会话（子 Agent）在动。
@@ -269,12 +266,8 @@ void AgentPanelSessionTest::thinkingLineExpandsLiveAndAfterRestore() {
     auto* editor = panel.findChild<QTextEdit*>();
     QVERIFY(editor != nullptr);
     editor->setPlainText(QStringLiteral("问点什么"));
-    auto* send = [this, &panel]() -> QPushButton* {
-        for (QPushButton* button : panel.findChildren<QPushButton*>()) {
-            if (button->text() == QStringLiteral("发送")) return button;
-        }
-        return nullptr;
-    }();
+    auto* send =
+        panel.findChild<QPushButton*>(QStringLiteral("agentSendButton"));
     QVERIFY(send != nullptr);
     QTest::mouseClick(send, Qt::LeftButton);
 
@@ -351,9 +344,8 @@ void AgentPanelSessionTest::pastedImageUsesTheSharedComposerAndReachesTheModel()
     QTest::keyClick(editor, Qt::Key_V, Qt::ControlModifier);
     QTRY_VERIFY(editor->toPlainText().contains(QChar(0xFFFC)));
 
-    QPushButton* send = nullptr;
-    for (QPushButton* button : panel.findChildren<QPushButton*>())
-        if (button->text() == QStringLiteral("发送")) send = button;
+    QPushButton* send =
+        panel.findChild<QPushButton*>(QStringLiteral("agentSendButton"));
     QVERIFY(send != nullptr);
     QSignalSpy finished(&controller, &AgentController::turnFinished);
     QTest::mouseClick(send, Qt::LeftButton);
@@ -401,10 +393,12 @@ void AgentPanelSessionTest::desktopAgentSuppliesMarkdownSystemPrompt() {
     QVERIFY(prompt.contains(QStringLiteral("delimiter row")));
 }
 
-void AgentPanelSessionTest::composerUsesApplicationStyleWithoutInheritedLabelBorders() {
+void AgentPanelSessionTest::composerMatchesImLayoutAndUsesEmbeddedSendAction() {
     Harness harness;
+    harness.panel->resize(1200, 700);
     QVERIFY(QTest::qWaitForWindowExposed(harness.panel.get()));
 
+    auto* editor = harness.panel->findChild<ComposerTextEdit*>();
     auto* card = harness.panel->findChild<QWidget*>(QStringLiteral("agentComposerCard"));
     auto* directory =
         harness.panel->findChild<QLabel*>(QStringLiteral("agentWorkingDirectory"));
@@ -413,16 +407,24 @@ void AgentPanelSessionTest::composerUsesApplicationStyleWithoutInheritedLabelBor
     auto* model = harness.panel->findChild<QPushButton*>(QStringLiteral("agentModelChip"));
     auto* more = harness.panel->findChild<QPushButton*>(QStringLiteral("agentMoreActions"));
     auto* send = harness.panel->findChild<QPushButton*>(QStringLiteral("agentSendButton"));
-    QVERIFY(card != nullptr);
-    QVERIFY(directory != nullptr);
+    QVERIFY(editor != nullptr);
     QVERIFY(policy != nullptr);
     QVERIFY(model != nullptr);
     QVERIFY(more != nullptr);
     QVERIFY(send != nullptr);
-    QVERIFY(card->styleSheet().contains(QStringLiteral("QFrame#agentComposerCard")));
-    QVERIFY(!card->styleSheet().contains(QStringLiteral("QFrame{")));
-    QVERIFY(!card->isAncestorOf(model));
-    QVERIFY(!card->isAncestorOf(policy));
+    QCOMPARE(card, nullptr);
+    QCOMPARE(directory, nullptr);
+    QCOMPARE(send->parentWidget(), editor);
+    QCOMPARE(send->text(), QString());
+    QVERIFY(!send->icon().isNull());
+    QCOMPARE(send->size(), QSize(UiZoom::s(36), UiZoom::s(36)));
+    QVERIFY(editor->rect().contains(send->geometry().topLeft()));
+    QVERIFY(editor->rect().contains(send->geometry().bottomRight()));
+    QVERIFY(harness.panel->findChild<QPushButton*>(QStringLiteral("agentAttachImage")) == nullptr);
+    QVERIFY(editor->width() >= harness.panel->width() - UiZoom::s(60));
+    QVERIFY(editor->styleSheet().contains(QStringLiteral("border:1px solid")));
+    QVERIFY(!editor->isAncestorOf(model));
+    QVERIFY(!editor->isAncestorOf(policy));
     QVERIFY(more->menu() != nullptr);
     QCOMPARE(more->menu()->actions().size(), 2);
     QCOMPARE(more->menu()->actions()[0]->text(), QStringLiteral("模型配置"));
@@ -434,9 +436,19 @@ void AgentPanelSessionTest::composerUsesApplicationStyleWithoutInheritedLabelBor
     QCOMPARE(policy->menu()->actions()[1]->text(), QStringLiteral("帮我批准"));
     QCOMPARE(policy->menu()->actions()[2]->text(), QStringLiteral("完全访问"));
 
-    const QString rootSession = harness.controller->createSession(QDir::rootPath());
-    harness.panel->openSession(rootSession);
-    QCOMPARE(directory->text(), QDir::toNativeSeparators(QDir::rootPath()));
+}
+
+void AgentPanelSessionTest::conversationUsesAvailableWidth() {
+    Harness harness;
+    harness.panel->resize(1200, 700);
+    QVERIFY(QTest::qWaitForWindowExposed(harness.panel.get()));
+
+    MarkdownView* view = harness.view();
+    QVERIFY(view != nullptr);
+    view->addItem(QStringLiteral("wide-document"), MarkdownView::Style::Document,
+                  QStringLiteral("内容应该使用窗口可用宽度"));
+    QTRY_VERIFY(view->itemRect(QStringLiteral("wide-document")).width() >=
+                view->viewport()->width() - UiZoom::s(60));
 }
 
 QTEST_MAIN(AgentPanelSessionTest)

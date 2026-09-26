@@ -1803,7 +1803,7 @@ void MainWindow::buildUi() {
         auto* button = new QPushButton(replySuggestionBar_);
         button->setObjectName(name);
         button->setProperty("styleLabel", label);
-        button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+        button->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
         button->setCursor(Qt::PointingHandCursor);
         button->setEnabled(false);
         choices->addWidget(button, 1);

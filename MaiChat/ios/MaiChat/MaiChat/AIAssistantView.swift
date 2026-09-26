@@ -407,7 +407,9 @@ private struct AIMessageRow: View {
                 } else {
                     HStack {
                         Text(message.completed == 0 ? "已中断" : "用时 \(max(0, (message.completed - message.created) / 1000)) 秒").font(.caption2)
-                        Button { UIPasteboard.general.string = message.text } label: { Image(systemName: "doc.on.doc") }
+                        Button { RemoteIMClipboard.writeText(message.text) } label: {
+                            Image(systemName: "doc.on.doc")
+                        }
                             .accessibilityLabel("复制回复")
                     }.foregroundStyle(.secondary).font(.caption)
                 }

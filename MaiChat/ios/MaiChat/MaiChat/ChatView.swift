@@ -1171,8 +1171,8 @@ private struct ChatDetailView: View {
                         selectingMessageID = nil
                     },
                     copyAll: {
-                        UIPasteboard.general.string = RemoteIMMessageCopyPolicy.fullText(
-                            for: messageActionTarget.message
+                        RemoteIMClipboard.writeText(
+                            RemoteIMMessageCopyPolicy.fullText(for: messageActionTarget.message)
                         )
                         self.messageActionTarget = nil
                         selectingMessageID = nil
@@ -2384,8 +2384,10 @@ private struct MessageBubbleView: View {
             if isSelectingText {
                 HStack(spacing: 2) {
                     Button {
-                        UIPasteboard.general.string = textSelectionController.selectedText(
-                            fallback: RemoteIMMessageCopyPolicy.selectionText(for: message)
+                        RemoteIMClipboard.writeText(
+                            textSelectionController.selectedText(
+                                fallback: RemoteIMMessageCopyPolicy.selectionText(for: message)
+                            )
                         )
                         finishSelectingText()
                     } label: {
@@ -4863,11 +4865,6 @@ private struct ComposerView: View {
                             ComposerEditActionBar(
                                 state: state,
                                 pasteTarget: composerEditingController.textView,
-                                pasteCompleted: {
-                                    withAnimation(.easeOut(duration: 0.08)) {
-                                        composerEditMenuState = nil
-                                    }
-                                },
                                 perform: performComposerEditAction
                             )
                             .offset(x: 4, y: -50)
@@ -5637,7 +5634,6 @@ private final class ComposerTextEditingController {
 private struct ComposerEditActionBar: View {
     let state: ComposerEditMenuState
     weak var pasteTarget: UITextView?
-    let pasteCompleted: () -> Void
     let perform: (ComposerEditAction) -> Void
 
     var body: some View {
@@ -5646,8 +5642,7 @@ private struct ComposerEditActionBar: View {
                 ForEach(state.actions) { action in
                     if action == .paste {
                         ComposerPasteControl(
-                            target: pasteTarget,
-                            pasteCompleted: pasteCompleted
+                            target: pasteTarget
                         )
                         .frame(width: 58, height: 42)
                         .overlay {
@@ -5706,13 +5701,8 @@ private struct ComposerEditActionBar: View {
 
 private struct ComposerPasteControl: UIViewRepresentable {
     weak var target: UITextView?
-    let pasteCompleted: () -> Void
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(pasteCompleted: pasteCompleted)
-    }
-
-    func makeUIView(context: Context) -> UIPasteControl {
+    func makeUIView(context _: Context) -> UIPasteControl {
         let configuration = UIPasteControl.Configuration()
         configuration.displayMode = .iconOnly
         configuration.cornerRadius = 0
@@ -5723,32 +5713,11 @@ private struct ComposerPasteControl: UIViewRepresentable {
         let control = UIPasteControl(configuration: configuration)
         control.target = target
         control.accessibilityIdentifier = "composer-custom-paste-control"
-        control.addTarget(
-            context.coordinator,
-            action: #selector(Coordinator.didPaste),
-            for: .primaryActionTriggered
-        )
         return control
     }
 
-    func updateUIView(_ control: UIPasteControl, context: Context) {
-        context.coordinator.pasteCompleted = pasteCompleted
+    func updateUIView(_ control: UIPasteControl, context _: Context) {
         control.target = target
-    }
-
-    @MainActor
-    final class Coordinator: NSObject {
-        var pasteCompleted: () -> Void
-
-        init(pasteCompleted: @escaping () -> Void) {
-            self.pasteCompleted = pasteCompleted
-        }
-
-        @objc func didPaste() {
-            DispatchQueue.main.async { [weak self] in
-                self?.pasteCompleted()
-            }
-        }
     }
 }
 

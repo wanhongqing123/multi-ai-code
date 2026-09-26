@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 enum MessageBubbleMetrics {
     static let horizontalInset: CGFloat = 12
@@ -11,6 +12,17 @@ enum RemoteIMActivityDurationFormatter {
         let value = max(0, seconds)
         guard value >= 60 else { return "\(value)秒" }
         return "\(value / 60)分\(value % 60)秒"
+    }
+}
+
+enum RemoteIMClipboard {
+    static func writeText(_ text: String) {
+        UIPasteboard.general.setItems(
+            [[
+                UTType.utf8PlainText.identifier: text,
+                UTType.plainText.identifier: text,
+            ]]
+        )
     }
 }
 

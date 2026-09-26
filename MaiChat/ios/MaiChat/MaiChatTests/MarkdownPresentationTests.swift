@@ -2,6 +2,7 @@ import XCTest
 import Combine
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 @testable import MaiChatCore
 
 final class MarkdownPresentationTests: XCTestCase {
@@ -11,6 +12,36 @@ final class MarkdownPresentationTests: XCTestCase {
         XCTAssertEqual(RemoteIMActivityDurationFormatter.text(seconds: 60), "1分0秒")
         XCTAssertEqual(RemoteIMActivityDurationFormatter.text(seconds: 62), "1分2秒")
         XCTAssertEqual(RemoteIMActivityDurationFormatter.text(seconds: 417), "6分57秒")
+    }
+
+    func testMessageClipboardPublishesPlainTextForComposerPaste() {
+        defer { UIPasteboard.general.items = [] }
+        let copied = "第一行\n第二行"
+        RemoteIMClipboard.writeText(copied)
+
+        XCTAssertEqual(UIPasteboard.general.string, copied)
+        let types = Set(UIPasteboard.general.types)
+        XCTAssertTrue(types.contains(UTType.utf8PlainText.identifier))
+        XCTAssertTrue(types.contains(UTType.plainText.identifier))
+    }
+
+    @MainActor
+    func testComposerTextViewCanPasteCopiedMessageText() {
+        defer { UIPasteboard.general.items = [] }
+        let copied = "选择复制的正文"
+        RemoteIMClipboard.writeText(copied)
+        let textView = UITextView()
+        textView.pasteConfiguration = UIPasteConfiguration(
+            acceptableTypeIdentifiers: [
+                UTType.utf8PlainText.identifier,
+                UTType.plainText.identifier,
+                UTType.url.identifier,
+            ]
+        )
+
+        textView.paste(nil)
+
+        XCTAssertEqual(textView.text, copied)
     }
 
     func testAIComposerReturnBuildsTheSubmittedText() {

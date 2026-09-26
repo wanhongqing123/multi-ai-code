@@ -1,6 +1,8 @@
 package com.kongshang.maichat;
 
 import android.content.Context;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -55,6 +57,16 @@ final class AIAssistantController {
                         return s.optBoolean("busy");
                 }
             return false;
+        }
+    }
+    static final class ImportedFile {
+        final String relativePath;
+        final String mimeType;
+        final boolean image;
+        ImportedFile(String relativePath, String mimeType, boolean image) {
+            this.relativePath = relativePath;
+            this.mimeType = mimeType;
+            this.image = image;
         }
     }
     private static AIAssistantController shared;
@@ -223,7 +235,11 @@ final class AIAssistantController {
         action("create", new JSONObject(), null);
     }
     void send(String text, Consumer<Boolean> completion) {
+        send(text, java.util.Collections.emptyList(), completion);
+    }
+    void send(String text, java.util.List<ImportedFile> attachments, Consumer<Boolean> completion) {
         String intendedSession = state.selected;
+        java.util.List<ImportedFile> intendedAttachments = new java.util.ArrayList<>(attachments);
         worker.post(() -> {
             boolean success = false;
             try {
@@ -232,7 +248,12 @@ final class AIAssistantController {
                     target = call(op("create")).getString("id");
                     selected = target;
                 }
-                call(op("send").put("session", target).put("text", text));
+                JSONArray images = new JSONArray();
+                for (ImportedFile file : intendedAttachments) if (file.image) {
+                    images.put(new JSONObject().put("path", file.relativePath)
+                        .put("mimeType", file.mimeType));
+                }
+                call(op("send").put("session", target).put("text", text).put("images", images));
                 error = "";
                 success = true;
                 refresh(true);
@@ -243,6 +264,9 @@ final class AIAssistantController {
             boolean sent = success;
             main.post(() -> completion.accept(sent));
         });
+    }
+    void switchModel(String name, Consumer<Boolean> completion) {
+        save(baseUrl, name, policy, "", completion);
     }
     void action(String operation, JSONObject values, Runnable completion) {
         String target = state.selected;
@@ -319,31 +343,120 @@ final class AIAssistantController {
             main.post(() -> completion.accept(saved));
         });
     }
-    void importFile(Uri uri, Consumer<String> completion) {
+    void importFile(Uri uri, Consumer<ImportedFile> completion) {
         worker.post(() -> {
-            String name = null;
+            ImportedFile imported = null;
             try (InputStream input = context.getContentResolver().openInputStream(uri)) {
                 if (input == null)
                     throw new IllegalArgumentException("无法读取文件");
-                java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
-                byte[] buffer = new byte[8192];
-                int count;
-                while ((count = input.read(buffer)) >= 0) {
-                    if (bytes.size() + count > 5 * 1024 * 1024)
-                        throw new IllegalArgumentException("请选择不超过 5 MB 的文本文件");
-                    bytes.write(buffer, 0, count);
-                }
-                byte[] value = bytes.toByteArray();
-                StandardCharsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(value));
-                name = "import-" + UUID.randomUUID().toString().substring(0, 8) + ".txt";
-                Files.write(new File(new File(root, "Workspace"), name).toPath(), value);
+                String mime = context.getContentResolver().getType(uri);
+                imported = importStream(input, mime == null ? "application/octet-stream" : mime,
+                    uri.getLastPathSegment());
             } catch (Exception e) {
                 error = safeMessage(e);
                 emit();
             }
-            String result = name;
+            ImportedFile result = imported;
             main.post(() -> completion.accept(result));
         });
+    }
+    void importCameraFile(File source, Consumer<ImportedFile> completion) {
+        worker.post(() -> {
+            ImportedFile imported = null;
+            try (InputStream input = new java.io.FileInputStream(source)) {
+                imported = importStream(input, "image/jpeg", source.getName());
+            } catch (Exception e) {
+                error = safeMessage(e);
+                emit();
+            } finally {
+                if (source != null) source.delete();
+            }
+            ImportedFile result = imported;
+            main.post(() -> completion.accept(result));
+        });
+    }
+    void prepareCameraFile(Consumer<File> completion) {
+        worker.post(() -> {
+            File value = null;
+            try {
+                File directory = new File(context.getCacheDir(), "AIAssistantCaptures");
+                if (!directory.mkdirs() && !directory.isDirectory())
+                    throw new IllegalStateException("无法创建拍照目录");
+                value = File.createTempFile("capture-", ".jpg", directory);
+            } catch (Exception e) {
+                error = safeMessage(e);
+                emit();
+            }
+            File result = value;
+            main.post(() -> completion.accept(result));
+        });
+    }
+    File workspaceFile(String relativePath) {
+        if (root == null || relativePath == null || relativePath.trim().isEmpty()) return null;
+        java.nio.file.Path workspace = new File(root, "Workspace").toPath().toAbsolutePath().normalize();
+        java.nio.file.Path candidate = workspace.resolve(relativePath).normalize();
+        return candidate.startsWith(workspace) ? candidate.toFile() : null;
+    }
+    private ImportedFile importStream(InputStream input, String sourceMime, String sourceName)
+        throws Exception {
+        String originalMime = sourceMime == null ? "application/octet-stream"
+            : sourceMime.toLowerCase(java.util.Locale.ROOT);
+        boolean image = originalMime.startsWith("image/")
+            || AIAssistantMediaPolicy.looksLikeImageName(sourceName);
+        boolean unknownType = originalMime.equals("application/octet-stream");
+        int maximum = AIAssistantMediaPolicy.maximumBytes(image || unknownType);
+        java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+        byte[] buffer = new byte[8192];
+        int count;
+        while ((count = input.read(buffer)) >= 0) {
+            if (bytes.size() + count > maximum)
+                throw new IllegalArgumentException(image
+                    ? "请选择不超过 20 MB 的图片" : "请选择不超过 5 MB 的文本文件");
+            bytes.write(buffer, 0, count);
+        }
+        byte[] value = bytes.toByteArray();
+        String mime = originalMime;
+        if (!image && unknownType) {
+            BitmapFactory.Options probe = new BitmapFactory.Options();
+            probe.inJustDecodeBounds = true;
+            BitmapFactory.decodeByteArray(value, 0, value.length, probe);
+            image = probe.outWidth > 0 && probe.outHeight > 0;
+        }
+        if (image) {
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeByteArray(value, 0, value.length, bounds);
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0)
+                throw new IllegalArgumentException("图片格式无法读取");
+            if (!AIAssistantMediaPolicy.isSupportedImageMime(mime)) {
+                BitmapFactory.Options decode = new BitmapFactory.Options();
+                decode.inSampleSize = MessageImageDecodePolicy.sampleSize(
+                    bounds.outWidth, bounds.outHeight, 4096, 4096);
+                Bitmap bitmap = BitmapFactory.decodeByteArray(value, 0, value.length, decode);
+                if (bitmap == null) throw new IllegalArgumentException("图片格式无法转换");
+                java.io.ByteArrayOutputStream converted = new java.io.ByteArrayOutputStream();
+                try {
+                    if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 92, converted))
+                        throw new IllegalArgumentException("图片格式无法转换");
+                } finally {
+                    bitmap.recycle();
+                }
+                value = converted.toByteArray();
+                mime = "image/jpeg";
+                if (value.length > AIAssistantMediaPolicy.maximumBytes(true))
+                    throw new IllegalArgumentException("转换后的图片超过 20 MB");
+            }
+        } else {
+            if (value.length > AIAssistantMediaPolicy.maximumBytes(false))
+                throw new IllegalArgumentException("请选择不超过 5 MB 的文本文件");
+            StandardCharsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(value));
+            mime = "text/plain";
+        }
+        String extension = image ? AIAssistantMediaPolicy.extension(mime) : "txt";
+        String name = (image ? "image-" : "import-")
+            + UUID.randomUUID().toString().substring(0, 8) + "." + extension;
+        Files.write(new File(new File(root, "Workspace"), name).toPath(), value);
+        return new ImportedFile(name, mime, image);
     }
     private SecretKey encryptionKey() throws Exception {
         KeyStore store = KeyStore.getInstance("AndroidKeyStore");

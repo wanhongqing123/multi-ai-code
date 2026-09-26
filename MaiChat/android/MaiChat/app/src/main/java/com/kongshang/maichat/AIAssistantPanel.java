@@ -1,5 +1,6 @@
 package com.kongshang.maichat;
 
+import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ClipData;
@@ -8,12 +9,16 @@ import android.content.Context;
 import android.content.Intent;
 import android.graphics.Color;
 import android.net.Uri;
+import android.provider.MediaStore;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.*;
+import androidx.core.content.FileProvider;
+import java.io.File;
 import java.util.*;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -21,6 +26,9 @@ import org.json.JSONObject;
 /** Stable composer + recycled message rows. No native calls, disk I/O or parsing on UI. */
 final class AIAssistantPanel extends LinearLayout implements AIAssistantController.Listener {
     static final int REQUEST_FILE = 7107;
+    static final int REQUEST_IMAGE = 7108;
+    static final int REQUEST_CAMERA = 7109;
+    static final int REQUEST_CAMERA_PERMISSION = 7110;
     private final Activity activity;
     final AIAssistantController controller;
     final EditText composer;
@@ -29,16 +37,23 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     private final TextView error;
     private final LatestMessageList list;
     private final LinearLayout pending;
+    private final LinearLayout attachmentTray;
     private final MessageAdapter adapter = new MessageAdapter();
     private AIAssistantController.State state;
     private String selected = "", pendingSignature = "";
     private final Map<String, String> drafts = new HashMap<>();
+    private final Map<String, List<AIAssistantController.ImportedFile>> attachments = new HashMap<>();
     private final Set<String> expanded = new HashSet<>();
     private List<JSONObject> messages = Collections.emptyList();
     private boolean following = true, submitting;
     private int visibleLimit = 50;
     private final Button older;
     private boolean visibleToUser = true;
+    private File pendingCameraFile;
+    private final VoiceRecordingController voiceRecorder;
+    private final SpeechRecognizer speechRecognizer;
+    private boolean voiceRecording, cancelVoice;
+    private int voiceGeneration;
     private final Runnable elapsed = new Runnable() {
         @Override
         public void run() {
@@ -53,12 +68,20 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         }
     };
     AIAssistantPanel(Activity activity) {
-        this(activity, AIAssistantController.shared(activity));
+        this(activity, AIAssistantController.shared(activity),
+            activity instanceof MainActivity ? ((MainActivity) activity).voiceRecorderForAssistant() : null,
+            activity instanceof MainActivity ? ((MainActivity) activity).speechRecognizerForAssistant() : null);
     }
     AIAssistantPanel(Activity activity, AIAssistantController controller) {
+        this(activity, controller, null, null);
+    }
+    AIAssistantPanel(Activity activity, AIAssistantController controller,
+                     VoiceRecordingController voiceRecorder, SpeechRecognizer speechRecognizer) {
         super(activity);
         this.activity = activity;
         this.controller = controller;
+        this.voiceRecorder = voiceRecorder;
+        this.speechRecognizer = speechRecognizer;
         setOrientation(VERTICAL);
         setBackgroundColor(Color.WHITE);
         MarkdownRenderer.initialize(activity);
@@ -139,17 +162,18 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             }
         });
         box.addView(composer, matchWrap());
+        attachmentTray = column();
+        box.addView(attachmentTray, matchWrap());
         LinearLayout actions = row();
-        actions.addView(button("＋", "导入文本文件", v -> {
-            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT)
-                                .setType("text/*")
-                                .addCategory(Intent.CATEGORY_OPENABLE);
-            activity.startActivityForResult(intent, REQUEST_FILE);
-        }), new LayoutParams(dp(36), dp(40)));
+        actions.addView(button("＋", "添加图片或文件", v -> attachmentMenu()),
+            new LayoutParams(dp(36), dp(40)));
+        Button voice = button("◉", "按住语音转文字", null);
+        voice.setOnTouchListener((view, event) -> voiceTouch(event));
+        actions.addView(voice, new LayoutParams(dp(36), dp(40)));
         policyButton = button("请求批准", "权限设置", v -> settings());
         policyButton.setTextSize(11);
         actions.addView(policyButton, new LayoutParams(LayoutParams.WRAP_CONTENT, dp(40)));
-        modelButton = button("未配置模型", "模型设置", v -> settings());
+        modelButton = button("未配置模型", "切换模型", v -> modelMenu());
         modelButton.setTextSize(11);
         modelButton.setSingleLine(true);
         actions.addView(modelButton, new LayoutParams(0, dp(40), 1));
@@ -174,6 +198,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     }
     void setForeground(boolean value) {
         visibleToUser = value;
+        if (!value && voiceRecording) finishVoice(true);
         removeCallbacks(elapsed);
         if (value)
             controller.setListener(this);
@@ -186,9 +211,12 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     public void onState(AIAssistantController.State next) {
         boolean changedSession = !selected.equals(next.selected);
         if (changedSession) {
-            drafts.put(selected, composer.getText().toString());
+            String previous = selected;
+            drafts.put(previous, composer.getText().toString());
             boolean firstSend = submitting && selected.isEmpty();
             selected = next.selected;
+            if (firstSend && attachments.containsKey(previous))
+                attachments.put(selected, attachments.remove(previous));
             if (!firstSend)
                 composer.setText(drafts.getOrDefault(selected, ""));
             visibleLimit = 50;
@@ -203,6 +231,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 : next.policy.equals("unless-trusted")   ? "帮我批准"
                                                          : "请求批准");
         updateSend();
+        updateAttachments();
         updateMessages();
         updatePending();
     }
@@ -256,11 +285,12 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         send.setText(busy ? "■" : "↑");
         send.setContentDescription(busy ? "停止" : "发送");
         send.setEnabled(state != null && state.ready && !submitting
-            && (busy || !composer.getText().toString().trim().isEmpty()));
+            && (busy || !composer.getText().toString().trim().isEmpty()
+                || !currentAttachments().isEmpty()));
         // Keep the native editor focused while submit runs; disabling it collapses the IME.
     }
     private void send() {
-        if (state == null)
+        if (state == null || submitting)
             return;
         if (state.busy()) {
             controller.action("stop", new JSONObject(), null);
@@ -271,14 +301,29 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             return;
         }
         String source = composer.getText().toString(), origin = selected;
+        List<AIAssistantController.ImportedFile> sending = new ArrayList<>(currentAttachments());
+        if (source.trim().isEmpty() && !sending.isEmpty())
+            source = sending.size() == 1 ? "请查看这张图片。" : "请查看这些图片。";
+        if (!sending.isEmpty() && !AIAssistantMediaPolicy.supportsImages(state.model)) {
+            Toast.makeText(activity, "glm-5.3 仅支持文本，请先切换到 glm-5.3-flash。",
+                Toast.LENGTH_LONG).show();
+            return;
+        }
+        String submittedText = source;
         submitting = true;
         updateSend();
         following = true;
-        controller.send(source, success -> {
+        controller.send(source, sending, success -> {
             submitting = false;
             if (success && (origin.isEmpty() || selected.equals(origin))
-                && composer.getText().toString().equals(source))
+                && (composer.getText().toString().equals(submittedText)
+                    || composer.getText().toString().trim().isEmpty()))
                 composer.setText("");
+            if (success) {
+                attachments.remove(origin);
+                if (origin.isEmpty()) attachments.remove(selected);
+            }
+            updateAttachments();
             updateSend();
             if (success)
                 locateLatest();
@@ -286,15 +331,233 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     }
     void importFile(Uri uri) {
         String origin = selected;
-        controller.importFile(uri, name -> {
-            if (name == null)
+        controller.importFile(uri, file -> {
+            if (file == null)
                 return;
-            String text = "\n请查看文件：" + name + "\n";
-            if (origin.equals(selected))
-                composer.append(text);
-            else
-                drafts.put(origin, drafts.getOrDefault(origin, "") + text);
+            acceptImportedFile(file, origin);
         });
+    }
+    private List<AIAssistantController.ImportedFile> currentAttachments() {
+        return attachments.getOrDefault(selected, Collections.emptyList());
+    }
+    private void acceptImportedFile(AIAssistantController.ImportedFile file, String target) {
+        if (!file.image) {
+            String reference = "\n请查看工作区文件：" + file.relativePath + "\n";
+            if (target.equals(selected)) composer.append(reference);
+            else drafts.put(target, drafts.getOrDefault(target, "") + reference);
+            return;
+        }
+        attachments.computeIfAbsent(target, ignored -> new ArrayList<>()).add(file);
+        if (target.equals(selected)) {
+            updateAttachments(); updateSend();
+            if (state != null && AIAssistantMediaPolicy.supportsImages(state.model)) send();
+            else Toast.makeText(activity, "图片已保留，请切换到 glm-5.3-flash 后发送。",
+                Toast.LENGTH_LONG).show();
+        }
+    }
+    private void updateAttachments() {
+        if (attachmentTray == null) return;
+        attachmentTray.removeAllViews();
+        for (AIAssistantController.ImportedFile file : currentAttachments()) {
+            LinearLayout chip = row();
+            chip.setPadding(dp(8), dp(4), dp(8), dp(4));
+            chip.setBackground(MaiChatTheme.bordered(MaiChatTheme.BLUE_SOFT,
+                MaiChatTheme.BORDER, 9, activity));
+            ImageView preview = new ImageView(activity);
+            preview.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            File image = controller.workspaceFile(file.relativePath);
+            if (image != null) MessageImageLoader.load(image.getPath(), dp(72), dp(54), preview, null);
+            chip.addView(preview, new LayoutParams(dp(72), dp(54)));
+            TextView name = text(file.relativePath, 12, MaiChatTheme.TEXT);
+            name.setMaxLines(2);
+            LayoutParams nameParams = new LayoutParams(0, dp(54), 1);
+            nameParams.setMargins(dp(8), 0, dp(8), 0);
+            chip.addView(name, nameParams);
+            chip.addView(button("×", "移除图片", view -> {
+                List<AIAssistantController.ImportedFile> values = attachments.get(selected);
+                if (values != null) {
+                    values.remove(file);
+                    if (values.isEmpty()) attachments.remove(selected);
+                }
+                updateAttachments(); updateSend();
+            }), new LayoutParams(dp(36), dp(54)));
+            LayoutParams params = matchWrap();
+            params.setMargins(0, dp(4), 0, dp(4));
+            attachmentTray.addView(chip, params);
+        }
+    }
+    private void attachmentMenu() {
+        new AlertDialog.Builder(activity)
+            .setItems(new String[] {"从相册选择", "拍照", "导入文本文件"}, (dialog, which) -> {
+                if (which == 0) {
+                    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT)
+                        .setType("image/*").addCategory(Intent.CATEGORY_OPENABLE);
+                    activity.startActivityForResult(intent, REQUEST_IMAGE);
+                } else if (which == 1) requestCamera();
+                else {
+                    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT)
+                        .setType("text/*").addCategory(Intent.CATEGORY_OPENABLE);
+                    activity.startActivityForResult(intent, REQUEST_FILE);
+                }
+            })
+            .show();
+    }
+    boolean handleActivityResult(int requestCode, Intent data) {
+        if (requestCode == REQUEST_FILE) {
+            if (data != null && data.getData() != null) importFile(data.getData());
+            return true;
+        }
+        if (requestCode == REQUEST_IMAGE) {
+            if (data != null && data.getClipData() != null) {
+                for (int i = 0; i < data.getClipData().getItemCount(); i++)
+                    importFile(data.getClipData().getItemAt(i).getUri());
+            } else if (data != null && data.getData() != null) importFile(data.getData());
+            return true;
+        }
+        if (requestCode == REQUEST_CAMERA) {
+            File file = pendingCameraFile; pendingCameraFile = null;
+            if (file != null) {
+                String target = selected;
+                controller.importCameraFile(file, imported -> {
+                    if (imported != null) acceptImportedFile(imported, target);
+                });
+            }
+            return true;
+        }
+        return false;
+    }
+    void handleActivityCancelled(int requestCode) {
+        if (requestCode == REQUEST_CAMERA && pendingCameraFile != null) {
+            pendingCameraFile.delete();
+            pendingCameraFile = null;
+        }
+    }
+    void onCameraPermission(boolean granted) {
+        if (granted) openCamera();
+        else Toast.makeText(activity, "没有相机权限，无法拍照", Toast.LENGTH_LONG).show();
+    }
+    void onAudioPermission(boolean granted) {
+        Toast.makeText(activity, granted ? "麦克风已启用，请按住语音按钮"
+            : "没有麦克风权限，无法语音转文字", Toast.LENGTH_LONG).show();
+    }
+    private void requestCamera() {
+        if (activity.checkSelfPermission(Manifest.permission.CAMERA)
+            == android.content.pm.PackageManager.PERMISSION_GRANTED) openCamera();
+        else activity.requestPermissions(new String[] {Manifest.permission.CAMERA},
+            REQUEST_CAMERA_PERMISSION);
+    }
+    private void openCamera() {
+        controller.prepareCameraFile(file -> {
+            if (file == null) return;
+            pendingCameraFile = file;
+            Uri output = FileProvider.getUriForFile(activity,
+                activity.getPackageName() + ".files", file);
+            Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+                .putExtra(MediaStore.EXTRA_OUTPUT, output)
+                .addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            activity.startActivityForResult(intent, REQUEST_CAMERA);
+        });
+    }
+    private void modelMenu() {
+        if (state == null) return;
+        String[] choices = {"glm-5.3", "glm-5.3-flash", "模型与权限设置"};
+        new AlertDialog.Builder(activity).setTitle("选择模型").setItems(choices, (dialog, which) -> {
+            if (which == 2) { settings(); return; }
+            if (state.busy()) {
+                Toast.makeText(activity, "请先停止当前任务再切换模型", Toast.LENGTH_LONG).show();
+                return;
+            }
+            if (choices[which].equalsIgnoreCase(state.model)) return;
+            modelButton.setEnabled(false);
+            controller.switchModel(choices[which], success -> {
+                modelButton.setEnabled(true);
+                if (!success) Toast.makeText(activity, controller.state.error,
+                    Toast.LENGTH_LONG).show();
+            });
+        }).show();
+    }
+    private boolean voiceTouch(MotionEvent event) {
+        if (voiceRecorder == null || state == null || state.busy() || submitting
+            || (!voiceRecording && !composer.getText().toString().trim().isEmpty())) return false;
+        if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+            if (activity.checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                activity.requestPermissions(new String[] {Manifest.permission.RECORD_AUDIO},
+                    REQUEST_AUDIO_PERMISSION);
+                return true;
+            }
+            beginVoice(); return true;
+        }
+        if (!voiceRecording) return false;
+        if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
+            cancelVoice = event.getY() < -dp(60); return true;
+        }
+        if (event.getActionMasked() == MotionEvent.ACTION_UP
+            || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+            finishVoice(cancelVoice || event.getActionMasked() == MotionEvent.ACTION_CANCEL);
+            return true;
+        }
+        return true;
+    }
+    static final int REQUEST_AUDIO_PERMISSION = 7111;
+    private void beginVoice() {
+        int generation = ++voiceGeneration;
+        boolean started = voiceRecorder.tryStart(new VoiceRecordingController.Completion() {
+            @Override public void partial(String text) {
+                if (voiceRecording && generation == voiceGeneration) composer.setText(text);
+            }
+            @Override public void recognized(String text, File file, int seconds) {
+                file.delete();
+                if (generation != voiceGeneration || text == null || text.trim().isEmpty()) return;
+                composer.setText(text.trim());
+                send();
+            }
+            @Override public void finished(File file, int seconds) {
+                if (speechRecognizer != null && speechRecognizer.isAvailable()) {
+                    speechRecognizer.transcribe(file, file.getName().endsWith(".aac") ? "aac" : "m4a",
+                        new SpeechRecognizer.Callback() {
+                            @Override public void onText(String text) {
+                                file.delete();
+                                if (generation != voiceGeneration || text == null
+                                    || text.trim().isEmpty()) {
+                                    Toast.makeText(activity, "没有识别到文字", Toast.LENGTH_LONG).show();
+                                    return;
+                                }
+                                composer.setText(text.trim()); send();
+                            }
+                            @Override public void onError(String message) {
+                                file.delete();
+                                if (generation == voiceGeneration)
+                                    Toast.makeText(activity, message, Toast.LENGTH_LONG).show();
+                            }
+                        });
+                } else {
+                    file.delete();
+                    if (generation == voiceGeneration)
+                        Toast.makeText(activity, "没有识别到文字", Toast.LENGTH_LONG).show();
+                }
+            }
+            @Override public void failed() {
+                if (generation == voiceGeneration)
+                    Toast.makeText(activity, "语音转文字失败", Toast.LENGTH_LONG).show();
+            }
+        });
+        if (!started) {
+            Toast.makeText(activity, "麦克风正在被其他录音使用", Toast.LENGTH_LONG).show();
+            return;
+        }
+        voiceRecording = true; cancelVoice = false;
+        composer.setHint("松开发送，上滑取消");
+    }
+    private void finishVoice(boolean cancel) {
+        if (!voiceRecording) return;
+        voiceRecording = false; cancelVoice = false;
+        composer.setHint("随心输入");
+        if (cancel) {
+            voiceGeneration++;
+            composer.setText("");
+        }
+        voiceRecorder.finish(cancel);
     }
     private JSONObject value(String... pairs) {
         JSONObject value = new JSONObject();
@@ -503,6 +766,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         JSONObject message;
         String key = "";
         final Map<String, TextView> parts = new HashMap<>();
+        final Map<String, ImageView> imageParts = new HashMap<>();
         TextView status;
         MessageRow() {
             super(activity);
@@ -516,8 +780,9 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                     key = "empty";
                     removeAllViews();
                     parts.clear();
+                    imageParts.clear();
                     status = null;
-                    TextView empty = text("有什么可以帮你？\n\n可以聊天、分析文本和处理导入的文件。", 16,
+                    TextView empty = text("有什么可以帮你？\n\n可以聊天、分析图片和文件，也可以语音转文字。", 16,
                         MaiChatTheme.SECONDARY);
                     empty.setPadding(0, dp(50), 0, dp(50));
                     empty.setGravity(Gravity.CENTER);
@@ -537,15 +802,27 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 key = structure.toString();
                 removeAllViews();
                 parts.clear();
+                imageParts.clear();
                 status = null;
                 if (outgoing) {
+                    LinearLayout bubble = column();
                     TextView body = MaiChatTypography.body(activity);
-                    body.setPadding(dp(12), dp(10), dp(12), dp(10));
-                    body.setBackground(MaiChatTheme.rounded(Color.rgb(244, 244, 247), 16, activity));
+                    bubble.addView(body, matchWrap());
+                    for (int i = 0; i < array.length(); i++) {
+                        JSONObject part = array.optJSONObject(i);
+                        if (part == null || !part.optString("kind").equals("image")) continue;
+                        ImageView image = new ImageView(activity);
+                        image.setAdjustViewBounds(true);
+                        image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                        bubble.addView(image, new LayoutParams(dp(220), dp(150)));
+                        imageParts.put(part.optString("id"), image);
+                    }
+                    bubble.setPadding(dp(12), dp(10), dp(12), dp(10));
+                    bubble.setBackground(MaiChatTheme.rounded(Color.rgb(244, 244, 247), 16, activity));
                     LayoutParams lp = new LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT);
                     lp.gravity = Gravity.END;
                     lp.leftMargin = dp(28);
-                    addView(body, lp);
+                    addView(bubble, lp);
                     parts.put("user", body);
                 } else {
                     for (int phase = 0; phase < 2; phase++)
@@ -592,8 +869,17 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             }
             if (outgoing) {
                 StringBuilder body = new StringBuilder();
-                for (int i = 0; i < array.length(); i++)
-                    body.append(array.optJSONObject(i).optString("text"));
+                for (int i = 0; i < array.length(); i++) {
+                    JSONObject part = array.optJSONObject(i);
+                    if (part.optString("kind").equals("text")) body.append(part.optString("text"));
+                    if (part.optString("kind").equals("image")) {
+                        ImageView image = imageParts.get(part.optString("id"));
+                        File file = controller.workspaceFile(part.optString("path"));
+                        if (image != null && file != null)
+                            MessageImageLoader.load(file.getPath(), dp(440), dp(300), image,
+                                () -> image.setContentDescription("图片无法显示"));
+                    }
+                }
                 parts.get("user").setText(body.toString());
             } else
                 for (int i = 0; i < array.length(); i++) {

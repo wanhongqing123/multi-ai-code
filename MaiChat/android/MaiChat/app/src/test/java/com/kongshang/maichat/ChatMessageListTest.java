@@ -35,6 +35,12 @@ public class ChatMessageListTest {
         list.measure(View.MeasureSpec.makeMeasureSpec(400, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY));
         list.layout(0, 0, 400, 600);
     }
+    @Test public void aShortConversationStartsAtTheTopWithoutBlankSpace() {
+        add(1); ChatMessageList list = list();
+        list.requestLatestAfterUpdate(); list.update(messages, null, 0); layout(list);
+        assertTrue(list.getChildCount() > 0);
+        assertEquals(list.getPaddingTop(), list.getChildAt(0).getTop());
+    }
     @Test public void enteringAndSendingScrollButIncomingAndReceiptsPreserveTheAnchor() {
         add(40); ChatMessageList list = list();
         list.requestLatestAfterUpdate(); list.update(messages, null, 0); layout(list);

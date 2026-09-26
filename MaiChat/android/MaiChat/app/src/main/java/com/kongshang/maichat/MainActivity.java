@@ -308,10 +308,11 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (resultCode != RESULT_OK) return;
-        if (requestCode == AIAssistantPanel.REQUEST_FILE && aiAssistant != null && data != null && data.getData() != null) {
-            aiAssistant.importFile(data.getData()); return;
+        if (resultCode != RESULT_OK) {
+            if (aiAssistant != null) aiAssistant.handleActivityCancelled(requestCode);
+            return;
         }
+        if (aiAssistant != null && aiAssistant.handleActivityResult(requestCode, data)) return;
         if (requestCode == REQUEST_PICK_IMAGE && data != null && data.getData() != null) {
             sendPickedImage(data.getData());
         } else if (requestCode == REQUEST_PICK_FILE && data != null && data.getData() != null) {
@@ -336,9 +337,21 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         } else if (requestCode == REQUEST_CAMERA_PERMISSION) {
             if (granted) openCamera();
             else toast("没有相机权限，无法拍照");
+        } else if (requestCode == AIAssistantPanel.REQUEST_CAMERA_PERMISSION && aiAssistant != null) {
+            aiAssistant.onCameraPermission(granted);
+        } else if (requestCode == AIAssistantPanel.REQUEST_AUDIO_PERMISSION && aiAssistant != null) {
+            aiAssistant.onAudioPermission(granted);
         } else if (requestCode == REQUEST_POST_NOTIFICATIONS && !granted) {
             Log.i(TAG, "notification-suppressed reason=permission-denied");
         }
+    }
+
+    VoiceRecordingController voiceRecorderForAssistant() {
+        return voiceRecorder;
+    }
+
+    SpeechRecognizer speechRecognizerForAssistant() {
+        return speechRecognizer;
     }
 
     private void createMessageNotificationChannel() {
@@ -471,6 +484,9 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
 
     private void render() {
         if (destroyed) return;
+        boolean showingAssistant = activityInForeground && activeTab == RemoteIMTab.ASSISTANT
+            && activeChatUserId == null && !showInitialLogin && !session.requiresLogin();
+        if (aiAssistant != null) aiAssistant.setForeground(showingAssistant);
         String owner = session.requiresLogin() ? "" : session.settings().loginUserId();
         if (!owner.equals(displayedOwner)) {
             rememberDraft();
@@ -778,6 +794,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             button.addView(badge, badgeParams);
         }
         button.setOnClickListener(view -> {
+            cancelVoiceRecording();
             activeTab = tab;
             activeChatUserId = null;
             render();

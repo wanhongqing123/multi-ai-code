@@ -11,14 +11,14 @@ import android.view.View;
 final class ActivityBubbleView extends View {
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final ValueAnimator animation = ValueAnimator.ofFloat(0, 1);
-    private final RemoteIMActivitySignal.Kind kind;
+    private final RemoteIMActivitySignal signal;
     private final float scale;
     private float phase;
-    ActivityBubbleView(Context context, RemoteIMActivitySignal.Kind kind) {
+    ActivityBubbleView(Context context, RemoteIMActivitySignal signal) {
         super(context);
-        this.kind = kind;
+        this.signal = signal;
         scale = getResources().getDisplayMetrics().density;
-        setContentDescription(kind == RemoteIMActivitySignal.Kind.HUMAN_TYPING ? "对方正在输入" : kind.label);
+        setContentDescription(statusText());
         animation.setDuration(1200);
         animation.setRepeatCount(ValueAnimator.INFINITE);
         animation.addUpdateListener(value -> { phase = (float) value.getAnimatedValue(); invalidate(); });
@@ -38,11 +38,14 @@ final class ActivityBubbleView extends View {
     @Override protected void onDraw(Canvas canvas) {
         paint.setStyle(Paint.Style.FILL);
         paint.setTextSize(12 * getResources().getDisplayMetrics().scaledDensity);
-        float width = kind == RemoteIMActivitySignal.Kind.HUMAN_TYPING ? 60 * scale : 48 * scale + paint.measureText(kind.label);
+        String status = statusText();
+        if (!status.contentEquals(getContentDescription())) setContentDescription(status);
+        float width = signal.kind == RemoteIMActivitySignal.Kind.HUMAN_TYPING
+            ? 60 * scale : 48 * scale + paint.measureText(status);
         paint.setColor(android.graphics.Color.rgb(242, 242, 247));
         canvas.drawRoundRect(new RectF(0, 3 * scale, width, 45 * scale), 21 * scale, 21 * scale, paint);
         paint.setColor(MaiChatTheme.BLUE);
-        if (kind == RemoteIMActivitySignal.Kind.HUMAN_TYPING) {
+        if (signal.kind == RemoteIMActivitySignal.Kind.HUMAN_TYPING) {
             for (int i = 0; i < 3; i++) {
                 double wave = (1 + Math.sin((phase - i * .16) * 2 * Math.PI)) / 2;
                 paint.setAlpha((int) (80 + 175 * wave));
@@ -54,7 +57,16 @@ final class ActivityBubbleView extends View {
             canvas.drawArc(new RectF(13 * scale, 16 * scale, 27 * scale, 30 * scale), phase * 360, 260, false, paint);
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(MaiChatTheme.SECONDARY);
-            canvas.drawText(kind.label, 36 * scale, 23 * scale - (paint.ascent() + paint.descent()) / 2, paint);
+            canvas.drawText(status, 36 * scale, 23 * scale - (paint.ascent() + paint.descent()) / 2, paint);
         }
+    }
+    private String statusText() {
+        if (signal.kind == RemoteIMActivitySignal.Kind.HUMAN_TYPING) return "对方正在输入";
+        long now = System.currentTimeMillis();
+        long phase = Math.max(0, (now - signal.startedAtMs) / 1000);
+        long task = Math.max(0, (now - signal.taskStartedAtMs) / 1000);
+        String title = signal.kind.label.replace("…", "");
+        return title + RemoteIMActivityDurationFormatter.text(phase)
+            + "，任务总耗时" + RemoteIMActivityDurationFormatter.text(task);
     }
 }

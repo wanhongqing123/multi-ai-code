@@ -37,7 +37,7 @@ final class ChatMessageList extends ListView {
         setDivider(null); setDividerHeight(0); setCacheColorHint(android.graphics.Color.TRANSPARENT);
         setSelector(new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
         setItemsCanFocus(true);
-        setStackFromBottom(true); setTranscriptMode(TRANSCRIPT_MODE_DISABLED);
+        setStackFromBottom(false); setTranscriptMode(TRANSCRIPT_MODE_DISABLED);
         setAdapter(adapter);
     }
     void requestLatestAfterUpdate() { position = Position.LATEST; targetId = null; intentGeneration++; }
@@ -89,6 +89,13 @@ final class ChatMessageList extends ListView {
         Position requested = position;
         int requestedOffset = targetOffset;
         position = Position.NONE; targetId = null;
+        boolean allRowsFit = getFirstVisiblePosition() == 0
+            && getLastVisiblePosition() == adapter.getCount() - 1;
+        if (allRowsFit && (requested == Position.LATEST || requested == Position.MESSAGE_BOTTOM)) {
+            setSelectionFromTop(0, 0);
+            layoutChildren();
+            return;
+        }
         int offset = requested == Position.RESTORE ? requestedOffset : requested == Position.SEARCH ? getHeight() / 3 : 0;
         setSelectionFromTop(target, offset);
         layoutChildren();
@@ -110,7 +117,9 @@ final class ChatMessageList extends ListView {
         String anchor = firstVisibleMessageId();
         int offset = firstVisibleOffset();
         boolean sameActivity = activity == null ? nextActivity == null : nextActivity != null
-            && activity.activityId.equals(nextActivity.activityId) && activity.kind == nextActivity.kind;
+            && activity.activityId.equals(nextActivity.activityId) && activity.kind == nextActivity.kind
+            && activity.startedAtMs == nextActivity.startedAtMs
+            && activity.taskStartedAtMs == nextActivity.taskStartedAtMs;
         boolean changed = !messages.equals(values) || !sameActivity || bindingRevision != revision;
         if (changed) {
             // Reserve the next reply slot while idle. Showing a typing row then
@@ -141,6 +150,8 @@ final class ChatMessageList extends ListView {
     private static final class Binding {
         RemoteIMMessage message;
         RemoteIMActivitySignal.Kind activityKind;
+        String activityId;
+        long activityStartedAtMs, taskStartedAtMs;
         int revision;
     }
     private final class Rows extends BaseAdapter {
@@ -159,9 +170,14 @@ final class ChatMessageList extends ListView {
                 if (previous != null && Objects.equals(previous.message, next.message) && previous.revision == next.revision) return convertView;
                 convertView = renderer.messageView(next.message);
             } else {
-                next.activityKind = activity.kind;
-                if (previous != null && previous.activityKind == next.activityKind) return convertView;
-                convertView = new ActivityBubbleView(getContext(), next.activityKind);
+                next.activityKind = activity.kind; next.activityId = activity.activityId;
+                next.activityStartedAtMs = activity.startedAtMs;
+                next.taskStartedAtMs = activity.taskStartedAtMs;
+                if (previous != null && previous.activityKind == next.activityKind
+                    && Objects.equals(previous.activityId, next.activityId)
+                    && previous.activityStartedAtMs == next.activityStartedAtMs
+                    && previous.taskStartedAtMs == next.taskStartedAtMs) return convertView;
+                convertView = new ActivityBubbleView(getContext(), activity);
             }
             convertView.setTag(next);
             return convertView;

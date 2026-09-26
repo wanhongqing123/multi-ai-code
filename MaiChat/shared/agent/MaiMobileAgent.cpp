@@ -9,6 +9,7 @@
 #include "MaiSqliteStore.h"
 #include "MaiTimeTool.h"
 #include "MaiTodoWriteTool.h"
+#include "MaiViewImageTool.h"
 #include "MaiWebFetchTool.h"
 #include <cstdlib>
 #include <cstring>
@@ -84,6 +85,7 @@ struct MaiMobileAgent {
         tools->add(makeMaiQuestionTool());
         tools->add(makeMaiCurrentTimeTool());
         tools->add(makeMaiTodoWriteTool());
+        tools->add(makeMaiViewImageTool());
         MaiAgent::Options options;
         options.defaultModel = request.at("model").get<std::string>();
         options.baseInstructions = kMarkdownBaseInstructions;

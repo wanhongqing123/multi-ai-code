@@ -42,8 +42,9 @@ final class VoiceRecordingController {
         this.diagnostic = diagnostic;
         this.store = store; thread.start(); worker = new Handler(thread.getLooper());
     }
-    void start(Completion callback) {
-        if (closed || !active.compareAndSet(false, true)) return;
+    void start(Completion callback) { tryStart(callback); }
+    boolean tryStart(Completion callback) {
+        if (closed || !active.compareAndSet(false, true)) return false;
         worker.post(() -> {
             if (closed) { active.set(false); return; }
             try {
@@ -75,6 +76,7 @@ final class VoiceRecordingController {
                 main.post(() -> { if (!closed) callback.failed(); });
             }
         });
+        return true;
     }
     void finish(boolean cancel) { if (!closed) worker.post(() -> finishOnWorker(cancel)); }
     private void finishOnWorker(boolean cancel) {

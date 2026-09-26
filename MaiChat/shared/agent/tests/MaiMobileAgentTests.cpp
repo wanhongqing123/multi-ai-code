@@ -9,7 +9,6 @@
 #include <json.hpp>
 #include <stdexcept>
 #include <thread>
-#include <unistd.h>
 using Json = nlohmann::json;
 #define CHECK(x)                                \
     do {                                        \
@@ -37,7 +36,12 @@ int main() {
         CHECK(body["messages"].front()["content"].get<std::string>().find(
                   "GitHub-Flavored Markdown") != std::string::npos);
         // 移动端不能向模型宣称可以执行桌面 shell。
-        for (const auto& tool : body["tools"]) CHECK(tool["function"]["name"] != "shell");
+        bool hasViewImage = false;
+        for (const auto& tool : body["tools"]) {
+            CHECK(tool["function"]["name"] != "shell");
+            if (tool["function"]["name"] == "view_image") hasViewImage = true;
+        }
+        CHECK(hasViewImage);
         const auto& last = body["messages"].back();
         std::string input;
         if (last["content"].is_string()) {
@@ -89,18 +93,22 @@ int main() {
     });
     int port = server.bind_to_any_port("127.0.0.1");
     std::thread listener([&] {
+#if !defined(_WIN32)
         pthread_setname_np("MaiMobileTestHTTP");
+#endif
         server.listen_after_bind();
     });
-    char directory[] = "/tmp/mai-mobile-test-XXXXXX";
-    CHECK(mkdtemp(directory));
+    const MaiFilePath testRoot = MaiFileSystem::temporaryDirectory().append(
+        MaiFilePath::fromUtf8("mai-mobile-test-" + MaiIdGenerator::newEventId()));
+    CHECK(!MaiFileSystem::createDirectories(testRoot).hasError());
+    const std::string directory = testRoot.toUtf8();
     void* agent = maiMobileAgentCreate();
     int status = 0;
     try {
         Json config = {
             {"op", "configure"},      {"baseUrl", "http://127.0.0.1:" + std::to_string(port)},
             {"apiKey", "test-key"},   {"model", "test"},
-            {"workspace", directory}, {"database", std::string(directory) + "/sessions.db"}};
+            {"workspace", directory}, {"database", directory + "/sessions.db"}};
         CHECK(call(agent, config)["ok"] == true);
         std::string session = call(agent, {{"op", "create"}}).at("id");
         auto snapshot = [&] {
@@ -165,7 +173,7 @@ int main() {
         CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "write"}})["ok"] == true);
         auto pending = wait([](const Json& s) { return !s["permissions"].empty(); });
         std::string permission = pending["permissions"][0]["id"];
-        CHECK(access((movedWorkspace + "/result.txt").c_str(), F_OK) != 0);
+        CHECK(!MaiFileSystem::exists(MaiFilePath::fromUtf8(movedWorkspace + "/result.txt")));
         CHECK(call(agent,
                    {{"op", "permission"}, {"id", permission}, {"decision", "unknown"}})["ok"] ==
               false);
@@ -174,7 +182,7 @@ int main() {
                    {{"op", "permission"}, {"id", permission}, {"decision", "approved"}})["ok"] ==
               true);
         wait([](const Json& s) { return s["busy"] == false; });
-        CHECK(access((movedWorkspace + "/result.txt").c_str(), F_OK) == 0);
+        CHECK(MaiFileSystem::exists(MaiFilePath::fromUtf8(movedWorkspace + "/result.txt")));
         CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "stop"}})["ok"] == true);
         wait([](const Json& s) {
             return s["busy"] == true && !s["messages"].back()["parts"].empty();
@@ -216,10 +224,6 @@ int main() {
     maiMobileAgentDestroy(agent);
     server.stop();
     listener.join();
-    MaiFileSystem::removeRecursively(
-        MaiFilePath::fromUtf8(std::string(directory) + "/moved-workspace"));
-    for (const auto* file : {"sessions.db", "sessions.db-shm", "sessions.db-wal", "result.txt"})
-        unlink((std::string(directory) + "/" + file).c_str());
-    rmdir(directory);
+    MaiFileSystem::removeRecursively(testRoot);
     return status;
 }

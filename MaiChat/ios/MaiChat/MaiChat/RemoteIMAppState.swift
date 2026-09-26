@@ -1323,8 +1323,9 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         }
     }
 
-    func sendImageFile(_ image: RemoteIMImageFile, to recipient: String? = nil) async {
-        guard let peerID = outgoingRecipient(recipient) else { return }
+    @discardableResult
+    func sendImageFile(_ image: RemoteIMImageFile, to recipient: String? = nil) async -> Bool {
+        guard let peerID = outgoingRecipient(recipient) else { return false }
 
         let identity = remoteDiagnosticsIdentity
         var queuedMessageID: UUID?
@@ -1340,7 +1341,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             locallyQueuedMessageID = message.id
             enqueueHistoryUpsert(message)
             let receipt = try await client.sendImage(to: message.toUserID, image: image)
-            guard remoteDiagnosticsIdentity == identity else { return }
+            guard remoteDiagnosticsIdentity == identity else { return false }
             try chatState.updateMessageDelivery(
                 id: message.id,
                 remoteID: receipt.remoteID,
@@ -1348,13 +1349,15 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             )
             enqueueCurrentMessage(id: message.id)
             errorMessage = nil
+            return true
         } catch {
-            guard remoteDiagnosticsIdentity == identity else { return }
+            guard remoteDiagnosticsIdentity == identity else { return false }
             if let queuedMessageID {
                 try? chatState.updateMessageStatus(id: queuedMessageID, status: .failed)
                 enqueueCurrentMessage(id: queuedMessageID)
             }
             errorMessage = error.localizedDescription
+            return false
         }
     }
 

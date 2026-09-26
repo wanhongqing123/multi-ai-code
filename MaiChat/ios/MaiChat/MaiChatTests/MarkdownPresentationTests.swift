@@ -6,6 +6,26 @@ import UniformTypeIdentifiers
 @testable import MaiChatCore
 
 final class MarkdownPresentationTests: XCTestCase {
+    func testScreenshotRecencyRejectsOldOrMissingPhotoAssets() {
+        let screenshotDate = Date(timeIntervalSince1970: 1_000)
+        XCTAssertTrue(RemoteIMScreenshotRecencyPolicy.accepts(
+            creationDate: screenshotDate.addingTimeInterval(-2),
+            screenshotDate: screenshotDate
+        ))
+        XCTAssertTrue(RemoteIMScreenshotRecencyPolicy.accepts(
+            creationDate: screenshotDate.addingTimeInterval(2),
+            screenshotDate: screenshotDate
+        ))
+        XCTAssertFalse(RemoteIMScreenshotRecencyPolicy.accepts(
+            creationDate: screenshotDate.addingTimeInterval(-4),
+            screenshotDate: screenshotDate
+        ))
+        XCTAssertFalse(RemoteIMScreenshotRecencyPolicy.accepts(
+            creationDate: nil,
+            screenshotDate: screenshotDate
+        ))
+    }
+
     func testActivityDurationUsesMinutesAfterSixtySeconds() {
         XCTAssertEqual(RemoteIMActivityDurationFormatter.text(seconds: 0), "0秒")
         XCTAssertEqual(RemoteIMActivityDurationFormatter.text(seconds: 59), "59秒")

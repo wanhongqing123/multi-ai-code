@@ -69,6 +69,31 @@ private struct RemoteIMImageEncodingInput: @unchecked Sendable {
     let image: UIImage
 }
 
+nonisolated private func makeRemoteIMImageFile(
+    data: Data,
+    contentTypes: [UTType],
+    stem: String = "remote-im-image-\(UUID().uuidString)"
+) throws -> RemoteIMImageFile {
+    let contentType = contentTypes.first(where: { $0.conforms(to: .image) })
+    let fileExtension = contentType?.preferredFilenameExtension ?? "jpg"
+    let fileURL = RemoteIMMediaStorage.fileURL(
+        category: .outgoingImages,
+        stem: stem,
+        pathExtension: fileExtension
+    )
+    try data.write(to: fileURL, options: .atomic)
+
+    let image = UIImage(data: data)
+    let width = image.map { Int($0.size.width * $0.scale) }
+    let height = image.map { Int($0.size.height * $0.scale) }
+    return RemoteIMImageFile(
+        fileURL: fileURL,
+        width: width,
+        height: height,
+        sizeBytes: data.count
+    )
+}
+
 private struct RemoteIMImageDecodeOutcome: @unchecked Sendable {
     let image: RemoteIMDecodedImageBox?
     let durationMilliseconds: Int
@@ -1073,6 +1098,141 @@ private struct PresentedMessageActions: Identifiable {
     var id: UUID { message.id }
 }
 
+private struct RemoteIMScreenshotCandidate: Identifiable {
+    let id = UUID()
+    let image: UIImage
+    let file: RemoteIMImageFile
+}
+
+private enum RemoteIMScreenshotLoader {
+    @MainActor
+    static func recentScreenshot(after screenshotDate: Date) async -> UIImage? {
+        let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        guard status == .authorized || status == .limited else { return nil }
+
+        for _ in 0..<6 {
+            if Task.isCancelled { return nil }
+            if let asset = latestScreenshotAsset(after: screenshotDate),
+               let image = await image(for: asset) {
+                return image
+            }
+            try? await Task.sleep(for: .milliseconds(150))
+        }
+        return nil
+    }
+
+    @MainActor
+    static func captureVisibleApplication() -> UIImage? {
+        let window = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .filter { $0.activationState == .foregroundActive }
+            .flatMap(\.windows)
+            .first(where: \.isKeyWindow)
+        guard let window, !window.bounds.isEmpty else { return nil }
+
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = window.screen.scale
+        let renderer = UIGraphicsImageRenderer(bounds: window.bounds, format: format)
+        return renderer.image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: false)
+        }
+    }
+
+    @MainActor
+    private static func latestScreenshotAsset(after screenshotDate: Date) -> PHAsset? {
+        let options = PHFetchOptions()
+        options.fetchLimit = 1
+        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+        options.predicate = NSPredicate(
+            format: "(mediaSubtype & %d) != 0",
+            PHAssetMediaSubtype.photoScreenshot.rawValue
+        )
+        let assets = PHAsset.fetchAssets(with: .image, options: options)
+        guard let asset = assets.firstObject,
+              RemoteIMScreenshotRecencyPolicy.accepts(
+                  creationDate: asset.creationDate,
+                  screenshotDate: screenshotDate
+              ) else { return nil }
+        return asset
+    }
+
+    @MainActor
+    private static func image(for asset: PHAsset) async -> UIImage? {
+        await withCheckedContinuation { continuation in
+            let options = PHImageRequestOptions()
+            options.deliveryMode = .highQualityFormat
+            options.isNetworkAccessAllowed = false
+            options.version = .current
+            PHImageManager.default().requestImageDataAndOrientation(
+                for: asset,
+                options: options
+            ) { data, _, _, _ in
+                continuation.resume(returning: data.flatMap(UIImage.init(data:)))
+            }
+        }
+    }
+}
+
+private struct RemoteIMScreenshotQuickSendView: View {
+    let image: UIImage
+    let isSending: Bool
+    let send: () -> Void
+    let dismiss: () -> Void
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Button(action: send) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 82, height: 142)
+                    .clipped()
+                    .overlay(alignment: .bottom) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "paperplane.fill")
+                            Text("发送")
+                        }
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.white)
+                        .padding(.horizontal, 8)
+                        .frame(height: 25)
+                        .background(Color.black.opacity(0.58), in: Capsule())
+                        .padding(.bottom, 6)
+                    }
+                    .overlay {
+                        if isSending {
+                            ZStack {
+                                Color.black.opacity(0.28)
+                                ProgressView().tint(.white)
+                            }
+                        }
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(Color.white.opacity(0.9), lineWidth: 2)
+                    )
+                    .shadow(color: Color.black.opacity(0.22), radius: 10, y: 4)
+            }
+            .buttonStyle(.plain)
+            .disabled(isSending)
+            .accessibilityLabel("发送刚刚的截图")
+
+            Button(action: dismiss) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Color.white)
+                    .frame(width: 24, height: 24)
+                    .background(Color.black.opacity(0.7), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(isSending)
+            .offset(x: 8, y: -8)
+            .accessibilityLabel("关闭截图快捷发送")
+        }
+    }
+}
+
 private struct ChatDetailView: View {
     let contact: RemoteIMContact
     @Binding var activeContact: RemoteIMContact?
@@ -1087,6 +1247,10 @@ private struct ChatDetailView: View {
     @State private var messageActionTarget: PresentedMessageActions?
     @State private var selectingMessageID: UUID?
     @State private var forwardingMessage: RemoteIMMessage?
+    @State private var screenshotCandidate: RemoteIMScreenshotCandidate?
+    @State private var isSendingScreenshot = false
+    @State private var screenshotTask: Task<Void, Never>?
+    @State private var screenshotDismissTask: Task<Void, Never>?
 
     var body: some View {
         ZStack {
@@ -1182,6 +1346,20 @@ private struct ChatDetailView: View {
                 .zIndex(30)
             }
 
+            if let screenshotCandidate {
+                RemoteIMScreenshotQuickSendView(
+                    image: screenshotCandidate.image,
+                    isSending: isSendingScreenshot,
+                    send: { sendScreenshot(screenshotCandidate) },
+                    dismiss: discardScreenshot
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                .padding(.leading, 14)
+                .padding(.bottom, 78)
+                .transition(.move(edge: .leading).combined(with: .opacity))
+                .zIndex(25)
+            }
+
             if let forwardingMessage {
                 ForwardMessageDialog(
                     message: forwardingMessage,
@@ -1223,6 +1401,9 @@ private struct ChatDetailView: View {
             messageActionTarget = nil
             selectingMessageID = nil
             forwardingMessage = nil
+            screenshotTask?.cancel()
+            screenshotDismissTask?.cancel()
+            discardScreenshot()
         }
         .task(id: contact.userID) {
             let startedAt = ProcessInfo.processInfo.systemUptime
@@ -1239,6 +1420,82 @@ private struct ChatDetailView: View {
                     "duration_ms": String(Int((elapsed * 1_000).rounded())),
                 ]
             )
+        }
+        .animation(.easeOut(duration: 0.2), value: screenshotCandidate?.id)
+        .onReceive(NotificationCenter.default.publisher(
+            for: UIApplication.userDidTakeScreenshotNotification
+        )) { _ in
+            prepareScreenshotCandidate(at: Date())
+        }
+    }
+
+    private func prepareScreenshotCandidate(at screenshotDate: Date) {
+        guard !isSendingScreenshot else { return }
+        screenshotTask?.cancel()
+        screenshotDismissTask?.cancel()
+        discardScreenshot()
+        guard let fallback = RemoteIMScreenshotLoader.captureVisibleApplication() else { return }
+        screenshotTask = Task { @MainActor in
+            let exact = await RemoteIMScreenshotLoader.recentScreenshot(after: screenshotDate)
+            guard !Task.isCancelled else { return }
+            let image = exact ?? fallback
+            do {
+                let input = RemoteIMImageEncodingInput(image: image)
+                let file = try await RemoteIMBackgroundWork.file {
+                    guard let data = input.image.pngData() else {
+                        throw RemoteIMPickedMediaError.coverGenerationFailed
+                    }
+                    return try makeRemoteIMImageFile(
+                        data: data,
+                        contentTypes: [.png],
+                        stem: "remote-im-screenshot-\(UUID().uuidString)"
+                    )
+                }
+                guard !Task.isCancelled else { return }
+                screenshotCandidate = RemoteIMScreenshotCandidate(image: image, file: file)
+                scheduleScreenshotDismissal()
+            } catch {
+                appState.errorMessage = "截图处理失败：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func sendScreenshot(_ candidate: RemoteIMScreenshotCandidate) {
+        guard !isSendingScreenshot else { return }
+        screenshotDismissTask?.cancel()
+        isSendingScreenshot = true
+        Task { @MainActor in
+            let sent = await appState.sendImageFile(candidate.file, to: contact.userID)
+            isSendingScreenshot = false
+            if sent { clearScreenshotCandidate(removingFile: false) }
+            else { scheduleScreenshotDismissal() }
+        }
+    }
+
+    private func discardScreenshot() {
+        clearScreenshotCandidate(removingFile: true)
+    }
+
+    private func clearScreenshotCandidate(removingFile: Bool) {
+        screenshotDismissTask?.cancel()
+        screenshotDismissTask = nil
+        let fileURL = screenshotCandidate?.file.fileURL
+        withAnimation(.easeOut(duration: 0.16)) { screenshotCandidate = nil }
+        if removingFile, let fileURL {
+            Task {
+                _ = try? await RemoteIMBackgroundWork.file {
+                    try? FileManager.default.removeItem(at: fileURL)
+                }
+            }
+        }
+    }
+
+    private func scheduleScreenshotDismissal() {
+        screenshotDismissTask?.cancel()
+        screenshotDismissTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(12))
+            guard !Task.isCancelled, !isSendingScreenshot else { return }
+            discardScreenshot()
         }
     }
 
@@ -5357,7 +5614,7 @@ private struct ComposerView: View {
                     }
                     let contentTypes = item.supportedContentTypes
                     let imageFile = try await RemoteIMBackgroundWork.file {
-                        try Self.savePickedImage(data: data, contentTypes: contentTypes)
+                        try makeRemoteIMImageFile(data: data, contentTypes: contentTypes)
                     }
                     guard appState.remoteDiagnosticsIdentity == identity, !Task.isCancelled else { return }
                     await appState.sendImageFile(imageFile, to: peerUserID)
@@ -5433,7 +5690,7 @@ private struct ComposerView: View {
                 guard let data = input.image.jpegData(compressionQuality: 0.9) else {
                     throw RemoteIMPickedMediaError.coverGenerationFailed
                 }
-                return try Self.savePickedImage(data: data, contentTypes: [.jpeg])
+                return try makeRemoteIMImageFile(data: data, contentTypes: [.jpeg])
             }
             guard appState.remoteDiagnosticsIdentity == identity, !Task.isCancelled else { return }
                     await appState.sendImageFile(imageFile, to: peerUserID)
@@ -5481,29 +5738,6 @@ private struct ComposerView: View {
         )
     }
 
-    nonisolated private static func savePickedImage(
-        data: Data,
-        contentTypes: [UTType]
-    ) throws -> RemoteIMImageFile {
-        let contentType = contentTypes.first(where: { $0.conforms(to: .image) })
-        let fileExtension = contentType?.preferredFilenameExtension ?? "jpg"
-        let fileURL = RemoteIMMediaStorage.fileURL(
-            category: .outgoingImages,
-            stem: "remote-im-image-\(UUID().uuidString)",
-            pathExtension: fileExtension
-        )
-        try data.write(to: fileURL, options: .atomic)
-
-        let image = UIImage(data: data)
-        let width = image.map { Int($0.size.width * $0.scale) }
-        let height = image.map { Int($0.size.height * $0.scale) }
-        return RemoteIMImageFile(
-            fileURL: fileURL,
-            width: width,
-            height: height,
-            sizeBytes: data.count
-        )
-    }
 }
 
 enum ComposerEditAction: CaseIterable, Identifiable {

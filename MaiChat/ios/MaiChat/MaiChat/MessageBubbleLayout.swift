@@ -339,6 +339,14 @@ enum VoiceTranscriptionHitTest {
     }
 }
 
+enum RemoteIMScreenshotRecencyPolicy {
+    static func accepts(creationDate: Date?, screenshotDate: Date) -> Bool {
+        guard let creationDate else { return false }
+        return creationDate >= screenshotDate.addingTimeInterval(-3)
+            && creationDate <= screenshotDate.addingTimeInterval(10)
+    }
+}
+
 
 /// Keep both pages alive during UIKit's native interactive pop. The selection
 /// changes only after a completed pop; a cancelled gesture keeps the chat intact.

@@ -229,6 +229,52 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         return RemoteIMUserProfile(userID: userID, displayName: userID, avatarURL: nil)
     }
 
+    func setSelfAvatar(url: String) async -> Bool {
+        let cleanURL = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let parsed = URL(string: cleanURL),
+              ["https", "http"].contains(parsed.scheme?.lowercased() ?? ""),
+              parsed.host != nil else {
+            showTransientError("IM 返回的头像地址无效")
+            return false
+        }
+        guard connectionState == .connected else {
+            showTransientError("请先连接 IM")
+            return false
+        }
+        let identity = remoteDiagnosticsIdentity
+        let userID = masterUserID
+        do {
+            try await client.setSelfAvatar(url: cleanURL)
+            guard remoteDiagnosticsIdentity == identity else { return false }
+            let current = profile(for: userID)
+            userProfileByUserID[userID] = RemoteIMUserProfile(
+                userID: userID, displayName: current.displayName, avatarURL: cleanURL
+            )
+            return true
+        } catch {
+            guard remoteDiagnosticsIdentity == identity else { return false }
+            showTransientError(error.localizedDescription)
+            return false
+        }
+    }
+
+    func uploadSelfAvatar(fileURL: URL) async -> Bool {
+        guard connectionState == .connected else {
+            showTransientError("请先连接 IM")
+            return false
+        }
+        let identity = remoteDiagnosticsIdentity
+        do {
+            let url = try await client.uploadAvatar(fileURL: fileURL)
+            guard remoteDiagnosticsIdentity == identity else { return false }
+            return await setSelfAvatar(url: url)
+        } catch {
+            guard remoteDiagnosticsIdentity == identity else { return false }
+            showTransientError(error.localizedDescription)
+            return false
+        }
+    }
+
     var shouldShowInitialLogin: Bool {
         !hasCompletedInitialLogin
     }

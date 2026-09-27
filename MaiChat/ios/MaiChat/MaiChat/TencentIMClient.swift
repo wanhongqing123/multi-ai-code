@@ -256,6 +256,49 @@ final class TencentIMClient:
         }
     }
 
+    func setSelfAvatar(url: String) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            Self.sdkQueue.async {
+                let info = V2TIMUserFullInfo()
+                info.faceURL = url
+                V2TIMManager.sharedInstance().setSelfInfo(info: info, succ: {
+                    continuation.resume()
+                }, fail: { code, description in
+                    continuation.resume(throwing: RemoteIMClientError.operationFailed(
+                        code: code, description: description ?? "setSelfInfo failed"
+                    ))
+                })
+            }
+        }
+    }
+
+    func uploadAvatar(fileURL: URL) async throws -> String {
+        let data = try JSONSerialization.data(withJSONObject: [
+            "filePath": fileURL.path, "fileType": 1,
+        ])
+        let parameters = String(decoding: data, as: UTF8.self)
+        return try await withCheckedThrowingContinuation { continuation in
+            Self.sdkQueue.async {
+                V2TIMManager.sharedInstance().callExperimentalAPI(
+                    api: "uploadFile", param: parameters as NSString,
+                    succ: { result in
+                        guard let url = result as? String, !url.isEmpty else {
+                            continuation.resume(throwing: RemoteIMClientError.operationFailed(
+                                code: -1, description: "Avatar upload returned no URL"
+                            ))
+                            return
+                        }
+                        continuation.resume(returning: url)
+                    }, fail: { code, description in
+                        continuation.resume(throwing: RemoteIMClientError.operationFailed(
+                            code: code, description: description ?? "uploadFile failed"
+                        ))
+                    }
+                )
+            }
+        }
+    }
+
     func subscribePresenceStatuses(userIDs: [String]) async throws {
         let cleanedUserIDs = Self.cleanUserIDs(userIDs)
         guard !cleanedUserIDs.isEmpty else { return }

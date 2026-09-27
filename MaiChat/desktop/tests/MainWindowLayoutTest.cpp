@@ -1850,7 +1850,7 @@ void MainWindowLayoutTest::navigationIconsSitNearTopEdge() {
     auto* navRail = window.findChild<QWidget*>(QStringLiteral("navRail"));
     QVERIFY(navRail != nullptr);
     QVERIFY(navRail->layout() != nullptr);
-    QCOMPARE(navRail->layout()->contentsMargins().top(), 4);
+    QCOMPARE(navRail->layout()->contentsMargins().top(), 0);
 }
 
 void MainWindowLayoutTest::removesRedundantChromeLabels() {

@@ -22,6 +22,11 @@
     <file alias="users.svg">icons/tabler/users.svg</file>
     <file alias="device-desktop.svg">icons/tabler/device-desktop.svg</file>
     <file alias="settings.svg">icons/tabler/settings.svg</file>
+    <file alias="message-circle-filled.svg">icons/tabler/message-circle-filled.svg</file>
+    <file alias="sparkles-filled.svg">icons/tabler/sparkles-filled.svg</file>
+    <file alias="users-filled.svg">icons/tabler/users-filled.svg</file>
+    <file alias="device-desktop-filled.svg">icons/tabler/device-desktop-filled.svg</file>
+    <file alias="settings-filled.svg">icons/tabler/settings-filled.svg</file>
     <file alias="arrow-up.svg">icons/tabler/arrow-up.svg</file>
     <file alias="user-circle.svg">icons/tabler/user-circle.svg</file>
     <file alias="tabler-license.txt">icons/tabler/LICENSE.txt</file>

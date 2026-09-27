@@ -1081,8 +1081,10 @@ QColor navIconColor(LineIconKind kind, bool selected) {
     }
 }
 
-QIcon makeNavIcon(LineIconKind kind, const QColor& color) {
-    const QString resource = navIconResource(kind);
+QIcon makeNavIcon(LineIconKind kind, const QColor& color, bool filled = false) {
+    QString resource = navIconResource(kind);
+    if (filled && !resource.isEmpty()) resource.replace(QStringLiteral(".svg"),
+                                                       QStringLiteral("-filled.svg"));
     if (resource.isEmpty()) return makeLineIcon(kind, color);
 
     QFile file(resource);
@@ -1117,7 +1119,7 @@ void applyNavButtonIcon(QPushButton* button, bool selected) {
     const QVariant rawKind = button->property("navIconKind");
     if (!rawKind.isValid()) return;
     const LineIconKind kind = lineIconKindFromValue(rawKind.toInt());
-    button->setIcon(makeNavIcon(kind, navIconColor(kind, selected)));
+    button->setIcon(makeNavIcon(kind, navIconColor(kind, selected), selected));
 }
 
 // Feishu-style borderless icon button for the chat header.

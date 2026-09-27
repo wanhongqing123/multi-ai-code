@@ -2328,12 +2328,12 @@ void MainWindow::applyStyle() {
         #agentNavButton { background: #f0edff; }
         #contactsNavButton { background: #e7f7f1; }
         #remoteNavButton { background: #ebf0f8; }
-        #settingsNavButton { background: #e9eef5; }
+        #settingsNavButton { background: #faeee3; }
         #messagesNavButton[selected="false"]:hover { background: #d9edfc; }
         #agentNavButton[selected="false"]:hover { background: #e7e1ff; }
         #contactsNavButton[selected="false"]:hover { background: #daf1e8; }
         #remoteNavButton[selected="false"]:hover { background: #dfe7f3; }
-        #settingsNavButton[selected="false"]:hover { background: #dfe6ef; }
+        #settingsNavButton[selected="false"]:hover { background: #f3dfcb; }
         #messagesNavButton[selected="true"], #contactsNavButton[selected="true"],
         #remoteNavButton[selected="true"], #settingsNavButton[selected="true"],
         #agentNavButton[selected="true"] {

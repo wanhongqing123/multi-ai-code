@@ -1774,9 +1774,9 @@ void MainWindow::buildUi() {
 
     auto* header = new QWidget(chatContentPane);
     header->setObjectName(QStringLiteral("chatHeader"));
-    header->setFixedHeight(UiZoom::s(35));
+    header->setFixedHeight(UiZoom::s(44));
     auto* headerLayout = new QHBoxLayout(header);
-    headerLayout->setContentsMargins(28, 3, 28, 3);
+    headerLayout->setContentsMargins(28, 8, 28, 8);
     headerLayout->setSpacing(12);
     titleLabel_ = new QLabel(header);
     titleLabel_->setObjectName(QStringLiteral("chatTitle"));
@@ -2504,7 +2504,7 @@ void MainWindow::applyStyle() {
         }
         #chatHeader {
             background: #ffffff;
-            border-bottom: 1px solid #dae4f0;
+            border-bottom: 1px solid #f1f2f4;
         }
         #chatTitle {
             color: #101828;
@@ -5511,9 +5511,9 @@ void MainWindow::applyUiZoom(bool showToastPopup) {
 void MainWindow::applyScaledFixedGeometry() {
     setMinimumSize(UiZoom::s(980), UiZoom::s(640));
     if (auto* header = findChild<QWidget*>(QStringLiteral("chatHeader"))) {
-        header->setFixedHeight(UiZoom::s(35));
-        header->layout()->setContentsMargins(UiZoom::s(28), UiZoom::s(3),
-                                             UiZoom::s(28), UiZoom::s(3));
+        header->setFixedHeight(UiZoom::s(44));
+        header->layout()->setContentsMargins(UiZoom::s(28), UiZoom::s(8),
+                                             UiZoom::s(28), UiZoom::s(8));
     }
     // 必须和构造时一致地定宽。这里原先放的是 160~260（同样是带文字时代的遗留），
     // 会把构造时的 setFixedWidth(64) 顶掉——缩放一次导航栏就胖回去。

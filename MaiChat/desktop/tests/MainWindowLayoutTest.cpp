@@ -1113,6 +1113,7 @@ void MainWindowLayoutTest::aiReplySuggestionOnlyFillsComposer() {
     QVERIFY(QTest::qWaitForWindowExposed(&window));
     auto* editor = window.findChild<QTextEdit*>(QStringLiteral("messageEditor"));
     auto* aiButton = window.findChild<QPushButton*>(QStringLiteral("aiReplyButton"));
+    auto* aiHint = window.findChild<QLabel*>(QStringLiteral("aiReplyHint"));
     auto* bar = window.findChild<QWidget*>(QStringLiteral("replySuggestionBar"));
     auto* professional =
         window.findChild<QPushButton*>(QStringLiteral("professionalReplySuggestion"));
@@ -1120,11 +1121,23 @@ void MainWindowLayoutTest::aiReplySuggestionOnlyFillsComposer() {
         QStringLiteral("replySuggestionController"));
     QVERIFY(editor != nullptr);
     QVERIFY(aiButton != nullptr);
+    QVERIFY(aiHint != nullptr);
     QVERIFY(bar != nullptr);
     QVERIFY(professional != nullptr);
     QVERIFY(controller != nullptr);
     QCOMPARE(aiButton->parentWidget(), editor);
+    QCOMPARE(aiButton->toolTip(), QString());
+    QVERIFY(aiHint->isHidden());
     QVERIFY(editor->rect().contains(aiButton->geometry().bottomLeft()));
+
+    QEvent enterEvent(QEvent::Enter);
+    QApplication::sendEvent(aiButton, &enterEvent);
+    QVERIFY(aiHint->isVisible());
+    QVERIFY(aiHint->height() < aiButton->height());
+    QVERIFY(aiHint->geometry().bottom() < aiButton->geometry().top());
+    QEvent leaveEvent(QEvent::Leave);
+    QApplication::sendEvent(aiButton, &leaveEvent);
+    QVERIFY(aiHint->isHidden());
 
     aiButton->click();
     QVERIFY(bar->isVisible());

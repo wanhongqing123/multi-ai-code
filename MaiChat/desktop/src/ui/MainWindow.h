@@ -333,6 +333,7 @@ private:
     QPushButton* addContactButton_ = nullptr;
     QPushButton* sendButton_ = nullptr;
     QPushButton* aiReplyButton_ = nullptr;
+    QLabel* aiReplyHint_ = nullptr;
     QTextEdit* messageEditor_ = nullptr;
     ReplySuggestionController* replySuggestionController_ = nullptr;
     QWidget* replySuggestionBar_ = nullptr;

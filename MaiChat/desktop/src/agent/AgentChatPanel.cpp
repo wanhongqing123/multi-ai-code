@@ -694,8 +694,8 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     composerHost->setStyleSheet(
         QStringLiteral("QWidget#agentComposerPanel{background:#ffffff;}"));
     auto* composerLayout = new QVBoxLayout(composerHost);
-    composerLayout->setContentsMargins(UiZoom::s(24), UiZoom::s(12), UiZoom::s(24),
-                                       UiZoom::s(14));
+    composerLayout->setContentsMargins(UiZoom::s(12), UiZoom::s(6), UiZoom::s(12),
+                                       UiZoom::s(8));
     composerLayout->setSpacing(0);
 
     runtime_->editor = new PromptEdit(composerHost);
@@ -837,10 +837,9 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     messageComposerSplitter->setChildrenCollapsible(false);
     messageComposerSplitter->setHandleWidth(1);
     messageComposerSplitter->setStyleSheet(QStringLiteral(
-        "QSplitter::handle{background:%1;}"
+        "QSplitter::handle{background:transparent;}"
         "QSplitter::handle:vertical{height:1px;}"
-        "QSplitter::handle:hover{background:#90c9ed;}")
-                                                .arg(kLine));
+        "QSplitter::handle:hover{background:transparent;}"));
     messageComposerSplitter->addWidget(runtime_->view);
     messageComposerSplitter->addWidget(composerHost);
     messageComposerSplitter->setStretchFactor(0, 1);

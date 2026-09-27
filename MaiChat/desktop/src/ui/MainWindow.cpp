@@ -1486,6 +1486,13 @@ void MainWindow::closeEvent(QCloseEvent* event) {
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == aiReplyButton_ && event->type() == QEvent::Enter) {
+        aiReplyHint_->show();
+        aiReplyHint_->raise();
+        static_cast<ComposerTextEdit*>(messageEditor_)->positionCornerAction();
+    } else if (watched == aiReplyButton_ && event->type() == QEvent::Leave) {
+        aiReplyHint_->hide();
+    }
     if (watched == messageEditor_ && event->type() == QEvent::FocusOut) {
         app_.setHumanTypingActive(false);
     }
@@ -1814,24 +1821,47 @@ void MainWindow::buildUi() {
 
     aiReplyButton_ = new QPushButton(messageEditor_);
     aiReplyButton_->setObjectName(QStringLiteral("aiReplyButton"));
-    aiReplyButton_->setText(QStringLiteral("✨"));
+    aiReplyButton_->setIcon(makeNavIcon(LineIconKind::Assistant,
+                                        QColor(QStringLiteral("#6254c7"))));
+    aiReplyButton_->setIconSize(QSize(UiZoom::s(17), UiZoom::s(17)));
     aiReplyButton_->setFixedSize(UiZoom::s(30), UiZoom::s(30));
     aiReplyButton_->setCursor(Qt::PointingHandCursor);
-    aiReplyButton_->setToolTip(QStringLiteral("AI 回复"));
     aiReplyButton_->setAccessibleName(QStringLiteral("AI 回复"));
+    aiReplyButton_->installEventFilter(this);
     aiReplyButton_->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
         QPushButton#aiReplyButton {
             background: transparent;
             border: none;
             border-radius: 8px;
             padding: 0;
-            font-size: 16px;
+            color: #574ba7;
+            font-size: 12px;
+            font-weight: 600;
         }
         QPushButton#aiReplyButton:hover { background: #f0edff; }
         QPushButton#aiReplyButton:pressed { background: #e2dcff; }
         QPushButton#aiReplyButton:disabled { background: transparent; }
     )")));
     static_cast<ComposerTextEdit*>(messageEditor_)->setLeadingAction(aiReplyButton_);
+
+    aiReplyHint_ = new QLabel(QStringLiteral("AI 回复"), messageEditor_);
+    aiReplyHint_->setObjectName(QStringLiteral("aiReplyHint"));
+    aiReplyHint_->setAlignment(Qt::AlignCenter);
+    aiReplyHint_->setFixedSize(UiZoom::s(54), UiZoom::s(22));
+    aiReplyHint_->setAttribute(Qt::WA_TransparentForMouseEvents);
+    aiReplyHint_->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
+        QLabel#aiReplyHint {
+            background: #ffffff;
+            border: 1px solid #d7dde6;
+            border-radius: 4px;
+            color: #344054;
+            font-size: 11px;
+            font-weight: 500;
+            padding: 0;
+        }
+    )")));
+    aiReplyHint_->hide();
+    static_cast<ComposerTextEdit*>(messageEditor_)->setLeadingHint(aiReplyHint_);
 
     replySuggestionBar_ = new QWidget(composer);
     replySuggestionBar_->setObjectName(QStringLiteral("replySuggestionBar"));
@@ -2171,14 +2201,6 @@ void MainWindow::buildUi() {
 
 void MainWindow::applyStyle() {
     setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
-        QToolTip {
-            background: #ffffff;
-            color: #475569;
-            border: 1px solid #dbe4ef;
-            border-radius: 5px;
-            padding: 3px 6px;
-            font-size: 11px;
-        }
         QMainWindow, #root {
             background: #f6f9fc;
             color: #172033;
@@ -2509,7 +2531,7 @@ void MainWindow::applyStyle() {
             background: #c4def0;
         }
         QSplitter::handle {
-            background: #e5ecf3;
+            background: transparent;
         }
         QSplitter::handle:horizontal {
             width: 1px;
@@ -2518,7 +2540,7 @@ void MainWindow::applyStyle() {
             height: 1px;
         }
         QSplitter::handle:hover {
-            background: #90c9ed;
+            background: transparent;
         }
     )")));
 }
@@ -5484,7 +5506,9 @@ void MainWindow::applyScaledFixedGeometry() {
     if (messageEditor_) messageEditor_->setMinimumHeight(UiZoom::s(64));
     if (aiReplyButton_) {
         aiReplyButton_->setFixedSize(UiZoom::s(30), UiZoom::s(30));
+        aiReplyButton_->setIconSize(QSize(UiZoom::s(17), UiZoom::s(17)));
     }
+    if (aiReplyHint_) aiReplyHint_->setFixedSize(UiZoom::s(54), UiZoom::s(22));
     if (sendButton_) {
         sendButton_->setFixedSize(UiZoom::s(36), UiZoom::s(36));
         sendButton_->setIconSize(QSize(UiZoom::s(18), UiZoom::s(18)));

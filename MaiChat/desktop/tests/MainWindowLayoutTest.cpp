@@ -41,6 +41,10 @@
 #include <QWidget>
 #include <memory>
 
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#endif
+
 #include "agent/ReplySuggestionController.h"
 #include "app/RemoteIMApplication.h"
 #include "im/FakeRemoteIMClient.h"
@@ -84,6 +88,7 @@ private slots:
     void renamedHeaderButtonsKeepTheirCompactAppearance();
     void messageTextUsesNativeResolutionAndRegularBodyFont();
     void exposesDesktopChatLayoutControls();
+    void mainWindowUsesRoomierIconFreeTitleArea();
     void conversationPreviewUsesPlainMarkdown_data();
     void conversationPreviewUsesPlainMarkdown();
     void composerUsesEmbeddedIconSendAction();
@@ -1042,6 +1047,30 @@ void MainWindowLayoutTest::exposesDesktopChatLayoutControls() {
     QVERIFY(window.findChild<QWidget*>(QStringLiteral("chatContentPane")) != nullptr);
     QVERIFY(window.findChild<QTextEdit*>(QStringLiteral("messageEditor")) != nullptr);
     QVERIFY(window.findChild<QPushButton*>(QStringLiteral("sendButton")) != nullptr);
+}
+
+void MainWindowLayoutTest::mainWindowUsesRoomierIconFreeTitleArea() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    MainWindow window(app);
+
+    auto* inset = window.findChild<QWidget*>(QStringLiteral("windowTopInset"));
+    QVERIFY(inset != nullptr);
+    QCOMPARE(inset->minimumHeight(), UiZoom::s(16));
+    QCOMPARE(inset->maximumHeight(), UiZoom::s(16));
+
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+#ifdef Q_OS_WIN
+    const HWND handle = reinterpret_cast<HWND>(window.winId());
+    QVERIFY(window.property("nativeTitleBarIconHidden").toBool());
+    QVERIFY(SendMessageW(handle, WM_GETICON, ICON_SMALL, 0) != 0);
+    QVERIFY(!(GetWindowLongPtrW(handle, GWL_EXSTYLE) & WS_EX_DLGMODALFRAME));
+    QVERIFY(window.windowFlags().testFlag(Qt::WindowSystemMenuHint));
+    QVERIFY(window.windowFlags().testFlag(Qt::WindowMinimizeButtonHint));
+    QVERIFY(window.windowFlags().testFlag(Qt::WindowMaximizeButtonHint));
+    QVERIFY(window.windowFlags().testFlag(Qt::WindowCloseButtonHint));
+#endif
 }
 
 void MainWindowLayoutTest::composerUsesEmbeddedIconSendAction() {

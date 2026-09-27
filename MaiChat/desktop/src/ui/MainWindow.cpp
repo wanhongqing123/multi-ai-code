@@ -81,6 +81,10 @@
 #include <functional>
 #include <utility>
 
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#endif
+
 #include "im/RemoteIMCredentialDefaults.h"
 #include "im/VideoFileMetadata.h"
 #include "markdown/MarkdownDocument.h"
@@ -1403,6 +1407,25 @@ QString agentDatabasePath() {
     return root + QStringLiteral("/agent.db");
 }
 
+#ifdef Q_OS_WIN
+void hideNativeTitleBarIcon(QWidget* window) {
+    if (window->property("nativeTitleBarIconHidden").toBool()) return;
+    const HWND handle = reinterpret_cast<HWND>(window->winId());
+    static HICON transparentSmallIcon = [] {
+        unsigned char andMask[64];
+        unsigned char xorMask[16 * 16 * 4];
+        std::fill_n(andMask, sizeof(andMask), 0xff);
+        std::fill_n(xorMask, sizeof(xorMask), 0x00);
+        return CreateIcon(nullptr, 16, 16, 1, 32, andMask, xorMask);
+    }();
+    SendMessageW(handle, WM_SETICON, ICON_SMALL,
+                 reinterpret_cast<LPARAM>(transparentSmallIcon));
+    SendMessageW(handle, WM_SETICON, ICON_SMALL2,
+                 reinterpret_cast<LPARAM>(transparentSmallIcon));
+    window->setProperty("nativeTitleBarIconHidden", true);
+}
+#endif
+
 }  // namespace
 
 MainWindow::MainWindow(RemoteIMApplication& app, QWidget* parent)
@@ -1562,6 +1585,9 @@ void MainWindow::resizeEvent(QResizeEvent* event) {
 
 void MainWindow::showEvent(QShowEvent* event) {
     QMainWindow::showEvent(event);
+#ifdef Q_OS_WIN
+    hideNativeTitleBarIcon(this);
+#endif
     QTimer::singleShot(0, this, [this] { updateMessageBubbleWidths(); });
 }
 
@@ -1580,6 +1606,13 @@ void MainWindow::buildUi() {
     rootColumn->setContentsMargins(0, 0, 0, 0);
     rootColumn->setSpacing(0);
     setCentralWidget(root);
+
+    // Give the native caption a roomier visual band without replacing it with a custom title bar.
+    // A custom frame would regress resizing, edge snapping and the Windows 11 snap layout menu.
+    auto* windowTopInset = new QWidget(root);
+    windowTopInset->setObjectName(QStringLiteral("windowTopInset"));
+    windowTopInset->setFixedHeight(UiZoom::s(16));
+    rootColumn->addWidget(windowTopInset);
 
     sharingIndicator_ = new SharingIndicatorBar(root);
     rootColumn->addWidget(sharingIndicator_);

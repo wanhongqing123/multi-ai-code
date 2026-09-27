@@ -1368,7 +1368,9 @@ private struct AIPermissionCard: View {
             HStack {
                 action("拒绝", "denied")
                 action("允许一次", "approved")
-                action("本会话允许", "approved_for_session")
+                if permission.allowForSession != false {
+                    action("本会话允许", "approved_for_session")
+                }
             }
         }.padding().frame(maxWidth: .infinity, alignment: .leading).background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
     }

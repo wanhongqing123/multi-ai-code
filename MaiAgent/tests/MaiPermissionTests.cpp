@@ -35,6 +35,30 @@ static int failures = 0;
 namespace {
 
 const std::atomic<bool> kNeverCancel{false};
+std::atomic<int> forcedToolRuns{0};
+
+class AlwaysConfirmTool final : public MaiTool {
+public:
+    std::string name() const override {
+        return "external_send";
+    }
+    std::string description() const override {
+        return "Send data to an external recipient.";
+    }
+    std::string parametersSchema() const override {
+        return R"({"type":"object","properties":{"text":{"type":"string"}}})";
+    }
+    bool requiresApproval(const std::string&) const override {
+        return true;
+    }
+    bool requiresPerCallApproval(const std::string&) const override {
+        return true;
+    }
+    MaiToolResult execute(const std::string&, const MaiToolContext&) override {
+        ++forcedToolRuns;
+        return MaiToolResult::success("sent");
+    }
+};
 
 MaiPermissionRequest makeRequest(const std::string& id, const std::string& sessionId,
                                  const std::string& tool = "write") {
@@ -256,14 +280,14 @@ struct AgentUnderTest {
     MaiFakeModelClient* model = nullptr;  // agent 持有，这里只是观察用
 };
 
-AgentUnderTest makeAgent(
-    std::vector<MaiFakeModelClient::Turn> script,
-    MaiApprovalPolicy approvalPolicy = MaiApprovalPolicy::OnRequest) {
+AgentUnderTest makeAgent(std::vector<MaiFakeModelClient::Turn> script,
+                         MaiApprovalPolicy approvalPolicy = MaiApprovalPolicy::OnRequest) {
     auto model = std::make_unique<MaiFakeModelClient>(std::move(script));
     MaiFakeModelClient* observer = model.get();
 
     auto tools = std::make_unique<MaiToolRegistry>();
     registerMaiBuiltinTools(*tools);
+    tools->add(std::make_unique<AlwaysConfirmTool>());
 
     MaiAgent::Options options;
     options.defaultModel = "glm-5.3";
@@ -562,9 +586,9 @@ void test_read_never_asks() {
 
 void test_unless_trusted_auto_approves_workspace_edits() {
     Workspace workspace;
-    auto underTest = makeAgent(
-        {callTurn("write", R"({"path":"trusted.txt","content":"ok"})"), sayTurn("Done.")},
-        MaiApprovalPolicy::UnlessTrusted);
+    auto underTest =
+        makeAgent({callTurn("write", R"({"path":"trusted.txt","content":"ok"})"), sayTurn("Done.")},
+                  MaiApprovalPolicy::UnlessTrusted);
     Recorder recorder;
     recorder.attach(*underTest.agent);
     const std::string sessionId =
@@ -578,9 +602,9 @@ void test_unless_trusted_auto_approves_workspace_edits() {
 
 void test_unless_trusted_still_asks_for_risky_shell() {
     Workspace workspace;
-    auto underTest = makeAgent(
-        {callTurn("shell", R"({"command":"rm -rf build"})"), sayTurn("Skipped.")},
-        MaiApprovalPolicy::UnlessTrusted);
+    auto underTest =
+        makeAgent({callTurn("shell", R"({"command":"rm -rf build"})"), sayTurn("Skipped.")},
+                  MaiApprovalPolicy::UnlessTrusted);
     const std::string sessionId =
         underTest.agent->submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
     underTest.agent->submit(MaiSendPrompt{sessionId, "remove build"});
@@ -588,16 +612,15 @@ void test_unless_trusted_still_asks_for_risky_shell() {
     CHECK(waitFor([&] { return underTest.agent->listPendingPermissions().size() == 1; }));
     CHECK(!underTest.agent->setApprovalPolicy(MaiApprovalPolicy::Never));
     const std::string permissionId = underTest.agent->listPendingPermissions().front().id;
-    underTest.agent->submit(
-        MaiReplyPermission{permissionId, MaiPermissionDecision::Denied});
+    underTest.agent->submit(MaiReplyPermission{permissionId, MaiPermissionDecision::Denied});
     underTest.agent->waitIdle();
 }
 
 void test_never_policy_runs_without_prompting() {
     Workspace workspace;
-    auto underTest = makeAgent(
-        {callTurn("write", R"({"path":"full.txt","content":"ok"})"), sayTurn("Done.")},
-        MaiApprovalPolicy::Never);
+    auto underTest =
+        makeAgent({callTurn("write", R"({"path":"full.txt","content":"ok"})"), sayTurn("Done.")},
+                  MaiApprovalPolicy::Never);
     Recorder recorder;
     recorder.attach(*underTest.agent);
     const std::string sessionId =
@@ -607,6 +630,40 @@ void test_never_policy_runs_without_prompting() {
 
     CHECK(workspace.has("full.txt"));
     CHECK(recorder.count(MaiEventType::PermissionAsked) == 0);
+}
+
+void test_per_call_approval_ignores_policy_and_session_grants() {
+    Workspace workspace;
+    forcedToolRuns = 0;
+    auto underTest =
+        makeAgent({callTurn("external_send", R"({"text":"first"})", "call_1"),
+                   callTurn("external_send", R"({"text":"second"})", "call_2"), sayTurn("Sent.")},
+                  MaiApprovalPolicy::Never);
+    Recorder recorder;
+    recorder.attach(*underTest.agent);
+    const std::string sessionId =
+        underTest.agent->submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
+    underTest.agent->submit(MaiSendPrompt{sessionId, "send two messages"});
+
+    CHECK(waitFor([&] { return underTest.agent->listPendingPermissions().size() == 1; }));
+    CHECK(forcedToolRuns == 0);
+    auto first = underTest.agent->listPendingPermissions().front();
+    CHECK(!first.allowForSession);
+    CHECK(underTest.agent
+              ->submit(MaiReplyPermission{first.id, MaiPermissionDecision::ApprovedForSession})
+              .isOk());
+
+    CHECK(waitFor([&] {
+        return forcedToolRuns == 1 && underTest.agent->listPendingPermissions().size() == 1;
+    }));
+    auto second = underTest.agent->listPendingPermissions().front();
+    CHECK(!second.allowForSession);
+    CHECK(underTest.agent->submit(MaiReplyPermission{second.id, MaiPermissionDecision::Approved})
+              .isOk());
+    underTest.agent->waitIdle();
+
+    CHECK(forcedToolRuns == 2);
+    CHECK(recorder.count(MaiEventType::PermissionAsked) == 2);
 }
 
 void test_interrupt_while_waiting_for_approval() {
@@ -695,6 +752,8 @@ int main() {
     test_unless_trusted_still_asks_for_risky_shell();
     std::printf("-> test_never_policy_runs_without_prompting\n");
     test_never_policy_runs_without_prompting();
+    std::printf("-> test_per_call_approval_ignores_policy_and_session_grants\n");
+    test_per_call_approval_ignores_policy_and_session_grants();
     std::printf("-> test_interrupt_while_waiting_for_approval\n");
     test_interrupt_while_waiting_for_approval();
     std::printf("-> test_reply_to_stale_permission_is_not_found\n");

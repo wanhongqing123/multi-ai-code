@@ -41,6 +41,7 @@ struct AIPermission: Codable, Identifiable, Sendable, Equatable {
     let id: String
     let tool: String
     let input: String
+    var allowForSession: Bool?
 }
 struct AIQuestion: Codable, Identifiable, Sendable, Equatable {
     let id: String

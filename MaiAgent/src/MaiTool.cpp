@@ -78,6 +78,11 @@ bool MaiTool::requiresApproval(const std::string& argumentsJson) const {
     return false;
 }
 
+bool MaiTool::requiresPerCallApproval(const std::string& argumentsJson) const {
+    (void)argumentsJson;
+    return false;
+}
+
 // ── MaiToolRegistry ─────────────────────────────────────────────
 
 void MaiToolRegistry::add(std::unique_ptr<MaiTool> tool) {

@@ -127,6 +127,9 @@ MaiPermissionDecision MaiPermissionGate::ask(const MaiPermissionRequest& request
         decision = timedOut ? MaiPermissionDecision::TimedOut : MaiPermissionDecision::Denied;
     }
 
+    if (decision == MaiPermissionDecision::ApprovedForSession && !request.allowForSession)
+        decision = MaiPermissionDecision::Approved;
+
     if (decision == MaiPermissionDecision::ApprovedForSession) {
         mApprovals->sessionAllowlist[request.sessionId].insert(
             request.approvalKey.empty() ? request.toolName : request.approvalKey);

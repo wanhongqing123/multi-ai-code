@@ -587,8 +587,12 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 heading.setOnClickListener(v -> details("操作参数", permission.optString("input")));
                 pending.addView(heading, matchWrap());
                 LinearLayout choices = row();
-                for (String[] choice : new String[][] {{"拒绝", "denied"}, {"允许一次", "approved"},
-                         {"本会话允许", "approved_for_session"}})
+                java.util.List<String[]> availableChoices = new java.util.ArrayList<>();
+                availableChoices.add(new String[] {"拒绝", "denied"});
+                availableChoices.add(new String[] {"允许一次", "approved"});
+                if (permission.optBoolean("allowForSession", true))
+                    availableChoices.add(new String[] {"本会话允许", "approved_for_session"});
+                for (String[] choice : availableChoices)
                     choices.addView(
                         button(choice[0], choice[0],
                             v

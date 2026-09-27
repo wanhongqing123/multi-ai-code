@@ -140,6 +140,9 @@ public:
   bool requiresApproval(const std::string &) const override {
     return mApproval;
   }
+  bool requiresPerCallApproval(const std::string &) const override {
+    return mApproval;
+  }
 
   MaiToolResult execute(const std::string &argumentsJson,
                         const MaiToolContext &) override {

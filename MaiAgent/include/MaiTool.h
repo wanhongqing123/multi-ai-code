@@ -131,6 +131,13 @@ public:
     // 这一层的兜底方向永远是「不放行」，看不懂的东西不能当成安全的。
     virtual bool requiresApproval(const std::string& argumentsJson) const;
 
+    // 这一类调用**每一次**都必须由用户明确确认，不受 approvalPolicy、
+    // 「本会话都允许」或其它自动放行规则影响。用于向外部系统发送消息、付款、发布等动作。
+    //
+    // 默认 false。返回 true 的工具也应让 requiresApproval() 返回 true，便于宿主在工具清单和
+    // 审计界面里保持一致；核心会优先按本方法处理。
+    virtual bool requiresPerCallApproval(const std::string& argumentsJson) const;
+
     // 用户选「这个会话以后都允许」时，记住的是哪一类调用。
     //
     // 默认就是工具名，对 write / edit 这种「危险程度不随参数变」的工具是对的。

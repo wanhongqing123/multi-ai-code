@@ -152,6 +152,7 @@ public:
     std::string description() const override { return mDescription; }
     std::string parametersSchema() const override { return mSchema; }
     bool requiresApproval(const std::string&) const override { return mApproval; }
+    bool requiresPerCallApproval(const std::string&) const override { return mApproval; }
     MaiToolResult execute(const std::string& argumentsJson,
                           const MaiToolContext&) override {
         return mDispatcher->call(mName, argumentsJson);
@@ -364,7 +365,10 @@ struct MaiMobileAgent {
         Json permissions = Json::array(), questions = Json::array();
         for (const auto& p : agent->listPendingPermissions())
             if (p.sessionId == selected)
-                permissions.push_back({{"id", p.id}, {"tool", p.toolName}, {"input", p.arguments}});
+                permissions.push_back({{"id", p.id},
+                                       {"tool", p.toolName},
+                                       {"input", p.arguments},
+                                       {"allowForSession", p.allowForSession}});
         for (const auto& q : agent->listPendingQuestions())
             if (q.sessionId == selected)
                 questions.push_back(

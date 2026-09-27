@@ -69,6 +69,8 @@ QString toolPrimaryArgument(const QString& tool, const QString& arguments) {
                         : tool == QStringLiteral("glob")     ? QStringLiteral("pattern")
                         : tool == QStringLiteral("grep")     ? QStringLiteral("pattern")
                         : tool == QStringLiteral("webfetch") ? QStringLiteral("url")
+                        : tool.startsWith(QStringLiteral("maichat_"))
+                            ? QStringLiteral("peer_id")
                                                                : QStringLiteral("path");
     return object.value(key).toString().simplified();
 }
@@ -483,13 +485,34 @@ public:
             "QFrame#agentToolCard{background:transparent;border:none;}"));
         icon_->setStyleSheet(QStringLiteral("color:%1;background:transparent;").arg(edge));
         approval_->setVisible(waitingForUser);
+        always_->setVisible(waitingForUser && allowForSession_);
+        if (waitingForUser && !allowForSession_) {
+            expanded_ = true;
+            detail_->setVisible(!detailText_.isEmpty());
+            expand_->setText(QStringLiteral("⌄"));
+        }
         refreshSummary();
+    }
+
+    void setAllowForSession(bool allow) {
+        allowForSession_ = allow;
+        always_->setVisible(waiting_ && allowForSession_);
     }
 
     void setDetail(const QString& text) {
         QString rendered;
         if (tool_ == QStringLiteral("shell") && !primaryArgument_.isEmpty()) {
             rendered = QStringLiteral("$ ") + primaryArgument_;
+            if (!text.trimmed().isEmpty()) rendered += QStringLiteral("\n\n") + text.trimmed();
+        } else if (tool_ == QStringLiteral("maichat_send_text") ||
+                   tool_ == QStringLiteral("maichat_reply_message")) {
+            const QJsonObject object = QJsonDocument::fromJson(arguments_.toUtf8()).object();
+            rendered = QStringLiteral("收件人：%1\n\n消息内容：\n%2")
+                           .arg(object.value(QStringLiteral("peer_id")).toString(),
+                                object.value(QStringLiteral("text")).toString());
+            const QString replyTo = object.value(QStringLiteral("message_id")).toString();
+            if (!replyTo.isEmpty())
+                rendered += QStringLiteral("\n\n回复消息：%1").arg(replyTo);
             if (!text.trimmed().isEmpty()) rendered += QStringLiteral("\n\n") + text.trimmed();
         } else {
             rendered = arguments_.trimmed();
@@ -545,6 +568,7 @@ private:
     MaiToolState stateValue_ = MaiToolState::Pending;
     bool waiting_ = false;
     bool expanded_ = false;
+    bool allowForSession_ = true;
 };
 
 struct AgentChatPanel::Runtime {
@@ -1190,6 +1214,8 @@ void AgentChatPanel::showApproval(const QString& permissionId) {
         if (fromUtf8(pending.id) != permissionId) continue;
         ToolCard* card = toolCardFor(fromUtf8(pending.partId));
         card->setCall(fromUtf8(pending.toolName), fromUtf8(pending.arguments));
+        card->setAllowForSession(pending.allowForSession);
+        card->setDetail(QString());
         card->apply(MaiToolState::Pending, true);
         scrollToBottom();
         return;

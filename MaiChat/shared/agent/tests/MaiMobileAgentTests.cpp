@@ -197,6 +197,7 @@ int main() {
             wait([](const Json& s) { return !s["permissions"].empty(); });
         CHECK(hostProbe.calls == 0);
         CHECK(hostPermission["permissions"][0]["tool"] == "maichat_send_text");
+        CHECK(hostPermission["permissions"][0]["allowForSession"] == false);
         CHECK(call(agent,
                    {{"op", "permission"},
                     {"id", hostPermission["permissions"][0]["id"]},

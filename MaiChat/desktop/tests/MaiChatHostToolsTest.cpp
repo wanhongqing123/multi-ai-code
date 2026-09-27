@@ -34,6 +34,12 @@ void MaiChatHostToolsTest::registersMaiChatReadAndWriteTools() {
   QVERIFY(!registry.find("maichat_list_contacts")->requiresApproval("{}"));
   QVERIFY(registry.find("maichat_send_text")->requiresApproval("{}"));
   QVERIFY(registry.find("maichat_reply_message")->requiresApproval("{}"));
+  QVERIFY(!registry.find("maichat_list_contacts")
+               ->requiresPerCallApproval("{}"));
+  QVERIFY(registry.find("maichat_send_text")
+              ->requiresPerCallApproval("{}"));
+  QVERIFY(registry.find("maichat_reply_message")
+              ->requiresPerCallApproval("{}"));
 }
 
 void MaiChatHostToolsTest::readsContactsMessagesSearchAndUnreadState() {

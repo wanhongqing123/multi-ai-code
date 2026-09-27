@@ -55,6 +55,9 @@ struct MaiPermissionRequest {
     // 分开是为了 shell：给 `git status` 点一次「以后都允许」，不该连 `rm -rf` 一起放行。
     // 键由工具自己给（MaiTool::approvalKey），闸门只管原样存和查。
     std::string approvalKey;
+    // false 表示这次动作只能批准一次。界面不能展示「本会话都允许」，
+    // 闸门也会把错误传入的 ApprovedForSession 收窄成 Approved。
+    bool allowForSession = true;
     MaiMillis asked = 0;
 };
 

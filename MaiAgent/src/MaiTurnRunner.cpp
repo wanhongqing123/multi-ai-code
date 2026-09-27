@@ -319,7 +319,9 @@ MaiToolResult MaiTurnRunner::checkPermission(const MaiToolInvocation& call,
     // shell 的键是 `shell:<程序名>`，所以放行的是「以后都允许跑 git」而不是
     // 「以后都允许跑任何命令」。
     const std::string approvalKey = tool->approvalKey(call.arguments);
-    if (mDependencies.permissions->isAllowedInSession(mSessionId, approvalKey)) return {};
+    const bool perCallApproval = tool->requiresPerCallApproval(call.arguments);
+    if (!perCallApproval && mDependencies.permissions->isAllowedInSession(mSessionId, approvalKey))
+        return {};
 
     MaiPermissionRequest request;
     request.id = MaiIdGenerator::newPermissionId();
@@ -329,6 +331,7 @@ MaiToolResult MaiTurnRunner::checkPermission(const MaiToolInvocation& call,
     request.toolName = call.name;
     request.arguments = call.arguments;
     request.approvalKey = approvalKey;
+    request.allowForSession = !perCallApproval;
     request.asked = MaiTime::getCurrentTime();
 
     MaiEventEmitter* emitter = mDependencies.emitter;
@@ -363,7 +366,9 @@ MaiToolResult MaiTurnRunner::checkPermission(const MaiToolInvocation& call,
 
 bool MaiTurnRunner::toolNeedsApproval(const MaiToolInvocation& call) const {
     MaiTool* tool = mDependencies.tools ? mDependencies.tools->find(call.name) : nullptr;
-    if (tool == nullptr || !tool->requiresApproval(call.arguments)) return false;
+    if (tool == nullptr) return false;
+    if (tool->requiresPerCallApproval(call.arguments)) return true;
+    if (!tool->requiresApproval(call.arguments)) return false;
     if (mDependencies.approvalPolicy == MaiApprovalPolicy::Never) return false;
     if (mDependencies.approvalPolicy == MaiApprovalPolicy::UnlessTrusted) {
         // 这些工具都受工作目录边界保护，且变更内容会完整进入工具调用记录。

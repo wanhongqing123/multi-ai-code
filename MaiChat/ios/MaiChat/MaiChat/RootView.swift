@@ -522,39 +522,45 @@ private struct CompactTabBar: View {
         HStack(spacing: 8) {
             TabButton(
                 title: "消息",
-                systemImage: selectedTab == .messages ? "bubble.left.fill" : "bubble.left",
+                imageName: "NavMessages",
+                accent: RemoteIMStyle.navMessages,
+                selectedBackground: RemoteIMStyle.navMessagesSoft,
                 selected: selectedTab == .messages,
                 badgeCount: appState.totalUnreadCount
             ) {
                 selectedTab = .messages
             }
-            TabButton(title: "AI 助手", systemImage: "sparkles", selected: selectedTab == .assistant) {
+            TabButton(
+                title: "AI 助手",
+                imageName: "NavAssistant",
+                accent: RemoteIMStyle.navAssistant,
+                selectedBackground: RemoteIMStyle.navAssistantSoft,
+                selected: selectedTab == .assistant
+            ) {
                 selectedTab = .assistant
             }
             TabButton(
                 title: "通讯录",
-                systemImage: selectedTab == .contacts ? "person.2.fill" : "person.2",
+                imageName: "NavContacts",
+                accent: RemoteIMStyle.navContacts,
+                selectedBackground: RemoteIMStyle.navContactsSoft,
                 selected: selectedTab == .contacts
             ) {
                 selectedTab = .contacts
             }
             TabButton(
                 title: "我",
-                systemImage: selectedTab == .me ? "person.fill" : "person",
+                imageName: "NavProfile",
+                accent: RemoteIMStyle.navProfile,
+                selectedBackground: RemoteIMStyle.navProfileSoft,
                 selected: selectedTab == .me
             ) {
                 selectedTab = .me
             }
         }
-        .padding(6)
-        .background(Color(red: 0.962, green: 0.97, blue: 0.98), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color(red: 0.855, green: 0.894, blue: 0.941), lineWidth: 1)
-        )
         .padding(.horizontal, 16)
-        .padding(.top, 9)
-        .padding(.bottom, 10)
+        .padding(.top, 10)
+        .padding(.bottom, 12)
         .frame(maxWidth: .infinity)
         .background(Color.white)
         .overlay(alignment: .top) {
@@ -565,7 +571,9 @@ private struct CompactTabBar: View {
 
 private struct TabButton: View {
     let title: String
-    let systemImage: String
+    let imageName: String
+    let accent: Color
+    let selectedBackground: Color
     let selected: Bool
     var badgeCount = 0
     let action: () -> Void
@@ -573,9 +581,11 @@ private struct TabButton: View {
     var body: some View {
         Button(action: action) {
             ZStack(alignment: .topTrailing) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 18, weight: .semibold))
-                    .frame(width: 28, height: 26)
+                Image(imageName)
+                    .renderingMode(.template)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 23, height: 23)
                 if badgeCount > 0 {
                     Circle()
                         .fill(Color(red: 1.0, green: 0.235, blue: 0.188))
@@ -583,17 +593,15 @@ private struct TabButton: View {
                         .offset(x: 6, y: -2)
                 }
             }
+            .frame(width: 48, height: 40)
+            .background(
+                selected ? selectedBackground : Color.clear,
+                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+            )
             .frame(maxWidth: .infinity)
-            .frame(height: 38)
         }
         .buttonStyle(.plain)
-        .foregroundStyle(selected ? Color(red: 0.035, green: 0.376, blue: 0.667) : Color(red: 0.392, green: 0.459, blue: 0.561))
-        .background(
-            selected
-                ? Color(red: 0.882, green: 0.957, blue: 1.0)
-                : Color.clear,
-            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-        )
+        .foregroundStyle(selected ? accent : RemoteIMStyle.textSecondary.opacity(0.78))
         .accessibilityLabel(title)
         .accessibilityValue(accessibilityValue)
     }

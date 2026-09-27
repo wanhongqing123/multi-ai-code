@@ -21,6 +21,16 @@ public final class MaiChatTheme {
     public static final int YELLOW_SOFT = Color.rgb(255, 251, 233);
     public static final int YELLOW_BORDER = Color.rgb(253, 207, 88);
     public static final int RED = Color.rgb(220, 38, 38);
+    public static final int NAV_MESSAGES = Color.rgb(20, 135, 212);
+    public static final int NAV_MESSAGES_SOFT = Color.rgb(230, 244, 255);
+    public static final int NAV_ASSISTANT = Color.rgb(111, 98, 199);
+    public static final int NAV_ASSISTANT_SOFT = Color.rgb(240, 237, 255);
+    public static final int NAV_CONTACTS = Color.rgb(25, 140, 115);
+    public static final int NAV_CONTACTS_SOFT = Color.rgb(231, 247, 241);
+    public static final int NAV_REMOTE = Color.rgb(83, 111, 158);
+    public static final int NAV_REMOTE_SOFT = Color.rgb(235, 240, 248);
+    public static final int NAV_PROFILE = Color.rgb(83, 101, 122);
+    public static final int NAV_PROFILE_SOFT = Color.rgb(233, 238, 245);
 
     private MaiChatTheme() {
     }

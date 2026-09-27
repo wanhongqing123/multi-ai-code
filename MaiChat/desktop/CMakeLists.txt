@@ -42,7 +42,7 @@ endif()
 # Multimedia/MultimediaWidgets：视频消息的播放窗（QMediaPlayer + QVideoWidget）。
 # 注意 QMediaPlayer 的解码后端是插件（plugins/mediaservice 下的 wmfengine/dsengine），
 # 链接通过不代表能播——打包脚本会校验插件是否随包部署。
-find_package(Qt5 REQUIRED COMPONENTS Core Network Sql Widgets Multimedia MultimediaWidgets Test)
+find_package(Qt5 REQUIRED COMPONENTS Core Network Sql Widgets Svg Multimedia MultimediaWidgets Test)
 find_package(ZLIB REQUIRED)
 
 # md4c：CommonMark + GFM 扩展的 Markdown 解析器（与 Qt 内嵌同源，MIT）。
@@ -282,7 +282,7 @@ add_library(remote_im_desktop_ui
 )
 target_include_directories(remote_im_desktop_ui PUBLIC src)
 target_link_libraries(remote_im_desktop_ui PUBLIC remote_im_desktop_app remote_im_core
-  maichat_agent Qt5::Widgets Qt5::Multimedia Qt5::MultimediaWidgets)
+  maichat_agent Qt5::Widgets Qt5::Svg Qt5::Multimedia Qt5::MultimediaWidgets)
 
 add_executable(maichat
   src/main.cpp

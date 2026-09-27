@@ -15,4 +15,15 @@
     <file alias="JetBrainsMono-latin-400.ttf">fonts/JetBrainsMono-latin-400.ttf</file>
     <file alias="JetBrainsMono-latin-700.ttf">fonts/JetBrainsMono-latin-700.ttf</file>
   </qresource>
+  <!-- Tabler Icons v3.x, MIT. Original SVGs and license live together. -->
+  <qresource prefix="/maichat/icons">
+    <file alias="message-circle.svg">icons/tabler/message-circle.svg</file>
+    <file alias="sparkles.svg">icons/tabler/sparkles.svg</file>
+    <file alias="users.svg">icons/tabler/users.svg</file>
+    <file alias="device-desktop.svg">icons/tabler/device-desktop.svg</file>
+    <file alias="settings.svg">icons/tabler/settings.svg</file>
+    <file alias="arrow-up.svg">icons/tabler/arrow-up.svg</file>
+    <file alias="user-circle.svg">icons/tabler/user-circle.svg</file>
+    <file alias="tabler-license.txt">icons/tabler/LICENSE.txt</file>
+  </qresource>
 </RCC>

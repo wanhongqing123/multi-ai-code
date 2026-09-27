@@ -772,27 +772,34 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             this
         ));
         outside.addView(bar, matchMatch());
-        bar.addView(tabButton(RemoteIMTab.MESSAGES, MaiChatSymbolView.Symbol.MESSAGE), weightMatch());
-        bar.addView(tabButton(RemoteIMTab.ASSISTANT, MaiChatSymbolView.Symbol.ASSISTANT), weightMatch());
-        bar.addView(tabButton(RemoteIMTab.CONTACTS, MaiChatSymbolView.Symbol.CONTACTS), weightMatch());
-        bar.addView(tabButton(RemoteIMTab.REMOTE, MaiChatSymbolView.Symbol.REMOTE), weightMatch());
-        bar.addView(tabButton(RemoteIMTab.ME, MaiChatSymbolView.Symbol.USER), weightMatch());
+        bar.addView(tabButton(RemoteIMTab.MESSAGES), weightMatch());
+        bar.addView(tabButton(RemoteIMTab.ASSISTANT), weightMatch());
+        bar.addView(tabButton(RemoteIMTab.CONTACTS), weightMatch());
+        bar.addView(tabButton(RemoteIMTab.REMOTE), weightMatch());
+        bar.addView(tabButton(RemoteIMTab.ME), weightMatch());
         return outside;
     }
 
-    private View tabButton(RemoteIMTab tab, MaiChatSymbolView.Symbol symbol) {
+    private View tabButton(RemoteIMTab tab) {
         FrameLayout button = new FrameLayout(this);
         boolean selected = activeTab == tab;
-        button.setBackground(selected
-            ? MaiChatTheme.rounded(MaiChatTheme.BLUE_SOFT, 10, this)
-            : new ColorDrawable(Color.TRANSPARENT));
         button.setContentDescription(tab.title());
         button.setClickable(true);
         button.setFocusable(true);
-        MaiChatSymbolView icon = new MaiChatSymbolView(this, symbol);
-        icon.setSymbolColor(selected ? MaiChatTheme.BLUE_DARK : MaiChatTheme.SECONDARY);
-        FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(dp(25), dp(25), Gravity.CENTER);
-        button.addView(icon, iconParams);
+
+        FrameLayout selection = new FrameLayout(this);
+        selection.setBackground(selected
+            ? MaiChatTheme.rounded(tabSoftColor(tab), 18, this)
+            : new ColorDrawable(Color.TRANSPARENT));
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(tabIconResource(tab));
+        icon.setColorFilter(selected ? tabAccentColor(tab) : MaiChatTheme.SECONDARY);
+        FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER);
+        selection.addView(icon, iconParams);
+        FrameLayout.LayoutParams selectionParams = new FrameLayout.LayoutParams(
+            dp(54), dp(36), Gravity.CENTER
+        );
+        button.addView(selection, selectionParams);
 
         if (tab == RemoteIMTab.MESSAGES && session.totalUnreadCount() > 0) {
             View badge = new View(this);
@@ -809,6 +816,39 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             render();
         });
         return button;
+    }
+
+    private int tabIconResource(RemoteIMTab tab) {
+        switch (tab) {
+            case MESSAGES: return R.drawable.ic_nav_messages;
+            case ASSISTANT: return R.drawable.ic_nav_assistant;
+            case CONTACTS: return R.drawable.ic_nav_contacts;
+            case REMOTE: return R.drawable.ic_nav_remote;
+            case ME: return R.drawable.ic_nav_profile;
+        }
+        return R.drawable.ic_nav_messages;
+    }
+
+    private int tabAccentColor(RemoteIMTab tab) {
+        switch (tab) {
+            case MESSAGES: return MaiChatTheme.NAV_MESSAGES;
+            case ASSISTANT: return MaiChatTheme.NAV_ASSISTANT;
+            case CONTACTS: return MaiChatTheme.NAV_CONTACTS;
+            case REMOTE: return MaiChatTheme.NAV_REMOTE;
+            case ME: return MaiChatTheme.NAV_PROFILE;
+        }
+        return MaiChatTheme.NAV_MESSAGES;
+    }
+
+    private int tabSoftColor(RemoteIMTab tab) {
+        switch (tab) {
+            case MESSAGES: return MaiChatTheme.NAV_MESSAGES_SOFT;
+            case ASSISTANT: return MaiChatTheme.NAV_ASSISTANT_SOFT;
+            case CONTACTS: return MaiChatTheme.NAV_CONTACTS_SOFT;
+            case REMOTE: return MaiChatTheme.NAV_REMOTE_SOFT;
+            case ME: return MaiChatTheme.NAV_PROFILE_SOFT;
+        }
+        return MaiChatTheme.NAV_MESSAGES_SOFT;
     }
 
     private void renderConversationList() {

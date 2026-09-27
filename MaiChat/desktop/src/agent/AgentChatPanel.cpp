@@ -164,10 +164,11 @@ QIcon makeComposerActionIcon(bool stop, const QColor& color) {
         painter.setBrush(color);
         painter.drawRoundedRect(QRectF(14, 14, 20, 20), 3, 3);
     } else {
-        painter.drawPolygon(QPolygonF({QPointF(8, 22), QPointF(40, 8), QPointF(30, 40),
-                                       QPointF(23, 28)}));
-        painter.drawLine(QPointF(8, 22), QPointF(23, 28));
-        painter.drawLine(QPointF(23, 28), QPointF(40, 8));
+        // Match the IM composer and mobile clients: a simple upward arrow reads as
+        // "send" at 18px more clearly than the previous detailed paper plane.
+        painter.drawLine(QPointF(24, 38), QPointF(24, 10));
+        painter.drawLine(QPointF(13, 21), QPointF(24, 10));
+        painter.drawLine(QPointF(35, 21), QPointF(24, 10));
     }
     painter.end();
     return QIcon(pixmap);
@@ -1400,11 +1401,11 @@ void AgentChatPanel::setRunning(bool running) {
     runtime_->send->setAccessibleName(runtime_->send->toolTip());
     runtime_->send->setStyleSheet(UiZoom::scaleQss(
         running ? QStringLiteral("QPushButton#agentSendButton{background:#fff5f3;color:%1;"
-                                 "border:1px solid #f0c3bd;border-radius:8px;padding:0;}"
+                                 "border:1px solid #f0c3bd;border-radius:18px;padding:0;}"
                                  "QPushButton#agentSendButton:hover{background:#fee4e2;}")
                       .arg(kDanger)
                 : QStringLiteral("QPushButton#agentSendButton{background:%1;color:#ffffff;"
-                                 "border:none;border-radius:8px;padding:0;}"
+                                 "border:none;border-radius:18px;padding:0;}"
                                  "QPushButton#agentSendButton:hover{background:#095a9f;}"
                                  "QPushButton#agentSendButton:pressed{background:#084d87;}"
                                  "QPushButton#agentSendButton:disabled{background:#b8d3e8;"

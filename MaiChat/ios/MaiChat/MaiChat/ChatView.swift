@@ -25,6 +25,14 @@ enum RemoteIMStyle {
     static let incomingBubbleBorder = Color(red: 235 / 255.0, green: 240 / 255.0, blue: 246 / 255.0)
     static let incomingBubbleBackground = Color(red: 250 / 255.0, green: 252 / 255.0, blue: 254 / 255.0)
     static let outgoingBubbleBackground = Color(red: 234 / 255.0, green: 244 / 255.0, blue: 255 / 255.0)
+    static let navMessages = Color(red: 20 / 255.0, green: 135 / 255.0, blue: 212 / 255.0)
+    static let navMessagesSoft = Color(red: 230 / 255.0, green: 244 / 255.0, blue: 255 / 255.0)
+    static let navAssistant = Color(red: 111 / 255.0, green: 98 / 255.0, blue: 199 / 255.0)
+    static let navAssistantSoft = Color(red: 240 / 255.0, green: 237 / 255.0, blue: 255 / 255.0)
+    static let navContacts = Color(red: 25 / 255.0, green: 140 / 255.0, blue: 115 / 255.0)
+    static let navContactsSoft = Color(red: 231 / 255.0, green: 247 / 255.0, blue: 241 / 255.0)
+    static let navProfile = Color(red: 83 / 255.0, green: 101 / 255.0, blue: 122 / 255.0)
+    static let navProfileSoft = Color(red: 233 / 255.0, green: 238 / 255.0, blue: 245 / 255.0)
 }
 
 private struct RemoteIMImageRequest: Hashable, Sendable {

@@ -103,6 +103,7 @@
 #include <QRadioButton>
 #include <QRegularExpression>
 #include <QSystemTrayIcon>
+#include <QSvgRenderer>
 
 #include "im/RemoteIMCredentialDefaults.h"
 #include "im/TencentUserSigGenerator.h"
@@ -153,9 +154,8 @@ constexpr int GroupCountRole = Qt::UserRole + 11;
 constexpr int MaxGlobalSearchResults = 60;
 // 导航栏与会话栏头部的图标统一用这个尺寸：混用会让一列图标看起来大小不一。
 constexpr int kNavIconPixels = 20;
-// 导航栏图标比会话栏那个「+」大一档：它是四个入口里唯一的辨识依据（没有文字），
-// 太小就只能靠位置记。图标源是 48px 渲染的，26 仍是缩小、不会糊。
-constexpr int kNavRailIconPixels = 26;
+// Desktop / iOS / Android share Tabler's 24px optical grid.
+constexpr int kNavRailIconPixels = 24;
 constexpr int MessageRowGap = 10;
 constexpr int RemoteDesktopStopSendTimeoutMs = 800;
 
@@ -1030,6 +1030,64 @@ QIcon makeLineIcon(LineIconKind kind, const QColor& color) {
     return QIcon(pixmap);
 }
 
+QString navIconResource(LineIconKind kind) {
+    switch (kind) {
+        case LineIconKind::Messages:
+            return QStringLiteral(":/maichat/icons/message-circle.svg");
+        case LineIconKind::Assistant:
+            return QStringLiteral(":/maichat/icons/sparkles.svg");
+        case LineIconKind::Contacts:
+            return QStringLiteral(":/maichat/icons/users.svg");
+        case LineIconKind::Screen:
+            return QStringLiteral(":/maichat/icons/device-desktop.svg");
+        case LineIconKind::Settings:
+            return QStringLiteral(":/maichat/icons/settings.svg");
+        case LineIconKind::Send:
+            return QStringLiteral(":/maichat/icons/arrow-up.svg");
+        default:
+            return {};
+    }
+}
+
+QColor navIconColor(LineIconKind kind, bool selected) {
+    switch (kind) {
+        case LineIconKind::Messages:
+            return QColor(selected ? QStringLiteral("#0879c9") : QStringLiteral("#1487d4"));
+        case LineIconKind::Assistant:
+            return QColor(selected ? QStringLiteral("#5e52b6") : QStringLiteral("#6f62c7"));
+        case LineIconKind::Contacts:
+            return QColor(selected ? QStringLiteral("#117960") : QStringLiteral("#198c73"));
+        case LineIconKind::Screen:
+        case LineIconKind::ScreenConnecting:
+        case LineIconKind::ScreenDisconnect:
+            return QColor(selected ? QStringLiteral("#455e88") : QStringLiteral("#536f9e"));
+        case LineIconKind::Settings:
+            return QColor(selected ? QStringLiteral("#455668") : QStringLiteral("#53657a"));
+        default:
+            return QColor(selected ? QStringLiteral("#0879c9") : QStringLiteral("#5f6f82"));
+    }
+}
+
+QIcon makeNavIcon(LineIconKind kind, const QColor& color) {
+    const QString resource = navIconResource(kind);
+    if (resource.isEmpty()) return makeLineIcon(kind, color);
+
+    QFile file(resource);
+    if (!file.open(QIODevice::ReadOnly)) return makeLineIcon(kind, color);
+    QByteArray svg = file.readAll();
+    svg.replace("currentColor", color.name(QColor::HexRgb).toUtf8());
+    QSvgRenderer renderer(svg);
+    if (!renderer.isValid()) return makeLineIcon(kind, color);
+
+    constexpr int kRender = 48;
+    QPixmap pixmap(kRender, kRender);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    renderer.render(&painter, QRectF(0, 0, kRender, kRender));
+    return QIcon(pixmap);
+}
+
 QPushButton* makeNavButton(const QString& title, const QString& objectName, QWidget* parent) {
     // 只留图标，不显示文字。文字改挂 tooltip 与 accessibleName：纯图标对
     // 「远程」「设置」这类不常点的入口本来就不好认，去掉文字后必须留个说明，
@@ -1045,8 +1103,8 @@ QPushButton* makeNavButton(const QString& title, const QString& objectName, QWid
 void applyNavButtonIcon(QPushButton* button, bool selected) {
     const QVariant rawKind = button->property("navIconKind");
     if (!rawKind.isValid()) return;
-    const QColor color = selected ? QColor(QStringLiteral("#0b67b7")) : QColor(QStringLiteral("#62728a"));
-    button->setIcon(makeLineIcon(lineIconKindFromValue(rawKind.toInt()), color));
+    const LineIconKind kind = lineIconKindFromValue(rawKind.toInt());
+    button->setIcon(makeNavIcon(kind, navIconColor(kind, selected)));
 }
 
 // Feishu-style borderless icon button for the chat header.
@@ -1746,7 +1804,7 @@ void MainWindow::buildUi() {
 
     sendButton_ = new QPushButton(messageEditor_);
     sendButton_->setObjectName(QStringLiteral("sendButton"));
-    sendButton_->setIcon(makeLineIcon(LineIconKind::Send, QColor(QStringLiteral("#ffffff"))));
+    sendButton_->setIcon(makeNavIcon(LineIconKind::Send, QColor(QStringLiteral("#ffffff"))));
     sendButton_->setIconSize(QSize(UiZoom::s(18), UiZoom::s(18)));
     sendButton_->setFixedSize(UiZoom::s(36), UiZoom::s(36));
     sendButton_->setToolTip(QStringLiteral("发送消息"));
@@ -2233,15 +2291,28 @@ void MainWindow::applyStyle() {
             max-height: 44px;
             border: 0;
             border-radius: 10px;
-            background: transparent;
             padding: 0;
         }
+        #messagesNavButton { background: #e6f4ff; }
+        #agentNavButton { background: #f0edff; }
+        #contactsNavButton { background: #e7f7f1; }
+        #remoteNavButton { background: #ebf0f8; }
+        #settingsNavButton { background: #e9eef5; }
+        #messagesNavButton:hover { background: #d9edfc; }
+        #agentNavButton:hover { background: #e7e1ff; }
+        #contactsNavButton:hover { background: #daf1e8; }
+        #remoteNavButton:hover { background: #dfe7f3; }
+        #settingsNavButton:hover { background: #dfe6ef; }
         #messagesNavButton[selected="true"], #contactsNavButton[selected="true"],
         #remoteNavButton[selected="true"], #settingsNavButton[selected="true"],
         #agentNavButton[selected="true"] {
-            background: #dff1ff;
-            color: #0b67b7;
+            border: 0;
         }
+        #messagesNavButton[selected="true"] { background: #cfe9fb; }
+        #agentNavButton[selected="true"] { background: #ded7ff; }
+        #contactsNavButton[selected="true"] { background: #cceadd; }
+        #remoteNavButton[selected="true"] { background: #d5e0ee; }
+        #settingsNavButton[selected="true"] { background: #d8e1ec; }
         #conversationPane {
             background: #ffffff;
             border-right: 1px solid #dae4f0;
@@ -2460,7 +2531,7 @@ void MainWindow::applyStyle() {
             border-color: #58b7ff;
         }
         #sendButton {
-            border-radius: 8px;
+            border-radius: 18px;
             border: 0;
             background: #168eea;
             padding: 0;

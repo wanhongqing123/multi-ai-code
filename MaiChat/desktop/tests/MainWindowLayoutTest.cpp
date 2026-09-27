@@ -1055,13 +1055,14 @@ void MainWindowLayoutTest::mainWindowUsesRoomierIconFreeTitleArea() {
     MainWindow window(app);
 
     auto* inset = window.findChild<QWidget*>(QStringLiteral("windowTopInset"));
+#ifdef Q_OS_WIN
     QVERIFY(inset != nullptr);
     QCOMPARE(inset->minimumHeight(), UiZoom::s(16));
     QCOMPARE(inset->maximumHeight(), UiZoom::s(16));
+    QVERIFY(inset->styleSheet().contains(QStringLiteral("#eff4f9")));
 
     window.show();
     QVERIFY(QTest::qWaitForWindowExposed(&window));
-#ifdef Q_OS_WIN
     const HWND handle = reinterpret_cast<HWND>(window.winId());
     QVERIFY(window.property("nativeTitleBarIconHidden").toBool());
     QVERIFY(SendMessageW(handle, WM_GETICON, ICON_SMALL, 0) != 0);
@@ -1070,6 +1071,8 @@ void MainWindowLayoutTest::mainWindowUsesRoomierIconFreeTitleArea() {
     QVERIFY(window.windowFlags().testFlag(Qt::WindowMinimizeButtonHint));
     QVERIFY(window.windowFlags().testFlag(Qt::WindowMaximizeButtonHint));
     QVERIFY(window.windowFlags().testFlag(Qt::WindowCloseButtonHint));
+#else
+    QVERIFY(inset == nullptr);
 #endif
 }
 

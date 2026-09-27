@@ -1607,12 +1607,17 @@ void MainWindow::buildUi() {
     rootColumn->setSpacing(0);
     setCentralWidget(root);
 
+#ifdef Q_OS_WIN
     // Give the native caption a roomier visual band without replacing it with a custom title bar.
     // A custom frame would regress resizing, edge snapping and the Windows 11 snap layout menu.
     auto* windowTopInset = new QWidget(root);
     windowTopInset->setObjectName(QStringLiteral("windowTopInset"));
     windowTopInset->setFixedHeight(UiZoom::s(16));
+    windowTopInset->setAttribute(Qt::WA_StyledBackground, true);
+    windowTopInset->setStyleSheet(
+        QStringLiteral("QWidget#windowTopInset{background:#eff4f9;}"));
     rootColumn->addWidget(windowTopInset);
+#endif
 
     sharingIndicator_ = new SharingIndicatorBar(root);
     rootColumn->addWidget(sharingIndicator_);

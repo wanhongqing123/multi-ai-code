@@ -1814,23 +1814,22 @@ void MainWindow::buildUi() {
 
     aiReplyButton_ = new QPushButton(messageEditor_);
     aiReplyButton_->setObjectName(QStringLiteral("aiReplyButton"));
-    aiReplyButton_->setIcon(makeNavIcon(LineIconKind::Assistant,
-                                        QColor(QStringLiteral("#6254c7"))));
-    aiReplyButton_->setIconSize(QSize(UiZoom::s(17), UiZoom::s(17)));
-    aiReplyButton_->setFixedSize(UiZoom::s(32), UiZoom::s(32));
+    aiReplyButton_->setText(QStringLiteral("✨"));
+    aiReplyButton_->setFixedSize(UiZoom::s(30), UiZoom::s(30));
     aiReplyButton_->setCursor(Qt::PointingHandCursor);
     aiReplyButton_->setToolTip(QStringLiteral("AI 回复"));
     aiReplyButton_->setAccessibleName(QStringLiteral("AI 回复"));
     aiReplyButton_->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
         QPushButton#aiReplyButton {
-            background: #f1efff;
+            background: transparent;
             border: none;
-            border-radius: 16px;
+            border-radius: 8px;
             padding: 0;
+            font-size: 16px;
         }
-        QPushButton#aiReplyButton:hover { background: #e5e0ff; }
-        QPushButton#aiReplyButton:pressed { background: #d8d0ff; }
-        QPushButton#aiReplyButton:disabled { background: #f2f4f7; }
+        QPushButton#aiReplyButton:hover { background: #f0edff; }
+        QPushButton#aiReplyButton:pressed { background: #e2dcff; }
+        QPushButton#aiReplyButton:disabled { background: transparent; }
     )")));
     static_cast<ComposerTextEdit*>(messageEditor_)->setLeadingAction(aiReplyButton_);
 
@@ -2173,12 +2172,12 @@ void MainWindow::buildUi() {
 void MainWindow::applyStyle() {
     setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
         QToolTip {
-            background: #273142;
-            color: #ffffff;
-            border: 0;
-            border-radius: 6px;
-            padding: 5px 8px;
-            font-size: 12px;
+            background: #ffffff;
+            color: #475569;
+            border: 1px solid #dbe4ef;
+            border-radius: 5px;
+            padding: 3px 6px;
+            font-size: 11px;
         }
         QMainWindow, #root {
             background: #f6f9fc;
@@ -5484,8 +5483,7 @@ void MainWindow::applyScaledFixedGeometry() {
     }
     if (messageEditor_) messageEditor_->setMinimumHeight(UiZoom::s(64));
     if (aiReplyButton_) {
-        aiReplyButton_->setFixedSize(UiZoom::s(32), UiZoom::s(32));
-        aiReplyButton_->setIconSize(QSize(UiZoom::s(17), UiZoom::s(17)));
+        aiReplyButton_->setFixedSize(UiZoom::s(30), UiZoom::s(30));
     }
     if (sendButton_) {
         sendButton_->setFixedSize(UiZoom::s(36), UiZoom::s(36));

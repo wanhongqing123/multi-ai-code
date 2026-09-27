@@ -3235,18 +3235,18 @@ private struct FullScreenImagePreviewView: View {
                     .ignoresSafeArea()
                     .onTapGesture(perform: close)
 
-                Image(uiImage: presentation.image)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(
-                            width: imageFrame.width,
-                            height: imageFrame.height
-                        )
-                        .position(x: imageFrame.midX, y: imageFrame.midY)
-                        .contentShape(Rectangle())
-                        .onTapGesture(perform: close)
-                        .accessibilityLabel("图片预览")
-                        .accessibilityIdentifier("remote-im-image-preview")
+                // The bubble intentionally decodes a small image for scrolling performance.
+                // Reusing that UIImage here made a downloaded original look blurry at full screen.
+                // Decode the persisted original again at the physical display size, while keeping
+                // the bubble image as the transition placeholder.
+                RemoteIMAsyncImage(
+                    filePath: presentation.item.localFilePath,
+                    maximumPointSize: geometry.size
+                ) { image in
+                    previewImage(image, frame: imageFrame)
+                } placeholder: { _ in
+                    previewImage(presentation.image, frame: imageFrame)
+                }
 
                 VStack(alignment: .trailing, spacing: 14) {
                     if let saveResultText {
@@ -3292,6 +3292,18 @@ private struct FullScreenImagePreviewView: View {
             .overlay {
                 Circle().stroke(.white.opacity(0.12), lineWidth: 1)
             }
+    }
+
+    private func previewImage(_ image: UIImage, frame: CGRect) -> some View {
+        Image(uiImage: image)
+            .resizable()
+            .scaledToFit()
+            .frame(width: frame.width, height: frame.height)
+            .position(x: frame.midX, y: frame.midY)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: close)
+            .accessibilityLabel("图片预览")
+            .accessibilityIdentifier("remote-im-image-preview")
     }
 
     private func saveImageToPhotoLibrary() {
@@ -3783,11 +3795,24 @@ private struct ImageBubbleContent: View {
                                     )
                                 )
                             } label: {
-                                Color.clear
-                                    .contentShape(Rectangle())
+                                ZStack(alignment: .bottomTrailing) {
+                                    Color.clear
+                                        .contentShape(Rectangle())
+                                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                        .font(.system(size: 11, weight: .bold))
+                                        .foregroundStyle(.white)
+                                        .frame(width: 25, height: 25)
+                                        .background(.black.opacity(0.52), in: Circle())
+                                        .overlay {
+                                            Circle().stroke(.white.opacity(0.16), lineWidth: 1)
+                                        }
+                                        .padding(7)
+                                        .allowsHitTesting(false)
+                                        .accessibilityHidden(true)
+                                }
                             }
                             .buttonStyle(.plain)
-                            .accessibilityLabel("消息图片")
+                            .accessibilityLabel("查看原图")
                             .accessibilityIdentifier("remote-im-message-image")
                         }
                     }

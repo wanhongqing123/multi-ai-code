@@ -3,8 +3,11 @@
 #include "MaiIdGenerator.h"
 #include "MaiMobileAgent.h"
 #include "MaiSqliteStore.h"
+#include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <httplib.h>
 #include <json.hpp>
 #include <stdexcept>
@@ -20,6 +23,31 @@ static Json call(void* agent, const Json& value) {
     auto parsed = Json::parse(response);
     maiMobileAgentFree(response);
     return parsed;
+}
+struct HostToolProbe {
+    std::atomic<int> calls{0};
+    std::atomic<bool> released{false};
+    std::string lastTool;
+    std::string lastArguments;
+};
+static const char* hostToolHandler(void* context, const char* tool, const char* arguments) {
+    auto* probe = static_cast<HostToolProbe*>(context);
+    probe->lastTool = tool ? tool : "";
+    probe->lastArguments = arguments ? arguments : "";
+    ++probe->calls;
+    const std::string response =
+        Json{{"ok", true}, {"output", probe->lastTool == "maichat_send_text" ? "sent" : "read"}}
+            .dump();
+    char* owned = static_cast<char*>(std::malloc(response.size() + 1));
+    CHECK(owned != nullptr);
+    std::memcpy(owned, response.c_str(), response.size() + 1);
+    return owned;
+}
+static void freeHostToolResponse(void*, const char* response) {
+    std::free(const_cast<char*>(response));
+}
+static void releaseHostToolContext(void* context) {
+    static_cast<HostToolProbe*>(context)->released = true;
 }
 static std::string frame(const Json& delta, const char* finish = nullptr) {
     Json choice = {
@@ -48,12 +76,16 @@ int main() {
         CHECK(body["messages"].front()["content"].get<std::string>().find(
                   "GitHub-Flavored Markdown") != std::string::npos);
         // 移动端不能向模型宣称可以执行桌面 shell。
-        bool hasViewImage = false;
+        bool hasViewImage = false, hasMaiChatContacts = false, hasMaiChatSend = false;
         for (const auto& tool : body["tools"]) {
             CHECK(tool["function"]["name"] != "shell");
             if (tool["function"]["name"] == "view_image") hasViewImage = true;
+            if (tool["function"]["name"] == "maichat_list_contacts") hasMaiChatContacts = true;
+            if (tool["function"]["name"] == "maichat_send_text") hasMaiChatSend = true;
         }
         CHECK(hasViewImage);
+        CHECK(hasMaiChatContacts);
+        CHECK(hasMaiChatSend);
         const auto& last = body["messages"].back();
         std::string input;
         if (last["content"].is_string()) {
@@ -78,6 +110,19 @@ int main() {
                 {"function",
                  {{"name", "write"},
                   {"arguments", "{\"path\":\"result.txt\",\"content\":\"saved\"}"}}}};
+            response.set_content(frame({{"tool_calls", Json::array({invocation})}}, "tool_calls") +
+                                     "data: [DONE]\n\n",
+                                 "text/event-stream");
+            return;
+        }
+        if (input == "host-send") {
+            Json invocation = {
+                {"index", 0},
+                {"id", "call_host_send"},
+                {"type", "function"},
+                {"function",
+                 {{"name", "maichat_send_text"},
+                  {"arguments", "{\"peer_id\":\"alice\",\"text\":\"hello\"}"}}}};
             response.set_content(frame({{"tool_calls", Json::array({invocation})}}, "tool_calls") +
                                      "data: [DONE]\n\n",
                                  "text/event-stream");
@@ -115,8 +160,13 @@ int main() {
     CHECK(!MaiFileSystem::createDirectories(testRoot).hasError());
     const std::string directory = testRoot.toUtf8();
     void* agent = maiMobileAgentCreate();
+    HostToolProbe hostProbe;
     int status = 0;
     try {
+        CHECK(maiMobileAgentSetHostToolHandler(agent, &hostProbe, nullptr, nullptr, nullptr) == 0);
+        CHECK(maiMobileAgentSetHostToolHandler(agent, &hostProbe, hostToolHandler,
+                                               freeHostToolResponse,
+                                               releaseHostToolContext) == 1);
         Json config = {
             {"op", "configure"},      {"baseUrl", "http://127.0.0.1:" + std::to_string(port)},
             {"apiKey", "test-key"},   {"model", "test"},
@@ -141,6 +191,20 @@ int main() {
             }
             throw std::runtime_error("timed out waiting for native state");
         };
+        CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "host-send"}})["ok"] ==
+              true);
+        const auto hostPermission =
+            wait([](const Json& s) { return !s["permissions"].empty(); });
+        CHECK(hostProbe.calls == 0);
+        CHECK(hostPermission["permissions"][0]["tool"] == "maichat_send_text");
+        CHECK(call(agent,
+                   {{"op", "permission"},
+                    {"id", hostPermission["permissions"][0]["id"]},
+                    {"decision", "approved"}})["ok"] == true);
+        wait([](const Json& s) { return s["busy"] == false; });
+        CHECK(hostProbe.calls == 1);
+        CHECK(hostProbe.lastTool == "maichat_send_text");
+        CHECK(Json::parse(hostProbe.lastArguments)["peer_id"] == "alice");
         CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "hello"}})["ok"] == true);
         CHECK(call(agent, config)["ok"] == false);  // 工作中不能销毁并换配置。
         auto partial = wait([](const Json& s) {
@@ -241,6 +305,7 @@ int main() {
         status = 1;
     }
     maiMobileAgentDestroy(agent);
+    CHECK(hostProbe.released);
     server.stop();
     listener.join();
     MaiFileSystem::removeRecursively(testRoot);

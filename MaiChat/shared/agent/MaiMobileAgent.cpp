@@ -31,6 +31,171 @@ constexpr auto kMarkdownBaseInstructions =
     "in a user message are already available as visual input; analyze them directly and do not "
     "call the read tool for image files.";
 
+class MaiMobileHostDispatcher {
+public:
+    ~MaiMobileHostDispatcher() {
+        clear();
+    }
+
+    bool set(void* context, MaiMobileHostToolHandler handler,
+             MaiMobileHostToolResponseFree responseFree,
+             MaiMobileHostToolContextRelease contextRelease) {
+        if (handler == nullptr && context != nullptr) return false;
+        if ((handler == nullptr) != (responseFree == nullptr) ||
+            (handler == nullptr) != (contextRelease == nullptr))
+            return false;
+        void* previousContext = nullptr;
+        MaiMobileHostToolContextRelease previousRelease = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(mMutex);
+            if (mActiveCalls != 0) return false;
+            previousContext = mContext;
+            previousRelease = mContextRelease;
+            mContext = context;
+            mHandler = handler;
+            mResponseFree = responseFree;
+            mContextRelease = contextRelease;
+        }
+        if (previousRelease != nullptr) previousRelease(previousContext);
+        return true;
+    }
+
+    MaiToolResult call(const std::string& toolName, const std::string& argumentsJson) {
+        void* context = nullptr;
+        MaiMobileHostToolHandler handler = nullptr;
+        MaiMobileHostToolResponseFree responseFree = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(mMutex);
+            if (mHandler == nullptr)
+                return MaiToolResult::failure(MaiErrorCode::NotConfigured,
+                                              "the MaiChat host tool handler is not registered");
+            ++mActiveCalls;
+            context = mContext;
+            handler = mHandler;
+            responseFree = mResponseFree;
+        }
+
+        const char* response = handler(context, toolName.c_str(), argumentsJson.c_str());
+        std::string responseJson;
+        if (response != nullptr) responseJson = response;
+        if (response != nullptr) responseFree(context, response);
+        {
+            std::lock_guard<std::mutex> lock(mMutex);
+            --mActiveCalls;
+        }
+        if (responseJson.empty())
+            return MaiToolResult::failure(MaiErrorCode::Internal,
+                                          "the MaiChat host returned an empty response");
+        try {
+            const Json parsed = Json::parse(responseJson);
+            const bool success = parsed.value("ok", parsed.value("success", false));
+            if (!success) {
+                const std::string code = parsed.value("errorCode", "internal");
+                MaiErrorCode errorCode = MaiErrorCode::Internal;
+                if (code == "invalid_input") errorCode = MaiErrorCode::InvalidInput;
+                else if (code == "not_found") errorCode = MaiErrorCode::NotFound;
+                else if (code == "not_configured") errorCode = MaiErrorCode::NotConfigured;
+                else if (code == "canceled") errorCode = MaiErrorCode::Canceled;
+                return MaiToolResult::failure(
+                    errorCode, parsed.value("error", parsed.value(
+                        "errorMessage", "the MaiChat host tool failed")));
+            }
+            if (!parsed.contains("output"))
+                return MaiToolResult::failure(MaiErrorCode::Protocol,
+                                              "the MaiChat host response has no output");
+            return MaiToolResult::success(parsed["output"].is_string()
+                                              ? parsed["output"].get<std::string>()
+                                              : parsed["output"].dump());
+        } catch (const std::exception& error) {
+            return MaiToolResult::failure(MaiErrorCode::Protocol,
+                                          std::string("invalid MaiChat host response: ") +
+                                              error.what());
+        }
+    }
+
+    void clear() {
+        void* context = nullptr;
+        MaiMobileHostToolContextRelease contextRelease = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(mMutex);
+            if (mActiveCalls != 0) return;
+            context = mContext;
+            contextRelease = mContextRelease;
+            mContext = nullptr;
+            mHandler = nullptr;
+            mResponseFree = nullptr;
+            mContextRelease = nullptr;
+        }
+        if (contextRelease != nullptr) contextRelease(context);
+    }
+
+private:
+    std::mutex mMutex;
+    void* mContext = nullptr;
+    MaiMobileHostToolHandler mHandler = nullptr;
+    MaiMobileHostToolResponseFree mResponseFree = nullptr;
+    MaiMobileHostToolContextRelease mContextRelease = nullptr;
+    int mActiveCalls = 0;
+};
+
+class MaiMobileHostTool final : public MaiTool {
+public:
+    MaiMobileHostTool(std::string name, std::string description, std::string schema,
+                      std::shared_ptr<MaiMobileHostDispatcher> dispatcher, bool approval)
+        : mName(std::move(name)),
+          mDescription(std::move(description)),
+          mSchema(std::move(schema)),
+          mDispatcher(std::move(dispatcher)),
+          mApproval(approval) {}
+
+    std::string name() const override { return mName; }
+    std::string description() const override { return mDescription; }
+    std::string parametersSchema() const override { return mSchema; }
+    bool requiresApproval(const std::string&) const override { return mApproval; }
+    MaiToolResult execute(const std::string& argumentsJson,
+                          const MaiToolContext&) override {
+        return mDispatcher->call(mName, argumentsJson);
+    }
+
+private:
+    std::string mName;
+    std::string mDescription;
+    std::string mSchema;
+    std::shared_ptr<MaiMobileHostDispatcher> mDispatcher;
+    bool mApproval = false;
+};
+
+void registerMaiChatHostTools(MaiToolRegistry& tools,
+                              const std::shared_ptr<MaiMobileHostDispatcher>& dispatcher) {
+    const auto add = [&](const char* name, const char* description, const char* schema,
+                         bool approval = false) {
+        tools.add(std::make_unique<MaiMobileHostTool>(name, description, schema, dispatcher,
+                                                      approval));
+    };
+    add("maichat_list_contacts",
+        "List MaiChat contacts. Use query to filter by user ID or display name.",
+        R"({"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":200}}})");
+    add("maichat_list_conversations",
+        "List MaiChat conversations ordered by latest message, including unread counts.",
+        R"({"type":"object","properties":{"limit":{"type":"integer","minimum":1,"maximum":200}}})");
+    add("maichat_get_messages",
+        "Read recent messages in a MaiChat conversation with a specific contact.",
+        R"({"type":"object","properties":{"peer_id":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":200}},"required":["peer_id"]})");
+    add("maichat_search_messages",
+        "Search MaiChat message text across all contacts or within one contact.",
+        R"({"type":"object","properties":{"query":{"type":"string"},"peer_id":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":200}},"required":["query"]})");
+    add("maichat_get_unread_summary", "Summarize unread MaiChat messages by contact.",
+        R"({"type":"object","properties":{}})");
+    add("maichat_send_text",
+        "Send text to a MaiChat contact through the host. Requires user approval.",
+        R"({"type":"object","properties":{"peer_id":{"type":"string"},"text":{"type":"string"}},"required":["peer_id","text"]})",
+        true);
+    add("maichat_reply_message",
+        "Send a quoted reply to a MaiChat message through the host. Requires user approval.",
+        R"({"type":"object","properties":{"peer_id":{"type":"string"},"message_id":{"type":"string"},"text":{"type":"string"}},"required":["peer_id","message_id","text"]})",
+        true);
+}
+
 }  // namespace
 
 // 这是移动端适配器，JSON 只在语言边界，MaiAgent 的公开接口仍是领域对象。
@@ -47,11 +212,14 @@ struct MaiMobileAgent {
     std::string model;
     MaiModelConfig suggestionConfig;
     bool configured = false;
+    std::shared_ptr<MaiMobileHostDispatcher> hostTools =
+        std::make_shared<MaiMobileHostDispatcher>();
     // 最后销毁 agent：回调捕获的字段必须活到工作线程退出。
     std::unique_ptr<MaiAgent> agent;
 
     ~MaiMobileAgent() {
         agent.reset();
+        hostTools->clear();
     }
 
     static std::string result(MaiResult<std::string> value) {
@@ -88,6 +256,7 @@ struct MaiMobileAgent {
         tools->add(makeMaiCurrentTimeTool());
         tools->add(makeMaiTodoWriteTool());
         tools->add(makeMaiViewImageTool());
+        registerMaiChatHostTools(*tools, hostTools);
         MaiAgent::Options options;
         options.defaultModel = request.at("model").get<std::string>();
         options.baseInstructions = kMarkdownBaseInstructions;
@@ -319,6 +488,15 @@ void* maiMobileAgentCreate(void) {
 }
 void maiMobileAgentDestroy(void* handle) {
     delete static_cast<MaiMobileAgent*>(handle);
+}
+int maiMobileAgentSetHostToolHandler(void* handle, void* context,
+                                    MaiMobileHostToolHandler handler,
+                                    MaiMobileHostToolResponseFree responseFree,
+                                    MaiMobileHostToolContextRelease contextRelease) {
+    if (handle == nullptr) return 0;
+    auto* mobile = static_cast<MaiMobileAgent*>(handle);
+    if (mobile->anyBusy()) return 0;
+    return mobile->hostTools->set(context, handler, responseFree, contextRelease) ? 1 : 0;
 }
 char* maiMobileAgentRequest(void* handle, const char* request) {
     std::string response;

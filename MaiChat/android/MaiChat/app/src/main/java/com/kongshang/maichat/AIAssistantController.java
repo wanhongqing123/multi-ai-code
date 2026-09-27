@@ -18,6 +18,8 @@ import java.nio.file.Files;
 import java.security.KeyStore;
 import java.security.cert.X509Certificate;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
@@ -31,6 +33,9 @@ import org.json.JSONObject;
 
 /** Native core, JSON, SQLite, credentials and imports are confined to the named worker. */
 final class AIAssistantController {
+    interface HostToolHandler {
+        Object execute(String toolName, JSONObject arguments) throws Exception;
+    }
     interface Listener {
         void onState(State state);
     }
@@ -78,6 +83,7 @@ final class AIAssistantController {
     private static native long nativeCreate();
     private static native void nativeDestroy(long handle);
     private static native byte[] nativeRequest(long handle, byte[] request);
+    private static native boolean nativeSetHostToolHandler(long handle, AIAssistantController owner);
 
     private final Context context;
     private final HandlerThread thread = new HandlerThread("MaiChat-Agent");
@@ -85,6 +91,7 @@ final class AIAssistantController {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final String testEndpoint;
     private volatile Listener listener;
+    private volatile HostToolHandler hostToolHandler;
     volatile State state = new State(new JSONObject(), "", "https://open.bigmodel.cn/api/coding/paas/v4",
         "glm-5.3", "on-request", "", false);
     private long handle;
@@ -127,10 +134,60 @@ final class AIAssistantController {
         if (listener == expected)
             setListener(null);
     }
+    void setHostToolHandler(HostToolHandler handler) {
+        hostToolHandler = handler;
+    }
+    @SuppressWarnings("unused") // Called from MaiAgentJni.cpp on an agent worker thread.
+    private byte[] onNativeHostTool(byte[] toolBytes, byte[] argumentsBytes) {
+        String tool = new String(toolBytes, StandardCharsets.UTF_8);
+        String arguments = new String(argumentsBytes, StandardCharsets.UTF_8);
+        HostToolHandler target = hostToolHandler;
+        if (target == null)
+            return hostToolFailure("MaiChat 宿主工具尚未连接");
+
+        final byte[][] response = new byte[1][];
+        Runnable invoke = () -> {
+            try {
+                Object output = target.execute(tool, new JSONObject(arguments));
+                response[0] = new JSONObject().put("ok", true).put("output", output)
+                    .toString().getBytes(StandardCharsets.UTF_8);
+            } catch (Throwable failure) {
+                response[0] = hostToolFailure(safeMessage(failure));
+            }
+        };
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            invoke.run();
+            return response[0];
+        }
+        CountDownLatch completed = new CountDownLatch(1);
+        main.post(() -> {
+            try { invoke.run(); }
+            finally { completed.countDown(); }
+        });
+        try {
+            if (!completed.await(30, TimeUnit.SECONDS))
+                return hostToolFailure("MaiChat 宿主工具执行超时");
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            return hostToolFailure("MaiChat 宿主工具执行被中断");
+        }
+        return response[0] == null ? hostToolFailure("MaiChat 宿主工具未返回结果") : response[0];
+    }
+    private static byte[] hostToolFailure(String message) {
+        try {
+            return new JSONObject().put("ok", false).put("error", message)
+                .toString().getBytes(StandardCharsets.UTF_8);
+        } catch (Exception ignored) {
+            return "{\"ok\":false,\"error\":\"MaiChat host tool failed\"}"
+                .getBytes(StandardCharsets.UTF_8);
+        }
+    }
     private void initialize() {
         try {
             System.loadLibrary("maichat_agent");
             handle = nativeCreate();
+            if (!nativeSetHostToolHandler(handle, this))
+                throw new IllegalStateException("无法注册 MaiChat 宿主工具");
             root = new File(context.getNoBackupFilesDir(),
                 testEndpoint == null ? "AIAssistant" : "AIAssistantTest-" + UUID.randomUUID());
             if (!root.mkdirs() && !root.isDirectory())

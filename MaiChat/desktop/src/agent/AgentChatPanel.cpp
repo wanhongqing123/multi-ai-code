@@ -656,10 +656,10 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
 
     // ---- 对话流：整片就是一个 MarkdownView ----
     // AI 页面使用窗口可用宽度，但正文和表格需要比普通消息列表更宽的呼吸区。
-    // 28px 仍能让宽表格充分展开，同时不会贴到内容区边缘。
+    // 48px 给正文和宽表格留出明确的页面边界，同时仍使用窗口剩余宽度。
     runtime_->view = new MarkdownView(this);
     MarkdownTheme conversationTheme = MarkdownTheme::standard(UiZoom::factor());
-    conversationTheme.viewMargin = UiZoom::s(28);
+    conversationTheme.viewMargin = UiZoom::s(48);
     runtime_->view->setTheme(conversationTheme);
 
     runtime_->flushTimer = new QTimer(this);

@@ -1815,23 +1815,22 @@ void MainWindow::buildUi() {
     aiReplyButton_ = new QPushButton(messageEditor_);
     aiReplyButton_->setObjectName(QStringLiteral("aiReplyButton"));
     aiReplyButton_->setIcon(makeNavIcon(LineIconKind::Assistant,
-                                        QColor(QStringLiteral("#6f62c7"))));
-    aiReplyButton_->setIconSize(QSize(UiZoom::s(18), UiZoom::s(18)));
+                                        QColor(QStringLiteral("#6254c7"))));
+    aiReplyButton_->setIconSize(QSize(UiZoom::s(17), UiZoom::s(17)));
     aiReplyButton_->setFixedSize(UiZoom::s(32), UiZoom::s(32));
     aiReplyButton_->setCursor(Qt::PointingHandCursor);
     aiReplyButton_->setToolTip(QStringLiteral("AI 回复"));
     aiReplyButton_->setAccessibleName(QStringLiteral("AI 回复"));
     aiReplyButton_->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
         QPushButton#aiReplyButton {
-            background: transparent;
+            background: #f1efff;
             border: none;
-            border-radius: 9px;
-            color: #168ad1;
+            border-radius: 16px;
             padding: 0;
         }
-        QPushButton#aiReplyButton:hover { background: #edf7ff; }
-        QPushButton#aiReplyButton:pressed { background: #dcefff; }
-        QPushButton#aiReplyButton:disabled { color: #aab8c6; background: transparent; }
+        QPushButton#aiReplyButton:hover { background: #e5e0ff; }
+        QPushButton#aiReplyButton:pressed { background: #d8d0ff; }
+        QPushButton#aiReplyButton:disabled { background: #f2f4f7; }
     )")));
     static_cast<ComposerTextEdit*>(messageEditor_)->setLeadingAction(aiReplyButton_);
 
@@ -2173,6 +2172,14 @@ void MainWindow::buildUi() {
 
 void MainWindow::applyStyle() {
     setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
+        QToolTip {
+            background: #273142;
+            color: #ffffff;
+            border: 0;
+            border-radius: 6px;
+            padding: 5px 8px;
+            font-size: 12px;
+        }
         QMainWindow, #root {
             background: #f6f9fc;
             color: #172033;
@@ -5478,7 +5485,7 @@ void MainWindow::applyScaledFixedGeometry() {
     if (messageEditor_) messageEditor_->setMinimumHeight(UiZoom::s(64));
     if (aiReplyButton_) {
         aiReplyButton_->setFixedSize(UiZoom::s(32), UiZoom::s(32));
-        aiReplyButton_->setIconSize(QSize(UiZoom::s(18), UiZoom::s(18)));
+        aiReplyButton_->setIconSize(QSize(UiZoom::s(17), UiZoom::s(17)));
     }
     if (sendButton_) {
         sendButton_->setFixedSize(UiZoom::s(36), UiZoom::s(36));

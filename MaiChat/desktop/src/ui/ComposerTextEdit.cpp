@@ -38,9 +38,11 @@ void ComposerTextEdit::positionCornerAction() {
         cornerAction_->raise();
     }
     if (leadingAction_) {
-        const int inset = qMax(UiZoom::s(6), leadingAction_->height() / 5);
+        const int horizontalInset = UiZoom::s(12);
+        const int verticalInset = UiZoom::s(10);
         setViewportMargins(0, 0, 0, leadingAction_->height() + UiZoom::s(10));
-        leadingAction_->move(inset, height() - leadingAction_->height() - inset);
+        leadingAction_->move(horizontalInset,
+                             height() - leadingAction_->height() - verticalInset);
         leadingAction_->raise();
     } else {
         setViewportMargins(0, 0, 0, 0);

@@ -446,10 +446,26 @@ private struct RemoteIMUserAvatar: View {
         let hash = profile.userID.utf8.reduce(UInt32(2166136261)) {
             ($0 ^ UInt32($1)) &* 16777619
         }
-        let letter = UnicodeScalar(Int(hash % 26) + 65)!
-        return Image("DefaultAvatar\(Character(letter))")
+        return Image(uiImage: Self.defaultAvatar(index: Int(hash % 26)))
             .resizable()
             .scaledToFill()
+    }
+
+    private static let avatarCache = NSCache<NSNumber, UIImage>()
+
+    private static func defaultAvatar(index: Int) -> UIImage {
+        let key = NSNumber(value: index)
+        if let cached = avatarCache.object(forKey: key) { return cached }
+        guard let image = UIImage(named: "DefaultAvatarAtlas")?.cgImage else {
+            return UIImage(systemName: "person.crop.square") ?? UIImage()
+        }
+        let tile = image.width / 6
+        let region = CGRect(x: (index % 6) * tile, y: (index / 6) * tile,
+                            width: tile, height: tile)
+        guard let cropped = image.cropping(to: region) else { return UIImage() }
+        let avatar = UIImage(cgImage: cropped)
+        avatarCache.setObject(avatar, forKey: key)
+        return avatar
     }
 }
 

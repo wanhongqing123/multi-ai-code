@@ -404,16 +404,21 @@ QPixmap defaultContactAvatar(const QString& userId, int size, qreal dpr) {
     const auto found = cache.constFind(key);
     if (found != cache.cend()) return found.value();
 
-    const QString resource = QStringLiteral(":/maichat/avatars/%1.svg")
-                                 .arg(QChar(QLatin1Char('a').unicode() + avatarIndex));
-    QSvgRenderer renderer(resource);
+    static const QPixmap atlas(QStringLiteral(":/maichat/avatars/atlas.png"));
+    const int tile = atlas.width() / 6;
+    const QPixmap source = atlas.copy((avatarIndex % 6) * tile,
+                                      (avatarIndex / 6) * tile, tile, tile);
     const int physical = qMax(1, qRound(size * dpr));
     QPixmap pixmap(physical, physical);
     pixmap.setDevicePixelRatio(dpr);
     pixmap.fill(Qt::transparent);
     QPainter painter(&pixmap);
     painter.setRenderHint(QPainter::Antialiasing, true);
-    renderer.render(&painter, QRectF(0, 0, size, size));
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+    QPainterPath clip;
+    clip.addRoundedRect(QRectF(0, 0, size, size), size * 0.22, size * 0.22);
+    painter.setClipPath(clip);
+    painter.drawPixmap(QRectF(0, 0, size, size), source, QRectF(source.rect()));
     cache.insert(key, pixmap);
     return pixmap;
 }

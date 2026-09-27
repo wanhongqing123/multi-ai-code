@@ -16,32 +16,7 @@
     <file alias="JetBrainsMono-latin-700.ttf">fonts/JetBrainsMono-latin-700.ttf</file>
   </qresource>
   <qresource prefix="/maichat/avatars">
-    <file alias="a.svg">avatars/a.svg</file>
-    <file alias="b.svg">avatars/b.svg</file>
-    <file alias="c.svg">avatars/c.svg</file>
-    <file alias="d.svg">avatars/d.svg</file>
-    <file alias="e.svg">avatars/e.svg</file>
-    <file alias="f.svg">avatars/f.svg</file>
-    <file alias="g.svg">avatars/g.svg</file>
-    <file alias="h.svg">avatars/h.svg</file>
-    <file alias="i.svg">avatars/i.svg</file>
-    <file alias="j.svg">avatars/j.svg</file>
-    <file alias="k.svg">avatars/k.svg</file>
-    <file alias="l.svg">avatars/l.svg</file>
-    <file alias="m.svg">avatars/m.svg</file>
-    <file alias="n.svg">avatars/n.svg</file>
-    <file alias="o.svg">avatars/o.svg</file>
-    <file alias="p.svg">avatars/p.svg</file>
-    <file alias="q.svg">avatars/q.svg</file>
-    <file alias="r.svg">avatars/r.svg</file>
-    <file alias="s.svg">avatars/s.svg</file>
-    <file alias="t.svg">avatars/t.svg</file>
-    <file alias="u.svg">avatars/u.svg</file>
-    <file alias="v.svg">avatars/v.svg</file>
-    <file alias="w.svg">avatars/w.svg</file>
-    <file alias="x.svg">avatars/x.svg</file>
-    <file alias="y.svg">avatars/y.svg</file>
-    <file alias="z.svg">avatars/z.svg</file>
+    <file alias="atlas.png">avatars/atlas.png</file>
   </qresource>
   <!-- Tabler Icons v3.x, MIT. Original SVGs and license live together. -->
   <qresource prefix="/maichat/icons">

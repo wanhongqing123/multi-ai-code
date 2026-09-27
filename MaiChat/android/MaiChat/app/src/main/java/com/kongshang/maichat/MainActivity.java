@@ -3455,14 +3455,16 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
 
     private View avatar(RemoteIMContact contact, boolean outgoing, int sizeDp) {
         FrameLayout frame = new FrameLayout(this);
-        int[] illustrations = {R.drawable.avatar_a, R.drawable.avatar_b, R.drawable.avatar_c, R.drawable.avatar_d, R.drawable.avatar_e, R.drawable.avatar_f, R.drawable.avatar_g, R.drawable.avatar_h, R.drawable.avatar_i, R.drawable.avatar_j, R.drawable.avatar_k, R.drawable.avatar_l, R.drawable.avatar_m, R.drawable.avatar_n, R.drawable.avatar_o, R.drawable.avatar_p, R.drawable.avatar_q, R.drawable.avatar_r, R.drawable.avatar_s, R.drawable.avatar_t, R.drawable.avatar_u, R.drawable.avatar_v, R.drawable.avatar_w, R.drawable.avatar_x, R.drawable.avatar_y, R.drawable.avatar_z};
         byte[] accountBytes = contact.userId().getBytes(StandardCharsets.UTF_8);
         int avatarHash = 0x811c9dc5;
         for (byte accountByte : accountBytes)
             avatarHash = (avatarHash ^ (accountByte & 0xff)) * 0x01000193;
         ImageView fallback = new ImageView(this);
-        fallback.setImageResource(illustrations[Integer.remainderUnsigned(avatarHash, 26)]);
+        fallback.setImageBitmap(DefaultAvatarAtlas.portrait(
+            this, Integer.remainderUnsigned(avatarHash, 26)));
         fallback.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        fallback.setBackground(MaiChatTheme.rounded(Color.TRANSPARENT, 10, this));
+        fallback.setClipToOutline(true);
         frame.addView(fallback, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT

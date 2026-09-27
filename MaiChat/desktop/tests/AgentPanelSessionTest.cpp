@@ -447,8 +447,10 @@ void AgentPanelSessionTest::conversationUsesAvailableWidth() {
     QVERIFY(view != nullptr);
     view->addItem(QStringLiteral("wide-document"), MarkdownView::Style::Document,
                   QStringLiteral("内容应该使用窗口可用宽度"));
-    QTRY_VERIFY(view->itemRect(QStringLiteral("wide-document")).width() >=
-                view->viewport()->width() - UiZoom::s(60));
+    QTRY_COMPARE(qRound(view->itemRect(QStringLiteral("wide-document")).left()), UiZoom::s(28));
+    QCOMPARE(qRound(view->viewport()->width() -
+                    view->itemRect(QStringLiteral("wide-document")).right()),
+             UiZoom::s(28));
 }
 
 QTEST_MAIN(AgentPanelSessionTest)

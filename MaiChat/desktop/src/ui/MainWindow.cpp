@@ -2323,12 +2323,8 @@ void MainWindow::applyStyle() {
             border: 0;
             border-radius: 10px;
             padding: 0;
+            background: transparent;
         }
-        #messagesNavButton { background: #e6f4ff; }
-        #agentNavButton { background: #f0edff; }
-        #contactsNavButton { background: #e7f7f1; }
-        #remoteNavButton { background: #ebf0f8; }
-        #settingsNavButton { background: #e9eef5; }
         #messagesNavButton[selected="false"]:hover { background: #d9edfc; }
         #agentNavButton[selected="false"]:hover { background: #e7e1ff; }
         #contactsNavButton[selected="false"]:hover { background: #daf1e8; }

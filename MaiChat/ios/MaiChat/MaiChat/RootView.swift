@@ -549,7 +549,7 @@ private struct CompactTabBar: View {
         .padding(.top, 10)
         .padding(.bottom, 12)
         .frame(maxWidth: .infinity)
-        .background(Color.white)
+        .background(Color.white.ignoresSafeArea(.container, edges: .bottom))
         .overlay(alignment: .top) {
             Divider().background(Color(red: 0.855, green: 0.894, blue: 0.941))
         }

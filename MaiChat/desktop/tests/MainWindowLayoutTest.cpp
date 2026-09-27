@@ -13,6 +13,7 @@
 #include <QLayout>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QMenu>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSettings>
@@ -147,8 +148,8 @@ private slots:
     void receivedMessagesKeepTheSameLeftEdge_data();
     void receivedMessagesKeepTheSameLeftEdge();
     void restoredLongMessagesExpandAfterWindowIsShown();
-    void slashCommandSuggestionsFillComposer();
-    void slashCommandBarLeavesImeCompositionUndisturbed();
+    void slashCommandMenuSendsWithoutChangingDraft();
+    void typingSlashDoesNotOpenCommandMenu();
     void deleteKeyClearsMessagesButKeepsContactInConversationList();
     void deleteKeyRemovesContactAndMessagesFromContactsList();
     void navigationIconsDoNotUsePrivateFontGlyphProperties();
@@ -2584,216 +2585,58 @@ void MainWindowLayoutTest::restoredLongMessagesExpandAfterWindowIsShown() {
                                 .arg(incomingBubble->property("expandedTextBubble").toBool())));
 }
 
-void MainWindowLayoutTest::slashCommandSuggestionsFillComposer() {
+void MainWindowLayoutTest::slashCommandMenuSendsWithoutChangingDraft() {
     auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fake = client.get();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
     app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
-
     MainWindow window(app);
     window.show();
     QVERIFY(QTest::qWaitForWindowExposed(&window));
     auto* editor = window.findChild<QTextEdit*>(QStringLiteral("messageEditor"));
-    auto* commandBar = window.findChild<QWidget*>(QStringLiteral("slashCommandBar"));
-
-    QVERIFY(editor != nullptr);
-    QVERIFY(commandBar != nullptr);
-    QVERIFY(!commandBar->isVisible());
-
-    // 命令栏重建被刻意延后到事件循环下一轮：若在按键事件派发内同步增删控件、隐藏/抬升
-    // 悬浮层，会吞掉紧随其后的 KeyRelease，令 Windows 认为按键仍按住而狂发自动重复
-    //（输入 /g 变成一长串 g）。因此每次改动输入框后放行一次事件循环，等 0ms 单次定时器
-    // 触发、命令栏完成重建，再做同步断言。
-    auto typeQuery = [&](const QString& text) {
-        editor->setPlainText(text);
-        QTest::qWait(200);  // 命令栏重建有 150ms 防抖，等它触发再断言
-    };
-
-    typeQuery(QStringLiteral("/st"));
-    QVERIFY(commandBar->isVisible());
-
-    const QStringList expectedCommandObjectNames = {
-        QStringLiteral("slashCommandButton_status"),
-        QStringLiteral("slashCommandButton_plan"),
-        QStringLiteral("slashCommandButton_build"),
-        QStringLiteral("slashCommandButton_models"),
-        QStringLiteral("slashCommandButton_model"),
-        QStringLiteral("slashCommandButton_goal"),
-        QStringLiteral("slashCommandButton_btw"),
-        QStringLiteral("slashCommandButton_diff"),
-        QStringLiteral("slashCommandButton_interrupt"),
-        QStringLiteral("slashCommandButton_compact"),
-        QStringLiteral("slashCommandButton_clear"),
-        QStringLiteral("slashCommandButton_help"),
-    };
-
-    typeQuery(QStringLiteral("/"));
-    QVERIFY(commandBar->isVisible());
-    for (const QString& objectName : expectedCommandObjectNames) {
-        QVERIFY2(window.findChild<QPushButton*>(objectName) != nullptr, qPrintable(objectName));
-    }
-
-    auto* statusButton = window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_status"));
-    QVERIFY(statusButton != nullptr);
-    statusButton->click();
-
-    QCOMPARE(editor->toPlainText(), QStringLiteral("/status"));
-    QVERIFY(commandBar->isVisible());
-
-    typeQuery(QStringLiteral("/pl"));
-    QVERIFY(commandBar->isVisible());
-
-    auto* planButton = window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_plan"));
-    QVERIFY(planButton != nullptr);
-    planButton->click();
-
-    QCOMPARE(editor->toPlainText(), QStringLiteral("/plan"));
-    QVERIFY(commandBar->isVisible());
-
-    typeQuery(QStringLiteral("/bu"));
-    QVERIFY(commandBar->isVisible());
-
-    auto* buildButton = window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_build"));
-    QVERIFY(buildButton != nullptr);
-    buildButton->click();
-
-    QCOMPARE(editor->toPlainText(), QStringLiteral("/build"));
-    QVERIFY(commandBar->isVisible());
-
-    typeQuery(QStringLiteral("/mo"));
-    QVERIFY(commandBar->isVisible());
-
-    auto* modelsButton = window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_models"));
-    QVERIFY(modelsButton != nullptr);
-    modelsButton->click();
-
-    QCOMPARE(editor->toPlainText(), QStringLiteral("/models"));
-    QVERIFY(commandBar->isVisible());
-
-    typeQuery(QStringLiteral("/mod"));
-    QVERIFY(commandBar->isVisible());
-
-    auto* modelButton = window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_model"));
-    QVERIFY(modelButton != nullptr);
-    modelButton->click();
-
-    QCOMPARE(editor->toPlainText(), QStringLiteral("/model "));
-    QVERIFY(commandBar->isVisible());
-
-    typeQuery(QStringLiteral("/go"));
-    QVERIFY(commandBar->isVisible());
-
-    auto* goalButton = window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_goal"));
-    QVERIFY(goalButton != nullptr);
-    goalButton->click();
-
-    QCOMPARE(editor->toPlainText(), QStringLiteral("/goal "));
-    QVERIFY(commandBar->isVisible());
-
-    typeQuery(QStringLiteral("/bt"));
-    QVERIFY(commandBar->isVisible());
-
-    auto* btwButton = window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_btw"));
-    QVERIFY(btwButton != nullptr);
-    btwButton->click();
-
-    QCOMPARE(editor->toPlainText(), QStringLiteral("/btw "));
-    QVERIFY(commandBar->isVisible());
-
-    typeQuery(QStringLiteral("/di"));
-    QVERIFY(commandBar->isVisible());
-
-    auto* diffButton = window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_diff"));
-    QVERIFY(diffButton != nullptr);
-    diffButton->click();
-
-    QCOMPARE(editor->toPlainText(), QStringLiteral("/diff "));
-    QVERIFY(commandBar->isVisible());
-
-    typeQuery(QStringLiteral("/in"));
-    QVERIFY(commandBar->isVisible());
-
-    auto* interruptButton = window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_interrupt"));
-    QVERIFY(interruptButton != nullptr);
-    interruptButton->click();
-
-    QCOMPARE(editor->toPlainText(), QStringLiteral("/interrupt"));
-    QVERIFY(commandBar->isVisible());
-
-    typeQuery(QStringLiteral("/co"));
-    QVERIFY(commandBar->isVisible());
-
-    auto* compactButton = window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_compact"));
-    QVERIFY(compactButton != nullptr);
-    compactButton->click();
-
-    QCOMPARE(editor->toPlainText(), QStringLiteral("/compact"));
-    QVERIFY(commandBar->isVisible());
-
-    typeQuery(QStringLiteral("/cl"));
-    QVERIFY(commandBar->isVisible());
-
-    auto* clearButton = window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_clear"));
-    QVERIFY(clearButton != nullptr);
-    clearButton->click();
-
-    QCOMPARE(editor->toPlainText(), QStringLiteral("/clear"));
-    QVERIFY(commandBar->isVisible());
-
-    typeQuery(QStringLiteral("/he"));
-    QVERIFY(commandBar->isVisible());
-
-    auto* helpButton = window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_help"));
-    QVERIFY(helpButton != nullptr);
-    helpButton->click();
-
-    QCOMPARE(editor->toPlainText(), QStringLiteral("/help"));
-    QVERIFY(commandBar->isVisible());
+    auto* button = window.findChild<QPushButton*>(QStringLiteral("composerCommandButton"));
+    auto* menu = window.findChild<QMenu*>(QStringLiteral("composerCommandMenu"));
+    QVERIFY(editor && button && menu);
+    QCOMPARE(menu->actions().size(), 12);
+    editor->setPlainText(QStringLiteral("Keep my draft"));
+    button->click();
+    QVERIFY(menu->isVisible());
+    auto* action = menu->findChild<QAction*>(QStringLiteral("slashCommandButton_status"));
+    QVERIFY(action);
+    action->trigger();
+    QCOMPARE(fake->lastText(), QStringLiteral("/status"));
+    QCOMPARE(editor->toPlainText(), QStringLiteral("Keep my draft"));
+    menu->hide();
+    app.addContact(QStringLiteral("other-user"), QStringLiteral("Other"));
+    app.selectPeer(QStringLiteral("phone-user"));
+    button->click();
+    app.selectPeer(QStringLiteral("other-user"));
+    action->trigger();
+    QCOMPARE(fake->lastTextPeerId(), QStringLiteral("phone-user"));
 }
 
-void MainWindowLayoutTest::slashCommandBarLeavesImeCompositionUndisturbed() {
+void MainWindowLayoutTest::typingSlashDoesNotOpenCommandMenu() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
     app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
-
     MainWindow window(app);
     window.show();
     QVERIFY(QTest::qWaitForWindowExposed(&window));
     auto* editor = window.findChild<QTextEdit*>(QStringLiteral("messageEditor"));
-    auto* commandBar = window.findChild<QWidget*>(QStringLiteral("slashCommandBar"));
-    QVERIFY(editor != nullptr);
-    QVERIFY(commandBar != nullptr);
+    auto* menu = window.findChild<QMenu*>(QStringLiteral("composerCommandMenu"));
+    QVERIFY(editor && menu);
     editor->setFocus();
-
-    // 输入 "/goal " 让命令栏显示（含 /goal 按钮）。setPlainText 会把光标留在开头，
-    // 手动移到末尾，模拟真实输入后的光标位置（组词上屏要接在末尾）。
     editor->setPlainText(QStringLiteral("/goal "));
-    {
-        QTextCursor cursor = editor->textCursor();
-        cursor.movePosition(QTextCursor::End);
-        editor->setTextCursor(cursor);
-    }
-    QTRY_VERIFY(commandBar->isVisible());
-    QVERIFY(window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_goal")) != nullptr);
-
-    // 模拟输入法开始组词（预编辑串 "n"，未上屏）。命令栏不得在组词期间被重建/隐藏，
-    // 否则会打断输入法上下文、把首个拼音键漏成普通字符。预编辑不入文档，已提交文本不变。
-    {
-        QInputMethodEvent ime(QStringLiteral("n"), {});
-        QApplication::sendEvent(editor, &ime);
-    }
-    QTest::qWait(200);  // 若有未取消的防抖重建会在此触发——不应发生
-    QVERIFY(commandBar->isVisible());
-    QVERIFY(window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_goal")) != nullptr);
-    QCOMPARE(editor->toPlainText(), QStringLiteral("/goal "));
-
-    // 组词上屏 "你好"：组词结束后命令栏才刷新，"/goal 你好" 不匹配任何命令 → 隐藏。
-    {
-        QInputMethodEvent ime(QString(), {});
-        ime.setCommitString(QStringLiteral("你好"));
-        QApplication::sendEvent(editor, &ime);
-    }
+    QTextCursor cursor = editor->textCursor();
+    cursor.movePosition(QTextCursor::End);
+    editor->setTextCursor(cursor);
+    QInputMethodEvent composing(QStringLiteral("n"), {});
+    QApplication::sendEvent(editor, &composing);
+    QInputMethodEvent committed(QString(), {});
+    committed.setCommitString(QStringLiteral("你好"));
+    QApplication::sendEvent(editor, &committed);
     QCOMPARE(editor->toPlainText(), QStringLiteral("/goal 你好"));
-    QTRY_VERIFY(!commandBar->isVisible());
+    QVERIFY(!menu->isVisible());
 }
 
 void MainWindowLayoutTest::deleteKeyClearsMessagesButKeepsContactInConversationList() {

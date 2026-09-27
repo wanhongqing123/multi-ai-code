@@ -30,6 +30,7 @@ class QButtonGroup;
 class QCheckBox;
 class QCloseEvent;
 class QMimeData;
+class QMenu;
 class QResizeEvent;
 class QShowEvent;
 class QLineEdit;
@@ -185,9 +186,8 @@ private:
     void clearReplySuggestions();
     void applyReplySuggestion(const QString& text);
     QString latestSelectedMessageId() const;
-    void updateSlashCommandSuggestions();
-    void positionSlashCommandBar();
-    void selectSlashCommand(const QString& command);
+    void showSlashCommandMenu();
+    void sendSlashCommand(const QString& command);
     // 会话列表右键：只提供「删除消息」（清空聊天记录、好友保留）。
     // 「删除好友」是通讯录（contactsList_）的专属功能。
     // 整体缩放（飞书式 Ctrl+= / Ctrl+- / Ctrl+0）：改倍率 → 重放全局字体与样式表、
@@ -344,16 +344,8 @@ private:
     quint64 activeReplySuggestionRequest_ = 0;
     QString replySuggestionPeerId_;
     QString replySuggestionLatestMessageId_;
-    QWidget* slashCommandBar_ = nullptr;
-    QVBoxLayout* slashCommandLayout_ = nullptr;
-    // 命令提示条重建从 textChanged（键盘事件派发内）里剥离出来，改由防抖单次定时器
-    // 延后执行——只在停顿时重建，绝不在按键前后那一瞬间动控件。否则在按键派发/输入法
-    // 组词期间同步删除全部按钮并隐藏/抬升悬浮层，会在 Windows 上吞掉 KeyRelease（按键
-    // 卡住自动重复，/g 变成一长串 g），或打断输入法上下文（首个拼音键被当普通字符漏进
-    // 输入框，/goal 后打 nihao 变成字面 n + 组词 ihao）。
-    QTimer* slashCommandUpdateTimer_ = nullptr;
-    // 输入法是否正在组词（预编辑串非空）。组词期间一律不重建命令栏，组词结束再刷新。
-    bool imeComposing_ = false;
+    QPushButton* commandButton_ = nullptr;
+    QMenu* commandMenu_ = nullptr;
     // 「保存到本地」上次使用的目录：同一会话内多次保存不必每次从下载目录重新翻。
     QString lastAttachmentSaveDir_;
     // 图片预览只允许存在一个实例，避免重复点击或平台窗口事件重入后叠出多个预览。

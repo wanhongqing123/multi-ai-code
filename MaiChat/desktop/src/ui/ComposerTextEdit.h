@@ -17,6 +17,7 @@ public:
     void setMimeHandler(std::function<bool(const QMimeData*)> handler);
     void setCornerAction(QWidget* action);
     void setLeadingAction(QWidget* action);
+    void setSecondaryLeadingAction(QWidget* action);
     void setLeadingHint(QWidget* hint);
     void positionCornerAction();
 
@@ -32,6 +33,7 @@ private:
 
     QWidget* cornerAction_ = nullptr;
     QWidget* leadingAction_ = nullptr;
+    QWidget* secondaryLeadingAction_ = nullptr;
     QWidget* leadingHint_ = nullptr;
     std::function<bool(const QMimeData*)> mimeHandler_;
 };

@@ -1229,8 +1229,6 @@ void MarkdownMessageView::contextMenuEvent(QContextMenuEvent* event) {
     }
 }
 
-constexpr int kSlashCommandRowHeight = 32;
-
 struct SlashCommandDefinition {
     QString command;
     QString label;
@@ -1579,21 +1577,6 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
             if (handleComposerPaste()) return true;
         }
     }
-    if (watched == messageEditor_ && event->type() == QEvent::InputMethod) {
-        // 输入法组词期间绝不重建命令提示条：组词从按下第一个拼音键开始，此刻若销毁/新建
-        // 按钮、隐藏或抬升悬浮层，会打断编辑器的输入法上下文，导致首个拼音键被当作普通
-        // 字符漏进输入框（如 /goal 后打 nihao 变成字面 n + 组词 ihao）。取消待执行的重建，
-        // 组词结束（上屏或取消）后再刷新命令栏。事件不拦截，交给 QTextEdit 正常处理。
-        auto* imeEvent = static_cast<QInputMethodEvent*>(event);
-        const bool composing = !imeEvent->preeditString().isEmpty();
-        if (composing) {
-            imeComposing_ = true;
-            if (slashCommandUpdateTimer_) slashCommandUpdateTimer_->stop();
-        } else if (imeComposing_) {
-            imeComposing_ = false;
-            if (slashCommandUpdateTimer_) slashCommandUpdateTimer_->start();
-        }
-    }
     if (messageScroll_ && watched == messageScroll_->viewport() && event->type() == QEvent::Resize) {
         QTimer::singleShot(0, this, [this] { updateMessageBubbleWidths(); });
     }
@@ -1604,7 +1587,6 @@ void MainWindow::resizeEvent(QResizeEvent* event) {
     QMainWindow::resizeEvent(event);
     QTimer::singleShot(0, this, [this] {
         updateMessageBubbleWidths();
-        if (slashCommandBar_ && slashCommandBar_->isVisible()) positionSlashCommandBar();
         // 结果面板是按搜索框位置摆的浮层，不在布局里，窗口一变它就得重新对位。
         layoutGlobalSearchResults();
     });
@@ -1844,26 +1826,6 @@ void MainWindow::buildUi() {
     composerLayout->setContentsMargins(12, 6, 12, 8);
     composerLayout->setSpacing(6);
 
-    // 命令提示条：悬浮在输入框上方的纵向列表，不占 composer 布局空间。
-    auto* slashCommandScroll = new QScrollArea(chatContentPane);
-    slashCommandBar_ = slashCommandScroll;
-    slashCommandBar_->setObjectName(QStringLiteral("slashCommandBar"));
-    slashCommandBar_->setVisible(false);
-    slashCommandScroll->setFrameShape(QFrame::NoFrame);
-    slashCommandScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    slashCommandScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    slashCommandScroll->setWidgetResizable(true);
-    slashCommandScroll->setStyleSheet(QStringLiteral(
-        "QScrollArea { border: 1px solid #dbe4ef; border-radius: 10px; background: #ffffff; }"));
-
-    auto* slashCommandContent = new QWidget(slashCommandScroll);
-    slashCommandContent->setObjectName(QStringLiteral("slashCommandContent"));
-    slashCommandContent->setStyleSheet(QStringLiteral("#slashCommandContent { background: #ffffff; }"));
-    slashCommandLayout_ = new QVBoxLayout(slashCommandContent);
-    slashCommandLayout_->setContentsMargins(8, 8, 8, 8);
-    slashCommandLayout_->setSpacing(4);
-    slashCommandScroll->setWidget(slashCommandContent);
-
     messageEditor_ = new ComposerTextEdit(composer);
     messageEditor_->setObjectName(QStringLiteral("messageEditor"));
     messageEditor_->setPlaceholderText(QStringLiteral("输入消息（可拖入文件，或 Ctrl+V 粘贴图片/文件）"));
@@ -1927,6 +1889,29 @@ void MainWindow::buildUi() {
     )")));
     aiReplyHint_->hide();
     static_cast<ComposerTextEdit*>(messageEditor_)->setLeadingHint(aiReplyHint_);
+
+    commandButton_ = new QPushButton(QStringLiteral("/"), messageEditor_);
+    commandButton_->setObjectName(QStringLiteral("composerCommandButton"));
+    commandButton_->setAccessibleName(QStringLiteral("命令"));
+    commandButton_->setCursor(Qt::PointingHandCursor);
+    commandButton_->setFixedSize(UiZoom::s(30), UiZoom::s(30));
+    commandButton_->setStyleSheet(UiZoom::scaleQss(QStringLiteral(
+        "QPushButton{background:transparent;border:0;border-radius:8px;color:#64748b;"
+        "font-size:19px;padding:0;}QPushButton:hover{background:#edf2f7;}"
+        "QPushButton:pressed{background:#e2e8f0;}")));
+    static_cast<ComposerTextEdit*>(messageEditor_)->setSecondaryLeadingAction(commandButton_);
+    commandMenu_ = new QMenu(commandButton_);
+    commandMenu_->setObjectName(QStringLiteral("composerCommandMenu"));
+    applyMessageContextMenuStyle(*commandMenu_);
+    for (const SlashCommandDefinition& definition : slashCommandDefinitions()) {
+        QAction* action = commandMenu_->addAction(definition.command.trimmed() +
+                                                  QStringLiteral("    ") + definition.label);
+        action->setObjectName(definition.objectName);
+        connect(action, &QAction::triggered, this, [this, command = definition.command] {
+            sendSlashCommand(command);
+        });
+    }
+    connect(commandButton_, &QPushButton::clicked, this, &MainWindow::showSlashCommandMenu);
 
     replySuggestionBar_ = new QWidget(composer);
     replySuggestionBar_->setObjectName(QStringLiteral("replySuggestionBar"));
@@ -2063,9 +2048,7 @@ void MainWindow::buildUi() {
     messageComposerSplitter->setStretchFactor(0, 1);
     messageComposerSplitter->setStretchFactor(1, 0);
     messageComposerSplitter->setSizes(QList<int>() << 620 << 166);
-    connect(messageComposerSplitter, &QSplitter::splitterMoved, this, [this] {
-        if (slashCommandBar_ && slashCommandBar_->isVisible()) positionSlashCommandBar();
-    });
+
 
     chatLayout->addWidget(header);
     diagnosticsStatusLabel_ = new QLabel(chatContentPane);
@@ -2710,22 +2693,10 @@ void MainWindow::bindSignals() {
         }
         replySuggestionStatus_->setText(message);
     });
-    // 命令提示条的重建（删除全部按钮、隐藏/抬升悬浮层）必须延后到事件循环下一轮，
-    // 不能在 textChanged 里同步做——textChanged 是在 QTextEdit 的按键事件派发内部发出的，
-    // 若此刻销毁 12 个按钮并隐藏被 raise() 的悬浮层，会吞掉紧随其后的 KeyRelease，
-    // 让 Windows 认为按键仍按住而持续自动重复（输入 /g 变成 /gggggg……）。
-    slashCommandUpdateTimer_ = new QTimer(this);
-    slashCommandUpdateTimer_->setSingleShot(true);
-    slashCommandUpdateTimer_->setInterval(150);  // 防抖：只在停顿后重建，避开按键前后那一瞬间
-    connect(slashCommandUpdateTimer_, &QTimer::timeout, this, [this] { updateSlashCommandSuggestions(); });
     connect(messageEditor_, &QTextEdit::textChanged, this, [this] {
         RemoteDiagnostics::PerformanceSpan performance("composer-change");
         updateComposerState();
         app_.setHumanTypingActive(messageEditor_->hasFocus() && !messageEditor_->toPlainText().isEmpty());
-        // 组词期间不触发重建（由 InputMethod 事件在组词结束时再拉起）；否则重启防抖定时器：
-        // 连续输入天然合并成一次重建，且始终落在按键/组词之外。
-        if (imeComposing_) return;
-        slashCommandUpdateTimer_->start();
     });
     connect(&app_, &RemoteIMApplication::activityChanged, this,
             [this](const QString& peerId) {
@@ -5325,9 +5296,7 @@ void MainWindow::sendCurrentText() {
 
     messageEditor_->clear();
     updateComposerState();
-    // 同样延后重建：sendCurrentText 可能由 Enter 键在事件过滤器里触发，走的是按键派发路径，
-    // 不能在这里同步销毁按钮/隐藏悬浮层（否则会吞掉 Enter 的 KeyRelease）。
-    slashCommandUpdateTimer_->start();
+
 }
 
 QString MainWindow::latestSelectedMessageId() const {
@@ -5409,94 +5378,34 @@ void MainWindow::updateComposerState() {
         aiReplyButton_->setEnabled(hasPeer && app_.chatState().messageCountWith(
                                                app_.chatState().selectedPeerId()) > 0);
     }
+    if (commandButton_) commandButton_->setEnabled(hasPeer);
     sendButton_->setEnabled(hasPeer && (hasText || hasAttachments));
 }
 
-void MainWindow::updateSlashCommandSuggestions() {
-    if (!slashCommandBar_ || !slashCommandLayout_ || !messageEditor_) return;
-    if (imeComposing_) return;  // 组词进行中，绝不动命令栏控件，避免打断输入法
-
-    while (QLayoutItem* item = slashCommandLayout_->takeAt(0)) {
-        if (QWidget* widget = item->widget()) delete widget;
-        delete item;
-    }
-
-    const QString query = messageEditor_->toPlainText().trimmed();
-    if (query.isEmpty() || !query.startsWith(QLatin1Char('/')) || app_.chatState().selectedPeerId().isEmpty()) {
-        slashCommandBar_->setVisible(false);
-        return;
-    }
-
-    bool hasMatch = false;
-    for (const SlashCommandDefinition& definition : slashCommandDefinitions()) {
-        if (!definition.command.startsWith(query, Qt::CaseInsensitive)) continue;
-        QWidget* commandContent = qobject_cast<QWidget*>(slashCommandLayout_->parentWidget());
-        auto* button = new QPushButton(definition.command + QStringLiteral("  ") + definition.label, commandContent ? commandContent : slashCommandBar_);
-        button->setObjectName(definition.objectName);
-        button->setCursor(Qt::PointingHandCursor);
-        button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        button->setFixedHeight(UiZoom::s(kSlashCommandRowHeight));
-        button->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
-            QPushButton {
-                border: 1px solid #b8def7;
-                border-radius: 8px;
-                background: #eff9ff;
-                color: #0b67b7;
-                padding: 0 12px;
-                font-size: 12px;
-                font-weight: 600;
-                text-align: left;
-            }
-            QPushButton:hover {
-                background: #dff1ff;
-                border-color: #58b7ff;
-            }
-        )")));
-        connect(button, &QPushButton::clicked, this, [this, command = definition.command] {
-            selectSlashCommand(command);
-        });
-        slashCommandLayout_->addWidget(button);
-        hasMatch = true;
-    }
-
-    if (hasMatch) {
-        positionSlashCommandBar();
-        slashCommandBar_->raise();
-    }
-    slashCommandBar_->setVisible(hasMatch);
+void MainWindow::showSlashCommandMenu() {
+    const QString peerId = app_.chatState().selectedPeerId();
+    if (peerId.isEmpty()) return;
+    commandMenu_->setProperty("peerId", peerId);
+    const QPoint anchor = commandButton_->mapToGlobal(QPoint(0, 0));
+    commandMenu_->popup(anchor - QPoint(0, commandMenu_->sizeHint().height() + UiZoom::s(6)));
 }
 
-void MainWindow::positionSlashCommandBar() {
-    if (!slashCommandBar_ || !slashCommandLayout_ || !messageEditor_) return;
-    QWidget* overlayParent = slashCommandBar_->parentWidget();
-    if (!overlayParent) return;
-
-    // 内容高度按行数直接推算（按钮定高），不依赖布局 sizeHint 的刷新时机；
-    // 最多显示 kMaxVisibleRows 行，更多时转纵向滚动，再按输入框上方的可用空间收缩。
-    const int rowCount = slashCommandLayout_->count();
-    if (rowCount <= 0) return;
-    constexpr int kMaxVisibleRows = 10;
-    const int visibleRows = qMin(rowCount, kMaxVisibleRows);
-    const QMargins margins = slashCommandLayout_->contentsMargins();
-    const int barHeightForRows = visibleRows * UiZoom::s(kSlashCommandRowHeight)
-        + (visibleRows - 1) * slashCommandLayout_->spacing()
-        + margins.top() + margins.bottom() + 2;
-    const QPoint editorTopLeft = messageEditor_->mapTo(overlayParent, QPoint(0, 0));
-    int barHeight = barHeightForRows;
-    barHeight = qMin(barHeight, qMax(60, editorTopLeft.y() - 16));
-    const int barWidth = messageEditor_->width();
-    slashCommandBar_->setGeometry(editorTopLeft.x(), editorTopLeft.y() - barHeight - 8, barWidth, barHeight);
-}
-
-void MainWindow::selectSlashCommand(const QString& command) {
-    if (!messageEditor_) return;
-    messageEditor_->setPlainText(command);
-    QTextCursor cursor = messageEditor_->textCursor();
-    cursor.movePosition(QTextCursor::End);
-    messageEditor_->setTextCursor(cursor);
-    messageEditor_->setFocus();
-    updateComposerState();
-    updateSlashCommandSuggestions();
+void MainWindow::sendSlashCommand(const QString& command) {
+    const QString peerId = commandMenu_->property("peerId").toString();
+    if (peerId.isEmpty() || peerId != app_.chatState().selectedPeerId()) return;
+    QString text = command.trimmed();
+    if (command.endsWith(QLatin1Char(' '))) {
+        bool accepted = false;
+        AppTextInputDialog::Options options;
+        options.title = text;
+        options.placeholder = QStringLiteral("命令参数");
+        const QString arguments = AppTextInputDialog::getText(this, options, &accepted).trimmed();
+        if (!accepted) return;
+        if (text == QStringLiteral("/btw") && arguments.isEmpty()) return;
+        if (!arguments.isEmpty()) text += QLatin1Char(' ') + arguments;
+    }
+    if (peerId != app_.chatState().selectedPeerId()) return;
+    app_.sendText(text);
 }
 
 void MainWindow::changeUiZoom(qreal delta) {
@@ -5567,6 +5476,7 @@ void MainWindow::applyScaledFixedGeometry() {
         aiReplyButton_->setFixedSize(UiZoom::s(30), UiZoom::s(30));
         aiReplyButton_->setIconSize(QSize(UiZoom::s(17), UiZoom::s(17)));
     }
+    if (commandButton_) commandButton_->setFixedSize(UiZoom::s(30), UiZoom::s(30));
     if (aiReplyHint_) aiReplyHint_->setFixedSize(UiZoom::s(54), UiZoom::s(22));
     if (sendButton_) {
         sendButton_->setFixedSize(UiZoom::s(36), UiZoom::s(36));

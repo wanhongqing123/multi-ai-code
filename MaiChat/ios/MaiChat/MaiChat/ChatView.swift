@@ -4974,17 +4974,13 @@ struct ComposerAttachmentPanel: View {
                 Image(systemName: systemImage)
                     .font(.system(size: 25, weight: .medium))
                     .foregroundStyle(
-                        enabled ? RemoteIMStyle.textPrimary : RemoteIMStyle.textSecondary.opacity(0.5)
+                        enabled ? actionColor(systemImage) : RemoteIMStyle.textSecondary.opacity(0.5)
                     )
                     .frame(maxWidth: .infinity)
                     .aspectRatio(1, contentMode: .fit)
                     .background(
-                        RemoteIMStyle.panelBackground,
+                        enabled ? actionColor(systemImage).opacity(0.09) : RemoteIMStyle.panelBackground,
                         in: RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 13, style: .continuous)
-                            .stroke(RemoteIMStyle.border, lineWidth: 1)
                     )
                 Text(title)
                     .font(.system(size: 12, weight: .medium))
@@ -4998,6 +4994,17 @@ struct ComposerAttachmentPanel: View {
         .buttonStyle(.plain)
         .disabled(!enabled)
         .accessibilityLabel(title)
+    }
+
+    private func actionColor(_ symbol: String) -> Color {
+        switch symbol {
+        case "sparkles": return Color(red: 0.51, green: 0.36, blue: 0.88)
+        case "photo": return Color(red: 0.06, green: 0.56, blue: 0.88)
+        case "camera.fill": return Color(red: 0.08, green: 0.65, blue: 0.49)
+        case "doc.fill": return Color(red: 0.91, green: 0.56, blue: 0.23)
+        case "mic.fill": return Color(red: 0.04, green: 0.63, blue: 0.72)
+        default: return RemoteIMStyle.blue
+        }
     }
 }
 

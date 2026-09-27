@@ -37,6 +37,13 @@ void ComposerTextEdit::setLeadingHint(QWidget* hint) {
     positionCornerAction();
 }
 
+void ComposerTextEdit::setSecondaryLeadingAction(QWidget* action) {
+    secondaryLeadingAction_ = action;
+    if (!action) return;
+    action->setParent(this);
+    positionCornerAction();
+}
+
 void ComposerTextEdit::positionCornerAction() {
     if (cornerAction_) {
         const int inset = qMax(UiZoom::s(6), cornerAction_->width() / 5);
@@ -51,6 +58,11 @@ void ComposerTextEdit::positionCornerAction() {
         leadingAction_->move(horizontalInset,
                              height() - leadingAction_->height() - verticalInset);
         leadingAction_->raise();
+        if (secondaryLeadingAction_) {
+            secondaryLeadingAction_->move(leadingAction_->x() + leadingAction_->width() + UiZoom::s(8),
+                                         leadingAction_->y());
+            secondaryLeadingAction_->raise();
+        }
         if (leadingHint_) {
             leadingHint_->move(leadingAction_->x(),
                                leadingAction_->y() - leadingHint_->height() - UiZoom::s(5));

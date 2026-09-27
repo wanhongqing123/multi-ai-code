@@ -2343,7 +2343,7 @@ void MainWindow::applyStyle() {
         #remoteNavButton[selected="true"] { background: #d5e0ee; }
         #settingsNavButton[selected="true"] { background: #d8e1ec; }
         #conversationPane {
-            background: #f0f2f5;
+            background: #f8fafc;
             border: 0;
         }
         #pageTitle {
@@ -2389,7 +2389,7 @@ void MainWindow::applyStyle() {
             background: #ffffff;
         }
         #contactsDirectoryPane {
-            background: #f0f2f5;
+            background: #f8fafc;
             border-right: 1px solid #dae4f0;
         }
         #contactHintPane {

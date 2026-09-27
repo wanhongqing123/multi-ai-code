@@ -89,6 +89,7 @@ private slots:
     void messageTextUsesNativeResolutionAndRegularBodyFont();
     void exposesDesktopChatLayoutControls();
     void mainWindowUsesRoomierIconFreeTitleArea();
+    void conversationSidebarUsesLighterBackground();
     void conversationPreviewUsesPlainMarkdown_data();
     void conversationPreviewUsesPlainMarkdown();
     void composerUsesEmbeddedIconSendAction();
@@ -1078,6 +1079,29 @@ void MainWindowLayoutTest::mainWindowUsesRoomierIconFreeTitleArea() {
 #else
     QVERIFY(inset == nullptr);
 #endif
+}
+
+void MainWindowLayoutTest::conversationSidebarUsesLighterBackground() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    MainWindow window(app);
+
+    auto* navRail = window.findChild<QWidget*>(QStringLiteral("navRail"));
+    auto* conversationPane = window.findChild<QWidget*>(QStringLiteral("conversationPane"));
+    auto* contactsDirectoryPane =
+        window.findChild<QWidget*>(QStringLiteral("contactsDirectoryPane"));
+    QVERIFY(navRail != nullptr);
+    QVERIFY(conversationPane != nullptr);
+    QVERIFY(contactsDirectoryPane != nullptr);
+
+    const QColor navBackground = navRail->palette().color(QPalette::Window);
+    const QColor sidebarBackground = conversationPane->palette().color(QPalette::Window);
+    QCOMPARE(sidebarBackground, QColor(QStringLiteral("#f8fafc")));
+    QCOMPARE(contactsDirectoryPane->palette().color(QPalette::Window), sidebarBackground);
+    QVERIFY2(sidebarBackground.lightness() > navBackground.lightness(),
+             "The conversation sidebar should be lighter than the navigation rail");
+    QVERIFY2(sidebarBackground.lightness() < QColor(Qt::white).lightness(),
+             "The conversation sidebar should remain distinct from white content");
 }
 
 void MainWindowLayoutTest::composerUsesEmbeddedIconSendAction() {

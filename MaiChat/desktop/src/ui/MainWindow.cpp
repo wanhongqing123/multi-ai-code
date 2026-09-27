@@ -2329,21 +2329,17 @@ void MainWindow::applyStyle() {
         #contactsNavButton { background: #e7f7f1; }
         #remoteNavButton { background: #ebf0f8; }
         #settingsNavButton { background: #e9eef5; }
-        #messagesNavButton:hover { background: #d9edfc; }
-        #agentNavButton:hover { background: #e7e1ff; }
-        #contactsNavButton:hover { background: #daf1e8; }
-        #remoteNavButton:hover { background: #dfe7f3; }
-        #settingsNavButton:hover { background: #dfe6ef; }
+        #messagesNavButton[selected="false"]:hover { background: #d9edfc; }
+        #agentNavButton[selected="false"]:hover { background: #e7e1ff; }
+        #contactsNavButton[selected="false"]:hover { background: #daf1e8; }
+        #remoteNavButton[selected="false"]:hover { background: #dfe7f3; }
+        #settingsNavButton[selected="false"]:hover { background: #dfe6ef; }
         #messagesNavButton[selected="true"], #contactsNavButton[selected="true"],
         #remoteNavButton[selected="true"], #settingsNavButton[selected="true"],
         #agentNavButton[selected="true"] {
             border: 0;
+            background: transparent;
         }
-        #messagesNavButton[selected="true"] { background: #cfe9fb; }
-        #agentNavButton[selected="true"] { background: #ded7ff; }
-        #contactsNavButton[selected="true"] { background: #cceadd; }
-        #remoteNavButton[selected="true"] { background: #d5e0ee; }
-        #settingsNavButton[selected="true"] { background: #d8e1ec; }
         #conversationPane {
             background: #f8fafc;
             border: 0;

@@ -19,7 +19,6 @@ import java.security.KeyStore;
 import java.security.cert.X509Certificate;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
@@ -165,8 +164,7 @@ final class AIAssistantController {
             finally { completed.countDown(); }
         });
         try {
-            if (!completed.await(30, TimeUnit.SECONDS))
-                return hostToolFailure("MaiChat 宿主工具执行超时");
+            completed.await();
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             return hostToolFailure("MaiChat 宿主工具执行被中断");

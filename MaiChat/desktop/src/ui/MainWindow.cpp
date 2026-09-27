@@ -1725,14 +1725,14 @@ void MainWindow::buildUi() {
     conversationPane->setObjectName(QStringLiteral("conversationPane"));
     conversationPane->setMinimumWidth(UiZoom::s(220));
     auto* conversationLayout = new QVBoxLayout(conversationPane);
-    conversationLayout->setContentsMargins(20, 18, 16, 16);
+    conversationLayout->setContentsMargins(20, 18, 0, 16);
     conversationLayout->setSpacing(14);
 
     // 会话栏头部：搜索框 + 添加联系人，与微信同一形态。
     // 搜索原先横贯窗口顶部，但它搜的结果最终都落在这一列里，放在这列的头部
     // 更符合「在哪找、结果在哪」的直觉，也省掉一整条顶栏的高度。
     auto* conversationHeader = new QHBoxLayout();
-    conversationHeader->setContentsMargins(0, 0, 0, 0);
+    conversationHeader->setContentsMargins(0, 0, 16, 0);
     conversationHeader->setSpacing(8);
     navSearchInput_ = new QLineEdit(conversationPane);
     navSearchInput_->setObjectName(QStringLiteral("globalSearchBox"));
@@ -2378,7 +2378,7 @@ void MainWindow::applyStyle() {
             background: #ffffff;
         }
         #contactsDirectoryPane {
-            background: #ffffff;
+            background: #f0f2f5;
             border-right: 1px solid #dae4f0;
         }
         #contactHintPane {

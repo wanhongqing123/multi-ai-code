@@ -76,16 +76,20 @@ int main() {
         CHECK(body["messages"].front()["content"].get<std::string>().find(
                   "GitHub-Flavored Markdown") != std::string::npos);
         // 移动端不能向模型宣称可以执行桌面 shell。
-        bool hasViewImage = false, hasMaiChatContacts = false, hasMaiChatSend = false;
+        bool hasViewImage = false, hasMaiChatContacts = false, hasMaiChatSend = false,
+             hasMaiChatBroadcast = false;
         for (const auto& tool : body["tools"]) {
             CHECK(tool["function"]["name"] != "shell");
             if (tool["function"]["name"] == "view_image") hasViewImage = true;
             if (tool["function"]["name"] == "maichat_list_contacts") hasMaiChatContacts = true;
             if (tool["function"]["name"] == "maichat_send_text") hasMaiChatSend = true;
+            if (tool["function"]["name"] == "maichat_broadcast_text")
+                hasMaiChatBroadcast = true;
         }
         CHECK(hasViewImage);
         CHECK(hasMaiChatContacts);
         CHECK(hasMaiChatSend);
+        CHECK(hasMaiChatBroadcast);
         const auto& last = body["messages"].back();
         std::string input;
         if (last["content"].is_string()) {

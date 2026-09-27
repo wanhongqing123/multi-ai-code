@@ -77,12 +77,7 @@ private:
     void appendContactGroupSection(const QString& groupName,
                                    const QList<RemoteIMContact>& members);
     void toggleContactGroupCollapsed(const QString& groupName);
-    // 返回真正建出来的分组名；用户取消或名字不合法时返回空串。
-    QString createContactGroup();
-    // preselectedGroup 非空时，打开对话框就预先勾中该分组（分组表头右键进来的情况）。
-    void openBroadcastDialog(const QString& preselectedGroup = QString());
     void openForwardDialog(const RemoteIMMessage& message);
-    void reportBroadcastResult(int total, const QStringList& failedPeerIds);
     void renameContactGroup(const QString& groupName);
     void deleteContactGroup(const QString& groupName);
     void appendMoveToGroupMenu(QMenu& menu, const QString& userId, const QString& currentGroup);
@@ -243,8 +238,6 @@ private:
     QWidget* navRail_ = nullptr;
     QLineEdit* navSearchInput_ = nullptr;
     QLineEdit* contactsSearchInput_ = nullptr;
-    QPushButton* newContactGroupButton_ = nullptr;
-    QPushButton* broadcastButton_ = nullptr;
     QSystemTrayIcon* trayIcon_ = nullptr;
     // 系统只保留最近一个通知气泡，点击回调也不带任何负载，所以只能记住
     // 「最后弹的是谁」。多个联系人先后来消息时，点通知只能定位到最后那个。

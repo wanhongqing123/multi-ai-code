@@ -12,6 +12,7 @@
 #include <QHBoxLayout>
 #include <QImageReader>
 #include <QJsonDocument>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QKeyEvent>
 #include <QLabel>
@@ -66,6 +67,12 @@ QString toolPrimaryArgument(const QString& tool, const QString& arguments) {
     const QJsonDocument document = QJsonDocument::fromJson(arguments.toUtf8());
     if (!document.isObject()) return arguments.simplified();
     const QJsonObject object = document.object();
+    if (tool == QStringLiteral("maichat_broadcast_text")) {
+        QStringList recipients;
+        for (const QJsonValue& value : object.value(QStringLiteral("peer_ids")).toArray())
+            recipients.append(value.toString());
+        return recipients.join(QStringLiteral("、"));
+    }
     const QString key = tool == QStringLiteral("shell")      ? QStringLiteral("command")
                         : tool == QStringLiteral("glob")     ? QStringLiteral("pattern")
                         : tool == QStringLiteral("grep")     ? QStringLiteral("pattern")
@@ -507,10 +514,19 @@ public:
             rendered = QStringLiteral("$ ") + primaryArgument_;
             if (!text.trimmed().isEmpty()) rendered += QStringLiteral("\n\n") + text.trimmed();
         } else if (tool_ == QStringLiteral("maichat_send_text") ||
-                   tool_ == QStringLiteral("maichat_reply_message")) {
+                   tool_ == QStringLiteral("maichat_reply_message") ||
+                   tool_ == QStringLiteral("maichat_broadcast_text")) {
             const QJsonObject object = QJsonDocument::fromJson(arguments_.toUtf8()).object();
+            QString recipients = object.value(QStringLiteral("peer_id")).toString();
+            if (tool_ == QStringLiteral("maichat_broadcast_text")) {
+                QStringList values;
+                for (const QJsonValue& value :
+                     object.value(QStringLiteral("peer_ids")).toArray())
+                    values.append(value.toString());
+                recipients = values.join(QStringLiteral("、"));
+            }
             rendered = QStringLiteral("收件人：%1\n\n消息内容：\n%2")
-                           .arg(object.value(QStringLiteral("peer_id")).toString(),
+                           .arg(recipients,
                                 object.value(QStringLiteral("text")).toString());
             const QString replyTo = object.value(QStringLiteral("message_id")).toString();
             if (!replyTo.isEmpty())

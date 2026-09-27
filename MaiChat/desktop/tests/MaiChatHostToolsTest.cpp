@@ -28,17 +28,20 @@ void MaiChatHostToolsTest::registersMaiChatReadAndWriteTools() {
        {"maichat_list_contacts", "maichat_list_conversations",
         "maichat_get_messages", "maichat_search_messages",
         "maichat_get_unread_summary", "maichat_send_text",
-        "maichat_reply_message"}) {
+        "maichat_reply_message", "maichat_broadcast_text"}) {
     QVERIFY2(registry.find(name) != nullptr, name);
   }
   QVERIFY(!registry.find("maichat_list_contacts")->requiresApproval("{}"));
   QVERIFY(registry.find("maichat_send_text")->requiresApproval("{}"));
   QVERIFY(registry.find("maichat_reply_message")->requiresApproval("{}"));
+  QVERIFY(registry.find("maichat_broadcast_text")->requiresApproval("{}"));
   QVERIFY(!registry.find("maichat_list_contacts")
                ->requiresPerCallApproval("{}"));
   QVERIFY(registry.find("maichat_send_text")
               ->requiresPerCallApproval("{}"));
   QVERIFY(registry.find("maichat_reply_message")
+              ->requiresPerCallApproval("{}"));
+  QVERIFY(registry.find("maichat_broadcast_text")
               ->requiresPerCallApproval("{}"));
 }
 
@@ -95,6 +98,7 @@ void MaiChatHostToolsTest::sendsAndRepliesOnlyThroughApprovalGatedTools() {
   auto *fake = client.get();
   RemoteIMApplication app(QStringLiteral("owner"), std::move(client));
   app.addContact(QStringLiteral("alice"), QStringLiteral("Alice"));
+  app.addContact(QStringLiteral("bob"), QStringLiteral("Bob"));
   fake->emitIncomingText(QStringLiteral("alice"),
                          QStringLiteral("Can you review this?"));
   const QString messageId =
@@ -128,6 +132,21 @@ void MaiChatHostToolsTest::sendsAndRepliesOnlyThroughApprovalGatedTools() {
       app.chatState().messagesWith(QStringLiteral("alice"));
   QVERIFY(messages.last().hasQuote);
   QCOMPARE(messages.last().text, QStringLiteral("I will review it"));
+
+  MaiTool *broadcast = registry.find("maichat_broadcast_text");
+  QVERIFY(broadcast->requiresPerCallApproval(
+      R"({"peer_ids":["alice","bob"],"text":"Release is ready"})"));
+  const auto broadcasted = broadcast->execute(
+      R"({"peer_ids":["alice","bob","alice"],"text":"Release is ready"})",
+      context);
+  QVERIFY(!broadcasted.hasError());
+  const QJsonObject broadcastResult = QJsonDocument::fromJson(
+      QByteArray::fromStdString(broadcasted.output())).object();
+  QCOMPARE(broadcastResult.value(QStringLiteral("recipient_count")).toInt(), 2);
+  QCOMPARE(app.chatState().messagesWith(QStringLiteral("alice")).last().text,
+           QStringLiteral("Release is ready"));
+  QCOMPARE(app.chatState().messagesWith(QStringLiteral("bob")).last().text,
+           QStringLiteral("Release is ready"));
 }
 
 QTEST_MAIN(MaiChatHostToolsTest)

@@ -1767,10 +1767,10 @@ void MainWindow::buildUi() {
 
     auto* composer = new QWidget(chatContentPane);
     composer->setObjectName(QStringLiteral("composerPanel"));
-    composer->setMinimumHeight(UiZoom::s(116));
+    composer->setMinimumHeight(UiZoom::s(96));
     auto* composerLayout = new QVBoxLayout(composer);
-    composerLayout->setContentsMargins(24, 12, 24, 14);
-    composerLayout->setSpacing(8);
+    composerLayout->setContentsMargins(12, 6, 12, 8);
+    composerLayout->setSpacing(6);
 
     // 命令提示条：悬浮在输入框上方的纵向列表，不占 composer 布局空间。
     auto* slashCommandScroll = new QScrollArea(chatContentPane);
@@ -1812,21 +1812,22 @@ void MainWindow::buildUi() {
     sendButton_->setCursor(Qt::PointingHandCursor);
     static_cast<ComposerTextEdit*>(messageEditor_)->setCornerAction(sendButton_);
 
-    aiReplyButton_ = new QPushButton(QStringLiteral("✨ AI 回复"), messageEditor_);
+    aiReplyButton_ = new QPushButton(messageEditor_);
     aiReplyButton_->setObjectName(QStringLiteral("aiReplyButton"));
-    aiReplyButton_->setFixedHeight(UiZoom::s(28));
+    aiReplyButton_->setIcon(makeNavIcon(LineIconKind::Assistant,
+                                        QColor(QStringLiteral("#6f62c7"))));
+    aiReplyButton_->setIconSize(QSize(UiZoom::s(18), UiZoom::s(18)));
+    aiReplyButton_->setFixedSize(UiZoom::s(32), UiZoom::s(32));
     aiReplyButton_->setCursor(Qt::PointingHandCursor);
-    aiReplyButton_->setToolTip(QStringLiteral("根据当前会话生成三条回复建议"));
+    aiReplyButton_->setToolTip(QStringLiteral("AI 回复"));
     aiReplyButton_->setAccessibleName(QStringLiteral("AI 回复"));
     aiReplyButton_->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
         QPushButton#aiReplyButton {
             background: transparent;
             border: none;
-            border-radius: 7px;
+            border-radius: 9px;
             color: #168ad1;
-            padding: 3px 7px;
-            font-size: 12px;
-            font-weight: 600;
+            padding: 0;
         }
         QPushButton#aiReplyButton:hover { background: #edf7ff; }
         QPushButton#aiReplyButton:pressed { background: #dcefff; }
@@ -2008,7 +2009,8 @@ void MainWindow::buildUi() {
     // 通讯录栏头部：和会话栏一样是一个搜索框，只是搜的对象不同。
     // 搜索框跟着页面走而不是共用一个：点通讯录就搜联系人、点消息就搜消息，
     // 一个框只做一件事，不必再在框里塞「现在搜的是什么」的模式开关。
-    // 搜索框一行、按钮一行：挤在同一行时搜索框被压窄，而搜索是这一页更常用的动作。
+    // 通讯录只保留搜索和右上角的添加好友入口。已有分组继续兼容显示；
+    // 群发迁入 AI 助手的逐次审批工具。
     auto* contactsHeader = new QVBoxLayout();
     contactsHeader->setContentsMargins(0, 0, 0, 0);
     contactsHeader->setSpacing(8);
@@ -2020,32 +2022,6 @@ void MainWindow::buildUi() {
         makeLineIcon(LineIconKind::Search, QColor(QStringLiteral("#98a2b3"))),
         QLineEdit::LeadingPosition);
     contactsHeader->addWidget(contactsSearchInput_);
-
-    // 两个动作并排一行，不再各占一行。竖着堆三个等宽白框时，搜索框（输入）和
-    // 这两个（动作）长得一模一样，看不出哪个能点、哪个能打字，而且白占一屏高度。
-    auto* contactsActions = new QHBoxLayout();
-    contactsActions->setContentsMargins(0, 0, 0, 0);
-    contactsActions->setSpacing(8);
-
-    // 建分组的主入口。右键菜单里也有，但那要求用户先想到去右键；
-    // 一个摆在搜索框下面的按钮才是"这里可以建分组"的可见提示。
-    newContactGroupButton_ = new QPushButton(QStringLiteral("新建分组"), contactsDirectoryPane);
-    newContactGroupButton_->setObjectName(QStringLiteral("newContactGroupButton"));
-    newContactGroupButton_->setCursor(Qt::PointingHandCursor);
-    newContactGroupButton_->setIcon(makeLineIcon(LineIconKind::Add, QColor(QStringLiteral("#64748b"))));
-    newContactGroupButton_->setIconSize(QSize(UiZoom::s(15), UiZoom::s(15)));
-    connect(newContactGroupButton_, &QPushButton::clicked, this, [this] { createContactGroup(); });
-    contactsActions->addWidget(newContactGroupButton_, 1);
-
-    broadcastButton_ = new QPushButton(QStringLiteral("群发消息"), contactsDirectoryPane);
-    broadcastButton_->setObjectName(QStringLiteral("broadcastButton"));
-    broadcastButton_->setCursor(Qt::PointingHandCursor);
-    broadcastButton_->setIcon(makeLineIcon(LineIconKind::Send, QColor(QStringLiteral("#64748b"))));
-    broadcastButton_->setIconSize(QSize(UiZoom::s(15), UiZoom::s(15)));
-    connect(broadcastButton_, &QPushButton::clicked, this, [this] { openBroadcastDialog(); });
-    contactsActions->addWidget(broadcastButton_, 1);
-
-    contactsHeader->addLayout(contactsActions);
 
     contactsList_ = new QListWidget(contactsDirectoryPane);
     contactsList_->setObjectName(QStringLiteral("contactsList"));
@@ -2233,25 +2209,6 @@ void MainWindow::applyStyle() {
         #addConversationButton:hover {
             border-color: #8ed0ff;
             background: #f2f9ff;
-        }
-        /* 动作按钮：浅底、无边框。白底加边框是输入框的样式，
-           两者用同一种外观时，用户看不出哪个能点、哪个能打字。 */
-        #newContactGroupButton, #broadcastButton {
-            min-height: 32px;
-            border: 0;
-            border-radius: 8px;
-            background: #eef2f7;
-            color: #475569;
-            font-size: 13px;
-            font-weight: 600;
-            padding: 0 10px;
-        }
-        #newContactGroupButton:hover, #broadcastButton:hover {
-            background: #e2e8f0;
-            color: #1e293b;
-        }
-        #newContactGroupButton:pressed, #broadcastButton:pressed {
-            background: #d7dee8;
         }
         #globalSearchBox, #contactsSearchBox {
             min-height: 34px;
@@ -2517,7 +2474,7 @@ void MainWindow::applyStyle() {
         }
         #composerPanel {
             background: #ffffff;
-            border-top: 1px solid #dae4f0;
+            border: 0;
         }
         #messageEditor {
             border: 1px solid #dae4f0;
@@ -2733,8 +2690,6 @@ void MainWindow::bindSignals() {
         app_.selectPeer(userId);
         showMessagesPage();
     };
-    connect(&app_, &RemoteIMApplication::broadcastFinished, this,
-            [this](int total, const QStringList& failed) { reportBroadcastResult(total, failed); });
     connect(contactsList_, &QListWidget::itemClicked, this, openContactConversation);
     connect(contactsList_, &QListWidget::itemActivated, this, openContactConversation);
 }
@@ -5514,14 +5469,17 @@ void MainWindow::applyScaledFixedGeometry() {
         pane->setMinimumWidth(UiZoom::s(520));
     }
     if (auto* pane = findChild<QWidget*>(QStringLiteral("composerPanel"))) {
-        pane->setMinimumHeight(UiZoom::s(116));
+        pane->setMinimumHeight(UiZoom::s(96));
     }
     if (auto* pane = findChild<QWidget*>(QStringLiteral("contactsDirectoryPane"))) {
         pane->setMinimumWidth(UiZoom::s(300));
         pane->setMaximumWidth(UiZoom::s(420));
     }
     if (messageEditor_) messageEditor_->setMinimumHeight(UiZoom::s(64));
-    if (aiReplyButton_) aiReplyButton_->setFixedHeight(UiZoom::s(28));
+    if (aiReplyButton_) {
+        aiReplyButton_->setFixedSize(UiZoom::s(32), UiZoom::s(32));
+        aiReplyButton_->setIconSize(QSize(UiZoom::s(18), UiZoom::s(18)));
+    }
     if (sendButton_) {
         sendButton_->setFixedSize(UiZoom::s(36), UiZoom::s(36));
         sendButton_->setIconSize(QSize(UiZoom::s(18), UiZoom::s(18)));
@@ -6314,17 +6272,7 @@ void MainWindow::showConversationContextMenu(const QPoint& pos) {
 void MainWindow::showContactContextMenu(QListWidget* list, const QPoint& pos) {
     if (!list) return;
     QListWidgetItem* item = list->itemAt(pos);
-    // 空白处右键也给「新建分组」：这是除按钮之外的第二个入口，
-    // 通讯录空着的时候尤其用得上。
-    if (!item) {
-        if (list != contactsList_) return;
-        QMenu menu(this);
-        applyMessageContextMenuStyle(menu);
-        QAction* createAction = menu.addAction(makeLineIcon(LineIconKind::Add, kMenuIconColor),
-                                               QStringLiteral("新建分组"));
-        if (menu.exec(list->viewport()->mapToGlobal(pos)) == createAction) createContactGroup();
-        return;
-    }
+    if (!item) return;
 
     if (item->data(IsGroupHeaderRole).toBool()) {
         showContactGroupContextMenu(list, item, pos);
@@ -6372,104 +6320,25 @@ void MainWindow::appendMoveToGroupMenu(QMenu& menu, const QString& userId,
                 [this, userId] { app_.setContactGroup(userId, QString()); });
     }
 
-    submenu->addSeparator();
-    // 一步到位：不必先关掉菜单去建组、再右键一次把人移进去。
-    QAction* createAndMove = submenu->addAction(makeLineIcon(LineIconKind::Add, kMenuIconColor),
-                                                QStringLiteral("新建分组并移入…"));
-    connect(createAndMove, &QAction::triggered, this, [this, userId] {
-        const QString created = createContactGroup();
-        if (!created.isEmpty()) app_.setContactGroup(userId, created);
-    });
 }
 
 void MainWindow::showContactGroupContextMenu(QListWidget* list, QListWidgetItem* item,
                                              const QPoint& pos) {
     const QString groupName = item->data(GroupNameRole).toString();
+    if (groupName.isEmpty()) return;
     QMenu menu(this);
     applyMessageContextMenuStyle(menu);
-    QAction* createAction = menu.addAction(makeLineIcon(LineIconKind::Add, kMenuIconColor),
-                                           QStringLiteral("新建分组"));
-    QAction* broadcastAction = nullptr;
-    QAction* renameAction = nullptr;
-    QAction* deleteAction = nullptr;
-    if (!groupName.isEmpty()) {
-        broadcastAction = menu.addAction(makeLineIcon(LineIconKind::Send, kMenuIconColor),
-                                         QStringLiteral("群发给这个分组"));
-    }
-    // 「未分组」不是真的分组，改不了名也删不掉；菜单里干脆不给这两项，
-    // 好过给了再弹一句不能这么做。
-    if (!groupName.isEmpty()) {
-        menu.addSeparator();
-        renameAction = menu.addAction(QStringLiteral("重命名分组"));
-        deleteAction = menu.addAction(makeLineIcon(LineIconKind::Trash, kMenuIconColor),
-                                      QStringLiteral("删除分组"));
-    }
+    QAction* renameAction = menu.addAction(QStringLiteral("重命名分组"));
+    QAction* deleteAction = menu.addAction(makeLineIcon(LineIconKind::Trash, kMenuIconColor),
+                                           QStringLiteral("删除分组"));
 
     QAction* selected = menu.exec(list->viewport()->mapToGlobal(pos));
     if (!selected) return;
-    if (selected == createAction) {
-        createContactGroup();
-    } else if (selected == broadcastAction) {
-        openBroadcastDialog(groupName);
-    } else if (selected == renameAction) {
+    if (selected == renameAction) {
         renameContactGroup(groupName);
     } else if (selected == deleteAction) {
         deleteContactGroup(groupName);
     }
-}
-
-// 返回真正建出来的分组名；用户取消或名字不合法时返回空串。
-QString MainWindow::createContactGroup() {
-    bool accepted = false;
-    AppTextInputDialog::Options options;
-    options.title = QStringLiteral("新建分组");
-    options.description = QStringLiteral("给这一组联系人起个名字，之后可以把好友移进来。");
-    options.placeholder = QStringLiteral("例如：同事");
-    const QString name = AppTextInputDialog::getText(this, options, &accepted);
-    if (!accepted) return QString();
-
-    const QString clean = ContactGroups::normalize(name);
-    if (!ContactGroups::isAcceptableName(clean)) {
-        AppMessageDialog::show(this, AppMessageDialog::Kind::Warning, QStringLiteral("分组名不可用"),
-                               QStringLiteral("分组名不能为空。"));
-        return QString();
-    }
-    if (!app_.createContactGroup(clean)) {
-        AppMessageDialog::show(this, AppMessageDialog::Kind::Warning, QStringLiteral("分组已存在"),
-                               QStringLiteral("已经有一个叫「%1」的分组了。").arg(clean));
-        return QString();
-    }
-    return clean;
-}
-
-void MainWindow::openBroadcastDialog(const QString& preselectedGroup) {
-    const QList<RemoteIMContact> contacts = app_.chatState().contacts();
-    if (contacts.isEmpty()) {
-        AppMessageDialog::show(this, AppMessageDialog::Kind::Info, QStringLiteral("还没有联系人"),
-                               QStringLiteral("通讯录是空的，先加几个好友再群发。"));
-        return;
-    }
-
-    BroadcastDialog dialog(contacts, app_.chatState().contactGroups(), preselectedGroup, this);
-    if (dialog.exec() != QDialog::Accepted) return;
-
-    const QStringList peerIds = dialog.selectedPeerIds();
-    const QString text = dialog.messageText().trimmed();
-    if (peerIds.isEmpty() || text.isEmpty()) return;
-
-    // 发送前把收件人一个不落地列出来。分组里到底有几个人，用户往往记不准
-    // ——以为「同事」是 3 个，实际是 8 个。这一步是发出去之前唯一的刹车。
-    QStringList names;
-    for (const QString& peerId : peerIds) names.append(contactName(peerId));
-    const QString body = QStringLiteral("这 %1 个人会各收到一条相同的消息：\n\n%2")
-                             .arg(peerIds.size())
-                             .arg(names.join(QStringLiteral("、")));
-    if (!AppMessageDialog::confirm(this, QStringLiteral("确认群发"), body,
-                                   QStringLiteral("发送给 %1 人").arg(peerIds.size()), false)) {
-        return;
-    }
-
-    app_.broadcastText(peerIds, text);
 }
 
 void MainWindow::openForwardDialog(const RemoteIMMessage& message) {
@@ -6488,20 +6357,6 @@ void MainWindow::openForwardDialog(const RemoteIMMessage& message) {
     app_.forwardMessage(message, peerIds.first());
 }
 
-void MainWindow::reportBroadcastResult(int total, const QStringList& failedPeerIds) {
-    if (failedPeerIds.isEmpty()) {
-        AppMessageDialog::show(this, AppMessageDialog::Kind::Info, QStringLiteral("群发完成"),
-                               QStringLiteral("%1 个人都收到了。").arg(total));
-        return;
-    }
-    // 只说「部分失败」用户没法补救，必须说出是谁——他才知道该单独补发给谁。
-    QStringList names;
-    for (const QString& peerId : failedPeerIds) names.append(contactName(peerId));
-    AppMessageDialog::show(
-        this, AppMessageDialog::Kind::Warning, QStringLiteral("部分没有发出去"),
-        QStringLiteral("%1 个人里有 %2 个没发出去：\n\n%3\n\n这几条留在各自的会话里并标成发送失败，可以单独重发。")
-            .arg(total).arg(failedPeerIds.size()).arg(names.join(QStringLiteral("、"))));
-}
 
 void MainWindow::renameContactGroup(const QString& groupName) {
     if (groupName.isEmpty()) return;

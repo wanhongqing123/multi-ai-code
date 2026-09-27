@@ -195,6 +195,10 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
         "Send a quoted reply to a MaiChat message through the host. Requires user approval.",
         R"({"type":"object","properties":{"peer_id":{"type":"string"},"message_id":{"type":"string"},"text":{"type":"string"}},"required":["peer_id","message_id","text"]})",
         true);
+    add("maichat_broadcast_text",
+        "Send the same text to multiple MaiChat contacts through the host. The complete recipient list and text require user approval for every call.",
+        R"({"type":"object","properties":{"peer_ids":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":200},"text":{"type":"string"}},"required":["peer_ids","text"]})",
+        true);
 }
 
 }  // namespace

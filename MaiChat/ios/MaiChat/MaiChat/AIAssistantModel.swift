@@ -105,6 +105,8 @@ final class AIMaiChatHostToolProvider {
             return await sendText(appState: appState, arguments: arguments)
         case "maichat_reply_message":
             return await replyMessage(appState: appState, arguments: arguments)
+        case "maichat_broadcast_text":
+            return await broadcastText(appState: appState, arguments: arguments)
         default:
             return .failure(code: "invalid_input", message: "unknown MaiChat host tool")
         }
@@ -254,6 +256,38 @@ final class AIMaiChatHostToolProvider {
             "peer_id": peerID,
             "message_id": appState.locallyQueuedMessageID?.uuidString ?? "",
             "reply_to": messageID,
+        ])
+    }
+
+    private func broadcastText(
+        appState: RemoteIMAppState,
+        arguments: [String: Any]
+    ) async -> AIMaiChatHostToolExecution {
+        guard let rawPeerIDs = arguments["peer_ids"] as? [String], rawPeerIDs.count <= 200 else {
+            return .failure(code: "invalid_input", message: "peer_ids must contain 1 to 200 contacts")
+        }
+        let text = Self.string(arguments, key: "text")
+        var seen = Set<String>()
+        let peerIDs = rawPeerIDs.compactMap { value -> String? in
+            let peerID = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !peerID.isEmpty, seen.insert(peerID).inserted else { return nil }
+            return peerID
+        }
+        guard !peerIDs.isEmpty, !text.isEmpty else {
+            return .failure(code: "invalid_input", message: "peer_ids and text are required")
+        }
+        guard peerIDs.allSatisfy({ Self.hasContact(appState, peerID: $0) }) else {
+            return .failure(code: "invalid_input", message: "peer_ids contains a non-contact")
+        }
+
+        let result = await appState.broadcastText(to: peerIDs, text: text)
+        guard result.total > 0 else {
+            return .failure(code: "internal", message: "MaiChat did not queue the broadcast")
+        }
+        return Self.jsonSuccess([
+            "recipient_count": result.total,
+            "sent_count": result.total - result.failedUserIDs.count,
+            "failed_peer_ids": result.failedUserIDs,
         ])
     }
 

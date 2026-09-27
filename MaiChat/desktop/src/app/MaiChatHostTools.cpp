@@ -5,6 +5,7 @@
 #include <QJsonObject>
 #include <QMetaObject>
 #include <QPointer>
+#include <QSet>
 #include <QThread>
 
 #include <algorithm>
@@ -27,6 +28,7 @@ enum class HostToolKind {
   GetUnreadSummary,
   SendText,
   ReplyMessage,
+  BroadcastText,
 };
 
 std::string toStdString(const QByteArray &bytes) {
@@ -166,6 +168,8 @@ public:
         return sendText(app, arguments);
       case HostToolKind::ReplyMessage:
         return replyMessage(app, arguments);
+      case HostToolKind::BroadcastText:
+        return broadcastText(app, arguments);
       }
       return MaiToolResult::failure(MaiErrorCode::Internal,
                                     "unknown MaiChat host tool");
@@ -347,6 +351,43 @@ private:
                        {QStringLiteral("reply_to"), messageId}});
   }
 
+  static MaiToolResult broadcastText(RemoteIMApplication &app,
+                                     const QJsonObject &arguments) {
+    const QJsonArray values = arguments.value(QStringLiteral("peer_ids")).toArray();
+    const QString text =
+        arguments.value(QStringLiteral("text")).toString().trimmed();
+    if (values.isEmpty() || text.isEmpty())
+      return invalidInput(QStringLiteral("peer_ids and text are required"));
+    if (values.size() > 200)
+      return invalidInput(QStringLiteral("peer_ids cannot contain more than 200 contacts"));
+
+    QStringList recipients;
+    QSet<QString> seen;
+    for (const QJsonValue &value : values) {
+      const QString peerId = value.toString().trimmed();
+      if (peerId.isEmpty() || seen.contains(peerId))
+        continue;
+      if (!hasContact(app.chatState(), peerId))
+        return invalidInput(
+            QStringLiteral("peer_ids contains a non-contact: %1").arg(peerId));
+      seen.insert(peerId);
+      recipients.append(peerId);
+    }
+    if (recipients.isEmpty())
+      return invalidInput(QStringLiteral("peer_ids must contain at least one contact"));
+
+    const int queued = app.broadcastText(recipients, text);
+    if (queued != recipients.size())
+      return MaiToolResult::failure(MaiErrorCode::Internal,
+                                    "MaiChat did not queue every broadcast message");
+    QJsonArray peerIds;
+    for (const QString &peerId : recipients)
+      peerIds.append(peerId);
+    return jsonResult({{QStringLiteral("queued"), true},
+                       {QStringLiteral("recipient_count"), queued},
+                       {QStringLiteral("peer_ids"), peerIds}});
+  }
+
   HostToolKind mKind;
   std::string mName;
   std::string mDescription;
@@ -402,5 +443,11 @@ void registerMaiChatHostTools(MaiToolRegistry &registry,
       "Queue a quoted text reply to a MaiChat message. This changes external "
       "state and requires user approval.",
       R"({"type":"object","properties":{"peer_id":{"type":"string"},"message_id":{"type":"string"},"text":{"type":"string"}},"required":["peer_id","message_id","text"]})",
+      app, true);
+  addTool(
+      registry, HostToolKind::BroadcastText, "maichat_broadcast_text",
+      "Queue the same text message to multiple MaiChat contacts. The complete "
+      "recipient list and text require user approval for every call.",
+      R"({"type":"object","properties":{"peer_ids":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":200},"text":{"type":"string"}},"required":["peer_ids","text"]})",
       app, true);
 }

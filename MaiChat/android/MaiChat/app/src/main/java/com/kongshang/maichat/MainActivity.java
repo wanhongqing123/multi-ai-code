@@ -1722,6 +1722,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             case "maichat_get_unread_summary": return hostUnreadSummary();
             case "maichat_send_text": return hostSendText(arguments, false);
             case "maichat_reply_message": return hostSendText(arguments, true);
+            case "maichat_broadcast_text": return hostBroadcastText(arguments);
             default: throw new IllegalArgumentException("未知 MaiChat 宿主工具：" + tool);
         }
     }
@@ -1825,6 +1826,33 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         RemoteIMMessage queued = session.sendTextMessageTo(peer, text, quote);
         return new JSONObject().put("sent", true).put("peer_id", peer)
             .put("message_id", queued.id());
+    }
+
+    private JSONObject hostBroadcastText(JSONObject arguments) throws Exception {
+        JSONArray values = arguments.optJSONArray("peer_ids");
+        String text = arguments.optString("text").trim();
+        if (values == null || values.length() == 0 || values.length() > 200 || text.isEmpty())
+            throw new IllegalArgumentException("peer_ids 和 text 不能为空，收件人最多 200 个");
+
+        Set<String> contacts = new HashSet<>();
+        for (RemoteIMContact contact : session.chatState().contacts())
+            contacts.add(contact.userId());
+        Set<String> seen = new HashSet<>();
+        List<String> recipients = new ArrayList<>();
+        for (int index = 0; index < values.length(); index += 1) {
+            String peer = values.optString(index).trim();
+            if (peer.isEmpty() || !seen.add(peer)) continue;
+            if (!contacts.contains(peer))
+                throw new IllegalArgumentException("peer_ids 包含非好友账号：" + peer);
+            recipients.add(peer);
+        }
+        if (recipients.isEmpty()) throw new IllegalArgumentException("peer_ids 不能为空");
+
+        int queued = session.broadcastText(recipients, text, null);
+        if (queued != recipients.size())
+            throw new IllegalStateException("MaiChat 未能排队全部群发消息");
+        return new JSONObject().put("queued", true).put("recipient_count", queued)
+            .put("peer_ids", new JSONArray(recipients));
     }
 
     private JSONObject hostMessageJson(RemoteIMMessage message, String peer) throws JSONException {
@@ -1933,7 +1961,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         LinearLayout rows = new LinearLayout(this);
         rows.setOrientation(LinearLayout.VERTICAL);
         rows.setPadding(dp(16), dp(8), dp(16), dp(16));
-        content.addView(contactToolbar(rows), match(dp(96)));
+        content.addView(contactToolbar(rows), match(dp(54)));
         ScrollView scroll = new ScrollView(this);
         scroll.addView(rows, matchWrap());
         content.addView(scroll, new LinearLayout.LayoutParams(
@@ -1993,7 +2021,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
 
     private View contactToolbar(LinearLayout rows) {
         LinearLayout toolbar = new LinearLayout(this);
-        toolbar.setOrientation(LinearLayout.VERTICAL);
+        toolbar.setOrientation(LinearLayout.HORIZONTAL);
+        toolbar.setGravity(Gravity.CENTER_VERTICAL);
         toolbar.setPadding(dp(12), dp(4), dp(12), dp(4));
         toolbar.setBackgroundColor(Color.WHITE);
         EditText search = new EditText(this);
@@ -2004,7 +2033,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         search.setTextSize(14);
         search.setPadding(dp(12), 0, dp(12), 0);
         search.setBackground(MaiChatTheme.bordered(MaiChatTheme.PAGE, MaiChatTheme.BORDER, 9, this));
-        toolbar.addView(search, match(dp(42)));
+        LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(0, dp(42), 1);
+        toolbar.addView(search, searchParams);
         search.addTextChangedListener(new SimpleTextWatcher() {
             @Override
             public void afterTextChanged(Editable editable) {
@@ -2012,241 +2042,13 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                 renderContactRows(rows, contactSearchQuery);
             }
         });
-        LinearLayout actions = new LinearLayout(this);
-        actions.setGravity(Gravity.CENTER_VERTICAL);
-        TextView group = iconButton("新建分组", 14, MaiChatTheme.BLUE_DARK);
-        group.setContentDescription("新建分组");
-        group.setOnClickListener(view -> showContactGroupNameDialog("新建分组", "", null));
-        actions.addView(group, new LinearLayout.LayoutParams(0, dp(42), 1));
-        TextView broadcast = iconButton("群发消息", 14, MaiChatTheme.BLUE_DARK);
-        broadcast.setContentDescription("群发消息");
-        broadcast.setOnClickListener(view -> showBroadcastDialog());
-        actions.addView(broadcast, new LinearLayout.LayoutParams(0, dp(42), 1));
         TextView plus = iconButton("＋", 24, MaiChatTheme.BLUE_DARK);
         plus.setContentDescription("添加好友");
         plus.setOnClickListener(view -> showAddContactDialog());
-        actions.addView(plus, new LinearLayout.LayoutParams(dp(44), dp(42)));
-        toolbar.addView(actions, match(dp(42)));
+        LinearLayout.LayoutParams plusParams = new LinearLayout.LayoutParams(dp(44), dp(42));
+        plusParams.leftMargin = dp(8);
+        toolbar.addView(plus, plusParams);
         return toolbar;
-    }
-
-    private void showBroadcastDialog() {
-        List<RemoteIMContact> contacts = session.chatState().contacts();
-        if (contacts.isEmpty()) {
-            new AlertDialog.Builder(this)
-                .setTitle("还没有联系人")
-                .setMessage("通讯录是空的，先加几个好友再群发。")
-                .setPositiveButton("知道了", null)
-                .show();
-            return;
-        }
-
-        Dialog dialog = new Dialog(this);
-        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
-        LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(18), dp(18), dp(18), dp(16));
-        card.setBackground(MaiChatTheme.rounded(Color.WHITE, 16, this));
-        card.addView(MaiChatTheme.label(this, "群发消息", 20, MaiChatTheme.TEXT), match(dp(30)));
-        TextView detail = MaiChatTheme.text(
-            this,
-            "勾选的每个人都会单独收到一条私聊消息。",
-            13,
-            MaiChatTheme.SECONDARY
-        );
-        card.addView(detail, match(dp(28)));
-
-        EditText filter = new EditText(this);
-        filter.setSingleLine(true);
-        filter.setHint("筛选联系人");
-        filter.setPadding(dp(12), 0, dp(12), 0);
-        filter.setBackground(MaiChatTheme.bordered(MaiChatTheme.PAGE, MaiChatTheme.BORDER, 9, this));
-        card.addView(filter, match(dp(42)));
-
-        ScrollView recipientScroll = new ScrollView(this);
-        LinearLayout recipientRows = new LinearLayout(this);
-        recipientRows.setOrientation(LinearLayout.VERTICAL);
-        recipientScroll.addView(recipientRows, matchWrap());
-        LinearLayout.LayoutParams listParams = new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            0,
-            1
-        );
-        listParams.setMargins(0, dp(8), 0, dp(8));
-        card.addView(recipientScroll, listParams);
-
-        EditText message = new EditText(this);
-        message.setHint("要发送的文本内容");
-        message.setGravity(Gravity.TOP | Gravity.START);
-        message.setMinLines(3);
-        message.setMaxLines(5);
-        message.setPadding(dp(12), dp(10), dp(12), dp(10));
-        message.setBackground(MaiChatTheme.bordered(MaiChatTheme.PAGE, MaiChatTheme.BORDER, 9, this));
-        card.addView(message, match(dp(92)));
-
-        TextView summary = MaiChatTheme.text(this, "还没有选人", 13, MaiChatTheme.SECONDARY);
-        Button send = primaryButton("发送");
-        send.setEnabled(false);
-        LinearLayout footer = new LinearLayout(this);
-        footer.setGravity(Gravity.CENTER_VERTICAL);
-        footer.addView(summary, new LinearLayout.LayoutParams(0, dp(44), 1));
-        Button cancel = secondaryButton("取消");
-        footer.addView(cancel, new LinearLayout.LayoutParams(dp(72), dp(42)));
-        LinearLayout.LayoutParams sendParams = new LinearLayout.LayoutParams(dp(112), dp(42));
-        sendParams.setMargins(dp(8), 0, 0, 0);
-        footer.addView(send, sendParams);
-        LinearLayout.LayoutParams footerParams = match(dp(48));
-        footerParams.setMargins(0, dp(8), 0, 0);
-        card.addView(footer, footerParams);
-
-        BroadcastRecipientPickerState pickerState = new BroadcastRecipientPickerState();
-        Runnable updateSendState = () -> {
-            int count = pickerState.selectedUserIds().size();
-            summary.setText(count == 0 ? "还没有选人" : "已选 " + count + " 人");
-            send.setText(count == 0 ? "发送" : "发送给 " + count + " 人");
-            send.setEnabled(count > 0 && !message.getText().toString().trim().isEmpty());
-        };
-        Runnable[] refresh = new Runnable[1];
-        refresh[0] = () -> renderBroadcastRecipientRows(
-            recipientRows,
-            contacts,
-            session.chatState().contactGroups(),
-            pickerState,
-            refresh[0],
-            updateSendState
-        );
-        filter.addTextChangedListener(new SimpleTextWatcher() {
-            @Override
-            public void afterTextChanged(Editable editable) {
-                pickerState.setFilterText(editable.toString());
-                refresh[0].run();
-            }
-        });
-        message.addTextChangedListener(new SimpleTextWatcher() {
-            @Override
-            public void afterTextChanged(Editable editable) { updateSendState.run(); }
-        });
-        refresh[0].run();
-
-        cancel.setOnClickListener(view -> dialog.dismiss());
-        send.setOnClickListener(view -> {
-            List<String> recipients = new ArrayList<>();
-            List<String> names = new ArrayList<>();
-            for (RemoteIMContact contact : contacts) {
-                if (!pickerState.isSelected(contact.userId())) continue;
-                recipients.add(contact.userId());
-                names.add(contact.displayName());
-            }
-            String cleanText = message.getText().toString().trim();
-            if (recipients.isEmpty() || cleanText.isEmpty()) return;
-            new AlertDialog.Builder(this)
-                .setTitle("确认群发")
-                .setMessage("以下每个人会各收到一条相同的私聊消息：\n\n"
-                    + String.join("、", names))
-                .setNegativeButton("取消", null)
-                .setPositiveButton("发送给 " + recipients.size() + " 人", (confirmDialog, which) -> {
-                    dialog.dismiss();
-                    try {
-                        session.broadcastText(recipients, cleanText, this::showBroadcastResult);
-                    } catch (IOException error) {
-                        new AlertDialog.Builder(this)
-                            .setTitle("群发失败")
-                            .setMessage(error.getMessage())
-                            .setPositiveButton("知道了", null)
-                            .show();
-                    }
-                })
-                .show();
-        });
-
-        dialog.setContentView(card);
-        allowKeyboardLocation = false;
-        dialog.show();
-        Window window = dialog.getWindow();
-        if (window != null) {
-            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-            window.setDimAmount(0.28f);
-            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
-            window.setLayout(
-                (int) (getResources().getDisplayMetrics().widthPixels * 0.94f),
-                (int) (getResources().getDisplayMetrics().heightPixels * 0.84f)
-            );
-        }
-    }
-
-    private void renderBroadcastRecipientRows(
-        LinearLayout rows,
-        List<RemoteIMContact> contacts,
-        List<String> groups,
-        BroadcastRecipientPickerState pickerState,
-        Runnable refresh,
-        Runnable updateSendState
-    ) {
-        rows.removeAllViews();
-        for (BroadcastRecipientDisplayPolicy.Row row : pickerState.visibleRows(groups, contacts)) {
-            if (row.kind() == BroadcastRecipientDisplayPolicy.Kind.CONTACT) {
-                rows.addView(broadcastContactRow(
-                    row.contact(), row.isIndented(), pickerState, refresh, updateSendState
-                ), match(dp(38)));
-                continue;
-            }
-            String group = row.groupName();
-            BroadcastSelectionPolicy.GroupState state =
-                pickerState.groupState(group, contacts);
-            String marker = state == BroadcastSelectionPolicy.GroupState.ALL ? "☑ "
-                : state == BroadcastSelectionPolicy.GroupState.PARTIAL ? "◩ " : "☐ ";
-            TextView header = MaiChatTheme.label(
-                this, marker + group + "（" + row.memberCount() + "）", 14, MaiChatTheme.TEXT
-            );
-            header.setGravity(Gravity.CENTER_VERTICAL);
-            header.setPadding(dp(4), 0, dp(4), 0);
-            header.setOnClickListener(view -> {
-                pickerState.toggleGroup(group, contacts);
-                refresh.run();
-                updateSendState.run();
-            });
-            rows.addView(header, match(dp(38)));
-        }
-    }
-
-    private View broadcastContactRow(
-        RemoteIMContact contact,
-        boolean indented,
-        BroadcastRecipientPickerState pickerState,
-        Runnable refresh,
-        Runnable updateSendState
-    ) {
-        TextView row = MaiChatTheme.label(
-            this,
-            (pickerState.isSelected(contact.userId()) ? "☑ " : "☐ ") + contact.displayName(),
-            14,
-            MaiChatTheme.TEXT
-        );
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(indented ? dp(18) : dp(4), 0, dp(4), 0);
-        row.setOnClickListener(view -> {
-            pickerState.toggleContact(contact.userId());
-            refresh.run();
-            updateSendState.run();
-        });
-        return row;
-    }
-
-    private void showBroadcastResult(int total, List<String> failedUserIds) {
-        List<String> failedNames = new ArrayList<>();
-        for (String userId : failedUserIds) {
-            RemoteIMContact contact = contact(userId);
-            failedNames.add(contact == null ? userId : contact.displayName());
-        }
-        new AlertDialog.Builder(this)
-            .setTitle(failedNames.isEmpty() ? "群发完成" : "部分没有发出去")
-            .setMessage(failedNames.isEmpty()
-                ? total + " 个人都收到了。"
-                : total + " 个人里有 " + failedNames.size() + " 个没发出去：\n\n"
-                    + String.join("、", failedNames)
-                    + "\n\n失败消息保留在各自会话里，可以单独重发。")
-            .setPositiveButton("知道了", null)
-            .show();
     }
 
     private View contactGroupHeader(LinearLayout rows, String group, int count, boolean searching) {
@@ -2275,7 +2077,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         List<String> groups = session.chatState().contactGroups();
         List<String> labels = new ArrayList<>(groups);
         if (!contact.groupName().isEmpty()) labels.add("移出分组");
-        labels.add("新建分组并移入…");
+        if (labels.isEmpty()) return;
         new AlertDialog.Builder(this)
             .setTitle("移动到分组")
             .setItems(labels.toArray(new String[0]), (dialog, index) -> {
@@ -2283,8 +2085,6 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                     session.setContactGroup(contact.userId(), groups.get(index));
                 } else if (!contact.groupName().isEmpty() && index == groups.size()) {
                     session.setContactGroup(contact.userId(), "");
-                } else {
-                    showContactGroupNameDialog("新建分组", "", contact.userId());
                 }
             })
             .show();

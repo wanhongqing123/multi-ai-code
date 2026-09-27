@@ -1075,7 +1075,7 @@ QColor navIconColor(LineIconKind kind, bool selected) {
         case LineIconKind::ScreenDisconnect:
             return QColor(selected ? QStringLiteral("#455e88") : QStringLiteral("#536f9e"));
         case LineIconKind::Settings:
-            return QColor(selected ? QStringLiteral("#455668") : QStringLiteral("#53657a"));
+            return QColor(selected ? QStringLiteral("#b76b35") : QStringLiteral("#b98054"));
         default:
             return QColor(selected ? QStringLiteral("#0879c9") : QStringLiteral("#5f6f82"));
     }

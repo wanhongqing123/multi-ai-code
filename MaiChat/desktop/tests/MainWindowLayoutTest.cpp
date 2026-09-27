@@ -3534,7 +3534,7 @@ void MainWindowLayoutTest::renamedHeaderButtonsKeepTheirCompactAppearance() {
     for (const auto* name : {"remoteDesktopButton", "moreButton"}) {
         auto* button = window.findChild<QPushButton*>(QString::fromLatin1(name));
         QVERIFY(button);
-        QCOMPARE(button->size(), QSize(UiZoom::s(34), UiZoom::s(34)));
+        QCOMPARE(button->size(), QSize(UiZoom::s(28), UiZoom::s(28)));
         // The corners must reveal the white header, not a native gray button frame.
         const auto image = button->grab().toImage();
         const auto corner = image.pixelColor(0, 0);

@@ -438,15 +438,17 @@ QPixmap monogramAvatarPixmap(const QString& text,
                              const QColor& gradientFrom,
                              const QColor& gradientTo,
                              int fontPixelSize,
-                             qreal dpr) {
-    const QString key = QStringLiteral("monogram:%1:%2:%3:%4:%5:%6:%7")
+                             qreal dpr,
+                             const QColor& foreground = Qt::white) {
+    const QString key = QStringLiteral("monogram:%1:%2:%3:%4:%5:%6:%7:%8")
                             .arg(text)
                             .arg(logicalSize)
                             .arg(radius)
                             .arg(gradientFrom.name())
                             .arg(gradientTo.name())
                             .arg(fontPixelSize)
-                            .arg(dpr);
+                            .arg(dpr)
+                            .arg(foreground.name());
     static QHash<QString, QPixmap> cache;
     const auto found = cache.constFind(key);
     if (found != cache.cend()) return found.value();
@@ -472,7 +474,7 @@ QPixmap monogramAvatarPixmap(const QString& text,
     textPath.addText((logicalSize - metrics.horizontalAdvance(text)) / 2.0,
                      (logicalSize + metrics.ascent() - metrics.descent()) / 2.0,
                      font, text);
-    painter.fillPath(textPath, Qt::white);
+    painter.fillPath(textPath, foreground);
     painter.end();
     cache.insert(key, pixmap);
     return pixmap;
@@ -482,6 +484,26 @@ const QColor kBrandGradientFrom(0x5b, 0x9b, 0xff);
 const QColor kBrandGradientTo(0x1e, 0x40, 0xaf);
 const QColor kPeerGradientFrom(0x2d, 0xd4, 0xbf);
 const QColor kPeerGradientTo(0x0f, 0x76, 0x6e);
+
+QPixmap defaultContactAvatar(const QString& name, const QString& userId,
+                             int size, qreal dpr) {
+    struct Palette { const char* background; const char* foreground; };
+    static const Palette palettes[] = {
+        {"#e2ebf6", "#456889"}, {"#e3eee7", "#4b765c"},
+        {"#eee5f2", "#7a5c8b"}, {"#f3e7dc", "#956849"},
+        {"#e0eeee", "#477a7c"}, {"#f1e1e5", "#935e6d"},
+        {"#e9e7f4", "#69618e"}, {"#efeada", "#87734a"},
+    };
+    quint32 hash = 2166136261u;
+    for (const unsigned char byte : userId.toUtf8()) {
+        hash = (hash ^ byte) * 16777619u;
+    }
+    const Palette& palette = palettes[hash % (sizeof(palettes) / sizeof(palettes[0]))];
+    const QColor background(QString::fromLatin1(palette.background));
+    return monogramAvatarPixmap(avatarMonogram(name, userId), size, UiZoom::s(10),
+                                 background, background, UiZoom::s(16), dpr,
+                                 QColor(QString::fromLatin1(palette.foreground)));
+}
 
 QHash<QString, QPixmap>& avatarPixmapCache() {
     static QHash<QString, QPixmap> cache;
@@ -611,10 +633,7 @@ public:
                               const_cast<QWidget*>(option.widget))) {
             const qreal dpr = option.widget ? option.widget->devicePixelRatioF() : 1.0;
             painter->drawPixmap(avatarRect.topLeft(),
-                                monogramAvatarPixmap(avatarMonogram(name, userId),
-                                                     avatarRect.width(), UiZoom::s(8),
-                                                     kBrandGradientFrom, kBrandGradientTo,
-                                                     UiZoom::s(12), dpr));
+                                defaultContactAvatar(name, userId, avatarRect.width(), dpr));
         }
 
         const int textLeft = avatarRect.right() + UiZoom::s(14);
@@ -720,10 +739,7 @@ public:
                               const_cast<QWidget*>(option.widget))) {
             const qreal dpr = option.widget ? option.widget->devicePixelRatioF() : 1.0;
             painter->drawPixmap(avatarRect.topLeft(),
-                                monogramAvatarPixmap(avatarMonogram(name, userId),
-                                                     avatarRect.width(), UiZoom::s(8),
-                                                     kBrandGradientFrom, kBrandGradientTo,
-                                                     UiZoom::s(11), dpr));
+                                defaultContactAvatar(name, userId, avatarRect.width(), dpr));
         }
 
         const int textLeft = avatarRect.right() + UiZoom::s(14);

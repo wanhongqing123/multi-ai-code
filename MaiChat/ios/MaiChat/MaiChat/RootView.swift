@@ -515,7 +515,6 @@ private struct CompactTabBar: View {
                 title: "消息",
                 imageName: "NavMessages",
                 accent: RemoteIMStyle.navMessages,
-                selectedBackground: RemoteIMStyle.navMessagesSoft,
                 selected: selectedTab == .messages,
                 badgeCount: appState.totalUnreadCount
             ) {
@@ -525,7 +524,6 @@ private struct CompactTabBar: View {
                 title: "AI 助手",
                 imageName: "NavAssistant",
                 accent: RemoteIMStyle.navAssistant,
-                selectedBackground: RemoteIMStyle.navAssistantSoft,
                 selected: selectedTab == .assistant
             ) {
                 selectedTab = .assistant
@@ -534,7 +532,6 @@ private struct CompactTabBar: View {
                 title: "通讯录",
                 imageName: "NavContacts",
                 accent: RemoteIMStyle.navContacts,
-                selectedBackground: RemoteIMStyle.navContactsSoft,
                 selected: selectedTab == .contacts
             ) {
                 selectedTab = .contacts
@@ -543,7 +540,6 @@ private struct CompactTabBar: View {
                 title: "我",
                 imageName: "NavProfile",
                 accent: RemoteIMStyle.navProfile,
-                selectedBackground: RemoteIMStyle.navProfileSoft,
                 selected: selectedTab == .me
             ) {
                 selectedTab = .me
@@ -564,7 +560,6 @@ private struct TabButton: View {
     let title: String
     let imageName: String
     let accent: Color
-    let selectedBackground: Color
     let selected: Bool
     var badgeCount = 0
     let action: () -> Void
@@ -572,7 +567,7 @@ private struct TabButton: View {
     var body: some View {
         Button(action: action) {
             ZStack(alignment: .topTrailing) {
-                Image(imageName)
+                Image(selected ? imageName + "Filled" : imageName)
                     .renderingMode(.template)
                     .resizable()
                     .scaledToFit()
@@ -585,10 +580,6 @@ private struct TabButton: View {
                 }
             }
             .frame(width: 48, height: 40)
-            .background(
-                selected ? selectedBackground : Color.clear,
-                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-            )
             .frame(maxWidth: .infinity)
         }
         .buttonStyle(.plain)

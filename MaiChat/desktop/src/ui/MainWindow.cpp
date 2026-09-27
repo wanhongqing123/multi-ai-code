@@ -2340,8 +2340,6 @@ void MainWindow::applyStyle() {
             border: 0;
             background: transparent;
         }
-        #remoteNavButton[selected="true"] { background: #d5e0ee; }
-        #settingsNavButton[selected="true"] { background: #faeee3; }
         #conversationPane {
             background: #f8fafc;
             border: 0;

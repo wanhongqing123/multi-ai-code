@@ -12,6 +12,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QPointer>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QRegularExpression>
@@ -493,6 +494,7 @@ qint64 TimSdkRemoteIMClient::orderedMessageTime(const QString& peerId, qint64 sd
 
 TimSdkRemoteIMClient::~TimSdkRemoteIMClient() {
     if (api_) {
+        api_->setSelfInfoUpdatedCallback({});
         api_->removeReceiveMessageCallback();
         api_->uninit();
     }
@@ -519,6 +521,7 @@ void TimSdkRemoteIMClient::connectToService(int sdkAppId, const QString& userId,
     }
     currentUserId_ = userId.trimmed();
     sdkAppId_ = static_cast<quint64>(sdkAppId);
+    const quint64 profileSession = ++profileSession_;
 
     qInfo().noquote()
         << QStringLiteral("[im] connect: sdkAppId=%1 user=%2").arg(sdkAppId).arg(currentUserId_);
@@ -532,6 +535,18 @@ void TimSdkRemoteIMClient::connectToService(int sdkAppId, const QString& userId,
     api_->addReceiveMessageCallback([this](const QString& jsonMessages) {
         handleIncomingMessages(jsonMessages);
     });
+    const QPointer<TimSdkRemoteIMClient> self(this);
+    const auto account = currentAccount();
+    api_->setSelfInfoUpdatedCallback([self, account, profileSession](const QString& payload) {
+        if (!self) return;
+        QMetaObject::invokeMethod(self, [self, account, profileSession, payload] {
+            if (self && self->currentAccount() == account && self->connected_ &&
+                self->profileSession_ == profileSession) {
+                ++self->selfProfileRevision_;
+                self->handleSelfProfilePayload(payload);
+            }
+        }, Qt::AutoConnection);
+    });
     api_->login(userId.trimmed(), userSig.trimmed(), [this, completion = std::move(completion)](int code,
                                                                                                 const QString& description,
                                                                                                 const QString&) mutable {
@@ -542,7 +557,10 @@ void TimSdkRemoteIMClient::connectToService(int sdkAppId, const QString& userId,
             qWarning().noquote()
                 << QStringLiteral("[im] login failed: code=%1 %2").arg(code).arg(description);
         }
-        if (!connected_) api_->removeReceiveMessageCallback();
+        if (!connected_) {
+            api_->setSelfInfoUpdatedCallback({});
+            api_->removeReceiveMessageCallback();
+        }
         if (connected_) syncInitialData();
         complete(std::move(completion), code, description);
     });
@@ -554,6 +572,8 @@ void TimSdkRemoteIMClient::disconnectFromService(RemoteIMCompletion completion) 
         return;
     }
     api_->removeReceiveMessageCallback();
+    api_->setSelfInfoUpdatedCallback({});
+    ++profileSession_;
     api_->logout([this, completion = std::move(completion)](int code, const QString& description, const QString&) mutable {
         connected_ = false;
         api_->uninit();
@@ -927,8 +947,40 @@ void TimSdkRemoteIMClient::sendVoice(const QString&, const QString&, int, Remote
 }
 
 void TimSdkRemoteIMClient::syncInitialData() {
+    QJsonObject request;
+    request[QStringLiteral("friendship_getprofilelist_param_identifier_array")] = QJsonArray{currentUserId_};
+    request[QStringLiteral("friendship_getprofilelist_param_force_update")] = true;
+    const QPointer<TimSdkRemoteIMClient> self(this);
+    const auto account = currentAccount();
+    const quint64 session = profileSession_;
+    const quint64 revision = selfProfileRevision_;
+    api_->getUserProfiles(compactJson(request), [self, account, session, revision](int code, const QString&, const QString& payload) {
+        if (code != 0 || !self) return;
+        QMetaObject::invokeMethod(self, [self, account, session, revision, payload] {
+            if (self && self->connected_ && self->currentAccount() == account &&
+                self->profileSession_ == session && self->selfProfileRevision_ == revision)
+                self->handleSelfProfilePayload(payload);
+        }, Qt::AutoConnection);
+    });
     fetchFriendList();
     fetchConversationList();
+}
+
+void TimSdkRemoteIMClient::handleSelfProfilePayload(const QString& payload) {
+    const QJsonDocument document = QJsonDocument::fromJson(payload.toUtf8());
+    QJsonArray profiles;
+    if (document.isArray()) profiles = document.array();
+    else if (document.isObject()) profiles.append(document.object());
+    for (const QJsonValue& value : profiles) {
+        const QJsonObject profile = value.toObject();
+        const QString userId = profile.value(QStringLiteral("user_profile_identifier")).toString();
+        if (userId != currentUserId_) continue;
+        const QString name = profile.value(QStringLiteral("user_profile_nick_name")).toString();
+        qInfo() << "[im] self profile updated; has avatar:"
+                << !profile.value(QStringLiteral("user_profile_face_url")).toString().isEmpty();
+        emit selfProfileReceived(userId, name.isEmpty() ? userId : name,
+                                 profile.value(QStringLiteral("user_profile_face_url")).toString());
+    }
 }
 
 void TimSdkRemoteIMClient::fetchFriendList() {

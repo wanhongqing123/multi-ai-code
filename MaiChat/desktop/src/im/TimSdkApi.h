@@ -23,6 +23,14 @@ public:
                             TimSdkCompletion completion) = 0;
     virtual int getConversationList(TimSdkCompletion completion) = 0;
     virtual int getFriendList(TimSdkCompletion completion) = 0;
+    virtual int getUserProfiles(const QString& request, TimSdkCompletion completion) {
+        Q_UNUSED(request);
+        if (completion) completion(-1, QStringLiteral("User profile API unavailable"), {});
+        return -1;
+    }
+    virtual void setSelfInfoUpdatedCallback(TimSdkReceiveMessagesCallback callback) {
+        Q_UNUSED(callback);
+    }
     virtual int deleteFriend(const QString& jsonRequest, TimSdkCompletion completion) = 0;
     virtual int deleteConversation(const QString& conversationId,
                                    int conversationType,

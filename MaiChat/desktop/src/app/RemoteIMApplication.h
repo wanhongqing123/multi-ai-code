@@ -27,6 +27,7 @@ public:
     ChatState& chatState();
     RemoteIMClient& client();
     bool isConnected() const;
+    RemoteIMContact selfProfile() const;
     RemoteIMActivitySignal activityForPeer(const QString& peerId) const;
 
     // 会话是否还有未加载进内存的更早消息（分页启动只载每会话最近一页）。
@@ -81,6 +82,7 @@ public:
     void sendVoicePlaceholder();
 
 signals:
+    void selfProfileChanged();
     void stateChanged();
     // 群发全部回执到齐后发出一次。failedPeerIds 为发送失败的人，
     // 部分失败必须让用户看见是"谁"没收到——只报一句"部分失败"没法补救。
@@ -118,6 +120,7 @@ private:
     void clearActivity(const QString& peerId);
 
     ChatState state_;
+    RemoteIMContact selfProfile_;
     QHash<QString, bool> hasEarlierMessages_;
     std::unique_ptr<RemoteIMClient> client_;
     std::unique_ptr<LocalMessageDatabase> database_;

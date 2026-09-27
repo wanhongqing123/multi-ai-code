@@ -56,6 +56,20 @@ public:
         return 0;
     }
 
+    int getUserProfiles(const QString& request, TimSdkCompletion completion) override {
+        profileRequest = request;
+        if (completion) completion(0, {}, profilePayload);
+        return 0;
+    }
+
+    void setSelfInfoUpdatedCallback(TimSdkReceiveMessagesCallback callback) override {
+        selfInfoCallback = std::move(callback);
+    }
+
+    QString profileRequest;
+    QString profilePayload;
+    TimSdkReceiveMessagesCallback selfInfoCallback;
+
     int deleteFriend(const QString& jsonRequest, TimSdkCompletion completion) override {
         operations.append(QStringLiteral("deleteFriend"));
         deleteFriendRequest = jsonRequest;
@@ -150,6 +164,7 @@ class TimSdkRemoteIMClientTest : public QObject {
     Q_OBJECT
 
 private slots:
+    void loadsAndUpdatesOwnAvatarWithoutAddingSelfAsContact();
     void activityUsesOnlineCustomTransportWithoutHistory();
     void connectsThroughSdkAndSendsTextAndImage();
     void sendsApprovalDecisionAsV2CloudInteraction();
@@ -171,6 +186,32 @@ private slots:
     void mergesCaptionIntoIncomingVideoMessage();
     void rejectsMissingCredentials();
 };
+
+void TimSdkRemoteIMClientTest::loadsAndUpdatesOwnAvatarWithoutAddingSelfAsContact() {
+    auto api = std::make_unique<FakeTimSdkApi>();
+    auto* fake = api.get();
+    fake->profilePayload = QString::fromUtf8(
+        R"([{"user_profile_identifier":"owner","user_profile_nick_name":"Owner","user_profile_face_url":"https://example.com/first.jpg"}])");
+    TimSdkRemoteIMClient client(std::move(api));
+    QSignalSpy profiles(&client, &RemoteIMClient::selfProfileReceived);
+    QSignalSpy contacts(&client, &RemoteIMClient::contactsReceived);
+    client.connectToService(123456, QStringLiteral("owner"), QStringLiteral("sig"), {});
+    QCOMPARE(profiles.size(), 1);
+    QCOMPARE(profiles.last().at(2).toString(), QStringLiteral("https://example.com/first.jpg"));
+    QCOMPARE(contacts.size(), 0);
+    const QJsonObject request = QJsonDocument::fromJson(fake->profileRequest.toUtf8()).object();
+    QVERIFY(request.value(QStringLiteral("friendship_getprofilelist_param_force_update")).toBool());
+    QVERIFY(bool(fake->selfInfoCallback));
+    fake->selfInfoCallback(QString::fromUtf8(
+        R"({"user_profile_identifier":"owner","user_profile_face_url":"https://example.com/new.jpg"})"));
+    QCOMPARE(profiles.size(), 2);
+    QCOMPARE(profiles.last().at(2).toString(), QStringLiteral("https://example.com/new.jpg"));
+    fake->selfInfoCallback(QString::fromUtf8(
+        R"({"user_profile_identifier":"other","user_profile_face_url":"https://example.com/other.jpg"})"));
+    QCOMPARE(profiles.size(), 2);
+    client.disconnectFromService({});
+    QVERIFY(!fake->selfInfoCallback);
+}
 
 void TimSdkRemoteIMClientTest::activityUsesOnlineCustomTransportWithoutHistory() {
     auto api = std::make_unique<FakeTimSdkApi>();

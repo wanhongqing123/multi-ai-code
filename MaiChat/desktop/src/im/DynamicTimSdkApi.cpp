@@ -84,6 +84,8 @@ DynamicTimSdkApi::DynamicTimSdkApi(QString libraryPath) : library_(std::move(lib
     sendMessage_ = resolve<SendMessageFn>("TIMMsgSendMessage");
     getConversationList_ = resolve<GetConversationListFn>("TIMConvGetConvList");
     getFriendList_ = resolve<GetFriendListFn>("TIMFriendshipGetFriendProfileList");
+    getUserProfiles_ = resolve<GetUserProfilesFn>("TIMProfileGetUserProfileList");
+    setSelfInfoUpdated_ = resolve<SetSelfInfoUpdatedFn>("TIMSetSelfInfoUpdatedCallback");
     deleteFriend_ = resolve<DeleteFriendFn>("TIMFriendshipDeleteFriend");
     deleteConversation_ = resolve<DeleteConversationFn>("TIMConvDelete");
     getMessageList_ = resolve<GetMessageListFn>("TIMMsgGetMsgList");
@@ -92,7 +94,33 @@ DynamicTimSdkApi::DynamicTimSdkApi(QString libraryPath) : library_(std::move(lib
 }
 
 DynamicTimSdkApi::~DynamicTimSdkApi() {
+    setSelfInfoUpdatedCallback({});
     removeReceiveMessageCallback();
+}
+
+int DynamicTimSdkApi::getUserProfiles(const QString& request, TimSdkCompletion completion) {
+    if (!getUserProfiles_) return completeIfImmediateFailure(-1, std::move(completion));
+    auto* heapCompletion = new TimSdkCompletion(std::move(completion));
+    const int result = getUserProfiles_(request.toUtf8().constData(), completeOnce, heapCompletion);
+    if (result != 0) {
+        TimSdkCompletion failedCompletion = std::move(*heapCompletion);
+        delete heapCompletion;
+        return completeIfImmediateFailure(result, std::move(failedCompletion));
+    }
+    return result;
+}
+
+void DynamicTimSdkApi::setSelfInfoUpdatedCallback(TimSdkReceiveMessagesCallback callback) {
+    selfInfoUpdatedCallback_ = std::move(callback);
+    if (setSelfInfoUpdated_) {
+        setSelfInfoUpdated_(selfInfoUpdatedCallback_ ? selfInfoUpdated : nullptr,
+                            selfInfoUpdatedCallback_ ? this : nullptr);
+    }
+}
+
+void DynamicTimSdkApi::selfInfoUpdated(const char* profile, const void* userData) {
+    auto* api = reinterpret_cast<DynamicTimSdkApi*>(const_cast<void*>(userData));
+    if (api && api->selfInfoUpdatedCallback_) api->selfInfoUpdatedCallback_(textFromC(profile));
 }
 
 QString DynamicTimSdkApi::libraryPathFromEnvironment() {

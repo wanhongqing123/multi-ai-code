@@ -39,6 +39,11 @@ QString forwardedCaption(const RemoteIMMessage& message) {
 
 }  // namespace
 
+RemoteIMContact RemoteIMApplication::selfProfile() const {
+    if (selfProfile_.userId == state_.ownerUserId()) return selfProfile_;
+    return RemoteIMContact{state_.ownerUserId(), state_.ownerUserId()};
+}
+
 RemoteIMApplication::RemoteIMApplication(QString ownerUserId,
                                          std::unique_ptr<RemoteIMClient> client,
                                          std::unique_ptr<LocalMessageDatabase> database,
@@ -699,6 +704,12 @@ void RemoteIMApplication::persistMessage(const RemoteIMMessage& message) {
 }
 
 void RemoteIMApplication::bindClientSignals() {
+    connect(client_.get(), &RemoteIMClient::selfProfileReceived, this,
+            [this](const QString& userId, const QString& name, const QString& avatarUrl) {
+        if (userId != state_.ownerUserId()) return;
+        selfProfile_ = RemoteIMContact{userId, name, avatarUrl};
+        emit selfProfileChanged();
+    });
     connect(client_.get(), &RemoteIMClient::contactsReceived, this, [this](const QList<RemoteIMContact>& contacts) {
         const bool shouldSelectFirstContact = state_.selectedPeerId().isEmpty();
         for (const RemoteIMContact& contact : contacts) {

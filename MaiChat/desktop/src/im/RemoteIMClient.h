@@ -141,6 +141,7 @@ public:
     }
 
 signals:
+    void selfProfileReceived(const QString& userId, const QString& displayName, const QString& avatarUrl);
     void contactsReceived(const QList<RemoteIMContact>& contacts);
     // 漫游/历史恢复通道：消息并入内存与本地库（按 id 去重），不产生未读红点。
     void messagesReceived(const QList<RemoteIMMessage>& messages);

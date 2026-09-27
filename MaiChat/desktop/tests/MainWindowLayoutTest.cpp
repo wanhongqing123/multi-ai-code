@@ -155,7 +155,7 @@ private slots:
     void navigationIconsDoNotUsePrivateFontGlyphProperties();
     void conversationListShowsUnreadBadgeAndClearsOnOpen();
     void everyNavButtonIsStyledConsistently();
-    void navLogoUsesAppIconBrandGradient();
+    void accountAvatarFollowsIMProfile();
     void connectionStatusLivesOnNavAvatarWithoutText();
     void fileBubbleOffersContextMenu();
     void imageBubbleOffersContextMenu();
@@ -2776,25 +2776,24 @@ void MainWindowLayoutTest::everyNavButtonIsStyledConsistently() {
     }
 }
 
-void MainWindowLayoutTest::navLogoUsesAppIconBrandGradient() {
+void MainWindowLayoutTest::accountAvatarFollowsIMProfile() {
     auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fake = client.get();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
-    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
-
     MainWindow window(app);
-    // 品牌色块与应用图标同款渐变（#5B9BFF → #1E40AF）。渐变与字母已改为
-    // 离屏生成位图（QPainterPath 灰度抗锯齿），不再经 QSS 背景绘制——
-    // 校验 navLogo 持有生成的位图且尺寸随 DPR 放大。
     auto* logo = window.findChild<QLabel*>(QStringLiteral("navLogo"));
-    QVERIFY(logo != nullptr);
-    const QPixmap pm = logo->pixmap(Qt::ReturnByValue);
-    QVERIFY(!pm.isNull());
-    QVERIFY(pm.width() >= 34);
-    // 渐变角像素应为品牌蓝系（非透明、非白）。
-    const QImage img = pm.toImage();
-    const QColor center = img.pixelColor(img.width() / 2, img.height() / 8);
-    QVERIFY(center.alpha() > 200);
-    QVERIFY(center.blue() > center.red());
+    QVERIFY(logo);
+    QVERIFY(!logo->pixmap(Qt::ReturnByValue).isNull());
+    QCOMPARE(logo->accessibleName(), QStringLiteral("desktop-user"));
+    fake->selfProfileReceived(QStringLiteral("desktop-user"), QStringLiteral("My Name"),
+                              QStringLiteral("https://example.com/new-avatar.jpg"));
+    QCOMPARE(app.selfProfile().avatarUrl, QStringLiteral("https://example.com/new-avatar.jpg"));
+    QCOMPARE(logo->accessibleName(), QStringLiteral("My Name"));
+    fake->selfProfileReceived(QStringLiteral("other-user"), QStringLiteral("Other"),
+                              QStringLiteral("https://example.com/other.jpg"));
+    QCOMPARE(app.selfProfile().displayName, QStringLiteral("My Name"));
+    QCOMPARE(logo->accessibleName(), QStringLiteral("My Name"));
+    QCOMPARE(app.chatState().contacts().size(), 0);
 }
 
 void MainWindowLayoutTest::connectionStatusLivesOnNavAvatarWithoutText() {

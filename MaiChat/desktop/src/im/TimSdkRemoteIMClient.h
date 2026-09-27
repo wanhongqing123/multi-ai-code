@@ -47,6 +47,7 @@ private:
                             const RemoteIMQuote& quote = RemoteIMQuote(),
                             bool hasQuote = false);
     void syncInitialData();
+    void handleSelfProfilePayload(const QString& payload);
     void fetchFriendList();
     void fetchConversationList();
     void fetchRecentMessages(const QString& conversationId, int conversationType);
@@ -91,6 +92,8 @@ private:
     QHash<QString, qint64> orderedSecondByPeer_;
     QHash<QString, int> nextOrderInSecondByPeer_;
     bool connected_ = false;
+    quint64 profileSession_ = 0;
+    quint64 selfProfileRevision_ = 0;
 
 public:
     RemoteDiagnostics::AccountTag currentAccount() const override;

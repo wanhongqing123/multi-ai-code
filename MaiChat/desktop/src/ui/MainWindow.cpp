@@ -598,6 +598,30 @@ bool drawRemoteAvatar(QPainter* painter,
     return false;
 }
 
+class AccountAvatarLabel final : public QLabel {
+public:
+    using QLabel::QLabel;
+
+    void setProfile(const RemoteIMContact& profile) {
+        profile_ = profile;
+        setPixmap(defaultContactAvatar(profile.displayName, profile.userId, width(), devicePixelRatioF()));
+        setAccessibleName(profile.displayName);
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent* event) override {
+        if (!profile_.avatarUrl.isEmpty()) {
+            QPainter painter(this);
+            if (drawRemoteAvatar(&painter, rect(), profile_.avatarUrl, UiZoom::s(10), this)) return;
+        }
+        QLabel::paintEvent(event);
+    }
+
+private:
+    RemoteIMContact profile_;
+};
+
 class ConversationListDelegate final : public QStyledItemDelegate {
 public:
     explicit ConversationListDelegate(QObject* parent = nullptr) : QStyledItemDelegate(parent) {}
@@ -1678,14 +1702,12 @@ void MainWindow::buildUi() {
     logoContainer->setObjectName(QStringLiteral("navLogoContainer"));
     logoContainer->setFixedSize(UiZoom::s(44), UiZoom::s(44));
 
-    auto* logo = new QLabel(logoContainer);
+    auto* logo = new AccountAvatarLabel(logoContainer);
     logo->setObjectName(QStringLiteral("navLogo"));
     logo->setAlignment(Qt::AlignCenter);
     logo->setFixedSize(UiZoom::s(34), UiZoom::s(34));
     logo->move(UiZoom::s(5), UiZoom::s(5));
-    logo->setPixmap(monogramAvatarPixmap(QStringLiteral("M"), UiZoom::s(34), UiZoom::s(17),
-                                         kBrandGradientFrom, kBrandGradientTo,
-                                         UiZoom::s(15), logo->devicePixelRatioF()));
+    logo->setProfile(app_.selfProfile());
 
     statusLabel_ = new QLabel(logoContainer);
     statusLabel_->setObjectName(QStringLiteral("connectionStatusDot"));
@@ -1890,7 +1912,9 @@ void MainWindow::buildUi() {
     aiReplyHint_->hide();
     static_cast<ComposerTextEdit*>(messageEditor_)->setLeadingHint(aiReplyHint_);
 
-    commandButton_ = new QPushButton(QStringLiteral("/"), messageEditor_);
+    commandButton_ = new QPushButton(messageEditor_);
+    commandButton_->setIcon(QIcon(QStringLiteral(":/maichat/icons/terminal-2.svg")));
+    commandButton_->setIconSize(QSize(UiZoom::s(18), UiZoom::s(18)));
     commandButton_->setObjectName(QStringLiteral("composerCommandButton"));
     commandButton_->setAccessibleName(QStringLiteral("命令"));
     commandButton_->setCursor(Qt::PointingHandCursor);
@@ -2583,6 +2607,10 @@ void MainWindow::applyStyle() {
 }
 
 void MainWindow::bindSignals() {
+    connect(&app_, &RemoteIMApplication::selfProfileChanged, this, [this] {
+        if (auto* logo = findChild<QLabel*>(QStringLiteral("navLogo")))
+            static_cast<AccountAvatarLabel*>(logo)->setProfile(app_.selfProfile());
+    });
     // 整体缩放（飞书式）：Ctrl+= / Ctrl++（小键盘）放大，Ctrl+- 缩小，Ctrl+0 复位。
     connect(new QShortcut(QKeySequence(Qt::CTRL + Qt::Key_Equal), this), &QShortcut::activated,
             this, [this] { changeUiZoom(UiZoom::step()); });
@@ -5449,9 +5477,7 @@ void MainWindow::applyScaledFixedGeometry() {
     if (auto* logo = findChild<QLabel*>(QStringLiteral("navLogo"))) {
         logo->setFixedSize(UiZoom::s(34), UiZoom::s(34));
         logo->move(UiZoom::s(5), UiZoom::s(5));
-        logo->setPixmap(monogramAvatarPixmap(QStringLiteral("M"), UiZoom::s(34), UiZoom::s(17),
-                                             kBrandGradientFrom, kBrandGradientTo,
-                                             UiZoom::s(15), logo->devicePixelRatioF()));
+        static_cast<AccountAvatarLabel*>(logo)->setProfile(app_.selfProfile());
     }
     if (statusLabel_) {
         statusLabel_->setFixedSize(UiZoom::s(9), UiZoom::s(9));

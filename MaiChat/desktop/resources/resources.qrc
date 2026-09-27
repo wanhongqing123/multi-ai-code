@@ -28,6 +28,7 @@
     <file alias="device-desktop-filled.svg">icons/tabler/device-desktop-filled.svg</file>
     <file alias="settings-filled.svg">icons/tabler/settings-filled.svg</file>
     <file alias="arrow-up.svg">icons/tabler/arrow-up.svg</file>
+    <file alias="terminal-2.svg">icons/tabler/terminal-2.svg</file>
     <file alias="user-circle.svg">icons/tabler/user-circle.svg</file>
     <file alias="tabler-license.txt">icons/tabler/LICENSE.txt</file>
   </qresource>

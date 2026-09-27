@@ -24,6 +24,8 @@ public:
                     TimSdkCompletion completion) override;
     int getConversationList(TimSdkCompletion completion) override;
     int getFriendList(TimSdkCompletion completion) override;
+    int getUserProfiles(const QString& request, TimSdkCompletion completion) override;
+    void setSelfInfoUpdatedCallback(TimSdkReceiveMessagesCallback callback) override;
     int deleteFriend(const QString& jsonRequest, TimSdkCompletion completion) override;
     int deleteConversation(const QString& conversationId,
                            int conversationType,
@@ -50,6 +52,8 @@ private:
                                   const void* userData);
     using GetConversationListFn = int (*)(NativeCompletion completion, const void* userData);
     using GetFriendListFn = int (*)(NativeCompletion completion, const void* userData);
+    using GetUserProfilesFn = int (*)(const char* request, NativeCompletion completion, const void* userData);
+    using SetSelfInfoUpdatedFn = void (*)(NativeReceiveMessages callback, const void* userData);
     using DeleteFriendFn = int (*)(const char* jsonRequest, NativeCompletion completion, const void* userData);
     using DeleteConversationFn = int (*)(const char* conversationId,
                                          int conversationType,
@@ -68,6 +72,7 @@ private:
 
     static void completeOnce(int code, const char* description, const char* jsonPayload, const void* userData);
     static void receiveMessages(const char* jsonMessages, const void* userData);
+    static void selfInfoUpdated(const char* profile, const void* userData);
     int completeIfImmediateFailure(int result, TimSdkCompletion completion);
 
     QLibrary library_;
@@ -79,10 +84,13 @@ private:
     SendMessageFn sendMessage_ = nullptr;
     GetConversationListFn getConversationList_ = nullptr;
     GetFriendListFn getFriendList_ = nullptr;
+    GetUserProfilesFn getUserProfiles_ = nullptr;
+    SetSelfInfoUpdatedFn setSelfInfoUpdated_ = nullptr;
     DeleteFriendFn deleteFriend_ = nullptr;
     DeleteConversationFn deleteConversation_ = nullptr;
     GetMessageListFn getMessageList_ = nullptr;
     AddReceiveMessagesFn addReceiveMessages_ = nullptr;
     RemoveReceiveMessagesFn removeReceiveMessages_ = nullptr;
     TimSdkReceiveMessagesCallback receiveMessagesCallback_;
+    TimSdkReceiveMessagesCallback selfInfoUpdatedCallback_;
 };

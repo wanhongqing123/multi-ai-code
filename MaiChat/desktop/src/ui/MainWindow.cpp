@@ -2299,7 +2299,7 @@ void MainWindow::applyStyle() {
         #remoteNavButton[selected="true"] { background: #d5e0ee; }
         #settingsNavButton[selected="true"] { background: #d8e1ec; }
         #conversationPane {
-            background: #ffffff;
+            background: #f0f2f5;
             border: 0;
         }
         #pageTitle {
@@ -2505,7 +2505,7 @@ void MainWindow::applyStyle() {
             border: 0;
         }
         #messageEditor {
-            border: 1px solid #dae4f0;
+            border: 1px solid #d1d5db;
             border-radius: 14px;
             background: #ffffff;
             color: #172033;
@@ -2513,7 +2513,7 @@ void MainWindow::applyStyle() {
             font-size: 14px;
         }
         #messageEditor:focus {
-            border-color: #58b7ff;
+            border-color: #b5bbc4;
         }
         #sendButton {
             border-radius: 18px;

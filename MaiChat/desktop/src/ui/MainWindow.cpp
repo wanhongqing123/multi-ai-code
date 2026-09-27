@@ -2300,7 +2300,7 @@ void MainWindow::applyStyle() {
         #settingsNavButton[selected="true"] { background: #d8e1ec; }
         #conversationPane {
             background: #ffffff;
-            border-right: 1px solid #dae4f0;
+            border: 0;
         }
         #pageTitle {
             color: #101828;

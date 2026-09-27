@@ -443,33 +443,13 @@ private struct RemoteIMUserAvatar: View {
     }
 
     private var monogram: some View {
-        Text(RemoteIMAvatarMonogramPolicy.text(
-            displayName: profile.displayName,
-            userID: profile.userID
-        ))
-        .font(.system(size: max(14, size * 0.4), weight: .bold))
-        .foregroundStyle(avatarPalette.foreground)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(avatarPalette.background)
-    }
-
-    private var avatarPalette: (background: Color, foreground: Color) {
-        let palettes: [(UInt32, UInt32)] = [
-            (0xe2ebf6, 0x456889), (0xe3eee7, 0x4b765c),
-            (0xeee5f2, 0x7a5c8b), (0xf3e7dc, 0x956849),
-            (0xe0eeee, 0x477a7c), (0xf1e1e5, 0x935e6d),
-            (0xe9e7f4, 0x69618e), (0xefeada, 0x87734a),
-        ]
         let hash = profile.userID.utf8.reduce(UInt32(2166136261)) {
             ($0 ^ UInt32($1)) &* 16777619
         }
-        let palette = palettes[Int(hash % UInt32(palettes.count))]
-        func color(_ rgb: UInt32) -> Color {
-            Color(red: Double((rgb >> 16) & 255) / 255,
-                  green: Double((rgb >> 8) & 255) / 255,
-                  blue: Double(rgb & 255) / 255)
-        }
-        return (color(palette.0), color(palette.1))
+        let letter = UnicodeScalar(Int(hash % 26) + 65)!
+        return Image("DefaultAvatar\(Character(letter))")
+            .resizable()
+            .scaledToFill()
     }
 }
 

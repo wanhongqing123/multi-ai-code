@@ -361,45 +361,6 @@ private:
     }
 };
 
-// 应用图标同款品牌渐变（MaiChat/brand/maichat-icon.svg：#5B9BFF → #1E40AF 对角），
-// 头像等品牌色块统一用它，保持与桌面图标一个色系。
-QBrush brandAvatarBrush(const QRectF& rect) {
-    QLinearGradient gradient(rect.topLeft(), rect.bottomRight());
-    gradient.setColorAt(0.0, QColor(QStringLiteral("#5B9BFF")));
-    gradient.setColorAt(1.0, QColor(QStringLiteral("#1E40AF")));
-    return QBrush(gradient);
-}
-
-QString avatarMonogram(const QString& displayName, const QString& userId) {
-    const QString cleanUserId = userId.trimmed();
-    const QString cleanDisplayName = displayName.trimmed();
-    const bool hasNickname = !cleanDisplayName.isEmpty() && cleanDisplayName != cleanUserId;
-    const QString source = hasNickname ? cleanDisplayName : cleanUserId;
-    if (source.isEmpty()) return QStringLiteral("M");
-    if (!hasNickname) return source.left(1).toUpper();
-
-    QString separated = source;
-    separated.replace(QLatin1Char('-'), QLatin1Char(' '));
-    separated.replace(QLatin1Char('_'), QLatin1Char(' '));
-    const QStringList words = separated.split(QLatin1Char(' '), Qt::SkipEmptyParts);
-    if (words.size() >= 2) {
-        return (words.first().left(1) + words.last().left(1)).toUpper();
-    }
-
-    bool hasNonAscii = false;
-    for (const QChar ch : source) {
-        if (ch.unicode() > 0x7f) {
-            hasNonAscii = true;
-            break;
-        }
-    }
-    return (hasNonAscii ? source.right(2) : source.left(2)).toUpper();
-}
-
-// 白色 monogram 字母压在深色头像块上时，ClearType 亚像素渲染的粉/青彩边在
-// 纯色底上非常显眼，小字号下字形显脏（QFont::NoSubpixelAntialias 在 Windows
-// 字体引擎上并不可靠）。整块头像改为离屏生成：文字走 QPainterPath 填充
-// （纯灰度抗锯齿），按 DPR 物理分辨率渲染并缓存，导航/列表/消息区共用。
 // 连接状态点自己画，不靠 QSS 的 border-radius：缩放倍率不是整数时，
 // 尺寸和圆角各自四舍五入，半径会小于半边长，圆就塌成圆角方块——
 // 用户看到的就是「一个又大又丑的绿方块」。
@@ -432,77 +393,29 @@ QPixmap statusDotPixmap(bool connected, int logicalSize, int ringWidth, qreal dp
     return pixmap;
 }
 
-QPixmap monogramAvatarPixmap(const QString& text,
-                             int logicalSize,
-                             qreal radius,
-                             const QColor& gradientFrom,
-                             const QColor& gradientTo,
-                             int fontPixelSize,
-                             qreal dpr,
-                             const QColor& foreground = Qt::white) {
-    const QString key = QStringLiteral("monogram:%1:%2:%3:%4:%5:%6:%7:%8")
-                            .arg(text)
-                            .arg(logicalSize)
-                            .arg(radius)
-                            .arg(gradientFrom.name())
-                            .arg(gradientTo.name())
-                            .arg(fontPixelSize)
-                            .arg(dpr)
-                            .arg(foreground.name());
+QPixmap defaultContactAvatar(const QString& userId, int size, qreal dpr) {
+    quint32 hash = 2166136261u;
+    for (const unsigned char byte : userId.toUtf8())
+        hash = (hash ^ byte) * 16777619u;
+    const int avatarIndex = static_cast<int>(hash % 26);
+    const QString key = QStringLiteral("illustrated:%1:%2:%3")
+                            .arg(avatarIndex).arg(size).arg(dpr);
     static QHash<QString, QPixmap> cache;
     const auto found = cache.constFind(key);
     if (found != cache.cend()) return found.value();
 
-    const int physical = qMax(1, qRound(logicalSize * dpr));
+    const QString resource = QStringLiteral(":/maichat/avatars/%1.svg")
+                                 .arg(QChar(QLatin1Char('a').unicode() + avatarIndex));
+    QSvgRenderer renderer(resource);
+    const int physical = qMax(1, qRound(size * dpr));
     QPixmap pixmap(physical, physical);
     pixmap.setDevicePixelRatio(dpr);
     pixmap.fill(Qt::transparent);
     QPainter painter(&pixmap);
     painter.setRenderHint(QPainter::Antialiasing, true);
-    QLinearGradient gradient(0, 0, logicalSize, logicalSize);
-    gradient.setColorAt(0, gradientFrom);
-    gradient.setColorAt(1, gradientTo);
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(gradient);
-    painter.drawRoundedRect(QRectF(0, 0, logicalSize, logicalSize), radius, radius);
-
-    QFont font = QApplication::font();
-    font.setPixelSize(fontPixelSize);
-    font.setBold(true);
-    const QFontMetricsF metrics(font);
-    QPainterPath textPath;
-    textPath.addText((logicalSize - metrics.horizontalAdvance(text)) / 2.0,
-                     (logicalSize + metrics.ascent() - metrics.descent()) / 2.0,
-                     font, text);
-    painter.fillPath(textPath, foreground);
-    painter.end();
+    renderer.render(&painter, QRectF(0, 0, size, size));
     cache.insert(key, pixmap);
     return pixmap;
-}
-
-const QColor kBrandGradientFrom(0x5b, 0x9b, 0xff);
-const QColor kBrandGradientTo(0x1e, 0x40, 0xaf);
-const QColor kPeerGradientFrom(0x2d, 0xd4, 0xbf);
-const QColor kPeerGradientTo(0x0f, 0x76, 0x6e);
-
-QPixmap defaultContactAvatar(const QString& name, const QString& userId,
-                             int size, qreal dpr) {
-    struct Palette { const char* background; const char* foreground; };
-    static const Palette palettes[] = {
-        {"#e2ebf6", "#456889"}, {"#e3eee7", "#4b765c"},
-        {"#eee5f2", "#7a5c8b"}, {"#f3e7dc", "#956849"},
-        {"#e0eeee", "#477a7c"}, {"#f1e1e5", "#935e6d"},
-        {"#e9e7f4", "#69618e"}, {"#efeada", "#87734a"},
-    };
-    quint32 hash = 2166136261u;
-    for (const unsigned char byte : userId.toUtf8()) {
-        hash = (hash ^ byte) * 16777619u;
-    }
-    const Palette& palette = palettes[hash % (sizeof(palettes) / sizeof(palettes[0]))];
-    const QColor background(QString::fromLatin1(palette.background));
-    return monogramAvatarPixmap(avatarMonogram(name, userId), size, UiZoom::s(10),
-                                 background, background, UiZoom::s(16), dpr,
-                                 QColor(QString::fromLatin1(palette.foreground)));
 }
 
 QHash<QString, QPixmap>& avatarPixmapCache() {
@@ -604,7 +517,7 @@ public:
 
     void setProfile(const RemoteIMContact& profile) {
         profile_ = profile;
-        setPixmap(defaultContactAvatar(profile.displayName, profile.userId, width(), devicePixelRatioF()));
+        setPixmap(defaultContactAvatar(profile.userId, width(), devicePixelRatioF()));
         setAccessibleName(profile.displayName);
         update();
     }
@@ -657,7 +570,7 @@ public:
                               const_cast<QWidget*>(option.widget))) {
             const qreal dpr = option.widget ? option.widget->devicePixelRatioF() : 1.0;
             painter->drawPixmap(avatarRect.topLeft(),
-                                defaultContactAvatar(name, userId, avatarRect.width(), dpr));
+                                defaultContactAvatar(userId, avatarRect.width(), dpr));
         }
 
         const int textLeft = avatarRect.right() + UiZoom::s(14);
@@ -763,7 +676,7 @@ public:
                               const_cast<QWidget*>(option.widget))) {
             const qreal dpr = option.widget ? option.widget->devicePixelRatioF() : 1.0;
             painter->drawPixmap(avatarRect.topLeft(),
-                                defaultContactAvatar(name, userId, avatarRect.width(), dpr));
+                                defaultContactAvatar(userId, avatarRect.width(), dpr));
         }
 
         const int textLeft = avatarRect.right() + UiZoom::s(14);

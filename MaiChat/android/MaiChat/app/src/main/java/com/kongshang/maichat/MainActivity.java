@@ -3455,15 +3455,15 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
 
     private View avatar(RemoteIMContact contact, boolean outgoing, int sizeDp) {
         FrameLayout frame = new FrameLayout(this);
-        TextView avatar = MaiChatTheme.label(
-            this,
-            avatarText(contact.displayName(), contact.userId()),
-            Math.max(11, sizeDp * 0.3f),
-            Color.WHITE
-        );
-        avatar.setGravity(Gravity.CENTER);
-        avatar.setBackground(MaiChatTheme.gradientAvatar(outgoing, this));
-        frame.addView(avatar, new FrameLayout.LayoutParams(
+        int[] illustrations = {R.drawable.avatar_a, R.drawable.avatar_b, R.drawable.avatar_c, R.drawable.avatar_d, R.drawable.avatar_e, R.drawable.avatar_f, R.drawable.avatar_g, R.drawable.avatar_h, R.drawable.avatar_i, R.drawable.avatar_j, R.drawable.avatar_k, R.drawable.avatar_l, R.drawable.avatar_m, R.drawable.avatar_n, R.drawable.avatar_o, R.drawable.avatar_p, R.drawable.avatar_q, R.drawable.avatar_r, R.drawable.avatar_s, R.drawable.avatar_t, R.drawable.avatar_u, R.drawable.avatar_v, R.drawable.avatar_w, R.drawable.avatar_x, R.drawable.avatar_y, R.drawable.avatar_z};
+        byte[] accountBytes = contact.userId().getBytes(StandardCharsets.UTF_8);
+        int avatarHash = 0x811c9dc5;
+        for (byte accountByte : accountBytes)
+            avatarHash = (avatarHash ^ (accountByte & 0xff)) * 0x01000193;
+        ImageView fallback = new ImageView(this);
+        fallback.setImageResource(illustrations[Integer.remainderUnsigned(avatarHash, 26)]);
+        fallback.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        frame.addView(fallback, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
         ));
@@ -3688,20 +3688,6 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         return left.get(java.util.Calendar.ERA) == right.get(java.util.Calendar.ERA)
             && left.get(java.util.Calendar.YEAR) == right.get(java.util.Calendar.YEAR)
             && left.get(java.util.Calendar.DAY_OF_YEAR) == right.get(java.util.Calendar.DAY_OF_YEAR);
-    }
-
-    private String avatarText(String displayName, String userId) {
-        String source = displayName == null || displayName.trim().isEmpty() || displayName.equals(userId)
-            ? userId
-            : displayName.trim();
-        if (source == null || source.isEmpty()) return "M";
-        String[] words = source.replace('-', ' ').replace('_', ' ').trim().split("\\s+");
-        if (words.length >= 2) {
-            return (words[0].substring(0, 1) + words[words.length - 1].substring(0, 1)).toUpperCase(Locale.ROOT);
-        }
-        int count = source.codePointCount(0, source.length());
-        int end = source.offsetByCodePoints(0, Math.min(2, count));
-        return source.substring(0, end).toUpperCase(Locale.ROOT);
     }
 
     private void copyToClipboard(String value) {

@@ -1056,10 +1056,14 @@ void MainWindowLayoutTest::mainWindowUsesRoomierIconFreeTitleArea() {
 
     auto* inset = window.findChild<QWidget*>(QStringLiteral("windowTopInset"));
 #ifdef Q_OS_WIN
+    auto* navRail = window.findChild<QWidget*>(QStringLiteral("navRail"));
     QVERIFY(inset != nullptr);
+    QVERIFY(navRail != nullptr);
     QCOMPARE(inset->minimumHeight(), UiZoom::s(16));
     QCOMPARE(inset->maximumHeight(), UiZoom::s(16));
-    QVERIFY(inset->styleSheet().contains(QStringLiteral("#eff4f9")));
+    QCOMPARE(inset->palette().color(QPalette::Window), QColor(QStringLiteral("#eff4f9")));
+    QCOMPARE(navRail->palette().color(QPalette::Window),
+             inset->palette().color(QPalette::Window));
 
     window.show();
     QVERIFY(QTest::qWaitForWindowExposed(&window));

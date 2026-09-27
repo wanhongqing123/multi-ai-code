@@ -57,6 +57,7 @@
 #include <QNetworkRequest>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPalette>
 #include <QPointer>
 #include <QPolygon>
 #include <QResizeEvent>
@@ -134,6 +135,14 @@
 namespace {
 
 constexpr int UserIdRole = Qt::UserRole;
+constexpr char kWindowChromeBackground[] = "#eff4f9";
+
+void setSolidWindowBackground(QWidget* widget) {
+    QPalette palette = widget->palette();
+    palette.setColor(QPalette::Window, QColor(QString::fromLatin1(kWindowChromeBackground)));
+    widget->setPalette(palette);
+    widget->setAutoFillBackground(true);
+}
 
 // 切换会话时同步渲染的尾部消息条数。屏上可见的也就十几条；其余的排版纯是
 // 切换延迟——200 条长 markdown 的会话首切实测排版占 3.8s。更早的消息由
@@ -1613,9 +1622,7 @@ void MainWindow::buildUi() {
     auto* windowTopInset = new QWidget(root);
     windowTopInset->setObjectName(QStringLiteral("windowTopInset"));
     windowTopInset->setFixedHeight(UiZoom::s(16));
-    windowTopInset->setAttribute(Qt::WA_StyledBackground, true);
-    windowTopInset->setStyleSheet(
-        QStringLiteral("QWidget#windowTopInset{background:#eff4f9;}"));
+    setSolidWindowBackground(windowTopInset);
     rootColumn->addWidget(windowTopInset);
 #endif
 
@@ -1660,6 +1667,7 @@ void MainWindow::buildUi() {
 
     navRail_ = new QWidget(rootNavigationSplitter);
     navRail_->setObjectName(QStringLiteral("navRail"));
+    setSolidWindowBackground(navRail_);
     // 纯图标之后不需要那么宽：按「图标 + 两侧留白」定宽，不再让它可拉伸。
     navRail_->setFixedWidth(UiZoom::s(64));
     auto* navLayout = new QVBoxLayout(navRail_);
@@ -2244,9 +2252,6 @@ void MainWindow::applyStyle() {
             background: #f6f9fc;
             color: #172033;
             font-size: 14px;
-        }
-        #navRail {
-            background: #ecf3ff;
         }
         #navLogoContainer {
             background: transparent;

@@ -1671,7 +1671,7 @@ void MainWindow::buildUi() {
     // 纯图标之后不需要那么宽：按「图标 + 两侧留白」定宽，不再让它可拉伸。
     navRail_->setFixedWidth(UiZoom::s(64));
     auto* navLayout = new QVBoxLayout(navRail_);
-    navLayout->setContentsMargins(8, 14, 8, 12);
+    navLayout->setContentsMargins(8, 4, 8, 12);
     navLayout->setSpacing(8);
 
     auto* logoContainer = new QWidget(navRail_);

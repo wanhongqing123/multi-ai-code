@@ -112,6 +112,7 @@ private slots:
     void agentSettingsSaveAppliesWithoutRestart();
     void agentSettingsDialogUsesMaiChatVisualStyle();
     void leftNavigationRailIsResizableAndWider();
+    void navigationIconsSitNearTopEdge();
     void removesRedundantChromeLabels();
     void globalSearchFindsMatchesAcrossConversationsAndJumps();
     void clickingFilteredConversationJumpsToItsSearchHit();
@@ -1839,6 +1840,17 @@ void MainWindowLayoutTest::leftNavigationRailIsResizableAndWider() {
                  "图标放大后必须仍装得进按钮，否则会被裁掉");
         QVERIFY2(button->width() <= navRail->width(), "按钮不能宽过导航栏本身");
     }
+}
+
+void MainWindowLayoutTest::navigationIconsSitNearTopEdge() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    MainWindow window(app);
+
+    auto* navRail = window.findChild<QWidget*>(QStringLiteral("navRail"));
+    QVERIFY(navRail != nullptr);
+    QVERIFY(navRail->layout() != nullptr);
+    QCOMPARE(navRail->layout()->contentsMargins().top(), 4);
 }
 
 void MainWindowLayoutTest::removesRedundantChromeLabels() {

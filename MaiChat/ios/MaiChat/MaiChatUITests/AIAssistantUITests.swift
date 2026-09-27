@@ -56,6 +56,11 @@ final class AIAssistantUITests: XCTestCase {
 
         app.buttons["收起更多功能"].tap()
         XCTAssertEqual(waitUntilNotHittable(app.buttons["相册"]), .completed)
+
+        more.tap()
+        XCTAssertTrue(app.buttons["相册"].waitForExistence(timeout: 3))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.88, dy: 0.42)).tap()
+        XCTAssertEqual(waitUntilNotHittable(app.buttons["相册"]), .completed)
     }
 
     func testModelChipOffersTextAndVisionModels() throws {

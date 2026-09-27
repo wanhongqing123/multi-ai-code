@@ -17,6 +17,7 @@ struct AIAssistantView: View {
     @State private var latestY: CGFloat = 0
     @State private var sessionDrawerOffset: CGFloat = 0
     @State private var sessionDrawerWidth: CGFloat = 320
+    @State private var isAttachmentPanelPresented = false
     @State private var composerFocusController = AIComposerFocusController()
     @State private var transcriptionPresentation = VoiceTranscriptionPresentation()
 
@@ -26,10 +27,15 @@ struct AIAssistantView: View {
                 AIHeader(
                     openSessions: {
                         composerFocusController.dismiss()
+                        isAttachmentPanelPresented = false
                         showActions = false
                         openSessionDrawer()
                     },
-                    openActions: { composerFocusController.dismiss(); showActions.toggle() }
+                    openActions: {
+                        composerFocusController.dismiss()
+                        isAttachmentPanelPresented = false
+                        showActions.toggle()
+                    }
                 )
                 Divider().overlay(Color.black.opacity(0.06))
                 if !model.ready {
@@ -68,7 +74,10 @@ struct AIAssistantView: View {
                             .coordinateSpace(name: "ai-scroll")
                             .contentShape(Rectangle())
                             .onAppear { scrollToLatest(proxy) }
-                            .onTapGesture { composerFocusController.dismiss() }
+                            .onTapGesture {
+                                composerFocusController.dismiss()
+                                isAttachmentPanelPresented = false
+                            }
                             .onPreferenceChange(AIBottomPreference.self) { y in
                                 latestY = y
                                 let nearBottom = y < geometry.size.height + 40
@@ -110,7 +119,8 @@ struct AIAssistantView: View {
                 AIComposer(
                     model: model,
                     focusController: composerFocusController,
-                    transcriptionPresentation: transcriptionPresentation
+                    transcriptionPresentation: transcriptionPresentation,
+                    isAttachmentPanelPresented: $isAttachmentPanelPresented
                 )
             }
             .background(Color(uiColor: .systemBackground))
@@ -693,6 +703,7 @@ private struct AIComposer: View {
     @ObservedObject var model: AIAssistantModel
     let focusController: AIComposerFocusController
     let transcriptionPresentation: VoiceTranscriptionPresentation
+    @Binding var isAttachmentPanelPresented: Bool
     @StateObject private var speechRecognizer = TencentRealtimeSpeechRecognizer(
         appId: TencentASRCredentials.appId,
         secretId: TencentASRCredentials.secretId,
@@ -700,7 +711,6 @@ private struct AIComposer: View {
     )
     @State private var draft = ""
     @State private var importing = false
-    @State private var isAttachmentPanelPresented = false
     @State private var isPhotoPickerPresented = false
     @State private var isCameraPresented = false
     @State private var selectedMediaItems: [PhotosPickerItem] = []
@@ -868,6 +878,7 @@ private struct AIComposer: View {
                         importing = true
                     },
                     openVoiceInput: {},
+                    suggestReply: nil,
                     showsVoiceInput: false
                 )
                 .transition(.move(edge: .bottom).combined(with: .opacity))

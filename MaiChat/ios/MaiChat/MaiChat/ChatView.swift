@@ -4866,7 +4866,7 @@ struct ComposerAttachmentPanel: View {
     let openCamera: () -> Void
     let openFile: () -> Void
     let openVoiceInput: () -> Void
-    let suggestReply: (() -> Void)? = nil
+    let suggestReply: (() -> Void)?
     var showsVoiceInput = true
 
     private var columns: [GridItem] {
@@ -5003,183 +5003,9 @@ private struct ComposerView: View {
                     }
                 }
 
-                if let quote = draft.quote {
-                    HStack(spacing: 8) {
-                        Capsule()
-                            .fill(RemoteIMStyle.blue)
-                            .frame(width: 3, height: 26)
-                        Text(quote.senderID.isEmpty
-                            ? quote.digest
-                            : "回复 \(quote.senderID)：\(quote.digest)")
-                            .font(.system(size: 12))
-                            .foregroundStyle(RemoteIMStyle.textSecondary)
-                            .lineLimit(1)
-                        Spacer(minLength: 4)
-                        Button {
-                            appState.cancelReply()
-                        } label: {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 12, weight: .bold))
-                                .frame(width: 30, height: 30)
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(RemoteIMStyle.textSecondary)
-                        .accessibilityLabel("取消引用回复")
-                    }
-                    .padding(.leading, 9)
-                    .padding(.trailing, 4)
-                    .frame(height: 40)
-                    .background(RemoteIMStyle.blueSoft, in: RoundedRectangle(cornerRadius: 9))
-                }
+                quoteBar
 
-                HStack(alignment: .bottom, spacing: 8) {
-                    Button {
-                        composerEditMenuState = nil
-                        setVoiceMode(!isVoiceMode)
-                    } label: {
-                        Image(systemName: isVoiceMode ? "keyboard" : "speaker.wave.2.fill")
-                            .font(.system(size: 18, weight: .bold))
-                            .frame(width: 44, height: 44)
-                            .background(RemoteIMStyle.blueSoft, in: Circle())
-                            .overlay(
-                                Circle()
-                                    .stroke(RemoteIMStyle.border, lineWidth: 1)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(RemoteIMStyle.blue)
-
-                if isVoiceMode {
-                    PressToTalkButton(
-                        isPressing: isPressingVoice,
-                        isCancelling: isCancellingVoice,
-                        isEnabled: appState.canSendVoice,
-                        idleTitle: "按住 发语音",
-                        onChanged: { translation in
-                            handleVoicePressChanged(
-                                translation: translation,
-                                showsTranscriptionHighlight: false
-                            )
-                        },
-                        onEnded: { translation in
-                            Task {
-                                await handleVoicePressEnded(
-                                    translation: translation,
-                                    sendsVoiceDirectly: true
-                                )
-                            }
-                        }
-                    )
-                } else {
-                    ZStack(alignment: .topLeading) {
-                        ComposerTextView(
-                            text: Binding(
-                                get: { draft.text },
-                                set: { draft.updateFromEditor($0) }
-                            ),
-                            onSubmit: submitDraft,
-                            focusRequestGeneration: composerFocusRequestGeneration,
-                            editingController: composerEditingController,
-                            onEditMenuRequested: { state in
-                                let nextState = state.hasActions ? state : nil
-                                guard composerEditMenuState != nextState else { return }
-                                withAnimation(.easeOut(duration: 0.1)) {
-                                    composerEditMenuState = nextState
-                                }
-                            },
-                            onEditMenuDismissed: {
-                                guard composerEditMenuState != nil else { return }
-                                withAnimation(.easeOut(duration: 0.08)) {
-                                    composerEditMenuState = nil
-                                }
-                            },
-                            onTypingActivityChanged: { active in
-                                appState.updateHumanTyping(active, to: peerUserID)
-                            },
-                            voiceTranscriptionEnabled: appState.canSendVoice && draft.text.isEmpty,
-                            onVoiceLongPressChanged: { translation, location in
-                                handleVoicePressChanged(
-                                    translation: translation,
-                                    showsTranscriptionHighlight: true,
-                                    location: location
-                                )
-                            },
-                            onVoiceLongPressEnded: { translation, location in
-                                Task {
-                                    await handleVoicePressEnded(
-                                        translation: translation,
-                                        sendsVoiceDirectly: false,
-                                        location: location
-                                    )
-                                }
-                            },
-                            onVoiceLongPressCancelled: cancelVoiceLongPress,
-                            registerTextView: { navigationArrival.composerView = $0 },
-                            accessibilityIdentifier: "message-composer-text-view",
-                            accessibilityLabel: "消息输入框，长按语音转文字"
-                        )
-
-                        if draft.text.isEmpty {
-                            Text(textComposerPrompt)
-                                .font(.system(size: 14, weight: isPressingVoice ? .semibold : .regular))
-                                .foregroundStyle(textComposerPromptColor)
-                                .padding(.horizontal, 13)
-                                .padding(.vertical, 13)
-                                .allowsHitTesting(false)
-                                .accessibilityHidden(true)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.white, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(
-                                appState.canSend ? RemoteIMStyle.blue : RemoteIMStyle.border,
-                                lineWidth: appState.canSend ? 1.5 : 1
-                            )
-                    )
-                    .overlay(alignment: .topLeading) {
-                        if let state = composerEditMenuState {
-                            ComposerEditActionBar(
-                                state: state,
-                                pasteTarget: composerEditingController.textView,
-                                perform: performComposerEditAction
-                            )
-                            .offset(x: 4, y: -50)
-                            .transition(.opacity)
-                            .zIndex(20)
-                        }
-                    }
-                    .zIndex(composerEditMenuState == nil ? 0 : 20)
-                }
-
-                Button {
-                    composerEditMenuState = nil
-                    if isAttachmentPanelPresented {
-                        isAttachmentPanelPresented = false
-                    } else {
-                        dismissKeyboard()
-                        isAttachmentPanelPresented = true
-                    }
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 20, weight: .semibold))
-                        .frame(width: 44, height: 44)
-                        .background(Color.white, in: Circle())
-                        .overlay(
-                            Circle()
-                                .stroke(RemoteIMStyle.border, lineWidth: 1)
-                        )
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(
-                    canOpenAttachmentPanel
-                        ? RemoteIMStyle.textPrimary
-                        : RemoteIMStyle.textSecondary
-                )
-                .disabled(!canOpenAttachmentPanel)
-                .accessibilityLabel(isAttachmentPanelPresented ? "收起更多功能" : "展开更多功能")
-                }
+                composerInputRow
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
@@ -5299,6 +5125,193 @@ private struct ComposerView: View {
             transcriptionPresentation.reset()
             isAttachmentPanelPresented = false
         }
+    }
+
+    @ViewBuilder
+    private var quoteBar: some View {
+        if let quote = draft.quote {
+            HStack(spacing: 8) {
+                Capsule()
+                    .fill(RemoteIMStyle.blue)
+                    .frame(width: 3, height: 26)
+                Text(replyQuoteTitle(quote))
+                    .font(.system(size: 12))
+                    .foregroundStyle(RemoteIMStyle.textSecondary)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Button {
+                    appState.cancelReply()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .bold))
+                        .frame(width: 30, height: 30)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(RemoteIMStyle.textSecondary)
+                .accessibilityLabel("取消引用回复")
+            }
+            .padding(.leading, 9)
+            .padding(.trailing, 4)
+            .frame(height: 40)
+            .background(RemoteIMStyle.blueSoft, in: RoundedRectangle(cornerRadius: 9))
+        }
+    }
+
+    private func replyQuoteTitle(_ quote: RemoteIMQuote) -> String {
+        quote.senderID.isEmpty ? quote.digest : "回复 \(quote.senderID)：\(quote.digest)"
+    }
+
+    private var composerInputRow: some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            voiceModeButton
+            if isVoiceMode {
+                PressToTalkButton(
+                    isPressing: isPressingVoice,
+                    isCancelling: isCancellingVoice,
+                    isEnabled: appState.canSendVoice,
+                    idleTitle: "按住 发语音",
+                    onChanged: { translation in
+                        handleVoicePressChanged(
+                            translation: translation,
+                            showsTranscriptionHighlight: false
+                        )
+                    },
+                    onEnded: { translation in
+                        Task {
+                            await handleVoicePressEnded(
+                                translation: translation,
+                                sendsVoiceDirectly: true
+                            )
+                        }
+                    }
+                )
+            } else {
+                textComposer
+            }
+            attachmentButton
+        }
+    }
+
+    private var voiceModeButton: some View {
+        Button {
+            composerEditMenuState = nil
+            setVoiceMode(!isVoiceMode)
+        } label: {
+            Image(systemName: isVoiceMode ? "keyboard" : "speaker.wave.2.fill")
+                .font(.system(size: 18, weight: .bold))
+                .frame(width: 44, height: 44)
+                .background(RemoteIMStyle.blueSoft, in: Circle())
+                .overlay(Circle().stroke(RemoteIMStyle.border, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(RemoteIMStyle.blue)
+    }
+
+    private var attachmentButton: some View {
+        Button {
+            composerEditMenuState = nil
+            if isAttachmentPanelPresented {
+                isAttachmentPanelPresented = false
+            } else {
+                dismissKeyboard()
+                isAttachmentPanelPresented = true
+            }
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 20, weight: .semibold))
+                .frame(width: 44, height: 44)
+                .background(Color.white, in: Circle())
+                .overlay(Circle().stroke(RemoteIMStyle.border, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(
+            canOpenAttachmentPanel ? RemoteIMStyle.textPrimary : RemoteIMStyle.textSecondary
+        )
+        .disabled(!canOpenAttachmentPanel)
+        .accessibilityLabel(isAttachmentPanelPresented ? "收起更多功能" : "展开更多功能")
+    }
+
+    private var textComposer: some View {
+        ZStack(alignment: .topLeading) {
+            ComposerTextView(
+                text: Binding(
+                    get: { draft.text },
+                    set: { draft.updateFromEditor($0) }
+                ),
+                onSubmit: submitDraft,
+                focusRequestGeneration: composerFocusRequestGeneration,
+                editingController: composerEditingController,
+                onEditMenuRequested: updateComposerEditMenu,
+                onEditMenuDismissed: dismissComposerEditMenu,
+                onTypingActivityChanged: { active in
+                    appState.updateHumanTyping(active, to: peerUserID)
+                },
+                voiceTranscriptionEnabled: appState.canSendVoice && draft.text.isEmpty,
+                onVoiceLongPressChanged: { translation, location in
+                    handleVoicePressChanged(
+                        translation: translation,
+                        showsTranscriptionHighlight: true,
+                        location: location
+                    )
+                },
+                onVoiceLongPressEnded: { translation, location in
+                    Task {
+                        await handleVoicePressEnded(
+                            translation: translation,
+                            sendsVoiceDirectly: false,
+                            location: location
+                        )
+                    }
+                },
+                onVoiceLongPressCancelled: cancelVoiceLongPress,
+                registerTextView: { navigationArrival.composerView = $0 },
+                accessibilityIdentifier: "message-composer-text-view",
+                accessibilityLabel: "消息输入框，长按语音转文字"
+            )
+
+            if draft.text.isEmpty {
+                Text(textComposerPrompt)
+                    .font(.system(size: 14, weight: isPressingVoice ? .semibold : .regular))
+                    .foregroundStyle(textComposerPromptColor)
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 13)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.white, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(
+                    appState.canSend ? RemoteIMStyle.blue : RemoteIMStyle.border,
+                    lineWidth: appState.canSend ? 1.5 : 1
+                )
+        )
+        .overlay(alignment: .topLeading) {
+            if let state = composerEditMenuState {
+                ComposerEditActionBar(
+                    state: state,
+                    pasteTarget: composerEditingController.textView,
+                    perform: performComposerEditAction
+                )
+                .offset(x: 4, y: -50)
+                .transition(.opacity)
+                .zIndex(20)
+            }
+        }
+        .zIndex(composerEditMenuState == nil ? 0 : 20)
+    }
+
+    private func updateComposerEditMenu(_ state: ComposerEditMenuState) {
+        let nextState = state.hasActions ? state : nil
+        guard composerEditMenuState != nextState else { return }
+        withAnimation(.easeOut(duration: 0.1)) { composerEditMenuState = nextState }
+    }
+
+    private func dismissComposerEditMenu() {
+        guard composerEditMenuState != nil else { return }
+        withAnimation(.easeOut(duration: 0.08)) { composerEditMenuState = nil }
     }
 
     @ViewBuilder

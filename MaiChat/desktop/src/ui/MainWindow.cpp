@@ -135,7 +135,7 @@
 namespace {
 
 constexpr int UserIdRole = Qt::UserRole;
-constexpr char kWindowChromeBackground[] = "#eff4f9";
+constexpr char kWindowChromeBackground[] = "#f3f3f3";
 
 void setSolidWindowBackground(QWidget* widget) {
     QPalette palette = widget->palette();

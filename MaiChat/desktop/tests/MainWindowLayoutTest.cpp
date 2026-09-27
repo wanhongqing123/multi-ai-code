@@ -1063,7 +1063,7 @@ void MainWindowLayoutTest::mainWindowUsesRoomierIconFreeTitleArea() {
     QVERIFY(navRail != nullptr);
     QCOMPARE(inset->minimumHeight(), UiZoom::s(16));
     QCOMPARE(inset->maximumHeight(), UiZoom::s(16));
-    QCOMPARE(inset->palette().color(QPalette::Window), QColor(QStringLiteral("#eff4f9")));
+    QCOMPARE(inset->palette().color(QPalette::Window), QColor(QStringLiteral("#f3f3f3")));
     QCOMPARE(navRail->palette().color(QPalette::Window),
              inset->palette().color(QPalette::Window));
 

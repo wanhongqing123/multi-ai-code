@@ -207,8 +207,14 @@ private final class MaiChatBootstrap: ObservableObject {
                 return (settings, secrets, settings.load(), secrets.readSecretKey())
             }
             guard !Task.isCancelled else { return }
-            appState = RemoteIMAppState(settingsStore: loaded.0, secretStore: loaded.1,
-                loadedSettings: loaded.2, loadedSecretKey: loaded.3)
+            let state = RemoteIMAppState(
+                settingsStore: loaded.0,
+                secretStore: loaded.1,
+                loadedSettings: loaded.2,
+                loadedSecretKey: loaded.3
+            )
+            AIMaiChatHostToolProvider.shared.appState = state
+            appState = state
         } catch {
             if !Task.isCancelled { errorMessage = error.localizedDescription }
         }

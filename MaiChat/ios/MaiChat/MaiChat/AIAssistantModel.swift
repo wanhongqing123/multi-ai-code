@@ -1,4 +1,6 @@
 import Foundation
+import Darwin
+import MaiChatCore
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
@@ -59,6 +61,342 @@ struct AIReplySuggestions: Codable, Sendable, Equatable {
     let casual: String
     let professional: String
 }
+struct AIMaiChatHostToolExecution: Sendable, Equatable {
+    let output: String?
+    let errorCode: String?
+    let errorMessage: String?
+
+    static func success(_ output: String) -> Self {
+        Self(output: output, errorCode: nil, errorMessage: nil)
+    }
+
+    static func failure(code: String, message: String) -> Self {
+        Self(output: nil, errorCode: code, errorMessage: message)
+    }
+}
+
+@MainActor
+final class AIMaiChatHostToolProvider {
+    static let shared = AIMaiChatHostToolProvider()
+
+    weak var appState: RemoteIMAppState?
+
+    func execute(name: String, argumentsJSON: String) async -> AIMaiChatHostToolExecution {
+        guard let appState else {
+            return .failure(code: "not_configured", message: "the MaiChat host is unavailable")
+        }
+        guard let arguments = Self.parseArguments(argumentsJSON) else {
+            return .failure(code: "invalid_input", message: "arguments must be a JSON object")
+        }
+
+        switch name {
+        case "maichat_list_contacts":
+            return Self.listContacts(appState: appState, arguments: arguments)
+        case "maichat_list_conversations":
+            return Self.listConversations(appState: appState, arguments: arguments)
+        case "maichat_get_messages":
+            return await getMessages(appState: appState, arguments: arguments)
+        case "maichat_search_messages":
+            return await searchMessages(appState: appState, arguments: arguments)
+        case "maichat_get_unread_summary":
+            return Self.unreadSummary(appState: appState)
+        case "maichat_send_text":
+            return await sendText(appState: appState, arguments: arguments)
+        case "maichat_reply_message":
+            return await replyMessage(appState: appState, arguments: arguments)
+        default:
+            return .failure(code: "invalid_input", message: "unknown MaiChat host tool")
+        }
+    }
+
+    private static func listContacts(
+        appState: RemoteIMAppState,
+        arguments: [String: Any]
+    ) -> AIMaiChatHostToolExecution {
+        let query = string(arguments, key: "query")
+        let limit = boundedLimit(arguments)
+        let contacts = appState.chatState.contacts.lazy
+            .filter { contact in
+                query.isEmpty || contact.userID.localizedCaseInsensitiveContains(query)
+                    || contact.displayName.localizedCaseInsensitiveContains(query)
+            }
+            .prefix(limit)
+            .map { contact in
+                [
+                    "user_id": contact.userID,
+                    "display_name": contact.displayName,
+                    "group": contact.groupName,
+                ]
+            }
+        return jsonSuccess(["contacts": Array(contacts), "count": contacts.count])
+    }
+
+    private static func listConversations(
+        appState: RemoteIMAppState,
+        arguments: [String: Any]
+    ) -> AIMaiChatHostToolExecution {
+        let limit = boundedLimit(arguments)
+        let values = appState.chatState.contacts.compactMap { contact -> [String: Any]? in
+            guard let latest = appState.chatState.latestMessage(with: contact.userID) else {
+                return nil
+            }
+            return [
+                "peer_id": contact.userID,
+                "display_name": contact.displayName,
+                "unread": appState.unreadCount(for: contact.userID),
+                "latest": messageJSON(latest, peerID: contact.userID),
+            ]
+        }
+        .sorted { left, right in
+            let leftDate = (left["latest"] as? [String: Any])?["created_at_ms"] as? Int64 ?? 0
+            let rightDate = (right["latest"] as? [String: Any])?["created_at_ms"] as? Int64 ?? 0
+            return leftDate > rightDate
+        }
+        let conversations = Array(values.prefix(limit))
+        return jsonSuccess(["conversations": conversations, "count": conversations.count])
+    }
+
+    private func getMessages(
+        appState: RemoteIMAppState,
+        arguments: [String: Any]
+    ) async -> AIMaiChatHostToolExecution {
+        let peerID = Self.string(arguments, key: "peer_id")
+        guard Self.hasContact(appState, peerID: peerID) else {
+            return .failure(code: "invalid_input", message: "peer_id is not a MaiChat contact")
+        }
+        let messages = await appState.messagesForHostTool(
+            peerUserID: peerID,
+            limit: Self.boundedLimit(arguments)
+        )
+        let values = messages.map { Self.messageJSON($0, peerID: peerID) }
+        return Self.jsonSuccess(["peer_id": peerID, "messages": values, "count": values.count])
+    }
+
+    private func searchMessages(
+        appState: RemoteIMAppState,
+        arguments: [String: Any]
+    ) async -> AIMaiChatHostToolExecution {
+        let query = Self.string(arguments, key: "query")
+        let peerID = Self.string(arguments, key: "peer_id")
+        guard !query.isEmpty else {
+            return .failure(code: "invalid_input", message: "query is required")
+        }
+        if !peerID.isEmpty, !Self.hasContact(appState, peerID: peerID) {
+            return .failure(code: "invalid_input", message: "peer_id is not a MaiChat contact")
+        }
+        let limit = Self.boundedLimit(arguments)
+        let hits = Array(await appState.searchMessages(query, limit: 200)
+            .filter { peerID.isEmpty || $0.peerUserID == peerID }
+            .prefix(limit))
+        appState.chatState.mergeMessages(hits.map(\.message))
+        let values = hits.map { Self.messageJSON($0.message, peerID: $0.peerUserID) }
+        return Self.jsonSuccess(["query": query, "matches": values, "count": values.count])
+    }
+
+    private static func unreadSummary(appState: RemoteIMAppState) -> AIMaiChatHostToolExecution {
+        let values = appState.chatState.contacts.compactMap { contact -> [String: Any]? in
+            let unread = appState.unreadCount(for: contact.userID)
+            guard unread > 0 else { return nil }
+            return [
+                "peer_id": contact.userID,
+                "display_name": contact.displayName,
+                "unread": unread,
+            ]
+        }
+        return jsonSuccess(["total_unread": values.reduce(0) { $0 + ($1["unread"] as? Int ?? 0) },
+                            "conversations": values])
+    }
+
+    private func sendText(
+        appState: RemoteIMAppState,
+        arguments: [String: Any]
+    ) async -> AIMaiChatHostToolExecution {
+        let peerID = Self.string(arguments, key: "peer_id")
+        let text = Self.string(arguments, key: "text")
+        guard Self.hasContact(appState, peerID: peerID), !text.isEmpty else {
+            return .failure(code: "invalid_input", message: "peer_id and text are required")
+        }
+        guard await appState.sendText(text, to: peerID) else {
+            return .failure(code: "internal", message: "MaiChat did not send the message")
+        }
+        return Self.jsonSuccess([
+            "sent": true,
+            "peer_id": peerID,
+            "message_id": appState.locallyQueuedMessageID?.uuidString ?? "",
+        ])
+    }
+
+    private func replyMessage(
+        appState: RemoteIMAppState,
+        arguments: [String: Any]
+    ) async -> AIMaiChatHostToolExecution {
+        let peerID = Self.string(arguments, key: "peer_id")
+        let messageID = Self.string(arguments, key: "message_id")
+        let text = Self.string(arguments, key: "text")
+        guard Self.hasContact(appState, peerID: peerID), !messageID.isEmpty, !text.isEmpty else {
+            return .failure(
+                code: "invalid_input",
+                message: "peer_id, message_id, and text are required"
+            )
+        }
+        guard let message = await appState.messageForHostTool(
+            peerUserID: peerID,
+            messageID: messageID
+        ), let quote = RemoteIMMessageQuotePolicy.quote(for: message) else {
+            return .failure(code: "invalid_input", message: "message_id was not found for peer_id")
+        }
+        guard await appState.sendText(text, quote: quote, to: peerID) else {
+            return .failure(code: "internal", message: "MaiChat did not send the reply")
+        }
+        return Self.jsonSuccess([
+            "sent": true,
+            "peer_id": peerID,
+            "message_id": appState.locallyQueuedMessageID?.uuidString ?? "",
+            "reply_to": messageID,
+        ])
+    }
+
+    private static func parseArguments(_ value: String) -> [String: Any]? {
+        guard let data = value.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              let arguments = object as? [String: Any] else { return nil }
+        return arguments
+    }
+
+    private static func boundedLimit(_ arguments: [String: Any], fallback: Int = 50) -> Int {
+        min(max(arguments["limit"] as? Int ?? fallback, 1), 200)
+    }
+
+    private static func string(_ arguments: [String: Any], key: String) -> String {
+        (arguments[key] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private static func hasContact(_ appState: RemoteIMAppState, peerID: String) -> Bool {
+        !peerID.isEmpty && appState.chatState.contacts.contains(where: { $0.userID == peerID })
+    }
+
+    private static func messageJSON(_ message: RemoteIMMessage, peerID: String) -> [String: Any] {
+        [
+            "id": message.id.uuidString,
+            "peer_id": peerID,
+            "direction": message.direction == .incoming ? "incoming" : "outgoing",
+            "sender_id": message.fromUserID,
+            "text": message.text,
+            "kind": messageKind(message),
+            "created_at_ms": Int64((message.createdAt.timeIntervalSince1970 * 1_000).rounded()),
+        ]
+    }
+
+    private static func messageKind(_ message: RemoteIMMessage) -> String {
+        if message.imageAttachment != nil { return "image" }
+        if message.videoAttachment != nil { return "video" }
+        if message.voiceAttachment != nil { return "voice" }
+        if message.fileAttachment != nil { return "file" }
+        return "text"
+    }
+
+    private static func jsonSuccess(_ object: [String: Any]) -> AIMaiChatHostToolExecution {
+        guard JSONSerialization.isValidJSONObject(object),
+              let data = try? JSONSerialization.data(withJSONObject: object),
+              let output = String(data: data, encoding: .utf8) else {
+            return .failure(code: "internal", message: "failed to encode MaiChat tool output")
+        }
+        return .success(output)
+    }
+}
+
+private final class AIMaiChatHostToolCallbackContext: @unchecked Sendable {}
+
+private final class AIMaiChatHostToolResponseBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = ""
+
+    func store(_ value: String) {
+        lock.lock()
+        self.value = value
+        lock.unlock()
+    }
+
+    func load() -> String {
+        lock.lock()
+        let result = value
+        lock.unlock()
+        return result
+    }
+}
+
+private func aiMaiChatHostToolEnvelope(_ result: AIMaiChatHostToolExecution) -> String {
+    let object: [String: Any]
+    if let output = result.output {
+        object = ["ok": true, "output": output]
+    } else {
+        object = [
+            "ok": false,
+            "errorCode": result.errorCode ?? "internal",
+            "error": result.errorMessage ?? "the MaiChat host tool failed",
+        ]
+    }
+    guard let data = try? JSONSerialization.data(withJSONObject: object),
+          let value = String(data: data, encoding: .utf8) else {
+        return #"{"ok":false,"errorCode":"internal","error":"failed to encode host response"}"#
+    }
+    return value
+}
+
+private func aiMaiChatOwnedCString(_ value: String) -> UnsafePointer<CChar>? {
+    value.withCString { pointer in
+        guard let copied = strdup(pointer) else { return nil }
+        return UnsafePointer(copied)
+    }
+}
+
+private let aiMaiChatHostToolHandler: @convention(c) (
+    UnsafeMutableRawPointer?,
+    UnsafePointer<CChar>?,
+    UnsafePointer<CChar>?
+) -> UnsafePointer<CChar>? = { context, toolName, argumentsJSON in
+    guard context != nil, let toolName, let argumentsJSON else {
+        return aiMaiChatOwnedCString(
+            #"{"ok":false,"errorCode":"invalid_input","error":"invalid host callback input"}"#
+        )
+    }
+    guard !Thread.isMainThread else {
+        return aiMaiChatOwnedCString(
+            #"{"ok":false,"errorCode":"internal","error":"host callback ran on the main thread"}"#
+        )
+    }
+    _ = Unmanaged<AIMaiChatHostToolCallbackContext>
+        .fromOpaque(context!)
+        .takeUnretainedValue()
+    let name = String(cString: toolName)
+    let arguments = String(cString: argumentsJSON)
+    let response = AIMaiChatHostToolResponseBox()
+    let finished = DispatchSemaphore(value: 0)
+    Task { @MainActor in
+        let result = await AIMaiChatHostToolProvider.shared.execute(
+            name: name,
+            argumentsJSON: arguments
+        )
+        response.store(aiMaiChatHostToolEnvelope(result))
+        finished.signal()
+    }
+    finished.wait()
+    return aiMaiChatOwnedCString(response.load())
+}
+
+private let aiMaiChatHostToolResponseFree: @convention(c) (
+    UnsafeMutableRawPointer?,
+    UnsafePointer<CChar>?
+) -> Void = { _, response in
+    if let response { free(UnsafeMutableRawPointer(mutating: response)) }
+}
+
+private let aiMaiChatHostToolContextRelease: @convention(c) (UnsafeMutableRawPointer?) -> Void = {
+    context in
+    guard let context else { return }
+    Unmanaged<AIMaiChatHostToolCallbackContext>.fromOpaque(context).release()
+}
+
 struct AIResponse: Codable, Sendable {
     let ok: Bool
     var id: String?
@@ -87,7 +425,22 @@ actor AIAssistantBackend {
     private var initialized = false
     private let keys = KeychainSecretStore(account: "ai-assistant-api-key")
 
-    init() { address = UInt(bitPattern: maiMobileAgentCreate()) }
+    init() {
+        let pointer = maiMobileAgentCreate()
+        address = UInt(bitPattern: pointer)
+        guard let pointer else { return }
+        let context = Unmanaged.passRetained(AIMaiChatHostToolCallbackContext()).toOpaque()
+        let registered = maiMobileAgentSetHostToolHandler(
+            pointer,
+            context,
+            aiMaiChatHostToolHandler,
+            aiMaiChatHostToolResponseFree,
+            aiMaiChatHostToolContextRelease
+        )
+        if registered == 0 {
+            Unmanaged<AIMaiChatHostToolCallbackContext>.fromOpaque(context).release()
+        }
+    }
     deinit {
         let address = address
         DispatchQueue.global(qos: .utility).async {

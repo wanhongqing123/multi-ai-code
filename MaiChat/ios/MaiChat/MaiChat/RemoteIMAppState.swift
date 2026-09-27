@@ -807,6 +807,68 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         }
     }
 
+    func messagesForHostTool(peerUserID: String, limit: Int) async -> [RemoteIMMessage] {
+        let peer = peerUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let safeLimit = min(max(limit, 1), 200)
+        let account = LocalChatHistoryAccount(
+            sdkAppID: chatHistorySDKAppID,
+            ownerUserID: chatState.ownerUserID
+        )
+        let accountGeneration = historyAccountGeneration
+        guard !peer.isEmpty,
+              !account.ownerUserID.isEmpty,
+              chatState.contacts.contains(where: { $0.userID == peer })
+        else { return [] }
+
+        _ = await flushHistoryPersistence()
+        guard historyAccountGeneration == accountGeneration,
+              chatState.ownerUserID == account.ownerUserID,
+              chatHistorySDKAppID == account.sdkAppID
+        else { return [] }
+
+        do {
+            let page = try await historyPersistence.loadConversationPage(
+                sdkAppID: account.sdkAppID,
+                ownerUserID: account.ownerUserID,
+                peerUserID: peer,
+                before: nil,
+                limit: safeLimit
+            )
+            guard historyAccountGeneration == accountGeneration,
+                  chatState.ownerUserID == account.ownerUserID,
+                  chatHistorySDKAppID == account.sdkAppID
+            else { return [] }
+            chatState.mergeMessages(page.messages)
+            return page.messages
+        } catch {
+            recordHistoryLoadFailure(error, operation: "host-tool-messages")
+            return []
+        }
+    }
+
+    func messageForHostTool(peerUserID: String, messageID: String) async -> RemoteIMMessage? {
+        let peer = peerUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let identifier = messageID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !peer.isEmpty, !identifier.isEmpty else { return nil }
+        if let uuid = UUID(uuidString: identifier),
+           let cached = chatState.message(id: uuid),
+           cached.fromUserID == peer || cached.toUserID == peer {
+            return cached
+        }
+        if let cached = chatState.message(remoteID: identifier),
+           cached.fromUserID == peer || cached.toUserID == peer {
+            return cached
+        }
+        let quote = RemoteIMQuote(
+            messageID: identifier,
+            senderID: "",
+            digest: "host tool lookup",
+            kind: "text"
+        )
+        guard let id = await openQuotedMessage(quote, peerUserID: peer) else { return nil }
+        return chatState.message(id: id)
+    }
+
     @discardableResult
     func openMessageSearchHit(_ hit: LocalChatHistorySearchHit) -> RemoteIMContact? {
         guard let contact = chatState.contacts.first(where: { $0.userID == hit.peerUserID })

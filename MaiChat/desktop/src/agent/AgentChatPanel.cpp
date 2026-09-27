@@ -22,6 +22,7 @@
 #include <QPolygonF>
 #include <QPushButton>
 #include <QSettings>
+#include <QSplitter>
 #include <QStandardPaths>
 #include <QTextBlock>
 #include <QTextCursor>
@@ -660,7 +661,6 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     MarkdownTheme conversationTheme = MarkdownTheme::standard(UiZoom::factor());
     conversationTheme.viewMargin = UiZoom::s(28);
     runtime_->view->setTheme(conversationTheme);
-    root->addWidget(runtime_->view, 1);
 
     runtime_->flushTimer = new QTimer(this);
     runtime_->flushTimer->setSingleShot(true);
@@ -673,9 +673,9 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     // ---- 输入区：与普通 IM 共用同一个 ComposerTextEdit 形状 ----
     auto* composerHost = new QWidget(this);
     composerHost->setObjectName(QStringLiteral("agentComposerPanel"));
-    composerHost->setStyleSheet(UiZoom::scaleQss(QStringLiteral(
-        "QWidget#agentComposerPanel{background:#ffffff;border-top:1px solid %1;}"))
-                                    .arg(kLine));
+    composerHost->setMinimumHeight(UiZoom::s(90));
+    composerHost->setStyleSheet(
+        QStringLiteral("QWidget#agentComposerPanel{background:#ffffff;}"));
     auto* composerLayout = new QVBoxLayout(composerHost);
     composerLayout->setContentsMargins(UiZoom::s(24), UiZoom::s(12), UiZoom::s(24),
                                        UiZoom::s(14));
@@ -684,7 +684,8 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     runtime_->editor = new PromptEdit(composerHost);
     runtime_->editor->setObjectName(QStringLiteral("agentPromptEditor"));
     runtime_->editor->setPlaceholderText(QStringLiteral("交给它做点什么…"));
-    runtime_->editor->setFixedHeight(UiZoom::s(112));
+    runtime_->editor->setMinimumHeight(UiZoom::s(64));
+    runtime_->editor->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     runtime_->editor->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
         QTextEdit#agentPromptEditor {
             border:1px solid %1;
@@ -701,7 +702,7 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     runtime_->editor->onSubmit = [this] { onSend(); };
     runtime_->editor->setMimeHandler(
         [this](const QMimeData* mime) { return insertComposerMimeData(mime); });
-    composerLayout->addWidget(runtime_->editor);
+    composerLayout->addWidget(runtime_->editor, 1);
 
     runtime_->modelChip = new QPushButton;
     runtime_->modelChip->setObjectName(QStringLiteral("agentModelChip"));
@@ -813,7 +814,23 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     runtime_->send->setFixedSize(UiZoom::s(36), UiZoom::s(36));
     runtime_->send->setIconSize(QSize(UiZoom::s(18), UiZoom::s(18)));
     runtime_->editor->setCornerAction(runtime_->send);
-    root->addWidget(composerHost);
+
+    auto* messageComposerSplitter = new QSplitter(Qt::Vertical, this);
+    messageComposerSplitter->setObjectName(QStringLiteral("agentMessageComposerSplitter"));
+    messageComposerSplitter->setChildrenCollapsible(false);
+    messageComposerSplitter->setHandleWidth(1);
+    messageComposerSplitter->setStyleSheet(QStringLiteral(
+        "QSplitter::handle{background:%1;}"
+        "QSplitter::handle:vertical{height:1px;}"
+        "QSplitter::handle:hover{background:#90c9ed;}")
+                                                .arg(kLine));
+    messageComposerSplitter->addWidget(runtime_->view);
+    messageComposerSplitter->addWidget(composerHost);
+    messageComposerSplitter->setStretchFactor(0, 1);
+    messageComposerSplitter->setStretchFactor(1, 0);
+    messageComposerSplitter->setSizes(
+        QList<int>() << UiZoom::s(620) << UiZoom::s(140));
+    root->addWidget(messageComposerSplitter, 1);
 
     setRunning(false);
     connect(runtime_->send, &QPushButton::clicked, this, &AgentChatPanel::onSend);

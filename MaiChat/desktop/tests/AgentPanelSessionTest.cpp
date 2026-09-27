@@ -7,6 +7,8 @@
 #include <QMimeData>
 #include <QPushButton>
 #include <QSignalSpy>
+#include <QSplitter>
+#include <QSplitterHandle>
 #include <QTemporaryDir>
 #include <QTextEdit>
 #include <QUrl>
@@ -90,6 +92,7 @@ private slots:
     void unconfiguredModelOpensConfigurationInsteadOfFailingTurn();
     void desktopAgentSuppliesMarkdownSystemPrompt();
     void composerMatchesImLayoutAndUsesEmbeddedSendAction();
+    void conversationAndComposerUseResizableSplitter();
     void conversationUsesAvailableWidth();
     void pastedImageUsesTheSharedComposerAndReachesTheModel();
     void modelChipOffersTheTextAndVisionModels();
@@ -436,6 +439,39 @@ void AgentPanelSessionTest::composerMatchesImLayoutAndUsesEmbeddedSendAction() {
     QCOMPARE(policy->menu()->actions()[1]->text(), QStringLiteral("帮我批准"));
     QCOMPARE(policy->menu()->actions()[2]->text(), QStringLiteral("完全访问"));
 
+}
+
+void AgentPanelSessionTest::conversationAndComposerUseResizableSplitter() {
+    Harness harness;
+    harness.panel->resize(1200, 800);
+    QVERIFY(QTest::qWaitForWindowExposed(harness.panel.get()));
+
+    auto* splitter =
+        harness.panel->findChild<QSplitter*>(QStringLiteral("agentMessageComposerSplitter"));
+    QVERIFY(splitter != nullptr);
+    QCOMPARE(splitter->orientation(), Qt::Vertical);
+    QCOMPARE(splitter->count(), 2);
+    QVERIFY(!splitter->childrenCollapsible());
+    QCOMPARE(splitter->handleWidth(), 1);
+
+    auto* editor = harness.panel->findChild<ComposerTextEdit*>();
+    QVERIFY(editor != nullptr);
+    QCOMPARE(editor->minimumHeight(), UiZoom::s(64));
+    QVERIFY(editor->maximumHeight() > UiZoom::s(112));
+
+    QSplitterHandle* handle = splitter->handle(1);
+    QVERIFY(handle != nullptr);
+    const int before = splitter->sizes().at(0);
+    const int editorBefore = editor->height();
+    const QPoint start = handle->rect().center();
+    const QPoint finish = start + QPoint(0, -60);
+    QTest::mousePress(handle, Qt::LeftButton, Qt::NoModifier, start);
+    QMouseEvent move(QEvent::MouseMove, QPointF(finish), QPointF(handle->mapToGlobal(finish)),
+                     Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(handle, &move);
+    QTest::mouseRelease(handle, Qt::LeftButton, Qt::NoModifier, finish);
+    QVERIFY(splitter->sizes().at(0) != before);
+    QVERIFY(editor->height() > editorBefore);
 }
 
 void AgentPanelSessionTest::conversationUsesAvailableWidth() {

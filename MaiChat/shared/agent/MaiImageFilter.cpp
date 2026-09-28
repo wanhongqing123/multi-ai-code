@@ -117,6 +117,14 @@ std::string filterDescription(const Json& input, int width, int height, std::str
     if (operation == "flip_horizontal") return "hflip";
     if (operation == "flip_vertical") return "vflip";
     if (operation == "grayscale") return "hue=s=0";
+    if (operation == "sharpen") {
+        double amount = 1.0;
+        if (!decimal(input, "amount", 1, 0, 2, &amount)) {
+            *error = "sharpen amount must be 0..2";
+            return {};
+        }
+        return "unsharp=luma_msize_x=3:luma_msize_y=3:luma_amount=" + number(amount);
+    }
     if (operation == "adjust") {
         double brightness = 0, contrast = 1, saturation = 1;
         if (!decimal(input, "brightness", 0, -1, 1, &brightness) ||

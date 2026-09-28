@@ -183,6 +183,13 @@ struct AIAssistantView: View {
             }
             VoiceTranscriptionHighlightHost(presentation: transcriptionPresentation)
                 .zIndex(20)
+            if let preview = model.previewImage {
+                AIImagePreviewOverlay(filePath: preview.filePath) {
+                    model.previewImage = nil
+                }
+                .id(preview.id)
+                .zIndex(30)
+            }
         }
         .simultaneousGesture(sessionDrawerOpenGesture)
         .confirmationDialog("清空当前对话的所有消息？", isPresented: $confirmClear, titleVisibility: .visible) {
@@ -637,12 +644,50 @@ private struct AIWorkspaceImage: View {
     }
 }
 
+private struct AIImagePreviewOverlay: View {
+    let filePath: String
+    let close: () -> Void
+    @StateObject private var state = AIWorkspaceImageState()
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .topTrailing) {
+                Color.black.ignoresSafeArea()
+                if let image = state.image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .accessibilityLabel("Agent 处理后的图片预览")
+                } else if state.hasFinished {
+                    Label("图片无法显示", systemImage: "photo")
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ProgressView().tint(.white)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                Button(action: close) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
+                        .background(.black.opacity(0.5), in: Circle())
+                }
+                .accessibilityLabel("关闭图片预览")
+                .padding(20)
+            }
+        }
+        .task(id: filePath) { await state.load(filePath, maxPixelSize: 2048) }
+    }
+}
+
 @MainActor
 private final class AIWorkspaceImageState: ObservableObject {
     @Published private(set) var image: UIImage?
     @Published private(set) var hasFinished = false
 
-    func load(_ path: String) async {
+    func load(_ path: String, maxPixelSize: Int = 720) async {
         image = nil
         hasFinished = false
         let decoded = await Task.detached(priority: .utility) { () -> AIWorkspaceImageBox? in
@@ -651,7 +696,7 @@ private final class AIWorkspaceImageState: ObservableObject {
                   let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                     kCGImageSourceCreateThumbnailFromImageAlways: true,
                     kCGImageSourceCreateThumbnailWithTransform: true,
-                    kCGImageSourceThumbnailMaxPixelSize: 720
+                    kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
                   ] as CFDictionary)
             else { return nil }
             return AIWorkspaceImageBox(UIImage(cgImage: cgImage))

@@ -216,7 +216,8 @@ void registerMobilePhotoTools(MaiToolRegistry& tools,
         R"({"type":"object","properties":{}})", dispatcher, false));
     tools.add(std::make_unique<MaiMobileHostTool>(
         "mobile_read_photo",
-        "Copy one photo by ID into the Agent working directory so view_image can inspect it. "
+        "Copy one photo preview by ID into the Agent working directory. Use "
+        "mobile_preview_image to show it to the user, or view_image with a vision-capable model. "
         "Only images authorized by the OS photo-library permission can be read.",
         R"({"type":"object","properties":{"id":{"type":"string"}},"required":["id"]})",
         dispatcher, false));
@@ -239,10 +240,32 @@ void registerMobilePhotoTools(MaiToolRegistry& tools,
         "Create a NEW image in the Agent working directory using an on-device edit; the source "
         "is unchanged. Apply one operation per call: crop (top-left x,y,width,height), rotate "
         "(degrees 90/180/270 clockwise), resize (width,height), flip_horizontal, flip_vertical, "
-        "grayscale, adjust (brightness -1..1, contrast 0..2, saturation 0..2), or beautify "
-        "(strength 0..1, mild whole-image smoothing and brightening, not face-aware). Call view_image "
-        "on the returned path, then mobile_save_image to add the result to the system gallery.",
-        R"({"type":"object","properties":{"path":{"type":"string"},"operation":{"type":"string","enum":["crop","rotate","resize","flip_horizontal","flip_vertical","grayscale","adjust","beautify"]},"x":{"type":"integer"},"y":{"type":"integer"},"width":{"type":"integer"},"height":{"type":"integer"},"degrees":{"type":"integer"},"brightness":{"type":"number"},"contrast":{"type":"number"},"saturation":{"type":"number"},"strength":{"type":"number"}},"required":["path","operation"]})",
+        "grayscale, sharpen (amount 0..2), adjust (brightness -1..1, contrast 0..2, "
+        "saturation 0..2), or beautify "
+        "(strength 0..1, mild whole-image smoothing and brightening, not face-aware). Call "
+        "mobile_preview_image on the returned path, then mobile_save_image to add the result "
+        "to the system gallery if requested.",
+        R"({"type":"object","properties":{"path":{"type":"string"},"operation":{"type":"string","enum":["crop","rotate","resize","flip_horizontal","flip_vertical","grayscale","sharpen","adjust","beautify"]},"x":{"type":"integer"},"y":{"type":"integer"},"width":{"type":"integer"},"height":{"type":"integer"},"degrees":{"type":"integer"},"brightness":{"type":"number"},"contrast":{"type":"number"},"saturation":{"type":"number"},"strength":{"type":"number"},"amount":{"type":"number"}},"required":["path","operation"]})",
+        dispatcher, false));
+    tools.add(std::make_unique<MaiMobileHostTool>(
+        "mobile_beautify_image",
+        "Make a NEW portrait-friendly image using mild whole-image smoothing, brightening, and "
+        "slightly richer colors. This is not face-aware skin retouching. Strength is 0..1. "
+        "The source remains unchanged; preview the returned path before saving it.",
+        R"({"type":"object","properties":{"path":{"type":"string"},"strength":{"type":"number","minimum":0,"maximum":1}},"required":["path"]})",
+        dispatcher, false));
+    tools.add(std::make_unique<MaiMobileHostTool>(
+        "mobile_image_info",
+        "Read dimensions, format, and byte size of an image inside the Agent working directory. "
+        "Use this before crop or resize when exact source dimensions are needed.",
+        R"({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]})",
+        dispatcher, false));
+    tools.add(std::make_unique<MaiMobileHostTool>(
+        "mobile_preview_image",
+        "Show an image from the Agent working directory to the user in a full-screen mobile "
+        "preview. This does not require a vision-capable model and does not save or modify it. "
+        "Use after mobile_read_photo or mobile_transform_image so the user can inspect it.",
+        R"({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]})",
         dispatcher, false));
 #if defined(__APPLE__)
     tools.add(std::make_unique<MaiMobileHostTool>(

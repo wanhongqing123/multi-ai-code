@@ -56,6 +56,10 @@ struct AIImportedFile: Sendable, Equatable {
     let mimeType: String
     let isImage: Bool
 }
+struct AIImagePreview: Identifiable, Equatable {
+    let id = UUID()
+    let filePath: String
+}
 struct AIAssistantOpenResult: Sendable {
     let settings: AIModelSettings
     let workspacePath: String
@@ -105,6 +109,12 @@ final class AIMobileHostToolProvider {
         case "mobile_export_photo_original": return await exportPhotoOriginal(arguments)
         case "mobile_save_image": return await saveImage(arguments)
         case "mobile_transform_image": return await transformImage(arguments)
+        case "mobile_beautify_image":
+            var edit = arguments
+            edit["operation"] = "beautify"
+            return await transformImage(edit)
+        case "mobile_image_info": return imageInfo(arguments)
+        case "mobile_preview_image": return previewImage(arguments)
         case "mobile_photos_add_to_album": return await addPhotosToAlbum(arguments)
         default: break
         }
@@ -366,6 +376,54 @@ final class AIMobileHostToolProvider {
         (arguments[key] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 
+    private func workspaceImageMetadata(_ arguments: [String: Any]) throws
+        -> (url: URL, metadata: [String: Any]) {
+        let path = Self.string(arguments, key: "path")
+        let workspacePath = AIAssistantModel.shared.workspacePath
+        guard !path.isEmpty, !workspacePath.isEmpty else {
+            throw AIBackendError(message: "需要 Agent 工作区内的图片路径")
+        }
+        let workspace = URL(fileURLWithPath: workspacePath, isDirectory: true)
+            .resolvingSymlinksInPath().standardizedFileURL
+        let url = workspace.appendingPathComponent(path)
+            .resolvingSymlinksInPath().standardizedFileURL
+        guard url.path.hasPrefix(workspace.path + "/") else {
+            throw AIBackendError(message: "图片必须位于 Agent 工作区内")
+        }
+        let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+        guard values.isRegularFile == true, let bytes = values.fileSize,
+              bytes > 0, bytes <= 50 * 1024 * 1024,
+              let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              CGImageSourceGetCount(source) > 0,
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any],
+              let width = properties[kCGImagePropertyPixelWidth as String] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight as String] as? Int,
+              width > 0, height > 0 else {
+            throw AIBackendError(message: "需要不超过 50 MB 的有效图片")
+        }
+        let mimeType = CGImageSourceGetType(source)
+            .flatMap { UTType($0 as String)?.preferredMIMEType } ?? "image/jpeg"
+        return (url, [
+            "path": path, "mime_type": mimeType, "bytes": bytes,
+            "width": width, "height": height,
+        ])
+    }
+
+    private func imageInfo(_ arguments: [String: Any]) -> AIMaiChatHostToolExecution {
+        do { return Self.jsonSuccess(try workspaceImageMetadata(arguments).metadata) }
+        catch { return .failure(code: "invalid_input", message: error.localizedDescription) }
+    }
+
+    private func previewImage(_ arguments: [String: Any]) -> AIMaiChatHostToolExecution {
+        do {
+            let image = try workspaceImageMetadata(arguments)
+            AIAssistantModel.shared.previewImage = AIImagePreview(filePath: image.url.path)
+            return Self.jsonSuccess(["opened": true, "path": image.metadata["path"] ?? ""])
+        } catch {
+            return .failure(code: "invalid_input", message: error.localizedDescription)
+        }
+    }
+
     private static func hasContact(_ appState: RemoteIMAppState, peerID: String) -> Bool {
         !peerID.isEmpty && appState.chatState.contacts.contains(where: { $0.userID == peerID })
     }
@@ -498,7 +556,7 @@ final class AIMobileHostToolProvider {
             }
             return Self.jsonSuccess([
                 "id": id, "path": imported.relativePath, "mime_type": imported.mimeType,
-                "next_tool": "view_image",
+                "next_tool": "mobile_preview_image", "vision_tool": "view_image",
             ])
         } catch {
             return .failure(code: "internal", message: error.localizedDescription)
@@ -668,7 +726,7 @@ final class AIMobileHostToolProvider {
             }.value
             return Self.jsonSuccess([
                 "path": name, "mime_type": "image/png", "width": dimensions.0,
-                "height": dimensions.1, "next_tool": "view_image",
+                "height": dimensions.1, "next_tool": "mobile_preview_image",
             ])
         } catch {
             return .failure(code: "internal", message: error.localizedDescription)
@@ -1066,6 +1124,7 @@ final class AIAssistantModel: ObservableObject {
     @Published var showSettings = false
     @Published var scrollRequest = 0
     @Published private(set) var workspacePath = ""
+    @Published var previewImage: AIImagePreview?
     var drafts: [String: String] = [:]
     private var pendingAttachments: [String: [AIImportedFile]] = [:]
     private let backend = AIAssistantBackend()

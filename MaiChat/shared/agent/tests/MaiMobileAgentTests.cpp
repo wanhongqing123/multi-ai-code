@@ -92,6 +92,10 @@ int main() {
                                        R"({"operation":"adjust","brightness":0.1,"contrast":1.1,"saturation":1.2})");
     CHECK(adjusted.error == nullptr && adjusted.width == 2 && adjusted.height == 1);
     maiImageFilterFree(adjusted.rgba);
+    auto sharpened = maiImageFilterRgba(pixels, 2, 1, 8,
+                                        R"({"operation":"sharpen","amount":1})");
+    CHECK(sharpened.error == nullptr && sharpened.width == 2 && sharpened.height == 1);
+    maiImageFilterFree(sharpened.rgba);
     auto beautified = maiImageFilterRgba(pixels, 2, 1, 8,
                                          R"({"operation":"beautify","strength":0.5})");
     CHECK(beautified.error == nullptr && beautified.width == 2 && beautified.height == 1);
@@ -127,6 +131,7 @@ int main() {
              hasMobilePhotos = false, hasMobileAlbums = false,
              hasMobilePhotoRead = false, hasMobilePhotoOriginal = false,
              hasMobilePhotoSave = false, hasMobileTransform = false,
+             hasMobileBeautify = false, hasMobileImageInfo = false, hasMobilePreview = false,
              hasMobilePhotoAlbumWrite = false;
         for (const auto& tool : body["tools"]) {
             CHECK(tool["function"]["name"] != "shell");
@@ -144,6 +149,10 @@ int main() {
             if (tool["function"]["name"] == "mobile_save_image") hasMobilePhotoSave = true;
             if (tool["function"]["name"] == "mobile_transform_image")
                 hasMobileTransform = true;
+            if (tool["function"]["name"] == "mobile_beautify_image")
+                hasMobileBeautify = true;
+            if (tool["function"]["name"] == "mobile_image_info") hasMobileImageInfo = true;
+            if (tool["function"]["name"] == "mobile_preview_image") hasMobilePreview = true;
             if (kPhotoAlbumTool != nullptr && tool["function"]["name"] == kPhotoAlbumTool)
                 hasMobilePhotoAlbumWrite = true;
         }
@@ -158,6 +167,9 @@ int main() {
         CHECK(hasMobilePhotoOriginal);
         CHECK(hasMobilePhotoSave);
         CHECK(hasMobileTransform);
+        CHECK(hasMobileBeautify);
+        CHECK(hasMobileImageInfo);
+        CHECK(hasMobilePreview);
         if (kPhotoAlbumTool != nullptr) CHECK(hasMobilePhotoAlbumWrite);
         const auto& last = body["messages"].back();
         std::string input;
@@ -224,6 +236,15 @@ int main() {
                 {"index", 0}, {"id", "call_photo_transform"}, {"type", "function"},
                 {"function", {{"name", "mobile_transform_image"},
                               {"arguments", "{\"path\":\"photo.jpg\",\"operation\":\"beautify\"}"}}}};
+            response.set_content(frame({{"tool_calls", Json::array({invocation})}}, "tool_calls") +
+                                     "data: [DONE]\n\n", "text/event-stream");
+            return;
+        }
+        if (input == "photo-preview") {
+            Json invocation = {
+                {"index", 0}, {"id", "call_photo_preview"}, {"type", "function"},
+                {"function", {{"name", "mobile_preview_image"},
+                              {"arguments", "{\"path\":\"created.png\"}"}}}};
             response.set_content(frame({{"tool_calls", Json::array({invocation})}}, "tool_calls") +
                                      "data: [DONE]\n\n", "text/event-stream");
             return;
@@ -325,6 +346,11 @@ int main() {
         CHECK(hostProbe.calls == (kPhotoAlbumTool == nullptr ? 3 : 4));
         CHECK(hostProbe.lastTool == "mobile_transform_image");
         CHECK(Json::parse(hostProbe.lastArguments)["operation"] == "beautify");
+        CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "photo-preview"}})["ok"] == true);
+        const auto photoPreviewed = wait([](const Json& s) { return s["busy"] == false; });
+        CHECK(photoPreviewed["permissions"].empty());
+        CHECK(hostProbe.calls == 5);
+        CHECK(hostProbe.lastTool == "mobile_preview_image");
         CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "hello"}})["ok"] == true);
         CHECK(call(agent, config)["ok"] == false);  // 工作中不能销毁并换配置。
         auto partial = wait([](const Json& s) {

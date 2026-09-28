@@ -1748,6 +1748,11 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             case "mobile_export_photo_original": return agentExportPhotoOriginal(arguments);
             case "mobile_save_image": return agentSaveImage(arguments);
             case "mobile_transform_image": return agentTransformImage(arguments);
+            case "mobile_beautify_image":
+                arguments.put("operation", "beautify");
+                return agentTransformImage(arguments);
+            case "mobile_image_info": return agentImageInfo(arguments);
+            case "mobile_preview_image": return agentPreviewImage(arguments);
             case "mobile_photos_copy_to_album": return agentCopyPhotosToAlbum(arguments);
             default: break;
         }
@@ -1882,7 +1887,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         AIAssistantController.ImportedFile file =
             AIAssistantController.shared(this).importPhotoForHost(uri);
         return new JSONObject().put("id", rawId).put("path", file.relativePath)
-            .put("mime_type", file.mimeType).put("next_tool", "view_image");
+            .put("mime_type", file.mimeType).put("next_tool", "mobile_preview_image")
+            .put("vision_tool", "view_image");
     }
 
     private JSONObject agentExportPhotoOriginal(JSONObject arguments) throws Exception {
@@ -1953,8 +1959,40 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private JSONObject agentTransformImage(JSONObject arguments) throws Exception {
         AIAssistantController.ImportedFile file = AIAssistantController.shared(this)
             .transformImageForHost(arguments);
+        File result = AIAssistantController.shared(this).workspaceImageForHost(file.relativePath);
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeFile(result.getPath(), bounds);
         return new JSONObject().put("path", file.relativePath)
-            .put("mime_type", file.mimeType).put("next_tool", "view_image");
+            .put("mime_type", file.mimeType).put("width", bounds.outWidth)
+            .put("height", bounds.outHeight).put("next_tool", "mobile_preview_image");
+    }
+
+    private JSONObject agentImageInfo(JSONObject arguments) throws Exception {
+        File source = AIAssistantController.shared(this)
+            .workspaceImageForHost(arguments.optString("path", ""));
+        if (source.length() < 1 || source.length() > 50L * 1024 * 1024)
+            throw new IllegalArgumentException("图片大小必须在 50 MB 以内");
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeFile(source.getPath(), bounds);
+        if (bounds.outWidth < 1 || bounds.outHeight < 1 || bounds.outMimeType == null)
+            throw new IllegalArgumentException("图片格式无法读取");
+        return new JSONObject().put("path", arguments.optString("path"))
+            .put("mime_type", bounds.outMimeType).put("bytes", source.length())
+            .put("width", bounds.outWidth).put("height", bounds.outHeight);
+    }
+
+    private JSONObject agentPreviewImage(JSONObject arguments) throws Exception {
+        JSONObject info = agentImageInfo(arguments);
+        if (destroyed || !activityInForeground)
+            throw new IllegalStateException("请打开 MaiChat 后再预览图片");
+        File source = AIAssistantController.shared(this)
+            .workspaceImageForHost(arguments.optString("path", ""));
+        runOnUiThread(() -> {
+            if (!destroyed && activityInForeground) showFullScreenImage(source.getPath());
+        });
+        return new JSONObject().put("opened", true).put("path", info.getString("path"));
     }
 
     private JSONObject agentCopyPhotosToAlbum(JSONObject arguments) throws Exception {

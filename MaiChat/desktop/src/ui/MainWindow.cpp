@@ -135,11 +135,12 @@
 namespace {
 
 constexpr int UserIdRole = Qt::UserRole;
-constexpr char kWindowChromeBackground[] = "#f3f3f3";
+constexpr char kActiveWindowChromeBackground[] = "#eef4f9";
+constexpr char kInactiveWindowChromeBackground[] = "#f3f3f3";
 
-void setSolidWindowBackground(QWidget* widget) {
+void setSolidWindowBackground(QWidget* widget, const char* color) {
     QPalette palette = widget->palette();
-    palette.setColor(QPalette::Window, QColor(QString::fromLatin1(kWindowChromeBackground)));
+    palette.setColor(QPalette::Window, QColor(QString::fromLatin1(color)));
     widget->setPalette(palette);
     widget->setAutoFillBackground(true);
 }
@@ -1399,6 +1400,7 @@ MainWindow::MainWindow(RemoteIMApplication& app, QWidget* parent)
     : QMainWindow(parent),
       app_(app),
       notificationTracker_(QDateTime::currentMSecsSinceEpoch()) {
+    Q_INIT_RESOURCE(resources);
     // 缩放只作用于主界面：登录窗（先于此构造）保持设计尺寸，
     // 进入主界面时才把全局字体切到基准 13px × 倍率。
     QFont scaledFont = QApplication::font();
@@ -1453,6 +1455,31 @@ MainWindow::MainWindow(RemoteIMApplication& app, QWidget* parent)
     // 重要的是通知在第一条实时消息到达之前就已经接好线。
     setUpMessageNotifications();
     refresh();
+}
+
+bool MainWindow::event(QEvent* event) {
+    const bool handled = QMainWindow::event(event);
+#ifdef Q_OS_WIN
+    if (event->type() == QEvent::WindowActivate) {
+        updateWindowChromeBackground(true);
+    } else if (event->type() == QEvent::WindowDeactivate) {
+        updateWindowChromeBackground(false);
+    }
+#endif
+    return handled;
+}
+
+void MainWindow::updateWindowChromeBackground(bool active) {
+#ifdef Q_OS_WIN
+    const char* color = active ? kActiveWindowChromeBackground
+                               : kInactiveWindowChromeBackground;
+    if (auto* inset = findChild<QWidget*>(QStringLiteral("windowTopInset"))) {
+        setSolidWindowBackground(inset, color);
+    }
+    if (navRail_ != nullptr) setSolidWindowBackground(navRail_, color);
+#else
+    Q_UNUSED(active);
+#endif
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
@@ -1564,7 +1591,7 @@ void MainWindow::buildUi() {
     auto* windowTopInset = new QWidget(root);
     windowTopInset->setObjectName(QStringLiteral("windowTopInset"));
     windowTopInset->setFixedHeight(UiZoom::s(16));
-    setSolidWindowBackground(windowTopInset);
+    setSolidWindowBackground(windowTopInset, kInactiveWindowChromeBackground);
     rootColumn->addWidget(windowTopInset);
 #endif
 
@@ -1609,7 +1636,7 @@ void MainWindow::buildUi() {
 
     navRail_ = new QWidget(rootNavigationSplitter);
     navRail_->setObjectName(QStringLiteral("navRail"));
-    setSolidWindowBackground(navRail_);
+    setSolidWindowBackground(navRail_, kInactiveWindowChromeBackground);
     // 纯图标之后不需要那么宽：按「图标 + 两侧留白」定宽，不再让它可拉伸。
     navRail_->setFixedWidth(UiZoom::s(64));
     auto* navLayout = new QVBoxLayout(navRail_);

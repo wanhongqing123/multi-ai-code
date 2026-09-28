@@ -1068,6 +1068,18 @@ void MainWindowLayoutTest::mainWindowUsesRoomierIconFreeTitleArea() {
     QCOMPARE(navRail->palette().color(QPalette::Window),
              inset->palette().color(QPalette::Window));
 
+    QEvent activateEvent(QEvent::WindowActivate);
+    QApplication::sendEvent(&window, &activateEvent);
+    QCOMPARE(inset->palette().color(QPalette::Window), QColor(QStringLiteral("#eef4f9")));
+    QCOMPARE(navRail->palette().color(QPalette::Window),
+             inset->palette().color(QPalette::Window));
+
+    QEvent deactivateEvent(QEvent::WindowDeactivate);
+    QApplication::sendEvent(&window, &deactivateEvent);
+    QCOMPARE(inset->palette().color(QPalette::Window), QColor(QStringLiteral("#f3f3f3")));
+    QCOMPARE(navRail->palette().color(QPalette::Window),
+             inset->palette().color(QPalette::Window));
+
     window.show();
     QVERIFY(QTest::qWaitForWindowExposed(&window));
     const HWND handle = reinterpret_cast<HWND>(window.winId());

@@ -60,12 +60,14 @@ public:
                                      QString* errorMessage = nullptr);
 
 protected:
+    bool event(QEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void showEvent(QShowEvent* event) override;
 
 private:
+    void updateWindowChromeBackground(bool active);
     void buildUi();
     void applyStyle();
     void bindSignals();

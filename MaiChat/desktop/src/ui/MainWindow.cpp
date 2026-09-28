@@ -446,6 +446,7 @@ QSet<QString>& failedAvatarUrls() {
 void requestAvatarPixmap(const QString& avatarUrl, QWidget* repaintTarget) {
     const QString url = avatarUrl.trimmed();
     if (url.isEmpty() || avatarPixmapCache().contains(url) || failedAvatarUrls().contains(url)) return;
+    if (!repaintTarget || !repaintTarget->property("avatarRequestsEnabled").toBool()) return;
 
     if (repaintTarget) {
         QList<QPointer<QWidget>>& waiters = avatarRepaintWaiters()[url];
@@ -465,7 +466,12 @@ void requestAvatarPixmap(const QString& avatarUrl, QWidget* repaintTarget) {
     QNetworkReply* reply = network->get(request);
     QObject::connect(reply, &QNetworkReply::finished, qApp, [reply, url] {
         QPixmap source;
-        if (reply->error() == QNetworkReply::NoError) source.loadFromData(reply->readAll());
+        if (reply->error() == QNetworkReply::NoError) {
+            const QByteArray data = reply->readAll();
+            if (data.size() <= 4 * 1024 * 1024) source.loadFromData(data);
+            if (!source.isNull() && (source.width() > 320 || source.height() > 320))
+                source = source.scaled(320, 320, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        }
         reply->deleteLater();
 
         pendingAvatarUrls().remove(url);
@@ -2552,8 +2558,10 @@ void MainWindow::applyStyle() {
 
 void MainWindow::bindSignals() {
     connect(&app_, &RemoteIMApplication::selfProfileChanged, this, [this] {
-        if (auto* logo = findChild<QLabel*>(QStringLiteral("navLogo")))
+        if (auto* logo = findChild<QLabel*>(QStringLiteral("navLogo"))) {
             static_cast<AccountAvatarLabel*>(logo)->setProfile(app_.selfProfile());
+            requestAvatarPixmap(app_.selfProfile().avatarUrl, logo);
+        }
     });
     // 整体缩放（飞书式）：Ctrl+= / Ctrl++（小键盘）放大，Ctrl+- 缩小，Ctrl+0 复位。
     connect(new QShortcut(QKeySequence(Qt::CTRL + Qt::Key_Equal), this), &QShortcut::activated,
@@ -2570,7 +2578,24 @@ void MainWindow::bindSignals() {
         refreshSelectedConversation();
     });
     connect(&app_, &RemoteIMApplication::connectionChanged, this, [this](bool connected) {
-        Q_UNUSED(connected);
+        auto* logo = findChild<QLabel*>(QStringLiteral("navLogo"));
+        if (logo) logo->setProperty("avatarRequestsEnabled", connected);
+        if (conversationList_) {
+            conversationList_->setProperty("avatarRequestsEnabled", connected);
+            conversationList_->viewport()->setProperty("avatarRequestsEnabled", connected);
+        }
+        if (contactsList_) {
+            contactsList_->setProperty("avatarRequestsEnabled", connected);
+            contactsList_->viewport()->setProperty("avatarRequestsEnabled", connected);
+        }
+        if (connected) {
+            failedAvatarUrls().clear();
+            requestAvatarPixmap(app_.selfProfile().avatarUrl, logo);
+            for (const RemoteIMContact& contact : app_.chatState().contacts()) {
+                requestAvatarPixmap(contact.avatarUrl, conversationList_);
+                requestAvatarPixmap(contact.avatarUrl, contactsList_);
+            }
+        }
         updateConnectionIndicator();
         refreshSettings();
     });

@@ -382,6 +382,7 @@ struct RemoteIMContactAvatar: View {
 }
 
 private struct RemoteIMUserAvatar: View {
+    @ObservedObject private var avatarImages = RemoteIMAvatarImageStore.shared
     let profile: RemoteIMUserProfile
     let outgoing: Bool
     let size: CGFloat
@@ -424,19 +425,9 @@ private struct RemoteIMUserAvatar: View {
     @ViewBuilder
     private var avatarContent: some View {
         if let avatarURL = profile.avatarURL,
-           let url = URL(string: avatarURL),
-           !avatarURL.isEmpty
+           let image = avatarImages.image(for: avatarURL)
         {
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case let .success(image):
-                    image
-                        .resizable()
-                        .scaledToFill()
-                default:
-                    monogram
-                }
-            }
+            Image(uiImage: image).resizable().scaledToFill()
         } else {
             monogram
         }
@@ -466,6 +457,73 @@ private struct RemoteIMUserAvatar: View {
         let avatar = UIImage(cgImage: cropped)
         avatarCache.setObject(avatar, forKey: key)
         return avatar
+    }
+}
+
+@MainActor
+final class RemoteIMAvatarImageStore: ObservableObject {
+    static let shared = RemoteIMAvatarImageStore()
+
+    @Published private(set) var revision = 0
+    private let images = NSCache<NSString, UIImage>()
+    private var loading = Set<String>()
+    private var failed = Set<String>()
+
+    private init() {
+        images.totalCostLimit = 48 * 1024 * 1024
+    }
+
+    func image(for rawURL: String) -> UIImage? {
+        images.object(forKey: rawURL.trimmingCharacters(in: .whitespacesAndNewlines) as NSString)
+    }
+
+    func beginConnection() {
+        failed.removeAll()
+    }
+
+    func prefetch(_ urls: [String]) {
+        for rawURL in Set(urls) {
+            let value = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let url = URL(string: value),
+                  ["https", "http"].contains(url.scheme?.lowercased() ?? ""),
+                  images.object(forKey: value as NSString) == nil,
+                  !loading.contains(value), !failed.contains(value) else { continue }
+            loading.insert(value)
+            Task {
+                defer { loading.remove(value) }
+                do {
+                    let (data, response) = try await URLSession.shared.data(from: url)
+                    guard let response = response as? HTTPURLResponse,
+                          (200..<300).contains(response.statusCode),
+                          data.count <= 4 * 1024 * 1024,
+                          let image = Self.thumbnail(from: data) else {
+                        failed.insert(value)
+                        return
+                    }
+                    images.setObject(image, forKey: value as NSString, cost: 320 * 320 * 4)
+                    revision &+= 1
+                } catch {
+                    failed.insert(value)
+                }
+            }
+        }
+    }
+
+    func store(_ data: Data, for url: String) {
+        guard let image = Self.thumbnail(from: data) else { return }
+        images.setObject(image, forKey: url as NSString, cost: 320 * 320 * 4)
+        failed.remove(url)
+        revision &+= 1
+    }
+
+    private static func thumbnail(from data: Data) -> UIImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: 320,
+              ] as CFDictionary) else { return nil }
+        return UIImage(cgImage: image)
     }
 }
 

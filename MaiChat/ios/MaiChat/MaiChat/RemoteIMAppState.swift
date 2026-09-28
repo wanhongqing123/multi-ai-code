@@ -83,6 +83,8 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     private var videoMetadataChecks: [String: UInt64] = [:]
     private var videoMetadataSequence: UInt64 = 0
     private var profileRefreshUserIDsInFlight = Set<String>()
+    private var profileFetchedForConnection = Set<String>()
+    private var profileFetchGeneration = 0
     private var activityExpiryTasks: [String: Task<Void, Never>] = [:]
     private var outgoingTypingTasks: [String: Task<Void, Never>] = [:]
     private var outgoingTypingIDs: [String: String] = [:]
@@ -267,6 +269,9 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         do {
             let url = try await client.uploadAvatar(fileURL: fileURL)
             guard remoteDiagnosticsIdentity == identity else { return false }
+            if let data = try? Data(contentsOf: fileURL) {
+                RemoteIMAvatarImageStore.shared.store(data, for: url)
+            }
             return await setSelfAvatar(url: url)
         } catch {
             guard remoteDiagnosticsIdentity == identity else { return false }
@@ -411,6 +416,10 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 userSig: userSig
             )
             connectionState = .connected
+            profileFetchGeneration += 1
+            profileRefreshUserIDsInFlight.removeAll()
+            profileFetchedForConnection.removeAll()
+            RemoteIMAvatarImageStore.shared.beginConnection()
             persistReconnectOnLaunchIntent(
                 RemoteIMConnectionIntentPolicy.afterUserRequestedConnection()
             )
@@ -424,6 +433,10 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 userID: cleanMasterUserID
             )
             await refreshProfilesForCurrentUsers()
+            RemoteIMAvatarImageStore.shared.prefetch(
+                userProfileByUserID.values.compactMap(\.avatarURL)
+                    + chatState.contacts.compactMap(\.avatarURL)
+            )
             await refreshPresenceForCurrentContacts()
             errorMessage = nil
         } catch {
@@ -2329,18 +2342,26 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
 
     private func refreshProfiles(userIDs: [String]) async {
         guard connectionState == .connected else { return }
+        let generation = profileFetchGeneration
         let requestedUserIDs = Set(userIDs.lazy.map {
             $0.trimmingCharacters(in: .whitespacesAndNewlines)
         }.filter { !$0.isEmpty })
         let pendingUserIDs = requestedUserIDs.subtracting(profileRefreshUserIDsInFlight)
+            .subtracting(profileFetchedForConnection)
         guard !pendingUserIDs.isEmpty else { return }
         profileRefreshUserIDsInFlight.formUnion(pendingUserIDs)
-        defer { profileRefreshUserIDsInFlight.subtract(pendingUserIDs) }
+        profileFetchedForConnection.formUnion(pendingUserIDs)
+        defer {
+            if generation == profileFetchGeneration {
+                profileRefreshUserIDsInFlight.subtract(pendingUserIDs)
+            }
+        }
 
         let pendingUserIDList = pendingUserIDs.sorted()
         let startedAt = ProcessInfo.processInfo.systemUptime
         do {
             let profiles = try await client.refreshUserProfiles(userIDs: pendingUserIDList)
+            guard generation == profileFetchGeneration, connectionState == .connected else { return }
             var nextProfiles = userProfileByUserID
             var nextChatState = chatState
             for profile in profiles {
@@ -2357,6 +2378,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             if nextProfiles != userProfileByUserID {
                 userProfileByUserID = nextProfiles
             }
+            RemoteIMAvatarImageStore.shared.prefetch(profiles.compactMap(\.avatarURL))
             if nextChatState != chatState {
                 chatState = nextChatState
             }

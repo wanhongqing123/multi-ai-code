@@ -3469,7 +3469,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
         ));
-        if (!contact.avatarUrl().isEmpty()) {
+        if (!contact.avatarUrl().isEmpty()
+                && session.connectionState() == TencentIMClient.ConnectionState.CONNECTED) {
             ImageView image = new ImageView(this);
             image.setScaleType(ImageView.ScaleType.CENTER_CROP);
             image.setBackground(MaiChatTheme.rounded(Color.TRANSPARENT, 10, this));

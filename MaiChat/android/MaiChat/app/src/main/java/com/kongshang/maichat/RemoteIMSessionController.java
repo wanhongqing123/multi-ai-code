@@ -1291,7 +1291,12 @@ public final class RemoteIMSessionController {
                 }
                 connectionState = state;
                 connectionDetail = detail;
-                if (state == TencentIMClient.ConnectionState.CONNECTED) refreshContactMetadata();
+                if (state == TencentIMClient.ConnectionState.CONNECTED) {
+                    AvatarImageLoader.beginConnection();
+                    for (RemoteIMContact contact : chatState.contacts())
+                        AvatarImageLoader.prefetch(contact.avatarUrl());
+                    refreshContactMetadata();
+                }
                 notifyStateChanged();
             });
         }
@@ -1337,6 +1342,8 @@ public final class RemoteIMSessionController {
                 for (RemoteIMContact contact : contacts) {
                     chatState.upsertContact(contact);
                     persistContact(contact);
+                    if (connectionState == TencentIMClient.ConnectionState.CONNECTED)
+                        AvatarImageLoader.prefetch(contact.avatarUrl());
                 }
                 notifyStateChanged();
             });

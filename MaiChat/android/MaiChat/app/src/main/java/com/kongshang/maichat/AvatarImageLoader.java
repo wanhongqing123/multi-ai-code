@@ -11,14 +11,16 @@ import java.lang.ref.WeakReference;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class AvatarImageLoader {
-    private static final int MAX_CACHE_BYTES = 8 * 1024 * 1024;
+    private static final int MAX_CACHE_BYTES = 24 * 1024 * 1024;
     private static final int MAX_DOWNLOAD_BYTES = 4 * 1024 * 1024;
     private static final int TARGET_PIXEL_SIZE = 160;
     private static final LruCache<String, Bitmap> CACHE = new LruCache<String, Bitmap>(
@@ -32,6 +34,7 @@ public final class AvatarImageLoader {
     private static final ExecutorService EXECUTOR = Executors.newFixedThreadPool(2);
     private static final Map<String, List<WeakReference<ImageView>>> WAITING_TARGETS =
         new HashMap<>();
+    private static final Set<String> FAILED_URLS = new HashSet<>();
 
     private AvatarImageLoader() {
     }
@@ -39,26 +42,33 @@ public final class AvatarImageLoader {
     public static void load(String rawUrl, ImageView target) {
         String value = rawUrl == null ? "" : rawUrl.trim();
         if (!(value.startsWith("https://") || value.startsWith("http://"))) return;
+        if (target != null) target.setTag(value);
         Bitmap cached;
         synchronized (CACHE) {
             cached = CACHE.get(value);
         }
         if (cached != null) {
-            target.setImageBitmap(cached);
+            if (target != null) target.setImageBitmap(cached);
             return;
         }
-        target.setTag(value);
         synchronized (WAITING_TARGETS) {
+            if (FAILED_URLS.contains(value)) return;
             List<WeakReference<ImageView>> targets = WAITING_TARGETS.get(value);
             if (targets != null) {
-                targets.add(new WeakReference<>(target));
+                if (target != null) targets.add(new WeakReference<>(target));
                 return;
             }
             targets = new ArrayList<>();
-            targets.add(new WeakReference<>(target));
+            if (target != null) targets.add(new WeakReference<>(target));
             WAITING_TARGETS.put(value, targets);
         }
         EXECUTOR.execute(() -> finish(value, download(value)));
+    }
+
+    public static void prefetch(String url) { load(url, null); }
+
+    public static void beginConnection() {
+        synchronized (WAITING_TARGETS) { FAILED_URLS.clear(); }
     }
 
     private static void finish(String value, Bitmap bitmap) {
@@ -70,6 +80,7 @@ public final class AvatarImageLoader {
         List<WeakReference<ImageView>> targets;
         synchronized (WAITING_TARGETS) {
             targets = WAITING_TARGETS.remove(value);
+            if (bitmap == null) FAILED_URLS.add(value);
         }
         if (bitmap == null || targets == null) return;
         for (WeakReference<ImageView> reference : targets) {

@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { Terminal } from '@xterm/xterm'
 import {
   buildMainTerminalOptions,
+  installSteadyCodexCursor,
   shouldConvertEolForCli,
   xtermThemeFor
 } from '../../../src/components/mainTerminalConfig.js'
@@ -72,6 +74,49 @@ describe('xtermThemeFor', () => {
 })
 
 describe('buildMainTerminalOptions', () => {
+  it('keeps Windows Codex cursor requests steady without changing their shape', async () => {
+    mockNavigatorPlatform('Win32')
+    const term = new Terminal(buildMainTerminalOptions('light', 'codex'))
+    const policy = installSteadyCodexCursor(term, () => 'codex')
+
+    await new Promise<void>((resolve) => term.write('\x1b[0 q', resolve))
+    expect(term.options.cursorStyle).toBe('block')
+    expect(term.options.cursorBlink).toBe(false)
+
+    await new Promise<void>((resolve) => term.write('\x1b[5 q', resolve))
+    expect(term.options.cursorStyle).toBe('bar')
+    expect(term.options.cursorBlink).toBe(false)
+    policy?.dispose()
+    term.dispose()
+  })
+
+  it('leaves other CLI cursor requests untouched', async () => {
+    mockNavigatorPlatform('Win32')
+    const term = new Terminal(buildMainTerminalOptions('light', 'claude'))
+    let cli = 'claude'
+    const policy = installSteadyCodexCursor(term, () => cli)
+
+    await new Promise<void>((resolve) => term.write('\x1b[0 q', resolve))
+    expect(term.options.cursorBlink).toBe(true)
+
+    cli = 'codex'
+    await new Promise<void>((resolve) => term.write('\x1b[0 q', resolve))
+    expect(term.options.cursorBlink).toBe(false)
+    policy?.dispose()
+    term.dispose()
+  })
+
+  it('does not override Codex cursor requests outside Windows', async () => {
+    mockNavigatorPlatform('MacIntel')
+    const term = new Terminal(buildMainTerminalOptions('light', 'codex'))
+    const policy = installSteadyCodexCursor(term, () => 'codex')
+
+    expect(policy).toBeNull()
+    await new Promise<void>((resolve) => term.write('\x1b[0 q', resolve))
+    expect(term.options.cursorBlink).toBe(true)
+    term.dispose()
+  })
+
   it('disables smooth scrolling for large-output sessions', () => {
     expect(buildMainTerminalOptions('light')).toMatchObject({
       smoothScrollDuration: 0
@@ -136,6 +181,7 @@ describe('buildMainTerminalOptions', () => {
   })
 
   it('uses a native-terminal-like render profile without extra spacing', () => {
+    mockNavigatorPlatform('MacIntel')
     expect(buildMainTerminalOptions('light')).toMatchObject({
       lineHeight: 1.15,
       letterSpacing: 0,

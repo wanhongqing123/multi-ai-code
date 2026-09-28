@@ -8,6 +8,7 @@ import '@xterm/xterm/css/xterm.css'
 import { getTheme, THEME_CHANGE_EVENT, type Theme } from '../utils/theme.js'
 import {
   buildMainTerminalOptions,
+  installSteadyCodexCursor,
   openTerminalExternalLink,
   shouldUseMainTerminalCanvasRenderer,
   shouldEnableMainTerminalGpuAcceleration,
@@ -69,6 +70,7 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
   useEffect(() => {
     if (!containerRef.current) return
     const term = new Terminal(buildMainTerminalOptions(getTheme(), aiCliRef.current))
+    const cursorPolicy = installSteadyCodexCursor(term, () => aiCliRef.current)
     const onThemeChange = (e: Event) => {
       term.options.theme = xtermThemeFor((e as CustomEvent<Theme>).detail)
     }
@@ -153,6 +155,7 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
       window.removeEventListener(THEME_CHANGE_EVENT, onThemeChange)
       unsubRef.current.forEach((fn) => fn())
       unsubRef.current = []
+      cursorPolicy?.dispose()
       term.dispose()
       termRef.current = null
       fitRef.current = null

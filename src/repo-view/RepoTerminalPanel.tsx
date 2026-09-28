@@ -7,6 +7,7 @@ import '@xterm/xterm/css/xterm.css'
 import { getTheme, THEME_CHANGE_EVENT, type Theme } from '../utils/theme.js'
 import {
   buildMainTerminalOptions,
+  installSteadyCodexCursor,
   openTerminalExternalLink,
   shouldConvertEolForCli,
   shouldUseMainTerminalCanvasRenderer,
@@ -65,6 +66,7 @@ export default function RepoTerminalPanel(
   useEffect(() => {
     if (!containerRef.current) return
     const term = new Terminal(buildMainTerminalOptions(getTheme(), cliLabelRef.current))
+    const cursorPolicy = installSteadyCodexCursor(term, () => cliLabelRef.current)
     const onThemeChange = (e: Event) => {
       term.options.theme = xtermThemeFor((e as CustomEvent<Theme>).detail)
     }
@@ -136,6 +138,7 @@ export default function RepoTerminalPanel(
       window.removeEventListener(THEME_CHANGE_EVENT, onThemeChange)
       unsubRef.current.forEach((fn) => fn())
       unsubRef.current = []
+      cursorPolicy?.dispose()
       term.dispose()
       termRef.current = null
       fitRef.current = null

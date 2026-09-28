@@ -107,6 +107,16 @@ describe('Codex home selection at the native PTY boundary', () => {
     expect(readdirSync(repo)).toEqual([])
   })
 
+  it('does not pass a JediTerm cursor mode into the xterm-hosted Codex process', () => {
+    vi.stubEnv('CODEX_JEDITERM_CURSOR_REPAIR', '1')
+    start('account-a')
+    const codexEnv = nativeSpawn.mock.calls[0][2].env
+    expect(Object.keys(codexEnv).some(key => key.toUpperCase() === 'CODEX_JEDITERM_CURSOR_REPAIR')).toBe(false)
+
+    start('account-a', 'claude')
+    expect(nativeSpawn.mock.calls[1][2].env.CODEX_JEDITERM_CURSOR_REPAIR).toBe('1')
+  })
+
   it('rejects a data root that would use the real host home location before writing', () => {
     const fakeSystemHome = join(root, 'system-user')
     const forbidden = join(fakeSystemHome, '.codex')

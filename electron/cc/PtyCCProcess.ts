@@ -245,6 +245,11 @@ export class PtyCCProcess extends EventEmitter {
         throw new Error('Codex requires a bound account (login required first)')
       }
       env = withCodexHome(env, codexRuntimeDir(), this.opts.cwd)
+      // This PTY is rendered by xterm.js. An inherited JediTerm opt-in would switch Codex
+      // back to hiding and showing its cursor on every streamed frame.
+      for (const key of Object.keys(env)) {
+        if (key.toUpperCase() === 'CODEX_JEDITERM_CURSOR_REPAIR') delete env[key]
+      }
       this.diagnosticState.codexHome = env.CODEX_HOME
       dismissCodexUpgradeNotice(env.CODEX_HOME)
     }

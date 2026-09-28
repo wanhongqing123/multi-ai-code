@@ -1,4 +1,4 @@
-import type { ITerminalOptions } from '@xterm/xterm'
+import type { IDisposable, ITerminalOptions, Terminal } from '@xterm/xterm'
 import type { Theme } from '../utils/theme.js'
 
 const XTERM_DARK_THEME = {
@@ -63,6 +63,24 @@ function isCliExecutable(cli: string | undefined, names: readonly string[]): boo
     `(^|[\\\\/])(${escapedNames.join('|')})(\\.(exe|cmd|bat|ps1))?$`,
     'i'
   ).test(cli.trim())
+}
+
+/** Keep Codex's requested cursor shape without letting DECSCUSR re-enable blinking. */
+export function installSteadyCodexCursor(
+  term: Terminal,
+  getCli: () => string | undefined
+): IDisposable | null {
+  if (!isWindowsPlatform()) return null
+  return term.parser.registerCsiHandler({ intermediates: ' ', final: 'q' }, (params) => {
+    if (!isCliExecutable(getCli(), ['codex'])) return false
+    const param = params[0]
+    if (typeof param !== 'number') return false
+    const style = param <= 2 ? 'block' : param <= 4 ? 'underline' : param <= 6 ? 'bar' : null
+    if (style === null) return false
+    term.options.cursorStyle = style
+    term.options.cursorBlink = false
+    return true
+  })
 }
 
 /**

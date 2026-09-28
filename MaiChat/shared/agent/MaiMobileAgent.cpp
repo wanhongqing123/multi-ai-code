@@ -233,6 +233,16 @@ void registerMobilePhotoTools(MaiToolRegistry& tools,
         "inside the Agent working directory.",
         R"({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]})",
         dispatcher, false));
+    tools.add(std::make_unique<MaiMobileHostTool>(
+        "mobile_transform_image",
+        "Create a NEW image in the Agent working directory using an on-device edit; the source "
+        "is unchanged. Apply one operation per call: crop (top-left x,y,width,height), rotate "
+        "(degrees 90/180/270 clockwise), resize (width,height), flip_horizontal, flip_vertical, "
+        "grayscale, adjust (brightness -1..1, contrast 0..2, saturation 0..2), or beautify "
+        "(strength 0..1, mild whole-image smoothing and brightening, not face-aware). Call view_image "
+        "on the returned path, then mobile_save_image to add the result to the system gallery.",
+        R"({"type":"object","properties":{"path":{"type":"string"},"operation":{"type":"string","enum":["crop","rotate","resize","flip_horizontal","flip_vertical","grayscale","adjust","beautify"]},"x":{"type":"integer"},"y":{"type":"integer"},"width":{"type":"integer"},"height":{"type":"integer"},"degrees":{"type":"integer"},"brightness":{"type":"number"},"contrast":{"type":"number"},"saturation":{"type":"number"},"strength":{"type":"number"}},"required":["path","operation"]})",
+        dispatcher, false));
 #if defined(__APPLE__)
     tools.add(std::make_unique<MaiMobileHostTool>(
         "mobile_photos_add_to_album",

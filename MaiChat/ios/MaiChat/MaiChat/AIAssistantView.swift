@@ -1466,6 +1466,8 @@ private struct AISettingsView: View {
                         SecureField(model.configured ? "留空保留原密钥" : "输入 API Key", text: $apiKey)
                             .textFieldStyle(.plain)
                     }
+                    Text("本地图片处理使用 FFmpeg（LGPLv2.1+）；完整源码随项目放在 MaiAgent/third_party/ffmpeg。")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
                     if !model.error.isEmpty {
                         Text(model.error).foregroundStyle(.red).font(.system(size: 12))
                             .padding(12).frame(maxWidth: .infinity, alignment: .leading)

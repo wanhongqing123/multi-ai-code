@@ -55,6 +55,45 @@ static std::string frame(const Json& delta, const char* finish = nullptr) {
     return "data: " + Json{{"choices", Json::array({choice})}}.dump() + "\n\n";
 }
 int main() {
+    const unsigned char pixels[] = {255, 0, 0, 255, 0, 255, 0, 255};
+    auto flipped = maiImageFilterRgba(pixels, 2, 1, 8,
+                                      R"({"operation":"flip_horizontal"})");
+    CHECK(flipped.error == nullptr);
+    CHECK(flipped.rgba != nullptr && flipped.width == 2 && flipped.height == 1);
+    CHECK(flipped.rgba[0] == 0 && flipped.rgba[1] == 255);
+    CHECK(flipped.rgba[4] == 255 && flipped.rgba[5] == 0);
+    maiImageFilterFree(flipped.rgba);
+    auto cropped = maiImageFilterRgba(pixels, 2, 1, 8,
+                                      R"({"operation":"crop","x":1,"y":0,"width":1,"height":1})");
+    CHECK(cropped.error == nullptr && cropped.width == 1 && cropped.height == 1);
+    CHECK(cropped.rgba[0] == 0 && cropped.rgba[1] == 255);
+    maiImageFilterFree(cropped.rgba);
+    auto rotated = maiImageFilterRgba(pixels, 2, 1, 8,
+                                      R"({"operation":"rotate","degrees":90})");
+    CHECK(rotated.error == nullptr && rotated.width == 1 && rotated.height == 2);
+    maiImageFilterFree(rotated.rgba);
+    auto resized = maiImageFilterRgba(pixels, 2, 1, 8,
+                                      R"({"operation":"resize","width":4,"height":2})");
+    CHECK(resized.error == nullptr && resized.width == 4 && resized.height == 2);
+    maiImageFilterFree(resized.rgba);
+    auto grayscale = maiImageFilterRgba(pixels, 2, 1, 8,
+                                        R"({"operation":"grayscale"})");
+    CHECK(grayscale.error == nullptr && grayscale.width == 2 && grayscale.height == 1);
+    CHECK(std::abs(int(grayscale.rgba[0]) - int(grayscale.rgba[1])) <= 2);
+    maiImageFilterFree(grayscale.rgba);
+    auto adjusted = maiImageFilterRgba(pixels, 2, 1, 8,
+                                       R"({"operation":"adjust","brightness":0.1,"contrast":1.1,"saturation":1.2})");
+    CHECK(adjusted.error == nullptr && adjusted.width == 2 && adjusted.height == 1);
+    maiImageFilterFree(adjusted.rgba);
+    auto beautified = maiImageFilterRgba(pixels, 2, 1, 8,
+                                         R"({"operation":"beautify","strength":0.5})");
+    CHECK(beautified.error == nullptr && beautified.width == 2 && beautified.height == 1);
+    maiImageFilterFree(beautified.rgba);
+    auto invalid = maiImageFilterRgba(pixels, 2, 1, 8,
+                                      R"({"operation":"crop","x":2,"y":0,"width":1,"height":1})");
+    CHECK(invalid.rgba == nullptr && invalid.error != nullptr);
+    maiImageFilterFree(invalid.error);
+
     httplib::Server server;
     server.Post("/chat/completions", [](const httplib::Request& request,
                                         httplib::Response& response) {
@@ -79,7 +118,8 @@ int main() {
         bool hasViewImage = false, hasMaiChatContacts = false, hasMaiChatSend = false,
              hasMaiChatBroadcast = false, hasMobilePhotos = false, hasMobileAlbums = false,
              hasMobilePhotoRead = false, hasMobilePhotoOriginal = false,
-             hasMobilePhotoSave = false, hasMobilePhotoAlbumWrite = false;
+             hasMobilePhotoSave = false, hasMobileTransform = false,
+             hasMobilePhotoAlbumWrite = false;
         for (const auto& tool : body["tools"]) {
             CHECK(tool["function"]["name"] != "shell");
             if (tool["function"]["name"] == "view_image") hasViewImage = true;
@@ -93,6 +133,8 @@ int main() {
             if (tool["function"]["name"] == "mobile_export_photo_original")
                 hasMobilePhotoOriginal = true;
             if (tool["function"]["name"] == "mobile_save_image") hasMobilePhotoSave = true;
+            if (tool["function"]["name"] == "mobile_transform_image")
+                hasMobileTransform = true;
             if (tool["function"]["name"] == "mobile_photos_add_to_album")
                 hasMobilePhotoAlbumWrite = true;
         }
@@ -105,6 +147,7 @@ int main() {
         CHECK(hasMobilePhotoRead);
         CHECK(hasMobilePhotoOriginal);
         CHECK(hasMobilePhotoSave);
+        CHECK(hasMobileTransform);
         CHECK(hasMobilePhotoAlbumWrite);
         const auto& last = body["messages"].back();
         std::string input;
@@ -162,6 +205,15 @@ int main() {
                 {"index", 0}, {"id", "call_photo_save"}, {"type", "function"},
                 {"function", {{"name", "mobile_save_image"},
                               {"arguments", "{\"path\":\"created.png\"}"}}}};
+            response.set_content(frame({{"tool_calls", Json::array({invocation})}}, "tool_calls") +
+                                     "data: [DONE]\n\n", "text/event-stream");
+            return;
+        }
+        if (input == "photo-transform") {
+            Json invocation = {
+                {"index", 0}, {"id", "call_photo_transform"}, {"type", "function"},
+                {"function", {{"name", "mobile_transform_image"},
+                              {"arguments", "{\"path\":\"photo.jpg\",\"operation\":\"beautify\"}"}}}};
             response.set_content(frame({{"tool_calls", Json::array({invocation})}}, "tool_calls") +
                                      "data: [DONE]\n\n", "text/event-stream");
             return;
@@ -255,6 +307,12 @@ int main() {
         CHECK(hostProbe.calls == 3);
         CHECK(hostProbe.lastTool == "mobile_save_image");
         CHECK(Json::parse(hostProbe.lastArguments)["path"] == "created.png");
+        CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "photo-transform"}})["ok"] == true);
+        const auto photoTransformed = wait([](const Json& s) { return s["busy"] == false; });
+        CHECK(photoTransformed["permissions"].empty());
+        CHECK(hostProbe.calls == 4);
+        CHECK(hostProbe.lastTool == "mobile_transform_image");
+        CHECK(Json::parse(hostProbe.lastArguments)["operation"] == "beautify");
         CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "hello"}})["ok"] == true);
         CHECK(call(agent, config)["ok"] == false);  // 工作中不能销毁并换配置。
         auto partial = wait([](const Json& s) {

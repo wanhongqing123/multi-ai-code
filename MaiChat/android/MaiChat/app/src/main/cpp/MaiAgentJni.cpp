@@ -2,6 +2,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <jni.h>
+#include <android/bitmap.h>
 #include <string>
 
 namespace {
@@ -125,4 +126,45 @@ Java_com_kongshang_maichat_AIAssistantController_nativeRequest(JNIEnv* env, jcla
     if (result) env->SetByteArrayRegion(result, 0, count, reinterpret_cast<const jbyte*>(response));
     maiMobileAgentFree(response);
     return result;
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_kongshang_maichat_AIAssistantController_nativeFilterBitmap(
+    JNIEnv* env, jclass, jobject bitmap, jstring operation, jintArray dimensions) {
+    if (bitmap == nullptr || operation == nullptr || dimensions == nullptr ||
+        env->GetArrayLength(dimensions) < 2)
+        return nullptr;
+    AndroidBitmapInfo info = {};
+    if (AndroidBitmap_getInfo(env, bitmap, &info) != ANDROID_BITMAP_RESULT_SUCCESS ||
+        info.format != ANDROID_BITMAP_FORMAT_RGBA_8888 || info.width < 1 || info.height < 1)
+        return nullptr;
+    const char* spec = env->GetStringUTFChars(operation, nullptr);
+    if (spec == nullptr) return nullptr;
+    void* input = nullptr;
+    if (AndroidBitmap_lockPixels(env, bitmap, &input) != ANDROID_BITMAP_RESULT_SUCCESS) {
+        env->ReleaseStringUTFChars(operation, spec);
+        return nullptr;
+    }
+    MaiImageFilterResult result = maiImageFilterRgba(
+        static_cast<const unsigned char*>(input), static_cast<int>(info.width),
+        static_cast<int>(info.height), static_cast<int>(info.stride), spec);
+    AndroidBitmap_unlockPixels(env, bitmap);
+    env->ReleaseStringUTFChars(operation, spec);
+    if (result.error != nullptr) {
+        jclass type = env->FindClass("java/lang/IllegalArgumentException");
+        if (type != nullptr) env->ThrowNew(type, result.error);
+        maiImageFilterFree(result.error);
+        return nullptr;
+    }
+    if (result.rgba == nullptr) return nullptr;
+    const jint outputDimensions[2] = {result.width, result.height};
+    env->SetIntArrayRegion(dimensions, 0, 2, outputDimensions);
+    const jsize outputSize = static_cast<jsize>(
+        static_cast<long long>(result.width) * result.height * 4);
+    jbyteArray output = env->NewByteArray(outputSize);
+    if (output != nullptr)
+        env->SetByteArrayRegion(output, 0, outputSize,
+                                reinterpret_cast<const jbyte*>(result.rgba));
+    maiImageFilterFree(result.rgba);
+    return output;
 }

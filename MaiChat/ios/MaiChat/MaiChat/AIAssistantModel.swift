@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import CoreImage
 import ImageIO
 import MaiChatCore
 import Photos
@@ -95,6 +96,7 @@ final class AIMobileHostToolProvider {
         case "mobile_read_photo": return await readPhoto(arguments)
         case "mobile_export_photo_original": return await exportPhotoOriginal(arguments)
         case "mobile_save_image": return await saveImage(arguments)
+        case "mobile_transform_image": return await transformImage(arguments)
         case "mobile_photos_add_to_album": return await addPhotosToAlbum(arguments)
         default: break
         }
@@ -536,6 +538,92 @@ final class AIMobileHostToolProvider {
                 PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: source)
             }
             return Self.jsonSuccess(["saved": true, "source_path": path])
+        } catch {
+            return .failure(code: "internal", message: error.localizedDescription)
+        }
+    }
+
+    private func transformImage(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
+        let path = Self.string(arguments, key: "path")
+        let workspacePath = AIAssistantModel.shared.workspacePath
+        guard !path.isEmpty, !workspacePath.isEmpty,
+              let operationData = try? JSONSerialization.data(withJSONObject: arguments),
+              let operation = String(data: operationData, encoding: .utf8) else {
+            return .failure(code: "invalid_input", message: "image path and an image operation are required")
+        }
+        let workspace = URL(fileURLWithPath: workspacePath, isDirectory: true)
+            .resolvingSymlinksInPath().standardizedFileURL
+        let source = workspace.appendingPathComponent(path)
+            .resolvingSymlinksInPath().standardizedFileURL
+        guard source.path.hasPrefix(workspace.path + "/") else {
+            return .failure(code: "invalid_input", message: "image must be inside the Agent working directory")
+        }
+        do {
+            let values = try source.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+            guard values.isRegularFile == true, let size = values.fileSize,
+                  size > 0, size <= 50 * 1024 * 1024 else {
+                return .failure(code: "invalid_input", message: "source image must be at most 50 MB")
+            }
+            let name = "edited-\(UUID().uuidString).png"
+            let target = workspace.appendingPathComponent(name)
+            let dimensions = try await Task.detached(priority: .userInitiated) {
+                guard let image = CIImage(contentsOf: source,
+                                          options: [.applyOrientationProperty: true]) else {
+                    throw AIBackendError(message: "无法读取图片")
+                }
+                let extent = image.extent.integral
+                let width = Int(extent.width), height = Int(extent.height)
+                guard width > 0, height > 0, Int64(width) * Int64(height) <= 12_000_000 else {
+                    throw AIBackendError(message: "图片不能超过 1200 万像素")
+                }
+                var pixels = Data(count: width * height * 4)
+                let context = CIContext()
+                pixels.withUnsafeMutableBytes { bytes in
+                    context.render(image, toBitmap: bytes.baseAddress!, rowBytes: width * 4,
+                                   bounds: extent, format: .RGBA8,
+                                   colorSpace: CGColorSpaceCreateDeviceRGB())
+                }
+                let result = pixels.withUnsafeBytes { bytes in
+                    operation.withCString { spec in
+                        maiImageFilterRgba(bytes.bindMemory(to: UInt8.self).baseAddress,
+                                           Int32(width), Int32(height), Int32(width * 4), spec)
+                    }
+                }
+                if let error = result.error {
+                    let message = String(cString: error)
+                    maiImageFilterFree(error)
+                    throw AIBackendError(message: message)
+                }
+                guard let output = result.rgba, result.width > 0, result.height > 0 else {
+                    throw AIBackendError(message: "图片处理没有返回结果")
+                }
+                defer { maiImageFilterFree(output) }
+                let resultWidth = Int(result.width), resultHeight = Int(result.height)
+                let outputData = Data(bytes: output, count: resultWidth * resultHeight * 4)
+                guard let provider = CGDataProvider(data: outputData as CFData),
+                      let image = CGImage(
+                        width: resultWidth, height: resultHeight, bitsPerComponent: 8,
+                        bitsPerPixel: 32, bytesPerRow: resultWidth * 4,
+                        space: CGColorSpaceCreateDeviceRGB(),
+                        bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
+                            .union(.byteOrder32Big),
+                        provider: provider, decode: nil, shouldInterpolate: true,
+                        intent: .defaultIntent),
+                      let destination = CGImageDestinationCreateWithURL(
+                        target as CFURL, UTType.png.identifier as CFString, 1, nil) else {
+                    throw AIBackendError(message: "无法保存处理结果")
+                }
+                CGImageDestinationAddImage(destination, image, nil)
+                guard CGImageDestinationFinalize(destination) else {
+                    try? FileManager.default.removeItem(at: target)
+                    throw AIBackendError(message: "无法写入处理结果")
+                }
+                return (resultWidth, resultHeight)
+            }.value
+            return Self.jsonSuccess([
+                "path": name, "mime_type": "image/png", "width": dimensions.0,
+                "height": dimensions.1, "next_tool": "view_image",
+            ])
         } catch {
             return .failure(code: "internal", message: error.localizedDescription)
         }

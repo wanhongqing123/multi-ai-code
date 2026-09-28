@@ -696,6 +696,8 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         form.addView(text("密钥使用系统 Keystore 加密保存。完全访问允许自动修改手机工作区文件和访问网络。",
                          12, MaiChatTheme.SECONDARY),
             matchWrap());
+        form.addView(text("本地图片处理使用 FFmpeg（LGPLv2.1+）；完整源码随项目放在 MaiAgent/third_party/ffmpeg。",
+                         12, MaiChatTheme.SECONDARY), matchWrap());
         TextView validation = text("", 12, Color.RED);
         form.addView(validation, matchWrap());
         AlertDialog dialog = new AlertDialog.Builder(activity)

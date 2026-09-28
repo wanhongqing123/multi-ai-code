@@ -1743,6 +1743,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             case "mobile_read_photo": return agentReadPhoto(arguments);
             case "mobile_export_photo_original": return agentExportPhotoOriginal(arguments);
             case "mobile_save_image": return agentSaveImage(arguments);
+            case "mobile_transform_image": return agentTransformImage(arguments);
             case "mobile_photos_copy_to_album": return agentCopyPhotosToAlbum(arguments);
             default: break;
         }
@@ -1943,6 +1944,13 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         }
         return new JSONObject().put("saved", true).put("id", Long.toString(ContentUris.parseId(created)))
             .put("uri", created.toString()).put("source_path", arguments.optString("path"));
+    }
+
+    private JSONObject agentTransformImage(JSONObject arguments) throws Exception {
+        AIAssistantController.ImportedFile file = AIAssistantController.shared(this)
+            .transformImageForHost(arguments);
+        return new JSONObject().put("path", file.relativePath)
+            .put("mime_type", file.mimeType).put("next_tool", "view_image");
     }
 
     private JSONObject agentCopyPhotosToAlbum(JSONObject arguments) throws Exception {

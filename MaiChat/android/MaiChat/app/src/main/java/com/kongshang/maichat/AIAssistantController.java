@@ -3,6 +3,8 @@ package com.kongshang.maichat;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Matrix;
+import android.media.ExifInterface;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -15,6 +17,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.security.KeyStore;
 import java.security.cert.X509Certificate;
@@ -84,6 +87,7 @@ final class AIAssistantController {
     private static native void nativeDestroy(long handle);
     private static native byte[] nativeRequest(long handle, byte[] request);
     private static native boolean nativeSetHostToolHandler(long handle, AIAssistantController owner);
+    private static native byte[] nativeFilterBitmap(Bitmap bitmap, String operation, int[] dimensions);
 
     private final Context context;
     private final HandlerThread thread = new HandlerThread("MaiChat-Agent");
@@ -542,6 +546,68 @@ final class AIAssistantController {
         if (!candidate.toPath().startsWith(workspace.toPath()) || !candidate.isFile())
             throw new IllegalArgumentException("图片必须位于 AI 工作区内");
         return candidate;
+    }
+    ImportedFile transformImageForHost(JSONObject arguments) throws Exception {
+        File source = workspaceImageForHost(arguments.optString("path", ""));
+        if (source.length() < 1 || source.length() > 50L * 1024 * 1024)
+            throw new IllegalArgumentException("源图片不能超过 50 MB");
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeFile(source.getPath(), bounds);
+        if (bounds.outWidth < 1 || bounds.outHeight < 1
+                || (long) bounds.outWidth * bounds.outHeight > 12_000_000)
+            throw new IllegalArgumentException("图片不能超过 1200 万像素");
+        BitmapFactory.Options decode = new BitmapFactory.Options();
+        decode.inPreferredConfig = Bitmap.Config.ARGB_8888;
+        Bitmap decoded = BitmapFactory.decodeFile(source.getPath(), decode);
+        if (decoded == null) throw new IllegalArgumentException("无法解码源图片");
+        Bitmap upright = decoded;
+        Bitmap edited = null;
+        File target = null;
+        try {
+            Matrix orientation = new Matrix();
+            try {
+                int exif = new ExifInterface(source.getPath()).getAttributeInt(
+                    ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL);
+                switch (exif) {
+                case ExifInterface.ORIENTATION_FLIP_HORIZONTAL: orientation.setScale(-1, 1); break;
+                case ExifInterface.ORIENTATION_ROTATE_180: orientation.setRotate(180); break;
+                case ExifInterface.ORIENTATION_FLIP_VERTICAL: orientation.setScale(1, -1); break;
+                case ExifInterface.ORIENTATION_TRANSPOSE:
+                    orientation.setRotate(90); orientation.postScale(-1, 1); break;
+                case ExifInterface.ORIENTATION_ROTATE_90: orientation.setRotate(90); break;
+                case ExifInterface.ORIENTATION_TRANSVERSE:
+                    orientation.setRotate(270); orientation.postScale(-1, 1); break;
+                case ExifInterface.ORIENTATION_ROTATE_270: orientation.setRotate(270); break;
+                default: break;
+                }
+            } catch (IOException ignored) { /* Images without EXIF are already upright. */ }
+            if (!orientation.isIdentity())
+                upright = Bitmap.createBitmap(decoded, 0, 0, decoded.getWidth(), decoded.getHeight(),
+                    orientation, true);
+            int[] dimensions = new int[2];
+            byte[] pixels = nativeFilterBitmap(upright, arguments.toString(), dimensions);
+            if (pixels == null || dimensions[0] < 1 || dimensions[1] < 1)
+                throw new IllegalStateException("图片处理没有返回结果");
+            edited = Bitmap.createBitmap(dimensions[0], dimensions[1], Bitmap.Config.ARGB_8888);
+            edited.copyPixelsFromBuffer(ByteBuffer.wrap(pixels));
+            String name = "edited-" + UUID.randomUUID() + ".png";
+            target = new File(new File(root, "Workspace"), name);
+            try (FileOutputStream output = new FileOutputStream(target)) {
+                if (!edited.compress(Bitmap.CompressFormat.PNG, 100, output))
+                    throw new IOException("无法写入处理结果");
+            }
+            if (target.length() < 1 || target.length() > 50L * 1024 * 1024)
+                throw new IllegalArgumentException("处理结果超过 50 MB");
+            return new ImportedFile(name, "image/png", true);
+        } catch (Exception error) {
+            if (target != null) target.delete();
+            throw error;
+        } finally {
+            if (edited != null) edited.recycle();
+            if (upright != decoded) upright.recycle();
+            decoded.recycle();
+        }
     }
     private ImportedFile importStream(InputStream input, String sourceMime, String sourceName)
         throws Exception {

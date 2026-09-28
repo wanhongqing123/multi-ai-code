@@ -10,5 +10,7 @@ cmake -S "$repo_dir/MaiChat/shared/agent" -B "$agent_build" \
   -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO
 cmake --build "$agent_build" --target maichat_mobile --parallel 6
 archive_list=()
-while IFS= read -r archive; do archive_list+=("$archive"); done < <(find "$agent_build" -name '*.a' -type f)
+while IFS= read -r archive; do archive_list+=("$archive"); done < <(
+  find "$agent_build" -name '*.a' -type f ! -path '*/vendor/ffmpeg-build/install/*'
+)
 xcrun libtool -static -o "$DERIVED_FILE_DIR/libMaiMobileAgent.a" "${archive_list[@]}"

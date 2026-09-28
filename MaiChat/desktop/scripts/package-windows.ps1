@@ -20,13 +20,26 @@ $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 
 $buildPath = Join-Path $projectRoot $BuildDir
-$exePath = Join-Path $buildPath 'maichat.exe'
+# OpenCV 的 CMake 子项目会设置 EXECUTABLE_OUTPUT_PATH。必须按当前构建缓存
+# 定位新生成的程序，不能误用构建目录根部残留的旧 maichat.exe。
+$cachePath = Join-Path $buildPath 'CMakeCache.txt'
+if (-not (Test-Path $cachePath)) { throw "未找到 $cachePath，请先配置 Release 构建" }
+$runtimeOutputLine = Select-String -Path $cachePath -Pattern '^EXECUTABLE_OUTPUT_PATH:PATH=(.+)$'
+$exeDir = $buildPath
+if ($runtimeOutputLine) {
+    $runtimeOutput = $runtimeOutputLine.Matches[0].Groups[1].Value
+    if ([System.IO.Path]::IsPathRooted($runtimeOutput)) {
+        $exeDir = $runtimeOutput
+    } else {
+        $exeDir = Join-Path $buildPath $runtimeOutput
+    }
+}
+$exePath = Join-Path $exeDir 'maichat.exe'
 if (-not (Test-Path $exePath)) {
     throw "未找到 $exePath，请先构建：cmake --build $BuildDir --target maichat"
 }
 
 # 从 CMakeCache 定位 Qt（避免依赖 PATH）
-$cachePath = Join-Path $buildPath 'CMakeCache.txt'
 $qt5DirLine = Select-String -Path $cachePath -Pattern '^Qt5_DIR:PATH=(.+)$'
 if (-not $qt5DirLine) { throw "CMakeCache.txt 里没有 Qt5_DIR，无法定位 windeployqt" }
 $qt5Dir = $qt5DirLine.Matches[0].Groups[1].Value
@@ -103,7 +116,7 @@ Write-Host 'OpenSSL 1.1 已旁挂（HTTPS 图片/文件下载所需）'
 # 程序起不来（隐式链接，加载期就要求）。
 # 以构建产物为准判断是否需要：CMake 只在 TRTC 可用时才把这些 DLL 拷到 exe
 # 旁边，所以构建目录里有就说明 exe 真的依赖它们；关掉远程桌面编译时则跳过。
-$trtcBuildDlls = @(Get-ChildItem (Join-Path $buildPath '*.dll') -ErrorAction SilentlyContinue |
+$trtcBuildDlls = @(Get-ChildItem (Join-Path $exeDir '*.dll') -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -in 'liteav.dll', 'liteav_screen.dll', 'txffmpeg.dll', 'txsoundtouch.dll' })
 if ($trtcBuildDlls.Count -gt 0) {
     $trtcDir = Join-Path $projectRoot 'vendor\tencent-trtc\windows\lib\x64'

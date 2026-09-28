@@ -90,7 +90,6 @@
 #include "im/VideoFileMetadata.h"
 #include "markdown/MarkdownDocument.h"
 #include "markdown/MarkdownLabel.h"
-#include "markdown/MarkdownRenderer.h"
 #include "markdown/MarkdownTheme.h"
 #include "markdown/PreviewText.h"
 #include "ui/AddContactDialog.h"
@@ -4373,13 +4372,13 @@ void MainWindow::openFilePreview(const RemoteIMFileAttachment& attachment) {
         return;
     }
     const QString displayName = attachment.fileName.isEmpty() ? QFileInfo(attachment.localPath).fileName() : attachment.fileName;
-    QString html = isHtmlFile(attachment)
-        ? readTextFile(attachment.localPath)
-        : UiZoom::scaleQss(MarkdownRenderer::renderToHtml(readTextFile(attachment.localPath)));
-    if (isGitDiffFile(attachment)) {
-        html = FilePreviewDialog::normalizeGitDiffHtmlForQt(html);
-    }
-    FilePreviewDialog dialog(displayName, html, this);
+    const bool htmlFile = isHtmlFile(attachment);
+    QString content = readTextFile(attachment.localPath);
+    if (isGitDiffFile(attachment))
+        content = FilePreviewDialog::normalizeGitDiffHtmlForQt(content);
+    FilePreviewDialog dialog(displayName, content, this,
+                             htmlFile ? FilePreviewDialog::ContentFormat::Html
+                                      : FilePreviewDialog::ContentFormat::Markdown);
     dialog.exec();
 }
 

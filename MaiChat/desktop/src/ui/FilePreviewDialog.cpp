@@ -9,6 +9,7 @@
 
 #include <QApplication>
 #include <QAbstractTextDocumentLayout>
+#include <QDesktopServices>
 #include <QFontMetrics>
 #include <QFrame>
 #include <QList>
@@ -23,8 +24,12 @@
 #include <QSizeGrip>
 #include <QTextBrowser>
 #include <QVBoxLayout>
+#include <QUrl>
 #include <QtMath>
 
+#include "markdown/MarkdownDocument.h"
+#include "markdown/MarkdownLayout.h"
+#include "markdown/MarkdownView.h"
 #include "ui/UiZoom.h"
 
 QString FilePreviewDialog::normalizeGitDiffHtmlForQt(QString html) {
@@ -65,14 +70,16 @@ QString FilePreviewDialog::normalizeGitDiffHtmlForQt(QString html) {
     return html;
 }
 
-FilePreviewDialog::FilePreviewDialog(const QString& displayName, const QString& html, QWidget* parent)
+FilePreviewDialog::FilePreviewDialog(const QString& displayName, const QString& content,
+                                     QWidget* parent, ContentFormat format)
     : QDialog(parent) {
-    buildUi(displayName, html);
+    buildUi(displayName, content, format);
     applyStyle();
     resize(contentAwareInitialSize());
 }
 
-void FilePreviewDialog::buildUi(const QString& displayName, const QString& html) {
+void FilePreviewDialog::buildUi(const QString& displayName, const QString& content,
+                                ContentFormat format) {
     fullTitle_ = displayName.trimmed().isEmpty() ? QStringLiteral("文件预览") : displayName.trimmed();
 
     setObjectName(QStringLiteral("filePreviewDialog"));
@@ -98,8 +105,8 @@ void FilePreviewDialog::buildUi(const QString& displayName, const QString& html)
     panel_->installEventFilter(this);
 
     auto* layout = new QVBoxLayout(panel);
-    layout->setContentsMargins(24, 20, 24, 18);
-    layout->setSpacing(UiZoom::s(14));
+    layout->setContentsMargins(UiZoom::s(24), UiZoom::s(20), UiZoom::s(24), UiZoom::s(18));
+    layout->setSpacing(UiZoom::s(12));
 
     // 自制标题栏：显示文件名 + 承担窗口拖动 + 右侧关闭。
     header_ = new QWidget(panel);
@@ -124,43 +131,48 @@ void FilePreviewDialog::buildUi(const QString& displayName, const QString& html)
     // （远程观看窗那次也是同样的取舍）。关闭入口只留底部按钮 + Esc。
     layout->addWidget(header_);
 
-    content_ = new QTextBrowser(panel);
-    content_->setObjectName(QStringLiteral("filePreviewContent"));
-    content_->setOpenExternalLinks(true);
-    content_->setReadOnly(true);
-    content_->setFrameShape(QFrame::NoFrame);
-    // 字体必须显式跟随应用全局字体：MarkdownRenderer 的 CSS 只声明字号、不声明
-    // font-family（见 MarkdownRenderer.cpp），字体族完全由文档默认字体决定。
-    // 少了这一步就会落到 Qt 在中文 Windows 上的默认宋体，衬线观感与界面其余部分脱节。
-    // 取 QApplication::font() 而不是写死字体名：Windows 是 Segoe UI + 微软雅黑
-    // （main.cpp 里按平台设的），macOS 用系统默认，且能跟上 MainWindow 的缩放倍率。
-    content_->document()->setDefaultFont(QApplication::font());
-    // 多文件 Diff 用「左目录 / 右正文」两栏：索引在文档顶部时，看第 20 个文件
-    // 得先滚回最上面再点一次，来回找位置。左栏常驻才是这类报告该有的样子。
-    const QList<FileIndexEntry> entries = parseFileIndex(html);
-    if (entries.size() >= 2) {
-        auto* splitter = new QSplitter(Qt::Horizontal, panel);
-        splitter->setObjectName(QStringLiteral("filePreviewSplitter"));
-        // 不允许把任一栏拖没：拖没了没有恢复入口，等于把功能弄丢。
-        splitter->setChildrenCollapsible(false);
-        fileList_ = qobject_cast<QTreeWidget*>(buildFileListPane(entries, splitter));
-        splitter->addWidget(fileList_);
-        splitter->addWidget(content_);
-        splitter->setStretchFactor(0, 0);
-        splitter->setStretchFactor(1, 1);
-        splitter->setSizes({UiZoom::s(340), UiZoom::s(900)});
-        layout->addWidget(splitter, 1);
-        // 左栏顶替了文档顶部那份索引，两份并排只会让人怀疑哪份是准的。
-        // 手机端没有左栏，所以索引只在这里、只对 Qt 剥掉。
-        static const QRegularExpression indexBlock(
-            QStringLiteral("<div class=\"file-index\">.*?</ul></div>"),
-            QRegularExpression::DotMatchesEverythingOption);
-        QString withoutIndex = html;
-        withoutIndex.remove(indexBlock);
-        content_->setHtml(withoutIndex);
+    if (format == ContentFormat::Markdown) {
+        markdownSource_ = content;
+        markdownView_ = new MarkdownView(panel);
+        markdownView_->setObjectName(QStringLiteral("filePreviewMarkdownView"));
+        markdownView_->setTheme(MarkdownTheme::standard(UiZoom::factor()));
+        markdownView_->setMaxContentWidth(UiZoom::s(920));
+        markdownView_->addItem(QStringLiteral("document"), MarkdownView::Style::Document,
+                               content);
+        connect(markdownView_, &MarkdownView::linkActivated, this,
+                [](const QString& href) { QDesktopServices::openUrl(QUrl(href)); });
+        layout->addWidget(markdownView_, 1);
     } else {
-        content_->setHtml(html);
-        layout->addWidget(content_, 1);
+        content_ = new QTextBrowser(panel);
+        content_->setObjectName(QStringLiteral("filePreviewContent"));
+        content_->setOpenExternalLinks(true);
+        content_->setReadOnly(true);
+        content_->setFrameShape(QFrame::NoFrame);
+        // HTML/Diff 仍使用 Qt 富文本，默认字体跟随应用以保持平台一致。
+        content_->document()->setDefaultFont(QApplication::font());
+        // 多文件 Diff 用「左目录 / 右正文」两栏，索引常驻方便跳转。
+        const QList<FileIndexEntry> entries = parseFileIndex(content);
+        if (entries.size() >= 2) {
+            auto* splitter = new QSplitter(Qt::Horizontal, panel);
+            splitter->setObjectName(QStringLiteral("filePreviewSplitter"));
+            splitter->setChildrenCollapsible(false);
+            fileList_ = qobject_cast<QTreeWidget*>(buildFileListPane(entries, splitter));
+            splitter->addWidget(fileList_);
+            splitter->addWidget(content_);
+            splitter->setStretchFactor(0, 0);
+            splitter->setStretchFactor(1, 1);
+            splitter->setSizes({UiZoom::s(340), UiZoom::s(900)});
+            layout->addWidget(splitter, 1);
+            static const QRegularExpression indexBlock(
+                QStringLiteral("<div class=\"file-index\">.*?</ul></div>"),
+                QRegularExpression::DotMatchesEverythingOption);
+            QString withoutIndex = content;
+            withoutIndex.remove(indexBlock);
+            content_->setHtml(withoutIndex);
+        } else {
+            content_->setHtml(content);
+            layout->addWidget(content_, 1);
+        }
     }
 
     auto* footerRow = new QHBoxLayout();
@@ -195,19 +207,27 @@ void FilePreviewDialog::applyStyle() {
             background: #ffffff;
             border-radius: 16px;
         }
+        #filePreviewHeader {
+            background: #ffffff;
+            border-bottom: 1px solid #e6edf5;
+        }
         #filePreviewTitle {
             color: #0f172a;
             font-size: 17px;
             font-weight: 700;
         }
-        /* 不在这里设 font-size：正文字号由 MarkdownRenderer 的 CSS 给出，
-           并已被 UiZoom::scaleQss 按缩放倍率换算过，这里再设会把它顶掉。 */
+        /* HTML/Diff 正文字号由文档自身负责。 */
         #filePreviewContent {
-            background: #f8fafc;
+            background: #ffffff;
             border: 1px solid #e6edf5;
             border-radius: 12px;
             color: #172033;
             padding: 16px;
+        }
+        #filePreviewMarkdownView {
+            background: #ffffff;
+            border: 1px solid #e6edf5;
+            border-radius: 12px;
         }
         #filePreviewFileList {
             background: #ffffff;
@@ -277,7 +297,7 @@ QSize FilePreviewDialog::contentAwareInitialSize() {
             : UiZoom::s(1000);
         const int readableDiffWidth = qMin(UiZoom::s(900), maximumWidth);
         preferredWidth = qBound(readableDiffWidth, parentBasedWidth, maximumWidth);
-    } else {
+    } else if (content_) {
         const QFontMetrics metrics(content_->document()->defaultFont());
         int longestLineWidth = 0;
         const QStringList lines = content_->toPlainText().split(QLatin1Char('\n'));
@@ -289,19 +309,33 @@ QSize FilePreviewDialog::contentAwareInitialSize() {
             ? qMax(minimumWidth, parentWidget()->width() * 2 / 3)
             : UiZoom::s(900);
         preferredWidth = qMin(naturalWidth, parentCeiling);
+    } else {
+        preferredWidth = qMin(UiZoom::s(1020), maximumWidth);
     }
     const int targetWidth = qBound(minimumWidth, preferredWidth, maximumWidth);
 
     // 用已经 polish 的真实控件测 chrome，而不是把标题、按钮、QSS padding 写死。
-    // probe 文档避免为了量高度去改变屏幕上 QTextBrowser 的真实 page size。
-    const int chromeWidth = qMax(UiZoom::s(96), width() - content_->viewport()->width());
-    const int chromeHeight = qMax(UiZoom::s(150), height() - content_->viewport()->height());
+    // probe 文档避免为了量高度去改变真实预览控件的 page size。
+    QWidget* view = content_ ? static_cast<QWidget*>(content_)
+                             : static_cast<QWidget*>(markdownView_);
+    const int chromeWidth = qMax(UiZoom::s(96), width() - view->width());
+    const int chromeHeight = qMax(UiZoom::s(150), height() - view->height());
     const int documentWidth = qMax(1, targetWidth - chromeWidth);
-    QTextDocument probe;
-    probe.setDefaultFont(content_->document()->defaultFont());
-    probe.setHtml(content_->toHtml());
-    probe.setTextWidth(documentWidth);
-    const int documentHeight = qCeil(probe.documentLayout()->documentSize().height());
+    int documentHeight = 0;
+    if (content_) {
+        QTextDocument probe;
+        probe.setDefaultFont(content_->document()->defaultFont());
+        probe.setHtml(content_->toHtml());
+        probe.setTextWidth(documentWidth);
+        documentHeight = qCeil(probe.documentLayout()->documentSize().height());
+    } else {
+        const MarkdownDocument document = MarkdownDocument::parse(markdownSource_);
+        MarkdownLayout probe;
+        const MarkdownTheme& theme = markdownView_->theme();
+        probe.layout(document, theme,
+                     qMax(1, documentWidth - 2 * theme.viewMargin));
+        documentHeight = qCeil(probe.height() + 2 * theme.viewMargin);
+    }
     const int preferredHeight = documentHeight + chromeHeight;
     const int targetHeight = qBound(minimumHeight, preferredHeight, maximumHeight);
     return QSize(targetWidth, targetHeight);

@@ -17,6 +17,7 @@
 #include <QtMath>
 
 #include "ui/FilePreviewDialog.h"
+#include "markdown/MarkdownView.h"
 
 class FilePreviewDialogTest : public QObject {
     Q_OBJECT
@@ -24,6 +25,8 @@ class FilePreviewDialogTest : public QObject {
 private slots:
     void dropsNativeTitleBarAndShowsNameOnce();
     void rendersHtmlContent();
+    void markdownUsesSharedViewAndKeepsWideTablesInside();
+    void longMarkdownScrollsWithinTheDialog();
     void rendersSideBySideDiffTable();
     void normalizesGitDiffHtmlForQt();
     void keepsEveryFileWhenTheDiffHasManyFiles();
@@ -64,6 +67,40 @@ void FilePreviewDialogTest::rendersHtmlContent() {
     QVERIFY(content != nullptr);
     QVERIFY(content->isReadOnly());
     QVERIFY(content->toPlainText().contains(QStringLiteral("正文内容")));
+}
+
+void FilePreviewDialogTest::markdownUsesSharedViewAndKeepsWideTablesInside() {
+    const QString markdown = QStringLiteral(
+        "# 崩溃修复方案\n\n| 排名 | 调用栈 | 建议修复 |\n"
+        "| --- | --- | --- |\n"
+        "| 1 | `SurfaceImpl::present` | **先定位**，再修复 |\n");
+    FilePreviewDialog dialog(QStringLiteral("report.md"), markdown, nullptr,
+                             FilePreviewDialog::ContentFormat::Markdown);
+    auto* view = dialog.findChild<MarkdownView*>(QStringLiteral("filePreviewMarkdownView"));
+    QVERIFY(view != nullptr);
+    QVERIFY(dialog.findChild<QTextBrowser*>(QStringLiteral("filePreviewContent")) == nullptr);
+    dialog.resize(760, 520);
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    view->selectAll();
+    QVERIFY(view->selectedText().contains(QStringLiteral("崩溃修复方案")));
+    QVERIFY(view->selectedText().contains(QStringLiteral("SurfaceImpl::present")));
+    QCOMPARE(view->horizontalScrollBarPolicy(), Qt::ScrollBarAlwaysOff);
+}
+
+void FilePreviewDialogTest::longMarkdownScrollsWithinTheDialog() {
+    QString markdown = QStringLiteral("# 长报告\n\n");
+    for (int i = 0; i < 120; ++i)
+        markdown += QStringLiteral("第 %1 段。\n\n").arg(i + 1);
+    FilePreviewDialog dialog(QStringLiteral("report.md"), markdown, nullptr,
+                             FilePreviewDialog::ContentFormat::Markdown);
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    auto* view = dialog.findChild<MarkdownView*>(QStringLiteral("filePreviewMarkdownView"));
+    QVERIFY(view != nullptr);
+    QVERIFY(view->verticalScrollBar()->maximum() > 0);
+    const int maxHeight = QApplication::primaryScreen()->availableGeometry().height() * 9 / 10;
+    QVERIFY(dialog.height() <= maxHeight + 1);
 }
 
 void FilePreviewDialogTest::rendersSideBySideDiffTable() {

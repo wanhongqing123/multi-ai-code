@@ -11,6 +11,7 @@ class QFrame;
 class QLabel;
 class QTextBrowser;
 class QTreeWidget;
+class MarkdownView;
 
 // Markdown / HTML 附件的预览窗。
 //
@@ -27,6 +28,7 @@ class FilePreviewDialog final : public QDialog {
     Q_OBJECT
 
 public:
+    enum class ContentFormat { Html, Markdown };
     // Git Diff 报告同时服务浏览器与 Qt 富文本。Qt 不支持媒体查询、CSS 自定义属性，
     // 也会忽略部分现代布局属性；在进入 QTextDocument 前集中做一次兼容化，避免调用方
     // 各自维护容易分家的替换规则。
@@ -43,9 +45,9 @@ public:
     // 从报告 HTML 里读出文件索引。不是 Diff 报告、或索引不存在时返回空列表。
     static QList<FileIndexEntry> parseFileIndex(const QString& html);
 
-    // html 由调用方渲染好（markdown 转换 / 原始 HTML 各走各的），
-    // 这样本类不碰文件读取与 markdown 细节，纯粹负责外观与交互。
-    FilePreviewDialog(const QString& displayName, const QString& html, QWidget* parent = nullptr);
+    // Markdown 保留原文交给共用 MarkdownView；HTML/Diff 保留富文本预览。
+    FilePreviewDialog(const QString& displayName, const QString& content, QWidget* parent = nullptr,
+                      ContentFormat format = ContentFormat::Html);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -55,7 +57,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent* event) override;
 
 private:
-    void buildUi(const QString& displayName, const QString& html);
+    void buildUi(const QString& displayName, const QString& content, ContentFormat format);
     void applyStyle();
     void updateElidedTitle();
     QSize contentAwareInitialSize();
@@ -72,8 +74,10 @@ private:
     QWidget* header_ = nullptr;
     QLabel* title_ = nullptr;
     QTextBrowser* content_ = nullptr;
+    MarkdownView* markdownView_ = nullptr;
     QTreeWidget* fileList_ = nullptr;
     QString fullTitle_;
+    QString markdownSource_;
     QPoint dragOffset_;
     bool dragging_ = false;
     Qt::Edges resizeEdges_;

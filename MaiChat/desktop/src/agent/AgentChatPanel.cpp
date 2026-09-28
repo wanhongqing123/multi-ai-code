@@ -407,6 +407,8 @@ public:
 
         detail_ = makeLabel(QString(), 11, kInkSoft);
         detail_->setObjectName(QStringLiteral("agentToolDetail"));
+        detail_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
+        detail_->setAlignment(Qt::AlignLeft | Qt::AlignTop);
         detail_->setTextInteractionFlags(Qt::TextSelectableByMouse);
         QFont detailFont = detail_->font();
         detailFont.setStyleHint(QFont::Monospace);

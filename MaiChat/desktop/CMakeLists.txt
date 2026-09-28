@@ -141,6 +141,78 @@ if(WIN32)
   endif()
 endif()
 
+# Desktop 人脸定位/人物分割使用仓库内同一份 OpenCV 4.14.0 源码。让 CMake
+# 直接构建所需模块及其依赖，避免手工猜测 protobuf、图片编解码库的链接顺序。
+if(WIN32)
+  option(MAICHAT_ENABLE_OPENCV "Build desktop vision with vendored OpenCV" ON)
+  if(MAICHAT_ENABLE_OPENCV)
+    set(_maichat_zlib_library_before_opencv "${ZLIB_LIBRARY}")
+    set(_maichat_zlib_include_before_opencv "${ZLIB_INCLUDE_DIR}")
+    set(_maichat_zlib_libraries_before_opencv "${ZLIB_LIBRARIES}")
+    set(MAICHAT_OPENCV_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/opencv")
+    if(NOT EXISTS "${MAICHAT_OPENCV_SOURCE}/CMakeLists.txt")
+      message(FATAL_ERROR "Vendored OpenCV 4.14.0 source is missing")
+    endif()
+    set(BUILD_LIST "core,imgproc,imgcodecs,dnn,objdetect" CACHE STRING "" FORCE)
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(BUILD_WITH_STATIC_CRT OFF CACHE BOOL "" FORCE)
+    set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(BUILD_PERF_TESTS OFF CACHE BOOL "" FORCE)
+    set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(BUILD_opencv_apps OFF CACHE BOOL "" FORCE)
+    set(BUILD_JAVA OFF CACHE BOOL "" FORCE)
+    set(BUILD_opencv_python2 OFF CACHE BOOL "" FORCE)
+    set(BUILD_opencv_python3 OFF CACHE BOOL "" FORCE)
+    set(WITH_OPENCL OFF CACHE BOOL "" FORCE)
+    set(WITH_IPP OFF CACHE BOOL "" FORCE)
+    set(WITH_TBB OFF CACHE BOOL "" FORCE)
+    set(WITH_FFMPEG OFF CACHE BOOL "" FORCE)
+    set(WITH_MSMF OFF CACHE BOOL "" FORCE)
+    set(WITH_QT OFF CACHE BOOL "" FORCE)
+    set(BUILD_JPEG ON CACHE BOOL "" FORCE)
+    set(BUILD_PNG ON CACHE BOOL "" FORCE)
+    set(BUILD_ZLIB ON CACHE BOOL "" FORCE)
+    set(WITH_TIFF OFF CACHE BOOL "" FORCE)
+    set(WITH_WEBP OFF CACHE BOOL "" FORCE)
+    set(WITH_OPENEXR OFF CACHE BOOL "" FORCE)
+    set(OPENCV_DNN_OPENCL OFF CACHE BOOL "" FORCE)
+    # OpenCV 自己的生成头不是 Qt 源文件；不能继承桌面工程的 AUTOMOC。
+    set(_maichat_opencv_automoc ${CMAKE_AUTOMOC})
+    set(_maichat_opencv_autouic ${CMAKE_AUTOUIC})
+    set(_maichat_opencv_autorcc ${CMAKE_AUTORCC})
+    set(CMAKE_AUTOMOC OFF)
+    set(CMAKE_AUTOUIC OFF)
+    set(CMAKE_AUTORCC OFF)
+    add_subdirectory("${MAICHAT_OPENCV_SOURCE}"
+      "${CMAKE_CURRENT_BINARY_DIR}/opencv" EXCLUDE_FROM_ALL)
+    # OpenCV 的内置 zlib 会覆写顶层 ZLIB_* 缓存变量；MaiChat 原有 Qt zlib
+    # 依赖仍须指向最初的库，否则已有桌面测试会在链接时去找 zlib.obj。
+    set(ZLIB_LIBRARY "${_maichat_zlib_library_before_opencv}" CACHE FILEPATH "" FORCE)
+    set(ZLIB_INCLUDE_DIR "${_maichat_zlib_include_before_opencv}" CACHE PATH "" FORCE)
+    set(ZLIB_LIBRARIES "${_maichat_zlib_libraries_before_opencv}")
+    set(CMAKE_AUTOMOC ${_maichat_opencv_automoc})
+    set(CMAKE_AUTOUIC ${_maichat_opencv_autouic})
+    set(CMAKE_AUTORCC ${_maichat_opencv_autorcc})
+    add_library(maichat_opencv INTERFACE)
+    target_include_directories(maichat_opencv INTERFACE
+      "${CMAKE_CURRENT_BINARY_DIR}"
+      "${MAICHAT_OPENCV_SOURCE}/modules/core/include"
+      "${MAICHAT_OPENCV_SOURCE}/modules/imgproc/include"
+      "${MAICHAT_OPENCV_SOURCE}/modules/imgcodecs/include"
+      "${MAICHAT_OPENCV_SOURCE}/modules/dnn/include"
+      "${MAICHAT_OPENCV_SOURCE}/modules/objdetect/include")
+    target_link_libraries(maichat_opencv INTERFACE
+      opencv_objdetect opencv_dnn opencv_imgcodecs)
+    add_library(maichat_image_vision STATIC ../shared/agent/MaiImageVision.cpp)
+    target_include_directories(maichat_image_vision PUBLIC ../shared/agent)
+    target_link_libraries(maichat_image_vision PUBLIC maichat_opencv)
+    set(MAICHAT_FACE_MODEL
+      "${CMAKE_CURRENT_SOURCE_DIR}/../shared/agent/models/face_detection_yunet_2023mar.onnx")
+    set(MAICHAT_PERSON_MODEL
+      "${CMAKE_CURRENT_SOURCE_DIR}/../shared/agent/models/human_segmentation_pphumanseg_2023mar.onnx")
+  endif()
+endif()
+
 add_library(md4c STATIC
   third_party/md4c/md4c.c
   third_party/md4c/md4c.h
@@ -396,6 +468,9 @@ target_link_libraries(maichat PRIVATE remote_im_desktop_ui remote_im_desktop_app
 if(WIN32 AND MAICHAT_ENABLE_FFMPEG)
   target_link_libraries(maichat PRIVATE maichat_image_filter)
 endif()
+if(WIN32 AND MAICHAT_ENABLE_OPENCV)
+  target_link_libraries(maichat PRIVATE maichat_image_vision)
+endif()
 if(WIN32)
   # SetCurrentProcessExplicitAppUserModelID：没有它系统通知会被静默丢弃。
   target_link_libraries(maichat PRIVATE shell32)
@@ -422,6 +497,12 @@ add_library(maichat_agent
 )
 target_include_directories(maichat_agent PUBLIC src)
 target_link_libraries(maichat_agent PUBLIC Qt5::Core Qt5::Widgets maiagent maichat_markdown)
+if(WIN32 AND MAICHAT_ENABLE_OPENCV)
+  target_sources(maichat_agent PRIVATE
+    src/agent/DesktopVisionTools.h src/agent/DesktopVisionTools.cpp)
+  target_compile_definitions(maichat_agent PRIVATE MAICHAT_DESKTOP_VISION=1)
+  target_link_libraries(maichat_agent PRIVATE maichat_image_vision)
+endif()
 
 add_executable(markdown_document_test tests/MarkdownDocumentTest.cpp)
 target_link_libraries(markdown_document_test PRIVATE maichat_markdown Qt5::Test)
@@ -450,6 +531,16 @@ target_link_libraries(desktop_pdf_renderer_test PRIVATE maichat_agent Qt5::Widge
 if(WIN32 AND MAICHAT_ENABLE_FFMPEG)
   add_executable(desktop_ffmpeg_filter_test tests/DesktopFfmpegFilterTest.cpp)
   target_link_libraries(desktop_ffmpeg_filter_test PRIVATE maichat_image_filter)
+endif()
+if(WIN32 AND MAICHAT_ENABLE_OPENCV)
+  add_executable(desktop_opencv_model_test tests/DesktopOpenCvModelTest.cpp)
+  target_link_libraries(desktop_opencv_model_test PRIVATE maichat_image_vision Qt5::Core)
+  add_executable(desktop_vision_tools_test
+    tests/DesktopVisionToolsTest.cpp resources/resources.qrc)
+  target_compile_definitions(desktop_vision_tools_test PRIVATE
+    MAICHAT_LENA_PATH="${MAICHAT_OPENCV_SOURCE}/samples/data/lena.jpg")
+  target_link_libraries(desktop_vision_tools_test PRIVATE
+    maichat_agent Qt5::Widgets Qt5::Test)
 endif()
 
 add_executable(reply_suggestion_controller_test tests/ReplySuggestionControllerTest.cpp)
@@ -628,6 +719,12 @@ add_test(NAME agent_panel_session_test COMMAND agent_panel_session_test)
 add_test(NAME desktop_pdf_renderer_test COMMAND desktop_pdf_renderer_test)
 if(WIN32 AND MAICHAT_ENABLE_FFMPEG)
   add_test(NAME desktop_ffmpeg_filter_test COMMAND desktop_ffmpeg_filter_test)
+endif()
+if(WIN32 AND MAICHAT_ENABLE_OPENCV)
+  add_test(NAME desktop_opencv_model_test COMMAND desktop_opencv_model_test
+    "${MAICHAT_FACE_MODEL}" "${MAICHAT_PERSON_MODEL}"
+    "${MAICHAT_OPENCV_SOURCE}/samples/data/lena.jpg")
+  add_test(NAME desktop_vision_tools_test COMMAND desktop_vision_tools_test)
 endif()
 add_test(NAME reply_suggestion_controller_test COMMAND reply_suggestion_controller_test)
 add_test(NAME performance_log_test COMMAND performance_log_test)

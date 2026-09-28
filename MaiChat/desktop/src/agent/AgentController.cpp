@@ -4,6 +4,9 @@
 #include "MaiSqliteStore.h"
 #include "MaiPdfTool.h"
 #include "agent/DesktopPdfRenderer.h"
+#if defined(MAICHAT_DESKTOP_VISION)
+#include "agent/DesktopVisionTools.h"
+#endif
 
 #include <QHash>
 #include <QMetaType>
@@ -74,6 +77,9 @@ std::unique_ptr<MaiAgent> buildAgent(std::unique_ptr<MaiModelClient> model,
     auto tools = std::make_unique<MaiToolRegistry>();
     registerMaiBuiltinTools(*tools);
     tools->add(makeMaiPdfTool(renderDesktopPdf));
+#if defined(MAICHAT_DESKTOP_VISION)
+    registerDesktopVisionTools(*tools);
+#endif
     if (hostTools) hostTools(*tools);
 
     MaiAgent::Options options;

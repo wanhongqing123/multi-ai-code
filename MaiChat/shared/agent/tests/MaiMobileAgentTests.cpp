@@ -230,14 +230,8 @@ int main() {
         CHECK(hostProbe.lastTool == "maichat_send_text");
         CHECK(Json::parse(hostProbe.lastArguments)["peer_id"] == "alice");
         CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "photo-add"}})["ok"] == true);
-        const auto photoPermission = wait([](const Json& s) { return !s["permissions"].empty(); });
-        CHECK(hostProbe.calls == 1);
-        CHECK(photoPermission["permissions"][0]["tool"] == "mobile_photos_add_to_album");
-        CHECK(photoPermission["permissions"][0]["allowForSession"] == false);
-        CHECK(call(agent, {{"op", "permission"},
-                           {"id", photoPermission["permissions"][0]["id"]},
-                           {"decision", "approved"}})["ok"] == true);
-        wait([](const Json& s) { return s["busy"] == false; });
+        const auto photoDone = wait([](const Json& s) { return s["busy"] == false; });
+        CHECK(photoDone["permissions"].empty());
         CHECK(hostProbe.calls == 2);
         CHECK(hostProbe.lastTool == "mobile_photos_add_to_album");
         CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "hello"}})["ok"] == true);

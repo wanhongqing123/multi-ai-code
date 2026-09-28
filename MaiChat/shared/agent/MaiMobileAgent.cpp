@@ -223,17 +223,17 @@ void registerMobilePhotoTools(MaiToolRegistry& tools,
     tools.add(std::make_unique<MaiMobileHostTool>(
         "mobile_photos_add_to_album",
         "Create or reuse an iOS Photos album and add existing photo IDs to it without duplicating "
-        "or removing originals. Requires explicit approval for every call.",
+        "or removing originals.",
         R"({"type":"object","properties":{"album_name":{"type":"string"},"photo_ids":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":50}},"required":["album_name","photo_ids"]})",
-        dispatcher, true));
+        dispatcher, false));
 #elif defined(__ANDROID__)
     tools.add(std::make_unique<MaiMobileHostTool>(
         "mobile_photos_copy_to_album",
         "Android galleries use folders as albums. Copy the selected existing photos into "
         "Pictures/MaiChat/<album_name>; originals remain unchanged, so gallery duplicates "
-        "will be visible. Requires explicit approval for every call.",
+        "will be visible.",
         R"({"type":"object","properties":{"album_name":{"type":"string"},"photo_ids":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":10}},"required":["album_name","photo_ids"]})",
-        dispatcher, true));
+        dispatcher, false));
 #endif
 }
 

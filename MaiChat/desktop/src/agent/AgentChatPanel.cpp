@@ -640,8 +640,9 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     // ---- 头部：标题 + 模型/权限 + 上下文 + 更多 ----
     // 模型、权限和低频配置属于页面级设置，不应挤在消息编辑框里。
     auto* head = new QWidget(this);
+    head->setObjectName(QStringLiteral("agentHeader"));
     head->setStyleSheet(UiZoom::scaleQss(
-        QStringLiteral("QWidget{background:#ffffff;border-bottom:1px solid %1;}").arg(kLine)));
+        QStringLiteral("QWidget#agentHeader{background:#ffffff;border-bottom:1px solid %1;}").arg(kLine)));
     auto* headRow = new QHBoxLayout(head);
     headRow->setContentsMargins(UiZoom::s(20), UiZoom::s(10), UiZoom::s(20), UiZoom::s(10));
     headRow->setSpacing(UiZoom::s(12));

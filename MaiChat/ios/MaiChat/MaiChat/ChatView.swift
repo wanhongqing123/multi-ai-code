@@ -447,7 +447,7 @@ private struct RemoteIMUserAvatar: View {
     private static func defaultAvatar(index: Int) -> UIImage {
         let key = NSNumber(value: index)
         if let cached = avatarCache.object(forKey: key) { return cached }
-        guard let image = UIImage(named: "DefaultAvatarAnimeAtlas")?.cgImage else {
+        guard let image = UIImage(named: "DefaultAvatarChibiAtlas")?.cgImage else {
             return UIImage(systemName: "person.crop.square") ?? UIImage()
         }
         let tile = image.width / 6

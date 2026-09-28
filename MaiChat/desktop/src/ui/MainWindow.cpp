@@ -404,7 +404,7 @@ QPixmap defaultContactAvatar(const QString& userId, int size, qreal dpr) {
     const auto found = cache.constFind(key);
     if (found != cache.cend()) return found.value();
 
-    static const QPixmap atlas(QStringLiteral(":/maichat/avatars/anime-atlas-v2.png"));
+    static const QPixmap atlas(QStringLiteral(":/maichat/avatars/chibi-atlas-v3.png"));
     const int tile = atlas.width() / 6;
     const QPixmap source = atlas.copy((avatarIndex % 6) * tile,
                                       (avatarIndex / 6) * tile, tile, tile);

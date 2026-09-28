@@ -1,6 +1,6 @@
 # 第三方依赖
 
-全部是单头文件，直接进仓库，**不用包管理器**。
+依赖源码直接进仓库，**不用包管理器**。
 
 这么做是为了两件事：一是没有网络的机器上也能构建（这个项目要交叉编译到
 嵌入式设备，那边通常拿不到 vcpkg / Conan）；二是版本彻底钉死，不会因为
@@ -12,6 +12,15 @@
 | `httplib/httplib.h` | https://github.com/yhirose/cpp-httplib | v0.18.3 |
 | `sqlite/sqlite3.{c,h}` | https://sqlite.org/ | 3.49.1（amalgamation） |
 | `curl/` | https://curl.se/ | 8.11.1（裁剪版） |
+| `ffmpeg/` | https://ffmpeg.org/ | 9.0.2（完整源码） |
+| `opencv/` | https://github.com/opencv/opencv | 4.14.0（完整源码） |
+
+OpenCV 4.14.0 来自官方 tag 源码包
+`https://github.com/opencv/opencv/archive/refs/tags/4.14.0.tar.gz`，SHA-256 为
+`ee8fb9b30eb60850431b4656447080e3737b56e45719c92b67f245950609f86e`。
+源码原样解包到 `opencv/`，构建时无需联网。上游许可见
+[`opencv/LICENSE`](opencv/LICENSE)。桌面图像模型单独放在
+[`MaiChat/shared/agent/models/`](../../MaiChat/shared/agent/models/)。
 
 ## 用法边界
 

@@ -1358,7 +1358,7 @@ void AgentChatPanel::onSend() {
         runtime_->editor->clear();
         appendUserBubble(answer);
         clearQuestion();
-        scrollToBottom();
+        runtime_->view->scrollToBottom();
         return;
     }
 
@@ -1391,7 +1391,7 @@ void AgentChatPanel::onSend() {
     appendUserBubble(text);
     appendUserImages(imagePaths);
     setRunning(true);
-    scrollToBottom();
+    runtime_->view->scrollToBottom();
 }
 
 void AgentChatPanel::onClear() {
@@ -1436,7 +1436,7 @@ void AgentChatPanel::setRunning(bool running) {
 }
 
 void AgentChatPanel::scrollToBottom() {
-    runtime_->view->scrollToBottom();
+    if (runtime_->view->isAtBottom()) runtime_->view->scrollToBottom();
 }
 
 void AgentChatPanel::refreshContextSize() {

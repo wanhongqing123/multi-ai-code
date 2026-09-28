@@ -15,6 +15,7 @@ struct AIAssistantView: View {
     @State private var followsBottom = true
     @State private var userDragging = false
     @State private var latestY: CGFloat = 0
+    @State private var scrollGeneration = 0
     @State private var sessionDrawerOffset: CGFloat = 0
     @State private var sessionDrawerWidth: CGFloat = 320
     @State private var isAttachmentPanelPresented = false
@@ -80,23 +81,23 @@ struct AIAssistantView: View {
                             }
                             .onPreferenceChange(AIBottomPreference.self) { y in
                                 latestY = y
-                                let nearBottom = y < geometry.size.height + 40
-                                if followsBottom && !nearBottom { proxy.scrollTo("bottom", anchor: .bottom) }
-                                else if !userDragging && nearBottom { followsBottom = true }
                             }
                             .simultaneousGesture(DragGesture().onChanged { _ in
-                                userDragging = true; followsBottom = false
-                            }.onEnded { _ in
+                                if !userDragging { scrollGeneration += 1 }
+                                userDragging = true
+                                followsBottom = false
+                            }.onEnded { value in
                                 userDragging = false
-                                followsBottom = latestY < geometry.size.height + 40
+                                followsBottom = value.translation.height < 0
+                                    && latestY < geometry.size.height + 24
                             })
                             .onChange(of: geometry.size.height) { _ in
-                                if followsBottom { proxy.scrollTo("bottom", anchor: .bottom) }
+                                if followsBottom && !userDragging { proxy.scrollTo("bottom", anchor: .bottom) }
                             }
                             .onChange(of: model.scrollRequest) { _ in scrollToLatest(proxy) }
                             .onChange(of: model.selected) { _ in scrollToLatest(proxy) }
                             .onChange(of: model.messages) { _ in
-                                if followsBottom { proxy.scrollTo("bottom", anchor: .bottom) }
+                                if followsBottom && !userDragging { proxy.scrollTo("bottom", anchor: .bottom) }
                             }
                             .overlay(alignment: .bottomTrailing) {
                                 if !followsBottom {
@@ -195,11 +196,15 @@ struct AIAssistantView: View {
     }
 
     private func scrollToLatest(_ proxy: ScrollViewProxy) {
+        scrollGeneration += 1
+        let generation = scrollGeneration
         followsBottom = true
         DispatchQueue.main.async {
+            guard scrollGeneration == generation && followsBottom && !userDragging else { return }
             proxy.scrollTo("bottom", anchor: .bottom)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            guard scrollGeneration == generation && followsBottom && !userDragging else { return }
             proxy.scrollTo("bottom", anchor: .bottom)
         }
     }

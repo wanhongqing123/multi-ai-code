@@ -6,6 +6,7 @@
 #include <QMenu>
 #include <QMimeData>
 #include <QPushButton>
+#include <QScrollBar>
 #include <QSignalSpy>
 #include <QSplitter>
 #include <QSplitterHandle>
@@ -96,6 +97,7 @@ private slots:
     void conversationUsesAvailableWidth();
     void pastedImageUsesTheSharedComposerAndReachesTheModel();
     void modelChipOffersTheTextAndVisionModels();
+    void newAgentOutputDoesNotInterruptReadingHistory();
 };
 
 namespace {
@@ -144,6 +146,35 @@ struct Harness {
 };
 
 }  // namespace
+
+void AgentPanelSessionTest::newAgentOutputDoesNotInterruptReadingHistory() {
+    Harness harness;
+    QVERIFY(QTest::qWaitForWindowExposed(harness.panel.get()));
+    auto* view = harness.view();
+    auto publish = [&](const char* partId, const QString& text) {
+        MaiEvent event;
+        event.id = "evt_scroll_test";
+        event.type = MaiEventType::MessagePartDelta;
+        event.sessionId = harness.mine.toUtf8().constData();
+        event.messageId = "msg_scroll_test";
+        event.partId = partId;
+        event.field = "text";
+        event.delta = text.toUtf8().constData();
+        harness.controller->agent().eventBus().publish(event);
+        QTest::qWait(120);
+    };
+    publish("part_history", QStringLiteral("history line\n").repeated(250));
+    auto* bar = view->verticalScrollBar();
+    QVERIFY(bar->maximum() > 0);
+    bar->setValue(qMax(0, bar->maximum() / 3));
+    QVERIFY(!view->isAtBottom());
+    const int position = bar->value();
+
+    publish("part_new", QStringLiteral("A new answer arrived while reading history"));
+    QCOMPARE(bar->value(), position);
+    publish("part_new", QStringLiteral(" and it kept streaming"));
+    QCOMPARE(bar->value(), position);
+}
 
 void AgentPanelSessionTest::answerFromAnotherSessionDoesNotLeakIn() {
     Harness harness;

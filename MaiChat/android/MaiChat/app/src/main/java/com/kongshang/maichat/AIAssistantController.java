@@ -159,9 +159,9 @@ final class AIAssistantController {
                 response[0] = hostToolFailure(safeMessage(failure));
             }
         };
-        if (tool.startsWith("mobile_")) {
+        if (tool.startsWith("mobile_") || tool.equals("generate_pdf")) {
             if (Looper.myLooper() == Looper.getMainLooper())
-                return hostToolFailure("相册工具不能在 UI 线程执行");
+                return hostToolFailure("此宿主工具不能在 UI 线程执行");
             invoke.run();
             return response[0];
         }
@@ -608,6 +608,17 @@ final class AIAssistantController {
             if (upright != decoded) upright.recycle();
             decoded.recycle();
         }
+    }
+    File workspacePdfOutputForHost(String absolutePath) throws Exception {
+        if (root == null || absolutePath == null || absolutePath.trim().isEmpty())
+            throw new IllegalArgumentException("需要 AI 工作区内的 PDF 输出路径");
+        File workspace = new File(root, "Workspace").getCanonicalFile();
+        File candidate = new File(absolutePath).getCanonicalFile();
+        if (!candidate.toPath().startsWith(workspace.toPath())
+            || !candidate.getName().toLowerCase(java.util.Locale.ROOT).endsWith(".pdf")
+            || candidate.exists())
+            throw new IllegalArgumentException("PDF 必须是 AI 工作区内的新文件");
+        return candidate;
     }
     private ImportedFile importStream(InputStream input, String sourceMime, String sourceName)
         throws Exception {

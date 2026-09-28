@@ -13,6 +13,13 @@
 #include <stdexcept>
 #include <thread>
 using Json = nlohmann::json;
+#if defined(__APPLE__)
+static const char* kPhotoAlbumTool = "mobile_photos_add_to_album";
+#elif defined(__ANDROID__)
+static const char* kPhotoAlbumTool = "mobile_photos_copy_to_album";
+#else
+static const char* kPhotoAlbumTool = nullptr;
+#endif
 #define CHECK(x)                                \
     do {                                        \
         if (!(x)) throw std::runtime_error(#x); \
@@ -116,13 +123,15 @@ int main() {
                   "GitHub-Flavored Markdown") != std::string::npos);
         // 移动端不能向模型宣称可以执行桌面 shell。
         bool hasViewImage = false, hasMaiChatContacts = false, hasMaiChatSend = false,
-             hasMaiChatBroadcast = false, hasMobilePhotos = false, hasMobileAlbums = false,
+             hasMaiChatBroadcast = false, hasGeneratePdf = false,
+             hasMobilePhotos = false, hasMobileAlbums = false,
              hasMobilePhotoRead = false, hasMobilePhotoOriginal = false,
              hasMobilePhotoSave = false, hasMobileTransform = false,
              hasMobilePhotoAlbumWrite = false;
         for (const auto& tool : body["tools"]) {
             CHECK(tool["function"]["name"] != "shell");
             if (tool["function"]["name"] == "view_image") hasViewImage = true;
+            if (tool["function"]["name"] == "generate_pdf") hasGeneratePdf = true;
             if (tool["function"]["name"] == "maichat_list_contacts") hasMaiChatContacts = true;
             if (tool["function"]["name"] == "maichat_send_text") hasMaiChatSend = true;
             if (tool["function"]["name"] == "maichat_broadcast_text")
@@ -135,10 +144,11 @@ int main() {
             if (tool["function"]["name"] == "mobile_save_image") hasMobilePhotoSave = true;
             if (tool["function"]["name"] == "mobile_transform_image")
                 hasMobileTransform = true;
-            if (tool["function"]["name"] == "mobile_photos_add_to_album")
+            if (kPhotoAlbumTool != nullptr && tool["function"]["name"] == kPhotoAlbumTool)
                 hasMobilePhotoAlbumWrite = true;
         }
         CHECK(hasViewImage);
+        CHECK(hasGeneratePdf);
         CHECK(hasMaiChatContacts);
         CHECK(hasMaiChatSend);
         CHECK(hasMaiChatBroadcast);
@@ -148,7 +158,7 @@ int main() {
         CHECK(hasMobilePhotoOriginal);
         CHECK(hasMobilePhotoSave);
         CHECK(hasMobileTransform);
-        CHECK(hasMobilePhotoAlbumWrite);
+        if (kPhotoAlbumTool != nullptr) CHECK(hasMobilePhotoAlbumWrite);
         const auto& last = body["messages"].back();
         std::string input;
         if (last["content"].is_string()) {
@@ -194,7 +204,7 @@ int main() {
         if (input == "photo-add") {
             Json invocation = {
                 {"index", 0}, {"id", "call_photo_add"}, {"type", "function"},
-                {"function", {{"name", "mobile_photos_add_to_album"},
+                 {"function", {{"name", kPhotoAlbumTool == nullptr ? "unused" : kPhotoAlbumTool},
                               {"arguments", "{\"album_name\":\"Trip\",\"photo_ids\":[\"one\"]}"}}}};
             response.set_content(frame({{"tool_calls", Json::array({invocation})}}, "tool_calls") +
                                      "data: [DONE]\n\n", "text/event-stream");
@@ -296,21 +306,23 @@ int main() {
         CHECK(hostProbe.calls == 1);
         CHECK(hostProbe.lastTool == "maichat_send_text");
         CHECK(Json::parse(hostProbe.lastArguments)["peer_id"] == "alice");
-        CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "photo-add"}})["ok"] == true);
-        const auto photoDone = wait([](const Json& s) { return s["busy"] == false; });
-        CHECK(photoDone["permissions"].empty());
-        CHECK(hostProbe.calls == 2);
-        CHECK(hostProbe.lastTool == "mobile_photos_add_to_album");
+        if (kPhotoAlbumTool != nullptr) {
+            CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "photo-add"}})["ok"] == true);
+            const auto photoDone = wait([](const Json& s) { return s["busy"] == false; });
+            CHECK(photoDone["permissions"].empty());
+            CHECK(hostProbe.calls == 2);
+            CHECK(hostProbe.lastTool == kPhotoAlbumTool);
+        }
         CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "photo-save"}})["ok"] == true);
         const auto photoSaved = wait([](const Json& s) { return s["busy"] == false; });
         CHECK(photoSaved["permissions"].empty());
-        CHECK(hostProbe.calls == 3);
+        CHECK(hostProbe.calls == (kPhotoAlbumTool == nullptr ? 2 : 3));
         CHECK(hostProbe.lastTool == "mobile_save_image");
         CHECK(Json::parse(hostProbe.lastArguments)["path"] == "created.png");
         CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "photo-transform"}})["ok"] == true);
         const auto photoTransformed = wait([](const Json& s) { return s["busy"] == false; });
         CHECK(photoTransformed["permissions"].empty());
-        CHECK(hostProbe.calls == 4);
+        CHECK(hostProbe.calls == (kPhotoAlbumTool == nullptr ? 3 : 4));
         CHECK(hostProbe.lastTool == "mobile_transform_image");
         CHECK(Json::parse(hostProbe.lastArguments)["operation"] == "beautify");
         CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "hello"}})["ok"] == true);

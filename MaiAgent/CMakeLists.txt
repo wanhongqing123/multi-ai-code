@@ -162,6 +162,7 @@ add_library(maiagent STATIC
   src/MaiShellTool.cpp
   src/MaiScreenshotTool.cpp
   src/MaiViewImageTool.cpp
+  src/MaiPdfTool.cpp
   src/MaiWindowListTool.cpp
   src/MaiAgent.cpp
   src/MaiTurnRunner.cpp
@@ -257,6 +258,7 @@ if(MAIAGENT_BUILD_TESTS)
       MaiShellToolTests     # shell：审批粒度、超时、取消、输出上限
       MaiScreenshotToolTests  # screenshot：平台能力、审批、原生 PNG 捕获
       MaiViewImageToolTests   # view_image：路径边界、图片识别、多模态回灌
+      MaiPdfToolTests         # generate_pdf：工作区边界、审批和产物验证
       MaiWindowListToolTests  # list_windows：平台能力、审批、可见窗口枚举
       MaiToolLoopTests      # 工具循环：调用 -> 执行 -> 回灌 -> 再答
       MaiPermissionTests)   # 权限闸门：拦住 -> 等裁决 -> 放行或拒绝

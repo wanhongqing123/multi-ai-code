@@ -5,6 +5,7 @@
 #include "MaiEditTool.h"
 #include "MaiFileTools.h"
 #include "MaiOpenAiClient.h"
+#include "MaiPdfTool.h"
 #include "MaiQuestionTool.h"
 #include "MaiSqliteStore.h"
 #include "MaiTimeTool.h"
@@ -321,6 +322,14 @@ struct MaiMobileAgent {
         tools->add(makeMaiCurrentTimeTool());
         tools->add(makeMaiTodoWriteTool());
         tools->add(makeMaiViewImageTool());
+        tools->add(makeMaiPdfTool([dispatcher = hostTools](
+                                      const std::string& html, const std::string& output,
+                                      const std::atomic<bool>* cancel) {
+            if (cancel != nullptr && cancel->load(std::memory_order_relaxed))
+                return MaiToolResult::failure(MaiErrorCode::Canceled,
+                                              "PDF generation was canceled");
+            return dispatcher->call("generate_pdf", Json{{"html", html}, {"output_path", output}}.dump());
+        }));
         registerMaiChatHostTools(*tools, hostTools);
         registerMobilePhotoTools(*tools, hostTools);
         MaiAgent::Options options;

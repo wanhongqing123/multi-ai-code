@@ -1738,6 +1738,10 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
 
     private Object executeMaiChatHostTool(String tool, JSONObject arguments) throws Exception {
         switch (tool) {
+            case "generate_pdf":
+                return AgentPdfRenderer.render(arguments.optString("html"),
+                    AIAssistantController.shared(this).workspacePdfOutputForHost(
+                        arguments.optString("output_path")));
             case "mobile_list_photos": return agentListPhotos(arguments);
             case "mobile_list_albums": return agentListAlbums();
             case "mobile_read_photo": return agentReadPhoto(arguments);

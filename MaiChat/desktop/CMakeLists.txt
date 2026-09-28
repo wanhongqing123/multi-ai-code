@@ -358,6 +358,8 @@ add_library(maichat_agent
   src/ui/ComposerTextEdit.cpp
   src/agent/AgentController.h
   src/agent/AgentController.cpp
+  src/agent/DesktopPdfRenderer.h
+  src/agent/DesktopPdfRenderer.cpp
   src/agent/AgentChatPanel.h
   src/agent/AgentChatPanel.cpp
   src/agent/AgentSessionList.h
@@ -388,6 +390,9 @@ add_executable(agent_panel_session_test tests/AgentPanelSessionTest.cpp)
 # UiZoom 在 remote_im_desktop_ui 里，而 AgentChatPanel 用它做缩放，所以要一起链。
 target_link_libraries(agent_panel_session_test PRIVATE remote_im_desktop_ui remote_im_desktop_app
   remote_im_core maichat_agent maichat_markdown Qt5::Widgets Qt5::Test)
+
+add_executable(desktop_pdf_renderer_test tests/DesktopPdfRendererTest.cpp)
+target_link_libraries(desktop_pdf_renderer_test PRIVATE maichat_agent Qt5::Widgets Qt5::Test)
 
 add_executable(reply_suggestion_controller_test tests/ReplySuggestionControllerTest.cpp)
 target_link_libraries(reply_suggestion_controller_test PRIVATE maichat_agent Qt5::Test)
@@ -562,6 +567,7 @@ add_test(NAME markdown_view_test COMMAND markdown_view_test)
 add_test(NAME markdown_label_test COMMAND markdown_label_test)
 add_test(NAME agent_controller_test COMMAND agent_controller_test)
 add_test(NAME agent_panel_session_test COMMAND agent_panel_session_test)
+add_test(NAME desktop_pdf_renderer_test COMMAND desktop_pdf_renderer_test)
 add_test(NAME reply_suggestion_controller_test COMMAND reply_suggestion_controller_test)
 add_test(NAME performance_log_test COMMAND performance_log_test)
 add_test(NAME remote_diagnostics_controller_test COMMAND remote_diagnostics_controller_test)

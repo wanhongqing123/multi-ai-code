@@ -2,6 +2,8 @@
 #include "MaiOpenAiClient.h"
 #include "MaiMemoryStore.h"
 #include "MaiSqliteStore.h"
+#include "MaiPdfTool.h"
+#include "agent/DesktopPdfRenderer.h"
 
 #include <QHash>
 #include <QMetaType>
@@ -71,6 +73,7 @@ std::unique_ptr<MaiAgent> buildAgent(std::unique_ptr<MaiModelClient> model,
     // 要不要把工具声明给模型看是 MaiContextBuilder 的事，不是这里的。
     auto tools = std::make_unique<MaiToolRegistry>();
     registerMaiBuiltinTools(*tools);
+    tools->add(makeMaiPdfTool(renderDesktopPdf));
     if (hostTools) hostTools(*tools);
 
     MaiAgent::Options options;

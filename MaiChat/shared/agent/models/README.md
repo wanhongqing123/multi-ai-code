@@ -12,3 +12,9 @@ from the OpenCV 4.14.0 source in `MaiAgent/third_party/opencv/`.
 The weights were downloaded from the OpenCV Zoo Git LFS media endpoint, not
 the small Git LFS pointer files. YuNet 2023mar is the OpenCV 4.x-compatible
 model; the newer 2026may model needs OpenCV 5's ONNX Runtime engine.
+
+The desktop bridge in `../MaiImageVision.h` takes both model files as memory
+buffers. The host should load them with its platform-aware file API, create one
+vision handle, and reuse it for inference. This avoids repeated model loading
+and allows model paths with non-ASCII characters on Windows. Inference is
+serialized by the handle; the original image pixels are never modified.

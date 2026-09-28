@@ -11,7 +11,7 @@
 | `nlohmann/json.hpp` | https://github.com/nlohmann/json | v3.11.3 |
 | `httplib/httplib.h` | https://github.com/yhirose/cpp-httplib | v0.18.3 |
 | `sqlite/sqlite3.{c,h}` | https://sqlite.org/ | 3.49.1（amalgamation） |
-| `curl/` | https://curl.se/ | 8.11.1（裁剪版） |
+| `curl/` | https://curl.se/ | 8.11.1（完整源码） |
 | `ffmpeg/` | https://ffmpeg.org/ | 9.0.2（完整源码） |
 | `opencv/` | https://github.com/opencv/opencv | 4.14.0（完整源码） |
 

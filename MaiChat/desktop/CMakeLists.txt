@@ -91,6 +91,56 @@ set(CMAKE_AUTOMOC ${_maichat_automoc})
 set(CMAKE_AUTOUIC ${_maichat_autouic})
 set(CMAKE_AUTORCC ${_maichat_autorcc})
 
+# 官方 FFmpeg 源码生成通用软件库。腾讯 TRTC 的 txffmpeg 只供 SDK 内部使用，
+# 不能拿来编译 MaiChat 自己的滤镜；Windows 用 MSVC 兼容的静态库独立接入。
+if(WIN32)
+  option(MAICHAT_ENABLE_FFMPEG "Build shared MaiChat image filters with FFmpeg" ON)
+  if(MAICHAT_ENABLE_FFMPEG)
+    set(MAICHAT_FFMPEG_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/ffmpeg")
+    set(MAICHAT_FFMPEG_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/vendor/ffmpeg-windows"
+      CACHE PATH "Windows FFmpeg build and install directory")
+    find_program(MAICHAT_MSYS2_BASH NAMES bash.exe
+      HINTS "$ENV{MSYS2_ROOT}/usr/bin" "C:/msys64/usr/bin"
+            "C:/tools/msys64/usr/bin" "E:/OpenSource/msys64/usr/bin"
+      NO_DEFAULT_PATH)
+    if(NOT MAICHAT_MSYS2_BASH)
+      message(FATAL_ERROR "MSYS2 bash is required for Windows FFmpeg; set MAICHAT_MSYS2_BASH")
+    endif()
+    set(MAICHAT_FFMPEG_LIBRARIES avdevice avfilter avformat avcodec swresample swscale avutil)
+    set(MAICHAT_FFMPEG_ARCHIVES)
+    foreach(library ${MAICHAT_FFMPEG_LIBRARIES})
+      list(APPEND MAICHAT_FFMPEG_ARCHIVES
+        "${MAICHAT_FFMPEG_BUILD_DIR}/lib${library}/${library}.lib")
+    endforeach()
+    set(MAICHAT_FFMPEG_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/scripts/build-ffmpeg-windows.ps1")
+    add_custom_command(OUTPUT ${MAICHAT_FFMPEG_ARCHIVES}
+      COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${MAICHAT_FFMPEG_SCRIPT}"
+        -SourceDirectory "${MAICHAT_FFMPEG_SOURCE}"
+        -BuildDirectory "${MAICHAT_FFMPEG_BUILD_DIR}"
+        -MsysBash "${MAICHAT_MSYS2_BASH}"
+      DEPENDS "${MAICHAT_FFMPEG_SOURCE}/configure"
+              "${MAICHAT_FFMPEG_SOURCE}/RELEASE" "${MAICHAT_FFMPEG_SCRIPT}"
+      VERBATIM)
+    add_custom_target(maichat_ffmpeg_build DEPENDS ${MAICHAT_FFMPEG_ARCHIVES})
+    foreach(library ${MAICHAT_FFMPEG_LIBRARIES})
+      add_library(maichat_ffmpeg_${library} STATIC IMPORTED GLOBAL)
+      set_target_properties(maichat_ffmpeg_${library} PROPERTIES
+        IMPORTED_LOCATION "${MAICHAT_FFMPEG_BUILD_DIR}/lib${library}/${library}.lib")
+      add_dependencies(maichat_ffmpeg_${library} maichat_ffmpeg_build)
+    endforeach()
+    add_library(maichat_image_filter STATIC ../shared/agent/MaiImageFilter.cpp)
+    add_dependencies(maichat_image_filter maichat_ffmpeg_build)
+    target_include_directories(maichat_image_filter PUBLIC ../shared/agent PRIVATE
+      "${MAICHAT_FFMPEG_BUILD_DIR}/install/include"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/nlohmann")
+    target_link_libraries(maichat_image_filter PUBLIC
+      maichat_ffmpeg_avdevice maichat_ffmpeg_avfilter maichat_ffmpeg_avformat
+      maichat_ffmpeg_avcodec maichat_ffmpeg_swresample maichat_ffmpeg_swscale
+      maichat_ffmpeg_avutil
+      psapi ole32 strmiids uuid oleaut32 shlwapi gdi32 vfw32 ws2_32 user32 bcrypt)
+  endif()
+endif()
+
 add_library(md4c STATIC
   third_party/md4c/md4c.c
   third_party/md4c/md4c.h
@@ -343,6 +393,9 @@ if(APPLE)
   endif()
 endif()
 target_link_libraries(maichat PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core maichat_agent Qt5::Widgets)
+if(WIN32 AND MAICHAT_ENABLE_FFMPEG)
+  target_link_libraries(maichat PRIVATE maichat_image_filter)
+endif()
 if(WIN32)
   # SetCurrentProcessExplicitAppUserModelID：没有它系统通知会被静默丢弃。
   target_link_libraries(maichat PRIVATE shell32)
@@ -393,6 +446,11 @@ target_link_libraries(agent_panel_session_test PRIVATE remote_im_desktop_ui remo
 
 add_executable(desktop_pdf_renderer_test tests/DesktopPdfRendererTest.cpp)
 target_link_libraries(desktop_pdf_renderer_test PRIVATE maichat_agent Qt5::Widgets Qt5::Test)
+
+if(WIN32 AND MAICHAT_ENABLE_FFMPEG)
+  add_executable(desktop_ffmpeg_filter_test tests/DesktopFfmpegFilterTest.cpp)
+  target_link_libraries(desktop_ffmpeg_filter_test PRIVATE maichat_image_filter)
+endif()
 
 add_executable(reply_suggestion_controller_test tests/ReplySuggestionControllerTest.cpp)
 target_link_libraries(reply_suggestion_controller_test PRIVATE maichat_agent Qt5::Test)
@@ -568,6 +626,9 @@ add_test(NAME markdown_label_test COMMAND markdown_label_test)
 add_test(NAME agent_controller_test COMMAND agent_controller_test)
 add_test(NAME agent_panel_session_test COMMAND agent_panel_session_test)
 add_test(NAME desktop_pdf_renderer_test COMMAND desktop_pdf_renderer_test)
+if(WIN32 AND MAICHAT_ENABLE_FFMPEG)
+  add_test(NAME desktop_ffmpeg_filter_test COMMAND desktop_ffmpeg_filter_test)
+endif()
 add_test(NAME reply_suggestion_controller_test COMMAND reply_suggestion_controller_test)
 add_test(NAME performance_log_test COMMAND performance_log_test)
 add_test(NAME remote_diagnostics_controller_test COMMAND remote_diagnostics_controller_test)

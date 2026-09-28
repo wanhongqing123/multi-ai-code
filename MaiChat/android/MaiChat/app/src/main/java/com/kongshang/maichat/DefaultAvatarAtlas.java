@@ -16,7 +16,7 @@ final class DefaultAvatarAtlas {
             BitmapFactory.Options options = new BitmapFactory.Options();
             options.inScaled = false;
             atlas = BitmapFactory.decodeResource(context.getResources(),
-                R.drawable.avatar_anime_atlas, options);
+                R.drawable.avatar_anime_atlas_v2, options);
         }
         int tile = atlas.getWidth() / 6;
         Bitmap portrait = Bitmap.createBitmap(atlas,

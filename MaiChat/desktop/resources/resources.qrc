@@ -16,7 +16,7 @@
     <file alias="JetBrainsMono-latin-700.ttf">fonts/JetBrainsMono-latin-700.ttf</file>
   </qresource>
   <qresource prefix="/maichat/avatars">
-    <file alias="anime-atlas.png">avatars/anime-atlas.png</file>
+    <file alias="anime-atlas-v2.png">avatars/anime-atlas-v2.png</file>
   </qresource>
   <!-- Tabler Icons v3.x, MIT. Original SVGs and license live together. -->
   <qresource prefix="/maichat/icons">

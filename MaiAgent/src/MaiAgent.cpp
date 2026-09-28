@@ -32,6 +32,30 @@ struct ActiveTurn {
     std::atomic<bool> cancel{false};
 };
 
+void recoverInterruptedTools(MaiSessionStore& store) {
+    // A new process has no workers or permission waits from the previous process. Leave
+    // completed calls intact, and turn only orphaned calls into truthful tool results.
+    for (const MaiSession& session : store.listSessions()) {
+        for (MaiMessage message : store.listMessages(session.id)) {
+            bool changed = false;
+            for (MaiMessagePart& part : message.parts) {
+                auto* tool = std::get_if<MaiToolPart>(&part.body);
+                if (!tool ||
+                    (tool->state != MaiToolState::Running && tool->state != MaiToolState::Pending))
+                    continue;
+                tool->state = MaiToolState::Error;
+                tool->error =
+                    "Tool execution was interrupted when the app stopped. Retry if needed.";
+                tool->output = tool->error;
+                changed = true;
+            }
+            if (!changed) continue;
+            if (message.completed == 0) message.completed = MaiTime::getCurrentTime();
+            store.putMessage(session.id, message);
+        }
+    }
+}
+
 }  // namespace
 
 struct MaiAgent::Runtime {
@@ -125,6 +149,7 @@ MaiAgent::MaiAgent(std::unique_ptr<MaiSessionStore> store, std::unique_ptr<MaiMo
     // 设晚了会有一轮拿到空的。
     mRuntime->owner = this;
     mRuntime->store = std::move(store);
+    recoverInterruptedTools(*mRuntime->store);
     mRuntime->model = std::move(model);
     mRuntime->tools = std::move(tools);
     mRuntime->options = std::move(options);

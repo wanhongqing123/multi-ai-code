@@ -1,4 +1,6 @@
 #include <algorithm>
+#include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <regex>
 #include <sstream>
@@ -26,6 +28,8 @@ constexpr int kMaxGrepMatches = 200;
 constexpr std::uint64_t kMaxFileBytes = 8u * 1024 * 1024;
 
 constexpr int kMaxGlobResults = 300;
+constexpr int kMaxGlobVisitedEntries = 50000;
+constexpr auto kMaxGlobDuration = std::chrono::seconds(5);
 
 // 截断时要落在 UTF-8 字符边界上，不然会切出半个汉字，后面 JSON 序列化会失败或者产生乱码。
 void truncateUtf8(std::string& text, std::size_t maxBytes) {
@@ -129,6 +133,39 @@ bool globMatch(const std::string& pattern, const std::string& text) {
     // 文本吃完了，剩下的模式必须全是 `*`
     while (cursor < pattern.size() && pattern[cursor] == '*') ++cursor;
     return cursor == pattern.size();
+}
+
+// A small, bounded brace expansion covers common extension lists without letting a model
+// accidentally create an unbounded number of patterns.
+bool expandGlobBraces(const std::string& pattern, std::vector<std::string>& expanded) {
+    if (pattern.size() > 512) return false;
+    expanded = {pattern};
+    for (std::size_t index = 0; index < expanded.size(); ++index) {
+        const std::size_t open = expanded[index].find('{');
+        if (open == std::string::npos) {
+            if (expanded[index].find('}') != std::string::npos) return false;
+            continue;
+        }
+        const std::size_t close = expanded[index].find('}', open + 1);
+        if (close == std::string::npos || expanded[index].find('{', open + 1) < close) return false;
+        const std::string prefix = expanded[index].substr(0, open);
+        const std::string suffix = expanded[index].substr(close + 1);
+        const std::string alternatives = expanded[index].substr(open + 1, close - open - 1);
+        expanded.erase(expanded.begin() + static_cast<std::ptrdiff_t>(index));
+        std::size_t start = 0;
+        do {
+            const std::size_t comma = alternatives.find(',', start);
+            const std::string choice = alternatives.substr(start, comma - start);
+            if (choice.empty() || choice.find('{') != std::string::npos ||
+                choice.find('}') != std::string::npos || expanded.size() >= 32)
+                return false;
+            expanded.push_back(prefix + choice + suffix);
+            if (comma == std::string::npos) break;
+            start = comma + 1;
+        } while (true);
+        index = static_cast<std::size_t>(-1);
+    }
+    return true;
 }
 
 // 跳过这些目录：它们体量巨大而且几乎肯定不是模型要找的东西。
@@ -306,8 +343,9 @@ public:
         return "glob";
     }
     std::string description() const override {
-        return "Find files inside the working directory by name pattern. Supports * and ?, "
-               "and ** to cross directory boundaries.";
+        return "Find files inside the working directory by name pattern. Supports *, ?, ** to "
+               "cross directories, and brace lists such as *.{png,jpg}. For a broad search, "
+               "provide a subdirectory in path.";
     }
     std::string parametersSchema() const override {
         return R"({"type":"object","properties":{)"
@@ -322,6 +360,10 @@ public:
         if (pattern.empty())
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,
                                           "missing required parameter: pattern");
+        std::vector<std::string> patterns;
+        if (!expandGlobBraces(pattern, patterns))
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                          "invalid or overly broad glob brace pattern");
 
         std::string base = context.root;
         if (args.contains("path") && args["path"].is_string() &&
@@ -335,22 +377,45 @@ public:
         if (!MaiFileSystem::isDirectory(basePath))
             return MaiToolResult::failure(MaiErrorCode::NotFound,
                                           "could not read directory: " + base);
+        if (basePath == basePath.dirName() && pattern.find("**") != std::string::npos)
+            return MaiToolResult::failure(
+                MaiErrorCode::InvalidInput,
+                "Searching an entire filesystem root is too broad. Set path to a specific "
+                "directory, such as the user's Documents folder, and retry.");
 
         std::vector<std::string> hits;
+        int visitedEntries = 0;
+        bool budgetExceeded = false;
+        const auto deadline = std::chrono::steady_clock::now() + kMaxGlobDuration;
         MaiFileSystem::walk(basePath, [&](const MaiFileEntry& entry) {
             if (context.isCanceled()) return MaiWalkAction::Stop;
+            ++visitedEntries;
+            if (visitedEntries > kMaxGlobVisitedEntries ||
+                (visitedEntries % 128 == 0 && std::chrono::steady_clock::now() >= deadline)) {
+                budgetExceeded = true;
+                return MaiWalkAction::Stop;
+            }
             if (entry.isDirectory) {
                 return shouldSkipDirectory(entry.nameUtf8) ? MaiWalkAction::SkipDirectory
                                                            : MaiWalkAction::Continue;
             }
             const std::string relative = toRelativePath(context.root, entry.path);
-            if (globMatch(pattern, relative) || globMatch(pattern, entry.nameUtf8)) {
+            const bool matches =
+                std::any_of(patterns.begin(), patterns.end(), [&](const auto& item) {
+                    return globMatch(item, relative) || globMatch(item, entry.nameUtf8);
+                });
+            if (matches) {
                 hits.push_back(relative);
                 if (static_cast<int>(hits.size()) >= kMaxGlobResults) return MaiWalkAction::Stop;
             }
             return MaiWalkAction::Continue;
         });
 
+        if (budgetExceeded && hits.empty())
+            return MaiToolResult::success(
+                "Search stopped after the scan limit without finding a match. Set path to a "
+                "smaller directory and retry.",
+                true);
         if (hits.empty()) return MaiToolResult::success("No files match " + pattern);
         std::sort(hits.begin(), hits.end());
         std::string out;
@@ -358,10 +423,11 @@ public:
             out += hit;
             out += "\n";
         }
-        const bool truncated = static_cast<int>(hits.size()) >= kMaxGlobResults;
+        const bool truncated = budgetExceeded || static_cast<int>(hits.size()) >= kMaxGlobResults;
         if (truncated)
-            out += "...Showing the first " + std::to_string(kMaxGlobResults) +
-                   " matches only. Use a more specific pattern to narrow the search.";
+            out +=
+                "...Search was limited. Set path to a smaller directory or use a more "
+                "specific pattern to find other matches.";
         return MaiToolResult::success(std::move(out), truncated);
     }
 };

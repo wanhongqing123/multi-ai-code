@@ -85,6 +85,7 @@ class AgentPanelSessionTest : public QObject {
     Q_OBJECT
 
 private slots:
+    void newSessionAvoidsFilesystemRoot();
     void answerFromAnotherSessionDoesNotLeakIn();
     void anotherSessionFailingDoesNotShowAnError();
     void anotherSessionTitleDoesNotRenameTheHeader();
@@ -146,6 +147,21 @@ struct Harness {
 };
 
 }  // namespace
+
+void AgentPanelSessionTest::newSessionAvoidsFilesystemRoot() {
+    struct RestoreCurrentDirectory {
+        QString original = QDir::currentPath();
+        ~RestoreCurrentDirectory() { QDir::setCurrent(original); }
+    } restore;
+    QVERIFY(QDir::setCurrent(QDir::rootPath()));
+
+    AgentController controller(std::make_unique<SilentModel>(), QString());
+    AgentChatPanel panel(controller);
+    panel.openSession(QString());
+    const auto sessions = controller.agent().listSessions();
+    QCOMPARE(sessions.size(), std::size_t(1));
+    QVERIFY(QString::fromStdString(sessions.front().directory) != QDir::rootPath());
+}
 
 void AgentPanelSessionTest::newAgentOutputDoesNotInterruptReadingHistory() {
     Harness harness;

@@ -80,6 +80,8 @@ struct Workspace {
         write(root / "src" / "main.cpp", "#include <cstdio>\nint main() { return 0; }\n");
         write(root / "src" / "util.cpp", "void helper() {}\n// TODO: fill this in\n");
         write(root / "src" / "util.h", "void helper();\n");
+        write(root / "src" / "mockup.png", "image");
+        write(root / "src" / "mockup.jpg", "image");
         // node_modules 里也放一个能匹配的，验证它被跳过
         write(root / "node_modules" / "junk" / "main.cpp", "should not be found\n");
         write(outside / "secret.txt", std::string(kSecretMarker) + " outside the workspace\n");
@@ -300,6 +302,21 @@ void test_glob() {
     CHECK(!none.hasError());
     CHECK(none.output().find("No files match") != std::string::npos);
 
+    const auto images = glob->execute(args({{"pattern", "**/*.{png,jpg,jpeg,webp}"}}), context);
+    CHECK(!images.hasError());
+    CHECK(images.output().find("src/mockup.png") != std::string::npos);
+    CHECK(images.output().find("src/mockup.jpg") != std::string::npos);
+    CHECK(images.output().find("src/main.cpp") == std::string::npos);
+    CHECK(glob->execute(args({{"pattern", "**/*.{png,}"}}), context).error().code() ==
+          MaiErrorCode::InvalidInput);
+
+#if !defined(_WIN32)
+    auto rootContext = context;
+    rootContext.root = "/";
+    CHECK(glob->execute(args({{"pattern", "**/*.png"}}), rootContext).error().code() ==
+          MaiErrorCode::InvalidInput);
+#endif
+
     CHECK(glob->execute("{}", context).error().code() == MaiErrorCode::InvalidInput);
 }
 
@@ -346,8 +363,7 @@ void test_registry() {
 
     // **按名字查，不比个数。** 比个数的话每加一个工具都要来改一次这里，
     // 而这条用例想守的是「这些工具都在」，不是「一共有几个」。
-    for (const char* n :
-         {"read", "write", "edit", "apply_patch", "glob", "grep", "current_time"}) {
+    for (const char* n : {"read", "write", "edit", "apply_patch", "glob", "grep", "current_time"}) {
         CHECK(reg.find(n) != nullptr);
     }
     CHECK(reg.find("no-such-tool") == nullptr);

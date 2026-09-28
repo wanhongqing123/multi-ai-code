@@ -81,6 +81,40 @@ static void test_session_crud_and_events() {
     CHECK(deleted == 1);
 }
 
+static void test_interrupted_tool_is_recovered_on_startup() {
+    auto store = makeMaiMemoryStore();
+    MaiSession session;
+    session.id = "ses_recovery";
+    session.directory = "/tmp";
+    store->putSession(session);
+
+    MaiMessage message;
+    message.id = "msg_recovery";
+    message.role = MaiRole::Assistant;
+    MaiToolPart running;
+    running.tool = "glob";
+    running.callId = "call_recovery";
+    running.state = MaiToolState::Running;
+    message.parts.push_back(MaiMessagePart{"prt_running", running});
+    MaiToolPart completed = running;
+    completed.state = MaiToolState::Completed;
+    completed.output = "done";
+    message.parts.push_back(MaiMessagePart{"prt_completed", completed});
+    store->putMessage(session.id, message);
+
+    MaiAgent agent(std::move(store), nullptr, nullptr);
+    const auto messages = agent.listMessages(session.id);
+    CHECK(messages.size() == 1);
+    if (messages.empty()) return;
+    const auto* recovered = std::get_if<MaiToolPart>(&messages.front().parts[0].body);
+    const auto* unchanged = std::get_if<MaiToolPart>(&messages.front().parts[1].body);
+    CHECK(recovered != nullptr && recovered->state == MaiToolState::Error);
+    CHECK(recovered != nullptr && recovered->output.find("interrupted") != std::string::npos);
+    CHECK(unchanged != nullptr && unchanged->state == MaiToolState::Completed);
+    CHECK(unchanged != nullptr && unchanged->output == "done");
+    CHECK(messages.front().completed != 0);
+}
+
 // 事件处理函数里不许做慢活——而且这条要真的被装上，不能只是注释。
 //
 // 不能直接测"违反了会炸"：那会终止进程，测试框架接不住。所以退一步，测**守卫确实在生效**：
@@ -151,6 +185,7 @@ static void test_unsubscribe() {
 int main() {
     test_id_prefix_and_monotonic();
     test_session_crud_and_events();
+    test_interrupted_tool_is_recovered_on_startup();
     test_event_handlers_run_with_blocking_disallowed();
     test_blocking_scopes_nest();
     test_thread_name();

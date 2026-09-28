@@ -45,7 +45,7 @@ void test_png_is_returned_as_a_model_image() {
     CHECK(!result.hasError());
     CHECK(result.images().size() == 1);
     if (!result.images().empty()) {
-        CHECK(result.images().front().path == path.u8string());
+        CHECK(result.images().front().path == fs::canonical(path).u8string());
         CHECK(result.images().front().mimeType == "image/png");
     }
 }

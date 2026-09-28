@@ -985,8 +985,15 @@ void AgentChatPanel::updateApprovalPolicyUi() {
 }
 
 void AgentChatPanel::openSession(const QString& sessionId) {
-    runtime_->sessionId =
-        sessionId.isEmpty() ? runtime_->controller->createSession(QDir::currentPath()) : sessionId;
+    QString directory = QDir::currentPath();
+    // Finder launches the app with "/" as its working directory. Using that as an Agent
+    // workspace makes a broad file search traverse the entire machine.
+    if (directory == QDir::rootPath()) {
+        directory = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+        if (directory.isEmpty() || !QDir(directory).exists()) directory = QDir::homePath();
+    }
+    runtime_->sessionId = sessionId.isEmpty() ? runtime_->controller->createSession(directory)
+                                            : sessionId;
 
     MaiSession session;
     if (runtime_->controller->agent().getSession(toUtf8(runtime_->sessionId), session)) {

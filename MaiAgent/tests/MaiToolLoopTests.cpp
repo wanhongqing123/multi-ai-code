@@ -492,7 +492,8 @@ void test_iteration_cap() {
     agent.waitIdle();
 
     // 到上限就停，不能无限烧钱
-    CHECK(model->requestCount() == 3);
+    CHECK(model->requestCount() == 4);
+    CHECK(model->request(3).tools.empty());
     // 而且要明确告诉用户停在哪儿了，不是悄悄结束让人以为跑完了
     bool toldUser = false;
     for (const auto& e : recorder.all())
@@ -500,6 +501,35 @@ void test_iteration_cap() {
             e.detail.find("tool-call limit") != std::string::npos)
             toldUser = true;
     CHECK(toldUser);
+}
+
+void test_iteration_cap_provides_a_final_status() {
+    Workspace workspace;
+    MaiAgent::Options options;
+    options.maxToolIterations = 3;
+    auto underTest = makeAgent({callTurn("read", R"({"path":"src/hello.txt"})"),
+                                callTurn("read", R"({"path":"src/hello.txt"})"),
+                                callTurn("read", R"({"path":"src/hello.txt"})"),
+                                sayTurn("I read the file, but the task needs more work.")},
+                               options);
+    Recorder recorder;
+    recorder.attach(*underTest.agent);
+    const std::string sessionId =
+        underTest.agent->submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
+    underTest.agent->submit(MaiSendPrompt{sessionId, "inspect the file"});
+    underTest.agent->waitIdle();
+
+    CHECK(underTest.model->requestCount() == 4);
+    CHECK(underTest.model->request(3).tools.empty());
+    CHECK(underTest.model->request(3).messages.back().content.find("what remains unfinished") !=
+          std::string::npos);
+    bool hasStatus = false;
+    for (const auto& message : underTest.agent->listMessages(sessionId))
+        for (const auto& part : message.parts)
+            if (const auto* text = std::get_if<MaiTextPart>(&part.body))
+                hasStatus |= text->text.find("needs more work") != std::string::npos;
+    CHECK(hasStatus);
+    for (const auto& event : recorder.all()) CHECK(event.type != MaiEventType::SessionError);
 }
 
 void test_no_tools_means_no_tool_field() {
@@ -563,6 +593,7 @@ int main() {
     test_unknown_tool_does_not_kill_the_turn();
     test_path_escape_through_model();
     test_iteration_cap();
+    test_iteration_cap_provides_a_final_status();
     test_no_tools_means_no_tool_field();
     test_model_exception_becomes_a_session_error();
     if (failures == 0) std::printf("tool loop tests passed\n");

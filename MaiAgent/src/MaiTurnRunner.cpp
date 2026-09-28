@@ -27,6 +27,11 @@ constexpr const char* kFinalAnswerHint =
     "Tool execution is complete. Use the tool results above to provide the user with a complete "
     "final answer now. Do not return only reasoning or a description of the steps you took.";
 
+constexpr const char* kToolLimitFinalHint =
+    "The tool-call budget for this turn is exhausted. You cannot call any more tools. "
+    "Tell the user what you completed, what remains unfinished, and what the tool results "
+    "actually show. Do not claim the task is complete unless those results prove it.";
+
 }  // namespace
 
 MaiTurnRunner::MaiTurnRunner(Dependencies dependencies, std::string sessionId, MaiMessage assistant)
@@ -101,12 +106,31 @@ void MaiTurnRunner::runUnchecked(const std::atomic<bool>& cancel) {
         executeTools(calls, cancel);
         hasToolResults = true;
 
-        // 到达上限还没收手：明确告诉用户，而不是悄悄停在半路让人以为跑完了。
+        // 最后一批工具结果也要交还给模型，让它说明实际进度；收尾请求不提供工具，
+        // 因而不会突破工具调用上限。不能直接报错，否则结果只留在工具卡里。
         if (iteration + 1 >= mDependencies.maxIterations) {
-            mError = MaiError::make(MaiErrorCode::Internal,
-                                    "Stopped after reaching the tool-call limit of " +
-                                        std::to_string(mDependencies.maxIterations) +
-                                        " iterations. Ask me to try a different approach.");
+            if (!cancel.load(std::memory_order_relaxed)) {
+                MaiModelRequest finalRequest = buildRequest(mModelName, false);
+                finalRequest.tools.clear();
+                MaiModelMessage instruction;
+                instruction.role = MaiModelRole::System;
+                instruction.content = kToolLimitFinalHint;
+                finalRequest.messages.push_back(std::move(instruction));
+                const auto finalCalls = requestCompletion(finalRequest, cancel);
+                const bool hasFinalText =
+                    std::any_of(mText.begin(), mText.end(),
+                                [](unsigned char character) { return !std::isspace(character); });
+                commitStreamedParts();
+                if (!mError && !cancel.load(std::memory_order_relaxed) &&
+                    (!finalCalls.empty() || !hasFinalText)) {
+                    mError =
+                        MaiError::make(MaiErrorCode::Internal,
+                                       "Stopped after reaching the tool-call limit of " +
+                                           std::to_string(mDependencies.maxIterations) +
+                                           " iterations without a final status from the model.");
+                }
+            }
+            break;
         }
     }
 

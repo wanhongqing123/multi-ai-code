@@ -261,6 +261,20 @@ void registerMobilePhotoTools(MaiToolRegistry& tools,
         R"({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]})",
         dispatcher, false));
     tools.add(std::make_unique<MaiMobileHostTool>(
+        "mobile_detect_faces",
+        "Find faces and facial landmarks in an image from the Agent working directory using "
+        "on-device vision. Return top-left pixel bounds and landmark positions for local image "
+        "editing; this does not identify who a person is or modify the source image.",
+        R"({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]})",
+        dispatcher, false));
+    tools.add(std::make_unique<MaiMobileHostTool>(
+        "mobile_segment_person",
+        "Create a grayscale person-versus-background mask from an image in the Agent working "
+        "directory using on-device vision. White means person and black means background. "
+        "Return a NEW mask PNG path and dimensions; do not modify the source image.",
+        R"({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]})",
+        dispatcher, false));
+    tools.add(std::make_unique<MaiMobileHostTool>(
         "mobile_preview_image",
         "Show an image from the Agent working directory to the user in a full-screen mobile "
         "preview. This does not require a vision-capable model and does not save or modify it. "

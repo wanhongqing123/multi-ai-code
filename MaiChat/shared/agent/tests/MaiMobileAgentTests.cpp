@@ -132,6 +132,7 @@ int main() {
              hasMobilePhotoRead = false, hasMobilePhotoOriginal = false,
              hasMobilePhotoSave = false, hasMobileTransform = false,
              hasMobileBeautify = false, hasMobileImageInfo = false, hasMobilePreview = false,
+             hasFaceDetection = false, hasPersonSegmentation = false,
              hasMobilePhotoAlbumWrite = false;
         for (const auto& tool : body["tools"]) {
             CHECK(tool["function"]["name"] != "shell");
@@ -152,6 +153,8 @@ int main() {
             if (tool["function"]["name"] == "mobile_beautify_image")
                 hasMobileBeautify = true;
             if (tool["function"]["name"] == "mobile_image_info") hasMobileImageInfo = true;
+            if (tool["function"]["name"] == "mobile_detect_faces") hasFaceDetection = true;
+            if (tool["function"]["name"] == "mobile_segment_person") hasPersonSegmentation = true;
             if (tool["function"]["name"] == "mobile_preview_image") hasMobilePreview = true;
             if (kPhotoAlbumTool != nullptr && tool["function"]["name"] == kPhotoAlbumTool)
                 hasMobilePhotoAlbumWrite = true;
@@ -169,6 +172,8 @@ int main() {
         CHECK(hasMobileTransform);
         CHECK(hasMobileBeautify);
         CHECK(hasMobileImageInfo);
+        CHECK(hasFaceDetection);
+        CHECK(hasPersonSegmentation);
         CHECK(hasMobilePreview);
         if (kPhotoAlbumTool != nullptr) CHECK(hasMobilePhotoAlbumWrite);
         const auto& last = body["messages"].back();

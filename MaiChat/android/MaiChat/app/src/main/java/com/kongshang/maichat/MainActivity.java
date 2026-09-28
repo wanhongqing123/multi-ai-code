@@ -1752,6 +1752,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                 arguments.put("operation", "beautify");
                 return agentTransformImage(arguments);
             case "mobile_image_info": return agentImageInfo(arguments);
+            case "mobile_detect_faces": return agentDetectFaces(arguments);
+            case "mobile_segment_person": return agentSegmentPerson(arguments);
             case "mobile_preview_image": return agentPreviewImage(arguments);
             case "mobile_photos_copy_to_album": return agentCopyPhotosToAlbum(arguments);
             default: break;
@@ -1993,6 +1995,22 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             if (!destroyed && activityInForeground) showFullScreenImage(source.getPath());
         });
         return new JSONObject().put("opened", true).put("path", info.getString("path"));
+    }
+
+    private JSONObject agentDetectFaces(JSONObject arguments) throws Exception {
+        File source = AIAssistantController.shared(this)
+            .workspaceImageForHost(arguments.optString("path", ""));
+        return MobileImageVision.detectFaces(source)
+            .put("source_path", arguments.optString("path"));
+    }
+
+    private JSONObject agentSegmentPerson(JSONObject arguments) throws Exception {
+        AIAssistantController controller = AIAssistantController.shared(this);
+        File source = controller.workspaceImageForHost(arguments.optString("path", ""));
+        File target = controller.workspaceFile(
+            "person-mask-" + java.util.UUID.randomUUID() + ".png");
+        if (target == null) throw new IllegalStateException("AI 工作区尚未准备好");
+        return MobileImageVision.segmentPerson(source, target);
     }
 
     private JSONObject agentCopyPhotosToAlbum(JSONObject arguments) throws Exception {

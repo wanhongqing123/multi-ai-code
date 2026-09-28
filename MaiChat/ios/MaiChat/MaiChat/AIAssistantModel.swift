@@ -93,6 +93,8 @@ final class AIMobileHostToolProvider {
         case "mobile_list_photos": return await listPhotos(arguments)
         case "mobile_list_albums": return await listAlbums()
         case "mobile_read_photo": return await readPhoto(arguments)
+        case "mobile_export_photo_original": return await exportPhotoOriginal(arguments)
+        case "mobile_save_image": return await saveImage(arguments)
         case "mobile_photos_add_to_album": return await addPhotosToAlbum(arguments)
         default: break
         }
@@ -450,6 +452,90 @@ final class AIMobileHostToolProvider {
                 "id": id, "path": imported.relativePath, "mime_type": imported.mimeType,
                 "next_tool": "view_image",
             ])
+        } catch {
+            return .failure(code: "internal", message: error.localizedDescription)
+        }
+    }
+
+    private func exportPhotoOriginal(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
+        let status = await photoAuthorization()
+        guard status == .authorized || status == .limited else {
+            return .failure(code: "canceled", message: "photo library access was not granted")
+        }
+        guard let id = arguments["id"] as? String, !id.isEmpty,
+              let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject,
+              asset.mediaType == .image else {
+            return .failure(code: "not_found", message: "photo not found in the authorized library")
+        }
+        let workspacePath = AIAssistantModel.shared.workspacePath
+        guard !workspacePath.isEmpty else {
+            return .failure(code: "not_configured", message: "Agent working directory is unavailable")
+        }
+        let options = PHImageRequestOptions()
+        options.isNetworkAccessAllowed = true
+        options.version = .original
+        let result: (Data, String)? = await withCheckedContinuation { continuation in
+            PHImageManager.default().requestImageDataAndOrientation(for: asset, options: options) {
+                data, type, _, _ in
+                guard let data, let type else { continuation.resume(returning: nil); return }
+                continuation.resume(returning: (data, type))
+            }
+        }
+        guard let (data, type) = result, !data.isEmpty, data.count <= 100 * 1024 * 1024 else {
+            return .failure(code: "invalid_input", message: "photo is unavailable or exceeds 100 MB")
+        }
+        guard let imageType = UTType(type), imageType.conforms(to: .image),
+              let suffix = imageType.preferredFilenameExtension,
+              let mimeType = imageType.preferredMIMEType else {
+            return .failure(code: "invalid_input", message: "unsupported system photo format")
+        }
+        let name = "gallery-\(UUID().uuidString).\(suffix)"
+        let target = URL(fileURLWithPath: workspacePath, isDirectory: true)
+            .appendingPathComponent(name)
+        do {
+            try await Task.detached(priority: .utility) {
+                try data.write(to: target, options: .atomic)
+            }.value
+            return Self.jsonSuccess([
+                "id": id, "path": name, "mime_type": mimeType,
+                "bytes": data.count, "width": asset.pixelWidth, "height": asset.pixelHeight,
+            ])
+        } catch {
+            return .failure(code: "internal", message: error.localizedDescription)
+        }
+    }
+
+    private func saveImage(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
+        let status = await photoAuthorization()
+        guard status == .authorized || status == .limited else {
+            return .failure(code: "canceled", message: "photo library access was not granted")
+        }
+        let path = Self.string(arguments, key: "path")
+        let workspacePath = AIAssistantModel.shared.workspacePath
+        guard !path.isEmpty, !workspacePath.isEmpty else {
+            return .failure(code: "invalid_input", message: "an Agent working-directory image path is required")
+        }
+        let workspace = URL(fileURLWithPath: workspacePath, isDirectory: true)
+            .resolvingSymlinksInPath().standardizedFileURL
+        let source = workspace.appendingPathComponent(path)
+            .resolvingSymlinksInPath().standardizedFileURL
+        guard source.path.hasPrefix(workspace.path + "/") else {
+            return .failure(code: "invalid_input", message: "image must be inside the Agent working directory")
+        }
+        do {
+            let values = try source.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+            let suffix = source.pathExtension.lowercased()
+            guard values.isRegularFile == true, let bytes = values.fileSize,
+                  bytes > 0, bytes <= 50 * 1024 * 1024,
+                  ["jpg", "jpeg", "png", "heic", "heif"].contains(suffix),
+                  let image = CGImageSourceCreateWithURL(source as CFURL, nil),
+                  CGImageSourceGetCount(image) > 0 else {
+                return .failure(code: "invalid_input", message: "image must be a JPEG, PNG, or HEIF file up to 50 MB")
+            }
+            try await performPhotoChanges {
+                PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: source)
+            }
+            return Self.jsonSuccess(["saved": true, "source_path": path])
         } catch {
             return .failure(code: "internal", message: error.localizedDescription)
         }

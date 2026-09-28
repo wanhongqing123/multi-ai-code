@@ -1741,6 +1741,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             case "mobile_list_photos": return agentListPhotos(arguments);
             case "mobile_list_albums": return agentListAlbums();
             case "mobile_read_photo": return agentReadPhoto(arguments);
+            case "mobile_export_photo_original": return agentExportPhotoOriginal(arguments);
+            case "mobile_save_image": return agentSaveImage(arguments);
             case "mobile_photos_copy_to_album": return agentCopyPhotosToAlbum(arguments);
             default: break;
         }
@@ -1876,6 +1878,71 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             AIAssistantController.shared(this).importPhotoForHost(uri);
         return new JSONObject().put("id", rawId).put("path", file.relativePath)
             .put("mime_type", file.mimeType).put("next_tool", "view_image");
+    }
+
+    private JSONObject agentExportPhotoOriginal(JSONObject arguments) throws Exception {
+        agentPhotoAccess();
+        String rawId = arguments.optString("id", "").trim();
+        long id;
+        try { id = Long.parseLong(rawId); }
+        catch (NumberFormatException error) { throw new IllegalArgumentException("无效的照片 ID"); }
+        if (id <= 0) throw new IllegalArgumentException("无效的照片 ID");
+        Uri uri = ContentUris.withAppendedId(agentPhotoCollection(), id);
+        AIAssistantController.ImportedFile file =
+            AIAssistantController.shared(this).importOriginalPhotoForHost(uri);
+        return new JSONObject().put("id", rawId).put("path", file.relativePath)
+            .put("mime_type", file.mimeType);
+    }
+
+    private JSONObject agentSaveImage(JSONObject arguments) throws Exception {
+        if (Build.VERSION.SDK_INT < 29)
+            throw new IllegalStateException("当前 Android 版本无法安全保存到系统图库");
+        File source = AIAssistantController.shared(this)
+            .workspaceImageForHost(arguments.optString("path", ""));
+        if (source.length() < 1 || source.length() > 50L * 1024 * 1024)
+            throw new IllegalArgumentException("图片大小必须在 50 MB 以内");
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeFile(source.getPath(), bounds);
+        String mime = bounds.outMimeType;
+        if (bounds.outWidth < 1 || bounds.outHeight < 1 || mime == null
+                || !(mime.equals("image/jpeg") || mime.equals("image/png")
+                    || mime.equals("image/webp") || mime.equals("image/heif")
+                    || mime.equals("image/heic")))
+            throw new IllegalArgumentException("需要有效的 JPEG、PNG、WebP 或 HEIF 图片");
+        String extension = mime.equals("image/png") ? "png"
+            : mime.equals("image/webp") ? "webp"
+            : mime.equals("image/heif") || mime.equals("image/heic") ? "heic" : "jpg";
+        ContentValues metadata = new ContentValues();
+        metadata.put(MediaStore.MediaColumns.DISPLAY_NAME,
+            "MaiChat-" + java.util.UUID.randomUUID() + "." + extension);
+        metadata.put(MediaStore.MediaColumns.MIME_TYPE, mime);
+        metadata.put(MediaStore.MediaColumns.RELATIVE_PATH,
+            Environment.DIRECTORY_PICTURES + "/MaiChat/");
+        metadata.put(MediaStore.MediaColumns.IS_PENDING, 1);
+        Uri collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);
+        Uri created = getContentResolver().insert(collection, metadata);
+        if (created == null) throw new IOException("无法创建系统图库图片");
+        try {
+            try (InputStream input = new FileInputStream(source);
+                 OutputStream output = getContentResolver().openOutputStream(created)) {
+                if (output == null) throw new IOException("无法写入系统图库图片");
+                byte[] buffer = new byte[8192];
+                int count;
+                while ((count = input.read(buffer)) >= 0)
+                    output.write(buffer, 0, count);
+            }
+            ContentValues visible = new ContentValues();
+            visible.put(MediaStore.MediaColumns.IS_PENDING, 0);
+            if (getContentResolver().update(created, visible, null, null) < 1)
+                throw new IOException("无法完成系统图库图片");
+        } catch (Exception error) {
+            try { getContentResolver().delete(created, null, null); }
+            catch (Exception ignored) { /* Only a newly created, incomplete image is removed. */ }
+            throw error;
+        }
+        return new JSONObject().put("saved", true).put("id", Long.toString(ContentUris.parseId(created)))
+            .put("uri", created.toString()).put("source_path", arguments.optString("path"));
     }
 
     private JSONObject agentCopyPhotosToAlbum(JSONObject arguments) throws Exception {

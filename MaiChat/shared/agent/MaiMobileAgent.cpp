@@ -219,6 +219,20 @@ void registerMobilePhotoTools(MaiToolRegistry& tools,
         "Only images authorized by the OS photo-library permission can be read.",
         R"({"type":"object","properties":{"id":{"type":"string"}},"required":["id"]})",
         dispatcher, false));
+    tools.add(std::make_unique<MaiMobileHostTool>(
+        "mobile_export_photo_original",
+        "Copy a full-resolution photo by ID from the authorized system library into the Agent "
+        "working directory for image creation. Preserve its original format and metadata; "
+        "do not modify the library photo. Files larger than 100 MB are not supported.",
+        R"({"type":"object","properties":{"id":{"type":"string"}},"required":["id"]})",
+        dispatcher, false));
+    tools.add(std::make_unique<MaiMobileHostTool>(
+        "mobile_save_image",
+        "Save an image from the Agent working directory as a NEW photo in the system library. "
+        "The source file and all existing library photos remain unchanged. Pass a relative path "
+        "inside the Agent working directory.",
+        R"({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]})",
+        dispatcher, false));
 #if defined(__APPLE__)
     tools.add(std::make_unique<MaiMobileHostTool>(
         "mobile_photos_add_to_album",

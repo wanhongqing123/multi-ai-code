@@ -12,6 +12,7 @@ import android.security.keystore.KeyProperties;
 import android.util.Base64;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -460,6 +461,42 @@ final class AIAssistantController {
             return importStream(input, "image/jpeg", "photo.jpg");
         }
     }
+    ImportedFile importOriginalPhotoForHost(Uri uri) throws Exception {
+        if (root == null) throw new IllegalStateException("AI 工作区尚未准备好");
+        String mime = context.getContentResolver().getType(uri);
+        if (mime == null || !mime.startsWith("image/"))
+            throw new IllegalArgumentException("只能导入系统图库中的图片");
+        String extension;
+        switch (mime.toLowerCase(java.util.Locale.ROOT)) {
+        case "image/jpeg": extension = "jpg"; break;
+        case "image/png": extension = "png"; break;
+        case "image/webp": extension = "webp"; break;
+        case "image/gif": extension = "gif"; break;
+        case "image/heic":
+        case "image/heif": extension = "heic"; break;
+        default: throw new IllegalArgumentException("不支持的系统照片格式：" + mime);
+        }
+        String name = "gallery-" + UUID.randomUUID() + "." + extension;
+        File target = new File(new File(root, "Workspace"), name);
+        try (InputStream input = context.getContentResolver().openInputStream(uri);
+             FileOutputStream output = new FileOutputStream(target)) {
+            if (input == null) throw new IOException("无法读取系统照片");
+            byte[] buffer = new byte[8192];
+            long copied = 0;
+            int count;
+            while ((count = input.read(buffer)) >= 0) {
+                copied += count;
+                if (copied > 100L * 1024 * 1024)
+                    throw new IllegalArgumentException("照片超过 100 MB");
+                output.write(buffer, 0, count);
+            }
+            if (copied == 0) throw new IOException("照片为空");
+        } catch (Exception error) {
+            target.delete();
+            throw error;
+        }
+        return new ImportedFile(name, mime, true);
+    }
     void importCameraFile(File source, Consumer<ImportedFile> completion) {
         worker.post(() -> {
             ImportedFile imported = null;
@@ -496,6 +533,15 @@ final class AIAssistantController {
         java.nio.file.Path workspace = new File(root, "Workspace").toPath().toAbsolutePath().normalize();
         java.nio.file.Path candidate = workspace.resolve(relativePath).normalize();
         return candidate.startsWith(workspace) ? candidate.toFile() : null;
+    }
+    File workspaceImageForHost(String relativePath) throws Exception {
+        if (root == null || relativePath == null || relativePath.trim().isEmpty())
+            throw new IllegalArgumentException("需要 AI 工作区内的图片路径");
+        File workspace = new File(root, "Workspace").getCanonicalFile();
+        File candidate = new File(workspace, relativePath).getCanonicalFile();
+        if (!candidate.toPath().startsWith(workspace.toPath()) || !candidate.isFile())
+            throw new IllegalArgumentException("图片必须位于 AI 工作区内");
+        return candidate;
     }
     private ImportedFile importStream(InputStream input, String sourceMime, String sourceName)
         throws Exception {

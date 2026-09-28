@@ -78,7 +78,8 @@ int main() {
         // 移动端不能向模型宣称可以执行桌面 shell。
         bool hasViewImage = false, hasMaiChatContacts = false, hasMaiChatSend = false,
              hasMaiChatBroadcast = false, hasMobilePhotos = false, hasMobileAlbums = false,
-             hasMobilePhotoRead = false, hasMobilePhotoAlbumWrite = false;
+             hasMobilePhotoRead = false, hasMobilePhotoOriginal = false,
+             hasMobilePhotoSave = false, hasMobilePhotoAlbumWrite = false;
         for (const auto& tool : body["tools"]) {
             CHECK(tool["function"]["name"] != "shell");
             if (tool["function"]["name"] == "view_image") hasViewImage = true;
@@ -89,6 +90,9 @@ int main() {
             if (tool["function"]["name"] == "mobile_list_photos") hasMobilePhotos = true;
             if (tool["function"]["name"] == "mobile_list_albums") hasMobileAlbums = true;
             if (tool["function"]["name"] == "mobile_read_photo") hasMobilePhotoRead = true;
+            if (tool["function"]["name"] == "mobile_export_photo_original")
+                hasMobilePhotoOriginal = true;
+            if (tool["function"]["name"] == "mobile_save_image") hasMobilePhotoSave = true;
             if (tool["function"]["name"] == "mobile_photos_add_to_album")
                 hasMobilePhotoAlbumWrite = true;
         }
@@ -99,6 +103,8 @@ int main() {
         CHECK(hasMobilePhotos);
         CHECK(hasMobileAlbums);
         CHECK(hasMobilePhotoRead);
+        CHECK(hasMobilePhotoOriginal);
+        CHECK(hasMobilePhotoSave);
         CHECK(hasMobilePhotoAlbumWrite);
         const auto& last = body["messages"].back();
         std::string input;
@@ -147,6 +153,15 @@ int main() {
                 {"index", 0}, {"id", "call_photo_add"}, {"type", "function"},
                 {"function", {{"name", "mobile_photos_add_to_album"},
                               {"arguments", "{\"album_name\":\"Trip\",\"photo_ids\":[\"one\"]}"}}}};
+            response.set_content(frame({{"tool_calls", Json::array({invocation})}}, "tool_calls") +
+                                     "data: [DONE]\n\n", "text/event-stream");
+            return;
+        }
+        if (input == "photo-save") {
+            Json invocation = {
+                {"index", 0}, {"id", "call_photo_save"}, {"type", "function"},
+                {"function", {{"name", "mobile_save_image"},
+                              {"arguments", "{\"path\":\"created.png\"}"}}}};
             response.set_content(frame({{"tool_calls", Json::array({invocation})}}, "tool_calls") +
                                      "data: [DONE]\n\n", "text/event-stream");
             return;
@@ -234,6 +249,12 @@ int main() {
         CHECK(photoDone["permissions"].empty());
         CHECK(hostProbe.calls == 2);
         CHECK(hostProbe.lastTool == "mobile_photos_add_to_album");
+        CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "photo-save"}})["ok"] == true);
+        const auto photoSaved = wait([](const Json& s) { return s["busy"] == false; });
+        CHECK(photoSaved["permissions"].empty());
+        CHECK(hostProbe.calls == 3);
+        CHECK(hostProbe.lastTool == "mobile_save_image");
+        CHECK(Json::parse(hostProbe.lastArguments)["path"] == "created.png");
         CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "hello"}})["ok"] == true);
         CHECK(call(agent, config)["ok"] == false);  // 工作中不能销毁并换配置。
         auto partial = wait([](const Json& s) {

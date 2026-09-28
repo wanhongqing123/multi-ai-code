@@ -15,12 +15,10 @@ cd "$build_dir"
 
 options=(
   "--prefix=$build_dir/install"
-  --disable-programs --disable-doc --disable-everything
-  --disable-avcodec --disable-avformat --disable-avdevice --disable-swresample
-  --disable-autodetect --disable-network --disable-asm --disable-debug
+  --disable-programs --disable-doc --disable-debug
+  --disable-autodetect --disable-asm
+  --disable-audiotoolbox --disable-videotoolbox
   --disable-gpl --disable-nonfree
-  --enable-avfilter --enable-swscale
-  --enable-filter=crop,scale,hflip,vflip,hue,format,transpose,lutrgb,gblur
   --enable-pic --enable-static --disable-shared
   "--cc=$compiler" "--ar=$archive_tool" "--ranlib=$ranlib_tool"
 )

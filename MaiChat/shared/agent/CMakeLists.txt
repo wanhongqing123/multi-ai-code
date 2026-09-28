@@ -31,7 +31,11 @@ if(NOT EXISTS "${ffmpeg_source}/configure")
 endif()
 set(ffmpeg_build "${CMAKE_CURRENT_BINARY_DIR}/vendor/ffmpeg-build")
 set(ffmpeg_archives
+  "${ffmpeg_build}/libavdevice/libavdevice.a"
   "${ffmpeg_build}/libavfilter/libavfilter.a"
+  "${ffmpeg_build}/libavformat/libavformat.a"
+  "${ffmpeg_build}/libavcodec/libavcodec.a"
+  "${ffmpeg_build}/libswresample/libswresample.a"
   "${ffmpeg_build}/libswscale/libswscale.a"
   "${ffmpeg_build}/libavutil/libavutil.a")
 get_filename_component(ffmpeg_bin "${CMAKE_C_COMPILER}" DIRECTORY)
@@ -79,7 +83,7 @@ add_custom_command(OUTPUT ${ffmpeg_archives}
   DEPENDS "${ffmpeg_source}/configure" "${ffmpeg_source}/RELEASE" "${ffmpeg_script}"
   VERBATIM)
 add_custom_target(maichat_ffmpeg_build DEPENDS ${ffmpeg_archives})
-foreach(library avfilter swscale avutil)
+foreach(library avdevice avfilter avformat avcodec swresample swscale avutil)
   add_library(maichat_ffmpeg_${library} STATIC IMPORTED GLOBAL)
   set_target_properties(maichat_ffmpeg_${library} PROPERTIES
     IMPORTED_LOCATION "${ffmpeg_build}/lib${library}/lib${library}.a")
@@ -90,7 +94,9 @@ add_dependencies(maichat_mobile maichat_ffmpeg_build)
 target_include_directories(maichat_mobile PRIVATE "${ffmpeg_build}/install/include")
 target_include_directories(maichat_mobile PUBLIC . PRIVATE ../../../MaiAgent/third_party/nlohmann)
 target_link_libraries(maichat_mobile PRIVATE maiagent
-  maichat_ffmpeg_avfilter maichat_ffmpeg_swscale maichat_ffmpeg_avutil)
+  maichat_ffmpeg_avdevice maichat_ffmpeg_avfilter maichat_ffmpeg_avformat
+  maichat_ffmpeg_avcodec maichat_ffmpeg_swresample maichat_ffmpeg_swscale
+  maichat_ffmpeg_avutil)
 option(MAICHAT_MOBILE_TESTS "Build mobile adapter integration tests" OFF)
 if(MAICHAT_MOBILE_TESTS)
   enable_testing()

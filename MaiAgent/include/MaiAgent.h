@@ -152,8 +152,8 @@ public:
         // 会话没指定模型时用这个。会话上配了就用会话的（MaiUpdateSession）。
         std::string defaultModel = "glm-5.3";
         // 模型可以连着调工具，一轮对话因此会有多次请求。
-        // 设上限是因为模型会绕圈——拿同样的参数反复调同一个工具，没上限就一直烧钱。
-        int maxToolIterations = 12;
+        // 相同调用与结果重复三次会提前停止；这里是不同操作也持续进行时的最终兜底。
+        int maxToolIterations = 64;
         // 每个会话同时只跑一轮。第二条来了直接拒绝而不是排队——排队会让用户以为消息丢了，
         // 界面上看不出区别。
         bool rejectWhenBusy = true;

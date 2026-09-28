@@ -3,7 +3,10 @@
 #include <algorithm>
 #include <cctype>
 #include <exception>
+#include <map>
+#include <tuple>
 #include <utility>
+#include <vector>
 
 #include "MaiIdGenerator.h"
 
@@ -31,6 +34,25 @@ constexpr const char* kToolLimitFinalHint =
     "The tool-call budget for this turn is exhausted. You cannot call any more tools. "
     "Tell the user what you completed, what remains unfinished, and what the tool results "
     "actually show. Do not claim the task is complete unless those results prove it.";
+
+constexpr const char* kRepeatedToolFinalHint =
+    "The same tool calls have returned identical results three times in this turn. "
+    "You cannot call more tools in this turn. Explain what you learned and what remains "
+    "unfinished. Do not claim progress that the tool results do not show.";
+
+using MaiObservedToolCall = std::tuple<std::string, std::string, MaiToolState, std::string>;
+using MaiObservedToolBatch = std::vector<MaiObservedToolCall>;
+
+MaiObservedToolBatch observeToolBatch(const std::vector<MaiMessagePart>& parts,
+                                      std::size_t firstPart) {
+    MaiObservedToolBatch batch;
+    for (std::size_t index = firstPart; index < parts.size(); ++index) {
+        const auto* tool = std::get_if<MaiToolPart>(&parts[index].body);
+        if (!tool) continue;
+        batch.emplace_back(tool->tool, tool->input, tool->state, tool->output);
+    }
+    return batch;
+}
 
 }  // namespace
 
@@ -77,6 +99,7 @@ void MaiTurnRunner::runUnchecked(const std::atomic<bool>& cancel) {
     // MaiContextBuilder 会把它展开成模型认得的形状。
     bool hasToolResults = false;
     bool retriedMissingFinalAnswer = false;
+    std::map<MaiObservedToolBatch, int> observedBatches;
     for (int iteration = 0; iteration < mDependencies.maxIterations; ++iteration) {
         if (cancel.load(std::memory_order_relaxed)) break;
 
@@ -103,18 +126,23 @@ void MaiTurnRunner::runUnchecked(const std::atomic<bool>& cancel) {
         if (cancel.load(std::memory_order_relaxed)) break;
 
         retriedMissingFinalAnswer = false;
+        const std::size_t firstToolPart = mAssistant.parts.size();
         executeTools(calls, cancel);
         hasToolResults = true;
+        const MaiObservedToolBatch batch = observeToolBatch(mAssistant.parts, firstToolPart);
+        const bool repeatedWithoutProgress = !batch.empty() && ++observedBatches[batch] >= 3;
+        const bool reachedHardLimit = iteration + 1 >= mDependencies.maxIterations;
 
-        // 最后一批工具结果也要交还给模型，让它说明实际进度；收尾请求不提供工具，
-        // 因而不会突破工具调用上限。不能直接报错，否则结果只留在工具卡里。
-        if (iteration + 1 >= mDependencies.maxIterations) {
+        // 相同调用拿到相同结果三次就是原地绕圈；正常的连续工具工作可以超过旧的
+        // 12 圈，但最终仍有硬上限。两种情况都要把结果交回模型作不带工具的收尾。
+        if (repeatedWithoutProgress || reachedHardLimit) {
             if (!cancel.load(std::memory_order_relaxed)) {
                 MaiModelRequest finalRequest = buildRequest(mModelName, false);
                 finalRequest.tools.clear();
                 MaiModelMessage instruction;
                 instruction.role = MaiModelRole::System;
-                instruction.content = kToolLimitFinalHint;
+                instruction.content =
+                    reachedHardLimit ? kToolLimitFinalHint : kRepeatedToolFinalHint;
                 finalRequest.messages.push_back(std::move(instruction));
                 const auto finalCalls = requestCompletion(finalRequest, cancel);
                 const bool hasFinalText =
@@ -123,11 +151,13 @@ void MaiTurnRunner::runUnchecked(const std::atomic<bool>& cancel) {
                 commitStreamedParts();
                 if (!mError && !cancel.load(std::memory_order_relaxed) &&
                     (!finalCalls.empty() || !hasFinalText)) {
-                    mError =
-                        MaiError::make(MaiErrorCode::Internal,
-                                       "Stopped after reaching the tool-call limit of " +
-                                           std::to_string(mDependencies.maxIterations) +
-                                           " iterations without a final status from the model.");
+                    mError = MaiError::make(
+                        MaiErrorCode::Internal,
+                        reachedHardLimit ? "Stopped after reaching the tool-call limit of " +
+                                               std::to_string(mDependencies.maxIterations) +
+                                               " iterations without a final status from the model."
+                                         : "Stopped after repeated tool calls without a final "
+                                           "status from the model.");
                 }
             }
             break;

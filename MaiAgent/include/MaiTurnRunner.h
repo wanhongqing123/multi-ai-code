@@ -43,8 +43,8 @@ public:
         std::string defaultModel;
         std::string baseInstructions;
         // 模型可以连着调工具，一轮对话因此会有多次请求。
-        // 设上限是因为模型会绕圈——拿同样的参数反复调同一个工具，没有上限就一直烧钱。
-        int maxIterations = 12;
+        // 重复结果会提前停止；这里限制仍不断产生新调用的极端情况。
+        int maxIterations = 64;
         MaiApprovalPolicy approvalPolicy = MaiApprovalPolicy::OnRequest;
     };
 

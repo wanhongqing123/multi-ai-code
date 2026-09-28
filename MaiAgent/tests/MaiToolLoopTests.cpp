@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "MaiAgent.h"
+#include "MaiFileSystem.h"
 #include "MaiMemoryStore.h"
 #include "MaiFileTools.h"
 #include "MaiFakeModelClient.h"
@@ -532,6 +533,52 @@ void test_iteration_cap_provides_a_final_status() {
     for (const auto& event : recorder.all()) CHECK(event.type != MaiEventType::SessionError);
 }
 
+void test_distinct_tool_calls_continue_past_twelve_rounds() {
+    Workspace workspace;
+    std::vector<MaiFakeModelClient::Turn> script;
+    for (int i = 0; i < 15; ++i) {
+        const std::string path = "src/step" + std::to_string(i) + ".txt";
+        CHECK(!MaiFileSystem::writeFile(MaiFilePath::fromUtf8(workspace.utf8Root() + "/" + path),
+                                        "step " + std::to_string(i)));
+        script.push_back(callTurn("read", "{\"path\":\"" + path + "\"}"));
+    }
+    script.push_back(sayTurn("All fifteen files have been inspected."));
+    auto underTest = makeAgent(std::move(script));
+    Recorder recorder;
+    recorder.attach(*underTest.agent);
+    const std::string sessionId =
+        underTest.agent->submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
+    underTest.agent->submit(MaiSendPrompt{sessionId, "inspect the files"});
+    underTest.agent->waitIdle();
+
+    CHECK(underTest.model->requestCount() == 16);
+    bool hasAnswer = false;
+    for (const auto& message : underTest.agent->listMessages(sessionId))
+        for (const auto& part : message.parts)
+            if (const auto* text = std::get_if<MaiTextPart>(&part.body))
+                hasAnswer |= text->text.find("fifteen files") != std::string::npos;
+    CHECK(hasAnswer);
+    for (const auto& event : recorder.all()) CHECK(event.type != MaiEventType::SessionError);
+}
+
+void test_repeated_tool_results_stop_before_hard_limit() {
+    Workspace workspace;
+    std::vector<MaiFakeModelClient::Turn> script;
+    for (int i = 0; i < 40; ++i) script.push_back(callTurn("read", R"({"path":"src/hello.txt"})"));
+    auto underTest = makeAgent(std::move(script));
+    Recorder recorder;
+    recorder.attach(*underTest.agent);
+    const std::string sessionId =
+        underTest.agent->submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
+    underTest.agent->submit(MaiSendPrompt{sessionId, "loop forever"});
+    underTest.agent->waitIdle();
+
+    CHECK(underTest.model->requestCount() == 4);
+    CHECK(underTest.model->request(3).tools.empty());
+    CHECK(underTest.model->request(3).messages.back().content.find("identical results") !=
+          std::string::npos);
+}
+
 void test_no_tools_means_no_tool_field() {
     Workspace workspace;
     // 不给工具注册表 = 纯对话模式
@@ -594,6 +641,8 @@ int main() {
     test_path_escape_through_model();
     test_iteration_cap();
     test_iteration_cap_provides_a_final_status();
+    test_distinct_tool_calls_continue_past_twelve_rounds();
+    test_repeated_tool_results_stop_before_hard_limit();
     test_no_tools_means_no_tool_field();
     test_model_exception_becomes_a_session_error();
     if (failures == 0) std::printf("tool loop tests passed\n");

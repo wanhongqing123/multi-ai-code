@@ -10,9 +10,12 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.ClipData;
 import android.content.ClipboardManager;
+import android.content.ContentUris;
+import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
@@ -21,6 +24,7 @@ import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Build;
+import android.os.Environment;
 import android.provider.MediaStore;
 import android.text.Editable;
 import android.text.TextUtils;
@@ -64,6 +68,7 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -72,12 +77,15 @@ import java.util.Comparator;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -89,6 +97,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private static final int REQUEST_TAKE_PHOTO = 1004;
     private static final int REQUEST_PICK_FILE = 1005;
     private static final int REQUEST_POST_NOTIFICATIONS = 1006;
+    private static final int REQUEST_AGENT_PHOTOS = 1007;
     private static final String TAG = "MaiChat.notify";
     private static final String MESSAGE_CHANNEL_ID = "maichat-new-messages";
     private static final String MESSAGE_GROUP_KEY = "maichat-private-messages";
@@ -164,6 +173,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private final ExecutorService messageSearchExecutor = Executors.newSingleThreadExecutor();
     private String pendingNotificationPeerUserId = "";
     private boolean activityInForeground;
+    private CountDownLatch pendingAgentPhotoPermission;
     private final Set<String> collapsedContactGroups = new HashSet<>();
 
     @Override
@@ -225,6 +235,12 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     @Override
     protected void onDestroy() {
         destroyed = true;
+        synchronized (this) {
+            if (pendingAgentPhotoPermission != null) {
+                pendingAgentPhotoPermission.countDown();
+                pendingAgentPhotoPermission = null;
+            }
+        }
         AIAssistantController.shared(this).setHostToolHandler(null);
         if (swipeBack != null) swipeBack.dispose();
         if (diagnostics != null) diagnostics.close();
@@ -340,6 +356,15 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+        if (requestCode == REQUEST_AGENT_PHOTOS) {
+            synchronized (this) {
+                if (pendingAgentPhotoPermission != null) {
+                    pendingAgentPhotoPermission.countDown();
+                    pendingAgentPhotoPermission = null;
+                }
+            }
+            return;
+        }
         if (requestCode == REQUEST_RECORD_AUDIO) {
             if (granted) toast("麦克风已启用，请按住说话");
             else toast("没有麦克风权限，无法发送语音");
@@ -1712,6 +1737,13 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     }
 
     private Object executeMaiChatHostTool(String tool, JSONObject arguments) throws Exception {
+        switch (tool) {
+            case "mobile_list_photos": return agentListPhotos(arguments);
+            case "mobile_list_albums": return agentListAlbums();
+            case "mobile_read_photo": return agentReadPhoto(arguments);
+            case "mobile_photos_copy_to_album": return agentCopyPhotosToAlbum(arguments);
+            default: break;
+        }
         if (session == null || session.requiresLogin())
             throw new IllegalStateException("MaiChat 尚未登录");
         switch (tool) {
@@ -1725,6 +1757,218 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             case "maichat_broadcast_text": return hostBroadcastText(arguments);
             default: throw new IllegalArgumentException("未知 MaiChat 宿主工具：" + tool);
         }
+    }
+
+    private String agentPhotoAccess() throws Exception {
+        String fullPermission = Build.VERSION.SDK_INT >= 33
+            ? Manifest.permission.READ_MEDIA_IMAGES : Manifest.permission.READ_EXTERNAL_STORAGE;
+        if (checkSelfPermission(fullPermission) == PackageManager.PERMISSION_GRANTED) return "full";
+        if (Build.VERSION.SDK_INT >= 34 && checkSelfPermission(
+                Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) == PackageManager.PERMISSION_GRANTED)
+            return "limited";
+        if (destroyed || !activityInForeground) throw new IllegalStateException(
+            "请打开 MaiChat，在系统权限提示中允许相册访问");
+        CountDownLatch pending = new CountDownLatch(1);
+        synchronized (this) {
+            if (pendingAgentPhotoPermission != null)
+                throw new IllegalStateException("正在等待相册权限确认");
+            pendingAgentPhotoPermission = pending;
+        }
+        runOnUiThread(() -> {
+            if (destroyed) {
+                pending.countDown();
+                return;
+            }
+            String[] permissions = Build.VERSION.SDK_INT >= 34
+                ? new String[]{Manifest.permission.READ_MEDIA_IMAGES,
+                    Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED}
+                : new String[]{fullPermission};
+            requestPermissions(permissions, REQUEST_AGENT_PHOTOS);
+        });
+        try {
+            if (!pending.await(120, TimeUnit.SECONDS))
+                throw new IllegalStateException("等待相册权限超时");
+        } finally {
+            synchronized (this) {
+                if (pendingAgentPhotoPermission == pending)
+                    pendingAgentPhotoPermission = null;
+            }
+        }
+        if (checkSelfPermission(fullPermission) == PackageManager.PERMISSION_GRANTED) return "full";
+        if (Build.VERSION.SDK_INT >= 34 && checkSelfPermission(
+                Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) == PackageManager.PERMISSION_GRANTED)
+            return "limited";
+        throw new SecurityException("没有获得相册访问权限");
+    }
+
+    private JSONObject agentListPhotos(JSONObject arguments) throws Exception {
+        String access = agentPhotoAccess();
+        int offset = Math.max(0, arguments.optInt("offset", 0));
+        int limit = Math.min(100, Math.max(1, arguments.optInt("limit", 50)));
+        String albumId = arguments.optString("album_id", "").trim();
+        String selection = albumId.isEmpty() || albumId.equals("all")
+            ? null : MediaStore.Images.Media.BUCKET_ID + "=?";
+        String[] selectionArgs = selection == null ? null : new String[]{albumId};
+        String[] projection = {MediaStore.Images.Media._ID,
+            MediaStore.Images.Media.DATE_TAKEN, MediaStore.Images.Media.DATE_ADDED,
+            MediaStore.Images.Media.WIDTH, MediaStore.Images.Media.HEIGHT,
+            MediaStore.Images.Media.BUCKET_ID};
+        JSONArray items = new JSONArray();
+        int total;
+        try (Cursor cursor = getContentResolver().query(
+                agentPhotoCollection(), projection,
+                selection, selectionArgs,
+                MediaStore.Images.Media.DATE_TAKEN + " DESC, " + MediaStore.Images.Media._ID + " DESC")) {
+            if (cursor == null) throw new IllegalStateException("无法读取系统相册");
+            total = cursor.getCount();
+            if (offset < total && cursor.moveToPosition(offset)) {
+                do {
+                    long created = cursor.getLong(1);
+                    if (created <= 0) created = cursor.getLong(2) * 1000;
+                    items.put(new JSONObject()
+                        .put("id", Long.toString(cursor.getLong(0)))
+                        .put("created_at_ms", created)
+                        .put("width", cursor.getInt(3))
+                        .put("height", cursor.getInt(4))
+                        .put("album_id", cursor.getString(5)));
+                } while (items.length() < limit && cursor.moveToNext());
+            }
+        }
+        return new JSONObject().put("access", access).put("total", total)
+            .put("offset", offset).put("items", items);
+    }
+
+    private JSONObject agentListAlbums() throws Exception {
+        String access = agentPhotoAccess();
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        Map<String, String> titles = new LinkedHashMap<>();
+        String[] columns = {MediaStore.Images.Media.BUCKET_ID,
+            MediaStore.Images.Media.BUCKET_DISPLAY_NAME};
+        try (Cursor cursor = getContentResolver().query(
+                agentPhotoCollection(), columns, null, null, null)) {
+            if (cursor == null) throw new IllegalStateException("无法读取系统相簿");
+            while (cursor.moveToNext()) {
+                String id = cursor.getString(0);
+                if (id == null || id.isEmpty()) continue;
+                counts.put(id, counts.getOrDefault(id, 0) + 1);
+                titles.putIfAbsent(id, cursor.getString(1));
+            }
+        }
+        JSONArray albums = new JSONArray();
+        albums.put(new JSONObject().put("id", "all").put("name", "所有照片"));
+        for (String id : counts.keySet()) {
+            if (albums.length() >= 201) break;
+            albums.put(new JSONObject().put("id", id).put("name", titles.get(id))
+                .put("count", counts.get(id)));
+        }
+        return new JSONObject().put("access", access).put("albums", albums);
+    }
+
+    private JSONObject agentReadPhoto(JSONObject arguments) throws Exception {
+        agentPhotoAccess();
+        String rawId = arguments.optString("id", "").trim();
+        long id;
+        try { id = Long.parseLong(rawId); }
+        catch (NumberFormatException error) { throw new IllegalArgumentException("无效的照片 ID"); }
+        if (id <= 0) throw new IllegalArgumentException("无效的照片 ID");
+        Uri uri = ContentUris.withAppendedId(agentPhotoCollection(), id);
+        AIAssistantController.ImportedFile file =
+            AIAssistantController.shared(this).importPhotoForHost(uri);
+        return new JSONObject().put("id", rawId).put("path", file.relativePath)
+            .put("mime_type", file.mimeType).put("next_tool", "view_image");
+    }
+
+    private JSONObject agentCopyPhotosToAlbum(JSONObject arguments) throws Exception {
+        agentPhotoAccess();
+        if (Build.VERSION.SDK_INT < 29)
+            throw new IllegalStateException("当前 Android 版本无法安全写入系统相簿");
+        String album = arguments.optString("album_name", "").trim();
+        JSONArray values = arguments.optJSONArray("photo_ids");
+        if (!album.matches("[\\p{L}\\p{N} _-]{1,64}") || values == null
+                || values.length() < 1 || values.length() > 10)
+            throw new IllegalArgumentException("相簿名或照片列表无效");
+        Set<Long> seen = new HashSet<>();
+        List<Uri> sources = new ArrayList<>();
+        List<String> names = new ArrayList<>();
+        List<String> mimeTypes = new ArrayList<>();
+        long totalBytes = 0;
+        String[] columns = {MediaStore.MediaColumns.DISPLAY_NAME,
+            MediaStore.MediaColumns.MIME_TYPE, MediaStore.MediaColumns.SIZE};
+        for (int index = 0; index < values.length(); index++) {
+            long id;
+            try { id = Long.parseLong(values.optString(index, "")); }
+            catch (NumberFormatException error) { throw new IllegalArgumentException("无效的照片 ID"); }
+            if (id <= 0 || !seen.add(id)) continue;
+            Uri source = ContentUris.withAppendedId(agentPhotoCollection(), id);
+            try (Cursor cursor = getContentResolver().query(source, columns, null, null, null)) {
+                if (cursor == null || !cursor.moveToFirst())
+                    throw new IllegalArgumentException("有照片不可访问或不存在");
+                String mime = cursor.getString(1);
+                long size = cursor.getLong(2);
+                if (mime == null || !mime.startsWith("image/") || size < 0 || size > 25 * 1024 * 1024)
+                    throw new IllegalArgumentException("仅支持每张不超过 25 MB 的图片");
+                totalBytes += size;
+                if (totalBytes > 100 * 1024 * 1024)
+                    throw new IllegalArgumentException("单次复制总量不能超过 100 MB");
+                sources.add(source);
+                names.add(cursor.getString(0));
+                mimeTypes.add(mime);
+            }
+        }
+        if (sources.isEmpty()) throw new IllegalArgumentException("照片列表为空");
+        String destinationPath = Environment.DIRECTORY_PICTURES + "/MaiChat/" + album + "/";
+        Uri destination = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);
+        List<Uri> copies = new ArrayList<>();
+        try {
+            for (int index = 0; index < sources.size(); index++) {
+                ContentValues metadata = new ContentValues();
+                String originalName = names.get(index);
+                String safeName = originalName == null ? "photo.jpg"
+                    : originalName.replaceAll("[^\\p{L}\\p{N}._-]", "_");
+                if (safeName.length() > 120)
+                    safeName = safeName.substring(safeName.length() - 120);
+                metadata.put(MediaStore.MediaColumns.DISPLAY_NAME,
+                    "maichat-" + java.util.UUID.randomUUID().toString().substring(0, 8)
+                        + "-" + safeName);
+                metadata.put(MediaStore.MediaColumns.MIME_TYPE, mimeTypes.get(index));
+                metadata.put(MediaStore.MediaColumns.RELATIVE_PATH, destinationPath);
+                metadata.put(MediaStore.MediaColumns.IS_PENDING, 1);
+                Uri copy = getContentResolver().insert(destination, metadata);
+                if (copy == null) throw new IOException("无法创建相簿副本");
+                copies.add(copy);
+                try (InputStream input = getContentResolver().openInputStream(sources.get(index));
+                     OutputStream output = getContentResolver().openOutputStream(copy)) {
+                    if (input == null || output == null) throw new IOException("无法复制照片");
+                    byte[] buffer = new byte[8192];
+                    int count;
+                    long bytesCopied = 0;
+                    while ((count = input.read(buffer)) >= 0) {
+                        bytesCopied += count;
+                        if (bytesCopied > 25 * 1024 * 1024)
+                            throw new IOException("照片实际大小超过 25 MB");
+                        output.write(buffer, 0, count);
+                    }
+                }
+                ContentValues visible = new ContentValues();
+                visible.put(MediaStore.MediaColumns.IS_PENDING, 0);
+                if (getContentResolver().update(copy, visible, null, null) < 1)
+                    throw new IOException("无法完成相簿副本");
+            }
+        } catch (Exception error) {
+            for (Uri copy : copies) {
+                try { getContentResolver().delete(copy, null, null); }
+                catch (Exception ignored) { /* Best effort rollback of app-owned copies. */ }
+            }
+            throw error;
+        }
+        return new JSONObject().put("album_name", album).put("relative_path", destinationPath)
+            .put("copied_count", copies.size()).put("copied_originals", true);
+    }
+
+    private static Uri agentPhotoCollection() {
+        return Build.VERSION.SDK_INT >= 29
+            ? MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+            : MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
     }
 
     private JSONObject hostListContacts(JSONObject arguments) throws JSONException {

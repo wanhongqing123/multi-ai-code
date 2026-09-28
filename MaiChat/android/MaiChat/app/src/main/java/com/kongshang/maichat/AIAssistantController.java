@@ -154,6 +154,12 @@ final class AIAssistantController {
                 response[0] = hostToolFailure(safeMessage(failure));
             }
         };
+        if (tool.startsWith("mobile_")) {
+            if (Looper.myLooper() == Looper.getMainLooper())
+                return hostToolFailure("相册工具不能在 UI 线程执行");
+            invoke.run();
+            return response[0];
+        }
         if (Looper.myLooper() == Looper.getMainLooper()) {
             invoke.run();
             return response[0];
@@ -430,6 +436,29 @@ final class AIAssistantController {
             ImportedFile result = imported;
             main.post(() -> completion.accept(result));
         });
+    }
+
+    ImportedFile importPhotoForHost(Uri uri) throws Exception {
+        if (root == null) throw new IllegalStateException("AI 工作区尚未准备好");
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            Bitmap bitmap = context.getContentResolver().loadThumbnail(
+                uri, new android.util.Size(2048, 2048), null);
+            if (bitmap == null) throw new IllegalArgumentException("无法读取照片");
+            java.io.ByteArrayOutputStream jpeg = new java.io.ByteArrayOutputStream();
+            try {
+                if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 88, jpeg))
+                    throw new IllegalArgumentException("无法转换照片");
+            } finally {
+                bitmap.recycle();
+            }
+            try (InputStream input = new java.io.ByteArrayInputStream(jpeg.toByteArray())) {
+                return importStream(input, "image/jpeg", "photo.jpg");
+            }
+        }
+        try (InputStream input = context.getContentResolver().openInputStream(uri)) {
+            if (input == null) throw new IllegalArgumentException("无法读取照片");
+            return importStream(input, "image/jpeg", "photo.jpg");
+        }
     }
     void importCameraFile(File source, Consumer<ImportedFile> completion) {
         worker.post(() -> {

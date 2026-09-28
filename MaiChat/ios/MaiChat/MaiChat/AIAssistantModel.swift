@@ -1,6 +1,8 @@
 import Foundation
 import Darwin
+import ImageIO
 import MaiChatCore
+import Photos
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
@@ -77,17 +79,25 @@ struct AIMaiChatHostToolExecution: Sendable, Equatable {
 }
 
 @MainActor
-final class AIMaiChatHostToolProvider {
-    static let shared = AIMaiChatHostToolProvider()
+final class AIMobileHostToolProvider {
+    static let shared = AIMobileHostToolProvider()
 
     weak var appState: RemoteIMAppState?
 
     func execute(name: String, argumentsJSON: String) async -> AIMaiChatHostToolExecution {
-        guard let appState else {
-            return .failure(code: "not_configured", message: "the MaiChat host is unavailable")
-        }
         guard let arguments = Self.parseArguments(argumentsJSON) else {
             return .failure(code: "invalid_input", message: "arguments must be a JSON object")
+        }
+
+        switch name {
+        case "mobile_list_photos": return await listPhotos(arguments)
+        case "mobile_list_albums": return await listAlbums()
+        case "mobile_read_photo": return await readPhoto(arguments)
+        case "mobile_photos_add_to_album": return await addPhotosToAlbum(arguments)
+        default: break
+        }
+        guard let appState else {
+            return .failure(code: "not_configured", message: "the MaiChat host is unavailable")
         }
 
         switch name {
@@ -338,6 +348,182 @@ final class AIMaiChatHostToolProvider {
         }
         return .success(output)
     }
+
+    private func photoAuthorization() async -> PHAuthorizationStatus {
+        let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        return status == .notDetermined
+            ? await PHPhotoLibrary.requestAuthorization(for: .readWrite)
+            : status
+    }
+
+    private func listPhotos(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
+        let status = await photoAuthorization()
+        guard status == .authorized || status == .limited else {
+            return .failure(code: "canceled", message: "photo library access was not granted")
+        }
+        let offset = max(0, arguments["offset"] as? Int ?? 0)
+        let limit = min(100, max(1, arguments["limit"] as? Int ?? 50))
+        let options = PHFetchOptions()
+        options.predicate = NSPredicate(format: "mediaType == %d", PHAssetMediaType.image.rawValue)
+        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+        let albumID = (arguments["album_id"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let photos: PHFetchResult<PHAsset>
+        if !albumID.isEmpty && albumID != "all" {
+            guard let album = PHAssetCollection.fetchAssetCollections(
+                withLocalIdentifiers: [albumID], options: nil
+            ).firstObject else { return .failure(code: "not_found", message: "album not found") }
+            photos = PHAsset.fetchAssets(in: album, options: options)
+        } else {
+            photos = PHAsset.fetchAssets(with: .image, options: options)
+        }
+        let end = min(photos.count, offset + limit)
+        var items: [[String: Any]] = []
+        if offset < end {
+            for index in offset..<end {
+                let photo = photos.object(at: index)
+                guard photo.mediaType == .image else { continue }
+                items.append([
+                    "id": photo.localIdentifier,
+                    "created_at_ms": Int64(((photo.creationDate ?? .distantPast).timeIntervalSince1970 * 1000).rounded()),
+                    "width": photo.pixelWidth,
+                    "height": photo.pixelHeight,
+                    "favorite": photo.isFavorite,
+                ])
+            }
+        }
+        return Self.jsonSuccess([
+            "access": status == .authorized ? "full" : "limited",
+            "total": photos.count, "offset": offset, "items": items,
+        ])
+    }
+
+    private func listAlbums() async -> AIMaiChatHostToolExecution {
+        let status = await photoAuthorization()
+        guard status == .authorized || status == .limited else {
+            return .failure(code: "canceled", message: "photo library access was not granted")
+        }
+        let albums = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: nil)
+        var items: [[String: Any]] = [["id": "all", "name": "所有照片"]]
+        albums.enumerateObjects { album, _, _ in
+            items.append(["id": album.localIdentifier, "name": album.localizedTitle ?? "未命名相簿"])
+        }
+        return Self.jsonSuccess([
+            "access": status == .authorized ? "full" : "limited", "albums": items,
+        ])
+    }
+
+    private func readPhoto(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
+        let status = await photoAuthorization()
+        guard status == .authorized || status == .limited else {
+            return .failure(code: "canceled", message: "photo library access was not granted")
+        }
+        guard let id = arguments["id"] as? String, !id.isEmpty,
+              let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject,
+              asset.mediaType == .image else {
+            return .failure(code: "not_found", message: "photo not found in the authorized library")
+        }
+        let options = PHImageRequestOptions()
+        options.isNetworkAccessAllowed = true
+        let data: Data? = await withCheckedContinuation { continuation in
+            PHImageManager.default().requestImageDataAndOrientation(for: asset, options: options) {
+                data, _, _, _ in continuation.resume(returning: data)
+            }
+        }
+        guard let data, let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let preview = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: 2048,
+              ] as CFDictionary),
+              let jpeg = UIImage(cgImage: preview).jpegData(compressionQuality: 0.88) else {
+            return .failure(code: "internal", message: "photo could not be read")
+        }
+        let temporary = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agent-photo-\(UUID().uuidString).jpg")
+        do {
+            try jpeg.write(to: temporary, options: .atomic)
+            defer { try? FileManager.default.removeItem(at: temporary) }
+            guard let imported = await AIAssistantModel.shared.importFile(temporary) else {
+                return .failure(code: "internal", message: "photo could not be imported")
+            }
+            return Self.jsonSuccess([
+                "id": id, "path": imported.relativePath, "mime_type": imported.mimeType,
+                "next_tool": "view_image",
+            ])
+        } catch {
+            return .failure(code: "internal", message: error.localizedDescription)
+        }
+    }
+
+    private func addPhotosToAlbum(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
+        let status = await photoAuthorization()
+        guard status == .authorized || status == .limited else {
+            return .failure(code: "canceled", message: "photo library access was not granted")
+        }
+        guard let rawName = arguments["album_name"] as? String,
+              let rawIDs = arguments["photo_ids"] as? [String] else {
+            return .failure(code: "invalid_input", message: "album_name and photo_ids are required")
+        }
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let ids = Array(Set(rawIDs.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }))
+        guard !name.isEmpty, name.count <= 64, !ids.isEmpty, ids.count <= 50,
+              ids.allSatisfy({ !$0.isEmpty }) else {
+            return .failure(code: "invalid_input", message: "invalid album name or photo IDs")
+        }
+        var assets: [PHAsset] = []
+        for id in ids {
+            guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject,
+                  asset.mediaType == .image else {
+                return .failure(code: "not_found", message: "a photo is not accessible")
+            }
+            assets.append(asset)
+        }
+
+        func findAlbum() -> PHAssetCollection? {
+            let albums = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: nil)
+            for index in 0..<albums.count {
+                let album = albums.object(at: index)
+                if album.localizedTitle == name { return album }
+            }
+            return nil
+        }
+
+        do {
+            var album = findAlbum()
+            if album == nil {
+                try await performPhotoChanges {
+                    PHAssetCollectionChangeRequest.creationRequestForAssetCollection(withTitle: name)
+                }
+                album = findAlbum()
+            }
+            guard let album, album.canPerform(.addContent) else {
+                return .failure(code: "internal", message: "album cannot be edited")
+            }
+            try await performPhotoChanges {
+                PHAssetCollectionChangeRequest(for: album)?.addAssets(assets as NSArray)
+            }
+            return Self.jsonSuccess([
+                "album_id": album.localIdentifier, "album_name": name,
+                "added_count": assets.count, "copied_originals": false,
+            ])
+        } catch {
+            return .failure(code: "internal", message: error.localizedDescription)
+        }
+    }
+
+    private func performPhotoChanges(_ changes: @escaping () -> Void) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            PHPhotoLibrary.shared().performChanges(changes) { success, error in
+                if success { continuation.resume() }
+                else {
+                    continuation.resume(throwing: error ?? NSError(
+                        domain: "MaiChat.Photos", code: -1,
+                        userInfo: [NSLocalizedDescriptionKey: "相簿操作失败"]
+                    ))
+                }
+            }
+        }
+    }
 }
 
 private final class AIMaiChatHostToolCallbackContext: @unchecked Sendable {}
@@ -408,7 +594,7 @@ private let aiMaiChatHostToolHandler: @convention(c) (
     let response = AIMaiChatHostToolResponseBox()
     let finished = DispatchSemaphore(value: 0)
     Task { @MainActor in
-        let result = await AIMaiChatHostToolProvider.shared.execute(
+        let result = await AIMobileHostToolProvider.shared.execute(
             name: name,
             argumentsJSON: arguments
         )

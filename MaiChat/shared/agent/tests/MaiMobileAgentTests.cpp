@@ -77,7 +77,8 @@ int main() {
                   "GitHub-Flavored Markdown") != std::string::npos);
         // 移动端不能向模型宣称可以执行桌面 shell。
         bool hasViewImage = false, hasMaiChatContacts = false, hasMaiChatSend = false,
-             hasMaiChatBroadcast = false;
+             hasMaiChatBroadcast = false, hasMobilePhotos = false, hasMobileAlbums = false,
+             hasMobilePhotoRead = false, hasMobilePhotoAlbumWrite = false;
         for (const auto& tool : body["tools"]) {
             CHECK(tool["function"]["name"] != "shell");
             if (tool["function"]["name"] == "view_image") hasViewImage = true;
@@ -85,11 +86,20 @@ int main() {
             if (tool["function"]["name"] == "maichat_send_text") hasMaiChatSend = true;
             if (tool["function"]["name"] == "maichat_broadcast_text")
                 hasMaiChatBroadcast = true;
+            if (tool["function"]["name"] == "mobile_list_photos") hasMobilePhotos = true;
+            if (tool["function"]["name"] == "mobile_list_albums") hasMobileAlbums = true;
+            if (tool["function"]["name"] == "mobile_read_photo") hasMobilePhotoRead = true;
+            if (tool["function"]["name"] == "mobile_photos_add_to_album")
+                hasMobilePhotoAlbumWrite = true;
         }
         CHECK(hasViewImage);
         CHECK(hasMaiChatContacts);
         CHECK(hasMaiChatSend);
         CHECK(hasMaiChatBroadcast);
+        CHECK(hasMobilePhotos);
+        CHECK(hasMobileAlbums);
+        CHECK(hasMobilePhotoRead);
+        CHECK(hasMobilePhotoAlbumWrite);
         const auto& last = body["messages"].back();
         std::string input;
         if (last["content"].is_string()) {
@@ -130,6 +140,15 @@ int main() {
             response.set_content(frame({{"tool_calls", Json::array({invocation})}}, "tool_calls") +
                                      "data: [DONE]\n\n",
                                  "text/event-stream");
+            return;
+        }
+        if (input == "photo-add") {
+            Json invocation = {
+                {"index", 0}, {"id", "call_photo_add"}, {"type", "function"},
+                {"function", {{"name", "mobile_photos_add_to_album"},
+                              {"arguments", "{\"album_name\":\"Trip\",\"photo_ids\":[\"one\"]}"}}}};
+            response.set_content(frame({{"tool_calls", Json::array({invocation})}}, "tool_calls") +
+                                     "data: [DONE]\n\n", "text/event-stream");
             return;
         }
         const bool slow = input == "stop";
@@ -210,6 +229,17 @@ int main() {
         CHECK(hostProbe.calls == 1);
         CHECK(hostProbe.lastTool == "maichat_send_text");
         CHECK(Json::parse(hostProbe.lastArguments)["peer_id"] == "alice");
+        CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "photo-add"}})["ok"] == true);
+        const auto photoPermission = wait([](const Json& s) { return !s["permissions"].empty(); });
+        CHECK(hostProbe.calls == 1);
+        CHECK(photoPermission["permissions"][0]["tool"] == "mobile_photos_add_to_album");
+        CHECK(photoPermission["permissions"][0]["allowForSession"] == false);
+        CHECK(call(agent, {{"op", "permission"},
+                           {"id", photoPermission["permissions"][0]["id"]},
+                           {"decision", "approved"}})["ok"] == true);
+        wait([](const Json& s) { return s["busy"] == false; });
+        CHECK(hostProbe.calls == 2);
+        CHECK(hostProbe.lastTool == "mobile_photos_add_to_album");
         CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "hello"}})["ok"] == true);
         CHECK(call(agent, config)["ok"] == false);  // 工作中不能销毁并换配置。
         auto partial = wait([](const Json& s) {

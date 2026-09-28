@@ -201,6 +201,42 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
         true);
 }
 
+void registerMobilePhotoTools(MaiToolRegistry& tools,
+                              const std::shared_ptr<MaiMobileHostDispatcher>& dispatcher) {
+    tools.add(std::make_unique<MaiMobileHostTool>(
+        "mobile_list_photos",
+        "List photos visible to this app in the system photo library after OS authorization. "
+        "Use offset and limit to page; a limited grant exposes only the user's selected photos.",
+        R"({"type":"object","properties":{"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":100},"album_id":{"type":"string"}}})",
+        dispatcher, false));
+    tools.add(std::make_unique<MaiMobileHostTool>(
+        "mobile_list_albums",
+        "List system photo albums available under the current OS photo-library permission.",
+        R"({"type":"object","properties":{}})", dispatcher, false));
+    tools.add(std::make_unique<MaiMobileHostTool>(
+        "mobile_read_photo",
+        "Copy one photo by ID into the Agent working directory so view_image can inspect it. "
+        "Only images authorized by the OS photo-library permission can be read.",
+        R"({"type":"object","properties":{"id":{"type":"string"}},"required":["id"]})",
+        dispatcher, false));
+#if defined(__APPLE__)
+    tools.add(std::make_unique<MaiMobileHostTool>(
+        "mobile_photos_add_to_album",
+        "Create or reuse an iOS Photos album and add existing photo IDs to it without duplicating "
+        "or removing originals. Requires explicit approval for every call.",
+        R"({"type":"object","properties":{"album_name":{"type":"string"},"photo_ids":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":50}},"required":["album_name","photo_ids"]})",
+        dispatcher, true));
+#elif defined(__ANDROID__)
+    tools.add(std::make_unique<MaiMobileHostTool>(
+        "mobile_photos_copy_to_album",
+        "Android galleries use folders as albums. Copy the selected existing photos into "
+        "Pictures/MaiChat/<album_name>; originals remain unchanged, so gallery duplicates "
+        "will be visible. Requires explicit approval for every call.",
+        R"({"type":"object","properties":{"album_name":{"type":"string"},"photo_ids":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":10}},"required":["album_name","photo_ids"]})",
+        dispatcher, true));
+#endif
+}
+
 }  // namespace
 
 // 这是移动端适配器，JSON 只在语言边界，MaiAgent 的公开接口仍是领域对象。
@@ -262,6 +298,7 @@ struct MaiMobileAgent {
         tools->add(makeMaiTodoWriteTool());
         tools->add(makeMaiViewImageTool());
         registerMaiChatHostTools(*tools, hostTools);
+        registerMobilePhotoTools(*tools, hostTools);
         MaiAgent::Options options;
         options.defaultModel = request.at("model").get<std::string>();
         options.baseInstructions = kMarkdownBaseInstructions;

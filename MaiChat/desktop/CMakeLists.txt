@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-# C 用于 third_party/md4c（Markdown 解析，纯 C 实现）。
+# C 用于 MaiAgent/third_party/md4c（Markdown 解析，纯 C 实现）。
 project(MaiChatDesktop VERSION 0.1.96 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -46,7 +46,7 @@ find_package(Qt5 REQUIRED COMPONENTS Core Network Sql Widgets Svg Multimedia Mul
 find_package(ZLIB REQUIRED)
 
 # md4c：CommonMark + GFM 扩展的 Markdown 解析器（与 Qt 内嵌同源，MIT）。
-# 来源 https://github.com/mity/md4c release-0.5.2，见 third_party/md4c/LICENSE.md。
+# 来源 https://github.com/mity/md4c release-0.5.2，见 MaiAgent/third_party/md4c/LICENSE.md。
 # ---- MaiAgent：agent 核心，纯 C++ 的库 ----
 #
 # 直接 add_subdirectory 源码编进来，不走预编译产物：
@@ -213,15 +213,7 @@ if(WIN32)
   endif()
 endif()
 
-add_library(md4c STATIC
-  third_party/md4c/md4c.c
-  third_party/md4c/md4c.h
-  third_party/md4c/md4c-html.c
-  third_party/md4c/md4c-html.h
-  third_party/md4c/entity.c
-  third_party/md4c/entity.h
-)
-target_include_directories(md4c PUBLIC third_party/md4c)
+# MaiAgent 已编译仓库唯一一份 md4c；消息 Markdown 和 PDF 工具共用它。
 
 # Markdown 的解析 + 排版 + 绘制。**两端共用这一套**（agent 和 IM）。
 #
@@ -244,7 +236,7 @@ add_library(maichat_markdown
   src/markdown/MarkdownLabel.cpp
 )
 target_include_directories(maichat_markdown PUBLIC src)
-target_link_libraries(maichat_markdown PUBLIC Qt5::Core Qt5::Gui Qt5::Widgets PRIVATE md4c)
+target_link_libraries(maichat_markdown PUBLIC Qt5::Core Qt5::Gui Qt5::Widgets PRIVATE mai_md4c)
 
 add_library(remote_im_core
   src/model/RemoteIMContact.h
@@ -321,7 +313,7 @@ add_library(remote_im_core
   src/remote/TrtcNetworkProxyApi.h
 )
 target_include_directories(remote_im_core PUBLIC src)
-target_link_libraries(remote_im_core PUBLIC Qt5::Core Qt5::Network Qt5::Sql ZLIB::ZLIB PRIVATE md4c)
+target_link_libraries(remote_im_core PUBLIC Qt5::Core Qt5::Network Qt5::Sql ZLIB::ZLIB PRIVATE mai_md4c)
 if(APPLE)
   target_link_libraries(remote_im_core PRIVATE
     "-framework ApplicationServices"

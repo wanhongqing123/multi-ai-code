@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-# C 也要开：sqlite3 是 C 源码。只写 CXX 的话 CMake 生成到一半会说
+# C 也要开：sqlite3 和 md4c 都是 C 源码。只写 CXX 的话 CMake 生成到一半会说
 # CMAKE_C_COMPILE_OBJECT 没设，错误信息离真正原因很远。
 project(MaiAgent VERSION 0.1.0 LANGUAGES C CXX)
 
@@ -66,6 +66,15 @@ target_compile_definitions(mai_sqlite PUBLIC
   SQLITE_USE_URI=0
 )
 # 不需要再给它补 /w：上面的告警选项本来就只加给 C++。
+
+# Markdown 输入在核心内转换成自包含 HTML，再交给各平台的 PDF 排版回调。
+# 桌面消息渲染也使用同一份 md4c，避免两份静态库里的 C 符号冲突。
+add_library(mai_md4c STATIC
+  third_party/md4c/md4c.c
+  third_party/md4c/md4c-html.c
+  third_party/md4c/entity.c
+)
+target_include_directories(mai_md4c PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/md4c)
 
 # ── libcurl：源码进仓库，和别的第三方一致 ─────────────────────
 # third_party/curl 是 curl 8.11.1 的**完整发布包**，原样解开，一个文件
@@ -195,8 +204,8 @@ target_include_directories(maiagent
 )
 # libcurl 是 HTTP **客户端**（核心用它调大模型），
 # 和适配器里的 cpp-httplib（HTTP **服务端**）是两回事，两个都要。
-# sqlite 和 libcurl 都是 PRIVATE：它们是实现细节，公开头里不出现。
-target_link_libraries(maiagent PUBLIC Threads::Threads PRIVATE CURL::libcurl mai_sqlite)
+# sqlite、libcurl 和 md4c 都是 PRIVATE：它们是实现细节，公开头里不出现。
+target_link_libraries(maiagent PUBLIC Threads::Threads PRIVATE CURL::libcurl mai_sqlite mai_md4c)
 if(WIN32)
   target_link_libraries(maiagent PRIVATE d3d11 dxgi windowscodecs ole32 user32 windowsapp)
 endif()

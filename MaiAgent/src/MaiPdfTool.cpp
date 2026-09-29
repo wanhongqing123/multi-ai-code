@@ -9,6 +9,7 @@
 #include <utility>
 
 #include <json.hpp>
+#include <md4c-html.h>
 
 #include "MaiFilePath.h"
 #include "MaiFileSystem.h"
@@ -18,8 +19,52 @@ namespace {
 
 using json = nlohmann::json;
 
-constexpr std::uint64_t kMaxHtmlBytes = 10u * 1024 * 1024;
+constexpr std::uint64_t kMaxInputBytes = 10u * 1024 * 1024;
 constexpr std::uint64_t kMaxPdfBytes = 100u * 1024 * 1024;
+constexpr std::size_t kMaxRenderedHtmlBytes = 20u * 1024 * 1024;
+
+struct MaiMarkdownHtmlOutput {
+    std::string html;
+    bool isTooLarge = false;
+};
+
+void appendMarkdownHtml(const MD_CHAR* chunk, MD_SIZE length, void* context) {
+    auto* output = static_cast<MaiMarkdownHtmlOutput*>(context);
+    if (output->isTooLarge) return;
+    if (length > kMaxRenderedHtmlBytes - output->html.size()) {
+        output->isTooLarge = true;
+        return;
+    }
+    output->html.append(chunk, length);
+}
+
+bool hasExternalImage(const std::string& html) {
+    const std::string marker = "<img src=\"";
+    std::size_t cursor = 0;
+    while ((cursor = html.find(marker, cursor)) != std::string::npos) {
+        const std::size_t start = cursor + marker.size();
+        const std::size_t end = html.find('"', start);
+        const std::size_t encoded = html.find(";base64,", start);
+        if (end == std::string::npos || html.compare(start, 11, "data:image/") != 0 ||
+            encoded == std::string::npos || encoded >= end)
+            return true;
+        cursor = end + 1;
+    }
+    return false;
+}
+
+bool markdownToHtml(const std::string& markdown, std::string& html) {
+    MaiMarkdownHtmlOutput output;
+    output.html.reserve(std::min(markdown.size() * 2, kMaxRenderedHtmlBytes));
+    const int status = md_html(markdown.data(), static_cast<MD_SIZE>(markdown.size()),
+                               appendMarkdownHtml, &output, MD_DIALECT_GITHUB | MD_FLAG_NOHTML,
+                               MD_HTML_FLAG_XHTML | MD_HTML_FLAG_SKIP_UTF8_BOM);
+    if (status != 0 || output.isTooLarge || hasExternalImage(output.html)) return false;
+    html = "<html><head><meta charset=\"utf-8\"></head><body>";
+    html += output.html;
+    html += "</body></html>";
+    return true;
+}
 
 bool hasExtension(const std::string& path, const std::string& extension) {
     if (path.size() < extension.size()) return false;
@@ -69,17 +114,17 @@ public:
     }
 
     std::string description() const override {
-        return "Generate an A4 PDF from a self-contained HTML file in the working directory. "
-               "Write the HTML first; inline any images as data URLs. External resources are "
-               "unsupported. The output must be a new .pdf "
-               "file inside the working directory.";
+        return "Generate an A4 PDF directly from Markdown content in one call. Use headings, "
+               "lists, tables, and inline formatting. Images must be embedded as base64 data "
+               "URLs; external resources are unsupported. The output must be a new .pdf file "
+               "inside the working directory.";
     }
 
     std::string parametersSchema() const override {
         return R"({"type":"object","properties":{)"
-               R"("source_path":{"type":"string","description":"Existing .html or .htm file inside the working directory"},)"
+               R"("content":{"type":"string","description":"UTF-8 Markdown to render as the PDF body"},)"
                R"("output_path":{"type":"string","description":"New .pdf path inside the working directory"}},)"
-               R"("required":["source_path","output_path"],"additionalProperties":false})";
+               R"("required":["content","output_path"],"additionalProperties":false})";
     }
 
     bool requiresApproval(const std::string&) const override {
@@ -89,55 +134,70 @@ public:
     MaiToolResult execute(const std::string& argumentsJson,
                           const MaiToolContext& context) override {
         const json arguments = json::parse(argumentsJson, nullptr, false);
-        if (!arguments.is_object() || arguments.size() != 2 || !arguments.contains("source_path") ||
-            !arguments["source_path"].is_string() || !arguments.contains("output_path") ||
-            !arguments["output_path"].is_string()) {
-            return MaiToolResult::failure(
-                MaiErrorCode::InvalidInput,
-                "generate_pdf requires source_path and output_path strings");
+        const bool hasContent = arguments.is_object() && arguments.contains("content") &&
+                                arguments["content"].is_string();
+        const bool hasLegacySource = arguments.is_object() && arguments.contains("source_path") &&
+                                     arguments["source_path"].is_string();
+        if (!arguments.is_object() || arguments.size() != 2 || hasContent == hasLegacySource ||
+            !arguments.contains("output_path") || !arguments["output_path"].is_string()) {
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                          "generate_pdf requires content and output_path strings");
         }
-        const std::string sourceName = arguments["source_path"].get<std::string>();
         const std::string outputName = arguments["output_path"].get<std::string>();
-        if ((!hasExtension(sourceName, ".html") && !hasExtension(sourceName, ".htm")) ||
-            !hasExtension(outputName, ".pdf")) {
-            return MaiToolResult::failure(
-                MaiErrorCode::InvalidInput,
-                "source_path must be HTML and output_path must end in .pdf");
+        if (!hasExtension(outputName, ".pdf")) {
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                          "output_path must end in .pdf");
         }
         if (context.root.empty())
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,
                                           "this session has no working directory");
-        const std::string source = maiResolvePathWithinRoot(context.root, sourceName);
         const std::string output = maiResolvePathWithinRoot(context.root, outputName);
-        if (source.empty() || output.empty())
-            return MaiToolResult::failure(
-                MaiErrorCode::InvalidInput,
-                "PDF source and output must stay inside the working directory");
-        if (source == output)
+        if (output.empty())
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,
-                                          "PDF output must differ from its HTML source");
-        const MaiFilePath sourcePath = MaiFilePath::fromUtf8(source);
+                                          "PDF output must stay inside the working directory");
         const MaiFilePath outputPath = MaiFilePath::fromUtf8(output);
-        if (!MaiFileSystem::exists(sourcePath) || MaiFileSystem::isDirectory(sourcePath))
-            return MaiToolResult::failure(MaiErrorCode::NotFound,
-                                          "HTML source file does not exist");
         if (MaiFileSystem::exists(outputPath))
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,
                                           "PDF output already exists; choose a new filename");
-        std::uint64_t sourceBytes = 0;
-        if (!MaiFileSystem::fileSize(sourcePath, sourceBytes) || sourceBytes == 0 ||
-            sourceBytes > kMaxHtmlBytes)
-            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
-                                          "HTML source must be between 1 byte and 10 MB");
         if (context.isCanceled())
             return MaiToolResult::failure(MaiErrorCode::Canceled, "PDF generation was canceled");
         std::string html;
-        const MaiError readError = MaiFileSystem::readFile(sourcePath, html, kMaxHtmlBytes);
-        if (readError.hasError())
-            return MaiToolResult::failure(readError.code(), readError.message());
+        if (hasContent) {
+            const std::string content = arguments["content"].get<std::string>();
+            if (content.find_first_not_of(" \t\r\n") == std::string::npos ||
+                content.size() > kMaxInputBytes || !isValidUtf8(content))
+                return MaiToolResult::failure(
+                    MaiErrorCode::InvalidInput,
+                    "Markdown content must be valid UTF-8 and at most 10 MB");
+            if (!markdownToHtml(content, html))
+                return MaiToolResult::failure(
+                    MaiErrorCode::InvalidInput,
+                    "Markdown could not be rendered or contains an external image");
+        } else {
+            const std::string sourceName = arguments["source_path"].get<std::string>();
+            if (!hasExtension(sourceName, ".html") && !hasExtension(sourceName, ".htm"))
+                return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                              "source_path must be an HTML file");
+            const std::string source = maiResolvePathWithinRoot(context.root, sourceName);
+            if (source.empty() || source == output)
+                return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                              "PDF source must stay inside the working directory");
+            const MaiFilePath sourcePath = MaiFilePath::fromUtf8(source);
+            if (!MaiFileSystem::exists(sourcePath) || MaiFileSystem::isDirectory(sourcePath))
+                return MaiToolResult::failure(MaiErrorCode::NotFound,
+                                              "HTML source file does not exist");
+            std::uint64_t sourceBytes = 0;
+            if (!MaiFileSystem::fileSize(sourcePath, sourceBytes) || sourceBytes == 0 ||
+                sourceBytes > kMaxInputBytes)
+                return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                              "HTML source must be between 1 byte and 10 MB");
+            const MaiError readError = MaiFileSystem::readFile(sourcePath, html, kMaxInputBytes);
+            if (readError.hasError())
+                return MaiToolResult::failure(readError.code(), readError.message());
+        }
         if (!isValidUtf8(html))
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,
-                                          "HTML source must contain valid UTF-8 text");
+                                          "PDF content must contain valid UTF-8 text");
         const MaiError directoryError = MaiFileSystem::createDirectories(outputPath.dirName());
         if (directoryError.hasError())
             return MaiToolResult::failure(directoryError.code(), directoryError.message());

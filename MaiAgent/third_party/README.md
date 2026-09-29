@@ -14,6 +14,7 @@
 | `curl/` | https://curl.se/ | 8.11.1（完整源码） |
 | `ffmpeg/` | https://ffmpeg.org/ | 9.0.2（完整源码） |
 | `opencv/` | https://github.com/opencv/opencv | 4.14.0（完整源码） |
+| `md4c/` | https://github.com/mity/md4c | release-0.5.2（MIT，供 PDF 与桌面 Markdown 共用） |
 
 OpenCV 4.14.0 来自官方 tag 源码包
 `https://github.com/opencv/opencv/archive/refs/tags/4.14.0.tar.gz`，SHA-256 为

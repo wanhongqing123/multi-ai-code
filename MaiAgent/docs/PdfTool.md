@@ -1,17 +1,13 @@
 # generate_pdf
 
-`generate_pdf` 把 Agent 工作区里的 UTF-8 HTML 文件排成 A4 PDF。模型先用 `write`
-建立自包含 HTML，再调用：
+Agent 可以一次调用直接把 Markdown 正文生成 A4 PDF，不必先创建 HTML 文件：
 
 ```json
-{"source_path":"report.html","output_path":"report.pdf"}
+{"content":"# 项目报告\n\n| 项目 | 结果 |\n| --- | --- |\n| 构建 | 通过 |","output_path":"report.pdf"}
 ```
 
-两个路径都必须留在会话工作区内。源文件限 10 MB；输出必须是尚不存在的 `.pdf`
-文件，产物限 100 MB。工具按写文件操作进入审批流程，不使用 shell 或外部浏览器。
-路径校验、读取 HTML、审批和 PDF 文件头检查由 MaiAgent 共用；宿主只实现排版回调。
+`content` 使用 UTF-8，支持标题、列表、表格、强调等 GitHub 风格 Markdown。MaiAgent 使用仓库内的 md4c 将正文转换成内存中的 HTML，然后把 HTML 交给宿主的 PDF 排版回调；中间过程不写 HTML 文件。原有 `source_path` 指向工作区 HTML 文件的调用仍能执行，供旧会话兼容，但不再展示给模型作为新调用参数。
 
-MaiChat Desktop 使用 Qt 富文本 PDF 输出；iOS 使用 UIKit 的多页 HTML 打印排版；
-Android 使用系统 HTML 文本排版和 `PdfDocument`。三端都支持中文、基本富文本和
-分页，但复杂网页 CSS 的排版并不保证逐像素相同。图片应写成 HTML 内的 `data:`
-URL；外部资源不属于工具输入契约。
+工具遵守写文件审批。输出必须是工作区内尚不存在的 `.pdf` 文件；正文限制 10 MB，生成的 PDF 限制 100 MB。Markdown 中的原始 HTML 会作为文字处理，图片只接受 `data:image/...;base64,...` 形式，不读取外部地址。渲染失败或取消时清理输出，成功后核对 PDF 文件头和大小。
+
+MaiChat Desktop 使用 Qt 的 `QTextDocument` 与 `QPdfWriter`；iOS 使用 UIKit 的 HTML 打印排版；Android 使用 `Html.fromHtml`、`StaticLayout` 和系统 `PdfDocument`。三端支持基本富文本与分页，但复杂 CSS 和表格不保证逐像素一致。

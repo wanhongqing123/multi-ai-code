@@ -22,11 +22,11 @@ namespace {
 
 class MaiPdfWorkspace {
 public:
-    MaiPdfWorkspace()
+    explicit MaiPdfWorkspace(bool createSource = true)
         : mRoot(MaiFileSystem::temporaryDirectory().append(
               MaiFilePath::fromUtf8(MaiIdGenerator::generate("pdf_tool_test_")))) {
         CHECK(!MaiFileSystem::createDirectories(mRoot));
-        CHECK(!MaiFileSystem::writeFile(path("source.html"), "<h1>Report</h1>"));
+        if (createSource) CHECK(!MaiFileSystem::writeFile(path("source.html"), "<h1>Report</h1>"));
     }
 
     ~MaiPdfWorkspace() {
@@ -47,6 +47,30 @@ private:
     MaiFilePath mRoot;
 };
 
+void test_generates_pdf_directly_from_markdown() {
+    MaiPdfWorkspace workspace(false);
+    int renderCalls = 0;
+    auto tool = makeMaiPdfTool(
+        [&](const std::string& html, const std::string& output, const std::atomic<bool>*) {
+            ++renderCalls;
+            CHECK(html.find("<h1>Report</h1>") != std::string::npos);
+            CHECK(html.find("<table>") != std::string::npos);
+            CHECK(html.find("<strong>Passed</strong>") != std::string::npos);
+            CHECK(html.find("<script>") == std::string::npos);
+            const MaiError error =
+                MaiFileSystem::writeFile(MaiFilePath::fromUtf8(output), "%PDF-1.4\n%%EOF\n");
+            if (error) return MaiToolResult::failure(error.code(), error.message());
+            return MaiToolResult::success("rendered");
+        });
+    const MaiToolResult result = tool->execute(
+        R"({"content":"# Report\n\n| Item | Result |\n| --- | --- |\n| Build | **Passed** |\n\n<script>alert(1)</script>","output_path":"report.pdf"})",
+        workspace.context());
+    CHECK(!result.hasError());
+    CHECK(MaiFileSystem::exists(workspace.path("report.pdf")));
+    CHECK(!MaiFileSystem::exists(workspace.path("source.html")));
+    CHECK(renderCalls == 1);
+}
+
 void test_creates_validated_pdf_with_approval() {
     MaiPdfWorkspace workspace;
     int renderCalls = 0;
@@ -62,6 +86,8 @@ void test_creates_validated_pdf_with_approval() {
     CHECK(tool != nullptr);
     CHECK(tool->name() == "generate_pdf");
     CHECK(tool->requiresApproval("{}"));
+    CHECK(tool->parametersSchema().find("\"required\":[\"content\",\"output_path\"]") !=
+          std::string::npos);
     const MaiToolResult result = tool->execute(
         R"({"source_path":"source.html","output_path":"report.pdf"})", workspace.context());
     CHECK(!result.hasError());
@@ -94,7 +120,43 @@ void test_rejects_paths_outside_workspace() {
     CHECK(tool->execute(R"({"source_path":"source.html","output_path":"report.pdf","extra":1})",
                         workspace.context())
               .hasError());
+    CHECK(tool->execute(R"({"content":"# Report","output_path":"../report.pdf"})",
+                        workspace.context())
+              .hasError());
+    CHECK(tool->execute(R"({"content":" ","output_path":"report.pdf"})", workspace.context())
+              .hasError());
+    CHECK(
+        tool->execute(
+                R"({"content":"# Report","source_path":"source.html","output_path":"report.pdf"})",
+                workspace.context())
+            .hasError());
     CHECK(renderCalls == 0);
+}
+
+void test_only_accepts_embedded_markdown_images() {
+    MaiPdfWorkspace workspace(false);
+    int renderCalls = 0;
+    auto tool = makeMaiPdfTool(
+        [&](const std::string& html, const std::string& output, const std::atomic<bool>*) {
+            ++renderCalls;
+            CHECK(html.find("<img src=\"data:image/png;base64,") != std::string::npos);
+            const MaiError error =
+                MaiFileSystem::writeFile(MaiFilePath::fromUtf8(output), "%PDF-1.4\n%%EOF\n");
+            if (error) return MaiToolResult::failure(error.code(), error.message());
+            return MaiToolResult::success("rendered");
+        });
+    CHECK(
+        tool->execute(
+                R"pdf({"content":"![image](https://example.com/image.png)","output_path":"external.pdf"})pdf",
+                workspace.context())
+            .hasError());
+    CHECK(renderCalls == 0);
+    CHECK(
+        !tool->execute(
+                 R"pdf({"content":"![image](data:image/png;base64,iVBORw0KGgo=)","output_path":"embedded.pdf"})pdf",
+                 workspace.context())
+             .hasError());
+    CHECK(renderCalls == 1);
 }
 
 void test_rejects_missing_or_invalid_renderer_output() {
@@ -143,8 +205,10 @@ void test_rejects_invalid_utf8_and_renderer_exceptions() {
 }  // namespace
 
 int main() {
+    test_generates_pdf_directly_from_markdown();
     test_creates_validated_pdf_with_approval();
     test_rejects_paths_outside_workspace();
+    test_only_accepts_embedded_markdown_images();
     test_rejects_missing_or_invalid_renderer_output();
     test_rejects_invalid_utf8_and_renderer_exceptions();
     if (failures == 0) std::printf("PDF tool tests passed\n");

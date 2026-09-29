@@ -111,6 +111,8 @@ private:
     ThinkingLine* thinkingLineFor(const QString& partId);
     ToolCard* toolCardFor(const QString& partId);
     void refreshToolCard(const QString& messageId, const QString& partId);
+    void appendPdfPreview(const QString& partId, const QString& output,
+                          const QString& workspace);
     void showApproval(const QString& permissionId);
 
     // 模型中途问了一句。

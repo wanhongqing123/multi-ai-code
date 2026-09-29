@@ -238,6 +238,25 @@ add_library(maichat_markdown
 target_include_directories(maichat_markdown PUBLIC src)
 target_link_libraries(maichat_markdown PUBLIC Qt5::Core Qt5::Gui Qt5::Widgets PRIVATE mai_md4c)
 
+add_library(maichat_pdf_preview STATIC
+  src/ui/PdfPreviewDialog.h
+  src/ui/PdfPreviewDialog.cpp)
+target_include_directories(maichat_pdf_preview PUBLIC src)
+target_link_libraries(maichat_pdf_preview PUBLIC Qt5::Widgets)
+if(APPLE)
+  enable_language(OBJCXX)
+  target_sources(maichat_pdf_preview PRIVATE src/ui/PdfPreviewMac.mm)
+  target_compile_definitions(maichat_pdf_preview PRIVATE MAICHAT_PDF_MAC_NATIVE=1)
+  target_compile_options(maichat_pdf_preview PRIVATE
+    $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
+  target_link_libraries(maichat_pdf_preview PRIVATE "-framework Cocoa" "-framework PDFKit")
+elseif(WIN32)
+  find_package(Qt5 REQUIRED COMPONENTS Concurrent)
+  target_sources(maichat_pdf_preview PRIVATE src/ui/PdfPreviewWindows.cpp)
+  target_compile_definitions(maichat_pdf_preview PRIVATE MAICHAT_PDF_WINDOWS_NATIVE=1)
+  target_link_libraries(maichat_pdf_preview PRIVATE Qt5::Concurrent windowsapp)
+endif()
+
 add_library(remote_im_core
   src/model/RemoteIMContact.h
   src/model/RemoteIMMessage.h
@@ -396,7 +415,8 @@ add_library(remote_im_desktop_ui
 )
 target_include_directories(remote_im_desktop_ui PUBLIC src)
 target_link_libraries(remote_im_desktop_ui PUBLIC remote_im_desktop_app remote_im_core
-  maichat_agent Qt5::Widgets Qt5::Svg Qt5::Multimedia Qt5::MultimediaWidgets)
+  maichat_agent Qt5::Widgets Qt5::Svg Qt5::Multimedia Qt5::MultimediaWidgets
+  maichat_pdf_preview)
 
 add_executable(maichat
   src/main.cpp
@@ -488,7 +508,8 @@ add_library(maichat_agent
   src/agent/ReplySuggestionController.cpp
 )
 target_include_directories(maichat_agent PUBLIC src)
-target_link_libraries(maichat_agent PUBLIC Qt5::Core Qt5::Widgets maiagent maichat_markdown)
+target_link_libraries(maichat_agent PUBLIC Qt5::Core Qt5::Widgets maiagent maichat_markdown
+  maichat_pdf_preview)
 if(WIN32 AND MAICHAT_ENABLE_OPENCV)
   target_sources(maichat_agent PRIVATE
     src/agent/DesktopVisionTools.h src/agent/DesktopVisionTools.cpp)
@@ -519,6 +540,12 @@ target_link_libraries(agent_panel_session_test PRIVATE remote_im_desktop_ui remo
 
 add_executable(desktop_pdf_renderer_test tests/DesktopPdfRendererTest.cpp)
 target_link_libraries(desktop_pdf_renderer_test PRIVATE maichat_agent Qt5::Widgets Qt5::Test)
+
+add_executable(pdf_preview_dialog_test tests/PdfPreviewDialogTest.cpp)
+target_link_libraries(pdf_preview_dialog_test PRIVATE maichat_pdf_preview Qt5::Test)
+if(WIN32)
+  target_link_libraries(pdf_preview_dialog_test PRIVATE Qt5::Concurrent)
+endif()
 
 if(WIN32 AND MAICHAT_ENABLE_FFMPEG)
   add_executable(desktop_ffmpeg_filter_test tests/DesktopFfmpegFilterTest.cpp)
@@ -709,6 +736,7 @@ add_test(NAME markdown_label_test COMMAND markdown_label_test)
 add_test(NAME agent_controller_test COMMAND agent_controller_test)
 add_test(NAME agent_panel_session_test COMMAND agent_panel_session_test)
 add_test(NAME desktop_pdf_renderer_test COMMAND desktop_pdf_renderer_test)
+add_test(NAME pdf_preview_dialog_test COMMAND pdf_preview_dialog_test)
 if(WIN32 AND MAICHAT_ENABLE_FFMPEG)
   add_test(NAME desktop_ffmpeg_filter_test COMMAND desktop_ffmpeg_filter_test)
 endif()

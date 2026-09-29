@@ -224,8 +224,10 @@ public:
             return MaiToolResult::failure(MaiErrorCode::Internal,
                                           "the PDF renderer did not produce a valid PDF file");
         }
-        return MaiToolResult::success("Created " + outputName + " (" + std::to_string(pdfBytes) +
-                                      " bytes).");
+        return MaiToolResult::success(json{
+            {"path", outputName},
+            {"mime_type", "application/pdf"},
+            {"bytes", pdfBytes}}.dump());
     }
 
 private:

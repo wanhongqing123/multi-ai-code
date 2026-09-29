@@ -773,6 +773,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         String key = "";
         final Map<String, TextView> parts = new HashMap<>();
         final Map<String, ImageView> imageParts = new HashMap<>();
+        final Map<String, Button> pdfCards = new HashMap<>();
         TextView status;
         MessageRow() {
             super(activity);
@@ -787,6 +788,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                     removeAllViews();
                     parts.clear();
                     imageParts.clear();
+                    pdfCards.clear();
                     status = null;
                     TextView empty = text("有什么可以帮你？\n\n可以聊天、分析图片和文件，也可以语音转文字。", 16,
                         MaiChatTheme.SECONDARY);
@@ -809,6 +811,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 removeAllViews();
                 parts.clear();
                 imageParts.clear();
+                pdfCards.clear();
                 status = null;
                 if (outgoing) {
                     LinearLayout bubble = column();
@@ -855,6 +858,24 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                                 detail.setTypeface(android.graphics.Typeface.MONOSPACE);
                                 parts.put(id + ":detail", detail);
                                 addView(detail, lp);
+                            }
+                            if (kind.equals("tool")) {
+                                Button preview = button("预览 PDF", "预览生成的 PDF", clicked -> {
+                                    Object stored = clicked.getTag();
+                                    if (!(stored instanceof String)) return;
+                                    File pdf = controller.workspaceFile((String) stored);
+                                    PdfPreviewDialog.show(activity, pdf,
+                                        controller.workspaceDirectoryForPreview());
+                                });
+                                preview.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+                                preview.setPadding(dp(12), 0, dp(12), 0);
+                                preview.setBackground(MaiChatTheme.bordered(
+                                    MaiChatTheme.BLUE_SOFT, MaiChatTheme.BORDER, 10, activity));
+                                preview.setVisibility(GONE);
+                                pdfCards.put(id, preview);
+                                LayoutParams cardLayout = matchWrap();
+                                cardLayout.bottomMargin = dp(12);
+                                addView(preview, cardLayout);
                             }
                         }
                     status = text("", 11, MaiChatTheme.SECONDARY);
@@ -910,6 +931,15 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                             detail.setText(kind.equals("reasoning") ? part.optString("text")
                                                                     : part.optString("input") + "\n"
                                         + part.optString("output") + "\n" + part.optString("error"));
+                        Button pdfCard = pdfCards.get(id);
+                        if (pdfCard != null) {
+                            String path = pdfPathFromToolOutput(part);
+                            pdfCard.setVisibility(path == null ? GONE : VISIBLE);
+                            if (path != null) {
+                                pdfCard.setTag(path);
+                                pdfCard.setText("PDF  " + new File(path).getName() + "  ·  预览");
+                            }
+                        }
                     }
                 }
             updateTime();
@@ -929,6 +959,23 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             : state.equals("error")      ? "失败"
             : state.equals("pending")    ? "等待授权"
                                          : "正在运行";
+    }
+    static String pdfPathFromToolOutput(JSONObject part) {
+        if (!part.optString("tool").equals("generate_pdf")
+            || !part.optString("state").equals("completed")) return null;
+        String output = part.optString("output");
+        try {
+            JSONObject artifact = new JSONObject(output);
+            String path = artifact.optString("path");
+            if (artifact.optString("mime_type").equals("application/pdf")
+                && path.toLowerCase(Locale.ROOT).endsWith(".pdf")) return path;
+        } catch (org.json.JSONException ignored) { }
+        int end = output.lastIndexOf(" (");
+        if (output.startsWith("Created ") && output.endsWith(" bytes).") && end > 8) {
+            String path = output.substring(8, end);
+            if (path.toLowerCase(Locale.ROOT).endsWith(".pdf")) return path;
+        }
+        return null;
     }
     private int dp(int value) {
         return MaiChatTheme.dp(activity, value);

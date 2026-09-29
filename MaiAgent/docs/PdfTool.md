@@ -10,4 +10,6 @@ Agent 可以一次调用直接把 Markdown 正文生成 A4 PDF，不必先创建
 
 工具遵守写文件审批。输出必须是工作区内尚不存在的 `.pdf` 文件；正文限制 10 MB，生成的 PDF 限制 100 MB。Markdown 中的原始 HTML 会作为文字处理，图片只接受 `data:image/...;base64,...` 形式，不读取外部地址。渲染失败或取消时清理输出，成功后核对 PDF 文件头和大小。
 
+成功时返回 `{"path":"report.pdf","mime_type":"application/pdf","bytes":1234}`。MaiChat 的消息展示层根据此结果显示预览入口；PDF 文件本身仍保存在 Agent 工作区。
+
 MaiChat Desktop 使用 Qt 的 `QTextDocument` 与 `QPdfWriter`；iOS 使用 UIKit 的 HTML 打印排版；Android 使用 `Html.fromHtml`、`StaticLayout` 和系统 `PdfDocument`。三端支持基本富文本与分页，但复杂 CSS 和表格不保证逐像素一致。

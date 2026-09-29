@@ -98,6 +98,7 @@
 #include "ui/BroadcastDialog.h"
 #include "ui/ComposerTextEdit.h"
 #include "ui/FilePreviewDialog.h"
+#include "ui/PdfPreviewDialog.h"
 #include "ui/ImagePreviewDialog.h"
 #include "ui/VideoPreviewDialog.h"
 #include <QButtonGroup>
@@ -1310,6 +1311,11 @@ bool isMarkdownFile(const RemoteIMFileAttachment& attachment) {
         || fileName.endsWith(QStringLiteral(".markdown"));
 }
 
+bool isPdfFile(const RemoteIMFileAttachment& attachment) {
+    return attachment.mimeType.compare(QStringLiteral("application/pdf"), Qt::CaseInsensitive) == 0
+        || attachment.fileName.endsWith(QStringLiteral(".pdf"), Qt::CaseInsensitive);
+}
+
 // 视频走 IM 的视频消息发出去，但本地回显仍存成文件附件（本地库还没有视频列）。
 // 气泡靠 MIME/扩展名认出来，显示成视频卡片而不是一张「文档」卡。
 bool isVideoFile(const RemoteIMFileAttachment& attachment) {
@@ -1322,7 +1328,7 @@ bool isVideoFile(const RemoteIMFileAttachment& attachment) {
 
 // 仅 md/html 文档支持内嵌预览；其余是普通文件，点击/菜单走「另存为」。
 bool isPreviewableDocument(const RemoteIMFileAttachment& attachment) {
-    return isHtmlFile(attachment) || isMarkdownFile(attachment);
+    return isHtmlFile(attachment) || isMarkdownFile(attachment) || isPdfFile(attachment);
 }
 
 QString fileSizeText(qint64 bytes) {
@@ -4386,6 +4392,10 @@ void MainWindow::openFilePreview(const RemoteIMFileAttachment& attachment) {
     // 非文档类型没有内嵌预览，转「另存为」。
     if (!isPreviewableDocument(attachment)) {
         saveFileAttachmentToLocal(attachment);
+        return;
+    }
+    if (isPdfFile(attachment)) {
+        showPdfPreview(this, attachment.localPath, attachment.fileName);
         return;
     }
     if (isGitDiffFile(attachment) && !hasValidGitDiffIntegrity(attachment)) {

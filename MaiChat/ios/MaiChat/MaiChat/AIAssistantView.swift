@@ -530,6 +530,8 @@ private struct AIBottomPreference: PreferenceKey {
 private struct AIMessageRow: View {
     let message: AIMessage
     let workspacePath: String
+    @State private var pdfPreview: AIPDFPreviewItem?
+    @State private var pdfPreviewError = false
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             if message.role == "user" {
@@ -562,6 +564,15 @@ private struct AIMessageRow: View {
                             }.textSelection(.enabled).padding(10).frame(maxWidth: .infinity, alignment: .leading)
                                 .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8))
                         }
+                        if let path = pdfArtifactPath(for: part) {
+                            AIPDFArtifactButton(path: path) {
+                                if let url = validatedPDFURL(path: path) {
+                                    pdfPreview = AIPDFPreviewItem(url: url)
+                                } else {
+                                    pdfPreviewError = true
+                                }
+                            }
+                        }
                     }
                 }
                 if message.active {
@@ -582,6 +593,49 @@ private struct AIMessageRow: View {
                 }
             }
         }.frame(maxWidth: .infinity, alignment: .leading)
+            .sheet(item: $pdfPreview) { item in
+                AIPDFPreviewScreen(item: item) { pdfPreview = nil }
+            }
+            .alert("无法预览 PDF", isPresented: $pdfPreviewError) {
+                Button("知道了", role: .cancel) {}
+            } message: {
+                Text("文件不存在、已移出 AI 工作区，或内容不是 PDF。")
+            }
+    }
+    private func pdfArtifactPath(for part: AIPart) -> String? {
+        guard part.tool == "generate_pdf", part.state == "completed",
+              let output = part.output else { return nil }
+        if let data = output.data(using: .utf8),
+           let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+           object["mime_type"] as? String == "application/pdf",
+           let path = object["path"] as? String,
+           path.lowercased().hasSuffix(".pdf") { return path }
+        if output.hasPrefix("Created "), output.hasSuffix(" bytes)."),
+           let end = output.range(of: " (", options: .backwards)?.lowerBound {
+            let start = output.index(output.startIndex, offsetBy: 8)
+            if end > start {
+                let path = String(output[start..<end])
+                if path.lowercased().hasSuffix(".pdf") { return path }
+            }
+        }
+        return nil
+    }
+    private func validatedPDFURL(path: String) -> URL? {
+        guard !workspacePath.isEmpty else { return nil }
+        let root = URL(fileURLWithPath: workspacePath, isDirectory: true)
+            .standardizedFileURL.resolvingSymlinksInPath()
+        let candidate = ((path as NSString).isAbsolutePath
+            ? URL(fileURLWithPath: path) : root.appendingPathComponent(path))
+            .standardizedFileURL.resolvingSymlinksInPath()
+        guard candidate.path.hasPrefix(root.path + "/"),
+              candidate.pathExtension.lowercased() == "pdf",
+              let attributes = try? FileManager.default.attributesOfItem(atPath: candidate.path),
+              let size = attributes[.size] as? NSNumber, size.int64Value >= 8,
+              size.int64Value <= 100 * 1024 * 1024,
+              let handle = try? FileHandle(forReadingFrom: candidate) else { return nil }
+        defer { try? handle.close() }
+        guard let header = try? handle.read(upToCount: 5) else { return nil }
+        return header == Data("%PDF-".utf8) ? candidate : nil
     }
     private var imagePaths: [String] {
         guard !workspacePath.isEmpty else { return [] }
@@ -616,6 +670,50 @@ private struct AIMessageRow: View {
     }
     private func toolStatus(_ state: String?) -> String {
         switch state { case "completed": return "已完成"; case "error": return "失败"; case "pending": return "等待授权"; default: return "正在运行" }
+    }
+}
+
+private struct AIPDFPreviewItem: Identifiable {
+    let url: URL
+    var id: String { url.path }
+}
+
+private struct AIPDFPreviewScreen: View {
+    let item: AIPDFPreviewItem
+    let close: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            RemoteIMQuickLookPreview(filePath: item.url.path)
+                .navigationTitle(item.url.lastPathComponent)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        ShareLink(item: item.url) { Image(systemName: "square.and.arrow.up") }
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("关闭", action: close)
+                    }
+                }
+        }
+    }
+}
+
+private struct AIPDFArtifactButton: View {
+    let path: String
+    let open: () -> Void
+
+    var body: some View {
+        Button(action: open) {
+            Label("预览 PDF · \((path as NSString).lastPathComponent)",
+                  systemImage: "doc.richtext")
+                .font(.system(size: 14, weight: .medium))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(Color.blue.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("agentPdfPreviewButton")
     }
 }
 

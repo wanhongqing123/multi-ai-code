@@ -609,6 +609,9 @@ final class AIAssistantController {
             decoded.recycle();
         }
     }
+    File workspaceDirectoryForPreview() {
+        return root == null ? null : new File(root, "Workspace");
+    }
     File workspacePdfOutputForHost(String absolutePath) throws Exception {
         if (root == null || absolutePath == null || absolutePath.trim().isEmpty())
             throw new IllegalArgumentException("需要 AI 工作区内的 PDF 输出路径");

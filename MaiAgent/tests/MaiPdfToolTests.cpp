@@ -5,6 +5,8 @@
 #include <stdexcept>
 #include <string>
 
+#include <json.hpp>
+
 #include "MaiFilePath.h"
 #include "MaiFileSystem.h"
 #include "MaiIdGenerator.h"
@@ -66,6 +68,13 @@ void test_generates_pdf_directly_from_markdown() {
         R"({"content":"# Report\n\n| Item | Result |\n| --- | --- |\n| Build | **Passed** |\n\n<script>alert(1)</script>","output_path":"report.pdf"})",
         workspace.context());
     CHECK(!result.hasError());
+    const auto artifact = nlohmann::json::parse(result.output(), nullptr, false);
+    CHECK(artifact.is_object());
+    if (artifact.is_object()) {
+        CHECK(artifact.value("path", "") == "report.pdf");
+        CHECK(artifact.value("mime_type", "") == "application/pdf");
+        CHECK(artifact.value("bytes", 0) > 8);
+    }
     CHECK(MaiFileSystem::exists(workspace.path("report.pdf")));
     CHECK(!MaiFileSystem::exists(workspace.path("source.html")));
     CHECK(renderCalls == 1);

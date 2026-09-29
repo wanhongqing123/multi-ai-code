@@ -3507,6 +3507,11 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         }
         String mime = attachment.mimeType().toLowerCase(Locale.ROOT);
         String name = attachment.fileName().toLowerCase(Locale.ROOT);
+        if (mime.equals("application/pdf") || name.endsWith(".pdf")) {
+            PdfPreviewDialog.show(this, new File(attachment.localPath()), null,
+                attachment.fileName());
+            return;
+        }
         if (mime.contains("html") || name.endsWith(".html") || name.endsWith(".htm")) {
             Dialog dialog = previewDialog(
                 RemoteIMGitDiffDisplayPolicy.isGitDiff(attachment) ? "代码 Diff" : attachment.fileName()

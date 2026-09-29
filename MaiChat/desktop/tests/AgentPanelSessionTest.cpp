@@ -1,6 +1,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QDir>
+#include <QFile>
 #include <QImage>
 #include <QLabel>
 #include <QMenu>
@@ -79,6 +80,25 @@ private:
     MaiModelRequest request_;
 };
 
+class PdfGeneratingModel final : public MaiModelClient {
+public:
+    MaiError stream(const MaiModelRequest&, const MaiStreamSink& sink,
+                    const std::atomic<bool>&) override {
+        if (calls_++ == 0) {
+            if (sink.onToolCall) sink.onToolCall(MaiToolInvocation{
+                "pdf-call", "generate_pdf",
+                R"({"content":"# Preview test","output_path":"preview.pdf"})"});
+        } else if (sink.onText) {
+            sink.onText("PDF created");
+        }
+        return {};
+    }
+    MaiWireApi wireApi() const override { return MaiWireApi::ChatCompletions; }
+
+private:
+    std::atomic<int> calls_{0};
+};
+
 }  // namespace
 
 class AgentPanelSessionTest : public QObject {
@@ -99,6 +119,7 @@ private slots:
     void pastedImageUsesTheSharedComposerAndReachesTheModel();
     void modelChipOffersTheTextAndVisionModels();
     void newAgentOutputDoesNotInterruptReadingHistory();
+    void completedPdfToolShowsPreviewCardAfterRestore();
 };
 
 namespace {
@@ -147,6 +168,31 @@ struct Harness {
 };
 
 }  // namespace
+
+void AgentPanelSessionTest::completedPdfToolShowsPreviewCardAfterRestore() {
+    QTemporaryDir workspace;
+    QVERIFY(workspace.isValid());
+    AgentController controller(std::make_unique<PdfGeneratingModel>(), QString());
+    AgentChatPanel panel(controller);
+    panel.resize(700, 500);
+    panel.show();
+    const QString session = controller.createSession(workspace.path());
+    panel.openSession(session);
+    QVERIFY(controller.sendPrompt(session, QStringLiteral("Create a PDF")));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.agent().listPendingPermissions().empty(), 5000);
+    const auto pending = controller.agent().listPendingPermissions();
+    QVERIFY(controller.approvePermission(QString::fromStdString(pending.front().id)));
+    controller.agent().waitIdle();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        panel.findChild<QPushButton*>(QStringLiteral("agentPdfPreviewButton")) != nullptr,
+        5000);
+    QVERIFY(QFile::exists(workspace.filePath(QStringLiteral("preview.pdf"))));
+
+    panel.openSession(session);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        panel.findChild<QPushButton*>(QStringLiteral("agentPdfPreviewButton")) != nullptr,
+        5000);
+}
 
 void AgentPanelSessionTest::newSessionAvoidsFilesystemRoot() {
     struct RestoreCurrentDirectory {

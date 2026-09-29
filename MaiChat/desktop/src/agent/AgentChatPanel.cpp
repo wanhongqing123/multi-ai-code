@@ -17,6 +17,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QMenu>
+#include <QMessageBox>
 #include <QMimeData>
 #include <QPainter>
 #include <QPixmap>
@@ -39,8 +40,10 @@
 #include <variant>
 
 #include "agent/AgentController.h"
+#include "MaiPathGuard.h"
 #include "markdown/MarkdownView.h"
 #include "ui/ComposerTextEdit.h"
+#include "ui/PdfPreviewDialog.h"
 #include "ui/UiZoom.h"
 
 namespace {
@@ -1058,6 +1061,9 @@ void AgentChatPanel::reloadFromStore() {
                 card->apply(tool->state, false);
                 card->setDetail(tool->state == MaiToolState::Error ? fromUtf8(tool->error)
                                                                    : fromUtf8(tool->output));
+                if (tool->state == MaiToolState::Completed && tool->tool == "generate_pdf")
+                    appendPdfPreview(partId, fromUtf8(tool->output),
+                                     fromUtf8(selectedSession.directory));
             }
         }
     }
@@ -1176,6 +1182,13 @@ void AgentChatPanel::refreshToolCard(const QString& messageId, const QString& pa
             card->apply(tool->state, waiting && tool->state == MaiToolState::Pending);
             if (tool->state == MaiToolState::Completed && !tool->output.empty()) {
                 card->setDetail(fromUtf8(tool->output));
+                if (tool->tool == "generate_pdf") {
+                    MaiSession session;
+                    if (runtime_->controller->agent().getSession(toUtf8(runtime_->sessionId),
+                                                                 session))
+                        appendPdfPreview(partId, fromUtf8(tool->output),
+                                         fromUtf8(session.directory));
+                }
             } else if (tool->state == MaiToolState::Error) {
                 card->setDetail(fromUtf8(tool->error));
             }
@@ -1184,6 +1197,44 @@ void AgentChatPanel::refreshToolCard(const QString& messageId, const QString& pa
         }
         return;
     }
+}
+
+void AgentChatPanel::appendPdfPreview(const QString& partId, const QString& output,
+                                      const QString& workspace) {
+    const QString id = partId + QStringLiteral("-pdf-preview");
+    if (runtime_->view->contains(id)) return;
+    const QJsonObject artifact = QJsonDocument::fromJson(output.toUtf8()).object();
+    QString relative;
+    if (artifact.value(QStringLiteral("mime_type")).toString() == QStringLiteral("application/pdf")) {
+        relative = artifact.value(QStringLiteral("path")).toString();
+    } else if (output.startsWith(QStringLiteral("Created ")) &&
+               output.endsWith(QStringLiteral(" bytes)."))) {
+        const int end = output.lastIndexOf(QStringLiteral(" ("));
+        if (end > 8) relative = output.mid(8, end - 8);
+    }
+    if (relative.isEmpty() || !relative.endsWith(QStringLiteral(".pdf"), Qt::CaseInsensitive))
+        return;
+
+    auto* button = new QPushButton(QStringLiteral("PDF  %1   ·   预览")
+                                      .arg(QFileInfo(relative).fileName()));
+    button->setObjectName(QStringLiteral("agentPdfPreviewButton"));
+    button->setCursor(Qt::PointingHandCursor);
+    button->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
+    button->setStyleSheet(UiZoom::scaleQss(QStringLiteral(
+        "QPushButton{background:#f3f8ff;border:1px solid #c9ddf7;border-radius:9px;"
+        "color:#175a9e;padding:10px 15px;text-align:left;font-size:13px;}"
+        "QPushButton:hover{background:#e9f3ff;border-color:#87b9ef;}")));
+    connect(button, &QPushButton::clicked, this, [this, workspace, relative] {
+        const std::string path = maiResolvePathWithinRoot(toUtf8(workspace), toUtf8(relative));
+        if (path.empty()) {
+            QMessageBox::warning(this, QStringLiteral("无法预览 PDF"),
+                                 QStringLiteral("PDF 文件已移出当前工作区。"));
+            return;
+        }
+        showPdfPreview(this, fromUtf8(path), QFileInfo(relative).fileName());
+    });
+    runtime_->view->addWidget(id, button);
+    scrollToBottom();
 }
 
 void AgentChatPanel::noteOtherSession(const QString& sessionId, const QString& text) {

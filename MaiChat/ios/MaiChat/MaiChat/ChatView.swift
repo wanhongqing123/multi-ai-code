@@ -3596,7 +3596,7 @@ private struct FullScreenFilePreviewView: View {
 
 }
 
-private struct RemoteIMQuickLookPreview: UIViewControllerRepresentable {
+struct RemoteIMQuickLookPreview: UIViewControllerRepresentable {
     let filePath: String
 
     func makeCoordinator() -> Coordinator {

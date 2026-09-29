@@ -1,7 +1,7 @@
 # MaiAgent Graphics
 
 本目录保留从 OBS Studio 提取的原始 Graphics 源码及构建验证。源码快照的版本、
-范围和许可见 [`obs-studio/UPSTREAM.md`](obs-studio/UPSTREAM.md)，SIMDe 位于
+范围和许可见 [`UPSTREAM.md`](UPSTREAM.md)，SIMDe 位于
 [`../third_party/simde/`](../third_party/simde/README.md)。
 
 原先自行实现的软件渲染接口、Effect 简化解析器和图形线程类已移除。

@@ -4,7 +4,7 @@ add_library(maiagent_graphics_simde INTERFACE)
 target_include_directories(maiagent_graphics_simde INTERFACE
   ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/simde/include)
 
-set(obs_graphics_source ${CMAKE_CURRENT_SOURCE_DIR}/obs-studio/libobs/graphics)
+set(obs_graphics_source ${CMAKE_CURRENT_SOURCE_DIR}/libobs/graphics)
 add_library(maiagent_obs_graphics_compile OBJECT
   ${obs_graphics_source}/effect-parser.c
   ${obs_graphics_source}/effect.c
@@ -15,7 +15,7 @@ add_library(maiagent_obs_graphics_compile OBJECT
   ${obs_graphics_source}/texture-render.c
 )
 target_include_directories(maiagent_obs_graphics_compile PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}/obs-studio/libobs)
+  ${CMAKE_CURRENT_SOURCE_DIR}/libobs)
 target_link_libraries(maiagent_obs_graphics_compile PRIVATE maiagent_graphics_simde)
 # This is a source-compatibility gate, not a linked OBS runtime.
 
@@ -54,14 +54,14 @@ add_library(maiagent_obs_math STATIC
   ${obs_graphics_source}/vec3.c
   ${obs_graphics_source}/vec4.c)
 target_include_directories(maiagent_obs_math PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}/obs-studio/libobs)
+  ${CMAKE_CURRENT_SOURCE_DIR}/libobs)
 target_link_libraries(maiagent_obs_math PRIVATE maiagent_graphics_simde)
 
 # OBS's C-family lexer is the first upstream component linked and exercised at
 # runtime. On Apple platforms, platform-nix.c supplies the allocation failure
 # hooks used by bmem.c. Its obsconfig.h include is unused on this platform.
 if(APPLE)
-  set(obs_util_source ${CMAKE_CURRENT_SOURCE_DIR}/obs-studio/libobs/util)
+  set(obs_util_source ${CMAKE_CURRENT_SOURCE_DIR}/libobs/util)
   if(NOT EXISTS "${CMAKE_CURRENT_BINARY_DIR}/obsconfig.h")
     file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/obsconfig.h
       "/* OBS platform-nix compatibility for the MaiAgent Graphics subset. */\n")
@@ -77,7 +77,7 @@ if(APPLE)
     ${obs_util_source}/utf8.c)
   target_include_directories(maiagent_obs_util PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/obs-studio/libobs)
+    ${CMAKE_CURRENT_SOURCE_DIR}/libobs)
 endif()
 
 add_custom_target(maiagent_obs_graphics_check ALL)

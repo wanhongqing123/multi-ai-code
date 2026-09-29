@@ -63,6 +63,19 @@ app.setPath(
 
 let mainWindow: BrowserWindow | null = null
 
+function expandMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  // macOS keeps the process alive after its last window closes. The new login window must
+  // become a resizable main window even when the account data layer is already active.
+  if (mainWindow.isResizable() && mainWindow.isMaximizable() && mainWindow.isFullScreenable()) return
+  mainWindow.setResizable(true)
+  mainWindow.setMaximizable(true)
+  mainWindow.setFullScreenable(true)
+  mainWindow.setMinimumSize(1100, 700)
+  mainWindow.setSize(1400, 900)
+  mainWindow.center()
+}
+
 function launchMacAppInstance(): void {
   if (process.platform !== 'darwin') return
   try {
@@ -986,21 +999,25 @@ async function activateAccountDataLayer(
 ): Promise<{ ok: true } | { ok: false; alreadyLocked?: boolean; error?: string }> {
   const accountId = sanitizeAccountId(userId)
   if (dataLayerActivatedAccountId) {
-    return dataLayerActivatedAccountId === accountId
-      ? { ok: true }
-      : { ok: false, error: '当前窗口已绑定另一个账号；切换账号请重启应用。' }
+    if (dataLayerActivatedAccountId !== accountId)
+      return { ok: false, error: '当前窗口已绑定另一个账号；切换账号请重启应用。' }
+    expandMainWindow()
+    return { ok: true }
   }
   if (dataLayerActivationPromise) {
     const result = await dataLayerActivationPromise
     if (!result.ok) return result
-    return dataLayerActivatedAccountId === accountId
-      ? { ok: true }
-      : { ok: false, error: '当前窗口已绑定另一个账号；切换账号请重启应用。' }
+    if (dataLayerActivatedAccountId !== accountId)
+      return { ok: false, error: '当前窗口已绑定另一个账号；切换账号请重启应用。' }
+    expandMainWindow()
+    return { ok: true }
   }
 
   dataLayerActivationPromise = activateAccountDataLayerOnce(userId, accountId)
   try {
-    return await dataLayerActivationPromise
+    const result = await dataLayerActivationPromise
+    if (result.ok) expandMainWindow()
+    return result
   } finally {
     dataLayerActivationPromise = null
   }
@@ -1031,16 +1048,6 @@ async function activateAccountDataLayerOnce(
     startScheduledTaskScheduler()
     activateRemoteImDataLayer()
 
-    // 登录成功：把登录小窗口放大成主界面窗口。
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.setResizable(true)
-      mainWindow.setMaximizable(true)
-      mainWindow.setFullScreenable(true)
-      mainWindow.setMinimumSize(1100, 700)
-      mainWindow.setSize(1400, 900)
-      mainWindow.center()
-    }
-
     dataLayerActivatedAccountId = accountId
     return { ok: true }
   } catch (error) {
@@ -1054,9 +1061,13 @@ async function activateAccountDataLayerOnce(
 
 app.on('window-all-closed', () => {
   killAllSessions('window-all-closed')
+  // Closing the last macOS window does not quit the process. Keep the account-scoped data
+  // layer and its lock alive so Dock reopen can bind the same account without reopening
+  // the database or registering IPC handlers a second time.
+  if (process.platform === 'darwin') return
   closeDb()
   releaseInstanceLock()
-  if (process.platform !== 'darwin') app.quit()
+  app.quit()
 })
 
 app.on('before-quit', () => {

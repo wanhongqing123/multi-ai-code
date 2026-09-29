@@ -220,6 +220,19 @@ endif()
 # 所以这里必须再挂一个 INTERFACE。MaiChat 把这个库 add_subdirectory 进去时就是这么炸的。
 target_compile_options(maiagent INTERFACE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 
+# Graphics remains an optional library until platform GPU backends and host bridges are ready.
+# Its first implementation is a deterministic offscreen reference backend for API validation.
+option(MAIAGENT_BUILD_GRAPHICS "Build experimental Agent Graphics Subsystem" OFF)
+if(MAIAGENT_BUILD_GRAPHICS)
+  add_library(maiagent_graphics STATIC
+    src/MaiGraphics.cpp
+    src/MaiGraphicsEffectParser.cpp
+    src/MaiGraphicsTaskRunner.cpp
+  )
+  target_include_directories(maiagent_graphics PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(maiagent_graphics PUBLIC maiagent)
+endif()
+
 # ── 唯一的宿主进程：只链核心库的控制台 ───────────────────────────
 # 这一行是全部：`maiagent`，没有别的。产物里没有 HTTP 服务端，
 # 因为压根就没有东西能提供一个——httplib 只在 mai_thirdparty_for_tests 里。
@@ -278,4 +291,9 @@ if(MAIAGENT_BUILD_TESTS)
     endif()
     add_test(NAME ${test_name} COMMAND ${test_name})
   endforeach()
+  if(MAIAGENT_BUILD_GRAPHICS)
+    add_executable(MaiGraphicsTests tests/MaiGraphicsTests.cpp)
+    target_link_libraries(MaiGraphicsTests PRIVATE maiagent_graphics)
+    add_test(NAME MaiGraphicsTests COMMAND MaiGraphicsTests)
+  endif()
 endif()

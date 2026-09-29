@@ -1,9 +1,17 @@
 # MaiAgent Graphics 设计草案
 
-状态：设计中，尚未实现。参考 OBS Studio 主干提交
+状态：基础接口与参考实现已落地，GPU 后端和播放器尚未实现。参考 OBS Studio 主干提交
 [`50530ce9`](https://github.com/obsproject/obs-studio/tree/50530ce9046599e698c5d2068e4f053fae2318f6)
 的 Graphics 分层与 Effect 语法。参考其行为和接口职责；实现与测试由 MaiAgent
 独立编写，不直接引入 OBS 源文件。
+
+当前代码位于 `include/MaiGraphics.h`、`src/MaiGraphics.cpp`、
+`include/MaiGraphicsTaskRunner.h`、`src/MaiGraphicsTaskRunner.cpp` 和
+`include/MaiGraphicsEffectParser.h`、`src/MaiGraphicsEffectParser.cpp`。
+构建时显式启用 `MAIAGENT_BUILD_GRAPHICS=ON`。已有 `ags_` 离屏 RGBA8
+软件参考后端、固定物理线程 TaskRunner，以及识别 Effect `technique/pass`
+结构的独立解析器。尚无 GPU 着色器编译、硬件帧导入、声音或窗口呈现；
+实验性接口在这些能力接入前不承诺稳定 ABI。
 
 ## 目标与边界
 
@@ -45,9 +53,9 @@ OBS 的 [`graphics.h`](https://github.com/obsproject/obs-studio/blob/50530ce9046
 公共 C 接口使用不透明的 `ags_graphics_t`、`ags_surface_t`、`ags_texture_t`、
 `ags_render_target_t` 和 `ags_effect_t`。首批操作分为设备/能力查询、表面附着与
 重建、纹理创建与导入、离屏渲染、Effect 编译与参数设置、合成、呈现和销毁。
-候选函数名沿用 OBS 的职责划分，例如 `ags_create`、`ags_destroy`、
-`ags_texture_create`、`ags_effect_create`、`ags_draw` 和 `ags_present`；
-资源所有权与异步宿主桥接定案后再冻结函数签名。
+函数命名沿用 OBS 的职责划分。当前实验性接口有 `ags_create`、
+`ags_destroy`、`ags_texture_create`、`ags_draw_sprite` 等；
+`ags_effect_create`、`ags_present` 待 GPU 后端与宿主表面契约确定后加入。
 所有资源由创建它的图形设备持有；销毁必须回到该设备的图形线程。设备丢失、
 应用进入后台或表面重建后，旧 GPU 资源句柄不得继续使用。
 
@@ -90,9 +98,9 @@ OBS 的
 [`effect-parser.h`](https://github.com/obsproject/obs-studio/blob/50530ce9046599e698c5d2068e4f053fae2318f6/libobs/graphics/effect-parser.h)
 明确包含“按 technique/pass 生成各自着色器”的职责，其实现还依赖
 `cf-parser`、`shader-parser` 与 Graphics 的着色器创建接口。因此迁移语法
-必须连同生成、编译和报错契约验证，不能只解析出 Effect 名称。首批兼容性
-测试使用仓库自有的最小 Effect 样例，并以 OBS 自带 Effect 文件作为行为参考；
-不复制其解析器源码。
+必须连同生成、编译和报错契约验证，不能只解析出 Effect 名称。当前解析
+测试使用仓库自有的最小 Effect 样例；后续还需以 OBS 自带 Effect 文件作为
+行为参考，验证预处理、shader 生成和编译结果。不复制其解析器源码。
 
 ## 后端与验收顺序
 
@@ -108,4 +116,4 @@ OBS 的
   Effect pass 测试，再接消息区及 AI 助手播放器。实际播放还需验证音画同步、
   暂停/跳转、旋转、色彩及后台恢复。
 
-这份文档是接口评审基线，不表示上述模块已经可用。
+当前软件参考后端仅用于锁定 API 与线程/资源契约，不会替换三端现有播放器。

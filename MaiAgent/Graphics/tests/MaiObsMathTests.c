@@ -1,6 +1,6 @@
 #include <stdio.h>
 
-#include <graphics/matrix4.h>
+#include "../matrix4.h"
 
 static int failures;
 

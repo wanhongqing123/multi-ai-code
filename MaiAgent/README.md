@@ -9,7 +9,8 @@ Qt 桌面、iOS/Android、Linux 服务器、嵌入式。
 
 ```
 include/     核心公开头（MaiAgent.h / MaiTool.h / ...）。对外只有 submit(Op) 和事件流
-src/         核心实现 + 内部头。无 Qt、无 HTTP 服务端、无 JSON
+Agent/       会话、事件、模型、存储、路径等核心实现
+AgentTools/  工具、权限路径边界及平台工具实现
 cli/         maiagent-console：只链核心的交互式控制台。**可摘**
 tests/       单元测试 + 一个端到端脚本
 docs/        编码规范
@@ -203,7 +204,7 @@ UTF-8——POSIX 的文件名是任意字节序列，不保证是合法 UTF-8，
 2. **构建产物只放 `MaiAgent/build/`。** 仓库根目录那个 `build/` 是
    electron-builder 在用，里面有被 git 跟踪的图标文件，别污染它。
 
-3. **路径一律走 `MaiPathUtf8::fromUtf8` / `toUtf8`**（`src/MaiPathUtf8.h`）。
+3. **路径一律走 `MaiFilePath::fromUtf8` / `toUtf8`**（`include/MaiFilePath.h`）。
    MSVC 的 `fs::path` 把 narrow 字符串按当前 ANSI 代码页解释，中文环境是 GBK，
    而我们的路径全来自 JSON、是 UTF-8。直接 `fs::path(s)` 会让中文路径出错——
    实测是进程直接挂掉，不是返回错误。测试里写中文路径要用 `std::filesystem::u8path`。

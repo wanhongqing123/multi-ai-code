@@ -15,7 +15,7 @@
 | # | 约束 | 细节 |
 |---|---|---|
 | 0 | agent 的形状、协议取值看 **codex**；通用基础组件看 **chromium 的 base**。不要自己发挥 | 0 / 0.5 |
-| 1 | 文件名大驼峰 + `Mai` 前缀；**头一律放 `include/`**，每个 `.cpp` 都有同名 `.h` | 1 |
+| 1 | 文件名大驼峰 + `Mai` 前缀；**头一律放 `include/`**，实现按职责放 `Agent/` 或 `AgentTools/` | 1 |
 | 2 | 类型大驼峰 + `Mai` 前缀，**不用命名空间** | 2 |
 | 3 | 成员函数小驼峰；布尔查询 `is` / `has` 开头 | 3 |
 | 4 | 名字说清"角色"，不是只说"技术"；**不用晦涩简写** | 3.5 / 3.6 |
@@ -149,20 +149,19 @@ Windows 那边是 UTF-16，可能含未配对代理项，转一圈回不来。
 ## 1. 文件命名与摆放
 
 **大驼峰，`Mai` 前缀，`.h` / `.cpp` 成对同名。头文件全部放 `include/`，
-实现全部放 `src/`。**
+核心实现放 `Agent/`，工具实现放 `AgentTools/`。**
 
 ```
-include/MaiTime.h        src/MaiTime.cpp
-include/MaiError.h       src/MaiError.cpp
+include/MaiTime.h        Agent/MaiTime.cpp
+include/MaiError.h       Agent/MaiError.cpp
 include/MaiSessionStore.h
-include/MaiFilePath.h    src/MaiFilePath.cpp
+include/MaiFilePath.h    Agent/MaiFilePath.cpp
+include/MaiEditTool.h    AgentTools/MaiEditTool.cpp
 ```
 
-独立子模块沿用同一对目录：`Graphics/include/MaiGraphics.h` 对应
-`Graphics/src/MaiGraphics.cpp`。子模块的头与实现仍各有固定位置，
-不会混放在 `Graphics/` 根目录或 `src/` 里。
+第三方子模块保持自己的目录布局，例如 `Graphics/` 中移植的 OBS 源码。
 
-### 1.1 头一律放 `include/`，`src/` 里不放 `.h`
+### 1.1 头一律放 `include/`，实现目录里不放 `.h`
 
 曾经有四个"内部头"放在 `src/` 里（`MaiTurnRunner.h` 这些），想法是
 "它们不是公开 API，别让外面看见"。代价比收益大：
@@ -173,7 +172,8 @@ include/MaiFilePath.h    src/MaiFilePath.cpp
 - "不是公开 API"这件事**注释里说一句就够了**，不需要用目录来强制。
   真要强制的话，靠目录也强制不住：谁都可以在 CMake 里把 `src/` 加进去
 
-所以现在只有一个规矩：**`.h` 在 `include/`，`.cpp` 在 `src/`**。
+所以现在只有一个规矩：**`.h` 在 `include/`，`.cpp` 按职责在 `Agent/` 或
+`AgentTools/`**。
 不想被外面用的头，在文件开头写清楚"这是内部头，接口随时会变"。
 
 ### 1.2 每个 `.cpp` 都要有同名 `.h`
@@ -181,9 +181,9 @@ include/MaiFilePath.h    src/MaiFilePath.cpp
 一个实现文件对外露出的东西，声明写在它自己的同名头里，不要塞进别人的头。
 
 ```
-src/MaiEditTool.cpp      → include/MaiEditTool.h
-src/MaiShellTool.cpp     → include/MaiShellTool.h
-src/MaiSqliteStore.cpp   → include/MaiSqliteStore.h
+AgentTools/MaiEditTool.cpp  → include/MaiEditTool.h
+AgentTools/MaiShellTool.cpp → include/MaiShellTool.h
+Agent/MaiSqliteStore.cpp    → include/MaiSqliteStore.h
 ```
 
 反例是 `MaiTool.h` 曾经的样子：十六个工具的工厂函数全堆在那一个头里，
@@ -197,10 +197,10 @@ src/MaiSqliteStore.cpp   → include/MaiSqliteStore.h
 ### 1.3 唯一的例外：一个头，两份平台实现
 
 ```
-include/MaiFileSystem.h  ← src/MaiFileSystemPosix.cpp
-                           src/MaiFileSystemWindows.cpp
-include/MaiProcess.h     ← src/MaiProcessPosix.cpp
-                           src/MaiProcessWindows.cpp
+include/MaiFileSystem.h  ← Agent/MaiFileSystemPosix.cpp
+                           Agent/MaiFileSystemWindows.cpp
+include/MaiProcess.h     ← AgentTools/MaiProcessPosix.cpp
+                           AgentTools/MaiProcessWindows.cpp
 ```
 
 这四个 `.cpp` **没有同名的头**，也不该有：它们是同一个接口的两份实现，

@@ -142,61 +142,62 @@ find_package(Threads REQUIRED)
 # ── 核心库：纯 C++，无 Qt，无 HTTP 服务端依赖 ────────────────────
 # 文件名一律大驼峰 + Mai 前缀，见 docs/CodingStyle.md。
 add_library(maiagent STATIC
-  src/MaiTime.cpp
-  src/MaiError.cpp
-  src/MaiSession.cpp
-  src/MaiMessage.cpp
-  src/MaiIdGenerator.cpp
-  src/MaiEventBus.cpp
-  src/MaiMemoryStore.cpp
-  src/MaiSqliteStore.cpp
-  src/MaiOpenAiClient.cpp
+  Agent/MaiTime.cpp
+  Agent/MaiError.cpp
+  Agent/MaiSession.cpp
+  Agent/MaiMessage.cpp
+  Agent/MaiIdGenerator.cpp
+  Agent/MaiEventBus.cpp
+  Agent/MaiMemoryStore.cpp
+  Agent/MaiSqliteStore.cpp
+  Agent/MaiOpenAiClient.cpp
   # 路径与文件系统：不用 std::filesystem，走系统 API。
   # 纯词法的那一半（MaiFilePath.cpp）是可移植的；真正调系统调用的那一半
   # 按平台各一份。形状参考 chromium 的 base/files。
-  src/MaiBlockingCheck.cpp
-  src/MaiFilePath.cpp
-  src/MaiPathGuard.cpp
-  src/MaiTool.cpp
-  src/MaiPermission.cpp
-  src/MaiQuestion.cpp
-  src/MaiFileTools.cpp
-  src/MaiEditTool.cpp
-  src/MaiTimeTool.cpp
-  src/MaiApplyPatchTool.cpp
-  src/MaiWebFetchTool.cpp
-  src/MaiTodoWriteTool.cpp
-  src/MaiQuestionTool.cpp
-  src/MaiSubAgentTools.cpp
-  src/MaiShellTool.cpp
-  src/MaiScreenshotTool.cpp
-  src/MaiViewImageTool.cpp
-  src/MaiPdfTool.cpp
-  src/MaiWindowListTool.cpp
-  src/MaiAgent.cpp
-  src/MaiTurnRunner.cpp
-  src/MaiContextBuilder.cpp
-  src/MaiEventEmitter.cpp
-  src/MaiSessionTitler.cpp
+  Agent/MaiBlockingCheck.cpp
+  Agent/MaiFilePath.cpp
+  AgentTools/MaiPathGuard.cpp
+  AgentTools/MaiTool.cpp
+  Agent/MaiPermission.cpp
+  Agent/MaiQuestion.cpp
+  AgentTools/MaiFileTools.cpp
+  AgentTools/MaiEditTool.cpp
+  AgentTools/MaiTimeTool.cpp
+  AgentTools/MaiApplyPatchTool.cpp
+  AgentTools/MaiWebFetchTool.cpp
+  AgentTools/MaiTodoWriteTool.cpp
+  AgentTools/MaiQuestionTool.cpp
+  AgentTools/MaiSubAgentTools.cpp
+  AgentTools/MaiShellTool.cpp
+  AgentTools/MaiScreenshotTool.cpp
+  AgentTools/MaiViewImageTool.cpp
+  AgentTools/MaiPdfTool.cpp
+  AgentTools/MaiWindowListTool.cpp
+  Agent/MaiAgent.cpp
+  Agent/MaiTurnRunner.cpp
+  Agent/MaiContextBuilder.cpp
+  Agent/MaiEventEmitter.cpp
+  Agent/MaiSessionTitler.cpp
 )
 # 平台实现按目标挑选。文件系统走 Win32/POSIX；屏幕捕获目前只在 Windows 注册。
 if(WIN32)
   target_sources(maiagent PRIVATE
-    src/MaiFileSystemWindows.cpp
-    src/MaiProcessWindows.cpp
-    src/MaiScreenshotWindows.cpp
+    Agent/MaiFileSystemWindows.cpp
+    AgentTools/MaiProcessWindows.cpp
+    AgentTools/MaiScreenshotWindows.cpp
   )
 else()
   target_sources(maiagent PRIVATE
-    src/MaiFileSystemPosix.cpp
-    src/MaiProcessPosix.cpp
-    src/MaiScreenshotUnsupported.cpp
+    Agent/MaiFileSystemPosix.cpp
+    AgentTools/MaiProcessPosix.cpp
+    AgentTools/MaiScreenshotUnsupported.cpp
   )
 endif()
 
 target_include_directories(maiagent
-  # 头全在 include/ 里，src/ 里一个 .h 都没有（见 docs/CodingStyle.md 第 1 节）。
-  # 以前 src/ 也在包含路径上，因为 MaiTurnRunner.h 这几个"内部头"放在那儿——
+  # 头全在 include/ 里，Agent/ 和 AgentTools/ 里不放 .h
+  # （见 docs/CodingStyle.md 第 1 节）。以前实现目录也在包含路径上，
+  # 因为 MaiTurnRunner.h 这几个"内部头"放在那儿——
   # 那套两个目录的分法要求每个新目标都记得补第二条包含路径，忘一次就是一串 C1083，
   # 而它想守的"别当公开 API 用"靠注释说一句就够了。
   PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/include

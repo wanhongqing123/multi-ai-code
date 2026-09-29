@@ -8,9 +8,15 @@
 
 OBS 的非 x86 图形数学使用 SIMDe。仓库内现已放入与本地 OBS 依赖包一致的
 [`SIMDe 0.8.2`](../third_party/simde/README.md)；`maiagent_obs_graphics_compile`
-目标会试编译 17 个原始 Graphics C 源文件。`graphics-ffmpeg.c` 还依赖此次
-限定复制范围之外的 `obs-ffmpeg-compat.h`，故未纳入该目标。通过编译仅证明
-源码兼容，运行时仍需完成 util/libobs 符号链接及各后端接入。
+目标会编译 17 个原始 Graphics C 源文件，其中 10 个向量、矩阵等数学实现
+已链接成 `maiagent_obs_math`，并用变换与逆变换测试在 ARM64 上验证 SIMDe
+执行。macOS 上另将 OBS util 中的
+`cf-lexer`、`cf-parser` 及其基础依赖链接成 `maiagent_obs_util`，通过
+`MaiObsLexerTests` 验证注释、续行和未闭合注释的实际词法处理。这是已运行的
+OBS 代码，但尚未把 OBS 的 Effect 编译器或 Graphics 设备接到 `ag_` 接口。
+`graphics-ffmpeg.c` 还依赖此次限定复制范围之外的 `obs-ffmpeg-compat.h`
+及 FFmpeg 配置后生成的头文件，故未纳入可复现的仓库构建目标。其余 Graphics
+源码通过编译仅证明源码兼容，运行时仍需完成 libobs 符号链接及各后端接入。
 
 当前代码位于 `include/MaiGraphics.h`、`src/MaiGraphics.cpp`、
 `include/MaiGraphicsTaskRunner.h`、`src/MaiGraphicsTaskRunner.cpp` 和

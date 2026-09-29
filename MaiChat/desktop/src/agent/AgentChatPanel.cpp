@@ -313,7 +313,10 @@ public:
         text_ += delta;
         // 默认收起时不让 QLabel 每个增量都重排一遍完整推理文本。
         // 推理可以有几万字，这条旧路径是明显的 O(n²) 主线程开销。
-        if (expanded_) body_->setText(text_);
+        if (expanded_) {
+            body_->setText(text_);
+            body_->setVisible(!text_.isEmpty());
+        }
     }
 
     // 这一轮结束：停下动画，塌成"思考了 N 秒"。
@@ -609,6 +612,8 @@ struct AgentChatPanel::Runtime {
     // partId -> 思考条 / 工具卡。这两样要能点，画不出来，所以还是部件，
     // 由 MarkdownView 负责摆位置和跟着滚。
     QHash<QString, ThinkingLine*> thinking;
+    ThinkingLine* pendingThinking = nullptr;
+    QString pendingThinkingItemId;
     QHash<QString, ToolCard*> toolCards;
     // 子会话 id -> 那张子任务卡。
     QHash<QString, SubAgentCard*> subAgentCards;
@@ -877,6 +882,7 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
                     noteOtherSession(sessionId, delta);
                     return;
                 }
+                clearPendingThinking();
                 appendAnswerDelta(partId, delta);
             });
     connect(&controller, &AgentController::reasoningDelta, this,
@@ -888,6 +894,7 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     connect(&controller, &AgentController::toolPartChanged, this,
             [this](const QString& sessionId, const QString& messageId, const QString& partId) {
                 if (!isCurrentSession(sessionId)) return;
+                clearPendingThinking();
                 refreshToolCard(messageId, partId);
             });
     connect(&controller, &AgentController::permissionAsked, this,
@@ -909,6 +916,7 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
             noteOtherSession(sessionId, QString());
             return;
         }
+        clearPendingThinking();
         setRunning(false);
         emit sessionListChanged();
         for (ThinkingLine* line : runtime_->thinking) line->settle();
@@ -922,6 +930,7 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
                     noteOtherSession(sessionId, message);
                     return;
                 }
+                clearPendingThinking();
                 setRunning(false);
                 for (ThinkingLine* line : runtime_->thinking) line->settle();
                 flushAnswers();
@@ -1015,6 +1024,8 @@ void AgentChatPanel::reloadFromStore() {
     // 视图自己会把嵌进去的部件删掉，这儿只要把索引清干净。
     runtime_->flushTimer->stop();
     runtime_->view->clear();
+    runtime_->pendingThinking = nullptr;
+    runtime_->pendingThinkingItemId.clear();
     runtime_->answers.clear();
     runtime_->dirtyAnswers.clear();
     runtime_->thinking.clear();
@@ -1121,11 +1132,27 @@ AgentChatPanel::ThinkingLine* AgentChatPanel::thinkingLineFor(const QString& par
     auto found = runtime_->thinking.constFind(partId);
     if (found != runtime_->thinking.constEnd()) return found.value();
 
+    if (runtime_->pendingThinking != nullptr) {
+        ThinkingLine* line = runtime_->pendingThinking;
+        runtime_->pendingThinking = nullptr;
+        runtime_->pendingThinkingItemId.clear();
+        runtime_->thinking.insert(partId, line);
+        return line;
+    }
+
     auto* line = new ThinkingLine;
     runtime_->view->addWidget(partId, line);
     runtime_->thinking.insert(partId, line);
     scrollToBottom();
     return line;
+}
+
+void AgentChatPanel::clearPendingThinking() {
+    if (runtime_->pendingThinking == nullptr) return;
+    runtime_->pendingThinking->hide();
+    runtime_->view->removeItem(runtime_->pendingThinkingItemId);
+    runtime_->pendingThinking = nullptr;
+    runtime_->pendingThinkingItemId.clear();
 }
 
 AgentChatPanel::ToolCard* AgentChatPanel::toolCardFor(const QString& partId) {
@@ -1452,6 +1479,10 @@ void AgentChatPanel::onSend() {
     appendUserBubble(text);
     appendUserImages(imagePaths);
     setRunning(true);
+    runtime_->pendingThinkingItemId =
+        QStringLiteral("pending-thinking-%1").arg(++runtime_->noticeSerial);
+    runtime_->pendingThinking = new ThinkingLine;
+    runtime_->view->addWidget(runtime_->pendingThinkingItemId, runtime_->pendingThinking);
     runtime_->view->scrollToBottom();
 }
 

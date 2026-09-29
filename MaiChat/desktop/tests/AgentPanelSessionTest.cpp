@@ -1,12 +1,14 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QImage>
 #include <QLabel>
 #include <QMenu>
 #include <QMimeData>
 #include <QPushButton>
+#include <QSemaphore>
 #include <QScrollBar>
 #include <QSignalSpy>
 #include <QSplitter>
@@ -99,6 +101,39 @@ private:
     std::atomic<int> calls_{0};
 };
 
+class DelayedFirstChunkModel final : public MaiModelClient {
+public:
+    explicit DelayedFirstChunkModel(bool reasoning, int warmupCalls = 0)
+        : reasoning_(reasoning), warmupCalls_(warmupCalls) {}
+
+    MaiError stream(const MaiModelRequest&, const MaiStreamSink& sink,
+                    const std::atomic<bool>& cancel) override {
+        if (calls_.fetch_add(1) < warmupCalls_) {
+            std::string answer;
+            for (int i = 0; i < 500; ++i) answer += "previous answer ";
+            if (sink.onText) sink.onText(answer);
+            return {};
+        }
+        entered_.store(true);
+        gate_.tryAcquire(1, 3000);
+        if (cancel.load()) return {};
+        if (reasoning_ && sink.onReasoning) sink.onReasoning("Thinking");
+        if (sink.onText) sink.onText("Answer");
+        return {};
+    }
+
+    MaiWireApi wireApi() const override { return MaiWireApi::ChatCompletions; }
+    void release() { gate_.release(); }
+    bool entered() const { return entered_.load(); }
+
+private:
+    QSemaphore gate_;
+    std::atomic<bool> entered_{false};
+    std::atomic<int> calls_{0};
+    bool reasoning_ = false;
+    int warmupCalls_ = 0;
+};
+
 }  // namespace
 
 class AgentPanelSessionTest : public QObject {
@@ -111,6 +146,8 @@ private slots:
     void anotherSessionTitleDoesNotRenameTheHeader();
     void approvalFromAnotherSessionIsStillShown();
     void thinkingLineExpandsLiveAndAfterRestore();
+    void waitingIndicatorAppearsBeforeFirstModelChunk();
+    void waitingIndicatorClearsWhenModelHasNoReasoning();
     void unconfiguredModelOpensConfigurationInsteadOfFailingTurn();
     void desktopAgentSuppliesMarkdownSystemPrompt();
     void composerMatchesImLayoutAndUsesEmbeddedSendAction();
@@ -326,6 +363,67 @@ void AgentPanelSessionTest::approvalFromAnotherSessionIsStillShown() {
     // 信号要到得了面板。面板拿这个 id 去核心查待裁决列表（那份列表是全局的，
     // 不分会话），所以子 Agent 的授权照样答得了。
     QCOMPARE(spy.count(), 1);
+}
+
+// 模型首包延迟时，发送后的等待状态仍要立即可见。
+void AgentPanelSessionTest::waitingIndicatorAppearsBeforeFirstModelChunk() {
+    auto model = std::make_unique<DelayedFirstChunkModel>(true, 1);
+    DelayedFirstChunkModel* delayed = model.get();
+    AgentController controller(std::move(model), QString());
+    const QString session = controller.createSession(QDir::currentPath());
+    QVERIFY(controller.sendPrompt(session, QStringLiteral("previous question")));
+    controller.agent().waitIdle();
+    AgentChatPanel panel(controller);
+    panel.resize(700, 500);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    panel.openSession(session);
+
+    auto* editor = panel.findChild<QTextEdit*>();
+    auto* send = panel.findChild<QPushButton*>(QStringLiteral("agentSendButton"));
+    QVERIFY(editor != nullptr);
+    QVERIFY(send != nullptr);
+    editor->setPlainText(QStringLiteral("你好"));
+    QElapsedTimer timer;
+    timer.start();
+    QTest::mouseClick(send, Qt::LeftButton);
+    qInfo() << "Agent prompt UI submit elapsed ms:" << timer.elapsed();
+
+    QTRY_VERIFY(delayed->entered());
+    qInfo() << "Agent request reached model stream after ms:" << timer.elapsed();
+    auto* waiting = panel.findChild<QWidget*>(QStringLiteral("agentThinkingCard"));
+    QVERIFY2(waiting != nullptr, "The waiting indicator must appear before the model sends data");
+    QVERIFY(waiting->isVisible());
+
+    delayed->release();
+    QTRY_COMPARE(panel.findChildren<QWidget*>(QStringLiteral("agentThinkingCard")).size(), 1);
+    QTRY_VERIFY(panel.findChild<QLabel*>(QStringLiteral("agentThinkingBody")) != nullptr);
+    controller.agent().waitIdle();
+}
+
+void AgentPanelSessionTest::waitingIndicatorClearsWhenModelHasNoReasoning() {
+    auto model = std::make_unique<DelayedFirstChunkModel>(false);
+    DelayedFirstChunkModel* delayed = model.get();
+    AgentController controller(std::move(model), QString());
+    AgentChatPanel panel(controller);
+    panel.resize(700, 500);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    panel.openSession(controller.createSession(QDir::currentPath()));
+
+    auto* editor = panel.findChild<QTextEdit*>();
+    auto* send = panel.findChild<QPushButton*>(QStringLiteral("agentSendButton"));
+    QVERIFY(editor != nullptr);
+    QVERIFY(send != nullptr);
+    editor->setPlainText(QStringLiteral("你好"));
+    QTest::mouseClick(send, Qt::LeftButton);
+    QTRY_VERIFY(delayed->entered());
+    QVERIFY(panel.findChild<QWidget*>(QStringLiteral("agentThinkingCard")) != nullptr);
+
+    delayed->release();
+    controller.agent().waitIdle();
+    QTRY_VERIFY(panel.findChildren<QWidget*>(QStringLiteral("agentThinkingCard")).isEmpty());
+    QVERIFY(panel.findChild<MarkdownView*>()->itemCount() >= 2);
 }
 
 // 思考条要能点开，而且**展开后高度必须真的长出来**：

@@ -26,9 +26,29 @@ add_library(maiagent_obs_graphics_compile OBJECT
 target_include_directories(maiagent_obs_graphics_compile PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/obs-studio/libobs)
 target_link_libraries(maiagent_obs_graphics_compile PRIVATE maiagent_graphics_simde)
-# This is a source-compatibility gate, not a linked OBS runtime. Upstream
-# graphics-ffmpeg.c needs a header outside the requested OBS source subset.
+# This is a source-compatibility gate, not a linked OBS runtime.
 add_dependencies(maiagent_graphics maiagent_obs_graphics_compile)
+
+if(APPLE AND NOT IOS)
+  set(ffmpeg_source ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/ffmpeg)
+  set(ffmpeg_config_dir ${CMAKE_CURRENT_BINARY_DIR}/ffmpeg-config)
+  set(ffmpeg_config_script
+    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/configure-ffmpeg-headers.sh)
+  add_custom_command(OUTPUT ${ffmpeg_config_dir}/libavutil/avconfig.h
+    COMMAND bash ${ffmpeg_config_script} ${ffmpeg_source} ${ffmpeg_config_dir}
+      ${CMAKE_SYSTEM_PROCESSOR} ${CMAKE_C_COMPILER}
+    DEPENDS ${ffmpeg_source}/configure ${ffmpeg_config_script}
+    VERBATIM)
+  add_custom_target(maiagent_ffmpeg_headers
+    DEPENDS ${ffmpeg_config_dir}/libavutil/avconfig.h)
+  target_sources(maiagent_obs_graphics_compile PRIVATE
+    ${obs_graphics_source}/graphics-ffmpeg.c)
+  target_include_directories(maiagent_obs_graphics_compile PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/compat
+    ${ffmpeg_config_dir}
+    ${ffmpeg_source})
+  add_dependencies(maiagent_obs_graphics_compile maiagent_ffmpeg_headers)
+endif()
 
 # Link the original OBS vector/matrix implementations so the SIMDe path is
 # exercised on ARM at runtime, not merely accepted by the compiler.

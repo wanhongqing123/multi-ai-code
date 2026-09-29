@@ -1,0 +1,3 @@
+add_executable(MaiGraphicsTests MaiGraphicsTests.cpp)
+target_link_libraries(MaiGraphicsTests PRIVATE maiagent_graphics)
+add_test(NAME MaiGraphicsTests COMMAND MaiGraphicsTests)

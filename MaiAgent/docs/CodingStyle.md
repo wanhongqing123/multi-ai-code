@@ -158,6 +158,10 @@ include/MaiSessionStore.h
 include/MaiFilePath.h    src/MaiFilePath.cpp
 ```
 
+独立子模块沿用同一对目录：`Graphics/include/MaiGraphics.h` 对应
+`Graphics/src/MaiGraphics.cpp`。子模块的头与实现仍各有固定位置，
+不会混放在 `Graphics/` 根目录或 `src/` 里。
+
 ### 1.1 头一律放 `include/`，`src/` 里不放 `.h`
 
 曾经有四个"内部头"放在 `src/` 里（`MaiTurnRunner.h` 这些），想法是

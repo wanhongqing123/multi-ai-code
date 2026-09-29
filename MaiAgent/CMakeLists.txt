@@ -224,13 +224,7 @@ target_compile_options(maiagent INTERFACE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 # Its first implementation is a deterministic offscreen reference backend for API validation.
 option(MAIAGENT_BUILD_GRAPHICS "Build experimental Agent Graphics Subsystem" OFF)
 if(MAIAGENT_BUILD_GRAPHICS)
-  add_library(maiagent_graphics STATIC
-    src/MaiGraphics.cpp
-    src/MaiGraphicsEffectParser.cpp
-    src/MaiGraphicsTaskRunner.cpp
-  )
-  target_include_directories(maiagent_graphics PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-  target_link_libraries(maiagent_graphics PUBLIC maiagent)
+  add_subdirectory(Graphics)
 endif()
 
 # ── 唯一的宿主进程：只链核心库的控制台 ───────────────────────────
@@ -292,8 +286,6 @@ if(MAIAGENT_BUILD_TESTS)
     add_test(NAME ${test_name} COMMAND ${test_name})
   endforeach()
   if(MAIAGENT_BUILD_GRAPHICS)
-    add_executable(MaiGraphicsTests tests/MaiGraphicsTests.cpp)
-    target_link_libraries(MaiGraphicsTests PRIVATE maiagent_graphics)
-    add_test(NAME MaiGraphicsTests COMMAND MaiGraphicsTests)
+    add_subdirectory(Graphics/tests)
   endif()
 endif()

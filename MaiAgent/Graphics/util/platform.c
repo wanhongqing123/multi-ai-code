@@ -26,7 +26,9 @@
 #include "bmem.h"
 #include "utf8.h"
 #include "dstr.h"
+#ifndef MAI_GRAPHICS_STANDALONE
 #include "obs.h"
+#endif
 #include "threading.h"
 
 FILE *os_wfopen(const wchar_t *path, const char *mode)
@@ -695,6 +697,7 @@ static void erase_ch(struct dstr *str, size_t pos)
 	*str = new_str;
 }
 
+#ifndef MAI_GRAPHICS_STANDALONE
 char *os_generate_formatted_filename(const char *extension, bool space, const char *format)
 {
 	time_t now = time(0);
@@ -790,6 +793,7 @@ char *os_generate_formatted_filename(const char *extension, bool space, const ch
 
 	return sf.array;
 }
+#endif
 
 static struct {
 	struct timespec ts;

@@ -4,6 +4,21 @@ target_include_directories(MaiObsMathTests PRIVATE
 target_link_libraries(MaiObsMathTests PRIVATE maiagent_obs_math maiagent_graphics_simde)
 add_test(NAME MaiObsMathTests COMMAND MaiObsMathTests)
 
+if(TARGET maiagent_graphics)
+  add_executable(MaiObsGraphicsLinkTests MaiObsGraphicsLinkTests.c)
+  target_link_libraries(MaiObsGraphicsLinkTests PRIVATE maiagent_graphics)
+  add_test(NAME MaiObsGraphicsLinkTests COMMAND MaiObsGraphicsLinkTests)
+endif()
+
+if(TARGET maiagent_obs_metal)
+  add_executable(MaiObsMetalRenderTests MaiObsMetalRenderTests.c)
+  target_link_libraries(MaiObsMetalRenderTests PRIVATE maiagent_graphics)
+  add_dependencies(MaiObsMetalRenderTests maiagent_obs_metal)
+  add_test(NAME MaiObsMetalRenderTests
+    COMMAND MaiObsMetalRenderTests $<TARGET_FILE:maiagent_obs_metal>)
+  set_tests_properties(MaiObsMetalRenderTests PROPERTIES SKIP_RETURN_CODE 77)
+endif()
+
 if(APPLE)
   add_executable(MaiObsLexerTests MaiObsLexerTests.c)
   target_include_directories(MaiObsLexerTests PRIVATE

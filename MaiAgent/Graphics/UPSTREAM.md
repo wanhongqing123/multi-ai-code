@@ -15,14 +15,17 @@ Source directory mapping into `MaiAgent/Graphics/`:
 | `libobs-metal/` | `metal/` |
 | `COPYING` | `COPYING` |
 
-Only include paths affected by the flattened layout were adjusted in source
-files; implementation bodies and copyright notices were preserved.
+Include paths affected by the flattened layout were adjusted in source files.
+The standalone build also guards `util/platform.c`'s OBS-application-only
+filename formatter behind `MAI_GRAPHICS_STANDALONE`. Original copyright
+notices were preserved.
 
 The source files retain their original copyright notices. `COPYING` is the
 upstream GPLv2 license text. SIMDe is provided separately under
 `MaiAgent/third_party/simde`, matching the version used by OBS. The optional
-Graphics build compiles the upstream Graphics C sources, including
-`graphics-ffmpeg.c` on macOS using a local compatibility header and FFmpeg
-generated headers. OBS math and lexer code is linked into focused test
-executables. The complete libobs runtime and platform backends are not linked
-or exposed as a MaiAgent API yet. No other OBS directories were copied.
+Graphics build links the upstream Graphics C sources, including
+`graphics-ffmpeg.c` on macOS against vendored FFmpeg 9.0.2. The OBS Metal
+Swift backend is a separate loadable module on Apple Silicon. Standalone
+application callbacks are isolated in `compat/`; device-reset signaling and
+HDR video information remain to be integrated with the host application.
+No other OBS directories were copied.

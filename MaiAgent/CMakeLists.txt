@@ -223,7 +223,7 @@ target_compile_options(maiagent INTERFACE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 
 # Build the vendored OBS Graphics subset separately while its platform backends
 # and libobs runtime dependencies are being integrated.
-option(MAIAGENT_BUILD_GRAPHICS "Build vendored OBS Graphics source checks" OFF)
+option(MAIAGENT_BUILD_GRAPHICS "Build OBS Graphics runtime where supported and source checks" OFF)
 if(MAIAGENT_BUILD_GRAPHICS)
   add_subdirectory(Graphics)
 endif()

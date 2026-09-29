@@ -20,6 +20,11 @@ docs/        编码规范
 [`docs/CodingStyle.md`](docs/CodingStyle.md)，动代码前先看**。
 根目录的 `.clang-format` 是它的可执行部分。
 
+可选 Graphics 模块的对外头为 [`include/MaiGraphics.h`](include/MaiGraphics.h)，
+直接暴露 OBS 的 `gs_*` 接口。启用 `MAIAGENT_BUILD_GRAPHICS=ON` 后，
+支持的平台可链接 `MaiAgent::Graphics`；当前可运行后端为 macOS Apple Silicon
+的 Metal。构建、后端路径与限制见 [`Graphics/README.md`](Graphics/README.md)。
+
 ## 这不是一个服务端
 
 产物是 **`maiagent` 这个库**。这个仓库里现在**一个 HTTP 服务端都没有**——

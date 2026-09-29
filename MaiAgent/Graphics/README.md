@@ -1,14 +1,15 @@
 # MaiAgent Graphics 设计草案
 
-状态：基础接口与参考实现已落地，GPU 后端和播放器尚未实现。参考 OBS Studio 主干提交
+状态：已纳入 OBS Graphics 原始源码子集；GPU 后端尚未接入 MaiAgent，播放器尚未实现。参考 OBS Studio 主干提交
 [`50530ce9`](https://github.com/obsproject/obs-studio/tree/50530ce9046599e698c5d2068e4f053fae2318f6)
-的 Graphics 分层与 Effect 语法。参考其行为和接口职责；实现与测试由 MaiAgent
-独立编写，不直接引入 OBS 源文件。
+的 Graphics 分层与 Effect 语法。原始源码按目录保存在
+[`obs-studio/`](obs-studio/UPSTREAM.md)，并保留版权及许可文件；现有 `ag_`
+适配层仍是实验实现，尚未改为调用 OBS 后端。
 
 当前代码位于 `include/MaiGraphics.h`、`src/MaiGraphics.cpp`、
 `include/MaiGraphicsTaskRunner.h`、`src/MaiGraphicsTaskRunner.cpp` 和
 `include/MaiGraphicsEffectParser.h`、`src/MaiGraphicsEffectParser.cpp`。
-构建时显式启用 `MAIAGENT_BUILD_GRAPHICS=ON`。已有 `ags_` 离屏 RGBA8
+构建时显式启用 `MAIAGENT_BUILD_GRAPHICS=ON`。已有 `ag_` 离屏 RGBA8
 软件参考后端、固定物理线程 TaskRunner，以及识别 Effect `technique/pass`
 结构的独立解析器。尚无 GPU 着色器编译、硬件帧导入、声音或窗口呈现；
 实验性接口在这些能力接入前不承诺稳定 ABI。
@@ -18,7 +19,7 @@
 - 消息区、AI 助手区和 Agent 图片处理复用同一套帧、效果、合成与呈现规则。
 - Graphics 管理设备、纹理、渲染目标、Effect、图层合成和屏幕呈现。FFmpeg
   的解封装、解码、音频时钟及播放控制属于独立的 Media 层；两层通过视频帧契约连接。
-- 公共 C 接口统一使用 `ags_` 前缀（Agent Graphics Subsystem）；不向公共头暴露
+- 公共 C 接口统一使用 `ag_` 前缀（Agent Graphics Subsystem）；不向公共头暴露
   Qt、Swift、Java、`AVFrame` 或特定图形 API 类型。内部 C++ 实现仍使用 `Mai`
   前缀和 MaiAgent 编码规范。
 - 首批后端：Apple Metal（iOS、macOS 共用渲染核心，各自接入界面表面）、
@@ -36,7 +37,7 @@ MaiChat 消息区 / AI 助手区 / Agent 图像工具
                   │
      MaiAgent Media：FFmpeg 解码、时钟、队列
                   │ 视频帧及所有权契约
-     MaiAgent Graphics：ags_ API、Effect、合成
+     MaiAgent Graphics：ag_ API、Effect、合成
                   │ 后端能力与资源接口
        Metal / D3D11 / OpenGL ES
                   │
@@ -50,12 +51,12 @@ OBS 的 [`graphics.h`](https://github.com/obsproject/obs-studio/blob/50530ce9046
 
 ## 公共资源与帧契约
 
-公共 C 接口使用不透明的 `ags_graphics_t`、`ags_surface_t`、`ags_texture_t`、
-`ags_render_target_t` 和 `ags_effect_t`。首批操作分为设备/能力查询、表面附着与
+公共 C 接口使用不透明的 `ag_graphics_t`、`ag_surface_t`、`ag_texture_t`、
+`ag_render_target_t` 和 `ag_effect_t`。首批操作分为设备/能力查询、表面附着与
 重建、纹理创建与导入、离屏渲染、Effect 编译与参数设置、合成、呈现和销毁。
-函数命名沿用 OBS 的职责划分。当前实验性接口有 `ags_create`、
-`ags_destroy`、`ags_texture_create`、`ags_draw_sprite` 等；
-`ags_effect_create`、`ags_present` 待 GPU 后端与宿主表面契约确定后加入。
+函数命名沿用 OBS 的职责划分。当前实验性接口有 `ag_create`、
+`ag_destroy`、`ag_texture_create`、`ag_draw_sprite` 等；
+`ag_effect_create`、`ag_present` 待 GPU 后端与宿主表面契约确定后加入。
 所有资源由创建它的图形设备持有；销毁必须回到该设备的图形线程。设备丢失、
 应用进入后台或表面重建后，旧 GPU 资源句柄不得继续使用。
 

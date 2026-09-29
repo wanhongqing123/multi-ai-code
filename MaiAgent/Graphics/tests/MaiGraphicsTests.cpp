@@ -66,34 +66,33 @@ void testTaskExceptionDoesNotKillRunner() {
 
 void testOffscreenGraphicsAndOwnership() {
     MaiGraphicsTaskRunner runner;
-    ags_graphics_t* graphics = nullptr;
-    ags_texture_t* texture = nullptr;
+    ag_graphics_t* graphics = nullptr;
+    ag_texture_t* texture = nullptr;
     std::array<uint8_t, 4 * 4 * 4> output{};
 
     runner
         .postTask([&] {
-            ags_graphics_t* unsupported = nullptr;
-            CHECK(ags_create(&unsupported, AGS_BACKEND_METAL, 4, 4) == AGS_ERROR_NOT_SUPPORTED);
+            ag_graphics_t* unsupported = nullptr;
+            CHECK(ag_create(&unsupported, AG_BACKEND_METAL, 4, 4) == AG_ERROR_NOT_SUPPORTED);
             CHECK(unsupported == nullptr);
-            CHECK(ags_create(&graphics, AGS_BACKEND_SOFTWARE, 4, 4) == AGS_SUCCESS);
-            CHECK(ags_texture_create(graphics, 1, 1, AGS_COLOR_RGBA8, &texture) == AGS_SUCCESS);
+            CHECK(ag_create(&graphics, AG_BACKEND_SOFTWARE, 4, 4) == AG_SUCCESS);
+            CHECK(ag_texture_create(graphics, 1, 1, AG_COLOR_RGBA8, &texture) == AG_SUCCESS);
             const uint8_t red[] = {255, 0, 0, 255};
-            CHECK(ags_texture_set_image(texture, red, sizeof(red)) == AGS_SUCCESS);
-            CHECK(ags_draw_sprite(graphics, texture, {1, 1, 2, 2}, 0.5f) ==
-                  AGS_ERROR_INVALID_STATE);
-            CHECK(ags_begin_frame(graphics) == AGS_SUCCESS);
-            CHECK(ags_begin_frame(graphics) == AGS_ERROR_INVALID_STATE);
-            CHECK(ags_clear(graphics, {0, 0, 255, 255}) == AGS_SUCCESS);
-            CHECK(ags_draw_sprite(graphics, texture, {1, 1, 2, 2}, 0.5f) == AGS_SUCCESS);
-            CHECK(ags_readback(graphics, output.data(), 16, output.size()) ==
-                  AGS_ERROR_INVALID_STATE);
-            CHECK(ags_end_frame(graphics) == AGS_SUCCESS);
-            CHECK(ags_readback(graphics, output.data(), 16, output.size()) == AGS_SUCCESS);
+            CHECK(ag_texture_set_image(texture, red, sizeof(red)) == AG_SUCCESS);
+            CHECK(ag_draw_sprite(graphics, texture, {1, 1, 2, 2}, 0.5f) == AG_ERROR_INVALID_STATE);
+            CHECK(ag_begin_frame(graphics) == AG_SUCCESS);
+            CHECK(ag_begin_frame(graphics) == AG_ERROR_INVALID_STATE);
+            CHECK(ag_clear(graphics, {0, 0, 255, 255}) == AG_SUCCESS);
+            CHECK(ag_draw_sprite(graphics, texture, {1, 1, 2, 2}, 0.5f) == AG_SUCCESS);
+            CHECK(ag_readback(graphics, output.data(), 16, output.size()) ==
+                  AG_ERROR_INVALID_STATE);
+            CHECK(ag_end_frame(graphics) == AG_SUCCESS);
+            CHECK(ag_readback(graphics, output.data(), 16, output.size()) == AG_SUCCESS);
         })
         .get();
 
-    CHECK(ags_begin_frame(graphics) == AGS_ERROR_WRONG_THREAD);
-    CHECK(ags_texture_destroy(texture) == AGS_ERROR_WRONG_THREAD);
+    CHECK(ag_begin_frame(graphics) == AG_ERROR_WRONG_THREAD);
+    CHECK(ag_texture_destroy(texture) == AG_ERROR_WRONG_THREAD);
     CHECK(output[0] == 0 && output[1] == 0 && output[2] == 255 && output[3] == 255);
     const size_t center = (1 * 4 + 1) * 4;
     CHECK(output[center] == 128 && output[center + 1] == 0 && output[center + 2] == 128 &&
@@ -101,12 +100,12 @@ void testOffscreenGraphicsAndOwnership() {
 
     runner
         .postTask([&] {
-            CHECK(ags_destroy(graphics) == AGS_ERROR_INVALID_STATE);
-            CHECK(ags_texture_destroy(texture) == AGS_SUCCESS);
-            CHECK(ags_resize(graphics, 2, 2) == AGS_SUCCESS);
-            CHECK(ags_readback(graphics, output.data(), 4, output.size()) ==
-                  AGS_ERROR_INVALID_ARGUMENT);
-            CHECK(ags_destroy(graphics) == AGS_SUCCESS);
+            CHECK(ag_destroy(graphics) == AG_ERROR_INVALID_STATE);
+            CHECK(ag_texture_destroy(texture) == AG_SUCCESS);
+            CHECK(ag_resize(graphics, 2, 2) == AG_SUCCESS);
+            CHECK(ag_readback(graphics, output.data(), 4, output.size()) ==
+                  AG_ERROR_INVALID_ARGUMENT);
+            CHECK(ag_destroy(graphics) == AG_SUCCESS);
         })
         .get();
 }

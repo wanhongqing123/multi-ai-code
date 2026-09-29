@@ -15,7 +15,9 @@ Copied without editing the upstream files:
 
 The source files retain their original copyright notices. `COPYING` is the
 upstream GPLv2 license text. This snapshot is currently reference source:
-`maiagent_graphics` does not compile or link it yet. The upstream Graphics
-files depend on other libobs interfaces and SIMDe; those dependencies must be
-resolved before replacing the current experimental adapter with the upstream
-implementation. No other OBS directories were copied.
+`maiagent_graphics` does not link it yet. SIMDe is provided separately under
+`MaiAgent/third_party/simde`, matching the version used by OBS. A compile-only
+target checks the upstream Graphics C files except `graphics-ffmpeg.c`; that
+file additionally needs `obs-ffmpeg-compat.h` from outside the requested OBS
+source directories. Runtime linking still requires other libobs symbols and
+backend integration. No other OBS directories were copied.

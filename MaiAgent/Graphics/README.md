@@ -6,6 +6,12 @@
 [`obs-studio/`](obs-studio/UPSTREAM.md)，并保留版权及许可文件；现有 `ag_`
 适配层仍是实验实现，尚未改为调用 OBS 后端。
 
+OBS 的非 x86 图形数学使用 SIMDe。仓库内现已放入与本地 OBS 依赖包一致的
+[`SIMDe 0.8.2`](../third_party/simde/README.md)；`maiagent_obs_graphics_compile`
+目标会试编译 17 个原始 Graphics C 源文件。`graphics-ffmpeg.c` 还依赖此次
+限定复制范围之外的 `obs-ffmpeg-compat.h`，故未纳入该目标。通过编译仅证明
+源码兼容，运行时仍需完成 util/libobs 符号链接及各后端接入。
+
 当前代码位于 `include/MaiGraphics.h`、`src/MaiGraphics.cpp`、
 `include/MaiGraphicsTaskRunner.h`、`src/MaiGraphicsTaskRunner.cpp` 和
 `include/MaiGraphicsEffectParser.h`、`src/MaiGraphicsEffectParser.cpp`。

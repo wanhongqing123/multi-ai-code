@@ -220,9 +220,9 @@ endif()
 # 所以这里必须再挂一个 INTERFACE。MaiChat 把这个库 add_subdirectory 进去时就是这么炸的。
 target_compile_options(maiagent INTERFACE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 
-# Graphics remains an optional library until platform GPU backends and host bridges are ready.
-# Its first implementation is a deterministic offscreen reference backend for API validation.
-option(MAIAGENT_BUILD_GRAPHICS "Build experimental Agent Graphics Subsystem" OFF)
+# Build the vendored OBS Graphics subset separately while its platform backends
+# and libobs runtime dependencies are being integrated.
+option(MAIAGENT_BUILD_GRAPHICS "Build vendored OBS Graphics source checks" OFF)
 if(MAIAGENT_BUILD_GRAPHICS)
   add_subdirectory(Graphics)
 endif()

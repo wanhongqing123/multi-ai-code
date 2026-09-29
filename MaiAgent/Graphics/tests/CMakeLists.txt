@@ -1,7 +1,3 @@
-add_executable(MaiGraphicsTests MaiGraphicsTests.cpp)
-target_link_libraries(MaiGraphicsTests PRIVATE maiagent_graphics)
-add_test(NAME MaiGraphicsTests COMMAND MaiGraphicsTests)
-
 add_executable(MaiObsMathTests MaiObsMathTests.c)
 target_include_directories(MaiObsMathTests PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/../obs-studio/libobs)

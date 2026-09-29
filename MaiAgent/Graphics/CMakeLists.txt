@@ -1,12 +1,3 @@
-add_library(maiagent_graphics STATIC
-  src/MaiGraphics.cpp
-  src/MaiGraphicsEffectParser.cpp
-  src/MaiGraphicsTaskRunner.cpp
-)
-
-target_include_directories(maiagent_graphics PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(maiagent_graphics PUBLIC maiagent)
-
 # OBS uses SIMDe as a header-only imported target. Keep that include path local
 # and reproducible instead of depending on an OBS installation or the host SDK.
 add_library(maiagent_graphics_simde INTERFACE)
@@ -27,7 +18,6 @@ target_include_directories(maiagent_obs_graphics_compile PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/obs-studio/libobs)
 target_link_libraries(maiagent_obs_graphics_compile PRIVATE maiagent_graphics_simde)
 # This is a source-compatibility gate, not a linked OBS runtime.
-add_dependencies(maiagent_graphics maiagent_obs_graphics_compile)
 
 if(APPLE AND NOT IOS)
   set(ffmpeg_source ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/ffmpeg)
@@ -66,7 +56,6 @@ add_library(maiagent_obs_math STATIC
 target_include_directories(maiagent_obs_math PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/obs-studio/libobs)
 target_link_libraries(maiagent_obs_math PRIVATE maiagent_graphics_simde)
-target_link_libraries(maiagent_graphics PRIVATE maiagent_obs_math)
 
 # OBS's C-family lexer is the first upstream component linked and exercised at
 # runtime. On Apple platforms, platform-nix.c supplies the allocation failure
@@ -89,5 +78,11 @@ if(APPLE)
   target_include_directories(maiagent_obs_util PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/obs-studio/libobs)
-  target_link_libraries(maiagent_graphics PRIVATE maiagent_obs_util)
+endif()
+
+add_custom_target(maiagent_obs_graphics_check ALL)
+add_dependencies(maiagent_obs_graphics_check
+  maiagent_obs_graphics_compile maiagent_obs_math)
+if(APPLE)
+  add_dependencies(maiagent_obs_graphics_check maiagent_obs_util)
 endif()

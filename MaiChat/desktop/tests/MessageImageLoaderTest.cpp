@@ -7,6 +7,13 @@
 
 #include "ui/MessageImageLoader.h"
 
+static void loadQtInto(const QString& path, const QSize& size, QLabel* label,
+                       const std::function<void()>& onMissing = {}) {
+    MessageImageLoader::instance().load(
+        path, size, label,
+        [label](const QPixmap& image) { label->setPixmap(image); }, onMissing);
+}
+
 class MessageImageLoaderTest : public QObject {
     Q_OBJECT
 
@@ -41,7 +48,7 @@ void MessageImageLoaderTest::initTestCase() {
 void MessageImageLoaderTest::decodesDownToTheRequestedSizeInsteadOfFullResolution() {
     QLabel label;
     const QSize target(240, 180);
-    MessageImageLoader::instance().loadInto(largePath_, target, &label);
+    loadQtInto(largePath_, target, &label);
     QTRY_VERIFY(label.pixmap() != nullptr && !label.pixmap()->isNull());
     QVERIFY2(label.pixmap()->width() <= target.width(),
              "解出来的图不该比请求的目标还宽——那说明没有按目标尺寸降采样");
@@ -55,11 +62,11 @@ void MessageImageLoaderTest::decodesDownToTheRequestedSizeInsteadOfFullResolutio
 void MessageImageLoaderTest::secondRequestForTheSameSizeIsServedFromCache() {
     const QSize target(200, 150);
     QLabel warmUp;
-    MessageImageLoader::instance().loadInto(largePath_, target, &warmUp);
+    loadQtInto(largePath_, target, &warmUp);
     QTRY_VERIFY(warmUp.pixmap() != nullptr && !warmUp.pixmap()->isNull());
 
     QLabel second;
-    MessageImageLoader::instance().loadInto(largePath_, target, &second);
+    loadQtInto(largePath_, target, &second);
     // 不跑事件循环：命中缓存时必须当场贴好。
     QVERIFY2(second.pixmap() != nullptr && !second.pixmap()->isNull(),
              "同尺寸的第二次请求应当直接命中缓存并同步贴图");
@@ -69,9 +76,9 @@ void MessageImageLoaderTest::secondRequestForTheSameSizeIsServedFromCache() {
 void MessageImageLoaderTest::differentTargetSizesDoNotShareOneCacheEntry() {
     QLabel small;
     QLabel big;
-    MessageImageLoader::instance().loadInto(largePath_, QSize(120, 90), &small);
+    loadQtInto(largePath_, QSize(120, 90), &small);
     QTRY_VERIFY(small.pixmap() != nullptr && !small.pixmap()->isNull());
-    MessageImageLoader::instance().loadInto(largePath_, QSize(800, 600), &big);
+    loadQtInto(largePath_, QSize(800, 600), &big);
     QTRY_VERIFY(big.pixmap() != nullptr && !big.pixmap()->isNull());
 
     QVERIFY2(big.pixmap()->width() > small.pixmap()->width(),
@@ -81,7 +88,7 @@ void MessageImageLoaderTest::differentTargetSizesDoNotShareOneCacheEntry() {
 void MessageImageLoaderTest::reportsMissingFileInsteadOfHangingOnThePlaceholder() {
     QLabel label;
     bool missing = false;
-    MessageImageLoader::instance().loadInto(
+    loadQtInto(
         dir_.filePath(QStringLiteral("not-there.jpg")), QSize(200, 150), &label,
         [&missing] { missing = true; });
     QVERIFY2(missing, "文件不存在时必须回调，否则界面会一直停在占位上");
@@ -110,12 +117,12 @@ void MessageImageLoaderTest::cacheKeyChangesWhenTheFileContentChanges() {
 void MessageImageLoaderTest::cachedReplacementRejectsOlderAsyncResult() {
     const QSize replacementSize(91, 67);
     QLabel warmUp;
-    MessageImageLoader::instance().loadInto(largePath_, replacementSize, &warmUp);
+    loadQtInto(largePath_, replacementSize, &warmUp);
     QTRY_VERIFY(warmUp.pixmap() != nullptr && !warmUp.pixmap()->isNull());
 
     QLabel target;
-    MessageImageLoader::instance().loadInto(largePath_, QSize(777, 583), &target);
-    MessageImageLoader::instance().loadInto(largePath_, replacementSize, &target);
+    loadQtInto(largePath_, QSize(777, 583), &target);
+    loadQtInto(largePath_, replacementSize, &target);
     QVERIFY(target.pixmap() != nullptr && !target.pixmap()->isNull());
     QVERIFY(target.pixmap()->width() <= replacementSize.width());
 

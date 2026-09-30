@@ -365,7 +365,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 MaiChatTheme.BORDER, 9, activity));
             MaiGraphicsImageView preview = new MaiGraphicsImageView(activity);
             File image = controller.workspaceFile(file.relativePath);
-            if (image != null) preview.showImage(image.getPath(), dp(72), dp(54), true, null);
+            if (image != null) preview.showImage(image.getPath(), true, null);
             chip.addView(preview, new LayoutParams(dp(72), dp(54)));
             TextView name = text(file.relativePath, 12, MaiChatTheme.TEXT);
             name.setMaxLines(2);
@@ -905,7 +905,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                         MaiGraphicsImageView image = imageParts.get(part.optString("id"));
                         File file = controller.workspaceFile(part.optString("path"));
                         if (image != null && file != null)
-                            image.showImage(file.getPath(), dp(440), dp(300), true,
+                            image.showImage(file.getPath(), true,
                                 () -> image.setContentDescription("图片无法显示"));
                     }
                 }

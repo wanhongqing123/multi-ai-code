@@ -20,9 +20,9 @@
  * 实测 12MP 照片解码后再缩到 560x400 要 46.8ms，而按目标尺寸降采样只要 9.6ms；
  * 且没有缓存，界面每重建一次就重解一遍——十张图的会话切进去约 470ms 主线程停顿。
  *
- * macOS 的消息图片优先由 MaiGraphicsPresenter 直接画到原生子视图。
- * 本加载器负责其他平台和 Graphics 失败时的 Qt 解码回退：按目标尺寸降采样，
- * 缓存键含文件指纹，同键并发只解一次，贴图前校验目标身份。
+ * macOS 的消息图片由 MaiGraphicsPresenter 直接画到原生子视图；失败时报告缺失，
+ * 不转给 Qt 图片解码器。显式的 load() 请求仍供尚未接入 Graphics 的控件使用：
+ * 按目标尺寸降采样，缓存键含文件指纹，同键并发只解一次，贴图前校验目标身份。
  */
 class MessageImageLoader : public QObject {
     Q_OBJECT

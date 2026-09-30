@@ -36,7 +36,7 @@ public:
         QElapsedTimer timer;
         timer.start();
         QImageReader reader(path_);
-        // 失败回退使用 Qt 的解码阶段降采样，不经过 Graphics 回读。
+        // Explicit Qt image requests use decoder-stage downsampling.
         QSize scaled = reader.size();
         if (scaled.isValid() && !scaled.isEmpty()) {
             scaled.scale(target_, Qt::KeepAspectRatio);
@@ -138,6 +138,7 @@ public:
             setProperty("graphicsPresented", true);
             return;
         }
+        if (label_) label_->clear();
         if (onFailure_) onFailure_();
         deleteLater();
     }
@@ -208,23 +209,24 @@ QString MessageImageLoader::cacheKey(const QString& path, const QSize& targetPix
 void MessageImageLoader::loadInto(const QString& path, const QSize& targetPixels, QLabel* label,
                                   const std::function<void()>& onMissing) {
     if (!label) return;
-    QPointer<QLabel> guard(label);
 #if defined(MAICHAT_HAS_GRAPHICS) && defined(Q_OS_MAC)
-    if (QFileInfo(path).isFile() && startGraphicsPresenter()) {
-        auto fallback = [this, path, targetPixels, guard, onMissing] {
-            if (!guard) return;
-            load(path, targetPixels, guard, [guard](const QPixmap& pixmap) {
-                if (guard) guard->setPixmap(pixmap);
-            }, onMissing);
-        };
-        auto* overlay = new MaiGraphicsImageOverlay(label, fallback);
-        if (overlay->render(path)) return;
-        delete overlay;
+    Q_UNUSED(targetPixels);
+    if (!QFileInfo(path).isFile() || !startGraphicsPresenter()) {
+        label->clear();
+        if (onMissing) onMissing();
+        return;
     }
-#endif
+    auto* overlay = new MaiGraphicsImageOverlay(label, onMissing);
+    if (overlay->render(path)) return;
+    delete overlay;
+    label->clear();
+    if (onMissing) onMissing();
+#else
+    QPointer<QLabel> guard(label);
     load(path, targetPixels, label, [guard](const QPixmap& pixmap) {
         if (guard) guard->setPixmap(pixmap);
     }, onMissing);
+#endif
 }
 
 void MessageImageLoader::load(const QString& path, const QSize& targetPixels, QWidget* owner,

@@ -3339,7 +3339,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         image.setOnClickListener(view -> showFullScreenImage(attachment.localPath()));
         TextView imageMissing = MaiChatTheme.text(this, "图片暂不可预览", 14, MaiChatTheme.SECONDARY);
         imageMissing.setVisibility(View.GONE);
-        image.showImage(attachment.localPath(), dp(260), dp(190), true, () -> {
+        image.showImage(attachment.localPath(), true, () -> {
             image.setVisibility(View.GONE);
             imageMissing.setVisibility(View.VISIBLE);
         });
@@ -3359,7 +3359,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         if (attachment.hasCover()) {
             MaiGraphicsImageView image = new MaiGraphicsImageView(this);
             // 封面也走同一个 Graphics 呈现入口。
-            image.showImage(attachment.coverPath(), dp(260), dp(190), true, null);
+            image.showImage(attachment.coverPath(), true, null);
             stage.addView(image, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
@@ -3472,8 +3472,6 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         // 全屏预览直接绑定自己的 TextureView，与气泡使用不同的渲染目标。
         image.showImage(
             path,
-            getResources().getDisplayMetrics().widthPixels,
-            getResources().getDisplayMetrics().heightPixels,
             false,
             () -> {
                 toast("图片暂不可预览");

@@ -33,8 +33,8 @@ macOS Metal 已验证 `default.effect` 和 `solid.effect`；目前有 9 个矩�
 
 Mac 构建的 FFmpeg 9.0.2 启用 VideoToolbox 和 AudioToolbox。独立 Graphics
 构建仍用 `compat/` 隔离 OBS 应用层信号，视频信息固定为 SDR，尚未转发
-`video_reset`。三端图片视图优先使用共用 Presenter，渲染失败时才回退原生
-解码。macOS、iOS 已验证原生 Layer 入口，Android 已做 View 像素验收；
+`video_reset`。三端媒体图片视图使用共用 Presenter；渲染失败时显示失败状态，
+不再切换到系统图片解码。macOS、iOS 已验证原生 Layer 入口，Android 已做 View 像素验收；
 真实设备上的滚动、视图复用和色彩仍需验收。视频帧已能通过共用 Presenter
 呈现并在 macOS、iOS、Android 的测试中执行；音频输出、音画同步和现有
 播放器 UI 的切换仍未完成。

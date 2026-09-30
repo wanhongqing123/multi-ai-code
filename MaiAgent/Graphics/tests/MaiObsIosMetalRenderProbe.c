@@ -62,6 +62,14 @@ int maiObsIosMetalPresentProbe(const char* image_path, const char* effect_direct
         passed = passed && atomic_load(&presented_frames) >= initial + 2;
         maiVideoPlaybackDestroy(video);
     }
+    if (passed) {
+        atomic_store(&present_result, 0);
+        passed = maiGraphicsPresenterShowImage(view_id, "/missing-graphics-image.png", false);
+        for (int attempt = 0; passed && attempt < 400 && atomic_load(&present_result) == 0;
+             ++attempt)
+            nanosleep(&delay, NULL);
+        passed = passed && atomic_load(&present_result) == -1;
+    }
     if (view_id) maiGraphicsPresenterDetach(view_id);
     maiGraphicsPresenterStop();
     return passed ? 0 : 5;

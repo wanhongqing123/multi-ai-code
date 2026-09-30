@@ -9,7 +9,10 @@ import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Color;
+import android.view.View;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
+import android.widget.TextView;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
 import java.io.File;
@@ -46,7 +49,7 @@ public final class GraphicsDirectPresenterInstrumentedTest {
                     success.set(rendered);
                     presented.countDown();
                 });
-                view.showImage(source.getAbsolutePath(), 64, 64, false, null);
+                view.showImage(source.getAbsolutePath(), false, null);
                 ((FrameLayout) activity.findViewById(android.R.id.content)).addView(view,
                     new FrameLayout.LayoutParams(64, 64));
                 surface.set(view);
@@ -110,6 +113,27 @@ public final class GraphicsDirectPresenterInstrumentedTest {
             assertTrue(Color.red(videoPixel) >= 240);
             assertTrue(Color.green(videoPixel) <= 10);
             assertTrue(Color.blue(videoPixel) <= 10);
+
+            ((MaiGraphicsTextureView) surface.get().getChildAt(0)).stopVideo();
+            File invalid = new File(context.getCacheDir(), "graphics-invalid.png");
+            try (FileOutputStream output = new FileOutputStream(invalid)) {
+                output.write("not an image".getBytes("UTF-8"));
+            }
+            CountDownLatch rejected = new CountDownLatch(1);
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                surface.get().setPresentationListener(rendered -> {
+                    if (!rendered) rejected.countDown();
+                });
+                surface.get().showImage(invalid.getAbsolutePath(), false, null);
+            });
+            assertTrue(rejected.await(10, TimeUnit.SECONDS));
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                assertEquals(2, surface.get().getChildCount());
+                assertTrue(surface.get().getChildAt(1) instanceof TextView);
+                assertTrue(!(surface.get().getChildAt(1) instanceof ImageView));
+                assertEquals(View.VISIBLE, surface.get().getChildAt(1).getVisibility());
+            });
+            invalid.delete();
             videoFile.delete();
         } finally {
             InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {

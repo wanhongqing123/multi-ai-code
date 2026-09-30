@@ -1,5 +1,4 @@
 import AVFoundation
-import ImageIO
 import Photos
 import PhotosUI
 import SwiftUI
@@ -713,64 +712,41 @@ private struct AIPDFArtifactButton: View {
 
 private struct AIWorkspaceImage: View {
     let filePath: String
-    @StateObject private var state = AIWorkspaceImageState()
-    @State private var directFailed = false
+    @State private var failed = false
 
     var body: some View {
         Group {
-            if !directFailed {
-                MaiGraphicsImageSurface(filePath: filePath) { directFailed = true }
+            if !failed {
+                MaiGraphicsImageSurface(filePath: filePath) { failed = true }
                     .frame(width: 240, height: 200)
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     .accessibilityLabel("AI 助手图片附件")
-            } else if let image = state.image {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: 240, maxHeight: 200)
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .accessibilityLabel("AI 助手图片附件")
-            } else if state.hasFinished {
+            } else {
                 Label("图片无法显示", systemImage: "photo")
                     .foregroundStyle(Color.secondary)
                     .frame(width: 180, height: 120)
-            } else {
-                ProgressView().frame(width: 180, height: 120)
             }
         }
-        .task(id: "\(filePath)|\(directFailed)") {
-            if directFailed { await state.load(filePath) }
-        }
-        .onChange(of: filePath) { _ in directFailed = false }
+        .onChange(of: filePath) { _ in failed = false }
     }
 }
 
 private struct AIImagePreviewOverlay: View {
     let filePath: String
     let close: () -> Void
-    @StateObject private var state = AIWorkspaceImageState()
-    @State private var directFailed = false
+    @State private var failed = false
 
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .topTrailing) {
                 Color.black.ignoresSafeArea()
-                if !directFailed {
-                    MaiGraphicsImageSurface(filePath: filePath) { directFailed = true }
+                if !failed {
+                    MaiGraphicsImageSurface(filePath: filePath) { failed = true }
                         .frame(width: geometry.size.width, height: geometry.size.height)
                         .accessibilityLabel("Agent 处理后的图片预览")
-                } else if let image = state.image {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: geometry.size.width, height: geometry.size.height)
-                        .accessibilityLabel("Agent 处理后的图片预览")
-                } else if state.hasFinished {
+                } else {
                     Label("图片无法显示", systemImage: "photo")
                         .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    ProgressView().tint(.white)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 Button(action: close) {
@@ -784,41 +760,8 @@ private struct AIImagePreviewOverlay: View {
                 .padding(20)
             }
         }
-        .task(id: "\(filePath)|\(directFailed)") {
-            if directFailed { await state.load(filePath, maxPixelSize: 2048) }
-        }
-        .onChange(of: filePath) { _ in directFailed = false }
+        .onChange(of: filePath) { _ in failed = false }
     }
-}
-
-@MainActor
-private final class AIWorkspaceImageState: ObservableObject {
-    @Published private(set) var image: UIImage?
-    @Published private(set) var hasFinished = false
-
-    func load(_ path: String, maxPixelSize: Int = 720) async {
-        image = nil
-        hasFinished = false
-        let decoded = await Task.detached(priority: .utility) { () -> AIWorkspaceImageBox? in
-            let url = URL(fileURLWithPath: path) as CFURL
-            guard let source = CGImageSourceCreateWithURL(url, nil),
-                  let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                    kCGImageSourceCreateThumbnailFromImageAlways: true,
-                    kCGImageSourceCreateThumbnailWithTransform: true,
-                    kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
-                  ] as CFDictionary)
-            else { return nil }
-            return AIWorkspaceImageBox(UIImage(cgImage: cgImage))
-        }.value
-        guard !Task.isCancelled else { return }
-        image = decoded?.image
-        hasFinished = true
-    }
-}
-
-private final class AIWorkspaceImageBox: @unchecked Sendable {
-    let image: UIImage
-    init(_ image: UIImage) { self.image = image }
 }
 
 private struct AIExpandableBlock<Content: View>: View {

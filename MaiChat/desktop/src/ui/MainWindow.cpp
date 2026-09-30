@@ -4800,8 +4800,7 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
             imageLabel->setAlignment(Qt::AlignCenter);
             // 先按目标尺寸占位，避免解码回来时气泡高度突变把列表顶得乱跳。
             imageLabel->setMinimumSize((QSizeF(targetPixels) / thumbDpr).toSize());
-            // 解码放后台、按目标尺寸降采样、结果进缓存。原先这里是 QPixmap(path)
-            // 解全尺寸原图再缩，实测 12MP 照片 46.8ms/张，且每次重建都重解。
+            // 消息图片交给 MaiAgent Graphics 的原生子视图；解码和绘制均不在 UI 线程。
             MessageImageLoader::instance().loadInto(
                 message.image.localPath, targetPixels, imageLabel, [imageLabel, thumbDpr] {
                     imageLabel->setText(QStringLiteral("图片暂不可预览"));

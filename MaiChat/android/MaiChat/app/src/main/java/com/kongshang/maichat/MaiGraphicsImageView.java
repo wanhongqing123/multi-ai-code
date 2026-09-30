@@ -1,19 +1,16 @@
 package com.kongshang.maichat;
 
 import android.content.Context;
+import android.view.Gravity;
 import android.view.View;
 import android.widget.FrameLayout;
-import android.widget.ImageView;
+import android.widget.TextView;
 
-/** Displays images directly through Graphics, with a decoder fallback on failure. */
+/** Displays media images only through the shared Graphics presenter. */
 public final class MaiGraphicsImageView extends FrameLayout {
     private final MaiGraphicsTextureView surface;
-    private ImageView fallback;
-    private String imagePath;
-    private int requestedWidth;
-    private int requestedHeight;
-    private boolean fillView;
-    private MessageImageLoader.MissingHandler missingHandler;
+    private final TextView failureLabel;
+    private Runnable missingHandler;
     private MaiGraphicsTextureView.PresentationListener presentationListener;
 
     public MaiGraphicsImageView(Context context) {
@@ -23,18 +20,22 @@ public final class MaiGraphicsImageView extends FrameLayout {
         surface.setClickable(false);
         surface.setPresentationListener(this::onPresented);
         addView(surface, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
+
+        failureLabel = new TextView(context);
+        failureLabel.setText("图片无法显示");
+        failureLabel.setTextColor(MaiChatTheme.SECONDARY);
+        failureLabel.setGravity(Gravity.CENTER);
+        failureLabel.setBackgroundColor(MaiChatTheme.PAGE);
+        failureLabel.setVisibility(View.GONE);
+        addView(failureLabel,
+            new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
     }
 
-    public void showImage(String path, int width, int height, boolean fill,
-                          MessageImageLoader.MissingHandler missing) {
-        imagePath = path;
-        requestedWidth = width;
-        requestedHeight = height;
-        fillView = fill;
+    public void showImage(String path, boolean fill, Runnable missing) {
         missingHandler = missing;
+        failureLabel.setVisibility(View.GONE);
         surface.setAlpha(0.01f);
         surface.setImageFile(path, fill);
-        if (fallback != null) fallback.setVisibility(View.GONE);
     }
 
     public void setPresentationListener(MaiGraphicsTextureView.PresentationListener listener) {
@@ -44,25 +45,12 @@ public final class MaiGraphicsImageView extends FrameLayout {
     private void onPresented(boolean success) {
         if (presentationListener != null) presentationListener.onPresented(success);
         if (success) {
+            failureLabel.setVisibility(View.GONE);
             surface.setAlpha(1.0f);
-            surface.bringToFront();
-            if (fallback != null) fallback.setVisibility(View.GONE);
             return;
         }
         surface.setAlpha(0.01f);
-        if (imagePath == null) {
-            if (missingHandler != null) missingHandler.onMissing();
-            return;
-        }
-        if (fallback == null) {
-            fallback = new ImageView(getContext());
-            addView(fallback, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
-        }
-        fallback.setScaleType(fillView ? ImageView.ScaleType.CENTER_CROP
-                                       : ImageView.ScaleType.FIT_CENTER);
-        fallback.setVisibility(View.VISIBLE);
-        fallback.bringToFront();
-        MessageImageLoader.load(imagePath, requestedWidth, requestedHeight, fallback,
-                                missingHandler);
+        failureLabel.setVisibility(View.VISIBLE);
+        if (missingHandler != null) missingHandler.run();
     }
 }

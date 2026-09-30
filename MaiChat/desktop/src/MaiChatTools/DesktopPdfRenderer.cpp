@@ -1,4 +1,4 @@
-#include "agent/DesktopPdfRenderer.h"
+#include "MaiChatTools/DesktopPdfRenderer.h"
 
 #include <QFile>
 #include <QFont>

@@ -129,7 +129,7 @@
 #include "agent/AgentChatPanel.h"
 #include "agent/AgentController.h"
 #include "agent/ReplySuggestionController.h"
-#include "app/MaiChatHostTools.h"
+#include "MaiChatTools/MaiChatHostTools.h"
 #include "agent/AgentSessionList.h"
 
 namespace {

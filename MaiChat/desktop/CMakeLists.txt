@@ -134,9 +134,9 @@ if(WIN32)
         IMPORTED_LOCATION "${MAICHAT_FFMPEG_BUILD_DIR}/lib${library}/${library}.lib")
       add_dependencies(maichat_ffmpeg_${library} maichat_ffmpeg_build)
     endforeach()
-    add_library(maichat_image_filter STATIC ../shared/agent/MaiImageFilter.cpp)
+    add_library(maichat_image_filter STATIC ../MaiChatTools/MaiImageFilter.cpp)
     add_dependencies(maichat_image_filter maichat_ffmpeg_build)
-    target_include_directories(maichat_image_filter PUBLIC ../shared/agent PRIVATE
+    target_include_directories(maichat_image_filter PUBLIC ../MaiChatTools PRIVATE
       "${MAICHAT_FFMPEG_BUILD_DIR}/install/include"
       "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/nlohmann")
     target_link_libraries(maichat_image_filter PUBLIC
@@ -209,8 +209,8 @@ if(WIN32)
       "${MAICHAT_OPENCV_SOURCE}/modules/objdetect/include")
     target_link_libraries(maichat_opencv INTERFACE
       opencv_objdetect opencv_dnn opencv_imgcodecs)
-    add_library(maichat_image_vision STATIC ../shared/agent/MaiImageVision.cpp)
-    target_include_directories(maichat_image_vision PUBLIC ../shared/agent)
+    add_library(maichat_image_vision STATIC src/MaiChatTools/MaiImageVision.cpp)
+    target_include_directories(maichat_image_vision PUBLIC src/MaiChatTools)
     target_link_libraries(maichat_image_vision PUBLIC maichat_opencv)
     set(MAICHAT_FACE_MODEL
       "${CMAKE_CURRENT_SOURCE_DIR}/../shared/agent/models/face_detection_yunet_2023mar.onnx")
@@ -366,8 +366,8 @@ add_library(remote_im_desktop_app
   src/diagnostics/RemoteDiagnosticsController.cpp
   src/app/RemoteIMApplication.h
   src/app/RemoteIMApplication.cpp
-  src/app/MaiChatHostTools.h
-  src/app/MaiChatHostTools.cpp
+  src/MaiChatTools/MaiChatHostTools.h
+  src/MaiChatTools/MaiChatHostTools.cpp
   src/app/VideoCoverImage.h
   src/app/VideoCoverImage.cpp
 )
@@ -533,8 +533,8 @@ add_library(maichat_agent
   src/ui/ComposerTextEdit.cpp
   src/agent/AgentController.h
   src/agent/AgentController.cpp
-  src/agent/DesktopPdfRenderer.h
-  src/agent/DesktopPdfRenderer.cpp
+  src/MaiChatTools/DesktopPdfRenderer.h
+  src/MaiChatTools/DesktopPdfRenderer.cpp
   src/agent/AgentChatPanel.h
   src/agent/AgentChatPanel.cpp
   src/agent/AgentSessionList.h
@@ -547,7 +547,7 @@ target_link_libraries(maichat_agent PUBLIC Qt5::Core Qt5::Widgets maiagent maich
   maichat_pdf_preview)
 if(WIN32 AND MAICHAT_ENABLE_OPENCV)
   target_sources(maichat_agent PRIVATE
-    src/agent/DesktopVisionTools.h src/agent/DesktopVisionTools.cpp)
+    src/MaiChatTools/DesktopVisionTools.h src/MaiChatTools/DesktopVisionTools.cpp)
   target_compile_definitions(maichat_agent PRIVATE MAICHAT_DESKTOP_VISION=1)
   target_link_libraries(maichat_agent PRIVATE maichat_image_vision)
 endif()

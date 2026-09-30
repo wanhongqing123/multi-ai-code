@@ -5,7 +5,7 @@
 #include <memory>
 
 #include "MaiTool.h"
-#include "app/MaiChatHostTools.h"
+#include "MaiChatTools/MaiChatHostTools.h"
 #include "app/RemoteIMApplication.h"
 #include "im/FakeRemoteIMClient.h"
 

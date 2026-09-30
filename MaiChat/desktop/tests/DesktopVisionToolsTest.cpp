@@ -7,7 +7,7 @@
 #include <QTemporaryDir>
 
 #include "MaiTool.h"
-#include "agent/DesktopVisionTools.h"
+#include "MaiChatTools/DesktopVisionTools.h"
 
 class DesktopVisionToolsTest : public QObject {
     Q_OBJECT

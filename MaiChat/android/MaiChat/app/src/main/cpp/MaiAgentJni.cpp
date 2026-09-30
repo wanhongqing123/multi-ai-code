@@ -1,4 +1,5 @@
 #include "MaiMobileAgent.h"
+#include "MaiImageFilter.h"
 #include <android/bitmap.h>
 #include <cstdlib>
 #include <cstring>

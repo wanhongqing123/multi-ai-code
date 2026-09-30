@@ -2,6 +2,7 @@
 #include "MaiFileSystem.h"
 #include "MaiIdGenerator.h"
 #include "MaiMobileAgent.h"
+#include "MaiImageFilter.h"
 #include "MaiSqliteStore.h"
 #include <atomic>
 #include <chrono>

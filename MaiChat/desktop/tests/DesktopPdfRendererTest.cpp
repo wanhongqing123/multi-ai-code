@@ -6,7 +6,7 @@
 #include <QTemporaryDir>
 
 #include "MaiPdfTool.h"
-#include "agent/DesktopPdfRenderer.h"
+#include "MaiChatTools/DesktopPdfRenderer.h"
 
 class DesktopPdfRendererTest : public QObject {
   Q_OBJECT

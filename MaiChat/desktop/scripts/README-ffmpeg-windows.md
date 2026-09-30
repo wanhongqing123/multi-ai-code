@@ -14,7 +14,7 @@ pacman -S --needed make diffutils pkgconf
 `build-ffmpeg-windows.ps1`。MSYS2 不在标准目录时可传入
 `-DMAICHAT_MSYS2_BASH=C:/path/to/msys64/usr/bin/bash.exe`。
 七个静态库与公开头写入桌面 CMake 构建目录的 `vendor/ffmpeg-windows`；
-`maichat_image_filter` 使用同一份 `MaiChat/shared/agent/MaiImageFilter.cpp`，并由
+`maichat_image_filter` 使用同一份 `MaiChat/MaiChatTools/MaiImageFilter.cpp`，并由
 `desktop_ffmpeg_filter_test` 验证灰度和旋转的实际执行。
 
 构建关闭自动探测、GPL/非自由组件与汇编，使用动态 CRT (`/MD`) 以匹配 Qt 桌面端。

@@ -61,6 +61,7 @@
 		F0D9326831C7925F6C4FC5D6 /* DiagnosticLogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E85A5C5C020900B2D0178B0A /* DiagnosticLogTests.swift */; };
 		F77972F4F6E4F2EE31D12DD5 /* TencentUserSigGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F230EA47173B4DFF2C689B31 /* TencentUserSigGenerator.swift */; };
 		FE969C619521D3BEF76775AE /* AIAssistantModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 526904A96E6C39A06C68A18E /* AIAssistantModel.swift */; };
+		AD84583FFF5C343CE2B9B7E7 /* AIMobileHostToolProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE21EC1A64CEAB1F418E929 /* AIMobileHostToolProvider.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -132,6 +133,7 @@
 		4E3D9F697A1737B461CCB2EB /* MaiChatUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = MaiChatUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		4F0A72E18F2D49F6FB7391C2 /* RemoteIMClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteIMClient.swift; sourceTree = "<group>"; };
 		526904A96E6C39A06C68A18E /* AIAssistantModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAssistantModel.swift; sourceTree = "<group>"; };
+		DAE21EC1A64CEAB1F418E929 /* AIMobileHostToolProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../MaiChatTools/AIMobileHostToolProvider.swift"; sourceTree = "<group>"; };
 		551A36DB80C7A7F2663F229D /* RemoteDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDiagnostics.swift; sourceTree = "<group>"; };
 		59C1F4DABEBD721F3CB32385 /* LocalChatHistoryStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalChatHistoryStoreTests.swift; sourceTree = "<group>"; };
 		5C9893DE3EC5736AB5DC2BBD /* AIAssistantView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAssistantView.swift; sourceTree = "<group>"; };
@@ -192,6 +194,7 @@
 			isa = PBXGroup;
 			children = (
 				526904A96E6C39A06C68A18E /* AIAssistantModel.swift */,
+				DAE21EC1A64CEAB1F418E929 /* AIMobileHostToolProvider.swift */,
 				5C9893DE3EC5736AB5DC2BBD /* AIAssistantView.swift */,
 				4DF2A8369BE5503C5666FE18 /* AppDiagnosticLog.swift */,
 				A6457534DA0479F3AD712C60 /* Assets.xcassets */,
@@ -564,6 +567,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				FE969C619521D3BEF76775AE /* AIAssistantModel.swift in Sources */,
+				AD84583FFF5C343CE2B9B7E7 /* AIMobileHostToolProvider.swift in Sources */,
 				8A3B76B3F5D189A4B1EEB33C /* AIAssistantView.swift in Sources */,
 				6C8CC7B0E521485EB1383FFA /* AppDiagnosticLog.swift in Sources */,
 				563F2D96FC7FE65D52984507 /* ChatView.swift in Sources */,

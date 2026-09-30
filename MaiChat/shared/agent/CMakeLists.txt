@@ -101,10 +101,21 @@ if(TARGET maiagent_graphics)
     maichat_ffmpeg_swresample maichat_ffmpeg_swscale
     maichat_ffmpeg_avutil)
 endif()
-add_library(maichat_mobile STATIC MaiMobileAgent.cpp MaiImageFilter.cpp)
+add_library(maichat_mobile STATIC
+  MaiMobileAgent.cpp
+  ../../MaiChatTools/MaiImageFilter.cpp
+  ../../MaiChatTools/MaiMobileHostTools.cpp)
+if(ANDROID)
+  target_sources(maichat_mobile PRIVATE
+    ../../android/MaiChat/MaiChatTools/MaiMobilePhotoAlbumTool.cpp)
+elseif(APPLE)
+  target_sources(maichat_mobile PRIVATE
+    ../../ios/MaiChat/MaiChatTools/MaiMobilePhotoAlbumTool.cpp)
+endif()
 add_dependencies(maichat_mobile maichat_ffmpeg_build)
 target_include_directories(maichat_mobile PRIVATE "${ffmpeg_build}/install/include")
-target_include_directories(maichat_mobile PUBLIC . PRIVATE ../../../MaiAgent/third_party/nlohmann)
+target_include_directories(maichat_mobile PUBLIC . ../../MaiChatTools
+  PRIVATE ../../../MaiAgent/third_party/nlohmann)
 target_link_libraries(maichat_mobile PRIVATE maiagent
   maichat_ffmpeg_avdevice maichat_ffmpeg_avfilter maichat_ffmpeg_avformat
   maichat_ffmpeg_avcodec maichat_ffmpeg_swresample maichat_ffmpeg_swscale

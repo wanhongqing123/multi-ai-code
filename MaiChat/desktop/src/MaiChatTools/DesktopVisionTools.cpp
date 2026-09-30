@@ -1,4 +1,4 @@
-#include "agent/DesktopVisionTools.h"
+#include "MaiChatTools/DesktopVisionTools.h"
 
 #include <QByteArray>
 #include <QFile>

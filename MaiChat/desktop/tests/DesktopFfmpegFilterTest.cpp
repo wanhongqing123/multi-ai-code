@@ -1,7 +1,7 @@
 #include <cmath>
 #include <cstdio>
 
-#include "MaiMobileAgent.h"
+#include "MaiImageFilter.h"
 
 static int failures = 0;
 #define CHECK(condition)                                                 \

@@ -1,4 +1,4 @@
-#include "app/MaiChatHostTools.h"
+#include "MaiChatTools/MaiChatHostTools.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>

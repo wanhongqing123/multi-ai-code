@@ -3,9 +3,9 @@
 #include "MaiMemoryStore.h"
 #include "MaiSqliteStore.h"
 #include "MaiPdfTool.h"
-#include "agent/DesktopPdfRenderer.h"
+#include "MaiChatTools/DesktopPdfRenderer.h"
 #if defined(MAICHAT_DESKTOP_VISION)
-#include "agent/DesktopVisionTools.h"
+#include "MaiChatTools/DesktopVisionTools.h"
 #endif
 
 #include <QHash>

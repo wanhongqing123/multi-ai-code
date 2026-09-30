@@ -110,7 +110,7 @@ if(ANDROID)
     ../../android/MaiChat/app/src/main/cpp/MaiChatTools/MaiMobilePhotoAlbumTool.cpp)
 elseif(APPLE)
   target_sources(maichat_mobile PRIVATE
-    ../../ios/MaiChat/MaiChat/Assistant/MaiChatTools/MaiMobilePhotoAlbumTool.cpp)
+    ../../ios/MaiChat/MaiChat/MaiChatTools/MaiMobilePhotoAlbumTool.cpp)
 endif()
 add_dependencies(maichat_mobile maichat_ffmpeg_build)
 target_include_directories(maichat_mobile PRIVATE "${ffmpeg_build}/install/include")

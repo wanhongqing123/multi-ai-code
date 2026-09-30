@@ -263,7 +263,7 @@
 				FE971E99F9FB4FD786142C14 /* MobileImageTools.swift */,
 				0D682AAFECD2400C8A4876B7 /* MobilePhotoTools.swift */,
 			);
-			path = Assistant/MaiChatTools;
+			path = MaiChatTools;
 			sourceTree = "<group>";
 		};
 		77FEC2B53DE369B0BBAE5A10 /* Products */ = {

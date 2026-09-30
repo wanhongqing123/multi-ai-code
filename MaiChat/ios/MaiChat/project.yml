@@ -15,7 +15,7 @@ targets:
     sources:
       - path: MaiChat
         excludes:
-          - Assistant/MaiChatTools/MaiMobilePhotoAlbumTool.cpp
+          - MaiChatTools/MaiMobilePhotoAlbumTool.cpp
     dependencies:
       - target: MaiChatCore
     preBuildScripts:

@@ -738,7 +738,7 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     composerHost->setStyleSheet(
         QStringLiteral("QWidget#agentComposerPanel{background:#ffffff;}"));
     auto* composerLayout = new QVBoxLayout(composerHost);
-    composerLayout->setContentsMargins(UiZoom::s(12), UiZoom::s(6), UiZoom::s(12),
+    composerLayout->setContentsMargins(UiZoom::s(12), UiZoom::s(2), UiZoom::s(12),
                                        UiZoom::s(8));
     composerLayout->setSpacing(0);
 
@@ -755,8 +755,8 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
             color:%2;
             padding:10px 52px 46px 13px;
         }
-        QTextEdit#agentPromptEditor:focus { border-color:#58b7ff; }
-    )").arg(kLine, kInk)));
+        QTextEdit#agentPromptEditor:focus { border-color:#b5bbc4; }
+    )").arg(QStringLiteral("#d1d5db"), kInk)));
     QFont editorFont = runtime_->editor->font();
     editorFont.setPixelSize(UiZoom::s(14));
     runtime_->editor->setFont(editorFont);

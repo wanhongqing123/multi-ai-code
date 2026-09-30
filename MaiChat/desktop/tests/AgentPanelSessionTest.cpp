@@ -238,6 +238,7 @@ private slots:
     void desktopAgentSuppliesMarkdownSystemPrompt();
     void composerMatchesImLayoutAndUsesEmbeddedSendAction();
     void conversationAndComposerUseResizableSplitter();
+    void composerResizeHandleAlignsWithEditorBorder();
     void composerPlaceholderFitsAtMinimumHeight();
     void conversationUsesAvailableWidth();
     void pastedImageUsesTheSharedComposerAndReachesTheModel();
@@ -974,6 +975,24 @@ void AgentPanelSessionTest::conversationAndComposerUseResizableSplitter() {
     QTest::mouseRelease(handle, Qt::LeftButton, Qt::NoModifier, finish);
     QVERIFY(splitter->sizes().at(0) != before);
     QVERIFY(editor->height() > editorBefore);
+}
+
+void AgentPanelSessionTest::composerResizeHandleAlignsWithEditorBorder() {
+    Harness harness;
+    harness.panel->resize(1200, 800);
+    QVERIFY(QTest::qWaitForWindowExposed(harness.panel.get()));
+    auto* splitter =
+        harness.panel->findChild<QSplitter*>(QStringLiteral("agentMessageComposerSplitter"));
+    auto* editor = harness.panel->findChild<ComposerTextEdit*>();
+    QVERIFY(splitter != nullptr);
+    QVERIFY(editor != nullptr);
+    QSplitterHandle* handle = splitter->handle(1);
+    QVERIFY(handle != nullptr);
+
+    const QRect handleOnScreen(handle->mapToGlobal(QPoint(0, 0)), handle->size());
+    const QRect editorOnScreen(editor->mapToGlobal(QPoint(0, 0)), editor->size());
+    QCOMPARE(editorOnScreen.top(), handleOnScreen.bottom() + 1);
+    QCOMPARE(editorOnScreen.center().x(), handleOnScreen.center().x());
 }
 
 void AgentPanelSessionTest::composerPlaceholderFitsAtMinimumHeight() {

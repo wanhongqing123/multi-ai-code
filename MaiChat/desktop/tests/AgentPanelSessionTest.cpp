@@ -152,6 +152,7 @@ private slots:
     void desktopAgentSuppliesMarkdownSystemPrompt();
     void composerMatchesImLayoutAndUsesEmbeddedSendAction();
     void conversationAndComposerUseResizableSplitter();
+    void composerPlaceholderFitsAtMinimumHeight();
     void conversationUsesAvailableWidth();
     void pastedImageUsesTheSharedComposerAndReachesTheModel();
     void modelChipOffersTheTextAndVisionModels();
@@ -647,7 +648,7 @@ void AgentPanelSessionTest::conversationAndComposerUseResizableSplitter() {
 
     auto* editor = harness.panel->findChild<ComposerTextEdit*>();
     QVERIFY(editor != nullptr);
-    QCOMPARE(editor->minimumHeight(), UiZoom::s(64));
+    QCOMPARE(editor->minimumHeight(), UiZoom::s(96));
     QVERIFY(editor->maximumHeight() > UiZoom::s(112));
 
     QSplitterHandle* handle = splitter->handle(1);
@@ -663,6 +664,29 @@ void AgentPanelSessionTest::conversationAndComposerUseResizableSplitter() {
     QTest::mouseRelease(handle, Qt::LeftButton, Qt::NoModifier, finish);
     QVERIFY(splitter->sizes().at(0) != before);
     QVERIFY(editor->height() > editorBefore);
+}
+
+void AgentPanelSessionTest::composerPlaceholderFitsAtMinimumHeight() {
+    Harness harness;
+    harness.panel->resize(1200, 700);
+    QVERIFY(QTest::qWaitForWindowExposed(harness.panel.get()));
+    auto* splitter =
+        harness.panel->findChild<QSplitter*>(QStringLiteral("agentMessageComposerSplitter"));
+    auto* editor = harness.panel->findChild<ComposerTextEdit*>();
+    QVERIFY(splitter != nullptr);
+    QVERIFY(editor != nullptr);
+    splitter->setSizes({10000, 0});
+    QApplication::processEvents();
+
+    const qreal requiredHeight = editor->fontMetrics().lineSpacing()
+        + 2 * editor->document()->documentMargin();
+    QVERIFY2(editor->viewport()->height() >= requiredHeight,
+             qPrintable(QStringLiteral("placeholder viewport %1px, one line needs %2px")
+                            .arg(editor->viewport()->height()).arg(requiredHeight)));
+    QVERIFY2(!editor->verticalScrollBar()->isVisible(),
+             "An empty composer must not expose a scroll bar or its corner");
+    QVERIFY2(!editor->horizontalScrollBar()->isVisible(),
+             "An empty composer must not expose a horizontal scroll bar corner");
 }
 
 void AgentPanelSessionTest::conversationUsesAvailableWidth() {

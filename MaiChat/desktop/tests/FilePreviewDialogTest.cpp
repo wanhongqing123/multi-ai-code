@@ -1,6 +1,7 @@
 #include <QtTest/QtTest>
 
 #include <QApplication>
+#include <QFrame>
 #include <QLabel>
 #include <QPixmap>
 #include <QPushButton>
@@ -35,7 +36,9 @@ private slots:
     void closeButtonsAccept();
     void escapeStillCloses();
     void stillResizableWithoutSystemFrame();
+    void sizeGripActuallyResizesMarkdownPreview();
     void draggingAnyEdgeResizesTheWindow();
+    void draggingVisiblePanelEdgeResizesTheMarkdownPreview();
     void resizeIsClampedToTheMinimumSize();
     void pressInTheMiddleDoesNotResize();
     void multiFileDiffPutsTheFileListOnTheLeft();
@@ -482,6 +485,27 @@ void FilePreviewDialogTest::draggingAnyEdgeResizesTheWindow() {
     QCOMPARE(dialog.geometry().left(), leftBefore - 100);
 }
 
+void FilePreviewDialogTest::draggingVisiblePanelEdgeResizesTheMarkdownPreview() {
+    const QString markdown = QStringLiteral("# Report\n\n| A | B |\n|---|---|\n| 1 | 2 |");
+    FilePreviewDialog dialog(QStringLiteral("report.md"), markdown, nullptr,
+                             FilePreviewDialog::ContentFormat::Markdown);
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    auto* panel = dialog.findChild<QFrame*>(QStringLiteral("filePreviewPanel"));
+    QVERIFY(panel != nullptr);
+
+    const QPoint edge = panel->mapToGlobal(QPoint(panel->width() - 12, panel->height() / 2));
+    QWidget* hit = QApplication::widgetAt(edge);
+    QCOMPARE(hit, static_cast<QWidget*>(panel));
+    const int before = dialog.width();
+    sendMouseAt(hit, QEvent::MouseButtonPress, edge, Qt::LeftButton, Qt::LeftButton);
+    sendMouseAt(hit, QEvent::MouseMove, edge + QPoint(120, 0), Qt::NoButton,
+                Qt::LeftButton);
+    sendMouseAt(hit, QEvent::MouseButtonRelease, edge + QPoint(120, 0), Qt::LeftButton,
+                Qt::NoButton);
+    QCOMPARE(dialog.width(), before + 120);
+}
+
 void FilePreviewDialogTest::resizeIsClampedToTheMinimumSize() {
     FilePreviewDialog dialog(QStringLiteral("report.md"), QStringLiteral("<p>hi</p>"));
     dialog.show();
@@ -528,6 +552,19 @@ void FilePreviewDialogTest::stillResizableWithoutSystemFrame() {
              "无边框预览窗没有缩放入口");
     QCOMPARE(grip->cursor().shape(), Qt::SizeFDiagCursor);
     QVERIFY2(!grip->toolTip().isEmpty(), "缩放入口没有向用户说明可以拖动调整大小");
+}
+
+void FilePreviewDialogTest::sizeGripActuallyResizesMarkdownPreview() {
+    FilePreviewDialog dialog(QStringLiteral("report.md"), QStringLiteral("# Report"), nullptr,
+                             FilePreviewDialog::ContentFormat::Markdown);
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    auto* grip = dialog.findChild<QSizeGrip*>(QStringLiteral("filePreviewGrip"));
+    QVERIFY(grip != nullptr);
+    const QSize before = dialog.size();
+    dragEdge(grip, grip->rect().center(), QPoint(120, 80));
+    QVERIFY2(dialog.width() > before.width(), "The size grip did not change the dialog width");
+    QVERIFY2(dialog.height() > before.height(), "The size grip did not change the dialog height");
 }
 
 void FilePreviewDialogTest::panelActuallyPaintsItsBackground() {

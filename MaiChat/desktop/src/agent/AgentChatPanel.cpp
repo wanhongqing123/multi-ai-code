@@ -701,7 +701,9 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     // ---- 输入区：与普通 IM 共用同一个 ComposerTextEdit 形状 ----
     auto* composerHost = new QWidget(this);
     composerHost->setObjectName(QStringLiteral("agentComposerPanel"));
-    composerHost->setMinimumHeight(UiZoom::s(90));
+    // Keep one text line visible even when the user drags the splitter all the way down:
+    // the editor also reserves a bottom row for the send button.
+    composerHost->setMinimumHeight(UiZoom::s(112));
     composerHost->setStyleSheet(
         QStringLiteral("QWidget#agentComposerPanel{background:#ffffff;}"));
     auto* composerLayout = new QVBoxLayout(composerHost);
@@ -712,7 +714,7 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     runtime_->editor = new PromptEdit(composerHost);
     runtime_->editor->setObjectName(QStringLiteral("agentPromptEditor"));
     runtime_->editor->setPlaceholderText(QStringLiteral("交给它做点什么…"));
-    runtime_->editor->setMinimumHeight(UiZoom::s(64));
+    runtime_->editor->setMinimumHeight(UiZoom::s(96));
     runtime_->editor->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     runtime_->editor->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
         QTextEdit#agentPromptEditor {

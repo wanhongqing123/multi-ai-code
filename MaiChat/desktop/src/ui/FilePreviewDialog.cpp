@@ -18,6 +18,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMouseEvent>
+#include <QPainter>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QScreen>
@@ -31,6 +32,30 @@
 #include "markdown/MarkdownLayout.h"
 #include "markdown/MarkdownView.h"
 #include "ui/UiZoom.h"
+
+namespace {
+
+class PreviewSizeGrip final : public QSizeGrip {
+public:
+    using QSizeGrip::QSizeGrip;
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(QStringLiteral("#edf5fc")));
+        painter.drawRoundedRect(rect().adjusted(1, 1, -1, -1), UiZoom::s(5), UiZoom::s(5));
+        painter.setPen(QPen(QColor(QStringLiteral("#6786a3")), qMax(1, UiZoom::s(2))));
+        const int corner = UiZoom::s(5);
+        for (int offset = UiZoom::s(5); offset <= UiZoom::s(15); offset += UiZoom::s(5)) {
+            painter.drawLine(width() - corner - offset, height() - corner,
+                             width() - corner, height() - corner - offset);
+        }
+    }
+};
+
+}  // namespace
 
 QString FilePreviewDialog::normalizeGitDiffHtmlForQt(QString html) {
     // QTextDocument 不执行媒体查询，会把桌面 split 与手机 unified 两份都画出来。
@@ -188,12 +213,13 @@ void FilePreviewDialog::buildUi(const QString& displayName, const QString& conte
     footerRow->addWidget(close);
 
     // 无边框窗口没有系统缩放边框，靠右下角的 grip 补回来。
-    auto* grip = new QSizeGrip(panel);
+    auto* grip = new PreviewSizeGrip(panel);
     grip->setObjectName(QStringLiteral("filePreviewGrip"));
-    grip->setFixedSize(UiZoom::s(22), UiZoom::s(22));
+    grip->setFixedSize(UiZoom::s(28), UiZoom::s(28));
     grip->setCursor(Qt::SizeFDiagCursor);
     grip->setToolTip(QStringLiteral("拖动调整窗口大小"));
     grip->setAccessibleName(QStringLiteral("调整预览窗口大小"));
+    grip->installEventFilter(this);
     footerRow->addWidget(grip, 0, Qt::AlignBottom);
 
     layout->addLayout(footerRow);
@@ -358,7 +384,7 @@ namespace {
 // WA_TranslucentBackground，在 Windows 上是分层窗口，**完全透明的像素会被系统
 // 判为点击穿透**，那圈里的按下根本到不了我们手上。外圈的处理留着（有的平台
 // 收得到，收到就是白赚），但可用性只能押在这条内侧带上。
-constexpr int kResizeInnerBand = 8;
+constexpr int kResizeInnerBand = 16;
 
 Qt::CursorShape cursorForEdges(Qt::Edges edges) {
     const bool left = edges & Qt::LeftEdge;
@@ -612,6 +638,26 @@ void FilePreviewDialog::resizeEvent(QResizeEvent* event) {
 }
 
 bool FilePreviewDialog::eventFilter(QObject* watched, QEvent* event) {
+    if (watched->objectName() == QLatin1String("filePreviewGrip")) {
+        if (event->type() == QEvent::MouseButtonPress) {
+            auto* mouse = static_cast<QMouseEvent*>(event);
+            if (mouse->button() == Qt::LeftButton) {
+                resizeEdges_ = Qt::RightEdge | Qt::BottomEdge;
+                resizeStartGeometry_ = geometry();
+                resizeStartGlobal_ = mouse->globalPos();
+                return true;
+            }
+        } else if (event->type() == QEvent::MouseMove) {
+            auto* mouse = static_cast<QMouseEvent*>(event);
+            if (resizeEdges_ && (mouse->buttons() & Qt::LeftButton)) {
+                updateResize(mouse->globalPos());
+                return true;
+            }
+        } else if (event->type() == QEvent::MouseButtonRelease && resizeEdges_) {
+            resizeEdges_ = {};
+            return true;
+        }
+    }
     if (watched == title_ && event->type() == QEvent::Resize) {
         updateElidedTitle();
         return false;

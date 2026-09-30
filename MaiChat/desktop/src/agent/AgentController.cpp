@@ -21,7 +21,11 @@ line breaks. Plain prose is valid Markdown; use headings, lists, fenced code blo
 tables only when they improve readability. Put a blank line before and after each table. Put the
 header, delimiter row, and every table row on separate lines, with one delimiter cell per column.
 Never imitate a table by writing pipe-separated rows in a single paragraph. Do not wrap the entire
-response in a code fence.)";
+response in a code fence.
+If the user attached an image, it is already included in the current model request. Inspect that
+image directly. Do not call view_image for a filename merely visible inside a screenshot.
+view_image can only read files in the Agent working directory. If a separate original image outside
+that directory is needed, ask the user to attach it or copy it into the working directory first.)";
 
 std::string toUtf8(const QString& text) {
     const QByteArray bytes = text.toUtf8();
@@ -44,7 +48,8 @@ struct AgentController::Runtime {
     QString openError;
     QString lastError;
     // 只有主线程碰它：所有事件都排队到主线程之后才分类。
-    QHash<QString, PartKind> partKinds;
+    QHash<QString, QHash<QString, PartKind>> partKindsBySession;
+    QHash<QString, QHash<QString, QString>> livePartTextBySession;
     QString modelName;
 };
 
@@ -307,6 +312,12 @@ bool AgentController::isChildOf(const QString& sessionId, const QString& parentS
     return fromUtf8(session.parentId) == parentSessionId;
 }
 
+QString AgentController::livePartText(const QString& sessionId, const QString& partId) const {
+    const auto session = runtime_->livePartTextBySession.constFind(sessionId);
+    if (session == runtime_->livePartTextBySession.constEnd()) return {};
+    return session.value().value(partId);
+}
+
 // ---- 事件 ----
 
 void AgentController::rawEvent(const MaiEvent& event) {
@@ -330,8 +341,9 @@ void AgentController::onEventQueued(const MaiEvent& event) {
             //
             // 工具片段每次都要查（状态会变）；正文和思考只需要查第一次——它们的类型不会变，
             // 之后来的全是增量。
-            const auto known = runtime_->partKinds.constFind(partId);
-            if (known != runtime_->partKinds.constEnd() && known.value() != PartKind::Tool) return;
+            auto& partKinds = runtime_->partKindsBySession[sessionId];
+            const auto known = partKinds.constFind(partId);
+            if (known != partKinds.constEnd() && known.value() != PartKind::Tool) return;
 
             PartKind kind = PartKind::Unknown;
             for (const MaiMessage& message : runtime_->agent->listMessages(event.sessionId)) {
@@ -351,7 +363,7 @@ void AgentController::onEventQueued(const MaiEvent& event) {
             }
             if (kind == PartKind::Unknown) return;
 
-            runtime_->partKinds.insert(partId, kind);
+            partKinds.insert(partId, kind);
             if (kind == PartKind::Tool) emit toolPartChanged(sessionId, messageId, partId);
             // 正文和思考片段这里不发信号：内容还是空的，界面没什么可画。等第一条增量到了再说。
             return;
@@ -361,8 +373,12 @@ void AgentController::onEventQueued(const MaiEvent& event) {
             // 两种增量的 field 都是 "text"，只能靠上面那张表区分。
             // 查不到就当正文——但那说明 message.part.updated 没到，属于上游的 bug，
             // 不是这里该悄悄兜住的事（MaiAgent 那边为此改过一次"先落库再广播"）。
-            const PartKind kind = runtime_->partKinds.value(partId, PartKind::Text);
+            PartKind kind = PartKind::Text;
+            const auto sessionKinds = runtime_->partKindsBySession.constFind(sessionId);
+            if (sessionKinds != runtime_->partKindsBySession.constEnd())
+                kind = sessionKinds.value().value(partId, PartKind::Text);
             const QString delta = fromUtf8(event.delta);
+            runtime_->livePartTextBySession[sessionId][partId] += delta;
             if (kind == PartKind::Reasoning) {
                 emit reasoningDelta(sessionId, messageId, partId, delta);
             } else {
@@ -373,8 +389,9 @@ void AgentController::onEventQueued(const MaiEvent& event) {
 
         case MaiEventType::SessionIdle:
             // 一轮结束，这一轮的片段表可以丢了。不丢的话长会话会一直涨。
-            runtime_->partKinds.clear();
+            runtime_->partKindsBySession.remove(sessionId);
             emit turnFinished(sessionId);
+            runtime_->livePartTextBySession.remove(sessionId);
             return;
 
         case MaiEventType::SessionError:

@@ -11,6 +11,7 @@
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include "agent/AgentController.h"
@@ -119,6 +120,28 @@ public:
     }
 };
 
+class ConcurrentReasoningModel final : public MaiModelClient {
+public:
+    std::atomic<bool> firstReasoningSent{false};
+    std::atomic<bool> release{false};
+
+    MaiError stream(const MaiModelRequest& request, const MaiStreamSink& sink,
+                    const std::atomic<bool>& cancel) override {
+        if (request.messages.back().content == "session A") {
+            if (sink.onReasoning) sink.onReasoning("first");
+            firstReasoningSent.store(true);
+            while (!release.load() && !cancel.load())
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            if (sink.onReasoning && !cancel.load()) sink.onReasoning("second");
+        } else if (sink.onText) {
+            sink.onText("session B done");
+        }
+        return {};
+    }
+
+    MaiWireApi wireApi() const override { return MaiWireApi::ChatCompletions; }
+};
+
 }  // namespace
 
 class AgentControllerTest : public QObject {
@@ -131,6 +154,7 @@ private slots:
     void sends_selected_images_as_multimodal_input();
     void registers_a_screenshot_tool_that_requires_approval();
     void registers_host_tools_after_builtin_tools();
+    void finishingAnotherSessionDoesNotReclassifyReasoning();
 };
 
 // 载荷不是文案：中文 + emoji，验证 UTF-8 一路（回调 -> 事件 -> QString）不走样。
@@ -303,6 +327,38 @@ void AgentControllerTest::registers_host_tools_after_builtin_tools() {
     }
     QVERIFY(foundBuiltin);
     QVERIFY(foundHost);
+}
+
+void AgentControllerTest::finishingAnotherSessionDoesNotReclassifyReasoning() {
+    auto model = std::make_unique<ConcurrentReasoningModel>();
+    ConcurrentReasoningModel* controlled = model.get();
+    AgentController controller(std::move(model), QString());
+    const QString firstSession = controller.createSession(QDir::currentPath());
+    const QString secondSession = controller.createSession(QDir::currentPath());
+    QSignalSpy reasoning(&controller, &AgentController::reasoningDelta);
+    QSignalSpy text(&controller, &AgentController::textDelta);
+    QSignalSpy finished(&controller, &AgentController::turnFinished);
+
+    QVERIFY(controller.sendPrompt(firstSession, QStringLiteral("session A")));
+    QTRY_VERIFY(controlled->firstReasoningSent.load());
+    QTRY_VERIFY(reasoning.count() >= 1);
+    QVERIFY(controller.sendPrompt(secondSession, QStringLiteral("session B")));
+    QTRY_VERIFY(std::any_of(finished.cbegin(), finished.cend(), [&](const QList<QVariant>& args) {
+        return args.first().toString() == secondSession;
+    }));
+    controlled->release.store(true);
+    controller.agent().waitIdle();
+    QTRY_VERIFY(std::any_of(finished.cbegin(), finished.cend(), [&](const QList<QVariant>& args) {
+        return args.first().toString() == firstSession;
+    }));
+    int firstReasoningParts = 0;
+    for (const QList<QVariant>& args : reasoning) {
+        if (args.first().toString() == firstSession) ++firstReasoningParts;
+    }
+    QCOMPARE(firstReasoningParts, 2);
+    for (const QList<QVariant>& args : text) {
+        QVERIFY(args.first().toString() != firstSession);
+    }
 }
 
 QTEST_MAIN(AgentControllerTest)

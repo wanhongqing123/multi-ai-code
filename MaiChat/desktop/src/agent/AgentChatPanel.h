@@ -109,6 +109,7 @@ private:
 
     // 流式期间按 partId 找（或建）对应的部件，只追加不重画。
     ThinkingLine* thinkingLineFor(const QString& partId);
+    void startPendingThinking();
     void clearPendingThinking();
     ToolCard* toolCardFor(const QString& partId);
     void refreshToolCard(const QString& messageId, const QString& partId);

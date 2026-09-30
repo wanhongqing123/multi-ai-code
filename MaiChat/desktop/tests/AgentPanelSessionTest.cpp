@@ -19,9 +19,11 @@
 #include <QtTest>
 
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 
 #include "agent/AgentChatPanel.h"
 #include "agent/AgentController.h"
@@ -134,6 +136,80 @@ private:
     int warmupCalls_ = 0;
 };
 
+class ApprovalModel final : public MaiModelClient {
+public:
+    MaiError stream(const MaiModelRequest&, const MaiStreamSink& sink,
+                    const std::atomic<bool>&) override {
+        if (calls_++ == 0) {
+            if (sink.onToolCall)
+                sink.onToolCall(MaiToolInvocation{
+                    "call-send", "maichat_send_text",
+                    R"({"peer_id":"house-multi-ai-code","text":"hello"})"});
+        } else if (sink.onText) {
+            sink.onText("done");
+        }
+        return {};
+    }
+
+    MaiWireApi wireApi() const override { return MaiWireApi::ChatCompletions; }
+
+private:
+    std::atomic<int> calls_{0};
+};
+
+class ApprovalTool final : public MaiTool {
+public:
+    explicit ApprovalTool(std::atomic<int>& executed) : executed_(executed) {}
+    std::string name() const override { return "maichat_send_text"; }
+    std::string description() const override { return "Send a test message."; }
+    std::string parametersSchema() const override { return R"({"type":"object"})"; }
+    bool requiresApproval(const std::string&) const override { return true; }
+    bool requiresPerCallApproval(const std::string&) const override { return true; }
+    MaiToolResult execute(const std::string&, const MaiToolContext&) override {
+        ++executed_;
+        return MaiToolResult::success("queued");
+    }
+
+private:
+    std::atomic<int>& executed_;
+};
+
+class QuestionModel final : public MaiModelClient {
+public:
+    MaiError stream(const MaiModelRequest&, const MaiStreamSink& sink,
+                    const std::atomic<bool>&) override {
+        if (calls_++ == 0) {
+            if (sink.onToolCall)
+                sink.onToolCall(MaiToolInvocation{
+                    "call-question", "question", R"({"question":"Choose A or B"})"});
+        } else if (sink.onText) {
+            sink.onText("answered");
+        }
+        return {};
+    }
+
+    MaiWireApi wireApi() const override { return MaiWireApi::ChatCompletions; }
+
+private:
+    std::atomic<int> calls_{0};
+};
+
+class PartialReasoningModel final : public MaiModelClient {
+public:
+    std::atomic<bool> release{false};
+
+    MaiError stream(const MaiModelRequest&, const MaiStreamSink& sink,
+                    const std::atomic<bool>& cancel) override {
+        if (sink.onReasoning) sink.onReasoning("partial reasoning");
+        while (!release.load() && !cancel.load())
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        if (sink.onReasoning && !cancel.load()) sink.onReasoning(" completed");
+        return {};
+    }
+
+    MaiWireApi wireApi() const override { return MaiWireApi::ChatCompletions; }
+};
+
 }  // namespace
 
 class AgentPanelSessionTest : public QObject {
@@ -145,6 +221,11 @@ private slots:
     void anotherSessionFailingDoesNotShowAnError();
     void anotherSessionTitleDoesNotRenameTheHeader();
     void approvalFromAnotherSessionIsStillShown();
+    void pendingApprovalIsRestoredAfterSessionSwitch();
+    void pendingQuestionIsRestoredOnlyInItsSession();
+    void composerDraftsStayInTheirSessions();
+    void waitingIndicatorSurvivesSwitchingAwayAndBack();
+    void partialReasoningSurvivesSwitchBeforeCheckpoint();
     void thinkingLineExpandsLiveAndAfterRestore();
     void waitingIndicatorAppearsBeforeFirstModelChunk();
     void waitingIndicatorClearsWhenModelHasNoReasoning();
@@ -366,6 +447,166 @@ void AgentPanelSessionTest::approvalFromAnotherSessionIsStillShown() {
     QCOMPARE(spy.count(), 1);
 }
 
+void AgentPanelSessionTest::pendingApprovalIsRestoredAfterSessionSwitch() {
+    std::atomic<int> executed{0};
+    AgentController controller(
+        std::make_unique<ApprovalModel>(), QString(),
+        [&executed](MaiToolRegistry& tools) {
+            tools.add(std::make_unique<ApprovalTool>(executed));
+        });
+    AgentChatPanel panel(controller);
+    panel.resize(800, 550);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    const QString session = controller.createSession(QDir::currentPath());
+    panel.openSession(session);
+    auto* editor = panel.findChild<QTextEdit*>();
+    auto* send = panel.findChild<QPushButton*>(QStringLiteral("agentSendButton"));
+    QVERIFY(editor != nullptr);
+    QVERIFY(send != nullptr);
+    editor->setPlainText(QStringLiteral("send the report"));
+    send->click();
+    QTRY_COMPARE(controller.agent().listPendingPermissions().size(), std::size_t(1));
+    QCOMPARE(send->toolTip(), QStringLiteral("停止任务"));
+
+    auto approvalIsVisible = [&panel] {
+        for (QLabel* label : panel.findChildren<QLabel*>()) {
+            if (label->text() == QStringLiteral("等你点头") && label->isVisible()) return true;
+        }
+        return false;
+    };
+    QTRY_VERIFY(approvalIsVisible());
+
+    panel.openSession(controller.createSession(QDir::currentPath()));
+    QCOMPARE(send->toolTip(), QStringLiteral("发送消息"));
+    auto unrelatedApprovalIsVisible = [&panel] {
+        for (QWidget* card : panel.findChildren<QWidget*>(QStringLiteral("agentToolCard"))) {
+            if (card->isVisible()) return true;
+        }
+        return false;
+    };
+    QTRY_VERIFY(!unrelatedApprovalIsVisible());
+    panel.openSession(session);
+    QCOMPARE(send->toolTip(), QStringLiteral("停止任务"));
+    QTRY_VERIFY2(approvalIsVisible(), "A pending send must not become an unapprovable queue item");
+    QPushButton* allow = nullptr;
+    for (QPushButton* button : panel.findChildren<QPushButton*>()) {
+        if (button->text() == QStringLiteral("允许") && button->isVisible()) allow = button;
+    }
+    QVERIFY(allow != nullptr);
+    allow->click();
+    controller.agent().waitIdle();
+    QCOMPARE(executed.load(), 1);
+}
+
+void AgentPanelSessionTest::pendingQuestionIsRestoredOnlyInItsSession() {
+    AgentController controller(std::make_unique<QuestionModel>(), QString());
+    AgentChatPanel panel(controller);
+    panel.resize(800, 550);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    const QString session = controller.createSession(QDir::currentPath());
+    panel.openSession(session);
+    auto* editor = panel.findChild<QTextEdit*>();
+    auto* send = panel.findChild<QPushButton*>(QStringLiteral("agentSendButton"));
+    QVERIFY(editor != nullptr);
+    QVERIFY(send != nullptr);
+    editor->setPlainText(QStringLiteral("ask me"));
+    send->click();
+    QTRY_COMPARE(controller.pendingQuestions().size(), std::size_t(1));
+    QTRY_COMPARE(editor->placeholderText(), QStringLiteral("回答它…"));
+
+    panel.openSession(controller.createSession(QDir::currentPath()));
+    QCOMPARE(editor->placeholderText(), QStringLiteral("交给它做点什么…"));
+    QCOMPARE(send->toolTip(), QStringLiteral("发送消息"));
+    panel.openSession(session);
+    QCOMPARE(editor->placeholderText(), QStringLiteral("回答它…"));
+    editor->setPlainText(QStringLiteral("A"));
+    send->click();
+    controller.agent().waitIdle();
+    QTRY_VERIFY(controller.pendingQuestions().empty());
+}
+
+void AgentPanelSessionTest::composerDraftsStayInTheirSessions() {
+    Harness harness;
+    QVERIFY(QTest::qWaitForWindowExposed(harness.panel.get()));
+    auto* editor = harness.panel->findChild<QTextEdit*>();
+    QVERIFY(editor != nullptr);
+    editor->setPlainText(QStringLiteral("unsent in first session"));
+    harness.panel->openSession(harness.other);
+    QCOMPARE(editor->toPlainText(), QString());
+    editor->setPlainText(QStringLiteral("unsent in second session"));
+    harness.panel->openSession(harness.mine);
+    QCOMPARE(editor->toPlainText(), QStringLiteral("unsent in first session"));
+    harness.panel->openSession(harness.other);
+    QCOMPARE(editor->toPlainText(), QStringLiteral("unsent in second session"));
+}
+
+void AgentPanelSessionTest::waitingIndicatorSurvivesSwitchingAwayAndBack() {
+    auto model = std::make_unique<DelayedFirstChunkModel>(true);
+    DelayedFirstChunkModel* delayed = model.get();
+    AgentController controller(std::move(model), QString());
+    AgentChatPanel panel(controller);
+    panel.resize(700, 500);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    const QString session = controller.createSession(QDir::currentPath());
+    panel.openSession(session);
+    auto* editor = panel.findChild<QTextEdit*>();
+    auto* send = panel.findChild<QPushButton*>(QStringLiteral("agentSendButton"));
+    QVERIFY(editor != nullptr);
+    QVERIFY(send != nullptr);
+    editor->setPlainText(QStringLiteral("long-running request"));
+    send->click();
+    QTRY_VERIFY(delayed->entered());
+    panel.openSession(controller.createSession(QDir::currentPath()));
+    panel.openSession(session);
+    auto hasVisibleThinking = [&panel] {
+        for (QWidget* card : panel.findChildren<QWidget*>(QStringLiteral("agentThinkingCard"))) {
+            if (card->isVisible()) return true;
+        }
+        return false;
+    };
+    QVERIFY2(hasVisibleThinking(), "The active session must show its waiting state immediately");
+    delayed->release();
+    controller.agent().waitIdle();
+}
+
+void AgentPanelSessionTest::partialReasoningSurvivesSwitchBeforeCheckpoint() {
+    auto model = std::make_unique<PartialReasoningModel>();
+    PartialReasoningModel* controlled = model.get();
+    AgentController controller(std::move(model), QString());
+    AgentChatPanel panel(controller);
+    panel.resize(700, 500);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    const QString session = controller.createSession(QDir::currentPath());
+    panel.openSession(session);
+    auto* editor = panel.findChild<QTextEdit*>();
+    auto* send = panel.findChild<QPushButton*>(QStringLiteral("agentSendButton"));
+    QVERIFY(editor != nullptr);
+    QVERIFY(send != nullptr);
+    QSignalSpy reasoning(&controller, &AgentController::reasoningDelta);
+    editor->setPlainText(QStringLiteral("inspect"));
+    send->click();
+    QTRY_VERIFY(reasoning.count() >= 1);
+
+    panel.openSession(controller.createSession(QDir::currentPath()));
+    panel.openSession(session);
+    QWidget* card = nullptr;
+    for (QWidget* item : panel.findChildren<QWidget*>(QStringLiteral("agentThinkingCard"))) {
+        if (item->isVisible()) card = item;
+    }
+    QVERIFY(card != nullptr);
+    QTest::mouseClick(card, Qt::LeftButton);
+    auto* body = card->findChild<QLabel*>(QStringLiteral("agentThinkingBody"));
+    QVERIFY(body != nullptr);
+    QVERIFY2(body->text().contains(QStringLiteral("partial reasoning")),
+             "Switching sessions lost reasoning already shown before the next disk checkpoint");
+    controlled->release.store(true);
+    controller.agent().waitIdle();
+}
+
 // 模型首包延迟时，发送后的等待状态仍要立即可见。
 void AgentPanelSessionTest::waitingIndicatorAppearsBeforeFirstModelChunk() {
     auto model = std::make_unique<DelayedFirstChunkModel>(true, 1);
@@ -538,6 +779,11 @@ void AgentPanelSessionTest::pastedImageUsesTheSharedComposerAndReachesTheModel()
     editor->setFocus();
     QTest::keyClick(editor, Qt::Key_V, Qt::ControlModifier);
     QTRY_VERIFY(editor->toPlainText().contains(QChar(0xFFFC)));
+    const QString otherSession = controller.createSession(directory.path());
+    panel.openSession(otherSession);
+    QVERIFY(!editor->toPlainText().contains(QChar(0xFFFC)));
+    panel.openSession(sessionId);
+    QVERIFY(editor->toPlainText().contains(QChar(0xFFFC)));
 
     QPushButton* send =
         panel.findChild<QPushButton*>(QStringLiteral("agentSendButton"));

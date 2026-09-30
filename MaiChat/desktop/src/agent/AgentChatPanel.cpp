@@ -29,6 +29,7 @@
 #include <QTextBlock>
 #include <QTextCursor>
 #include <QTextDocument>
+#include <QTextDocumentFragment>
 #include <QTextEdit>
 #include <QTextFragment>
 #include <QTextImageFormat>
@@ -612,6 +613,7 @@ struct AgentChatPanel::Runtime {
     // partId -> 思考条 / 工具卡。这两样要能点，画不出来，所以还是部件，
     // 由 MarkdownView 负责摆位置和跟着滚。
     QHash<QString, ThinkingLine*> thinking;
+    QHash<QString, QTextDocumentFragment> composerDrafts;
     ThinkingLine* pendingThinking = nullptr;
     QString pendingThinkingItemId;
     QHash<QString, ToolCard*> toolCards;
@@ -901,8 +903,8 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
             });
     connect(&controller, &AgentController::permissionAsked, this,
             [this](const QString& permissionId, const QString& sessionId) {
-                // 授权**不按会话过滤**：子 Agent 也要用户点头，而它没有自己的界面。
-                // 滤掉的话它会永远挂在闸门上，用户只看到「一直在跑」。
+                // 当前会话和它的子 Agent 可以在这里审批；其它根会话的审批留在
+                // 它自己的会话中，切回去时从核心待审批列表恢复。
                 (void)sessionId;
                 showApproval(permissionId);
             });
@@ -912,7 +914,9 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
                 showQuestion(questionId);
             });
     connect(&controller, &AgentController::questionAnswered, this,
-            [this](const QString&, const QString&) { clearQuestion(); });
+            [this](const QString& questionId, const QString&) {
+                if (runtime_->pendingQuestionId == questionId) clearQuestion();
+            });
     connect(&controller, &AgentController::turnFinished, this, [this](const QString& sessionId) {
         if (!isCurrentSession(sessionId)) {
             noteOtherSession(sessionId, QString());
@@ -1006,8 +1010,26 @@ void AgentChatPanel::openSession(const QString& sessionId) {
         directory = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
         if (directory.isEmpty() || !QDir(directory).exists()) directory = QDir::homePath();
     }
-    runtime_->sessionId = sessionId.isEmpty() ? runtime_->controller->createSession(directory)
-                                            : sessionId;
+    const QString nextSession = sessionId.isEmpty()
+                                    ? runtime_->controller->createSession(directory) : sessionId;
+    if (runtime_->sessionId != nextSession) {
+        if (!runtime_->sessionId.isEmpty()) {
+            if (runtime_->editor->document()->isEmpty())
+                runtime_->composerDrafts.remove(runtime_->sessionId);
+            else
+                runtime_->composerDrafts.insert(
+                    runtime_->sessionId,
+                    QTextDocumentFragment(runtime_->editor->document()));
+        }
+        runtime_->sessionId = nextSession;
+        runtime_->editor->clear();
+        if (runtime_->composerDrafts.contains(nextSession)) {
+            QTextCursor cursor = runtime_->editor->textCursor();
+            cursor.insertFragment(runtime_->composerDrafts.take(nextSession));
+            cursor.movePosition(QTextCursor::End);
+            runtime_->editor->setTextCursor(cursor);
+        }
+    }
 
     MaiSession session;
     if (runtime_->controller->agent().getSession(toUtf8(runtime_->sessionId), session)) {
@@ -1033,9 +1055,13 @@ void AgentChatPanel::reloadFromStore() {
     runtime_->thinking.clear();
     runtime_->toolCards.clear();
     runtime_->subAgentCards.clear();
+    runtime_->pendingQuestionId.clear();
+    runtime_->editor->setPlaceholderText(QStringLiteral("交给它做点什么…"));
 
     MaiSession selectedSession;
     runtime_->controller->agent().getSession(toUtf8(runtime_->sessionId), selectedSession);
+    const bool sessionBusy = runtime_->controller->agent().isBusy(toUtf8(runtime_->sessionId));
+    bool activeAssistantHasVisibleActivity = false;
 
     for (const MaiMessage& message :
          runtime_->controller->agent().listMessages(toUtf8(runtime_->sessionId))) {
@@ -1059,16 +1085,33 @@ void AgentChatPanel::reloadFromStore() {
         for (const MaiMessagePart& part : message.parts) {
             const QString partId = fromUtf8(part.id);
             if (const auto* text = std::get_if<MaiTextPart>(&part.body)) {
-                runtime_->answers.insert(partId, fromUtf8(text->text));
+                const QString stored = fromUtf8(text->text);
+                const QString live = message.completed == 0
+                                         ? runtime_->controller->livePartText(runtime_->sessionId, partId)
+                                         : QString();
+                const QString content = live.isEmpty() ? stored : live;
+                if (message.completed == 0 && !content.isEmpty())
+                    activeAssistantHasVisibleActivity = true;
+                runtime_->answers.insert(partId, content);
                 runtime_->view->addItem(partId, MarkdownView::Style::Document,
-                                        fromUtf8(text->text));
+                                        content);
             } else if (const auto* reasoning = std::get_if<MaiReasoningPart>(&part.body)) {
                 // 空文本的思考片段没有可展开的内容，画出来就是个点不开的空壳。
-                if (reasoning->text.empty()) continue;
+                const QString stored = fromUtf8(reasoning->text);
+                const QString live = message.completed == 0
+                                         ? runtime_->controller->livePartText(runtime_->sessionId, partId)
+                                         : QString();
+                const QString content = live.isEmpty() ? stored : live;
+                if (content.isEmpty()) continue;
+                if (message.completed == 0) activeAssistantHasVisibleActivity = true;
                 ThinkingLine* line = thinkingLineFor(partId);
-                line->append(fromUtf8(reasoning->text));
-                line->settleRestored();  // 历史里的思考早就结束了；时长没落库，别编秒数
+                line->append(content);
+                if (!sessionBusy || message.completed != 0)
+                    line->settleRestored();  // 已结束的历史没有耗时记录，别编秒数
             } else if (const auto* tool = std::get_if<MaiToolPart>(&part.body)) {
+                if (message.completed == 0 &&
+                    (tool->state == MaiToolState::Pending || tool->state == MaiToolState::Running))
+                    activeAssistantHasVisibleActivity = true;
                 ToolCard* card = toolCardFor(partId);
                 card->setCall(fromUtf8(tool->tool), fromUtf8(tool->input));
                 card->apply(tool->state, false);
@@ -1080,6 +1123,22 @@ void AgentChatPanel::reloadFromStore() {
             }
         }
     }
+    setRunning(sessionBusy);
+    // A permission event is delivered only once. After a session switch, rebuild the actionable
+    // approval state from the gate instead of rendering its stored Pending part as "queued".
+    for (const MaiPermissionRequest& pending :
+         runtime_->controller->agent().listPendingPermissions()) {
+        showApproval(fromUtf8(pending.id));
+    }
+    for (const MaiQuestionRequest& pending : runtime_->controller->pendingQuestions()) {
+        if (fromUtf8(pending.sessionId) == runtime_->sessionId ||
+            runtime_->controller->isChildOf(fromUtf8(pending.sessionId), runtime_->sessionId)) {
+            showQuestion(fromUtf8(pending.id));
+            break;
+        }
+    }
+    if (sessionBusy && !activeAssistantHasVisibleActivity && runtime_->pendingQuestionId.isEmpty())
+        startPendingThinking();
     refreshContextSize();
     scrollToBottom();
 }
@@ -1147,6 +1206,14 @@ AgentChatPanel::ThinkingLine* AgentChatPanel::thinkingLineFor(const QString& par
     runtime_->thinking.insert(partId, line);
     scrollToBottom();
     return line;
+}
+
+void AgentChatPanel::startPendingThinking() {
+    if (runtime_->pendingThinking != nullptr) return;
+    runtime_->pendingThinkingItemId =
+        QStringLiteral("pending-thinking-%1").arg(++runtime_->noticeSerial);
+    runtime_->pendingThinking = new ThinkingLine;
+    runtime_->view->addWidget(runtime_->pendingThinkingItemId, runtime_->pendingThinking);
 }
 
 void AgentChatPanel::clearPendingThinking() {
@@ -1303,6 +1370,9 @@ void AgentChatPanel::showQuestion(const QString& questionId) {
     // 所以回核心取。
     for (const MaiQuestionRequest& pending : runtime_->controller->pendingQuestions()) {
         if (fromUtf8(pending.id) != questionId) continue;
+        const QString owner = fromUtf8(pending.sessionId);
+        if (owner != runtime_->sessionId &&
+            !runtime_->controller->isChildOf(owner, runtime_->sessionId)) return;
 
         QString text = fromUtf8(pending.question);
         if (!pending.options.empty()) {
@@ -1335,6 +1405,9 @@ void AgentChatPanel::showApproval(const QString& permissionId) {
     for (const MaiPermissionRequest& pending :
          runtime_->controller->agent().listPendingPermissions()) {
         if (fromUtf8(pending.id) != permissionId) continue;
+        const QString owner = fromUtf8(pending.sessionId);
+        if (owner != runtime_->sessionId &&
+            !runtime_->controller->isChildOf(owner, runtime_->sessionId)) return;
         ToolCard* card = toolCardFor(fromUtf8(pending.partId));
         card->setCall(fromUtf8(pending.toolName), fromUtf8(pending.arguments));
         card->setAllowForSession(pending.allowForSession);
@@ -1481,10 +1554,7 @@ void AgentChatPanel::onSend() {
     appendUserBubble(text);
     appendUserImages(imagePaths);
     setRunning(true);
-    runtime_->pendingThinkingItemId =
-        QStringLiteral("pending-thinking-%1").arg(++runtime_->noticeSerial);
-    runtime_->pendingThinking = new ThinkingLine;
-    runtime_->view->addWidget(runtime_->pendingThinkingItemId, runtime_->pendingThinking);
+    startPendingThinking();
     runtime_->view->scrollToBottom();
 }
 

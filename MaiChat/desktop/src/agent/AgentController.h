@@ -111,6 +111,10 @@ public:
     // 「这条是子任务在动」还是「这条不关我事」。
     bool isChildOf(const QString& sessionId, const QString& parentSessionId) const;
 
+    // The store checkpoints an active stream in batches. Keep received deltas available while
+    // switching views so the latest uncheckpointed text remains visible in its own session.
+    QString livePartText(const QString& sessionId, const QString& partId) const;
+
     QString lastError() const;
 
 signals:

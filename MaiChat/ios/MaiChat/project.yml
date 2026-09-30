@@ -15,7 +15,7 @@ targets:
     sources:
       - path: MaiChat
         excludes:
-          - MaiChatTools/MaiMobilePhotoAlbumTool.cpp
+          - Assistant/MaiChatTools/MaiMobilePhotoAlbumTool.cpp
     dependencies:
       - target: MaiChatCore
     preBuildScripts:
@@ -54,12 +54,12 @@ targets:
     platform: iOS
     sources:
       - path: MaiChatTests
-      - path: MaiChat/LocalChatHistoryStore.swift
-      - path: MaiChat/MarkdownInlineStyling.swift
-      - path: MaiChat/MessageBubbleLayout.swift
-      - path: MaiChat/ComposerDraftState.swift
-      - path: MaiChat/RemoteDiagnosticsCoordinator.swift
-      - path: MaiChat/RemoteDiagnosticsView.swift
+      - path: MaiChat/IM/LocalChatHistoryStore.swift
+      - path: MaiChat/Chat/MarkdownInlineStyling.swift
+      - path: MaiChat/Chat/MessageBubbleLayout.swift
+      - path: MaiChat/Chat/ComposerDraftState.swift
+      - path: MaiChat/Diagnostics/RemoteDiagnosticsCoordinator.swift
+      - path: MaiChat/Diagnostics/RemoteDiagnosticsView.swift
       - path: ../../../tests/fixtures/remote-diagnostics-failure-receipts.json
         buildPhase: resources
       - path: ../../../tests/fixtures/remote-diagnostics-report.json

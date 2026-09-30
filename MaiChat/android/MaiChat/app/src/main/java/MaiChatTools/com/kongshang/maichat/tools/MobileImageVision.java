@@ -1,4 +1,4 @@
-package com.kongshang.maichat;
+package com.kongshang.maichat.tools;
 
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -28,10 +28,10 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 /** On-device face localization and person masks for Agent workspace images. */
-final class MobileImageVision {
+public final class MobileImageVision {
     private MobileImageVision() {}
 
-    static JSONObject detectFaces(File source) throws Exception {
+    public static JSONObject detectFaces(File source) throws Exception {
         PreparedImage image = prepare(source);
         FaceDetectorOptions options = new FaceDetectorOptions.Builder()
             .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
@@ -69,7 +69,7 @@ final class MobileImageVision {
         }
     }
 
-    static JSONObject segmentPerson(File source, File target) throws Exception {
+    public static JSONObject segmentPerson(File source, File target) throws Exception {
         PreparedImage image = prepare(source);
         SelfieSegmenterOptions options = new SelfieSegmenterOptions.Builder()
             .setDetectorMode(SelfieSegmenterOptions.SINGLE_IMAGE_MODE).build();

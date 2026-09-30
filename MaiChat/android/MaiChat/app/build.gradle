@@ -64,6 +64,18 @@ tasks.register("stageMaiAgentGraphicsEffects", Sync) {
     into graphicsEffectsOutput
 }
 android.sourceSets.main.assets.srcDir(graphicsEffectsOutput)
+// Each feature is a Java source root; package names stay stable across feature directories.
+android.sourceSets.main.java.setSrcDirs([
+    "src/main/java/app",
+    "src/main/java/assistant",
+    "src/main/java/chat",
+    "src/main/java/contacts",
+    "src/main/java/im",
+    "src/main/java/MaiChatTools",
+    "src/main/java/media",
+    "src/main/java/remote",
+    "src/main/java/ui",
+])
 android.sourceSets.androidTest.assets.srcDir(
     file("$projectDir/../../../../MaiAgent/Graphics/tests/fixtures"))
 tasks.configureEach {

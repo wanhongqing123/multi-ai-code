@@ -35,7 +35,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 /** Native core, JSON, SQLite, credentials and imports are confined to the named worker. */
-final class AIAssistantController {
+public final class AIAssistantController {
     interface HostToolHandler {
         Object execute(String toolName, JSONObject arguments) throws Exception;
     }
@@ -67,9 +67,9 @@ final class AIAssistantController {
             return false;
         }
     }
-    static final class ImportedFile {
-        final String relativePath;
-        final String mimeType;
+    public static final class ImportedFile {
+        public final String relativePath;
+        public final String mimeType;
         final boolean image;
         ImportedFile(String relativePath, String mimeType, boolean image) {
             this.relativePath = relativePath;
@@ -78,7 +78,7 @@ final class AIAssistantController {
         }
     }
     private static AIAssistantController shared;
-    static synchronized AIAssistantController shared(Context context) {
+    public static synchronized AIAssistantController shared(Context context) {
         if (shared == null)
             shared = new AIAssistantController(context, null);
         return shared;
@@ -460,7 +460,7 @@ final class AIAssistantController {
         });
     }
 
-    ImportedFile importPhotoForHost(Uri uri) throws Exception {
+    public ImportedFile importPhotoForHost(Uri uri) throws Exception {
         if (root == null) throw new IllegalStateException("AI 工作区尚未准备好");
         if (android.os.Build.VERSION.SDK_INT >= 29) {
             Bitmap bitmap = context.getContentResolver().loadThumbnail(
@@ -482,7 +482,7 @@ final class AIAssistantController {
             return importStream(input, "image/jpeg", "photo.jpg");
         }
     }
-    ImportedFile importOriginalPhotoForHost(Uri uri) throws Exception {
+    public ImportedFile importOriginalPhotoForHost(Uri uri) throws Exception {
         if (root == null) throw new IllegalStateException("AI 工作区尚未准备好");
         String mime = context.getContentResolver().getType(uri);
         if (mime == null || !mime.startsWith("image/"))
@@ -549,7 +549,7 @@ final class AIAssistantController {
             main.post(() -> completion.accept(result));
         });
     }
-    File workspaceFile(String relativePath) {
+    public File workspaceFile(String relativePath) {
         if (root == null || relativePath == null || relativePath.trim().isEmpty()) return null;
         try { return resolveAppFile(relativePath); }
         catch (IOException | IllegalArgumentException error) { return null; }
@@ -560,13 +560,13 @@ final class AIAssistantController {
         return AIAssistantPathPolicy.resolve(new File(root, "Workspace"),
             context.getFilesDir().getParentFile(), path);
     }
-    File workspaceImageForHost(String relativePath) throws Exception {
+    public File workspaceImageForHost(String relativePath) throws Exception {
         File candidate = resolveAppFile(relativePath);
         if (!candidate.isFile())
             throw new IllegalArgumentException("图片必须位于当前 App 目录内");
         return candidate;
     }
-    ImportedFile transformImageForHost(JSONObject arguments) throws Exception {
+    public ImportedFile transformImageForHost(JSONObject arguments) throws Exception {
         File source = workspaceImageForHost(arguments.optString("path", ""));
         if (source.length() < 1 || source.length() > 50L * 1024 * 1024)
             throw new IllegalArgumentException("源图片不能超过 50 MB");
@@ -631,7 +631,7 @@ final class AIAssistantController {
     File workspaceDirectoryForPreview() {
         return root == null ? null : context.getFilesDir().getParentFile();
     }
-    File workspacePdfOutputForHost(String absolutePath) throws Exception {
+    public File workspacePdfOutputForHost(String absolutePath) throws Exception {
         File candidate = resolveAppFile(absolutePath);
         if (!candidate.getName().toLowerCase(java.util.Locale.ROOT).endsWith(".pdf")
             || candidate.exists())

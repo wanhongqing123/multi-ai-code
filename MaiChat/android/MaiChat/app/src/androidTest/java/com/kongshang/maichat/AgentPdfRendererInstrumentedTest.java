@@ -1,5 +1,7 @@
 package com.kongshang.maichat;
 
+import com.kongshang.maichat.tools.AgentPdfRenderer;
+
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 

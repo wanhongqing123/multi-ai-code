@@ -1,4 +1,5 @@
 import AVFoundation
+import MaiChatCore
 import Photos
 import PhotosUI
 import SwiftUI

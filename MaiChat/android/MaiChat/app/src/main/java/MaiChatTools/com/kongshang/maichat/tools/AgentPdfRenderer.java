@@ -1,4 +1,4 @@
-package com.kongshang.maichat;
+package com.kongshang.maichat.tools;
 
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -20,7 +20,7 @@ import java.nio.charset.StandardCharsets;
 import org.json.JSONObject;
 
 /** Generates a paginated A4 PDF using only Android's in-process drawing APIs. */
-final class AgentPdfRenderer {
+public final class AgentPdfRenderer {
     private static final int PAGE_WIDTH = 595;
     private static final int PAGE_HEIGHT = 842;
     private static final int MARGIN = 36;
@@ -30,7 +30,7 @@ final class AgentPdfRenderer {
 
     private AgentPdfRenderer() {}
 
-    static JSONObject render(String html, File output) throws Exception {
+    public static JSONObject render(String html, File output) throws Exception {
         if (html == null || html.isEmpty() || html.getBytes(StandardCharsets.UTF_8).length > 10 * 1024 * 1024)
             throw new IllegalArgumentException("HTML source is empty or exceeds 10 MB");
         Html.ImageGetter images = source -> embeddedImage(source);

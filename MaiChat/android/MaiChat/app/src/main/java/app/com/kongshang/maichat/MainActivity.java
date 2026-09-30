@@ -1,5 +1,7 @@
 package com.kongshang.maichat;
 
+import com.kongshang.maichat.tools.MaiChatHostTools;
+
 import android.annotation.SuppressLint;
 import android.Manifest;
 import android.app.Activity;
@@ -225,7 +227,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         super.onPause();
     }
 
-    boolean isHostToolForeground() {
+    public boolean isHostToolForeground() {
         return activityInForeground && !destroyed;
     }
 
@@ -2941,7 +2943,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         return box;
     }
 
-    void showFullScreenImage(String path) {
+    public void showFullScreenImage(String path) {
         Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
         FrameLayout frame = new FrameLayout(this);
         frame.setBackgroundColor(Color.BLACK);
@@ -3482,7 +3484,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         return null;
     }
 
-    RemoteIMMessage latestMessage(String userId) {
+    public RemoteIMMessage latestMessage(String userId) {
         List<RemoteIMMessage> messages = session.chatState().messagesWith(userId);
         return messages.isEmpty() ? null : messages.get(messages.size() - 1);
     }

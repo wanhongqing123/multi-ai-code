@@ -27,6 +27,31 @@ final class RemoteIMDraftState: @preconcurrency ObservableObject {
     private var storedQuote: RemoteIMQuote?
     private var storedText = ""
     private var presentation = Presentation(text: "")
+    private var selectedConversation: String?
+    private var draftsByConversation: [String: ConversationDraft] = [:]
+
+    private struct ConversationDraft {
+        let text: String
+        let quote: RemoteIMQuote?
+    }
+
+    func selectConversation(ownerUserID: String, peerUserID: String) {
+        let key = ownerUserID + "\u{0}" + peerUserID
+        guard selectedConversation != key else { return }
+        guard let previous = selectedConversation else {
+            selectedConversation = key
+            return
+        }
+        if storedText.isEmpty && storedQuote == nil {
+            draftsByConversation.removeValue(forKey: previous)
+        } else {
+            draftsByConversation[previous] = ConversationDraft(text: storedText, quote: storedQuote)
+        }
+        selectedConversation = key
+        let restored = draftsByConversation.removeValue(forKey: key)
+        text = restored?.text ?? ""
+        quote = restored?.quote
+    }
 
     var text: String {
         get { storedText }

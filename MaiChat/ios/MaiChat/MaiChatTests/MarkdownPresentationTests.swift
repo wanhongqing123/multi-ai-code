@@ -1079,4 +1079,26 @@ final class ComposerDraftStateTests: XCTestCase {
         XCTAssertEqual(draft.text, "最新的正文")
         withExtendedLifetime(subscription) {}
     }
+
+    @MainActor
+    func testDraftTextAndQuoteAreScopedToOwnerAndPeer() {
+        let draft = RemoteIMDraftState()
+        draft.selectConversation(ownerUserID: "owner", peerUserID: "A")
+        draft.text = "unsent for A"
+        draft.quote = RemoteIMQuote(messageID: "from-a", senderID: "A", digest: "quote", kind: "text")
+
+        draft.selectConversation(ownerUserID: "owner", peerUserID: "B")
+        XCTAssertEqual(draft.text, "")
+        XCTAssertNil(draft.quote)
+        draft.text = "unsent for B"
+        draft.selectConversation(ownerUserID: "owner", peerUserID: "A")
+        XCTAssertEqual(draft.text, "unsent for A")
+        XCTAssertEqual(draft.quote?.messageID, "from-a")
+
+        draft.selectConversation(ownerUserID: "other-owner", peerUserID: "A")
+        XCTAssertEqual(draft.text, "")
+        XCTAssertNil(draft.quote)
+        draft.selectConversation(ownerUserID: "owner", peerUserID: "B")
+        XCTAssertEqual(draft.text, "unsent for B")
+    }
 }

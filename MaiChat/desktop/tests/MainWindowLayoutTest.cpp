@@ -107,6 +107,8 @@ private slots:
     void rendersSentMessageFromTopWithMetadata();
     void rendersRelativeMessageDates();
     void contactsNavigationShowsContactsAndOpensChat();
+    void composerDraftAndQuoteStayWithTheirContact();
+    void attachmentDraftStaysWithItsContact();
     void contactsCurrentSelectionDoesNotLeaveContactsPage();
     void settingsNavigationShowsAccountAndSdkDefaults();
     void agentSettingsDialogExposesSecureModelFields();
@@ -1178,6 +1180,8 @@ void MainWindowLayoutTest::aiReplySuggestionOnlyFillsComposer() {
     auto* fake = client.get();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
     app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+    app.addContact(QStringLiteral("other-user"), QStringLiteral("Other"));
+    app.selectPeer(QStringLiteral("phone-user"));
     fake->emitIncomingText(QStringLiteral("phone-user"), QStringLiteral("今天能审核完吗？"));
     const QString latestId =
         app.chatState().messagesWith(QStringLiteral("phone-user")).last().id;
@@ -1229,6 +1233,10 @@ void MainWindowLayoutTest::aiReplySuggestionOnlyFillsComposer() {
     QCOMPARE(editor->toPlainText(), QStringLiteral("已收到，我会在今天完成审核。"));
     QCOMPARE(fake->lastText(), QString());
     QVERIFY(bar->isHidden());
+    app.selectPeer(QStringLiteral("other-user"));
+    QCOMPARE(editor->toPlainText(), QString());
+    app.selectPeer(QStringLiteral("phone-user"));
+    QCOMPARE(editor->toPlainText(), QStringLiteral("已收到，我会在今天完成审核。"));
 }
 
 void MainWindowLayoutTest::conversationPreviewUsesPlainMarkdown_data() {
@@ -1637,6 +1645,95 @@ void MainWindowLayoutTest::contactsNavigationShowsContactsAndOpensChat() {
     auto* messagesPage = window.findChild<QWidget*>(QStringLiteral("messagesPage"));
     QVERIFY(messagesPage != nullptr);
     QCOMPARE(contentStack->currentWidget(), messagesPage);
+}
+
+// The editor widget is shared, so switching peers must swap its rich draft and quote together.
+void MainWindowLayoutTest::composerDraftAndQuoteStayWithTheirContact() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fakeClient = client.get();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("peer-a"), QStringLiteral("A"));
+    app.addContact(QStringLiteral("peer-b"), QStringLiteral("B"));
+    app.selectPeer(QStringLiteral("peer-a"));
+    MainWindow window(app);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto* editor = window.findChild<QTextEdit*>(QStringLiteral("messageEditor"));
+    auto* replyBar = window.findChild<QWidget*>(QStringLiteral("pendingReplyBar"));
+    auto* send = window.findChild<QPushButton*>(QStringLiteral("sendButton"));
+    QVERIFY(editor != nullptr);
+    QVERIFY(replyBar != nullptr);
+    QVERIFY(send != nullptr);
+
+    editor->setPlainText(QStringLiteral("unsent draft for A"));
+    RemoteIMMessage quoted;
+    quoted.fromUserId = QStringLiteral("peer-a");
+    quoted.toUserId = QStringLiteral("desktop-user");
+    quoted.text = QStringLiteral("A's message");
+    window.beginReplyTo(quoted);
+    QVERIFY(replyBar->isVisible());
+
+    app.selectPeer(QStringLiteral("peer-b"));
+    QCOMPARE(editor->toPlainText(), QString());
+    QVERIFY(!replyBar->isVisible());
+    window.beginReplyTo(quoted);
+    QVERIFY(!replyBar->isVisible());
+    editor->setPlainText(QStringLiteral("unsent draft for B"));
+
+    app.selectPeer(QStringLiteral("peer-a"));
+    QCOMPARE(editor->toPlainText(), QStringLiteral("unsent draft for A"));
+    QVERIFY(replyBar->isVisible());
+    app.selectPeer(QStringLiteral("peer-b"));
+    QCOMPARE(editor->toPlainText(), QStringLiteral("unsent draft for B"));
+    QVERIFY(!replyBar->isVisible());
+
+    send->click();
+    QCOMPARE(fakeClient->lastTextPeerId(), QStringLiteral("peer-b"));
+    QCOMPARE(fakeClient->lastText(), QStringLiteral("unsent draft for B"));
+    const QList<RemoteIMMessage> sent = app.chatState().messagesWith(QStringLiteral("peer-b"));
+    QVERIFY(!sent.isEmpty());
+    QVERIFY(!sent.last().hasQuote);
+    app.selectPeer(QStringLiteral("peer-a"));
+    QCOMPARE(editor->toPlainText(), QStringLiteral("unsent draft for A"));
+    QVERIFY(replyBar->isVisible());
+}
+
+void MainWindowLayoutTest::attachmentDraftStaysWithItsContact() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString imagePath = QDir(directory.path()).filePath(QStringLiteral("draft.png"));
+    QImage image(32, 24, QImage::Format_RGB32);
+    image.fill(Qt::green);
+    QVERIFY(image.save(imagePath, "PNG"));
+
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fakeClient = client.get();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("peer-a"), QStringLiteral("A"));
+    app.addContact(QStringLiteral("peer-b"), QStringLiteral("B"));
+    app.selectPeer(QStringLiteral("peer-a"));
+    MainWindow window(app);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto* editor = window.findChild<QTextEdit*>(QStringLiteral("messageEditor"));
+    auto* send = window.findChild<QPushButton*>(QStringLiteral("sendButton"));
+    QVERIFY(editor != nullptr);
+    QVERIFY(send != nullptr);
+    QMimeData mime;
+    mime.setUrls({QUrl::fromLocalFile(imagePath)});
+    dropOnComposer(editor, &mime);
+    QVERIFY(editor->toPlainText().contains(QChar(0xFFFC)));
+
+    app.selectPeer(QStringLiteral("peer-b"));
+    QCOMPARE(editor->toPlainText(), QString());
+    editor->setPlainText(QStringLiteral("B text"));
+    app.selectPeer(QStringLiteral("peer-a"));
+    QVERIFY(editor->toPlainText().contains(QChar(0xFFFC)));
+    send->click();
+    QCOMPARE(fakeClient->lastImagePeerId(), QStringLiteral("peer-a"));
+    QCOMPARE(fakeClient->lastImagePath(), imagePath);
+    app.selectPeer(QStringLiteral("peer-b"));
+    QCOMPARE(editor->toPlainText(), QStringLiteral("B text"));
 }
 
 void MainWindowLayoutTest::contactsCurrentSelectionDoesNotLeaveContactsPage() {

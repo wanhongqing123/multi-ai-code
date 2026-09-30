@@ -1470,7 +1470,8 @@ private struct ChatDetailView: View {
         }
         .onDisappear {
             appState.setConversationVisible(userID: contact.userID, visible: false)
-            appState.cancelReply()
+            // The previous chat can disappear after the next one has appeared. Clearing the
+            // shared draft here would erase the next contact's restored quote.
             messageActionTarget = nil
             selectingMessageID = nil
             forwardingMessage = nil

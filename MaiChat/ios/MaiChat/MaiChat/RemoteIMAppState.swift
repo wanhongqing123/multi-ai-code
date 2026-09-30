@@ -731,8 +731,12 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
 
     func selectContact(_ contact: RemoteIMContact) {
         if chatState.selectedPeerID != contact.userID {
-            cancelReply()
+            replyPreparationTask?.cancel()
+            replyPreparationTask = nil
+            draft.selectConversation(ownerUserID: chatState.ownerUserID, peerUserID: contact.userID)
             chatState.selectPeer(userID: contact.userID)
+        } else {
+            draft.selectConversation(ownerUserID: chatState.ownerUserID, peerUserID: contact.userID)
         }
         if unreadCountByUserID.removeValue(forKey: contact.userID) != nil {
             settingsStore.save(currentStoredSettings())

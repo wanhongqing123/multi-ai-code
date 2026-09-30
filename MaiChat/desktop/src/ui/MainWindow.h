@@ -9,6 +9,7 @@
 #include <QScrollArea>
 #include <QStackedWidget>
 #include <QTextEdit>
+#include <QTextDocumentFragment>
 #include <QVBoxLayout>
 #include <functional>
 #include <memory>
@@ -87,6 +88,7 @@ private:
     void showContactGroupContextMenu(QListWidget* list, QListWidgetItem* item, const QPoint& pos);
     void refreshSettings();
     void refreshMessages();
+    void syncComposerPeer(const QString& peerId);
     void rebuildMessageList(const QString& peerId, const QList<RemoteIMMessage>& messages);
     void applyIncrementalMessageUpdate(const QList<RemoteIMMessage>& messages);
     // 渲染窗口（只画尾部一批，更早的由「加载更早」分批补；见 cpp 里的成本记录）。
@@ -159,6 +161,13 @@ private:
     bool composerHasAttachments() const;
     RemoteIMQuote pendingQuote_;
     bool hasPendingQuote_ = false;
+    struct ComposerDraft {
+        QTextDocumentFragment content;
+        RemoteIMQuote quote;
+        bool hasQuote = false;
+    };
+    QHash<QString, ComposerDraft> composerDrafts_;
+    QString composerPeerId_;
     QWidget* pendingReplyBar_ = nullptr;
     QLabel* pendingReplyLabel_ = nullptr;
     void openImagePreview(const QString& imagePath);

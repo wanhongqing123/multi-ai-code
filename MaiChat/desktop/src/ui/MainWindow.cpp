@@ -2059,7 +2059,7 @@ void MainWindow::buildUi() {
     contactsDirectoryPane->setMinimumWidth(UiZoom::s(300));
     contactsDirectoryPane->setMaximumWidth(UiZoom::s(420));
     auto* contactsDirectoryLayout = new QVBoxLayout(contactsDirectoryPane);
-    contactsDirectoryLayout->setContentsMargins(24, 24, 20, 18);
+    contactsDirectoryLayout->setContentsMargins(24, 24, 8, 18);
     contactsDirectoryLayout->setSpacing(16);
 
     // 通讯录栏头部：和会话栏一样是一个搜索框，只是搜的对象不同。
@@ -2721,7 +2721,6 @@ void MainWindow::bindSignals() {
         const QString userId = current->data(Qt::UserRole).toString();
         if (userId.isEmpty()) return;
         if (userId != app_.chatState().selectedPeerId()) {
-            if (composerHasAttachments()) messageEditor_->clear();  // 丢弃属上一个会话的内联附件草稿
             app_.selectPeer(userId);
         }
         // 搜索状态下，左列被过滤成「有命中的会话」。点进去只打开会话而不定位，
@@ -2731,7 +2730,9 @@ void MainWindow::bindSignals() {
         const QString hitId = bestSearchHitId(userId, needle);
         if (hitId.isEmpty()) return;
         // 切会话会整屏重建气泡，高度要等一次布局才定下来；和结果面板走同一套延后定位。
-        QTimer::singleShot(0, this, [this, hitId] { highlightMessage(hitId); });
+        QTimer::singleShot(0, this, [this, userId, hitId] {
+            if (app_.chatState().selectedPeerId() == userId) highlightMessage(hitId);
+        });
     });
     auto openContactConversation = [this](QListWidgetItem* item) {
         if (!item) return;
@@ -2742,7 +2743,6 @@ void MainWindow::bindSignals() {
         }
         const QString userId = item->data(Qt::UserRole).toString();
         if (userId.isEmpty()) return;
-        if (userId != app_.chatState().selectedPeerId() && composerHasAttachments()) messageEditor_->clear();
         app_.selectPeer(userId);
         showMessagesPage();
     };
@@ -3017,14 +3017,15 @@ void MainWindow::openGlobalSearchResult(QListWidgetItem* item) {
 
     clearMessageSearchHighlight();
     if (peerId != app_.chatState().selectedPeerId()) {
-        if (composerHasAttachments()) messageEditor_->clear();
         app_.selectPeer(peerId);
     }
     showMessagesPage();
     closeGlobalSearchResults();
     // 切会话会整屏重建气泡，气泡高度还要等一次布局才定下来，
     // 所以定位放到事件循环下一轮，否则滚到的位置是旧布局算出来的。
-    QTimer::singleShot(0, this, [this, messageId] { highlightMessage(messageId); });
+    QTimer::singleShot(0, this, [this, peerId, messageId] {
+        if (app_.chatState().selectedPeerId() == peerId) highlightMessage(messageId);
+    });
 }
 
 QString MainWindow::bestSearchHitId(const QString& peerId, const QString& needle) const {
@@ -3626,9 +3627,43 @@ void MainWindow::updateConnectionIndicator() {
     statusLabel_->update();
 }
 
+void MainWindow::syncComposerPeer(const QString& peerId) {
+    if (!messageEditor_ || composerPeerId_ == peerId) return;
+    if (!composerPeerId_.isEmpty()) {
+        ComposerDraft draft;
+        if (!messageEditor_->document()->isEmpty())
+            draft.content = QTextDocumentFragment(messageEditor_->document());
+        draft.quote = pendingQuote_;
+        draft.hasQuote = hasPendingQuote_;
+        if (!draft.content.isEmpty() || draft.hasQuote)
+            composerDrafts_.insert(composerPeerId_, std::move(draft));
+        else
+            composerDrafts_.remove(composerPeerId_);
+    }
+
+    composerPeerId_ = peerId;
+    clearReplySuggestions();
+    messageEditor_->clear();
+    cancelPendingReply();
+    if (composerDrafts_.contains(peerId)) {
+        const ComposerDraft draft = composerDrafts_.take(peerId);
+        if (!draft.content.isEmpty()) {
+            QTextCursor cursor = messageEditor_->textCursor();
+            cursor.insertFragment(draft.content);
+            cursor.movePosition(QTextCursor::End);
+            messageEditor_->setTextCursor(cursor);
+        }
+        pendingQuote_ = draft.quote;
+        hasPendingQuote_ = draft.hasQuote;
+        refreshPendingReplyBar();
+    }
+    updateComposerState();
+}
+
 void MainWindow::refreshMessages() {
     RemoteDiagnostics::PerformanceSpan performance("message-refresh");
     const QString selectedPeer = app_.chatState().selectedPeerId();
+    syncComposerPeer(selectedPeer);
     titleLabel_->setText(selectedPeer.isEmpty() ? QStringLiteral("请选择会话") : contactName(selectedPeer));
     updateConnectionIndicator();
     updateComposerState();
@@ -3721,6 +3756,7 @@ MainWindow::ApprovalDisplayState MainWindow::approvalDisplayState(
 }
 
 void MainWindow::rebuildMessageList(const QString& peerId, const QList<RemoteIMMessage>& messages) {
+    QObject::disconnect(messageScrollToBottomConn_);
     while (QLayoutItem* item = messageLayout_->takeAt(0)) {
         if (QWidget* widget = item->widget()) delete widget;
         delete item;
@@ -3853,9 +3889,11 @@ void MainWindow::rebuildMessageList(const QString& peerId, const QList<RemoteIMM
     updateLoadEarlierVisibility();
 
     QTimer::singleShot(0, this, [this, peerId, renderedApprovalIds] {
+        if (renderedPeerId_ != peerId || app_.chatState().selectedPeerId() != peerId) return;
         updateMessageBubbleWidths();
         scrollMessagesToBottom();
         QTimer::singleShot(0, this, [this, peerId, renderedApprovalIds] {
+            if (renderedPeerId_ != peerId || app_.chatState().selectedPeerId() != peerId) return;
             QWidget* viewport = messageScroll_ ? messageScroll_->viewport() : nullptr;
             for (const QString& messageId : renderedApprovalIds) {
                 QWidget* row = messageRowById_.value(messageId);
@@ -3932,11 +3970,17 @@ void MainWindow::prependRenderWindow(const QList<RemoteIMMessage>& messages, int
 
     if (!keepViewport) return;
     // 高度要等下一轮布局才进滚动条范围，等 rangeChanged 再补偿，一次性触发。
-    QTimer::singleShot(0, this, [this, bar, oldMax, oldValue] {
+    const QString peerId = app_.chatState().selectedPeerId();
+    QTimer::singleShot(0, this, [this, peerId, bar, oldMax, oldValue] {
+        if (renderedPeerId_ != peerId || app_.chatState().selectedPeerId() != peerId) return;
         QObject::disconnect(messageScrollToBottomConn_);
         messageScrollToBottomConn_ = connect(
             bar, &QAbstractSlider::rangeChanged, this,
-            [this, bar, oldMax, oldValue](int, int max) {
+            [this, peerId, bar, oldMax, oldValue](int, int max) {
+                if (renderedPeerId_ != peerId || app_.chatState().selectedPeerId() != peerId) {
+                    QObject::disconnect(messageScrollToBottomConn_);
+                    return;
+                }
                 bar->setValue(oldValue + (max - oldMax));
                 QObject::disconnect(messageScrollToBottomConn_);
             });
@@ -3962,6 +4006,7 @@ bool MainWindow::ensureMessageRendered(const QString& messageId) {
 
 void MainWindow::applyIncrementalMessageUpdate(const QList<RemoteIMMessage>& messages) {
     RemoteDiagnostics::PerformanceSpan performance("message-layout");
+    const QString peerId = app_.chatState().selectedPeerId();
     QSet<QString> newIds;
     newIds.reserve(messages.size());
     for (const RemoteIMMessage& message : messages) newIds.insert(message.id);
@@ -4058,8 +4103,9 @@ void MainWindow::applyIncrementalMessageUpdate(const QList<RemoteIMMessage>& mes
     }
     updateLoadEarlierVisibility();
 
-    QTimer::singleShot(0, this, [this, prepended, appended, wasNearBottom, oldMax, oldValue,
+    QTimer::singleShot(0, this, [this, peerId, prepended, appended, wasNearBottom, oldMax, oldValue,
                                       appendedApprovalIds] {
+        if (renderedPeerId_ != peerId || app_.chatState().selectedPeerId() != peerId) return;
         updateMessageBubbleWidths();
         QScrollBar* bar = messageScroll_->verticalScrollBar();
         QObject::disconnect(messageScrollToBottomConn_);
@@ -4067,7 +4113,11 @@ void MainWindow::applyIncrementalMessageUpdate(const QList<RemoteIMMessage>& mes
             // 向上翻页：锚定原可视位置（新内容顶入的高度差补偿到滚动值）。
             messageScrollToBottomConn_ = connect(
                 bar, &QAbstractSlider::rangeChanged, this,
-                [this, bar, oldMax, oldValue](int, int max) {
+                [this, peerId, bar, oldMax, oldValue](int, int max) {
+                    if (renderedPeerId_ != peerId || app_.chatState().selectedPeerId() != peerId) {
+                        QObject::disconnect(messageScrollToBottomConn_);
+                        return;
+                    }
                     bar->setValue(oldValue + (max - oldMax));
                     QObject::disconnect(messageScrollToBottomConn_);
                 });
@@ -4077,7 +4127,8 @@ void MainWindow::applyIncrementalMessageUpdate(const QList<RemoteIMMessage>& mes
         if (appended && wasNearBottom) {
             scrollMessagesToBottom();
         }
-        QTimer::singleShot(0, this, [this, appendedApprovalIds] {
+        QTimer::singleShot(0, this, [this, peerId, appendedApprovalIds] {
+            if (renderedPeerId_ != peerId || app_.chatState().selectedPeerId() != peerId) return;
             QWidget* viewport = messageScroll_ ? messageScroll_->viewport() : nullptr;
             for (const QString& messageId : appendedApprovalIds) {
                 QWidget* row = messageRowById_.value(messageId);
@@ -4475,6 +4526,9 @@ void MainWindow::saveFileAttachmentToLocal(const RemoteIMFileAttachment& attachm
 // （对端设备发的、本地已清理、或落在还没加载的分页里）。查不到就渲染成空白，
 // 而空白引用块比没有引用更难看。
 void MainWindow::beginReplyTo(const RemoteIMMessage& message) {
+    const QString peerId = message.direction == RemoteIMMessageDirection::Incoming
+                               ? message.fromUserId : message.toUserId;
+    if (!peerId.isEmpty() && peerId != app_.chatState().selectedPeerId()) return;
     pendingQuote_ = MessageQuote::quoteFor(message);
     // 摘要为空说明这条消息压不出可展示的内容，引用它只会得到一个空白块。
     hasPendingQuote_ = !pendingQuote_.digest.isEmpty();
@@ -4632,7 +4686,11 @@ QWidget* MainWindow::createQuoteBlock(const RemoteIMMessage& message, QWidget* p
         : new ClickableWidget(parent, [this, quoteMsgId] {
               // 定位可能触发「加载更早」，那会整屏刷新、重建气泡——在被点部件
               // 自己的事件处理里同步做这件事，等于在自己脚下拆房子。
-              QTimer::singleShot(0, this, [this, quoteMsgId] { jumpToQuotedMessage(quoteMsgId); });
+              const QString peerId = app_.chatState().selectedPeerId();
+              QTimer::singleShot(0, this, [this, peerId, quoteMsgId] {
+                  if (app_.chatState().selectedPeerId() == peerId)
+                      jumpToQuotedMessage(quoteMsgId);
+              });
           });
     block->setObjectName(QStringLiteral("messageQuoteBlock"));
     auto* layout = new QHBoxLayout(block);

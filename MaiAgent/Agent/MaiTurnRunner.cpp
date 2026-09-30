@@ -199,6 +199,7 @@ std::vector<MaiToolInvocation> MaiTurnRunner::requestCompletion(const MaiModelRe
     // 混成一个 part 会让界面把工具卡夹在一段文字中间。
     mText.clear();
     mReasoning.clear();
+    mLastPersistedStreamBytes = 0;
     mTextPartId = MaiIdGenerator::newPartId();
     mReasoningPartId = MaiIdGenerator::newPartId();
 
@@ -213,6 +214,7 @@ std::vector<MaiToolInvocation> MaiTurnRunner::requestCompletion(const MaiModelRe
             beginStreamedPart(mTextPartId, MaiTextPart{});
         }
         mText.append(chunk);
+        checkpointStreamedParts(false);
         mDependencies.emitter->emitDelta(mSessionId, mAssistant.id, mTextPartId, "text", chunk);
     };
     sink.onReasoning = [&](std::string_view chunk) {
@@ -221,6 +223,7 @@ std::vector<MaiToolInvocation> MaiTurnRunner::requestCompletion(const MaiModelRe
             beginStreamedPart(mReasoningPartId, MaiReasoningPart{});
         }
         mReasoning.append(chunk);
+        checkpointStreamedParts(false);
         mDependencies.emitter->emitDelta(mSessionId, mAssistant.id, mReasoningPartId, "text",
                                          chunk);
     };
@@ -323,11 +326,10 @@ void MaiTurnRunner::executeTools(const std::vector<MaiToolInvocation>& calls,
 
             resultImages.insert(resultImages.end(), result.images().begin(), result.images().end());
         }
-        mDependencies.emitter->emitPart(MaiEventType::MessagePartUpdated, mSessionId, mAssistant.id,
-                                        part.id);
-
         // 每执行完一个工具就落一次库：工具可能跑很久，中途崩了不该丢掉已完成的部分。
         mDependencies.store->putMessage(mSessionId, mAssistant);
+        mDependencies.emitter->emitPart(MaiEventType::MessagePartUpdated, mSessionId, mAssistant.id,
+                                        part.id);
     }
 
     // A single model response may request several tools at once. Keep their MaiToolPart entries
@@ -447,15 +449,27 @@ void MaiTurnRunner::beginStreamedPart(const std::string& partId, MaiMessagePartB
 }
 
 void MaiTurnRunner::commitStreamedParts() {
-    // 内容落库只在这里做。每个 delta 落一次盘等于每秒几十次 fsync。
-    // （part 本身早在第一个 chunk 到达时就占位入库了，见 beginStreamedPart。）
-    //
-    // 按实际到达顺序填：思考过程一般先来，正文在后。
-    fillStreamedPart(mReasoningPartId, mReasoning);
-    fillStreamedPart(mTextPartId, mText);
+    checkpointStreamedParts(true);
+    mReasoning.clear();
+    mText.clear();
+    mLastPersistedStreamBytes = 0;
 }
 
-void MaiTurnRunner::fillStreamedPart(const std::string& partId, std::string& buffer) {
+void MaiTurnRunner::checkpointStreamedParts(bool force) {
+    // UI receives every delta, but durable storage must not lag until the HTTP stream closes.
+    // Persist in bounded chunks so a stalled stream or process exit loses at most one small tail.
+    constexpr std::size_t kCheckpointBytes = 1024;
+    const std::size_t currentBytes = mReasoning.size() + mText.size();
+    if (currentBytes == mLastPersistedStreamBytes ||
+        (!force && currentBytes - mLastPersistedStreamBytes < kCheckpointBytes))
+        return;
+    fillStreamedPart(mReasoningPartId, mReasoning);
+    fillStreamedPart(mTextPartId, mText);
+    mDependencies.store->putMessage(mSessionId, mAssistant);
+    mLastPersistedStreamBytes = currentBytes;
+}
+
+void MaiTurnRunner::fillStreamedPart(const std::string& partId, const std::string& buffer) {
     if (buffer.empty()) return;
     for (MaiMessagePart& part : mAssistant.parts) {
         if (part.id != partId) continue;
@@ -467,8 +481,6 @@ void MaiTurnRunner::fillStreamedPart(const std::string& partId, std::string& buf
         break;
     }
     // 找不到对应的 part 说明占位那一步没跑过（理论上不可能：有内容就一定先有第一个 chunk）。
-    // 清掉缓冲而不是把它留到下一圈——留着会让下一圈的 part 带上这一圈的尾巴。
-    buffer.clear();
 }
 
 void MaiTurnRunner::finish(const std::atomic<bool>& cancel) {

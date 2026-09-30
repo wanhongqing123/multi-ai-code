@@ -38,7 +38,8 @@ public:
 
     std::string description() const override {
         return "View an existing PNG, JPEG, WebP, or GIF file inside the working directory. "
-               "Use this when visual inspection is needed for an image already on disk.";
+               "Images attached by the user are already in the current prompt; inspect them "
+               "directly instead of calling this tool for paths mentioned in a screenshot.";
     }
 
     std::string parametersSchema() const override {
@@ -67,7 +68,10 @@ public:
         if (resolved.empty()) {
             return MaiToolResult::failure(
                 MaiErrorCode::InvalidInput,
-                "Image path is outside the working directory and was rejected: " + rawPath);
+                "Image path is outside the working directory and was rejected: " + rawPath +
+                    ". Working directory: " + context.root +
+                    ". Inspect a user-attached image directly, or copy the original file into "
+                    "the working directory and call view_image with a relative path.");
         }
         const MaiFilePath path = MaiFilePath::fromUtf8(resolved);
         if (!MaiFileSystem::exists(path))

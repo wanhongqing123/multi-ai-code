@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include <cstddef>
 #include <memory>
 #include <set>
 #include <string>
@@ -86,10 +87,11 @@ private:
     // 这个洞是拿真实 GLM-5.3 跑出来的：假模型不发 reasoning_content，测不到。
     void beginStreamedPart(const std::string& partId, MaiMessagePartBody body);
 
-    // 把这一圈累积的文本和推理填进各自的 part。**就地填**，
+    // 流式增量每积累约 1 KiB 就写一次，结束/中断时强制写尾巴。**就地填**，
     // 不是新建——part 在第一个 chunk 到达时就已经占位入库了。
     void commitStreamedParts();
-    void fillStreamedPart(const std::string& partId, std::string& buffer);
+    void checkpointStreamedParts(bool force);
+    void fillStreamedPart(const std::string& partId, const std::string& buffer);
     void finish(const std::atomic<bool>& cancel);
 
     Dependencies mDependencies;
@@ -104,6 +106,7 @@ private:
     std::string mReasoning;
     std::string mTextPartId;
     std::string mReasoningPartId;
+    std::size_t mLastPersistedStreamBytes = 0;
 
     MaiError mError;
 

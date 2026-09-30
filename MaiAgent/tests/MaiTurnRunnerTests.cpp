@@ -6,12 +6,15 @@
 #include <chrono>
 #include <cstdio>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "MaiAgent.h"
 #include "MaiMemoryStore.h"
+#include "MaiSqliteStore.h"
 #include "MaiFakeModelClient.h"
 
 static int failures = 0;
@@ -44,6 +47,29 @@ MaiFakeModelClient::Turn defaultTurn(int chunkDelayMilliseconds = 0) {
     turn.chunkDelayMilliseconds = chunkDelayMilliseconds;
     return turn;
 }
+
+class GatedStreamModel final : public MaiModelClient {
+public:
+    std::atomic<bool> emitted{false};
+    std::atomic<bool> release{false};
+
+    MaiError stream(const MaiModelRequest&, const MaiStreamSink& sink,
+                    const std::atomic<bool>& cancel) override {
+        for (int index = 0; index < 16; ++index) {
+            if (sink.onReasoning) sink.onReasoning(std::string(512, 'r'));
+            if (sink.onText) sink.onText(std::string(256, 't'));
+        }
+        emitted.store(true);
+        while (!release.load() && !cancel.load())
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        return cancel.load() ? MaiError::make(MaiErrorCode::Canceled, "canceled by user")
+                             : MaiError::ok();
+    }
+
+    MaiWireApi wireApi() const override {
+        return MaiWireApi::ChatCompletions;
+    }
+};
 
 // 把事件流录下来，方便断言顺序和内容。
 struct Recorder {
@@ -358,9 +384,17 @@ void test_concurrent_sessions() {
     std::vector<std::string> sids;
     for (int i = 0; i < 4; ++i)
         sids.push_back(agent->submit(MaiCreateSession{"/tmp", "", ""}).value());
-    for (const auto& sessionId : sids)
-        CHECK(agent->submit(MaiSendPrompt{sessionId, "concurrency"}).isOk());
+    for (std::size_t index = 0; index < sids.size(); ++index)
+        CHECK(agent->submit(MaiSendPrompt{sids[index], "concurrency " + std::to_string(index)})
+                  .isOk());
     agent->waitIdle();
+    std::set<std::string> requestPrompts;
+    for (std::size_t index = 0; index < underTest.model->requestCount(); ++index) {
+        const MaiModelRequest request = underTest.model->request(index);
+        CHECK(request.messages.size() == 1);
+        if (request.messages.size() == 1) requestPrompts.insert(request.messages.front().content);
+    }
+    CHECK(requestPrompts.size() == sids.size());
     for (const auto& sessionId : sids) {
         const auto msgs = agent->listMessages(sessionId);
         CHECK(msgs.size() == 2);
@@ -369,6 +403,77 @@ void test_concurrent_sessions() {
             CHECK(t && t->text == kDefaultText);
         }
     }
+}
+
+void test_tool_completion_is_stored_before_update_event() {
+    MaiFakeModelClient::Turn first;
+    first.invocations.push_back(MaiToolInvocation{"call_1", "missing_tool", "{}"});
+    MaiFakeModelClient::Turn second;
+    second.textChunks = {"done"};
+    auto model =
+        std::make_unique<MaiFakeModelClient>(std::vector<MaiFakeModelClient::Turn>{first, second});
+    MaiAgent agent(makeMaiMemoryStore(), std::move(model));
+    const std::string sessionId = agent.submit(MaiCreateSession{"/tmp", "", ""}).value();
+    std::vector<MaiToolState> observed;
+    agent.eventBus().subscribe([&](const MaiEvent& event) {
+        if (event.sessionId != sessionId || event.type != MaiEventType::MessagePartUpdated) return;
+        for (const MaiMessage& message : agent.listMessages(sessionId)) {
+            for (const MaiMessagePart& part : message.parts) {
+                if (part.id != event.partId) continue;
+                if (const auto* tool = std::get_if<MaiToolPart>(&part.body))
+                    observed.push_back(tool->state);
+            }
+        }
+    });
+
+    CHECK(agent.submit(MaiSendPrompt{sessionId, "try a missing tool"}).isOk());
+    agent.waitIdle();
+    CHECK(observed.size() == 2);
+    if (observed.size() == 2) {
+        CHECK(observed[0] == MaiToolState::Running);
+        CHECK(observed[1] == MaiToolState::Error);
+    }
+}
+
+void test_streamed_text_is_checkpointed_before_network_finishes() {
+    const auto runCase = [](std::unique_ptr<MaiSessionStore> store) {
+        auto model = std::make_unique<GatedStreamModel>();
+        GatedStreamModel* gated = model.get();
+        MaiAgent agent(std::move(store), std::move(model));
+        const std::string sessionId = agent.submit(MaiCreateSession{"/tmp", "", ""}).value();
+        CHECK(agent.submit(MaiSendPrompt{sessionId, "long answer"}).isOk());
+        for (int i = 0; i < 200 && !gated->emitted.load(); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        CHECK(gated->emitted.load());
+
+        const auto sizes = [&] {
+            std::size_t reasoningBytes = 0;
+            std::size_t textBytes = 0;
+            for (const MaiMessage& message : agent.listMessages(sessionId)) {
+                if (message.role != MaiRole::Assistant) continue;
+                for (const MaiMessagePart& part : message.parts) {
+                    if (const auto* reasoning = std::get_if<MaiReasoningPart>(&part.body))
+                        reasoningBytes += reasoning->text.size();
+                    if (const auto* text = std::get_if<MaiTextPart>(&part.body))
+                        textBytes += text->text.size();
+                }
+            }
+            return std::pair<std::size_t, std::size_t>{reasoningBytes, textBytes};
+        };
+        const auto during = sizes();
+        CHECK(during.first >= 7 * 1024);
+        CHECK(during.second >= 3 * 1024);
+        gated->release.store(true);
+        agent.waitIdle();
+        const auto final = sizes();
+        CHECK(final.first == 8 * 1024);
+        CHECK(final.second == 4 * 1024);
+    };
+
+    runCase(makeMaiMemoryStore());
+    auto opened = makeMaiSqliteStore(":memory:");
+    CHECK(opened.isOk());
+    if (opened.isOk()) runCase(std::move(opened.value()));
 }
 
 }  // namespace
@@ -385,6 +490,8 @@ int main() {
     test_unknown_session();
     test_no_llm_configured();
     test_concurrent_sessions();
+    test_tool_completion_is_stored_before_update_event();
+    test_streamed_text_is_checkpointed_before_network_finishes();
     if (failures == 0) std::printf("loop tests passed\n");
     return failures == 0 ? 0 : 1;
 }

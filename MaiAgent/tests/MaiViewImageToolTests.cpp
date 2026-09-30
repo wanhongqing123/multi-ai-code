@@ -59,7 +59,10 @@ void test_rejects_invalid_images_and_escaped_paths() {
     context.model = "glm-5.3-flash";
 
     CHECK(tool->execute(R"({"path":"text.txt"})", context).hasError());
-    CHECK(tool->execute(R"({"path":"../outside.png"})", context).hasError());
+    const MaiToolResult outside = tool->execute(R"({"path":"../outside.png"})", context);
+    CHECK(outside.hasError());
+    CHECK(outside.error().message().find(context.root) != std::string::npos);
+    CHECK(outside.error().message().find("user-attached image") != std::string::npos);
     CHECK(tool->execute(R"({"path":7})", context).hasError());
     CHECK(tool->execute("not-json", context).hasError());
 }

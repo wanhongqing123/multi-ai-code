@@ -235,7 +235,7 @@ public:
 
         // part 整体重写而不是逐条 diff：一条消息的 part 个数是个位数，
         // 而 diff 要处理"改了/删了/顺序变了"三种情况，不值得。
-        // putMessage 的调用频率是每个工具调用一次，不是每个 delta 一次。
+        // putMessage 也用于流式内容的分块检查点；不是每个 delta 都写一次。
         runWith("DELETE FROM parts WHERE message_id = ?1", message.id);
         for (const auto& part : message.parts) writePartLocked(message.id, part);
 

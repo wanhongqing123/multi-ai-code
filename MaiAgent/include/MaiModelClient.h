@@ -165,7 +165,7 @@ struct MaiModelConfig {
     long totalTimeoutSeconds = 0;
     // No model content/reasoning/tool-call progress for this long aborts the stream.
     // SSE comments and transport keepalives do not count as model progress. 0 disables it.
-    long inactivityTimeoutSeconds = 300;
+    long inactivityTimeoutSeconds = 120;
     // 只在还没有向调用方交付任何正文/思考/工具调用时重试，避免流式内容重复。
     int maxRetries = 2;
     long retryInitialDelayMs = 250;

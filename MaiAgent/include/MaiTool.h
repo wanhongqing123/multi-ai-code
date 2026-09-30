@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -32,6 +33,10 @@ struct MaiToolContext {
     // desktop hosts can opt out of a tool-level path boundary.
     std::string fileAccessRoot;
     bool allowOutsideWorkingDirectory = false;
+
+    // Optional platform decoder for legacy text encodings. The result must be UTF-8. Mobile
+    // hosts use their native charset libraries when the core detects non-UTF-8 file bytes.
+    std::function<MaiResult<std::string>(const std::string&, const std::string&)> decodeText;
 
     // Relative paths still start from root; the access policy above controls absolute targets
     // and paths that leave root. An empty result means the path is not permitted.
@@ -126,7 +131,7 @@ public:
     // 是同一个工具。只按工具名判的话只有两种结果——要么每次都弹框（用户很快被训练成
     // 条件反射点「允许」，闸门就废了），要么永不弹（等于没有闸门）。
     //
-    // read / glob / grep 这类只读的一律返回 false；write / edit 一律返回 true；
+    // read / glob / grep 这类只读的一律返回 false；文件创建、写入、删除和编辑返回 true；
     // shell 自己看命令决定。
     //
     // 默认 false。**加会改东西的新工具时别忘了覆盖它**——忘了的后果是模型可以不经用户同意改文件，

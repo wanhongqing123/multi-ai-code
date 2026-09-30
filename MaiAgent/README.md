@@ -104,15 +104,17 @@ Windows 上要先进 MSVC 环境（`vcvars64.bat`）。
 
 - [x] **M1 空转骨架** — session 增删查 + 事件流
 - [x] **M2 能聊天** — Chat Completions 流式客户端 + agent loop + prompt/interrupt
-- [x] **M3 能干活** — 工具注册表 + read/write/glob/grep + 工具循环
-- [x] **M4 权限闸门** — write 跑之前停下来等用户点头
+- [x] **M3 能干活** — 工具注册表 + 文件创建/读取/写入/删除/查找 + 工具循环
+- [x] **M4 权限闸门** — 文件变更前按审批策略询问，授权按目标路径收窄
 - [x] **M5 落库** — SQLite 持久化 + 切模型 + 写失败不再无声无息
 - [x] **M6 脱壳验证** — `maiagent-console` 只链 `maiagent`，HTTP 整块摘掉
 
 ## 权限闸门
 
-会改东西的工具（现在只有 `write`）跑之前会停下来等用户点头。
-只读的 `read` / `glob` / `grep` 不问——每一次多余的确认都在训练用户闭眼点"允许"。
+`create_file` 只创建空文件，不覆盖已有文件；`create_directory` 可递归创建目录；
+`delete_file` 只删除单个文件，不递归删除目录。已有的 `write` 会写入内容并覆盖文件。
+这些文件变更工具都经过审批闸门；只读的 `read` / `glob` / `grep` 不问。
+`read` 和 `grep` 会先把文本转成 UTF-8，编码不明确时可传 `encoding`（如 `gb18030`）。
 
 一次授权的完整链路：
 
@@ -120,12 +122,12 @@ Windows 上要先进 MSVC 环境（`vcvars64.bat`）。
 工具卡进入 pending 状态          message.part.updated
 核心广播"有人在等授权"            permission.asked   { permissionID, partID }
         ↓  这一轮在这里阻塞（只挂住它自己那个线程）
-界面裁决                          POST /api/permission/<id>  {"decision": "approved"}
+界面裁决                          MaiReplyPermission{id, Approved}
 核心广播裁决结果                  permission.replied { permissionID, detail }
 工具卡进入 running 并真正执行      message.part.updated
 ```
 
-`decision` 三选一：`approved`（就这一次）、`approved_for_session`（这个会话里这个工具以后别问了）、
+`decision` 三选一：`approved`（就这一次）、`approved_for_session`（这个会话里相同目标路径以后别问了）、
 `denied`。**认不出来的取值一律 400**，不会兜底成放行——闸门不该被一个错别字拆掉。
 
 `GET /api/permission` 列出当前所有待裁决的请求。界面重连之后必须拉一次：

@@ -207,6 +207,9 @@ target_include_directories(maiagent
 # 和适配器里的 cpp-httplib（HTTP **服务端**）是两回事，两个都要。
 # sqlite、libcurl 和 md4c 都是 PRIVATE：它们是实现细节，公开头里不出现。
 target_link_libraries(maiagent PUBLIC Threads::Threads PRIVATE CURL::libcurl mai_sqlite mai_md4c)
+if(APPLE)
+  target_link_libraries(maiagent PRIVATE iconv)
+endif()
 if(WIN32)
   target_link_libraries(maiagent PRIVATE d3d11 dxgi windowscodecs ole32 user32 windowsapp)
 endif()

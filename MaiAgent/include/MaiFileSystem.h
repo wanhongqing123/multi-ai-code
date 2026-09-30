@@ -43,6 +43,8 @@ public:
     // ── 查询 ────────────────────────────────────────────────────
     static bool exists(const MaiFilePath& path);
     static bool isDirectory(const MaiFilePath& path);
+    // 不跟进最后一段链接；删除文件时据此拒绝可能误删目标的符号链接。
+    static bool isSymbolicLink(const MaiFilePath& path);
     // 拿不到大小时返回 false，size 不动。
     static bool fileSize(const MaiFilePath& path, std::uint64_t& size);
 
@@ -54,6 +56,9 @@ public:
 
     // 覆盖写。父目录不会自动创建，调用方自己先 createDirectories。
     static MaiError writeFile(const MaiFilePath& path, const std::string& contents);
+
+    // 原子地创建空文件。已存在时失败，绝不覆盖；父目录由调用方先创建。
+    static MaiError createEmptyFile(const MaiFilePath& path);
 
     // 删掉一个文件。**只删文件，不删目录**：递归删目录是另一种危险程度的操作，
     // 要的时候单独加一个名字里说清楚的函数，不要让这个悄悄兼职。

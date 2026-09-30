@@ -143,6 +143,9 @@ std::vector<MaiToolSpec> MaiToolRegistry::specs() const {
 
 void registerMaiBuiltinTools(MaiToolRegistry& registry) {
     registry.add(makeMaiReadTool());
+    registry.add(makeMaiCreateFileTool());
+    registry.add(makeMaiCreateDirectoryTool());
+    registry.add(makeMaiDeleteFileTool());
     registry.add(makeMaiWriteTool());
     registry.add(makeMaiEditTool());
     registry.add(makeMaiApplyPatchTool());

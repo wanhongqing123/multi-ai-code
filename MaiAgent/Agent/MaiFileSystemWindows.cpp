@@ -19,8 +19,8 @@ namespace {
 // 长度 0 的情况（它会返回 0，和失败没法区分）。
 std::wstring widen(const std::string& utf8) {
     if (utf8.empty()) return {};
-    const int needed = ::MultiByteToWideChar(CP_UTF8, 0, utf8.data(),
-                                             static_cast<int>(utf8.size()), nullptr, 0);
+    const int needed =
+        ::MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
     if (needed <= 0) return {};
     std::wstring wide(static_cast<std::size_t>(needed), L'\0');
     ::MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), wide.data(),
@@ -30,9 +30,8 @@ std::wstring widen(const std::string& utf8) {
 
 std::string narrow(const std::wstring& wide) {
     if (wide.empty()) return {};
-    const int needed = ::WideCharToMultiByte(CP_UTF8, 0, wide.data(),
-                                             static_cast<int>(wide.size()), nullptr, 0, nullptr,
-                                             nullptr);
+    const int needed = ::WideCharToMultiByte(CP_UTF8, 0, wide.data(), static_cast<int>(wide.size()),
+                                             nullptr, 0, nullptr, nullptr);
     if (needed <= 0) return {};
     std::string utf8(static_cast<std::size_t>(needed), '\0');
     ::WideCharToMultiByte(CP_UTF8, 0, wide.data(), static_cast<int>(wide.size()), utf8.data(),
@@ -47,21 +46,17 @@ std::string narrow(const std::wstring& wide) {
 MaiErrorCode toErrorCode(DWORD lastError) {
     switch (lastError) {
         case ERROR_FILE_NOT_FOUND:
-        case ERROR_PATH_NOT_FOUND:
-            return MaiErrorCode::NotFound;
+        case ERROR_PATH_NOT_FOUND: return MaiErrorCode::NotFound;
         case ERROR_ACCESS_DENIED:
-        case ERROR_SHARING_VIOLATION:
-            return MaiErrorCode::InvalidInput;
-        default:
-            return MaiErrorCode::Internal;
+        case ERROR_SHARING_VIOLATION: return MaiErrorCode::InvalidInput;
+        default: return MaiErrorCode::Internal;
     }
 }
 
 std::string describe(DWORD lastError) {
     LPWSTR buffer = nullptr;
     const DWORD length = ::FormatMessageW(
-        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
-            FORMAT_MESSAGE_IGNORE_INSERTS,
+        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
         nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
         reinterpret_cast<LPWSTR>(&buffer), 0, nullptr);
     std::string message;
@@ -119,6 +114,13 @@ bool MaiFileSystem::isDirectory(const MaiFilePath& path) {
     return (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
 }
 
+bool MaiFileSystem::isSymbolicLink(const MaiFilePath& path) {
+    if (path.isEmpty()) return false;
+    const DWORD attributes = ::GetFileAttributesW(path.value().c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES &&
+           (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+}
+
 bool MaiFileSystem::fileSize(const MaiFilePath& path, std::uint64_t& size) {
     WIN32_FILE_ATTRIBUTE_DATA data{};
     if (!attributesOf(path, data)) return false;
@@ -136,9 +138,9 @@ MaiError MaiFileSystem::readFile(const MaiFilePath& path, std::string& contents,
     maiAssertBlockingAllowed("MaiFileSystem::readFile");
     // FILE_SHARE_READ | FILE_SHARE_WRITE：别人正开着这个文件时我们也能读。不给 SHARE_WRITE 的话，
     // 读一个编辑器正打开的文件会失败。
-    const HANDLE handle = ::CreateFileW(path.value().c_str(), GENERIC_READ,
-                                        FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
-                                        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    const HANDLE handle =
+        ::CreateFileW(path.value().c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                      nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (handle == INVALID_HANDLE_VALUE) return lastErrorAs("cannot open file for reading");
 
     LARGE_INTEGER size{};
@@ -158,8 +160,8 @@ MaiError MaiFileSystem::readFile(const MaiFilePath& path, std::string& contents,
     std::uint64_t done = 0;
     while (done < toRead) {
         // ReadFile 一次最多 DWORD 能表示的量；大文件要分几次。
-        const DWORD chunk = static_cast<DWORD>(
-            (toRead - done) > 0x10000000ull ? 0x10000000ull : (toRead - done));
+        const DWORD chunk =
+            static_cast<DWORD>((toRead - done) > 0x10000000ull ? 0x10000000ull : (toRead - done));
         DWORD got = 0;
         if (!::ReadFile(handle, contents.data() + done, chunk, &got, nullptr)) {
             const MaiError error = lastErrorAs("read failed");
@@ -198,6 +200,17 @@ MaiError MaiFileSystem::writeFile(const MaiFilePath& path, const std::string& co
     return {};
 }
 
+MaiError MaiFileSystem::createEmptyFile(const MaiFilePath& path) {
+    if (path.isEmpty()) return MaiError::make(MaiErrorCode::InvalidInput, "empty path");
+
+    maiAssertBlockingAllowed("MaiFileSystem::createEmptyFile");
+    const HANDLE handle = ::CreateFileW(path.value().c_str(), GENERIC_WRITE, FILE_SHARE_READ,
+                                        nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) return lastErrorAs("cannot create file");
+    ::CloseHandle(handle);
+    return {};
+}
+
 MaiError MaiFileSystem::removeFile(const MaiFilePath& path) {
     if (path.isEmpty()) return MaiError::make(MaiErrorCode::InvalidInput, "empty path");
 
@@ -219,7 +232,9 @@ MaiError MaiFileSystem::createDirectories(const MaiFilePath& path) {
 
     if (::CreateDirectoryW(path.value().c_str(), nullptr)) return {};
     // 并发时别人可能刚好抢先建好了，那不算错。
-    if (::GetLastError() == ERROR_ALREADY_EXISTS) return {};
+    const DWORD code = ::GetLastError();
+    if (code == ERROR_ALREADY_EXISTS && isDirectory(path)) return {};
+    ::SetLastError(code);
     return lastErrorAs("cannot create directory");
 }
 
@@ -239,9 +254,9 @@ void MaiFileSystem::walk(const MaiFilePath& root,
         WIN32_FIND_DATAW data{};
         // FindExInfoBasic：不要 cAlternateFileName（8.3 短名），少一次查询。
         // 遍历大目录时这个差别是实打实的。
-        const HANDLE handle = ::FindFirstFileExW(pattern.value().c_str(), FindExInfoBasic, &data,
-                                                 FindExSearchNameMatch, nullptr,
-                                                 FIND_FIRST_EX_LARGE_FETCH);
+        const HANDLE handle =
+            ::FindFirstFileExW(pattern.value().c_str(), FindExInfoBasic, &data,
+                               FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
         if (handle == INVALID_HANDLE_VALUE) continue;  // 没权限之类，跳过这个目录
 
         do {
@@ -279,15 +294,14 @@ MaiFilePath MaiFileSystem::resolve(const MaiFilePath& path) {
     // 这是判断越界时必须做的一步——root 里放一个指向 C:\ 的联接，光靠词法规范化是看不出来的。
     //
     // FILE_FLAG_BACKUP_SEMANTICS 是打开**目录**句柄所必需的，少了它 CreateFileW 对目录一律失败。
-    const HANDLE handle = ::CreateFileW(path.value().c_str(), 0,
-                                        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                                        nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS,
-                                        nullptr);
+    const HANDLE handle = ::CreateFileW(
+        path.value().c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+        OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
     if (handle != INVALID_HANDLE_VALUE) {
         std::wstring buffer(1024, L'\0');
-        DWORD length = ::GetFinalPathNameByHandleW(handle, buffer.data(),
-                                                   static_cast<DWORD>(buffer.size()),
-                                                   FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+        DWORD length =
+            ::GetFinalPathNameByHandleW(handle, buffer.data(), static_cast<DWORD>(buffer.size()),
+                                        FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
         if (length > buffer.size()) {
             buffer.resize(length);
             length = ::GetFinalPathNameByHandleW(handle, buffer.data(),

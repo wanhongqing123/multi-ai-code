@@ -166,6 +166,7 @@ public:
         // Desktop hosts can leave path access to the operating system. Approval policy still
         // governs mutations independently of this setting.
         bool allowOutsideWorkingDirectory = false;
+        std::function<MaiResult<std::string>(const std::string&, const std::string&)> decodeText;
         // 模型的基础指令。和 Codex 的 base_instructions 一样独立于消息历史，空表示不注入。
         std::string baseInstructions;
 

@@ -121,6 +121,7 @@ struct MaiAgent::Runtime {
         dependencies.approvalPolicy = options.approvalPolicy;
         dependencies.fileAccessRoot = options.fileAccessRoot;
         dependencies.allowOutsideWorkingDirectory = options.allowOutsideWorkingDirectory;
+        dependencies.decodeText = options.decodeText;
         return dependencies;
     }
 

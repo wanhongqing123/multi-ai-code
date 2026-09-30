@@ -111,10 +111,10 @@ public:
     }
 
     std::string description() const override {
-        return "Run a shell command in the working directory and return its combined stdout and "
-               "stderr. Use it to build, run tests, inspect git state, or anything else a "
-               "terminal can do. Commands that only read are run immediately; anything else "
-               "asks the user first.";
+        return "Fallback for tasks built-in tools cannot perform. Run a shell command in the "
+               "working directory and return combined stdout and stderr. Prefer create_file, "
+               "create_directory, delete_file, read, write, edit, and apply_patch for file "
+               "operations. Commands that only read run immediately; anything else asks first.";
     }
 
     std::string parametersSchema() const override {

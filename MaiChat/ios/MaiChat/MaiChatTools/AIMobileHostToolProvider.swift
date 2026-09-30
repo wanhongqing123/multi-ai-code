@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 import Darwin
 import CoreImage
 import ImageIO
@@ -42,6 +43,7 @@ final class AIMobileHostToolProvider {
         }
 
         switch name {
+        case "mobile_decode_text": return decodeLegacyText(arguments)
         case "generate_pdf": return generatePDF(arguments)
         case "mobile_list_photos": return await listPhotos(arguments)
         case "mobile_list_albums": return await listAlbums()
@@ -84,6 +86,30 @@ final class AIMobileHostToolProvider {
         default:
             return .failure(code: "invalid_input", message: "unknown MaiChat host tool")
         }
+    }
+
+    private func decodeLegacyText(_ arguments: [String: Any]) -> AIMaiChatHostToolExecution {
+        guard let base64 = arguments["base64"] as? String,
+              let bytes = Data(base64Encoded: base64), bytes.count <= 8 * 1024 * 1024,
+              let requested = arguments["encoding"] as? String else {
+            return .failure(code: "invalid_input", message: "valid base64 text and encoding are required")
+        }
+        let name = requested.lowercased().replacingOccurrences(of: "_", with: "-")
+        let gb18030 = String.Encoding(rawValue:
+            CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(kCFStringEncodingGB_18030_2000)))
+        let encoding: String.Encoding
+        switch name {
+        case "auto", "gb18030", "gbk", "cp936", "system": encoding = gb18030
+        case "windows-1252": encoding = .windowsCP1252
+        case "latin1", "iso-8859-1": encoding = .isoLatin1
+        case "shift-jis", "shift-jis-2004": encoding = .shiftJIS
+        default:
+            return .failure(code: "invalid_input", message: "unsupported file encoding: \(requested)")
+        }
+        guard let text = String(data: bytes, encoding: encoding) else {
+            return .failure(code: "invalid_input", message: "file could not be decoded as \(requested)")
+        }
+        return .success(text)
     }
 
     private func generatePDF(_ arguments: [String: Any]) -> AIMaiChatHostToolExecution {

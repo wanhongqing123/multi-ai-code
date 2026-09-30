@@ -33,6 +33,25 @@ constexpr auto kMarkdownBaseInstructions =
     "in a user message are already available as visual input; analyze them directly and do not "
     "call the read tool for image files.";
 
+std::string encodeBase64(const std::string& input) {
+    constexpr char kAlphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string output;
+    output.reserve(((input.size() + 2) / 3) * 4);
+    for (std::size_t offset = 0; offset < input.size(); offset += 3) {
+        const auto first = static_cast<unsigned char>(input[offset]);
+        const auto second = offset + 1 < input.size()
+                                ? static_cast<unsigned char>(input[offset + 1]) : 0;
+        const auto third = offset + 2 < input.size()
+                               ? static_cast<unsigned char>(input[offset + 2]) : 0;
+        output.push_back(kAlphabet[first >> 2]);
+        output.push_back(kAlphabet[((first & 0x03) << 4) | (second >> 4)]);
+        output.push_back(offset + 1 < input.size()
+                             ? kAlphabet[((second & 0x0F) << 2) | (third >> 6)] : '=');
+        output.push_back(offset + 2 < input.size() ? kAlphabet[third & 0x3F] : '=');
+    }
+    return output;
+}
+
 }  // namespace
 
 // 这是移动端适配器，JSON 只在语言边界，MaiAgent 的公开接口仍是领域对象。
@@ -83,6 +102,9 @@ struct MaiMobileAgent {
         auto tools = std::make_unique<MaiToolRegistry>();
         // 两个移动端只提供真实可用的本地文件和网络工具，不暴露桌面 shell。
         tools->add(makeMaiReadTool());
+        tools->add(makeMaiCreateFileTool());
+        tools->add(makeMaiCreateDirectoryTool());
+        tools->add(makeMaiDeleteFileTool());
         tools->add(makeMaiWriteTool());
         tools->add(makeMaiEditTool());
         tools->add(makeMaiApplyPatchTool());
@@ -106,6 +128,15 @@ struct MaiMobileAgent {
         MaiAgent::Options options;
         options.defaultModel = request.at("model").get<std::string>();
         options.fileAccessRoot = request.value("appRoot", request.at("workspace").get<std::string>());
+        options.decodeText = [dispatcher = hostTools](const std::string& bytes,
+                                                       const std::string& encoding)
+            -> MaiResult<std::string> {
+            const MaiToolResult result = callMaiMobileHostTool(
+                dispatcher, "mobile_decode_text",
+                Json{{"base64", encodeBase64(bytes)}, {"encoding", encoding}}.dump());
+            if (result.hasError()) return result.error();
+            return result.output();
+        };
         options.baseInstructions = kMarkdownBaseInstructions;
         const auto policy = request.value("policy", "on-request");
         if (policy == "never")

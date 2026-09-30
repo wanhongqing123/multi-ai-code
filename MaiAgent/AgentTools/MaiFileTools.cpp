@@ -1,10 +1,17 @@
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <regex>
 #include <sstream>
 #include <system_error>
+
+#if defined(_WIN32)
+#include <windows.h>
+#elif !defined(__ANDROID__)
+#include <iconv.h>
+#endif
 
 #include <json.hpp>
 
@@ -48,6 +55,199 @@ std::string stringArgument(const json& arguments, const char* name) {
     const auto value = arguments.find(name);
     return value != arguments.end() && value->is_string() ? value->get<std::string>()
                                                           : std::string{};
+}
+
+bool isValidUtf8(const std::string& text) {
+    for (std::size_t index = 0; index < text.size();) {
+        const unsigned char first = static_cast<unsigned char>(text[index]);
+        if (first < 0x80) {
+            ++index;
+            continue;
+        }
+        int width = 0;
+        if (first >= 0xC2 && first <= 0xDF)
+            width = 2;
+        else if (first >= 0xE0 && first <= 0xEF)
+            width = 3;
+        else if (first >= 0xF0 && first <= 0xF4)
+            width = 4;
+        else
+            return false;
+        if (index + width > text.size()) return false;
+        const unsigned char second = static_cast<unsigned char>(text[index + 1]);
+        if (second < 0x80 || second > 0xBF || (first == 0xE0 && second < 0xA0) ||
+            (first == 0xED && second > 0x9F) || (first == 0xF0 && second < 0x90) ||
+            (first == 0xF4 && second > 0x8F))
+            return false;
+        for (int offset = 2; offset < width; ++offset) {
+            const unsigned char next = static_cast<unsigned char>(text[index + offset]);
+            if (next < 0x80 || next > 0xBF) return false;
+        }
+        index += static_cast<std::size_t>(width);
+    }
+    return true;
+}
+
+bool looksBinary(const std::string& text) {
+    std::size_t controls = 0;
+    for (const unsigned char byte : text) {
+        if (byte == 0) return true;
+        if (byte < 0x09 || (byte > 0x0D && byte < 0x20)) ++controls;
+    }
+    return !text.empty() && controls > text.size() / 100;
+}
+
+void appendUtf8(std::string& output, std::uint32_t codePoint) {
+    if (codePoint <= 0x7F) {
+        output.push_back(static_cast<char>(codePoint));
+    } else if (codePoint <= 0x7FF) {
+        output.push_back(static_cast<char>(0xC0 | (codePoint >> 6)));
+        output.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
+    } else if (codePoint <= 0xFFFF) {
+        output.push_back(static_cast<char>(0xE0 | (codePoint >> 12)));
+        output.push_back(static_cast<char>(0x80 | ((codePoint >> 6) & 0x3F)));
+        output.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
+    } else {
+        output.push_back(static_cast<char>(0xF0 | (codePoint >> 18)));
+        output.push_back(static_cast<char>(0x80 | ((codePoint >> 12) & 0x3F)));
+        output.push_back(static_cast<char>(0x80 | ((codePoint >> 6) & 0x3F)));
+        output.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
+    }
+}
+
+MaiResult<std::string> decodeUtf16(const std::string& bytes, bool littleEndian) {
+    std::size_t offset = 0;
+    if (bytes.size() >= 2 && ((littleEndian && static_cast<unsigned char>(bytes[0]) == 0xFF &&
+                               static_cast<unsigned char>(bytes[1]) == 0xFE) ||
+                              (!littleEndian && static_cast<unsigned char>(bytes[0]) == 0xFE &&
+                               static_cast<unsigned char>(bytes[1]) == 0xFF)))
+        offset = 2;
+    if ((bytes.size() - offset) % 2 != 0)
+        return {MaiErrorCode::InvalidInput, "UTF-16 file ends with an incomplete code unit"};
+    std::string output;
+    output.reserve(bytes.size());
+    auto unitAt = [&](std::size_t at) {
+        const auto first = static_cast<unsigned char>(bytes[at]);
+        const auto second = static_cast<unsigned char>(bytes[at + 1]);
+        return static_cast<std::uint32_t>(littleEndian ? first | (second << 8)
+                                                       : (first << 8) | second);
+    };
+    for (; offset < bytes.size(); offset += 2) {
+        std::uint32_t codePoint = unitAt(offset);
+        if (codePoint >= 0xD800 && codePoint <= 0xDBFF) {
+            if (offset + 3 >= bytes.size())
+                return {MaiErrorCode::InvalidInput, "UTF-16 file ends with a high surrogate"};
+            const std::uint32_t low = unitAt(offset + 2);
+            if (low < 0xDC00 || low > 0xDFFF)
+                return {MaiErrorCode::InvalidInput, "UTF-16 file has an invalid surrogate pair"};
+            codePoint = 0x10000 + ((codePoint - 0xD800) << 10) + (low - 0xDC00);
+            offset += 2;
+        } else if (codePoint >= 0xDC00 && codePoint <= 0xDFFF) {
+            return {MaiErrorCode::InvalidInput, "UTF-16 file has an unmatched low surrogate"};
+        }
+        appendUtf8(output, codePoint);
+    }
+    if (looksBinary(output))
+        return {MaiErrorCode::InvalidInput, "file contains binary control bytes"};
+    return output;
+}
+
+std::string normalizedEncoding(const std::string& name) {
+    std::string result = name.empty() ? "auto" : name;
+    std::transform(result.begin(), result.end(), result.begin(), [](unsigned char character) {
+        return character == '_' ? '-' : static_cast<char>(std::tolower(character));
+    });
+    return result;
+}
+
+MaiResult<std::string> decodeLegacy(const std::string& bytes, const std::string& encoding,
+                                    const MaiToolContext& context) {
+    if (context.decodeText) return context.decodeText(bytes, encoding);
+#if defined(_WIN32)
+    UINT codePage = 0;
+    if (encoding == "auto" || encoding == "system")
+        codePage = CP_ACP;
+    else if (encoding == "gb18030")
+        codePage = 54936;
+    else if (encoding == "gbk" || encoding == "cp936")
+        codePage = 936;
+    else if (encoding == "windows-1252")
+        codePage = 1252;
+    else if (encoding == "latin1" || encoding == "iso-8859-1")
+        codePage = 28591;
+    else if (encoding == "shift-jis" || encoding == "shift-jis-2004")
+        codePage = 932;
+    else
+        return {MaiErrorCode::InvalidInput, "unsupported file encoding: " + encoding};
+    const int length = ::MultiByteToWideChar(codePage, MB_ERR_INVALID_CHARS, bytes.data(),
+                                             static_cast<int>(bytes.size()), nullptr, 0);
+    if (length <= 0)
+        return {MaiErrorCode::InvalidInput, "file could not be decoded as " + encoding};
+    std::wstring wide(static_cast<std::size_t>(length), L'\0');
+    ::MultiByteToWideChar(codePage, MB_ERR_INVALID_CHARS, bytes.data(),
+                          static_cast<int>(bytes.size()), wide.data(), length);
+    const int utf8Length =
+        ::WideCharToMultiByte(CP_UTF8, 0, wide.data(), length, nullptr, 0, nullptr, nullptr);
+    if (utf8Length <= 0)
+        return {MaiErrorCode::InvalidInput, "file could not be converted to UTF-8"};
+    std::string output(static_cast<std::size_t>(utf8Length), '\0');
+    ::WideCharToMultiByte(CP_UTF8, 0, wide.data(), length, output.data(), utf8Length, nullptr,
+                          nullptr);
+    return output;
+#elif !defined(__ANDROID__)
+    const std::string source = encoding == "auto" ? "GB18030" : encoding;
+    iconv_t converter = ::iconv_open("UTF-8", source.c_str());
+    if (converter == reinterpret_cast<iconv_t>(-1))
+        return {MaiErrorCode::InvalidInput, "unsupported file encoding: " + encoding};
+    std::string output(bytes.size() * 4 + 4, '\0');
+    char* input = const_cast<char*>(bytes.data());
+    std::size_t remaining = bytes.size();
+    char* destination = output.data();
+    std::size_t capacity = output.size();
+    const std::size_t converted = ::iconv(converter, &input, &remaining, &destination, &capacity);
+    ::iconv_close(converter);
+    if (converted == static_cast<std::size_t>(-1) || remaining != 0)
+        return {MaiErrorCode::InvalidInput, "file could not be decoded as " + source};
+    output.resize(output.size() - capacity);
+    return output;
+#else
+    return {MaiErrorCode::NotConfigured, "this Android host has no legacy text decoder configured"};
+#endif
+}
+
+MaiResult<std::string> decodeFileText(const std::string& bytes, const std::string& requested,
+                                      const MaiToolContext& context) {
+    const std::string encoding = normalizedEncoding(requested);
+    if (encoding == "utf-16le" || encoding == "utf16le") return decodeUtf16(bytes, true);
+    if (encoding == "utf-16be" || encoding == "utf16be") return decodeUtf16(bytes, false);
+    if (encoding == "auto" && bytes.size() >= 2) {
+        if (static_cast<unsigned char>(bytes[0]) == 0xFF &&
+            static_cast<unsigned char>(bytes[1]) == 0xFE)
+            return decodeUtf16(bytes, true);
+        if (static_cast<unsigned char>(bytes[0]) == 0xFE &&
+            static_cast<unsigned char>(bytes[1]) == 0xFF)
+            return decodeUtf16(bytes, false);
+    }
+    if (encoding == "auto" || encoding == "utf-8" || encoding == "utf8") {
+        const std::size_t bom = bytes.size() >= 3 && static_cast<unsigned char>(bytes[0]) == 0xEF &&
+                                        static_cast<unsigned char>(bytes[1]) == 0xBB &&
+                                        static_cast<unsigned char>(bytes[2]) == 0xBF
+                                    ? 3
+                                    : 0;
+        const std::string utf8 = bytes.substr(bom);
+        if (isValidUtf8(utf8) && !looksBinary(utf8)) return utf8;
+        if (encoding != "auto")
+            return {MaiErrorCode::InvalidInput,
+                    "file is not valid UTF-8; retry with an explicit encoding"};
+    }
+    if (looksBinary(bytes))
+        return {MaiErrorCode::InvalidInput,
+                "file looks binary or uses UTF-16 without a BOM; specify encoding explicitly"};
+    MaiResult<std::string> decoded = decodeLegacy(bytes, encoding, context);
+    if (!decoded) return decoded;
+    if (!isValidUtf8(decoded.value()) || looksBinary(decoded.value()))
+        return {MaiErrorCode::InvalidInput, "decoded file is not valid UTF-8 text"};
+    return decoded;
 }
 
 // 把 root 之外的路径挡掉，并给模型一句它能据此改正的话。
@@ -210,13 +410,15 @@ public:
         return "read";
     }
     std::string description() const override {
-        return "Read a file. Relative paths use the session working directory. Returns text with "
-               "line numbers "
-               "so you can refer to specific lines later.";
+        return "Read a text file as UTF-8 with line numbers. UTF-8 and BOM-marked UTF-16 are "
+               "detected automatically; for ambiguous legacy text, set encoding explicitly "
+               "(for example gb18030, gbk, or windows-1252). Relative paths use the session "
+               "working directory.";
     }
     std::string parametersSchema() const override {
         return R"({"type":"object","properties":{)"
                R"("path":{"type":"string","description":"Absolute path or path relative to the working directory"},)"
+               R"("encoding":{"type":"string","description":"Source text encoding; default auto. Examples: utf-8, utf-16le, utf-16be, gb18030, gbk, windows-1252"},)"
                R"("offset":{"type":"integer","description":"1-based line to start from, default 1"},)"
                R"("limit":{"type":"integer","description":"Maximum number of lines to read, default 500"}},)"
                R"("required":["path"]})";
@@ -224,6 +426,8 @@ public:
 
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const json args = parseArguments(raw);
+        if (args.contains("encoding") && !args["encoding"].is_string())
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput, "encoding must be a string");
         auto resolved = resolveOrFail(context, stringArgument(args, "path"));
         if (!resolved.ok) return resolved.error;
 
@@ -245,6 +449,11 @@ public:
             MaiFileSystem::readFile(target, blob, kMaxFileBytes, &readTruncated);
         if (readError.hasError())
             return MaiToolResult::failure(readError.code(), readError.message());
+        const MaiResult<std::string> decoded =
+            decodeFileText(blob, stringArgument(args, "encoding"), context);
+        if (!decoded)
+            return MaiToolResult::failure(decoded.error().code(), decoded.error().message());
+        blob = decoded.value();
 
         const int offset = std::max(1, args.value("offset", 1));
         const int limit = std::max(1, args.value("limit", 500));
@@ -291,6 +500,152 @@ public:
         truncateUtf8(out, kMaxReadBytes);
         if (truncated) out += "\n...Output truncated. Use the offset parameter to read further.";
         return MaiToolResult::success(std::move(out), truncated);
+    }
+};
+
+// ── explicit file and directory mutations ─────────────────────
+class CreateFileTool final : public MaiTool {
+public:
+    std::string name() const override {
+        return "create_file";
+    }
+    std::string description() const override {
+        return "Create a new empty file without overwriting an existing file. Missing parent "
+               "directories are created. Use write when the file needs content.";
+    }
+    std::string parametersSchema() const override {
+        return R"({"type":"object","properties":{"path":{"type":"string","description":"Absolute path or path relative to the working directory"}},"required":["path"],"additionalProperties":false})";
+    }
+    bool requiresApproval(const std::string&) const override {
+        return true;
+    }
+    std::vector<std::string> approvalKeys(const std::string& argumentsJson,
+                                          const MaiToolContext& context) const override {
+        const std::string path =
+            context.resolvePath(stringArgument(parseArguments(argumentsJson), "path"));
+        return path.empty() ? MaiTool::approvalKeys(argumentsJson, context)
+                            : std::vector<std::string>{"file:" + path};
+    }
+    MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
+        const json args = parseArguments(raw);
+        if (args.size() != 1 || !args.contains("path") || !args["path"].is_string())
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                          "create_file requires one string parameter named path");
+        auto resolved = resolveOrFail(context, stringArgument(args, "path"));
+        if (!resolved.ok) return resolved.error;
+        const MaiFilePath path = MaiFilePath::fromUtf8(resolved.path);
+        if (MaiFileSystem::exists(path))
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                          "path already exists; nothing was overwritten");
+        const MaiFilePath parent = path.dirName();
+        if (!parent.isEmpty() && parent != path) {
+            const MaiError error = MaiFileSystem::createDirectories(parent);
+            if (error.hasError())
+                return MaiToolResult::failure(
+                    error.code(), "could not create parent directory: " + error.message());
+        }
+        const MaiError error = MaiFileSystem::createEmptyFile(path);
+        if (error.hasError()) {
+            if (MaiFileSystem::exists(path))
+                return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                              "path already exists; nothing was overwritten");
+            return MaiToolResult::failure(error.code(), error.message());
+        }
+        return MaiToolResult::success("Created file " + toRelativePath(context.root, path));
+    }
+};
+
+class CreateDirectoryTool final : public MaiTool {
+public:
+    std::string name() const override {
+        return "create_directory";
+    }
+    std::string description() const override {
+        return "Create a directory and any missing parents. An existing directory is accepted; "
+               "a file at that path is an error.";
+    }
+    std::string parametersSchema() const override {
+        return R"({"type":"object","properties":{"path":{"type":"string","description":"Absolute path or path relative to the working directory"}},"required":["path"],"additionalProperties":false})";
+    }
+    bool requiresApproval(const std::string&) const override {
+        return true;
+    }
+    std::vector<std::string> approvalKeys(const std::string& argumentsJson,
+                                          const MaiToolContext& context) const override {
+        const std::string path =
+            context.resolvePath(stringArgument(parseArguments(argumentsJson), "path"));
+        return path.empty() ? MaiTool::approvalKeys(argumentsJson, context)
+                            : std::vector<std::string>{"directory:" + path};
+    }
+    MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
+        const json args = parseArguments(raw);
+        if (args.size() != 1 || !args.contains("path") || !args["path"].is_string())
+            return MaiToolResult::failure(
+                MaiErrorCode::InvalidInput,
+                "create_directory requires one string parameter named path");
+        auto resolved = resolveOrFail(context, stringArgument(args, "path"));
+        if (!resolved.ok) return resolved.error;
+        const MaiFilePath path = MaiFilePath::fromUtf8(resolved.path);
+        if (MaiFileSystem::exists(path) && !MaiFileSystem::isDirectory(path))
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                          "a file already exists at the requested directory path");
+        const bool existed = MaiFileSystem::isDirectory(path);
+        const MaiError error = MaiFileSystem::createDirectories(path);
+        if (error.hasError()) return MaiToolResult::failure(error.code(), error.message());
+        if (!MaiFileSystem::isDirectory(path))
+            return MaiToolResult::failure(MaiErrorCode::Internal,
+                                          "directory creation returned without a directory");
+        return MaiToolResult::success(
+            std::string(existed ? "Directory already exists " : "Created directory ") +
+            toRelativePath(context.root, path));
+    }
+};
+
+class DeleteFileTool final : public MaiTool {
+public:
+    std::string name() const override {
+        return "delete_file";
+    }
+    std::string description() const override {
+        return "Delete one existing file. Directories are never deleted; this is not recursive.";
+    }
+    std::string parametersSchema() const override {
+        return R"({"type":"object","properties":{"path":{"type":"string","description":"Absolute path or path relative to the working directory"}},"required":["path"],"additionalProperties":false})";
+    }
+    bool requiresApproval(const std::string&) const override {
+        return true;
+    }
+    std::vector<std::string> approvalKeys(const std::string& argumentsJson,
+                                          const MaiToolContext& context) const override {
+        const std::string path =
+            context.resolvePath(stringArgument(parseArguments(argumentsJson), "path"));
+        return path.empty() ? MaiTool::approvalKeys(argumentsJson, context)
+                            : std::vector<std::string>{"file:" + path};
+    }
+    MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
+        const json args = parseArguments(raw);
+        if (args.size() != 1 || !args.contains("path") || !args["path"].is_string())
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                          "delete_file requires one string parameter named path");
+        auto resolved = resolveOrFail(context, stringArgument(args, "path"));
+        if (!resolved.ok) return resolved.error;
+        const MaiFilePath path = MaiFilePath::fromUtf8(resolved.path);
+        MaiFilePath requested = MaiFilePath::fromUtf8(stringArgument(args, "path"));
+        if (!requested.isAbsolute())
+            requested = MaiFilePath::fromUtf8(context.root).append(requested);
+        if (MaiFileSystem::isSymbolicLink(requested))
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                          "delete_file refuses symbolic links; use shell with "
+                                          "explicit approval to remove the link itself");
+        if (!MaiFileSystem::exists(path))
+            return MaiToolResult::failure(MaiErrorCode::NotFound,
+                                          "file does not exist: " + stringArgument(args, "path"));
+        if (MaiFileSystem::isDirectory(path))
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                          "delete_file cannot delete a directory");
+        const MaiError error = MaiFileSystem::removeFile(path);
+        if (error.hasError()) return MaiToolResult::failure(error.code(), error.message());
+        return MaiToolResult::success("Deleted file " + toRelativePath(context.root, path));
     }
 };
 
@@ -373,7 +728,7 @@ public:
 
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const json args = parseArguments(raw);
-        const std::string pattern = args.value("pattern", std::string{});
+        const std::string pattern = stringArgument(args, "pattern");
         if (pattern.empty())
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,
                                           "missing required parameter: pattern");
@@ -456,21 +811,24 @@ public:
         return "grep";
     }
     std::string description() const override {
-        return "Search file contents with a regular expression. Relative paths use the working "
-               "directory. "
-               "Returns the file, line number and the whole matching line.";
+        return "Search text files with a regular expression. Source bytes are converted to "
+               "UTF-8 before matching; set encoding for ambiguous legacy text. Relative paths "
+               "use the working directory. Returns the file, line number and matching line.";
     }
     std::string parametersSchema() const override {
         return R"({"type":"object","properties":{)"
                R"("pattern":{"type":"string","description":"Regular expression"},)"
                R"("path":{"type":"string","description":"Subdirectory to search from, defaults to the working directory root"},)"
+               R"("encoding":{"type":"string","description":"Source text encoding; default auto"},)"
                R"("glob":{"type":"string","description":"Only search files matching this pattern, for example *.cpp"}},)"
                R"("required":["pattern"]})";
     }
 
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const json args = parseArguments(raw);
-        const std::string pattern = args.value("pattern", std::string{});
+        if (args.contains("encoding") && !args["encoding"].is_string())
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput, "encoding must be a string");
+        const std::string pattern = stringArgument(args, "pattern");
         if (pattern.empty())
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,
                                           "missing required parameter: pattern");
@@ -492,11 +850,12 @@ public:
                 std::string("could not parse the regular expression: ") + regexError.what());
         }
 
-        const std::string globPattern = args.value("glob", std::string{});
+        const std::string globPattern = stringArgument(args, "glob");
         const bool hasFilter = !globPattern.empty();
 
         std::string out;
         int matches = 0;
+        int undecodable = 0;
 
         const MaiFilePath basePath = MaiFilePath::fromUtf8(base);
         if (!MaiFileSystem::isDirectory(basePath))
@@ -521,6 +880,13 @@ public:
             std::string blob;
             if (MaiFileSystem::readFile(entry.path, blob).hasError())
                 return MaiWalkAction::Continue;
+            const MaiResult<std::string> decoded =
+                decodeFileText(blob, stringArgument(args, "encoding"), context);
+            if (!decoded) {
+                ++undecodable;
+                return MaiWalkAction::Continue;
+            }
+            blob = decoded.value();
 
             std::string line;
             int lineno = 0;
@@ -559,9 +925,20 @@ public:
             return out.size() > kMaxOutputBytes ? MaiWalkAction::Stop : MaiWalkAction::Continue;
         });
 
-        if (matches == 0) return MaiToolResult::success("No content matches " + pattern);
-        const bool truncated = matches >= kMaxGrepMatches || out.size() > kMaxOutputBytes;
+        if (matches == 0) {
+            const std::string message = "No content matches " + pattern;
+            if (undecodable == 0) return MaiToolResult::success(message);
+            return MaiToolResult::success(
+                message + "; skipped " + std::to_string(undecodable) +
+                    " files that could not be decoded. Retry with an explicit encoding.",
+                true);
+        }
+        const bool truncated =
+            matches >= kMaxGrepMatches || out.size() > kMaxOutputBytes || undecodable > 0;
         truncateUtf8(out, kMaxOutputBytes);
+        if (undecodable > 0)
+            out += "\n...Skipped " + std::to_string(undecodable) +
+                   " files that could not be decoded; specify encoding to search them.";
         if (truncated)
             out +=
                 "\n...Too many matches; showing the first ones only. Use a more specific "
@@ -577,6 +954,15 @@ std::unique_ptr<MaiTool> makeMaiReadTool() {
 }
 std::unique_ptr<MaiTool> makeMaiWriteTool() {
     return std::make_unique<WriteTool>();
+}
+std::unique_ptr<MaiTool> makeMaiCreateFileTool() {
+    return std::make_unique<CreateFileTool>();
+}
+std::unique_ptr<MaiTool> makeMaiCreateDirectoryTool() {
+    return std::make_unique<CreateDirectoryTool>();
+}
+std::unique_ptr<MaiTool> makeMaiDeleteFileTool() {
+    return std::make_unique<DeleteFileTool>();
 }
 std::unique_ptr<MaiTool> makeMaiGlobTool() {
     return std::make_unique<GlobTool>();

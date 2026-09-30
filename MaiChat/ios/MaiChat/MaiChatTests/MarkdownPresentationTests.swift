@@ -1131,3 +1131,19 @@ final class AIAssistantPathPolicyTests: XCTestCase {
             workspacePath: workspace.path, appRootPath: app.path))
     }
 }
+
+final class AIAssistantTextDecoderTests: XCTestCase {
+    @MainActor
+    func testGb18030BytesBecomeUnicodeText() async throws {
+        let bytes = Data([0xC4, 0xE3, 0xBA, 0xC3])
+        let arguments = try JSONSerialization.data(withJSONObject: [
+            "base64": bytes.base64EncodedString(), "encoding": "gb18030",
+        ])
+        let execution = await AIMobileHostToolProvider.shared.execute(
+            name: "mobile_decode_text",
+            argumentsJSON: String(decoding: arguments, as: UTF8.self)
+        )
+        XCTAssertEqual(execution.output, "你好")
+        XCTAssertNil(execution.errorCode)
+    }
+}

@@ -31,14 +31,11 @@ namespace {
 MaiErrorCode toErrorCode(int savedErrno) {
     switch (savedErrno) {
         case ENOENT:
-        case ENOTDIR:
-            return MaiErrorCode::NotFound;
+        case ENOTDIR: return MaiErrorCode::NotFound;
         case EACCES:
         case EPERM:
-        case EISDIR:
-            return MaiErrorCode::InvalidInput;
-        default:
-            return MaiErrorCode::Internal;
+        case EISDIR: return MaiErrorCode::InvalidInput;
+        default: return MaiErrorCode::Internal;
     }
 }
 
@@ -72,18 +69,24 @@ std::string MaiFilePath::toGenericUtf8() const {
 // ── MaiFileSystem ───────────────────────────────────────────────
 
 bool MaiFileSystem::exists(const MaiFilePath& path) {
-    struct stat info {};
+    struct stat info{};
     return statOf(path, info);
 }
 
 bool MaiFileSystem::isDirectory(const MaiFilePath& path) {
-    struct stat info {};
+    struct stat info{};
     if (!statOf(path, info)) return false;
     return S_ISDIR(info.st_mode);
 }
 
+bool MaiFileSystem::isSymbolicLink(const MaiFilePath& path) {
+    if (path.isEmpty()) return false;
+    struct stat info{};
+    return ::lstat(path.value().c_str(), &info) == 0 && S_ISLNK(info.st_mode);
+}
+
 bool MaiFileSystem::fileSize(const MaiFilePath& path, std::uint64_t& size) {
-    struct stat info {};
+    struct stat info{};
     if (!statOf(path, info)) return false;
     if (S_ISDIR(info.st_mode)) return false;
     size = static_cast<std::uint64_t>(info.st_size);
@@ -100,7 +103,7 @@ MaiError MaiFileSystem::readFile(const MaiFilePath& path, std::string& contents,
     const int fd = ::open(path.value().c_str(), O_RDONLY | O_CLOEXEC);
     if (fd < 0) return errnoAs("cannot open file for reading");
 
-    struct stat info {};
+    struct stat info{};
     if (::fstat(fd, &info) != 0) {
         const MaiError error = errnoAs("cannot stat file");
         ::close(fd);
@@ -158,6 +161,16 @@ MaiError MaiFileSystem::writeFile(const MaiFilePath& path, const std::string& co
     return {};
 }
 
+MaiError MaiFileSystem::createEmptyFile(const MaiFilePath& path) {
+    if (path.isEmpty()) return MaiError::make(MaiErrorCode::InvalidInput, "empty path");
+
+    maiAssertBlockingAllowed("MaiFileSystem::createEmptyFile");
+    const int fd = ::open(path.value().c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0644);
+    if (fd < 0) return errnoAs("cannot create file");
+    if (::close(fd) != 0) return errnoAs("cannot close file after creation");
+    return {};
+}
+
 MaiError MaiFileSystem::removeFile(const MaiFilePath& path) {
     if (path.isEmpty()) return MaiError::make(MaiErrorCode::InvalidInput, "empty path");
 
@@ -177,7 +190,9 @@ MaiError MaiFileSystem::createDirectories(const MaiFilePath& path) {
     }
 
     if (::mkdir(path.value().c_str(), 0755) == 0) return {};
-    if (errno == EEXIST) return {};  // 并发时别人刚好建好了
+    const int savedErrno = errno;
+    if (savedErrno == EEXIST && isDirectory(path)) return {};  // 并发时别人刚好建好了
+    errno = savedErrno;
     return errnoAs("cannot create directory");
 }
 
@@ -203,7 +218,7 @@ void MaiFileSystem::walk(const MaiFilePath& root,
 
             // lstat 不是 stat：要看的是这一项**自身**是不是符号链接，而不是它指向的东西。
             // 用 stat 的话符号链接会被当成它的目标，于是指回上级的链接会让遍历无限转下去。
-            struct stat info {};
+            struct stat info{};
             if (::lstat(entry.path.value().c_str(), &info) != 0) continue;
             const bool isSymlink = S_ISLNK(info.st_mode);
             entry.isDirectory = S_ISDIR(info.st_mode);
@@ -214,8 +229,7 @@ void MaiFileSystem::walk(const MaiFilePath& root,
                 ::closedir(handle);
                 return;
             }
-            if (!entry.isDirectory || isSymlink || action == MaiWalkAction::SkipDirectory)
-                continue;
+            if (!entry.isDirectory || isSymlink || action == MaiWalkAction::SkipDirectory) continue;
 
             pending.push_back(entry.path);
         }

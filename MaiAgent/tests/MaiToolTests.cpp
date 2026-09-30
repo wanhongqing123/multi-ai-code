@@ -345,6 +345,119 @@ void test_write() {
     CHECK(!makeMaiReadTool()->requiresApproval(args({{"path", "x.txt"}})));
 }
 
+void test_read_decodes_non_utf8_files_for_the_model() {
+    Workspace workspace;
+    const MaiToolContext context = workspace.context();
+    auto read = makeMaiReadTool();
+    Workspace::write(workspace.root / "utf16.txt",
+                     std::string("\xFF\xFE\x60\x4F\x7D\x59\x0A\x00", 8));
+    Workspace::write(workspace.root / "gb18030.txt", std::string("\xC4\xE3\xBA\xC3\x0A", 5));
+    Workspace::write(workspace.root / "utf16be.txt",
+                     std::string("\xFE\xFF\x4F\x60\x59\x7D\x00\x0A", 8));
+    Workspace::write(workspace.root / "utf16emoji.txt",
+                     std::string("\xFF\xFE\x3D\xD8\x42\xDE\x0A\x00", 8));
+    Workspace::write(workspace.root / "utf8bom.txt",
+                     std::string("\xEF\xBB\xBF", 3) + "\u4f60\u597d\n");
+    Workspace::write(workspace.root / "binary.dat", std::string("\x00\x01\x02", 3));
+    const std::string greeting = "\u4f60\u597d";
+    const auto utf16 = read->execute(args({{"path", "utf16.txt"}}), context);
+    CHECK(!utf16.hasError());
+    CHECK(utf16.output().find(greeting) != std::string::npos);
+    const auto gb18030 =
+        read->execute(args({{"path", "gb18030.txt"}, {"encoding", "gb18030"}}), context);
+    CHECK(!gb18030.hasError());
+    CHECK(gb18030.output().find(greeting) != std::string::npos);
+    const auto bigEndian = read->execute(args({{"path", "utf16be.txt"}}), context);
+    CHECK(!bigEndian.hasError());
+    CHECK(bigEndian.output().find(greeting) != std::string::npos);
+    const auto surrogate = read->execute(args({{"path", "utf16emoji.txt"}}), context);
+    CHECK(!surrogate.hasError());
+    CHECK(surrogate.output().find("\U0001f642") != std::string::npos);
+    const auto withBom = read->execute(args({{"path", "utf8bom.txt"}}), context);
+    CHECK(!withBom.hasError());
+    CHECK(withBom.output().find(greeting) != std::string::npos);
+    CHECK(withBom.output().find("\xEF\xBB\xBF") == std::string::npos);
+    CHECK(read->execute(args({{"path", "binary.dat"}}), context).hasError());
+    CHECK(
+        read->execute(args({{"path", "gb18030.txt"}, {"encoding", "utf-8"}}), context).hasError());
+    CHECK(read->execute(args({{"path", "utf16.txt"}, {"encoding", 42}}), context).hasError());
+
+    MaiToolContext mobile = context;
+    int decoderCalls = 0;
+    mobile.decodeText = [&](const std::string& bytes,
+                            const std::string& encoding) -> MaiResult<std::string> {
+        ++decoderCalls;
+        CHECK(bytes == std::string("\xC4\xE3\xBA\xC3\x0A", 5));
+        CHECK(encoding == "gb18030");
+        return greeting + "\n";
+    };
+    const auto viaHost =
+        read->execute(args({{"path", "gb18030.txt"}, {"encoding", "gb18030"}}), mobile);
+    CHECK(!viaHost.hasError());
+    CHECK(viaHost.output().find(greeting) != std::string::npos);
+    CHECK(decoderCalls == 1);
+}
+
+void test_grep_returns_utf8_for_legacy_files() {
+    Workspace workspace;
+    Workspace::write(workspace.root / "legacy-search.txt", std::string("\xC4\xE3\xBA\xC3\x0A", 5));
+    auto grep = makeMaiGrepTool();
+    const auto result = grep->execute(
+        args({{"pattern", "\u4f60\u597d"}, {"glob", "legacy-search.txt"}, {"encoding", "gb18030"}}),
+        workspace.context());
+    CHECK(!result.hasError());
+    CHECK(result.output().find("legacy-search.txt:1:") != std::string::npos);
+    CHECK(result.output().find("\u4f60\u597d") != std::string::npos);
+}
+
+void test_explicit_create_and_delete_tools_use_utf8_paths() {
+    Workspace workspace;
+    const MaiToolContext context = workspace.context();
+    auto createDirectory = makeMaiCreateDirectoryTool();
+    auto createFile = makeMaiCreateFileTool();
+    auto deleteFile = makeMaiDeleteFileTool();
+    const std::string directory = std::string(kCjkDir) + "/\u5b50\u76ee\u5f55";
+    const std::string file = directory + "/" + kCjkFile;
+    const fs::path native = workspace.root / fs::u8path(directory) / fs::u8path(kCjkFile);
+
+    CHECK(createDirectory->requiresApproval("{}"));
+    CHECK(createFile->requiresApproval("{}"));
+    CHECK(deleteFile->requiresApproval("{}"));
+    CHECK(!createDirectory->execute(args({{"path", directory}}), context).hasError());
+    CHECK(fs::is_directory(native.parent_path()));
+    CHECK(!createDirectory->execute(args({{"path", directory}}), context).hasError());
+    CHECK(!createFile->execute(args({{"path", file}}), context).hasError());
+    CHECK(fs::is_regular_file(native));
+    CHECK(fs::file_size(native) == 0);
+    Workspace::write(native, "must stay intact");
+    CHECK(createFile->execute(args({{"path", file}}), context).hasError());
+    CHECK(fs::file_size(native) == std::string("must stay intact").size());
+    CHECK(createDirectory->execute(args({{"path", file}}), context).hasError());
+    CHECK(deleteFile->execute(args({{"path", directory}}), context).hasError());
+    const fs::path shortcut = workspace.root / "shortcut.txt";
+    std::error_code symlinkError;
+    fs::create_symlink(native, shortcut, symlinkError);
+    if (!symlinkError) {
+        CHECK(deleteFile->execute(args({{"path", "shortcut.txt"}}), context).hasError());
+        CHECK(fs::exists(native));
+        fs::remove(shortcut);
+    }
+
+    const auto createKey = createFile->approvalKeys(args({{"path", file}}), context);
+    const auto deleteKey = deleteFile->approvalKeys(args({{"path", file}}), context);
+    CHECK(createKey == deleteKey);
+    CHECK(createDirectory->approvalKeys(args({{"path", directory}}), context) != createKey);
+    CHECK(!deleteFile->execute(args({{"path", file}}), context).hasError());
+    CHECK(!fs::exists(native));
+    CHECK(deleteFile->execute(args({{"path", file}}), context).error().code() ==
+          MaiErrorCode::NotFound);
+    CHECK(deleteFile->execute(args({{"path", "../outside/secret.txt"}}), context).hasError());
+    CHECK(fs::exists(workspace.outside / "secret.txt"));
+    CHECK(createFile->execute(R"({"path":42})", context).hasError());
+    CHECK(createDirectory->execute(R"({"path":42})", context).hasError());
+    CHECK(deleteFile->execute(R"({"path":42})", context).hasError());
+}
+
 // ── 4. glob ─────────────────────────────────────────────────────
 
 void test_glob() {
@@ -429,7 +542,8 @@ void test_registry() {
 
     // **按名字查，不比个数。** 比个数的话每加一个工具都要来改一次这里，
     // 而这条用例想守的是「这些工具都在」，不是「一共有几个」。
-    for (const char* n : {"read", "write", "edit", "apply_patch", "glob", "grep", "current_time"}) {
+    for (const char* n : {"read", "create_file", "create_directory", "delete_file", "write", "edit",
+                          "apply_patch", "glob", "grep", "current_time"}) {
         CHECK(reg.find(n) != nullptr);
     }
     CHECK(reg.find("no-such-tool") == nullptr);
@@ -489,7 +603,10 @@ int main() {
     RUN(test_invalid_path_types_fail_without_throwing);
     RUN(test_maiResolvePathWithinRoot_directly);
     RUN(test_read);
+    RUN(test_read_decodes_non_utf8_files_for_the_model);
+    RUN(test_grep_returns_utf8_for_legacy_files);
     RUN(test_write);
+    RUN(test_explicit_create_and_delete_tools_use_utf8_paths);
     RUN(test_glob);
     RUN(test_grep);
     RUN(test_registry);

@@ -407,6 +407,41 @@ void test_write_waits_for_approval_then_runs() {
     CHECK(agent->listPendingPermissions().empty());
 }
 
+void test_explicit_create_and_delete_tools_wait_for_file_approval() {
+    Workspace workspace;
+    auto underTest = makeAgent(
+        {callTurn("create_directory", R"({"path":"folder"})"), sayTurn("Folder created."),
+         callTurn("create_file", R"({"path":"folder/note.txt"})"), sayTurn("File created."),
+         callTurn("delete_file", R"({"path":"folder/note.txt"})"), sayTurn("File deleted.")});
+    MaiAgent& agent = *underTest.agent;
+    const std::string sessionId =
+        agent.submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
+
+    const auto approvePending = [&]() {
+        CHECK(waitFor([&] { return agent.listPendingPermissions().size() == 1; }));
+        const auto pending = agent.listPendingPermissions();
+        if (pending.empty()) return;
+        CHECK(agent.submit(MaiReplyPermission{pending.front().id, MaiPermissionDecision::Approved})
+                  .isOk());
+        agent.waitIdle();
+    };
+
+    CHECK(agent.submit(MaiSendPrompt{sessionId, "create folder"}).isOk());
+    CHECK(!fs::exists(workspace.root / "folder"));
+    approvePending();
+    CHECK(fs::is_directory(workspace.root / "folder"));
+
+    CHECK(agent.submit(MaiSendPrompt{sessionId, "create note"}).isOk());
+    approvePending();
+    CHECK(fs::is_regular_file(workspace.root / "folder" / "note.txt"));
+
+    CHECK(agent.submit(MaiSendPrompt{sessionId, "delete note"}).isOk());
+    CHECK(fs::exists(workspace.root / "folder" / "note.txt"));
+    approvePending();
+    CHECK(!fs::exists(workspace.root / "folder" / "note.txt"));
+    CHECK(fs::is_directory(workspace.root / "folder"));
+}
+
 void test_reject_blocks_write_and_tells_model() {
     Workspace workspace;
     auto underTest =
@@ -779,6 +814,8 @@ int main() {
 
     std::printf("-> test_write_waits_for_approval_then_runs\n");
     test_write_waits_for_approval_then_runs();
+    std::printf("-> test_explicit_create_and_delete_tools_wait_for_file_approval\n");
+    test_explicit_create_and_delete_tools_wait_for_file_approval();
     std::printf("-> test_reject_blocks_write_and_tells_model\n");
     test_reject_blocks_write_and_tells_model();
     std::printf("-> test_rejected_repeat_does_not_ask_again\n");

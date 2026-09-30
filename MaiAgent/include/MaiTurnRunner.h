@@ -49,6 +49,7 @@ public:
         MaiApprovalPolicy approvalPolicy = MaiApprovalPolicy::OnRequest;
         std::string fileAccessRoot;
         bool allowOutsideWorkingDirectory = false;
+        std::function<MaiResult<std::string>(const std::string&, const std::string&)> decodeText;
     };
 
     MaiTurnRunner(Dependencies dependencies, std::string sessionId, MaiMessage assistant);

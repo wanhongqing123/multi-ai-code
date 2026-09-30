@@ -145,6 +145,19 @@ final class AIAssistantController {
     private byte[] onNativeHostTool(byte[] toolBytes, byte[] argumentsBytes) {
         String tool = new String(toolBytes, StandardCharsets.UTF_8);
         String arguments = new String(argumentsBytes, StandardCharsets.UTF_8);
+        if (tool.equals("mobile_decode_text")) {
+            try {
+                JSONObject request = new JSONObject(arguments);
+                byte[] bytes = Base64.decode(request.getString("base64"), Base64.DEFAULT);
+                if (bytes.length > 8 * 1024 * 1024)
+                    return hostToolFailure("file exceeds the 8 MB text limit", "invalid_input");
+                String decoded = AIAssistantTextDecoder.decode(bytes, request.getString("encoding"));
+                return new JSONObject().put("ok", true).put("output", decoded)
+                    .toString().getBytes(StandardCharsets.UTF_8);
+            } catch (Throwable failure) {
+                return hostToolFailure(safeMessage(failure), "invalid_input");
+            }
+        }
         HostToolHandler target = hostToolHandler;
         if (target == null)
             return hostToolFailure("MaiChat 宿主工具尚未连接");
@@ -183,8 +196,11 @@ final class AIAssistantController {
         return response[0] == null ? hostToolFailure("MaiChat 宿主工具未返回结果") : response[0];
     }
     private static byte[] hostToolFailure(String message) {
+        return hostToolFailure(message, "internal");
+    }
+    private static byte[] hostToolFailure(String message, String code) {
         try {
-            return new JSONObject().put("ok", false).put("error", message)
+            return new JSONObject().put("ok", false).put("error", message).put("errorCode", code)
                 .toString().getBytes(StandardCharsets.UTF_8);
         } catch (Exception ignored) {
             return "{\"ok\":false,\"error\":\"MaiChat host tool failed\"}"

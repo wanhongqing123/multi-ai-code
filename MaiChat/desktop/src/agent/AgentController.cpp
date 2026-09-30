@@ -26,7 +26,10 @@ If the user attached an image, it is already included in the current model reque
 image directly. Do not call view_image for a filename merely visible inside a screenshot.
 On desktop, file tools accept absolute paths wherever the operating system allows access; relative
 paths start in this session's working directory. If an original image is needed, use its accessible
-path or ask the user to attach it.)";
+path or ask the user to attach it.
+For local file work, prefer create_file, create_directory, delete_file, read, write, edit, and
+apply_patch. create_file makes an empty file without overwriting; write sets file content. Use
+shell only when the built-in tools cannot perform the task.)";
 
 std::string toUtf8(const QString& text) {
     const QByteArray bytes = text.toUtf8();

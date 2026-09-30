@@ -244,6 +244,7 @@ void MaiTurnRunner::executeTools(const std::vector<MaiToolInvocation>& calls,
     context.root = session.directory;
     context.fileAccessRoot = mDependencies.fileAccessRoot;
     context.allowOutsideWorkingDirectory = mDependencies.allowOutsideWorkingDirectory;
+    context.decodeText = mDependencies.decodeText;
     context.cancel = &cancel;
     context.questions = mDependencies.questions;
     context.subAgents = mDependencies.subAgents;
@@ -395,9 +396,11 @@ MaiToolResult MaiTurnRunner::checkPermission(const MaiToolInvocation& call,
     request.arguments = call.arguments;
     request.approvalKey = approvalKeys.front();
     request.approvalKeys = std::move(approvalKeys);
-    request.rememberOnApproval = mDependencies.approvalPolicy == MaiApprovalPolicy::UnlessTrusted &&
-                                 (call.name == "write" || call.name == "edit" ||
-                                  call.name == "apply_patch" || call.name == "generate_pdf");
+    request.rememberOnApproval =
+        mDependencies.approvalPolicy == MaiApprovalPolicy::UnlessTrusted &&
+        (call.name == "create_file" || call.name == "create_directory" ||
+         call.name == "delete_file" || call.name == "write" || call.name == "edit" ||
+         call.name == "apply_patch" || call.name == "generate_pdf");
     request.allowForSession = !perCallApproval;
     request.asked = MaiTime::getCurrentTime();
 

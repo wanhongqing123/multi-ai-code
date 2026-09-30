@@ -44,7 +44,9 @@ static const char* hostToolHandler(void* context, const char* tool, const char* 
     probe->lastArguments = arguments ? arguments : "";
     ++probe->calls;
     const std::string response =
-        Json{{"ok", true}, {"output", probe->lastTool == "maichat_send_text" ? "sent" : "read"}}
+        Json{{"ok", true},
+             {"output", probe->lastTool == "maichat_send_text" ? "sent"
+                        : probe->lastTool == "mobile_decode_text" ? "\u4f60\u597d" : "read"}}
             .dump();
     char* owned = static_cast<char*>(std::malloc(response.size() + 1));
     CHECK(owned != nullptr);
@@ -129,7 +131,8 @@ int main() {
         CHECK(body["messages"].front()["content"].get<std::string>().find(
                   "GitHub-Flavored Markdown") != std::string::npos);
         // 移动端不能向模型宣称可以执行桌面 shell。
-        bool hasViewImage = false, hasMaiChatContacts = false, hasMaiChatSend = false,
+        bool hasCreateFile = false, hasCreateDirectory = false, hasDeleteFile = false,
+             hasViewImage = false, hasMaiChatContacts = false, hasMaiChatSend = false,
              hasMaiChatBroadcast = false, hasGeneratePdf = false,
              hasMobilePhotos = false, hasMobileAlbums = false,
              hasMobilePhotoRead = false, hasMobilePhotoOriginal = false,
@@ -139,6 +142,9 @@ int main() {
              hasMobilePhotoAlbumWrite = false;
         for (const auto& tool : body["tools"]) {
             CHECK(tool["function"]["name"] != "shell");
+            if (tool["function"]["name"] == "create_file") hasCreateFile = true;
+            if (tool["function"]["name"] == "create_directory") hasCreateDirectory = true;
+            if (tool["function"]["name"] == "delete_file") hasDeleteFile = true;
             if (tool["function"]["name"] == "view_image") hasViewImage = true;
             if (tool["function"]["name"] == "generate_pdf") hasGeneratePdf = true;
             if (tool["function"]["name"] == "maichat_list_contacts") hasMaiChatContacts = true;
@@ -162,6 +168,9 @@ int main() {
             if (kPhotoAlbumTool != nullptr && tool["function"]["name"] == kPhotoAlbumTool)
                 hasMobilePhotoAlbumWrite = true;
         }
+        CHECK(hasCreateFile);
+        CHECK(hasCreateDirectory);
+        CHECK(hasDeleteFile);
         CHECK(hasViewImage);
         CHECK(hasGeneratePdf);
         CHECK(hasMaiChatContacts);
@@ -213,6 +222,15 @@ int main() {
                 {"index", 0}, {"id", "call_read_sibling"}, {"type", "function"},
                 {"function", {{"name", "read"},
                               {"arguments", "{\"path\":\"../shared.txt\"}"}}}};
+            response.set_content(frame({{"tool_calls", Json::array({invocation})}}, "tool_calls") +
+                                     "data: [DONE]\n\n", "text/event-stream");
+            return;
+        }
+        if (input == "read-legacy") {
+            Json invocation = {
+                {"index", 0}, {"id", "call_read_legacy"}, {"type", "function"},
+                {"function", {{"name", "read"},
+                              {"arguments", "{\"path\":\"legacy.txt\",\"encoding\":\"gb18030\"}"}}}};
             response.set_content(frame({{"tool_calls", Json::array({invocation})}}, "tool_calls") +
                                      "data: [DONE]\n\n", "text/event-stream");
             return;
@@ -423,6 +441,15 @@ int main() {
                             {"text", "read-app-sibling"} })["ok"] == true);
         const auto sibling = wait([](const Json& s) { return s["busy"] == false; });
         CHECK(sibling.dump().find("app sibling content") != std::string::npos);
+
+        CHECK(!MaiFileSystem::writeFile(MaiFilePath::fromUtf8(movedWorkspace + "/legacy.txt"),
+                                        std::string("\xC4\xE3\xBA\xC3", 4)));
+        CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "read-legacy"}})["ok"] == true);
+        const auto decoded = wait([](const Json& s) { return s["busy"] == false; });
+        CHECK(decoded.dump().find("\u4f60\u597d") != std::string::npos);
+        CHECK(hostProbe.lastTool == "mobile_decode_text");
+        CHECK(Json::parse(hostProbe.lastArguments).value("encoding", "") == "gb18030");
+        CHECK(Json::parse(hostProbe.lastArguments).value("base64", "") == "xOO6ww==");
 
         CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "write"}})["ok"] == true);
         auto pending = wait([](const Json& s) { return !s["permissions"].empty(); });

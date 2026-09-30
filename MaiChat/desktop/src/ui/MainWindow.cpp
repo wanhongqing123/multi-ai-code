@@ -1514,6 +1514,16 @@ void MainWindow::closeEvent(QCloseEvent* event) {
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == commandButton_ && event->type() == QEvent::Enter) {
+        showSlashCommandMenu();
+    }
+    if (watched == commandButton_ && event->type() == QEvent::KeyPress) {
+        const int key = static_cast<QKeyEvent*>(event)->key();
+        if (key == Qt::Key_Space || key == Qt::Key_Return || key == Qt::Key_Enter) {
+            showSlashCommandMenu();
+            return true;
+        }
+    }
     if (watched == aiReplyButton_ && event->type() == QEvent::Enter) {
         aiReplyHint_->show();
         aiReplyHint_->raise();
@@ -1801,7 +1811,7 @@ void MainWindow::buildUi() {
     composer->setObjectName(QStringLiteral("composerPanel"));
     composer->setMinimumHeight(UiZoom::s(96));
     auto* composerLayout = new QVBoxLayout(composer);
-    composerLayout->setContentsMargins(12, 6, 12, 8);
+    composerLayout->setContentsMargins(12, 2, 12, 8);
     composerLayout->setSpacing(6);
 
     messageEditor_ = new ComposerTextEdit(composer);
@@ -1874,6 +1884,7 @@ void MainWindow::buildUi() {
     commandButton_->setObjectName(QStringLiteral("composerCommandButton"));
     commandButton_->setAccessibleName(QStringLiteral("命令"));
     commandButton_->setCursor(Qt::PointingHandCursor);
+    commandButton_->installEventFilter(this);
     commandButton_->setFixedSize(UiZoom::s(30), UiZoom::s(30));
     commandButton_->setStyleSheet(UiZoom::scaleQss(QStringLiteral(
         "QPushButton{background:transparent;border:0;border-radius:8px;color:#64748b;"
@@ -1891,7 +1902,6 @@ void MainWindow::buildUi() {
             sendSlashCommand(command);
         });
     }
-    connect(commandButton_, &QPushButton::clicked, this, &MainWindow::showSlashCommandMenu);
 
     replySuggestionBar_ = new QWidget(composer);
     replySuggestionBar_->setObjectName(QStringLiteral("replySuggestionBar"));
@@ -5449,7 +5459,7 @@ void MainWindow::updateComposerState() {
 
 void MainWindow::showSlashCommandMenu() {
     const QString peerId = app_.chatState().selectedPeerId();
-    if (peerId.isEmpty()) return;
+    if (peerId.isEmpty() || !commandButton_->isEnabled() || commandMenu_->isVisible()) return;
     commandMenu_->setProperty("peerId", peerId);
     const QPoint anchor = commandButton_->mapToGlobal(QPoint(0, 0));
     commandMenu_->popup(anchor - QPoint(0, commandMenu_->sizeHint().height() + UiZoom::s(6)));

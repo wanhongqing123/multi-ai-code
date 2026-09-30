@@ -17,6 +17,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSettings>
+#include <QSignalSpy>
 #include <QSplitter>
 #include <QSplitterHandle>
 #include <QMouseEvent>
@@ -99,6 +100,8 @@ private slots:
     void agentConversationListUsesResizableSplitter();
     void compactSplittersKeepDragTargets_data();
     void compactSplittersKeepDragTargets();
+    void composerResizeHandleAlignsWithEditorBorder_data();
+    void composerResizeHandleAlignsWithEditorBorder();
     void rendersEmptyConversationState();
     void sendsTextFromComposer();
     void returnKeySendsComposerText();
@@ -1647,6 +1650,36 @@ void MainWindowLayoutTest::contactsNavigationShowsContactsAndOpensChat() {
     QCOMPARE(contentStack->currentWidget(), messagesPage);
 }
 
+void MainWindowLayoutTest::composerResizeHandleAlignsWithEditorBorder_data() {
+    QTest::addColumn<qreal>("zoom");
+    for (const qreal zoom : {0.8, 1.0, 1.5, 2.0}) {
+        QTest::newRow(QByteArray::number(zoom).constData()) << zoom;
+    }
+}
+
+void MainWindowLayoutTest::composerResizeHandleAlignsWithEditorBorder() {
+    QFETCH(qreal, zoom);
+    struct RestoreZoom { qreal old; ~RestoreZoom() { UiZoom::setFactor(old); } } restore{UiZoom::factor()};
+    UiZoom::setFactor(zoom);
+    RemoteIMApplication app(QStringLiteral("desktop-user"),
+                            std::make_unique<FakeRemoteIMClient>());
+    MainWindow window(app);
+    window.resize(1400, 900);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto* splitter = window.findChild<QSplitter*>(QStringLiteral("messageComposerSplitter"));
+    auto* editor = window.findChild<QTextEdit*>(QStringLiteral("messageEditor"));
+    QVERIFY(splitter != nullptr);
+    QVERIFY(editor != nullptr);
+    QSplitterHandle* handle = splitter->handle(1);
+    QVERIFY(handle != nullptr);
+
+    const QRect handleOnScreen(handle->mapToGlobal(QPoint(0, 0)), handle->size());
+    const QRect editorOnScreen(editor->mapToGlobal(QPoint(0, 0)), editor->size());
+    QCOMPARE(editorOnScreen.top(), handleOnScreen.bottom() + 1);
+    QCOMPARE(editorOnScreen.center().x(), handleOnScreen.center().x());
+}
+
 // The editor widget is shared, so switching peers must swap its rich draft and quote together.
 void MainWindowLayoutTest::composerDraftAndQuoteStayWithTheirContact() {
     auto client = std::make_unique<FakeRemoteIMClient>();
@@ -2707,8 +2740,17 @@ void MainWindowLayoutTest::slashCommandMenuSendsWithoutChangingDraft() {
     auto* menu = window.findChild<QMenu*>(QStringLiteral("composerCommandMenu"));
     QVERIFY(editor && button && menu);
     QCOMPARE(menu->actions().size(), 12);
+    QSignalSpy shown(menu, &QMenu::aboutToShow);
     editor->setPlainText(QStringLiteral("Keep my draft"));
-    button->click();
+    QEvent enterButton(QEvent::Enter);
+    QApplication::sendEvent(button, &enterButton);
+    QVERIFY(menu->isVisible());
+    QCOMPARE(shown.count(), 1);
+    QEvent repeatedEnter(QEvent::Enter);
+    QApplication::sendEvent(button, &repeatedEnter);
+    QCOMPARE(shown.count(), 1);
+    QEvent leaveButton(QEvent::Leave);
+    QApplication::sendEvent(button, &leaveButton);
     QVERIFY(menu->isVisible());
     auto* action = menu->findChild<QAction*>(QStringLiteral("slashCommandButton_status"));
     QVERIFY(action);
@@ -2716,9 +2758,16 @@ void MainWindowLayoutTest::slashCommandMenuSendsWithoutChangingDraft() {
     QCOMPARE(fake->lastText(), QStringLiteral("/status"));
     QCOMPARE(editor->toPlainText(), QStringLiteral("Keep my draft"));
     menu->hide();
+    button->click();
+    QVERIFY(!menu->isVisible());
+    button->setFocus();
+    QTest::keyClick(button, Qt::Key_Space);
+    QVERIFY(menu->isVisible());
+    menu->hide();
     app.addContact(QStringLiteral("other-user"), QStringLiteral("Other"));
     app.selectPeer(QStringLiteral("phone-user"));
-    button->click();
+    QApplication::sendEvent(button, &enterButton);
+    QVERIFY(menu->isVisible());
     app.selectPeer(QStringLiteral("other-user"));
     action->trigger();
     QCOMPARE(fake->lastTextPeerId(), QStringLiteral("phone-user"));

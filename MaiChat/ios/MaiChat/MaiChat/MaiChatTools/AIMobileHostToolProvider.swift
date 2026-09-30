@@ -95,8 +95,9 @@ final class AIMobileHostToolProvider {
             return .failure(code: "invalid_input", message: "valid base64 text and encoding are required")
         }
         let name = requested.lowercased().replacingOccurrences(of: "_", with: "-")
+        // CFStringEncodingExt.h defines GB 18030 as 0x0632; Swift does not expose its enum case.
         let gb18030 = String.Encoding(rawValue:
-            CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(kCFStringEncodingGB_18030_2000)))
+            CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(0x0632)))
         let encoding: String.Encoding
         switch name {
         case "auto", "gb18030", "gbk", "cp936", "system": encoding = gb18030

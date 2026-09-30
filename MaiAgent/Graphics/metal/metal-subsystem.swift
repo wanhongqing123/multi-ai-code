@@ -79,10 +79,12 @@ public func device_preprocessor_name() -> UnsafePointer<CChar> {
 /// ignored (there is only ever one "adapter" in an Apple Silicon machine and thus only the "default" device is used.
 @_cdecl("device_create")
 public func device_create(devicePointer: UnsafeMutableRawPointer, adapter: UInt32) -> Int32 {
+#if os(macOS)
     guard NSProtocolFromString("MTLDevice") != nil else {
         OBSLog(.error, "This Mac does not support Metal.")
         return GS_ERROR_NOT_SUPPORTED
     }
+#endif
 
     OBSLog(.info, "---------------------------------")
 
@@ -98,9 +100,11 @@ public func device_create(devicePointer: UnsafeMutableRawPointer, adapter: UInt3
     descriptions.append("\t- Unified Memory     : \(metalDevice.hasUnifiedMemory ? "Yes" : "No")")
     descriptions.append("\t- Raytracing Support : \(metalDevice.supportsRaytracing ? "Yes" : "No")")
 
+#if os(macOS)
     if #available(macOS 14.0, *) {
         descriptions.append("\t- Architecture       : \(metalDevice.architecture.name)")
     }
+#endif
 
     OBSLog(.info, descriptions.joined(separator: "\n"))
 
@@ -591,6 +595,9 @@ public func device_present(device: UnsafeRawPointer) {
     let device: MetalDevice = unretained(device)
 
     device.finishPendingCommands()
+#if os(iOS)
+    device.blitSwapChains()
+#endif
 }
 
 /// Commits the current command buffer to schedule and execute the GPU commands encoded within it and waits until they

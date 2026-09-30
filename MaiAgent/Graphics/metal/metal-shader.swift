@@ -272,7 +272,11 @@ public func device_get_pixel_shader(device: UnsafeRawPointer) -> OpaquePointer? 
 ///
 /// Ownership of the ``MetalShader`` instance will be transferred into the function and if this was the last strong
 /// reference to it, the object will be automatically deinitialized and deallocated by Swift.
+#if os(iOS)
+@_cdecl("mai_metal_gs_shader_destroy")
+#else
 @_cdecl("gs_shader_destroy")
+#endif
 public func gs_shader_destroy(shader: UnsafeRawPointer) {
     let _ = retained(shader) as MetalShader
 }
@@ -280,7 +284,11 @@ public func gs_shader_destroy(shader: UnsafeRawPointer) {
 /// Gets the number of uniform parameters used on the ``MetalShader``
 /// - Parameter shader: Opaque pointer to ``MetalShader`` instance shared with `libobs`
 /// - Returns: Number of uniforms
+#if os(iOS)
+@_cdecl("mai_metal_gs_shader_get_num_params")
+#else
 @_cdecl("gs_shader_get_num_params")
+#endif
 public func gs_shader_get_num_params(shader: UnsafeRawPointer) -> UInt32 {
     let shader: MetalShader = unretained(shader)
 
@@ -300,7 +308,11 @@ public func gs_shader_get_num_params(shader: UnsafeRawPointer) -> UInt32 {
 /// > Important: The opaque pointer for the ``ShaderUniform`` instance is passe unretained and as such can become
 /// invalid when its owning ``MetalShader`` instance either is deinitialized itself or is replaced in the uniforms
 /// array.
+#if os(iOS)
+@_cdecl("mai_metal_gs_shader_get_param_by_idx")
+#else
 @_cdecl("gs_shader_get_param_by_idx")
+#endif
 public func gs_shader_get_param_by_idx(shader: UnsafeRawPointer, param: UInt32) -> OpaquePointer? {
     let shader: MetalShader = unretained(shader)
 
@@ -325,7 +337,11 @@ public func gs_shader_get_param_by_idx(shader: UnsafeRawPointer, param: UInt32) 
 /// invalid when its owning ``MetalShader`` instance either is deinitialized itself or is replaced in the uniforms
 /// array.
 ///
+#if os(iOS)
+@_cdecl("mai_metal_gs_shader_get_param_by_name")
+#else
 @_cdecl("gs_shader_get_param_by_name")
+#endif
 public func gs_shader_get_param_by_name(shader: UnsafeRawPointer, param: UnsafeMutablePointer<CChar>) -> OpaquePointer?
 {
     let shader: MetalShader = unretained(shader)
@@ -354,7 +370,11 @@ public func gs_shader_get_param_by_name(shader: UnsafeRawPointer, param: UnsafeM
 /// invalid when its owning ``MetalShader`` instance either is deinitialized itself or is replaced in the uniforms
 /// array.
 ///
+#if os(iOS)
+@_cdecl("mai_metal_gs_shader_get_viewproj_matrix")
+#else
 @_cdecl("gs_shader_get_viewproj_matrix")
+#endif
 public func gs_shader_get_viewproj_matrix(shader: UnsafeRawPointer) -> OpaquePointer? {
     let shader: MetalShader = unretained(shader)
     let paramName = "viewProj"
@@ -380,7 +400,11 @@ public func gs_shader_get_viewproj_matrix(shader: UnsafeRawPointer) -> OpaquePoi
 /// > Important: The opaque pointer for the ``ShaderUniform`` instance is passe unretained and as such can become
 /// invalid when its owning ``MetalShader`` instance either is deinitialized itself or is replaced in the uniforms
 /// array.
+#if os(iOS)
+@_cdecl("mai_metal_gs_shader_get_world_matrix")
+#else
 @_cdecl("gs_shader_get_world_matrix")
+#endif
 public func gs_shader_get_world_matrix(shader: UnsafeRawPointer) -> OpaquePointer? {
     let shader: MetalShader = unretained(shader)
     let paramName = "worldProj"
@@ -402,7 +426,11 @@ public func gs_shader_get_world_matrix(shader: UnsafeRawPointer) -> OpaquePointe
 ///
 /// > Warning: The C character array pointer holding the name of the uniform is managed by Swift and might become
 /// invalid at any point in time.
+#if os(iOS)
+@_cdecl("mai_metal_gs_shader_get_param_info")
+#else
 @_cdecl("gs_shader_get_param_info")
+#endif
 public func gs_shader_get_param_info(shaderParam: UnsafeRawPointer, info: UnsafeMutablePointer<gs_shader_param_info>) {
     let shaderUniform: MetalShader.ShaderUniform = unretained(shaderParam)
 
@@ -416,7 +444,11 @@ public func gs_shader_get_param_info(shaderParam: UnsafeRawPointer, info: Unsafe
 /// - Parameters:
 ///   - shaderParam: Opaque pointer to ``ShaderUniform`` instance shared with `libobs`
 ///   - val: Boolean value to set for the uniform
+#if os(iOS)
+@_cdecl("mai_metal_gs_shader_set_bool")
+#else
 @_cdecl("gs_shader_set_bool")
+#endif
 public func gs_shader_set_bool(shaderParam: UnsafeRawPointer, val: Bool) {
     let shaderUniform: MetalShader.ShaderUniform = unretained(shaderParam)
 
@@ -429,7 +461,11 @@ public func gs_shader_set_bool(shaderParam: UnsafeRawPointer, val: Bool) {
 /// - Parameters:
 ///   - shaderParam: Opaque pointer to ``ShaderUniform`` instance shared with `libobs`
 ///   - val: 32-bit floating point value to set for the uniform
+#if os(iOS)
+@_cdecl("mai_metal_gs_shader_set_float")
+#else
 @_cdecl("gs_shader_set_float")
+#endif
 public func gs_shader_set_float(shaderParam: UnsafeRawPointer, val: Float32) {
     let shaderUniform: MetalShader.ShaderUniform = unretained(shaderParam)
 
@@ -442,7 +478,11 @@ public func gs_shader_set_float(shaderParam: UnsafeRawPointer, val: Float32) {
 /// - Parameters:
 ///   - shaderParam: Opaque pointer to ``ShaderUniform`` instance shared with `libobs`
 ///   - val: 32-bit signed integer value to set for the uniform
+#if os(iOS)
+@_cdecl("mai_metal_gs_shader_set_int")
+#else
 @_cdecl("gs_shader_set_int")
+#endif
 public func gs_shader_set_int(shaderParam: UnsafeRawPointer, val: Int32) {
     let shaderUniform: MetalShader.ShaderUniform = unretained(shaderParam)
 
@@ -457,7 +497,11 @@ public func gs_shader_set_int(shaderParam: UnsafeRawPointer, val: Int32) {
 ///   - val: A 3x3 matrix of 32-bit floating point values
 ///
 /// The 3x3 matrix is converted into a 4x4 matrix (padded with zeros) before actually being set as the uniform data
+#if os(iOS)
+@_cdecl("mai_metal_gs_shader_set_matrix3")
+#else
 @_cdecl("gs_shader_set_matrix3")
+#endif
 public func gs_shader_set_matrix3(shaderParam: UnsafeRawPointer, val: UnsafePointer<matrix3>) {
     let shaderUniform: MetalShader.ShaderUniform = unretained(shaderParam)
 
@@ -471,7 +515,11 @@ public func gs_shader_set_matrix3(shaderParam: UnsafeRawPointer, val: UnsafePoin
 /// - Parameters:
 ///   - shaderParam: Opaque pointer to ``ShaderUniform`` instance shared with `libobs`
 ///   - val: A 4x4 matrix of 32-bit floating point values
+#if os(iOS)
+@_cdecl("mai_metal_gs_shader_set_matrix4")
+#else
 @_cdecl("gs_shader_set_matrix4")
+#endif
 public func gs_shader_set_matrix4(shaderParam: UnsafeRawPointer, val: UnsafePointer<matrix4>) {
     let shaderUniform: MetalShader.ShaderUniform = unretained(shaderParam)
 
@@ -482,7 +530,11 @@ public func gs_shader_set_matrix4(shaderParam: UnsafeRawPointer, val: UnsafePoin
 /// - Parameters:
 ///   - shaderParam: Opaque pointer to ``ShaderUniform`` instance shared with `libobs`
 ///   - val: A vector of 2 32-bit floating point values
+#if os(iOS)
+@_cdecl("mai_metal_gs_shader_set_vec2")
+#else
 @_cdecl("gs_shader_set_vec2")
+#endif
 public func gs_shader_set_vec2(shaderParam: UnsafeRawPointer, val: UnsafePointer<vec2>) {
     let shaderUniform: MetalShader.ShaderUniform = unretained(shaderParam)
 
@@ -493,7 +545,11 @@ public func gs_shader_set_vec2(shaderParam: UnsafeRawPointer, val: UnsafePointer
 /// - Parameters:
 ///   - shaderParam: Opaque pointer to ``ShaderUniform`` instance shared with `libobs`
 ///   - val: A vector of 3 32-bit floating point values
+#if os(iOS)
+@_cdecl("mai_metal_gs_shader_set_vec3")
+#else
 @_cdecl("gs_shader_set_vec3")
+#endif
 public func gs_shader_set_vec3(shaderParam: UnsafeRawPointer, val: UnsafePointer<vec3>) {
     let shaderUniform: MetalShader.ShaderUniform = unretained(shaderParam)
 
@@ -504,7 +560,11 @@ public func gs_shader_set_vec3(shaderParam: UnsafeRawPointer, val: UnsafePointer
 /// - Parameters:
 ///   - shaderParam: Opaque pointer to ``ShaderUniform`` instance shared with `libobs`
 ///   - val: A vector of 4 32-bit floating point values
+#if os(iOS)
+@_cdecl("mai_metal_gs_shader_set_vec4")
+#else
 @_cdecl("gs_shader_set_vec4")
+#endif
 public func gs_shader_set_vec4(shaderParam: UnsafeRawPointer, val: UnsafePointer<vec4>) {
     let shaderUniform: MetalShader.ShaderUniform = unretained(shaderParam)
 
@@ -519,7 +579,11 @@ public func gs_shader_set_vec4(shaderParam: UnsafeRawPointer, val: UnsafePointer
 ///
 /// The struct's data is copied verbatim into the uniform, which allows reconstruction of the pointer at a later point
 /// as long as the actual ``MetalTexture`` instance still exists.
+#if os(iOS)
+@_cdecl("mai_metal_gs_shader_set_texture")
+#else
 @_cdecl("gs_shader_set_texture")
+#endif
 public func gs_shader_set_texture(shaderParam: UnsafeRawPointer, val: UnsafePointer<gs_shader_texture>?) {
     let shaderUniform: MetalShader.ShaderUniform = unretained(shaderParam)
 
@@ -540,7 +604,11 @@ public func gs_shader_set_texture(shaderParam: UnsafeRawPointer, val: UnsafePoin
 ///
 /// If the ``ShaderUniform`` expects a texture parameter, the pointer will be bound as memory of a `gs_shader_texture`
 /// instance before setting it up.
+#if os(iOS)
+@_cdecl("mai_metal_gs_shader_set_val")
+#else
 @_cdecl("gs_shader_set_val")
+#endif
 public func gs_shader_set_val(shaderParam: UnsafeRawPointer, val: UnsafeRawPointer, size: UInt32) {
     let shaderUniform: MetalShader.ShaderUniform = unretained(shaderParam)
 
@@ -567,7 +635,11 @@ public func gs_shader_set_val(shaderParam: UnsafeRawPointer, val: UnsafeRawPoint
 ///
 /// Each ``ShaderUniform`` is optionally set up with a set of default data (stored as an array of bytes) which is
 /// simply copied into the current values.
+#if os(iOS)
+@_cdecl("mai_metal_gs_shader_set_default")
+#else
 @_cdecl("gs_shader_set_default")
+#endif
 public func gs_shader_set_default(shaderParam: UnsafeRawPointer) {
     let shaderUniform: MetalShader.ShaderUniform = unretained(shaderParam)
 
@@ -583,7 +655,11 @@ public func gs_shader_set_default(shaderParam: UnsafeRawPointer) {
 ///
 /// If the uniform represents a texture for use in the associated shader, this function will also set up the provided
 /// ``MTLSamplerState`` for the associated texture's texture slot.
+#if os(iOS)
+@_cdecl("mai_metal_gs_shader_set_next_sampler")
+#else
 @_cdecl("gs_shader_set_next_sampler")
+#endif
 public func gs_shader_set_next_sampler(shaderParam: UnsafeRawPointer, sampler: UnsafeRawPointer) {
     let shaderUniform: MetalShader.ShaderUniform = unretained(shaderParam)
 

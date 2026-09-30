@@ -17,6 +17,14 @@ if(TARGET maiagent_obs_metal)
   add_test(NAME MaiObsMetalRenderTests
     COMMAND MaiObsMetalRenderTests $<TARGET_FILE:maiagent_obs_metal>)
   set_tests_properties(MaiObsMetalRenderTests PROPERTIES SKIP_RETURN_CODE 77)
+
+  add_executable(MaiObsEffectTests MaiObsEffectTests.c)
+  target_link_libraries(MaiObsEffectTests PRIVATE maiagent_graphics)
+  add_dependencies(MaiObsEffectTests maiagent_obs_metal maiagent_graphics_data)
+  add_test(NAME MaiObsEffectTests
+    COMMAND MaiObsEffectTests $<TARGET_FILE:maiagent_obs_metal>
+      ${CMAKE_CURRENT_BINARY_DIR}/../data/default.effect
+      ${CMAKE_CURRENT_BINARY_DIR}/../data/solid.effect)
 endif()
 
 if(APPLE)

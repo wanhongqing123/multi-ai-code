@@ -112,7 +112,11 @@ public func device_cubetexture_create(
 ///
 /// The ownership of the shared pointer is transferred into this function and the instance is placed under Swift's
 /// memory management again.
+#if os(iOS)
+@_cdecl("mai_metal_gs_texture_destroy")
+#else
 @_cdecl("gs_texture_destroy")
+#endif
 public func gs_texture_destroy(texture: UnsafeRawPointer) {
     let _ = retained(texture) as MetalTexture
 }
@@ -301,7 +305,11 @@ public func device_stage_texture(device: UnsafeRawPointer, dst: UnsafeRawPointer
 /// Gets the width of the texture wrapped by the ``MetalTexture`` instance
 /// - Parameter tex: Opaque pointer to ``MetalTexture`` instance shared with `libobs`
 /// - Returns: Width of the texture
+#if os(iOS)
+@_cdecl("mai_metal_gs_texture_get_width")
+#else
 @_cdecl("gs_texture_get_width")
+#endif
 public func device_texture_get_width(tex: UnsafeRawPointer) -> UInt32 {
     let texture: MetalTexture = unretained(tex)
 
@@ -311,7 +319,11 @@ public func device_texture_get_width(tex: UnsafeRawPointer) -> UInt32 {
 /// Gets the height of the texture wrapped by the ``MetalTexture`` instance
 /// - Parameter tex: Opaque pointer to ``MetalTexture`` instance shared with `libobs`
 /// - Returns: Height of the texture
+#if os(iOS)
+@_cdecl("mai_metal_gs_texture_get_height")
+#else
 @_cdecl("gs_texture_get_height")
+#endif
 public func device_texture_get_height(tex: UnsafeRawPointer) -> UInt32 {
     let texture: MetalTexture = unretained(tex)
 
@@ -321,7 +333,11 @@ public func device_texture_get_height(tex: UnsafeRawPointer) -> UInt32 {
 /// Gets the color format of the texture wrapped by the ``MetalTexture`` instance
 /// - Parameter tex: Opaque pointer to ``MetalTexture`` instance shared with `libobs`
 /// - Returns: Color format as defined by the `gs_color_format` enumeration
+#if os(iOS)
+@_cdecl("mai_metal_gs_texture_get_color_format")
+#else
 @_cdecl("gs_texture_get_color_format")
+#endif
 public func gs_texture_get_color_format(tex: UnsafeRawPointer) -> gs_color_format {
     let texture: MetalTexture = unretained(tex)
 
@@ -344,7 +360,11 @@ public func gs_texture_get_color_format(tex: UnsafeRawPointer) -> gs_color_forma
 ///
 /// > Important: This function can only be used to **push** new image data into the texture. To _pull_ image data from
 /// the texture, use a stage surface instead.
+#if os(iOS)
+@_cdecl("mai_metal_gs_texture_map")
+#else
 @_cdecl("gs_texture_map")
+#endif
 public func gs_texture_map(
     tex: UnsafeRawPointer, ptr: UnsafeMutablePointer<UnsafeMutableRawPointer>, linesize: UnsafeMutablePointer<UInt32>
 ) -> Bool {
@@ -390,7 +410,11 @@ public func gs_texture_map(
 /// This function needs to be used in tandem with `gs_texture_map`, which allocates memory for raw image data that
 /// should be used in an update of the wrapped `MTLTexture`. This function will then actually replace the image data
 /// in the texture with that raw image data and deallocate the memory that was allocated during `gs_texture_map`.
+#if os(iOS)
+@_cdecl("mai_metal_gs_texture_unmap")
+#else
 @_cdecl("gs_texture_unmap")
+#endif
 public func gs_texture_unmap(tex: UnsafeRawPointer) {
     let texture: MetalTexture = unretained(tex)
 
@@ -414,7 +438,11 @@ public func gs_texture_unmap(tex: UnsafeRawPointer) {
 ///
 /// > Important: The opaque pointer returned by this function is **unretained**, which means that the ``MTLTexture``
 /// instance it refers to might be deinitialized at any point when no other Swift code holds a strong reference to it.
+#if os(iOS)
+@_cdecl("mai_metal_gs_texture_get_obj")
+#else
 @_cdecl("gs_texture_get_obj")
+#endif
 public func gs_texture_get_obj(tex: UnsafeRawPointer) -> OpaquePointer {
     let texture: MetalTexture = unretained(tex)
 
@@ -428,7 +456,11 @@ public func gs_texture_get_obj(tex: UnsafeRawPointer) -> OpaquePointer {
 ///
 /// The ownership of the shared pointer is transferred into this function and the instance is placed under
 /// Swift's memory management again.
+#if os(iOS)
+@_cdecl("mai_metal_gs_cubetexture_destroy")
+#else
 @_cdecl("gs_cubetexture_destroy")
+#endif
 public func gs_cubetexture_destroy(cubetex: UnsafeRawPointer) {
     let _ = retained(cubetex) as MetalTexture
 }
@@ -436,7 +468,11 @@ public func gs_cubetexture_destroy(cubetex: UnsafeRawPointer) {
 /// Gets the edge size of the cube texture wrapped by the ``MetalTexture`` instance
 /// - Parameter cubetex: Opaque pointer to ``MetalTexture`` instance shared with `libobs`
 /// - Returns: Edge size of the cube
+#if os(iOS)
+@_cdecl("mai_metal_gs_cubetexture_get_size")
+#else
 @_cdecl("gs_cubetexture_get_size")
+#endif
 public func gs_cubetexture_get_size(cubetex: UnsafeRawPointer) -> UInt32 {
     let texture: MetalTexture = unretained(cubetex)
 
@@ -446,7 +482,11 @@ public func gs_cubetexture_get_size(cubetex: UnsafeRawPointer) -> UInt32 {
 /// Gets the color format of the cube texture wrapped by the ``MetalTexture`` instance
 /// - Parameter cubetex: Opaque pointer to ``MetalTexture`` instance shared with `libobs`
 /// - Returns: Color format value
+#if os(iOS)
+@_cdecl("mai_metal_gs_cubetexture_get_color_format")
+#else
 @_cdecl("gs_cubetexture_get_color_format")
+#endif
 public func gs_cubetexture_get_color_format(cubetex: UnsafeRawPointer) -> gs_color_format {
     let texture: MetalTexture = unretained(cubetex)
 
@@ -496,7 +536,11 @@ public func device_texture_create_from_iosurface(device: UnsafeRawPointer, iosur
 /// The "rebind" mentioned in the function name is limited to the ``MTLTexture`` instance wrapped inside the
 /// ``MetalTexture`` instance, as textures are immutable objects (but their underlying data is mutable). This allows
 /// `libobs` to hold onto the same opaque ``MetalTexture`` pointer even though the backing surface might have changed.
+#if os(iOS)
+@_cdecl("mai_metal_gs_texture_rebind_iosurface")
+#else
 @_cdecl("gs_texture_rebind_iosurface")
+#endif
 public func gs_texture_rebind_iosurface(texture: UnsafeRawPointer, iosurf: IOSurfaceRef) -> Bool {
     let texture: MetalTexture = unretained(texture)
 

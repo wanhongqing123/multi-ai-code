@@ -39,42 +39,74 @@ public func device_timer_create(device: UnsafeRawPointer) {
 public func device_timer_range_create(device: UnsafeRawPointer) {
 }
 
+#if os(iOS)
+@_cdecl("mai_metal_gs_timer_destroy")
+#else
 @_cdecl("gs_timer_destroy")
+#endif
 public func gs_timer_destroy(timer: UnsafeRawPointer) {
     return
 }
 
+#if os(iOS)
+@_cdecl("mai_metal_gs_timer_begin")
+#else
 @_cdecl("gs_timer_begin")
+#endif
 public func gs_timer_begin(timer: UnsafeRawPointer) {
     return
 }
 
+#if os(iOS)
+@_cdecl("mai_metal_gs_timer_end")
+#else
 @_cdecl("gs_timer_end")
+#endif
 public func gs_timer_end(timer: UnsafeRawPointer) {
     return
 }
 
+#if os(iOS)
+@_cdecl("mai_metal_gs_timer_get_data")
+#else
 @_cdecl("gs_timer_get_data")
+#endif
 public func gs_timer_get_data(timer: UnsafeRawPointer) -> Bool {
     return false
 }
 
+#if os(iOS)
+@_cdecl("mai_metal_gs_timer_range_destroy")
+#else
 @_cdecl("gs_timer_range_destroy")
+#endif
 public func gs_timer_range_destroy(range: UnsafeRawPointer) {
     return
 }
 
+#if os(iOS)
+@_cdecl("mai_metal_gs_timer_range_begin")
+#else
 @_cdecl("gs_timer_range_begin")
+#endif
 public func gs_timer_range_begin(range: UnsafeRawPointer) {
     return
 }
 
+#if os(iOS)
+@_cdecl("mai_metal_gs_timer_range_end")
+#else
 @_cdecl("gs_timer_range_end")
+#endif
 public func gs_timer_range_end(range: UnsafeRawPointer) {
     return
 }
 
+#if os(iOS)
+@_cdecl("mai_metal_gs_timer_range_get_data")
+#else
 @_cdecl("gs_timer_range_get_data")
+#endif
 public func gs_timer_range_get_data(range: UnsafeRawPointer, disjoint: Bool, frequency: UInt64) -> Bool {
     return false
 }

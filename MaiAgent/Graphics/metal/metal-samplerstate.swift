@@ -78,7 +78,11 @@ public func device_samplerstate_create(device: UnsafeRawPointer, info: gs_sample
 ///
 /// Ownership of the ``MTLSamplerState`` instance will be transferred into the function and if this was the last
 /// strong reference to it, the object will be automatically deinitialized and deallocated by Swift.
+#if os(iOS)
+@_cdecl("mai_metal_gs_samplerstate_destroy")
+#else
 @_cdecl("gs_samplerstate_destroy")
+#endif
 public func gs_samplerstate_destroy(samplerstate: UnsafeRawPointer) {
     let _ = retained(samplerstate) as MTLSamplerState
 }

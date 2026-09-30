@@ -15,7 +15,11 @@
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  ******************************************************************************/
 
+#if os(macOS)
 import AppKit
+#elseif os(iOS)
+import UIKit
+#endif
 import Foundation
 import Metal
 import simd
@@ -39,7 +43,9 @@ class MetalDevice {
     private var pipelines = [Int: MTLRenderPipelineState]()
     private var depthStencilStates = [Int: MTLDepthStencilState]()
     private var obsSignalCallbacks = [MetalSignalType: () -> Void]()
+#if os(macOS)
     private var displayLink: CVDisplayLink?
+#endif
 
     let device: MTLDevice
     let commandQueue: MTLCommandQueue
@@ -61,7 +67,7 @@ class MetalDevice {
         let nopVertexSource = "[[vertex]] float4 vsNop() { return (float4)0; }"
 
         let compileOptions = MTLCompileOptions()
-        if #available(macOS 15, *) {
+        if #available(macOS 15, iOS 18, *) {
             compileOptions.mathMode = .fast
         } else {
             compileOptions.fastMathEnabled = true
@@ -73,10 +79,12 @@ class MetalDevice {
             throw MetalError.MTLDeviceError.shaderCompilationFailure("Vertex NOP shader")
         }
 
+#if os(macOS)
         CVDisplayLinkCreateWithActiveCGDisplays(&displayLink)
         if displayLink == nil {
             throw MetalError.MTLDeviceError.displayLinkCreationFailure
         }
+#endif
 
         self.commandQueue = commandQueue
         self.nopVertexFunction = function
@@ -97,7 +105,9 @@ class MetalDevice {
         clearPipelineDescriptor.inputPrimitiveTopology = .point
 
         setupSignalHandlers()
+#if os(macOS)
         setupDisplayLink()
+#endif
     }
 
     func dispatchSignal(type: MetalSignalType) {
@@ -108,18 +118,23 @@ class MetalDevice {
 
     /// Creates signal handlers for specific OBS signals and adds them to a collection of signal handlers using the signal name as their key
     private func setupSignalHandlers() {
+#if os(macOS)
         let videoResetCallback = { [self] in
             guard let displayLink else { return }
 
             CVDisplayLinkStop(displayLink)
             CVDisplayLinkStart(displayLink)
         }
+#else
+        let videoResetCallback = {}
+#endif
 
         obsSignalCallbacks.updateValue(videoResetCallback, forKey: MetalSignalType.videoReset)
     }
 
     /// Sets up the `CVDisplayLink` used by the ``MetalDevice`` to synchronize projector output with the operating
     /// system's screen refresh rate.
+#if os(macOS)
     private func setupDisplayLink() {
         func displayLinkCallback(
             displayLink: CVDisplayLink,
@@ -142,6 +157,7 @@ class MetalDevice {
 
         CVDisplayLinkSetOutputCallback(displayLink!, displayLinkCallback, opaqueSelf)
     }
+#endif
 
     /// Iterates over all ``OBSSwapChain`` instances present on the ``MetalDevice`` instance and encodes a block
     /// transfer command on the GPU to copy the contents of the projector rendered by `libobs`'s render loop into the
@@ -777,10 +793,12 @@ class MetalDevice {
 
     /// Stops the `CVDisplayLink` used by the ``MetalDevice`` instance
     func shutdown() {
+#if os(macOS)
         guard let displayLink else { return }
 
         CVDisplayLinkStop(displayLink)
         self.displayLink = nil
+#endif
     }
 
     deinit {

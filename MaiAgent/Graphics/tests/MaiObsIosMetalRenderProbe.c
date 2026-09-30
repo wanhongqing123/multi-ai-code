@@ -1,0 +1,44 @@
+#include <stdint.h>
+
+#include "MaiGraphics.h"
+#include "vec4.h"
+
+int maiObsIosMetalRenderProbe(void) {
+    graphics_t* graphics = NULL;
+    if (gs_create(&graphics, "builtin:metal", 0) != GS_SUCCESS || !graphics) return 1;
+
+    gs_enter_context(graphics);
+    gs_texture_t* texture = gs_texture_create(2, 2, GS_RGBA, 1, NULL, GS_RENDER_TARGET);
+    gs_stagesurf_t* surface = gs_stagesurface_create(2, 2, GS_RGBA);
+    bool passed = gs_get_device_type() == GS_DEVICE_METAL && texture && surface;
+
+    if (passed) {
+        struct vec4 red;
+        vec4_set(&red, 1.0f, 0.0f, 0.0f, 1.0f);
+        gs_set_render_target(texture, NULL);
+        gs_clear(GS_CLEAR_COLOR, &red, 1.0f, 0);
+        gs_stage_texture(surface, texture);
+        gs_flush();
+
+        uint8_t* pixels = NULL;
+        uint32_t stride = 0;
+        passed = gs_stagesurface_map(surface, &pixels, &stride) && pixels && stride >= 8;
+        if (passed) {
+            for (uint32_t row = 0; row < 2; ++row) {
+                for (uint32_t column = 0; column < 2; ++column) {
+                    const uint8_t* pixel = pixels + row * stride + column * 4;
+                    if (pixel[0] != 255 || pixel[1] != 0 || pixel[2] != 0 || pixel[3] != 255)
+                        passed = false;
+                }
+            }
+            gs_stagesurface_unmap(surface);
+        }
+        gs_set_render_target(NULL, NULL);
+    }
+
+    if (surface) gs_stagesurface_destroy(surface);
+    if (texture) gs_texture_destroy(texture);
+    gs_leave_context();
+    gs_destroy(graphics);
+    return passed ? 0 : 2;
+}

@@ -203,11 +203,18 @@ int gs_create(graphics_t **pgraphics, const char *module, uint32_t adapter)
 	pthread_mutex_init_value(&graphics->mutex);
 	pthread_mutex_init_value(&graphics->effect_mutex);
 
+#if defined(MAI_GRAPHICS_STATIC_METAL)
+	if (!module || strcmp(module, "builtin:metal") != 0) {
+		errcode = GS_ERROR_MODULE_NOT_FOUND;
+		goto error;
+	}
+#else
 	graphics->module = os_dlopen(module);
 	if (!graphics->module) {
 		errcode = GS_ERROR_MODULE_NOT_FOUND;
 		goto error;
 	}
+#endif
 
 	if (!load_graphics_imports(&graphics->exports, graphics->module, module))
 		goto error;

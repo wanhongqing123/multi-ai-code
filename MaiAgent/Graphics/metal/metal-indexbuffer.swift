@@ -80,7 +80,11 @@ public func device_load_indexbuffer(device: UnsafeRawPointer, indexbuffer: Unsaf
 ///
 /// > Note: The index buffer data memory is implicitly owned by the ``MetalIndexBuffer`` instance and will be manually
 /// cleaned up and deallocated by the instance's `deinit` method.
+#if os(iOS)
+@_cdecl("mai_metal_gs_indexbuffer_destroy")
+#else
 @_cdecl("gs_indexbuffer_destroy")
+#endif
 public func gs_indexbuffer_destroy(indexBuffer: UnsafeRawPointer) {
     let _ = retained(indexBuffer) as MetalIndexBuffer
 }
@@ -89,7 +93,11 @@ public func gs_indexbuffer_destroy(indexBuffer: UnsafeRawPointer) {
 /// - Parameter indexBuffer: Opaque pointer to ``MetalIndexBuffer`` instance shared with `libobs`
 ///
 /// This function will call `gs_indexbuffer_flush_direct` with `nil` data pointer.
+#if os(iOS)
+@_cdecl("mai_metal_gs_indexbuffer_flush")
+#else
 @_cdecl("gs_indexbuffer_flush")
+#endif
 public func gs_indexbuffer_flush(indexBuffer: UnsafeRawPointer) {
     gs_indexbuffer_flush_direct(indexBuffer: indexBuffer, data: nil)
 }
@@ -102,7 +110,11 @@ public func gs_indexbuffer_flush(indexBuffer: UnsafeRawPointer) {
 /// This function is called to ensure that the index buffer data that is contained in the memory pointed at by the
 /// `data` argument is uploaded into GPU memory. If a `nil` pointer is provided instead, the data provided to the
 /// instance during creation will be used instead.
+#if os(iOS)
+@_cdecl("mai_metal_gs_indexbuffer_flush_direct")
+#else
 @_cdecl("gs_indexbuffer_flush_direct")
+#endif
 public func gs_indexbuffer_flush_direct(indexBuffer: UnsafeRawPointer, data: UnsafeMutableRawPointer?) {
     let indexBuffer: MetalIndexBuffer = unretained(indexBuffer)
 
@@ -118,7 +130,11 @@ public func gs_indexbuffer_flush_direct(indexBuffer: UnsafeRawPointer, data: Uns
 ///
 /// > Warning: There is only limited memory safety associated with this pointer. It is implicitly owned and its
 /// lifetime is managed by the ``MetalIndexBuffer`` instance, but it was originally created by `libobs`.
+#if os(iOS)
+@_cdecl("mai_metal_gs_indexbuffer_get_data")
+#else
 @_cdecl("gs_indexbuffer_get_data")
+#endif
 public func gs_indexbuffer_get_data(indexBuffer: UnsafeRawPointer) -> UnsafeMutableRawPointer? {
     let indexBuffer: MetalIndexBuffer = unretained(indexBuffer)
 
@@ -130,7 +146,11 @@ public func gs_indexbuffer_get_data(indexBuffer: UnsafeRawPointer) -> UnsafeMuta
 /// - Returns: Number of index buffers
 ///
 /// > Note: This returns the same number that was provided for the creation of the index buffer object.
+#if os(iOS)
+@_cdecl("mai_metal_gs_indexbuffer_get_num_indices")
+#else
 @_cdecl("gs_indexbuffer_get_num_indices")
+#endif
 public func gs_indexbuffer_get_num_indices(indexBuffer: UnsafeRawPointer) -> UInt32 {
     let indexBuffer: MetalIndexBuffer = unretained(indexBuffer)
 
@@ -144,7 +164,11 @@ public func gs_indexbuffer_get_num_indices(indexBuffer: UnsafeRawPointer) -> UIn
 /// > Warning: As the `gs_index_type` enumeration does not provide an "invalid" value (and thus `0` becomes a valid
 /// value), this function has no way to communicate an incompatible index buffer type that might be introduced at a
 /// later point.
+#if os(iOS)
+@_cdecl("mai_metal_gs_indexbuffer_get_type")
+#else
 @_cdecl("gs_indexbuffer_get_type")
+#endif
 public func gs_indexbuffer_get_type(indexBuffer: UnsafeRawPointer) -> gs_index_type {
     let indexBuffer: MetalIndexBuffer = unretained(indexBuffer)
 

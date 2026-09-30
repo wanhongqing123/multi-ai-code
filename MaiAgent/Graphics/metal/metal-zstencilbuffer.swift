@@ -63,7 +63,11 @@ public func device_get_zstencil_target(device: UnsafeRawPointer) -> OpaquePointe
 ///
 /// The ownership of the shared pointer is transferred into this function and the instance is placed under Swift's
 /// memory management again.
+#if os(iOS)
+@_cdecl("mai_metal_gs_zstencil_destroy")
+#else
 @_cdecl("gs_zstencil_destroy")
+#endif
 public func gs_zstencil_destroy(zstencil: UnsafeRawPointer) {
     let _ = retained(zstencil) as MetalTexture
 }

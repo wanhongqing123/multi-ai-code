@@ -3,6 +3,11 @@ project(MaiChatMobileAgent LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(MAIAGENT_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+  set(MAIAGENT_BUILD_GRAPHICS ON CACHE BOOL "" FORCE)
+  set(MAIAGENT_GRAPHICS_FFMPEG_INCLUDE_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/vendor/ffmpeg-build/install/include")
+endif()
 if(ANDROID)
   set(mbed_archive "${CMAKE_CURRENT_SOURCE_DIR}/third_party/mbedtls-3.6.7.tar.bz2")
   file(SHA256 "${mbed_archive}" mbed_hash)
@@ -89,6 +94,13 @@ foreach(library avdevice avfilter avformat avcodec swresample swscale avutil)
     IMPORTED_LOCATION "${ffmpeg_build}/lib${library}/lib${library}.a")
   add_dependencies(maichat_ffmpeg_${library} maichat_ffmpeg_build)
 endforeach()
+if(TARGET maiagent_graphics)
+  add_dependencies(maiagent_obs_graphics_compile maichat_ffmpeg_build)
+  target_link_libraries(maiagent_graphics PRIVATE
+    maichat_ffmpeg_avformat maichat_ffmpeg_avcodec
+    maichat_ffmpeg_swresample maichat_ffmpeg_swscale
+    maichat_ffmpeg_avutil)
+endif()
 add_library(maichat_mobile STATIC MaiMobileAgent.cpp MaiImageFilter.cpp)
 add_dependencies(maichat_mobile maichat_ffmpeg_build)
 target_include_directories(maichat_mobile PRIVATE "${ffmpeg_build}/install/include")
@@ -97,6 +109,9 @@ target_link_libraries(maichat_mobile PRIVATE maiagent
   maichat_ffmpeg_avdevice maichat_ffmpeg_avfilter maichat_ffmpeg_avformat
   maichat_ffmpeg_avcodec maichat_ffmpeg_swresample maichat_ffmpeg_swscale
   maichat_ffmpeg_avutil)
+if(TARGET maiagent_graphics)
+  target_link_libraries(maichat_mobile PRIVATE maiagent_graphics)
+endif()
 option(MAICHAT_MOBILE_TESTS "Build mobile adapter integration tests" OFF)
 if(MAICHAT_MOBILE_TESTS)
   enable_testing()

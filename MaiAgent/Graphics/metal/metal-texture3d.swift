@@ -67,7 +67,11 @@ public func device_voltexture_create(
 ///
 /// The ownership of the shared pointer is transferred into this function and the instance is placed under
 /// Swift's memory management again.
+#if os(iOS)
+@_cdecl("mai_metal_gs_voltexture_destroy")
+#else
 @_cdecl("gs_voltexture_destroy")
+#endif
 public func gs_voltexture_destroy(voltex: UnsafeRawPointer) {
     let _ = retained(voltex) as MetalTexture
 }
@@ -75,7 +79,11 @@ public func gs_voltexture_destroy(voltex: UnsafeRawPointer) {
 /// Gets the width of the texture wrapped by the ``MetalTexture`` instance
 /// - Parameter voltex: Opaque pointer to ``MetalTexture`` instance shared with `libobs`
 /// - Returns: Width of the texture
+#if os(iOS)
+@_cdecl("mai_metal_gs_voltexture_get_width")
+#else
 @_cdecl("gs_voltexture_get_width")
+#endif
 public func gs_voltexture_get_width(voltex: UnsafeRawPointer) -> UInt32 {
     let texture: MetalTexture = unretained(voltex)
 
@@ -85,7 +93,11 @@ public func gs_voltexture_get_width(voltex: UnsafeRawPointer) -> UInt32 {
 /// Gets the height of the texture wrapped by the ``MetalTexture`` instance
 /// - Parameter voltex: Opaque pointer to ``MetalTexture`` instance shared with `libobs`
 /// - Returns: Height of the texture
+#if os(iOS)
+@_cdecl("mai_metal_gs_voltexture_get_height")
+#else
 @_cdecl("gs_voltexture_get_height")
+#endif
 public func gs_voltexture_get_height(voltex: UnsafeRawPointer) -> UInt32 {
     let texture: MetalTexture = unretained(voltex)
 
@@ -95,7 +107,11 @@ public func gs_voltexture_get_height(voltex: UnsafeRawPointer) -> UInt32 {
 /// Gets the depth of the texture wrapped by the ``Metaltexture`` instance
 /// - Parameter voltex: Opaque pointer to ``MetalTexture`` instance shared with `libobs`
 /// - Returns: Depth of the texture
+#if os(iOS)
+@_cdecl("mai_metal_gs_voltexture_get_depth")
+#else
 @_cdecl("gs_voltexture_get_depth")
+#endif
 public func gs_voltexture_get_depth(voltex: UnsafeRawPointer) -> UInt32 {
     let texture: MetalTexture = unretained(voltex)
 
@@ -105,7 +121,11 @@ public func gs_voltexture_get_depth(voltex: UnsafeRawPointer) -> UInt32 {
 /// Gets the color format of the texture wrapped by the ``MetalTexture`` instance
 /// - Parameter voltex: Opaque pointer to ``MetalTexture`` instance shared with `libobs`
 /// - Returns: Color format as defined by the `gs_color_format` enumeration
+#if os(iOS)
+@_cdecl("mai_metal_gs_voltexture_get_color_format")
+#else
 @_cdecl("gs_voltexture_get_color_format")
+#endif
 public func gs_voltexture_get_color_format(voltex: UnsafeRawPointer) -> gs_color_format {
     let texture: MetalTexture = unretained(voltex)
 

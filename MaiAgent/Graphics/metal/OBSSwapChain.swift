@@ -15,10 +15,17 @@
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  ******************************************************************************/
 
+#if os(macOS)
 import AppKit
+typealias OBSPlatformView = NSView
+#elseif os(iOS)
+import UIKit
+typealias OBSPlatformView = UIView
+#endif
 import CoreVideo
 import Foundation
 import Metal
+import QuartzCore
 
 class OBSSwapChain {
     enum ColorRange {
@@ -28,7 +35,7 @@ class OBSSwapChain {
     }
 
     private weak var device: MetalDevice?
-    private var view: NSView?
+    private var view: OBSPlatformView?
 
     var colorRange: ColorRange
     var edrHeadroom: CGFloat = 0.0
@@ -47,9 +54,11 @@ class OBSSwapChain {
         self.layer.drawableSize = CGSize(width: viewSize.width, height: viewSize.height)
         self.layer.pixelFormat = .bgra8Unorm_srgb
         self.layer.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
+#if os(macOS)
         self.layer.wantsExtendedDynamicRangeContent = false
         self.layer.edrMetadata = nil
         self.layer.displaySyncEnabled = false
+#endif
         self.colorRange = .sdr
 
         guard let fence = device.device.makeFence() else { return nil }
@@ -62,10 +71,16 @@ class OBSSwapChain {
     ///
     /// > Important: This function has to be called from the main thread
     @MainActor
-    func updateView(_ view: NSView) {
+    func updateView(_ view: OBSPlatformView) {
         self.view = view
+#if os(macOS)
         view.layer = self.layer
         view.wantsLayer = true
+#else
+        layer.frame = view.bounds
+        layer.contentsScale = view.contentScaleFactor
+        view.layer.addSublayer(layer)
+#endif
 
         updateEdrHeadroom()
     }
@@ -77,6 +92,7 @@ class OBSSwapChain {
     /// the view is on.
     @MainActor
     func updateEdrHeadroom() {
+#if os(macOS)
         guard let view = self.view else {
             return
         }
@@ -86,6 +102,9 @@ class OBSSwapChain {
         } else {
             self.edrHeadroom = CGFloat(1.0)
         }
+#else
+        self.edrHeadroom = CGFloat(1.0)
+#endif
     }
 
     /// Resizes the drawable of the managed `CAMetalLayer` to the provided size

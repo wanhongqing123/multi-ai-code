@@ -48,7 +48,11 @@ public func device_vertexbuffer_create(device: UnsafeRawPointer, data: UnsafeMut
 ///
 /// > Note: The vertex buffer data memory is implicitly owned by the ``MetalVertexBuffer`` instance and will be
 /// manually cleaned up and deallocated by the instance's ``deinit`` method.
+#if os(iOS)
+@_cdecl("mai_metal_gs_vertexbuffer_destroy")
+#else
 @_cdecl("gs_vertexbuffer_destroy")
+#endif
 public func gs_vertexbuffer_destroy(vertBuffer: UnsafeRawPointer) {
     let _ = retained(vertBuffer) as MetalVertexBuffer
 }
@@ -76,7 +80,11 @@ public func device_load_vertexbuffer(device: UnsafeRawPointer, vertBuffer: Unsaf
 /// - Parameter vertBuffer: Opaque pointer to ``MetalVertexBuffer`` instance shared with `libobs`
 ///
 /// This function will call `gs_vertexbuffer_flush_direct` with a `nil` pointer as the data pointer.
+#if os(iOS)
+@_cdecl("mai_metal_gs_vertexbuffer_flush")
+#else
 @_cdecl("gs_vertexbuffer_flush")
+#endif
 public func gs_vertexbuffer_flush(vertbuffer: UnsafeRawPointer) {
     gs_vertexbuffer_flush_direct(vertbuffer: vertbuffer, data: nil)
 }
@@ -90,7 +98,11 @@ public func gs_vertexbuffer_flush(vertbuffer: UnsafeRawPointer) {
 /// `data` argument is uploaded into GPU memory.
 ///
 /// If a `nil` pointer is provided instead, the data provided to the instance during creation will be used instead.
+#if os(iOS)
+@_cdecl("mai_metal_gs_vertexbuffer_flush_direct")
+#else
 @_cdecl("gs_vertexbuffer_flush_direct")
+#endif
 public func gs_vertexbuffer_flush_direct(vertbuffer: UnsafeRawPointer, data: UnsafeMutablePointer<gs_vb_data>?) {
     let vertexBuffer: MetalVertexBuffer = unretained(vertbuffer)
 
@@ -107,7 +119,11 @@ public func gs_vertexbuffer_flush_direct(vertbuffer: UnsafeRawPointer, data: Uns
 /// > Warning: There is only limited memory safety associated with this pointer. It is implicitly owned and its
 /// lifetime is managed by the ``MetalVertexBuffer``
 /// instance, but it was originally created by `libobs`.
+#if os(iOS)
+@_cdecl("mai_metal_gs_vertexbuffer_get_data")
+#else
 @_cdecl("gs_vertexbuffer_get_data")
+#endif
 public func gs_vertexbuffer_get_data(vertBuffer: UnsafeRawPointer) -> UnsafeMutablePointer<gs_vb_data>? {
     let vertexBuffer: MetalVertexBuffer = unretained(vertBuffer)
 

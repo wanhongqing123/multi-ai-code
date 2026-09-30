@@ -206,11 +206,23 @@ extension gs_color_format {
         case GS_RGBA32F:
             return .rgba32Float
         case GS_DXT1:
+#if os(iOS)
+            return .invalid
+#else
             return .bc1_rgba
+#endif
         case GS_DXT3:
+#if os(iOS)
+            return .invalid
+#else
             return .bc2_rgba
+#endif
         case GS_DXT5:
+#if os(iOS)
+            return .invalid
+#else
             return .bc3_rgba
+#endif
         default:
             return .invalid
         }
@@ -399,7 +411,11 @@ extension gs_zstencil_format {
         case GS_Z16:
             return .depth16Unorm
         case GS_Z24_S8:
+#if os(iOS)
+            return .depth32Float_stencil8
+#else
             return .depth24Unorm_stencil8
+#endif
         case GS_Z32F:
             return .depth32Float
         case GS_Z32F_S8X24:

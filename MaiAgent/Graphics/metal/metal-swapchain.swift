@@ -15,7 +15,11 @@
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  ******************************************************************************/
 
+#if os(macOS)
 import AppKit
+#elseif os(iOS)
+import UIKit
+#endif
 import Foundation
 
 /// Creates a ``OBSSwapChain`` instance for use as a pseudo swap chain implementation to be shared with `libobs`
@@ -40,7 +44,7 @@ public func device_swapchain_create(device: UnsafeMutableRawPointer, data: Unsaf
 {
     let device: MetalDevice = unretained(device)
 
-    let view = data.pointee.window.view.takeUnretainedValue() as! NSView
+    let view = data.pointee.window.view.takeUnretainedValue() as! OBSPlatformView
     let size = MTLSize(
         width: Int(data.pointee.cx),
         height: Int(data.pointee.cy),
@@ -167,6 +171,7 @@ public func device_load_swapchain(device: UnsafeRawPointer, swap: UnsafeRawPoint
     let device: MetalDevice = unretained(device)
     let swapChain: OBSSwapChain = unretained(swap)
 
+#if os(macOS)
     if swapChain.edrHeadroom > 1.0 {
         var videoInfo: obs_video_info = obs_video_info()
         obs_get_video_info(&videoInfo)
@@ -220,6 +225,14 @@ public func device_load_swapchain(device: UnsafeRawPointer, swap: UnsafeRawPoint
             swapChain.renderTarget = nil
         }
     }
+#else
+    if swapChain.colorRange != .sdr {
+        swapChain.layer.pixelFormat = .bgra8Unorm_srgb
+        swapChain.layer.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
+        swapChain.colorRange = .sdr
+        swapChain.renderTarget = nil
+    }
+#endif
 
     switch swapChain.colorRange {
     case .hdrHLG, .hdrPQ:
@@ -261,7 +274,11 @@ public func device_load_swapchain(device: UnsafeRawPointer, swap: UnsafeRawPoint
 ///
 /// The ownership of the shared pointer is transferred into this function and the instance is placed under Swift's
 /// memory management again.
+#if os(iOS)
+@_cdecl("mai_metal_gs_swapchain_destroy")
+#else
 @_cdecl("gs_swapchain_destroy")
+#endif
 public func gs_swapchain_destroy(swapChain: UnsafeMutableRawPointer) {
     let swapChain = retained(swapChain) as OBSSwapChain
 

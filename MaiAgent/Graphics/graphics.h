@@ -20,7 +20,7 @@
 #include "util/bmem.h"
 #include "input.h"
 #ifdef __APPLE__
-#include <objc/objc-runtime.h>
+#include <objc/objc.h>
 #endif
 
 /*

@@ -55,7 +55,11 @@ public func device_stagesurface_create(device: UnsafeRawPointer, width: UInt32, 
 ///
 /// The ownership of the shared pointer is transferred into this function and the instance is placed under Swift's
 /// memory management again.
+#if os(iOS)
+@_cdecl("mai_metal_gs_stagesurface_destroy")
+#else
 @_cdecl("gs_stagesurface_destroy")
+#endif
 public func gs_stagesurface_destroy(stagesurf: UnsafeRawPointer) {
     let _ = retained(stagesurf) as MetalStageBuffer
 }
@@ -63,7 +67,11 @@ public func gs_stagesurface_destroy(stagesurf: UnsafeRawPointer) {
 /// Gets the "width" of the staging texture
 /// - Parameter stagesurf: Opaque pointer to ``MetalStageBuffer`` instance shared with `libobs`
 /// - Returns: Amount of data rows in the buffer representing the width of an image
+#if os(iOS)
+@_cdecl("mai_metal_gs_stagesurface_get_width")
+#else
 @_cdecl("gs_stagesurface_get_width")
+#endif
 public func gs_stagesurface_get_width(stagesurf: UnsafeRawPointer) -> UInt32 {
     let stageSurface: MetalStageBuffer = unretained(stagesurf)
 
@@ -73,7 +81,11 @@ public func gs_stagesurface_get_width(stagesurf: UnsafeRawPointer) -> UInt32 {
 /// Gets the "height" of the staging texture
 /// - Parameter stagesurf: Opaque pointer to ``MetalStageBuffer`` instance shared with `libobs`
 /// - Returns: Amount of data columns in the buffer representing the height of an image
+#if os(iOS)
+@_cdecl("mai_metal_gs_stagesurface_get_height")
+#else
 @_cdecl("gs_stagesurface_get_height")
+#endif
 public func gs_stagesurface_get_height(stagesurf: UnsafeRawPointer) -> UInt32 {
     let stageSurface: MetalStageBuffer = unretained(stagesurf)
 
@@ -85,7 +97,11 @@ public func gs_stagesurface_get_height(stagesurf: UnsafeRawPointer) -> UInt32 {
 /// - Returns: Color format in `libobs`'s own color format struct
 ///
 /// The Metal color format is automatically converted into its corresponding `gs_color_format` variant.
+#if os(iOS)
+@_cdecl("mai_metal_gs_stagesurface_get_color_format")
+#else
 @_cdecl("gs_stagesurface_get_color_format")
+#endif
 public func gs_stagesurface_get_height(stagesurf: UnsafeRawPointer) -> gs_color_format {
     let stageSurface: MetalStageBuffer = unretained(stagesurf)
 
@@ -106,7 +122,11 @@ public func gs_stagesurface_get_height(stagesurf: UnsafeRawPointer) -> gs_color_
 ///
 /// As the Metal renderer is only available on Apple Silicon machines, this means that the buffer itself is available
 /// for direct access by the CPU and thus a pointer to the raw bytes of the buffer can be shared with `libobs`.
+#if os(iOS)
+@_cdecl("mai_metal_gs_stagesurface_map")
+#else
 @_cdecl("gs_stagesurface_map")
+#endif
 public func gs_stagesurface_map(
     stagesurf: UnsafeRawPointer, ptr: UnsafeMutablePointer<UnsafeMutableRawPointer>,
     linesize: UnsafeMutablePointer<UInt32>
@@ -124,7 +144,11 @@ public func gs_stagesurface_map(
 /// - Parameter stagesurf: Opaque pointer to ``MetalStageBuffer`` instance shared with `libobs`
 ///
 /// This function has no effect as the `MTLBuffer` used by the ``MetalStageBuffer`` does not need to be "unmapped".
+#if os(iOS)
+@_cdecl("mai_metal_gs_stagesurface_unmap")
+#else
 @_cdecl("gs_stagesurface_unmap")
+#endif
 public func gs_stagesurface_unmap(stagesurf: UnsafeRawPointer) {
     return
 }

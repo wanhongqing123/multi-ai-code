@@ -77,7 +77,7 @@ public:
 
     std::string parametersSchema() const override {
         return R"({"type":"object","properties":{)"
-               R"("path":{"type":"string","description":"File path relative to the working directory"},)"
+               R"("path":{"type":"string","description":"Absolute path or path relative to the working directory"},)"
                R"("old_string":{"type":"string","description":"The exact text to replace, copied from the file"},)"
                R"("new_string":{"type":"string","description":"What to put there instead"},)"
                R"("replace_all":{"type":"boolean","description":"Replace every occurrence instead of requiring exactly one, default false"}},)"
@@ -90,9 +90,21 @@ public:
         return true;
     }
 
+    std::vector<std::string> approvalKeys(const std::string& argumentsJson,
+                                          const MaiToolContext& context) const override {
+        const json args = parseArguments(argumentsJson);
+        if (!args.contains("path") || !args["path"].is_string())
+            return MaiTool::approvalKeys(argumentsJson, context);
+        const std::string path = context.resolvePath(args["path"].get<std::string>());
+        return path.empty() ? MaiTool::approvalKeys(argumentsJson, context)
+                            : std::vector<std::string>{"file:" + path};
+    }
+
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const json args = parseArguments(raw);
-        const std::string requested = args.value("path", std::string{});
+        const std::string requested = args.contains("path") && args["path"].is_string()
+                                          ? args["path"].get<std::string>()
+                                          : std::string{};
         if (requested.empty()) {
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,
                                           "missing required parameter: path");
@@ -102,11 +114,11 @@ public:
                 MaiErrorCode::InvalidInput,
                 "this session has no working directory, so file tools are unavailable");
         }
-        const std::string resolved = maiResolvePathWithinRoot(context.root, requested);
+        const std::string resolved = context.resolvePath(requested);
         if (resolved.empty()) {
             return MaiToolResult::failure(
                 MaiErrorCode::InvalidInput,
-                "path is outside the working directory, which is not allowed: " + requested);
+                "path is outside the area accessible to this host: " + requested);
         }
         if (!args.contains("old_string") || !args["old_string"].is_string() ||
             !args.contains("new_string") || !args["new_string"].is_string()) {

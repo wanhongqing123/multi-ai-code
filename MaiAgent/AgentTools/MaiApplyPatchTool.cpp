@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -313,8 +314,8 @@ ParseOutcome parsePatch(const std::string& patch) {
         } else if (marker == '+') {
             chunk.replacement.push_back(body);
         } else {
-            outcome.message = "every change line must start with a space, \"-\" or \"+\", but got: " +
-                              line;
+            outcome.message =
+                "every change line must start with a space, \"-\" or \"+\", but got: " + line;
             return outcome;
         }
     }
@@ -378,9 +379,33 @@ public:
         return true;
     }
 
+    std::vector<std::string> approvalKeys(const std::string& argumentsJson,
+                                          const MaiToolContext& context) const override {
+        const json args = parseArguments(argumentsJson);
+        if (!args.contains("patch") || !args["patch"].is_string())
+            return MaiTool::approvalKeys(argumentsJson, context);
+        const ParseOutcome parsed = parsePatch(args["patch"].get<std::string>());
+        if (!parsed.ok) return MaiTool::approvalKeys(argumentsJson, context);
+        std::set<std::string> paths;
+        for (const Operation& operation : parsed.operations) {
+            const std::string source = context.resolvePath(operation.path);
+            if (source.empty()) return MaiTool::approvalKeys(argumentsJson, context);
+            paths.insert("file:" + source);
+            if (!operation.movePath.empty()) {
+                const std::string destination = context.resolvePath(operation.movePath);
+                if (destination.empty()) return MaiTool::approvalKeys(argumentsJson, context);
+                paths.insert("file:" + destination);
+            }
+        }
+        return paths.empty() ? MaiTool::approvalKeys(argumentsJson, context)
+                             : std::vector<std::string>(paths.begin(), paths.end());
+    }
+
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const json args = parseArguments(raw);
-        const std::string patch = args.value("patch", std::string{});
+        const std::string patch = args.contains("patch") && args["patch"].is_string()
+                                      ? args["patch"].get<std::string>()
+                                      : std::string{};
         if (patch.empty()) {
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,
                                           "missing required parameter: patch");
@@ -413,9 +438,9 @@ public:
             if (write.remove) {
                 const MaiError error = MaiFileSystem::removeFile(path);
                 if (error.hasError()) {
-                    return MaiToolResult::failure(error.code(), "could not delete " +
-                                                                    write.reportedPath + ": " +
-                                                                    error.message());
+                    return MaiToolResult::failure(
+                        error.code(),
+                        "could not delete " + write.reportedPath + ": " + error.message());
                 }
             } else {
                 const MaiFilePath parent = path.dirName();
@@ -423,16 +448,15 @@ public:
                     const MaiError error = MaiFileSystem::createDirectories(parent);
                     if (error.hasError()) {
                         return MaiToolResult::failure(
-                            error.code(),
-                            "could not create parent directory for " + write.reportedPath + ": " +
-                                error.message());
+                            error.code(), "could not create parent directory for " +
+                                              write.reportedPath + ": " + error.message());
                     }
                 }
                 const MaiError error = MaiFileSystem::writeFile(path, write.contents);
                 if (error.hasError()) {
-                    return MaiToolResult::failure(error.code(), "could not write " +
-                                                                    write.reportedPath + ": " +
-                                                                    error.message());
+                    return MaiToolResult::failure(
+                        error.code(),
+                        "could not write " + write.reportedPath + ": " + error.message());
                 }
             }
             report += write.status;
@@ -451,11 +475,11 @@ private:
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,
                                           "a file header is missing its path");
         }
-        const std::string resolved = maiResolvePathWithinRoot(context.root, operation.path);
+        const std::string resolved = context.resolvePath(operation.path);
         if (resolved.empty()) {
             return MaiToolResult::failure(
                 MaiErrorCode::InvalidInput,
-                "path is outside the working directory, which is not allowed: " + operation.path);
+                "path is outside the area accessible to this host: " + operation.path);
         }
         const MaiFilePath path = MaiFilePath::fromUtf8(resolved);
 
@@ -519,8 +543,8 @@ private:
             }
             lines.erase(lines.begin() + static_cast<std::ptrdiff_t>(at),
                         lines.begin() + static_cast<std::ptrdiff_t>(at + chunk.pattern.size()));
-            lines.insert(lines.begin() + static_cast<std::ptrdiff_t>(at),
-                         chunk.replacement.begin(), chunk.replacement.end());
+            lines.insert(lines.begin() + static_cast<std::ptrdiff_t>(at), chunk.replacement.begin(),
+                         chunk.replacement.end());
             searchFrom = at + chunk.replacement.size();
         }
 
@@ -530,10 +554,10 @@ private:
             return {};
         }
 
-        const std::string destination = maiResolvePathWithinRoot(context.root, operation.movePath);
+        const std::string destination = context.resolvePath(operation.movePath);
         if (destination.empty()) {
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,
-                                          "\"*** Move to\" path is outside the working directory, "
+                                          "\"*** Move to\" path is outside the accessible area, "
                                           "which is not allowed: " +
                                               operation.movePath);
         }

@@ -20,6 +20,8 @@
 
 #include "MaiFilePath.h"
 #include "MaiFileSystem.h"
+#include "MaiEditTool.h"
+#include "MaiApplyPatchTool.h"
 #include "MaiTool.h"
 #include "MaiFileTools.h"
 #include "MaiPathGuard.h"
@@ -184,6 +186,70 @@ void test_write_cannot_escape() {
                                   workspace.context());
     CHECK(r.error().code() == MaiErrorCode::InvalidInput);
     CHECK(!fs::exists(workspace.outside / "pwned.txt"));
+}
+
+void test_unrestricted_host_can_read_and_write_outside_working_directory() {
+    Workspace workspace;
+    MaiToolContext context = workspace.context();
+    context.allowOutsideWorkingDirectory = true;
+    const std::string source = (workspace.outside / "secret.txt").string();
+    const std::string output = (workspace.outside / "created.txt").string();
+
+    CHECK(context.resolvePath(source) ==
+          MaiFileSystem::resolve(MaiFilePath::fromUtf8(source)).toUtf8());
+    const auto read = makeMaiReadTool()->execute(args({{"path", source}}), context);
+    CHECK(!read.hasError());
+    CHECK(read.output().find(kSecretMarker) != std::string::npos);
+    const auto write = makeMaiWriteTool()->execute(
+        args({{"path", output}, {"content", "outside content"}}), context);
+    CHECK(!write.hasError());
+    CHECK(fs::exists(workspace.outside / "created.txt"));
+    CHECK(write.output().find(MaiFilePath::fromUtf8(output).toGenericUtf8()) != std::string::npos);
+}
+
+void test_app_container_allows_sibling_of_workspace_but_not_other_container() {
+    Workspace workspace;
+    Workspace other;
+    MaiToolContext context = workspace.context();
+    context.fileAccessRoot = workspace.root.parent_path().string();
+
+    const auto insideApp =
+        makeMaiReadTool()->execute(args({{"path", "../outside/secret.txt"}}), context);
+    CHECK(!insideApp.hasError());
+    CHECK(insideApp.output().find(kSecretMarker) != std::string::npos);
+    const auto outsideApp = makeMaiReadTool()->execute(
+        args({{"path", (other.outside / "secret.txt").string()}}), context);
+    CHECK(outsideApp.error().code() == MaiErrorCode::InvalidInput);
+}
+
+void test_write_and_edit_share_a_file_specific_approval_key() {
+    Workspace workspace;
+    const MaiToolContext context = workspace.context();
+    const std::string path = (workspace.root / "README.md").string();
+    const auto write = makeMaiWriteTool()->approvalKeys(
+        args({{"path", "README.md"}, {"content", "new"}}), context);
+    const auto edit = makeMaiEditTool()->approvalKeys(
+        args({{"path", path}, {"old_string", "old"}, {"new_string", "new"}}), context);
+    CHECK(write.size() == 1);
+    CHECK(write == edit);
+    CHECK(write.front().find("file:") == 0);
+}
+
+void test_invalid_path_types_fail_without_throwing() {
+    Workspace workspace;
+    const MaiToolContext context = workspace.context();
+    bool safe = true;
+    try {
+        safe = makeMaiReadTool()->execute(R"({"path":42})", context).hasError() &&
+               makeMaiWriteTool()->execute(R"({"path":42,"content":"x"})", context).hasError() &&
+               makeMaiEditTool()
+                   ->execute(R"({"path":42,"old_string":"a","new_string":"b"})", context)
+                   .hasError() &&
+               makeMaiApplyPatchTool()->execute(R"({"patch":42})", context).hasError();
+    } catch (...) {
+        safe = false;
+    }
+    CHECK(safe);
 }
 
 void test_maiResolvePathWithinRoot_directly() {
@@ -417,6 +483,10 @@ int main() {
     RUN(test_path_escape_is_blocked);
     RUN(test_sibling_with_shared_prefix_is_outside);
     RUN(test_write_cannot_escape);
+    RUN(test_unrestricted_host_can_read_and_write_outside_working_directory);
+    RUN(test_app_container_allows_sibling_of_workspace_but_not_other_container);
+    RUN(test_write_and_edit_share_a_file_specific_approval_key);
+    RUN(test_invalid_path_types_fail_without_throwing);
     RUN(test_maiResolvePathWithinRoot_directly);
     RUN(test_read);
     RUN(test_write);

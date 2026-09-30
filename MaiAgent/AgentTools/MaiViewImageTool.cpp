@@ -37,14 +37,14 @@ public:
     }
 
     std::string description() const override {
-        return "View an existing PNG, JPEG, WebP, or GIF file inside the working directory. "
+        return "View an existing PNG, JPEG, WebP, or GIF file accessible to this host. "
                "Images attached by the user are already in the current prompt; inspect them "
                "directly instead of calling this tool for paths mentioned in a screenshot.";
     }
 
     std::string parametersSchema() const override {
         return R"({"type":"object","properties":{)"
-               R"("path":{"type":"string","description":"Image path inside the working directory"}},)"
+               R"("path":{"type":"string","description":"Absolute or relative image path"}},)"
                R"("required":["path"],"additionalProperties":false})";
     }
 
@@ -64,14 +64,13 @@ public:
         }
 
         const std::string rawPath = arguments["path"].get<std::string>();
-        const std::string resolved = maiResolvePathWithinRoot(context.root, rawPath);
+        const std::string resolved = context.resolvePath(rawPath);
         if (resolved.empty()) {
             return MaiToolResult::failure(
                 MaiErrorCode::InvalidInput,
-                "Image path is outside the working directory and was rejected: " + rawPath +
-                    ". Working directory: " + context.root +
-                    ". Inspect a user-attached image directly, or copy the original file into "
-                    "the working directory and call view_image with a relative path.");
+                "Image path is outside the area accessible to this host: " + rawPath +
+                    ". Working directory for relative paths: " + context.root +
+                    ". Inspect a user-attached image directly, or use an accessible image path.");
         }
         const MaiFilePath path = MaiFilePath::fromUtf8(resolved);
         if (!MaiFileSystem::exists(path))

@@ -10,9 +10,9 @@
 
 // 一轮里工具调用的审批策略。命名和 Codex 的 AskForApproval 对齐。
 enum class MaiApprovalPolicy {
-    OnRequest,      // 会改文件、访问网络或执行高风险命令时询问
-    UnlessTrusted,  // 工作区内文件修改自动批准；网络和高风险命令仍询问
-    Never,          // 不逐次询问；终端与网络调用会直接执行
+    OnRequest,      // 文件变更、网络和高风险命令按需询问；可授权同一文件在本会话免问
+    UnlessTrusted,  // 每个文件首次变更要批准，之后同一会话同一文件免问
+    Never,          // 不逐次询问；强制逐次审批的外部发送工具仍会询问
 };
 
 // 用户对一次工具调用的裁决。
@@ -21,7 +21,7 @@ enum class MaiApprovalPolicy {
 // 原来叫 Once / AlwaysInSession / Reject，"Once" 根本没说是批准还是拒绝，得看另外两个值反推。
 enum class MaiPermissionDecision {
     Approved,            // 批准这一次
-    ApprovedForSession,  // 批准，且这个会话里这个工具以后别再问
+    ApprovedForSession,  // 批准，且这个会话里相同审批键以后别再问
     Denied,              // 不许跑，但这一轮继续，让模型换个做法
 
     // 没人裁决就到点了。**不能和 Denied 合并**：合并之后回灌给模型的话是"用户拒绝了这次调用"，
@@ -50,11 +50,13 @@ struct MaiPermissionRequest {
     std::string partId;
     std::string toolName;
     std::string arguments;  // 参数 JSON 原文
-    // 「这个会话以后都允许」记的是这个键，不是工具名。空表示退回成工具名。
-    //
-    // 分开是为了 shell：给 `git status` 点一次「以后都允许」，不该连 `rm -rf` 一起放行。
-    // 键由工具自己给（MaiTool::approvalKey），闸门只管原样存和查。
+    // 兼容单键工具；多文件操作还会在 approvalKeys 中列出每个目标文件。
+    // 键由工具给出，闸门只管原样存和查。
     std::string approvalKey;
+    // One operation can change several files. Store each approved path independently.
+    std::vector<std::string> approvalKeys;
+    // A confirmed file mutation remains allowed for the same file in this session.
+    bool rememberOnApproval = false;
     // false 表示这次动作只能批准一次。界面不能展示「本会话都允许」，
     // 闸门也会把错误传入的 ApprovedForSession 收窄成 Approved。
     bool allowForSession = true;

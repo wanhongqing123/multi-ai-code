@@ -63,7 +63,7 @@ struct MaiPermissionGate::ApprovalTable {
     // 用 shared_ptr 是因为等待的那个线程要在解锁之后仍然能看着自己那条记录，
     // 而 reply() 可能已经把它从表里摘掉了。
     std::unordered_map<std::string, std::shared_ptr<Pending>> pending;
-    // sessionId -> 用户说了"本会话都允许"的工具名
+    // sessionId -> 用户已批准的文件路径或精确命令键
     std::unordered_map<std::string, std::set<std::string>> sessionAllowlist;
 
     explicit ApprovalTable(Options options) : options(options) {}
@@ -127,12 +127,19 @@ MaiPermissionDecision MaiPermissionGate::ask(const MaiPermissionRequest& request
         decision = timedOut ? MaiPermissionDecision::TimedOut : MaiPermissionDecision::Denied;
     }
 
+    if (decision == MaiPermissionDecision::Approved && request.rememberOnApproval &&
+        request.allowForSession)
+        decision = MaiPermissionDecision::ApprovedForSession;
     if (decision == MaiPermissionDecision::ApprovedForSession && !request.allowForSession)
         decision = MaiPermissionDecision::Approved;
 
     if (decision == MaiPermissionDecision::ApprovedForSession) {
-        mApprovals->sessionAllowlist[request.sessionId].insert(
-            request.approvalKey.empty() ? request.toolName : request.approvalKey);
+        auto& allowed = mApprovals->sessionAllowlist[request.sessionId];
+        if (!request.approvalKeys.empty()) {
+            allowed.insert(request.approvalKeys.begin(), request.approvalKeys.end());
+        } else {
+            allowed.insert(request.approvalKey.empty() ? request.toolName : request.approvalKey);
+        }
     }
     return decision;
 }

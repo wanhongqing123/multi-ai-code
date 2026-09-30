@@ -242,6 +242,8 @@ void MaiTurnRunner::executeTools(const std::vector<MaiToolInvocation>& calls,
     context.sessionId = mSessionId;
     context.model = mModelName;
     context.root = session.directory;
+    context.fileAccessRoot = mDependencies.fileAccessRoot;
+    context.allowOutsideWorkingDirectory = mDependencies.allowOutsideWorkingDirectory;
     context.cancel = &cancel;
     context.questions = mDependencies.questions;
     context.subAgents = mDependencies.subAgents;
@@ -293,7 +295,7 @@ void MaiTurnRunner::executeTools(const std::vector<MaiToolInvocation>& calls,
                 "this session has no working directory, so file tools are unavailable");
         } else {
             bool allowed = true;
-            MaiToolResult denial = checkPermission(call, part.id, allowed, cancel);
+            MaiToolResult denial = checkPermission(call, part.id, context, allowed, cancel);
             if (!allowed) {
                 result = std::move(denial);
             } else {
@@ -348,7 +350,8 @@ void MaiTurnRunner::executeTools(const std::vector<MaiToolInvocation>& calls,
 }
 
 MaiToolResult MaiTurnRunner::checkPermission(const MaiToolInvocation& call,
-                                             const std::string& partId, bool& allowed,
+                                             const std::string& partId,
+                                             const MaiToolContext& context, bool& allowed,
                                              const std::atomic<bool>& cancel) {
     allowed = true;
     MaiTool* tool = mDependencies.tools ? mDependencies.tools->find(call.name) : nullptr;
@@ -371,13 +374,17 @@ MaiToolResult MaiTurnRunner::checkPermission(const MaiToolInvocation& call,
             "This tool requires user approval, but no permission gate is wired up.");
     }
 
-    // 用户之前对这个会话说过"以后都允许"。比的是工具给的键，不是工具名——
-    // shell 的键是 `shell:<程序名>`，所以放行的是「以后都允许跑 git」而不是
-    // 「以后都允许跑任何命令」。
-    const std::string approvalKey = tool->approvalKey(call.arguments);
+    // 会话授权按工具给出的每个键核对：文件操作逐个路径，终端按完整命令。
+    std::vector<std::string> approvalKeys = tool->approvalKeys(call.arguments, context);
+    if (approvalKeys.empty()) approvalKeys.push_back(tool->approvalKey(call.arguments));
     const bool perCallApproval = tool->requiresPerCallApproval(call.arguments);
-    if (!perCallApproval && mDependencies.permissions->isAllowedInSession(mSessionId, approvalKey))
-        return {};
+    if (!perCallApproval) {
+        const bool allAllowed =
+            std::all_of(approvalKeys.begin(), approvalKeys.end(), [&](const std::string& key) {
+                return mDependencies.permissions->isAllowedInSession(mSessionId, key);
+            });
+        if (allAllowed) return {};
+    }
 
     MaiPermissionRequest request;
     request.id = MaiIdGenerator::newPermissionId();
@@ -386,7 +393,11 @@ MaiToolResult MaiTurnRunner::checkPermission(const MaiToolInvocation& call,
     request.partId = partId;
     request.toolName = call.name;
     request.arguments = call.arguments;
-    request.approvalKey = approvalKey;
+    request.approvalKey = approvalKeys.front();
+    request.approvalKeys = std::move(approvalKeys);
+    request.rememberOnApproval = mDependencies.approvalPolicy == MaiApprovalPolicy::UnlessTrusted &&
+                                 (call.name == "write" || call.name == "edit" ||
+                                  call.name == "apply_patch" || call.name == "generate_pdf");
     request.allowForSession = !perCallApproval;
     request.asked = MaiTime::getCurrentTime();
 
@@ -427,9 +438,9 @@ bool MaiTurnRunner::toolNeedsApproval(const MaiToolInvocation& call) const {
     if (!tool->requiresApproval(call.arguments)) return false;
     if (mDependencies.approvalPolicy == MaiApprovalPolicy::Never) return false;
     if (mDependencies.approvalPolicy == MaiApprovalPolicy::UnlessTrusted) {
-        // 这些工具都受工作目录边界保护，且变更内容会完整进入工具调用记录。
-        // 未知的新工具保持询问，避免新增能力时被这一档静默放行。
-        return call.name != "write" && call.name != "edit" && call.name != "apply_patch";
+        // Every new file target asks once. The gate remembers the approved canonical paths,
+        // and all other mutating or external tools continue to ask normally.
+        return true;
     }
     return true;
 }

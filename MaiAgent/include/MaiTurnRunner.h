@@ -47,6 +47,8 @@ public:
         // 重复结果会提前停止；这里限制仍不断产生新调用的极端情况。
         int maxIterations = 64;
         MaiApprovalPolicy approvalPolicy = MaiApprovalPolicy::OnRequest;
+        std::string fileAccessRoot;
+        bool allowOutsideWorkingDirectory = false;
     };
 
     MaiTurnRunner(Dependencies dependencies, std::string sessionId, MaiMessage assistant);
@@ -70,7 +72,8 @@ private:
     // 这次调用该不该放行。需要审批的话会在这里阻塞等用户裁决。返回空表示放行；
     // 非空就是要直接回灌给模型的失败结果。
     MaiToolResult checkPermission(const MaiToolInvocation& call, const std::string& partId,
-                                  bool& allowed, const std::atomic<bool>& cancel);
+                                  const MaiToolContext& context, bool& allowed,
+                                  const std::atomic<bool>& cancel);
     bool toolNeedsApproval(const MaiToolInvocation& call) const;
 
     // 组装这一次要发给模型的请求。

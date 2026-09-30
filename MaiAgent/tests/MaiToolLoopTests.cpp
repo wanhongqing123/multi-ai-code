@@ -469,7 +469,7 @@ void test_path_escape_through_model() {
     CHECK(toolPart != nullptr);
     if (toolPart) {
         CHECK(toolPart->state == MaiToolState::Error);
-        CHECK(toolPart->output.find("outside the working directory") != std::string::npos);
+        CHECK(toolPart->output.find("outside the area accessible") != std::string::npos);
     }
 }
 

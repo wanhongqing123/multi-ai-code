@@ -3,6 +3,7 @@
 // 这个工具和 edit 的区别就在「全有或全无」上，所以用例的重心是**失败的那一半**：
 // 一批改动里有一处对不上，剩下的必须一个字节都没落盘。半应用的补丁比不应用糟得多——
 // 模型和用户都说不清当前是什么状态，而 git diff 里会混着真改动和半截改动。
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -76,18 +77,17 @@ void test_updates_several_places_in_one_file() {
     workspace.write("a.txt", "a\nb\nc\nd\ne\nf\n");
     auto tool = makeMaiApplyPatchTool();
 
-    const MaiToolResult result = tool->execute(patchArgs(
-                                                   "*** Begin Patch\n"
-                                                   "*** Update File: a.txt\n"
-                                                   "@@\n"
-                                                   " a\n"
-                                                   "-b\n"
-                                                   "+B\n"
-                                                   "@@\n"
-                                                   " d\n"
-                                                   "-e\n"
-                                                   "+E\n"
-                                                   "*** End Patch\n"),
+    const MaiToolResult result = tool->execute(patchArgs("*** Begin Patch\n"
+                                                         "*** Update File: a.txt\n"
+                                                         "@@\n"
+                                                         " a\n"
+                                                         "-b\n"
+                                                         "+B\n"
+                                                         "@@\n"
+                                                         " d\n"
+                                                         "-e\n"
+                                                         "+E\n"
+                                                         "*** End Patch\n"),
                                                workspace.context());
     CHECK(!result.hasError());
     CHECK(workspace.read("a.txt") == "a\nB\nc\nd\nE\nf\n");
@@ -100,17 +100,16 @@ void test_one_patch_can_touch_several_files() {
     workspace.write("two.txt", "old\n");
     auto tool = makeMaiApplyPatchTool();
 
-    const MaiToolResult result = tool->execute(patchArgs(
-                                                   "*** Begin Patch\n"
-                                                   "*** Update File: one.txt\n"
-                                                   "@@\n"
-                                                   "-old\n"
-                                                   "+new\n"
-                                                   "*** Update File: two.txt\n"
-                                                   "@@\n"
-                                                   "-old\n"
-                                                   "+new\n"
-                                                   "*** End Patch\n"),
+    const MaiToolResult result = tool->execute(patchArgs("*** Begin Patch\n"
+                                                         "*** Update File: one.txt\n"
+                                                         "@@\n"
+                                                         "-old\n"
+                                                         "+new\n"
+                                                         "*** Update File: two.txt\n"
+                                                         "@@\n"
+                                                         "-old\n"
+                                                         "+new\n"
+                                                         "*** End Patch\n"),
                                                workspace.context());
     CHECK(!result.hasError());
     CHECK(workspace.read("one.txt") == "new\n");
@@ -125,17 +124,16 @@ void test_nothing_is_written_when_any_part_fails() {
     workspace.write("bad.txt", "something else\n");
     auto tool = makeMaiApplyPatchTool();
 
-    const MaiToolResult result = tool->execute(patchArgs(
-                                                   "*** Begin Patch\n"
-                                                   "*** Update File: good.txt\n"
-                                                   "@@\n"
-                                                   "-old\n"
-                                                   "+new\n"
-                                                   "*** Update File: bad.txt\n"
-                                                   "@@\n"
-                                                   "-this line is not in the file\n"
-                                                   "+whatever\n"
-                                                   "*** End Patch\n"),
+    const MaiToolResult result = tool->execute(patchArgs("*** Begin Patch\n"
+                                                         "*** Update File: good.txt\n"
+                                                         "@@\n"
+                                                         "-old\n"
+                                                         "+new\n"
+                                                         "*** Update File: bad.txt\n"
+                                                         "@@\n"
+                                                         "-this line is not in the file\n"
+                                                         "+whatever\n"
+                                                         "*** End Patch\n"),
                                                workspace.context());
     CHECK(result.hasError());
     CHECK(workspace.read("good.txt") == "old\n");
@@ -149,13 +147,12 @@ void test_add_and_delete_files() {
     workspace.write("gone.txt", "bye\n");
     auto tool = makeMaiApplyPatchTool();
 
-    const MaiToolResult result = tool->execute(patchArgs(
-                                                   "*** Begin Patch\n"
-                                                   "*** Add File: made/up.txt\n"
-                                                   "+first\n"
-                                                   "+second\n"
-                                                   "*** Delete File: gone.txt\n"
-                                                   "*** End Patch\n"),
+    const MaiToolResult result = tool->execute(patchArgs("*** Begin Patch\n"
+                                                         "*** Add File: made/up.txt\n"
+                                                         "+first\n"
+                                                         "+second\n"
+                                                         "*** Delete File: gone.txt\n"
+                                                         "*** End Patch\n"),
                                                workspace.context());
     CHECK(!result.hasError());
     CHECK(workspace.read("made/up.txt") == "first\nsecond\n");
@@ -171,11 +168,10 @@ void test_add_refuses_to_clobber_an_existing_file() {
     workspace.write("there.txt", "precious\n");
     auto tool = makeMaiApplyPatchTool();
 
-    const MaiToolResult result = tool->execute(patchArgs(
-                                                   "*** Begin Patch\n"
-                                                   "*** Add File: there.txt\n"
-                                                   "+overwritten\n"
-                                                   "*** End Patch\n"),
+    const MaiToolResult result = tool->execute(patchArgs("*** Begin Patch\n"
+                                                         "*** Add File: there.txt\n"
+                                                         "+overwritten\n"
+                                                         "*** End Patch\n"),
                                                workspace.context());
     CHECK(result.hasError());
     CHECK(workspace.read("there.txt") == "precious\n");
@@ -187,14 +183,13 @@ void test_move_writes_the_new_path_and_removes_the_old() {
     workspace.write("from.txt", "keep\n");
     auto tool = makeMaiApplyPatchTool();
 
-    const MaiToolResult result = tool->execute(patchArgs(
-                                                   "*** Begin Patch\n"
-                                                   "*** Update File: from.txt\n"
-                                                   "*** Move to: to.txt\n"
-                                                   "@@\n"
-                                                   "-keep\n"
-                                                   "+moved\n"
-                                                   "*** End Patch\n"),
+    const MaiToolResult result = tool->execute(patchArgs("*** Begin Patch\n"
+                                                         "*** Update File: from.txt\n"
+                                                         "*** Move to: to.txt\n"
+                                                         "@@\n"
+                                                         "-keep\n"
+                                                         "+moved\n"
+                                                         "*** End Patch\n"),
                                                workspace.context());
     CHECK(!result.hasError());
     CHECK(workspace.read("to.txt") == "moved\n");
@@ -208,14 +203,13 @@ void test_crlf_files_keep_their_line_endings() {
     workspace.write("crlf.txt", "a\r\nb\r\nc\r\n");
     auto tool = makeMaiApplyPatchTool();
 
-    const MaiToolResult result = tool->execute(patchArgs(
-                                                   "*** Begin Patch\n"
-                                                   "*** Update File: crlf.txt\n"
-                                                   "@@\n"
-                                                   " a\n"
-                                                   "-b\n"
-                                                   "+B\n"
-                                                   "*** End Patch\n"),
+    const MaiToolResult result = tool->execute(patchArgs("*** Begin Patch\n"
+                                                         "*** Update File: crlf.txt\n"
+                                                         "@@\n"
+                                                         " a\n"
+                                                         "-b\n"
+                                                         "+B\n"
+                                                         "*** End Patch\n"),
                                                workspace.context());
     CHECK(!result.hasError());
     CHECK(workspace.read("crlf.txt") == "a\r\nB\r\nc\r\n");
@@ -228,14 +222,13 @@ void test_context_is_matched_leniently_on_whitespace() {
     workspace.write("ws.txt", "keep   \n  target\nafter\n");
     auto tool = makeMaiApplyPatchTool();
 
-    const MaiToolResult result = tool->execute(patchArgs(
-                                                   "*** Begin Patch\n"
-                                                   "*** Update File: ws.txt\n"
-                                                   "@@\n"
-                                                   " keep\n"
-                                                   "-  target\n"
-                                                   "+  replaced\n"
-                                                   "*** End Patch\n"),
+    const MaiToolResult result = tool->execute(patchArgs("*** Begin Patch\n"
+                                                         "*** Update File: ws.txt\n"
+                                                         "@@\n"
+                                                         " keep\n"
+                                                         "-  target\n"
+                                                         "+  replaced\n"
+                                                         "*** End Patch\n"),
                                                workspace.context());
     CHECK(!result.hasError());
     CHECK(workspace.read("ws.txt").find("replaced") != std::string::npos);
@@ -271,23 +264,21 @@ void test_cannot_escape_the_working_directory() {
     Workspace workspace;
     auto tool = makeMaiApplyPatchTool();
 
-    const MaiToolResult update = tool->execute(patchArgs(
-                                                   "*** Begin Patch\n"
-                                                   "*** Update File: ../outside.txt\n"
-                                                   "@@\n"
-                                                   "-a\n"
-                                                   "+b\n"
-                                                   "*** End Patch\n"),
+    const MaiToolResult update = tool->execute(patchArgs("*** Begin Patch\n"
+                                                         "*** Update File: ../outside.txt\n"
+                                                         "@@\n"
+                                                         "-a\n"
+                                                         "+b\n"
+                                                         "*** End Patch\n"),
                                                workspace.context());
     CHECK(update.hasError());
-    CHECK(update.error().message().find("outside the working directory") != std::string::npos);
+    CHECK(update.error().message().find("outside the area accessible") != std::string::npos);
 
     // 新建和移动的目标路径同样要挡。
-    const MaiToolResult add = tool->execute(patchArgs(
-                                                "*** Begin Patch\n"
-                                                "*** Add File: ../escaped.txt\n"
-                                                "+x\n"
-                                                "*** End Patch\n"),
+    const MaiToolResult add = tool->execute(patchArgs("*** Begin Patch\n"
+                                                      "*** Add File: ../escaped.txt\n"
+                                                      "+x\n"
+                                                      "*** End Patch\n"),
                                             workspace.context());
     CHECK(add.hasError());
     CHECK(!fs::exists(workspace.root.parent_path() / "escaped.txt"));
@@ -296,13 +287,12 @@ void test_cannot_escape_the_working_directory() {
 void test_missing_file_is_reported_as_not_found() {
     Workspace workspace;
     auto tool = makeMaiApplyPatchTool();
-    const MaiToolResult result = tool->execute(patchArgs(
-                                                   "*** Begin Patch\n"
-                                                   "*** Update File: nope.txt\n"
-                                                   "@@\n"
-                                                   "-a\n"
-                                                   "+b\n"
-                                                   "*** End Patch\n"),
+    const MaiToolResult result = tool->execute(patchArgs("*** Begin Patch\n"
+                                                         "*** Update File: nope.txt\n"
+                                                         "@@\n"
+                                                         "-a\n"
+                                                         "+b\n"
+                                                         "*** End Patch\n"),
                                                workspace.context());
     CHECK(result.hasError());
     CHECK(result.error().code() == MaiErrorCode::NotFound);
@@ -313,6 +303,28 @@ void test_apply_patch_always_needs_approval() {
     CHECK(tool->requiresApproval(patchArgs("*** Begin Patch\n*** End Patch\n")));
     CHECK(tool->requiresApproval("not json at all"));
     CHECK(tool->approvalKey(patchArgs("anything")) == "apply_patch");
+}
+
+void test_delete_and_move_require_approval_for_each_affected_file() {
+    Workspace workspace;
+    auto tool = makeMaiApplyPatchTool();
+    const auto context = workspace.context();
+    const auto keys = tool->approvalKeys(patchArgs("*** Begin Patch\n"
+                                                   "*** Delete File: gone.txt\n"
+                                                   "*** Update File: from.txt\n"
+                                                   "*** Move to: to.txt\n"
+                                                   "@@\n"
+                                                   "-old\n"
+                                                   "+new\n"
+                                                   "*** End Patch\n"),
+                                         context);
+    CHECK(keys.size() == 3);
+    CHECK(std::find(keys.begin(), keys.end(), "file:" + context.resolvePath("gone.txt")) !=
+          keys.end());
+    CHECK(std::find(keys.begin(), keys.end(), "file:" + context.resolvePath("from.txt")) !=
+          keys.end());
+    CHECK(std::find(keys.begin(), keys.end(), "file:" + context.resolvePath("to.txt")) !=
+          keys.end());
 }
 
 }  // namespace
@@ -337,6 +349,7 @@ int main() {
     RUN(test_cannot_escape_the_working_directory);
     RUN(test_missing_file_is_reported_as_not_found);
     RUN(test_apply_patch_always_needs_approval);
+    RUN(test_delete_and_move_require_approval_for_each_affected_file);
     if (failures == 0) std::printf("apply_patch tool tests passed\n");
     return failures == 0 ? 0 : 1;
 }

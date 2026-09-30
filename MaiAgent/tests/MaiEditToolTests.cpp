@@ -82,9 +82,9 @@ void test_replaces_a_unique_match() {
     workspace.write("a.txt", "alpha\nbeta\ngamma\n");
     auto tool = makeMaiEditTool();
 
-    const MaiToolResult result = tool->execute(
-        args({{"path", "a.txt"}, {"old_string", "beta"}, {"new_string", "BETA"}}),
-        workspace.context());
+    const MaiToolResult result =
+        tool->execute(args({{"path", "a.txt"}, {"old_string", "beta"}, {"new_string", "BETA"}}),
+                      workspace.context());
     CHECK(!result.hasError());
     CHECK(workspace.read("a.txt") == "alpha\nBETA\ngamma\n");
     // 回给模型的要带一小段上下文，它才能确认改在了想改的地方。
@@ -98,9 +98,9 @@ void test_refuses_when_the_match_is_ambiguous() {
     workspace.write("b.txt", "same\nother\nsame\n");
     auto tool = makeMaiEditTool();
 
-    const MaiToolResult result = tool->execute(
-        args({{"path", "b.txt"}, {"old_string", "same"}, {"new_string", "changed"}}),
-        workspace.context());
+    const MaiToolResult result =
+        tool->execute(args({{"path", "b.txt"}, {"old_string", "same"}, {"new_string", "changed"}}),
+                      workspace.context());
     CHECK(result.hasError());
     // 文件必须一个字节都没动。
     CHECK(workspace.read("b.txt") == "same\nother\nsame\n");
@@ -114,12 +114,9 @@ void test_replace_all_changes_every_occurrence() {
     workspace.write("c.txt", "x\ny\nx\nz\nx\n");
     auto tool = makeMaiEditTool();
 
-    const MaiToolResult result =
-        tool->execute(args({{"path", "c.txt"},
-                            {"old_string", "x"},
-                            {"new_string", "w"},
-                            {"replace_all", true}}),
-                      workspace.context());
+    const MaiToolResult result = tool->execute(
+        args({{"path", "c.txt"}, {"old_string", "x"}, {"new_string", "w"}, {"replace_all", true}}),
+        workspace.context());
     CHECK(!result.hasError());
     CHECK(workspace.read("c.txt") == "w\ny\nw\nz\nw\n");
     CHECK(result.output().find("3 occurrences") != std::string::npos);
@@ -130,9 +127,9 @@ void test_refuses_when_nothing_matches() {
     workspace.write("d.txt", "hello\n");
     auto tool = makeMaiEditTool();
 
-    const MaiToolResult result = tool->execute(
-        args({{"path", "d.txt"}, {"old_string", "goodbye"}, {"new_string", "hi"}}),
-        workspace.context());
+    const MaiToolResult result =
+        tool->execute(args({{"path", "d.txt"}, {"old_string", "goodbye"}, {"new_string", "hi"}}),
+                      workspace.context());
     CHECK(result.hasError());
     CHECK(workspace.read("d.txt") == "hello\n");
     // 最常见的原因是缩进抄错或者凭记忆写，所以提示要往这个方向指。
@@ -150,9 +147,9 @@ void test_refuses_empty_and_identical_strings() {
     CHECK(empty.hasError());
 
     // 一模一样等于没改。放过去的话模型会以为自己做了事。
-    const MaiToolResult same = tool->execute(
-        args({{"path", "e.txt"}, {"old_string", "body"}, {"new_string", "body"}}),
-        workspace.context());
+    const MaiToolResult same =
+        tool->execute(args({{"path", "e.txt"}, {"old_string", "body"}, {"new_string", "body"}}),
+                      workspace.context());
     CHECK(same.hasError());
     CHECK(workspace.read("e.txt") == "body\n");
 }
@@ -168,7 +165,7 @@ void test_cannot_escape_the_working_directory() {
         tool->execute(args({{"path", "../outside.txt"}, {"old_string", "a"}, {"new_string", "b"}}),
                       workspace.context());
     CHECK(result.hasError());
-    CHECK(result.error().message().find("outside the working directory") != std::string::npos);
+    CHECK(result.error().message().find("outside the area accessible") != std::string::npos);
 }
 
 void test_missing_file_and_directory_are_reported_differently() {
@@ -176,9 +173,9 @@ void test_missing_file_and_directory_are_reported_differently() {
     fs::create_directories(workspace.root / "adir");
     auto tool = makeMaiEditTool();
 
-    const MaiToolResult missing = tool->execute(
-        args({{"path", "nope.txt"}, {"old_string", "a"}, {"new_string", "b"}}),
-        workspace.context());
+    const MaiToolResult missing =
+        tool->execute(args({{"path", "nope.txt"}, {"old_string", "a"}, {"new_string", "b"}}),
+                      workspace.context());
     CHECK(missing.hasError());
     CHECK(missing.error().code() == MaiErrorCode::NotFound);
 

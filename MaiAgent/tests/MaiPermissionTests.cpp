@@ -169,6 +169,23 @@ void test_reject_and_always() {
     CHECK(!gate.isAllowedInSession("ses_1", "write"));
 }
 
+void test_first_approval_remembers_each_file_without_granting_other_files() {
+    MaiPermissionGate gate;
+    MaiPermissionRequest request = makeRequest("per_paths", "ses_paths");
+    request.approvalKeys = {"file:/app/a.txt", "file:/app/b.txt"};
+    request.rememberOnApproval = true;
+    std::atomic<int> outcome{-1};
+    std::thread worker(
+        [&] { outcome = static_cast<int>(gate.ask(request, nullptr, kNeverCancel)); });
+    CHECK(waitFor([&] { return gate.listPending().size() == 1; }));
+    CHECK(gate.reply(request.id, MaiPermissionDecision::Approved));
+    worker.join();
+    CHECK(outcome.load() == static_cast<int>(MaiPermissionDecision::ApprovedForSession));
+    CHECK(gate.isAllowedInSession(request.sessionId, "file:/app/a.txt"));
+    CHECK(gate.isAllowedInSession(request.sessionId, "file:/app/b.txt"));
+    CHECK(!gate.isAllowedInSession(request.sessionId, "file:/app/c.txt"));
+}
+
 void test_cancel_session_wakes_waiter() {
     MaiPermissionGate gate;
     std::atomic<int> outcome{-1};
@@ -452,10 +469,11 @@ void test_rejected_repeat_does_not_ask_again() {
     CHECK(model->requestCount() == 3);  // 三圈都跑到了，没卡住
 }
 
-void test_always_in_session_asks_only_once() {
+void test_session_grant_only_authorizes_named_file() {
     Workspace workspace;
     auto underTest = makeAgent({callTurn("write", R"({"path":"a.txt","content":"1"})", "call_1"),
                                 callTurn("write", R"({"path":"b.txt","content":"2"})", "call_2"),
+                                callTurn("write", R"({"path":"a.txt","content":"3"})", "call_3"),
                                 sayTurn("Both files written.")});
     MaiAgent* agent = underTest.agent.get();
     Recorder recorder;
@@ -471,11 +489,17 @@ void test_always_in_session_asks_only_once() {
     reply.decision = MaiPermissionDecision::ApprovedForSession;
     agent->submit(reply);
 
+    CHECK(waitFor(
+        [&] { return workspace.has("a.txt") && agent->listPendingPermissions().size() == 1; }));
+    CHECK(!workspace.has("b.txt"));
+    reply.permissionId = agent->listPendingPermissions()[0].id;
+    CHECK(agent->submit(reply).isOk());
+
     agent->waitIdle();
 
     CHECK(workspace.has("a.txt"));
-    CHECK(workspace.has("b.txt"));  // 第二次没再问，直接放行
-    CHECK(recorder.count(MaiEventType::PermissionAsked) == 1);
+    CHECK(workspace.has("b.txt"));
+    CHECK(recorder.count(MaiEventType::PermissionAsked) == 2);
 }
 
 // 清空聊天记录**不能**把"本会话都允许"一起清掉。
@@ -488,8 +512,8 @@ void test_clearing_history_keeps_the_session_grant() {
     Workspace workspace;
     auto underTest = makeAgent({callTurn("write", R"({"path":"a.txt","content":"1"})", "call_1"),
                                 sayTurn("Wrote a.txt."),
-                                callTurn("write", R"({"path":"b.txt","content":"2"})", "call_2"),
-                                sayTurn("Wrote b.txt.")});
+                                callTurn("write", R"({"path":"a.txt","content":"2"})", "call_2"),
+                                sayTurn("Updated a.txt.")});
     MaiAgent* agent = underTest.agent.get();
     Recorder recorder;
     recorder.attach(*agent);
@@ -517,14 +541,17 @@ void test_clearing_history_keeps_the_session_grant() {
     // 标题一起清掉，让下一轮重新起名。留着的话头部会挂着一句已经不存在的对话。
     CHECK(session.title.empty());
 
-    // 第二轮：**不该再问**。授权记录在闸门里，不在聊天记录里。
-    agent->submit(MaiSendPrompt{sessionId, "write b.txt"});
+    // 第二轮改的是同一个文件，**不该再问**。授权记录在闸门里，不在聊天记录里。
+    agent->submit(MaiSendPrompt{sessionId, "update a.txt"});
 
     // 这里刻意**不用 waitIdle()**。授权记录要是丢了，这一轮会停在等授权上
     // 永远不结束（permissionTimeoutMs = 0 是无限等），waitIdle 也就永远不返回——
     // 用例变成挂死而不是报错。挂死比失败难查得多：看不到断言、看不到行号，
     // 只有一个卡着不动的进程。有界等待会在超时后干脆地红掉。
-    CHECK(waitFor([&] { return workspace.has("b.txt"); }));
+    CHECK(waitFor([&] {
+        std::ifstream in(workspace.root / "a.txt", std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(in)), {}) == "2";
+    }));
     CHECK(recorder.count(MaiEventType::PermissionAsked) == 1);
 
     // 收尾：万一它真的又问了（说明这个用例红了），把请求答掉再退出。
@@ -584,20 +611,36 @@ void test_read_never_asks() {
     CHECK(agent->listPendingPermissions().empty());
 }
 
-void test_unless_trusted_auto_approves_workspace_edits() {
+void test_unless_trusted_asks_once_per_file() {
     Workspace workspace;
-    auto underTest =
-        makeAgent({callTurn("write", R"({"path":"trusted.txt","content":"ok"})"), sayTurn("Done.")},
-                  MaiApprovalPolicy::UnlessTrusted);
+    auto underTest = makeAgent(
+        {callTurn("write", R"({"path":"trusted.txt","content":"first"})"),
+         callTurn("write", R"({"path":"other.txt","content":"other"})"),
+         callTurn("write", R"({"path":"trusted.txt","content":"again"})"), sayTurn("Done.")},
+        MaiApprovalPolicy::UnlessTrusted);
     Recorder recorder;
     recorder.attach(*underTest.agent);
     const std::string sessionId =
         underTest.agent->submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
-    underTest.agent->submit(MaiSendPrompt{sessionId, "write trusted.txt"});
+    underTest.agent->submit(MaiSendPrompt{sessionId, "write two files"});
+    CHECK(waitFor([&] { return underTest.agent->listPendingPermissions().size() == 1; }));
+    auto first = underTest.agent->listPendingPermissions().front();
+    CHECK(first.rememberOnApproval);
+    CHECK(underTest.agent->submit(MaiReplyPermission{first.id, MaiPermissionDecision::Approved})
+              .isOk());
+    CHECK(waitFor([&] {
+        return workspace.has("trusted.txt") &&
+               underTest.agent->listPendingPermissions().size() == 1;
+    }));
+    CHECK(!workspace.has("other.txt"));
+    auto second = underTest.agent->listPendingPermissions().front();
+    CHECK(underTest.agent->submit(MaiReplyPermission{second.id, MaiPermissionDecision::Approved})
+              .isOk());
     underTest.agent->waitIdle();
 
     CHECK(workspace.has("trusted.txt"));
-    CHECK(recorder.count(MaiEventType::PermissionAsked) == 0);
+    CHECK(workspace.has("other.txt"));
+    CHECK(recorder.count(MaiEventType::PermissionAsked) == 2);
 }
 
 void test_unless_trusted_still_asks_for_risky_shell() {
@@ -725,6 +768,8 @@ int main() {
     test_reply_to_unknown_id();
     std::printf("-> test_reject_and_always\n");
     test_reject_and_always();
+    std::printf("-> test_first_approval_remembers_each_file_without_granting_other_files\n");
+    test_first_approval_remembers_each_file_without_granting_other_files();
     std::printf("-> test_cancel_session_wakes_waiter\n");
     test_cancel_session_wakes_waiter();
     std::printf("-> test_cancel_flag_wakes_waiter\n");
@@ -738,16 +783,16 @@ int main() {
     test_reject_blocks_write_and_tells_model();
     std::printf("-> test_rejected_repeat_does_not_ask_again\n");
     test_rejected_repeat_does_not_ask_again();
-    std::printf("-> test_always_in_session_asks_only_once\n");
-    test_always_in_session_asks_only_once();
+    std::printf("-> test_session_grant_only_authorizes_named_file\n");
+    test_session_grant_only_authorizes_named_file();
     std::printf("-> test_clearing_history_keeps_the_session_grant\n");
     test_clearing_history_keeps_the_session_grant();
     std::printf("-> test_clearing_a_busy_session_is_refused\n");
     test_clearing_a_busy_session_is_refused();
     std::printf("-> test_read_never_asks\n");
     test_read_never_asks();
-    std::printf("-> test_unless_trusted_auto_approves_workspace_edits\n");
-    test_unless_trusted_auto_approves_workspace_edits();
+    std::printf("-> test_unless_trusted_asks_once_per_file\n");
+    test_unless_trusted_asks_once_per_file();
     std::printf("-> test_unless_trusted_still_asks_for_risky_shell\n");
     test_unless_trusted_still_asks_for_risky_shell();
     std::printf("-> test_never_policy_runs_without_prompting\n");

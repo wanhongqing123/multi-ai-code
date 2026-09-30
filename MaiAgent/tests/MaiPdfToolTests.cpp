@@ -142,6 +142,27 @@ void test_rejects_paths_outside_workspace() {
     CHECK(renderCalls == 0);
 }
 
+void test_desktop_can_generate_pdf_outside_session_directory() {
+    MaiPdfWorkspace session;
+    MaiPdfWorkspace destination(false);
+    auto tool = makeMaiPdfTool(
+        [&](const std::string&, const std::string& output, const std::atomic<bool>*) {
+            const MaiError error =
+                MaiFileSystem::writeFile(MaiFilePath::fromUtf8(output), "%PDF-1.4\n%%EOF\n");
+            return error ? MaiToolResult::failure(error.code(), error.message())
+                         : MaiToolResult::success("rendered");
+        });
+    MaiToolContext context = session.context();
+    context.allowOutsideWorkingDirectory = true;
+    const std::string output = destination.path("outside.pdf").toUtf8();
+    const auto arguments = nlohmann::json{{"content", "# Report"}, {"output_path", output}};
+    const MaiToolResult result = tool->execute(arguments.dump(), context);
+    CHECK(!result.hasError());
+    CHECK(MaiFileSystem::exists(destination.path("outside.pdf")));
+    CHECK(tool->approvalKeys(arguments.dump(), context) ==
+          std::vector<std::string>{"file:" + context.resolvePath(output)});
+}
+
 void test_only_accepts_embedded_markdown_images() {
     MaiPdfWorkspace workspace(false);
     int renderCalls = 0;
@@ -217,6 +238,7 @@ int main() {
     test_generates_pdf_directly_from_markdown();
     test_creates_validated_pdf_with_approval();
     test_rejects_paths_outside_workspace();
+    test_desktop_can_generate_pdf_outside_session_directory();
     test_only_accepts_embedded_markdown_images();
     test_rejects_missing_or_invalid_renderer_output();
     test_rejects_invalid_utf8_and_renderer_exceptions();

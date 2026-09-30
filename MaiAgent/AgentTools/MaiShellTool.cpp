@@ -26,6 +26,12 @@ json parseArguments(const std::string& raw) {
     return parsed.is_object() ? parsed : json::object();
 }
 
+std::string commandOf(const json& arguments) {
+    const auto command = arguments.find("command");
+    return command != arguments.end() && command->is_string() ? command->get<std::string>()
+                                                              : std::string{};
+}
+
 // 命令行里第一个词，也就是要跑的程序。
 //
 // 只做最朴素的切分：按空白切，去掉引号。**不求精确**——它只用来生成审批的键
@@ -63,9 +69,8 @@ std::string programOf(const std::string& command) {
 // 交给下面的子命令判断。
 bool isReadOnlyProgram(const std::string& program) {
     static const char* const kReadOnly[] = {
-        "ls",   "dir",  "pwd",  "echo", "cat",  "head", "tail", "wc",
-        "stat", "grep", "which", "where", "whoami", "uname", "df", "du",
-        "printenv", "cmp",
+        "ls",   "dir",   "pwd",   "echo",   "cat",   "head", "tail", "wc",       "stat",
+        "grep", "which", "where", "whoami", "uname", "df",   "du",   "printenv", "cmp",
     };
     for (const char* candidate : kReadOnly) {
         if (program == candidate) return true;
@@ -123,7 +128,7 @@ public:
     // 这一层的兜底方向永远是「不放行」。
     bool requiresApproval(const std::string& argumentsJson) const override {
         const json args = parseArguments(argumentsJson);
-        const std::string command = args.value("command", std::string{});
+        const std::string command = commandOf(args);
         if (command.empty()) return true;
         if (hasShellControlCharacters(command)) return true;
 
@@ -133,23 +138,24 @@ public:
         return !isReadOnlyProgram(program);
     }
 
-    // 「这个会话以后都允许」只记到**程序**这一级。
+    // 「这个会话以后都允许」只记到**完整命令**这一级。
     //
-    // 记成 "shell" 的话，给 `npm test` 点一次「以后都允许」，后面的 `rm -rf` 也跟着放行了。
+    // 记成 "shell" 或程序名的话，给 `rm file-a` 点一次头，`rm file-b` 也会被放行。
     std::string approvalKey(const std::string& argumentsJson) const override {
         const json args = parseArguments(argumentsJson);
-        const std::string command = args.value("command", std::string{});
+        const std::string command = commandOf(args);
         const std::string program = programOf(command);
-        // 带控制字符时，真正执行的内容不由第一个词决定。按完整命令收窄会话授权：
-        // 用户允许 `npm test && echo done` 不能顺带放行 `npm test && del important.txt`。
+        // 带控制字符时，真正执行的内容不由第一个词决定；保留独立前缀方便审计。
         if (program.empty() || hasShellControlCharacters(command))
             return "shell:<compound>:" + command;
-        return "shell:" + program;
+        // Shell syntax can write or delete arbitrary paths; unlike built-in file tools, it
+        // cannot reliably identify a target file. Never grant a whole program for one command.
+        return "shell:command:" + command;
     }
 
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const json args = parseArguments(raw);
-        const std::string command = args.value("command", std::string{});
+        const std::string command = commandOf(args);
         if (command.empty()) {
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,
                                           "the command parameter is required");

@@ -67,6 +67,21 @@ void test_rejects_invalid_images_and_escaped_paths() {
     CHECK(tool->execute("not-json", context).hasError());
 }
 
+void test_desktop_can_view_image_outside_session_directory() {
+    Workspace session;
+    Workspace other;
+    const fs::path image = other.root / "outside.png";
+    std::ofstream(image, std::ios::binary).write("\x89PNG\r\n\x1a\n", 8);
+    MaiToolContext context;
+    context.root = session.root.u8string();
+    context.model = "glm-5.3-flash";
+    context.allowOutsideWorkingDirectory = true;
+    const std::string arguments = "{\"path\":\"" + image.generic_u8string() + "\"}";
+    const MaiToolResult result = makeMaiViewImageTool()->execute(arguments, context);
+    CHECK(!result.hasError());
+    CHECK(result.images().size() == 1);
+}
+
 void test_rejects_text_only_models() {
     std::unique_ptr<MaiTool> tool = makeMaiViewImageTool();
     MaiToolContext context;
@@ -82,6 +97,7 @@ void test_rejects_text_only_models() {
 int main() {
     test_png_is_returned_as_a_model_image();
     test_rejects_invalid_images_and_escaped_paths();
+    test_desktop_can_view_image_outside_session_directory();
     test_rejects_text_only_models();
     if (failures == 0) std::printf("view image tool tests passed\n");
     return failures == 0 ? 0 : 1;

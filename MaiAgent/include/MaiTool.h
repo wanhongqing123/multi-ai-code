@@ -20,17 +20,22 @@ struct MaiToolContext {
     // 当前会话实际选中的模型名。宿主工具可据此拒绝模型不支持的媒体或平台能力。
     std::string model;
 
-    // 所有文件操作的根，UTF-8 绝对路径。
-    //
-    // **工具不得访问这个目录之外的任何路径。** 模型会试——有时是它自己想看看 ../.env，
-    // 有时是被提示词注入诱导的。这是安全边界，不是建议。
-    //
-    // 别自己拼路径判断，一律走 maiResolvePathWithinRoot()：那里会解析符号链接再逐段比对，
-    // 而"消掉 .. 之后比字符串前缀"这种直觉写法有两个洞（符号链接、同前缀兄弟目录），都有用例守着。
+    // 文件类工具的相对路径基准，UTF-8 绝对路径。实际访问边界由宿主配置：默认
+    // 限在这里，移动端可扩大到 App 容器，桌面端可交给操作系统文件权限决定。
+    // 工具一律走 resolvePath()，不能自行拼路径或做字符串前缀判断。
     //
     // 会话没设工作目录时这里是空的，
     // 文件类工具要明确拒绝而不是退回到当前目录——那会让模型读到进程的工作目录。
     std::string root;
+
+    // Empty means root remains the boundary. Mobile hosts can provide the App container root;
+    // desktop hosts can opt out of a tool-level path boundary.
+    std::string fileAccessRoot;
+    bool allowOutsideWorkingDirectory = false;
+
+    // Relative paths still start from root; the access policy above controls absolute targets
+    // and paths that leave root. An empty result means the path is not permitted.
+    std::string resolvePath(const std::string& candidate) const;
 
     // 这一次工具调用对应的消息和片段。question 工具要把它们带进提问里，
     // 界面才知道是哪一次调用在等回答。
@@ -140,12 +145,17 @@ public:
 
     // 用户选「这个会话以后都允许」时，记住的是哪一类调用。
     //
-    // 默认就是工具名，对 write / edit 这种「危险程度不随参数变」的工具是对的。
-    // **shell 必须收窄**：给 `git status` 点一次「以后都允许」，不该连 `rm -rf` 一起放行。
-    // 它返回的是 `shell:<程序名>`，所以「以后都允许」的粒度是「以后都允许跑 git」。
+    // 默认就是工具名；会修改文件的工具会覆盖 approvalKeys，按目标路径收窄。
+    // **shell 必须收窄**：给 `rm a` 点一次「以后都允许」，不该连 `rm b` 一起放行。
+    // 它按完整命令返回键；文件工具则按目标文件返回键。
     //
     // 返回值只当键用，不给人看；它会被原样存进会话白名单。
     virtual std::string approvalKey(const std::string& argumentsJson) const;
+
+    // File-mutating tools return one canonical key per target file. A grant for A must not
+    // silently authorize B; a multi-file patch records each approved target separately.
+    virtual std::vector<std::string> approvalKeys(const std::string& argumentsJson,
+                                                  const MaiToolContext& context) const;
 
     // 真正干活。
     //

@@ -44,6 +44,12 @@ json parseArguments(const std::string& raw) {
     return parsed.is_object() ? parsed : json::object();
 }
 
+std::string stringArgument(const json& arguments, const char* name) {
+    const auto value = arguments.find(name);
+    return value != arguments.end() && value->is_string() ? value->get<std::string>()
+                                                          : std::string{};
+}
+
 // 把 root 之外的路径挡掉，并给模型一句它能据此改正的话。
 struct Resolved {
     std::string path;
@@ -57,14 +63,13 @@ Resolved resolveOrFail(const MaiToolContext& context, const std::string& rawPath
             {},
             MaiToolResult::failure(MaiErrorCode::InvalidInput, "missing required parameter: path"),
             false};
-    const std::string resolved = maiResolvePathWithinRoot(context.root, rawPath);
+    const std::string resolved = context.resolvePath(rawPath);
     if (resolved.empty()) {
-        return {{},
-                MaiToolResult::failure(
-                    MaiErrorCode::InvalidInput,
-                    "Path is outside the working directory and was rejected: " + rawPath +
-                        ". Only files inside the working directory are accessible."),
-                false};
+        return {
+            {},
+            MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                   "Path is outside the area accessible to this host: " + rawPath),
+            false};
     }
     return {resolved, {}, true};
 }
@@ -181,12 +186,13 @@ bool shouldSkipDirectory(const std::string& name) {
 // path 相对于 root 的写法。算不出来（不在 root 下）就返回完整路径。
 //
 // 自己按段算，不调系统的 PathRelativePathToW：那个 API 在两边不同盘时行为古怪，
-// 而我们这里 path 一定在 root 之内（调用方已经过了安全检查），逐段砍掉公共前缀就够了。
+// root 内的路径逐段裁成相对路径；宿主允许 root 外访问时保留完整绝对路径。
 //
 // 一律返回 generic 形式（'/' 分隔）的 UTF-8：模型看到的路径在三个平台上长得一样，
 // 它给回来的我们也认。
 std::string toRelativePath(const std::string& root, const MaiFilePath& path) {
     const MaiFilePath rootPath = MaiFilePath::fromUtf8(root);
+    if (path != rootPath && !rootPath.isParentOf(path)) return path.toGenericUtf8();
     const auto rootParts = rootPath.components();
     const auto pathParts = path.components();
     if (pathParts.size() <= rootParts.size()) return path.toGenericUtf8();
@@ -204,12 +210,13 @@ public:
         return "read";
     }
     std::string description() const override {
-        return "Read a file inside the working directory. Returns the text with line numbers "
+        return "Read a file. Relative paths use the session working directory. Returns text with "
+               "line numbers "
                "so you can refer to specific lines later.";
     }
     std::string parametersSchema() const override {
         return R"({"type":"object","properties":{)"
-               R"("path":{"type":"string","description":"File path relative to the working directory"},)"
+               R"("path":{"type":"string","description":"Absolute path or path relative to the working directory"},)"
                R"("offset":{"type":"integer","description":"1-based line to start from, default 1"},)"
                R"("limit":{"type":"integer","description":"Maximum number of lines to read, default 500"}},)"
                R"("required":["path"]})";
@@ -217,14 +224,13 @@ public:
 
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const json args = parseArguments(raw);
-        auto resolved = resolveOrFail(context, args.value("path", std::string{}));
+        auto resolved = resolveOrFail(context, stringArgument(args, "path"));
         if (!resolved.ok) return resolved.error;
 
         const MaiFilePath target = MaiFilePath::fromUtf8(resolved.path);
         if (!MaiFileSystem::exists(target))
-            return MaiToolResult::failure(
-                MaiErrorCode::NotFound,
-                "file does not exist: " + args.value("path", std::string{}));
+            return MaiToolResult::failure(MaiErrorCode::NotFound,
+                                          "file does not exist: " + stringArgument(args, "path"));
         if (MaiFileSystem::isDirectory(target))
             return MaiToolResult::failure(
                 MaiErrorCode::InvalidInput,
@@ -295,12 +301,12 @@ public:
         return "write";
     }
     std::string description() const override {
-        return "Write content to a file inside the working directory, replacing whatever was "
+        return "Write content to a file, replacing whatever was "
                "there. Parent directories are created as needed.";
     }
     std::string parametersSchema() const override {
         return R"({"type":"object","properties":{)"
-               R"("path":{"type":"string","description":"File path relative to the working directory"},)"
+               R"("path":{"type":"string","description":"Absolute path or path relative to the working directory"},)"
                R"("content":{"type":"string","description":"The full content to write"}},)"
                R"("required":["path","content"]})";
     }
@@ -310,9 +316,19 @@ public:
         return true;
     }
 
+    std::vector<std::string> approvalKeys(const std::string& argumentsJson,
+                                          const MaiToolContext& context) const override {
+        const json args = parseArguments(argumentsJson);
+        if (!args.contains("path") || !args["path"].is_string())
+            return MaiTool::approvalKeys(argumentsJson, context);
+        const std::string path = context.resolvePath(args["path"].get<std::string>());
+        return path.empty() ? MaiTool::approvalKeys(argumentsJson, context)
+                            : std::vector<std::string>{"file:" + path};
+    }
+
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const json args = parseArguments(raw);
-        auto resolved = resolveOrFail(context, args.value("path", std::string{}));
+        auto resolved = resolveOrFail(context, stringArgument(args, "path"));
         if (!resolved.ok) return resolved.error;
         if (!args.contains("content") || !args["content"].is_string())
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,
@@ -343,7 +359,8 @@ public:
         return "glob";
     }
     std::string description() const override {
-        return "Find files inside the working directory by name pattern. Supports *, ?, ** to "
+        return "Find files by name pattern. Relative paths use the working directory. Supports *, "
+               "?, ** to "
                "cross directories, and brace lists such as *.{png,jpg}. For a broad search, "
                "provide a subdirectory in path.";
     }
@@ -439,7 +456,8 @@ public:
         return "grep";
     }
     std::string description() const override {
-        return "Search file contents inside the working directory with a regular expression. "
+        return "Search file contents with a regular expression. Relative paths use the working "
+               "directory. "
                "Returns the file, line number and the whole matching line.";
     }
     std::string parametersSchema() const override {

@@ -243,7 +243,7 @@ public:
         curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");
         curl_easy_setopt(curl, CURLOPT_USERAGENT, "MaiAgent/0.1");
         // **把协议锁死在 http/https。** curl 默认还认 file:// gopher:// smb:// 之类，
-        // 一个重定向就能把「抓网页」变成「读本地文件」——那是绕过工作目录边界的路。
+        // 一个重定向就能把「抓网页」变成「读本地文件」——那会绕过文件工具的路径策略。
 #ifdef CURLOPT_PROTOCOLS_STR
         curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "http,https");
         curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");

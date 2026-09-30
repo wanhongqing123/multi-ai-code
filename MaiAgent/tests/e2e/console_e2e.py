@@ -324,8 +324,10 @@ with served_lock:
 SCRIPTS[:] = [
     ("", "write", json.dumps({"path": "always-1.txt", "content": "first"})),
     ("First one done.", "", ""),
-    ("", "write", json.dumps({"path": "always-2.txt", "content": "second"})),
+    ("", "write", json.dumps({"path": "always-1.txt", "content": "second"})),
     ("Second one done.", "", ""),
+    ("", "write", json.dumps({"path": "always-2.txt", "content": "third"})),
+    ("Third one done.", "", ""),
 ]
 
 mark = len(text())
@@ -339,12 +341,22 @@ check("that turn went idle", wait_prompts(turns + 1))
 
 mark = len(text())
 turns = prompts_seen()
-send("write always-2.txt")
+send("update always-1.txt")
 check("second write finished", wait_after("Second one done.", mark))
-check("and it did NOT ask again", "needs approval" not in text()[mark:])
-check("the second file is really there",
-      os.path.exists(os.path.join(workspace, "always-2.txt")))
+check("and the same file did NOT ask again", "needs approval" not in text()[mark:])
+with open(os.path.join(workspace, "always-1.txt"), encoding="utf-8") as updated:
+    check("the approved file was updated", updated.read() == "second")
 check("the always-turn went idle", wait_prompts(turns + 1))
+
+mark = len(text())
+turns = prompts_seen()
+send("write always-2.txt")
+check("a different file asks for approval", wait_after("needs approval", mark))
+mark = len(text())
+send("/a")
+check("the new file was written after approval", wait_after("Third one done.", mark))
+check("the new file exists", os.path.exists(os.path.join(workspace, "always-2.txt")))
+check("the new-file turn went idle", wait_prompts(turns + 1))
 
 # ── 一轮在跑的时候不收第二条 ──────────────────────────────
 # 不排队是故意的：排队的消息在界面上和"发出去了"长得一模一样，用户会以为丢了。

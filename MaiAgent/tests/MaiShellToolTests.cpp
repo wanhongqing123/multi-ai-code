@@ -141,21 +141,30 @@ void test_unparsable_arguments_ask() {
     CHECK(tool->requiresApproval("{}"));
     CHECK(tool->requiresApproval(args({{"command", ""}})));
     CHECK(tool->requiresApproval(args({{"command", "   "}})));
+    bool rejectedWrongType = false;
+    try {
+        rejectedWrongType = tool->requiresApproval(R"({"command":42})") &&
+                            tool->execute(R"({"command":42})", MaiToolContext{}).hasError();
+    } catch (...) {
+        rejectedWrongType = false;
+    }
+    CHECK(rejectedWrongType);
 }
 
-void test_session_approval_is_scoped_to_the_program() {
+void test_session_approval_is_scoped_to_the_exact_command() {
     // 给 `npm test` 点一次「以后都允许」，不该连 `rm -rf` 一起放行。
     auto tool = makeMaiShellTool();
-    CHECK(tool->approvalKey(args({{"command", "npm test"}})) == "shell:npm");
-    CHECK(tool->approvalKey(args({{"command", "npm run build"}})) == "shell:npm");
-    CHECK(tool->approvalKey(args({{"command", "rm -rf x"}})) == "shell:rm");
+    CHECK(tool->approvalKey(args({{"command", "npm test"}})) == "shell:command:npm test");
+    CHECK(tool->approvalKey(args({{"command", "npm run build"}})) == "shell:command:npm run build");
+    CHECK(tool->approvalKey(args({{"command", "rm -rf x"}})) == "shell:command:rm -rf x");
     CHECK(tool->approvalKey(args({{"command", "npm test"}})) !=
           tool->approvalKey(args({{"command", "rm -rf x"}})));
 
-    // 带路径和扩展名的要归一化成同一个键，否则 `/usr/bin/git` 和 `git`
-    // 会各自攒一份豁免，用户以为放行过了其实没有。
-    CHECK(tool->approvalKey(args({{"command", "/usr/bin/git push"}})) == "shell:git");
-    CHECK(tool->approvalKey(args({{"command", "C:\\\\tools\\\\git.exe push"}})) == "shell:git");
+    // 同一程序的不同写命令也不能共用豁免。
+    CHECK(tool->approvalKey(args({{"command", "/usr/bin/git push"}})) ==
+          "shell:command:/usr/bin/git push");
+    CHECK(tool->approvalKey(args({{"command", "C:\\\\tools\\\\git.exe push"}})) ==
+          "shell:command:C:\\\\tools\\\\git.exe push");
 
     // 带控制字符的命令按完整命令收窄，不能让一条复合命令的会话授权放行另一条。
     const std::string firstCompound = tool->approvalKey(args({{"command", "ls; rm -rf ."}}));
@@ -359,7 +368,7 @@ int main() {
     RUN(test_anything_that_can_change_things_asks_first);
     RUN(test_shell_metacharacters_always_ask);
     RUN(test_unparsable_arguments_ask);
-    RUN(test_session_approval_is_scoped_to_the_program);
+    RUN(test_session_approval_is_scoped_to_the_exact_command);
     RUN(test_runs_a_command_and_returns_its_output);
     RUN(test_a_failing_command_is_a_normal_result_not_an_error);
     RUN(test_stderr_is_interleaved_with_stdout);

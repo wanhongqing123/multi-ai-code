@@ -117,18 +117,28 @@ public:
         return "Generate an A4 PDF directly from Markdown content in one call. Use headings, "
                "lists, tables, and inline formatting. Images must be embedded as base64 data "
                "URLs; external resources are unsupported. The output must be a new .pdf file "
-               "inside the working directory.";
+               "in a location accessible to this host.";
     }
 
     std::string parametersSchema() const override {
         return R"({"type":"object","properties":{)"
                R"("content":{"type":"string","description":"UTF-8 Markdown to render as the PDF body"},)"
-               R"("output_path":{"type":"string","description":"New .pdf path inside the working directory"}},)"
+               R"("output_path":{"type":"string","description":"Absolute or relative path for a new .pdf file"}},)"
                R"("required":["content","output_path"],"additionalProperties":false})";
     }
 
     bool requiresApproval(const std::string&) const override {
         return true;
+    }
+
+    std::vector<std::string> approvalKeys(const std::string& argumentsJson,
+                                          const MaiToolContext& context) const override {
+        const json args = json::parse(argumentsJson, nullptr, false);
+        if (!args.is_object() || !args.contains("output_path") || !args["output_path"].is_string())
+            return MaiTool::approvalKeys(argumentsJson, context);
+        const std::string path = context.resolvePath(args["output_path"].get<std::string>());
+        return path.empty() ? MaiTool::approvalKeys(argumentsJson, context)
+                            : std::vector<std::string>{"file:" + path};
     }
 
     MaiToolResult execute(const std::string& argumentsJson,
@@ -151,10 +161,11 @@ public:
         if (context.root.empty())
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,
                                           "this session has no working directory");
-        const std::string output = maiResolvePathWithinRoot(context.root, outputName);
+        const std::string output = context.resolvePath(outputName);
         if (output.empty())
-            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
-                                          "PDF output must stay inside the working directory");
+            return MaiToolResult::failure(
+                MaiErrorCode::InvalidInput,
+                "PDF output must stay inside the area accessible to this host");
         const MaiFilePath outputPath = MaiFilePath::fromUtf8(output);
         if (MaiFileSystem::exists(outputPath))
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,
@@ -178,10 +189,11 @@ public:
             if (!hasExtension(sourceName, ".html") && !hasExtension(sourceName, ".htm"))
                 return MaiToolResult::failure(MaiErrorCode::InvalidInput,
                                               "source_path must be an HTML file");
-            const std::string source = maiResolvePathWithinRoot(context.root, sourceName);
+            const std::string source = context.resolvePath(sourceName);
             if (source.empty() || source == output)
-                return MaiToolResult::failure(MaiErrorCode::InvalidInput,
-                                              "PDF source must stay inside the working directory");
+                return MaiToolResult::failure(
+                    MaiErrorCode::InvalidInput,
+                    "PDF source must stay inside the area accessible to this host");
             const MaiFilePath sourcePath = MaiFilePath::fromUtf8(source);
             if (!MaiFileSystem::exists(sourcePath) || MaiFileSystem::isDirectory(sourcePath))
                 return MaiToolResult::failure(MaiErrorCode::NotFound,

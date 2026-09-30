@@ -119,6 +119,8 @@ struct MaiAgent::Runtime {
         dependencies.baseInstructions = options.baseInstructions;
         dependencies.maxIterations = options.maxToolIterations;
         dependencies.approvalPolicy = options.approvalPolicy;
+        dependencies.fileAccessRoot = options.fileAccessRoot;
+        dependencies.allowOutsideWorkingDirectory = options.allowOutsideWorkingDirectory;
         return dependencies;
     }
 

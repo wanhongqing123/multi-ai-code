@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "MaiFilePath.h"
+#include "MaiFileSystem.h"
 #include "MaiProcess.h"
 #include "MaiApplyPatchTool.h"
 #include "MaiEditTool.h"
@@ -21,6 +23,16 @@
 
 bool MaiToolContext::isCanceled() const {
     return cancel != nullptr && cancel->load(std::memory_order_relaxed);
+}
+
+std::string MaiToolContext::resolvePath(const std::string& candidate) const {
+    if (root.empty() || candidate.empty()) return {};
+    const MaiFilePath rootPath = MaiFilePath::fromUtf8(root);
+    MaiFilePath target = MaiFilePath::fromUtf8(candidate);
+    if (!target.isAbsolute()) target = rootPath.append(target);
+    if (allowOutsideWorkingDirectory) return MaiFileSystem::resolve(target).toUtf8();
+    const std::string& boundary = fileAccessRoot.empty() ? root : fileAccessRoot;
+    return maiResolvePathWithinRoot(boundary, target.toUtf8());
 }
 
 // ── MaiToolResult ───────────────────────────────────────────────
@@ -71,6 +83,12 @@ bool MaiToolResult::hasError() const {
 std::string MaiTool::approvalKey(const std::string& argumentsJson) const {
     (void)argumentsJson;
     return name();
+}
+
+std::vector<std::string> MaiTool::approvalKeys(const std::string& argumentsJson,
+                                               const MaiToolContext& context) const {
+    (void)context;
+    return {approvalKey(argumentsJson)};
 }
 
 bool MaiTool::requiresApproval(const std::string& argumentsJson) const {

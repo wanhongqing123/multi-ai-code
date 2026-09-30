@@ -263,6 +263,9 @@ struct StreamCtx {
     std::string finishReason;
     bool sawOutput = false;
     bool done = false;
+    long inactivityTimeoutSeconds = 0;
+    std::chrono::steady_clock::time_point lastModelProgress = std::chrono::steady_clock::now();
+    bool inactive = false;
 };
 
 std::string providerErrorMessage(const std::string& body) {
@@ -287,6 +290,7 @@ void handleSseLine(StreamCtx& context, const std::string& line) {
     if (!payload.empty() && payload[0] == ' ') payload.erase(0, 1);
     if (payload == "[DONE]") {
         context.done = true;
+        context.lastModelProgress = std::chrono::steady_clock::now();
         return;
     }
 
@@ -313,6 +317,7 @@ void handleSseLine(StreamCtx& context, const std::string& line) {
         const auto slot = delta["content"].get<std::string>();
         if (!slot.empty()) {
             context.sawOutput = true;
+            context.lastModelProgress = std::chrono::steady_clock::now();
             if (context.sink->onText) context.sink->onText(slot);
         }
     }
@@ -322,12 +327,15 @@ void handleSseLine(StreamCtx& context, const std::string& line) {
             const auto slot = delta[key].get<std::string>();
             if (!slot.empty()) {
                 context.sawOutput = true;
+                context.lastModelProgress = std::chrono::steady_clock::now();
                 if (context.sink->onReasoning) context.sink->onReasoning(slot);
             }
         }
     }
-    if (delta.contains("tool_calls")) {
+    if (delta.contains("tool_calls") && delta["tool_calls"].is_array() &&
+        !delta["tool_calls"].empty()) {
         context.sawOutput = true;
+        context.lastModelProgress = std::chrono::steady_clock::now();
         context.tools.feed(delta["tool_calls"]);
     }
 }
@@ -335,8 +343,8 @@ void handleSseLine(StreamCtx& context, const std::string& line) {
 std::size_t writeCallback(char* ptr, std::size_t size, std::size_t nmemb, void* userdata) {
     auto& context = *static_cast<StreamCtx*>(userdata);
     const std::size_t total = size * nmemb;
-    // 返回不等于 total 的值会让 curl 以 CURLE_WRITE_ERROR 中断传输——这就是 MaiInterrupt 的落点，
-    // 比等超时干净。
+    // 返回不等于 total 的值会让 curl 以 CURLE_WRITE_ERROR 中断传输。取消和收到完整的
+    // [DONE] 都在这里结束，不等服务端继续保持连接。
     if (context.cancel->load(std::memory_order_relaxed)) return 0;
 
     constexpr std::size_t kMaxCapturedBody = 64 * 1024;
@@ -347,7 +355,19 @@ std::size_t writeCallback(char* ptr, std::size_t size, std::size_t nmemb, void* 
     context.lines.append(ptr, total);
     std::string line;
     while (context.lines.nextLine(line)) handleSseLine(context, line);
-    return total;
+    return context.done ? 0 : total;
+}
+
+int progressCallback(void* userdata, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
+    auto& context = *static_cast<StreamCtx*>(userdata);
+    if (context.cancel->load(std::memory_order_relaxed)) return 1;
+    if (context.inactivityTimeoutSeconds > 0 &&
+        std::chrono::steady_clock::now() - context.lastModelProgress >=
+            std::chrono::seconds(context.inactivityTimeoutSeconds)) {
+        context.inactive = true;
+        return 1;
+    }
+    return 0;
 }
 
 bool isRetryableCurlError(CURLcode code) {
@@ -406,6 +426,7 @@ public:
             StreamCtx context;
             context.sink = &sink;
             context.cancel = &cancel;
+            context.inactivityTimeoutSeconds = mConfig.inactivityTimeoutSeconds;
             curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
             if (!mConfig.caBundlePath.empty())
                 curl_easy_setopt(curl, CURLOPT_CAINFO, mConfig.caBundlePath.c_str());
@@ -415,6 +436,11 @@ public:
             curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
             curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
             curl_easy_setopt(curl, CURLOPT_WRITEDATA, &context);
+            // The progress callback also runs while the connection is silent. Write callbacks
+            // cannot enforce cancellation or an idle deadline until another byte arrives.
+            curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+            curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progressCallback);
+            curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &context);
             curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, mConfig.connectTimeoutSeconds);
             if (mConfig.totalTimeoutSeconds > 0)
                 curl_easy_setopt(curl, CURLOPT_TIMEOUT, mConfig.totalTimeoutSeconds);
@@ -433,6 +459,12 @@ public:
 
             if (cancel.load(std::memory_order_relaxed))
                 return MaiError::make(MaiErrorCode::Canceled, "canceled by user");
+            if (context.inactive)
+                return MaiError::make(
+                    MaiErrorCode::Network,
+                    "model stream inactive for " +
+                        std::to_string(mConfig.inactivityTimeoutSeconds) +
+                        " seconds; retry the request or start a new conversation");
 
             const bool transient = curlResult != CURLE_OK ? isRetryableCurlError(curlResult)
                                                           : status == 408 || status >= 500;
@@ -443,7 +475,7 @@ public:
                 continue;
             }
 
-            if (curlResult != CURLE_OK)
+            if (curlResult != CURLE_OK && !(context.done && curlResult == CURLE_WRITE_ERROR))
                 return MaiError::make(
                     MaiErrorCode::Network,
                     std::string("curl: ") +

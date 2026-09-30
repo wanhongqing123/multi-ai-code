@@ -43,6 +43,12 @@ struct FakeServer {
     std::size_t chunk = 1;
     int status = 200;
     int transientFailures = 0;
+    bool stallWithoutBytes = false;
+    bool sendOnlyHeartbeats = false;
+    bool keepOpenAfterDone = false;
+    std::vector<std::string> delayedChunks;
+    int delayedChunkMs = 0;
+    std::atomic<bool> releaseStall{false};
     std::atomic<int> requestCount{0};
 
     // 收到的请求体和鉴权头。测线格式要看**真正发出去的字节**，
@@ -71,6 +77,51 @@ struct FakeServer {
                 response.set_content(script, "application/json");
                 return;
             }
+            if (keepOpenAfterDone) {
+                auto sent = std::make_shared<bool>(false);
+                response.set_chunked_content_provider(
+                    "text/event-stream", [this, sent](std::size_t, httplib::DataSink& sink) {
+                        if (!*sent) {
+                            *sent = true;
+                            return sink.write(script.data(), script.size());
+                        }
+                        if (releaseStall.load()) {
+                            sink.done();
+                            return false;
+                        }
+                        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                        return true;
+                    });
+                return;
+            }
+            if (!delayedChunks.empty()) {
+                auto index = std::make_shared<std::size_t>(0);
+                response.set_chunked_content_provider(
+                    "text/event-stream", [this, index](std::size_t, httplib::DataSink& sink) {
+                        if (*index >= delayedChunks.size()) {
+                            sink.done();
+                            return false;
+                        }
+                        const std::string& chunk = delayedChunks[(*index)++];
+                        const bool written = sink.write(chunk.data(), chunk.size());
+                        std::this_thread::sleep_for(std::chrono::milliseconds(delayedChunkMs));
+                        return written;
+                    });
+                return;
+            }
+            if (stallWithoutBytes || sendOnlyHeartbeats) {
+                response.set_chunked_content_provider(
+                    "text/event-stream", [this](std::size_t, httplib::DataSink& sink) {
+                        if (releaseStall.load()) {
+                            sink.done();
+                            return false;
+                        }
+                        if (sendOnlyHeartbeats && !sink.write(": keepalive\n\n", 13)) return false;
+                        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                        return true;
+                    });
+                return;
+            }
             auto text = std::make_shared<std::string>(script);
             auto pos = std::make_shared<std::size_t>(0);
             const std::size_t step = chunk;
@@ -93,6 +144,7 @@ struct FakeServer {
     }
 
     ~FakeServer() {
+        releaseStall.store(true);
         server.stop();
         if (th.joinable()) th.join();
     }
@@ -393,6 +445,101 @@ void test_transient_http_failure_retries_before_streaming() {
     CHECK(result.done);
     CHECK(result.text == "recovered");
     CHECK(fake.requestCount.load() == 2);
+}
+
+void test_heartbeats_do_not_extend_model_inactivity() {
+    FakeServer fake;
+    fake.sendOnlyHeartbeats = true;
+    fake.start();
+
+    MaiModelConfig config;
+    config.baseUrl = fake.base();
+    config.inactivityTimeoutSeconds = 1;
+    config.totalTimeoutSeconds = 4;
+    config.maxRetries = 0;
+    auto client = makeMaiModelClient(config);
+    MaiModelRequest request;
+    request.model = "test-model";
+    MaiStreamSink sink;
+    const std::atomic<bool> cancel{false};
+    const auto started = std::chrono::steady_clock::now();
+    const MaiError result = client->stream(request, sink, cancel);
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    CHECK(result.code() == MaiErrorCode::Network);
+    CHECK(result.message().find("inactive") != std::string::npos);
+    CHECK(elapsed < std::chrono::seconds(3));
+}
+
+void test_real_model_progress_extends_idle_deadline() {
+    FakeServer fake;
+    fake.delayedChunks = {text_delta("first"), text_delta("second"), kDone};
+    fake.delayedChunkMs = 1100;
+    fake.start();
+
+    MaiModelConfig config;
+    config.baseUrl = fake.base();
+    config.inactivityTimeoutSeconds = 2;
+    config.totalTimeoutSeconds = 6;
+    auto client = makeMaiModelClient(config);
+    MaiModelRequest request;
+    request.model = "test-model";
+    std::string output;
+    MaiStreamSink sink;
+    sink.onText = [&output](std::string_view text) { output.append(text); };
+    const std::atomic<bool> cancel{false};
+    const MaiError result = client->stream(request, sink, cancel);
+    CHECK(!result);
+    CHECK(output == "firstsecond");
+}
+
+void test_done_ends_stream_without_waiting_for_socket_close() {
+    FakeServer fake;
+    fake.keepOpenAfterDone = true;
+    fake.script = text_delta("complete") + kDone;
+    fake.start();
+
+    MaiModelConfig config;
+    config.baseUrl = fake.base();
+    config.totalTimeoutSeconds = 3;
+    config.maxRetries = 0;
+    auto client = makeMaiModelClient(config);
+    MaiModelRequest request;
+    request.model = "test-model";
+    std::string output;
+    MaiStreamSink sink;
+    sink.onText = [&output](std::string_view text) { output.append(text); };
+    const std::atomic<bool> cancel{false};
+    const auto started = std::chrono::steady_clock::now();
+    const MaiError result = client->stream(request, sink, cancel);
+    CHECK(!result);
+    CHECK(output == "complete");
+    CHECK(std::chrono::steady_clock::now() - started < std::chrono::seconds(2));
+}
+
+void test_cancel_interrupts_silent_model_stream() {
+    FakeServer fake;
+    fake.stallWithoutBytes = true;
+    fake.start();
+
+    MaiModelConfig config;
+    config.baseUrl = fake.base();
+    config.totalTimeoutSeconds = 4;
+    config.inactivityTimeoutSeconds = 10;
+    config.maxRetries = 0;
+    auto client = makeMaiModelClient(config);
+    MaiModelRequest request;
+    request.model = "test-model";
+    MaiStreamSink sink;
+    std::atomic<bool> cancel{false};
+    MaiError result;
+    std::thread worker([&] { result = client->stream(request, sink, cancel); });
+    for (int i = 0; i < 200 && fake.requestCount.load() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    const auto canceledAt = std::chrono::steady_clock::now();
+    cancel.store(true);
+    worker.join();
+    CHECK(result.code() == MaiErrorCode::Canceled);
+    CHECK(std::chrono::steady_clock::now() - canceledAt < std::chrono::seconds(2));
 }
 
 // ── 线格式 ──────────────────────────────────────────────────────
@@ -738,6 +885,10 @@ int main() {
     test_finish_reason_length_is_not_reported_as_success();
     test_final_unterminated_sse_line_is_processed();
     test_transient_http_failure_retries_before_streaming();
+    test_heartbeats_do_not_extend_model_inactivity();
+    test_real_model_progress_extends_idle_deadline();
+    test_done_ends_stream_without_waiting_for_socket_close();
+    test_cancel_interrupts_silent_model_stream();
     test_wire_shape_of_request();
     test_no_tools_field_when_empty();
     test_user_image_is_sent_as_multimodal_content();

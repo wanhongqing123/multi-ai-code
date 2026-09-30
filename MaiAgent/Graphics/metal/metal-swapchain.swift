@@ -28,32 +28,35 @@ import Foundation
 ///   - data: Pointer to platform-specific `gs_init_data` struct
 /// - Returns: Opaque pointer to a new ``OBSSwapChain`` on success or `nil` on error
 ///
-/// As interaction with UI elements needs to happen on the main thread of macOS, this function is marked with
-/// `@MainActor`. This is also necessary because ``OBSSwapChain/updateView`` itself interacts with the ``NSView``
-/// instance passed via the `data` argument and also has to occur on the main thread.
+/// The application's UI thread may attach a native view directly. A renderer
+/// thread can instead pass a CAMetalLayer already installed by the UI thread.
 ///
 /// As applications cannot manage their own swap chain on macOS, the ``OBSSwapChain`` class merely wraps the
 /// management of the ``CAMetalLayer`` that will be associated with the ``NSView`` and handles the drawables used to
 /// render their contents.
 ///
-/// > Important: This function can only be called from the main thread.
-@MainActor
 @_cdecl("device_swapchain_create")
 public func device_swapchain_create(device: UnsafeMutableRawPointer, data: UnsafePointer<gs_init_data>)
     -> OpaquePointer?
 {
     let device: MetalDevice = unretained(device)
 
-    let view = data.pointee.window.view.takeUnretainedValue() as! OBSPlatformView
+    let surface = data.pointee.window.view.takeUnretainedValue()
+    let existingLayer = surface as? CAMetalLayer
+    if existingLayer == nil && !Thread.isMainThread { return nil }
     let size = MTLSize(
         width: Int(data.pointee.cx),
         height: Int(data.pointee.cy),
         depth: 0
     )
 
-    guard let swapChain = OBSSwapChain(device: device, size: size, colorSpace: data.pointee.format) else { return nil }
+    guard let swapChain = OBSSwapChain(device: device, size: size,
+                                      colorSpace: data.pointee.format,
+                                      existingLayer: existingLayer) else { return nil }
 
-    swapChain.updateView(view)
+    if let view = surface as? OBSPlatformView {
+        MainActor.assumeIsolated { swapChain.updateView(view) }
+    }
 
     device.swapChainQueue.sync {
         device.swapChains.append(swapChain)
@@ -167,8 +170,14 @@ public func device_get_height(device: UnsafeRawPointer) -> UInt32 {
 /// will only ever be one "current" swap chain in use by `libobs` and there is no dedicated call to "reset" or unload
 /// the current swap chain, instead a new swap chain is loaded or the "scene end" function is called.
 @_cdecl("device_load_swapchain")
-public func device_load_swapchain(device: UnsafeRawPointer, swap: UnsafeRawPointer) {
+public func device_load_swapchain(device: UnsafeRawPointer, swap: UnsafeRawPointer?) {
     let device: MetalDevice = unretained(device)
+    guard let swap else {
+        device.renderState.swapChain = nil
+        device.renderState.renderTarget = nil
+        device.renderState.isInDisplaysRenderStage = false
+        return
+    }
     let swapChain: OBSSwapChain = unretained(swap)
 
 #if os(macOS)

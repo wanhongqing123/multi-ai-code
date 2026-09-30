@@ -124,7 +124,7 @@ if(APPLE AND NOT IOS)
   add_library(maiagent_graphics SHARED
     $<TARGET_OBJECTS:maiagent_obs_graphics_compile>
     compat/MaiObsStandalone.c
-    MaiGraphicsImageRenderer.cpp)
+    MaiGraphicsPresenter.cpp)
   add_library(MaiAgent::Graphics ALIAS maiagent_graphics)
   target_include_directories(maiagent_graphics PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -204,7 +204,7 @@ if(IOS)
   add_library(maiagent_graphics STATIC
     $<TARGET_OBJECTS:maiagent_obs_graphics_compile>
     compat/MaiObsStandalone.c
-    MaiGraphicsImageRenderer.cpp)
+    MaiGraphicsPresenter.cpp)
   set_target_properties(maiagent_graphics PROPERTIES LINKER_LANGUAGE C)
   add_library(MaiAgent::Graphics ALIAS maiagent_graphics)
   target_include_directories(maiagent_graphics PUBLIC
@@ -239,7 +239,7 @@ if(ANDROID)
 
   add_library(maiagent_graphics SHARED
     $<TARGET_OBJECTS:maiagent_obs_graphics_compile>
-    MaiGraphicsImageRenderer.cpp)
+    MaiGraphicsPresenter.cpp)
   add_library(MaiAgent::Graphics ALIAS maiagent_graphics)
   target_include_directories(maiagent_graphics PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}

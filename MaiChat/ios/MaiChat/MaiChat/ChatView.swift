@@ -7,10 +7,144 @@ import MaiChatCore
 import Photos
 import PhotosUI
 import QuickLook
+import QuartzCore
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 import WebKit
+
+@MainActor
+private final class MaiGraphicsWeakView {
+    weak var view: MaiGraphicsUIImageView?
+    init(_ view: MaiGraphicsUIImageView) { self.view = view }
+}
+
+@MainActor
+private enum MaiGraphicsViewRegistry {
+    static var started = false
+    static var views: [UInt64: MaiGraphicsWeakView] = [:]
+
+    static func start() -> Bool {
+        if started { return true }
+        guard let resources = Bundle.main.resourcePath else { return false }
+        let directory = resources + "/MaiAgentGraphics"
+        guard FileManager.default.fileExists(atPath: directory + "/default.effect") else {
+            return false
+        }
+        started = directory.withCString { effects in
+            maiGraphicsPresenterStart("builtin:metal", effects,
+                                      maiGraphicsPresentCallback, nil)
+        }
+        return started
+    }
+}
+
+private func maiGraphicsPresentCallback(_ viewID: UInt64, _ success: Bool,
+                                        _ userData: UnsafeMutableRawPointer?) {
+    _ = userData
+    DispatchQueue.main.async {
+        MaiGraphicsViewRegistry.views[viewID]?.view?.presentationFinished(success)
+    }
+}
+
+private func maiGraphicsRetainLayer(_ pointer: UnsafeMutableRawPointer?) {
+    if let pointer { _ = Unmanaged<AnyObject>.fromOpaque(pointer).retain() }
+}
+
+private func maiGraphicsReleaseLayer(_ pointer: UnsafeMutableRawPointer?) {
+    if let pointer { Unmanaged<AnyObject>.fromOpaque(pointer).release() }
+}
+
+@MainActor
+private final class MaiGraphicsUIImageView: UIView {
+    override class var layerClass: AnyClass { CAMetalLayer.self }
+
+    var onFailure: (() -> Void)?
+    private var imagePath = ""
+    private var fillView = false
+    private var viewID: UInt64 = 0
+    private var lastSize: CGSize = .zero
+
+    func showImage(_ path: String, fill: Bool) {
+        guard imagePath != path || fillView != fill else { return }
+        imagePath = path
+        fillView = fill
+        if viewID != 0 { submitImage() }
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil { attach() }
+        else { detach() }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard viewID != 0 else { attach(); return }
+        let size = CGSize(width: max(1, bounds.width * contentScaleFactor),
+                          height: max(1, bounds.height * contentScaleFactor))
+        guard size != lastSize else { return }
+        lastSize = size
+        maiGraphicsPresenterResize(viewID, UInt32(size.width), UInt32(size.height))
+    }
+
+    func presentationFinished(_ success: Bool) {
+        if !success { onFailure?() }
+    }
+
+    private func attach() {
+        guard viewID == 0, window != nil, bounds.width > 0, bounds.height > 0,
+              MaiGraphicsViewRegistry.start() else { return }
+        lastSize = CGSize(width: max(1, bounds.width * contentScaleFactor),
+                          height: max(1, bounds.height * contentScaleFactor))
+        viewID = maiGraphicsPresenterAttach(
+            Unmanaged.passUnretained(layer).toOpaque(), UInt32(lastSize.width),
+            UInt32(lastSize.height), maiGraphicsRetainLayer, maiGraphicsReleaseLayer
+        )
+        guard viewID != 0 else { onFailure?(); return }
+        MaiGraphicsViewRegistry.views[viewID] = MaiGraphicsWeakView(self)
+        submitImage()
+    }
+
+    private func submitImage() {
+        guard viewID != 0, !imagePath.isEmpty else { return }
+        if !imagePath.withCString({ maiGraphicsPresenterShowImage(viewID, $0, fillView) }) {
+            onFailure?()
+        }
+    }
+
+    private func detach() {
+        guard viewID != 0 else { return }
+        MaiGraphicsViewRegistry.views.removeValue(forKey: viewID)
+        maiGraphicsPresenterDetach(viewID)
+        viewID = 0
+    }
+}
+
+struct MaiGraphicsImageSurface: UIViewRepresentable {
+    let filePath: String
+    let fillView: Bool
+    let onFailure: () -> Void
+
+    init(filePath: String, fillView: Bool = false, onFailure: @escaping () -> Void) {
+        self.filePath = filePath
+        self.fillView = fillView
+        self.onFailure = onFailure
+    }
+
+    func makeUIView(context _: Context) -> UIView {
+        let view = MaiGraphicsUIImageView()
+        view.onFailure = onFailure
+        view.showImage(filePath, fill: fillView)
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context _: Context) {
+        guard let view = uiView as? MaiGraphicsUIImageView else { return }
+        view.onFailure = onFailure
+        view.showImage(filePath, fill: fillView)
+    }
+}
 
 enum RemoteIMStyle {
     static let pageBackground = Color(red: 0.966, green: 0.976, blue: 0.988)
@@ -105,32 +239,6 @@ nonisolated private func makeRemoteIMImageFile(
 private struct RemoteIMImageDecodeOutcome: @unchecked Sendable {
     let image: RemoteIMDecodedImageBox?
     let durationMilliseconds: Int
-}
-
-nonisolated func maiGraphicsUIImage(path: String, maxPixelSize: Int) -> UIImage? {
-    guard maxPixelSize > 0 else { return nil }
-    var rendered = MaiGraphicsImageResult()
-    let loaded = path.withCString { utf8Path in
-        maiGraphicsRenderImageFile(
-            utf8Path, "builtin:metal", UInt32(clamping: maxPixelSize),
-            UInt32(clamping: maxPixelSize), &rendered
-        )
-    }
-    guard loaded, let pixels = rendered.pixels else {
-        maiGraphicsImageResultFree(&rendered)
-        return nil
-    }
-    defer { maiGraphicsImageResultFree(&rendered) }
-    let bytes = Data(bytes: pixels, count: Int(rendered.stride) * Int(rendered.height))
-    guard let provider = CGDataProvider(data: bytes as CFData) else { return nil }
-    let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue).union(.byteOrder32Big)
-    guard let cgImage = CGImage(
-        width: Int(rendered.width), height: Int(rendered.height),
-        bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: Int(rendered.stride),
-        space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: bitmapInfo,
-        provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent
-    ) else { return nil }
-    return UIImage(cgImage: cgImage)
 }
 
 private actor RemoteIMImageDecodeLimiter {
@@ -241,14 +349,6 @@ private actor RemoteIMImagePipeline {
         _ request: RemoteIMImageRequest
     ) -> RemoteIMImageDecodeOutcome {
         let startedAt = ProcessInfo.processInfo.systemUptime
-        if let rendered = maiGraphicsUIImage(path: request.filePath,
-                                             maxPixelSize: request.maximumPixelSize),
-           let cgImage = rendered.cgImage {
-            let box = RemoteIMDecodedImageBox(
-                image: rendered, memoryCost: cgImage.bytesPerRow * cgImage.height
-            )
-            return outcome(image: box, startedAt: startedAt)
-        }
         let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
         guard let source = CGImageSourceCreateWithURL(
             URL(fileURLWithPath: request.filePath) as CFURL,
@@ -1192,7 +1292,7 @@ private enum RemoteIMImagePreviewLayout {
 
 private struct PresentedRemoteIMImage: Identifiable {
     let item: RemoteIMImagePreviewItem
-    let image: UIImage
+    let imageSize: CGSize
     let sourceFrame: CGRect
 
     var id: UUID { item.id }
@@ -1613,13 +1713,13 @@ private struct ChatDetailView: View {
 
     private func presentImagePreview(
         item: RemoteIMImagePreviewItem,
-        image: UIImage,
+        imageSize: CGSize,
         sourceFrame: CGRect
     ) {
         guard sourceFrame.width > 0, sourceFrame.height > 0 else { return }
         imagePreviewPresentation = PresentedRemoteIMImage(
             item: item,
-            image: image,
+            imageSize: imageSize,
             sourceFrame: sourceFrame
         )
         isImagePreviewExpanded = false
@@ -2026,7 +2126,7 @@ private struct MessageListView: View {
     let selectingMessageID: UUID?
     let finishSelectingText: () -> Void
     let dismissAttachmentPanel: () -> Void
-    let presentImagePreview: (RemoteIMImagePreviewItem, UIImage, CGRect) -> Void
+    let presentImagePreview: (RemoteIMImagePreviewItem, CGSize, CGRect) -> Void
     let showMessageActions: (RemoteIMMessage, CGRect) -> Void
     let replyToMessage: (RemoteIMMessage) -> Void
     let openQuote: (RemoteIMQuote) -> Void
@@ -2101,11 +2201,11 @@ private struct MessageListView: View {
                                 playVoice: {
                                     voicePlayer.toggle(message: message)
                                 },
-                                previewImage: { image, sourceFrame in
+                                previewImage: { imageSize, sourceFrame in
                                     guard let nextItem = RemoteIMImagePreviewPolicy.previewItem(
                                         for: message
                                     ) else { return }
-                                    presentImagePreview(nextItem, image, sourceFrame)
+                                    presentImagePreview(nextItem, imageSize, sourceFrame)
                                 },
                                 previewVideo: {
                                     videoPreviewItem = RemoteIMVideoPreviewPolicy.previewItem(for: message)
@@ -2508,7 +2608,7 @@ private struct MessageBubbleView: View {
     let isVideoDownloading: Bool
     let isVoicePlaying: Bool
     let playVoice: () -> Void
-    let previewImage: (UIImage, CGRect) -> Void
+    let previewImage: (CGSize, CGRect) -> Void
     let previewVideo: () -> Void
     let previewFile: () -> Void
     let isSelectingText: Bool
@@ -3322,11 +3422,12 @@ private struct FullScreenImagePreviewView: View {
     let close: () -> Void
     @State private var isSaving = false
     @State private var saveResultText: String?
+    @State private var directFailed = false
 
     var body: some View {
         GeometryReader { geometry in
             let fittedSize = aspectFitSize(
-                imageSize: presentation.image.size,
+                imageSize: presentation.imageSize,
                 containerSize: geometry.size
             )
             let destinationFrame = CGRect(
@@ -3343,18 +3444,7 @@ private struct FullScreenImagePreviewView: View {
                     .ignoresSafeArea()
                     .onTapGesture(perform: close)
 
-                // The bubble intentionally decodes a small image for scrolling performance.
-                // Reusing that UIImage here made a downloaded original look blurry at full screen.
-                // Decode the persisted original again at the physical display size, while keeping
-                // the bubble image as the transition placeholder.
-                RemoteIMAsyncImage(
-                    filePath: presentation.item.localFilePath,
-                    maximumPointSize: geometry.size
-                ) { image in
-                    previewImage(image, frame: imageFrame)
-                } placeholder: { _ in
-                    previewImage(presentation.image, frame: imageFrame)
-                }
+                previewImage(frame: imageFrame, maximumSize: geometry.size)
 
                 VStack(alignment: .trailing, spacing: 14) {
                     if let saveResultText {
@@ -3402,10 +3492,23 @@ private struct FullScreenImagePreviewView: View {
             }
     }
 
-    private func previewImage(_ image: UIImage, frame: CGRect) -> some View {
-        Image(uiImage: image)
-            .resizable()
-            .scaledToFit()
+    private func previewImage(frame: CGRect, maximumSize: CGSize) -> some View {
+        Group {
+            if directFailed {
+                RemoteIMAsyncImage(
+                    filePath: presentation.item.localFilePath,
+                    maximumPointSize: maximumSize
+                ) { image in
+                    Image(uiImage: image).resizable().scaledToFit()
+                } placeholder: { _ in
+                    ProgressView().tint(.white)
+                }
+            } else {
+                MaiGraphicsImageSurface(filePath: presentation.item.localFilePath) {
+                    directFailed = true
+                }
+            }
+        }
             .frame(width: frame.width, height: frame.height)
             .position(x: frame.midX, y: frame.midY)
             .contentShape(Rectangle())
@@ -3775,33 +3878,39 @@ private struct VideoBubbleContent: View {
     let attachment: RemoteIMVideoAttachment
     let isIncoming: Bool
     let fileState: RemoteIMVideoFileState
+    @EnvironmentObject private var appState: RemoteIMAppState
+    @State private var directCoverFailed = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             ZStack {
-                RemoteIMAsyncImage(
-                    filePath: attachment.coverPath,
-                    maximumPointSize: CGSize(width: 220, height: previewHeight)
-                ) { image in
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: 220, height: previewHeight)
-                        .clipped()
-                        .accessibilityLabel("视频封面")
-                        .accessibilityIdentifier("remote-im-video-cover")
-                } placeholder: { _ in
-                    ZStack {
-                        LinearGradient(
-                            colors: [Color(red: 0.10, green: 0.17, blue: 0.27), Color(red: 0.18, green: 0.32, blue: 0.47)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                        Image(systemName: "video.fill")
-                            .font(.system(size: 30, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.72))
+                if let cover = attachment.coverPath, !directCoverFailed {
+                    MaiGraphicsImageSurface(filePath: cover, fillView: true) {
+                        directCoverFailed = true
                     }
                     .frame(width: 220, height: previewHeight)
+                    .clipped()
+                    .accessibilityLabel("视频封面")
+                    .accessibilityIdentifier("remote-im-video-cover")
+                } else {
+                    RemoteIMAsyncImage(
+                        filePath: attachment.coverPath,
+                        maximumPointSize: CGSize(width: 220, height: previewHeight)
+                    ) { image in
+                        Image(uiImage: image).resizable().scaledToFill()
+                            .frame(width: 220, height: previewHeight).clipped()
+                    } placeholder: { _ in
+                        ZStack {
+                            LinearGradient(
+                                colors: [Color(red: 0.10, green: 0.17, blue: 0.27),
+                                         Color(red: 0.18, green: 0.32, blue: 0.47)],
+                                startPoint: .topLeading, endPoint: .bottomTrailing)
+                            Image(systemName: "video.fill")
+                                .font(.system(size: 30, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.72))
+                        }
+                        .frame(width: 220, height: previewHeight)
+                    }
                 }
 
                 if fileState.isPlayable {
@@ -3844,6 +3953,7 @@ private struct VideoBubbleContent: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                     .padding(8)
             }
+            .onChange(of: appState.mediaFileRevision) { _ in directCoverFailed = false }
             .frame(width: 220, height: previewHeight)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .background(Color(red: 0.945, green: 0.957, blue: 0.973), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -3877,69 +3987,77 @@ private struct VideoBubbleContent: View {
 
 private struct ImageBubbleContent: View {
     let attachment: RemoteIMImageAttachment
-    let previewImage: (UIImage, CGRect) -> Void
+    let previewImage: (CGSize, CGRect) -> Void
+    @EnvironmentObject private var appState: RemoteIMAppState
+    @State private var directFailed = false
+
+    private var imageSize: CGSize {
+        CGSize(width: max(1, attachment.width ?? 220),
+               height: max(1, attachment.height ?? 180))
+    }
+
+    private var thumbnailSize: CGSize {
+        let scale = min(220 / imageSize.width, 180 / imageSize.height)
+        return CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            RemoteIMAsyncImage(
-                filePath: attachment.localFilePath,
-                maximumPointSize: CGSize(width: 220, height: 180)
-            ) { image in
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: 220, maxHeight: 180)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .background(Color(red: 0.945, green: 0.957, blue: 0.973), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .overlay {
-                        GeometryReader { geometry in
-                            Button {
-                                previewImage(
-                                    image,
-                                    geometry.frame(
-                                        in: .named(
-                                            RemoteIMImagePreviewLayout.coordinateSpaceName
-                                        )
-                                    )
-                                )
-                            } label: {
-                                ZStack(alignment: .bottomTrailing) {
-                                    Color.clear
-                                        .contentShape(Rectangle())
-                                    Image(systemName: "arrow.up.left.and.arrow.down.right")
-                                        .font(.system(size: 11, weight: .bold))
-                                        .foregroundStyle(.white)
-                                        .frame(width: 25, height: 25)
-                                        .background(.black.opacity(0.52), in: Circle())
-                                        .overlay {
-                                            Circle().stroke(.white.opacity(0.16), lineWidth: 1)
-                                        }
-                                        .padding(7)
-                                        .allowsHitTesting(false)
-                                        .accessibilityHidden(true)
-                                }
+            Group {
+                if directFailed {
+                    RemoteIMAsyncImage(
+                        filePath: attachment.localFilePath,
+                        maximumPointSize: thumbnailSize
+                    ) { image in
+                        Image(uiImage: image).resizable().scaledToFit()
+                    } placeholder: { hasFailed in
+                        Group {
+                            if hasFailed {
+                                Label("图片文件已丢失，无法预览", systemImage: "photo")
+                            } else {
+                                ProgressView()
                             }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("查看原图")
-                            .accessibilityIdentifier("remote-im-message-image")
                         }
+                        .foregroundStyle(RemoteIMStyle.textSecondary)
                     }
-            } placeholder: { hasFailed in
-                Group {
-                    if hasFailed {
-                        HStack(spacing: 8) {
-                            Image(systemName: "photo")
-                            Text("图片文件已丢失，无法预览")
-                                .font(.system(size: 13, weight: .semibold))
-                        }
-                    } else {
-                        ProgressView()
+                } else {
+                    MaiGraphicsImageSurface(filePath: attachment.localFilePath) {
+                        directFailed = true
                     }
                 }
-                .foregroundStyle(RemoteIMStyle.textSecondary)
-                .frame(width: 180, height: 120)
-                .background(Color(red: 0.945, green: 0.957, blue: 0.973), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
+            .frame(width: thumbnailSize.width, height: thumbnailSize.height)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(Color(red: 0.945, green: 0.957, blue: 0.973),
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                GeometryReader { geometry in
+                    Button {
+                        previewImage(
+                            imageSize,
+                            geometry.frame(in: .named(
+                                RemoteIMImagePreviewLayout.coordinateSpaceName))
+                        )
+                    } label: {
+                        ZStack(alignment: .bottomTrailing) {
+                            Color.clear.contentShape(Rectangle())
+                            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(.white)
+                                .frame(width: 25, height: 25)
+                                .background(.black.opacity(0.52), in: Circle())
+                                .padding(7)
+                                .allowsHitTesting(false)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("查看原图")
+                    .accessibilityIdentifier("remote-im-message-image")
+                }
+            }
+            .onChange(of: attachment.localFilePath) { _ in directFailed = false }
+            .onChange(of: appState.mediaFileRevision) { _ in directFailed = false }
             Text(URL(fileURLWithPath: attachment.localFilePath).lastPathComponent)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(RemoteIMStyle.textSecondary)

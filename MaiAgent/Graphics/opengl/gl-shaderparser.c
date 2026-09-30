@@ -228,10 +228,14 @@ static void gl_write_struct(struct gl_shader_parser *glsp, struct shader_struct 
 
 static void gl_write_interface_block(struct gl_shader_parser *glsp)
 {
+#ifndef __ANDROID__
 	if (glsp->type == GS_SHADER_VERTEX) {
 		dstr_cat(&glsp->gl_string, "out gl_PerVertex {\n"
 					   "\tvec4 gl_Position;\n};\n\n");
 	}
+#else
+	UNUSED_PARAMETER(glsp);
+#endif
 }
 
 static inline void gl_write_structs(struct gl_shader_parser *glsp)
@@ -727,23 +731,37 @@ static bool gl_shader_buildstring(struct gl_shader_parser *glsp)
 		return false;
 	}
 
+#ifdef __ANDROID__
+	dstr_copy(&glsp->gl_string,
+		  "#version 300 es\nprecision highp float;\nprecision highp int;\n"
+		  "precision highp sampler2D;\nprecision highp sampler3D;\n\n");
+#else
 	dstr_copy(&glsp->gl_string, "#version 330\n\n");
+#endif
 	dstr_cat(&glsp->gl_string, "const bool obs_glsl_compile = true;\n\n");
 	dstr_cat(&glsp->gl_string, "vec4 obs_load_2d(sampler2D s, ivec3 p_lod)\n");
 	dstr_cat(&glsp->gl_string, "{\n");
+#ifdef __ANDROID__
+	dstr_cat(&glsp->gl_string, "\treturn texelFetch(s, p_lod.xy, p_lod.z);\n");
+#else
 	dstr_cat(&glsp->gl_string, "\tint lod = p_lod.z;\n");
-	dstr_cat(&glsp->gl_string, "\tvec2 size = textureSize(s, lod);\n");
+	dstr_cat(&glsp->gl_string, "\tvec2 size = vec2(textureSize(s, lod));\n");
 	dstr_cat(&glsp->gl_string, "\tvec2 p = (vec2(p_lod.xy) + 0.5) / size;\n");
 	dstr_cat(&glsp->gl_string, "\tvec4 color = textureLod(s, p, lod);\n");
 	dstr_cat(&glsp->gl_string, "\treturn color;\n");
+#endif
 	dstr_cat(&glsp->gl_string, "}\n\n");
 	dstr_cat(&glsp->gl_string, "vec4 obs_load_3d(sampler3D s, ivec4 p_lod)\n");
 	dstr_cat(&glsp->gl_string, "{\n");
+#ifdef __ANDROID__
+	dstr_cat(&glsp->gl_string, "\treturn texelFetch(s, p_lod.xyz, p_lod.w);\n");
+#else
 	dstr_cat(&glsp->gl_string, "\tint lod = p_lod.w;\n");
-	dstr_cat(&glsp->gl_string, "\tvec3 size = textureSize(s, lod);\n");
+	dstr_cat(&glsp->gl_string, "\tvec3 size = vec3(textureSize(s, lod));\n");
 	dstr_cat(&glsp->gl_string, "\tvec3 p = (vec3(p_lod.xyz) + 0.5) / size;\n");
 	dstr_cat(&glsp->gl_string, "\tvec4 color = textureLod(s, p, lod);\n");
 	dstr_cat(&glsp->gl_string, "\treturn color;\n");
+#endif
 	dstr_cat(&glsp->gl_string, "}\n\n");
 	gl_write_params(glsp);
 	gl_write_inputs(glsp, main_func);

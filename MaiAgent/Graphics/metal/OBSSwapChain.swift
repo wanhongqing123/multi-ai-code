@@ -45,10 +45,11 @@ class OBSSwapChain {
     var fence: MTLFence
     var discard: Bool = false
 
-    init?(device: MetalDevice, size: MTLSize, colorSpace: gs_color_format) {
+    init?(device: MetalDevice, size: MTLSize, colorSpace: gs_color_format,
+          existingLayer: CAMetalLayer? = nil) {
         self.device = device
         self.viewSize = size
-        self.layer = CAMetalLayer()
+        self.layer = existingLayer ?? CAMetalLayer()
         self.layer.framebufferOnly = false
         self.layer.device = device.device
         self.layer.drawableSize = CGSize(width: viewSize.width, height: viewSize.height)

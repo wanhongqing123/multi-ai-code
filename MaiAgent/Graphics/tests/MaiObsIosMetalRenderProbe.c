@@ -1,8 +1,34 @@
 #include <stdint.h>
+#include <stdatomic.h>
+#include <time.h>
 
 #include "MaiGraphics.h"
-#include "MaiGraphicsImageRenderer.h"
+#include "MaiGraphicsPresenter.h"
 #include "vec4.h"
+
+static atomic_int present_result;
+
+static void on_present(uint64_t view_id, bool success, void* user_data) {
+    (void)view_id;
+    (void)user_data;
+    atomic_store(&present_result, success ? 1 : -1);
+}
+
+int maiObsIosMetalPresentProbe(const char* image_path, const char* effect_directory,
+                               void* layer) {
+    if (!maiGraphicsPresenterStart("builtin:metal", effect_directory, on_present, NULL))
+        return 4;
+    const uint64_t view_id = maiGraphicsPresenterAttach(layer, 64, 64, NULL, NULL);
+    const bool accepted = view_id && maiGraphicsPresenterShowImage(view_id, image_path, false);
+    const struct timespec delay = {0, 20000000};
+    for (int attempt = 0; accepted && attempt < 400 && atomic_load(&present_result) == 0;
+         ++attempt)
+        nanosleep(&delay, NULL);
+    const bool passed = accepted && atomic_load(&present_result) == 1;
+    if (view_id) maiGraphicsPresenterDetach(view_id);
+    maiGraphicsPresenterStop();
+    return passed ? 0 : 5;
+}
 
 int maiObsIosMetalRenderProbe(const char* image_path) {
     graphics_t* graphics = NULL;
@@ -41,13 +67,6 @@ int maiObsIosMetalRenderProbe(const char* image_path) {
     if (texture) gs_texture_destroy(texture);
     gs_leave_context();
     gs_destroy(graphics);
-    if (!passed) return 2;
-
-    MaiGraphicsImageResult image = {0};
-    const bool rendered = maiGraphicsRenderImageFile(image_path, "builtin:metal", 1, 1, &image);
-    const bool image_valid = rendered && image.width == 1 && image.height == 1 && image.pixels &&
-                             image.pixels[0] == 255 && image.pixels[1] == 0 &&
-                             image.pixels[2] == 0 && image.pixels[3] == 255;
-    maiGraphicsImageResultFree(&image);
-    return image_valid ? 0 : 3;
+    (void)image_path;
+    return passed ? 0 : 2;
 }

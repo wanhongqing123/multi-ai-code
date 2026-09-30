@@ -714,10 +714,16 @@ private struct AIPDFArtifactButton: View {
 private struct AIWorkspaceImage: View {
     let filePath: String
     @StateObject private var state = AIWorkspaceImageState()
+    @State private var directFailed = false
 
     var body: some View {
         Group {
-            if let image = state.image {
+            if !directFailed {
+                MaiGraphicsImageSurface(filePath: filePath) { directFailed = true }
+                    .frame(width: 240, height: 200)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .accessibilityLabel("AI 助手图片附件")
+            } else if let image = state.image {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFit()
@@ -732,7 +738,10 @@ private struct AIWorkspaceImage: View {
                 ProgressView().frame(width: 180, height: 120)
             }
         }
-        .task(id: filePath) { await state.load(filePath) }
+        .task(id: "\(filePath)|\(directFailed)") {
+            if directFailed { await state.load(filePath) }
+        }
+        .onChange(of: filePath) { _ in directFailed = false }
     }
 }
 
@@ -740,12 +749,17 @@ private struct AIImagePreviewOverlay: View {
     let filePath: String
     let close: () -> Void
     @StateObject private var state = AIWorkspaceImageState()
+    @State private var directFailed = false
 
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .topTrailing) {
                 Color.black.ignoresSafeArea()
-                if let image = state.image {
+                if !directFailed {
+                    MaiGraphicsImageSurface(filePath: filePath) { directFailed = true }
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .accessibilityLabel("Agent 处理后的图片预览")
+                } else if let image = state.image {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFit()
@@ -770,7 +784,10 @@ private struct AIImagePreviewOverlay: View {
                 .padding(20)
             }
         }
-        .task(id: filePath) { await state.load(filePath, maxPixelSize: 2048) }
+        .task(id: "\(filePath)|\(directFailed)") {
+            if directFailed { await state.load(filePath, maxPixelSize: 2048) }
+        }
+        .onChange(of: filePath) { _ in directFailed = false }
     }
 }
 
@@ -783,9 +800,6 @@ private final class AIWorkspaceImageState: ObservableObject {
         image = nil
         hasFinished = false
         let decoded = await Task.detached(priority: .utility) { () -> AIWorkspaceImageBox? in
-            if let image = maiGraphicsUIImage(path: path, maxPixelSize: maxPixelSize) {
-                return AIWorkspaceImageBox(image)
-            }
             let url = URL(fileURLWithPath: path) as CFURL
             guard let source = CGImageSourceCreateWithURL(url, nil),
                   let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, [

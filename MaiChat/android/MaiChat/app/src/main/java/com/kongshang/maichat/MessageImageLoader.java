@@ -1,6 +1,5 @@
 package com.kongshang.maichat;
 
-import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.drawable.BitmapDrawable;
@@ -29,9 +28,6 @@ public final class MessageImageLoader {
     private static final ExecutorService WORKER = Executors.newFixedThreadPool(2);
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static final AtomicLong IDS = new AtomicLong();
-    private static volatile boolean nativeGraphicsLoaded;
-    private static volatile boolean nativeGraphicsUnavailable;
-    private static native Bitmap nativeRenderImage(String path, int width, int height, String backend);
     public interface MissingHandler { void onMissing(); }
     private static final class Tag {
         final long id; final MissingHandler missing;
@@ -51,7 +47,6 @@ public final class MessageImageLoader {
         }
     }
     public static void load(String path, int width, int height, ImageView target, MissingHandler missing) {
-        Context appContext = target.getContext().getApplicationContext();
         String clean = path == null ? "" : path.trim();
         long id = IDS.incrementAndGet();
         target.setTag(new Tag(id, missing));
@@ -69,7 +64,7 @@ public final class MessageImageLoader {
                 if (pending != null) { pending.add(request); return; }
                 pending = new ArrayList<>(); pending.add(request); WAITING.put(key, pending);
             }
-            Bitmap bitmap = decode(clean, width, height, appContext);
+            Bitmap bitmap = decode(clean, width, height);
             if (bitmap != null) {
                 CACHE.put(key, bitmap);
                 synchronized (RECENT) {
@@ -93,30 +88,8 @@ public final class MessageImageLoader {
             } else if (tag.missing != null) tag.missing.onMissing();
         });
     }
-    private static Bitmap decode(String path, int width, int height, Context context) {
+    private static Bitmap decode(String path, int width, int height) {
         try {
-            if (!nativeGraphicsUnavailable && width > 0 && height > 0) {
-                if (!nativeGraphicsLoaded) synchronized (MessageImageLoader.class) {
-                    if (!nativeGraphicsLoaded && !nativeGraphicsUnavailable) {
-                        try {
-                            System.loadLibrary("maichat_agent");
-                            nativeGraphicsLoaded = true;
-                        } catch (UnsatisfiedLinkError error) {
-                            nativeGraphicsUnavailable = true;
-                        }
-                    }
-                }
-                if (nativeGraphicsLoaded) {
-                    String backend = context.getApplicationInfo().nativeLibraryDir
-                        + "/libmaiagent_obs_gles.so";
-                    try {
-                        Bitmap rendered = nativeRenderImage(path, width, height, backend);
-                        if (rendered != null) return rendered;
-                    } catch (UnsatisfiedLinkError error) {
-                        nativeGraphicsUnavailable = true;
-                    }
-                }
-            }
             BitmapFactory.Options bounds = new BitmapFactory.Options(); bounds.inJustDecodeBounds = true;
             BitmapFactory.decodeFile(path, bounds);
             BitmapFactory.Options options = new BitmapFactory.Options();

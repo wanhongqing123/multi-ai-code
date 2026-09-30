@@ -23,8 +23,9 @@ docs/        编码规范
 可选 Graphics 模块的对外头为 [`include/MaiGraphics.h`](include/MaiGraphics.h)，
 直接暴露 OBS 的 `gs_*` 接口。启用 `MAIAGENT_BUILD_GRAPHICS=ON` 后，
 支持的平台可链接 `MaiAgent::Graphics`；当前 macOS Apple Silicon 与 iOS
-使用 Metal，Android 使用 GLES。共用图片入口在
-[`include/MaiGraphicsImageRenderer.h`](include/MaiGraphicsImageRenderer.h)。
+使用 Metal，Android 使用 GLES。共用图片呈现入口在
+[`include/MaiGraphicsPresenter.h`](include/MaiGraphicsPresenter.h)：MaiChat 提供原生
+渲染视图和 effect 目录，Graphics 线程直接呈现到视图。
 构建、后端路径与限制见 [`Graphics/README.md`](Graphics/README.md)。
 
 ## 这不是一个服务端

@@ -363,10 +363,9 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             chip.setPadding(dp(8), dp(4), dp(8), dp(4));
             chip.setBackground(MaiChatTheme.bordered(MaiChatTheme.BLUE_SOFT,
                 MaiChatTheme.BORDER, 9, activity));
-            ImageView preview = new ImageView(activity);
-            preview.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            MaiGraphicsImageView preview = new MaiGraphicsImageView(activity);
             File image = controller.workspaceFile(file.relativePath);
-            if (image != null) MessageImageLoader.load(image.getPath(), dp(72), dp(54), preview, null);
+            if (image != null) preview.showImage(image.getPath(), dp(72), dp(54), true, null);
             chip.addView(preview, new LayoutParams(dp(72), dp(54)));
             TextView name = text(file.relativePath, 12, MaiChatTheme.TEXT);
             name.setMaxLines(2);
@@ -777,7 +776,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         JSONObject message;
         String key = "";
         final Map<String, TextView> parts = new HashMap<>();
-        final Map<String, ImageView> imageParts = new HashMap<>();
+        final Map<String, MaiGraphicsImageView> imageParts = new HashMap<>();
         final Map<String, Button> pdfCards = new HashMap<>();
         TextView status;
         MessageRow() {
@@ -825,9 +824,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                     for (int i = 0; i < array.length(); i++) {
                         JSONObject part = array.optJSONObject(i);
                         if (part == null || !part.optString("kind").equals("image")) continue;
-                        ImageView image = new ImageView(activity);
-                        image.setAdjustViewBounds(true);
-                        image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                        MaiGraphicsImageView image = new MaiGraphicsImageView(activity);
                         bubble.addView(image, new LayoutParams(dp(220), dp(150)));
                         imageParts.put(part.optString("id"), image);
                     }
@@ -905,10 +902,10 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                     JSONObject part = array.optJSONObject(i);
                     if (part.optString("kind").equals("text")) body.append(part.optString("text"));
                     if (part.optString("kind").equals("image")) {
-                        ImageView image = imageParts.get(part.optString("id"));
+                        MaiGraphicsImageView image = imageParts.get(part.optString("id"));
                         File file = controller.workspaceFile(part.optString("path"));
                         if (image != null && file != null)
-                            MessageImageLoader.load(file.getPath(), dp(440), dp(300), image,
+                            image.showImage(file.getPath(), dp(440), dp(300), true,
                                 () -> image.setContentDescription("图片无法显示"));
                     }
                 }

@@ -225,6 +225,9 @@ target_compile_options(maiagent INTERFACE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 # and libobs runtime dependencies are being integrated.
 option(MAIAGENT_BUILD_GRAPHICS "Build OBS Graphics runtime where supported and source checks" OFF)
 if(MAIAGENT_BUILD_GRAPHICS)
+  if(APPLE AND NOT IOS)
+    enable_language(OBJC)
+  endif()
   add_subdirectory(Graphics)
 endif()
 

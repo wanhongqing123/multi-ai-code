@@ -426,6 +426,11 @@ target_link_libraries(remote_im_desktop_ui PUBLIC remote_im_desktop_app remote_i
 if(TARGET maiagent_obs_metal OR TARGET maiagent_obs_d3d11)
   target_link_libraries(remote_im_desktop_ui PRIVATE maiagent_graphics)
   target_compile_definitions(remote_im_desktop_ui PRIVATE MAICHAT_HAS_GRAPHICS=1)
+  if(APPLE)
+    target_sources(remote_im_desktop_ui PRIVATE src/ui/MaiGraphicsMacLayer.mm)
+    target_link_libraries(remote_im_desktop_ui PRIVATE
+      "-framework AppKit" "-framework QuartzCore")
+  endif()
 endif()
 
 add_executable(maichat
@@ -749,6 +754,11 @@ target_link_libraries(remote_desktop_ui_test PRIVATE remote_im_desktop_ui remote
 
 add_executable(message_image_loader_test tests/MessageImageLoaderTest.cpp)
 target_link_libraries(message_image_loader_test PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)
+if(APPLE AND TARGET maiagent_obs_metal)
+  add_executable(mai_graphics_desktop_image_test tests/MaiGraphicsDesktopImageTest.cpp)
+  target_link_libraries(mai_graphics_desktop_image_test PRIVATE remote_im_desktop_ui
+    remote_im_desktop_app remote_im_core Qt5::Widgets)
+endif()
 
 add_executable(message_search_test tests/MessageSearchTest.cpp)
 target_link_libraries(message_search_test PRIVATE remote_im_core Qt5::Widgets Qt5::Test)

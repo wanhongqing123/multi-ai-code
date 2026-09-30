@@ -23,7 +23,9 @@ formatter behind `MAI_GRAPHICS_STANDALONE`. The Metal backend has iOS UIKit
 and static-symbol adaptations. `opengl/` retains Linux X11/Wayland sources,
 but no macOS or Windows platform implementation. Android uses EGL/GLES code in
 `opengl/android/` plus guarded changes for unavailable desktop GL and POSIX
-APIs. `graphics-ffmpeg.c` outputs RGBA on Android for GLES uploads. Original
+APIs. The Android shader generator emits GLSL ES 3.00 and omits the desktop
+`gl_PerVertex` interface block so bundled effects compile on GLES.
+`graphics-ffmpeg.c` outputs RGBA on Android for GLES uploads. Original
 copyright notices were preserved.
 
 The source files retain their original copyright notices. `COPYING` is the

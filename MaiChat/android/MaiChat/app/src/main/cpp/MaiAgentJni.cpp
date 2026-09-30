@@ -1,4 +1,3 @@
-#include "MaiGraphicsImageRenderer.h"
 #include "MaiMobileAgent.h"
 #include <android/bitmap.h>
 #include <cstdlib>
@@ -84,76 +83,6 @@ void hostToolContextRelease(void *opaque) {
 }
 
 } // namespace
-
-extern "C" JNIEXPORT jobject JNICALL
-Java_com_kongshang_maichat_MessageImageLoader_nativeRenderImage(
-    JNIEnv *env, jclass, jstring path, jint maxWidth, jint maxHeight,
-    jstring backend) {
-  if (!path || !backend || maxWidth <= 0 || maxHeight <= 0)
-    return nullptr;
-  const char *nativePath = env->GetStringUTFChars(path, nullptr);
-  if (!nativePath)
-    return nullptr;
-  const char *nativeBackend = env->GetStringUTFChars(backend, nullptr);
-  if (!nativeBackend) {
-    env->ReleaseStringUTFChars(path, nativePath);
-    return nullptr;
-  }
-  MaiGraphicsImageResult image{};
-  const bool rendered = maiGraphicsRenderImageFile(
-      nativePath, nativeBackend, static_cast<uint32_t>(maxWidth),
-      static_cast<uint32_t>(maxHeight), &image);
-  env->ReleaseStringUTFChars(backend, nativeBackend);
-  env->ReleaseStringUTFChars(path, nativePath);
-  if (!rendered)
-    return nullptr;
-
-  jclass configClass = env->FindClass("android/graphics/Bitmap$Config");
-  jclass bitmapClass = env->FindClass("android/graphics/Bitmap");
-  jobject bitmap = nullptr;
-  if (configClass && bitmapClass) {
-    jfieldID formatField = env->GetStaticFieldID(
-        configClass, "ARGB_8888", "Landroid/graphics/Bitmap$Config;");
-    jmethodID create = env->GetStaticMethodID(
-        bitmapClass, "createBitmap",
-        "(IILandroid/graphics/Bitmap$Config;)Landroid/graphics/Bitmap;");
-    if (formatField && create) {
-      jobject format = env->GetStaticObjectField(configClass, formatField);
-      bitmap = env->CallStaticObjectMethod(
-          bitmapClass, create, static_cast<jint>(image.width),
-          static_cast<jint>(image.height), format);
-      if (format)
-        env->DeleteLocalRef(format);
-    }
-  }
-  if (configClass)
-    env->DeleteLocalRef(configClass);
-  if (bitmapClass)
-    env->DeleteLocalRef(bitmapClass);
-  if (env->ExceptionCheck()) {
-    env->ExceptionClear();
-    bitmap = nullptr;
-  }
-  if (bitmap) {
-    AndroidBitmapInfo info{};
-    void *pixels = nullptr;
-    if (AndroidBitmap_getInfo(env, bitmap, &info) !=
-            ANDROID_BITMAP_RESULT_SUCCESS ||
-        info.format != ANDROID_BITMAP_FORMAT_RGBA_8888 ||
-        AndroidBitmap_lockPixels(env, bitmap, &pixels) !=
-            ANDROID_BITMAP_RESULT_SUCCESS) {
-      env->DeleteLocalRef(bitmap);
-      bitmap = nullptr;
-    } else {
-      for (uint32_t row = 0; row < image.height; ++row)
-        std::memcpy(static_cast<uint8_t *>(pixels) + row * info.stride,
-                    image.pixels + row * image.stride, image.width * 4);
-      AndroidBitmap_unlockPixels(env, bitmap);
-    }
-  }
-  maiGraphicsImageResultFree(&image);
-  return bitmap;
-}
 
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_kongshang_maichat_AIAssistantController_nativeCreate(JNIEnv *,

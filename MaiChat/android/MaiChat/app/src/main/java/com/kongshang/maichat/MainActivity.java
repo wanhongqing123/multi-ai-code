@@ -3333,15 +3333,13 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private View imageMessageContent(RemoteIMImageAttachment attachment) {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        // 不在这里同步解原图：解码放后台、按气泡尺寸降采样、结果进缓存。
-        // 原先直接 decodeFile 解全尺寸，一张手机照片就要几十毫秒，且每次界面重建都重解。
-        ImageView image = new ImageView(this);
-        image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        // 图片解码和 Graphics 绘制都不阻塞界面线程；失败时才使用位图回退。
+        MaiGraphicsImageView image = new MaiGraphicsImageView(this);
         image.setBackgroundColor(MaiChatTheme.PAGE);
         image.setOnClickListener(view -> showFullScreenImage(attachment.localPath()));
         TextView imageMissing = MaiChatTheme.text(this, "图片暂不可预览", 14, MaiChatTheme.SECONDARY);
         imageMissing.setVisibility(View.GONE);
-        MessageImageLoader.load(attachment.localPath(), dp(260), dp(190), image, () -> {
+        image.showImage(attachment.localPath(), dp(260), dp(190), true, () -> {
             image.setVisibility(View.GONE);
             imageMissing.setVisibility(View.VISIBLE);
         });
@@ -3359,10 +3357,9 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         FrameLayout stage = new FrameLayout(this);
         stage.setBackgroundColor(MaiChatTheme.PAGE);
         if (attachment.hasCover()) {
-            ImageView image = new ImageView(this);
-            image.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            // 封面同样后台降采样，不在主线程解原图。
-            MessageImageLoader.load(attachment.coverPath(), dp(260), dp(190), image, null);
+            MaiGraphicsImageView image = new MaiGraphicsImageView(this);
+            // 封面也走同一个 Graphics 呈现入口。
+            image.showImage(attachment.coverPath(), dp(260), dp(190), true, null);
             stage.addView(image, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
@@ -3471,15 +3468,13 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
         FrameLayout frame = new FrameLayout(this);
         frame.setBackgroundColor(Color.BLACK);
-        ImageView image = new ImageView(this);
-        image.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        // 预览按屏幕像素请求，气泡按气泡像素请求：同一文件的两个尺寸各存一份缓存，
-        // 所以缓存键里必须带目标尺寸，否则先到的会把另一个顶掉。
-        MessageImageLoader.load(
+        MaiGraphicsImageView image = new MaiGraphicsImageView(this);
+        // 全屏预览直接绑定自己的 TextureView，与气泡使用不同的渲染目标。
+        image.showImage(
             path,
             getResources().getDisplayMetrics().widthPixels,
             getResources().getDisplayMetrics().heightPixels,
-            image,
+            false,
             () -> {
                 toast("图片暂不可预览");
                 dialog.dismiss();

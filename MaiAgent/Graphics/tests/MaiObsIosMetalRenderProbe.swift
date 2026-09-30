@@ -7,9 +7,10 @@ func maiObsIosMetalRenderProbe(_ imagePath: UnsafePointer<CChar>) -> Int32
 @_silgen_name("maiObsIosMetalPresentProbe")
 func maiObsIosMetalPresentProbe(_ imagePath: UnsafePointer<CChar>,
                                 _ effectDirectory: UnsafePointer<CChar>,
+                                _ videoPath: UnsafePointer<CChar>,
                                 _ layer: UnsafeMutableRawPointer) -> Int32
 
-guard CommandLine.arguments.count == 3 else {
+guard CommandLine.arguments.count == 4 else {
     exit(2)
 }
 let layer = CAMetalLayer()
@@ -18,8 +19,10 @@ let result = CommandLine.arguments[1].withCString { imagePath in
     let offscreenResult = maiObsIosMetalRenderProbe(imagePath)
     guard offscreenResult == 0 else { return offscreenResult }
     return CommandLine.arguments[2].withCString { effectDirectory in
-        maiObsIosMetalPresentProbe(imagePath, effectDirectory,
-                                   Unmanaged.passUnretained(layer).toOpaque())
+        CommandLine.arguments[3].withCString { videoPath in
+            maiObsIosMetalPresentProbe(imagePath, effectDirectory, videoPath,
+                                       Unmanaged.passUnretained(layer).toOpaque())
+        }
     }
 }
 if result != 0 {

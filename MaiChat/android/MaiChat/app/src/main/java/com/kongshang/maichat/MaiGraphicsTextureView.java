@@ -39,10 +39,18 @@ public final class MaiGraphicsTextureView extends TextureView
     private static native boolean nativeStart(String backend, String effectDirectory);
     private static native long nativeAttach(Surface surface, int width, int height);
     private static native boolean nativeShowImage(long viewId, String path, boolean fillView);
+    private static native boolean nativeShowFrame(long viewId, byte[] rgba, int width,
+                                                  int height, int stride, boolean fillView);
+    private static native long nativeCreateVideo(long viewId, String path);
+    private static native boolean nativePlayVideo(long videoHandle);
+    private static native boolean nativePauseVideo(long videoHandle);
+    private static native boolean nativeSeekVideo(long videoHandle, long positionMs);
+    private static native void nativeDestroyVideo(long videoHandle);
     private static native void nativeResize(long viewId, int width, int height);
     private static native void nativeDetach(long viewId);
 
     private long viewId;
+    private long videoHandle;
     private String imagePath;
     private boolean fillView;
     private PresentationListener listener;
@@ -57,6 +65,31 @@ public final class MaiGraphicsTextureView extends TextureView
         imagePath = path;
         fillView = fill;
         if (viewId != 0 && path != null && !nativeShowImage(viewId, path, fillView)) notifyFailure();
+    }
+
+    public boolean showRgbaFrame(byte[] rgba, int width, int height, int stride, boolean fill) {
+        return viewId != 0 && nativeShowFrame(viewId, rgba, width, height, stride, fill);
+    }
+
+    public boolean playVideo(String path) {
+        if (viewId == 0 || path == null) return false;
+        stopVideo();
+        videoHandle = nativeCreateVideo(viewId, path);
+        return videoHandle != 0 && nativePlayVideo(videoHandle);
+    }
+
+    public boolean pauseVideo() {
+        return videoHandle != 0 && nativePauseVideo(videoHandle);
+    }
+
+    public boolean seekVideo(long positionMs) {
+        return videoHandle != 0 && nativeSeekVideo(videoHandle, positionMs);
+    }
+
+    public void stopVideo() {
+        if (videoHandle == 0) return;
+        nativeDestroyVideo(videoHandle);
+        videoHandle = 0;
     }
 
     public void setPresentationListener(PresentationListener listener) {
@@ -130,6 +163,7 @@ public final class MaiGraphicsTextureView extends TextureView
     }
 
     @Override public boolean onSurfaceTextureDestroyed(SurfaceTexture texture) {
+        stopVideo();
         if (viewId != 0) {
             VIEWS.remove(viewId);
             nativeDetach(viewId);

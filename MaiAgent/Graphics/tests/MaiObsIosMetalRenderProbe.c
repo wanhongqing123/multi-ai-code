@@ -4,18 +4,30 @@
 
 #include "MaiGraphics.h"
 #include "MaiGraphicsPresenter.h"
+#include "MaiVideoPlayback.h"
 #include "vec4.h"
 
 static atomic_int present_result;
+static atomic_int presented_frames;
+static atomic_int video_ready;
 
 static void on_present(uint64_t view_id, bool success, void* user_data) {
     (void)view_id;
     (void)user_data;
     atomic_store(&present_result, success ? 1 : -1);
+    if (success) atomic_fetch_add(&presented_frames, 1);
+}
+
+static void on_video(MaiVideoPlayback* playback, MaiVideoPlaybackEvent event,
+                     void* user_data) {
+    (void)playback;
+    (void)user_data;
+    if (event == MAI_VIDEO_READY) atomic_store(&video_ready, 1);
+    if (event == MAI_VIDEO_ERROR) atomic_store(&video_ready, -1);
 }
 
 int maiObsIosMetalPresentProbe(const char* image_path, const char* effect_directory,
-                               void* layer) {
+                               const char* video_path, void* layer) {
     if (!maiGraphicsPresenterStart("builtin:metal", effect_directory, on_present, NULL))
         return 4;
     const uint64_t view_id = maiGraphicsPresenterAttach(layer, 64, 64, NULL, NULL);
@@ -24,7 +36,32 @@ int maiObsIosMetalPresentProbe(const char* image_path, const char* effect_direct
     for (int attempt = 0; accepted && attempt < 400 && atomic_load(&present_result) == 0;
          ++attempt)
         nanosleep(&delay, NULL);
-    const bool passed = accepted && atomic_load(&present_result) == 1;
+    bool passed = accepted && atomic_load(&present_result) == 1;
+    if (passed) {
+        const uint8_t green[] = {0, 255, 0, 255, 0, 255, 0, 255,
+                                 0, 255, 0, 255, 0, 255, 0, 255};
+        atomic_store(&present_result, 0);
+        passed = maiGraphicsPresenterShowFrame(view_id, green, 2, 2, 8, false);
+        for (int attempt = 0; passed && attempt < 400 && atomic_load(&present_result) == 0;
+             ++attempt)
+            nanosleep(&delay, NULL);
+        passed = passed && atomic_load(&present_result) == 1;
+    }
+    if (passed) {
+        MaiVideoPlayback* video = maiVideoPlaybackCreate(view_id, video_path, on_video, NULL);
+        passed = video != NULL;
+        for (int attempt = 0; passed && attempt < 400 && atomic_load(&video_ready) == 0;
+             ++attempt)
+            nanosleep(&delay, NULL);
+        passed = passed && atomic_load(&video_ready) == 1;
+        const int initial = atomic_load(&presented_frames);
+        if (passed) passed = maiVideoPlaybackPlay(video);
+        for (int attempt = 0; passed && attempt < 400 &&
+                              atomic_load(&presented_frames) < initial + 2; ++attempt)
+            nanosleep(&delay, NULL);
+        passed = passed && atomic_load(&presented_frames) >= initial + 2;
+        maiVideoPlaybackDestroy(video);
+    }
     if (view_id) maiGraphicsPresenterDetach(view_id);
     maiGraphicsPresenterStop();
     return passed ? 0 : 5;

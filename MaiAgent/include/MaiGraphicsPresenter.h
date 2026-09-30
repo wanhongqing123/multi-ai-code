@@ -32,6 +32,12 @@ uint64_t maiGraphicsPresenterAttach(void* native_view, uint32_t width, uint32_t 
                                     MaiGraphicsNativeViewCallback retain_view,
                                     MaiGraphicsNativeViewCallback release_view);
 bool maiGraphicsPresenterShowImage(uint64_t view_id, const char* file_path, bool fill_view);
+// Copies one decoded RGBA8 video frame into the Graphics queue. The caller may
+// reuse pixels after this call. stride must be at least width * 4. Frame
+// scheduling and audio synchronization belong to the media session; submitting
+// a newer frame supersedes any older frame still waiting in the queue.
+bool maiGraphicsPresenterShowFrame(uint64_t view_id, const uint8_t* pixels, uint32_t width,
+                                   uint32_t height, uint32_t stride, bool fill_view);
 void maiGraphicsPresenterResize(uint64_t view_id, uint32_t width, uint32_t height);
 void maiGraphicsPresenterDetach(uint64_t view_id);
 

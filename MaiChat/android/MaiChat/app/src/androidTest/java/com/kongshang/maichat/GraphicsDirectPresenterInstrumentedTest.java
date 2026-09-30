@@ -14,6 +14,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -62,6 +63,54 @@ public final class GraphicsDirectPresenterInstrumentedTest {
                     .getBitmap()));
             assertNotNull(captured.get());
             assertEquals(Color.RED, captured.get().getPixel(32, 32));
+
+            CountDownLatch nextFrame = new CountDownLatch(1);
+            AtomicReference<Boolean> frameSuccess = new AtomicReference<>(false);
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() ->
+                surface.get().setPresentationListener(rendered -> {
+                    frameSuccess.set(rendered);
+                    nextFrame.countDown();
+                }));
+            byte[] green = {
+                0, (byte) 255, 0, (byte) 255, 0, (byte) 255, 0, (byte) 255,
+                0, (byte) 255, 0, (byte) 255, 0, (byte) 255, 0, (byte) 255
+            };
+            assertTrue(((MaiGraphicsTextureView) surface.get().getChildAt(0))
+                .showRgbaFrame(green, 2, 2, 8, false));
+            assertTrue(nextFrame.await(10, TimeUnit.SECONDS));
+            assertTrue(frameSuccess.get());
+            Thread.sleep(250);
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(
+                () -> captured.set(((MaiGraphicsTextureView) surface.get().getChildAt(0))
+                    .getBitmap()));
+            assertEquals(Color.GREEN, captured.get().getPixel(32, 32));
+
+            File videoFile = new File(context.getCacheDir(), "graphics-direct-red.mp4");
+            try (InputStream input = InstrumentationRegistry.getInstrumentation()
+                    .getContext().getAssets().open("tiny-red.mp4");
+                 FileOutputStream output = new FileOutputStream(videoFile)) {
+                byte[] buffer = new byte[8192];
+                int count;
+                while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+            }
+            CountDownLatch videoFrames = new CountDownLatch(2);
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() ->
+                surface.get().setPresentationListener(rendered -> {
+                    if (rendered) videoFrames.countDown();
+                }));
+            assertTrue(((MaiGraphicsTextureView) surface.get().getChildAt(0))
+                .playVideo(videoFile.getAbsolutePath()));
+            assertTrue(videoFrames.await(10, TimeUnit.SECONDS));
+            ((MaiGraphicsTextureView) surface.get().getChildAt(0)).pauseVideo();
+            Thread.sleep(250);
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(
+                () -> captured.set(((MaiGraphicsTextureView) surface.get().getChildAt(0))
+                    .getBitmap()));
+            int videoPixel = captured.get().getPixel(32, 32);
+            assertTrue(Color.red(videoPixel) >= 240);
+            assertTrue(Color.green(videoPixel) <= 10);
+            assertTrue(Color.blue(videoPixel) <= 10);
+            videoFile.delete();
         } finally {
             InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
                 if (surface.get() != null)

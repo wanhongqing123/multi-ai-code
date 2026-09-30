@@ -26,6 +26,8 @@ docs/        编码规范
 使用 Metal，Android 使用 GLES。共用图片呈现入口在
 [`include/MaiGraphicsPresenter.h`](include/MaiGraphicsPresenter.h)：MaiChat 提供原生
 渲染视图和 effect 目录，Graphics 线程直接呈现到视图。
+[`include/MaiVideoPlayback.h`](include/MaiVideoPlayback.h) 是目前无音频输出的
+FFmpeg 视频帧播放内核，完整播放器尚未切换到它。
 构建、后端路径与限制见 [`Graphics/README.md`](Graphics/README.md)。
 
 ## 这不是一个服务端

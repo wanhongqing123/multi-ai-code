@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstring>
 #include <deque>
+#include <exception>
 #include <functional>
 #include <future>
 #include <memory>
@@ -106,6 +107,9 @@ struct MaiGraphicsViewState {
     std::atomic<bool> fillView{false};
     std::atomic<bool> active{true};
     gs_swapchain_t* swapchain = nullptr;
+    gs_texture_t* texture = nullptr;
+    uint32_t textureWidth = 0;
+    uint32_t textureHeight = 0;
     std::shared_ptr<MaiDecodedImage> currentImage;
 };
 
@@ -207,6 +211,7 @@ public:
         mGraphicsRunner.post([this] {
             gs_enter_context(mGraphics);
             for (auto& view : mGraphicsViews) {
+                if (view->texture) gs_texture_destroy(view->texture);
                 if (view->swapchain) gs_swapchain_destroy(view->swapchain);
             }
             mGraphicsViews.clear();
@@ -296,6 +301,32 @@ public:
         });
     }
 
+    bool showFrame(uint64_t id, const uint8_t* pixels, uint32_t width, uint32_t height,
+                   uint32_t stride, bool fillView) {
+        if (!pixels || !width || !height ||
+            static_cast<uint64_t>(width) * height > kMaximumPixels ||
+            static_cast<uint64_t>(stride) < static_cast<uint64_t>(width) * 4)
+            return false;
+        std::shared_ptr<MaiGraphicsViewState> view = findView(id);
+        if (!view) return false;
+        auto image = std::make_shared<MaiDecodedImage>();
+        image->width = width;
+        image->height = height;
+        image->pixels.resize(static_cast<size_t>(width) * height * 4);
+        for (uint32_t row = 0; row < height; ++row) {
+            std::memcpy(image->pixels.data() + static_cast<size_t>(row) * width * 4,
+                        pixels + static_cast<size_t>(row) * stride, static_cast<size_t>(width) * 4);
+        }
+        const uint64_t generation = ++view->generation;
+        return mGraphicsRunner.post([this, view, image, generation, fillView] {
+            if (!view->active || view->generation != generation) return;
+            view->fillView = fillView;
+            const bool presented = renderImage(view.get(), *image);
+            if (presented) view->currentImage = image;
+            notify(view->id, presented);
+        });
+    }
+
     void resize(uint64_t id, uint32_t width, uint32_t height) {
         std::shared_ptr<MaiGraphicsViewState> view = findView(id);
         if (!view || !width || !height) return;
@@ -324,6 +355,10 @@ public:
         }
         mGraphicsRunner.post([this, view] {
             gs_enter_context(mGraphics);
+            if (view->texture) {
+                gs_texture_destroy(view->texture);
+                view->texture = nullptr;
+            }
             if (view->swapchain) {
                 gs_load_swapchain(nullptr);
                 gs_swapchain_destroy(view->swapchain);
@@ -354,11 +389,19 @@ private:
         if (errors) bfree(errors);
         gs_eparam_t* parameter = effect ? gs_effect_get_param_by_name(effect, "image") : nullptr;
         gs_technique_t* technique = effect ? gs_effect_get_technique(effect, "Draw") : nullptr;
-        const uint8_t* planes[] = {image.pixels.data()};
-        gs_texture_t* texture =
-            parameter && technique
-                ? gs_texture_create(image.width, image.height, GS_RGBA, 1, planes, 0)
-                : nullptr;
+        if (parameter && technique &&
+            (!view->texture || view->textureWidth != image.width ||
+             view->textureHeight != image.height)) {
+            if (view->texture) gs_texture_destroy(view->texture);
+            const uint8_t* planes[] = {image.pixels.data()};
+            view->texture =
+                gs_texture_create(image.width, image.height, GS_RGBA, 1, planes, GS_DYNAMIC);
+            view->textureWidth = image.width;
+            view->textureHeight = image.height;
+        } else if (parameter && technique && view->texture) {
+            gs_texture_set_image(view->texture, image.pixels.data(), image.width * 4, false);
+        }
+        gs_texture_t* texture = parameter && technique ? view->texture : nullptr;
         bool presented = false;
         if (texture) {
             const uint32_t width = view->width;
@@ -402,7 +445,6 @@ private:
                 presented = false;
             gs_load_swapchain(nullptr);
         }
-        if (texture) gs_texture_destroy(texture);
         gs_leave_context();
         return presented;
     }
@@ -433,26 +475,49 @@ std::shared_ptr<MaiGraphicsPresenter> presenter() {
 extern "C" bool maiGraphicsPresenterStart(const char* backend, const char* effect_directory,
                                           MaiGraphicsPresentCallback callback, void* user_data) {
     if (!backend || !*backend || !effect_directory || !*effect_directory) return false;
-    std::lock_guard<std::mutex> lock(sPresenterMutex);
-    if (sPresenter) return false;
-    auto created =
-        std::make_shared<MaiGraphicsPresenter>(backend, effect_directory, callback, user_data);
-    if (!created->start()) return false;
-    sPresenter = std::move(created);
-    return true;
+    try {
+        std::lock_guard<std::mutex> lock(sPresenterMutex);
+        if (sPresenter) return false;
+        auto created =
+            std::make_shared<MaiGraphicsPresenter>(backend, effect_directory, callback, user_data);
+        if (!created->start()) return false;
+        sPresenter = std::move(created);
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
 }
 
 extern "C" uint64_t maiGraphicsPresenterAttach(void* native_view, uint32_t width, uint32_t height,
                                                MaiGraphicsNativeViewCallback retain_view,
                                                MaiGraphicsNativeViewCallback release_view) {
-    auto current = presenter();
-    return current ? current->attach(native_view, width, height, retain_view, release_view) : 0;
+    try {
+        auto current = presenter();
+        return current ? current->attach(native_view, width, height, retain_view, release_view) : 0;
+    } catch (const std::exception&) {
+        return 0;
+    }
 }
 
 extern "C" bool maiGraphicsPresenterShowImage(uint64_t view_id, const char* file_path,
                                               bool fill_view) {
-    auto current = presenter();
-    return current && current->showImage(view_id, file_path, fill_view);
+    try {
+        auto current = presenter();
+        return current && current->showImage(view_id, file_path, fill_view);
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+extern "C" bool maiGraphicsPresenterShowFrame(uint64_t view_id, const uint8_t* pixels,
+                                              uint32_t width, uint32_t height, uint32_t stride,
+                                              bool fill_view) {
+    try {
+        auto current = presenter();
+        return current && current->showFrame(view_id, pixels, width, height, stride, fill_view);
+    } catch (const std::exception&) {
+        return false;
+    }
 }
 
 extern "C" void maiGraphicsPresenterResize(uint64_t view_id, uint32_t width, uint32_t height) {

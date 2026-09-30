@@ -7,6 +7,7 @@
 #include <mutex>
 
 #include "MaiGraphicsPresenter.h"
+#include "MaiVideoPlayback.h"
 #include "util/base.h"
 
 namespace {
@@ -108,6 +109,62 @@ Java_com_kongshang_maichat_MaiGraphicsTextureView_nativeShowImage(
       static_cast<uint64_t>(viewId), nativePath, fillView);
   env->ReleaseStringUTFChars(path, nativePath);
   return accepted ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_kongshang_maichat_MaiGraphicsTextureView_nativeShowFrame(
+    JNIEnv* env, jclass, jlong viewId, jbyteArray rgba, jint width, jint height,
+    jint stride, jboolean fillView) {
+  if (!rgba || width <= 0 || height <= 0 ||
+      static_cast<jlong>(stride) < static_cast<jlong>(width) * 4 ||
+      static_cast<jlong>(env->GetArrayLength(rgba)) <
+          static_cast<jlong>(stride) * height)
+    return JNI_FALSE;
+  jbyte* bytes = env->GetByteArrayElements(rgba, nullptr);
+  if (!bytes) return JNI_FALSE;
+  const bool accepted = maiGraphicsPresenterShowFrame(
+      static_cast<uint64_t>(viewId), reinterpret_cast<const uint8_t*>(bytes),
+      static_cast<uint32_t>(width), static_cast<uint32_t>(height),
+      static_cast<uint32_t>(stride), fillView);
+  env->ReleaseByteArrayElements(rgba, bytes, JNI_ABORT);
+  return accepted ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_kongshang_maichat_MaiGraphicsTextureView_nativeCreateVideo(
+    JNIEnv* env, jclass, jlong viewId, jstring path) {
+  if (!path) return 0;
+  const char* nativePath = env->GetStringUTFChars(path, nullptr);
+  if (!nativePath) return 0;
+  MaiVideoPlayback* playback = maiVideoPlaybackCreate(
+      static_cast<uint64_t>(viewId), nativePath, nullptr, nullptr);
+  env->ReleaseStringUTFChars(path, nativePath);
+  return reinterpret_cast<jlong>(playback);
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_kongshang_maichat_MaiGraphicsTextureView_nativePlayVideo(
+    JNIEnv*, jclass, jlong handle) {
+  return maiVideoPlaybackPlay(reinterpret_cast<MaiVideoPlayback*>(handle));
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_kongshang_maichat_MaiGraphicsTextureView_nativePauseVideo(
+    JNIEnv*, jclass, jlong handle) {
+  return maiVideoPlaybackPause(reinterpret_cast<MaiVideoPlayback*>(handle));
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_kongshang_maichat_MaiGraphicsTextureView_nativeSeekVideo(
+    JNIEnv*, jclass, jlong handle, jlong positionMs) {
+  return maiVideoPlaybackSeek(reinterpret_cast<MaiVideoPlayback*>(handle),
+                              positionMs);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_kongshang_maichat_MaiGraphicsTextureView_nativeDestroyVideo(
+    JNIEnv*, jclass, jlong handle) {
+  maiVideoPlaybackDestroy(reinterpret_cast<MaiVideoPlayback*>(handle));
 }
 
 extern "C" JNIEXPORT void JNICALL

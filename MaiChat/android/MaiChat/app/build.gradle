@@ -64,6 +64,8 @@ tasks.register("stageMaiAgentGraphicsEffects", Sync) {
     into graphicsEffectsOutput
 }
 android.sourceSets.main.assets.srcDir(graphicsEffectsOutput)
+android.sourceSets.androidTest.assets.srcDir(
+    file("$projectDir/../../../../MaiAgent/Graphics/tests/fixtures"))
 tasks.configureEach {
     if (name.startsWith("merge") && name.endsWith("Assets")) {
         dependsOn("stageMaiAgentGraphicsEffects")

@@ -18,7 +18,8 @@ if(TARGET maiagent_obs_metal)
   add_test(NAME MaiGraphicsPresenterMacTests
     COMMAND MaiGraphicsPresenterMacTests $<TARGET_FILE:maiagent_obs_metal>
       ${CMAKE_CURRENT_BINARY_DIR}/../data
-      ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/tiny-red.ppm)
+      ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/tiny-red.ppm
+      ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/tiny-red.mp4)
 
   add_executable(MaiObsMetalRenderTests MaiObsMetalRenderTests.c)
   target_link_libraries(MaiObsMetalRenderTests PRIVATE maiagent_graphics)

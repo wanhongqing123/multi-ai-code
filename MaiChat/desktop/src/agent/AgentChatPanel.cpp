@@ -1,11 +1,13 @@
 #include "agent/AgentChatPanel.h"
 
+#include <QAction>
 #include <QAbstractTextDocumentLayout>
 #include <QDateTime>
 #include <QDebug>
 #include <QDesktopServices>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QFontMetrics>
 #include <QFrame>
@@ -17,7 +19,6 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QMenu>
-#include <QMessageBox>
 #include <QMimeData>
 #include <QPainter>
 #include <QPixmap>
@@ -41,7 +42,6 @@
 #include <variant>
 
 #include "agent/AgentController.h"
-#include "MaiPathGuard.h"
 #include "markdown/MarkdownView.h"
 #include "ui/ComposerTextEdit.h"
 #include "ui/PdfPreviewDialog.h"
@@ -503,7 +503,7 @@ public:
             "QFrame#agentToolCard{background:transparent;border:none;}"));
         icon_->setStyleSheet(QStringLiteral("color:%1;background:transparent;").arg(edge));
         approval_->setVisible(waitingForUser);
-        always_->setVisible(waitingForUser && allowForSession_);
+        always_->setVisible(waitingForUser && allowForSession_ && !rememberOnApproval_);
         if (waitingForUser && !allowForSession_) {
             expanded_ = true;
             detail_->setVisible(!detailText_.isEmpty());
@@ -512,9 +512,14 @@ public:
         refreshSummary();
     }
 
-    void setAllowForSession(bool allow) {
+    void setApprovalBehavior(bool allow, bool rememberOnApproval, int fileCount) {
         allowForSession_ = allow;
-        always_->setVisible(waiting_ && allowForSession_);
+        rememberOnApproval_ = rememberOnApproval;
+        allow_->setText(rememberOnApproval ? QStringLiteral("允许并记住") : QStringLiteral("允许"));
+        always_->setText(fileCount == 1 ? QStringLiteral("本会话允许此文件")
+                         : fileCount > 1 ? QStringLiteral("本会话允许这些文件")
+                                         : QStringLiteral("本会话都允许"));
+        always_->setVisible(waiting_ && allowForSession_ && !rememberOnApproval_);
     }
 
     void setDetail(const QString& text) {
@@ -596,6 +601,7 @@ private:
     bool waiting_ = false;
     bool expanded_ = false;
     bool allowForSession_ = true;
+    bool rememberOnApproval_ = false;
 };
 
 struct AgentChatPanel::Runtime {
@@ -680,6 +686,29 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     applyAgentMenuStyle(moreMenu);
     QAction* configureAction = moreMenu->addAction(QStringLiteral("模型配置"));
     QAction* clearAction = moreMenu->addAction(QStringLiteral("清空当前对话"));
+    moreMenu->addSeparator();
+    QAction* directoryAction = moreMenu->addAction(QStringLiteral("相对路径起点：未选择"));
+    directoryAction->setEnabled(false);
+    QAction* chooseDirectoryAction =
+        moreMenu->addAction(QStringLiteral("选择工作目录并新建对话…"));
+    chooseDirectoryAction->setToolTip(
+        QStringLiteral("只改变相对路径起点；绝对路径可访问系统允许的位置"));
+    connect(moreMenu, &QMenu::aboutToShow, this, [this, directoryAction] {
+        MaiSession session;
+        if (!runtime_->controller->agent().getSession(toUtf8(runtime_->sessionId), session))
+            return;
+        directoryAction->setText(QStringLiteral("相对路径起点：%1")
+                                     .arg(QDir::toNativeSeparators(fromUtf8(session.directory))));
+    });
+    connect(chooseDirectoryAction, &QAction::triggered, this, [this] {
+        MaiSession session;
+        QString initial = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+        if (runtime_->controller->agent().getSession(toUtf8(runtime_->sessionId), session))
+            initial = fromUtf8(session.directory);
+        const QString selected = QFileDialog::getExistingDirectory(
+            this, QStringLiteral("选择 AI 助手工作目录"), initial, QFileDialog::ShowDirsOnly);
+        if (!selected.isEmpty()) openSessionInDirectory(selected);
+    });
     moreButton->setMenu(moreMenu);
     headRow->addWidget(moreButton);
     root->addWidget(head);
@@ -826,13 +855,13 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
         action->setToolTip(detail);
     };
     addPolicy(QStringLiteral("请求批准"),
-              QStringLiteral("修改文件、访问网络或执行高风险命令时询问"),
+              QStringLiteral("文件变更、访问网络或执行高风险命令时询问；可单独授权文件"),
               MaiApprovalPolicy::OnRequest);
     addPolicy(QStringLiteral("帮我批准"),
-              QStringLiteral("工作区文件修改自动批准；网络和高风险命令仍询问"),
+              QStringLiteral("每个文件首次变更先询问，此后本会话免问；网络和高风险命令仍询问"),
               MaiApprovalPolicy::UnlessTrusted);
     addPolicy(QStringLiteral("完全访问"),
-              QStringLiteral("不逐次询问；终端和网络调用会直接执行"),
+              QStringLiteral("文件写入不逐次询问；外部发送仍会确认"),
               MaiApprovalPolicy::Never);
     runtime_->hint->setMenu(policyMenu);
     connect(policyMenu, &QMenu::triggered, this, [this](QAction* action) {
@@ -990,28 +1019,29 @@ void AgentChatPanel::updateApprovalPolicyUi() {
     if (policy == MaiApprovalPolicy::Never) {
         runtime_->hint->setText(QStringLiteral("完全访问"));
         runtime_->hint->setToolTip(
-            QStringLiteral("不逐次询问；终端和网络调用会直接执行。"));
+            QStringLiteral("可读写系统允许的文件位置；文件写入不逐次询问，外部发送仍会确认。"));
     } else if (policy == MaiApprovalPolicy::UnlessTrusted) {
         runtime_->hint->setText(QStringLiteral("帮我批准"));
         runtime_->hint->setToolTip(
-            QStringLiteral("工作区文件修改自动批准；访问网络和高风险命令仍会询问。"));
+            QStringLiteral("每个文件首次变更先询问，此后本会话免问；网络和高风险命令仍会询问。"));
     } else {
         runtime_->hint->setText(QStringLiteral("请求批准"));
         runtime_->hint->setToolTip(
-            QStringLiteral("修改文件、访问网络或执行高风险命令前都会询问。"));
+            QStringLiteral("文件变更、访问网络或执行高风险命令前会询问；可单独授权文件。"));
     }
 }
 
 void AgentChatPanel::openSession(const QString& sessionId) {
-    QString directory = QDir::currentPath();
-    // Finder launches the app with "/" as its working directory. Using that as an Agent
-    // workspace makes a broad file search traverse the entire machine.
-    if (directory == QDir::rootPath()) {
-        directory = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
-        if (directory.isEmpty() || !QDir(directory).exists()) directory = QDir::homePath();
+    if (sessionId.isEmpty()) {
+        QString directory = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+        if (directory.isEmpty() || !QFileInfo(directory).isDir() ||
+            !QFileInfo(directory).isWritable()) {
+            directory = QDir::homePath();
+        }
+        openSessionInDirectory(directory);
+        return;
     }
-    const QString nextSession = sessionId.isEmpty()
-                                    ? runtime_->controller->createSession(directory) : sessionId;
+    const QString nextSession = sessionId;
     if (runtime_->sessionId != nextSession) {
         if (!runtime_->sessionId.isEmpty()) {
             if (runtime_->editor->document()->isEmpty())
@@ -1040,6 +1070,20 @@ void AgentChatPanel::openSession(const QString& sessionId) {
     }
     reloadFromStore();
     emit sessionListChanged();
+}
+
+void AgentChatPanel::openSessionInDirectory(const QString& directory) {
+    const QFileInfo selected(directory);
+    if (!selected.isDir()) {
+        appendNotice(QStringLiteral("工作目录不存在或不可访问：%1").arg(directory), true);
+        return;
+    }
+    const QString sessionId = runtime_->controller->createSession(selected.canonicalFilePath());
+    if (sessionId.isEmpty()) {
+        appendNotice(runtime_->controller->lastError(), true);
+        return;
+    }
+    openSession(sessionId);
 }
 
 // ── 重画 ────────────────────────────────────────────────────────
@@ -1321,13 +1365,10 @@ void AgentChatPanel::appendPdfPreview(const QString& partId, const QString& outp
         "color:#175a9e;padding:10px 15px;text-align:left;font-size:13px;}"
         "QPushButton:hover{background:#e9f3ff;border-color:#87b9ef;}")));
     connect(button, &QPushButton::clicked, this, [this, workspace, relative] {
-        const std::string path = maiResolvePathWithinRoot(toUtf8(workspace), toUtf8(relative));
-        if (path.empty()) {
-            QMessageBox::warning(this, QStringLiteral("无法预览 PDF"),
-                                 QStringLiteral("PDF 文件已移出当前工作区。"));
-            return;
-        }
-        showPdfPreview(this, fromUtf8(path), QFileInfo(relative).fileName());
+        const QString path = QFileInfo(relative).isAbsolute()
+                                 ? QDir::cleanPath(relative)
+                                 : QDir(workspace).absoluteFilePath(relative);
+        showPdfPreview(this, path, QFileInfo(relative).fileName());
     });
     runtime_->view->addWidget(id, button);
     scrollToBottom();
@@ -1410,7 +1451,11 @@ void AgentChatPanel::showApproval(const QString& permissionId) {
             !runtime_->controller->isChildOf(owner, runtime_->sessionId)) return;
         ToolCard* card = toolCardFor(fromUtf8(pending.partId));
         card->setCall(fromUtf8(pending.toolName), fromUtf8(pending.arguments));
-        card->setAllowForSession(pending.allowForSession);
+        const int fileCount = !pending.approvalKeys.empty() &&
+                                      pending.approvalKeys.front().rfind("file:", 0) == 0
+                                  ? static_cast<int>(pending.approvalKeys.size()) : 0;
+        card->setApprovalBehavior(pending.allowForSession, pending.rememberOnApproval,
+                                  fileCount);
         card->setDetail(QString());
         card->apply(MaiToolState::Pending, true);
         scrollToBottom();

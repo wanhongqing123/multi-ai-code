@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
 #include <QImage>
 #include <QLabel>
 #include <QMenu>
@@ -13,6 +14,7 @@
 #include <QSignalSpy>
 #include <QSplitter>
 #include <QSplitterHandle>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTextEdit>
 #include <QUrl>
@@ -217,6 +219,9 @@ class AgentPanelSessionTest : public QObject {
 
 private slots:
     void newSessionAvoidsFilesystemRoot();
+    void newSessionUsesDocumentsInsteadOfProcessDirectory();
+    void newSessionOffersWorkspaceChoice();
+    void chosenWorkspaceCreatesIndependentSession();
     void answerFromAnotherSessionDoesNotLeakIn();
     void anotherSessionFailingDoesNotShowAnError();
     void anotherSessionTitleDoesNotRenameTheHeader();
@@ -445,6 +450,65 @@ void AgentPanelSessionTest::approvalFromAnotherSessionIsStillShown() {
     // 信号要到得了面板。面板拿这个 id 去核心查待裁决列表（那份列表是全局的，
     // 不分会话），所以子 Agent 的授权照样答得了。
     QCOMPARE(spy.count(), 1);
+}
+
+void AgentPanelSessionTest::newSessionUsesDocumentsInsteadOfProcessDirectory() {
+    QTemporaryDir processDirectory;
+    QVERIFY(processDirectory.isValid());
+    struct RestoreCurrentDirectory {
+        QString original = QDir::currentPath();
+        ~RestoreCurrentDirectory() { QDir::setCurrent(original); }
+    } restore;
+    QVERIFY(QDir::setCurrent(processDirectory.path()));
+
+    AgentController controller(std::make_unique<SilentModel>(), QString());
+    AgentChatPanel panel(controller);
+    panel.openSession();
+    const auto sessions = controller.agent().listSessions();
+    QCOMPARE(sessions.size(), std::size_t(1));
+    QString documents = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    if (documents.isEmpty() || !QFileInfo(documents).isDir() ||
+        !QFileInfo(documents).isWritable()) documents = QDir::homePath();
+    QCOMPARE(QDir(QString::fromStdString(sessions.front().directory)).canonicalPath(),
+             QDir(documents).canonicalPath());
+}
+
+void AgentPanelSessionTest::newSessionOffersWorkspaceChoice() {
+    Harness harness;
+    auto* more = harness.panel->findChild<QPushButton*>(QStringLiteral("agentMoreActions"));
+    QVERIFY(more != nullptr);
+    QVERIFY(more->menu() != nullptr);
+    bool hasChoice = false;
+    for (QAction* action : more->menu()->actions()) {
+        if (action->text() == QStringLiteral("选择工作目录并新建对话…")) hasChoice = true;
+    }
+    QVERIFY(hasChoice);
+}
+
+void AgentPanelSessionTest::chosenWorkspaceCreatesIndependentSession() {
+    QTemporaryDir firstDirectory;
+    QTemporaryDir secondDirectory;
+    QVERIFY(firstDirectory.isValid());
+    QVERIFY(secondDirectory.isValid());
+    AgentController controller(std::make_unique<SilentModel>(), QString());
+    AgentChatPanel panel(controller);
+
+    panel.openSessionInDirectory(firstDirectory.path());
+    const QString firstSession = panel.sessionId();
+    QVERIFY(!firstSession.isEmpty());
+    panel.openSessionInDirectory(secondDirectory.path());
+    const QString secondSession = panel.sessionId();
+    QVERIFY(!secondSession.isEmpty());
+    QVERIFY(secondSession != firstSession);
+
+    MaiSession first;
+    MaiSession second;
+    QVERIFY(controller.agent().getSession(firstSession.toStdString(), first));
+    QVERIFY(controller.agent().getSession(secondSession.toStdString(), second));
+    QCOMPARE(QDir(QString::fromStdString(first.directory)).canonicalPath(),
+             QDir(firstDirectory.path()).canonicalPath());
+    QCOMPARE(QDir(QString::fromStdString(second.directory)).canonicalPath(),
+             QDir(secondDirectory.path()).canonicalPath());
 }
 
 void AgentPanelSessionTest::pendingApprovalIsRestoredAfterSessionSwitch() {
@@ -867,7 +931,7 @@ void AgentPanelSessionTest::composerMatchesImLayoutAndUsesEmbeddedSendAction() {
     QVERIFY(!editor->isAncestorOf(model));
     QVERIFY(!editor->isAncestorOf(policy));
     QVERIFY(more->menu() != nullptr);
-    QCOMPARE(more->menu()->actions().size(), 2);
+    QVERIFY(more->menu()->actions().size() >= 2);
     QCOMPARE(more->menu()->actions()[0]->text(), QStringLiteral("模型配置"));
     QCOMPARE(more->menu()->actions()[1]->text(), QStringLiteral("清空当前对话"));
     QVERIFY(policy->menu() != nullptr);

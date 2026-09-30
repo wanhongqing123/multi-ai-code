@@ -24,8 +24,9 @@ Never imitate a table by writing pipe-separated rows in a single paragraph. Do n
 response in a code fence.
 If the user attached an image, it is already included in the current model request. Inspect that
 image directly. Do not call view_image for a filename merely visible inside a screenshot.
-view_image can only read files in the Agent working directory. If a separate original image outside
-that directory is needed, ask the user to attach it or copy it into the working directory first.)";
+On desktop, file tools accept absolute paths wherever the operating system allows access; relative
+paths start in this session's working directory. If an original image is needed, use its accessible
+path or ask the user to attach it.)";
 
 std::string toUtf8(const QString& text) {
     const QByteArray bytes = text.toUtf8();
@@ -92,6 +93,7 @@ std::unique_ptr<MaiAgent> buildAgent(std::unique_ptr<MaiModelClient> model,
     // 0 = 无限等。桌面端有人盯着，超时自动拒绝等于替用户做决定。
     options.permissionTimeoutMs = 0;
     options.approvalPolicy = approvalPolicy;
+    options.allowOutsideWorkingDirectory = true;
     options.baseInstructions = kDesktopSystemPrompt;
 
     return std::make_unique<MaiAgent>(std::move(store), std::move(model), std::move(tools),

@@ -1,5 +1,7 @@
 #include <QCoreApplication>
 #include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QThread>
@@ -120,6 +122,26 @@ public:
     }
 };
 
+class OutsideReadModel final : public MaiModelClient {
+public:
+    explicit OutsideReadModel(std::string arguments, std::string tool = "read")
+        : arguments_(std::move(arguments)), tool_(std::move(tool)) {}
+    MaiError stream(const MaiModelRequest&, const MaiStreamSink& sink,
+                    const std::atomic<bool>&) override {
+        if (calls_++ == 0 && sink.onToolCall)
+            sink.onToolCall(MaiToolInvocation{"outside-file", tool_, arguments_});
+        else if (sink.onText)
+            sink.onText("done");
+        return {};
+    }
+    MaiWireApi wireApi() const override { return MaiWireApi::ChatCompletions; }
+
+private:
+    std::string arguments_;
+    std::string tool_;
+    std::atomic<int> calls_{0};
+};
+
 class ConcurrentReasoningModel final : public MaiModelClient {
 public:
     std::atomic<bool> firstReasoningSent{false};
@@ -155,7 +177,63 @@ private slots:
     void registers_a_screenshot_tool_that_requires_approval();
     void registers_host_tools_after_builtin_tools();
     void finishingAnotherSessionDoesNotReclassifyReasoning();
+    void desktopReadsOutsideSessionWorkingDirectory();
+    void desktopWriteOutsideWaitsForApproval();
 };
+
+void AgentControllerTest::desktopReadsOutsideSessionWorkingDirectory() {
+    QTemporaryDir workspace;
+    QTemporaryDir otherDirectory;
+    QVERIFY(workspace.isValid());
+    QVERIFY(otherDirectory.isValid());
+    const QString source = QDir(otherDirectory.path()).filePath(QStringLiteral("outside.txt"));
+    QFile file(source);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QVERIFY(file.write("outside-visible") > 0);
+    file.close();
+    const std::string arguments =
+        QJsonDocument(QJsonObject{{QStringLiteral("path"), source}})
+            .toJson(QJsonDocument::Compact).toStdString();
+    AgentController controller(std::make_unique<OutsideReadModel>(arguments), QString());
+    const QString sessionId = controller.createSession(workspace.path());
+    QVERIFY(controller.sendPrompt(sessionId, QStringLiteral("read the file")));
+    controller.agent().waitIdle();
+
+    bool readOutside = false;
+    for (const MaiMessage& message : controller.agent().listMessages(sessionId.toStdString())) {
+        for (const MaiMessagePart& part : message.parts) {
+            const auto* tool = std::get_if<MaiToolPart>(&part.body);
+            if (tool != nullptr && tool->tool == "read" &&
+                tool->output.find("outside-visible") != std::string::npos)
+                readOutside = true;
+        }
+    }
+    QVERIFY(readOutside);
+}
+
+void AgentControllerTest::desktopWriteOutsideWaitsForApproval() {
+    QTemporaryDir workspace;
+    QTemporaryDir otherDirectory;
+    QVERIFY(workspace.isValid());
+    QVERIFY(otherDirectory.isValid());
+    const QString target = QDir(otherDirectory.path()).filePath(QStringLiteral("outside.txt"));
+    const std::string arguments = QJsonDocument(QJsonObject{
+        {QStringLiteral("path"), target}, {QStringLiteral("content"), QStringLiteral("approved")}})
+                                      .toJson(QJsonDocument::Compact).toStdString();
+    AgentController controller(
+        std::make_unique<OutsideReadModel>(arguments, "write"), QString());
+    const QString sessionId = controller.createSession(workspace.path());
+    QVERIFY(controller.sendPrompt(sessionId, QStringLiteral("write outside")));
+    QTRY_COMPARE(controller.agent().listPendingPermissions().size(), std::size_t(1));
+    QVERIFY(!QFile::exists(target));
+    const QString permission =
+        QString::fromStdString(controller.agent().listPendingPermissions().front().id);
+    QVERIFY(controller.approvePermission(permission));
+    controller.agent().waitIdle();
+    QFile written(target);
+    QVERIFY(written.open(QIODevice::ReadOnly));
+    QCOMPARE(written.readAll(), QByteArray("approved"));
+}
 
 // 载荷不是文案：中文 + emoji，验证 UTF-8 一路（回调 -> 事件 -> QString）不走样。
 // 合起来是 "你好，我在主线程上 🙂"

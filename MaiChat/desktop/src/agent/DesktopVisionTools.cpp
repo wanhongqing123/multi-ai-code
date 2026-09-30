@@ -86,14 +86,14 @@ public:
 
     std::string description() const override {
         return mAction == VisionAction::DetectFaces
-            ? "Locate faces and landmarks in an image inside the working directory. Returns "
+            ? "Locate faces and landmarks in an accessible image. Returns "
               "top-left-origin pixel coordinates without changing the image."
-            : "Create a grayscale person mask from an image inside the working directory. "
+            : "Create a grayscale person mask from an accessible image. "
               "The source stays unchanged and a new PNG mask is written to the workspace.";
     }
 
     std::string parametersSchema() const override {
-        return R"({"type":"object","properties":{"path":{"type":"string","description":"Image path inside the working directory"}},"required":["path"],"additionalProperties":false})";
+        return R"({"type":"object","properties":{"path":{"type":"string","description":"Absolute or relative image path"}},"required":["path"],"additionalProperties":false})";
     }
 
     bool requiresApproval(const std::string&) const override {
@@ -112,10 +112,10 @@ public:
                                           "a single image path string is required");
         }
         const QString relative = document.object().value(QStringLiteral("path")).toString();
-        const std::string resolved = maiResolvePathWithinRoot(context.root, utf8(relative));
+        const std::string resolved = context.resolvePath(utf8(relative));
         if (resolved.empty())
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,
-                                          "image path must stay inside the working directory");
+                                          "image path is outside the accessible area");
         std::uint64_t fileBytes = 0;
         if (!MaiFileSystem::fileSize(MaiFilePath::fromUtf8(resolved), fileBytes) ||
             fileBytes == 0 || fileBytes > kMaxImageBytes) {
@@ -211,10 +211,10 @@ private:
             return MaiToolResult::failure(MaiErrorCode::Internal,
                                           "person mask could not be copied");
         const std::string name = MaiIdGenerator::generate("person-mask-") + ".png";
-        const std::string output = maiResolvePathWithinRoot(context.root, name);
+        const std::string output = context.resolvePath(name);
         if (output.empty())
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,
-                                          "person mask output is outside the working directory");
+                                          "person mask output is outside the accessible area");
         QFile file(QString::fromUtf8(output.c_str()));
         if (!file.open(QIODevice::WriteOnly | QIODevice::NewOnly))
             return MaiToolResult::failure(MaiErrorCode::Internal,

@@ -49,8 +49,11 @@ public:
     explicit AgentChatPanel(AgentController& controller, QWidget* parent = nullptr);
     ~AgentChatPanel() override;
 
-    // 开一个会话。传空表示在当前目录建一个新的。
+    // 开一个会话。传空表示在用户文档目录新建。
     void openSession(const QString& sessionId = QString());
+
+    // 在用户选定的工作目录新建会话；不改变已有会话的目录边界。
+    void openSessionInDirectory(const QString& directory);
 
     // 上下文条上显示哪个模型。
     //

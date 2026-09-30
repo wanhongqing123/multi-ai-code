@@ -1,6 +1,12 @@
 #include "diagnostics/PerformanceLog.h"
 #include "ui/MessageImageLoader.h"
 
+#ifdef MAICHAT_HAS_GRAPHICS
+#include "MaiGraphicsImageRenderer.h"
+#include <QCoreApplication>
+#include <QDir>
+#include <QFile>
+#endif
 #include <QDebug>
 #include <QElapsedTimer>
 #include <QFileInfo>
@@ -27,15 +33,45 @@ public:
         QElapsedTimer timer;
         timer.start();
         QImage image;
-        QImageReader reader(path_);
-        // 关键：让解码器直接按目标尺寸出图，而不是解完整图再缩。
-        // JPEG 能在解码阶段降采样，实测 46.8ms → 9.6ms。
-        QSize scaled = reader.size();
-        if (scaled.isValid() && !scaled.isEmpty()) {
-            scaled.scale(target_, Qt::KeepAspectRatio);
-            reader.setScaledSize(scaled);
+#ifdef MAICHAT_HAS_GRAPHICS
+        const QByteArray overridePath = qgetenv("MAICHAT_GRAPHICS_BACKEND_PATH");
+#if defined(Q_OS_MAC)
+        const QString defaultModule = QDir(QCoreApplication::applicationDirPath()).filePath(
+            QStringLiteral("../Frameworks/libmaiagent_obs_metal.so"));
+#elif defined(Q_OS_WIN)
+        const QString defaultModule = QDir(QCoreApplication::applicationDirPath()).filePath(
+            QStringLiteral("maiagent_obs_d3d11.dll"));
+#else
+        const QString defaultModule;
+#endif
+        const QString module = overridePath.isEmpty()
+                                   ? defaultModule
+                                   : QFile::decodeName(overridePath);
+        if (!module.isEmpty() && QFileInfo::exists(module)) {
+            MaiGraphicsImageResult rendered{};
+            const QByteArray pathBytes = QFile::encodeName(path_);
+            const QByteArray moduleBytes = QFile::encodeName(module);
+            if (maiGraphicsRenderImageFile(pathBytes.constData(), moduleBytes.constData(),
+                                           qMax(1, target_.width()), qMax(1, target_.height()),
+                                           &rendered)) {
+                image = QImage(rendered.pixels, static_cast<int>(rendered.width),
+                               static_cast<int>(rendered.height), static_cast<int>(rendered.stride),
+                               QImage::Format_RGBA8888).copy();
+            }
+            maiGraphicsImageResultFree(&rendered);
         }
-        image = reader.read();
+#endif
+        if (image.isNull()) {
+            QImageReader reader(path_);
+            // 关键：让解码器直接按目标尺寸出图，而不是解完整图再缩。
+            // JPEG 能在解码阶段降采样，实测 46.8ms → 9.6ms。
+            QSize scaled = reader.size();
+            if (scaled.isValid() && !scaled.isEmpty()) {
+                scaled.scale(target_, Qt::KeepAspectRatio);
+                reader.setScaledSize(scaled);
+            }
+            image = reader.read();
+        }
         const qint64 elapsed = timer.elapsed();
         if (!owner_) return;
         QMetaObject::invokeMethod(owner_, "deliver", Qt::QueuedConnection,

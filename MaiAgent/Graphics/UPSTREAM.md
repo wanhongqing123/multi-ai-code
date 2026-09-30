@@ -12,15 +12,19 @@ Source directory mapping into `MaiAgent/Graphics/`:
 | `libobs/util/` | `util/` |
 | `libobs/data/` | `data/` |
 | `libobs-d3d11/` | `d3d11/` |
-| `libobs-opengl/` | `opengl/` |
+| `libobs-opengl/` | `opengl/` (common code, Linux X11/Wayland, Android EGL) |
 | `libobs-metal/` | `metal/` |
 | `COPYING` | `COPYING` |
 
 All 21 `libobs/data/*.effect` files were copied without modification.
 Include paths affected by the flattened layout were adjusted in source files.
 The standalone build guards `util/platform.c`'s OBS-application-only filename
-formatter behind `MAI_GRAPHICS_STANDALONE`. The Metal backend also has iOS
-UIKit and static-symbol adaptations. Original copyright notices were preserved.
+formatter behind `MAI_GRAPHICS_STANDALONE`. The Metal backend has iOS UIKit
+and static-symbol adaptations. `opengl/` retains Linux X11/Wayland sources,
+but no macOS or Windows platform implementation. Android uses EGL/GLES code in
+`opengl/android/` plus guarded changes for unavailable desktop GL and POSIX
+APIs. `graphics-ffmpeg.c` outputs RGBA on Android for GLES uploads. Original
+copyright notices were preserved.
 
 The source files retain their original copyright notices. `COPYING` is the
 upstream GPLv2 license text. SIMDe is provided separately under

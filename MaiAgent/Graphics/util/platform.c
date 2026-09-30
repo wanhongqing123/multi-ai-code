@@ -803,7 +803,11 @@ static struct {
 
 static void init_timespec_offset(void)
 {
+#if defined(__ANDROID__)
+	timespec_offset.ts_valid = clock_gettime(CLOCK_REALTIME, &timespec_offset.ts) == 0;
+#else
 	timespec_offset.ts_valid = timespec_get(&timespec_offset.ts, TIME_UTC) == TIME_UTC;
+#endif
 	timespec_offset.timestamp = os_gettime_ns();
 }
 

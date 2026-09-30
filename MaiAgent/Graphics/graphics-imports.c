@@ -241,6 +241,8 @@ bool load_graphics_imports(struct gs_exports *exports, void *module, const char 
 	GRAPHICS_IMPORT_OPTIONAL(device_stagesurface_create_p010);
 	GRAPHICS_IMPORT_OPTIONAL(device_register_loss_callbacks);
 	GRAPHICS_IMPORT_OPTIONAL(device_unregister_loss_callbacks);
+#elif defined(__ANDROID__)
+	/* Android uses EGL/GLES; Linux desktop DMA-BUF and syncobj imports do not apply. */
 #elif defined(__linux__) || defined(__FreeBSD__) || defined(__DragonFly__)
 	GRAPHICS_IMPORT(device_texture_create_from_dmabuf);
 	GRAPHICS_IMPORT(device_query_dmabuf_capabilities);

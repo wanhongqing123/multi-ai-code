@@ -131,6 +131,15 @@ static void gl_enable_debug() {}
 
 static bool gl_init_extensions(struct gs_device *device)
 {
+#if defined(__ANDROID__)
+	const char *version = (const char *)glGetString(GL_VERSION);
+	if (!version || strncmp(version, "OpenGL ES 3.", 12) != 0) {
+		blog(LOG_ERROR, "MaiAgent Graphics requires OpenGL ES 3.x");
+		return false;
+	}
+	device->copy_type = COPY_TYPE_FBO_BLIT;
+	return true;
+#else
 	if (!GLAD_GL_VERSION_3_3) {
 		blog(LOG_ERROR, "obs-studio requires OpenGL version 3.3 or higher.");
 		return false;
@@ -154,6 +163,7 @@ static bool gl_init_extensions(struct gs_device *device)
 		device->copy_type = COPY_TYPE_FBO_BLIT;
 
 	return true;
+#endif
 }
 
 static void clear_textures(struct gs_device *device)
@@ -433,6 +443,9 @@ gs_timer_t *device_timer_create(gs_device_t *device)
 {
 	UNUSED_PARAMETER(device);
 
+#if defined(__ANDROID__)
+	return NULL;
+#else
 	struct gs_timer *timer;
 
 	GLuint queries[2];
@@ -445,6 +458,7 @@ gs_timer_t *device_timer_create(gs_device_t *device)
 	timer->queries[1] = queries[1];
 
 	return timer;
+#endif
 }
 
 gs_timer_range_t *device_timer_range_create(gs_device_t *device)
@@ -587,8 +601,12 @@ static void device_load_texture_internal(gs_device_t *device, gs_texture_t *tex,
 	if (!gl_bind_texture(tex->gl_target, tex->texture))
 		goto fail;
 
+#if defined(__ANDROID__)
+	UNUSED_PARAMETER(decode);
+#else
 	if (!gl_tex_param_i(tex->gl_target, GL_TEXTURE_SRGB_DECODE_EXT, decode))
 		goto fail;
+#endif
 
 	if (sampler && !load_texture_sampler(tex, sampler))
 		goto fail;
@@ -944,19 +962,27 @@ void device_enable_framebuffer_srgb(gs_device_t *device, bool enable)
 {
 	UNUSED_PARAMETER(device);
 
+#if defined(__ANDROID__)
+	UNUSED_PARAMETER(enable);
+#else
 	if (enable)
 		gl_enable(GL_FRAMEBUFFER_SRGB);
 	else
 		gl_disable(GL_FRAMEBUFFER_SRGB);
+#endif
 }
 
 bool device_framebuffer_srgb_enabled(gs_device_t *device)
 {
 	UNUSED_PARAMETER(device);
 
+#if defined(__ANDROID__)
+	return true;
+#else
 	const GLboolean enabled = glIsEnabled(GL_FRAMEBUFFER_SRGB);
 	gl_success("glIsEnabled");
 	return enabled == GL_TRUE;
+#endif
 }
 
 void device_copy_texture_region(gs_device_t *device, gs_texture_t *dst, uint32_t dst_x, uint32_t dst_y,
@@ -1479,14 +1505,20 @@ void device_debug_marker_begin(gs_device_t *device, const char *markername, cons
 	UNUSED_PARAMETER(device);
 	UNUSED_PARAMETER(color);
 
+#if defined(__ANDROID__)
+	UNUSED_PARAMETER(markername);
+#else
 	glPushDebugGroupKHR(GL_DEBUG_SOURCE_APPLICATION, 0, -1, markername);
+#endif
 }
 
 void device_debug_marker_end(gs_device_t *device)
 {
 	UNUSED_PARAMETER(device);
 
+#if !defined(__ANDROID__)
 	glPopDebugGroupKHR();
+#endif
 }
 
 void gs_swapchain_destroy(gs_swapchain_t *swapchain)
@@ -1577,18 +1609,31 @@ void gs_timer_destroy(gs_timer_t *timer)
 
 void gs_timer_begin(gs_timer_t *timer)
 {
+#if defined(__ANDROID__)
+	UNUSED_PARAMETER(timer);
+#else
 	glQueryCounter(timer->queries[0], GL_TIMESTAMP);
 	gl_success("glQueryCounter");
+#endif
 }
 
 void gs_timer_end(gs_timer_t *timer)
 {
+#if defined(__ANDROID__)
+	UNUSED_PARAMETER(timer);
+#else
 	glQueryCounter(timer->queries[1], GL_TIMESTAMP);
 	gl_success("glQueryCounter");
+#endif
 }
 
 bool gs_timer_get_data(gs_timer_t *timer, uint64_t *ticks)
 {
+#if defined(__ANDROID__)
+	UNUSED_PARAMETER(timer);
+	UNUSED_PARAMETER(ticks);
+	return false;
+#else
 	GLint available = 0;
 	glGetQueryObjectiv(timer->queries[1], GL_QUERY_RESULT_AVAILABLE, &available);
 
@@ -1600,6 +1645,7 @@ bool gs_timer_get_data(gs_timer_t *timer, uint64_t *ticks)
 
 	*ticks = end - begin;
 	return true;
+#endif
 }
 
 void gs_timer_range_destroy(gs_timer_range_t *range)

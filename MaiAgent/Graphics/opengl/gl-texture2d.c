@@ -195,8 +195,14 @@ bool gs_texture_map(gs_texture_t *tex, uint8_t **ptr, uint32_t *linesize)
 	if (!gl_bind_buffer(GL_PIXEL_UNPACK_BUFFER, tex2d->unpack_buffer))
 		goto fail;
 
+#if defined(__ANDROID__)
+	GLsizeiptr length = (GLsizeiptr)((tex2d->width * gs_get_format_bpp(tex->format) / 8 + 3) & ~3U) * tex2d->height;
+	*ptr = glMapBufferRange(GL_PIXEL_UNPACK_BUFFER, 0, length, GL_MAP_WRITE_BIT);
+	if (!gl_success("glMapBufferRange"))
+#else
 	*ptr = glMapBuffer(GL_PIXEL_UNPACK_BUFFER, GL_WRITE_ONLY);
 	if (!gl_success("glMapBuffer"))
+#endif
 		goto fail;
 
 	gl_bind_buffer(GL_PIXEL_UNPACK_BUFFER, 0);
@@ -252,7 +258,11 @@ bool gs_texture_is_rect(const gs_texture_t *tex)
 	}
 
 	const struct gs_texture_2d *tex2d = (const struct gs_texture_2d *)tex;
+#if defined(__ANDROID__)
+	return false;
+#else
 	return tex2d->base.gl_target == GL_TEXTURE_RECTANGLE;
+#endif
 }
 
 void *gs_texture_get_obj(gs_texture_t *tex)

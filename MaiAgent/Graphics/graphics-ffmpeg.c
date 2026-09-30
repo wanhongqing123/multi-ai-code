@@ -352,9 +352,13 @@ static void *ffmpeg_image_reformat_frame(struct ffmpeg_image *info, AVFrame *fra
 		}
 	}
 
+#if !defined(__ANDROID__)
 	if (info->format == AV_PIX_FMT_BGR0) {
 		data = ffmpeg_image_copy_data_straight(info, frame);
 	} else if (info->format == AV_PIX_FMT_RGBA || info->format == AV_PIX_FMT_BGRA) {
+#else
+	if (info->format == AV_PIX_FMT_RGBA) {
+#endif
 		if (alpha_mode == GS_IMAGE_ALPHA_STRAIGHT) {
 			data = ffmpeg_image_copy_data_straight(info, frame);
 		} else {
@@ -443,7 +447,11 @@ static void *ffmpeg_image_reformat_frame(struct ffmpeg_image *info, AVFrame *fra
 
 		info->format = AV_PIX_FMT_RGBA;
 	} else {
+#if defined(__ANDROID__)
+		static const enum AVPixelFormat format = AV_PIX_FMT_RGBA;
+#else
 		static const enum AVPixelFormat format = AV_PIX_FMT_BGRA;
+#endif
 
 		sws_ctx = sws_getContext(info->cx, info->cy, info->format, info->cx, info->cy, format, SWS_POINT, NULL,
 					 NULL, NULL);

@@ -107,6 +107,32 @@ private struct RemoteIMImageDecodeOutcome: @unchecked Sendable {
     let durationMilliseconds: Int
 }
 
+nonisolated func maiGraphicsUIImage(path: String, maxPixelSize: Int) -> UIImage? {
+    guard maxPixelSize > 0 else { return nil }
+    var rendered = MaiGraphicsImageResult()
+    let loaded = path.withCString { utf8Path in
+        maiGraphicsRenderImageFile(
+            utf8Path, "builtin:metal", UInt32(clamping: maxPixelSize),
+            UInt32(clamping: maxPixelSize), &rendered
+        )
+    }
+    guard loaded, let pixels = rendered.pixels else {
+        maiGraphicsImageResultFree(&rendered)
+        return nil
+    }
+    defer { maiGraphicsImageResultFree(&rendered) }
+    let bytes = Data(bytes: pixels, count: Int(rendered.stride) * Int(rendered.height))
+    guard let provider = CGDataProvider(data: bytes as CFData) else { return nil }
+    let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue).union(.byteOrder32Big)
+    guard let cgImage = CGImage(
+        width: Int(rendered.width), height: Int(rendered.height),
+        bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: Int(rendered.stride),
+        space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: bitmapInfo,
+        provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent
+    ) else { return nil }
+    return UIImage(cgImage: cgImage)
+}
+
 private actor RemoteIMImageDecodeLimiter {
     private let limit: Int
     private var activeCount = 0
@@ -215,6 +241,14 @@ private actor RemoteIMImagePipeline {
         _ request: RemoteIMImageRequest
     ) -> RemoteIMImageDecodeOutcome {
         let startedAt = ProcessInfo.processInfo.systemUptime
+        if let rendered = maiGraphicsUIImage(path: request.filePath,
+                                             maxPixelSize: request.maximumPixelSize),
+           let cgImage = rendered.cgImage {
+            let box = RemoteIMDecodedImageBox(
+                image: rendered, memoryCost: cgImage.bytesPerRow * cgImage.height
+            )
+            return outcome(image: box, startedAt: startedAt)
+        }
         let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
         guard let source = CGImageSourceCreateWithURL(
             URL(fileURLWithPath: request.filePath) as CFURL,

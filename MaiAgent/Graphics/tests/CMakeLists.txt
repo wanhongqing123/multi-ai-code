@@ -10,6 +10,17 @@ if(TARGET maiagent_graphics)
   add_test(NAME MaiObsGraphicsLinkTests COMMAND MaiObsGraphicsLinkTests)
 endif()
 
+if(TARGET maiagent_graphics AND NOT IOS)
+  add_executable(MaiGraphicsImageRendererTests MaiGraphicsImageRendererTests.c)
+  target_link_libraries(MaiGraphicsImageRendererTests PRIVATE maiagent_graphics)
+  if(TARGET maiagent_obs_metal)
+    add_dependencies(MaiGraphicsImageRendererTests maiagent_obs_metal)
+    add_test(NAME MaiGraphicsImageRendererTests
+      COMMAND MaiGraphicsImageRendererTests $<TARGET_FILE:maiagent_obs_metal>
+        ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/tiny-red.ppm)
+  endif()
+endif()
+
 if(TARGET maiagent_obs_metal)
   add_executable(MaiObsMetalRenderTests MaiObsMetalRenderTests.c)
   target_link_libraries(MaiObsMetalRenderTests PRIVATE maiagent_graphics)

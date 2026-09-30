@@ -102,9 +102,11 @@ bool gl_copy_texture(struct gs_device *device, struct gs_texture *dst, uint32_t 
 		success = gl_success("glCopyImageSubData");
 
 	} else if (device->copy_type == COPY_TYPE_NV) {
+#if !defined(__ANDROID__)
 		glCopyImageSubDataNV(src->texture, src->gl_target, 0, src_x, src_y, 0, dst->texture, dst->gl_target, 0,
 				     dst_x, dst_y, 0, width, height, 1);
 		success = gl_success("glCopyImageSubDataNV");
+#endif
 
 	} else if (device->copy_type == COPY_TYPE_FBO_BLIT) {
 		success = gl_copy_fbo(dst, dst_x, dst_y, src, src_x, src_y, width, height);

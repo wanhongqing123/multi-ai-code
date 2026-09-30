@@ -106,7 +106,7 @@ static bool can_stage(struct gs_stage_surface *dst, struct gs_texture_2d *src)
 	return true;
 }
 
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__ANDROID__)
 
 /* Apparently for mac, PBOs won't do an asynchronous transfer unless you use
  * FBOs along with glReadPixels, which is really dumb. */
@@ -134,6 +134,9 @@ void device_stage_texture(gs_device_t *device, gs_stagesurf_t *dst, gs_texture_t
 	if (!gl_success("glFrameBufferTexture2D"))
 		goto failed_unbind_all;
 
+#if defined(__ANDROID__)
+	glPixelStorei(GL_PACK_ALIGNMENT, 1);
+#endif
 	glReadPixels(0, 0, dst->width, dst->height, dst->gl_format, dst->gl_type, 0);
 	if (!gl_success("glReadPixels"))
 		goto failed_unbind_all;
@@ -204,8 +207,15 @@ bool gs_stagesurface_map(gs_stagesurf_t *stagesurf, uint8_t **data, uint32_t *li
 	if (!gl_bind_buffer(GL_PIXEL_PACK_BUFFER, stagesurf->pack_buffer))
 		goto fail;
 
+#if defined(__ANDROID__)
+	*data = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0,
+				 (GLsizeiptr)stagesurf->width * stagesurf->height * stagesurf->bytes_per_pixel,
+				 GL_MAP_READ_BIT);
+	if (!gl_success("glMapBufferRange"))
+#else
 	*data = glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
 	if (!gl_success("glMapBuffer"))
+#endif
 		goto fail;
 
 	gl_bind_buffer(GL_PIXEL_PACK_BUFFER, 0);

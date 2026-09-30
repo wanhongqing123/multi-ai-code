@@ -1,9 +1,10 @@
 #include <stdint.h>
 
 #include "MaiGraphics.h"
+#include "MaiGraphicsImageRenderer.h"
 #include "vec4.h"
 
-int maiObsIosMetalRenderProbe(void) {
+int maiObsIosMetalRenderProbe(const char* image_path) {
     graphics_t* graphics = NULL;
     if (gs_create(&graphics, "builtin:metal", 0) != GS_SUCCESS || !graphics) return 1;
 
@@ -40,5 +41,13 @@ int maiObsIosMetalRenderProbe(void) {
     if (texture) gs_texture_destroy(texture);
     gs_leave_context();
     gs_destroy(graphics);
-    return passed ? 0 : 2;
+    if (!passed) return 2;
+
+    MaiGraphicsImageResult image = {0};
+    const bool rendered = maiGraphicsRenderImageFile(image_path, "builtin:metal", 1, 1, &image);
+    const bool image_valid = rendered && image.width == 1 && image.height == 1 && image.pixels &&
+                             image.pixels[0] == 255 && image.pixels[1] == 0 &&
+                             image.pixels[2] == 0 && image.pixels[3] == 255;
+    maiGraphicsImageResultFree(&image);
+    return image_valid ? 0 : 3;
 }

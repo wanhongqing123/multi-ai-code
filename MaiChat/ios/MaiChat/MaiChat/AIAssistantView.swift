@@ -789,6 +789,9 @@ private final class AIWorkspaceImageState: ObservableObject {
         image = nil
         hasFinished = false
         let decoded = await Task.detached(priority: .utility) { () -> AIWorkspaceImageBox? in
+            if let image = maiGraphicsUIImage(path: path, maxPixelSize: maxPixelSize) {
+                return AIWorkspaceImageBox(image)
+            }
             let url = URL(fileURLWithPath: path) as CFURL
             guard let source = CGImageSourceCreateWithURL(url, nil),
                   let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, [

@@ -27,7 +27,11 @@
 #include <glob.h>
 #include <time.h>
 #include <signal.h>
+#if defined(__ANDROID__)
+#include <fcntl.h>
+#else
 #include <uuid/uuid.h>
+#endif
 
 #include "obsconfig.h"
 
@@ -505,6 +509,7 @@ int64_t os_get_free_space(const char *path)
 }
 #endif
 
+#if !defined(__ANDROID__)
 struct posix_glob_info {
 	struct os_glob_info base;
 	glob_t gl;
@@ -549,6 +554,7 @@ void os_globfree(os_glob_t *pglob)
 		bfree(pgi);
 	}
 }
+#endif
 
 int os_unlink(const char *path)
 {
@@ -637,7 +643,7 @@ int os_chdir(const char *path)
 	return chdir(path);
 }
 
-#if !defined(__APPLE__)
+#if !defined(__APPLE__) && !defined(__ANDROID__)
 
 #if defined(GIO_FOUND)
 struct dbus_sleep_info;
@@ -1099,10 +1105,37 @@ uint64_t os_get_free_disk_space(const char *dir)
 
 char *os_generate_uuid(void)
 {
+#if defined(__ANDROID__)
+	uint8_t uuid[16];
+	int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+	if (fd < 0)
+		return NULL;
+	size_t offset = 0;
+	while (offset < sizeof(uuid)) {
+		ssize_t count = read(fd, uuid + offset, sizeof(uuid) - offset);
+		if (count < 0 && errno == EINTR)
+			continue;
+		if (count <= 0) {
+			close(fd);
+			return NULL;
+		}
+		offset += (size_t)count;
+	}
+	close(fd);
+	uuid[6] = (uuid[6] & 0x0f) | 0x40;
+	uuid[8] = (uuid[8] & 0x3f) | 0x80;
+	char *out = bmalloc(37);
+	snprintf(out, 37,
+		 "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+		 uuid[0], uuid[1], uuid[2], uuid[3], uuid[4], uuid[5], uuid[6], uuid[7], uuid[8], uuid[9],
+		 uuid[10], uuid[11], uuid[12], uuid[13], uuid[14], uuid[15]);
+	return out;
+#else
 	uuid_t uuid;
 	// 36 char UUID + NULL
 	char *out = bmalloc(37);
 	uuid_generate(uuid);
 	uuid_unparse_lower(uuid, out);
 	return out;
+#endif
 }

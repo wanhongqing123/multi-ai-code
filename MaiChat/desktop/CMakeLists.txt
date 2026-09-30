@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.21)
 # C 用于 MaiAgent/third_party/md4c（Markdown 解析，纯 C 实现）。
 project(MaiChatDesktop VERSION 0.1.96 LANGUAGES C CXX)
+if(APPLE)
+  enable_language(OBJCXX)
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -84,6 +87,9 @@ set(CMAKE_AUTORCC OFF)
 set(_maichat_zlib_found ${ZLIB_FOUND})
 set(ZLIB_FOUND FALSE)
 
+if(APPLE)
+  set(MAIAGENT_BUILD_GRAPHICS ON CACHE BOOL "" FORCE)
+endif()
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent maiagent EXCLUDE_FROM_ALL)
 
 set(ZLIB_FOUND ${_maichat_zlib_found})
@@ -417,6 +423,10 @@ target_include_directories(remote_im_desktop_ui PUBLIC src)
 target_link_libraries(remote_im_desktop_ui PUBLIC remote_im_desktop_app remote_im_core
   maichat_agent Qt5::Widgets Qt5::Svg Qt5::Multimedia Qt5::MultimediaWidgets
   maichat_pdf_preview)
+if(TARGET maiagent_obs_metal OR TARGET maiagent_obs_d3d11)
+  target_link_libraries(remote_im_desktop_ui PRIVATE maiagent_graphics)
+  target_compile_definitions(remote_im_desktop_ui PRIVATE MAICHAT_HAS_GRAPHICS=1)
+endif()
 
 add_executable(maichat
   src/main.cpp
@@ -474,6 +484,26 @@ if(APPLE)
               "$<TARGET_BUNDLE_DIR:maichat>/Contents/Frameworks/TXSoundTouch.framework"
       COMMENT "Embedding macOS TRTC frameworks into MaiChat.app"
     )
+  endif()
+  if(TARGET maiagent_obs_metal)
+    set_target_properties(maichat PROPERTIES
+      BUILD_WITH_INSTALL_RPATH TRUE
+      BUILD_RPATH "@executable_path/../Frameworks"
+      INSTALL_RPATH "@executable_path/../Frameworks")
+    target_link_libraries(maichat PRIVATE maiagent_graphics)
+    add_dependencies(maichat maiagent_obs_metal)
+    add_custom_command(TARGET maichat POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E make_directory
+              "$<TARGET_BUNDLE_DIR:maichat>/Contents/Frameworks"
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+              "$<TARGET_FILE:maiagent_graphics>"
+              "$<TARGET_BUNDLE_DIR:maichat>/Contents/Frameworks"
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+              "$<TARGET_FILE:maiagent_obs_metal>"
+              "$<TARGET_BUNDLE_DIR:maichat>/Contents/Frameworks"
+      COMMAND ${CMAKE_COMMAND} -E copy_directory
+              "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/Graphics/data"
+              "$<TARGET_BUNDLE_DIR:maichat>/Contents/Resources/MaiAgentGraphics")
   endif()
 endif()
 target_link_libraries(maichat PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core maichat_agent Qt5::Widgets)

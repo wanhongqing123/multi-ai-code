@@ -1,3 +1,3 @@
-#include "../../../shared/agent/MaiMobileAgent.h"
+#include "../../../MobileAgentAdapter/MaiMobileAgent.h"
 #include "../../../MaiChatTools/MaiImageFilter.h"
 #include "../../../../MaiAgent/include/MaiGraphicsPresenter.h"

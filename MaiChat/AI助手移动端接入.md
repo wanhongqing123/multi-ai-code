@@ -10,7 +10,7 @@
 ## 共用核心
 
 移动端和 Qt 桌面都在进程内构造 `MaiAgent`，没有本地 HTTP 服务，也没有另写 Swift/Java 工具循环。
-`shared/agent/MaiMobileAgent` 只负责 C ABI 与界面数据转换；会话、SQLite、Chat Completions/SSE、工具执行、批准、提问与停止仍由 MaiAgent 实现。
+`MobileAgentAdapter/MaiMobileAgent` 只负责 C ABI 与界面数据转换；会话、SQLite、Chat Completions/SSE、工具执行、批准、提问与停止仍由 MaiAgent 实现。
 
 事件回调只在锁内合并增量，不能读数据库或解析 Markdown。移动端后台执行器取快照；纯文本增量复用消息结构，结构事件才重读 SQLite。工作期间界面每 100ms 合并刷新，闲置时每 500ms 检查变化，页面不可见时停止轮询。最后一个事件不依赖界面此前是否认为任务忙碌，因此不会漏掉结束或错误。
 
@@ -42,12 +42,12 @@ iOS 在 Xcode 构建阶段使用 CMake 编译仓库内的 MaiAgent、SQLite 与 
 - iOS Markdown 回归 36 项通过。
 - iOS XCTest UI 用例在独立新会话中实际输入、发送、检查最新正文可见、停止下一轮、打开对话列表，通过。
 
-测试服务仅位于 `shared/agent/tests/mobile_model_server.py`，监听本机 18189。模拟器通过 `--ai-ui-test` 使用单独临时目录及测试密钥；真机包不包含这个分支，不接触正式 IM 数据。
+测试服务仅位于 `MobileAgentAdapter/tests/mobile_model_server.py`，监听本机 18189。模拟器通过 `--ai-ui-test` 使用单独临时目录及测试密钥；真机包不包含这个分支，不接触正式 IM 数据。
 
 ```sh
-python3 MaiChat/shared/agent/tests/mobile_model_server.py
+python3 MaiChat/MobileAgentAdapter/tests/mobile_model_server.py
 # 另一个终端：通过 MaiChat scheme 执行 MaiChatUITests。
-cmake -S MaiChat/shared/agent -B /tmp/mobile-agent-tests -DMAICHAT_MOBILE_TESTS=ON
+cmake -S MaiChat/MobileAgentAdapter -B /tmp/mobile-agent-tests -DMAICHAT_MOBILE_TESTS=ON
 cmake --build /tmp/mobile-agent-tests --target MaiMobileAgentTests
 ctest --test-dir /tmp/mobile-agent-tests --output-on-failure
 ```

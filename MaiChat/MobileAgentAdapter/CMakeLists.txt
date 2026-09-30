@@ -29,8 +29,8 @@ if(ANDROID)
   set(MBEDX509_LIBRARY mbedx509 CACHE STRING "" FORCE)
   set(MBEDCRYPTO_LIBRARY mbedcrypto CACHE STRING "" FORCE)
 endif()
-add_subdirectory(../../../MaiAgent maiagent EXCLUDE_FROM_ALL)
-set(ffmpeg_source "${CMAKE_CURRENT_SOURCE_DIR}/../../../MaiAgent/third_party/ffmpeg")
+add_subdirectory(../../MaiAgent maiagent EXCLUDE_FROM_ALL)
+set(ffmpeg_source "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/ffmpeg")
 if(NOT EXISTS "${ffmpeg_source}/configure")
   message(FATAL_ERROR "Vendored FFmpeg source is missing")
 endif()
@@ -103,19 +103,19 @@ if(TARGET maiagent_graphics)
 endif()
 add_library(maichat_mobile STATIC
   MaiMobileAgent.cpp
-  ../../MaiChatTools/MaiImageFilter.cpp
-  ../../MaiChatTools/MaiMobileHostTools.cpp)
+  ../MaiChatTools/MaiImageFilter.cpp
+  ../MaiChatTools/MaiMobileHostTools.cpp)
 if(ANDROID)
   target_sources(maichat_mobile PRIVATE
-    ../../android/MaiChat/app/src/main/cpp/MaiChatTools/MaiMobilePhotoAlbumTool.cpp)
+    ../android/MaiChat/app/src/main/cpp/MaiChatTools/MaiMobilePhotoAlbumTool.cpp)
 elseif(APPLE)
   target_sources(maichat_mobile PRIVATE
-    ../../ios/MaiChat/MaiChat/MaiChatTools/MaiMobilePhotoAlbumTool.cpp)
+    ../ios/MaiChat/MaiChat/MaiChatTools/MaiMobilePhotoAlbumTool.cpp)
 endif()
 add_dependencies(maichat_mobile maichat_ffmpeg_build)
 target_include_directories(maichat_mobile PRIVATE "${ffmpeg_build}/install/include")
-target_include_directories(maichat_mobile PUBLIC . ../../MaiChatTools
-  PRIVATE ../../../MaiAgent/third_party/nlohmann)
+target_include_directories(maichat_mobile PUBLIC . ../MaiChatTools
+  PRIVATE ../../MaiAgent/third_party/nlohmann)
 target_link_libraries(maichat_mobile PRIVATE maiagent
   maichat_ffmpeg_avdevice maichat_ffmpeg_avfilter maichat_ffmpeg_avformat
   maichat_ffmpeg_avcodec maichat_ffmpeg_swresample maichat_ffmpeg_swscale
@@ -127,7 +127,7 @@ option(MAICHAT_MOBILE_TESTS "Build mobile adapter integration tests" OFF)
 if(MAICHAT_MOBILE_TESTS)
   enable_testing()
   add_executable(MaiMobileAgentTests tests/MaiMobileAgentTests.cpp)
-  target_include_directories(MaiMobileAgentTests PRIVATE ../../../MaiAgent/third_party/httplib ../../../MaiAgent/third_party/nlohmann)
+  target_include_directories(MaiMobileAgentTests PRIVATE ../../MaiAgent/third_party/httplib ../../MaiAgent/third_party/nlohmann)
   target_link_libraries(MaiMobileAgentTests PRIVATE maichat_mobile maiagent)
   add_test(NAME MaiMobileAgentTests COMMAND MaiMobileAgentTests)
 endif()

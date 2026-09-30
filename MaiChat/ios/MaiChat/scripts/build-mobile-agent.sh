@@ -2,8 +2,8 @@
 set -euo pipefail
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 repo_dir="$(cd "$PROJECT_DIR/../../.." && pwd)"
-agent_build="$DERIVED_FILE_DIR/MaiAgent-$PLATFORM_NAME-graphics"
-cmake -S "$repo_dir/MaiChat/shared/agent" -B "$agent_build" -G Ninja \
+agent_build="$DERIVED_FILE_DIR/MobileAgentAdapter-$PLATFORM_NAME-graphics"
+cmake -S "$repo_dir/MaiChat/MobileAgentAdapter" -B "$agent_build" -G Ninja \
   -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT="$SDKROOT" \
   -DCMAKE_OSX_ARCHITECTURES="${ARCHS// /;}" -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0 \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \

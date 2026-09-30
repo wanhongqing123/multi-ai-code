@@ -16,7 +16,13 @@ android {
     namespace "com.kongshang.maichat"
     compileSdk 34
     ndkVersion "27.3.13750724"
-    externalNativeBuild { cmake { path "src/main/cpp/CMakeLists.txt"; version "3.22.1" } }
+    externalNativeBuild {
+        cmake {
+            path "src/main/cpp/CMakeLists.txt"
+            version "3.22.1"
+            buildStagingDirectory ".cxx/mobile-agent-adapter"
+        }
+    }
 
     defaultConfig {
         applicationId "com.kongshang.maichat"

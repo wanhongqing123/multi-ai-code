@@ -213,9 +213,9 @@ if(WIN32)
     target_include_directories(maichat_image_vision PUBLIC src/MaiChatTools)
     target_link_libraries(maichat_image_vision PUBLIC maichat_opencv)
     set(MAICHAT_FACE_MODEL
-      "${CMAKE_CURRENT_SOURCE_DIR}/../shared/agent/models/face_detection_yunet_2023mar.onnx")
+      "${CMAKE_CURRENT_SOURCE_DIR}/../MobileAgentAdapter/models/face_detection_yunet_2023mar.onnx")
     set(MAICHAT_PERSON_MODEL
-      "${CMAKE_CURRENT_SOURCE_DIR}/../shared/agent/models/human_segmentation_pphumanseg_2023mar.onnx")
+      "${CMAKE_CURRENT_SOURCE_DIR}/../MobileAgentAdapter/models/human_segmentation_pphumanseg_2023mar.onnx")
   endif()
 endif()
 

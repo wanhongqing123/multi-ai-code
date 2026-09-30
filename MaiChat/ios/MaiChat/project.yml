@@ -14,7 +14,8 @@ targets:
     platform: iOS
     sources:
       - path: MaiChat
-      - path: MaiChatTools/AIMobileHostToolProvider.swift
+        excludes:
+          - MaiChatTools/MaiMobilePhotoAlbumTool.cpp
     dependencies:
       - target: MaiChatCore
     preBuildScripts:

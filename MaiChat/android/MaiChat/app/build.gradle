@@ -64,7 +64,6 @@ tasks.register("stageMaiAgentGraphicsEffects", Sync) {
     into graphicsEffectsOutput
 }
 android.sourceSets.main.assets.srcDir(graphicsEffectsOutput)
-android.sourceSets.main.java.srcDir(file("$projectDir/../MaiChatTools"))
 android.sourceSets.androidTest.assets.srcDir(
     file("$projectDir/../../../../MaiAgent/Graphics/tests/fixtures"))
 tasks.configureEach {

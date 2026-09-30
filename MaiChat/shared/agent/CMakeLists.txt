@@ -107,10 +107,10 @@ add_library(maichat_mobile STATIC
   ../../MaiChatTools/MaiMobileHostTools.cpp)
 if(ANDROID)
   target_sources(maichat_mobile PRIVATE
-    ../../android/MaiChat/MaiChatTools/MaiMobilePhotoAlbumTool.cpp)
+    ../../android/MaiChat/app/src/main/cpp/MaiChatTools/MaiMobilePhotoAlbumTool.cpp)
 elseif(APPLE)
   target_sources(maichat_mobile PRIVATE
-    ../../ios/MaiChat/MaiChatTools/MaiMobilePhotoAlbumTool.cpp)
+    ../../ios/MaiChat/MaiChat/MaiChatTools/MaiMobilePhotoAlbumTool.cpp)
 endif()
 add_dependencies(maichat_mobile maichat_ffmpeg_build)
 target_include_directories(maichat_mobile PRIVATE "${ffmpeg_build}/install/include")

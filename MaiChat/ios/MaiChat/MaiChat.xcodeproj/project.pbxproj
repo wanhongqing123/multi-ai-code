@@ -133,7 +133,7 @@
 		4E3D9F697A1737B461CCB2EB /* MaiChatUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = MaiChatUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		4F0A72E18F2D49F6FB7391C2 /* RemoteIMClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteIMClient.swift; sourceTree = "<group>"; };
 		526904A96E6C39A06C68A18E /* AIAssistantModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAssistantModel.swift; sourceTree = "<group>"; };
-		DAE21EC1A64CEAB1F418E929 /* AIMobileHostToolProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../MaiChatTools/AIMobileHostToolProvider.swift"; sourceTree = "<group>"; };
+		DAE21EC1A64CEAB1F418E929 /* AIMobileHostToolProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIMobileHostToolProvider.swift; sourceTree = "<group>"; };
 		551A36DB80C7A7F2663F229D /* RemoteDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDiagnostics.swift; sourceTree = "<group>"; };
 		59C1F4DABEBD721F3CB32385 /* LocalChatHistoryStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalChatHistoryStoreTests.swift; sourceTree = "<group>"; };
 		5C9893DE3EC5736AB5DC2BBD /* AIAssistantView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAssistantView.swift; sourceTree = "<group>"; };
@@ -194,7 +194,7 @@
 			isa = PBXGroup;
 			children = (
 				526904A96E6C39A06C68A18E /* AIAssistantModel.swift */,
-				DAE21EC1A64CEAB1F418E929 /* AIMobileHostToolProvider.swift */,
+				63816AD21B434C5107F93E78 /* MaiChatTools */,
 				5C9893DE3EC5736AB5DC2BBD /* AIAssistantView.swift */,
 				4DF2A8369BE5503C5666FE18 /* AppDiagnosticLog.swift */,
 				A6457534DA0479F3AD712C60 /* Assets.xcassets */,
@@ -240,6 +240,14 @@
 			);
 			name = fixtures;
 			path = ../../../tests/fixtures;
+			sourceTree = "<group>";
+		};
+		63816AD21B434C5107F93E78 /* MaiChatTools */ = {
+			isa = PBXGroup;
+			children = (
+				DAE21EC1A64CEAB1F418E929 /* AIMobileHostToolProvider.swift */,
+			);
+			path = MaiChatTools;
 			sourceTree = "<group>";
 		};
 		77FEC2B53DE369B0BBAE5A10 /* Products */ = {

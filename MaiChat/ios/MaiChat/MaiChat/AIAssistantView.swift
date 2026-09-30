@@ -621,13 +621,7 @@ private struct AIMessageRow: View {
         return nil
     }
     private func validatedPDFURL(path: String) -> URL? {
-        guard !workspacePath.isEmpty else { return nil }
-        let root = URL(fileURLWithPath: workspacePath, isDirectory: true)
-            .standardizedFileURL.resolvingSymlinksInPath()
-        let candidate = ((path as NSString).isAbsolutePath
-            ? URL(fileURLWithPath: path) : root.appendingPathComponent(path))
-            .standardizedFileURL.resolvingSymlinksInPath()
-        guard candidate.path.hasPrefix(root.path + "/"),
+        guard let candidate = AIAssistantPathPolicy.resolve(path, workspacePath: workspacePath),
               candidate.pathExtension.lowercased() == "pdf",
               let attributes = try? FileManager.default.attributesOfItem(atPath: candidate.path),
               let size = attributes[.size] as? NSNumber, size.int64Value >= 8,
@@ -1512,14 +1506,18 @@ private struct AITranscriptionButton: View {
 private struct AIPermissionCard: View {
     let permission: AIPermission
     @ObservedObject var model: AIAssistantModel
+    private var approveTitle: String {
+        guard permission.rememberOnApproval == true else { return "允许一次" }
+        return (permission.fileCount ?? 0) > 1 ? "允许并记住这些文件" : "允许并记住此文件"
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Label("允许执行 \(permission.tool)？", systemImage: "hand.raised").font(.subheadline.bold())
             Text(permission.input).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
             HStack {
                 action("拒绝", "denied")
-                action("允许一次", "approved")
-                if permission.allowForSession != false {
+                action(approveTitle, "approved")
+                if permission.allowForSession != false && permission.rememberOnApproval != true {
                     action("本会话允许", "approved_for_session")
                 }
             }

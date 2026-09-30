@@ -9,6 +9,45 @@ import UIKit
 import UniformTypeIdentifiers
 import Vision
 
+enum AIAssistantPathPolicy {
+    static func appRoot(workspacePath: String) -> String {
+        #if targetEnvironment(simulator)
+        if ProcessInfo.processInfo.arguments.contains("--ai-ui-test") {
+            return URL(fileURLWithPath: workspacePath, isDirectory: true)
+                .deletingLastPathComponent().deletingLastPathComponent().path
+        }
+        #endif
+        return NSHomeDirectory()
+    }
+
+    static func resolve(_ path: String, workspacePath: String,
+                        appRootPath: String? = nil) -> URL? {
+        guard !path.isEmpty, !workspacePath.isEmpty else { return nil }
+        let workspace = URL(fileURLWithPath: workspacePath, isDirectory: true)
+            .standardizedFileURL.resolvingSymlinksInPath()
+        let root = URL(fileURLWithPath: appRootPath ?? appRoot(workspacePath: workspacePath),
+                       isDirectory: true).standardizedFileURL.resolvingSymlinksInPath()
+        let unresolved = ((path as NSString).isAbsolutePath
+            ? URL(fileURLWithPath: path) : workspace.appendingPathComponent(path))
+            .standardizedFileURL
+        var existing = unresolved
+        var suffix: [String] = []
+        while !FileManager.default.fileExists(atPath: existing.path) {
+            let parent = existing.deletingLastPathComponent()
+            guard parent.path != existing.path else { return nil }
+            suffix.insert(existing.lastPathComponent, at: 0)
+            existing = parent
+        }
+        var candidate = existing.resolvingSymlinksInPath().standardizedFileURL
+        for component in suffix { candidate.appendPathComponent(component) }
+        candidate = candidate.standardizedFileURL
+        guard candidate.path == root.path || candidate.path.hasPrefix(root.path + "/") else {
+            return nil
+        }
+        return candidate
+    }
+}
+
 struct AIModelSettings: Codable, Sendable, Equatable {
     var baseUrl = "https://open.bigmodel.cn/api/coding/paas/v4"
     var model = "glm-5.3"
@@ -46,6 +85,8 @@ struct AIPermission: Codable, Identifiable, Sendable, Equatable {
     let tool: String
     let input: String
     var allowForSession: Bool?
+    var rememberOnApproval: Bool?
+    var fileCount: Int?
 }
 struct AIQuestion: Codable, Identifiable, Sendable, Equatable {
     let id: String
@@ -152,14 +193,11 @@ final class AIMobileHostToolProvider {
               let outputPath = arguments["output_path"] as? String, !outputPath.isEmpty else {
             return .failure(code: "invalid_input", message: "HTML and PDF output path are required")
         }
-        let workspace = URL(fileURLWithPath: AIAssistantModel.shared.workspacePath,
-                            isDirectory: true).standardizedFileURL.resolvingSymlinksInPath()
-        let destination = URL(fileURLWithPath: outputPath).standardizedFileURL.resolvingSymlinksInPath()
-        guard !AIAssistantModel.shared.workspacePath.isEmpty,
-              destination.path.hasPrefix(workspace.path + "/"),
+        guard let destination = AIAssistantPathPolicy.resolve(
+                  outputPath, workspacePath: AIAssistantModel.shared.workspacePath),
               destination.path.lowercased().hasSuffix(".pdf"),
               !FileManager.default.fileExists(atPath: destination.path) else {
-            return .failure(code: "invalid_input", message: "PDF output must be a new file in the Agent workspace")
+            return .failure(code: "invalid_input", message: "PDF output must be a new file in the App container")
         }
         let formatter = UIMarkupTextPrintFormatter(markupText: html)
         let renderer = AIPDFPageRenderer()
@@ -383,15 +421,8 @@ final class AIMobileHostToolProvider {
         -> (url: URL, metadata: [String: Any]) {
         let path = Self.string(arguments, key: "path")
         let workspacePath = AIAssistantModel.shared.workspacePath
-        guard !path.isEmpty, !workspacePath.isEmpty else {
-            throw AIBackendError(message: "需要 Agent 工作区内的图片路径")
-        }
-        let workspace = URL(fileURLWithPath: workspacePath, isDirectory: true)
-            .resolvingSymlinksInPath().standardizedFileURL
-        let url = workspace.appendingPathComponent(path)
-            .resolvingSymlinksInPath().standardizedFileURL
-        guard url.path.hasPrefix(workspace.path + "/") else {
-            throw AIBackendError(message: "图片必须位于 Agent 工作区内")
+        guard let url = AIAssistantPathPolicy.resolve(path, workspacePath: workspacePath) else {
+            throw AIBackendError(message: "图片必须位于当前 App 目录内")
         }
         let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
         guard values.isRegularFile == true, let bytes = values.fileSize,
@@ -748,16 +779,9 @@ final class AIMobileHostToolProvider {
             return .failure(code: "canceled", message: "photo library access was not granted")
         }
         let path = Self.string(arguments, key: "path")
-        let workspacePath = AIAssistantModel.shared.workspacePath
-        guard !path.isEmpty, !workspacePath.isEmpty else {
-            return .failure(code: "invalid_input", message: "an Agent working-directory image path is required")
-        }
-        let workspace = URL(fileURLWithPath: workspacePath, isDirectory: true)
-            .resolvingSymlinksInPath().standardizedFileURL
-        let source = workspace.appendingPathComponent(path)
-            .resolvingSymlinksInPath().standardizedFileURL
-        guard source.path.hasPrefix(workspace.path + "/") else {
-            return .failure(code: "invalid_input", message: "image must be inside the Agent working directory")
+        guard let source = AIAssistantPathPolicy.resolve(
+                  path, workspacePath: AIAssistantModel.shared.workspacePath) else {
+            return .failure(code: "invalid_input", message: "image must be inside the App container")
         }
         do {
             let values = try source.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
@@ -786,13 +810,11 @@ final class AIMobileHostToolProvider {
               let operation = String(data: operationData, encoding: .utf8) else {
             return .failure(code: "invalid_input", message: "image path and an image operation are required")
         }
+        guard let source = AIAssistantPathPolicy.resolve(path, workspacePath: workspacePath) else {
+            return .failure(code: "invalid_input", message: "image must be inside the App container")
+        }
         let workspace = URL(fileURLWithPath: workspacePath, isDirectory: true)
             .resolvingSymlinksInPath().standardizedFileURL
-        let source = workspace.appendingPathComponent(path)
-            .resolvingSymlinksInPath().standardizedFileURL
-        guard source.path.hasPrefix(workspace.path + "/") else {
-            return .failure(code: "invalid_input", message: "image must be inside the Agent working directory")
-        }
         do {
             let values = try source.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
             guard values.isRegularFile == true, let size = values.fileSize,
@@ -1136,9 +1158,10 @@ actor AIAssistantBackend {
         guard let root else { throw AIBackendError(message: "AI 助手尚未准备好") }
         let workspace = root.appendingPathComponent("Workspace", isDirectory: true)
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        let appRootPath = AIAssistantPathPolicy.appRoot(workspacePath: workspace.path)
         _ = try call("configure", values: ["database": root.appendingPathComponent("sessions.sqlite").path,
             "workspace": workspace.path, "baseUrl": config.baseUrl, "apiKey": key,
-            "model": config.model, "policy": config.policy])
+            "model": config.model, "policy": config.policy, "appRoot": appRootPath])
     }
 
     func save(_ config: AIModelSettings, newKey: String) throws {

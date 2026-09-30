@@ -589,8 +589,13 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 LinearLayout choices = row();
                 java.util.List<String[]> availableChoices = new java.util.ArrayList<>();
                 availableChoices.add(new String[] {"拒绝", "denied"});
-                availableChoices.add(new String[] {"允许一次", "approved"});
-                if (permission.optBoolean("allowForSession", true))
+                availableChoices.add(new String[] {
+                    permission.optBoolean("rememberOnApproval")
+                        ? (permission.optInt("fileCount", 0) > 1
+                            ? "允许并记住这些文件" : "允许并记住此文件")
+                        : "允许一次", "approved"});
+                if (permission.optBoolean("allowForSession", true)
+                    && !permission.optBoolean("rememberOnApproval"))
                     availableChoices.add(new String[] {"本会话允许", "approved_for_session"});
                 for (String[] choice : availableChoices)
                     choices.addView(
@@ -693,7 +698,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             new String[] {"请求批准", "帮我批准", "完全访问"}));
         policy.setSelection(state.policy.equals("never") ? 2 : state.policy.equals("unless-trusted") ? 1 : 0);
         form.addView(policy, matchWrap());
-        form.addView(text("密钥使用系统 Keystore 加密保存。完全访问允许自动修改手机工作区文件和访问网络。",
+        form.addView(text("密钥使用系统 Keystore 加密保存。三种模式均可访问 App 目录；帮我批准会在首次修改每个文件时询问，完全访问不逐次询问。",
                          12, MaiChatTheme.SECONDARY),
             matchWrap());
         form.addView(text("本地图片处理使用 FFmpeg（LGPLv2.1+）；完整源码随项目放在 MaiAgent/third_party/ffmpeg。",

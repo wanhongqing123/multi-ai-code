@@ -264,6 +264,7 @@ final class AIAssistantController {
                 .put("policy", approval)
                 .put("database", new File(root, "sessions.sqlite").getPath())
                 .put("workspace", workspace.getPath())
+                .put("appRoot", context.getFilesDir().getParentFile().getCanonicalPath())
                 .put("caBundle", new File(root, "trusted-roots.pem").getPath()));
     }
     private void refresh(boolean force) {
@@ -534,17 +535,19 @@ final class AIAssistantController {
     }
     File workspaceFile(String relativePath) {
         if (root == null || relativePath == null || relativePath.trim().isEmpty()) return null;
-        java.nio.file.Path workspace = new File(root, "Workspace").toPath().toAbsolutePath().normalize();
-        java.nio.file.Path candidate = workspace.resolve(relativePath).normalize();
-        return candidate.startsWith(workspace) ? candidate.toFile() : null;
+        try { return resolveAppFile(relativePath); }
+        catch (IOException | IllegalArgumentException error) { return null; }
+    }
+    private File resolveAppFile(String path) throws IOException {
+        if (root == null)
+            throw new IllegalArgumentException("需要 App 目录中的文件路径");
+        return AIAssistantPathPolicy.resolve(new File(root, "Workspace"),
+            context.getFilesDir().getParentFile(), path);
     }
     File workspaceImageForHost(String relativePath) throws Exception {
-        if (root == null || relativePath == null || relativePath.trim().isEmpty())
-            throw new IllegalArgumentException("需要 AI 工作区内的图片路径");
-        File workspace = new File(root, "Workspace").getCanonicalFile();
-        File candidate = new File(workspace, relativePath).getCanonicalFile();
-        if (!candidate.toPath().startsWith(workspace.toPath()) || !candidate.isFile())
-            throw new IllegalArgumentException("图片必须位于 AI 工作区内");
+        File candidate = resolveAppFile(relativePath);
+        if (!candidate.isFile())
+            throw new IllegalArgumentException("图片必须位于当前 App 目录内");
         return candidate;
     }
     ImportedFile transformImageForHost(JSONObject arguments) throws Exception {
@@ -610,17 +613,13 @@ final class AIAssistantController {
         }
     }
     File workspaceDirectoryForPreview() {
-        return root == null ? null : new File(root, "Workspace");
+        return root == null ? null : context.getFilesDir().getParentFile();
     }
     File workspacePdfOutputForHost(String absolutePath) throws Exception {
-        if (root == null || absolutePath == null || absolutePath.trim().isEmpty())
-            throw new IllegalArgumentException("需要 AI 工作区内的 PDF 输出路径");
-        File workspace = new File(root, "Workspace").getCanonicalFile();
-        File candidate = new File(absolutePath).getCanonicalFile();
-        if (!candidate.toPath().startsWith(workspace.toPath())
-            || !candidate.getName().toLowerCase(java.util.Locale.ROOT).endsWith(".pdf")
+        File candidate = resolveAppFile(absolutePath);
+        if (!candidate.getName().toLowerCase(java.util.Locale.ROOT).endsWith(".pdf")
             || candidate.exists())
-            throw new IllegalArgumentException("PDF 必须是 AI 工作区内的新文件");
+            throw new IllegalArgumentException("PDF 必须是当前 App 目录内的新文件");
         return candidate;
     }
     private ImportedFile importStream(InputStream input, String sourceMime, String sourceName)

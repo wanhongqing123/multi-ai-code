@@ -371,6 +371,7 @@ struct MaiMobileAgent {
         registerMobilePhotoTools(*tools, hostTools);
         MaiAgent::Options options;
         options.defaultModel = request.at("model").get<std::string>();
+        options.fileAccessRoot = request.value("appRoot", request.at("workspace").get<std::string>());
         options.baseInstructions = kMarkdownBaseInstructions;
         const auto policy = request.value("policy", "on-request");
         if (policy == "never")
@@ -479,7 +480,9 @@ struct MaiMobileAgent {
                 permissions.push_back({{"id", p.id},
                                        {"tool", p.toolName},
                                        {"input", p.arguments},
-                                       {"allowForSession", p.allowForSession}});
+                                       {"allowForSession", p.allowForSession},
+                                       {"rememberOnApproval", p.rememberOnApproval},
+                                       {"fileCount", p.approvalKeys.size()}});
         for (const auto& q : agent->listPendingQuestions())
             if (q.sessionId == selected)
                 questions.push_back(

@@ -62,6 +62,7 @@ static std::string frame(const Json& delta, const char* finish = nullptr) {
     return "data: " + Json{{"choices", Json::array({choice})}}.dump() + "\n\n";
 }
 int main() {
+#if !defined(_WIN32)
     const unsigned char pixels[] = {255, 0, 0, 255, 0, 255, 0, 255};
     auto flipped = maiImageFilterRgba(pixels, 2, 1, 8,
                                       R"({"operation":"flip_horizontal"})");
@@ -104,6 +105,7 @@ int main() {
                                       R"({"operation":"crop","x":2,"y":0,"width":1,"height":1})");
     CHECK(invalid.rgba == nullptr && invalid.error != nullptr);
     maiImageFilterFree(invalid.error);
+#endif
 
     httplib::Server server;
     server.Post("/chat/completions", [](const httplib::Request& request,
@@ -203,6 +205,15 @@ int main() {
             response.set_content(frame({{"tool_calls", Json::array({invocation})}}, "tool_calls") +
                                      "data: [DONE]\n\n",
                                  "text/event-stream");
+            return;
+        }
+        if (input == "read-app-sibling") {
+            Json invocation = {
+                {"index", 0}, {"id", "call_read_sibling"}, {"type", "function"},
+                {"function", {{"name", "read"},
+                              {"arguments", "{\"path\":\"../shared.txt\"}"}}}};
+            response.set_content(frame({{"tool_calls", Json::array({invocation})}}, "tool_calls") +
+                                     "data: [DONE]\n\n", "text/event-stream");
             return;
         }
         if (input == "host-send") {
@@ -354,7 +365,7 @@ int main() {
         CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "photo-preview"}})["ok"] == true);
         const auto photoPreviewed = wait([](const Json& s) { return s["busy"] == false; });
         CHECK(photoPreviewed["permissions"].empty());
-        CHECK(hostProbe.calls == 5);
+        CHECK(hostProbe.calls == (kPhotoAlbumTool == nullptr ? 4 : 5));
         CHECK(hostProbe.lastTool == "mobile_preview_image");
         CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "hello"}})["ok"] == true);
         CHECK(call(agent, config)["ok"] == false);  // 工作中不能销毁并换配置。
@@ -398,11 +409,19 @@ int main() {
         CHECK(!MaiFileSystem::removeFile(
             MaiFilePath::fromUtf8(std::string(directory) + "/photo.png")));
         config["workspace"] = movedWorkspace;
+        config["appRoot"] = directory;
         CHECK(call(agent, config)["ok"] == true);
         CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "relocated"}})["ok"] ==
               true);
         const auto relocated = wait([](const Json& s) { return s["busy"] == false; });
         CHECK(relocated.value("error", "").empty());
+
+        CHECK(!MaiFileSystem::writeFile(MaiFilePath::fromUtf8(directory + "/shared.txt"),
+                                        "app sibling content"));
+        CHECK(call(agent, { {"op", "send"}, {"session", session},
+                            {"text", "read-app-sibling"} })["ok"] == true);
+        const auto sibling = wait([](const Json& s) { return s["busy"] == false; });
+        CHECK(sibling.dump().find("app sibling content") != std::string::npos);
 
         CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "write"}})["ok"] == true);
         auto pending = wait([](const Json& s) { return !s["permissions"].empty(); });

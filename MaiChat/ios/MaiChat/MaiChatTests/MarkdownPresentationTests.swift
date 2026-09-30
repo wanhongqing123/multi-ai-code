@@ -1102,3 +1102,32 @@ final class ComposerDraftStateTests: XCTestCase {
         XCTAssertEqual(draft.text, "unsent for B")
     }
 }
+
+final class AIAssistantPathPolicyTests: XCTestCase {
+    func testAppContainerSiblingIsAllowedAndOtherContainerIsDenied() throws {
+        let temporary = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ai-path-test-\(UUID().uuidString)", isDirectory: true)
+        let app = temporary.appendingPathComponent("app", isDirectory: true)
+        let workspace = app.appendingPathComponent("Workspace", isDirectory: true)
+        let media = app.appendingPathComponent("media", isDirectory: true)
+        let outside = temporary.appendingPathComponent("other-app", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: media, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(
+            at: workspace.appendingPathComponent("escape"), withDestinationURL: outside)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+
+        let target = media.appendingPathComponent("note.txt")
+        let resolved = AIAssistantPathPolicy.resolve("../media/note.txt",
+            workspacePath: workspace.path, appRootPath: app.path)
+        XCTAssertEqual(resolved?.path, target.path)
+        try Data("hello".utf8).write(to: XCTUnwrap(resolved))
+        XCTAssertEqual(AIAssistantPathPolicy.resolve(target.path,
+            workspacePath: workspace.path, appRootPath: app.path)?.path, target.path)
+        XCTAssertNil(AIAssistantPathPolicy.resolve("../../other-app/private.txt",
+            workspacePath: workspace.path, appRootPath: app.path))
+        XCTAssertNil(AIAssistantPathPolicy.resolve("escape/private.txt",
+            workspacePath: workspace.path, appRootPath: app.path))
+    }
+}

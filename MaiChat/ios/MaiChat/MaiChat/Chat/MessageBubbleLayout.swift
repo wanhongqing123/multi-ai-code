@@ -208,6 +208,7 @@ struct MessageScrollPositionReader: UIViewRepresentable {
         private var observations: [NSKeyValueObservation] = []
         private var lastNearBottom: Bool?
         private var previousViewportSize: CGSize?
+        private var previousContentSize: CGSize?
         private var correctingViewport = false
         private var followsLatest = false
         private var notifiedUserScroll = false
@@ -244,6 +245,7 @@ struct MessageScrollPositionReader: UIViewRepresentable {
             scroll = nil
             lastNearBottom = nil
             previousViewportSize = nil
+            previousContentSize = nil
             correctingViewport = false
             followsLatest = false
             notifiedUserScroll = false
@@ -283,11 +285,16 @@ struct MessageScrollPositionReader: UIViewRepresentable {
             let viewportSize = CGSize(width: scroll.bounds.width.rounded(), height: scroll.bounds.height.rounded())
             let viewportChanged = previousViewportSize.map { $0 != viewportSize } ?? false
             previousViewportSize = viewportSize
-            if viewportChanged, followsLatest, allowsBottomFollowing,
+            let contentSize = CGSize(width: scroll.contentSize.width.rounded(),
+                                     height: scroll.contentSize.height.rounded())
+            let contentChanged = previousContentSize.map { $0 != contentSize } ?? false
+            previousContentSize = contentSize
+            if (viewportChanged || contentChanged), followsLatest, allowsBottomFollowing,
                !scroll.isTracking, !scroll.isDragging, !scroll.isDecelerating {
                 if onViewportResizeNeedsBottom != nil {
                     // Never mutate UIScrollView's offset synchronously inside SwiftUI's
                     // bounds/content-size KVO. Let its stable ID resolve the lazy layout.
+                    // Late Markdown height changes must also keep the newest row visible.
                     restoreGeneration &+= 1
                     scheduleBottomRestore(generation: restoreGeneration, passes: 2)
                 } else {

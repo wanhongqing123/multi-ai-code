@@ -2289,8 +2289,13 @@ private struct MessageListView: View {
                 .padding(.vertical, 18)
                 .background(MessageScrollPositionReader(
                     onViewportResizeNeedsBottom: {
-                        guard !scrollIntent.userBrowsedHistory else { return }
-                        proxy.scrollTo("message-list-bottom", anchor: .bottom)
+                        guard !scrollIntent.userBrowsedHistory,
+                              searchTargetMessageID == nil else { return }
+                        if let latestID = messages.last?.id {
+                            proxy.scrollTo(latestID, anchor: .bottom)
+                        } else {
+                            proxy.scrollTo("message-list-bottom", anchor: .bottom)
+                        }
                     },
                     onUserScroll: { scrollIntent.userDidScroll() }
                 ) { nearBottom in
@@ -2348,10 +2353,10 @@ private struct MessageListView: View {
                 scrollIntent.followLatest()
                 scrollIntent.positionAtBottom(proxy: proxy, id: id, anchor: .bottom)
             }
-            .onChange(of: messages.last?.id) { _ in
-                guard !scrollIntent.userBrowsedHistory else { return }
+            .onChange(of: messages.last?.id) { latestID in
+                guard !scrollIntent.userBrowsedHistory, let latestID else { return }
                 scrollIntent.positionAtBottom(
-                    proxy: proxy, id: "message-list-bottom", anchor: .bottom)
+                    proxy: proxy, id: latestID, anchor: .bottom)
             }
             .onChange(of: activity?.activityID) { _ in
                 guard !scrollIntent.userBrowsedHistory else { return }
@@ -2411,10 +2416,10 @@ private struct MessageListView: View {
     }
 
     private func scrollToLatestMessage(proxy: ScrollViewProxy) {
-        guard appState.chatState.latestMessage(with: peerUserID) != nil else { return }
+        guard let latestID = appState.chatState.latestMessage(with: peerUserID)?.id else { return }
         scrollIntent.followLatest()
         scrollIntent.positionAtBottom(
-            proxy: proxy, id: "message-list-bottom", anchor: .bottom)
+            proxy: proxy, id: latestID, anchor: .bottom)
     }
 
     @MainActor

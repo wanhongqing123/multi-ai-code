@@ -544,6 +544,7 @@ final class MarkdownPresentationTests: XCTestCase {
     private final class HistoryModel: ObservableObject {
         @Published var locallyQueuedMessageID: Int?
         @Published var viewportHeight: CGFloat = 640
+        @Published var expandedRows = false
         @Published var items: [HistoryItem]
         init(_ range: Range<Int>) { items = range.map(HistoryItem.init) }
     }
@@ -618,7 +619,8 @@ final class MarkdownPresentationTests: XCTestCase {
                 ScrollView {
                     VStack(spacing: 14) {
                         MessageHistoryStack(items: messages) { item in
-                            Text(String(repeating: "消息 \(item.id)\n", count: linesPerMessage))
+                            Text(String(repeating: "消息 \(item.id)\n",
+                                        count: model.expandedRows ? 30 : linesPerMessage))
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .background {
                                     GeometryReader { geometry in
@@ -632,20 +634,30 @@ final class MarkdownPresentationTests: XCTestCase {
                         }
                         Color.clear.frame(height: 1).id("bottom")
                     }
+                    .background(MessageScrollPositionReader(onViewportResizeNeedsBottom: {
+                        guard !intent.userBrowsedHistory else { return }
+                        if let latestID = messages.last?.id {
+                            proxy.scrollTo(latestID, anchor: .bottom)
+                        }
+                    }, onUserScroll: { intent.userDidScroll() }) { probe.nearBottom = $0 })
                 }
                 .modifier(MessageInitialScrollAnchor())
                 .coordinateSpace(name: "entry")
                 .onAppear {
                     probe.proxy = proxy
-                    if performsExplicitPositioning && MessageInitialScrollAnchor.requiresDeferredPositioning && !intent.userBrowsedHistory { intent.positionAtBottom(proxy: proxy, id: "bottom") }
+                    if performsExplicitPositioning && MessageInitialScrollAnchor.requiresDeferredPositioning && !intent.userBrowsedHistory,
+                       let latestID = messages.last?.id {
+                        intent.positionAtBottom(proxy: proxy, id: latestID)
+                    }
                 }
                 .onChange(of: displayedSendID) { targetID in
                     guard let targetID else { return }
                     intent.positionAtBottom(proxy: proxy, id: targetID)
                 }
                 .onChange(of: arrival.hasArrived) { arrived in
-                    if performsExplicitPositioning && MessageInitialScrollAnchor.requiresDeferredPositioning && arrived && !intent.userBrowsedHistory {
-                        intent.positionAtBottom(proxy: proxy, id: "bottom")
+                    if performsExplicitPositioning && MessageInitialScrollAnchor.requiresDeferredPositioning && arrived && !intent.userBrowsedHistory,
+                       let latestID = messages.last?.id {
+                        intent.positionAtBottom(proxy: proxy, id: latestID)
                     }
                 }
             }
@@ -763,6 +775,42 @@ final class MarkdownPresentationTests: XCTestCase {
         navigation.update(root: root, detail: detail, selectionID: "a", onPop: {})
         try await Task.sleep(for: .milliseconds(300))
         XCTAssertEqual(try XCTUnwrap(probe.frames[100]).minY, history.minY, accuracy: 2)
+    }
+
+    @MainActor
+    func testReenterLongHistoryShowsLatestRowPromptly() async throws {
+        let navigation = ChatNavigationController()
+        let root = AnyView(Text("Conversations"))
+        navigation.update(root: root, detail: nil, selectionID: nil, onPop: {}, animated: false)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 640))
+        window.rootViewController = navigation
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        let model = HistoryModel(0..<80)
+
+        for attempt in 0..<2 {
+            let probe = HistoryProbe()
+            model.expandedRows = false
+            let detail = AnyView(EntryHistoryHarness(
+                model: model, intent: MessageScrollIntent(), probe: probe,
+                linesPerMessage: 1
+            ))
+            navigation.update(root: root, detail: detail, selectionID: "long-history",
+                              onPop: {}, animated: false)
+            try await Task.sleep(for: .milliseconds(150))
+            model.expandedRows = true
+            try await Task.sleep(for: .milliseconds(750))
+            let latest = try XCTUnwrap(probe.frames[79],
+                                       "The latest row must mount on entry \(attempt + 1)")
+            XCTAssertGreaterThan(latest.maxY, 0)
+            XCTAssertLessThan(latest.minY, navigation.view.bounds.height,
+                              "Long history must not leave a blank viewport")
+            XCTAssertEqual(probe.nearBottom, true,
+                           "Late row growth must keep the visible conversation at its latest message")
+            navigation.update(root: root, detail: nil, selectionID: nil,
+                              onPop: {}, animated: false)
+            try await Task.sleep(for: .milliseconds(100))
+        }
     }
 
     @MainActor

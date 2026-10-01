@@ -67,6 +67,10 @@ tasks.register("stageMaiAgentGraphicsEffects", Sync) {
         include "*.effect"
         into "MaiAgentGraphics"
     }
+    from(file("$projectDir/../../../../MaiChat/Media/data")) {
+        include "*.effect"
+        into "MaiAgentGraphics"
+    }
     into graphicsEffectsOutput
 }
 android.sourceSets.main.assets.srcDir(graphicsEffectsOutput)

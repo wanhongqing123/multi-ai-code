@@ -186,7 +186,10 @@ if(IOS)
   if(CMAKE_OSX_SYSROOT MATCHES "[Ss]imulator")
     string(APPEND mai_ios_swift_target "-simulator")
   endif()
-  set(CMAKE_Swift_FLAGS "${CMAKE_Swift_FLAGS} -target ${mai_ios_swift_target}"
+  string(REGEX REPLACE "(^|[ \t])-target[ \t]+[^ \t]+" ""
+    mai_ios_swift_flags "${CMAKE_Swift_FLAGS}")
+  string(STRIP "${mai_ios_swift_flags}" mai_ios_swift_flags)
+  set(CMAKE_Swift_FLAGS "${mai_ios_swift_flags} -target ${mai_ios_swift_target}"
     CACHE STRING "Swift target for iOS Graphics" FORCE)
   enable_language(Swift)
   file(GLOB metal_sources CONFIGURE_DEPENDS

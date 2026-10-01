@@ -385,7 +385,12 @@ static inline GLint convert_address_mode(enum gs_address_mode mode)
 	case GS_ADDRESS_MIRROR:
 		return GL_MIRRORED_REPEAT;
 	case GS_ADDRESS_BORDER:
+#if defined(__ANDROID__)
+		/* GLES 3.1 has no texture border address mode. */
+		return GL_CLAMP_TO_EDGE;
+#else
 		return GL_CLAMP_TO_BORDER;
+#endif
 	case GS_ADDRESS_MIRRORONCE:
 		return GL_MIRROR_CLAMP_EXT;
 	}

@@ -1,6 +1,7 @@
 #include "MaiGraphicsPresenter.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <condition_variable>
 #include <cstddef>
@@ -29,6 +30,7 @@ extern "C" {
 }
 
 #include "MaiGraphics.h"
+#include "MaiVideoColorParameters.h"
 #include "vec4.h"
 
 namespace {
@@ -93,6 +95,7 @@ private:
 };
 
 struct MaiDecodedImage;
+struct MaiDecodedVideoFrame;
 
 struct MaiGraphicsViewState {
     ~MaiGraphicsViewState() {
@@ -111,6 +114,12 @@ struct MaiGraphicsViewState {
     uint32_t textureWidth = 0;
     uint32_t textureHeight = 0;
     std::shared_ptr<MaiDecodedImage> currentImage;
+    std::shared_ptr<MaiDecodedVideoFrame> currentVideo;
+    std::array<gs_texture_t*, 3> videoTextures{};
+    gs_texrender_t* convertedVideo = nullptr;
+    MaiVideoPixelFormat videoFormat = MAI_VIDEO_PIXEL_RGBA;
+    uint32_t videoWidth = 0;
+    uint32_t videoHeight = 0;
 };
 
 struct MaiDecodedImage {
@@ -118,6 +127,35 @@ struct MaiDecodedImage {
     uint32_t height = 0;
     std::vector<uint8_t> pixels;
 };
+
+struct MaiDecodedVideoFrame {
+    uint32_t width = 0;
+    uint32_t height = 0;
+    MaiVideoPixelFormat format = MAI_VIDEO_PIXEL_RGBA;
+    MaiVideoColorSpace colorSpace = MAI_VIDEO_COLOR_BT709;
+    MaiVideoColorRange colorRange = MAI_VIDEO_RANGE_LIMITED;
+    std::array<std::vector<uint8_t>, 3> planes;
+    std::array<uint32_t, 3> strides{};
+};
+
+uint32_t planeCount(MaiVideoPixelFormat format) {
+    return format == MAI_VIDEO_PIXEL_I420 ? 3 : format == MAI_VIDEO_PIXEL_NV12 ? 2 : 1;
+}
+
+uint32_t planeWidth(uint32_t width, uint32_t index) {
+    return index == 0 ? width : (width + 1) / 2;
+}
+
+uint32_t planeHeight(uint32_t height, uint32_t index) {
+    return index == 0 ? height : (height + 1) / 2;
+}
+
+uint32_t planeBytes(MaiVideoPixelFormat format, uint32_t width, uint32_t index) {
+    if (index == 0 && (format == MAI_VIDEO_PIXEL_RGBA || format == MAI_VIDEO_PIXEL_BGRA))
+        return width * 4;
+    return format == MAI_VIDEO_PIXEL_NV12 && index == 1 ? planeWidth(width, index) * 2
+                                                        : planeWidth(width, index);
+}
 
 AVPixelFormat pixelFormat(gs_color_format format) {
     switch (format) {
@@ -191,7 +229,8 @@ public:
     MaiGraphicsPresenter(std::string backend, std::string effectDirectory,
                          MaiGraphicsPresentCallback callback, void* userData)
         : mBackend(std::move(backend)),
-          mEffectFile(std::move(effectDirectory) + "/default.effect"),
+          mEffectFile(effectDirectory + "/default.effect"),
+          mConversionEffectFile(std::move(effectDirectory) + "/video_conversion.effect"),
           mCallback(callback),
           mUserData(userData),
           mGraphicsRunner("mai-graphics"),
@@ -212,9 +251,13 @@ public:
             gs_enter_context(mGraphics);
             for (auto& view : mGraphicsViews) {
                 if (view->texture) gs_texture_destroy(view->texture);
+                for (gs_texture_t* texture : view->videoTextures)
+                    if (texture) gs_texture_destroy(texture);
+                if (view->convertedVideo) gs_texrender_destroy(view->convertedVideo);
                 if (view->swapchain) gs_swapchain_destroy(view->swapchain);
             }
             mGraphicsViews.clear();
+            if (mConversionEffect) gs_effect_destroy(mConversionEffect);
             if (mEffect) {
                 gs_effect_destroy(mEffect);
                 mEffect = nullptr;
@@ -299,7 +342,10 @@ public:
                 if (!view->active || view->generation != generation) return;
                 view->fillView = fillView;
                 const bool presented = decoded && renderImage(view.get(), *image);
-                if (presented) view->currentImage = image;
+                if (presented) {
+                    view->currentImage = image;
+                    view->currentVideo.reset();
+                }
                 notify(view->id, presented);
             });
         });
@@ -326,7 +372,58 @@ public:
             if (!view->active || view->generation != generation) return;
             view->fillView = fillView;
             const bool presented = renderImage(view.get(), *image);
-            if (presented) view->currentImage = image;
+            if (presented) {
+                view->currentImage = image;
+                view->currentVideo.reset();
+            }
+            notify(view->id, presented);
+        });
+    }
+
+    bool showVideoFrame(uint64_t id, const MaiVideoFrame* source, bool fillView) {
+        if (!source || !source->width || !source->height || source->width > 16384 ||
+            source->height > 16384 ||
+            static_cast<uint64_t>(source->width) * source->height > kMaximumPixels)
+            return false;
+        const MaiVideoPixelFormat format = source->format;
+        if (format != MAI_VIDEO_PIXEL_RGBA && format != MAI_VIDEO_PIXEL_BGRA &&
+            format != MAI_VIDEO_PIXEL_NV12 && format != MAI_VIDEO_PIXEL_I420)
+            return false;
+        std::shared_ptr<MaiGraphicsViewState> view = findView(id);
+        if (!view) return false;
+
+        auto frame = std::make_shared<MaiDecodedVideoFrame>();
+        frame->width = source->width;
+        frame->height = source->height;
+        frame->format = format;
+        frame->colorSpace = source->color_space;
+        frame->colorRange = source->color_range;
+        for (uint32_t index = 0; index < planeCount(format); ++index) {
+            const uint32_t rowBytes = planeBytes(format, source->width, index);
+            const uint32_t rows = planeHeight(source->height, index);
+            const int64_t lineSize = source->linesize[index];
+            if (!source->data[index] || lineSize == 0 ||
+                (lineSize < 0 ? -lineSize : lineSize) < rowBytes)
+                return false;
+            frame->strides[index] = rowBytes;
+            frame->planes[index].resize(static_cast<size_t>(rowBytes) * rows);
+            for (uint32_t row = 0; row < rows; ++row) {
+                const uint8_t* sourceRow =
+                    source->data[index] + static_cast<std::ptrdiff_t>(row) * lineSize;
+                std::memcpy(frame->planes[index].data() + static_cast<size_t>(row) * rowBytes,
+                            sourceRow, rowBytes);
+            }
+        }
+
+        const uint64_t generation = ++view->generation;
+        return mGraphicsRunner.post([this, view, frame, generation, fillView] {
+            if (!view->active || view->generation != generation) return;
+            view->fillView = fillView;
+            const bool presented = renderVideo(view.get(), *frame);
+            if (presented) {
+                view->currentVideo = frame;
+                view->currentImage.reset();
+            }
             notify(view->id, presented);
         });
     }
@@ -343,7 +440,10 @@ public:
             gs_resize(width, height);
             gs_load_swapchain(nullptr);
             gs_leave_context();
-            if (view->currentImage) renderImage(view.get(), *view->currentImage);
+            if (view->currentVideo)
+                renderVideo(view.get(), *view->currentVideo);
+            else if (view->currentImage)
+                renderImage(view.get(), *view->currentImage);
         });
     }
 
@@ -362,6 +462,14 @@ public:
             if (view->texture) {
                 gs_texture_destroy(view->texture);
                 view->texture = nullptr;
+            }
+            for (gs_texture_t*& texture : view->videoTextures) {
+                if (texture) gs_texture_destroy(texture);
+                texture = nullptr;
+            }
+            if (view->convertedVideo) {
+                gs_texrender_destroy(view->convertedVideo);
+                view->convertedVideo = nullptr;
             }
             if (view->swapchain) {
                 gs_load_swapchain(nullptr);
@@ -385,9 +493,7 @@ private:
         if (mCallback) mCallback(id, success, mUserData);
     }
 
-    bool renderImage(MaiGraphicsViewState* view, const MaiDecodedImage& image) {
-        if (!view->swapchain || !image.width || !image.height) return false;
-        gs_enter_context(mGraphics);
+    bool ensureDrawEffect() {
         if (!mEffectAttempted) {
             mEffectAttempted = true;
             char* errors = nullptr;
@@ -398,74 +504,212 @@ private:
                 mDrawTechnique = gs_effect_get_technique(mEffect, "Draw");
             }
         }
-        gs_eparam_t* parameter = mImageParameter;
-        gs_technique_t* technique = mDrawTechnique;
-        if (parameter && technique &&
-            (!view->texture || view->textureWidth != image.width ||
-             view->textureHeight != image.height)) {
+        return mImageParameter && mDrawTechnique;
+    }
+
+    bool ensureConversionEffect() {
+        if (!mConversionEffectAttempted) {
+            mConversionEffectAttempted = true;
+            char* errors = nullptr;
+            mConversionEffect = gs_effect_create_from_file(mConversionEffectFile.c_str(), &errors);
+            if (errors) bfree(errors);
+        }
+        return mConversionEffect != nullptr;
+    }
+
+    bool drawTexture(MaiGraphicsViewState* view, gs_texture_t* texture, uint32_t sourceWidth,
+                     uint32_t sourceHeight) {
+        if (!view->swapchain || !texture || !ensureDrawEffect()) return false;
+        const uint32_t width = view->width;
+        const uint32_t height = view->height;
+        gs_load_swapchain(view->swapchain);
+        gs_begin_scene();
+        gs_set_viewport(0, 0, static_cast<int>(width), static_cast<int>(height));
+        gs_ortho(0.0f, static_cast<float>(width), 0.0f, static_cast<float>(height), -100.0f,
+                 100.0f);
+        struct vec4 black;
+        vec4_set(&black, 0.0f, 0.0f, 0.0f, 1.0f);
+        gs_clear(GS_CLEAR_COLOR, &black, 1.0f, 0);
+        gs_set_cull_mode(GS_NEITHER);
+        gs_enable_blending(false);
+        gs_effect_set_texture_srgb(mImageParameter, texture);
+        const float widthScale = static_cast<float>(width) / sourceWidth;
+        const float heightScale = static_cast<float>(height) / sourceHeight;
+        const float scale =
+            view->fillView ? std::max(widthScale, heightScale) : std::min(widthScale, heightScale);
+        const float drawWidth = scale * sourceWidth;
+        const float drawHeight = scale * sourceHeight;
+        gs_matrix_push();
+        gs_matrix_translate3f((width - drawWidth) / 2.0f, (height - drawHeight) / 2.0f, 0.0f);
+        const size_t passes = gs_technique_begin(mDrawTechnique);
+        bool presented = passes > 0;
+        for (size_t pass = 0; pass < passes; ++pass) {
+            if (!gs_technique_begin_pass(mDrawTechnique, pass)) {
+                presented = false;
+                break;
+            }
+            gs_draw_sprite(texture, 0, std::max<uint32_t>(1, drawWidth),
+                           std::max<uint32_t>(1, drawHeight));
+            gs_technique_end_pass(mDrawTechnique);
+        }
+        gs_technique_end(mDrawTechnique);
+        gs_matrix_pop();
+        gs_end_scene();
+        if (presented && gs_is_present_ready())
+            gs_present();
+        else
+            presented = false;
+        gs_load_swapchain(nullptr);
+        return presented;
+    }
+
+    bool renderImage(MaiGraphicsViewState* view, const MaiDecodedImage& image) {
+        if (!view->swapchain || !image.width || !image.height) return false;
+        gs_enter_context(mGraphics);
+        if (!view->texture || view->textureWidth != image.width ||
+            view->textureHeight != image.height) {
             if (view->texture) gs_texture_destroy(view->texture);
-            const uint8_t* planes[] = {image.pixels.data()};
             view->texture =
-                gs_texture_create(image.width, image.height, GS_RGBA, 1, planes, GS_DYNAMIC);
+                gs_texture_create(image.width, image.height, GS_RGBA, 1, nullptr, GS_DYNAMIC);
             view->textureWidth = image.width;
             view->textureHeight = image.height;
-        } else if (parameter && technique && view->texture) {
+        }
+        if (view->texture)
             gs_texture_set_image(view->texture, image.pixels.data(), image.width * 4, false);
+        const bool presented = drawTexture(view, view->texture, image.width, image.height);
+        gs_leave_context();
+        return presented;
+    }
+
+    void destroyVideoTextures(MaiGraphicsViewState* view) {
+        for (gs_texture_t*& texture : view->videoTextures) {
+            if (texture) gs_texture_destroy(texture);
+            texture = nullptr;
         }
-        gs_texture_t* texture = parameter && technique ? view->texture : nullptr;
-        bool presented = false;
-        if (texture) {
-            const uint32_t width = view->width;
-            const uint32_t height = view->height;
-            gs_load_swapchain(view->swapchain);
-            gs_begin_scene();
-            gs_set_viewport(0, 0, static_cast<int>(width), static_cast<int>(height));
-            gs_ortho(0.0f, static_cast<float>(width), 0.0f, static_cast<float>(height), -100.0f,
-                     100.0f);
-            struct vec4 black;
-            vec4_set(&black, 0.0f, 0.0f, 0.0f, 1.0f);
-            gs_clear(GS_CLEAR_COLOR, &black, 1.0f, 0);
-            gs_set_cull_mode(GS_NEITHER);
-            gs_enable_blending(false);
-            gs_effect_set_texture_srgb(parameter, texture);
-            const float widthScale = static_cast<float>(width) / image.width;
-            const float heightScale = static_cast<float>(height) / image.height;
-            const float scale = view->fillView ? std::max(widthScale, heightScale)
-                                               : std::min(widthScale, heightScale);
-            const float drawWidth = scale * image.width;
-            const float drawHeight = scale * image.height;
-            gs_matrix_push();
-            gs_matrix_translate3f((width - drawWidth) / 2.0f, (height - drawHeight) / 2.0f, 0.0f);
-            const size_t passes = gs_technique_begin(technique);
-            presented = passes > 0;
-            for (size_t pass = 0; pass < passes; ++pass) {
-                if (!gs_technique_begin_pass(technique, pass)) {
-                    presented = false;
-                    break;
+        view->videoWidth = view->videoHeight = 0;
+    }
+
+    bool uploadVideoPlanes(MaiGraphicsViewState* view, const MaiDecodedVideoFrame& frame) {
+        if (view->videoWidth != frame.width || view->videoHeight != frame.height ||
+            view->videoFormat != frame.format || !view->videoTextures[0]) {
+            destroyVideoTextures(view);
+            for (uint32_t index = 0; index < planeCount(frame.format); ++index) {
+                const gs_color_format textureFormat =
+                    frame.format == MAI_VIDEO_PIXEL_RGBA                 ? GS_RGBA
+                    : frame.format == MAI_VIDEO_PIXEL_BGRA               ? GS_BGRA
+                    : frame.format == MAI_VIDEO_PIXEL_NV12 && index == 1 ? GS_R8G8
+                                                                         : GS_R8;
+                view->videoTextures[index] = gs_texture_create(
+                    planeWidth(frame.width, index), planeHeight(frame.height, index), textureFormat,
+                    1, nullptr, GS_DYNAMIC);
+                if (!view->videoTextures[index]) {
+                    destroyVideoTextures(view);
+                    return false;
                 }
-                gs_draw_sprite(texture, 0, std::max<uint32_t>(1, drawWidth),
-                               std::max<uint32_t>(1, drawHeight));
-                gs_technique_end_pass(technique);
             }
-            gs_technique_end(technique);
-            gs_matrix_pop();
-            gs_end_scene();
-            if (presented && gs_is_present_ready())
-                gs_present();
-            else
-                presented = false;
-            gs_load_swapchain(nullptr);
+            view->videoWidth = frame.width;
+            view->videoHeight = frame.height;
+            view->videoFormat = frame.format;
         }
+        for (uint32_t index = 0; index < planeCount(frame.format); ++index)
+            gs_texture_set_image(view->videoTextures[index], frame.planes[index].data(),
+                                 frame.strides[index], false);
+        return true;
+    }
+
+    gs_texture_t* convertVideo(MaiGraphicsViewState* view, const MaiDecodedVideoFrame& frame) {
+        if (frame.format == MAI_VIDEO_PIXEL_RGBA || frame.format == MAI_VIDEO_PIXEL_BGRA)
+            return view->videoTextures[0];
+        if (!ensureConversionEffect()) return nullptr;
+        const char* techniqueName =
+            frame.format == MAI_VIDEO_PIXEL_NV12 ? "NV12_Reverse" : "I420_Reverse";
+        gs_technique_t* technique = gs_effect_get_technique(mConversionEffect, techniqueName);
+        gs_eparam_t* image = gs_effect_get_param_by_name(mConversionEffect, "image");
+        gs_eparam_t* image1 = gs_effect_get_param_by_name(mConversionEffect, "image1");
+        gs_eparam_t* image2 = gs_effect_get_param_by_name(mConversionEffect, "image2");
+        if (!technique || !image || !image1 || (frame.format == MAI_VIDEO_PIXEL_I420 && !image2))
+            return nullptr;
+        if (!view->convertedVideo)
+            view->convertedVideo = gs_texrender_create(
+#if defined(__ANDROID__)
+                GS_RGBA_UNORM,
+#else
+                GS_RGBA,
+#endif
+                GS_ZS_NONE);
+        if (!view->convertedVideo) return nullptr;
+        gs_texrender_reset(view->convertedVideo);
+        if (!gs_texrender_begin(view->convertedVideo, frame.width, frame.height)) return nullptr;
+
+        const MaiVideoColorParameters color =
+            maiVideoColorParameters(frame.colorSpace, frame.colorRange);
+        const char* colorNames[] = {"color_vec0", "color_vec1", "color_vec2"};
+        for (int row = 0; row < 3; ++row) {
+            struct vec4 value;
+            vec4_set(&value, color.vectors[row][0], color.vectors[row][1], color.vectors[row][2],
+                     color.vectors[row][3]);
+            gs_effect_set_vec4(gs_effect_get_param_by_name(mConversionEffect, colorNames[row]),
+                               &value);
+        }
+        gs_effect_set_val(gs_effect_get_param_by_name(mConversionEffect, "color_range_min"),
+                          color.rangeMin, sizeof(color.rangeMin));
+        gs_effect_set_val(gs_effect_get_param_by_name(mConversionEffect, "color_range_max"),
+                          color.rangeMax, sizeof(color.rangeMax));
+        gs_effect_set_float(gs_effect_get_param_by_name(mConversionEffect, "width"),
+                            static_cast<float>(frame.width));
+        gs_effect_set_float(gs_effect_get_param_by_name(mConversionEffect, "height"),
+                            static_cast<float>(frame.height));
+        gs_effect_set_float(gs_effect_get_param_by_name(mConversionEffect, "width_d2"),
+                            frame.width * 0.5f);
+        gs_effect_set_float(gs_effect_get_param_by_name(mConversionEffect, "height_d2"),
+                            frame.height * 0.5f);
+        gs_effect_set_float(gs_effect_get_param_by_name(mConversionEffect, "width_x2_i"),
+                            0.5f / frame.width);
+        gs_effect_set_float(gs_effect_get_param_by_name(mConversionEffect, "height_x2_i"),
+                            0.5f / frame.height);
+        gs_effect_set_texture(image, view->videoTextures[0]);
+        gs_effect_set_texture(image1, view->videoTextures[1]);
+        if (frame.format == MAI_VIDEO_PIXEL_I420)
+            gs_effect_set_texture(image2, view->videoTextures[2]);
+        const bool previousSrgb = gs_framebuffer_srgb_enabled();
+        gs_enable_framebuffer_srgb(false);
+        gs_enable_blending(false);
+        const size_t passes = gs_technique_begin(technique);
+        bool converted = passes > 0;
+        for (size_t pass = 0; pass < passes; ++pass) {
+            if (!gs_technique_begin_pass(technique, pass)) {
+                converted = false;
+                break;
+            }
+            gs_draw(GS_TRIS, 0, 3);
+            gs_technique_end_pass(technique);
+        }
+        gs_technique_end(technique);
+        gs_enable_blending(true);
+        gs_enable_framebuffer_srgb(previousSrgb);
+        gs_texrender_end(view->convertedVideo);
+        return converted ? gs_texrender_get_texture(view->convertedVideo) : nullptr;
+    }
+
+    bool renderVideo(MaiGraphicsViewState* view, const MaiDecodedVideoFrame& frame) {
+        if (!view->swapchain) return false;
+        gs_enter_context(mGraphics);
+        const bool uploaded = uploadVideoPlanes(view, frame);
+        gs_texture_t* texture = uploaded ? convertVideo(view, frame) : nullptr;
+        const bool presented = drawTexture(view, texture, frame.width, frame.height);
         gs_leave_context();
         return presented;
     }
 
     std::string mBackend;
     std::string mEffectFile;
+    std::string mConversionEffectFile;
     gs_effect_t* mEffect = nullptr;
+    gs_effect_t* mConversionEffect = nullptr;
     gs_eparam_t* mImageParameter = nullptr;
     gs_technique_t* mDrawTechnique = nullptr;
     bool mEffectAttempted = false;
+    bool mConversionEffectAttempted = false;
     MaiGraphicsPresentCallback mCallback;
     void* mUserData;
     MaiGraphicsTaskRunner mGraphicsRunner;
@@ -530,6 +774,16 @@ extern "C" bool maiGraphicsPresenterShowFrame(uint64_t view_id, const uint8_t* p
     try {
         auto current = presenter();
         return current && current->showFrame(view_id, pixels, width, height, stride, fill_view);
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+extern "C" bool maiGraphicsPresenterShowVideoFrame(uint64_t view_id, const MaiVideoFrame* frame,
+                                                   bool fill_view) {
+    try {
+        auto current = presenter();
+        return current && current->showVideoFrame(view_id, frame, fill_view);
     } catch (const std::exception&) {
         return false;
     }

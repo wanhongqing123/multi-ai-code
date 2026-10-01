@@ -32,6 +32,40 @@ uint64_t maiGraphicsPresenterAttach(void* native_view, uint32_t width, uint32_t 
                                     MaiGraphicsNativeViewCallback retain_view,
                                     MaiGraphicsNativeViewCallback release_view);
 bool maiGraphicsPresenterShowImage(uint64_t view_id, const char* file_path, bool fill_view);
+typedef enum MaiVideoPixelFormat {
+    MAI_VIDEO_PIXEL_RGBA,
+    MAI_VIDEO_PIXEL_BGRA,
+    MAI_VIDEO_PIXEL_NV12,
+    MAI_VIDEO_PIXEL_I420
+} MaiVideoPixelFormat;
+
+typedef enum MaiVideoColorSpace {
+    MAI_VIDEO_COLOR_BT601,
+    MAI_VIDEO_COLOR_BT709,
+    MAI_VIDEO_COLOR_BT2020
+} MaiVideoColorSpace;
+
+typedef enum MaiVideoColorRange {
+    MAI_VIDEO_RANGE_LIMITED,
+    MAI_VIDEO_RANGE_FULL
+} MaiVideoColorRange;
+
+// Planes are borrowed until this call returns; the presenter copies them before
+// dispatching to its Graphics thread. RGBA/BGRA use plane 0, NV12 uses planes
+// 0-1, and I420 uses planes 0-2. A negative line size is accepted. Color
+// metadata is used only for YUV frames.
+typedef struct MaiVideoFrame {
+    const uint8_t* data[3];
+    int32_t linesize[3];
+    uint32_t width;
+    uint32_t height;
+    MaiVideoPixelFormat format;
+    MaiVideoColorSpace color_space;
+    MaiVideoColorRange color_range;
+} MaiVideoFrame;
+
+bool maiGraphicsPresenterShowVideoFrame(uint64_t view_id, const MaiVideoFrame* frame,
+                                        bool fill_view);
 // Copies one decoded RGBA8 video frame into the Graphics queue. The caller may
 // reuse pixels after this call. stride must be at least width * 4. Frame
 // scheduling and audio synchronization belong to the media session; submitting

@@ -529,8 +529,15 @@ static bool load_texture_sampler(gs_texture_t *tex, gs_samplerstate_t *ss)
 		success = false;
 	if (!gl_tex_param_i(tex->gl_target, GL_TEXTURE_WRAP_T, ss->address_v))
 		success = false;
+#if defined(__ANDROID__)
+	/* GL ES does not accept WRAP_R for a 2D texture. */
+	if (tex->gl_target != GL_TEXTURE_2D &&
+	    !gl_tex_param_i(tex->gl_target, GL_TEXTURE_WRAP_R, ss->address_w))
+		success = false;
+#else
 	if (!gl_tex_param_i(tex->gl_target, GL_TEXTURE_WRAP_R, ss->address_w))
 		success = false;
+#endif
 	if (ss->address_u == GL_CLAMP_TO_BORDER || ss->address_v == GL_CLAMP_TO_BORDER ||
 	    ss->address_w == GL_CLAMP_TO_BORDER) {
 		if (!gl_tex_param_fv(tex->gl_target, GL_TEXTURE_BORDER_COLOR, ss->border_color.ptr))

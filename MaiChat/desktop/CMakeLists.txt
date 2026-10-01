@@ -426,7 +426,8 @@ target_link_libraries(remote_im_desktop_ui PUBLIC remote_im_desktop_app remote_i
 if(TARGET maiagent_obs_metal OR TARGET maiagent_obs_d3d11)
   target_link_libraries(remote_im_desktop_ui PRIVATE maiagent_graphics)
   target_sources(remote_im_desktop_ui PRIVATE
-    ../Media/MaiGraphicsPresenter.cpp ../Media/MaiVideoPlayback.cpp)
+    ../Media/MaiGraphicsPresenter.cpp ../Media/MaiVideoPlayback.cpp
+    ../Media/MaiVideoColorParameters.cpp)
   target_include_directories(remote_im_desktop_ui PUBLIC ../Media)
   target_compile_definitions(remote_im_desktop_ui PRIVATE MAICHAT_HAS_GRAPHICS=1)
   if(APPLE)
@@ -511,7 +512,10 @@ if(APPLE)
               "$<TARGET_BUNDLE_DIR:maichat>/Contents/Frameworks"
       COMMAND ${CMAKE_COMMAND} -E copy_directory
               "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/Graphics/data"
-              "$<TARGET_BUNDLE_DIR:maichat>/Contents/Resources/MaiAgentGraphics")
+              "$<TARGET_BUNDLE_DIR:maichat>/Contents/Resources/MaiAgentGraphics"
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+              "${CMAKE_CURRENT_SOURCE_DIR}/../Media/data/video_conversion.effect"
+              "$<TARGET_BUNDLE_DIR:maichat>/Contents/Resources/MaiAgentGraphics/video_conversion.effect")
   endif()
 endif()
 target_link_libraries(maichat PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core maichat_agent Qt5::Widgets)
@@ -580,12 +584,17 @@ add_executable(desktop_pdf_renderer_test tests/DesktopPdfRendererTest.cpp)
 target_link_libraries(desktop_pdf_renderer_test PRIVATE maichat_agent Qt5::Widgets Qt5::Test)
 
 if(APPLE AND TARGET maiagent_obs_metal)
+  add_custom_target(maichat_media_effects
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      ${CMAKE_CURRENT_SOURCE_DIR}/../Media/data/video_conversion.effect
+      ${CMAKE_CURRENT_BINARY_DIR}/maiagent/Graphics/data/video_conversion.effect
+    DEPENDS maiagent_graphics_data)
   enable_language(OBJC)
   add_executable(MaiGraphicsPresenterMacTests
     ../Media/tests/MaiGraphicsPresenterMacTests.m)
   target_link_libraries(MaiGraphicsPresenterMacTests PRIVATE
     remote_im_desktop_ui maiagent_graphics "-framework AppKit" "-framework QuartzCore")
-  add_dependencies(MaiGraphicsPresenterMacTests maiagent_obs_metal maiagent_graphics_data)
+  add_dependencies(MaiGraphicsPresenterMacTests maiagent_obs_metal maichat_media_effects)
   add_test(NAME MaiGraphicsPresenterMacTests
     COMMAND MaiGraphicsPresenterMacTests $<TARGET_FILE:maiagent_obs_metal>
       ${CMAKE_CURRENT_BINARY_DIR}/maiagent/Graphics/data

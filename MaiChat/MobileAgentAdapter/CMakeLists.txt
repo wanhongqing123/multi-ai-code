@@ -105,6 +105,7 @@ add_library(maichat_mobile STATIC
   MaiMobileAgent.cpp
   ../Media/MaiGraphicsPresenter.cpp
   ../Media/MaiVideoPlayback.cpp
+  ../Media/MaiVideoColorParameters.cpp
   ../MaiChatTools/MaiImageFilter.cpp
   ../MaiChatTools/MaiMobileHostTools.cpp)
 if(ANDROID)

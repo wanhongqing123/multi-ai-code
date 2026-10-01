@@ -67,6 +67,50 @@ int main(int argc, char** argv) {
             passed = passed && atomic_load(&present_result) == 1;
         }
         if (passed) {
+            const uint8_t y[] = {81, 81, 81, 81};
+            const uint8_t uv[] = {90, 240};
+            MaiVideoFrame frame = {0};
+            frame.data[0] = y;
+            frame.data[1] = uv;
+            frame.linesize[0] = 2;
+            frame.linesize[1] = 2;
+            frame.width = frame.height = 2;
+            frame.format = MAI_VIDEO_PIXEL_NV12;
+            frame.color_space = MAI_VIDEO_COLOR_BT601;
+            frame.color_range = MAI_VIDEO_RANGE_LIMITED;
+            atomic_store(&present_result, 0);
+            passed = maiGraphicsPresenterShowVideoFrame(id, &frame, false);
+            NSDate* frameDeadline = [NSDate dateWithTimeIntervalSinceNow:8.0];
+            while (passed && atomic_load(&present_result) == 0 &&
+                   [frameDeadline timeIntervalSinceNow] > 0.0)
+                [[NSRunLoop currentRunLoop]
+                    runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.02]];
+            passed = passed && atomic_load(&present_result) == 1;
+        }
+        if (passed) {
+            const uint8_t y[] = {81, 81, 81, 81};
+            const uint8_t u[] = {90};
+            const uint8_t v[] = {240};
+            MaiVideoFrame frame = {0};
+            frame.data[0] = y;
+            frame.data[1] = u;
+            frame.data[2] = v;
+            frame.linesize[0] = 2;
+            frame.linesize[1] = frame.linesize[2] = 1;
+            frame.width = frame.height = 2;
+            frame.format = MAI_VIDEO_PIXEL_I420;
+            frame.color_space = MAI_VIDEO_COLOR_BT601;
+            frame.color_range = MAI_VIDEO_RANGE_LIMITED;
+            atomic_store(&present_result, 0);
+            passed = maiGraphicsPresenterShowVideoFrame(id, &frame, false);
+            NSDate* frameDeadline = [NSDate dateWithTimeIntervalSinceNow:8.0];
+            while (passed && atomic_load(&present_result) == 0 &&
+                   [frameDeadline timeIntervalSinceNow] > 0.0)
+                [[NSRunLoop currentRunLoop]
+                    runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.02]];
+            passed = passed && atomic_load(&present_result) == 1;
+        }
+        if (passed) {
             MaiVideoPlayback* video = maiVideoPlaybackCreate(id, argv[4], onVideo, NULL);
             passed = video != NULL;
             NSDate* readyDeadline = [NSDate dateWithTimeIntervalSinceNow:8.0];

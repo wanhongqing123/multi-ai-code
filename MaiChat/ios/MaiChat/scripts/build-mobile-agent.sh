@@ -18,4 +18,5 @@ if [[ -n "${TARGET_BUILD_DIR:-}" && -n "${UNLOCALIZED_RESOURCES_FOLDER_PATH:-}" 
   effect_bundle="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/MaiAgentGraphics"
   mkdir -p "$effect_bundle"
   cp "$repo_dir/MaiAgent/Graphics/data/"*.effect "$effect_bundle/"
+  cp "$repo_dir/MaiChat/Media/data/"*.effect "$effect_bundle/"
 fi

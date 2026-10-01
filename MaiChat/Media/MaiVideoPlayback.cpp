@@ -10,7 +10,6 @@
 #include <mutex>
 #include <string>
 #include <thread>
-#include <vector>
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -21,7 +20,6 @@
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
-#include <libswscale/swscale.h>
 }
 
 #include "MaiGraphicsPresenter.h"
@@ -146,7 +144,6 @@ struct MaiVideoPlayback {
             durationMs = av_rescale_q(stream->duration, stream->time_base, {1, 1000});
         notify(MAI_VIDEO_READY);
 
-        SwsContext* scaler = nullptr;
         Clock::time_point baseWall = Clock::now();
         int64_t basePts = 0;
         int64_t lastPts = 0;
@@ -163,29 +160,43 @@ struct MaiVideoPlayback {
                     ? av_rescale_q(frame->best_effort_timestamp, stream->time_base, milliseconds)
                     : lastPts + std::max<int64_t>(1, frameDuration);
             if (!waitForFrame(pts, &baseWall, &basePts)) return false;
-            const uint64_t pixels = static_cast<uint64_t>(frame->width) * frame->height;
-            if (!frame->width || !frame->height || pixels > 64000000) {
+            if (frame->width <= 0 || frame->height <= 0) {
                 failed = true;
                 return false;
             }
-            scaler = sws_getCachedContext(scaler, frame->width, frame->height,
-                                          static_cast<AVPixelFormat>(frame->format), frame->width,
-                                          frame->height, AV_PIX_FMT_RGBA, SWS_BILINEAR, nullptr,
-                                          nullptr, nullptr);
-            if (!scaler) {
-                failed = true;
-                return false;
+            MaiVideoFrame videoFrame = {};
+            videoFrame.width = static_cast<uint32_t>(frame->width);
+            videoFrame.height = static_cast<uint32_t>(frame->height);
+            switch (static_cast<AVPixelFormat>(frame->format)) {
+                case AV_PIX_FMT_RGBA: videoFrame.format = MAI_VIDEO_PIXEL_RGBA; break;
+                case AV_PIX_FMT_BGRA: videoFrame.format = MAI_VIDEO_PIXEL_BGRA; break;
+                case AV_PIX_FMT_NV12: videoFrame.format = MAI_VIDEO_PIXEL_NV12; break;
+                case AV_PIX_FMT_YUV420P:
+                case AV_PIX_FMT_YUVJ420P: videoFrame.format = MAI_VIDEO_PIXEL_I420; break;
+                default: failed = true; return false;
             }
-            std::vector<uint8_t> rgba(static_cast<size_t>(pixels) * 4);
-            uint8_t* output[] = {rgba.data(), nullptr, nullptr, nullptr};
-            const int strides[] = {frame->width * 4, 0, 0, 0};
-            if (sws_scale(scaler, frame->data, frame->linesize, 0, frame->height, output,
-                          strides) != frame->height) {
-                failed = true;
-                return false;
+            const AVColorSpace colorSpace = frame->colorspace != AVCOL_SPC_UNSPECIFIED
+                                                ? frame->colorspace
+                                                : stream->codecpar->color_space;
+            videoFrame.color_space =
+                colorSpace == AVCOL_SPC_UNSPECIFIED || colorSpace == AVCOL_SPC_BT470BG ||
+                        colorSpace == AVCOL_SPC_SMPTE170M
+                    ? MAI_VIDEO_COLOR_BT601
+                : colorSpace == AVCOL_SPC_BT2020_NCL || colorSpace == AVCOL_SPC_BT2020_CL
+                    ? MAI_VIDEO_COLOR_BT2020
+                    : MAI_VIDEO_COLOR_BT709;
+            const AVColorRange colorRange = frame->color_range != AVCOL_RANGE_UNSPECIFIED
+                                                ? frame->color_range
+                                                : stream->codecpar->color_range;
+            videoFrame.color_range =
+                colorRange == AVCOL_RANGE_JPEG || frame->format == AV_PIX_FMT_YUVJ420P
+                    ? MAI_VIDEO_RANGE_FULL
+                    : MAI_VIDEO_RANGE_LIMITED;
+            for (int index = 0; index < 3; ++index) {
+                videoFrame.data[index] = frame->data[index];
+                videoFrame.linesize[index] = frame->linesize[index];
             }
-            if (!maiGraphicsPresenterShowFrame(viewId, rgba.data(), frame->width, frame->height,
-                                               strides[0], false)) {
+            if (!maiGraphicsPresenterShowVideoFrame(viewId, &videoFrame, false)) {
                 failed = true;
                 return false;
             }
@@ -277,7 +288,6 @@ struct MaiVideoPlayback {
                 failed = true;
             if (failed) break;
         }
-        if (scaler) sws_freeContext(scaler);
         if (failed) notify(MAI_VIDEO_ERROR);
     }
 };

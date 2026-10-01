@@ -110,7 +110,7 @@ public final class GraphicsDirectPresenterInstrumentedTest {
                 () -> captured.set(((MaiGraphicsTextureView) surface.get().getChildAt(0))
                     .getBitmap()));
             int videoPixel = captured.get().getPixel(32, 32);
-            assertTrue(Color.red(videoPixel) >= 240);
+            assertTrue("video pixel: " + Integer.toHexString(videoPixel), Color.red(videoPixel) >= 240);
             assertTrue(Color.green(videoPixel) <= 10);
             assertTrue(Color.blue(videoPixel) <= 10);
 

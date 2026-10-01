@@ -2069,7 +2069,7 @@ void MainWindow::buildUi() {
     contactsDirectoryPane->setMinimumWidth(UiZoom::s(300));
     contactsDirectoryPane->setMaximumWidth(UiZoom::s(420));
     auto* contactsDirectoryLayout = new QVBoxLayout(contactsDirectoryPane);
-    contactsDirectoryLayout->setContentsMargins(24, 24, 8, 18);
+    contactsDirectoryLayout->setContentsMargins(24, 24, 0, 18);
     contactsDirectoryLayout->setSpacing(16);
 
     // 通讯录栏头部：和会话栏一样是一个搜索框，只是搜的对象不同。
@@ -2078,7 +2078,8 @@ void MainWindow::buildUi() {
     // 通讯录只保留搜索和右上角的添加好友入口。已有分组继续兼容显示；
     // 群发迁入 AI 助手的逐次审批工具。
     auto* contactsHeader = new QVBoxLayout();
-    contactsHeader->setContentsMargins(0, 0, 0, 0);
+    // Keep the search field inset without moving the list scrollbar away from the divider.
+    contactsHeader->setContentsMargins(0, 0, 8, 0);
     contactsHeader->setSpacing(8);
     contactsSearchInput_ = new QLineEdit(contactsDirectoryPane);
     contactsSearchInput_->setObjectName(QStringLiteral("contactsSearchBox"));

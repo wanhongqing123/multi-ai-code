@@ -543,6 +543,17 @@ void MainWindowLayoutTest::listScrollBarsAreNarrowAndStillScrollableAcrossZoomLe
         QVERIFY2(qAbs(contactsBar->width() - expected) <= 1,
                  qPrintable(QStringLiteral("缩放 %1：联系人列表滚动条宽 %2px，期望约 %3px")
                                 .arg(zoom).arg(contactsBar->width()).arg(expected)));
+        auto* contactsPane = window.findChild<QWidget*>(QStringLiteral("contactsDirectoryPane"));
+        auto* contactsSearch = window.findChild<QLineEdit*>(QStringLiteral("contactsSearchBox"));
+        QVERIFY(contactsPane != nullptr);
+        QVERIFY(contactsSearch != nullptr);
+        const int barRight = contactsBar->mapTo(contactsPane, QPoint(contactsBar->width(), 0)).x();
+        const int searchRight = contactsSearch->mapTo(contactsPane, QPoint(contactsSearch->width(), 0)).x();
+        const int trailingGap = contactsPane->width() - barRight;
+        QVERIFY2(trailingGap <= 1,
+                 qPrintable(QStringLiteral("缩放 %1：联系人滚动条到分割线仍有 %2px 空隙")
+                                .arg(zoom).arg(trailingGap)));
+        QVERIFY(contactsPane->width() - searchRight >= 8);
         contactsBar->setValue(contactsBar->minimum());
         QCoreApplication::processEvents();
         QVERIFY2(dragScrollBarHandle(contactsBar, 120),

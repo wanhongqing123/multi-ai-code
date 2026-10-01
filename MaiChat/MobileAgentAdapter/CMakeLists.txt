@@ -148,6 +148,15 @@ if(MAICHAT_MOBILE_TESTS)
   target_include_directories(MaiMobileAgentTests PRIVATE ../../MaiAgent/third_party/httplib ../../MaiAgent/third_party/nlohmann)
   target_link_libraries(MaiMobileAgentTests PRIVATE maichat_mobile maiagent)
   add_test(NAME MaiMobileAgentTests COMMAND MaiMobileAgentTests)
+  if(ANDROID)
+    add_executable(MaiEmbeddedFfmpegToolsTest
+      ../desktop/tests/MaiEmbeddedFfmpegToolsTest.cpp)
+    target_include_directories(MaiEmbeddedFfmpegToolsTest PRIVATE
+      ../../MaiAgent/third_party/ffmpeg/fftools
+      ../../MaiAgent/third_party/nlohmann)
+    target_link_libraries(MaiEmbeddedFfmpegToolsTest PRIVATE
+      maichat_mobile maiagent android log jnigraphics)
+  endif()
   if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND CMAKE_OSX_SYSROOT MATCHES "[Ss]imulator")
     add_executable(MaiObsIosMetalRenderProbe
       ../Media/tests/MaiObsIosMetalRenderProbe.c

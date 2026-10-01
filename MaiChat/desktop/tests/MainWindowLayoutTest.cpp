@@ -102,6 +102,7 @@ private slots:
     void compactSplittersKeepDragTargets();
     void composerResizeHandleAlignsWithEditorBorder_data();
     void composerResizeHandleAlignsWithEditorBorder();
+    void composerResizeCursorClearsAfterPointerLeaves();
     void rendersEmptyConversationState();
     void sendsTextFromComposer();
     void returnKeySendsComposerText();
@@ -1689,6 +1690,42 @@ void MainWindowLayoutTest::composerResizeHandleAlignsWithEditorBorder() {
     const QRect editorOnScreen(editor->mapToGlobal(QPoint(0, 0)), editor->size());
     QCOMPARE(editorOnScreen.top(), handleOnScreen.bottom() + 1);
     QCOMPARE(editorOnScreen.center().x(), handleOnScreen.center().x());
+}
+
+void MainWindowLayoutTest::composerResizeCursorClearsAfterPointerLeaves() {
+    RemoteIMApplication app(QStringLiteral("desktop-user"),
+                            std::make_unique<FakeRemoteIMClient>());
+    MainWindow window(app);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto* splitter = window.findChild<QSplitter*>(QStringLiteral("messageComposerSplitter"));
+    QVERIFY(splitter != nullptr);
+    QSplitterHandle* handle = splitter->handle(1);
+    QVERIFY(handle != nullptr);
+
+    QEvent enter(QEvent::Enter);
+    QApplication::sendEvent(handle, &enter);
+    QCOMPARE(handle->cursor().shape(), Qt::SplitVCursor);
+    QEvent leave(QEvent::Leave);
+    QApplication::sendEvent(handle, &leave);
+    QCOMPARE(handle->cursor().shape(), Qt::ArrowCursor);
+    QApplication::sendEvent(handle, &enter);
+    QEvent ungrab(QEvent::UngrabMouse);
+    QApplication::sendEvent(handle, &ungrab);
+    QCOMPARE(handle->cursor().shape(), Qt::ArrowCursor);
+
+    auto* agentButton = window.findChild<QPushButton*>(QStringLiteral("agentNavButton"));
+    QVERIFY(agentButton != nullptr);
+    agentButton->click();
+    auto* agentSplitter =
+        window.findChild<QSplitter*>(QStringLiteral("agentMessageComposerSplitter"));
+    QVERIFY(agentSplitter != nullptr);
+    QSplitterHandle* agentHandle = agentSplitter->handle(1);
+    QVERIFY(agentHandle != nullptr);
+    QApplication::sendEvent(agentHandle, &enter);
+    QCOMPARE(agentHandle->cursor().shape(), Qt::SplitVCursor);
+    QApplication::sendEvent(agentHandle, &leave);
+    QCOMPARE(agentHandle->cursor().shape(), Qt::ArrowCursor);
 }
 
 // The editor widget is shared, so switching peers must swap its rich draft and quote together.

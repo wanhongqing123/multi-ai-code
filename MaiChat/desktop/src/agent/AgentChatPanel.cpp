@@ -43,6 +43,7 @@
 
 #include "agent/AgentController.h"
 #include "markdown/MarkdownView.h"
+#include "ui/ComposerResizeSplitter.h"
 #include "ui/ComposerTextEdit.h"
 #include "ui/PdfPreviewDialog.h"
 #include "ui/UiZoom.h"
@@ -876,10 +877,9 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     runtime_->send->setIconSize(QSize(UiZoom::s(18), UiZoom::s(18)));
     runtime_->editor->setCornerAction(runtime_->send);
 
-    auto* messageComposerSplitter = new QSplitter(Qt::Vertical, this);
+    auto* messageComposerSplitter = new ComposerResizeSplitter(this);
     messageComposerSplitter->setObjectName(QStringLiteral("agentMessageComposerSplitter"));
     messageComposerSplitter->setChildrenCollapsible(false);
-    messageComposerSplitter->setHandleWidth(1);
     messageComposerSplitter->setStyleSheet(QStringLiteral(
         "QSplitter::handle{background:transparent;}"
         "QSplitter::handle:vertical{height:1px;}"

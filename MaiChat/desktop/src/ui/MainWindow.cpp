@@ -96,6 +96,7 @@
 #include "ui/AppMessageDialog.h"
 #include "ui/AppTextInputDialog.h"
 #include "ui/BroadcastDialog.h"
+#include "ui/ComposerResizeSplitter.h"
 #include "ui/ComposerTextEdit.h"
 #include "ui/FilePreviewDialog.h"
 #include "ui/PdfPreviewDialog.h"
@@ -2029,10 +2030,9 @@ void MainWindow::buildUi() {
 
     composerLayout->addWidget(messageEditor_, 1);
 
-    auto* messageComposerSplitter = new QSplitter(Qt::Vertical, chatContentPane);
+    auto* messageComposerSplitter = new ComposerResizeSplitter(chatContentPane);
     messageComposerSplitter->setObjectName(QStringLiteral("messageComposerSplitter"));
     messageComposerSplitter->setChildrenCollapsible(false);
-    messageComposerSplitter->setHandleWidth(1);
     messageComposerSplitter->addWidget(messageScroll_);
     messageComposerSplitter->addWidget(composer);
     messageComposerSplitter->setStretchFactor(0, 1);

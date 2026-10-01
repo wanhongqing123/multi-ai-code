@@ -548,6 +548,8 @@ endif()
 # ---- agent 接入层 ----
 # 只做一件事：把 MaiAgent 的事件搬到 Qt 主线程。界面代码不直接碰 MaiAgent 的事件总线。
 add_library(maichat_agent
+  src/ui/ComposerResizeSplitter.h
+  src/ui/ComposerResizeSplitter.cpp
   src/ui/ComposerTextEdit.h
   src/ui/ComposerTextEdit.cpp
   src/agent/AgentController.h

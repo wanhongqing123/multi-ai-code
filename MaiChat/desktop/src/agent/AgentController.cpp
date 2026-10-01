@@ -91,7 +91,8 @@ std::unique_ptr<MaiAgent> buildAgent(std::unique_ptr<MaiModelClient> model,
     registerMaiBuiltinTools(*tools);
 #if defined(MAICHAT_EMBEDDED_FFMPEG)
     MaiFfmpegEngine ffmpegEngine{mai_ffmpeg_execute, mai_ffmpeg_set_cancel_check,
-                                 mai_ffprobe_execute, mai_ffprobe_set_cancel_check};
+                                 mai_ffprobe_execute, mai_ffprobe_set_cancel_check,
+                                 mai_fftools_set_log_sink, mai_fftools_error_string};
     tools->add(makeMaiFfmpegTool(ffmpegEngine));
     tools->add(makeMaiFfprobeTool(ffmpegEngine));
 #endif

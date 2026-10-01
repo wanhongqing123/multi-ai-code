@@ -12,8 +12,14 @@ cmake --build "$agent_build" --target maichat_mobile --parallel 6
 cmake --build "$agent_build" --target maichat_ffplay_hosted --parallel 6
 archive_list=()
 while IFS= read -r archive; do archive_list+=("$archive"); done < <(
-  find "$agent_build" -name '*.a' -type f ! -path '*/vendor/ffmpeg-build/install/*'
+  find "$agent_build" -name '*.a' -type f \
+    ! -path '*/vendor/ffmpeg-build/install/*' \
+    ! -path '*/vendor/ffmpeg-build/vendor-build/*' \
+    ! -path '*/vendor/ffmpeg-build/vendor-install/*'
 )
+for codec in libdav1d.a libx264.a libmp3lame.a; do
+  archive_list+=("$agent_build/vendor/ffmpeg-build/vendor-install/lib/$codec")
+done
 xcrun libtool -static -o "$DERIVED_FILE_DIR/libMaiMobileAgent.a" "${archive_list[@]}"
 if [[ -n "${TARGET_BUILD_DIR:-}" && -n "${FRAMEWORKS_FOLDER_PATH:-}" ]]; then
   hosted_source="$agent_build/libmaichat_ffplay_hosted.dylib"

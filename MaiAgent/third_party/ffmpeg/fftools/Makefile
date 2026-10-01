@@ -72,7 +72,8 @@ $(foreach P,$(AVPROGS-yes),$(eval $(call DOFFTOOL,$(P))))
 # Embed both command engines in one application without building runnable programs. The normal
 # FFmpeg executables are unaffected because this target is requested only by MaiAgent builds.
 MAI_FFTOOLS_OBJS = $(sort $(OBJS-ffmpeg) $(OBJS-ffprobe) \
-    fftools/ffmpeg.o fftools/ffprobe.o fftools/cmdutils.o fftools/opt_common.o)
+    fftools/ffmpeg.o fftools/ffprobe.o fftools/cmdutils.o fftools/opt_common.o \
+    fftools/mai_fftools_log.o)
 $(MAI_FFTOOLS_OBJS): CFLAGS += -DMAI_FFMPEG_EMBEDDED
 $(MAI_FFTOOLS_OBJS): | fftools fftools/textformat fftools/resources fftools/graph
 fftools/resources/graph.css.min fftools/resources/graph.css.min.gz \

@@ -52,16 +52,24 @@ if(APPLE AND NOT IOS)
     ${ffmpeg_runtime_dir}/libavcodec/libavcodec.a
     ${ffmpeg_runtime_dir}/libswresample/libswresample.a
     ${ffmpeg_runtime_dir}/libswscale/libswscale.a
-    ${ffmpeg_runtime_dir}/libavutil/libavutil.a)
+    ${ffmpeg_runtime_dir}/libavutil/libavutil.a
+    ${ffmpeg_runtime_dir}/vendor-install/lib/libdav1d.a
+    ${ffmpeg_runtime_dir}/vendor-install/lib/libx264.a
+    ${ffmpeg_runtime_dir}/vendor-install/lib/libmp3lame.a)
   add_custom_command(OUTPUT ${ffmpeg_runtime_archives}
     ${ffmpeg_runtime_dir}/install/include/libavutil/avconfig.h
     COMMAND bash ${ffmpeg_runtime_script} ${ffmpeg_source} ${ffmpeg_runtime_dir}
       ${CMAKE_C_COMPILER} ${CMAKE_SYSTEM_PROCESSOR} ${CMAKE_AR} ${CMAKE_RANLIB}
     DEPENDS ${ffmpeg_source}/configure ${ffmpeg_runtime_script}
+      ${ffmpeg_source}/../build-media-codecs.sh
       ${ffmpeg_source}/fftools/Makefile
       ${ffmpeg_source}/fftools/ffmpeg.c ${ffmpeg_source}/fftools/ffprobe.c
       ${ffmpeg_source}/fftools/cmdutils.c ${ffmpeg_source}/fftools/opt_common.c
       ${ffmpeg_source}/fftools/mai_fftools_embed.h
+      ${ffmpeg_source}/fftools/mai_fftools_log.c
+      ${ffmpeg_source}/../dav1d/meson.build
+      ${ffmpeg_source}/../x264/configure
+      ${ffmpeg_source}/../lame/configure
     VERBATIM)
   add_custom_target(maiagent_ffmpeg_runtime
     DEPENDS ${ffmpeg_runtime_archives}
@@ -78,6 +86,9 @@ if(APPLE AND NOT IOS)
     ${ffmpeg_runtime_dir}/libswresample/libswresample.a
     ${ffmpeg_runtime_dir}/libswscale/libswscale.a
     ${ffmpeg_runtime_dir}/libavutil/libavutil.a
+    ${ffmpeg_runtime_dir}/vendor-install/lib/libdav1d.a
+    ${ffmpeg_runtime_dir}/vendor-install/lib/libx264.a
+    ${ffmpeg_runtime_dir}/vendor-install/lib/libmp3lame.a
     z
     "-framework AudioToolbox" "-framework CoreAudio" "-framework CoreMedia"
     "-framework CoreVideo" "-framework VideoToolbox")

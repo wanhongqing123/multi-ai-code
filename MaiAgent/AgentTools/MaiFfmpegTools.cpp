@@ -5,6 +5,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <json.hpp>
@@ -18,15 +19,31 @@ using json = nlohmann::json;
 namespace {
 
 constexpr std::uint64_t kMaximumProbeBytes = 2u * 1024u * 1024u;
+constexpr std::size_t kMaximumDiagnosticBytes = 4096;
 std::mutex sFfmpegCommandMutex;
+
+struct DiagnosticCapture {
+    std::mutex mutex;
+    std::string text;
+};
 
 int shouldCancel(void* opaque) {
     const auto* token = static_cast<const std::atomic<bool>*>(opaque);
     return token->load(std::memory_order_relaxed) ? 1 : 0;
 }
 
+void captureDiagnostic(void* opaque, const char* line) {
+    if (!opaque || !line) return;
+    auto& capture = *static_cast<DiagnosticCapture*>(opaque);
+    std::lock_guard<std::mutex> lock(capture.mutex);
+    capture.text.append(line);
+    if (capture.text.size() > kMaximumDiagnosticBytes)
+        capture.text.erase(0, capture.text.size() - kMaximumDiagnosticBytes);
+}
+
 int runEngine(int (*execute)(int, char**), void (*setCancelCheck)(int (*)(void*), void*),
-              std::vector<std::string> arguments, const MaiToolContext& context) {
+              const MaiFfmpegEngine& engine, std::vector<std::string> arguments,
+              const MaiToolContext& context, std::string& diagnostic) {
     std::lock_guard<std::mutex> commandLock(sFfmpegCommandMutex);
     if (context.isCanceled()) return -1;
 
@@ -37,9 +54,25 @@ int runEngine(int (*execute)(int, char**), void (*setCancelCheck)(int (*)(void*)
     if (setCancelCheck)
         setCancelCheck(context.cancel ? shouldCancel : nullptr,
                        const_cast<std::atomic<bool>*>(context.cancel));
+    DiagnosticCapture capture;
+    if (engine.setLogSink) engine.setLogSink(captureDiagnostic, &capture);
     const int status = execute(static_cast<int>(argv.size()), argv.data());
+    if (engine.setLogSink) engine.setLogSink(nullptr, nullptr);
+    diagnostic = std::move(capture.text);
     if (setCancelCheck) setCancelCheck(nullptr, nullptr);
     return status;
+}
+
+std::string errorDescription(const MaiFfmpegEngine& engine, int status,
+                             const std::string& diagnostic) {
+    char text[256] = {};
+    std::string result;
+    if (engine.describeError && engine.describeError(status, text, sizeof(text)) == 0)
+        result = text;
+    else
+        result = "status " + std::to_string(status);
+    if (!diagnostic.empty()) result += "\n" + diagnostic;
+    return result;
 }
 
 class MaiFfmpegTool final : public MaiTool {
@@ -94,8 +127,8 @@ public:
         }
         for (std::size_t index = 5; index < arguments.size(); ++index) {
             if (arguments[index - 1] != "-i") continue;
-            const bool filterInput = index >= 3 && arguments[index - 3] == "-f" &&
-                                     arguments[index - 2] == "lavfi";
+            const bool filterInput =
+                index >= 3 && arguments[index - 3] == "-f" && arguments[index - 2] == "lavfi";
             const std::string& value = arguments[index];
             if (filterInput || value == "-" || value.rfind("pipe:", 0) == 0 ||
                 value.find("://") != std::string::npos)
@@ -118,21 +151,23 @@ public:
                                                   "use a local path instead of a file: URL");
                 const std::string resolved = context.resolvePath(output);
                 if (resolved.empty())
-                    return MaiToolResult::failure(MaiErrorCode::InvalidInput,
-                                                  "FFmpeg output path is outside the accessible area");
+                    return MaiToolResult::failure(
+                        MaiErrorCode::InvalidInput,
+                        "FFmpeg output path is outside the accessible area");
                 output = resolved;
             }
         }
         if (context.isCanceled())
             return MaiToolResult::failure(MaiErrorCode::Canceled, "FFmpeg was canceled");
-        const int status = runEngine(mEngine.runFfmpeg, mEngine.setFfmpegCancelCheck,
-                                     std::move(arguments), context);
+        std::string diagnostic;
+        const int status = runEngine(mEngine.runFfmpeg, mEngine.setFfmpegCancelCheck, mEngine,
+                                     std::move(arguments), context, diagnostic);
         if (context.isCanceled())
             return MaiToolResult::failure(MaiErrorCode::Canceled, "FFmpeg was canceled");
         if (status != 0)
-            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
-                                          "FFmpeg failed with status " + std::to_string(status) +
-                                              "; inspect the input, options, and output path");
+            return MaiToolResult::failure(
+                MaiErrorCode::InvalidInput,
+                "FFmpeg failed: " + errorDescription(mEngine, status, diagnostic));
         return MaiToolResult::success("FFmpeg completed with status 0.");
     }
 
@@ -175,9 +210,8 @@ public:
                                           "media file does not exist: " + input);
 
         // fileAccessRoot is an access boundary, not a scratch directory.
-        const MaiFilePath directory = context.root.empty()
-                                          ? MaiFileSystem::temporaryDirectory()
-                                          : MaiFilePath::fromUtf8(context.root);
+        const MaiFilePath directory = context.root.empty() ? MaiFileSystem::temporaryDirectory()
+                                                           : MaiFilePath::fromUtf8(context.root);
         const MaiFilePath output = directory.append(
             MaiFilePath::fromUtf8(MaiIdGenerator::generate("mai_ffprobe_") + ".json"));
         const MaiError createError = MaiFileSystem::createEmptyFile(output);
@@ -187,8 +221,9 @@ public:
         std::vector<std::string> arguments = {"ffprobe",       "-v",  "error", "-show_format",
                                               "-show_streams", "-of", "json",  "-o",
                                               output.toUtf8(), input};
-        const int status = runEngine(mEngine.runFfprobe, mEngine.setFfprobeCancelCheck,
-                                     std::move(arguments), context);
+        std::string diagnostic;
+        const int status = runEngine(mEngine.runFfprobe, mEngine.setFfprobeCancelCheck, mEngine,
+                                     std::move(arguments), context, diagnostic);
         std::string result;
         bool truncated = false;
         const MaiError readError =
@@ -197,9 +232,9 @@ public:
         if (context.isCanceled())
             return MaiToolResult::failure(MaiErrorCode::Canceled, "FFprobe was canceled");
         if (status != 0)
-            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
-                                          "FFprobe failed to read media (status " +
-                                              std::to_string(status) + "): " + input);
+            return MaiToolResult::failure(
+                MaiErrorCode::InvalidInput,
+                "FFprobe failed to read media: " + errorDescription(mEngine, status, diagnostic));
         if (readError.hasError())
             return MaiToolResult::failure(readError.code(), readError.message());
         if (result.empty())

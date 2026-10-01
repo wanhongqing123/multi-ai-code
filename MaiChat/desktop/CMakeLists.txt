@@ -134,6 +134,7 @@ if(WIN32)
               "${MAICHAT_FFMPEG_SOURCE}/fftools/cmdutils.c"
               "${MAICHAT_FFMPEG_SOURCE}/fftools/opt_common.c"
               "${MAICHAT_FFMPEG_SOURCE}/fftools/mai_fftools_embed.h"
+              "${MAICHAT_FFMPEG_SOURCE}/fftools/mai_fftools_log.c"
       VERBATIM)
     add_custom_target(maichat_ffmpeg_build DEPENDS ${MAICHAT_FFMPEG_ARCHIVES})
     add_library(maichat_ffmpeg_tools STATIC IMPORTED GLOBAL)
@@ -661,6 +662,9 @@ if(APPLE AND TARGET maiagent_obs_metal)
     ${ffplay_ffmpeg_build}/libswresample/libswresample.a
     ${ffplay_ffmpeg_build}/libswscale/libswscale.a
     ${ffplay_ffmpeg_build}/libavutil/libavutil.a
+    ${ffplay_ffmpeg_build}/vendor-install/lib/libdav1d.a
+    ${ffplay_ffmpeg_build}/vendor-install/lib/libx264.a
+    ${ffplay_ffmpeg_build}/vendor-install/lib/libmp3lame.a
     z "-framework AudioToolbox" "-framework CoreAudio"
     "-framework CoreFoundation"
     "-framework CoreMedia" "-framework CoreVideo" "-framework VideoToolbox")

@@ -24,7 +24,7 @@ options=(
   --disable-programs --disable-doc --disable-debug
   --disable-autodetect --disable-asm --enable-zlib
   --disable-audiotoolbox --disable-videotoolbox
-  --disable-gpl --disable-nonfree
+  --enable-gpl --disable-nonfree
   --enable-pic --enable-static --disable-shared
   "--cc=$compiler" "--ar=$archive_tool" "--ranlib=$ranlib_tool"
 )
@@ -63,7 +63,20 @@ if [[ "$platform" == iOS ]]; then
   rm -f ffbuild/bin2c_host.o ffbuild/bin2c
 fi
 
+vendor_prefix="$build_dir/vendor-install"
+bash "$source_dir/../build-media-codecs.sh" "$source_dir/.." \
+  "$build_dir/vendor-build" "$vendor_prefix" "$platform" "$compiler" \
+  "$arch" "$sysroot" "$archive_tool" "$ranlib_tool"
+export PKG_CONFIG_LIBDIR="$vendor_prefix/lib/pkgconfig"
+export PKG_CONFIG_PATH=
+options+=(--enable-libdav1d --enable-libx264 --enable-libmp3lame
+  --pkg-config-flags=--static
+  "--extra-cflags=-I$vendor_prefix/include"
+  "--extra-ldflags=-L$vendor_prefix/lib")
+
 "$source_dir/configure" "${options[@]}"
+rm -f libmaifftools.a fftools/ffmpeg.o fftools/ffprobe.o \
+  fftools/cmdutils.o fftools/opt_common.o
 make -j6
 make -j6 libmaifftools.a
 make install

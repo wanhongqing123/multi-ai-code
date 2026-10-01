@@ -43,7 +43,10 @@ set(ffmpeg_archives
   "${ffmpeg_build}/libavcodec/libavcodec.a"
   "${ffmpeg_build}/libswresample/libswresample.a"
   "${ffmpeg_build}/libswscale/libswscale.a"
-  "${ffmpeg_build}/libavutil/libavutil.a")
+  "${ffmpeg_build}/libavutil/libavutil.a"
+  "${ffmpeg_build}/vendor-install/lib/libdav1d.a"
+  "${ffmpeg_build}/vendor-install/lib/libx264.a"
+  "${ffmpeg_build}/vendor-install/lib/libmp3lame.a")
 get_filename_component(ffmpeg_bin "${CMAKE_C_COMPILER}" DIRECTORY)
 if(ANDROID)
   set(ffmpeg_platform Android)
@@ -91,6 +94,11 @@ add_custom_command(OUTPUT ${ffmpeg_archives}
           "${ffmpeg_source}/fftools/ffprobe.c" "${ffmpeg_source}/fftools/cmdutils.c"
           "${ffmpeg_source}/fftools/opt_common.c"
           "${ffmpeg_source}/fftools/mai_fftools_embed.h"
+          "${ffmpeg_source}/fftools/mai_fftools_log.c"
+          "${ffmpeg_source}/../build-media-codecs.sh"
+          "${ffmpeg_source}/../dav1d/meson.build"
+          "${ffmpeg_source}/../x264/configure"
+          "${ffmpeg_source}/../lame/configure"
   VERBATIM)
 add_custom_target(maichat_ffmpeg_build DEPENDS ${ffmpeg_archives})
 add_library(maichat_ffmpeg_tools STATIC IMPORTED GLOBAL)
@@ -108,7 +116,10 @@ if(TARGET maiagent_graphics)
   target_link_libraries(maiagent_graphics PRIVATE
     maichat_ffmpeg_avformat maichat_ffmpeg_avcodec
     maichat_ffmpeg_swresample maichat_ffmpeg_swscale
-    maichat_ffmpeg_avutil z)
+    maichat_ffmpeg_avutil
+    "${ffmpeg_build}/vendor-install/lib/libdav1d.a"
+    "${ffmpeg_build}/vendor-install/lib/libx264.a"
+    "${ffmpeg_build}/vendor-install/lib/libmp3lame.a" z)
 endif()
 add_library(maichat_mobile STATIC
   MaiMobileAgent.cpp
@@ -135,7 +146,10 @@ target_link_libraries(maichat_mobile PRIVATE maiagent
   maichat_ffmpeg_tools
   maichat_ffmpeg_avdevice maichat_ffmpeg_avfilter maichat_ffmpeg_avformat
   maichat_ffmpeg_avcodec maichat_ffmpeg_swresample maichat_ffmpeg_swscale
-  maichat_ffmpeg_avutil z)
+  maichat_ffmpeg_avutil
+  "${ffmpeg_build}/vendor-install/lib/libdav1d.a"
+  "${ffmpeg_build}/vendor-install/lib/libx264.a"
+  "${ffmpeg_build}/vendor-install/lib/libmp3lame.a" z)
 if(TARGET maiagent_graphics)
   target_link_libraries(maichat_mobile PRIVATE maiagent_graphics)
 endif()
@@ -183,7 +197,10 @@ if(ANDROID OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
   target_link_libraries(maichat_ffplay_hosted PRIVATE
     maichat_ffmpeg_avdevice maichat_ffmpeg_avfilter maichat_ffmpeg_avformat
     maichat_ffmpeg_avcodec maichat_ffmpeg_swresample maichat_ffmpeg_swscale
-    maichat_ffmpeg_avutil z)
+    maichat_ffmpeg_avutil
+    "${ffmpeg_build}/vendor-install/lib/libdav1d.a"
+    "${ffmpeg_build}/vendor-install/lib/libx264.a"
+    "${ffmpeg_build}/vendor-install/lib/libmp3lame.a" z)
 endif()
 option(MAICHAT_MOBILE_TESTS "Build mobile adapter integration tests" OFF)
 if(MAICHAT_MOBILE_TESTS)

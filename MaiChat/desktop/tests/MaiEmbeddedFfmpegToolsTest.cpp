@@ -59,7 +59,8 @@ int main(int argc, char** argv) {
     if (!MaiFileSystem::exists(input)) return 3;
 
     MaiFfmpegEngine engine{mai_ffmpeg_execute, mai_ffmpeg_set_cancel_check, mai_ffprobe_execute,
-                           mai_ffprobe_set_cancel_check};
+                           mai_ffprobe_set_cancel_check, mai_fftools_set_log_sink,
+                           mai_fftools_error_string};
     auto probe = makeMaiFfprobeTool(engine);
     auto convert = makeMaiFfmpegTool(engine);
     MaiToolContext context;
@@ -169,6 +170,123 @@ int main(int argc, char** argv) {
         if (readError.hasError() || bytes.compare(0, 2, "P6") != 0)
             return 8;
     }
+
+    const MaiFilePath av1Input = input.dirName().append(MaiFilePath::fromUtf8("tiny-red-av1.webm"));
+    if (!MaiFileSystem::exists(av1Input)) return 19;
+    const MaiFilePath av1Output = MaiFileSystem::temporaryDirectory().append(
+        MaiFilePath::fromUtf8(MaiIdGenerator::generate("mai_av1_test_") + ".ppm"));
+    const MaiToolResult av1Result = convert->execute(
+        nlohmann::json{
+            {"arguments",
+             {"-i", av1Input.toUtf8(), "-frames:v", "1", "-f", "image2", av1Output.toUtf8()}}}
+            .dump(),
+        context);
+    std::string av1Bytes;
+    const MaiError av1Read = MaiFileSystem::readFile(av1Output, av1Bytes, 16);
+    MaiFileSystem::removeFile(av1Output);
+    if (av1Result.hasError() || av1Read.hasError() || av1Bytes.compare(0, 2, "P6") != 0) {
+        std::fprintf(stderr, "AV1 software decode failed: %s\n",
+                     av1Result.hasError() ? av1Result.error().message().c_str()
+                                          : "no PPM output");
+        return 20;
+    }
+
+    const MaiFilePath lavfiOutput = MaiFileSystem::temporaryDirectory().append(
+        MaiFilePath::fromUtf8(MaiIdGenerator::generate("mai_lavfi_test_") + ".ppm"));
+    const MaiToolResult lavfiResult =
+        convert->execute(nlohmann::json{{"arguments",
+                                         {"-f", "lavfi", "-i", "testsrc=size=16x16:rate=1",
+                                          "-frames:v", "1", "-f", "image2", lavfiOutput.toUtf8()}}}
+                             .dump(),
+                         context);
+    std::string lavfiBytes;
+    const MaiError lavfiRead = MaiFileSystem::readFile(lavfiOutput, lavfiBytes, 16);
+    MaiFileSystem::removeFile(lavfiOutput);
+    if (lavfiResult.hasError() || lavfiRead.hasError() || lavfiBytes.compare(0, 2, "P6") != 0) {
+        std::fprintf(
+            stderr, "lavfi source failed: %s\n",
+            lavfiResult.hasError() ? lavfiResult.error().message().c_str() : "no PPM output");
+        return 21;
+    }
+
+    const MaiFilePath unsupportedOutput = MaiFileSystem::temporaryDirectory().append(
+        MaiFilePath::fromUtf8(MaiIdGenerator::generate("mai_encoder_test_") + ".mp4"));
+    const MaiToolResult unsupportedEncoder = convert->execute(
+        nlohmann::json{
+            {"arguments",
+             {"-i", input.toUtf8(), "-c:v", "maichat_missing_encoder", unsupportedOutput.toUtf8()}}}
+            .dump(),
+        context);
+    MaiFileSystem::removeFile(unsupportedOutput);
+    if (!unsupportedEncoder.hasError() ||
+        unsupportedEncoder.error().message().find("Encoder not found") == std::string::npos) {
+        std::fprintf(stderr, "encoder diagnostic missing: %s\n",
+                     unsupportedEncoder.hasError() ? unsupportedEncoder.error().message().c_str()
+                                                   : "no failure");
+        return 22;
+    }
+
+    const MaiFilePath x264Output = MaiFileSystem::temporaryDirectory().append(
+        MaiFilePath::fromUtf8(MaiIdGenerator::generate("mai_x264_test_") + ".mp4"));
+    const MaiToolResult x264Encode = convert->execute(
+        nlohmann::json{{"arguments", {"-i", input.toUtf8(), "-an", "-vf",
+                                       "hqdn3d=1.5:1.5:6:6,eq=contrast=1.05:brightness=0.02,"
+                                       "unsharp=3:3:0.5", "-c:v", "libx264", "-preset",
+                                       "ultrafast", "-crf", "28", x264Output.toUtf8()}}}.dump(),
+        context);
+    const MaiToolResult x264Metadata = x264Encode.hasError()
+        ? x264Encode
+        : probe->execute(nlohmann::json{{"path", x264Output.toUtf8()}}.dump(), context);
+    MaiFileSystem::removeFile(x264Output);
+    if (x264Metadata.hasError() ||
+        x264Metadata.output().find("\"codec_name\": \"h264\"") == std::string::npos) {
+        std::fprintf(stderr, "libx264/filter encode failed: %s\n",
+                     x264Metadata.hasError() ? x264Metadata.error().message().c_str()
+                                             : x264Metadata.output().c_str());
+        return 24;
+    }
+
+    const MaiFilePath mp3Output = MaiFileSystem::temporaryDirectory().append(
+        MaiFilePath::fromUtf8(MaiIdGenerator::generate("mai_lame_test_") + ".mp3"));
+    const MaiToolResult mp3Encode = convert->execute(
+        nlohmann::json{{"arguments", {"-f", "lavfi", "-i",
+                                       "sine=frequency=440:sample_rate=44100", "-t", "1",
+                                       "-c:a", "libmp3lame", mp3Output.toUtf8()}}}.dump(),
+        context);
+    const MaiToolResult mp3Metadata = mp3Encode.hasError()
+        ? mp3Encode
+        : probe->execute(nlohmann::json{{"path", mp3Output.toUtf8()}}.dump(), context);
+    MaiFileSystem::removeFile(mp3Output);
+    if (mp3Metadata.hasError() ||
+        mp3Metadata.output().find("\"codec_name\": \"mp3\"") == std::string::npos) {
+        std::fprintf(stderr, "libmp3lame encode failed: %s\n",
+                     mp3Metadata.hasError() ? mp3Metadata.error().message().c_str()
+                                            : mp3Metadata.output().c_str());
+        return 25;
+    }
+
+#ifdef __APPLE__
+    const MaiFilePath hardwareOutput = MaiFileSystem::temporaryDirectory().append(
+        MaiFilePath::fromUtf8(MaiIdGenerator::generate("mai_videotoolbox_test_") + ".mp4"));
+    const MaiToolResult hardwareEncode =
+        convert->execute(nlohmann::json{{"arguments",
+                                         {"-i", input.toUtf8(), "-an", "-c:v", "h264_videotoolbox",
+                                          "-b:v", "200k", hardwareOutput.toUtf8()}}}
+                             .dump(),
+                         context);
+    const MaiToolResult hardwareMetadata =
+        hardwareEncode.hasError()
+            ? hardwareEncode
+            : probe->execute(nlohmann::json{{"path", hardwareOutput.toUtf8()}}.dump(), context);
+    MaiFileSystem::removeFile(hardwareOutput);
+    if (hardwareMetadata.hasError() ||
+        hardwareMetadata.output().find("\"codec_name\": \"h264\"") == std::string::npos) {
+        std::fprintf(stderr, "VideoToolbox encode failed: %s\n",
+                     hardwareMetadata.hasError() ? hardwareMetadata.error().message().c_str()
+                                                 : hardwareMetadata.output().c_str());
+        return 23;
+    }
+#endif
 
     std::atomic<bool> canceled{false};
     MaiFfmpegEngine fakeEngine{runUntilCanceled, setFakeCancelCheck, nullptr, nullptr};

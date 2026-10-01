@@ -54,10 +54,7 @@ final class MobilePermissionTools {
             }
             String status = access.equals("full") ? "granted"
                 : access.equals("denied") ? "denied" : "limited";
-            boolean settingsRequired = status.equals("denied") ||
-                (Build.VERSION.SDK_INT >= 33 && access.equals("images_only") &&
-                    !activity.shouldShowRequestPermissionRationale(
-                        Manifest.permission.READ_MEDIA_VIDEO));
+            boolean settingsRequired = status.equals("denied") && !hasPhotoRationale();
             return response(permission, status, prompted, settingsRequired,
                 access);
         }
@@ -65,8 +62,8 @@ final class MobilePermissionTools {
         switch (permission) {
             case "camera": required = new String[]{Manifest.permission.CAMERA}; break;
             case "microphone": required = new String[]{Manifest.permission.RECORD_AUDIO}; break;
-            case "location": required = new String[]{Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION}; break;
+            case "location": required = new String[]{Manifest.permission.ACCESS_COARSE_LOCATION};
+                break;
             case "contacts": required = new String[]{Manifest.permission.READ_CONTACTS}; break;
             case "calendar": required = new String[]{Manifest.permission.READ_CALENDAR}; break;
             case "notifications":
@@ -110,8 +107,11 @@ final class MobilePermissionTools {
         boolean some = hasAny(required);
         String status = all ? "granted" : some ? "limited" : "denied";
         boolean settingsRequired = !all && prompted && !hasRationale(required);
-        return response(permission, status, prompted, settingsRequired,
-            permission.equals("location") ? "when_in_use" : "system");
+        String access = permission.equals("location")
+            ? !all ? "none" : activity.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED ? "precise" : "approximate"
+            : "system";
+        return response(permission, status, prompted, settingsRequired, access);
     }
 
     private boolean hasAllPhotoAccess() {
@@ -122,6 +122,15 @@ final class MobilePermissionTools {
                 == PackageManager.PERMISSION_GRANTED &&
             activity.checkSelfPermission(Manifest.permission.READ_MEDIA_VIDEO)
                 == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private boolean hasPhotoRationale() {
+        if (Build.VERSION.SDK_INT < 33)
+            return activity.shouldShowRequestPermissionRationale(
+                Manifest.permission.READ_EXTERNAL_STORAGE);
+        return activity.shouldShowRequestPermissionRationale(
+            Manifest.permission.READ_MEDIA_IMAGES) ||
+            activity.shouldShowRequestPermissionRationale(Manifest.permission.READ_MEDIA_VIDEO);
     }
 
     private boolean hasAll(String[] permissions) {

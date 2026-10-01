@@ -22,6 +22,7 @@ extension AIMobileHostToolProvider {
         }
         let status: String
         let prompted: Bool
+        var access = "system"
         switch permission {
         case "photos":
             let initial = PHPhotoLibrary.authorizationStatus(for: .readWrite)
@@ -36,6 +37,7 @@ extension AIMobileHostToolProvider {
             case .notDetermined: status = "not_determined"
             @unknown default: status = "restricted"
             }
+            access = status == "granted" ? "full" : status == "limited" ? "limited" : "none"
         case "camera", "microphone":
             let media: AVMediaType = permission == "camera" ? .video : .audio
             let initial = AVCaptureDevice.authorizationStatus(for: media)
@@ -68,6 +70,7 @@ extension AIMobileHostToolProvider {
             case .notDetermined: status = "not_determined"
             @unknown default: status = "restricted"
             }
+            access = status == "granted" ? request.accuracyAccess : "none"
         case "contacts":
             let store = CNContactStore()
             let initial = CNContactStore.authorizationStatus(for: .contacts)
@@ -137,6 +140,7 @@ extension AIMobileHostToolProvider {
         return Self.jsonSuccess([
             "permission": permission, "status": status, "prompted": prompted,
             "settings_required": status == "denied" || status == "restricted",
+            "access": access,
         ])
     }
 }
@@ -147,6 +151,9 @@ private final class MaiLocationPermissionRequest: NSObject, CLLocationManagerDel
     private var continuation: CheckedContinuation<CLAuthorizationStatus, Never>?
 
     var currentStatus: CLAuthorizationStatus { manager.authorizationStatus }
+    var accuracyAccess: String {
+        manager.accuracyAuthorization == .fullAccuracy ? "precise" : "approximate"
+    }
 
     func request() async -> CLAuthorizationStatus {
         await withCheckedContinuation { continuation in

@@ -34,8 +34,10 @@ constexpr auto kMarkdownBaseInstructions =
     "they improve readability. Never emit table pipes as one continuous line. Images included "
     "in a user message are already available as visual input; analyze them directly and do not "
     "call the read tool for image files. When a mobile task lacks an OS permission, call "
-    "mobile_request_permission for that capability and retry once if granted. If the OS reports "
-    "settings_required, tell the user which permission to enable instead of retrying in a loop.";
+    "mobile_request_permission for that capability and retry once if granted. A limited grant "
+    "may still allow the operation, such as reading selected photos or using approximate "
+    "location; retry once when that access is sufficient. If the OS reports settings_required, "
+    "tell the user which permission to enable instead of retrying in a loop.";
 
 std::string encodeBase64(const std::string& input) {
     constexpr char kAlphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

@@ -72,6 +72,7 @@ public final class MobileGalleryVideoInstrumentedTest {
             JSONObject locationPermission = permissions.request(
                 new JSONObject().put("permission", "location"));
             assertEquals("granted", locationPermission.getString("status"));
+            assertEquals("precise", locationPermission.getString("access"));
             JSONObject list = (JSONObject) tools.execute("mobile_list_photos",
                 new JSONObject().put("limit", 100));
             String id = Long.toString(android.content.ContentUris.parseId(created));

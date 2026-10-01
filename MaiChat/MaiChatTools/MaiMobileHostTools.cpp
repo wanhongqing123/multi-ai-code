@@ -210,10 +210,11 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
         true);
     add("mobile_request_permission",
         "Ask the operating system for a MaiChat permission when a task needs it. "
-        "Use photos before reading the system gallery. Returns granted, limited, or denied "
-        "and whether Settings is required. Supported permissions: photos (images and videos), "
-        "camera, microphone, location, contacts, calendar, notifications.",
-        R"({"type":"object","properties":{"permission":{"type":"string"}},"required":["permission"],"additionalProperties":false})");
+        "Use photos before reading the system gallery. Ask only for the capability needed by "
+        "the current task. Returns status, whether the system prompted, whether Settings is "
+        "required, and the access level (including approximate or precise location). A limited "
+        "photo grant can still expose selected items. Location is foreground-only.",
+        R"({"type":"object","properties":{"permission":{"type":"string","enum":["photos","camera","microphone","location","contacts","calendar","notifications"]}},"required":["permission"],"additionalProperties":false})");
 }
 
 void registerMobilePhotoTools(MaiToolRegistry& tools,

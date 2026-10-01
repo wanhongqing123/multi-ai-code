@@ -27,6 +27,7 @@
 #include <QSettings>
 #include <QSplitter>
 #include <QStandardPaths>
+#include <QStyle>
 #include <QTextBlock>
 #include <QTextCursor>
 #include <QTextDocument>
@@ -616,6 +617,7 @@ struct AgentChatPanel::Runtime {
     PromptEdit* editor = nullptr;
     QPushButton* send = nullptr;
     QPushButton* hint = nullptr;
+    QPushButton* chooseWorkspace = nullptr;
 
     // partId -> 思考条 / 工具卡。这两样要能点，画不出来，所以还是部件，
     // 由 MarkdownView 负责摆位置和跟着滚。
@@ -687,29 +689,6 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     applyAgentMenuStyle(moreMenu);
     QAction* configureAction = moreMenu->addAction(QStringLiteral("模型配置"));
     QAction* clearAction = moreMenu->addAction(QStringLiteral("清空当前对话"));
-    moreMenu->addSeparator();
-    QAction* directoryAction = moreMenu->addAction(QStringLiteral("相对路径起点：未选择"));
-    directoryAction->setEnabled(false);
-    QAction* chooseDirectoryAction =
-        moreMenu->addAction(QStringLiteral("选择工作目录并新建对话…"));
-    chooseDirectoryAction->setToolTip(
-        QStringLiteral("只改变相对路径起点；绝对路径可访问系统允许的位置"));
-    connect(moreMenu, &QMenu::aboutToShow, this, [this, directoryAction] {
-        MaiSession session;
-        if (!runtime_->controller->agent().getSession(toUtf8(runtime_->sessionId), session))
-            return;
-        directoryAction->setText(QStringLiteral("相对路径起点：%1")
-                                     .arg(QDir::toNativeSeparators(fromUtf8(session.directory))));
-    });
-    connect(chooseDirectoryAction, &QAction::triggered, this, [this] {
-        MaiSession session;
-        QString initial = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
-        if (runtime_->controller->agent().getSession(toUtf8(runtime_->sessionId), session))
-            initial = fromUtf8(session.directory);
-        const QString selected = QFileDialog::getExistingDirectory(
-            this, QStringLiteral("选择 AI 助手工作目录"), initial, QFileDialog::ShowDirsOnly);
-        if (!selected.isEmpty()) openSessionInDirectory(selected);
-    });
     moreButton->setMenu(moreMenu);
     headRow->addWidget(moreButton);
     root->addWidget(head);
@@ -754,7 +733,7 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
             border-radius:14px;
             background:#ffffff;
             color:%2;
-            padding:10px 52px 46px 13px;
+            padding:10px 52px 10px 13px;
         }
         QTextEdit#agentPromptEditor:focus { border-color:#b5bbc4; }
     )").arg(QStringLiteral("#d1d5db"), kInk)));
@@ -876,6 +855,33 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     runtime_->send->setFixedSize(UiZoom::s(36), UiZoom::s(36));
     runtime_->send->setIconSize(QSize(UiZoom::s(18), UiZoom::s(18)));
     runtime_->editor->setCornerAction(runtime_->send);
+
+    runtime_->chooseWorkspace = new QPushButton(QStringLiteral("选择工作目录"), runtime_->editor);
+    runtime_->chooseWorkspace->setObjectName(QStringLiteral("agentChooseWorkspaceButton"));
+    runtime_->chooseWorkspace->setAccessibleName(QStringLiteral("选择工作目录并新建对话"));
+    runtime_->chooseWorkspace->setCursor(Qt::PointingHandCursor);
+    runtime_->chooseWorkspace->setIcon(style()->standardIcon(QStyle::SP_DirIcon));
+    runtime_->chooseWorkspace->setIconSize(QSize(UiZoom::s(16), UiZoom::s(16)));
+    runtime_->chooseWorkspace->setFixedSize(UiZoom::s(154), UiZoom::s(30));
+    runtime_->chooseWorkspace->setToolTip(QStringLiteral("选择工作目录并新建对话"));
+    runtime_->chooseWorkspace->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
+        QPushButton#agentChooseWorkspaceButton {
+            background:#f5f7fa;border:1px solid #e2e8f0;border-radius:8px;
+            color:#344054;font-size:12px;padding:0 8px;text-align:left;
+        }
+        QPushButton#agentChooseWorkspaceButton:hover { background:#eef2f6; }
+        QPushButton#agentChooseWorkspaceButton:pressed { background:#e5eaf0; }
+    )")));
+    runtime_->editor->setLeadingAction(runtime_->chooseWorkspace);
+    connect(runtime_->chooseWorkspace, &QPushButton::clicked, this, [this] {
+        MaiSession session;
+        QString initial = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+        if (runtime_->controller->agent().getSession(toUtf8(runtime_->sessionId), session))
+            initial = fromUtf8(session.directory);
+        const QString selected = QFileDialog::getExistingDirectory(
+            this, QStringLiteral("选择 AI 助手工作目录"), initial, QFileDialog::ShowDirsOnly);
+        if (!selected.isEmpty()) openSessionInDirectory(selected);
+    });
 
     auto* messageComposerSplitter = new ComposerResizeSplitter(this);
     messageComposerSplitter->setObjectName(QStringLiteral("agentMessageComposerSplitter"));
@@ -1067,6 +1073,14 @@ void AgentChatPanel::openSession(const QString& sessionId) {
         //（"New session"），不是空串。判空的话那串占位符会直接显示在头部。
         runtime_->title->setText(session.isUntitled() ? QStringLiteral("AI 助手")
                                                       : fromUtf8(session.title));
+        const QString directory = QDir::toNativeSeparators(fromUtf8(session.directory));
+        QString name = QFileInfo(directory).fileName();
+        if (name.isEmpty()) name = directory;
+        const QString label = QStringLiteral("工作目录 · %1").arg(name);
+        runtime_->chooseWorkspace->setText(runtime_->chooseWorkspace->fontMetrics().elidedText(
+            label, Qt::ElideMiddle, runtime_->chooseWorkspace->width() - UiZoom::s(40)));
+        runtime_->chooseWorkspace->setToolTip(
+            QStringLiteral("当前工作目录：%1\n点击选择目录并新建对话").arg(directory));
     }
     reloadFromStore();
     emit sessionListChanged();

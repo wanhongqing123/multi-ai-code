@@ -477,13 +477,25 @@ void AgentPanelSessionTest::newSessionUsesDocumentsInsteadOfProcessDirectory() {
 void AgentPanelSessionTest::newSessionOffersWorkspaceChoice() {
     Harness harness;
     auto* more = harness.panel->findChild<QPushButton*>(QStringLiteral("agentMoreActions"));
+    auto* editor = harness.panel->findChild<ComposerTextEdit*>();
+    auto* workspace =
+        harness.panel->findChild<QPushButton*>(QStringLiteral("agentChooseWorkspaceButton"));
     QVERIFY(more != nullptr);
+    QVERIFY(editor != nullptr);
+    QVERIFY(workspace != nullptr);
     QVERIFY(more->menu() != nullptr);
-    bool hasChoice = false;
+    QCOMPARE(workspace->parentWidget(), editor);
+    QVERIFY(editor->rect().contains(workspace->geometry().topLeft()));
+    QVERIFY(editor->rect().contains(workspace->geometry().bottomRight()));
+    QVERIFY(workspace->x() < editor->width() / 3);
+    QVERIFY(workspace->y() > editor->height() / 2);
+    MaiSession session;
+    QVERIFY(harness.controller->agent().getSession(harness.mine.toStdString(), session));
+    QVERIFY(workspace->toolTip().contains(
+        QDir::toNativeSeparators(QString::fromStdString(session.directory))));
     for (QAction* action : more->menu()->actions()) {
-        if (action->text() == QStringLiteral("选择工作目录并新建对话…")) hasChoice = true;
+        QVERIFY(action->text() != QStringLiteral("选择工作目录并新建对话…"));
     }
-    QVERIFY(hasChoice);
 }
 
 void AgentPanelSessionTest::chosenWorkspaceCreatesIndependentSession() {

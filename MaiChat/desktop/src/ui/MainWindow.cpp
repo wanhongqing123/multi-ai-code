@@ -68,6 +68,7 @@
 #include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QSplitter>
+#include <QSplitterHandle>
 #include <QStyle>
 #include <QAbstractItemView>
 #include <QStyledItemDelegate>
@@ -1515,6 +1516,43 @@ void MainWindow::closeEvent(QCloseEvent* event) {
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == messageComposerHandle_ && messageScroll_) {
+        if (event->type() == QEvent::MouseButtonPress
+            && static_cast<QMouseEvent*>(event)->button() == Qt::LeftButton) {
+            QObject::disconnect(composerResizeRangeConn_);
+            QScrollBar* bar = messageScroll_->verticalScrollBar();
+            composerResizePeerId_ = app_.chatState().selectedPeerId();
+            composerResizeStartedAtBottom_ =
+                bar->value() >= bar->maximum() - UiZoom::s(40);
+            if (composerResizeStartedAtBottom_) {
+                const QString peerId = composerResizePeerId_;
+                composerResizeRangeConn_ = connect(
+                    bar, &QAbstractSlider::rangeChanged, this,
+                    [this, peerId](int, int) {
+                        QTimer::singleShot(0, this, [this, peerId] {
+                            if (messageScroll_ && app_.chatState().selectedPeerId() == peerId)
+                                messageScroll_->verticalScrollBar()->setValue(
+                                    messageScroll_->verticalScrollBar()->maximum());
+                        });
+                    });
+            }
+        } else if ((event->type() == QEvent::MouseButtonRelease
+                    && static_cast<QMouseEvent*>(event)->button() == Qt::LeftButton)
+                   || event->type() == QEvent::Hide
+                   || event->type() == QEvent::UngrabMouse) {
+            QObject::disconnect(composerResizeRangeConn_);
+            if (composerResizeStartedAtBottom_) {
+                const QString peerId = composerResizePeerId_;
+                QTimer::singleShot(0, this, [this, peerId] {
+                    if (messageScroll_ && app_.chatState().selectedPeerId() == peerId)
+                        messageScroll_->verticalScrollBar()->setValue(
+                            messageScroll_->verticalScrollBar()->maximum());
+                });
+            }
+            composerResizeStartedAtBottom_ = false;
+            composerResizePeerId_.clear();
+        }
+    }
     if (watched == commandButton_ && event->type() == QEvent::Enter) {
         showSlashCommandMenu();
     }
@@ -2035,6 +2073,8 @@ void MainWindow::buildUi() {
     messageComposerSplitter->setChildrenCollapsible(false);
     messageComposerSplitter->addWidget(messageScroll_);
     messageComposerSplitter->addWidget(composer);
+    messageComposerHandle_ = messageComposerSplitter->handle(1);
+    messageComposerHandle_->installEventFilter(this);
     messageComposerSplitter->setStretchFactor(0, 1);
     messageComposerSplitter->setStretchFactor(1, 0);
     messageComposerSplitter->setSizes(QList<int>() << 620 << 166);

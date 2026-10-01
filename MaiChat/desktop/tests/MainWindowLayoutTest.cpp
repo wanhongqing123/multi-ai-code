@@ -103,6 +103,7 @@ private slots:
     void composerResizeHandleAlignsWithEditorBorder_data();
     void composerResizeHandleAlignsWithEditorBorder();
     void composerResizeCursorClearsAfterPointerLeaves();
+    void composerResizeKeepsLatestMessageVisible();
     void rendersEmptyConversationState();
     void sendsTextFromComposer();
     void returnKeySendsComposerText();
@@ -1727,6 +1728,69 @@ void MainWindowLayoutTest::composerResizeCursorClearsAfterPointerLeaves() {
     QCOMPARE(agentHandle->cursor().shape(), Qt::SplitVCursor);
     QApplication::sendEvent(agentHandle, &leave);
     QCOMPARE(agentHandle->cursor().shape(), Qt::ArrowCursor);
+}
+
+void MainWindowLayoutTest::composerResizeKeepsLatestMessageVisible() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+    app.selectPeer(QStringLiteral("phone-user"));
+    for (int index = 0; index < 30; ++index)
+        app.sendText(QStringLiteral("message %1").arg(index));
+
+    MainWindow window(app);
+    window.resize(1280, 800);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QCoreApplication::processEvents();
+    auto* splitter = window.findChild<QSplitter*>(QStringLiteral("messageComposerSplitter"));
+    auto* scroll = window.findChild<QScrollArea*>(QStringLiteral("messageScroll"));
+    QVERIFY(splitter && scroll);
+    QScrollBar* bar = scroll->verticalScrollBar();
+    QVERIFY(bar->maximum() > 0);
+    bar->setValue(bar->maximum());
+    const int oldHeight = scroll->height();
+    QSplitterHandle* handle = splitter->handle(1);
+    const QPoint start = handle->rect().center();
+    const QPoint startGlobal = handle->mapToGlobal(start);
+    QTest::mousePress(handle, Qt::LeftButton, Qt::NoModifier, start);
+    bool latestVisibleDuringDrag = true;
+    QString clippedDuringDrag;
+    for (int step = 1; step <= 5; ++step) {
+        const QPoint global = startGlobal - QPoint(0, step * 24);
+        const QPoint local = handle->mapFromGlobal(global);
+        QMouseEvent move(QEvent::MouseMove, QPointF(local), QPointF(global),
+                         Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(handle, &move);
+        QCoreApplication::processEvents();
+        if (bar->value() != bar->maximum()) {
+            latestVisibleDuringDrag = false;
+            clippedDuringDrag = QStringLiteral("step=%1 scroll=%2/%3")
+                                    .arg(step).arg(bar->value()).arg(bar->maximum());
+            break;
+        }
+    }
+    const QPoint finishGlobal = startGlobal - QPoint(0, 120);
+    QTest::mouseRelease(handle, Qt::LeftButton, Qt::NoModifier,
+                        handle->mapFromGlobal(finishGlobal));
+    QCoreApplication::processEvents();
+    QVERIFY2(latestVisibleDuringDrag, qPrintable(clippedDuringDrag));
+    QVERIFY(scroll->height() < oldHeight);
+    QCOMPARE(bar->value(), bar->maximum());
+    const QList<QWidget*> rows =
+        window.findChildren<QWidget*>(QStringLiteral("messageRowOutgoing"));
+    QVERIFY(!rows.isEmpty());
+    QWidget* latest = rows.first();
+    for (QWidget* row : rows) {
+        if (row->mapTo(scroll->viewport(), QPoint(0, 0)).y() >
+            latest->mapTo(scroll->viewport(), QPoint(0, 0)).y())
+            latest = row;
+    }
+    const QRect latestRect(latest->mapTo(scroll->viewport(), QPoint(0, 0)), latest->size());
+    QVERIFY2(latestRect.top() < scroll->viewport()->height() && latestRect.bottom() >= 0,
+             qPrintable(QStringLiteral("latest row=%1..%2 viewport=%3 scroll=%4/%5")
+                            .arg(latestRect.top()).arg(latestRect.bottom())
+                            .arg(scroll->viewport()->height()).arg(bar->value()).arg(bar->maximum())));
 }
 
 // The editor widget is shared, so switching peers must swap its rich draft and quote together.

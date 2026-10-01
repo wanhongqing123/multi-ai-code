@@ -34,6 +34,7 @@ class QMimeData;
 class QMenu;
 class QResizeEvent;
 class QShowEvent;
+class QSplitterHandle;
 class QLineEdit;
 class QHBoxLayout;
 class QListWidgetItem;
@@ -307,6 +308,10 @@ private:
     QLabel* settingsSdkAppIdValue_ = nullptr;
     QLabel* settingsAgentModelValue_ = nullptr;
     QScrollArea* messageScroll_ = nullptr;
+    QSplitterHandle* messageComposerHandle_ = nullptr;
+    QMetaObject::Connection composerResizeRangeConn_;
+    bool composerResizeStartedAtBottom_ = false;
+    QString composerResizePeerId_;
     QWidget* messageContainer_ = nullptr;
     QVBoxLayout* messageLayout_ = nullptr;
     QWidget* activityBubble_ = nullptr;

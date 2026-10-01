@@ -25,6 +25,7 @@
 #include "../util/util.hpp"
 #include "../matrix3.h"
 #include <winternl.h>
+#include <ntstatus.h>
 #include <d3d9.h>
 #include "d3d11-subsystem.hpp"
 #include <shellscalingapi.h>
@@ -240,7 +241,9 @@ gs_swap_chain::gs_swap_chain(gs_device *device, const gs_init_data *data)
 	UINT flags = 0;
 
 	ComQIPtr<IDXGIFactory5> factory5 = device->factory;
-	if (factory5) {
+	/* Qt embeds this swap chain in a child HWND. Blit presentation keeps the
+	 * SDR image visible to the parent compositor and window capture. */
+	if (factory5 && !(GetWindowLongPtr(hwnd, GWL_STYLE) & WS_CHILD)) {
 		initData.num_backbuffers = std::max(data->num_backbuffers, (uint32_t)2);
 
 		effect = DXGI_SWAP_EFFECT_FLIP_DISCARD;

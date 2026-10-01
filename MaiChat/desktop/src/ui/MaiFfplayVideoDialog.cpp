@@ -19,23 +19,36 @@
 
 #include "MaiGraphicsPresenter.h"
 
+#if defined(Q_OS_MAC)
 extern "C" void* maiGraphicsCreateMacLayer(QWidget* widget);
 extern "C" void maiGraphicsResizeMacLayer(void* nativeLayer, QWidget* widget);
 extern "C" void maiGraphicsRetainMacLayer(void* nativeLayer);
 extern "C" void maiGraphicsReleaseMacLayer(void* nativeLayer);
+#endif
 
 namespace {
 
 QPointer<MaiFfplayVideoDialog> sActiveDialog;
 int sPresenterUsers = 0;
+std::atomic<uint64_t> sPresentedFrames{0};
+
+void onFramePresented(uint64_t, bool success, void*) {
+    if (success) sPresentedFrames.fetch_add(1);
+}
 
 QString bundledResource(const QString& relative) {
     const QString base = QCoreApplication::applicationDirPath();
+#if defined(Q_OS_WIN)
+    if (relative.endsWith(QStringLiteral("libmaiagent_obs_metal.so")))
+        return base + QStringLiteral("/maiagent_obs_d3d11.dll");
+    return base + QStringLiteral("/MaiAgentGraphics");
+#else
     const QString bundled = QFileInfo(base + relative).absoluteFilePath();
     if (QFileInfo::exists(bundled)) return bundled;
     if (relative.endsWith(QStringLiteral("libmaiagent_obs_metal.so")))
         return base + QStringLiteral("/maiagent/Graphics/libmaiagent_obs_metal.so");
     return base + QStringLiteral("/maiagent/Graphics/data");
+#endif
 }
 
 }  // namespace
@@ -47,8 +60,14 @@ MaiFfplayVideoDialog::MaiFfplayVideoDialog(const QString& path, QWidget* parent)
     setStyleSheet(QStringLiteral("QDialog { background: #10151f; }"));
     auto* layout = new QVBoxLayout(this);
     surface_ = new QWidget(this);
+    surface_->setObjectName(QStringLiteral("ffplayVideoSurface"));
     surface_->setAttribute(Qt::WA_NativeWindow);
+#if defined(Q_OS_WIN)
+    surface_->setAttribute(Qt::WA_PaintOnScreen);
+    surface_->setAttribute(Qt::WA_NoSystemBackground);
+#else
     surface_->setStyleSheet(QStringLiteral("background: black"));
+#endif
     layout->addWidget(surface_, 1);
     errorLabel_ = new QLabel(this);
     errorLabel_->setStyleSheet(QStringLiteral("color: #ffb4b4"));
@@ -73,6 +92,10 @@ MaiFfplayVideoDialog::~MaiFfplayVideoDialog() { stopPlayback(); }
 
 QPointer<MaiFfplayVideoDialog> MaiFfplayVideoDialog::activeDialog() {
     return sActiveDialog;
+}
+
+uint64_t MaiFfplayVideoDialog::presentedFrames() const {
+    return sPresentedFrames.load();
 }
 
 bool MaiFfplayVideoDialog::presentVideo(void* userData, const MaiVideoFrame* frame,
@@ -136,18 +159,27 @@ bool MaiFfplayVideoDialog::startPlayback() {
         const QByteArray modulePath = backend.toUtf8();
         const QByteArray effectPath = effects.toUtf8();
         if (!maiGraphicsPresenterStart(modulePath.constData(), effectPath.constData(),
-                                       nullptr, nullptr)) return false;
+                                       onFramePresented, nullptr)) return false;
     }
     ++sPresenterUsers;
-    nativeLayer_ = maiGraphicsCreateMacLayer(surface_);
-    if (nativeLayer_) {
-        viewId_ = maiGraphicsPresenterAttach(nativeLayer_,
+#if defined(Q_OS_WIN)
+    nativeView_ = reinterpret_cast<void*>(surface_->winId());
+    if (nativeView_) {
+        viewId_ = maiGraphicsPresenterAttach(nativeView_,
+                                             std::max(surface_->width(), 1),
+                                             std::max(surface_->height(), 1), nullptr, nullptr);
+    }
+#else
+    nativeView_ = maiGraphicsCreateMacLayer(surface_);
+    if (nativeView_) {
+        viewId_ = maiGraphicsPresenterAttach(nativeView_,
                                              std::max(surface_->width(), 1),
                                              std::max(surface_->height(), 1),
                                              maiGraphicsRetainMacLayer,
                                              maiGraphicsReleaseMacLayer);
-        maiGraphicsReleaseMacLayer(nativeLayer_);
+        maiGraphicsReleaseMacLayer(nativeView_);
     }
+#endif
     if (!viewId_) {
         --sPresenterUsers;
         if (sPresenterUsers == 0) maiGraphicsPresenterStop();
@@ -163,6 +195,7 @@ bool MaiFfplayVideoDialog::startPlayback() {
     host_.set_fullscreen = setFullscreen;
     host_.show_window = showWindow;
     const QByteArray sourcePath = QFileInfo(path_).absoluteFilePath().toUtf8();
+    sPresentedFrames = 0;
     started_ = true;
     playbackFinished_ = false;
     sActiveDialog = this;
@@ -222,7 +255,9 @@ void MaiFfplayVideoDialog::closeEvent(QCloseEvent* event) {
 void MaiFfplayVideoDialog::resizeEvent(QResizeEvent* event) {
     QDialog::resizeEvent(event);
     if (!viewId_) return;
-    maiGraphicsResizeMacLayer(nativeLayer_, surface_);
+#if defined(Q_OS_MAC)
+    maiGraphicsResizeMacLayer(nativeView_, surface_);
+#endif
     maiGraphicsPresenterResize(viewId_, std::max(surface_->width(), 1),
                                std::max(surface_->height(), 1));
 }

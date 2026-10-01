@@ -26,6 +26,7 @@ public:
     bool seekPercent(double fraction);
     bool isStarted() const { return started_; }
     bool isPlaying() const { return playing_; }
+    uint64_t presentedFrames() const;
 
 protected:
     void showEvent(QShowEvent* event) override;
@@ -53,7 +54,7 @@ private:
     QLabel* errorLabel_ = nullptr;
     MaiFfplayHost host_{};
     std::thread playbackThread_;
-    void* nativeLayer_ = nullptr;
+    void* nativeView_ = nullptr;
     uint64_t viewId_ = 0;
     bool started_ = false;
     bool playing_ = true;

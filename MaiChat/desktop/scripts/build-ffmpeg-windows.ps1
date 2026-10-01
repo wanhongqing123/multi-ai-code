@@ -2,6 +2,7 @@ param(
     [Parameter(Mandatory = $true)][string]$SourceDirectory,
     [Parameter(Mandatory = $true)][string]$BuildDirectory,
     [Parameter(Mandatory = $true)][string]$MsysBash,
+    [Parameter(Mandatory = $true)][string]$CodecInstallDirectory,
     [int]$Jobs = 6
 )
 
@@ -18,6 +19,7 @@ function ConvertTo-MsysPath([string]$Path) {
 $source = (Resolve-Path -LiteralPath $SourceDirectory).Path
 $build = [System.IO.Path]::GetFullPath($BuildDirectory)
 $bash = (Resolve-Path -LiteralPath $MsysBash).Path
+$codecs = (Resolve-Path -LiteralPath $CodecInstallDirectory).Path
 $msysBin = Split-Path -Parent $bash
 if (-not (Test-Path -LiteralPath (Join-Path $msysBin 'make.exe'))) {
     throw 'MSYS2 make.exe is required. Install it with: pacman -S make diffutils pkgconf'
@@ -34,8 +36,14 @@ $env:MSYS2_PATH_TYPE = 'inherit'
 $env:MAICHAT_FFMPEG_SOURCE = ConvertTo-MsysPath $source
 $env:MAICHAT_FFMPEG_BUILD = ConvertTo-MsysPath $build
 $env:MAICHAT_FFMPEG_JOBS = [string][Math]::Max(1, $Jobs)
+$env:MAICHAT_CODEC_INCLUDE = ($codecs + '/include').Replace('\', '/')
+$env:MAICHAT_CODEC_LIB = ($codecs + '/lib').Replace('\', '/')
+$env:LIB = (Join-Path $codecs 'lib') + ';' + $env:LIB
+$env:MAICHAT_PKG_CONFIG_PATH = ConvertTo-MsysPath (Join-Path $codecs 'lib/pkgconfig')
 $script = @'
 set -euo pipefail
+export PKG_CONFIG_PATH="$MAICHAT_PKG_CONFIG_PATH"
+export MSYS2_ARG_CONV_EXCL="/MD"
 mkdir -p "$MAICHAT_FFMPEG_BUILD"
 cd "$MAICHAT_FFMPEG_BUILD"
 "$MAICHAT_FFMPEG_SOURCE/configure" \
@@ -43,14 +51,20 @@ cd "$MAICHAT_FFMPEG_BUILD"
   --toolchain=msvc --cc=clang-cl.exe --ld=lld-link.exe --ar=lib.exe \
   --target-os=win64 --arch=x86_64 \
   --disable-programs --disable-doc --disable-debug --disable-autodetect --disable-asm \
-  --disable-gpl --disable-nonfree --enable-static --disable-shared --enable-pic \
-  --extra-cflags=-MD
+  --enable-gpl --disable-nonfree --enable-static --disable-shared --enable-pic \
+  --enable-libdav1d --enable-libx264 --enable-libmp3lame --enable-zlib \
+  --extra-cflags="/MD -I$MAICHAT_CODEC_INCLUDE" \
+  --extra-ldflags="-libpath:$MAICHAT_CODEC_LIB"
+make clean
 make -j"$MAICHAT_FFMPEG_JOBS"
 make -j"$MAICHAT_FFMPEG_JOBS" libmaifftools.lib
 make install
 '@
+$scriptFile = Join-Path $build 'build-maichat-ffmpeg.sh'
+[System.IO.File]::WriteAllText($scriptFile, $script,
+    [System.Text.UTF8Encoding]::new($false))
 $ErrorActionPreference = 'Continue'
-& $bash -lc $script
+& $bash -l (ConvertTo-MsysPath $scriptFile)
 $buildExit = $LASTEXITCODE
 $ErrorActionPreference = 'Stop'
 if ($buildExit -ne 0) { throw "FFmpeg build failed with exit code $buildExit" }

@@ -1,6 +1,13 @@
 cmake_minimum_required(VERSION 3.21)
 # C 用于 MaiAgent/third_party/md4c（Markdown 解析，纯 C 实现）。
 project(MaiChatDesktop VERSION 0.1.96 LANGUAGES C CXX)
+if(MSVC AND CMAKE_CL_SHOWINCLUDES_PREFIX MATCHES "^娉")
+  # Some CMake/VS2019 locale combinations double-decode /showIncludes. Ninja then
+  # records no header dependencies, so changing a public header leaves stale objects.
+  set(CMAKE_C_CL_SHOWINCLUDES_PREFIX "注意: 包含文件:  ")
+  set(CMAKE_CXX_CL_SHOWINCLUDES_PREFIX "注意: 包含文件:  ")
+  set(CMAKE_CL_SHOWINCLUDES_PREFIX "注意: 包含文件:  ")
+endif()
 if(APPLE)
   enable_language(OBJCXX)
 endif()
@@ -87,7 +94,16 @@ set(CMAKE_AUTORCC OFF)
 set(_maichat_zlib_found ${ZLIB_FOUND})
 set(ZLIB_FOUND FALSE)
 
-if(APPLE)
+if(WIN32)
+  option(MAICHAT_ENABLE_FFMPEG "Build shared MaiChat image filters with FFmpeg" ON)
+  if(MAICHAT_ENABLE_FFMPEG)
+    set(MAICHAT_FFMPEG_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/vendor/ffmpeg-windows"
+      CACHE PATH "Windows FFmpeg build and install directory")
+    set(MAIAGENT_BUILD_GRAPHICS ON CACHE BOOL "" FORCE)
+    set(MAIAGENT_GRAPHICS_FFMPEG_INCLUDE_DIR
+      "${MAICHAT_FFMPEG_BUILD_DIR}/install/include" CACHE PATH "" FORCE)
+  endif()
+elseif(APPLE)
   set(MAIAGENT_BUILD_GRAPHICS ON CACHE BOOL "" FORCE)
 endif()
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent maiagent EXCLUDE_FROM_ALL)
@@ -100,7 +116,6 @@ set(CMAKE_AUTORCC ${_maichat_autorcc})
 # 官方 FFmpeg 源码生成通用软件库。腾讯 TRTC 的 txffmpeg 只供 SDK 内部使用，
 # 不能拿来编译 MaiChat 自己的滤镜；Windows 用 MSVC 兼容的静态库独立接入。
 if(WIN32)
-  option(MAICHAT_ENABLE_FFMPEG "Build shared MaiChat image filters with FFmpeg" ON)
   if(MAICHAT_ENABLE_FFMPEG)
     set(MAICHAT_FFMPEG_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/ffmpeg")
     set(MAICHAT_FFMPEG_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/vendor/ffmpeg-windows"
@@ -112,6 +127,39 @@ if(WIN32)
     if(NOT MAICHAT_MSYS2_BASH)
       message(FATAL_ERROR "MSYS2 bash is required for Windows FFmpeg; set MAICHAT_MSYS2_BASH")
     endif()
+    find_program(MAICHAT_MESON NAMES meson.exe meson
+      HINTS "${CMAKE_CURRENT_BINARY_DIR}/pytools/bin")
+    if(NOT MAICHAT_MESON)
+      message(FATAL_ERROR "Meson is required to build the vendored Windows dav1d library")
+    endif()
+    set(MAICHAT_MEDIA_CODEC_SOURCE
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party")
+    set(MAICHAT_MEDIA_CODEC_BUILD_DIR
+      "${CMAKE_CURRENT_BINARY_DIR}/vendor/media-codecs-windows")
+    set(MAICHAT_MEDIA_CODEC_INSTALL_DIR
+      "${MAICHAT_MEDIA_CODEC_BUILD_DIR}/install")
+    set(MAICHAT_MEDIA_CODEC_ARCHIVES
+      "${MAICHAT_MEDIA_CODEC_INSTALL_DIR}/lib/dav1d.lib"
+      "${MAICHAT_MEDIA_CODEC_INSTALL_DIR}/lib/libx264.lib"
+      "${MAICHAT_MEDIA_CODEC_INSTALL_DIR}/lib/mp3lame.lib"
+      "${MAICHAT_MEDIA_CODEC_INSTALL_DIR}/lib/zlib.lib")
+    set(MAICHAT_MEDIA_CODEC_SCRIPT
+      "${CMAKE_CURRENT_SOURCE_DIR}/scripts/build-media-codecs-windows.ps1")
+    add_custom_command(OUTPUT ${MAICHAT_MEDIA_CODEC_ARCHIVES}
+      COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
+        -File "${MAICHAT_MEDIA_CODEC_SCRIPT}"
+        -SourceDirectory "${MAICHAT_MEDIA_CODEC_SOURCE}"
+        -BuildDirectory "${MAICHAT_MEDIA_CODEC_BUILD_DIR}"
+        -MsysBash "${MAICHAT_MSYS2_BASH}"
+        -Meson "${MAICHAT_MESON}"
+      DEPENDS "${MAICHAT_MEDIA_CODEC_SCRIPT}"
+        "${MAICHAT_MEDIA_CODEC_SOURCE}/dav1d/meson.build"
+        "${MAICHAT_MEDIA_CODEC_SOURCE}/x264/configure"
+        "${MAICHAT_MEDIA_CODEC_SOURCE}/lame/vc_solution/vs2019_libmp3lame.vcxproj"
+        "${MAICHAT_MEDIA_CODEC_SOURCE}/opencv/3rdparty/zlib/zlib.h"
+      VERBATIM)
+    add_custom_target(maichat_media_codecs_build
+      DEPENDS ${MAICHAT_MEDIA_CODEC_ARCHIVES})
     set(MAICHAT_FFMPEG_LIBRARIES avdevice avfilter avformat avcodec swresample swscale avutil)
     set(MAICHAT_FFMPEG_ARCHIVES)
     list(APPEND MAICHAT_FFMPEG_ARCHIVES
@@ -126,6 +174,7 @@ if(WIN32)
         -SourceDirectory "${MAICHAT_FFMPEG_SOURCE}"
         -BuildDirectory "${MAICHAT_FFMPEG_BUILD_DIR}"
         -MsysBash "${MAICHAT_MSYS2_BASH}"
+        -CodecInstallDirectory "${MAICHAT_MEDIA_CODEC_INSTALL_DIR}"
       DEPENDS "${MAICHAT_FFMPEG_SOURCE}/configure"
               "${MAICHAT_FFMPEG_SOURCE}/RELEASE" "${MAICHAT_FFMPEG_SCRIPT}"
               "${MAICHAT_FFMPEG_SOURCE}/fftools/Makefile"
@@ -135,8 +184,15 @@ if(WIN32)
               "${MAICHAT_FFMPEG_SOURCE}/fftools/opt_common.c"
               "${MAICHAT_FFMPEG_SOURCE}/fftools/mai_fftools_embed.h"
               "${MAICHAT_FFMPEG_SOURCE}/fftools/mai_fftools_log.c"
+              ${MAICHAT_MEDIA_CODEC_ARCHIVES}
       VERBATIM)
     add_custom_target(maichat_ffmpeg_build DEPENDS ${MAICHAT_FFMPEG_ARCHIVES})
+    add_dependencies(maichat_ffmpeg_build maichat_media_codecs_build)
+    add_dependencies(maiagent_obs_graphics_compile maichat_ffmpeg_build)
+    add_dependencies(maiagent_graphics maichat_ffmpeg_build)
+    target_link_libraries(maiagent_graphics PRIVATE
+      ${MAICHAT_FFMPEG_ARCHIVES} ${MAICHAT_MEDIA_CODEC_ARCHIVES}
+      psapi ole32 strmiids uuid oleaut32 shlwapi gdi32 vfw32 ws2_32 user32 bcrypt)
     add_library(maichat_ffmpeg_tools STATIC IMPORTED GLOBAL)
     set_target_properties(maichat_ffmpeg_tools PROPERTIES
       IMPORTED_LOCATION "${MAICHAT_FFMPEG_BUILD_DIR}/libmaifftools.lib")
@@ -155,7 +211,7 @@ if(WIN32)
     target_link_libraries(maichat_image_filter PUBLIC
       maichat_ffmpeg_avdevice maichat_ffmpeg_avfilter maichat_ffmpeg_avformat
       maichat_ffmpeg_avcodec maichat_ffmpeg_swresample maichat_ffmpeg_swscale
-      maichat_ffmpeg_avutil
+      maichat_ffmpeg_avutil ${MAICHAT_MEDIA_CODEC_ARCHIVES}
       psapi ole32 strmiids uuid oleaut32 shlwapi gdi32 vfw32 ws2_32 user32 bcrypt)
   endif()
 endif()
@@ -592,7 +648,7 @@ if(TARGET maiagent_embedded_fftools OR TARGET maichat_ffmpeg_tools)
       maichat_ffmpeg_tools
       maichat_ffmpeg_avdevice maichat_ffmpeg_avfilter maichat_ffmpeg_avformat
       maichat_ffmpeg_avcodec maichat_ffmpeg_swresample maichat_ffmpeg_swscale
-      maichat_ffmpeg_avutil
+      maichat_ffmpeg_avutil ${MAICHAT_MEDIA_CODEC_ARCHIVES}
       psapi ole32 strmiids uuid oleaut32 shlwapi gdi32 vfw32 ws2_32 user32 bcrypt)
   endif()
 endif()
@@ -713,16 +769,15 @@ if(APPLE AND TARGET maiagent_obs_metal)
 endif()
 
 if(WIN32 AND MAICHAT_ENABLE_FFMPEG)
-  # Keep the Windows adapter opt-in until the D3D11 Graphics runtime and
-  # native popup are linked and validated together.
-  add_library(maichat_ffplay_hosted SHARED EXCLUDE_FROM_ALL
+  add_library(maichat_ffplay_hosted SHARED
     ${maichat_ffplay_common_sources}
     ../Media/FfplayCompat/MaiFfplayAudioWindows.cpp)
   add_dependencies(maichat_ffplay_hosted maichat_ffmpeg_build)
   set_target_properties(maichat_ffplay_hosted PROPERTIES
     C_STANDARD 11 C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden
     VISIBILITY_INLINES_HIDDEN YES)
-  target_compile_definitions(maichat_ffplay_hosted PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+  target_compile_definitions(maichat_ffplay_hosted PRIVATE
+    NOMINMAX WIN32_LEAN_AND_MEAN MAI_FFPLAY_HOSTED)
   target_include_directories(maichat_ffplay_hosted PRIVATE
     ../Media ../Media/FfplayCompat
     ${ffplay_ffmpeg_source}/fftools
@@ -735,8 +790,74 @@ if(WIN32 AND MAICHAT_ENABLE_FFMPEG)
   target_link_libraries(maichat_ffplay_hosted PRIVATE
     maichat_ffmpeg_avdevice maichat_ffmpeg_avfilter maichat_ffmpeg_avformat
     maichat_ffmpeg_avcodec maichat_ffmpeg_swresample maichat_ffmpeg_swscale
-    maichat_ffmpeg_avutil winmm psapi ole32 strmiids uuid oleaut32 shlwapi
+    maichat_ffmpeg_avutil ${MAICHAT_MEDIA_CODEC_ARCHIVES}
+    winmm psapi ole32 strmiids uuid oleaut32 shlwapi
     gdi32 vfw32 ws2_32 user32 bcrypt)
+
+  target_sources(remote_im_desktop_ui PRIVATE
+    src/ui/MaiFfplayVideoDialog.h src/ui/MaiFfplayVideoDialog.cpp
+    src/MaiChatTools/DesktopMediaTools.h src/MaiChatTools/DesktopMediaTools.cpp)
+  target_include_directories(remote_im_desktop_ui PRIVATE ../Media/FfplayCompat)
+  target_link_libraries(remote_im_desktop_ui PRIVATE maichat_ffplay_hosted)
+  target_compile_definitions(remote_im_desktop_ui PRIVATE
+    MAICHAT_HAS_FFPLAY=1 NOMINMAX WIN32_LEAN_AND_MEAN)
+
+  add_dependencies(maichat maiagent_obs_d3d11)
+  add_custom_command(TARGET maichat POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      $<TARGET_FILE:maichat_ffplay_hosted>
+      $<TARGET_FILE_DIR:maichat>
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      $<TARGET_FILE:maiagent_graphics>
+      $<TARGET_FILE_DIR:maichat>
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      $<TARGET_FILE:maiagent_obs_d3d11>
+      $<TARGET_FILE_DIR:maichat>
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      $<TARGET_FILE:maiagent_obs_pthreads>
+      $<TARGET_FILE_DIR:maichat>
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+      ${CMAKE_CURRENT_BINARY_DIR}/maiagent/Graphics/data
+      $<TARGET_FILE_DIR:maichat>/MaiAgentGraphics
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      ${CMAKE_CURRENT_SOURCE_DIR}/../Media/data/video_conversion.effect
+      $<TARGET_FILE_DIR:maichat>/MaiAgentGraphics/video_conversion.effect)
+
+  add_executable(MaiFfplayVideoDialogTest tests/MaiFfplayVideoDialogTest.cpp)
+  add_custom_target(maichat_ffplay_test_runtime
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+      $<TARGET_FILE_DIR:MaiFfplayVideoDialogTest>/MaiAgentGraphics
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      $<TARGET_FILE:maichat_ffplay_hosted>
+      $<TARGET_FILE_DIR:MaiFfplayVideoDialogTest>
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      $<TARGET_FILE:maiagent_graphics>
+      $<TARGET_FILE_DIR:MaiFfplayVideoDialogTest>
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      $<TARGET_FILE:maiagent_obs_d3d11>
+      $<TARGET_FILE_DIR:MaiFfplayVideoDialogTest>
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      $<TARGET_FILE:maiagent_obs_pthreads>
+      $<TARGET_FILE_DIR:MaiFfplayVideoDialogTest>
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+      ${CMAKE_CURRENT_BINARY_DIR}/maiagent/Graphics/data
+      $<TARGET_FILE_DIR:MaiFfplayVideoDialogTest>/MaiAgentGraphics
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      ${CMAKE_CURRENT_SOURCE_DIR}/../Media/data/video_conversion.effect
+      $<TARGET_FILE_DIR:MaiFfplayVideoDialogTest>/MaiAgentGraphics/video_conversion.effect
+    DEPENDS maichat_ffplay_hosted maiagent_graphics
+      maiagent_obs_d3d11 maiagent_obs_pthreads)
+  add_dependencies(MaiFfplayVideoDialogTest maichat_ffplay_test_runtime)
+  target_compile_definitions(MaiFfplayVideoDialogTest PRIVATE
+    MAICHAT_FFPLAY_VIDEO_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../Media/tests/fixtures/ffplay-av-subtitles.mkv"
+    MAICHAT_FFPLAY_H264_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/Graphics/tests/fixtures/tiny-red.mp4"
+    MAICHAT_FFPLAY_AV1_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/Graphics/tests/fixtures/tiny-red-av1.webm")
+  target_include_directories(MaiFfplayVideoDialogTest PRIVATE ../Media/FfplayCompat)
+  target_link_libraries(MaiFfplayVideoDialogTest PRIVATE remote_im_desktop_ui Qt5::Test)
+  add_test(NAME MaiFfplayVideoDialogTest COMMAND MaiFfplayVideoDialogTest)
+  set_tests_properties(MaiFfplayVideoDialogTest PROPERTIES
+    PASS_REGULAR_EXPRESSION "Seek to 50%"
+    FAIL_REGULAR_EXPRESSION "Seek to (inf|nan)%")
 endif()
 
 if((APPLE AND TARGET maiagent_embedded_fftools) OR

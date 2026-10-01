@@ -31,6 +31,12 @@ copyright notices were preserved.
 The source files retain their original copyright notices. `COPYING` is the
 upstream GPLv2 license text. SIMDe is provided separately under
 `MaiAgent/third_party/simde`, matching the version used by OBS. The optional
+Windows D3D11 runtime also uses OBS's `w32-pthreads` dependency from
+`MaiAgent/third_party/w32-pthreads`; see its `MAI_UPSTREAM.md` and license files.
+The Windows platform source replaces its original missing OBS-relative pthread
+include with the vendored include path and explicitly uses the Windows SDK
+version types required by MSVC 2019.
+The optional
 Graphics build links the upstream Graphics C sources, including
 `graphics-ffmpeg.c` on macOS against vendored FFmpeg 9.0.2. The OBS Metal
 Swift backend is a separate loadable module on macOS Apple Silicon and a

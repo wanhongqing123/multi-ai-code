@@ -29,9 +29,11 @@ Graphics 目录保留引擎及后端代码。视图绑定、FFmpeg 播放状态�
 - Android 构建 Graphics 和 GLES 两个 `.so`。GLES shader 使用 3.0 语法；
   arm64 GLES 3.1 模拟器实测 `default.effect` 和 `TextureView` 直显的红色像素。Debug APK 含
   两种 ABI 的库及 effect 资源；聊天图、视频封面和 AI 图片视图已接入。
-- Windows 应使用 D3D11；运行时尚未接通。macOS、iOS 和 Windows 均不使用
-  OpenGL。Linux 的 X11/Wayland OpenGL 实现源码保留，但当前未进入 MaiAgent
-  构建。桌面 Qt 图片加载逻辑共用，后端由平台选择。
+- Windows 使用 D3D11 动态后端和原生 HWND 视频视图。桌面 CMake 构建 Graphics
+  核心、D3D11 模块和所需的 w32-pthreads，并将运行库及 effect 拷到 MaiChat 目录。
+  NVIDIA D3D11 真机测试验证了 FFplay 视频帧呈现、暂停、恢复与百分比跳转。
+  macOS、iOS 和 Windows 均不使用 OpenGL。Linux 的 X11/Wayland OpenGL 实现源码
+  保留，但当前未进入 MaiAgent 构建。桌面 Qt 图片加载逻辑共用，后端由平台选择。
 
 OBS `libobs/data` 的 21 个 `.effect` 文件位于 `data/` 并进入三端资源包。
 macOS Metal 已验证 `default.effect` 和 `solid.effect`；目前有 9 个矩形纹理

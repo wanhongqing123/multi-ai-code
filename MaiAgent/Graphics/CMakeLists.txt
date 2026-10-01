@@ -153,6 +153,78 @@ if(APPLE OR ANDROID)
     ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
 
+if(WIN32)
+  set(obs_pthreads_source ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/w32-pthreads)
+  add_library(maiagent_obs_pthreads SHARED ${obs_pthreads_source}/pthread.c)
+  target_compile_definitions(maiagent_obs_pthreads PRIVATE __CLEANUP_C PTW32_BUILD)
+  target_include_directories(maiagent_obs_pthreads PUBLIC ${obs_pthreads_source})
+
+  if(NOT MAIAGENT_GRAPHICS_FFMPEG_INCLUDE_DIR)
+    message(FATAL_ERROR "Windows Graphics requires MAIAGENT_GRAPHICS_FFMPEG_INCLUDE_DIR")
+  endif()
+  target_sources(maiagent_obs_graphics_compile PRIVATE
+    ${obs_graphics_source}/graphics-ffmpeg.c)
+  target_include_directories(maiagent_obs_graphics_compile PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/compat
+    ${MAIAGENT_GRAPHICS_FFMPEG_INCLUDE_DIR}
+    ${obs_pthreads_source})
+
+  set(obs_util_source ${CMAKE_CURRENT_SOURCE_DIR}/util)
+  add_library(maiagent_obs_util STATIC
+    ${obs_util_source}/base.c
+    ${obs_util_source}/bmem.c
+    ${obs_util_source}/cf-lexer.c
+    ${obs_util_source}/cf-parser.c
+    ${obs_util_source}/dstr.c
+    ${obs_util_source}/lexer.c
+    ${obs_util_source}/platform.c
+    ${obs_util_source}/platform-windows.c
+    ${obs_util_source}/threading-windows.c
+    ${obs_util_source}/utf8.c)
+  target_compile_definitions(maiagent_obs_util PRIVATE
+    MAI_GRAPHICS_STANDALONE UNICODE _UNICODE)
+  target_include_directories(maiagent_obs_util PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR} ${obs_pthreads_source})
+  target_link_libraries(maiagent_obs_util PRIVATE
+    maiagent_obs_pthreads winmm shell32 shlwapi psapi rpcrt4)
+
+  add_library(maiagent_graphics SHARED
+    $<TARGET_OBJECTS:maiagent_obs_graphics_compile>
+    compat/MaiObsStandalone.c)
+  add_library(MaiAgent::Graphics ALIAS maiagent_graphics)
+  target_include_directories(maiagent_graphics PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    ${MAIAGENT_GRAPHICS_FFMPEG_INCLUDE_DIR})
+  target_include_directories(maiagent_graphics PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/compat ${obs_pthreads_source})
+  target_link_libraries(maiagent_graphics PUBLIC
+    maiagent_obs_math maiagent_obs_util maiagent_graphics_simde
+    maiagent_obs_pthreads Threads::Threads
+    PRIVATE d3d11 dxgi d3dcompiler)
+  add_dependencies(maiagent_graphics maiagent_graphics_data)
+
+  add_library(maiagent_obs_d3d11 MODULE
+    d3d11/d3d11-duplicator.cpp
+    d3d11/d3d11-indexbuffer.cpp
+    d3d11/d3d11-rebuild.cpp
+    d3d11/d3d11-samplerstate.cpp
+    d3d11/d3d11-shader.cpp
+    d3d11/d3d11-shaderprocessor.cpp
+    d3d11/d3d11-stagesurf.cpp
+    d3d11/d3d11-subsystem.cpp
+    d3d11/d3d11-texture2d.cpp
+    d3d11/d3d11-texture3d.cpp
+    d3d11/d3d11-vertexbuffer.cpp
+    d3d11/d3d11-zstencilbuffer.cpp)
+  target_include_directories(maiagent_obs_d3d11 PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR} ${obs_pthreads_source})
+  target_compile_definitions(maiagent_obs_d3d11 PRIVATE
+    UNICODE _UNICODE _WIN32_WINNT=0x0A00 WINVER=0x0A00 _AMD64_)
+  target_link_libraries(maiagent_obs_d3d11 PRIVATE
+    maiagent_graphics d3d9 d3d11 d3dcompiler dxgi shcore)
+endif()
+
 if(APPLE AND NOT IOS)
   add_library(maiagent_graphics SHARED
     $<TARGET_OBJECTS:maiagent_obs_graphics_compile>

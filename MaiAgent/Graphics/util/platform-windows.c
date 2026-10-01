@@ -15,6 +15,7 @@
  */
 
 #include <windows.h>
+#include <winternl.h>
 #include <mmsystem.h>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -31,7 +32,7 @@
 #include "windows/win-registry.h"
 #include "windows/win-version.h"
 
-#include "../../deps/w32-pthreads/pthread.h"
+#include <pthread.h>
 
 #define MAX_SZ_LEN 256
 

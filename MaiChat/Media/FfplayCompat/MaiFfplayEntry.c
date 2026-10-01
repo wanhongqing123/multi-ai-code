@@ -19,6 +19,9 @@
 
 #include "SDL.h"
 #include "MaiFfplayCompatInternal.h"
+#if defined(_WIN32)
+#include "cmdutils.h"
+#endif
 
 #if defined(_WIN32)
 static volatile LONG sRunning;

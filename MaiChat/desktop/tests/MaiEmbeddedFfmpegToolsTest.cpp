@@ -65,6 +65,37 @@ int main(int argc, char** argv) {
             return 6;
     }
 
+#ifdef _WIN32
+    std::string fixtureBytes;
+    if (MaiFileSystem::readFile(input, fixtureBytes).hasError())
+        return 12;
+    const MaiFilePath utf8Input = MaiFileSystem::temporaryDirectory().append(
+        MaiFilePath::fromUtf8(MaiIdGenerator::generate("mai_") + "_\xE6\xB5\x8B\xE8\xAF\x95.mp4"));
+    if (MaiFileSystem::writeFile(utf8Input, fixtureBytes).hasError())
+        return 13;
+    const MaiToolResult utf8Metadata =
+        probe->execute(nlohmann::json{{"path", utf8Input.toUtf8()}}.dump(), context);
+    if (utf8Metadata.hasError()) {
+        std::fprintf(stderr, "UTF-8 path probe failed: %s\n",
+                     utf8Metadata.error().message().c_str());
+        MaiFileSystem::removeFile(utf8Input);
+        return 14;
+    }
+    const MaiFilePath utf8Output = MaiFileSystem::temporaryDirectory().append(
+        MaiFilePath::fromUtf8(MaiIdGenerator::generate("mai_") + "_\xE6\xB5\x8B\xE8\xAF\x95.ppm"));
+    const nlohmann::json utf8Request = {
+        {"arguments",
+         {"-i", utf8Input.toUtf8(), "-frames:v", "1", "-f", "image2", utf8Output.toUtf8()}}};
+    const MaiToolResult utf8Conversion = convert->execute(utf8Request.dump(), context);
+    std::string utf8OutputBytes;
+    const MaiError utf8ReadError = MaiFileSystem::readFile(utf8Output, utf8OutputBytes, 16);
+    MaiFileSystem::removeFile(utf8Input);
+    MaiFileSystem::removeFile(utf8Output);
+    if (utf8Conversion.hasError() || utf8ReadError.hasError() ||
+        utf8OutputBytes.compare(0, 2, "P6") != 0)
+        return 15;
+#endif
+
     for (int attempt = 0; attempt < 2; ++attempt) {
         const MaiFilePath output = MaiFileSystem::temporaryDirectory().append(
             MaiFilePath::fromUtf8(MaiIdGenerator::generate("mai_ffmpeg_test_") + ".ppm"));
@@ -79,7 +110,8 @@ int main(int argc, char** argv) {
         std::string bytes;
         const MaiError readError = MaiFileSystem::readFile(output, bytes, 16);
         MaiFileSystem::removeFile(output);
-        if (readError.hasError() || bytes.compare(0, 2, "P6") != 0) return 8;
+        if (readError.hasError() || bytes.compare(0, 2, "P6") != 0)
+            return 8;
     }
 
     std::atomic<bool> canceled{false};

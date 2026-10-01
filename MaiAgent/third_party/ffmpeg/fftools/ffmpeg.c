@@ -184,7 +184,7 @@ sigterm_handler(int sig)
 }
 #endif
 
-#if HAVE_SETCONSOLECTRLHANDLER
+#if HAVE_SETCONSOLECTRLHANDLER && !defined(MAI_FFMPEG_EMBEDDED)
 static BOOL WINAPI CtrlHandler(DWORD fdwCtrlType)
 {
     av_log(NULL, AV_LOG_DEBUG, "\nReceived windows signal %ld\n", fdwCtrlType);

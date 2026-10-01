@@ -241,6 +241,7 @@ if(MAICHAT_MOBILE_TESTS)
   target_link_libraries(MaiMobileAgentTests PRIVATE maichat_mobile maiagent)
   add_test(NAME MaiMobileAgentTests COMMAND MaiMobileAgentTests)
   if(ANDROID)
+    target_link_libraries(MaiMobileAgentTests PRIVATE android log jnigraphics)
     add_executable(MaiCvVideoAnalysisTests
       ../../MaiAgent/tests/MaiCvVideoAnalysisTests.cpp)
     target_include_directories(MaiCvVideoAnalysisTests PRIVATE

@@ -13,6 +13,9 @@
 #include <json.hpp>
 #include <stdexcept>
 #include <thread>
+#if !defined(_WIN32)
+#include <pthread.h>
+#endif
 using Json = nlohmann::json;
 #if defined(__APPLE__)
 static const char* kPhotoAlbumTool = "mobile_photos_add_to_album";
@@ -318,8 +321,10 @@ int main() {
     });
     int port = server.bind_to_any_port("127.0.0.1");
     std::thread listener([&] {
-#if !defined(_WIN32)
-        pthread_setname_np("MaiMobileTestHTTP");
+#if defined(__APPLE__)
+        pthread_setname_np("MaiMobileHTTP");
+#elif !defined(_WIN32)
+        pthread_setname_np(pthread_self(), "MaiMobileHTTP");
 #endif
         server.listen_after_bind();
     });

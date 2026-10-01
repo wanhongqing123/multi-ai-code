@@ -1,6 +1,8 @@
 #include <QElapsedTimer>
 #include <QFileInfo>
 #include <QPointer>
+#include <QSlider>
+#include <QLabel>
 #include <QScreen>
 #include <QWidget>
 #include <QtTest>
@@ -60,6 +62,12 @@ void MaiFfplayVideoDialogTest::opensControlsAndClosesVideoPopup() {
     QVERIFY(!dialog.isNull());
     QVERIFY(dialog->isStarted());
     QCOMPARE(MaiFfplayVideoDialog::activeDialog(), dialog);
+    auto* slider = dialog->findChild<QSlider*>(QStringLiteral("ffplaySeekSlider"));
+    auto* timeLabel = dialog->findChild<QLabel*>(QStringLiteral("ffplayTimeLabel"));
+    QVERIFY(slider != nullptr);
+    QVERIFY(timeLabel != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(slider->value() > 0 &&
+                             timeLabel->text().contains(QStringLiteral(" / 0:02")), 3000);
     QTRY_VERIFY_WITH_TIMEOUT(dialog->presentedFrames() >= 3, 4000);
     QWidget* surface = dialog->findChild<QWidget*>(QStringLiteral("ffplayVideoSurface"));
     QVERIFY(surface != nullptr);

@@ -2,6 +2,8 @@
 
 #include <QCloseEvent>
 #include <QCoreApplication>
+#include <QDebug>
+#include <QDir>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QKeyEvent>
@@ -12,6 +14,7 @@
 #include <QShowEvent>
 #include <QSlider>
 #include <QThread>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -45,9 +48,11 @@ QString bundledResource(const QString& relative) {
 #else
     const QString bundled = QFileInfo(base + relative).absoluteFilePath();
     if (QFileInfo::exists(bundled)) return bundled;
-    if (relative.endsWith(QStringLiteral("libmaiagent_obs_metal.so")))
-        return base + QStringLiteral("/maiagent/Graphics/libmaiagent_obs_metal.so");
-    return base + QStringLiteral("/maiagent/Graphics/data");
+    const QString development = QDir(base).filePath(relative.endsWith(
+        QStringLiteral("libmaiagent_obs_metal.so")) ?
+        QStringLiteral("../maiagent/Graphics/libmaiagent_obs_metal.so") :
+        QStringLiteral("../maiagent/Graphics/data"));
+    return QFileInfo(development).absoluteFilePath();
 #endif
 }
 
@@ -76,10 +81,33 @@ MaiFfplayVideoDialog::MaiFfplayVideoDialog(const QString& path, QWidget* parent)
     auto* controls = new QHBoxLayout();
     pauseButton_ = new QPushButton(QStringLiteral("暂停"), this);
     seekSlider_ = new QSlider(Qt::Horizontal, this);
+    seekSlider_->setObjectName(QStringLiteral("ffplaySeekSlider"));
     seekSlider_->setRange(0, 1000);
+    timeLabel_ = new QLabel(QStringLiteral("0:00 / 0:00"), this);
+    timeLabel_->setObjectName(QStringLiteral("ffplayTimeLabel"));
+    timeLabel_->setStyleSheet(QStringLiteral("color: white"));
     controls->addWidget(pauseButton_);
     controls->addWidget(seekSlider_, 1);
+    controls->addWidget(timeLabel_);
     layout->addLayout(controls);
+    progressTimer_ = new QTimer(this);
+    progressTimer_->setInterval(250);
+    connect(progressTimer_, &QTimer::timeout, this, [this] {
+        MaiFfplayPlaybackStatus status{};
+        if (!maiFfplayGetPlaybackStatus(&status) || status.duration_us <= 0) return;
+        const auto position = std::clamp(status.position_us, int64_t{0}, status.duration_us);
+        if (!seekSlider_->isSliderDown())
+            seekSlider_->setValue(static_cast<int>(position * 1000.0 / status.duration_us));
+        const auto clockText = [](int64_t microseconds) {
+            const int64_t seconds = microseconds / 1000000;
+            return QStringLiteral("%1:%2").arg(static_cast<qlonglong>(seconds / 60))
+                .arg(static_cast<qlonglong>(seconds % 60), 2, 10, QLatin1Char('0'));
+        };
+        timeLabel_->setText(clockText(position) + QStringLiteral(" / ") +
+                            clockText(status.duration_us));
+        playing_ = status.paused == 0;
+        pauseButton_->setText(playing_ ? QStringLiteral("暂停") : QStringLiteral("播放"));
+    });
     connect(pauseButton_, &QPushButton::clicked, this, [this] {
         sendCommand(QStringLiteral("pause"));
     });
@@ -147,19 +175,28 @@ void MaiFfplayVideoDialog::showWindow(void* userData) {
 }
 
 bool MaiFfplayVideoDialog::startPlayback() {
-    if (started_ || !QFileInfo(path_).isFile()) return false;
+    if (started_ || !QFileInfo(path_).isFile()) {
+        qWarning() << "FFplay popup has no readable video file:" << path_;
+        return false;
+    }
     if (!sActiveDialog.isNull() && sActiveDialog != this) sActiveDialog->close();
     const QString backend = bundledResource(
         QStringLiteral("/../Frameworks/libmaiagent_obs_metal.so"));
     const QString effects = bundledResource(
         QStringLiteral("/../Resources/MaiAgentGraphics"));
     if (!QFileInfo::exists(backend) ||
-        !QFileInfo::exists(effects + QStringLiteral("/default.effect"))) return false;
+        !QFileInfo::exists(effects + QStringLiteral("/default.effect"))) {
+        qWarning() << "FFplay popup is missing Graphics resources:" << backend << effects;
+        return false;
+    }
     if (sPresenterUsers == 0) {
         const QByteArray modulePath = backend.toUtf8();
         const QByteArray effectPath = effects.toUtf8();
         if (!maiGraphicsPresenterStart(modulePath.constData(), effectPath.constData(),
-                                       onFramePresented, nullptr)) return false;
+                                       onFramePresented, nullptr)) {
+            qWarning() << "FFplay popup could not start Graphics:" << backend << effects;
+            return false;
+        }
     }
     ++sPresenterUsers;
 #if defined(Q_OS_WIN)
@@ -181,6 +218,7 @@ bool MaiFfplayVideoDialog::startPlayback() {
     }
 #endif
     if (!viewId_) {
+        qWarning() << "FFplay popup could not attach its video surface:" << path_;
         --sPresenterUsers;
         if (sPresenterUsers == 0) maiGraphicsPresenterStop();
         return false;
@@ -197,6 +235,7 @@ bool MaiFfplayVideoDialog::startPlayback() {
     const QByteArray sourcePath = QFileInfo(path_).absoluteFilePath().toUtf8();
     sPresentedFrames = 0;
     started_ = true;
+    progressTimer_->start();
     playbackFinished_ = false;
     sActiveDialog = this;
     playbackThread_ = std::thread([this, sourcePath] {
@@ -216,6 +255,7 @@ bool MaiFfplayVideoDialog::startPlayback() {
 
 void MaiFfplayVideoDialog::stopPlayback() {
     if (!started_) return;
+    progressTimer_->stop();
     for (int attempt = 0; attempt < 100 && !playbackFinished_; ++attempt) {
         if (maiFfplaySendCommand("close") == 1) break;
         QThread::msleep(10);

@@ -1472,22 +1472,82 @@ private struct AITranscriptionButton: View {
 private struct AIPermissionCard: View {
     let permission: AIPermission
     @ObservedObject var model: AIAssistantModel
+    @State private var showsRawInput = false
+    private var fields: [String: Any] {
+        guard let data = permission.input.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              let fields = object as? [String: Any] else { return [:] }
+        return fields
+    }
+    private var isSendText: Bool { permission.tool == "maichat_send_text" }
+    private var formattedInput: String {
+        guard !fields.isEmpty,
+              let data = try? JSONSerialization.data(withJSONObject: fields,
+                                                       options: [.prettyPrinted, .sortedKeys]),
+              let result = String(data: data, encoding: .utf8) else { return permission.input }
+        return result
+    }
     private var approveTitle: String {
         guard permission.rememberOnApproval == true else { return "允许一次" }
         return (permission.fileCount ?? 0) > 1 ? "允许并记住这些文件" : "允许并记住此文件"
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("允许执行 \(permission.tool)？", systemImage: "hand.raised").font(.subheadline.bold())
-            Text(permission.input).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+        VStack(alignment: .leading, spacing: 14) {
+            Label(isSendText ? "确认发送消息" : "确认工具操作", systemImage: "hand.raised")
+                .font(.headline)
+                .foregroundStyle(Color.primary)
+            if isSendText, let peer = fields["peer_id"] as? String,
+               let text = fields["text"] as? String {
+                Label(peer, systemImage: "person.crop.circle")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                ScrollView {
+                    Text(text)
+                        .font(.body)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 220)
+                .padding(12)
+                .background(Color(uiColor: .systemBackground),
+                            in: RoundedRectangle(cornerRadius: 10))
+            } else {
+                Text(permission.tool).font(.subheadline.bold()).foregroundStyle(.secondary)
+                ScrollView {
+                    Text(formattedInput)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 220)
+                .padding(12)
+                .background(Color(uiColor: .systemBackground),
+                            in: RoundedRectangle(cornerRadius: 10))
+            }
+            if isSendText {
+                DisclosureGroup("查看完整参数", isExpanded: $showsRawInput) {
+                    ScrollView {
+                        Text(formattedInput)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 180)
+                    .padding(.top, 6)
+                }
+                .font(.caption)
+            }
             HStack {
                 action("拒绝", "denied")
                 action(approveTitle, "approved")
-                if permission.allowForSession != false && permission.rememberOnApproval != true {
-                    action("本会话允许", "approved_for_session")
-                }
             }
-        }.padding().frame(maxWidth: .infinity, alignment: .leading).background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+            if permission.allowForSession != false && permission.rememberOnApproval != true {
+                action("本会话允许", "approved_for_session")
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.orange.opacity(0.16)))
     }
     private func action(_ title: String, _ decision: String) -> some View {
         Button(title) { Task { await model.action("permission", values: ["id": permission.id, "decision": decision]) } }
@@ -1498,6 +1558,26 @@ private struct AIPermissionCard: View {
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.black.opacity(0.08)))
     }
 }
+
+#if targetEnvironment(simulator)
+struct AIPermissionUITestRoot: View {
+    private let permission = AIPermission(
+        id: "preview", tool: "maichat_send_text",
+        input: "{\"peer_id\":\"demo-contact\",\"text\":\"" +
+            String(repeating: "A paragraph for approval.\\n", count: 60) + "\"}",
+        allowForSession: false, rememberOnApproval: false, fileCount: nil
+    )
+
+    var body: some View {
+        ScrollView {
+            AIPermissionCard(permission: permission, model: .shared)
+                .padding(16)
+        }
+        .background(Color(uiColor: .systemBackground))
+    }
+}
+#endif
+
 private struct AIQuestionCard: View {
     let question: AIQuestion
     @ObservedObject var model: AIAssistantModel

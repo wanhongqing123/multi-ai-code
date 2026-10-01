@@ -12,6 +12,7 @@
 class QPushButton;
 class QSlider;
 class QLabel;
+class QTimer;
 class QWidget;
 
 class MaiFfplayVideoDialog final : public QDialog {
@@ -51,6 +52,8 @@ private:
     QWidget* surface_ = nullptr;
     QPushButton* pauseButton_ = nullptr;
     QSlider* seekSlider_ = nullptr;
+    QLabel* timeLabel_ = nullptr;
+    QTimer* progressTimer_ = nullptr;
     QLabel* errorLabel_ = nullptr;
     MaiFfplayHost host_{};
     std::thread playbackThread_;

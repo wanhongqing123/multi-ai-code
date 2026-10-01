@@ -629,13 +629,19 @@ if(APPLE AND TARGET maiagent_obs_metal)
       ${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/Graphics/tests/fixtures/tiny-red.mp4)
 endif()
 
-if(APPLE AND TARGET maiagent_embedded_fftools)
+if((APPLE AND TARGET maiagent_embedded_fftools) OR
+   (WIN32 AND TARGET maichat_ffmpeg_tools))
   add_executable(MaiEmbeddedFfmpegToolsTest tests/MaiEmbeddedFfmpegToolsTest.cpp)
   target_include_directories(MaiEmbeddedFfmpegToolsTest PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/ffmpeg/fftools
     ${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/nlohmann)
-  target_link_libraries(MaiEmbeddedFfmpegToolsTest PRIVATE
-    maiagent maiagent_embedded_fftools)
+  target_link_libraries(MaiEmbeddedFfmpegToolsTest PRIVATE maiagent)
+  if(APPLE)
+    target_link_libraries(MaiEmbeddedFfmpegToolsTest PRIVATE maiagent_embedded_fftools)
+  else()
+    target_link_libraries(MaiEmbeddedFfmpegToolsTest PRIVATE
+      maichat_ffmpeg_tools maichat_image_filter)
+  endif()
   add_test(NAME MaiEmbeddedFfmpegToolsTest COMMAND MaiEmbeddedFfmpegToolsTest
     ${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/Graphics/tests/fixtures/tiny-red.mp4)
 endif()

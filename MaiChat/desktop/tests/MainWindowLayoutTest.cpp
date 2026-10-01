@@ -165,6 +165,7 @@ private slots:
     void connectionStatusLivesOnNavAvatarWithoutText();
     void fileBubbleOffersContextMenu();
     void imageBubbleOffersContextMenu();
+    void imageBubbleUsesNativePixmapPreview();
     void maximizedImageBubbleOpensOnlyOnePreview();
     void copyAttachmentToPathCopiesOverwritesAndReportsErrors();
     void ctrlShortcutsZoomWholeUi();
@@ -3090,6 +3091,30 @@ void MainWindowLayoutTest::imageBubbleOffersContextMenu() {
     QVERIFY(imageLabel != nullptr);
     // 自定义右键菜单（复制 / 预览 / 保存到本地）挂在图片缩略图上。
     QCOMPARE(imageLabel->contextMenuPolicy(), Qt::CustomContextMenu);
+}
+
+void MainWindowLayoutTest::imageBubbleUsesNativePixmapPreview() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("chat-photo.png"));
+    QImage original(3024, 1898, QImage::Format_RGBA8888);
+    original.fill(Qt::red);
+    QVERIFY(original.save(path, "PNG"));
+
+    RemoteIMApplication app(QStringLiteral("desktop-user"),
+                            std::make_unique<FakeRemoteIMClient>());
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+    app.chatState().receiveImage(QStringLiteral("phone-user"), path, 3024, 1898,
+                                 QFileInfo(path).size());
+    MainWindow window(app);
+    window.resize(1280, 800);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto* label = window.findChild<QLabel*>(QStringLiteral("messageImageLabel"));
+    QVERIFY(label != nullptr);
+    QTRY_VERIFY(label->pixmap() != nullptr && !label->pixmap()->isNull());
+    QCOMPARE(label->pixmap()->toImage().pixelColor(0, 0), QColor(Qt::red));
+    QVERIFY(label->findChild<QWidget*>(QStringLiteral("maiGraphicsImageOverlay")) == nullptr);
 }
 
 void MainWindowLayoutTest::maximizedImageBubbleOpensOnlyOnePreview() {

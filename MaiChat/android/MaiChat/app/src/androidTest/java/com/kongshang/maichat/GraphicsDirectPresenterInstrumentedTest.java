@@ -26,9 +26,39 @@ import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public final class GraphicsDirectPresenterInstrumentedTest {
+    @Test public void messagePreviewDecodesPngIntoNativeImageView() throws Exception {
+        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        File source = new File(context.getCacheDir(), "message-preview-red.png");
+        Bitmap original = Bitmap.createBitmap(24, 16, Bitmap.Config.ARGB_8888);
+        original.eraseColor(Color.RED);
+        try (FileOutputStream output = new FileOutputStream(source)) {
+            assertTrue(original.compress(Bitmap.CompressFormat.PNG, 100, output));
+        }
+        original.recycle();
+        ImageView image = new ImageView(context);
+        CountDownLatch decoded = new CountDownLatch(1);
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+            MessageImageLoader.load(source.getAbsolutePath(), 48, 48, image, decoded::countDown);
+        });
+        AtomicReference<Bitmap> result = new AtomicReference<>();
+        long deadline = System.currentTimeMillis() + 10000;
+        while (result.get() == null && System.currentTimeMillis() < deadline) {
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                if (image.getDrawable() instanceof android.graphics.drawable.BitmapDrawable)
+                    result.set(((android.graphics.drawable.BitmapDrawable) image.getDrawable())
+                        .getBitmap());
+            });
+            Thread.sleep(25);
+        }
+        assertNotNull("FFmpeg failed to decode the PNG preview", result.get());
+        assertEquals(Color.RED, result.get().getPixel(8, 8));
+        assertEquals(1L, decoded.getCount());
+    }
+
     @Test public void effectRendersStraightToTextureView() throws Exception {
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         File source = new File(context.getCacheDir(), "graphics-direct-red.ppm");
+        File pngSource = new File(context.getCacheDir(), "graphics-direct-red.png");
         byte[] ppm = {
             'P', '6', '\n', '2', ' ', '2', '\n', '2', '5', '5', '\n',
             (byte) 255, 0, 0, (byte) 255, 0, 0,
@@ -66,6 +96,24 @@ public final class GraphicsDirectPresenterInstrumentedTest {
                     .getBitmap()));
             assertNotNull(captured.get());
             assertEquals(Color.RED, captured.get().getPixel(32, 32));
+
+            Bitmap png = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888);
+            png.eraseColor(Color.RED);
+            try (FileOutputStream output = new FileOutputStream(pngSource)) {
+                assertTrue(png.compress(Bitmap.CompressFormat.PNG, 100, output));
+            }
+            png.recycle();
+            CountDownLatch pngPresented = new CountDownLatch(1);
+            AtomicReference<Boolean> pngSuccess = new AtomicReference<>(false);
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                surface.get().setPresentationListener(rendered -> {
+                    pngSuccess.set(rendered);
+                    pngPresented.countDown();
+                });
+                surface.get().showImage(pngSource.getAbsolutePath(), false, null);
+            });
+            assertTrue(pngPresented.await(10, TimeUnit.SECONDS));
+            assertTrue("PNG must decode through FFmpeg Graphics", pngSuccess.get());
 
             CountDownLatch nextFrame = new CountDownLatch(1);
             AtomicReference<Boolean> frameSuccess = new AtomicReference<>(false);
@@ -143,6 +191,7 @@ public final class GraphicsDirectPresenterInstrumentedTest {
                 activity.finish();
             });
             source.delete();
+            pngSource.delete();
         }
     }
 }

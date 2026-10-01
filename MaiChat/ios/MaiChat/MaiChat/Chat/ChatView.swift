@@ -13,6 +13,266 @@ import UIKit
 import UniformTypeIdentifiers
 import WebKit
 
+private struct RemoteIMImageRequest: Hashable, Sendable {
+    let filePath: String
+    let maximumPixelSize: Int
+    let fileSize: Int
+    let modificationMilliseconds: Int64
+
+    init?(filePath: String?, maximumPixelSize: CGFloat) {
+        guard let filePath,
+              !filePath.isEmpty,
+              maximumPixelSize.isFinite,
+              maximumPixelSize > 0
+        else { return nil }
+        let fileURL = URL(fileURLWithPath: filePath).standardizedFileURL
+        // Cover downloads publish the same final path first as metadata and then again after
+        // the .part file is promoted. Including the lightweight fingerprint restarts the task
+        // without allowing an older asynchronous result to overwrite the newer file.
+        let values = try? fileURL.resourceValues(
+            forKeys: [.fileSizeKey, .contentModificationDateKey]
+        )
+        self.filePath = fileURL.path
+        self.maximumPixelSize = max(1, Int(maximumPixelSize.rounded(.up)))
+        self.fileSize = values?.fileSize ?? -1
+        self.modificationMilliseconds = values?.contentModificationDate.map {
+            Int64(($0.timeIntervalSince1970 * 1_000).rounded())
+        } ?? -1
+    }
+}
+
+private final class RemoteIMDecodedImageBox: @unchecked Sendable {
+    let image: UIImage
+    let memoryCost: Int
+
+    init(image: UIImage, memoryCost: Int) {
+        self.image = image
+        self.memoryCost = max(memoryCost, 1)
+    }
+}
+
+private struct RemoteIMImageDecodeOutcome: @unchecked Sendable {
+    let image: RemoteIMDecodedImageBox?
+    let durationMilliseconds: Int
+    let errorCode: Int32
+}
+
+private actor RemoteIMImageDecodeLimiter {
+    private let limit: Int
+    private var activeCount = 0
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    init(limit: Int) {
+        self.limit = max(limit, 1)
+    }
+
+    func acquire() async {
+        if activeCount < limit {
+            activeCount += 1
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func release() {
+        if waiters.isEmpty {
+            activeCount = max(activeCount - 1, 0)
+        } else {
+            waiters.removeFirst().resume()
+        }
+    }
+}
+
+private actor RemoteIMImagePipeline {
+    static let shared = RemoteIMImagePipeline()
+
+    private let cache = NSCache<NSString, RemoteIMDecodedImageBox>()
+    // A screenful of photos should not fan out into enough user-initiated work to starve UI.
+    private let decodeLimiter = RemoteIMImageDecodeLimiter(limit: 2)
+    private var requestsInFlight: [RemoteIMImageRequest: Task<RemoteIMImageDecodeOutcome, Never>] = [:]
+    private var reportedFailures = Set<RemoteIMImageRequest>()
+    private var reportedCacheHits = Set<RemoteIMImageRequest>()
+
+    private init() {
+        cache.name = "MaiChat.RemoteIMImagePipeline"
+        cache.totalCostLimit = 32 * 1_024 * 1_024
+    }
+
+    func image(for request: RemoteIMImageRequest) async -> RemoteIMDecodedImageBox? {
+        let cacheKey = Self.cacheKey(for: request)
+        if let cached = cache.object(forKey: cacheKey) {
+            if reportedCacheHits.insert(request).inserted {
+                Task { @MainActor in
+                    AppDiagnosticLog.shared.record(
+                        level: .debug,
+                        category: "media-performance",
+                        event: "image-cache-hit",
+                        fields: [
+                            "file": DiagnosticLogPrivacy.stableTag(request.filePath, prefix: "f"),
+                            "target_pixels": String(request.maximumPixelSize),
+                        ]
+                    )
+                }
+            }
+            return cached
+        }
+        if let existing = requestsInFlight[request] {
+            return await existing.value.image
+        }
+
+        let limiter = decodeLimiter
+        let task = Task.detached(priority: .userInitiated) {
+            await limiter.acquire()
+            let outcome = Self.decode(request)
+            await limiter.release()
+            return outcome
+        }
+        requestsInFlight[request] = task
+        let outcome = await task.value
+        requestsInFlight[request] = nil
+
+        if let image = outcome.image {
+            cache.setObject(image, forKey: cacheKey, cost: image.memoryCost)
+        }
+        let shouldReportFailure = outcome.image == nil && reportedFailures.insert(request).inserted
+        let shouldReportSlowDecode = outcome.image != nil && outcome.durationMilliseconds >= 50
+        if shouldReportFailure || shouldReportSlowDecode {
+            let event = outcome.image == nil ? "image-decode-failed" : "image-decode-slow"
+            let level: DiagnosticLogLevel = outcome.image == nil ? .warning : .info
+            Task { @MainActor in
+                AppDiagnosticLog.shared.record(
+                    level: level,
+                    category: "media-performance",
+                    event: event,
+                    fields: [
+                        "file": DiagnosticLogPrivacy.stableTag(request.filePath, prefix: "f"),
+                        "target_pixels": String(request.maximumPixelSize),
+                        "duration_ms": String(outcome.durationMilliseconds),
+                        "ffmpeg_error": String(outcome.errorCode),
+                    ]
+                )
+            }
+        }
+        return outcome.image
+    }
+
+    private static func cacheKey(for request: RemoteIMImageRequest) -> NSString {
+        "\(request.filePath)#\(request.maximumPixelSize)#\(request.fileSize)#\(request.modificationMilliseconds)" as NSString
+    }
+
+    nonisolated private static func decode(
+        _ request: RemoteIMImageRequest
+    ) -> RemoteIMImageDecodeOutcome {
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        let decoded = request.filePath.withCString { path in
+            maiImageDecodeFile(path, Int32(request.maximumPixelSize),
+                               Int32(request.maximumPixelSize))
+        }
+        guard let pixels = decoded.rgba, decoded.width > 0, decoded.height > 0,
+              decoded.stride >= decoded.width * 4 else {
+            return outcome(image: nil, startedAt: startedAt,
+                           errorCode: decoded.error_code)
+        }
+        let byteCount = Int(decoded.stride) * Int(decoded.height)
+        let bytes = Data(bytes: pixels, count: byteCount)
+        maiImageDecodeFree(UnsafeMutableRawPointer(pixels))
+        guard let provider = CGDataProvider(data: bytes as CFData),
+              let cgImage = CGImage(
+                  width: Int(decoded.width), height: Int(decoded.height),
+                  bitsPerComponent: 8, bitsPerPixel: 32,
+                  bytesPerRow: Int(decoded.stride), space: CGColorSpaceCreateDeviceRGB(),
+                  bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue)
+                      .union(.byteOrder32Big), provider: provider, decode: nil,
+                  shouldInterpolate: true, intent: .defaultIntent
+              ) else {
+            return outcome(image: nil, startedAt: startedAt, errorCode: -1)
+        }
+        let box = RemoteIMDecodedImageBox(image: UIImage(cgImage: cgImage),
+                                           memoryCost: byteCount)
+        return outcome(image: box, startedAt: startedAt, errorCode: 0)
+    }
+
+    nonisolated private static func outcome(
+        image: RemoteIMDecodedImageBox?,
+        startedAt: TimeInterval,
+        errorCode: Int32
+    ) -> RemoteIMImageDecodeOutcome {
+        let elapsed = max(ProcessInfo.processInfo.systemUptime - startedAt, 0)
+        return RemoteIMImageDecodeOutcome(
+            image: image,
+            durationMilliseconds: Int((elapsed * 1_000).rounded()),
+            errorCode: errorCode
+        )
+    }
+}
+
+private struct RemoteIMImageLoadKey: Hashable, Sendable {
+    let filePath: String?
+    let pixels: Int
+    let revision: UInt64
+}
+
+@MainActor
+private final class RemoteIMAsyncImageState: ObservableObject {
+    @Published private(set) var image: UIImage?
+    @Published private(set) var hasFinished = false
+    private var activeRequest: RemoteIMImageRequest?
+    private var generation: UInt64 = 0
+
+    func load(_ key: RemoteIMImageLoadKey) async {
+        generation &+= 1
+        let generation = generation
+        do {
+            let request = try await RemoteIMBackgroundWork.metadata {
+                RemoteIMImageRequest(filePath: key.filePath, maximumPixelSize: CGFloat(key.pixels))
+            }
+            guard !Task.isCancelled, self.generation == generation else { return }
+            if activeRequest == request, image != nil || hasFinished { return }
+            activeRequest = request
+            image = nil
+            hasFinished = false
+            guard let request else { hasFinished = true; return }
+            let result = await RemoteIMImagePipeline.shared.image(for: request)
+            guard !Task.isCancelled, self.generation == generation else { return }
+            image = result?.image
+            hasFinished = true
+        } catch { }
+    }
+}
+
+struct RemoteIMAsyncImage<Content: View, Placeholder: View>: View {
+    let filePath: String?
+    let maximumPointSize: CGSize
+    let revision: UInt64
+    @ViewBuilder let content: (UIImage) -> Content
+    @ViewBuilder let placeholder: (_ hasFailed: Bool) -> Placeholder
+    @Environment(\.displayScale) private var displayScale
+    @StateObject private var state = RemoteIMAsyncImageState()
+
+    init(filePath: String?, maximumPointSize: CGSize, revision: UInt64 = 0,
+         @ViewBuilder content: @escaping (UIImage) -> Content,
+         @ViewBuilder placeholder: @escaping (Bool) -> Placeholder) {
+        self.filePath = filePath
+        self.maximumPointSize = maximumPointSize
+        self.revision = revision
+        self.content = content
+        self.placeholder = placeholder
+    }
+
+    var body: some View {
+        let key = RemoteIMImageLoadKey(filePath: filePath,
+            pixels: max(1, Int((max(maximumPointSize.width, maximumPointSize.height) * displayScale).rounded(.up))),
+            revision: revision)
+        return Group {
+            if let image = state.image { content(image) }
+            else { placeholder(state.hasFinished) }
+        }
+        .task(id: key) { await state.load(key) }
+    }
+}
+
 @MainActor
 private final class MaiGraphicsWeakView {
     weak var view: MaiGraphicsUIImageView?
@@ -3633,14 +3893,17 @@ private struct VideoBubbleContent: View {
     let isIncoming: Bool
     let fileState: RemoteIMVideoFileState
     @EnvironmentObject private var appState: RemoteIMAppState
-    @State private var directCoverFailed = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             ZStack {
-                if let cover = attachment.coverPath, !directCoverFailed {
-                    MaiGraphicsImageSurface(filePath: cover, fillView: true) {
-                        directCoverFailed = true
+                if let cover = attachment.coverPath {
+                    RemoteIMAsyncImage(filePath: cover,
+                                       maximumPointSize: CGSize(width: 220, height: previewHeight),
+                                       revision: appState.mediaFileRevision) { image in
+                        Image(uiImage: image).resizable().scaledToFill()
+                    } placeholder: { _ in
+                        Color.clear
                     }
                     .frame(width: 220, height: previewHeight)
                     .clipped()
@@ -3699,7 +3962,6 @@ private struct VideoBubbleContent: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                     .padding(8)
             }
-            .onChange(of: appState.mediaFileRevision) { _ in directCoverFailed = false }
             .frame(width: 220, height: previewHeight)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .background(Color(red: 0.945, green: 0.957, blue: 0.973), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -3735,7 +3997,6 @@ private struct ImageBubbleContent: View {
     let attachment: RemoteIMImageAttachment
     let previewImage: (CGSize, CGRect) -> Void
     @EnvironmentObject private var appState: RemoteIMAppState
-    @State private var directFailed = false
 
     private var imageSize: CGSize {
         CGSize(width: max(1, attachment.width ?? 220),
@@ -3749,15 +4010,17 @@ private struct ImageBubbleContent: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            Group {
-                if directFailed {
+            RemoteIMAsyncImage(filePath: attachment.localFilePath,
+                               maximumPointSize: thumbnailSize,
+                               revision: appState.mediaFileRevision) { image in
+                Image(uiImage: image).resizable().scaledToFit()
+            } placeholder: { failed in
+                if failed {
                     Label("图片无法显示", systemImage: "photo")
                         .foregroundStyle(RemoteIMStyle.textSecondary)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    MaiGraphicsImageSurface(filePath: attachment.localFilePath) {
-                        directFailed = true
-                    }
+                    Color.clear
                 }
             }
             .frame(width: thumbnailSize.width, height: thumbnailSize.height)
@@ -3790,8 +4053,6 @@ private struct ImageBubbleContent: View {
                     .accessibilityIdentifier("remote-im-message-image")
                 }
             }
-            .onChange(of: attachment.localFilePath) { _ in directFailed = false }
-            .onChange(of: appState.mediaFileRevision) { _ in directFailed = false }
             Text(URL(fileURLWithPath: attachment.localFilePath).lastPathComponent)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(RemoteIMStyle.textSecondary)

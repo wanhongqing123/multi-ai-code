@@ -435,6 +435,20 @@ target_include_directories(remote_im_desktop_ui PUBLIC src)
 target_link_libraries(remote_im_desktop_ui PUBLIC remote_im_desktop_app remote_im_core
   maichat_agent Qt5::Widgets Qt5::Svg Qt5::Multimedia Qt5::MultimediaWidgets
   maichat_pdf_preview)
+if(APPLE AND TARGET maiagent_embedded_fftools)
+  target_sources(remote_im_desktop_ui PRIVATE ../Media/MaiImageDecode.cpp)
+  target_include_directories(remote_im_desktop_ui PUBLIC ../Media)
+  target_include_directories(remote_im_desktop_ui PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}/maiagent/Graphics/ffmpeg-runtime/install/include")
+  target_link_libraries(remote_im_desktop_ui PRIVATE maiagent_embedded_fftools)
+  target_compile_definitions(remote_im_desktop_ui PRIVATE MAICHAT_FFMPEG_IMAGE_DECODE=1)
+endif()
+
+if(APPLE AND TARGET maiagent_embedded_fftools)
+  add_executable(MaiImageDecodeTest tests/MaiImageDecodeTest.cpp)
+  target_link_libraries(MaiImageDecodeTest PRIVATE remote_im_desktop_ui Qt5::Gui)
+  add_test(NAME MaiImageDecodeTest COMMAND MaiImageDecodeTest)
+endif()
 if(TARGET maiagent_obs_metal OR TARGET maiagent_obs_d3d11)
   target_link_libraries(remote_im_desktop_ui PRIVATE maiagent_graphics)
   target_sources(remote_im_desktop_ui PRIVATE
@@ -627,7 +641,7 @@ if(APPLE AND TARGET maiagent_obs_metal)
   add_test(NAME MaiGraphicsPresenterMacTests
     COMMAND MaiGraphicsPresenterMacTests $<TARGET_FILE:maiagent_obs_metal>
       ${CMAKE_CURRENT_BINARY_DIR}/maiagent/Graphics/data
-      ${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/Graphics/tests/fixtures/tiny-red.ppm
+      ${CMAKE_CURRENT_SOURCE_DIR}/resources/macos/AppIcon-1024.png
       ${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/Graphics/tests/fixtures/tiny-red.mp4)
 endif()
 

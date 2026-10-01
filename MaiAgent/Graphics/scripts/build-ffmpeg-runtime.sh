@@ -14,7 +14,7 @@ cd "$build_dir"
 if ! "$source_dir/configure" \
   "--prefix=$build_dir/install" \
   --disable-programs --disable-doc --disable-debug \
-  --disable-autodetect --disable-asm \
+  --disable-autodetect --disable-asm --enable-zlib \
   --enable-audiotoolbox --enable-videotoolbox \
   --disable-gpl --disable-nonfree \
   --enable-pic --enable-static --disable-shared \

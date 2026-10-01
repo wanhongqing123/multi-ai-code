@@ -6,7 +6,7 @@ usage() {
 Package the Qt Desktop IM app for macOS.
 
 Usage:
-  MaiChat/desktop/scripts/package-macos.sh [--build-dir build] [--out-dir dist] [--macdeployqt /path/to/macdeployqt]
+  MaiChat/desktop/scripts/package-macos.sh [--build-dir build] [--out-dir dist] [--app-only] [--macdeployqt /path/to/macdeployqt]
 
 The script expects a built macOS bundle:
   <build-dir>/MaiChat.app
@@ -20,6 +20,7 @@ USAGE
 build_dir="build"
 out_dir="dist"
 macdeployqt=""
+app_only=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -34,6 +35,9 @@ while [[ $# -gt 0 ]]; do
     --macdeployqt)
       macdeployqt="${2:-}"
       shift
+      ;;
+    --app-only)
+      app_only=true
       ;;
     -h|--help)
       usage
@@ -139,6 +143,12 @@ fi
 git_hash="$(git -C "$repo_root" rev-parse --short HEAD 2>/dev/null || true)"
 if [[ -z "$git_hash" ]]; then
   git_hash="unknown"
+fi
+
+if [[ "$app_only" == true ]]; then
+  echo "MaiChat macOS portable app: $staged_app"
+  echo "Version: $short_version ($bundle_version)"
+  exit 0
 fi
 
 dmg_name="MaiChat-macos-arm64-v${short_version}-$(date +%Y%m%d)-$git_hash.dmg"

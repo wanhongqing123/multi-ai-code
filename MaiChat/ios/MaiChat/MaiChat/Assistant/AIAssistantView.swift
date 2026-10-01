@@ -713,22 +713,23 @@ private struct AIPDFArtifactButton: View {
 
 private struct AIWorkspaceImage: View {
     let filePath: String
-    @State private var failed = false
 
     var body: some View {
-        Group {
-            if !failed {
-                MaiGraphicsImageSurface(filePath: filePath) { failed = true }
+        RemoteIMAsyncImage(filePath: filePath,
+                           maximumPointSize: CGSize(width: 240, height: 200)) { image in
+                Image(uiImage: image).resizable().scaledToFit()
                     .frame(width: 240, height: 200)
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     .accessibilityLabel("AI 助手图片附件")
-            } else {
+        } placeholder: { failed in
+            if failed {
                 Label("图片无法显示", systemImage: "photo")
                     .foregroundStyle(Color.secondary)
                     .frame(width: 180, height: 120)
+            } else {
+                Color.clear.frame(width: 240, height: 200)
             }
         }
-        .onChange(of: filePath) { _ in failed = false }
     }
 }
 

@@ -1,14 +1,10 @@
 #include "diagnostics/PerformanceLog.h"
 #include "ui/MessageImageLoader.h"
 
-#if defined(MAICHAT_HAS_GRAPHICS) && defined(Q_OS_MAC)
-#include "MaiGraphicsPresenter.h"
-#include <QApplication>
-#include <QCoreApplication>
-#include <QDir>
-#include <QFile>
-#include <QHash>
+#if defined(MAICHAT_FFMPEG_IMAGE_DECODE)
+#include "MaiImageDecode.h"
 #endif
+
 #include <QDebug>
 #include <QElapsedTimer>
 #include <QEvent>
@@ -35,6 +31,19 @@ public:
     void run() override {
         QElapsedTimer timer;
         timer.start();
+#if defined(MAICHAT_FFMPEG_IMAGE_DECODE)
+        const QByteArray utf8Path = path_.toUtf8();
+        const MaiImageDecodeResult decoded = maiImageDecodeFile(
+            utf8Path.constData(), qMax(1, target_.width()), qMax(1, target_.height()));
+        QImage image;
+        const int decodeError = decoded.error_code;
+        if (decoded.rgba) {
+            image = QImage(decoded.rgba, decoded.width, decoded.height, decoded.stride,
+                           QImage::Format_RGBA8888).copy();
+            maiImageDecodeFree(decoded.rgba);
+        }
+#else
+        const int decodeError = 0;
         QImageReader reader(path_);
         // Explicit Qt image requests use decoder-stage downsampling.
         QSize scaled = reader.size();
@@ -43,11 +52,13 @@ public:
             reader.setScaledSize(scaled);
         }
         QImage image = reader.read();
+#endif
         const qint64 elapsed = timer.elapsed();
         if (!owner_) return;
         QMetaObject::invokeMethod(owner_, "deliver", Qt::QueuedConnection,
                                   Q_ARG(QString, key_), Q_ARG(QImage, image),
-                                  Q_ARG(qint64, elapsed), Q_ARG(QString, context_));
+                                  Q_ARG(qint64, elapsed), Q_ARG(QString, context_),
+                                  Q_ARG(int, decodeError));
     }
 
 private:
@@ -58,127 +69,6 @@ private:
     QString context_;
 };
 
-#if defined(MAICHAT_HAS_GRAPHICS) && defined(Q_OS_MAC)
-extern "C" void* maiGraphicsCreateMacLayer(QWidget* widget);
-extern "C" void maiGraphicsResizeMacLayer(void* layer, QWidget* widget);
-extern "C" void maiGraphicsRetainMacLayer(void* layer);
-extern "C" void maiGraphicsReleaseMacLayer(void* layer);
-
-class MaiGraphicsImageOverlay;
-QHash<uint64_t, QPointer<MaiGraphicsImageOverlay>> graphicsOverlays;
-
-void imagePresented(uint64_t viewId, bool success, void*);
-
-bool startGraphicsPresenter() {
-    static bool attempted = false;
-    static bool ready = false;
-    if (attempted) return ready;
-    attempted = true;
-    if (QGuiApplication::platformName() != QStringLiteral("cocoa")) return false;
-    const QByteArray backendOverride = qgetenv("MAICHAT_GRAPHICS_BACKEND_PATH");
-    const QByteArray effectsOverride = qgetenv("MAICHAT_GRAPHICS_EFFECT_DIRECTORY");
-    const QString appDirectory = QCoreApplication::applicationDirPath();
-    const QString backend = backendOverride.isEmpty()
-        ? QDir(appDirectory).filePath(QStringLiteral("../Frameworks/libmaiagent_obs_metal.so"))
-        : QFile::decodeName(backendOverride);
-    const QString effects = effectsOverride.isEmpty()
-        ? QDir(appDirectory).filePath(QStringLiteral("../Resources/MaiAgentGraphics"))
-        : QFile::decodeName(effectsOverride);
-    if (!QFileInfo::exists(backend) ||
-        !QFileInfo::exists(QDir(effects).filePath(QStringLiteral("default.effect"))))
-        return false;
-    const QByteArray backendBytes = QFile::encodeName(backend);
-    const QByteArray effectsBytes = QFile::encodeName(effects);
-    ready = maiGraphicsPresenterStart(backendBytes.constData(), effectsBytes.constData(),
-                                     imagePresented, nullptr);
-    if (ready) {
-        QObject::connect(qApp, &QCoreApplication::aboutToQuit, qApp,
-                         [] { maiGraphicsPresenterStop(); });
-    }
-    return ready;
-}
-
-class MaiGraphicsImageOverlay final : public QWidget {
-public:
-    MaiGraphicsImageOverlay(QLabel* label, std::function<void()> onFailure)
-        : QWidget(label), label_(label), onFailure_(std::move(onFailure)) {
-        setObjectName(QStringLiteral("maiGraphicsImageOverlay"));
-        setAttribute(Qt::WA_TransparentForMouseEvents);
-        setGeometry(label->rect());
-        label->installEventFilter(this);
-        show();
-    }
-
-    ~MaiGraphicsImageOverlay() override {
-        if (label_) label_->removeEventFilter(this);
-        if (viewId_) {
-            graphicsOverlays.remove(viewId_);
-            maiGraphicsPresenterDetach(viewId_);
-        }
-        if (nativeLayer_) maiGraphicsReleaseMacLayer(nativeLayer_);
-    }
-
-    bool render(const QString& path) {
-        nativeLayer_ = maiGraphicsCreateMacLayer(this);
-        if (!nativeLayer_) return false;
-        const qreal ratio = devicePixelRatioF();
-        const uint32_t width = qMax(1, qRound(this->width() * ratio));
-        const uint32_t height = qMax(1, qRound(this->height() * ratio));
-        viewId_ = maiGraphicsPresenterAttach(nativeLayer_, width, height,
-                                             maiGraphicsRetainMacLayer,
-                                             maiGraphicsReleaseMacLayer);
-        if (!viewId_) return false;
-        graphicsOverlays.insert(viewId_, this);
-        const QByteArray pathBytes = QFile::encodeName(path);
-        return maiGraphicsPresenterShowImage(viewId_, pathBytes.constData(), false);
-    }
-
-    void presented(bool success) {
-        if (success) {
-            setProperty("graphicsPresented", true);
-            return;
-        }
-        if (label_) label_->clear();
-        if (onFailure_) onFailure_();
-        deleteLater();
-    }
-
-protected:
-    bool eventFilter(QObject* watched, QEvent* event) override {
-        if (watched == label_ && event->type() == QEvent::Resize) {
-            setGeometry(label_->rect());
-            updateSurfaceSize();
-        }
-        return QWidget::eventFilter(watched, event);
-    }
-
-    void resizeEvent(QResizeEvent* event) override {
-        QWidget::resizeEvent(event);
-        updateSurfaceSize();
-    }
-
-private:
-    void updateSurfaceSize() {
-        if (!viewId_ || !nativeLayer_) return;
-        maiGraphicsResizeMacLayer(nativeLayer_, this);
-        const qreal ratio = devicePixelRatioF();
-        maiGraphicsPresenterResize(viewId_, qMax(1, qRound(width() * ratio)),
-                                   qMax(1, qRound(height() * ratio)));
-    }
-
-    QPointer<QLabel> label_;
-    std::function<void()> onFailure_;
-    void* nativeLayer_ = nullptr;
-    uint64_t viewId_ = 0;
-};
-
-void imagePresented(uint64_t viewId, bool success, void*) {
-    QMetaObject::invokeMethod(QCoreApplication::instance(), [viewId, success] {
-        const auto overlay = graphicsOverlays.value(viewId);
-        if (overlay) overlay->presented(success);
-    }, Qt::QueuedConnection);
-}
-#endif
 
 }  // namespace
 
@@ -209,24 +99,10 @@ QString MessageImageLoader::cacheKey(const QString& path, const QSize& targetPix
 void MessageImageLoader::loadInto(const QString& path, const QSize& targetPixels, QLabel* label,
                                   const std::function<void()>& onMissing) {
     if (!label) return;
-#if defined(MAICHAT_HAS_GRAPHICS) && defined(Q_OS_MAC)
-    Q_UNUSED(targetPixels);
-    if (!QFileInfo(path).isFile() || !startGraphicsPresenter()) {
-        label->clear();
-        if (onMissing) onMissing();
-        return;
-    }
-    auto* overlay = new MaiGraphicsImageOverlay(label, onMissing);
-    if (overlay->render(path)) return;
-    delete overlay;
-    label->clear();
-    if (onMissing) onMissing();
-#else
     QPointer<QLabel> guard(label);
     load(path, targetPixels, label, [guard](const QPixmap& pixmap) {
         if (guard) guard->setPixmap(pixmap);
     }, onMissing);
-#endif
 }
 
 void MessageImageLoader::load(const QString& path, const QSize& targetPixels, QWidget* owner,
@@ -256,14 +132,15 @@ void MessageImageLoader::load(const QString& path, const QSize& targetPixels, QW
     pool_.start(new DecodeTask(this, path, targetPixels, key));
 }
 
-void MessageImageLoader::deliver(const QString& key, const QImage& image, qint64 elapsedMs, const QString& context) {
+void MessageImageLoader::deliver(const QString& key, const QImage& image, qint64 elapsedMs,
+                                 const QString& context, int decodeError) {
     if (context == RemoteDiagnostics::PerformanceLog::shared().context())
         RemoteDiagnostics::PerformanceLog::shared().record("image-decode", elapsedMs);
     const QVector<Pending> targets = waiting_.take(key);
     if (image.isNull()) {
         qWarning().noquote()
-            << QStringLiteral("[ui] image decode failed: key=%1 <- file unreadable or unsupported")
-                   .arg(key);
+            << QStringLiteral("[ui] image decode failed: key=%1 ffmpeg_error=%2")
+                   .arg(key).arg(decodeError);
         for (const Pending& pending : targets) {
             QWidget* owner = pending.owner.data();
             if (!owner || owner->property("pendingImageKey").toString() != key) continue;

@@ -78,6 +78,7 @@ if(APPLE AND NOT IOS)
     ${ffmpeg_runtime_dir}/libswresample/libswresample.a
     ${ffmpeg_runtime_dir}/libswscale/libswscale.a
     ${ffmpeg_runtime_dir}/libavutil/libavutil.a
+    z
     "-framework AudioToolbox" "-framework CoreAudio" "-framework CoreMedia"
     "-framework CoreVideo" "-framework VideoToolbox")
   target_sources(maiagent_obs_graphics_compile PRIVATE
@@ -155,6 +156,7 @@ if(APPLE AND NOT IOS)
   target_link_libraries(maiagent_graphics PUBLIC
     maiagent_obs_math maiagent_obs_util maiagent_graphics_simde Threads::Threads
     PRIVATE ${ffmpeg_runtime_archives}
+      z
       "-framework AudioToolbox" "-framework CoreMedia"
       "-framework CoreVideo" "-framework VideoToolbox")
   add_dependencies(maiagent_graphics maiagent_ffmpeg_runtime)

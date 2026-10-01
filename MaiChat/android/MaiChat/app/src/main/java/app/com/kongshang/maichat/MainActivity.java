@@ -2812,13 +2812,13 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private View imageMessageContent(RemoteIMImageAttachment attachment) {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        // 图片解码和 Graphics 绘制都不阻塞界面线程；失败时才使用位图回退。
-        MaiGraphicsImageView image = new MaiGraphicsImageView(this);
+        ImageView image = new ImageView(this);
+        image.setScaleType(ImageView.ScaleType.CENTER_CROP);
         image.setBackgroundColor(MaiChatTheme.PAGE);
         image.setOnClickListener(view -> showFullScreenImage(attachment.localPath()));
         TextView imageMissing = MaiChatTheme.text(this, "图片暂不可预览", 14, MaiChatTheme.SECONDARY);
         imageMissing.setVisibility(View.GONE);
-        image.showImage(attachment.localPath(), true, () -> {
+        MessageImageLoader.load(attachment.localPath(), dp(260), dp(190), image, () -> {
             image.setVisibility(View.GONE);
             imageMissing.setVisibility(View.VISIBLE);
         });
@@ -2836,9 +2836,9 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         FrameLayout stage = new FrameLayout(this);
         stage.setBackgroundColor(MaiChatTheme.PAGE);
         if (attachment.hasCover()) {
-            MaiGraphicsImageView image = new MaiGraphicsImageView(this);
-            // 封面也走同一个 Graphics 呈现入口。
-            image.showImage(attachment.coverPath(), true, null);
+            ImageView image = new ImageView(this);
+            image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            MessageImageLoader.load(attachment.coverPath(), dp(260), dp(190), image, null);
             stage.addView(image, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT

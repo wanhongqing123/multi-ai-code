@@ -13,10 +13,16 @@ ranlib_tool="$8"
 mkdir -p "$build_dir"
 cd "$build_dir"
 
+# FFmpeg configure preserves existing Makefile/src links in a reused build
+# directory. Replace links left by an older vendored source checkout.
+if [[ -L src ]] && [[ "$(cd src && pwd -P)" != "$(cd "$source_dir" && pwd -P)" ]]; then
+  rm -f src Makefile
+fi
+
 options=(
   "--prefix=$build_dir/install"
   --disable-programs --disable-doc --disable-debug
-  --disable-autodetect --disable-asm
+  --disable-autodetect --disable-asm --enable-zlib
   --disable-audiotoolbox --disable-videotoolbox
   --disable-gpl --disable-nonfree
   --enable-pic --enable-static --disable-shared

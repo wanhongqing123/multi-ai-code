@@ -108,13 +108,14 @@ if(TARGET maiagent_graphics)
   target_link_libraries(maiagent_graphics PRIVATE
     maichat_ffmpeg_avformat maichat_ffmpeg_avcodec
     maichat_ffmpeg_swresample maichat_ffmpeg_swscale
-    maichat_ffmpeg_avutil)
+    maichat_ffmpeg_avutil z)
 endif()
 add_library(maichat_mobile STATIC
   MaiMobileAgent.cpp
   ../Media/MaiGraphicsPresenter.cpp
   ../Media/MaiVideoPlayback.cpp
   ../Media/MaiVideoColorParameters.cpp
+  ../Media/MaiImageDecode.cpp
   ../MaiChatTools/MaiImageFilter.cpp
   ../MaiChatTools/MaiMobileHostTools.cpp)
 if(ANDROID)
@@ -134,7 +135,7 @@ target_link_libraries(maichat_mobile PRIVATE maiagent
   maichat_ffmpeg_tools
   maichat_ffmpeg_avdevice maichat_ffmpeg_avfilter maichat_ffmpeg_avformat
   maichat_ffmpeg_avcodec maichat_ffmpeg_swresample maichat_ffmpeg_swscale
-  maichat_ffmpeg_avutil)
+  maichat_ffmpeg_avutil z)
 if(TARGET maiagent_graphics)
   target_link_libraries(maichat_mobile PRIVATE maiagent_graphics)
 endif()

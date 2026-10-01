@@ -59,6 +59,11 @@ AVDictionary *format_opts, *codec_opts;
 
 int hide_banner = 0;
 
+#ifdef MAI_FFMPEG_EMBEDDED
+const char *program_name = "ffmpeg";
+int program_birth_year = 2000;
+#endif
+
 void uninit_opts(void)
 {
     av_dict_free(&swr_opts);

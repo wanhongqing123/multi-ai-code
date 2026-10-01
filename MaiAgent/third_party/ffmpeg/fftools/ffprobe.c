@@ -90,8 +90,33 @@ typedef struct InputFile {
     int       nb_streams;
 } InputFile;
 
+#ifdef MAI_FFMPEG_EMBEDDED
+#include "mai_fftools_embed.h"
+
+static int (*mai_probe_cancel_check)(void *opaque) = NULL;
+static void *mai_probe_cancel_opaque = NULL;
+
+void mai_ffprobe_set_cancel_check(int (*check)(void *opaque), void *opaque)
+{
+    mai_probe_cancel_check = check;
+    mai_probe_cancel_opaque = opaque;
+}
+
+static int mai_probe_canceled(void)
+{
+    return mai_probe_cancel_check && mai_probe_cancel_check(mai_probe_cancel_opaque);
+}
+
+static int mai_ffprobe_interrupted(void *opaque)
+{
+    return mai_probe_canceled();
+}
+#endif
+
+#ifndef MAI_FFMPEG_EMBEDDED
 const char program_name[] = "ffprobe";
 const int program_birth_year = 2007;
+#endif
 
 static int do_analyze_frames = 0;
 static int do_bitexact = 0;
@@ -1738,6 +1763,12 @@ static int read_interval_packets(AVTextFormatContext *tfc, InputFile *ifile,
         goto end;
     }
     while (!av_read_frame(fmt_ctx, pkt)) {
+#ifdef MAI_FFMPEG_EMBEDDED
+        if (mai_probe_canceled()) {
+            ret = AVERROR_EXIT;
+            goto end;
+        }
+#endif
         if (fmt_ctx->nb_streams > nb_streams) {
             REALLOCZ_ARRAY_STREAM(nb_streams_frames,  nb_streams, fmt_ctx->nb_streams);
             REALLOCZ_ARRAY_STREAM(nb_streams_packets, nb_streams, fmt_ctx->nb_streams);
@@ -2567,10 +2598,15 @@ static int open_input_file(InputFile *ifile, const char *filename,
     fmt_ctx = avformat_alloc_context();
     if (!fmt_ctx)
         return AVERROR(ENOMEM);
+#ifdef MAI_FFMPEG_EMBEDDED
+    fmt_ctx->interrupt_callback.callback = mai_ffprobe_interrupted;
+#endif
 
     err = set_decoders(fmt_ctx);
-    if (err < 0)
+    if (err < 0) {
+        avformat_free_context(fmt_ctx);
         return err;
+    }
     if (!av_dict_get(format_opts, "scan_all_pmts", NULL, AV_DICT_MATCH_CASE)) {
         av_dict_set(&format_opts, "scan_all_pmts", "1", AV_DICT_DONT_OVERWRITE);
         scan_all_pmts_set = 1;
@@ -2614,7 +2650,7 @@ static int open_input_file(InputFile *ifile, const char *filename,
 
     ifile->streams = av_calloc(fmt_ctx->nb_streams, sizeof(*ifile->streams));
     if (!ifile->streams)
-        exit(1);
+        return AVERROR(ENOMEM);
     ifile->nb_streams = fmt_ctx->nb_streams;
 
     /* bind a decoder to each input stream */
@@ -2635,15 +2671,19 @@ static int open_input_file(InputFile *ifile, const char *filename,
             err = filter_codec_opts(codec_opts, stream->codecpar->codec_id,
                                     fmt_ctx, stream, codec, &opts, NULL);
             if (err < 0)
-                exit(1);
+                return err;
 
             ist->dec_ctx = avcodec_alloc_context3(codec);
-            if (!ist->dec_ctx)
-                exit(1);
+            if (!ist->dec_ctx) {
+                av_dict_free(&opts);
+                return AVERROR(ENOMEM);
+            }
 
             err = avcodec_parameters_to_context(ist->dec_ctx, stream->codecpar);
-            if (err < 0)
-                exit(1);
+            if (err < 0) {
+                av_dict_free(&opts);
+                return err;
+            }
 
             if (do_show_log) {
                 // For logging it is needed to disable at least frame threads as otherwise
@@ -2656,17 +2696,21 @@ static int open_input_file(InputFile *ifile, const char *filename,
 
             ist->dec_ctx->pkt_timebase = stream->time_base;
 
-            if (avcodec_open2(ist->dec_ctx, codec, &opts) < 0) {
+            err = avcodec_open2(ist->dec_ctx, codec, &opts);
+            if (err < 0) {
                 av_log(NULL, AV_LOG_WARNING, "Could not open codec for input stream %d\n",
                        stream->index);
-                exit(1);
+                av_dict_free(&opts);
+                return err;
             }
 
             if ((t = av_dict_iterate(opts, NULL))) {
                 av_log(NULL, AV_LOG_ERROR, "Option %s for input stream %d not found\n",
                        t->key, stream->index);
+                av_dict_free(&opts);
                 return AVERROR_OPTION_NOT_FOUND;
             }
+            av_dict_free(&opts);
         }
     }
 
@@ -3042,7 +3086,11 @@ static int opt_print_filename(void *optctx, const char *opt, const char *arg)
     return print_input_filename ? 0 : AVERROR(ENOMEM);
 }
 
+#ifdef MAI_FFMPEG_EMBEDDED
+void mai_ffprobe_show_help_default(const char *opt, const char *arg)
+#else
 void show_help_default(const char *opt, const char *arg)
+#endif
 {
     av_log_set_callback(log_callback_help);
     show_usage();
@@ -3363,7 +3411,40 @@ static inline int check_section_show_entries(int section_id)
             do_show_##varname = 1;                                      \
     } while (0)
 
+#ifdef MAI_FFMPEG_EMBEDDED
+static void mai_ffprobe_reset_state(void)
+{
+    do_analyze_frames = do_bitexact = do_count_frames = do_count_packets = 0;
+    do_read_frames = do_read_packets = 0;
+    do_show_chapters = do_show_error = do_show_format = do_show_frames = 0;
+    do_show_packets = do_show_programs = do_show_stream_groups = 0;
+    do_show_stream_group_components = do_show_streams = 0;
+    do_show_stream_disposition = do_show_stream_group_disposition = 0;
+    do_show_data = do_show_program_version = do_show_library_versions = 0;
+    do_show_pixel_formats = do_show_pixel_format_flags = 0;
+    do_show_pixel_format_components = do_show_log = 0;
+    do_show_chapter_tags = do_show_format_tags = do_show_frame_tags = 0;
+    do_show_program_tags = do_show_stream_group_tags = do_show_stream_tags = 0;
+    do_show_packet_tags = 0;
+    show_value_unit = use_value_prefix = use_byte_value_binary_prefix = 0;
+    use_value_sexagesimal_format = 0;
+    show_private_data = 1;
+    show_optional_fields = SHOW_OPTIONAL_FIELDS_AUTO;
+    read_intervals_nb = 0;
+    find_stream_info = 1;
+    nb_streams = 0;
+    for (size_t i = 0; i < FF_ARRAY_ELEMS(selected_entries); ++i) {
+        av_dict_free(&selected_entries[i].entries_to_show);
+        selected_entries[i].show_all_entries = 0;
+    }
+}
+#endif
+
+#ifdef MAI_FFMPEG_EMBEDDED
+int mai_ffprobe_execute(int argc, char **argv)
+#else
 int main(int argc, char **argv)
+#endif
 {
     const AVTextFormatter *f;
     AVTextFormatContext *tctx;
@@ -3372,10 +3453,23 @@ int main(int argc, char **argv)
     char *f_name = NULL, *f_args = NULL;
     int ret, input_ret;
     AVTextFormatDataDump data_dump_format_id = AV_TEXTFORMAT_DATADUMP_XXD;
+#ifdef MAI_FFMPEG_EMBEDDED
+    const int original_log_level = av_log_get_level();
+    const int original_log_flags = av_log_get_flags();
+#endif
+
+#ifdef MAI_FFMPEG_EMBEDDED
+    program_name = "ffprobe";
+    program_birth_year = 2007;
+    hide_banner = 0;
+    mai_ffprobe_reset_state();
+#endif
 
     init_dynload();
 
+#ifndef MAI_FFMPEG_EMBEDDED
     setvbuf(stderr, NULL, _IONBF, 0); /* win32 runtime needs this */
+#endif
 
     av_log_set_flags(AV_LOG_SKIP_REPEATED);
 
@@ -3534,11 +3628,31 @@ end:
     av_freep(&print_input_filename);
     av_freep(&read_intervals);
 
+#ifdef MAI_FFMPEG_EMBEDDED
+    av_freep(&stream_specifier);
+    av_freep(&show_data_hash);
+    av_freep(&data_dump_format);
+    av_freep(&audio_codec_name);
+    av_freep(&data_codec_name);
+    av_freep(&subtitle_codec_name);
+    av_freep(&video_codec_name);
+    clear_log(1);
+    av_freep(&log_buffer);
+    if (do_show_log)
+        av_log_set_callback(av_log_default_callback);
+#endif
+
     uninit_opts();
     for (size_t i = 0; i < FF_ARRAY_ELEMS(selected_entries); ++i)
         av_dict_free(&selected_entries[i].entries_to_show);
 
     avformat_network_deinit();
 
+#ifdef MAI_FFMPEG_EMBEDDED
+    av_log_set_level(original_log_level);
+    av_log_set_flags(original_log_flags);
+    return ret < 0 || mai_probe_canceled();
+#else
     return ret < 0;
+#endif
 }

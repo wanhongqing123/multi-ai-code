@@ -46,6 +46,7 @@ cd "$MAICHAT_FFMPEG_BUILD"
   --disable-gpl --disable-nonfree --enable-static --disable-shared --enable-pic \
   --extra-cflags=-MD
 make -j"$MAICHAT_FFMPEG_JOBS"
+make -j"$MAICHAT_FFMPEG_JOBS" libmaifftools.lib
 make install
 '@
 $ErrorActionPreference = 'Continue'
@@ -57,6 +58,9 @@ if ($buildExit -ne 0) { throw "FFmpeg build failed with exit code $buildExit" }
 foreach ($library in @('avdevice', 'avfilter', 'avformat', 'avcodec', 'swresample', 'swscale', 'avutil')) {
     $archive = Join-Path $build "lib$library/$library.lib"
     if (-not (Test-Path -LiteralPath $archive)) { throw "Missing FFmpeg archive: $archive" }
+}
+if (-not (Test-Path -LiteralPath (Join-Path $build 'libmaifftools.lib'))) {
+    throw 'Missing embedded FFmpeg command archive'
 }
 if (-not (Test-Path -LiteralPath (Join-Path $build 'install/include/libavfilter/avfilter.h'))) {
     throw 'FFmpeg public headers were not installed'

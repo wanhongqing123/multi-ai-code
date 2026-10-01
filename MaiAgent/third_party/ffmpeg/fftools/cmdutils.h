@@ -37,12 +37,20 @@
 /**
  * program name, defined by the program for show_version().
  */
+#ifdef MAI_FFMPEG_EMBEDDED
+extern const char *program_name;
+#else
 extern const char program_name[];
+#endif
 
 /**
  * program birth year, defined by the program for show_banner()
  */
+#ifdef MAI_FFMPEG_EMBEDDED
+extern int program_birth_year;
+#else
 extern const int program_birth_year;
+#endif
 
 extern AVDictionary *sws_dict;
 extern AVDictionary *swr_opts;

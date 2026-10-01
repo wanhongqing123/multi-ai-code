@@ -1,5 +1,9 @@
 # MaiChat 媒体适配
 
+渲染部分遵循 [`MaiAgent/Graphics/README.md`](../../MaiAgent/Graphics/README.md)
+中的 OBS 参照规范。播放器所需的纹理上传、色彩转换和绘制顺序先对照 OBS
+`libobs/obs-source.c` 与 `libobs/data`；平台差异以实际画面或像素验证。
+
 `MaiGraphicsPresenter` 管理 MaiChat 原生视图、Graphics 线程、交换链和绘制 effect；
 它调用 MaiAgent 移植的 OBS `gs_*` 图像引擎，不属于引擎本身。
 

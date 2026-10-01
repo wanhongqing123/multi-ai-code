@@ -26,4 +26,5 @@ if ! "$source_dir/configure" \
 fi
 
 make -j6 > build.log 2>&1 || { tail -n 80 build.log >&2; exit 1; }
+make -j6 libmaifftools.a >> build.log 2>&1 || { tail -n 80 build.log >&2; exit 1; }
 make install > install.log 2>&1 || { tail -n 80 install.log >&2; exit 1; }

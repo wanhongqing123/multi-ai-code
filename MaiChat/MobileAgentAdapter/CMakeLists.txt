@@ -36,6 +36,7 @@ if(NOT EXISTS "${ffmpeg_source}/configure")
 endif()
 set(ffmpeg_build "${CMAKE_CURRENT_BINARY_DIR}/vendor/ffmpeg-build")
 set(ffmpeg_archives
+  "${ffmpeg_build}/libmaifftools.a"
   "${ffmpeg_build}/libavdevice/libavdevice.a"
   "${ffmpeg_build}/libavfilter/libavfilter.a"
   "${ffmpeg_build}/libavformat/libavformat.a"
@@ -86,8 +87,16 @@ add_custom_command(OUTPUT ${ffmpeg_archives}
     "${ffmpeg_platform}" "${ffmpeg_cc}" "${ffmpeg_arch}" "${ffmpeg_sysroot}"
     "${ffmpeg_ar}" "${ffmpeg_ranlib}"
   DEPENDS "${ffmpeg_source}/configure" "${ffmpeg_source}/RELEASE" "${ffmpeg_script}"
+          "${ffmpeg_source}/fftools/Makefile" "${ffmpeg_source}/fftools/ffmpeg.c"
+          "${ffmpeg_source}/fftools/ffprobe.c" "${ffmpeg_source}/fftools/cmdutils.c"
+          "${ffmpeg_source}/fftools/opt_common.c"
+          "${ffmpeg_source}/fftools/mai_fftools_embed.h"
   VERBATIM)
 add_custom_target(maichat_ffmpeg_build DEPENDS ${ffmpeg_archives})
+add_library(maichat_ffmpeg_tools STATIC IMPORTED GLOBAL)
+set_target_properties(maichat_ffmpeg_tools PROPERTIES
+  IMPORTED_LOCATION "${ffmpeg_build}/libmaifftools.a")
+add_dependencies(maichat_ffmpeg_tools maichat_ffmpeg_build)
 foreach(library avdevice avfilter avformat avcodec swresample swscale avutil)
   add_library(maichat_ffmpeg_${library} STATIC IMPORTED GLOBAL)
   set_target_properties(maichat_ffmpeg_${library} PROPERTIES
@@ -117,14 +126,20 @@ elseif(APPLE)
 endif()
 add_dependencies(maichat_mobile maichat_ffmpeg_build)
 target_include_directories(maichat_mobile PRIVATE "${ffmpeg_build}/install/include")
+target_include_directories(maichat_mobile PRIVATE
+  "${ffmpeg_source}/fftools")
 target_include_directories(maichat_mobile PUBLIC . ../MaiChatTools ../Media
   PRIVATE ../../MaiAgent/third_party/nlohmann)
 target_link_libraries(maichat_mobile PRIVATE maiagent
+  maichat_ffmpeg_tools
   maichat_ffmpeg_avdevice maichat_ffmpeg_avfilter maichat_ffmpeg_avformat
   maichat_ffmpeg_avcodec maichat_ffmpeg_swresample maichat_ffmpeg_swscale
   maichat_ffmpeg_avutil)
 if(TARGET maiagent_graphics)
   target_link_libraries(maichat_mobile PRIVATE maiagent_graphics)
+endif()
+if(ANDROID)
+  target_link_libraries(maichat_mobile PRIVATE camera2ndk mediandk)
 endif()
 option(MAICHAT_MOBILE_TESTS "Build mobile adapter integration tests" OFF)
 if(MAICHAT_MOBILE_TESTS)

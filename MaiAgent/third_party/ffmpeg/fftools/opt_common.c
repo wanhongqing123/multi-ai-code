@@ -25,6 +25,9 @@
 #include "cmdutils.h"
 #include "fopen_utf8.h"
 #include "opt_common.h"
+#ifdef MAI_FFMPEG_EMBEDDED
+#include "mai_fftools_embed.h"
+#endif
 
 #include "libavutil/avassert.h"
 #include "libavutil/avstring.h"
@@ -600,7 +603,12 @@ int show_help(void *optctx, const char *opt, const char *arg)
         *par++ = 0;
 
     if (!*topic) {
-        show_help_default(topic, par);
+#ifdef MAI_FFMPEG_EMBEDDED
+        if (!strcmp(program_name, "ffprobe"))
+            mai_ffprobe_show_help_default(topic, par);
+        else
+#endif
+            show_help_default(topic, par);
     } else if (!strcmp(topic, "decoder")) {
         show_help_codec(par, SHOW_DECODER);
     } else if (!strcmp(topic, "encoder")) {
@@ -618,7 +626,12 @@ int show_help(void *optctx, const char *opt, const char *arg)
     } else if (!strcmp(topic, "bsf")) {
         show_help_bsf(par);
     } else {
-        show_help_default(topic, par);
+#ifdef MAI_FFMPEG_EMBEDDED
+        if (!strcmp(program_name, "ffprobe"))
+            mai_ffprobe_show_help_default(topic, par);
+        else
+#endif
+            show_help_default(topic, par);
     }
 
     av_freep(&topic);

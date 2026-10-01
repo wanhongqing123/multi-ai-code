@@ -1,5 +1,16 @@
 # MaiAgent Graphics
 
+## 渲染实现约定
+
+项目的图像、视频渲染以 OBS Studio 为实现参照。动 Graphics 接口、纹理上传、
+色彩转换、effect 或平台后端前，先在本地 `/Users/hongqingwan/OpenSource/obs-studio`
+定位对应代码和调用顺序，再决定如何复用。当前移植基线见 [`UPSTREAM.md`](UPSTREAM.md)。
+需要适配 MaiChat 或移动平台时，记录与 OBS 原实现的差异、原因，并用目标平台的
+实际画面或像素验证；不能只凭编译或“调用成功”断定渲染正确。
+
+Graphics 目录保留引擎及后端代码。视图绑定、FFmpeg 播放状态和 Agent 命令桥接
+放在 MaiChat 媒体层，不塞进 OBS Graphics 核心。
+
 这里移植了 OBS 的 Graphics、util、Metal 和 OpenGL 源码。版本、目录映射、许可
 与平台适配见 [`UPSTREAM.md`](UPSTREAM.md)。对外接口是 OBS 原有的 `gs_*`，
 入口在 [`../include/MaiGraphics.h`](../include/MaiGraphics.h)。MaiChat 使用 Graphics

@@ -45,6 +45,9 @@ if(APPLE AND NOT IOS)
   set(ffmpeg_runtime_script
     ${CMAKE_CURRENT_SOURCE_DIR}/scripts/build-ffmpeg-runtime.sh)
   set(ffmpeg_runtime_archives
+    ${ffmpeg_runtime_dir}/libmaifftools.a
+    ${ffmpeg_runtime_dir}/libavdevice/libavdevice.a
+    ${ffmpeg_runtime_dir}/libavfilter/libavfilter.a
     ${ffmpeg_runtime_dir}/libavformat/libavformat.a
     ${ffmpeg_runtime_dir}/libavcodec/libavcodec.a
     ${ffmpeg_runtime_dir}/libswresample/libswresample.a
@@ -55,10 +58,28 @@ if(APPLE AND NOT IOS)
     COMMAND bash ${ffmpeg_runtime_script} ${ffmpeg_source} ${ffmpeg_runtime_dir}
       ${CMAKE_C_COMPILER} ${CMAKE_SYSTEM_PROCESSOR} ${CMAKE_AR} ${CMAKE_RANLIB}
     DEPENDS ${ffmpeg_source}/configure ${ffmpeg_runtime_script}
+      ${ffmpeg_source}/fftools/Makefile
+      ${ffmpeg_source}/fftools/ffmpeg.c ${ffmpeg_source}/fftools/ffprobe.c
+      ${ffmpeg_source}/fftools/cmdutils.c ${ffmpeg_source}/fftools/opt_common.c
+      ${ffmpeg_source}/fftools/mai_fftools_embed.h
     VERBATIM)
   add_custom_target(maiagent_ffmpeg_runtime
     DEPENDS ${ffmpeg_runtime_archives}
       ${ffmpeg_runtime_dir}/install/include/libavutil/avconfig.h)
+  add_library(maiagent_embedded_fftools STATIC IMPORTED GLOBAL)
+  set_target_properties(maiagent_embedded_fftools PROPERTIES
+    IMPORTED_LOCATION ${ffmpeg_runtime_dir}/libmaifftools.a)
+  add_dependencies(maiagent_embedded_fftools maiagent_ffmpeg_runtime)
+  target_link_libraries(maiagent_embedded_fftools INTERFACE
+    ${ffmpeg_runtime_dir}/libavdevice/libavdevice.a
+    ${ffmpeg_runtime_dir}/libavfilter/libavfilter.a
+    ${ffmpeg_runtime_dir}/libavformat/libavformat.a
+    ${ffmpeg_runtime_dir}/libavcodec/libavcodec.a
+    ${ffmpeg_runtime_dir}/libswresample/libswresample.a
+    ${ffmpeg_runtime_dir}/libswscale/libswscale.a
+    ${ffmpeg_runtime_dir}/libavutil/libavutil.a
+    "-framework AudioToolbox" "-framework CoreAudio" "-framework CoreMedia"
+    "-framework CoreVideo" "-framework VideoToolbox")
   target_sources(maiagent_obs_graphics_compile PRIVATE
     ${obs_graphics_source}/graphics-ffmpeg.c)
   target_include_directories(maiagent_obs_graphics_compile PRIVATE

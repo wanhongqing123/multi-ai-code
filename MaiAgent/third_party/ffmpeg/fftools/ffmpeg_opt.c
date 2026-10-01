@@ -87,6 +87,29 @@ int ignore_unknown_streams = 0;
 int copy_unknown_streams = 0;
 int recast_media = 0;
 
+#ifdef MAI_FFMPEG_EMBEDDED
+void mai_ffmpeg_reset_options(void)
+{
+    dts_delta_threshold = 10;
+    dts_error_threshold = 3600 * 30;
+    frame_drop_threshold = 0;
+    do_benchmark = do_benchmark_all = do_hex_dump = do_pkt_dump = 0;
+    copy_ts = start_at_zero = 0;
+    copy_tb = -1;
+    debug_ts = exit_on_error = abort_on_flags = 0;
+    print_stats = -1;
+    stdin_interaction = 0;
+    max_error_rate = 2.0 / 3;
+    filter_complex_nbthreads = filter_buffered_frames = 0;
+    vstats_version = 2;
+    print_graphs = 0;
+    auto_conversion_filters = 1;
+    stats_period = 500000;
+    file_overwrite = no_file_overwrite = 0;
+    ignore_unknown_streams = copy_unknown_streams = recast_media = 0;
+}
+#endif
+
 // this struct is passed as the optctx argument
 // to func_arg() for global options
 typedef struct GlobalOptionsContext {

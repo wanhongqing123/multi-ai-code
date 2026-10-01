@@ -5,6 +5,7 @@
 #include "MaiApplyPatchTool.h"
 #include "MaiEditTool.h"
 #include "MaiFileTools.h"
+#include "MaiFfmpegTools.h"
 #include "MaiOpenAiClient.h"
 #include "MaiPdfTool.h"
 #include "MaiQuestionTool.h"
@@ -13,6 +14,7 @@
 #include "MaiTodoWriteTool.h"
 #include "MaiViewImageTool.h"
 #include "MaiWebFetchTool.h"
+#include "mai_fftools_embed.h"
 #include <cstdlib>
 #include <cstring>
 #include <json.hpp>
@@ -115,6 +117,10 @@ struct MaiMobileAgent {
         tools->add(makeMaiCurrentTimeTool());
         tools->add(makeMaiTodoWriteTool());
         tools->add(makeMaiViewImageTool());
+        MaiFfmpegEngine ffmpegEngine{mai_ffmpeg_execute, mai_ffmpeg_set_cancel_check,
+                                     mai_ffprobe_execute, mai_ffprobe_set_cancel_check};
+        tools->add(makeMaiFfmpegTool(ffmpegEngine));
+        tools->add(makeMaiFfprobeTool(ffmpegEngine));
         tools->add(makeMaiPdfTool([dispatcher = hostTools](
                                       const std::string& html, const std::string& output,
                                       const std::atomic<bool>* cancel) {

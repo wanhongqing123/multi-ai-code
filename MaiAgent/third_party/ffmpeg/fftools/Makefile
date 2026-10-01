@@ -69,6 +69,20 @@ endef
 
 $(foreach P,$(AVPROGS-yes),$(eval $(call DOFFTOOL,$(P))))
 
+# Embed both command engines in one application without building runnable programs. The normal
+# FFmpeg executables are unaffected because this target is requested only by MaiAgent builds.
+MAI_FFTOOLS_OBJS = $(sort $(OBJS-ffmpeg) $(OBJS-ffprobe) \
+    fftools/ffmpeg.o fftools/ffprobe.o fftools/cmdutils.o fftools/opt_common.o)
+$(MAI_FFTOOLS_OBJS): CFLAGS += -DMAI_FFMPEG_EMBEDDED
+$(MAI_FFTOOLS_OBJS): | fftools fftools/textformat fftools/resources fftools/graph
+fftools/resources/graph.css.min fftools/resources/graph.css.min.gz \
+fftools/resources/graph.css.c fftools/resources/graph.html.gz \
+fftools/resources/graph.html.c: | fftools/resources
+libmaifftools$(LIBSUF): $(MAI_FFTOOLS_OBJS)
+	$(RM) $@
+	$(AR) $(ARFLAGS) $(AR_O) $^
+	$(RANLIB) $@
+
 all: $(AVPROGS)
 
 fftools/ffprobe.o fftools/cmdutils.o: libavutil/ffversion.h | fftools
@@ -94,4 +108,4 @@ uninstall-progs:
 	$(RM) $(addprefix "$(BINDIR)/", $(ALLAVPROGS))
 
 clean::
-	$(RM) $(ALLAVPROGS) $(ALLAVPROGS_G) $(CLEANSUFFIXES:%=fftools/%) $(CLEANSUFFIXES:%=fftools/graph/%) $(CLEANSUFFIXES:%=fftools/textformat/%)
+	$(RM) $(ALLAVPROGS) $(ALLAVPROGS_G) libmaifftools$(LIBSUF) $(CLEANSUFFIXES:%=fftools/%) $(CLEANSUFFIXES:%=fftools/graph/%) $(CLEANSUFFIXES:%=fftools/textformat/%)

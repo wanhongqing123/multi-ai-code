@@ -32,9 +32,14 @@ case "$platform" in
     if [[ "$sysroot" == *iPhoneSimulator* ]]; then
       target="$arch-apple-ios16.0-simulator"
     fi
+    host_sdk="$(xcrun --sdk macosx --show-sdk-path)"
+    host_target="$(uname -m)-apple-macos13.0"
     options+=(--target-os=darwin "--arch=$arch" --enable-cross-compile
       "--sysroot=$sysroot" "--extra-cflags=-target $target"
-      "--extra-ldflags=-target $target")
+      "--extra-ldflags=-target $target"
+      --host-cc=/usr/bin/clang --host-ld=/usr/bin/clang
+      "--host-cflags=-target $host_target -isysroot $host_sdk"
+      "--host-ldflags=-target $host_target -isysroot $host_sdk")
     ;;
   Darwin)
     options+=(--target-os=darwin "--arch=$arch")
@@ -45,6 +50,14 @@ case "$platform" in
     ;;
 esac
 
+if [[ "$platform" == iOS ]]; then
+  # Xcode exports the iPhone SDKROOT to child tools. FFmpeg's bin2c runs on the
+  # build Mac, so that SDKROOT would incorrectly produce a simulator executable.
+  unset SDKROOT IPHONEOS_DEPLOYMENT_TARGET
+  rm -f ffbuild/bin2c_host.o ffbuild/bin2c
+fi
+
 "$source_dir/configure" "${options[@]}"
 make -j6
+make -j6 libmaifftools.a
 make install

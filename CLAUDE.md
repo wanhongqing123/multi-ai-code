@@ -19,13 +19,16 @@
 开头有一张 21 条的速查表。最容易想当然做错的是这两条：代码里除注释外
 不出现中文；碰文件不要用 `std::filesystem`。
 
-## 两个参照系
+## 参照系
 
 写代码拿不准的时候去看，不要自己发挥：
 
 - **agent 的形状、协议取值、词汇** → `third_party/aicli/codex/codex-rs`
 - **通用基础组件**（路径、文件、线程、字符串、容器） →
   `E:\OpenSource\chromium\src\base`
+- **图像、视频渲染与 effect** → 本地 `obs-studio` 的 `libobs` 实现；
+  先读 [`MaiAgent/Graphics/README.md`](MaiAgent/Graphics/README.md) 和
+  [`MaiAgent/Graphics/UPSTREAM.md`](MaiAgent/Graphics/UPSTREAM.md)。
 
 理由见 `MaiAgent/docs/CodingStyle.md` 的第 0 和 0.5 节——那里记了两次
 "自己想当然、结果是错的"的具体经过。

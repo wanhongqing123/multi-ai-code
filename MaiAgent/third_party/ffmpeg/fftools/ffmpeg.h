@@ -776,6 +776,9 @@ void term_init(void);
 void term_exit(void);
 
 void show_usage(void);
+#ifdef MAI_FFMPEG_EMBEDDED
+void mai_ffmpeg_reset_options(void);
+#endif
 
 int check_avoptions_used(const AVDictionary *opts, const AVDictionary *opts_used,
                          void *logctx, int decode);

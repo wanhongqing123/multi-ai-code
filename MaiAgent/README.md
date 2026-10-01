@@ -61,6 +61,8 @@ agent.submit(MaiSendPrompt{sessionId, "你好"});
 
 核心的边界是 `MaiAgent::submit(MaiOperation)` 加一条事件流，形状抄 codex
 （它的 `core/src/codex_thread.rs` 对外就 `submit` / `next_event` 两个方法）。
+MaiChat 宿主可注册进程内 FFmpeg/FFprobe 工具，接口和限制见
+[`docs/EmbeddedFfmpegTools.md`](docs/EmbeddedFfmpegTools.md)。
 
 ## 构建
 

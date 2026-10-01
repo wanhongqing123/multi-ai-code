@@ -85,9 +85,14 @@
 #include "ffmpeg_sched.h"
 #include "ffmpeg_utils.h"
 #include "graph/graphprint.h"
+#ifdef MAI_FFMPEG_EMBEDDED
+#include "mai_fftools_embed.h"
+#endif
 
+#ifndef MAI_FFMPEG_EMBEDDED
 const char program_name[] = "ffmpeg";
 const int program_birth_year = 2000;
+#endif
 
 FILE *vstats_file;
 
@@ -140,10 +145,29 @@ void term_exit(void)
 
 static volatile int received_sigterm = 0;
 static volatile int received_nb_signals = 0;
+#ifdef MAI_FFMPEG_EMBEDDED
+static int (*mai_cancel_check)(void *opaque) = NULL;
+static void *mai_cancel_opaque = NULL;
+
+void mai_ffmpeg_set_cancel_check(int (*check)(void *opaque), void *opaque)
+{
+    mai_cancel_check = check;
+    mai_cancel_opaque = opaque;
+}
+
+static int mai_cancel_requested(void)
+{
+    return mai_cancel_check && mai_cancel_check(mai_cancel_opaque);
+}
+#endif
 static atomic_int transcode_init_done = 0;
 static volatile int ffmpeg_exited = 0;
 static int64_t copy_ts_first_pts = AV_NOPTS_VALUE;
+static int64_t report_last_time = -1;
+static int report_first = 1;
+static int64_t keyboard_last_time = 0;
 
+#ifndef MAI_FFMPEG_EMBEDDED
 static void
 sigterm_handler(int sig)
 {
@@ -158,6 +182,7 @@ sigterm_handler(int sig)
         exit(123);
     }
 }
+#endif
 
 #if HAVE_SETCONSOLECTRLHANDLER
 static BOOL WINAPI CtrlHandler(DWORD fdwCtrlType)
@@ -204,6 +229,9 @@ static BOOL WINAPI CtrlHandler(DWORD fdwCtrlType)
 
 void term_init(void)
 {
+#ifdef MAI_FFMPEG_EMBEDDED
+    return;
+#else
 #if defined __linux__
     struct sigaction action = {0};
     action.sa_handler = sigterm_handler;
@@ -247,6 +275,7 @@ void term_init(void)
 #endif
 #if HAVE_SETCONSOLECTRLHANDLER
     SetConsoleCtrlHandler((PHANDLER_ROUTINE) CtrlHandler, TRUE);
+#endif
 #endif
 }
 
@@ -306,6 +335,10 @@ static int read_key(void)
 
 static int decode_interrupt_cb(void *ctx)
 {
+#ifdef MAI_FFMPEG_EMBEDDED
+    if (mai_cancel_requested())
+        return 1;
+#endif
     return received_nb_signals > atomic_load(&transcode_init_done);
 }
 
@@ -340,6 +373,7 @@ static void ffmpeg_cleanup(int ret)
             av_log(NULL, AV_LOG_ERROR,
                    "Error closing vstats file, loss of information possible: %s\n",
                    av_err2str(AVERROR(errno)));
+        vstats_file = NULL;
     }
     av_freep(&vstats_filename);
     of_enc_stats_close();
@@ -353,6 +387,10 @@ static void ffmpeg_cleanup(int ret)
 
     av_freep(&input_files);
     av_freep(&output_files);
+    nb_filtergraphs = nb_input_files = nb_output_files = nb_decoders = 0;
+
+    if (progress_avio)
+        avio_closep(&progress_avio);
 
     uninit_opts();
 
@@ -576,8 +614,6 @@ static void print_report(int is_last_report, int64_t timer_start, int64_t cur_ti
     int vid;
     double bitrate;
     double speed;
-    static int64_t last_time = -1;
-    static int first_report = 1;
     uint64_t nb_frames_dup = 0, nb_frames_drop = 0;
     int mins, secs, ms, us;
     int64_t hours;
@@ -589,13 +625,13 @@ static void print_report(int is_last_report, int64_t timer_start, int64_t cur_ti
         return;
 
     if (!is_last_report) {
-        if (last_time == -1) {
-            last_time = cur_time;
+        if (report_last_time == -1) {
+            report_last_time = cur_time;
         }
-        if (((cur_time - last_time) < stats_period && !first_report) ||
-            (first_report && atomic_load(&nb_output_dumped) < nb_output_files))
+        if (((cur_time - report_last_time) < stats_period && !report_first) ||
+            (report_first && atomic_load(&nb_output_dumped) < nb_output_files))
             return;
-        last_time = cur_time;
+        report_last_time = cur_time;
     }
 
     t = (cur_time-timer_start) / 1000000.0;
@@ -728,7 +764,7 @@ static void print_report(int is_last_report, int64_t timer_start, int64_t cur_ti
         }
     }
 
-    first_report = 0;
+    report_first = 0;
 }
 
 static void print_stream_maps(void)
@@ -822,11 +858,10 @@ static void set_tty_echo(int on)
 static int check_keyboard_interaction(int64_t cur_time)
 {
     int i, key;
-    static int64_t last_time;
     /* read_key() returns 0 on EOF */
-    if (cur_time - last_time >= 100000) {
+    if (cur_time - keyboard_last_time >= 100000) {
         key =  read_key();
-        last_time = cur_time;
+        keyboard_last_time = cur_time;
     }else
         key = -1;
     if (key == 'q') {
@@ -906,7 +941,11 @@ static int transcode(Scheduler *sch)
     while (!sch_wait(sch, stats_period, &transcode_ts)) {
         int64_t cur_time= av_gettime_relative();
 
-        if (received_nb_signals)
+        if (received_nb_signals
+#ifdef MAI_FFMPEG_EMBEDDED
+            || mai_cancel_requested()
+#endif
+           )
             break;
 
         /* if 'q' pressed, exits */
@@ -978,16 +1017,48 @@ static int64_t getmaxrss(void)
 #endif
 }
 
+#ifdef MAI_FFMPEG_EMBEDDED
+int mai_ffmpeg_execute(int argc, char **argv)
+#else
 int main(int argc, char **argv)
+#endif
 {
     Scheduler *sch = NULL;
 
     int ret;
     BenchmarkTimeStamps ti;
+#ifdef MAI_FFMPEG_EMBEDDED
+    const int original_log_level = av_log_get_level();
+    const int original_log_flags = av_log_get_flags();
+#endif
+
+#ifdef MAI_FFMPEG_EMBEDDED
+    program_name = "ffmpeg";
+    program_birth_year = 2000;
+    hide_banner = 0;
+    received_sigterm = 0;
+    received_nb_signals = 0;
+    ffmpeg_exited = 0;
+    atomic_store(&transcode_init_done, 0);
+    atomic_store(&nb_output_dumped, 0);
+    copy_ts_first_pts = AV_NOPTS_VALUE;
+    report_last_time = -1;
+    report_first = 1;
+    keyboard_last_time = 0;
+    nb_filtergraphs = nb_input_files = nb_output_files = nb_decoders = 0;
+    filtergraphs = NULL;
+    input_files = NULL;
+    output_files = NULL;
+    decoders = NULL;
+    progress_avio = NULL;
+    mai_ffmpeg_reset_options();
+#endif
 
     init_dynload();
 
+#ifndef MAI_FFMPEG_EMBEDDED
     setvbuf(stderr,NULL,_IONBF,0); /* win32 runtime needs this */
+#endif
 
     av_log_set_flags(AV_LOG_SKIP_REPEATED);
     parse_loglevel(argc, argv, options);
@@ -1041,6 +1112,9 @@ int main(int argc, char **argv)
     }
 
     ret = received_nb_signals                 ? 255 :
+#ifdef MAI_FFMPEG_EMBEDDED
+          mai_cancel_requested()               ? 255 :
+#endif
           (ret == FFMPEG_ERROR_RATE_EXCEEDED) ?  69 : ret;
 
 finish:
@@ -1054,5 +1128,9 @@ finish:
     av_log(NULL, AV_LOG_VERBOSE, "\n");
     av_log(NULL, AV_LOG_VERBOSE, "Exiting with exit code %d\n", ret);
 
+#ifdef MAI_FFMPEG_EMBEDDED
+    av_log_set_level(original_log_level);
+    av_log_set_flags(original_log_flags);
+#endif
     return ret;
 }

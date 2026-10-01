@@ -114,6 +114,8 @@ if(WIN32)
     endif()
     set(MAICHAT_FFMPEG_LIBRARIES avdevice avfilter avformat avcodec swresample swscale avutil)
     set(MAICHAT_FFMPEG_ARCHIVES)
+    list(APPEND MAICHAT_FFMPEG_ARCHIVES
+      "${MAICHAT_FFMPEG_BUILD_DIR}/libmaifftools.lib")
     foreach(library ${MAICHAT_FFMPEG_LIBRARIES})
       list(APPEND MAICHAT_FFMPEG_ARCHIVES
         "${MAICHAT_FFMPEG_BUILD_DIR}/lib${library}/${library}.lib")
@@ -126,8 +128,18 @@ if(WIN32)
         -MsysBash "${MAICHAT_MSYS2_BASH}"
       DEPENDS "${MAICHAT_FFMPEG_SOURCE}/configure"
               "${MAICHAT_FFMPEG_SOURCE}/RELEASE" "${MAICHAT_FFMPEG_SCRIPT}"
+              "${MAICHAT_FFMPEG_SOURCE}/fftools/Makefile"
+              "${MAICHAT_FFMPEG_SOURCE}/fftools/ffmpeg.c"
+              "${MAICHAT_FFMPEG_SOURCE}/fftools/ffprobe.c"
+              "${MAICHAT_FFMPEG_SOURCE}/fftools/cmdutils.c"
+              "${MAICHAT_FFMPEG_SOURCE}/fftools/opt_common.c"
+              "${MAICHAT_FFMPEG_SOURCE}/fftools/mai_fftools_embed.h"
       VERBATIM)
     add_custom_target(maichat_ffmpeg_build DEPENDS ${MAICHAT_FFMPEG_ARCHIVES})
+    add_library(maichat_ffmpeg_tools STATIC IMPORTED GLOBAL)
+    set_target_properties(maichat_ffmpeg_tools PROPERTIES
+      IMPORTED_LOCATION "${MAICHAT_FFMPEG_BUILD_DIR}/libmaifftools.lib")
+    add_dependencies(maichat_ffmpeg_tools maichat_ffmpeg_build)
     foreach(library ${MAICHAT_FFMPEG_LIBRARIES})
       add_library(maichat_ffmpeg_${library} STATIC IMPORTED GLOBAL)
       set_target_properties(maichat_ffmpeg_${library} PROPERTIES
@@ -552,6 +564,21 @@ add_library(maichat_agent
 target_include_directories(maichat_agent PUBLIC src)
 target_link_libraries(maichat_agent PUBLIC Qt5::Core Qt5::Widgets maiagent maichat_markdown
   maichat_pdf_preview)
+if(TARGET maiagent_embedded_fftools OR TARGET maichat_ffmpeg_tools)
+  target_include_directories(maichat_agent PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/ffmpeg/fftools")
+  target_compile_definitions(maichat_agent PRIVATE MAICHAT_EMBEDDED_FFMPEG=1)
+  if(APPLE)
+    target_link_libraries(maichat_agent PRIVATE maiagent_embedded_fftools)
+  elseif(WIN32)
+    target_link_libraries(maichat_agent PRIVATE
+      maichat_ffmpeg_tools
+      maichat_ffmpeg_avdevice maichat_ffmpeg_avfilter maichat_ffmpeg_avformat
+      maichat_ffmpeg_avcodec maichat_ffmpeg_swresample maichat_ffmpeg_swscale
+      maichat_ffmpeg_avutil
+      psapi ole32 strmiids uuid oleaut32 shlwapi gdi32 vfw32 ws2_32 user32 bcrypt)
+  endif()
+endif()
 if(WIN32 AND MAICHAT_ENABLE_OPENCV)
   target_sources(maichat_agent PRIVATE
     src/MaiChatTools/DesktopVisionTools.h src/MaiChatTools/DesktopVisionTools.cpp)
@@ -600,6 +627,17 @@ if(APPLE AND TARGET maiagent_obs_metal)
       ${CMAKE_CURRENT_BINARY_DIR}/maiagent/Graphics/data
       ${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/Graphics/tests/fixtures/tiny-red.ppm
       ${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/Graphics/tests/fixtures/tiny-red.mp4)
+endif()
+
+if(APPLE AND TARGET maiagent_embedded_fftools)
+  add_executable(MaiEmbeddedFfmpegToolsTest tests/MaiEmbeddedFfmpegToolsTest.cpp)
+  target_include_directories(MaiEmbeddedFfmpegToolsTest PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/ffmpeg/fftools
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/nlohmann)
+  target_link_libraries(MaiEmbeddedFfmpegToolsTest PRIVATE
+    maiagent maiagent_embedded_fftools)
+  add_test(NAME MaiEmbeddedFfmpegToolsTest COMMAND MaiEmbeddedFfmpegToolsTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/Graphics/tests/fixtures/tiny-red.mp4)
 endif()
 
 add_executable(pdf_preview_dialog_test tests/PdfPreviewDialogTest.cpp)

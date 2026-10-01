@@ -2,6 +2,10 @@
 #include "MaiOpenAiClient.h"
 #include "MaiMemoryStore.h"
 #include "MaiSqliteStore.h"
+#if defined(MAICHAT_CV_VIDEO_ANALYSIS)
+#include "MaiCvVideoAnalysis.h"
+#include "MaiCvVideoTools.h"
+#endif
 #include "MaiPdfTool.h"
 #if defined(MAICHAT_EMBEDDED_FFMPEG)
 #include "MaiFfmpegTools.h"
@@ -96,6 +100,10 @@ std::unique_ptr<MaiAgent> buildAgent(std::unique_ptr<MaiModelClient> model,
     tools->add(makeMaiViewImageTool(makeMaiFfmpegImagePreview(ffmpegEngine)));
     tools->add(makeMaiFfmpegTool(ffmpegEngine));
     tools->add(makeMaiFfprobeTool(ffmpegEngine));
+#endif
+#if defined(MAICHAT_CV_VIDEO_ANALYSIS)
+    tools->add(makeMaiCvSceneDetectTool(analyzeMaiCvVideo));
+    tools->add(makeMaiCvMotionDetectTool(analyzeMaiCvVideo));
 #endif
     tools->add(makeMaiPdfTool(renderDesktopPdf));
 #if defined(MAICHAT_DESKTOP_VISION)

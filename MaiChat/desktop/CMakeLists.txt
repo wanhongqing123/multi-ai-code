@@ -218,7 +218,7 @@ endif()
 
 # Desktop 人脸定位/人物分割使用仓库内同一份 OpenCV 4.14.0 源码。让 CMake
 # 直接构建所需模块及其依赖，避免手工猜测 protobuf、图片编解码库的链接顺序。
-if(WIN32)
+if(WIN32 OR APPLE)
   option(MAICHAT_ENABLE_OPENCV "Build desktop vision with vendored OpenCV" ON)
   if(MAICHAT_ENABLE_OPENCV)
     set(_maichat_zlib_library_before_opencv "${ZLIB_LIBRARY}")
@@ -228,7 +228,11 @@ if(WIN32)
     if(NOT EXISTS "${MAICHAT_OPENCV_SOURCE}/CMakeLists.txt")
       message(FATAL_ERROR "Vendored OpenCV 4.14.0 source is missing")
     endif()
-    set(BUILD_LIST "core,imgproc,imgcodecs,dnn,objdetect" CACHE STRING "" FORCE)
+    if(WIN32)
+      set(BUILD_LIST "core,imgproc,imgcodecs,dnn,objdetect" CACHE STRING "" FORCE)
+    else()
+      set(BUILD_LIST "core,imgproc" CACHE STRING "" FORCE)
+    endif()
     set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
     set(BUILD_WITH_STATIC_CRT OFF CACHE BOOL "" FORCE)
     set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
@@ -272,19 +276,24 @@ if(WIN32)
     target_include_directories(maichat_opencv INTERFACE
       "${CMAKE_CURRENT_BINARY_DIR}"
       "${MAICHAT_OPENCV_SOURCE}/modules/core/include"
-      "${MAICHAT_OPENCV_SOURCE}/modules/imgproc/include"
-      "${MAICHAT_OPENCV_SOURCE}/modules/imgcodecs/include"
-      "${MAICHAT_OPENCV_SOURCE}/modules/dnn/include"
-      "${MAICHAT_OPENCV_SOURCE}/modules/objdetect/include")
-    target_link_libraries(maichat_opencv INTERFACE
-      opencv_objdetect opencv_dnn opencv_imgcodecs)
-    add_library(maichat_image_vision STATIC src/MaiChatTools/MaiImageVision.cpp)
-    target_include_directories(maichat_image_vision PUBLIC src/MaiChatTools)
-    target_link_libraries(maichat_image_vision PUBLIC maichat_opencv)
-    set(MAICHAT_FACE_MODEL
-      "${CMAKE_CURRENT_SOURCE_DIR}/../MobileAgentAdapter/models/face_detection_yunet_2023mar.onnx")
-    set(MAICHAT_PERSON_MODEL
-      "${CMAKE_CURRENT_SOURCE_DIR}/../MobileAgentAdapter/models/human_segmentation_pphumanseg_2023mar.onnx")
+      "${MAICHAT_OPENCV_SOURCE}/modules/imgproc/include")
+    if(WIN32)
+      target_include_directories(maichat_opencv INTERFACE
+        "${MAICHAT_OPENCV_SOURCE}/modules/imgcodecs/include"
+        "${MAICHAT_OPENCV_SOURCE}/modules/dnn/include"
+        "${MAICHAT_OPENCV_SOURCE}/modules/objdetect/include")
+      target_link_libraries(maichat_opencv INTERFACE
+        opencv_objdetect opencv_dnn opencv_imgcodecs)
+      add_library(maichat_image_vision STATIC src/MaiChatTools/MaiImageVision.cpp)
+      target_include_directories(maichat_image_vision PUBLIC src/MaiChatTools)
+      target_link_libraries(maichat_image_vision PUBLIC maichat_opencv)
+      set(MAICHAT_FACE_MODEL
+        "${CMAKE_CURRENT_SOURCE_DIR}/../MobileAgentAdapter/models/face_detection_yunet_2023mar.onnx")
+      set(MAICHAT_PERSON_MODEL
+        "${CMAKE_CURRENT_SOURCE_DIR}/../MobileAgentAdapter/models/human_segmentation_pphumanseg_2023mar.onnx")
+    else()
+      target_link_libraries(maichat_opencv INTERFACE opencv_imgproc)
+    endif()
   endif()
 endif()
 
@@ -658,6 +667,39 @@ if(WIN32 AND MAICHAT_ENABLE_OPENCV)
   target_compile_definitions(maichat_agent PRIVATE MAICHAT_DESKTOP_VISION=1)
   target_link_libraries(maichat_agent PRIVATE maichat_image_vision)
 endif()
+if(MAICHAT_ENABLE_OPENCV AND
+   (TARGET maiagent_embedded_fftools OR TARGET maichat_ffmpeg_tools))
+  add_library(maiagent_cv_video_analysis STATIC
+    ../../MaiAgent/AgentTools/MaiCvVideoAnalysis.cpp)
+  target_include_directories(maiagent_cv_video_analysis PRIVATE
+    ../../MaiAgent/include)
+  target_link_libraries(maiagent_cv_video_analysis PRIVATE maichat_opencv)
+  if(APPLE)
+    target_include_directories(maiagent_cv_video_analysis PRIVATE
+      "${CMAKE_CURRENT_BINARY_DIR}/maiagent/Graphics/ffmpeg-runtime/install/include")
+    add_dependencies(maiagent_cv_video_analysis maiagent_ffmpeg_runtime)
+    target_link_libraries(maiagent_cv_video_analysis PRIVATE maiagent_embedded_fftools)
+  elseif(WIN32)
+    target_include_directories(maiagent_cv_video_analysis PRIVATE
+      "${MAICHAT_FFMPEG_BUILD_DIR}/install/include")
+    add_dependencies(maiagent_cv_video_analysis maichat_ffmpeg_build)
+    target_link_libraries(maiagent_cv_video_analysis PRIVATE
+      maichat_ffmpeg_avformat maichat_ffmpeg_avcodec
+      maichat_ffmpeg_swscale maichat_ffmpeg_avutil
+      ${MAICHAT_MEDIA_CODEC_ARCHIVES}
+      psapi ole32 strmiids uuid oleaut32 shlwapi gdi32 vfw32 ws2_32 user32 bcrypt)
+  endif()
+  target_link_libraries(maichat_agent PRIVATE maiagent_cv_video_analysis)
+  target_compile_definitions(maichat_agent PRIVATE MAICHAT_CV_VIDEO_ANALYSIS=1)
+  add_executable(MaiCvVideoAnalysisTests
+    ../../MaiAgent/tests/MaiCvVideoAnalysisTests.cpp)
+  target_include_directories(MaiCvVideoAnalysisTests PRIVATE
+    ../../MaiAgent/include ../../MaiAgent/third_party/nlohmann)
+  target_link_libraries(MaiCvVideoAnalysisTests PRIVATE
+    maiagent_cv_video_analysis maiagent)
+  add_test(NAME MaiCvVideoAnalysisTests COMMAND MaiCvVideoAnalysisTests
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/tests/fixtures/cv-video-analysis.mp4)
+endif()
 
 add_executable(markdown_document_test tests/MarkdownDocumentTest.cpp)
 target_link_libraries(markdown_document_test PRIVATE maichat_markdown Qt5::Test)
@@ -674,6 +716,9 @@ target_link_libraries(markdown_label_test PRIVATE maichat_markdown Qt5::Widgets 
 add_executable(agent_controller_test tests/AgentControllerTest.cpp)
 target_link_libraries(agent_controller_test PRIVATE remote_im_desktop_ui remote_im_desktop_app
   remote_im_core maichat_agent maichat_markdown Qt5::Widgets Qt5::Test)
+if(TARGET maiagent_cv_video_analysis)
+  target_compile_definitions(agent_controller_test PRIVATE MAICHAT_TEST_CV_VIDEO_ANALYSIS=1)
+endif()
 
 add_executable(agent_panel_session_test tests/AgentPanelSessionTest.cpp)
 # UiZoom 在 remote_im_desktop_ui 里，而 AgentChatPanel 用它做缩放，所以要一起链。
@@ -746,7 +791,9 @@ if(APPLE AND TARGET maiagent_obs_metal)
     ${CMAKE_CURRENT_SOURCE_DIR}/../Media/tests/fixtures/ffplay-av-subtitles.mkv)
   add_executable(MaiFfplayVideoDialogTest tests/MaiFfplayVideoDialogTest.cpp)
   target_compile_definitions(MaiFfplayVideoDialogTest PRIVATE
-    MAICHAT_FFPLAY_VIDEO_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/Graphics/tests/fixtures/tiny-red.mp4")
+    MAICHAT_FFPLAY_VIDEO_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../Media/tests/fixtures/ffplay-av-subtitles.mkv"
+    MAICHAT_FFPLAY_H264_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/Graphics/tests/fixtures/tiny-red.mp4"
+    MAICHAT_FFPLAY_AV1_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/Graphics/tests/fixtures/tiny-red-av1.webm")
   target_include_directories(MaiFfplayVideoDialogTest PRIVATE ../Media/FfplayCompat)
   target_link_libraries(MaiFfplayVideoDialogTest PRIVATE remote_im_desktop_ui Qt5::Test)
   add_test(NAME MaiFfplayVideoDialogTest COMMAND MaiFfplayVideoDialogTest)

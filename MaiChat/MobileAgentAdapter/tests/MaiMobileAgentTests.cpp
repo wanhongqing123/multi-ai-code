@@ -140,7 +140,8 @@ int main() {
              hasMobilePhotoSave = false, hasMobileTransform = false,
              hasMobileBeautify = false, hasMobileImageInfo = false, hasMobilePreview = false,
              hasFaceDetection = false, hasPersonSegmentation = false,
-             hasMobilePhotoAlbumWrite = false, hasPermissionRequest = false;
+             hasMobilePhotoAlbumWrite = false, hasPermissionRequest = false,
+             hasSceneDetect = false, hasMotionDetect = false;
         for (const auto& tool : body["tools"]) {
             CHECK(tool["function"]["name"] != "shell");
             if (tool["function"]["name"] == "create_file") hasCreateFile = true;
@@ -170,6 +171,8 @@ int main() {
             if (tool["function"]["name"] == "mobile_preview_image") hasMobilePreview = true;
             if (tool["function"]["name"] == "mobile_request_permission")
                 hasPermissionRequest = true;
+            if (tool["function"]["name"] == "cv_scene_detect") hasSceneDetect = true;
+            if (tool["function"]["name"] == "cv_motion_detect") hasMotionDetect = true;
             if (kPhotoAlbumTool != nullptr && tool["function"]["name"] == kPhotoAlbumTool)
                 hasMobilePhotoAlbumWrite = true;
         }
@@ -194,6 +197,8 @@ int main() {
         CHECK(hasPersonSegmentation);
         CHECK(hasMobilePreview);
         CHECK(hasPermissionRequest);
+        CHECK(hasSceneDetect);
+        CHECK(hasMotionDetect);
         if (kPhotoAlbumTool != nullptr) CHECK(hasMobilePhotoAlbumWrite);
         const auto& last = body["messages"].back();
         std::string input;

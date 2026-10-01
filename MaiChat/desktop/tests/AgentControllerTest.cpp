@@ -399,12 +399,24 @@ void AgentControllerTest::registers_host_tools_after_builtin_tools() {
 
     bool foundBuiltin = false;
     bool foundHost = false;
+#if defined(MAICHAT_TEST_CV_VIDEO_ANALYSIS)
+    bool foundSceneDetect = false;
+    bool foundMotionDetect = false;
+#endif
     for (const MaiToolSpec& tool : scripted->lastRequest().tools) {
         if (tool.name == "read") foundBuiltin = true;
         if (tool.name == "maichat_probe") foundHost = true;
+#if defined(MAICHAT_TEST_CV_VIDEO_ANALYSIS)
+        if (tool.name == "cv_scene_detect") foundSceneDetect = true;
+        if (tool.name == "cv_motion_detect") foundMotionDetect = true;
+#endif
     }
     QVERIFY(foundBuiltin);
     QVERIFY(foundHost);
+#if defined(MAICHAT_TEST_CV_VIDEO_ANALYSIS)
+    QVERIFY(foundSceneDetect);
+    QVERIFY(foundMotionDetect);
+#endif
 }
 
 void AgentControllerTest::finishingAnotherSessionDoesNotReclassifyReasoning() {

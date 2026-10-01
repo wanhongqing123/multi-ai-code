@@ -159,6 +159,7 @@ add_library(maiagent STATIC
   AgentTools/MaiPathGuard.cpp
   AgentTools/MaiTool.cpp
   AgentTools/MaiFfmpegTools.cpp
+  AgentTools/MaiCvVideoTools.cpp
   Agent/MaiPermission.cpp
   Agent/MaiQuestion.cpp
   AgentTools/MaiFileTools.cpp

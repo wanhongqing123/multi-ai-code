@@ -3,6 +3,8 @@
 
 #include "MaiAgent.h"
 #include "MaiApplyPatchTool.h"
+#include "MaiCvVideoAnalysis.h"
+#include "MaiCvVideoTools.h"
 #include "MaiEditTool.h"
 #include "MaiFileTools.h"
 #include "MaiFfmpegTools.h"
@@ -127,6 +129,8 @@ struct MaiMobileAgent {
         tools->add(makeMaiViewImageTool(makeMaiFfmpegImagePreview(ffmpegEngine)));
         tools->add(makeMaiFfmpegTool(ffmpegEngine));
         tools->add(makeMaiFfprobeTool(ffmpegEngine));
+        tools->add(makeMaiCvSceneDetectTool(analyzeMaiCvVideo));
+        tools->add(makeMaiCvMotionDetectTool(analyzeMaiCvVideo));
         tools->add(makeMaiPdfTool([dispatcher = hostTools](
                                       const std::string& html, const std::string& output,
                                       const std::atomic<bool>* cancel) {

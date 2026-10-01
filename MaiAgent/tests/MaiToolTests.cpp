@@ -22,6 +22,7 @@
 #include "MaiFileSystem.h"
 #include "MaiEditTool.h"
 #include "MaiApplyPatchTool.h"
+#include "MaiCvVideoTools.h"
 #include "MaiTool.h"
 #include "MaiFileTools.h"
 #include "MaiPathGuard.h"
@@ -571,6 +572,55 @@ void test_registry() {
     CHECK(reg.specs().size() == before);
 }
 
+MaiCvVideoAnalysisResult sampleVideoAnalysis(const std::string&,
+                                             const MaiCvVideoAnalysisOptions& options,
+                                             const MaiToolContext&) {
+    MaiCvVideoAnalysisResult result;
+    result.durationSeconds = 4;
+    result.decodedFrames = 120;
+    result.sampledFrames = 8;
+    result.segments = options.kind == MaiCvVideoAnalysisKind::Scene
+                          ? std::vector<MaiCvTimeSegment>{{0, 2}, {2, 4}}
+                          : std::vector<MaiCvTimeSegment>{{1, 3}};
+    return result;
+}
+
+void test_cv_video_tool_registration_and_results() {
+    Workspace workspace;
+    MaiToolRegistry registry;
+    registry.add(makeMaiCvSceneDetectTool(sampleVideoAnalysis));
+    registry.add(makeMaiCvMotionDetectTool(sampleVideoAnalysis));
+    CHECK(registry.find("cv_scene_detect") != nullptr);
+    CHECK(registry.find("cv_motion_detect") != nullptr);
+    const MaiToolContext context = workspace.context();
+    const MaiToolResult scene =
+        registry.find("cv_scene_detect")
+            ->execute(args({{"path", "src/mockup.png"}, {"sample_interval_s", 0.5}}), context);
+    CHECK(!scene.hasError());
+    if (!scene.hasError()) {
+        const json output = json::parse(scene.output());
+        CHECK(output["segments"].size() == 2);
+        CHECK(output["segments"][1]["start_s"] == 2);
+        CHECK(output["duration_s"] == 4);
+    }
+    const MaiToolResult motion =
+        registry.find("cv_motion_detect")
+            ->execute(args({{"path", "src/mockup.png"}, {"motion_ratio_threshold", 0.02}}),
+                      context);
+    CHECK(!motion.hasError());
+    if (!motion.hasError()) {
+        const json output = json::parse(motion.output());
+        CHECK(output["segments"].size() == 1);
+        CHECK(output["segments"][0]["start_s"] == 1);
+    }
+    CHECK(registry.find("cv_scene_detect")
+              ->execute(args({{"path", "../outside/secret.txt"}}), context)
+              .hasError());
+    CHECK(registry.find("cv_motion_detect")
+              ->execute(args({{"path", "src/mockup.png"}, {"pixel_threshold", 0}}), context)
+              .hasError());
+}
+
 void test_cancel_stops_traversal() {
     Workspace workspace;
     auto glob = makeMaiGlobTool();
@@ -610,6 +660,7 @@ int main() {
     RUN(test_glob);
     RUN(test_grep);
     RUN(test_registry);
+    RUN(test_cv_video_tool_registration_and_results);
     RUN(test_cancel_stops_traversal);
     if (failures == 0) std::printf("tool tests passed\n");
     return failures == 0 ? 0 : 1;

@@ -1,3 +1,4 @@
+import AVFoundation
 import QuartzCore
 import SwiftUI
 import UIKit
@@ -9,7 +10,12 @@ struct MaiFfplayPresentation: Identifiable {
 
 @MainActor
 enum MaiFfplayMobilePlayer {
-    static weak var active: MaiFfplayVideoController?
+    static var active: MaiFfplayVideoController?
+
+    static var unavailableReason: String {
+        guard let active else { return "no video popup is active" }
+        return active.playbackUnavailableReason
+    }
 
     static func command(_ action: String, percent: Double?) -> Bool {
         guard let active else { return false }
@@ -62,6 +68,14 @@ private final class MaiFfplayMetalView: UIView {
     private func attach() {
         guard viewID == 0, window != nil, bounds.width > 0, bounds.height > 0,
               !videoPath.isEmpty, maiGraphicsPresenterEnsureStarted() else { return }
+        do {
+            let audioSession = AVAudioSession.sharedInstance()
+            try audioSession.setCategory(.playback, mode: .moviePlayback)
+            try audioSession.setActive(true)
+        } catch {
+            onError?("无法启动视频声音：\(error.localizedDescription)")
+            return
+        }
         lastSize = CGSize(width: max(1, bounds.width * contentScaleFactor),
                           height: max(1, bounds.height * contentScaleFactor))
         viewID = maiGraphicsPresenterAttach(
@@ -96,6 +110,20 @@ private final class MaiFfplayMetalView: UIView {
         onError?("FFplay 无法播放此视频")
     }
 
+    func playbackStatus() -> MaiFfplayPlaybackStatus? {
+        guard session != nil else { return nil }
+        var status = MaiFfplayPlaybackStatus()
+        return maiFfplayGetPlaybackStatus(&status) == 1 ? status : nil
+    }
+
+    var unavailableReason: String {
+        guard let session else { return "the video popup has no playback session" }
+        if maiFfplayIosHasFinished(session) == 1 {
+            return "FFplay exited with status \(maiFfplayIosExitCode(session))"
+        }
+        return "FFplay is running but did not accept the command"
+    }
+
     func stop() {
         if let session {
             self.session = nil
@@ -106,6 +134,7 @@ private final class MaiFfplayMetalView: UIView {
             viewID = 0
         }
     }
+
 }
 
 @MainActor
@@ -115,6 +144,7 @@ final class MaiFfplayVideoController: UIViewController {
     private let metalView = MaiFfplayMetalView()
     private let pauseButton = UIButton(type: .system)
     private let seekSlider = UISlider()
+    private let timeLabel = UILabel()
     private let errorLabel = UILabel()
     private var playbackTimer: Timer?
     private var playing = true
@@ -151,7 +181,10 @@ final class MaiFfplayVideoController: UIViewController {
         seekSlider.addTarget(self, action: #selector(seekReleased), for: .touchUpInside)
         seekSlider.accessibilityIdentifier = "ffplay-seek"
         seekSlider.addTarget(self, action: #selector(seekReleased), for: .touchUpOutside)
-        let controls = UIStackView(arrangedSubviews: [pauseButton, seekSlider])
+        timeLabel.text = "0:00 / 0:00"
+        timeLabel.textColor = .white
+        timeLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        let controls = UIStackView(arrangedSubviews: [pauseButton, seekSlider, timeLabel])
         controls.axis = .horizontal
         controls.spacing = 16
         controls.backgroundColor = UIColor.black.withAlphaComponent(0.6)
@@ -187,16 +220,33 @@ final class MaiFfplayVideoController: UIViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        MaiFfplayMobilePlayer.active?.stop()
-        MaiFfplayMobilePlayer.active = self
-        playbackTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) {
-            [weak self] _ in self?.metalView.checkPlayback()
+        if let previous = MaiFfplayMobilePlayer.active, previous !== self {
+            previous.stop()
         }
+        MaiFfplayMobilePlayer.active = self
+        if playbackTimer == nil {
+            playbackTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) {
+                [weak self] _ in self?.refreshPlayback()
+            }
+        }
+        refreshPlayback()
     }
 
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
-        stop()
+    private func refreshPlayback() {
+        metalView.checkPlayback()
+        guard let status = metalView.playbackStatus(), status.duration_us > 0 else { return }
+        let position = min(max(status.position_us, 0), status.duration_us)
+        if !seekSlider.isTracking {
+            seekSlider.value = Float(Double(position) / Double(status.duration_us))
+        }
+        timeLabel.text = "\(Self.timestamp(position)) / \(Self.timestamp(status.duration_us))"
+        playing = status.paused == 0
+        pauseButton.setTitle(playing ? "暂停" : "播放", for: .normal)
+    }
+
+    private static func timestamp(_ microseconds: Int64) -> String {
+        let seconds = max(0, microseconds / 1_000_000)
+        return String(format: "%lld:%02lld", seconds / 60, seconds % 60)
     }
 
     func stop() {
@@ -205,6 +255,8 @@ final class MaiFfplayVideoController: UIViewController {
         metalView.stop()
         if MaiFfplayMobilePlayer.active === self { MaiFfplayMobilePlayer.active = nil }
     }
+
+    var playbackUnavailableReason: String { metalView.unavailableReason }
 
     func sendCommand(_ action: String) -> Bool {
         let command: String

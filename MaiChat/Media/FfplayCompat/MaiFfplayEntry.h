@@ -21,6 +21,14 @@ MAI_FFPLAY_EXPORT void maiFfplayRequestQuit(void);
 // Returns 1 if queued, 0 if playback is not active, -1 for an unknown command.
 MAI_FFPLAY_EXPORT int maiFfplaySendCommand(const char* command);
 MAI_FFPLAY_EXPORT int maiFfplaySeekPercent(double fraction);
+typedef struct MaiFfplayPlaybackStatus {
+    int64_t position_us;
+    int64_t duration_us;
+    int running;
+    int paused;
+} MaiFfplayPlaybackStatus;
+// A thread-safe snapshot sampled on ffplay's playback/event thread.
+MAI_FFPLAY_EXPORT int maiFfplayGetPlaybackStatus(MaiFfplayPlaybackStatus* status);
 // Receives FFplay diagnostics from playback worker threads. The caller owns
 // user_data and must clear the sink after maiFfplayRun returns.
 MAI_FFPLAY_EXPORT void maiFfplaySetDiagnosticSink(

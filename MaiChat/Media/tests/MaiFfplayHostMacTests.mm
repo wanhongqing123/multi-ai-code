@@ -9,6 +9,8 @@
 #include "MaiFfplayEntry.h"
 #include "MaiGraphicsPresenter.h"
 
+extern "C" uint64_t maiFfplayAppleNonSilentBufferCount(void);
+
 static std::atomic<int> rendered{0};
 static std::atomic<bool> sawFiniteSeek{false};
 static std::atomic<bool> sawInvalidSeek{false};
@@ -64,6 +66,7 @@ int main(int argc, char** argv) {
 
         for (int attempt = 0; attempt < 2; ++attempt) {
             const int startingFrames = rendered.load();
+            const uint64_t startingAudioBuffers = maiFfplayAppleNonSilentBufferCount();
             sawFiniteSeek = false;
             sawInvalidSeek = false;
             maiFfplaySetDiagnosticSink(onLog, nullptr);
@@ -72,11 +75,9 @@ int main(int argc, char** argv) {
             char name[] = "ffplay";
             char loopOption[] = "-loop";
             char infinite[] = "0";
-            char volume[] = "-volume";
-            char muted[] = "0";
-            char* options[] = {name, loopOption, infinite, volume, muted, argv[3]};
+            char* options[] = {name, loopOption, infinite, argv[3]};
             std::thread playback([&] {
-                result = maiFfplayRun(&host, 6, options);
+                result = maiFfplayRun(&host, 4, options);
                 finished = true;
             });
             const auto waitUntil = [&](auto predicate, double seconds) {
@@ -89,6 +90,14 @@ int main(int argc, char** argv) {
                 return predicate();
             };
             const bool started = waitUntil([&] { return rendered.load() > startingFrames; }, 5);
+            const bool audibleAudioQueued = started && waitUntil([&] {
+                return maiFfplayAppleNonSilentBufferCount() > startingAudioBuffers;
+            }, 3);
+            MaiFfplayPlaybackStatus status{};
+            const bool clockAdvanced = audibleAudioQueued && waitUntil([&] {
+                return maiFfplayGetPlaybackStatus(&status) &&
+                       status.duration_us > 1'000'000 && status.position_us > 0;
+            }, 2);
             const bool pausedCommand = started && maiFfplaySendCommand("pause") == 1;
             [[NSRunLoop currentRunLoop]
                 runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.15]];
@@ -106,7 +115,8 @@ int main(int argc, char** argv) {
             if (!finished) maiFfplayRequestQuit();
             playback.join();
             maiFfplaySetDiagnosticSink(nullptr, nullptr);
-            if (result != 0 || !started || !paused || !resumed || !seekHandled) return 6;
+            if (result != 0 || !started || !audibleAudioQueued || !clockAdvanced ||
+                !paused || !resumed || !seekHandled) return 6;
         }
         maiGraphicsPresenterDetach(viewId);
         maiGraphicsPresenterStop();

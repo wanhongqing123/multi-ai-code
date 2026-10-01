@@ -25,6 +25,7 @@ struct AudioDevice {
 std::mutex sAudioMutex;
 std::unordered_map<SDL_AudioDeviceID, std::unique_ptr<AudioDevice>> sAudioDevices;
 std::atomic<SDL_AudioDeviceID> sNextAudioId{2};
+std::atomic<uint64_t> sNonSilentBuffers{0};
 
 void fillBuffer(AudioDevice* device, AudioQueueBufferRef buffer) {
     if (device->closing) return;
@@ -33,7 +34,13 @@ void fillBuffer(AudioDevice* device, AudioQueueBufferRef buffer) {
     device->spec.callback(device->spec.userdata,
                           static_cast<Uint8*>(buffer->mAudioData),
                           static_cast<int>(device->spec.size));
-    if (!device->closing) AudioQueueEnqueueBuffer(device->queue, buffer, 0, nullptr);
+    if (!device->closing &&
+        AudioQueueEnqueueBuffer(device->queue, buffer, 0, nullptr) == noErr) {
+        const auto* samples = static_cast<const Sint16*>(buffer->mAudioData);
+        const size_t count = buffer->mAudioDataByteSize / sizeof(Sint16);
+        if (std::any_of(samples, samples + count, [](Sint16 sample) { return sample != 0; }))
+            sNonSilentBuffers.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 
 void audioCallback(void* userData, AudioQueueRef, AudioQueueBufferRef buffer) {
@@ -46,6 +53,11 @@ AudioDevice* findDevice(SDL_AudioDeviceID id) {
 }
 
 }  // namespace
+
+extern "C" __attribute__((visibility("default"))) uint64_t
+maiFfplayAppleNonSilentBufferCount(void) {
+    return sNonSilentBuffers.load(std::memory_order_relaxed);
+}
 
 extern "C" SDL_AudioDeviceID SDL_OpenAudioDevice(const char*, int capture,
                                                   const SDL_AudioSpec* wanted,

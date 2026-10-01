@@ -85,6 +85,19 @@ Java_com_kongshang_maichat_MaiFfplayVideoView_nativeSeekPercent(
     return handle && maiFfplaySeekPercent(fraction) == 1 ? JNI_TRUE : JNI_FALSE;
 }
 
+extern "C" JNIEXPORT jlongArray JNICALL
+Java_com_kongshang_maichat_MaiFfplayVideoView_nativePlaybackStatus(
+    JNIEnv* env, jclass, jlong handle) {
+    if (!handle) return nullptr;
+    MaiFfplayPlaybackStatus status{};
+    if (!maiFfplayGetPlaybackStatus(&status)) return nullptr;
+    const jlong values[] = {status.position_us, status.duration_us,
+                            status.running, status.paused};
+    jlongArray result = env->NewLongArray(4);
+    if (result) env->SetLongArrayRegion(result, 0, 4, values);
+    return result;
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_kongshang_maichat_MaiFfplayVideoView_nativeDestroy(
     JNIEnv*, jclass, jlong handle) {

@@ -75,8 +75,12 @@ final class AIMobileHostToolProvider {
             let action = Self.string(arguments, key: "action")
             let percent = arguments["percent"] as? Double
             guard MaiFfplayMobilePlayer.command(action, percent: percent) else {
-                return .failure(code: "invalid_input",
-                                message: "video command is unavailable or no video is open")
+                let reason = MaiFfplayMobilePlayer.unavailableReason
+                AppDiagnosticLog.shared.record(level: .warning, category: "ffplay",
+                    event: "video-command-unavailable", fields: [
+                        "action": action, "reason": reason
+                    ])
+                return .failure(code: "unavailable", message: reason)
             }
             return Self.jsonSuccess(["accepted": true])
         case "maichat_list_contacts":

@@ -13,8 +13,6 @@ struct AIAssistantView: View {
     @State private var showActions = false
     @State private var confirmClear = false
     @State private var followsBottom = true
-    @State private var userDragging = false
-    @State private var latestY: CGFloat = 0
     @State private var scrollGeneration = 0
     @State private var sessionDrawerOffset: CGFloat = 0
     @State private var sessionDrawerWidth: CGFloat = 320
@@ -66,42 +64,43 @@ struct AIAssistantView: View {
                                     ForEach(model.permissions) { permission in AIPermissionCard(permission: permission, model: model) }
                                     ForEach(model.questions) { question in AIQuestionCard(question: question, model: model) }
                                     Color.clear.frame(height: 1).id("bottom")
-                                        .background(GeometryReader { anchor in
-                                            Color.clear.preference(key: AIBottomPreference.self,
-                                                value: anchor.frame(in: .named("ai-scroll")).maxY)
-                                        })
                                 }.padding(18)
+                                .background(MessageScrollPositionReader(
+                                    allowsBottomFollowing: followsBottom,
+                                    onViewportResizeNeedsBottom: {
+                                        scrollToLatestRow(proxy)
+                                    },
+                                    onUserScroll: {
+                                        scrollGeneration += 1
+                                        followsBottom = false
+                                    }
+                                ) { nearBottom in
+                                    if nearBottom { followsBottom = true }
+                                })
                             }
-                            .coordinateSpace(name: "ai-scroll")
                             .contentShape(Rectangle())
                             .onAppear { scrollToLatest(proxy) }
                             .onTapGesture {
                                 composerFocusController.dismiss()
                                 isAttachmentPanelPresented = false
                             }
-                            .onPreferenceChange(AIBottomPreference.self) { y in
-                                latestY = y
-                            }
-                            .simultaneousGesture(DragGesture().onChanged { _ in
-                                if !userDragging { scrollGeneration += 1 }
-                                userDragging = true
-                                followsBottom = false
-                            }.onEnded { value in
-                                userDragging = false
-                                followsBottom = value.translation.height < 0
-                                    && latestY < geometry.size.height + 24
-                            })
                             .onChange(of: geometry.size.height) { _ in
-                                if followsBottom && !userDragging { proxy.scrollTo("bottom", anchor: .bottom) }
+                                if followsBottom { scrollToLatestRow(proxy) }
                             }
                             .onChange(of: model.scrollRequest) { _ in scrollToLatest(proxy) }
                             .onChange(of: model.selected) { _ in scrollToLatest(proxy) }
                             .onChange(of: model.messages) { _ in
-                                if followsBottom && !userDragging { proxy.scrollTo("bottom", anchor: .bottom) }
+                                if followsBottom { scrollToLatestRow(proxy) }
+                            }
+                            .onChange(of: model.permissions) { _ in
+                                if followsBottom { scrollToLatestRow(proxy) }
+                            }
+                            .onChange(of: model.questions) { _ in
+                                if followsBottom { scrollToLatestRow(proxy) }
                             }
                             .overlay(alignment: .bottomTrailing) {
                                 if !followsBottom {
-                                    Button { followsBottom = true; proxy.scrollTo("bottom", anchor: .bottom) } label: {
+                                    Button { scrollToLatest(proxy) } label: {
                                         Image(systemName: "arrow.down").padding(12).background(.regularMaterial, in: Circle())
                                     }.padding()
                                 }
@@ -207,11 +206,23 @@ struct AIAssistantView: View {
         let generation = scrollGeneration
         followsBottom = true
         DispatchQueue.main.async {
-            guard scrollGeneration == generation && followsBottom && !userDragging else { return }
-            proxy.scrollTo("bottom", anchor: .bottom)
+            guard scrollGeneration == generation && followsBottom else { return }
+            scrollToLatestRow(proxy)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-            guard scrollGeneration == generation && followsBottom && !userDragging else { return }
+            guard scrollGeneration == generation && followsBottom else { return }
+            scrollToLatestRow(proxy)
+        }
+    }
+
+    private func scrollToLatestRow(_ proxy: ScrollViewProxy) {
+        if let question = model.questions.last {
+            proxy.scrollTo(question.id, anchor: .bottom)
+        } else if let permission = model.permissions.last {
+            proxy.scrollTo(permission.id, anchor: .bottom)
+        } else if let message = model.messages.last {
+            proxy.scrollTo(message.id, anchor: .bottom)
+        } else {
             proxy.scrollTo("bottom", anchor: .bottom)
         }
     }
@@ -522,10 +533,6 @@ private struct AIActionPanel: View {
             }.foregroundStyle(color).padding(.horizontal, 14).frame(height: 44)
         }.buttonStyle(.plain)
     }
-}
-private struct AIBottomPreference: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
 private struct AIMessageRow: View {
     let message: AIMessage

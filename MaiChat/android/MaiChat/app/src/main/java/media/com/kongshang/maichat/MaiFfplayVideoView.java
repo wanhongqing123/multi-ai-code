@@ -11,6 +11,7 @@ import android.widget.LinearLayout;
 import android.widget.SeekBar;
 import android.widget.TextView;
 import java.lang.ref.WeakReference;
+import java.util.Locale;
 
 /** Native Graphics surface controlled by the shared in-process ffplay engine. */
 public final class MaiFfplayVideoView extends FrameLayout {
@@ -21,12 +22,29 @@ public final class MaiFfplayVideoView extends FrameLayout {
     private static native long nativeCreate(long viewId, String path);
     private static native boolean nativeCommand(long handle, String command);
     private static native boolean nativeSeekPercent(long handle, double fraction);
+    private static native long[] nativePlaybackStatus(long handle);
     private static native void nativeDestroy(long handle);
 
     private final MaiGraphicsTextureView surface;
     private final TextView errorLabel;
     private final Button playButton;
     private final SeekBar seekBar;
+    private final TextView timeLabel;
+    private boolean seeking;
+    private final Runnable refreshProgress = new Runnable() {
+        @Override public void run() {
+            if (playbackHandle == 0) return;
+            long[] status = nativePlaybackStatus(playbackHandle);
+            if (status != null && status.length == 4 && status[1] > 0) {
+                long position = Math.max(0, Math.min(status[0], status[1]));
+                if (!seeking) seekBar.setProgress((int) (position * 1000 / status[1]));
+                timeLabel.setText(timestamp(position) + " / " + timestamp(status[1]));
+                playing = status[3] == 0;
+                playButton.setText(playing ? "暂停" : "播放");
+            }
+            MAIN.postDelayed(this, 500);
+        }
+    };
     private String videoPath;
     private long playbackHandle;
     private boolean playing = true;
@@ -67,14 +85,24 @@ public final class MaiFfplayVideoView extends FrameLayout {
         seekBar.setMax(1000);
         seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar bar, int value, boolean fromUser) {}
-            @Override public void onStartTrackingTouch(SeekBar bar) {}
+            @Override public void onStartTrackingTouch(SeekBar bar) { seeking = true; }
             @Override public void onStopTrackingTouch(SeekBar bar) {
+                seeking = false;
                 seekPercent(bar.getProgress() / 1000.0);
             }
         });
         controls.addView(seekBar, new LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1));
+        timeLabel = new TextView(context);
+        timeLabel.setText("0:00 / 0:00");
+        timeLabel.setTextColor(Color.WHITE);
+        controls.addView(timeLabel);
         addView(controls, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT,
             Gravity.BOTTOM));
+    }
+
+    private static String timestamp(long microseconds) {
+        long seconds = Math.max(0, microseconds / 1_000_000);
+        return String.format(Locale.US, "%d:%02d", seconds / 60, seconds % 60);
     }
 
     public static MaiFfplayVideoView activeView() { return active.get(); }
@@ -104,6 +132,8 @@ public final class MaiFfplayVideoView extends FrameLayout {
         }
         active = new WeakReference<>(this);
         presented = false;
+        MAIN.removeCallbacks(refreshProgress);
+        MAIN.post(refreshProgress);
         MAIN.postDelayed(() -> {
             if (playbackHandle != 0 && !presented)
                 errorLabel.setText("视频暂时无法播放");
@@ -133,6 +163,7 @@ public final class MaiFfplayVideoView extends FrameLayout {
     }
 
     public void stop() {
+        MAIN.removeCallbacks(refreshProgress);
         long handle = playbackHandle;
         playbackHandle = 0;
         if (handle != 0) nativeDestroy(handle);

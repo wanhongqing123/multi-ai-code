@@ -1,6 +1,7 @@
 #include "MaiFfplayEntry.h"
 
 #include <setjmp.h>
+#include <math.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -21,14 +22,35 @@
 
 #if defined(_WIN32)
 static volatile LONG sRunning;
+static volatile LONG sPlaybackActive;
+static volatile LONG64 sPositionUs;
+static volatile LONG64 sDurationUs;
+static volatile LONG sPaused;
+#define MAI_STATUS_STORE64(field, value) InterlockedExchange64(&(field), (value))
+#define MAI_STATUS_LOAD64(field) InterlockedCompareExchange64(&(field), 0, 0)
+#define MAI_STATUS_STORE(field, value) InterlockedExchange(&(field), (value))
+#define MAI_STATUS_LOAD(field) InterlockedCompareExchange(&(field), 0, 0)
 #else
 static atomic_flag sRunning = ATOMIC_FLAG_INIT;
+static atomic_int sPlaybackActive;
+static atomic_int_fast64_t sPositionUs;
+static atomic_int_fast64_t sDurationUs;
+static atomic_int sPaused;
+#define MAI_STATUS_STORE64(field, value) atomic_store(&(field), (value))
+#define MAI_STATUS_LOAD64(field) atomic_load(&(field))
+#define MAI_STATUS_STORE(field, value) atomic_store(&(field), (value))
+#define MAI_STATUS_LOAD(field) atomic_load(&(field))
 #endif
 static MAI_FFPLAY_THREAD_LOCAL jmp_buf sExitPoint;
 static MAI_FFPLAY_THREAD_LOCAL int sExitReady;
 static MAI_FFPLAY_THREAD_LOCAL int sDidCleanUp;
 static void (*sDiagnosticSink)(void* user_data, int level, const char* line);
 static void* sDiagnosticUserData;
+
+struct VideoState;
+static int maiFfplayPeepEventsWithStatus(struct VideoState* state,
+                                        SDL_Event* events, int count, int action,
+                                        Uint32 min_type, Uint32 max_type);
 
 static void (*maiFfplaySignal(int signal_number, void (*handler)(int)))(int)
 {
@@ -53,11 +75,47 @@ static MAI_FFPLAY_NORETURN void maiFfplayExit(int status)
 #define exit maiFfplayExit
 #define signal maiFfplaySignal
 #define SDL_Quit maiFfplayQuit
+// ffplay.c has one SDL_PeepEvents call, inside its event loop. Sample its
+// existing master clock there without changing the upstream playback logic.
+#define SDL_PeepEvents(events, count, action, min_type, max_type) \
+    maiFfplayPeepEventsWithStatus(is, events, count, action, min_type, max_type)
 #include "../ffplay.c"
+#undef SDL_PeepEvents
 #undef SDL_Quit
 #undef signal
 #undef exit
 #undef main
+
+static int maiFfplayPeepEventsWithStatus(VideoState* state,
+                                        SDL_Event* events, int count, int action,
+                                        Uint32 min_type, Uint32 max_type)
+{
+    if (state && state->ic) {
+        const int64_t length = state->ic->duration;
+        const double clock = get_master_clock(state);
+        const double start = state->ic->start_time == AV_NOPTS_VALUE ? 0.0 :
+                             state->ic->start_time / (double)AV_TIME_BASE;
+        if (length > 0 && isfinite(clock)) {
+            const double relative = fmax(0.0, clock - start);
+            MAI_STATUS_STORE64(sPositionUs,
+                relative >= length / (double)AV_TIME_BASE ? length :
+                (int64_t)(relative * AV_TIME_BASE));
+        }
+        MAI_STATUS_STORE64(sDurationUs, length > 0 ? length : 0);
+        MAI_STATUS_STORE(sPaused, state->paused ? 1 : 0);
+    }
+    return SDL_PeepEvents(events, count, action, min_type, max_type);
+}
+
+int maiFfplayGetPlaybackStatus(MaiFfplayPlaybackStatus* status)
+{
+    if (!status) return 0;
+    status->running = MAI_STATUS_LOAD(sPlaybackActive);
+    status->position_us = MAI_STATUS_LOAD64(sPositionUs);
+    status->duration_us = MAI_STATUS_LOAD64(sDurationUs);
+    status->paused = MAI_STATUS_LOAD(sPaused);
+    return status->running;
+}
 
 static void maiFfplayLogCallback(void* context, int level,
                                  const char* format, va_list arguments)
@@ -136,6 +194,10 @@ int maiFfplayRun(const MaiFfplayHost* host, int argc, char** argv)
     if (atomic_flag_test_and_set(&sRunning)) return -1;
 #endif
     resetFfplayOptions();
+    MAI_STATUS_STORE64(sPositionUs, 0);
+    MAI_STATUS_STORE64(sDurationUs, 0);
+    MAI_STATUS_STORE(sPaused, 0);
+    MAI_STATUS_STORE(sPlaybackActive, 1);
     maiFfplayBindHost(host);
     sExitReady = 1;
     sDidCleanUp = 0;
@@ -149,6 +211,7 @@ int maiFfplayRun(const MaiFfplayHost* host, int argc, char** argv)
         SDL_Quit();
     }
     maiFfplayBindHost(NULL);
+    MAI_STATUS_STORE(sPlaybackActive, 0);
 #if defined(_WIN32)
     InterlockedExchange(&sRunning, 0);
 #else

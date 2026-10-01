@@ -151,6 +151,9 @@ struct MaiStreamSink {
     std::function<void(const MaiToolInvocation&)> onToolCall;
 };
 
+using MaiModelImagePreparer =
+    std::function<MaiResult<std::string>(const std::string& source, const std::string& workspace)>;
+
 struct MaiModelConfig {
     // 不带末尾斜杠，也不带具体路径。客户端自己拼 "/chat/completions"。例如：
     //   https://open.bigmodel.cn/api/paas/v4   GLM
@@ -172,6 +175,11 @@ struct MaiModelConfig {
     // 空时使用平台默认根证书；Android 宿主可传系统信任库导出的 PEM 文件。
     // 只更换信任根来源，不能关闭证书或主机名校验。
     std::string caBundlePath;
+    // Optional host image preparation for requests carrying large images. The host receives
+    // an already-authorized absolute source path and the Agent workspace, and returns a
+    // persistent JPEG preview path no larger than 2 MB. It must not change the source.
+    // The callback can run on any model worker thread; errors fail the current image request.
+    MaiModelImagePreparer prepareImage;
 };
 
 // 模型客户端。一个接口，多个 wire 实现。

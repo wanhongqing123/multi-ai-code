@@ -467,6 +467,7 @@ void test_heartbeats_do_not_extend_model_inactivity() {
     const auto elapsed = std::chrono::steady_clock::now() - started;
     CHECK(result.code() == MaiErrorCode::Network);
     CHECK(result.message().find("inactive") != std::string::npos);
+    CHECK(result.message().find("0 images; received ") != std::string::npos);
     CHECK(elapsed < std::chrono::seconds(3));
 }
 
@@ -706,6 +707,74 @@ void test_user_image_is_sent_as_multimodal_content() {
     MaiFileSystem::removeRecursively(root);
 }
 
+void test_large_historical_image_uses_cached_bounded_preview() {
+    FakeServer fake;
+    fake.script = text_delta("ok") + std::string(kDone);
+    fake.chunk = 100000;
+    fake.start();
+
+    const MaiFilePath root =
+        MaiFileSystem::temporaryDirectory().append(MaiFilePath::fromUtf8("mai-model-preview-test"));
+    MaiFileSystem::removeRecursively(root);
+    CHECK(!MaiFileSystem::createDirectories(root));
+    const MaiFilePath preview = root.append(MaiFilePath::fromUtf8("preview.jpg"));
+    std::string large(3u * 1024u * 1024u, 'a');
+    large.replace(0, 4, "\x89PNG", 4);
+    std::vector<MaiFilePath> sources;
+    for (int index = 0; index < 4; ++index) {
+        sources.push_back(
+            root.append(MaiFilePath::fromUtf8("historical-" + std::to_string(index) + ".png")));
+        CHECK(!MaiFileSystem::writeFile(sources.back(), large));
+    }
+    CHECK(!MaiFileSystem::writeFile(preview, std::string("\xff\xd8\xff", 3)));
+
+    int prepared = 0;
+    MaiModelConfig config;
+    config.baseUrl = fake.base();
+    config.prepareImage = [&](const std::string& path,
+                              const std::string& workspace) -> MaiResult<std::string> {
+        ++prepared;
+        bool matchesSource = false;
+        for (const auto& source : sources)
+            if (path == MaiFileSystem::resolve(source).toUtf8()) matchesSource = true;
+        CHECK(matchesSource);
+        CHECK(workspace == root.toUtf8());
+        return preview.toUtf8();
+    };
+    auto client = makeMaiModelClient(config);
+    MaiModelRequest request;
+    request.model = "glm-5.3-flash";
+    request.workingDirectory = root.toUtf8();
+    MaiModelMessage user;
+    user.role = MaiModelRole::User;
+    user.content = "inspect the prior frame";
+    for (int index = 0; index < 4; ++index)
+        user.images.push_back({"historical-" + std::to_string(index) + ".png", "image/png"});
+    request.messages.push_back(user);
+    MaiStreamSink sink;
+    const std::atomic<bool> cancel{false};
+    CHECK(!client->stream(request, sink, cancel));
+    CHECK(!client->stream(request, sink, cancel));
+    CHECK(prepared == 4);
+    std::string body;
+    {
+        std::lock_guard<std::mutex> lock(fake.mutex);
+        body = fake.lastBody;
+    }
+    CHECK(body.size() < 3000);
+    const json sent = json::parse(body, nullptr, false);
+    CHECK(!sent.is_discarded());
+    if (!sent.is_discarded()) {
+        const json& content = sent["messages"][0]["content"];
+        CHECK(content.size() == 5);
+        for (std::size_t index = 1; index < content.size(); ++index) {
+            const std::string url = content[index]["image_url"]["url"];
+            CHECK(url.rfind("data:image/jpeg;base64,", 0) == 0);
+        }
+    }
+    MaiFileSystem::removeRecursively(root);
+}
+
 void test_absolute_desktop_image_can_be_outside_the_workspace() {
     FakeServer fake;
     fake.script = text_delta("ok") + std::string(kDone);
@@ -892,6 +961,7 @@ int main() {
     test_wire_shape_of_request();
     test_no_tools_field_when_empty();
     test_user_image_is_sent_as_multimodal_content();
+    test_large_historical_image_uses_cached_bounded_preview();
     test_absolute_desktop_image_can_be_outside_the_workspace();
     test_missing_historical_image_does_not_break_later_turns();
     test_missing_current_image_is_reported();

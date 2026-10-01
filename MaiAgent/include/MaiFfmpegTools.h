@@ -4,6 +4,7 @@
 #include <memory>
 
 #include "MaiTool.h"
+#include "MaiViewImageTool.h"
 
 // The host owns the embedded FFmpeg engines and links their archives. Each
 // callback runs in the caller's process, on the Agent tool worker thread.
@@ -25,3 +26,9 @@ struct MaiFfmpegEngine {
 // globals. Cancellation is delivered to the active engine in-process.
 std::unique_ptr<MaiTool> makeMaiFfmpegTool(MaiFfmpegEngine engine);
 std::unique_ptr<MaiTool> makeMaiFfprobeTool(MaiFfmpegEngine engine);
+
+// Produce a JPEG model observation at most 1280 pixels on either side, without
+// changing the source image. The preview remains in the Agent workspace for
+// later turns. Engine calls are serialized with the normal FFmpeg tool.
+MaiImagePreviewCallback makeMaiFfmpegImagePreview(MaiFfmpegEngine engine);
+MaiModelImagePreparer makeMaiFfmpegModelImagePreparer(MaiFfmpegEngine engine);

@@ -104,6 +104,10 @@ struct MaiMobileAgent {
         config.baseUrl = request.at("baseUrl").get<std::string>();
         config.apiKey = request.value("apiKey", "");
         config.caBundlePath = request.value("caBundle", "");
+        MaiFfmpegEngine ffmpegEngine{mai_ffmpeg_execute, mai_ffmpeg_set_cancel_check,
+                                     mai_ffprobe_execute, mai_ffprobe_set_cancel_check,
+                                     mai_fftools_set_log_sink, mai_fftools_error_string};
+        config.prepareImage = makeMaiFfmpegModelImagePreparer(ffmpegEngine);
         suggestionConfig = config;
         auto tools = std::make_unique<MaiToolRegistry>();
         // 两个移动端只提供真实可用的本地文件和网络工具，不暴露桌面 shell。
@@ -120,10 +124,7 @@ struct MaiMobileAgent {
         tools->add(makeMaiQuestionTool());
         tools->add(makeMaiCurrentTimeTool());
         tools->add(makeMaiTodoWriteTool());
-        tools->add(makeMaiViewImageTool());
-        MaiFfmpegEngine ffmpegEngine{mai_ffmpeg_execute, mai_ffmpeg_set_cancel_check,
-                                     mai_ffprobe_execute, mai_ffprobe_set_cancel_check,
-                                     mai_fftools_set_log_sink, mai_fftools_error_string};
+        tools->add(makeMaiViewImageTool(makeMaiFfmpegImagePreview(ffmpegEngine)));
         tools->add(makeMaiFfmpegTool(ffmpegEngine));
         tools->add(makeMaiFfprobeTool(ffmpegEngine));
         tools->add(makeMaiPdfTool([dispatcher = hostTools](

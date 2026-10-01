@@ -256,3 +256,48 @@ std::unique_ptr<MaiTool> makeMaiFfmpegTool(MaiFfmpegEngine engine) {
 std::unique_ptr<MaiTool> makeMaiFfprobeTool(MaiFfmpegEngine engine) {
     return engine.runFfprobe ? std::make_unique<MaiFfprobeTool>(engine) : nullptr;
 }
+
+MaiImagePreviewCallback makeMaiFfmpegImagePreview(MaiFfmpegEngine engine) {
+    return [engine](const std::string& source,
+                    const MaiToolContext& context) -> MaiResult<std::string> {
+        if (!engine.runFfmpeg || context.root.empty())
+            return {
+                MaiErrorCode::NotConfigured,
+                "a writable Agent workspace and embedded FFmpeg are required for image previews"};
+        const MaiFilePath directory = MaiFilePath::fromUtf8(context.root)
+                                          .append(MaiFilePath::fromUtf8(".maiagent"))
+                                          .append(MaiFilePath::fromUtf8("model-previews"));
+        const MaiError createError = MaiFileSystem::createDirectories(directory);
+        if (createError.hasError()) return createError;
+        const MaiFilePath output = directory.append(
+            MaiFilePath::fromUtf8(MaiIdGenerator::generate("mai_model_preview_") + ".jpg"));
+        const json arguments = {{"arguments",
+                                 {"-i", source, "-vf",
+                                  "scale=w='min(iw,1280)':h='min(ih,1280)':"
+                                  "force_original_aspect_ratio=decrease",
+                                  "-frames:v", "1", "-q:v", "5", "-f", "image2", output.toUtf8()}}};
+        MaiFfmpegTool tool(engine);
+        const MaiToolResult result = tool.execute(arguments.dump(), context);
+        if (result.hasError()) {
+            if (MaiFileSystem::exists(output)) MaiFileSystem::removeFile(output);
+            return result.error();
+        }
+        std::uint64_t bytes = 0;
+        if (!MaiFileSystem::fileSize(output, bytes) || bytes == 0 || bytes > 2u * 1024u * 1024u) {
+            if (MaiFileSystem::exists(output)) MaiFileSystem::removeFile(output);
+            return {MaiErrorCode::InvalidInput,
+                    "the model preview could not be limited to 2 MB; resize the source image"};
+        }
+        return output.toUtf8();
+    };
+}
+
+MaiModelImagePreparer makeMaiFfmpegModelImagePreparer(MaiFfmpegEngine engine) {
+    MaiImagePreviewCallback preview = makeMaiFfmpegImagePreview(engine);
+    return [preview = std::move(preview)](const std::string& source, const std::string& workspace) {
+        MaiToolContext context;
+        context.root = workspace;
+        context.allowOutsideWorkingDirectory = true;
+        return preview(source, context);
+    };
+}

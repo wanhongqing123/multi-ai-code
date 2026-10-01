@@ -8,7 +8,9 @@
 #include <cstdint>
 #include <cstring>
 #include <map>
+#include <mutex>
 #include <thread>
+#include <unordered_map>
 
 #include "MaiFilePath.h"
 #include "MaiFileSystem.h"
@@ -146,7 +148,10 @@ std::string base64Encode(const std::string& input) {
     return output;
 }
 
-MaiResult<std::string> imageDataUrl(const MaiModelRequest& request, const MaiModelImage& image) {
+using ImagePreparer = std::function<MaiResult<std::string>(const std::string&, const std::string&)>;
+
+MaiResult<std::string> imageDataUrl(const MaiModelRequest& request, const MaiModelImage& image,
+                                    const ImagePreparer& prepareImage) {
     if (request.workingDirectory.empty())
         return {MaiErrorCode::InvalidInput,
                 "an image prompt requires a non-empty working directory"};
@@ -160,19 +165,50 @@ MaiResult<std::string> imageDataUrl(const MaiModelRequest& request, const MaiMod
         return {MaiErrorCode::InvalidInput,
                 "prompt image is outside the working directory: " + image.path};
 
+    constexpr std::uint64_t kMaximumModelPreviewBytes = 2u * 1024u * 1024u;
+    const MaiFilePath sourcePath = MaiFilePath::fromUtf8(resolved);
+    std::uint64_t sourceSize = 0;
+    const bool sizeKnown = MaiFileSystem::fileSize(sourcePath, sourceSize);
+    if (sizeKnown && sourceSize > kMaxPromptImageBytes)
+        return {MaiErrorCode::InvalidInput, "prompt image exceeds the 20 MB limit: " + image.path};
     std::string bytes;
     bool truncated = false;
-    const MaiError readError = MaiFileSystem::readFile(MaiFilePath::fromUtf8(resolved), bytes,
-                                                       kMaxPromptImageBytes, &truncated);
-    if (readError) return readError;
-    if (truncated)
-        return {MaiErrorCode::InvalidInput, "prompt image exceeds the 20 MB limit: " + image.path};
-    if (bytes.empty()) return {MaiErrorCode::InvalidInput, "prompt image is empty: " + image.path};
-    return "data:" + image.mimeType + ";base64," + base64Encode(bytes);
+    const bool largeSource = sizeKnown && sourceSize > kMaximumModelPreviewBytes;
+    if (!largeSource) {
+        const MaiError readError =
+            MaiFileSystem::readFile(sourcePath, bytes, kMaxPromptImageBytes, &truncated);
+        if (readError) return readError;
+        if (truncated)
+            return {MaiErrorCode::InvalidInput,
+                    "prompt image exceeds the 20 MB limit: " + image.path};
+        if (bytes.empty())
+            return {MaiErrorCode::InvalidInput, "prompt image is empty: " + image.path};
+    }
+    std::string mimeType = image.mimeType;
+    if (largeSource || bytes.size() > kMaximumModelPreviewBytes) {
+        if (!prepareImage)
+            return {MaiErrorCode::InvalidInput,
+                    "image exceeds the 2 MB model request budget; resize it before retrying"};
+        MaiResult<std::string> preview = prepareImage(resolved, request.workingDirectory);
+        if (!preview) return preview.error();
+        if (preview.value() == resolved)
+            return {MaiErrorCode::Internal, "the model preview must not reuse the original image"};
+        bytes.clear();
+        truncated = false;
+        const MaiError previewRead = MaiFileSystem::readFile(
+            MaiFilePath::fromUtf8(preview.value()), bytes, kMaximumModelPreviewBytes, &truncated);
+        if (previewRead) return previewRead;
+        if (truncated || bytes.empty())
+            return {MaiErrorCode::InvalidInput,
+                    "the prepared model image is empty or exceeds the 2 MB request budget"};
+        mimeType = "image/jpeg";
+    }
+    return "data:" + mimeType + ";base64," + base64Encode(bytes);
 }
 
 // ── 请求体构造：中立结构 -> OpenAI 线格式 ─────────────────────
-MaiResult<std::string> buildRequestBody(const MaiModelRequest& request) {
+MaiResult<std::string> buildRequestBody(const MaiModelRequest& request,
+                                        const ImagePreparer& prepareImage) {
     json msgs = json::array();
     if (!request.baseInstructions.empty()) {
         msgs.push_back({{"role", "system"}, {"content", request.baseInstructions}});
@@ -191,12 +227,14 @@ MaiResult<std::string> buildRequestBody(const MaiModelRequest& request) {
             bool skippedUnavailableHistoryImage = false;
             json images = json::array();
             for (const auto& image : message.images) {
-                MaiResult<std::string> dataUrl = imageDataUrl(request, image);
+                MaiResult<std::string> dataUrl = imageDataUrl(request, image, prepareImage);
                 if (!dataUrl) {
                     // 当前输入的图片丢失必须明确失败，不能悄悄降级成纯文本。
                     // 旧历史里的图片则可能因为移动端容器迁移或用户清理缓存而失效；
                     // 它不应让这个会话此后的每一轮都永久失败。
-                    if (index == latestUserMessage) return dataUrl.error();
+                    if (index == latestUserMessage ||
+                        dataUrl.error().code() != MaiErrorCode::NotFound)
+                        return dataUrl.error();
                     skippedUnavailableHistoryImage = true;
                     continue;
                 }
@@ -266,6 +304,8 @@ struct StreamCtx {
     long inactivityTimeoutSeconds = 0;
     std::chrono::steady_clock::time_point lastModelProgress = std::chrono::steady_clock::now();
     bool inactive = false;
+    std::size_t responseBytes = 0;
+    curl_off_t uploadedBytes = 0;
 };
 
 std::string providerErrorMessage(const std::string& body) {
@@ -343,6 +383,7 @@ void handleSseLine(StreamCtx& context, const std::string& line) {
 std::size_t writeCallback(char* ptr, std::size_t size, std::size_t nmemb, void* userdata) {
     auto& context = *static_cast<StreamCtx*>(userdata);
     const std::size_t total = size * nmemb;
+    context.responseBytes += total;
     // 返回不等于 total 的值会让 curl 以 CURLE_WRITE_ERROR 中断传输。取消和收到完整的
     // [DONE] 都在这里结束，不等服务端继续保持连接。
     if (context.cancel->load(std::memory_order_relaxed)) return 0;
@@ -358,9 +399,15 @@ std::size_t writeCallback(char* ptr, std::size_t size, std::size_t nmemb, void* 
     return context.done ? 0 : total;
 }
 
-int progressCallback(void* userdata, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
+int progressCallback(void* userdata, curl_off_t, curl_off_t uploadTotal, curl_off_t uploadNow) {
     auto& context = *static_cast<StreamCtx*>(userdata);
     if (context.cancel->load(std::memory_order_relaxed)) return 1;
+    // A large multimodal POST can spend time uploading before the model can respond.
+    // Count actual upload progress as activity, then enforce the response idle deadline.
+    if (uploadTotal > 0 && uploadNow > context.uploadedBytes) {
+        context.uploadedBytes = uploadNow;
+        context.lastModelProgress = std::chrono::steady_clock::now();
+    }
     if (context.inactivityTimeoutSeconds > 0 &&
         std::chrono::steady_clock::now() - context.lastModelProgress >=
             std::chrono::seconds(context.inactivityTimeoutSeconds)) {
@@ -404,9 +451,14 @@ public:
         if (!url.empty() && url.back() == '/') url.pop_back();
         url += "/chat/completions";
 
-        MaiResult<std::string> builtBody = buildRequestBody(request);
+        MaiResult<std::string> builtBody = buildRequestBody(
+            request, [this](const std::string& source, const std::string& workspace) {
+                return prepareImage(source, workspace);
+            });
         if (!builtBody) return builtBody.error();
         const std::string body = std::move(builtBody.value());
+        std::size_t imageCount = 0;
+        for (const auto& message : request.messages) imageCount += message.images.size();
         for (int attempt = 0;; ++attempt) {
             CURL* curl = curl_easy_init();
             if (!curl) return MaiError::make(MaiErrorCode::Internal, "curl_easy_init failed");
@@ -463,8 +515,10 @@ public:
                 return MaiError::make(
                     MaiErrorCode::Network,
                     "model stream inactive for " +
-                        std::to_string(mConfig.inactivityTimeoutSeconds) +
-                        " seconds; retry the request or start a new conversation");
+                        std::to_string(mConfig.inactivityTimeoutSeconds) + " seconds (request " +
+                        std::to_string(body.size()) + " bytes, " + std::to_string(imageCount) +
+                        " images; received " + std::to_string(context.responseBytes) +
+                        " bytes). Reduce image size or retry the request.");
 
             const bool transient = curlResult != CURLE_OK ? isRetryableCurlError(curlResult)
                                                           : status == 408 || status >= 500;
@@ -510,7 +564,24 @@ public:
     }
 
 private:
+    MaiResult<std::string> prepareImage(const std::string& source, const std::string& workspace) {
+        if (!mConfig.prepareImage)
+            return {MaiErrorCode::InvalidInput,
+                    "image exceeds the 2 MB model request budget; resize it before retrying"};
+        const std::string key = workspace + "\n" + source;
+        std::lock_guard<std::mutex> lock(mPreviewMutex);
+        const auto existing = mPreviewCache.find(key);
+        if (existing != mPreviewCache.end() &&
+            MaiFileSystem::exists(MaiFilePath::fromUtf8(existing->second)))
+            return existing->second;
+        MaiResult<std::string> result = mConfig.prepareImage(source, workspace);
+        if (result) mPreviewCache[key] = result.value();
+        return result;
+    }
+
     MaiModelConfig mConfig;
+    std::mutex mPreviewMutex;
+    std::unordered_map<std::string, std::string> mPreviewCache;
 };
 
 struct CurlGlobal {

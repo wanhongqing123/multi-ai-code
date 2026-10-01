@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <memory>
 #include <string>
+#include <utility>
 
 #include <json.hpp>
 
@@ -32,12 +33,15 @@ std::string detectMimeType(const std::string& bytes) {
 
 class MaiViewImageTool final : public MaiTool {
 public:
+    explicit MaiViewImageTool(MaiImagePreviewCallback preview) : mPreview(std::move(preview)) {}
+
     std::string name() const override {
         return "view_image";
     }
 
     std::string description() const override {
         return "View an existing PNG, JPEG, WebP, or GIF file accessible to this host. "
+               "MaiChat prepares a bounded JPEG preview for model analysis. "
                "Images attached by the user are already in the current prompt; inspect them "
                "directly instead of calling this tool for paths mentioned in a screenshot.";
     }
@@ -97,13 +101,24 @@ public:
                 "file is not a supported PNG, JPEG, WebP, or GIF image: " + rawPath);
         }
 
+        if (mPreview) {
+            MaiResult<std::string> preview = mPreview(path.toUtf8(), context);
+            if (!preview)
+                return MaiToolResult::failure(preview.error().code(), preview.error().message());
+            return MaiToolResult::successWithImages(
+                "Loaded a resized model preview from " + rawPath + ".",
+                {MaiToolImage{preview.value(), "image/jpeg"}});
+        }
         return MaiToolResult::successWithImages("Loaded the image from " + rawPath + ".",
                                                 {MaiToolImage{path.toUtf8(), mimeType}});
     }
+
+private:
+    MaiImagePreviewCallback mPreview;
 };
 
 }  // namespace
 
-std::unique_ptr<MaiTool> makeMaiViewImageTool() {
-    return std::make_unique<MaiViewImageTool>();
+std::unique_ptr<MaiTool> makeMaiViewImageTool(MaiImagePreviewCallback preview) {
+    return std::make_unique<MaiViewImageTool>(std::move(preview));
 }

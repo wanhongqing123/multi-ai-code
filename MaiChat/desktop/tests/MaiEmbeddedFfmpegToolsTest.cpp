@@ -265,6 +265,50 @@ int main(int argc, char** argv) {
         return 25;
     }
 
+    const MaiFilePath previewWorkspace = MaiFileSystem::temporaryDirectory().append(
+        MaiFilePath::fromUtf8(MaiIdGenerator::generate("mai_preview_test_")));
+    if (MaiFileSystem::createDirectories(previewWorkspace).hasError()) return 26;
+    MaiToolContext previewContext = context;
+    previewContext.root = previewWorkspace.toUtf8();
+    previewContext.allowOutsideWorkingDirectory = false;
+    const MaiFilePath largeImage = previewWorkspace.append(MaiFilePath::fromUtf8("large.png"));
+    const MaiToolResult generatedImage = convert->execute(
+        nlohmann::json{{"arguments", {"-f", "lavfi", "-i", "testsrc=size=1920x1080:rate=1",
+                                       "-frames:v", "1", largeImage.toUtf8()}}}.dump(),
+        previewContext);
+    if (generatedImage.hasError()) {
+        std::fprintf(stderr, "image fixture generation failed: %s\n",
+                     generatedImage.error().message().c_str());
+        MaiFileSystem::removeRecursively(previewWorkspace);
+        return 27;
+    }
+    const MaiToolResult preview = makeMaiViewImageTool(makeMaiFfmpegImagePreview(engine))
+                                      ->execute(R"({"path":"large.png"})", previewContext);
+    bool previewValid = !preview.hasError() && preview.images().size() == 1;
+    if (previewValid) {
+        const auto& image = preview.images().front();
+        std::uint64_t previewBytes = 0;
+        previewValid = image.mimeType == "image/jpeg" && image.path != largeImage.toUtf8() &&
+                       MaiFileSystem::fileSize(MaiFilePath::fromUtf8(image.path), previewBytes) &&
+                       previewBytes > 0 && previewBytes <= 2u * 1024u * 1024u;
+        if (previewValid) {
+            const MaiToolResult dimensions = probe->execute(
+                nlohmann::json{{"path", image.path}}.dump(), previewContext);
+            const nlohmann::json metadata = nlohmann::json::parse(
+                dimensions.hasError() ? "" : dimensions.output(), nullptr, false);
+            previewValid = !metadata.is_discarded() && metadata.contains("streams") &&
+                           !metadata["streams"].empty() &&
+                           metadata["streams"][0].value("width", 0) <= 1280 &&
+                           metadata["streams"][0].value("height", 0) <= 1280;
+        }
+    }
+    MaiFileSystem::removeRecursively(previewWorkspace);
+    if (!previewValid) {
+        std::fprintf(stderr, "bounded image preview failed: %s\n",
+                     preview.hasError() ? preview.error().message().c_str() : "invalid preview");
+        return 28;
+    }
+
 #ifdef __APPLE__
     const MaiFilePath hardwareOutput = MaiFileSystem::temporaryDirectory().append(
         MaiFilePath::fromUtf8(MaiIdGenerator::generate("mai_videotoolbox_test_") + ".mp4"));

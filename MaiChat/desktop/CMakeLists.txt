@@ -685,7 +685,7 @@ if(MAICHAT_ENABLE_OPENCV AND
     add_dependencies(maiagent_cv_video_analysis maichat_ffmpeg_build)
     target_link_libraries(maiagent_cv_video_analysis PRIVATE
       maichat_ffmpeg_avformat maichat_ffmpeg_avcodec
-      maichat_ffmpeg_swscale maichat_ffmpeg_avutil
+      maichat_ffmpeg_swresample maichat_ffmpeg_swscale maichat_ffmpeg_avutil
       ${MAICHAT_MEDIA_CODEC_ARCHIVES}
       psapi ole32 strmiids uuid oleaut32 shlwapi gdi32 vfw32 ws2_32 user32 bcrypt)
   endif()

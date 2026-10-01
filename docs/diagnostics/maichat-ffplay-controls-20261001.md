@@ -19,6 +19,7 @@
 
 ## 修复与验证
 
+- 共享尺寸事件及实际控制回归提交：`4ce5f972745baddcca818d17f4645e7123a1a8a2`。
 - 适配器在创建窗口与 `SDL_SetWindowSize` 时入队 `SDL_WINDOWEVENT_SIZE_CHANGED`，
   保持复制的 `ffplay.c` 字节不变。销毁窗口时清除适配器宽度。
 - 测试现在等待实际呈现帧，确认暂停后画面停止、恢复后继续出帧，并通过

@@ -1,7 +1,8 @@
 # Vendored media codec sources
 
-These sources are built from the repository into local build directories. No
-system package manager or build-time download is required.
+These sources are built from the repository into local build directories.
+Meson, Ninja, Make, pkg-config and a platform C toolchain are build tools;
+no Homebrew codec library or build-time source download is used.
 
 | Directory | Upstream source | Pinned revision / digest | License |
 |---|---|---|---|

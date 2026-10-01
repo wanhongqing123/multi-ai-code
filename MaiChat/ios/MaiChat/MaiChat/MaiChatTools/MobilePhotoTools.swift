@@ -27,7 +27,6 @@ extension AIMobileHostToolProvider {
         let offset = max(0, arguments["offset"] as? Int ?? 0)
         let limit = min(100, max(1, arguments["limit"] as? Int ?? 50))
         let options = PHFetchOptions()
-        options.predicate = NSPredicate(format: "mediaType == %d", PHAssetMediaType.image.rawValue)
         options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
         let albumID = (arguments["album_id"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let photos: PHFetchResult<PHAsset>
@@ -37,19 +36,21 @@ extension AIMobileHostToolProvider {
             ).firstObject else { return .failure(code: "not_found", message: "album not found") }
             photos = PHAsset.fetchAssets(in: album, options: options)
         } else {
-            photos = PHAsset.fetchAssets(with: .image, options: options)
+            photos = PHAsset.fetchAssets(with: options)
         }
         let end = min(photos.count, offset + limit)
         var items: [[String: Any]] = []
         if offset < end {
             for index in offset..<end {
                 let photo = photos.object(at: index)
-                guard photo.mediaType == .image else { continue }
+                let mediaType = Self.galleryMediaType(photo)
                 items.append([
                     "id": photo.localIdentifier,
+                    "mediaType": mediaType,
                     "created_at_ms": Int64(((photo.creationDate ?? .distantPast).timeIntervalSince1970 * 1000).rounded()),
                     "width": photo.pixelWidth,
                     "height": photo.pixelHeight,
+                    "duration_ms": mediaType == "video" ? Int64((photo.duration * 1000).rounded()) : 0,
                     "favorite": photo.isFavorite,
                 ])
             }
@@ -81,9 +82,12 @@ extension AIMobileHostToolProvider {
             return .failure(code: "canceled", message: "photo library access was not granted")
         }
         guard let id = arguments["id"] as? String, !id.isEmpty,
-              let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject,
-              asset.mediaType == .image else {
+              let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject else {
             return .failure(code: "not_found", message: "photo not found in the authorized library")
+        }
+        guard asset.mediaType == .image else {
+            return .failure(code: "invalid_input",
+                            message: "video requires mobile_export_photo_original to get its media file")
         }
         let options = PHImageRequestOptions()
         options.isNetworkAccessAllowed = true
@@ -125,12 +129,63 @@ extension AIMobileHostToolProvider {
         }
         guard let id = arguments["id"] as? String, !id.isEmpty,
               let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject,
-              asset.mediaType == .image else {
-            return .failure(code: "not_found", message: "photo not found in the authorized library")
+              asset.mediaType == .image || asset.mediaType == .video else {
+            return .failure(code: "not_found", message: "media item not found in the authorized library")
         }
         let workspacePath = AIAssistantModel.shared.workspacePath
         guard !workspacePath.isEmpty else {
             return .failure(code: "not_configured", message: "Agent working directory is unavailable")
+        }
+        let component = Self.string(arguments, key: "component")
+        if asset.mediaType == .video || component == "video" {
+            guard asset.mediaType == .video || asset.mediaSubtypes.contains(.photoLive) else {
+                return .failure(code: "invalid_input", message: "this media item has no video component")
+            }
+            let resources = PHAssetResource.assetResources(for: asset)
+            let resource = resources.first(where: {
+                $0.type == (asset.mediaType == .video ? .video : .pairedVideo)
+            })
+            guard let resource else {
+                return .failure(code: "not_found", message: "original video resource is unavailable")
+            }
+            let mediaType = UTType(resource.uniformTypeIdentifier)
+            let originalSuffix = URL(fileURLWithPath: resource.originalFilename)
+                .pathExtension.lowercased()
+            let suffix = ["mov", "mp4", "m4v"].contains(originalSuffix)
+                ? originalSuffix : (mediaType?.preferredFilenameExtension ?? "mov")
+            let targetName = "gallery-\(UUID().uuidString).\(suffix)"
+            let target = URL(fileURLWithPath: workspacePath, isDirectory: true)
+                .appendingPathComponent(targetName)
+            let options = PHAssetResourceRequestOptions()
+            options.isNetworkAccessAllowed = true
+            let exportError: Error? = await withCheckedContinuation { continuation in
+                PHAssetResourceManager.default().writeData(
+                    for: resource, toFile: target, options: options
+                ) { error in continuation.resume(returning: error) }
+            }
+            if let exportError {
+                try? FileManager.default.removeItem(at: target)
+                return .failure(code: "internal", message: "video export failed: \(exportError.localizedDescription)")
+            }
+            do {
+                let bytes = try target.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+                guard bytes > 0 else {
+                    try? FileManager.default.removeItem(at: target)
+                    return .failure(code: "internal", message: "original video resource is empty")
+                }
+                return Self.jsonSuccess([
+                    "id": id, "path": targetName,
+                    "mediaType": asset.mediaType == .video ? "video" : "livephoto",
+                    "mime_type": mediaType?.preferredMIMEType ??
+                        (suffix == "mp4" || suffix == "m4v" ? "video/mp4" : "video/quicktime"),
+                    "bytes": bytes, "width": asset.pixelWidth,
+                    "height": asset.pixelHeight,
+                    "duration_ms": Int64((asset.duration * 1000).rounded()),
+                ])
+            } catch {
+                try? FileManager.default.removeItem(at: target)
+                return .failure(code: "internal", message: error.localizedDescription)
+            }
         }
         let options = PHImageRequestOptions()
         options.isNetworkAccessAllowed = true
@@ -159,11 +214,20 @@ extension AIMobileHostToolProvider {
             }.value
             return Self.jsonSuccess([
                 "id": id, "path": name, "mime_type": mimeType,
+                "mediaType": Self.galleryMediaType(asset),
                 "bytes": data.count, "width": asset.pixelWidth, "height": asset.pixelHeight,
             ])
         } catch {
             return .failure(code: "internal", message: error.localizedDescription)
         }
+    }
+
+    private static func galleryMediaType(_ asset: PHAsset) -> String {
+        if asset.mediaType == .video { return "video" }
+        if asset.mediaType == .image && asset.mediaSubtypes.contains(.photoLive) {
+            return "livephoto"
+        }
+        return "photo"
     }
 
     func saveImage(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {

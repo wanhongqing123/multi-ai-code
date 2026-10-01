@@ -65,6 +65,7 @@ final class MobilePhotoTools {
             case "mobile_list_albums": return agentListAlbums();
             case "mobile_read_photo": return agentReadPhoto(arguments);
             case "mobile_export_photo_original": return agentExportPhotoOriginal(arguments);
+            case "mobile_export_media_original": return agentExportPhotoOriginal(arguments);
             case "mobile_save_image": return agentSaveImage(arguments);
             case "mobile_transform_image": return agentTransformImage(arguments);
             case "mobile_beautify_image":
@@ -79,10 +80,14 @@ final class MobilePhotoTools {
         }
     }
 
-    private String agentPhotoAccess() throws Exception {
-        String fullPermission = Build.VERSION.SDK_INT >= 33
+    String agentPhotoAccess() throws Exception {
+        String imagePermission = Build.VERSION.SDK_INT >= 33
             ? Manifest.permission.READ_MEDIA_IMAGES : Manifest.permission.READ_EXTERNAL_STORAGE;
-        if (activity.checkSelfPermission(fullPermission) == PackageManager.PERMISSION_GRANTED) return "full";
+        boolean imagesGranted = activity.checkSelfPermission(imagePermission)
+            == PackageManager.PERMISSION_GRANTED;
+        boolean videosGranted = Build.VERSION.SDK_INT < 33 || activity.checkSelfPermission(
+            Manifest.permission.READ_MEDIA_VIDEO) == PackageManager.PERMISSION_GRANTED;
+        if (imagesGranted && videosGranted) return "full";
         if (Build.VERSION.SDK_INT >= 34 && activity.checkSelfPermission(
                 Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) == PackageManager.PERMISSION_GRANTED)
             return "limited";
@@ -101,8 +106,12 @@ final class MobilePhotoTools {
             }
             String[] permissions = Build.VERSION.SDK_INT >= 34
                 ? new String[]{Manifest.permission.READ_MEDIA_IMAGES,
+                    Manifest.permission.READ_MEDIA_VIDEO,
                     Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED}
-                : new String[]{fullPermission};
+                : Build.VERSION.SDK_INT >= 33
+                    ? new String[]{Manifest.permission.READ_MEDIA_IMAGES,
+                        Manifest.permission.READ_MEDIA_VIDEO}
+                    : new String[]{imagePermission};
             activity.requestPermissions(permissions, REQUEST_AGENT_PHOTOS);
         });
         try {
@@ -114,10 +123,16 @@ final class MobilePhotoTools {
                     pendingAgentPhotoPermission = null;
             }
         }
-        if (activity.checkSelfPermission(fullPermission) == PackageManager.PERMISSION_GRANTED) return "full";
+        imagesGranted = activity.checkSelfPermission(imagePermission)
+            == PackageManager.PERMISSION_GRANTED;
+        videosGranted = Build.VERSION.SDK_INT < 33 || activity.checkSelfPermission(
+            Manifest.permission.READ_MEDIA_VIDEO) == PackageManager.PERMISSION_GRANTED;
+        if (imagesGranted && videosGranted) return "full";
         if (Build.VERSION.SDK_INT >= 34 && activity.checkSelfPermission(
                 Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) == PackageManager.PERMISSION_GRANTED)
             return "limited";
+        if (imagesGranted) return "images_only";
+        if (videosGranted) return "videos_only";
         throw new SecurityException("没有获得相册访问权限");
     }
 
@@ -126,17 +141,21 @@ final class MobilePhotoTools {
         int offset = Math.max(0, arguments.optInt("offset", 0));
         int limit = Math.min(100, Math.max(1, arguments.optInt("limit", 50)));
         String albumId = arguments.optString("album_id", "").trim();
-        String selection = albumId.isEmpty() || albumId.equals("all")
-            ? null : MediaStore.Images.Media.BUCKET_ID + "=?";
-        String[] selectionArgs = selection == null ? null : new String[]{albumId};
+        String selection = MediaStore.Files.FileColumns.MEDIA_TYPE + " IN (?, ?)";
+        String[] selectionArgs = albumId.isEmpty() || albumId.equals("all")
+            ? new String[]{"1", "3"} : new String[]{"1", "3", albumId};
+        if (selectionArgs.length == 3) selection += " AND " + MediaStore.Images.Media.BUCKET_ID + "=?";
         String[] projection = {MediaStore.Images.Media._ID,
             MediaStore.Images.Media.DATE_TAKEN, MediaStore.Images.Media.DATE_ADDED,
             MediaStore.Images.Media.WIDTH, MediaStore.Images.Media.HEIGHT,
-            MediaStore.Images.Media.BUCKET_ID};
+            MediaStore.Images.Media.BUCKET_ID,
+            MediaStore.Files.FileColumns.MEDIA_TYPE,
+            MediaStore.MediaColumns.MIME_TYPE,
+            MediaStore.Video.Media.DURATION};
         JSONArray items = new JSONArray();
         int total;
         try (Cursor cursor = activity.getContentResolver().query(
-                agentPhotoCollection(), projection,
+                agentVisualCollection(), projection,
                 selection, selectionArgs,
                 MediaStore.Images.Media.DATE_TAKEN + " DESC, " + MediaStore.Images.Media._ID + " DESC")) {
             if (cursor == null) throw new IllegalStateException("无法读取系统相册");
@@ -145,12 +164,18 @@ final class MobilePhotoTools {
                 do {
                     long created = cursor.getLong(1);
                     if (created <= 0) created = cursor.getLong(2) * 1000;
+                    int mediaType = cursor.getInt(6);
                     items.put(new JSONObject()
                         .put("id", Long.toString(cursor.getLong(0)))
+                        .put("mediaType", mediaType == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO
+                            ? "video" : "photo")
                         .put("created_at_ms", created)
                         .put("width", cursor.getInt(3))
                         .put("height", cursor.getInt(4))
-                        .put("album_id", cursor.getString(5)));
+                        .put("album_id", cursor.getString(5))
+                        .put("mime_type", cursor.getString(7))
+                        .put("duration_ms", mediaType == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO
+                            ? cursor.getLong(8) : 0));
                 } while (items.length() < limit && cursor.moveToNext());
             }
         }
@@ -165,7 +190,9 @@ final class MobilePhotoTools {
         String[] columns = {MediaStore.Images.Media.BUCKET_ID,
             MediaStore.Images.Media.BUCKET_DISPLAY_NAME};
         try (Cursor cursor = activity.getContentResolver().query(
-                agentPhotoCollection(), columns, null, null, null)) {
+                agentVisualCollection(), columns,
+                MediaStore.Files.FileColumns.MEDIA_TYPE + " IN (?, ?)",
+                new String[]{"1", "3"}, null)) {
             if (cursor == null) throw new IllegalStateException("无法读取系统相簿");
             while (cursor.moveToNext()) {
                 String id = cursor.getString(0);
@@ -191,6 +218,8 @@ final class MobilePhotoTools {
         try { id = Long.parseLong(rawId); }
         catch (NumberFormatException error) { throw new IllegalArgumentException("无效的照片 ID"); }
         if (id <= 0) throw new IllegalArgumentException("无效的照片 ID");
+        if (agentMediaType(id) != MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE)
+            throw new IllegalArgumentException("视频请使用 mobile_export_photo_original 获取原文件");
         Uri uri = ContentUris.withAppendedId(agentPhotoCollection(), id);
         AIAssistantController.ImportedFile file =
             AIAssistantController.shared(activity).importPhotoForHost(uri);
@@ -206,11 +235,16 @@ final class MobilePhotoTools {
         try { id = Long.parseLong(rawId); }
         catch (NumberFormatException error) { throw new IllegalArgumentException("无效的照片 ID"); }
         if (id <= 0) throw new IllegalArgumentException("无效的照片 ID");
-        Uri uri = ContentUris.withAppendedId(agentPhotoCollection(), id);
+        int mediaType = agentMediaType(id);
+        Uri uri = ContentUris.withAppendedId(
+            mediaType == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO
+                ? agentVideoCollection() : agentPhotoCollection(), id);
         AIAssistantController.ImportedFile file =
-            AIAssistantController.shared(activity).importOriginalPhotoForHost(uri);
+            AIAssistantController.shared(activity).importOriginalMediaForHost(uri);
         return new JSONObject().put("id", rawId).put("path", file.relativePath)
-            .put("mime_type", file.mimeType);
+            .put("mime_type", file.mimeType)
+            .put("mediaType", mediaType == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO
+                ? "video" : "photo");
     }
 
     private JSONObject agentSaveImage(JSONObject arguments) throws Exception {
@@ -410,6 +444,31 @@ final class MobilePhotoTools {
         return Build.VERSION.SDK_INT >= 29
             ? MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
             : MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+    }
+
+    private static Uri agentVideoCollection() {
+        return Build.VERSION.SDK_INT >= 29
+            ? MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+            : MediaStore.Video.Media.EXTERNAL_CONTENT_URI;
+    }
+
+    private static Uri agentVisualCollection() {
+        return MediaStore.Files.getContentUri(Build.VERSION.SDK_INT >= 29
+            ? MediaStore.VOLUME_EXTERNAL : "external");
+    }
+
+    private int agentMediaType(long id) {
+        String[] projection = {MediaStore.Files.FileColumns.MEDIA_TYPE};
+        try (Cursor cursor = activity.getContentResolver().query(
+                ContentUris.withAppendedId(agentVisualCollection(), id),
+                projection, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int type = cursor.getInt(0);
+                if (type == MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE ||
+                    type == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO) return type;
+            }
+        }
+        throw new IllegalArgumentException("相册媒体不存在或没有访问权限");
     }
 
 }

@@ -18,6 +18,10 @@ namespace {
 
 int (*sFakeCancelCheck)(void*) = nullptr;
 void* sFakeCancelOpaque = nullptr;
+std::string sCapturedProbeOutput;
+std::string sCapturedProbeInput;
+std::string sCapturedConvertInput;
+std::string sCapturedConvertOutput;
 
 void setFakeCancelCheck(int (*check)(void*), void* opaque) {
     sFakeCancelCheck = check;
@@ -28,6 +32,23 @@ int runUntilCanceled(int, char**) {
     while (!sFakeCancelCheck || !sFakeCancelCheck(sFakeCancelOpaque))
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     return 255;
+}
+
+int captureProbePaths(int argc, char** argv) {
+    for (int index = 0; index + 1 < argc; ++index)
+        if (std::string(argv[index]) == "-o") sCapturedProbeOutput = argv[index + 1];
+    sCapturedProbeInput = argv[argc - 1];
+    return MaiFileSystem::writeFile(MaiFilePath::fromUtf8(sCapturedProbeOutput),
+                                    R"({"streams":[{"codec_type":"video"}]})")
+                   .hasError()
+               ? 1 : 0;
+}
+
+int captureConvertPaths(int argc, char** argv) {
+    for (int index = 0; index + 1 < argc; ++index)
+        if (std::string(argv[index]) == "-i") sCapturedConvertInput = argv[index + 1];
+    sCapturedConvertOutput = argv[argc - 1];
+    return 0;
 }
 
 }  // namespace
@@ -63,6 +84,41 @@ int main(int argc, char** argv) {
         if (parsed.is_discarded() || !parsed.contains("streams") || !parsed["streams"].is_array() ||
             parsed["streams"].empty())
             return 6;
+    }
+
+    const MaiFilePath workspace = MaiFileSystem::temporaryDirectory().append(
+        MaiFilePath::fromUtf8(MaiIdGenerator::generate("mai_media_workspace_")));
+    if (MaiFileSystem::createDirectories(workspace).hasError()) return 16;
+    const MaiFilePath workspaceInput = workspace.append(MaiFilePath::fromUtf8("gallery.mp4"));
+    if (MaiFileSystem::writeFile(workspaceInput, "media").hasError()) return 17;
+    MaiToolContext workspaceContext = context;
+    workspaceContext.root = workspace.toUtf8();
+    workspaceContext.fileAccessRoot = workspace.dirName().toUtf8();
+    workspaceContext.allowOutsideWorkingDirectory = false;
+    MaiFfmpegEngine pathEngine{captureConvertPaths, nullptr, captureProbePaths, nullptr};
+    const MaiToolResult workspaceProbe = makeMaiFfprobeTool(pathEngine)->execute(
+        R"({"path":"gallery.mp4"})", workspaceContext);
+    const MaiToolResult workspaceConvert = makeMaiFfmpegTool(pathEngine)->execute(
+        R"({"arguments":["-i","gallery.mp4","-frames:v","1","frame.png"]})",
+        workspaceContext);
+    const std::string expectedInput = MaiFileSystem::resolve(workspaceInput).toUtf8();
+    const std::string expectedOutput = MaiFileSystem::resolve(
+        workspace.append(MaiFilePath::fromUtf8("frame.png"))).toUtf8();
+    const std::string outputDirectory = MaiFileSystem::resolve(
+        MaiFilePath::fromUtf8(sCapturedProbeOutput)).dirName().toUtf8();
+    const bool workspacePathsCorrect = !workspaceProbe.hasError() &&
+        !workspaceConvert.hasError() && sCapturedProbeInput == expectedInput &&
+        outputDirectory == MaiFileSystem::resolve(workspace).toUtf8() &&
+        sCapturedConvertInput == expectedInput && sCapturedConvertOutput == expectedOutput;
+    MaiFileSystem::removeRecursively(workspace);
+    if (!workspacePathsCorrect) {
+        std::fprintf(stderr, "workspace probe error=%s convert error=%s\n"
+                             "probe input=%s output=%s\nconvert input=%s output=%s\n",
+                     workspaceProbe.hasError() ? workspaceProbe.error().message().c_str() : "none",
+                     workspaceConvert.hasError() ? workspaceConvert.error().message().c_str() : "none",
+                     sCapturedProbeInput.c_str(), sCapturedProbeOutput.c_str(),
+                     sCapturedConvertInput.c_str(), sCapturedConvertOutput.c_str());
+        return 18;
     }
 
 #ifdef _WIN32

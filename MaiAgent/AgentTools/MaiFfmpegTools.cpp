@@ -1,6 +1,7 @@
 #include "MaiFfmpegTools.h"
 
 #include <atomic>
+#include <cstddef>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -91,6 +92,37 @@ public:
                                               "empty arguments, -y, and -stdin are not allowed");
             arguments.push_back(value);
         }
+        for (std::size_t index = 5; index < arguments.size(); ++index) {
+            if (arguments[index - 1] != "-i") continue;
+            const bool filterInput = index >= 3 && arguments[index - 3] == "-f" &&
+                                     arguments[index - 2] == "lavfi";
+            const std::string& value = arguments[index];
+            if (filterInput || value == "-" || value.rfind("pipe:", 0) == 0 ||
+                value.find("://") != std::string::npos)
+                continue;
+            if (value.rfind("file:", 0) == 0)
+                return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                              "use a local path instead of a file: URL");
+            const std::string resolved = context.resolvePath(value);
+            if (resolved.empty())
+                return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                              "FFmpeg input path is outside the accessible area");
+            arguments[index] = resolved;
+        }
+        if (arguments.size() > 4 && arguments[arguments.size() - 2] != "-i") {
+            std::string& output = arguments.back();
+            if (output != "-" && output.rfind("pipe:", 0) != 0 &&
+                output.find("://") == std::string::npos && output[0] != '-') {
+                if (output.rfind("file:", 0) == 0)
+                    return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                                  "use a local path instead of a file: URL");
+                const std::string resolved = context.resolvePath(output);
+                if (resolved.empty())
+                    return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                                  "FFmpeg output path is outside the accessible area");
+                output = resolved;
+            }
+        }
         if (context.isCanceled())
             return MaiToolResult::failure(MaiErrorCode::Canceled, "FFmpeg was canceled");
         const int status = runEngine(mEngine.runFfmpeg, mEngine.setFfmpegCancelCheck,
@@ -142,9 +174,10 @@ public:
             return MaiToolResult::failure(MaiErrorCode::NotFound,
                                           "media file does not exist: " + input);
 
-        const MaiFilePath directory = context.fileAccessRoot.empty()
+        // fileAccessRoot is an access boundary, not a scratch directory.
+        const MaiFilePath directory = context.root.empty()
                                           ? MaiFileSystem::temporaryDirectory()
-                                          : MaiFilePath::fromUtf8(context.fileAccessRoot);
+                                          : MaiFilePath::fromUtf8(context.root);
         const MaiFilePath output = directory.append(
             MaiFilePath::fromUtf8(MaiIdGenerator::generate("mai_ffprobe_") + ".json"));
         const MaiError createError = MaiFileSystem::createEmptyFile(output);
@@ -165,7 +198,8 @@ public:
             return MaiToolResult::failure(MaiErrorCode::Canceled, "FFprobe was canceled");
         if (status != 0)
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,
-                                          "FFprobe failed to read media: " + input);
+                                          "FFprobe failed to read media (status " +
+                                              std::to_string(status) + "): " + input);
         if (readError.hasError())
             return MaiToolResult::failure(readError.code(), readError.message());
         if (result.empty())

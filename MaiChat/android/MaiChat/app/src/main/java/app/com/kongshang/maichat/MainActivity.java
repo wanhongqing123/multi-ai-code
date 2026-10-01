@@ -99,6 +99,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private static final int REQUEST_TAKE_PHOTO = 1004;
     private static final int REQUEST_PICK_FILE = 1005;
     private static final int REQUEST_POST_NOTIFICATIONS = 1006;
+    private static final int REQUEST_GALLERY_ACCESS = 1008;
     private static final String TAG = "MaiChat.notify";
     private static final String MESSAGE_CHANNEL_ID = "maichat-new-messages";
     private static final String MESSAGE_GROUP_KEY = "maichat-private-messages";
@@ -108,6 +109,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private MaiChatHostTools maiChatHostTools;
     private RemoteIMMediaStore mediaStore;
     private AIAssistantPanel aiAssistant;
+    private Runnable pendingGalleryAction;
     private RemoteIMTab activeTab = RemoteIMTab.MESSAGES;
     private LinearLayout root;
     private LinearLayout content;
@@ -241,6 +243,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     @Override
     protected void onDestroy() {
         destroyed = true;
+        pendingGalleryAction = null;
         if (maiChatHostTools != null) maiChatHostTools.onDestroy();
         AIAssistantController.shared(this).setHostToolHandler(null);
         if (swipeBack != null) swipeBack.dispose();
@@ -358,6 +361,12 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
         if (maiChatHostTools != null && maiChatHostTools.onPermissionResult(requestCode)) return;
+        if (requestCode == REQUEST_GALLERY_ACCESS) {
+            Runnable action = pendingGalleryAction;
+            pendingGalleryAction = null;
+            if (action != null && !destroyed) action.run();
+            return;
+        }
         if (requestCode == REQUEST_RECORD_AUDIO) {
             if (granted) toast("麦克风已启用，请按住说话");
             else toast("没有麦克风权限，无法发送语音");
@@ -2674,11 +2683,44 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
 
     private void openImagePicker() {
         pendingAttachmentTarget = sendTarget();
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("*/*");
-        intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"image/*", "video/*"});
-        startActivityForResult(intent, REQUEST_PICK_IMAGE);
+        requestGalleryAccess(() -> {
+            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+            intent.setType("*/*");
+            intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"image/*", "video/*"});
+            startActivityForResult(intent, REQUEST_PICK_IMAGE);
+        });
+    }
+
+    void requestGalleryAccess(Runnable action) {
+        if (action == null || destroyed) return;
+        if (Build.VERSION.SDK_INT < 33) {
+            if (checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE)
+                    == PackageManager.PERMISSION_GRANTED) {
+                action.run();
+            } else {
+                pendingGalleryAction = action;
+                requestPermissions(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE},
+                    REQUEST_GALLERY_ACCESS);
+            }
+            return;
+        }
+        boolean images = checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES)
+            == PackageManager.PERMISSION_GRANTED;
+        boolean videos = checkSelfPermission(Manifest.permission.READ_MEDIA_VIDEO)
+            == PackageManager.PERMISSION_GRANTED;
+        if (images && videos) {
+            action.run();
+            return;
+        }
+        pendingGalleryAction = action;
+        String[] permissions = Build.VERSION.SDK_INT >= 34
+            ? new String[]{Manifest.permission.READ_MEDIA_IMAGES,
+                Manifest.permission.READ_MEDIA_VIDEO,
+                Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED}
+            : new String[]{Manifest.permission.READ_MEDIA_IMAGES,
+                Manifest.permission.READ_MEDIA_VIDEO};
+        requestPermissions(permissions, REQUEST_GALLERY_ACCESS);
     }
 
     private void openFilePicker() {

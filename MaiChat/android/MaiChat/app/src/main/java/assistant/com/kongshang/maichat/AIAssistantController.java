@@ -482,11 +482,11 @@ public final class AIAssistantController {
             return importStream(input, "image/jpeg", "photo.jpg");
         }
     }
-    public ImportedFile importOriginalPhotoForHost(Uri uri) throws Exception {
+    public ImportedFile importOriginalMediaForHost(Uri uri) throws Exception {
         if (root == null) throw new IllegalStateException("AI 工作区尚未准备好");
         String mime = context.getContentResolver().getType(uri);
-        if (mime == null || !mime.startsWith("image/"))
-            throw new IllegalArgumentException("只能导入系统图库中的图片");
+        if (mime == null || !(mime.startsWith("image/") || mime.startsWith("video/")))
+            throw new IllegalArgumentException("只能导入系统图库中的图片或视频");
         String extension;
         switch (mime.toLowerCase(java.util.Locale.ROOT)) {
         case "image/jpeg": extension = "jpg"; break;
@@ -495,23 +495,28 @@ public final class AIAssistantController {
         case "image/gif": extension = "gif"; break;
         case "image/heic":
         case "image/heif": extension = "heic"; break;
-        default: throw new IllegalArgumentException("不支持的系统照片格式：" + mime);
+        case "video/mp4": extension = "mp4"; break;
+        case "video/quicktime": extension = "mov"; break;
+        case "video/x-matroska": extension = "mkv"; break;
+        case "video/3gpp": extension = "3gp"; break;
+        case "video/webm": extension = "webm"; break;
+        default: throw new IllegalArgumentException("不支持的系统媒体格式：" + mime);
         }
         String name = "gallery-" + UUID.randomUUID() + "." + extension;
         File target = new File(new File(root, "Workspace"), name);
         try (InputStream input = context.getContentResolver().openInputStream(uri);
              FileOutputStream output = new FileOutputStream(target)) {
-            if (input == null) throw new IOException("无法读取系统照片");
+            if (input == null) throw new IOException("无法读取系统媒体");
             byte[] buffer = new byte[8192];
             long copied = 0;
             int count;
             while ((count = input.read(buffer)) >= 0) {
                 copied += count;
-                if (copied > 100L * 1024 * 1024)
+                if (mime.startsWith("image/") && copied > 100L * 1024 * 1024)
                     throw new IllegalArgumentException("照片超过 100 MB");
                 output.write(buffer, 0, count);
             }
-            if (copied == 0) throw new IOException("照片为空");
+            if (copied == 0) throw new IOException("媒体文件为空");
         } catch (Exception error) {
             target.delete();
             throw error;

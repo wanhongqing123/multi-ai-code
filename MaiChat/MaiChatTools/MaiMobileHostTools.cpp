@@ -208,14 +208,21 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
         "Send the same text to multiple MaiChat contacts through the host. The complete recipient list and text require user approval for every call.",
         R"({"type":"object","properties":{"peer_ids":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":200},"text":{"type":"string"}},"required":["peer_ids","text"]})",
         true);
+    add("mobile_request_permission",
+        "Ask the operating system for a MaiChat permission when a task needs it. "
+        "Use photos before reading the system gallery. Returns granted, limited, or denied "
+        "and whether Settings is required. Supported permissions: photos (images and videos), "
+        "camera, microphone, location, contacts, calendar, notifications.",
+        R"({"type":"object","properties":{"permission":{"type":"string"}},"required":["permission"],"additionalProperties":false})");
 }
 
 void registerMobilePhotoTools(MaiToolRegistry& tools,
                               const std::shared_ptr<MaiMobileHostDispatcher>& dispatcher) {
     tools.add(std::make_unique<MaiMobileHostTool>(
         "mobile_list_photos",
-        "List photos visible to this app in the system photo library after OS authorization. "
-        "Use offset and limit to page; a limited grant exposes only the user's selected photos.",
+        "List photos, Live Photos, and videos visible in the system library after OS authorization. "
+        "Each item includes mediaType; use offset and limit to page. A limited grant exposes "
+        "only the user's selected media.",
         R"({"type":"object","properties":{"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":100},"album_id":{"type":"string"}}})",
         dispatcher, false));
     tools.add(std::make_unique<MaiMobileHostTool>(
@@ -231,10 +238,17 @@ void registerMobilePhotoTools(MaiToolRegistry& tools,
         dispatcher, false));
     tools.add(std::make_unique<MaiMobileHostTool>(
         "mobile_export_photo_original",
-        "Copy a full-resolution photo by ID from the authorized system library into the Agent "
-        "working directory for image creation. Preserve its original format and metadata; "
-        "do not modify the library photo. Files larger than 100 MB are not supported.",
-        R"({"type":"object","properties":{"id":{"type":"string"}},"required":["id"]})",
+        "Copy the original photo or video bytes by ID from the authorized system library into "
+        "the Agent working directory. The library item stays unchanged. For an iOS Live Photo, "
+        "component=video exports its paired video; otherwise its still photo is exported.",
+        R"({"type":"object","properties":{"id":{"type":"string"},"component":{"type":"string","enum":["photo","video"]}},"required":["id"]})",
+        dispatcher, false));
+    tools.add(std::make_unique<MaiMobileHostTool>(
+        "mobile_export_media_original",
+        "Export the original photo or video file from the authorized system library into the "
+        "Agent workspace, preserving its media format. Use this for videos before ffprobe, "
+        "ffmpeg, or playback. A Live Photo exports its still image unless component=video.",
+        R"({"type":"object","properties":{"id":{"type":"string"},"component":{"type":"string","enum":["photo","video"]}},"required":["id"]})",
         dispatcher, false));
     tools.add(std::make_unique<MaiMobileHostTool>(
         "mobile_save_image",

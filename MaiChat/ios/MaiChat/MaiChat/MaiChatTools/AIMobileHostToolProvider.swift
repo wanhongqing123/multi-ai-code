@@ -36,12 +36,14 @@ final class AIMobileHostToolProvider {
         }
 
         switch name {
+        case "mobile_request_permission": return await requestSystemPermission(arguments)
         case "mobile_decode_text": return decodeLegacyText(arguments)
         case "generate_pdf": return generatePDF(arguments)
         case "mobile_list_photos": return await listPhotos(arguments)
         case "mobile_list_albums": return await listAlbums()
         case "mobile_read_photo": return await readPhoto(arguments)
         case "mobile_export_photo_original": return await exportPhotoOriginal(arguments)
+        case "mobile_export_media_original": return await exportPhotoOriginal(arguments)
         case "mobile_save_image": return await saveImage(arguments)
         case "mobile_transform_image": return await transformImage(arguments)
         case "mobile_beautify_image":

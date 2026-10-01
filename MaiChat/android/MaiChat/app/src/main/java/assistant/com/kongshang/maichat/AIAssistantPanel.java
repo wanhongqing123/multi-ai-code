@@ -390,9 +390,11 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         new AlertDialog.Builder(activity)
             .setItems(new String[] {"从相册选择", "拍照", "导入文本文件"}, (dialog, which) -> {
                 if (which == 0) {
-                    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT)
-                        .setType("image/*").addCategory(Intent.CATEGORY_OPENABLE);
-                    activity.startActivityForResult(intent, REQUEST_IMAGE);
+                    ((MainActivity) activity).requestGalleryAccess(() -> {
+                        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT)
+                            .setType("image/*").addCategory(Intent.CATEGORY_OPENABLE);
+                        activity.startActivityForResult(intent, REQUEST_IMAGE);
+                    });
                 } else if (which == 1) requestCamera();
                 else {
                     Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT)

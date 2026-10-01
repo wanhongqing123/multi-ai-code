@@ -394,7 +394,9 @@ static void ffmpeg_cleanup(int ret)
 
     uninit_opts();
 
+#ifndef MAI_FFMPEG_EMBEDDED
     avformat_network_deinit();
+#endif
 
     if (received_sigterm) {
         av_log(NULL, AV_LOG_INFO, "Exiting normally, received signal %d.\n",
@@ -1066,7 +1068,11 @@ int main(int argc, char **argv)
 #if CONFIG_AVDEVICE
     avdevice_register_all();
 #endif
+#ifdef MAI_FFMPEG_EMBEDDED
+    mai_fftools_init_network_once();
+#else
     avformat_network_init();
+#endif
 
     show_banner(argc, argv, options);
 

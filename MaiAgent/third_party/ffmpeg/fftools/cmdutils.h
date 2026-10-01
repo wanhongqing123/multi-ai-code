@@ -38,6 +38,7 @@
  * program name, defined by the program for show_version().
  */
 #ifdef MAI_FFMPEG_EMBEDDED
+void mai_fftools_init_network_once(void);
 extern const char *program_name;
 #else
 extern const char program_name[];

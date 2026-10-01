@@ -3475,7 +3475,11 @@ int main(int argc, char **argv)
 
     options = real_options;
     parse_loglevel(argc, argv, options);
+#ifdef MAI_FFMPEG_EMBEDDED
+    mai_fftools_init_network_once();
+#else
     avformat_network_init();
+#endif
 #if CONFIG_AVDEVICE
     avdevice_register_all();
 #endif
@@ -3646,7 +3650,9 @@ end:
     for (size_t i = 0; i < FF_ARRAY_ELEMS(selected_entries); ++i)
         av_dict_free(&selected_entries[i].entries_to_show);
 
+#ifndef MAI_FFMPEG_EMBEDDED
     avformat_network_deinit();
+#endif
 
 #ifdef MAI_FFMPEG_EMBEDDED
     av_log_set_level(original_log_level);

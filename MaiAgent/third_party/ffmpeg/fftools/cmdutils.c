@@ -62,6 +62,15 @@ int hide_banner = 0;
 #ifdef MAI_FFMPEG_EMBEDDED
 const char *program_name = "ffmpeg";
 int program_birth_year = 2000;
+
+void mai_fftools_init_network_once(void)
+{
+    static int initialized = 0;
+    if (!initialized) {
+        avformat_network_init();
+        initialized = 1;
+    }
+}
 #endif
 
 void uninit_opts(void)

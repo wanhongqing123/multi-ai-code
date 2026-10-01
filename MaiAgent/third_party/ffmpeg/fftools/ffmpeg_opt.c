@@ -90,6 +90,7 @@ int recast_media = 0;
 #ifdef MAI_FFMPEG_EMBEDDED
 void mai_ffmpeg_reset_options(void)
 {
+    filter_hw_device = NULL;
     dts_delta_threshold = 10;
     dts_error_threshold = 3600 * 30;
     frame_drop_threshold = 0;

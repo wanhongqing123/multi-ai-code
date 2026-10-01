@@ -47,6 +47,16 @@ std::atomic<int> sWindowWidth{0};
 
 bool isPacked(Uint32 format) { return format != SDL_PIXELFORMAT_IYUV; }
 
+void sendSizeChanged(int width, int height) {
+    if (width < 1 || height < 1) return;
+    SDL_Event event{};
+    event.type = SDL_WINDOWEVENT;
+    event.window.event = SDL_WINDOWEVENT_SIZE_CHANGED;
+    event.window.data1 = width;
+    event.window.data2 = height;
+    SDL_PushEvent(&event);
+}
+
 void fillCanvas(SDL_Renderer* renderer, const SDL_Rect& area) {
     if (!renderer || !renderer->window) return;
     const int width = renderer->window->width;
@@ -119,11 +129,15 @@ extern "C" SDL_Window* SDL_CreateWindow(const char* title, int, int, int width,
     window->height = height;
     sWindowWidth = width;
     window->host = host;
+    sendSizeChanged(width, height);
     if (host.set_title) host.set_title(host.user_data, title);
     return window;
 }
 
-extern "C" void SDL_DestroyWindow(SDL_Window* window) { delete window; }
+extern "C" void SDL_DestroyWindow(SDL_Window* window) {
+    sWindowWidth = 0;
+    delete window;
+}
 
 extern "C" void SDL_SetWindowTitle(SDL_Window* window, const char* title) {
     if (window && window->host.set_title) window->host.set_title(window->host.user_data, title);
@@ -134,6 +148,7 @@ extern "C" void SDL_SetWindowSize(SDL_Window* window, int width, int height) {
     window->width = width;
     window->height = height;
     sWindowWidth = width;
+    sendSizeChanged(width, height);
     if (window->host.set_size)
         window->host.set_size(window->host.user_data, width, height);
 }

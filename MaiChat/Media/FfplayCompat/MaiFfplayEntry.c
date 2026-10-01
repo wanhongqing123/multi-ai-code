@@ -2,6 +2,7 @@
 
 #include <setjmp.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -26,6 +27,8 @@ static atomic_flag sRunning = ATOMIC_FLAG_INIT;
 static MAI_FFPLAY_THREAD_LOCAL jmp_buf sExitPoint;
 static MAI_FFPLAY_THREAD_LOCAL int sExitReady;
 static MAI_FFPLAY_THREAD_LOCAL int sDidCleanUp;
+static void (*sDiagnosticSink)(void* user_data, int level, const char* line);
+static void* sDiagnosticUserData;
 
 static void (*maiFfplaySignal(int signal_number, void (*handler)(int)))(int)
 {
@@ -55,6 +58,29 @@ static MAI_FFPLAY_NORETURN void maiFfplayExit(int status)
 #undef signal
 #undef exit
 #undef main
+
+static void maiFfplayLogCallback(void* context, int level,
+                                 const char* format, va_list arguments)
+{
+    if (sDiagnosticSink) {
+        char line[1024];
+        int print_prefix = 1;
+        va_list copied;
+        va_copy(copied, arguments);
+        av_log_format_line2(context, level, format, copied,
+                            line, sizeof(line), &print_prefix);
+        va_end(copied);
+        sDiagnosticSink(sDiagnosticUserData, level, line);
+    }
+    av_log_default_callback(context, level, format, arguments);
+}
+
+void maiFfplaySetDiagnosticSink(void (*sink)(void*, int, const char*), void* user_data)
+{
+    sDiagnosticUserData = user_data;
+    sDiagnosticSink = sink;
+    av_log_set_callback(sink ? maiFfplayLogCallback : av_log_default_callback);
+}
 
 static void resetFfplayOptions(void)
 {

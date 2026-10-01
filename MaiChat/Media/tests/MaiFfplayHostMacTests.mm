@@ -3,12 +3,21 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstring>
 #include <thread>
 
 #include "MaiFfplayEntry.h"
 #include "MaiGraphicsPresenter.h"
 
 static std::atomic<int> rendered{0};
+static std::atomic<bool> sawFiniteSeek{false};
+static std::atomic<bool> sawInvalidSeek{false};
+
+static void onLog(void*, int, const char* line) {
+    if (!line || !std::strstr(line, "Seek to ") || !std::strstr(line, "%")) return;
+    if (std::strstr(line, "inf") || std::strstr(line, "nan")) sawInvalidSeek = true;
+    else sawFiniteSeek = true;
+}
 
 static void onPresent(uint64_t, bool success, void*) {
     if (success) rendered.fetch_add(1);
@@ -55,35 +64,49 @@ int main(int argc, char** argv) {
 
         for (int attempt = 0; attempt < 2; ++attempt) {
             const int startingFrames = rendered.load();
+            sawFiniteSeek = false;
+            sawInvalidSeek = false;
+            maiFfplaySetDiagnosticSink(onLog, nullptr);
             std::atomic<bool> finished{false};
             int result = -1;
-            bool controlsSent = false;
             char name[] = "ffplay";
-            char autoexit[] = "-autoexit";
+            char loopOption[] = "-loop";
+            char infinite[] = "0";
             char volume[] = "-volume";
             char muted[] = "0";
-            char* options[] = {name, autoexit, volume, muted, argv[3]};
+            char* options[] = {name, loopOption, infinite, volume, muted, argv[3]};
             std::thread playback([&] {
-                result = maiFfplayRun(&host, 5, options);
+                result = maiFfplayRun(&host, 6, options);
                 finished = true;
             });
-            const auto deadline = std::chrono::steady_clock::now() +
-                                  std::chrono::seconds(12);
-            while (!finished && std::chrono::steady_clock::now() < deadline) {
-                if (!controlsSent && rendered.load() > startingFrames) {
-                    controlsSent = maiFfplaySendCommand("pause") == 1 &&
-                                   maiFfplaySendCommand("pause") == 1 &&
-                                   maiFfplaySeekPercent(0.5) == 1 &&
-                                   maiFfplaySendCommand("not_a_command") == -1;
+            const auto waitUntil = [&](auto predicate, double seconds) {
+                const auto deadline = std::chrono::steady_clock::now() +
+                    std::chrono::duration<double>(seconds);
+                while (!predicate() && !finished && std::chrono::steady_clock::now() < deadline) {
+                    [[NSRunLoop currentRunLoop]
+                        runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.02]];
                 }
-                [[NSRunLoop currentRunLoop]
-                    runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.02]];
-            }
-            if (!finished) {
-                maiFfplayRequestQuit();
-            }
+                return predicate();
+            };
+            const bool started = waitUntil([&] { return rendered.load() > startingFrames; }, 5);
+            const bool pausedCommand = started && maiFfplaySendCommand("pause") == 1;
+            [[NSRunLoop currentRunLoop]
+                runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.15]];
+            const int pausedFrames = rendered.load();
+            [[NSRunLoop currentRunLoop]
+                runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.4]];
+            const bool paused = pausedCommand && rendered.load() <= pausedFrames + 1;
+            const bool resumedCommand = paused && maiFfplaySendCommand("pause") == 1;
+            const bool resumed = resumedCommand &&
+                waitUntil([&] { return rendered.load() > pausedFrames + 1; }, 2);
+            const bool seekAccepted = resumed && maiFfplaySeekPercent(0.5) == 1 &&
+                maiFfplaySendCommand("not_a_command") == -1;
+            const bool seekHandled = seekAccepted &&
+                waitUntil([&] { return sawFiniteSeek.load(); }, 2) && !sawInvalidSeek;
+            if (!finished) maiFfplayRequestQuit();
             playback.join();
-            if (result != 0 || rendered.load() <= startingFrames || !controlsSent) return 6;
+            maiFfplaySetDiagnosticSink(nullptr, nullptr);
+            if (result != 0 || !started || !paused || !resumed || !seekHandled) return 6;
         }
         maiGraphicsPresenterDetach(viewId);
         maiGraphicsPresenterStop();

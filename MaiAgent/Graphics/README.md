@@ -2,15 +2,10 @@
 
 这里移植了 OBS 的 Graphics、util、Metal 和 OpenGL 源码。版本、目录映射、许可
 与平台适配见 [`UPSTREAM.md`](UPSTREAM.md)。对外接口是 OBS 原有的 `gs_*`，
-入口在 [`../include/MaiGraphics.h`](../include/MaiGraphics.h)。应用图片呈现入口
-是 [`../include/MaiGraphicsPresenter.h`](../include/MaiGraphicsPresenter.h)：MaiChat
-提供原生渲染视图与打包的 effect 目录；后台解码线程用 FFmpeg 解码图片，
-唯一的 Graphics 线程通过 `default.effect` 绘制到交换链并直接呈现，不回读像素。
-视图绑定、图片切换和尺寸变化都是异步命令。
-`MaiGraphicsPresenterShowFrame` 可提交已解码的 RGBA 视频帧；
-[`../include/MaiVideoPlayback.h`](../include/MaiVideoPlayback.h) 提供 FFmpeg
-视频读流、解码、播放、暂停、跳转、逐帧、倍速和循环的第一阶段接口。
-当前它**没有音频输出**，也尚未替换 MaiChat 的有声视频播放器。
+入口在 [`../include/MaiGraphics.h`](../include/MaiGraphics.h)。MaiChat 使用 Graphics
+实现图片呈现和视频播放；视图绑定、帧调度与 FFmpeg 解码位于
+[`../../MaiChat/Media/`](../../MaiChat/Media/)，不属于 OBS Graphics 底层。
+当前媒体层尚无音频输出，也尚未替换 MaiChat 的有声视频播放器。
 
 启用 `MAIAGENT_BUILD_GRAPHICS=ON` 后：
 

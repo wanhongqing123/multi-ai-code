@@ -123,16 +123,14 @@ endif()
 if(APPLE AND NOT IOS)
   add_library(maiagent_graphics SHARED
     $<TARGET_OBJECTS:maiagent_obs_graphics_compile>
-    compat/MaiObsStandalone.c
-    MaiGraphicsPresenter.cpp
-    MaiVideoPlayback.cpp)
+    compat/MaiObsStandalone.c)
   add_library(MaiAgent::Graphics ALIAS maiagent_graphics)
   target_include_directories(maiagent_graphics PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include)
-  target_include_directories(maiagent_graphics PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/compat
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
     ${ffmpeg_runtime_dir}/install/include)
+  target_include_directories(maiagent_graphics PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/compat)
   target_link_libraries(maiagent_graphics PUBLIC
     maiagent_obs_math maiagent_obs_util maiagent_graphics_simde Threads::Threads
     PRIVATE ${ffmpeg_runtime_archives}
@@ -204,29 +202,21 @@ if(IOS)
 
   add_library(maiagent_graphics STATIC
     $<TARGET_OBJECTS:maiagent_obs_graphics_compile>
-    compat/MaiObsStandalone.c
-    MaiGraphicsPresenter.cpp
-    MaiVideoPlayback.cpp)
+    compat/MaiObsStandalone.c)
   set_target_properties(maiagent_graphics PROPERTIES LINKER_LANGUAGE C)
   add_library(MaiAgent::Graphics ALIAS maiagent_graphics)
   target_include_directories(maiagent_graphics PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include)
-  target_include_directories(maiagent_graphics PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/compat
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
     ${MAIAGENT_GRAPHICS_FFMPEG_INCLUDE_DIR})
+  target_include_directories(maiagent_graphics PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/compat)
   target_link_libraries(maiagent_graphics PUBLIC
     maiagent_obs_metal_ios maiagent_obs_math maiagent_obs_util
     maiagent_graphics_simde Threads::Threads c++
     "-framework UIKit" "-framework Metal"
     "-framework CoreVideo" "-framework QuartzCore")
   add_dependencies(maiagent_graphics maiagent_graphics_data)
-  if(MAICHAT_MOBILE_TESTS AND CMAKE_OSX_SYSROOT MATCHES "[Ss]imulator")
-    add_executable(MaiObsIosMetalRenderProbe
-      tests/MaiObsIosMetalRenderProbe.c
-      tests/MaiObsIosMetalRenderProbe.swift)
-    target_link_libraries(MaiObsIosMetalRenderProbe PRIVATE maiagent_graphics)
-  endif()
 endif()
 
 if(ANDROID)
@@ -240,14 +230,11 @@ if(ANDROID)
     ${MAIAGENT_GRAPHICS_FFMPEG_INCLUDE_DIR})
 
   add_library(maiagent_graphics SHARED
-    $<TARGET_OBJECTS:maiagent_obs_graphics_compile>
-    MaiGraphicsPresenter.cpp
-    MaiVideoPlayback.cpp)
+    $<TARGET_OBJECTS:maiagent_obs_graphics_compile>)
   add_library(MaiAgent::Graphics ALIAS maiagent_graphics)
   target_include_directories(maiagent_graphics PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include)
-  target_include_directories(maiagent_graphics PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
     ${MAIAGENT_GRAPHICS_FFMPEG_INCLUDE_DIR})
   target_link_libraries(maiagent_graphics PUBLIC
     maiagent_obs_math maiagent_obs_util maiagent_graphics_simde Threads::Threads

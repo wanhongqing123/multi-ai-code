@@ -215,6 +215,10 @@ public:
                 if (view->swapchain) gs_swapchain_destroy(view->swapchain);
             }
             mGraphicsViews.clear();
+            if (mEffect) {
+                gs_effect_destroy(mEffect);
+                mEffect = nullptr;
+            }
             gs_leave_context();
             gs_destroy(mGraphics);
             mGraphics = nullptr;
@@ -384,11 +388,18 @@ private:
     bool renderImage(MaiGraphicsViewState* view, const MaiDecodedImage& image) {
         if (!view->swapchain || !image.width || !image.height) return false;
         gs_enter_context(mGraphics);
-        char* errors = nullptr;
-        gs_effect_t* effect = gs_effect_create_from_file(mEffectFile.c_str(), &errors);
-        if (errors) bfree(errors);
-        gs_eparam_t* parameter = effect ? gs_effect_get_param_by_name(effect, "image") : nullptr;
-        gs_technique_t* technique = effect ? gs_effect_get_technique(effect, "Draw") : nullptr;
+        if (!mEffectAttempted) {
+            mEffectAttempted = true;
+            char* errors = nullptr;
+            mEffect = gs_effect_create_from_file(mEffectFile.c_str(), &errors);
+            if (errors) bfree(errors);
+            if (mEffect) {
+                mImageParameter = gs_effect_get_param_by_name(mEffect, "image");
+                mDrawTechnique = gs_effect_get_technique(mEffect, "Draw");
+            }
+        }
+        gs_eparam_t* parameter = mImageParameter;
+        gs_technique_t* technique = mDrawTechnique;
         if (parameter && technique &&
             (!view->texture || view->textureWidth != image.width ||
              view->textureHeight != image.height)) {
@@ -451,6 +462,10 @@ private:
 
     std::string mBackend;
     std::string mEffectFile;
+    gs_effect_t* mEffect = nullptr;
+    gs_eparam_t* mImageParameter = nullptr;
+    gs_technique_t* mDrawTechnique = nullptr;
+    bool mEffectAttempted = false;
     MaiGraphicsPresentCallback mCallback;
     void* mUserData;
     MaiGraphicsTaskRunner mGraphicsRunner;

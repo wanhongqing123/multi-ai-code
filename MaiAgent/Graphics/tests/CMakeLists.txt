@@ -11,16 +11,6 @@ if(TARGET maiagent_graphics)
 endif()
 
 if(TARGET maiagent_obs_metal)
-  add_executable(MaiGraphicsPresenterMacTests MaiGraphicsPresenterMacTests.m)
-  target_link_libraries(MaiGraphicsPresenterMacTests PRIVATE maiagent_graphics
-    "-framework AppKit" "-framework QuartzCore")
-  add_dependencies(MaiGraphicsPresenterMacTests maiagent_obs_metal maiagent_graphics_data)
-  add_test(NAME MaiGraphicsPresenterMacTests
-    COMMAND MaiGraphicsPresenterMacTests $<TARGET_FILE:maiagent_obs_metal>
-      ${CMAKE_CURRENT_BINARY_DIR}/../data
-      ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/tiny-red.ppm
-      ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/tiny-red.mp4)
-
   add_executable(MaiObsMetalRenderTests MaiObsMetalRenderTests.c)
   target_link_libraries(MaiObsMetalRenderTests PRIVATE maiagent_graphics)
   add_dependencies(MaiObsMetalRenderTests maiagent_obs_metal)

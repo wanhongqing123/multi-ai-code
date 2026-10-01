@@ -103,6 +103,8 @@ if(TARGET maiagent_graphics)
 endif()
 add_library(maichat_mobile STATIC
   MaiMobileAgent.cpp
+  ../Media/MaiGraphicsPresenter.cpp
+  ../Media/MaiVideoPlayback.cpp
   ../MaiChatTools/MaiImageFilter.cpp
   ../MaiChatTools/MaiMobileHostTools.cpp)
 if(ANDROID)
@@ -114,7 +116,7 @@ elseif(APPLE)
 endif()
 add_dependencies(maichat_mobile maichat_ffmpeg_build)
 target_include_directories(maichat_mobile PRIVATE "${ffmpeg_build}/install/include")
-target_include_directories(maichat_mobile PUBLIC . ../MaiChatTools
+target_include_directories(maichat_mobile PUBLIC . ../MaiChatTools ../Media
   PRIVATE ../../MaiAgent/third_party/nlohmann)
 target_link_libraries(maichat_mobile PRIVATE maiagent
   maichat_ffmpeg_avdevice maichat_ffmpeg_avfilter maichat_ffmpeg_avformat
@@ -130,4 +132,10 @@ if(MAICHAT_MOBILE_TESTS)
   target_include_directories(MaiMobileAgentTests PRIVATE ../../MaiAgent/third_party/httplib ../../MaiAgent/third_party/nlohmann)
   target_link_libraries(MaiMobileAgentTests PRIVATE maichat_mobile maiagent)
   add_test(NAME MaiMobileAgentTests COMMAND MaiMobileAgentTests)
+  if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND CMAKE_OSX_SYSROOT MATCHES "[Ss]imulator")
+    add_executable(MaiObsIosMetalRenderProbe
+      ../Media/tests/MaiObsIosMetalRenderProbe.c
+      ../Media/tests/MaiObsIosMetalRenderProbe.swift)
+    target_link_libraries(MaiObsIosMetalRenderProbe PRIVATE maichat_mobile)
+  endif()
 endif()

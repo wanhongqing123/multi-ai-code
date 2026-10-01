@@ -425,6 +425,9 @@ target_link_libraries(remote_im_desktop_ui PUBLIC remote_im_desktop_app remote_i
   maichat_pdf_preview)
 if(TARGET maiagent_obs_metal OR TARGET maiagent_obs_d3d11)
   target_link_libraries(remote_im_desktop_ui PRIVATE maiagent_graphics)
+  target_sources(remote_im_desktop_ui PRIVATE
+    ../Media/MaiGraphicsPresenter.cpp ../Media/MaiVideoPlayback.cpp)
+  target_include_directories(remote_im_desktop_ui PUBLIC ../Media)
   target_compile_definitions(remote_im_desktop_ui PRIVATE MAICHAT_HAS_GRAPHICS=1)
   if(APPLE)
     target_sources(remote_im_desktop_ui PRIVATE src/ui/MaiGraphicsMacLayer.mm)
@@ -575,6 +578,20 @@ target_link_libraries(agent_panel_session_test PRIVATE remote_im_desktop_ui remo
 
 add_executable(desktop_pdf_renderer_test tests/DesktopPdfRendererTest.cpp)
 target_link_libraries(desktop_pdf_renderer_test PRIVATE maichat_agent Qt5::Widgets Qt5::Test)
+
+if(APPLE AND TARGET maiagent_obs_metal)
+  enable_language(OBJC)
+  add_executable(MaiGraphicsPresenterMacTests
+    ../Media/tests/MaiGraphicsPresenterMacTests.m)
+  target_link_libraries(MaiGraphicsPresenterMacTests PRIVATE
+    remote_im_desktop_ui maiagent_graphics "-framework AppKit" "-framework QuartzCore")
+  add_dependencies(MaiGraphicsPresenterMacTests maiagent_obs_metal maiagent_graphics_data)
+  add_test(NAME MaiGraphicsPresenterMacTests
+    COMMAND MaiGraphicsPresenterMacTests $<TARGET_FILE:maiagent_obs_metal>
+      ${CMAKE_CURRENT_BINARY_DIR}/maiagent/Graphics/data
+      ${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/Graphics/tests/fixtures/tiny-red.ppm
+      ${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/Graphics/tests/fixtures/tiny-red.mp4)
+endif()
 
 add_executable(pdf_preview_dialog_test tests/PdfPreviewDialogTest.cpp)
 target_link_libraries(pdf_preview_dialog_test PRIVATE maichat_pdf_preview Qt5::Test)

@@ -158,9 +158,18 @@ if(MAICHAT_MOBILE_TESTS)
       maichat_mobile maiagent android log jnigraphics)
   endif()
   if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND CMAKE_OSX_SYSROOT MATCHES "[Ss]imulator")
-    add_executable(MaiObsIosMetalRenderProbe
-      ../Media/tests/MaiObsIosMetalRenderProbe.c
-      ../Media/tests/MaiObsIosMetalRenderProbe.swift)
-    target_link_libraries(MaiObsIosMetalRenderProbe PRIVATE maichat_mobile)
+    add_executable(MaiEmbeddedFfmpegToolsTest
+      ../desktop/tests/MaiEmbeddedFfmpegToolsTest.cpp)
+    target_include_directories(MaiEmbeddedFfmpegToolsTest PRIVATE
+      ../../MaiAgent/third_party/ffmpeg/fftools
+      ../../MaiAgent/third_party/nlohmann)
+    target_link_libraries(MaiEmbeddedFfmpegToolsTest PRIVATE maichat_mobile maiagent)
+    option(MAICHAT_IOS_METAL_RENDER_PROBE "Build the mixed Swift/C render probe" ON)
+    if(MAICHAT_IOS_METAL_RENDER_PROBE)
+      add_executable(MaiObsIosMetalRenderProbe
+        ../Media/tests/MaiObsIosMetalRenderProbe.c
+        ../Media/tests/MaiObsIosMetalRenderProbe.swift)
+      target_link_libraries(MaiObsIosMetalRenderProbe PRIVATE maichat_mobile)
+    endif()
   endif()
 endif()

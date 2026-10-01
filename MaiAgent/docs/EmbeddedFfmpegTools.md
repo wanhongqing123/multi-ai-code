@@ -24,3 +24,9 @@ FFmpeg 的进程级状态，所以工具层串行调用，并在每次调用后�
 结果会在读取后删除；超过 2 MiB 时明确标记截断。
 
 媒体播放与 Graphics 原生视图属于 MaiChat `Media/`，不由这两个命令工具托管。
+
+`MaiEmbeddedFfmpegToolsTest` 在 macOS/Windows Desktop、Android 和 iOS 模拟器
+共用同一份测试代码，覆盖失败后的再次调用、重复转换和真实取消。移动端测试构建
+需开启 `MAICHAT_MOBILE_TESTS`；单独运行 iOS 工具测试时可设置
+`MAICHAT_IOS_METAL_RENDER_PROBE=OFF`，避免同时构建不相关的混合 Swift/C
+渲染探针。

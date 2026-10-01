@@ -18,6 +18,10 @@ public final class MaiGraphicsTextureView extends TextureView
     implements TextureView.SurfaceTextureListener {
 
     public interface PresentationListener { void onPresented(boolean success); }
+    public interface ViewReadyListener {
+        void onReady(long viewId);
+        void onLost();
+    }
 
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static final ConcurrentHashMap<Long, WeakReference<MaiGraphicsTextureView>> VIEWS =
@@ -54,6 +58,7 @@ public final class MaiGraphicsTextureView extends TextureView
     private String imagePath;
     private boolean fillView;
     private PresentationListener listener;
+    private ViewReadyListener viewReadyListener;
 
     public MaiGraphicsTextureView(Context context) {
         super(context);
@@ -94,6 +99,11 @@ public final class MaiGraphicsTextureView extends TextureView
 
     public void setPresentationListener(PresentationListener listener) {
         this.listener = listener;
+    }
+
+    public void setViewReadyListener(ViewReadyListener listener) {
+        viewReadyListener = listener;
+        if (listener != null && viewId != 0) listener.onReady(viewId);
     }
 
     private void notifyFailure() {
@@ -154,6 +164,7 @@ public final class MaiGraphicsTextureView extends TextureView
         }
         if (viewId == 0) { notifyFailure(); return; }
         VIEWS.put(viewId, new WeakReference<>(this));
+        if (viewReadyListener != null) viewReadyListener.onReady(viewId);
         if (imagePath != null && !nativeShowImage(viewId, imagePath, fillView)) notifyFailure();
     }
 
@@ -163,6 +174,7 @@ public final class MaiGraphicsTextureView extends TextureView
     }
 
     @Override public boolean onSurfaceTextureDestroyed(SurfaceTexture texture) {
+        if (viewReadyListener != null) viewReadyListener.onLost();
         stopVideo();
         if (viewId != 0) {
             VIEWS.remove(viewId);

@@ -187,6 +187,16 @@ class MetalTexture {
             return
         }
 
+        #if targetEnvironment(simulator)
+        // Apple's simulator Metal driver rejects single/dual-channel sRGB
+        // texture views used by the YUV shader. The linear plane textures are
+        // sampled directly; color conversion still runs in Graphics.
+        if texture.pixelFormat == .r8Unorm || texture.pixelFormat == .rg8Unorm {
+            self.sRGBtexture = nil
+            return
+        }
+        #endif
+
         let sRGBFormat: MTLPixelFormat? =
             switch texture.pixelFormat {
             case .bgra8Unorm: .bgra8Unorm_srgb

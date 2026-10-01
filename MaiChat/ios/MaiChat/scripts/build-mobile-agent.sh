@@ -9,11 +9,24 @@ cmake -S "$repo_dir/MaiChat/MobileAgentAdapter" -B "$agent_build" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
   -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO
 cmake --build "$agent_build" --target maichat_mobile --parallel 6
+cmake --build "$agent_build" --target maichat_ffplay_hosted --parallel 6
 archive_list=()
 while IFS= read -r archive; do archive_list+=("$archive"); done < <(
   find "$agent_build" -name '*.a' -type f ! -path '*/vendor/ffmpeg-build/install/*'
 )
 xcrun libtool -static -o "$DERIVED_FILE_DIR/libMaiMobileAgent.a" "${archive_list[@]}"
+if [[ -n "${TARGET_BUILD_DIR:-}" && -n "${FRAMEWORKS_FOLDER_PATH:-}" ]]; then
+  hosted_source="$agent_build/libmaichat_ffplay_hosted.dylib"
+  hosted_target="$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH/libmaichat_ffplay_hosted.dylib"
+  mkdir -p "$(dirname "$hosted_target")"
+  cp "$hosted_source" "$hosted_target"
+  if [[ "${CODE_SIGNING_ALLOWED:-YES}" != NO ]]; then
+    identity="${EXPANDED_CODE_SIGN_IDENTITY:-}"
+    if [[ -n "$identity" ]]; then
+      codesign --force --sign "$identity" "$hosted_target"
+    fi
+  fi
+fi
 if [[ -n "${TARGET_BUILD_DIR:-}" && -n "${UNLOCALIZED_RESOURCES_FOLDER_PATH:-}" ]]; then
   effect_bundle="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/MaiAgentGraphics"
   mkdir -p "$effect_bundle"

@@ -1,6 +1,24 @@
 import XCTest
 
 final class AIAssistantUITests: XCTestCase {
+    func testFfplayVideoPopupCanPauseSeekAndClose() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--ffplay-ui-test"]
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        let pause = app.buttons["ffplay-pause"]
+        XCTAssertTrue(pause.waitForExistence(timeout: 20))
+        pause.tap()
+        XCTAssertTrue(app.buttons["ffplay-close"].isHittable)
+        app.sliders["ffplay-seek"].adjust(toNormalizedSliderPosition: 0.5)
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "ios-ffplay-metal-video"
+        capture.lifetime = .keepAlways
+        add(capture)
+        app.buttons["ffplay-close"].tap()
+        XCTAssertFalse(app.buttons["ffplay-close"].waitForExistence(timeout: 3))
+    }
+
     func testComposerAcceptsTypingWithoutSendButton() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--ai-ui-test"]

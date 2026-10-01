@@ -299,6 +299,11 @@ private enum MaiGraphicsViewRegistry {
     }
 }
 
+@MainActor
+func maiGraphicsPresenterEnsureStarted() -> Bool {
+    MaiGraphicsViewRegistry.start()
+}
+
 private func maiGraphicsPresentCallback(_ viewID: UInt64, _ success: Bool,
                                         _ userData: UnsafeMutableRawPointer?) {
     _ = userData
@@ -3595,51 +3600,8 @@ private struct FullScreenVideoPreviewView: View {
     let close: () -> Void
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
-            Color.black.ignoresSafeArea()
-            LocalVideoPlayer(url: URL(fileURLWithPath: item.localFilePath))
-                .ignoresSafeArea()
-                .accessibilityIdentifier("remote-im-video-preview")
-
-            Button(action: close) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 44, height: 44)
-                    .background(.black.opacity(0.52), in: Circle())
-            }
-            .buttonStyle(.plain)
-            .padding(.top, 18)
-            .padding(.trailing, 18)
-            .accessibilityLabel("关闭视频预览")
-        }
-        .statusBarHidden(true)
-    }
-}
-
-private struct LocalVideoPlayer: UIViewControllerRepresentable {
-    let url: URL
-
-    func makeUIViewController(context _: Context) -> AVPlayerViewController {
-        let controller = AVPlayerViewController()
-        controller.player = AVPlayer(url: url)
-        controller.showsPlaybackControls = true
-        controller.videoGravity = .resizeAspect
-        controller.player?.play()
-        return controller
-    }
-
-    func updateUIViewController(_ controller: AVPlayerViewController, context _: Context) {
-        guard let currentAsset = controller.player?.currentItem?.asset as? AVURLAsset,
-              currentAsset.url != url
-        else { return }
-        controller.player?.replaceCurrentItem(with: AVPlayerItem(url: url))
-        controller.player?.play()
-    }
-
-    static func dismantleUIViewController(_ controller: AVPlayerViewController, coordinator _: Void) {
-        controller.player?.pause()
-        controller.player = nil
+        MaiFfplayVideoScreen(path: item.localFilePath, close: close)
+            .accessibilityIdentifier("remote-im-video-preview")
     }
 }
 

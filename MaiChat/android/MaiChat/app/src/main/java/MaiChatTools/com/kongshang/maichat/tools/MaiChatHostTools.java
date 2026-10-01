@@ -10,12 +10,14 @@ public final class MaiChatHostTools {
     private final MainActivity activity;
     private final MobilePhotoTools photos;
     private final MobilePermissionTools permissions;
+    private final MobileMediaTools media;
     private final MaiChatIMTools im;
 
     public MaiChatHostTools(MainActivity activity, RemoteIMSessionController session) {
         this.activity = activity;
         this.photos = new MobilePhotoTools(activity);
         this.permissions = new MobilePermissionTools(activity, photos);
+        this.media = new MobileMediaTools(activity);
         this.im = new MaiChatIMTools(activity, session);
     }
 
@@ -35,6 +37,8 @@ public final class MaiChatHostTools {
                 AIAssistantController.shared(activity).workspacePdfOutputForHost(
                     arguments.optString("output_path")));
         if (tool.equals("mobile_request_permission")) return permissions.request(arguments);
+        if (tool.equals("maichat_play_video") || tool.equals("maichat_video_command"))
+            return media.execute(tool, arguments);
         if (tool.startsWith("mobile_")) return photos.execute(tool, arguments);
         return im.execute(tool, arguments);
     }

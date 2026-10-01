@@ -38,6 +38,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     @Published var newContactUserID = ""
     @Published var newContactRelation: RemoteIMContactRelation = .friend
     @Published var errorMessage: String?
+    @Published var agentVideoPresentation: MaiFfplayPresentation?
     @Published var connectionState: ConnectionState = .disconnected
     // Emitted only when this device queues a user send, never on history or delivery updates.
     @Published private(set) var locallyQueuedMessageID: UUID?

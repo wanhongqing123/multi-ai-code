@@ -116,6 +116,9 @@ struct MaiGraphicsViewState {
     std::shared_ptr<MaiDecodedImage> currentImage;
     std::shared_ptr<MaiDecodedVideoFrame> currentVideo;
     std::array<gs_texture_t*, 3> videoTextures{};
+    gs_texture_t* subtitleTexture = nullptr;
+    uint32_t subtitleWidth = 0;
+    uint32_t subtitleHeight = 0;
     gs_texrender_t* convertedVideo = nullptr;
     MaiVideoPixelFormat videoFormat = MAI_VIDEO_PIXEL_RGBA;
     uint32_t videoWidth = 0;
@@ -136,6 +139,7 @@ struct MaiDecodedVideoFrame {
     MaiVideoColorRange colorRange = MAI_VIDEO_RANGE_LIMITED;
     std::array<std::vector<uint8_t>, 3> planes;
     std::array<uint32_t, 3> strides{};
+    std::vector<uint8_t> subtitlePixels;
 };
 
 uint32_t planeCount(MaiVideoPixelFormat format) {
@@ -253,6 +257,7 @@ public:
                 if (view->texture) gs_texture_destroy(view->texture);
                 for (gs_texture_t* texture : view->videoTextures)
                     if (texture) gs_texture_destroy(texture);
+                if (view->subtitleTexture) gs_texture_destroy(view->subtitleTexture);
                 if (view->convertedVideo) gs_texrender_destroy(view->convertedVideo);
                 if (view->swapchain) gs_swapchain_destroy(view->swapchain);
             }
@@ -380,7 +385,8 @@ public:
         });
     }
 
-    bool showVideoFrame(uint64_t id, const MaiVideoFrame* source, bool fillView) {
+    bool showVideoFrame(uint64_t id, const MaiVideoFrame* source,
+                        const MaiVideoSubtitle* subtitle, bool fillView) {
         if (!source || !source->width || !source->height || source->width > 16384 ||
             source->height > 16384 ||
             static_cast<uint64_t>(source->width) * source->height > kMaximumPixels)
@@ -413,6 +419,18 @@ public:
                 std::memcpy(frame->planes[index].data() + static_cast<size_t>(row) * rowBytes,
                             sourceRow, rowBytes);
             }
+        }
+        if (subtitle) {
+            if (!subtitle->rgba || subtitle->width != source->width ||
+                subtitle->height != source->height ||
+                subtitle->stride < source->width * 4)
+                return false;
+            frame->subtitlePixels.resize(static_cast<size_t>(source->width) * source->height * 4);
+            for (uint32_t row = 0; row < source->height; ++row)
+                std::memcpy(frame->subtitlePixels.data() +
+                                static_cast<size_t>(row) * source->width * 4,
+                            subtitle->rgba + static_cast<size_t>(row) * subtitle->stride,
+                            static_cast<size_t>(source->width) * 4);
         }
 
         const uint64_t generation = ++view->generation;
@@ -467,6 +485,10 @@ public:
                 if (texture) gs_texture_destroy(texture);
                 texture = nullptr;
             }
+            if (view->subtitleTexture) {
+                gs_texture_destroy(view->subtitleTexture);
+                view->subtitleTexture = nullptr;
+            }
             if (view->convertedVideo) {
                 gs_texrender_destroy(view->convertedVideo);
                 view->convertedVideo = nullptr;
@@ -518,7 +540,7 @@ private:
     }
 
     bool drawTexture(MaiGraphicsViewState* view, gs_texture_t* texture, uint32_t sourceWidth,
-                     uint32_t sourceHeight) {
+                     uint32_t sourceHeight, gs_texture_t* subtitle = nullptr) {
         if (!view->swapchain || !texture || !ensureDrawEffect()) return false;
         const uint32_t width = view->width;
         const uint32_t height = view->height;
@@ -553,6 +575,25 @@ private:
             gs_technique_end_pass(mDrawTechnique);
         }
         gs_technique_end(mDrawTechnique);
+        if (presented && subtitle) {
+            gs_blend_state_push();
+            gs_enable_blending(true);
+            gs_blend_function(GS_BLEND_SRCALPHA, GS_BLEND_INVSRCALPHA);
+            gs_effect_set_texture_srgb(mImageParameter, subtitle);
+            const size_t subtitlePasses = gs_technique_begin(mDrawTechnique);
+            presented = subtitlePasses > 0;
+            for (size_t pass = 0; pass < subtitlePasses; ++pass) {
+                if (!gs_technique_begin_pass(mDrawTechnique, pass)) {
+                    presented = false;
+                    break;
+                }
+                gs_draw_sprite(subtitle, 0, std::max<uint32_t>(1, drawWidth),
+                               std::max<uint32_t>(1, drawHeight));
+                gs_technique_end_pass(mDrawTechnique);
+            }
+            gs_technique_end(mDrawTechnique);
+            gs_blend_state_pop();
+        }
         gs_matrix_pop();
         gs_end_scene();
         if (presented && gs_is_present_ready())
@@ -696,7 +737,21 @@ private:
         gs_enter_context(mGraphics);
         const bool uploaded = uploadVideoPlanes(view, frame);
         gs_texture_t* texture = uploaded ? convertVideo(view, frame) : nullptr;
-        const bool presented = drawTexture(view, texture, frame.width, frame.height);
+        if (!frame.subtitlePixels.empty() &&
+            (!view->subtitleTexture || view->subtitleWidth != frame.width ||
+             view->subtitleHeight != frame.height)) {
+            if (view->subtitleTexture) gs_texture_destroy(view->subtitleTexture);
+            view->subtitleTexture = gs_texture_create(frame.width, frame.height, GS_RGBA, 1,
+                                                      nullptr, GS_DYNAMIC);
+            view->subtitleWidth = frame.width;
+            view->subtitleHeight = frame.height;
+        }
+        if (!frame.subtitlePixels.empty() && view->subtitleTexture)
+            gs_texture_set_image(view->subtitleTexture, frame.subtitlePixels.data(),
+                                 frame.width * 4, false);
+        const bool presented = drawTexture(view, texture, frame.width, frame.height,
+                                           frame.subtitlePixels.empty() ? nullptr
+                                                                        : view->subtitleTexture);
         gs_leave_context();
         return presented;
     }
@@ -780,10 +835,16 @@ extern "C" bool maiGraphicsPresenterShowFrame(uint64_t view_id, const uint8_t* p
 }
 
 extern "C" bool maiGraphicsPresenterShowVideoFrame(uint64_t view_id, const MaiVideoFrame* frame,
-                                                   bool fill_view) {
+                                                    bool fill_view) {
+    return maiGraphicsPresenterShowVideoFrameWithSubtitle(view_id, frame, nullptr, fill_view);
+}
+
+extern "C" bool maiGraphicsPresenterShowVideoFrameWithSubtitle(
+    uint64_t view_id, const MaiVideoFrame* frame, const MaiVideoSubtitle* subtitle,
+    bool fill_view) {
     try {
         auto current = presenter();
-        return current && current->showVideoFrame(view_id, frame, fill_view);
+        return current && current->showVideoFrame(view_id, frame, subtitle, fill_view);
     } catch (const std::exception&) {
         return false;
     }

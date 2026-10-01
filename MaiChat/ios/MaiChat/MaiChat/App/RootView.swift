@@ -152,6 +152,11 @@ struct RootView: View {
         .animation(.easeOut(duration: 0.18), value: renamingContactGroup)
         .animation(.easeOut(duration: 0.18), value: deletingContactGroup)
         .background(Color(red: 0.966, green: 0.976, blue: 0.988).ignoresSafeArea())
+        .fullScreenCover(item: $appState.agentVideoPresentation) { presentation in
+            MaiFfplayVideoScreen(path: presentation.path) {
+                appState.agentVideoPresentation = nil
+            }
+        }
         .task {
             if !appState.shouldShowInitialLogin {
                 await appState.connectOnLaunchIfNeeded()

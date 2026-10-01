@@ -28,7 +28,7 @@ targets:
         INFOPLIST_FILE: MaiChat/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         SWIFT_OBJC_BRIDGING_HEADER: MaiChat/MaiChat-Bridging-Header.h
-        OTHER_LDFLAGS: $(inherited) $(DERIVED_FILE_DIR)/libMaiMobileAgent.a -lc++ -liconv -lz -framework Security -framework CoreFoundation -framework SystemConfiguration
+        OTHER_LDFLAGS: $(inherited) $(DERIVED_FILE_DIR)/libMaiMobileAgent.a $(DERIVED_FILE_DIR)/MobileAgentAdapter-$(PLATFORM_NAME)-graphics/libmaichat_ffplay_hosted.dylib -lc++ -liconv -lz -framework Security -framework CoreFoundation -framework SystemConfiguration
         ENABLE_USER_SCRIPT_SANDBOXING: NO
   MaiChatCore:
     type: framework

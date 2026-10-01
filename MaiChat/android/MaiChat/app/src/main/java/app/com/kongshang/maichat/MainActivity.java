@@ -53,9 +53,7 @@ import android.widget.LinearLayout;
 import android.widget.PopupWindow;
 import android.widget.ScrollView;
 import android.widget.Space;
-import android.widget.MediaController;
 import android.widget.TextView;
-import android.widget.VideoView;
 import android.widget.Toast;
 
 import androidx.core.content.FileProvider;
@@ -109,6 +107,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private MaiChatHostTools maiChatHostTools;
     private RemoteIMMediaStore mediaStore;
     private AIAssistantPanel aiAssistant;
+    private Dialog videoDialog;
     private Runnable pendingGalleryAction;
     private RemoteIMTab activeTab = RemoteIMTab.MESSAGES;
     private LinearLayout root;
@@ -244,6 +243,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     protected void onDestroy() {
         destroyed = true;
         pendingGalleryAction = null;
+        if (videoDialog != null) videoDialog.dismiss();
         if (maiChatHostTools != null) maiChatHostTools.onDestroy();
         AIAssistantController.shared(this).setHostToolHandler(null);
         if (swipeBack != null) swipeBack.dispose();
@@ -2928,22 +2928,13 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     }
 
     private void openVideoPlayer(String path) {
-        File source = new File(path);
+        if (videoDialog != null) videoDialog.dismiss();
         Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
         FrameLayout frame = new FrameLayout(this);
         frame.setBackgroundColor(Color.BLACK);
 
-        VideoView video = new VideoView(this);
-        video.setVideoPath(source.getAbsolutePath());
-        MediaController controller = new MediaController(this);
-        controller.setAnchorView(video);
-        video.setMediaController(controller);
-        video.setOnPreparedListener(player -> video.start());
-        video.setOnErrorListener((player, what, extra) -> {
-            toast("无法播放该视频（" + what + "/" + extra + "）");
-            dialog.dismiss();
-            return true;
-        });
+        MaiFfplayVideoView video = new MaiFfplayVideoView(this);
+        video.setVideoPath(path);
         FrameLayout.LayoutParams videoParams = new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT,
@@ -2959,11 +2950,32 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         closeParams.setMargins(0, dp(14), dp(14), 0);
         frame.addView(close, closeParams);
 
-        // 不停就关的话解码器可能还占着文件句柄。
-        dialog.setOnDismissListener(d -> video.stopPlayback());
+        dialog.setOnDismissListener(d -> {
+            video.stop();
+            if (videoDialog == dialog) videoDialog = null;
+        });
         dialog.setContentView(frame);
         allowKeyboardLocation = false;
+        videoDialog = dialog;
         dialog.show();
+    }
+
+    public boolean openAgentVideo(String path) {
+        if (destroyed || path == null || !new File(path).isFile()) return false;
+        openVideoPlayer(path);
+        return true;
+    }
+
+    public boolean commandAgentVideo(String action, double percent) {
+        if (action.equals("close")) {
+            if (videoDialog == null) return false;
+            videoDialog.dismiss();
+            return true;
+        }
+        MaiFfplayVideoView video = MaiFfplayVideoView.activeView();
+        if (video == null) return false;
+        return action.equals("seek_percent")
+            ? video.seekPercent(percent / 100.0) : video.command(action);
     }
 
     private View fileMessageContent(RemoteIMFileAttachment attachment) {

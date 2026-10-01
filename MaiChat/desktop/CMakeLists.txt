@@ -626,7 +626,70 @@ target_link_libraries(agent_panel_session_test PRIVATE remote_im_desktop_ui remo
 add_executable(desktop_pdf_renderer_test tests/DesktopPdfRendererTest.cpp)
 target_link_libraries(desktop_pdf_renderer_test PRIVATE maichat_agent Qt5::Widgets Qt5::Test)
 
+set(ffplay_ffmpeg_source ${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/ffmpeg)
+set(maichat_ffplay_common_sources
+  ../Media/FfplayCompat/MaiFfplayEntry.c
+  ../Media/FfplayCompat/MaiFfplayThreading.cpp
+  ../Media/FfplayCompat/MaiFfplayRenderer.cpp
+  ../Media/FfplayCompat/MaiFfplayAudioMix.cpp
+  ../Media/FfplayCompat/MaiFfplayRendererBackend.cpp
+  ${ffplay_ffmpeg_source}/fftools/cmdutils.c
+  ${ffplay_ffmpeg_source}/fftools/opt_common.c)
 if(APPLE AND TARGET maiagent_obs_metal)
+  set(ffplay_ffmpeg_build ${CMAKE_CURRENT_BINARY_DIR}/maiagent/Graphics/ffmpeg-runtime)
+  add_library(maichat_ffplay_hosted SHARED
+    ${maichat_ffplay_common_sources}
+    ../Media/FfplayCompat/MaiFfplayAudioApple.cpp)
+  add_dependencies(maichat_ffplay_hosted maiagent_ffmpeg_runtime)
+  set_target_properties(maichat_ffplay_hosted PROPERTIES
+    C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN YES)
+  target_include_directories(maichat_ffplay_hosted PRIVATE
+    ../Media ../Media/FfplayCompat
+    ${ffplay_ffmpeg_source}/fftools
+    ${ffplay_ffmpeg_build} ${ffplay_ffmpeg_build}/install/include)
+  set_source_files_properties(
+    ../Media/FfplayCompat/MaiFfplayEntry.c
+    ${ffplay_ffmpeg_source}/fftools/cmdutils.c
+    ${ffplay_ffmpeg_source}/fftools/opt_common.c
+    PROPERTIES INCLUDE_DIRECTORIES ${ffplay_ffmpeg_source})
+  target_link_libraries(maichat_ffplay_hosted PRIVATE
+    ${ffplay_ffmpeg_build}/libavdevice/libavdevice.a
+    ${ffplay_ffmpeg_build}/libavfilter/libavfilter.a
+    ${ffplay_ffmpeg_build}/libavformat/libavformat.a
+    ${ffplay_ffmpeg_build}/libavcodec/libavcodec.a
+    ${ffplay_ffmpeg_build}/libswresample/libswresample.a
+    ${ffplay_ffmpeg_build}/libswscale/libswscale.a
+    ${ffplay_ffmpeg_build}/libavutil/libavutil.a
+    z "-framework AudioToolbox" "-framework CoreAudio"
+    "-framework CoreFoundation"
+    "-framework CoreMedia" "-framework CoreVideo" "-framework VideoToolbox")
+  target_sources(remote_im_desktop_ui PRIVATE
+    src/ui/MaiFfplayVideoDialog.h src/ui/MaiFfplayVideoDialog.cpp
+    src/MaiChatTools/DesktopMediaTools.h src/MaiChatTools/DesktopMediaTools.cpp)
+  target_include_directories(remote_im_desktop_ui PRIVATE ../Media/FfplayCompat)
+  target_link_libraries(remote_im_desktop_ui PRIVATE maichat_ffplay_hosted)
+  target_compile_definitions(remote_im_desktop_ui PRIVATE MAICHAT_HAS_FFPLAY=1)
+  add_custom_command(TARGET maichat POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      $<TARGET_FILE:maichat_ffplay_hosted>
+      $<TARGET_BUNDLE_DIR:maichat>/Contents/Frameworks)
+  enable_language(OBJCXX)
+  add_executable(MaiFfplayHostMacTests ../Media/tests/MaiFfplayHostMacTests.mm)
+  target_include_directories(MaiFfplayHostMacTests PRIVATE
+    ../Media ../Media/FfplayCompat)
+  target_link_libraries(MaiFfplayHostMacTests PRIVATE maichat_ffplay_hosted
+    remote_im_desktop_ui maiagent_graphics "-framework AppKit" "-framework QuartzCore")
+  add_test(NAME MaiFfplayHostMacTests COMMAND MaiFfplayHostMacTests
+    $<TARGET_FILE:maiagent_obs_metal>
+    ${CMAKE_CURRENT_BINARY_DIR}/maiagent/Graphics/data
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Media/tests/fixtures/ffplay-av-subtitles.mkv)
+  add_executable(MaiFfplayVideoDialogTest tests/MaiFfplayVideoDialogTest.cpp)
+  target_compile_definitions(MaiFfplayVideoDialogTest PRIVATE
+    MAICHAT_FFPLAY_VIDEO_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/Graphics/tests/fixtures/tiny-red.mp4")
+  target_include_directories(MaiFfplayVideoDialogTest PRIVATE ../Media/FfplayCompat)
+  target_link_libraries(MaiFfplayVideoDialogTest PRIVATE remote_im_desktop_ui Qt5::Test)
+  add_test(NAME MaiFfplayVideoDialogTest COMMAND MaiFfplayVideoDialogTest)
   add_custom_target(maichat_media_effects
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       ${CMAKE_CURRENT_SOURCE_DIR}/../Media/data/video_conversion.effect
@@ -643,6 +706,33 @@ if(APPLE AND TARGET maiagent_obs_metal)
       ${CMAKE_CURRENT_BINARY_DIR}/maiagent/Graphics/data
       ${CMAKE_CURRENT_SOURCE_DIR}/resources/macos/AppIcon-1024.png
       ${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/Graphics/tests/fixtures/tiny-red.mp4)
+endif()
+
+if(WIN32 AND MAICHAT_ENABLE_FFMPEG)
+  # Keep the Windows adapter opt-in until the D3D11 Graphics runtime and
+  # native popup are linked and validated together.
+  add_library(maichat_ffplay_hosted SHARED EXCLUDE_FROM_ALL
+    ${maichat_ffplay_common_sources}
+    ../Media/FfplayCompat/MaiFfplayAudioWindows.cpp)
+  add_dependencies(maichat_ffplay_hosted maichat_ffmpeg_build)
+  set_target_properties(maichat_ffplay_hosted PROPERTIES
+    C_STANDARD 11 C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN YES)
+  target_compile_definitions(maichat_ffplay_hosted PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+  target_include_directories(maichat_ffplay_hosted PRIVATE
+    ../Media ../Media/FfplayCompat
+    ${ffplay_ffmpeg_source}/fftools
+    ${MAICHAT_FFMPEG_BUILD_DIR} ${MAICHAT_FFMPEG_BUILD_DIR}/install/include)
+  set_source_files_properties(
+    ../Media/FfplayCompat/MaiFfplayEntry.c
+    ${ffplay_ffmpeg_source}/fftools/cmdutils.c
+    ${ffplay_ffmpeg_source}/fftools/opt_common.c
+    PROPERTIES INCLUDE_DIRECTORIES ${ffplay_ffmpeg_source})
+  target_link_libraries(maichat_ffplay_hosted PRIVATE
+    maichat_ffmpeg_avdevice maichat_ffmpeg_avfilter maichat_ffmpeg_avformat
+    maichat_ffmpeg_avcodec maichat_ffmpeg_swresample maichat_ffmpeg_swscale
+    maichat_ffmpeg_avutil winmm psapi ole32 strmiids uuid oleaut32 shlwapi
+    gdi32 vfw32 ws2_32 user32 bcrypt)
 endif()
 
 if((APPLE AND TARGET maiagent_embedded_fftools) OR

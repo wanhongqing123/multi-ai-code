@@ -9,6 +9,10 @@
 #include "model/ContactGroups.h"
 #include "model/MessageSearch.h"
 #include "ui/MessageImageLoader.h"
+#if defined(MAICHAT_HAS_FFPLAY)
+#include "ui/MaiFfplayVideoDialog.h"
+#include "MaiChatTools/DesktopMediaTools.h"
+#endif
 
 #include <QCoreApplication>
 #include <QApplication>
@@ -3229,7 +3233,12 @@ void MainWindow::rebuildAgentPage() {
     }
     agentController_ = new AgentController(
         modelConfig, agentDatabasePath(),
-        [this](MaiToolRegistry& registry) { registerMaiChatHostTools(registry, app_); }, this);
+        [this](MaiToolRegistry& registry) {
+            registerMaiChatHostTools(registry, app_);
+            #if defined(MAICHAT_HAS_FFPLAY)
+            registerDesktopMediaTools(registry, this);
+            #endif
+        }, this);
     agentSessions_ = new AgentSessionList(*agentController_, agentSplitter);
     agentPanel_ = new AgentChatPanel(*agentController_, agentSplitter);
     agentPanel_->setModelLabel(modelConfig.baseUrl.isEmpty() || modelConfig.apiKey.isEmpty()
@@ -4462,9 +4471,21 @@ void MainWindow::openVideoPreview(const RemoteIMVideoAttachment& attachment) {
     const QString title = attachment.fileName.trimmed().isEmpty()
         ? QFileInfo(path).fileName()
         : attachment.fileName.trimmed();
+    #if defined(MAICHAT_HAS_FFPLAY)
+    auto* dialog = new MaiFfplayVideoDialog(path, this);
+    #else
     auto* dialog = new VideoPreviewDialog(path, title, this);
+    #endif
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->show();
+    #if defined(MAICHAT_HAS_FFPLAY)
+    if (!dialog->isStarted()) {
+        dialog->close();
+        AppMessageDialog::show(this, AppMessageDialog::Kind::Warning,
+                               QStringLiteral("无法播放"),
+                               QStringLiteral("FFplay 渲染后端或视频文件不可用。"));
+    }
+    #endif
 }
 
 void MainWindow::openImagePreview(const QString& imagePath) {

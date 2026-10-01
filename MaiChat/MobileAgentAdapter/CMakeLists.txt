@@ -142,6 +142,49 @@ endif()
 if(ANDROID)
   target_link_libraries(maichat_mobile PRIVATE camera2ndk mediandk)
 endif()
+if(ANDROID OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
+  add_library(maichat_ffplay_hosted SHARED
+    ../Media/FfplayCompat/MaiFfplayEntry.c
+    ../Media/FfplayCompat/MaiFfplayThreading.cpp
+    ../Media/FfplayCompat/MaiFfplayRenderer.cpp
+    ../Media/FfplayCompat/MaiFfplayAudioMix.cpp
+    ../Media/FfplayCompat/MaiFfplayRendererBackend.cpp
+    ${ffmpeg_source}/fftools/cmdutils.c
+    ${ffmpeg_source}/fftools/opt_common.c)
+  if(ANDROID)
+    target_sources(maichat_ffplay_hosted PRIVATE
+      ../Media/FfplayCompat/MaiFfplayAudioAndroid.cpp)
+    target_link_libraries(maichat_ffplay_hosted PRIVATE
+      aaudio camera2ndk mediandk android log)
+  else()
+    target_sources(maichat_ffplay_hosted PRIVATE
+      ../Media/FfplayCompat/MaiFfplayAudioApple.cpp)
+    target_link_libraries(maichat_ffplay_hosted PRIVATE
+      "-framework AudioToolbox" "-framework CoreAudio"
+      "-framework CoreFoundation" "-framework CoreMedia"
+      "-framework CoreVideo" "-framework VideoToolbox")
+  endif()
+  add_dependencies(maichat_ffplay_hosted maichat_ffmpeg_build)
+  set_target_properties(maichat_ffplay_hosted PROPERTIES
+    C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN YES)
+  if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set_target_properties(maichat_ffplay_hosted PROPERTIES
+      BUILD_WITH_INSTALL_RPATH YES INSTALL_NAME_DIR "@rpath")
+  endif()
+  target_include_directories(maichat_ffplay_hosted PRIVATE
+    ../Media ../Media/FfplayCompat
+    ${ffmpeg_source}/fftools ${ffmpeg_build} ${ffmpeg_build}/install/include)
+  set_source_files_properties(
+    ../Media/FfplayCompat/MaiFfplayEntry.c
+    ${ffmpeg_source}/fftools/cmdutils.c
+    ${ffmpeg_source}/fftools/opt_common.c
+    PROPERTIES INCLUDE_DIRECTORIES ${ffmpeg_source})
+  target_link_libraries(maichat_ffplay_hosted PRIVATE
+    maichat_ffmpeg_avdevice maichat_ffmpeg_avfilter maichat_ffmpeg_avformat
+    maichat_ffmpeg_avcodec maichat_ffmpeg_swresample maichat_ffmpeg_swscale
+    maichat_ffmpeg_avutil z)
+endif()
 option(MAICHAT_MOBILE_TESTS "Build mobile adapter integration tests" OFF)
 if(MAICHAT_MOBILE_TESTS)
   enable_testing()

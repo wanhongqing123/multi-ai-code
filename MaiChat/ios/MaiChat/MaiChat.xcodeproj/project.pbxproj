@@ -69,6 +69,9 @@
 		1E57D3C22BD146AB8DE80F41 /* MobileImageTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE971E99F9FB4FD786142C14 /* MobileImageTools.swift */; };
 		F6C748B7303646F69BE1BC98 /* MobilePhotoTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D682AAFECD2400C8A4876B7 /* MobilePhotoTools.swift */; };
 		B9D4C6E8F01234567890ABCD /* MobilePermissionTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9D4C6E8F01234567890ABCD /* MobilePermissionTools.swift */; };
+		AAAABBBBCCCCDDDDEEEE0001 /* MaiFfplayIosBridge.cpp in Sources */ = {isa = PBXBuildFile; fileRef = AAAABBBBCCCCDDDDEEEE0002 /* MaiFfplayIosBridge.cpp */; };
+		AAAABBBBCCCCDDDDEEEE0004 /* MaiFfplayVideoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAAABBBBCCCCDDDDEEEE0005 /* MaiFfplayVideoView.swift */; };
+		AAAABBBBCCCCDDDDEEEE0006 /* ffplay-sample.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = AAAABBBBCCCCDDDDEEEE0007 /* ffplay-sample.mp4 */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -146,6 +149,10 @@
 		FE971E99F9FB4FD786142C14 /* MobileImageTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileImageTools.swift; sourceTree = "<group>"; };
 		0D682AAFECD2400C8A4876B7 /* MobilePhotoTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobilePhotoTools.swift; sourceTree = "<group>"; };
 		A9D4C6E8F01234567890ABCD /* MobilePermissionTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobilePermissionTools.swift; sourceTree = "<group>"; };
+		AAAABBBBCCCCDDDDEEEE0002 /* MaiFfplayIosBridge.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = Media/MaiFfplayIosBridge.cpp; sourceTree = "<group>"; };
+		AAAABBBBCCCCDDDDEEEE0003 /* MaiFfplayIosBridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Media/MaiFfplayIosBridge.h; sourceTree = "<group>"; };
+		AAAABBBBCCCCDDDDEEEE0005 /* MaiFfplayVideoView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Chat/MaiFfplayVideoView.swift; sourceTree = "<group>"; };
+		AAAABBBBCCCCDDDDEEEE0007 /* ffplay-sample.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = Resources/ffplay-sample.mp4; sourceTree = "<group>"; };
 		551A36DB80C7A7F2663F229D /* RemoteDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Diagnostics/RemoteDiagnostics.swift; sourceTree = "<group>"; };
 		59C1F4DABEBD721F3CB32385 /* LocalChatHistoryStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalChatHistoryStoreTests.swift; sourceTree = "<group>"; };
 		5C9893DE3EC5736AB5DC2BBD /* AIAssistantView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assistant/AIAssistantView.swift; sourceTree = "<group>"; };
@@ -208,6 +215,10 @@
 			isa = PBXGroup;
 			children = (
 				526904A96E6C39A06C68A18E /* AIAssistantModel.swift */,
+				AAAABBBBCCCCDDDDEEEE0002 /* MaiFfplayIosBridge.cpp */,
+				AAAABBBBCCCCDDDDEEEE0003 /* MaiFfplayIosBridge.h */,
+				AAAABBBBCCCCDDDDEEEE0005 /* MaiFfplayVideoView.swift */,
+				AAAABBBBCCCCDDDDEEEE0007 /* ffplay-sample.mp4 */,
 				63816AD21B434C5107F93E78 /* MaiChatTools */,
 				5C9893DE3EC5736AB5DC2BBD /* AIAssistantView.swift */,
 				4DF2A8369BE5503C5666FE18 /* AppDiagnosticLog.swift */,
@@ -471,6 +482,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				DEBCE768E14C523F47FC7CC5 /* Assets.xcassets in Resources */,
+				AAAABBBBCCCCDDDDEEEE0006 /* ffplay-sample.mp4 in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -604,6 +616,8 @@
 				1E57D3C22BD146AB8DE80F41 /* MobileImageTools.swift in Sources */,
 				F6C748B7303646F69BE1BC98 /* MobilePhotoTools.swift in Sources */,
 				B9D4C6E8F01234567890ABCD /* MobilePermissionTools.swift in Sources */,
+				AAAABBBBCCCCDDDDEEEE0001 /* MaiFfplayIosBridge.cpp in Sources */,
+				AAAABBBBCCCCDDDDEEEE0004 /* MaiFfplayVideoView.swift in Sources */,
 				8A3B76B3F5D189A4B1EEB33C /* AIAssistantView.swift in Sources */,
 				6C8CC7B0E521485EB1383FFA /* AppDiagnosticLog.swift in Sources */,
 				563F2D96FC7FE65D52984507 /* ChatView.swift in Sources */,
@@ -673,6 +687,7 @@
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"$(DERIVED_FILE_DIR)/libMaiMobileAgent.a",
+					"$(DERIVED_FILE_DIR)/MobileAgentAdapter-$(PLATFORM_NAME)-graphics/libmaichat_ffplay_hosted.dylib",
 					"-lc++",
 					"-liconv",
 					"-lz",
@@ -940,6 +955,7 @@
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"$(DERIVED_FILE_DIR)/libMaiMobileAgent.a",
+					"$(DERIVED_FILE_DIR)/MobileAgentAdapter-$(PLATFORM_NAME)-graphics/libmaichat_ffplay_hosted.dylib",
 					"-lc++",
 					"-liconv",
 					"-lz",

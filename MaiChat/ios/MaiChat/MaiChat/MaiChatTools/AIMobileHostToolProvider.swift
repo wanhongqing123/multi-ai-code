@@ -62,6 +62,23 @@ final class AIMobileHostToolProvider {
         }
 
         switch name {
+        case "maichat_play_video":
+            let path = Self.string(arguments, key: "path")
+            guard let source = AIAssistantPathPolicy.resolve(
+                path, workspacePath: AIAssistantModel.shared.workspacePath
+            ), FileManager.default.fileExists(atPath: source.path) else {
+                return .failure(code: "not_found", message: "video must be an accessible local file")
+            }
+            appState.agentVideoPresentation = MaiFfplayPresentation(path: source.path)
+            return Self.jsonSuccess(["opened": true])
+        case "maichat_video_command":
+            let action = Self.string(arguments, key: "action")
+            let percent = arguments["percent"] as? Double
+            guard MaiFfplayMobilePlayer.command(action, percent: percent) else {
+                return .failure(code: "invalid_input",
+                                message: "video command is unavailable or no video is open")
+            }
+            return Self.jsonSuccess(["accepted": true])
         case "maichat_list_contacts":
             return Self.listContacts(appState: appState, arguments: arguments)
         case "maichat_list_conversations":

@@ -64,8 +64,22 @@ typedef struct MaiVideoFrame {
     MaiVideoColorRange color_range;
 } MaiVideoFrame;
 
+// Straight-alpha RGBA subtitle canvas in decoded video coordinates. The
+// presenter copies the canvas before returning; pass NULL when no subtitle is
+// visible. Width and height must match the video frame.
+typedef struct MaiVideoSubtitle {
+    const uint8_t* rgba;
+    uint32_t width;
+    uint32_t height;
+    uint32_t stride;
+} MaiVideoSubtitle;
+
 bool maiGraphicsPresenterShowVideoFrame(uint64_t view_id, const MaiVideoFrame* frame,
                                         bool fill_view);
+bool maiGraphicsPresenterShowVideoFrameWithSubtitle(uint64_t view_id,
+                                                    const MaiVideoFrame* frame,
+                                                    const MaiVideoSubtitle* subtitle,
+                                                    bool fill_view);
 // Copies one decoded RGBA8 video frame into the Graphics queue. The caller may
 // reuse pixels after this call. stride must be at least width * 4. Frame
 // scheduling and audio synchronization belong to the media session; submitting

@@ -235,7 +235,11 @@ struct MaiChatApp: App {
             Group {
                 #if targetEnvironment(simulator)
                 if ProcessInfo.processInfo.arguments.contains("--ai-ui-test") {
-                    AIAssistantView()
+                    if ProcessInfo.processInfo.arguments.contains("--ffplay-ui-test") {
+                        MaiFfplayUITestRoot()
+                    } else {
+                        AIAssistantView()
+                    }
                 } else {
                     appContent
                 }

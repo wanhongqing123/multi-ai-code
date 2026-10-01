@@ -215,6 +215,14 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
         "required, and the access level (including approximate or precise location). A limited "
         "photo grant can still expose selected items. Location is foreground-only.",
         R"({"type":"object","properties":{"permission":{"type":"string","enum":["photos","camera","microphone","location","contacts","calendar","notifications"]}},"required":["permission"],"additionalProperties":false})");
+    add("maichat_play_video",
+        "Open a video from the Agent workspace in MaiChat's FFplay/Graphics popup. "
+        "IM video messages use the same player.",
+        R"({"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false})");
+    add("maichat_video_command",
+        "Control the currently open FFplay video: play, pause, step, relative or percent seek, "
+        "stream and filter cycling, mute, volume, fullscreen, or close.",
+        R"({"type":"object","properties":{"action":{"type":"string","enum":["play","pause","toggle_pause","step","seek_forward","seek_backward","seek_minute_forward","seek_minute_backward","seek_percent","next_audio","next_video","next_subtitle","next_program","next_filter","mute","volume_up","volume_down","fullscreen","close"]},"percent":{"type":"number","minimum":0,"maximum":100}},"required":["action"],"additionalProperties":false})");
 }
 
 void registerMobilePhotoTools(MaiToolRegistry& tools,

@@ -111,6 +111,30 @@ int main(int argc, char** argv) {
             passed = passed && atomic_load(&present_result) == 1;
         }
         if (passed) {
+            const uint8_t red[] = {255, 0, 0, 255, 255, 0, 0, 255,
+                                   255, 0, 0, 255, 255, 0, 0, 255};
+            const uint8_t subtitle[] = {0, 0, 255, 128, 0, 0, 0, 0,
+                                        0, 0, 0, 0, 0, 0, 0, 0};
+            MaiVideoFrame frame = {0};
+            frame.data[0] = red;
+            frame.linesize[0] = 8;
+            frame.width = frame.height = 2;
+            frame.format = MAI_VIDEO_PIXEL_RGBA;
+            MaiVideoSubtitle overlay = {subtitle, 2, 2, 8};
+            atomic_store(&present_result, 0);
+            passed = maiGraphicsPresenterShowVideoFrameWithSubtitle(id, &frame,
+                                                                    &overlay, false);
+            NSDate* deadline = [NSDate dateWithTimeIntervalSinceNow:8.0];
+            while (passed && atomic_load(&present_result) == 0 &&
+                   [deadline timeIntervalSinceNow] > 0.0)
+                [[NSRunLoop currentRunLoop]
+                    runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.02]];
+            passed = passed && atomic_load(&present_result) == 1;
+            overlay.stride = 7;
+            passed = passed && !maiGraphicsPresenterShowVideoFrameWithSubtitle(id, &frame,
+                                                                               &overlay, false);
+        }
+        if (passed) {
             MaiVideoPlayback* video = maiVideoPlaybackCreate(id, argv[4], onVideo, NULL);
             passed = video != NULL;
             NSDate* readyDeadline = [NSDate dateWithTimeIntervalSinceNow:8.0];

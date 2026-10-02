@@ -526,7 +526,7 @@ private struct AIMessageRow: View {
                 HStack {
                     Spacer(minLength: 30)
                     VStack(alignment: .leading, spacing: 10) {
-                        Text(message.text).font(.body).textSelection(.enabled)
+                        Text(message.text).font(.subheadline).textSelection(.enabled)
                         ForEach(Array(imagePaths.enumerated()), id: \.offset) { _, path in
                             AIWorkspaceImage(filePath: path)
                         }
@@ -543,7 +543,7 @@ private struct AIMessageRow: View {
                 ForEach(message.parts) { part in
                     if part.kind == "text", let text = part.text, !text.isEmpty {
                         MarkdownLikeText(text, retainsPreviousWhilePreparing: true,
-                                         bodyFont: .body, assistantTypography: true)
+                                         bodyFont: .subheadline, assistantTypography: true)
                     } else if part.kind == "reasoning", part.id == reasoningParts.first?.id,
                               !reasoningText.isEmpty {
                         AIExpandableBlock(title: "思考过程", systemImage: "brain") {
@@ -558,13 +558,13 @@ private struct AIMessageRow: View {
                                         Text("\(tool.tool ?? "工具") · \(toolStatus(tool.state))")
                                             .font(.subheadline.weight(.semibold))
                                         Text(tool.input ?? "")
-                                            .font(.system(.subheadline, design: .monospaced))
+                                            .font(.system(size: 14, design: .monospaced))
                                         if let output = tool.output, !output.isEmpty {
                                             Text(output)
-                                                .font(.system(.subheadline, design: .monospaced))
+                                                .font(.system(size: 14, design: .monospaced))
                                         }
                                         if let error = tool.error, !error.isEmpty {
-                                            Text(error).font(.subheadline).foregroundStyle(.red)
+                                            Text(error).font(.system(size: 14)).foregroundStyle(.red)
                                         }
                                     }
                                     if tool.id != toolParts.last?.id { Divider() }
@@ -593,11 +593,11 @@ private struct AIMessageRow: View {
                         HStack(spacing: 8) {
                             ProgressView().controlSize(.small)
                             Text("正在思考 · \(max(0, Int(context.date.timeIntervalSince1970) - Int(message.created / 1000))) 秒")
-                        }.font(.footnote).foregroundStyle(.secondary)
+                        }.font(.caption).foregroundStyle(.secondary)
                     }
                 } else {
                     HStack {
-                        Text(message.completed == 0 ? "已中断" : "用时 \(max(0, (message.completed - message.created) / 1000)) 秒").font(.footnote)
+                        Text(message.completed == 0 ? "已中断" : "用时 \(max(0, (message.completed - message.created) / 1000)) 秒").font(.caption)
                         Button { RemoteIMClipboard.writeText(message.text) } label: {
                             Image(systemName: "doc.on.doc")
                         }
@@ -810,6 +810,7 @@ private struct AIWorkspaceVideoCard: View {
     let filePath: String
     let open: () -> Void
     @State private var cover: UIImage?
+    @State private var videoSize: CGSize?
     @State private var durationSeconds = 0
 
     private var exists: Bool { FileManager.default.fileExists(atPath: filePath) }
@@ -819,7 +820,7 @@ private struct AIWorkspaceVideoCard: View {
             VStack(alignment: .leading, spacing: 6) {
                 ZStack {
                     if let cover {
-                        Image(uiImage: cover).resizable().scaledToFill()
+                        Image(uiImage: cover).resizable().scaledToFit()
                     } else {
                         LinearGradient(colors: [Color(red: 0.10, green: 0.17, blue: 0.27),
                                                 Color(red: 0.18, green: 0.32, blue: 0.47)],
@@ -841,12 +842,12 @@ private struct AIWorkspaceVideoCard: View {
                                alignment: .bottomTrailing)
                         .padding(8)
                 }
-                .frame(width: 220, height: 142)
+                .frame(width: previewSize.width, height: previewSize.height)
                 .clipped()
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 Text(exists ? URL(fileURLWithPath: filePath).lastPathComponent : "视频文件已丢失")
-                    .font(.subheadline).lineLimit(1).truncationMode(.middle)
-                    .frame(width: 220, alignment: .leading)
+                    .font(.system(size: 14)).lineLimit(1).truncationMode(.middle)
+                    .frame(width: previewSize.width, alignment: .leading)
             }
         }
         .buttonStyle(.plain)
@@ -856,19 +857,30 @@ private struct AIWorkspaceVideoCard: View {
         .task(id: filePath) {
             guard exists else { return }
             let asset = AVURLAsset(url: URL(fileURLWithPath: filePath))
+            if let track = try? await asset.loadTracks(withMediaType: .video).first,
+               let naturalSize = try? await track.load(.naturalSize),
+               let transform = try? await track.load(.preferredTransform) {
+                let displayed = CGRect(origin: .zero, size: naturalSize).applying(transform)
+                videoSize = CGSize(width: abs(displayed.width), height: abs(displayed.height))
+            }
             if let duration = try? await asset.load(.duration),
                duration.seconds.isFinite {
                 durationSeconds = max(0, Int(duration.seconds))
             }
             let generator = AVAssetImageGenerator(asset: asset)
             generator.appliesPreferredTrackTransform = true
-            generator.maximumSize = CGSize(width: 440, height: 284)
+            generator.maximumSize = CGSize(width: 440, height: 480)
             let time = CMTime(seconds: durationSeconds > 1 ? 0.5 : 0,
                               preferredTimescale: 600)
             if let image = try? await generator.image(at: time), !Task.isCancelled {
+                videoSize = CGSize(width: image.image.width, height: image.image.height)
                 cover = UIImage(cgImage: image.image)
             }
         }
+    }
+
+    private var previewSize: CGSize {
+        VideoBubbleSize.fitted(videoSize ?? .zero)
     }
 }
 
@@ -974,7 +986,7 @@ private struct AIExpandableBlock<Content: View>: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(title).font(.subheadline.weight(.medium)).lineLimit(1)
                         if let subtitle, !subtitle.isEmpty {
-                            Text(subtitle).font(.footnote).lineLimit(1)
+                            Text(subtitle).font(.caption).lineLimit(1)
                         }
                     }
                     Spacer()

@@ -3796,6 +3796,19 @@ private struct RemoteIMVideoStatusKey: Equatable {
     let revision: UInt64
 }
 
+enum VideoBubbleSize {
+    static let maximum = CGSize(width: 220, height: 240)
+    static let fallback = CGSize(width: 220, height: 142)
+
+    static func fitted(_ source: CGSize) -> CGSize {
+        guard source.width.isFinite, source.height.isFinite,
+              source.width > 0, source.height > 0 else { return fallback }
+        let scale = min(maximum.width / source.width, maximum.height / source.height)
+        return CGSize(width: max(1, (source.width * scale).rounded()),
+                      height: max(1, (source.height * scale).rounded()))
+    }
+}
+
 private struct RemoteIMVideoButton: View {
     let attachment: RemoteIMVideoAttachment
     let isIncoming: Bool
@@ -3830,19 +3843,21 @@ private struct VideoBubbleContent: View {
     let isIncoming: Bool
     let fileState: RemoteIMVideoFileState
     @EnvironmentObject private var appState: RemoteIMAppState
+    @State private var coverSize: CGSize?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             ZStack {
                 if let cover = attachment.coverPath {
                     RemoteIMAsyncImage(filePath: cover,
-                                       maximumPointSize: CGSize(width: 220, height: previewHeight),
+                                       maximumPointSize: previewSize,
                                        revision: appState.mediaFileRevision) { image in
-                        Image(uiImage: image).resizable().scaledToFill()
+                        Image(uiImage: image).resizable().scaledToFit()
+                            .task(id: image.size) { coverSize = image.size }
                     } placeholder: { _ in
                         Color.clear
                     }
-                    .frame(width: 220, height: previewHeight)
+                    .frame(width: previewSize.width, height: previewSize.height)
                     .clipped()
                     .accessibilityLabel("视频封面")
                     .accessibilityIdentifier("remote-im-video-cover")
@@ -3856,7 +3871,7 @@ private struct VideoBubbleContent: View {
                             .font(.system(size: 30, weight: .semibold))
                             .foregroundStyle(.white.opacity(0.72))
                     }
-                    .frame(width: 220, height: previewHeight)
+                    .frame(width: previewSize.width, height: previewSize.height)
                 }
 
                 if fileState.isPlayable {
@@ -3899,13 +3914,14 @@ private struct VideoBubbleContent: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                     .padding(8)
             }
-            .frame(width: 220, height: previewHeight)
+            .frame(width: previewSize.width, height: previewSize.height)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .background(Color(red: 0.945, green: 0.957, blue: 0.973), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
             Text(videoStatusText)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(RemoteIMStyle.textSecondary)
+                .frame(width: previewSize.width, alignment: .leading)
                 .accessibilityIdentifier("remote-im-video-status")
         }
         .contentShape(Rectangle())
@@ -3917,10 +3933,9 @@ private struct VideoBubbleContent: View {
         return isIncoming ? "视频文件已丢失，暂时无法播放" : "本地视频文件已丢失"
     }
 
-    private var previewHeight: CGFloat {
-        guard attachment.width > 0, attachment.height > 0 else { return 142 }
-        let ratio = CGFloat(attachment.width) / CGFloat(attachment.height)
-        return min(180, max(118, 220 / max(0.35, ratio)))
+    private var previewSize: CGSize {
+        VideoBubbleSize.fitted(coverSize ?? CGSize(width: attachment.width,
+                                                 height: attachment.height))
     }
 
     private var durationText: String {
@@ -4220,7 +4235,7 @@ struct MarkdownLikeText: View {
                 case .sourceNote(let text):
                     MarkdownTrailingDate(timestamp: timestamp) {
                         MarkdownInlineText(text: text)
-                            .font(assistantTypography ? .subheadline.weight(.semibold)
+                            .font(assistantTypography ? .footnote.weight(.semibold)
                                                       : .system(size: 12, weight: .semibold))
                             .foregroundStyle(RemoteIMStyle.blue)
                             .padding(.horizontal, 6)
@@ -4345,7 +4360,7 @@ private struct MarkdownInlineText: View {
                 .filter { $0.inlinePresentationIntent?.contains(.code) == true }
                 .map(\.range)
             for range in codeRanges {
-                rendered[range].font = .system(.subheadline, design: .monospaced)
+                rendered[range].font = .system(size: 14, design: .monospaced)
             }
         }
         if let trailingTimestamp {
@@ -4392,7 +4407,7 @@ private struct MarkdownQuoteView: View {
         VStack(alignment: .leading, spacing: 6) {
             if let kind = quote.kind {
                 Label(kind.title, systemImage: symbol)
-                    .font(assistantTypography ? .subheadline.weight(.semibold)
+                    .font(assistantTypography ? .system(size: 14, weight: .semibold)
                                               : .system(size: 13, weight: .semibold))
                     .foregroundStyle(accent)
             }
@@ -4440,9 +4455,8 @@ private struct MarkdownHeadingView: View {
 
     private var assistantFont: Font {
         switch level {
-        case 1: .title3.weight(.semibold)
-        case 2: .headline
-        default: .body.weight(.semibold)
+        case 1: .headline
+        default: .subheadline.weight(.semibold)
         }
     }
 }
@@ -4465,12 +4479,12 @@ private struct MarkdownListView: View {
                             Text(item.marker).foregroundStyle(RemoteIMStyle.blue)
                         }
                     }
-                    .font(assistantTypography ? .body.weight(.semibold)
+                    .font(assistantTypography ? .subheadline.weight(.semibold)
                                               : .system(size: 13, weight: .semibold))
                     .frame(minWidth: 16, alignment: .trailing)
                     MarkdownInlineText(text: item.text,
                         trailingTimestamp: item.id == list.items.last?.id ? trailingTimestamp : nil)
-                        .font(assistantTypography ? .body : .system(size: 14, weight: .regular))
+                        .font(assistantTypography ? .subheadline : .system(size: 14, weight: .regular))
                         .foregroundStyle(RemoteIMStyle.textPrimary)
                         .lineSpacing(4)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -4499,7 +4513,7 @@ private struct MarkdownCodeBlock: View {
                 Text("\(lineCount) 行")
                     .foregroundStyle(RemoteIMStyle.textSecondary)
             }
-            .font(assistantTypography ? .footnote.weight(.medium)
+            .font(assistantTypography ? .caption.weight(.medium)
                                       : .system(size: 11, weight: .medium))
             .foregroundStyle(Color(red: 0.11, green: 0.31, blue: 0.54))
             .padding(.horizontal, 12)
@@ -4509,7 +4523,7 @@ private struct MarkdownCodeBlock: View {
 
             ScrollView(.horizontal, showsIndicators: true) {
                 Text(code.isEmpty ? " " : code)
-                    .font(assistantTypography ? .system(.subheadline, design: .monospaced)
+                    .font(assistantTypography ? .system(size: 14, design: .monospaced)
                                               : .system(size: 12, weight: .regular, design: .monospaced))
                     .lineSpacing(4)
                     .foregroundStyle(RemoteIMStyle.textPrimary)
@@ -4580,7 +4594,7 @@ private struct MarkdownTableView: View {
     private func tableCell(_ text: String, isHeader: Bool, width: CGFloat) -> some View {
         MarkdownInlineText(text: text)
             .font(assistantTypography
-                ? (isHeader ? .body.weight(.semibold) : .body)
+                ? (isHeader ? .subheadline.weight(.semibold) : .subheadline)
                 : .system(size: 12, weight: isHeader ? .semibold : .regular))
             .foregroundStyle(RemoteIMStyle.textPrimary)
             .lineLimit(nil)

@@ -261,7 +261,7 @@ struct MessageScrollPositionReader: UIViewRepresentable {
                     self.updatePosition()
                 }
             }
-            followsLatest = allowsBottomFollowing
+            followsLatest = allowsBottomFollowing && restoreInitialScrollableHistory
             next.panGestureRecognizer.addTarget(self, action: #selector(panChanged(_:)))
             observations = [
                 next.observe(\.contentOffset, options: [.new]) { [weak self] _, _ in
@@ -374,7 +374,7 @@ struct MessageScrollPositionReader: UIViewRepresentable {
             // user scroll relinquishes the latest-message intent during that transition.
             if scroll.isTracking || scroll.isDragging {
                 userDidBeginScrolling()
-            } else if nearBottom {
+            } else if nearBottom && restoreInitialScrollableHistory && allowsBottomFollowing {
                 followsLatest = true
             }
             guard nearBottom != lastNearBottom else { return }

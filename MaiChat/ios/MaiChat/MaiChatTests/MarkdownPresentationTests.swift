@@ -437,6 +437,11 @@ final class MarkdownPresentationTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(30))
         XCTAssertEqual(unchanged.contentOffset.y, 3300, accuracy: 1,
                        "Without initial restoration the loaded conversation stays beyond its rows")
+        unchanged.contentOffset.y = 900
+        unchanged.contentSize.height = 3200
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(unchanged.contentOffset.y, 900, accuracy: 1,
+                       "A caller without latest intent must keep its older programmatic position")
 
         let coordinator = MessageScrollPositionReader.Coordinator { _ in }
         coordinator.restoreInitialScrollableHistory = true

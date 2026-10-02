@@ -16,8 +16,8 @@ enum RemoteIMActivityDurationFormatter {
 }
 
 enum RemoteIMClipboard {
-    static func writeText(_ text: String) {
-        UIPasteboard.general.setItems(
+    static func writeText(_ text: String, to pasteboard: UIPasteboard = .general) {
+        pasteboard.setItems(
             [[
                 UTType.utf8PlainText.identifier: text,
                 UTType.plainText.identifier: text,

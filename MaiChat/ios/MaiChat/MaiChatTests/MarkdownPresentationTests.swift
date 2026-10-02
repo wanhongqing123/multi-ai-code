@@ -35,22 +35,36 @@ final class MarkdownPresentationTests: XCTestCase {
     }
 
     func testMessageClipboardPublishesPlainTextForComposerPaste() {
-        defer { UIPasteboard.general.items = [] }
+        let name = UIPasteboard.Name(rawValue: "maichat-clipboard-test-\(UUID())")
+        guard let pasteboard = UIPasteboard(name: name, create: true) else {
+            XCTFail("Could not create a private test pasteboard")
+            return
+        }
+        defer { UIPasteboard.remove(withName: name) }
         let copied = "第一行\n第二行"
-        RemoteIMClipboard.writeText(copied)
+        RemoteIMClipboard.writeText(copied, to: pasteboard)
 
-        XCTAssertEqual(UIPasteboard.general.string, copied)
-        let types = Set(UIPasteboard.general.types)
+        XCTAssertEqual(pasteboard.string, copied)
+        let types = Set(pasteboard.types)
         XCTAssertTrue(types.contains(UTType.utf8PlainText.identifier))
         XCTAssertTrue(types.contains(UTType.plainText.identifier))
     }
 
     @MainActor
-    func testComposerTextViewCanPasteCopiedMessageText() {
+    func testComposerTextViewCanPasteCopiedMessageText() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("The simulator's general pasteboard cannot reliably drive UITextView.paste")
+        #else
         defer { UIPasteboard.general.items = [] }
         let copied = "选择复制的正文"
         RemoteIMClipboard.writeText(copied)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 400))
+        window.rootViewController = UIViewController()
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
         let textView = UITextView()
+        window.rootViewController?.view.addSubview(textView)
+        XCTAssertTrue(textView.becomeFirstResponder())
         textView.pasteConfiguration = UIPasteConfiguration(
             acceptableTypeIdentifiers: [
                 UTType.utf8PlainText.identifier,
@@ -62,6 +76,7 @@ final class MarkdownPresentationTests: XCTestCase {
         textView.paste(nil)
 
         XCTAssertEqual(textView.text, copied)
+        #endif
     }
 
     func testAIComposerReturnBuildsTheSubmittedText() {
@@ -361,6 +376,7 @@ final class MarkdownPresentationTests: XCTestCase {
         let marker = UIView()
         scroll.addSubview(marker)
         let coordinator = MessageScrollPositionReader.Coordinator { _ in }
+        coordinator.restoreInitialScrollableHistory = true
         coordinator.install(from: marker)
         defer { coordinator.uninstall() }
         // Keyboard opens, then closes; no new messages arrive.
@@ -628,6 +644,7 @@ final class MarkdownPresentationTests: XCTestCase {
     private struct HistoryHarness: View {
         @ObservedObject var model: HistoryModel
         let probe: HistoryProbe
+        var followsLatest = true
         var body: some View {
             ScrollViewReader { proxy in
                 ScrollView {
@@ -649,7 +666,8 @@ final class MarkdownPresentationTests: XCTestCase {
                         }
                         Color.clear.frame(height: 1).id("bottom")
                             .background(MessageScrollPositionReader(
-                                restoreInitialScrollableHistory: !model.items.isEmpty
+                                restoreInitialScrollableHistory: followsLatest && !model.items.isEmpty,
+                                allowsBottomFollowing: followsLatest
                             ) { probe.nearBottom = $0 })
                     }
                 }
@@ -909,8 +927,11 @@ final class MarkdownPresentationTests: XCTestCase {
     }
 
     @MainActor
-    private func historyWindow(_ model: HistoryModel, _ probe: HistoryProbe) -> UIWindow {
-        let controller = UIHostingController(rootView: HistoryHarness(model: model, probe: probe))
+    private func historyWindow(_ model: HistoryModel, _ probe: HistoryProbe,
+                               followsLatest: Bool = true) -> UIWindow {
+        let controller = UIHostingController(
+            rootView: HistoryHarness(model: model, probe: probe, followsLatest: followsLatest)
+        )
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 640))
         window.rootViewController = controller; window.makeKeyAndVisible()
         controller.view.layoutIfNeeded()
@@ -934,7 +955,9 @@ final class MarkdownPresentationTests: XCTestCase {
     func testHistoryRenderingIsBoundedAndLatestRowRemainsReachable() async throws {
         for count in [350, 1000] {
             let probe = HistoryProbe(), model = HistoryModel(0..<count)
-            let window = historyWindow(model, probe)
+            // This test drives ScrollViewReader to both old and new rows directly, as search
+            // does. Search disables automatic latest following in the product UI.
+            let window = historyWindow(model, probe, followsLatest: false)
             defer { window.isHidden = true; window.rootViewController = nil }
             try await Task.sleep(for: .milliseconds(250))
             print("history initial loaded=\(count) mounted=\(probe.mounted.count)")

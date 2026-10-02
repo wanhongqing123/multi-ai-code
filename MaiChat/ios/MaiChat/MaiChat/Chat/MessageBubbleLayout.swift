@@ -179,6 +179,7 @@ struct MessageScrollPositionReader: UIViewRepresentable {
     var onViewportResizeNeedsBottom: (() -> Void)? = nil
     var onUserScroll: (() -> Void)? = nil
     var onUserReachedTop: (() -> Void)? = nil
+    var onViewportMeasured: ((CGFloat, CGFloat, CGFloat, CGFloat, Bool) -> Void)? = nil
     let onNearBottomChanged: (Bool) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -188,6 +189,7 @@ struct MessageScrollPositionReader: UIViewRepresentable {
         coordinator.onViewportResizeNeedsBottom = onViewportResizeNeedsBottom
         coordinator.onUserScroll = onUserScroll
         coordinator.onUserReachedTop = onUserReachedTop
+        coordinator.onViewportMeasured = onViewportMeasured
         return coordinator
     }
     func makeUIView(context: Context) -> UIView {
@@ -201,6 +203,7 @@ struct MessageScrollPositionReader: UIViewRepresentable {
         context.coordinator.onViewportResizeNeedsBottom = onViewportResizeNeedsBottom
         context.coordinator.onUserScroll = onUserScroll
         context.coordinator.onUserReachedTop = onUserReachedTop
+        context.coordinator.onViewportMeasured = onViewportMeasured
         context.coordinator.setAllowsBottomFollowing(allowsBottomFollowing)
         context.coordinator.setRestoreInitialScrollableHistory(restoreInitialScrollableHistory)
         install(view, context.coordinator)
@@ -222,6 +225,7 @@ struct MessageScrollPositionReader: UIViewRepresentable {
         var onViewportResizeNeedsBottom: (() -> Void)?
         var onUserScroll: (() -> Void)?
         var onUserReachedTop: (() -> Void)?
+        var onViewportMeasured: ((CGFloat, CGFloat, CGFloat, CGFloat, Bool) -> Void)?
         private weak var scroll: UIScrollView?
         private weak var contentMarker: UIView?
         private var observations: [NSKeyValueObservation] = []
@@ -399,6 +403,8 @@ struct MessageScrollPositionReader: UIViewRepresentable {
                 scroll.adjustedContentInset.bottom
                 - scroll.contentOffset.y - scroll.bounds.height
             let nearBottom = remaining <= 60
+            onViewportMeasured?(scroll.contentSize.height, scroll.bounds.height,
+                                scroll.contentOffset.y, remaining, nearBottom)
             // Layout can temporarily change contentSize before bounds. Only a real
             // user scroll relinquishes the latest-message intent during that transition.
             if scroll.isTracking || scroll.isDragging {

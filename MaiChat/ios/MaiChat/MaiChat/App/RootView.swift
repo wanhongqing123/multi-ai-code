@@ -255,9 +255,11 @@ struct RootView: View {
 
     private func openAssistant() {
         if hasOpenedAssistant {
+            logAIHistoryEvent("open reused selected=\(AIAssistantModel.shared.selected) last=\(AIAssistantModel.shared.messages.last?.id ?? "none")")
             selectedTab = .assistant
             return
         }
+        logAIHistoryEvent("open first begin tab=\(selectedTab)")
         assistantOpenGeneration += 1
         let generation = assistantOpenGeneration
         let origin = selectedTab
@@ -266,6 +268,7 @@ struct RootView: View {
             guard assistantOpenGeneration == generation,
                   selectedTab == origin,
                   !appState.shouldShowInitialLogin else { return }
+            logAIHistoryEvent("open first visible selected=\(AIAssistantModel.shared.selected) count=\(AIAssistantModel.shared.messages.count) last=\(AIAssistantModel.shared.messages.last?.id ?? "none")")
             selectedTab = .assistant
         }
     }

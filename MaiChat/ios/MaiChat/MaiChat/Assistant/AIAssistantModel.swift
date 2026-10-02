@@ -9,6 +9,12 @@ import UIKit
 import UniformTypeIdentifiers
 import Vision
 
+func logAIHistoryEvent(_ message: @autoclosure () -> String) {
+    #if DEBUG
+    NSLog("[AIHistory] %@", message())
+    #endif
+}
+
 struct AIModelSettings: Codable, Sendable, Equatable {
     var baseUrl = "https://open.bigmodel.cn/api/coding/paas/v4"
     var model = "glm-5.3"
@@ -397,7 +403,10 @@ final class AIAssistantModel: ObservableObject {
     }
 
     func prepareFirstPage() async {
-        if historyLoaded { return }
+        if historyLoaded {
+            logAIHistoryEvent("prepare skip selected=\(selected) count=\(messages.count)")
+            return
+        }
         if let initialPreparation {
             await initialPreparation.value
             return
@@ -415,12 +424,16 @@ final class AIAssistantModel: ObservableObject {
                     configured = summary.configured ?? false
                     selected = sessions.first?.id ?? ""
                 }
+                logAIHistoryEvent("prepare selected=\(selected) sessions=\(sessions.count)")
                 guard !selected.isEmpty else { historyLoaded = true; return }
                 let session = selected
                 if let newestID = try await showNewestMessage(for: session) {
                     pendingInitialPage = (session, newestID)
                 }
-            } catch { self.error = error.localizedDescription }
+            } catch {
+                logAIHistoryEvent("prepare error=\(error.localizedDescription)")
+                self.error = error.localizedDescription
+            }
         }
         initialPreparation = task
         await task.value
@@ -482,6 +495,7 @@ final class AIAssistantModel: ObservableObject {
         messages = Array(latest.reversed())
         historyLoaded = true
         scrollTargetMessageID = latest.first?.id
+        logAIHistoryEvent("first-page session=\(session) count=\(latest.count) newest=\(latest.first?.id ?? "none") role=\(latest.first?.role ?? "none") parts=\(latest.first?.parts.count ?? 0)")
         return latest.first?.id
     }
 
@@ -492,8 +506,12 @@ final class AIAssistantModel: ObservableObject {
             guard selected == session else { return }
             mergeMessages(earlier)
             hasOlderMessages = earlier.count == 29
+            logAIHistoryEvent("older-page session=\(session) added=\(earlier.count) first=\(messages.first?.id ?? "none") last=\(messages.last?.id ?? "none")")
             await refresh(force: true)
-        } catch { self.error = error.localizedDescription }
+        } catch {
+            logAIHistoryEvent("older-page error=\(error.localizedDescription)")
+            self.error = error.localizedDescription
+        }
     }
 
     private func mergeMessages(_ page: [AIMessage]) {

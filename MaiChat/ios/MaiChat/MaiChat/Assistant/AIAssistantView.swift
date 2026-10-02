@@ -53,7 +53,7 @@ struct AIAssistantView: View {
                 if !model.ready {
                     Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    AIAssistantTimeline(
+                    AIAssistantMessageList(
                         model: model,
                         focusController: composerFocusController,
                         isAttachmentPanelPresented: $isAttachmentPanelPresented,
@@ -311,9 +311,27 @@ struct AIAssistantView: View {
     }
 }
 
+private final class AIMessageViewportLog {
+    private var session = ""
+    private var visibleHeight = -1
+    private var nearBottom: Bool?
+
+    func record(session: String, content: CGFloat, visible: CGFloat,
+                offset: CGFloat, remaining: CGFloat, nearBottom: Bool) {
+        let height = Int(visible.rounded())
+        guard self.session != session || visibleHeight != height || self.nearBottom != nearBottom else {
+            return
+        }
+        self.session = session
+        visibleHeight = height
+        self.nearBottom = nearBottom
+        logAIHistoryEvent("viewport session=\(session) content=\(Int(content)) visible=\(height) offset=\(Int(offset)) remaining=\(Int(remaining)) nearBottom=\(nearBottom)")
+    }
+}
+
 // Owns AI message positioning. Data refresh supplies stable message IDs;
 // keyboard resizing and streamed parts never replace the current scroll intent.
-private struct AIAssistantTimeline: View {
+private struct AIAssistantMessageList: View {
     @ObservedObject var model: AIAssistantModel
     let focusController: AIComposerFocusController
     @Binding var isAttachmentPanelPresented: Bool
@@ -323,6 +341,7 @@ private struct AIAssistantTimeline: View {
     // A send first shows its user bubble; the assistant becomes the target only
     // after it has a visible part instead of an empty in-progress record.
     @State private var sentUserMessageID: String?
+    @State private var viewportLog = AIMessageViewportLog()
 
     var body: some View {
         GeometryReader { geometry in
@@ -333,7 +352,7 @@ private struct AIAssistantTimeline: View {
                             welcome
                         }
                         if !model.messages.isEmpty {
-                            LazyVStack(alignment: .leading, spacing: 24) {
+                            VStack(alignment: .leading, spacing: 24) {
                                 ForEach(model.messages) { message in
                                     AIMessageRow(message: message,
                                                  workspacePath: model.workspacePath)
@@ -349,30 +368,44 @@ private struct AIAssistantTimeline: View {
                             AIQuestionCard(question: question, model: model)
                                 .id(question.id)
                         }
-                        Color.clear.frame(height: 1)
-                            .background(MessageScrollPositionReader(
-                                restoreInitialScrollableHistory: false,
-                                allowsBottomFollowing: false,
-                                onUserScroll: {
-                                    followsLatest = false
-                                    sentUserMessageID = nil
-                                },
-                                onUserReachedTop: {
-                                    guard prependAnchorID == nil,
-                                          let anchor = model.messages.first?.id else { return }
-                                    prependAnchorID = anchor
-                                    Task {
-                                        await model.loadOlderMessages()
-                                        if model.messages.first?.id == anchor {
-                                            prependAnchorID = nil
-                                        }
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.top, 18)
+                    .padding(.bottom, 24)
+                    .frame(minHeight: geometry.size.height, alignment: .bottom)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(alignment: .bottom) {
+                        MessageScrollPositionReader(
+                            restoreInitialScrollableHistory: isActive && followsLatest &&
+                                sentUserMessageID == nil && !model.messages.isEmpty,
+                            allowsBottomFollowing: isActive && followsLatest &&
+                                sentUserMessageID == nil,
+                            onUserScroll: {
+                                logAIHistoryEvent("user-scroll session=\(model.selected)")
+                                followsLatest = false
+                                sentUserMessageID = nil
+                            },
+                            onUserReachedTop: {
+                                guard prependAnchorID == nil,
+                                      let anchor = model.messages.first?.id else { return }
+                                prependAnchorID = anchor
+                                Task {
+                                    await model.loadOlderMessages()
+                                    if model.messages.first?.id == anchor {
+                                        prependAnchorID = nil
                                     }
                                 }
-                            ) { nearBottom in
-                                if nearBottom { followsLatest = true }
-                            })
+                            },
+                            onViewportMeasured: { content, viewport, offset, remaining, nearBottom in
+                                viewportLog.record(session: model.selected, content: content,
+                                                   visible: viewport, offset: offset,
+                                                   remaining: remaining, nearBottom: nearBottom)
+                            }
+                        ) { nearBottom in
+                            if nearBottom { followsLatest = true }
+                        }
+                        .frame(height: 1)
                     }
-                    .padding(18)
                 }
                 .contentShape(Rectangle())
                 .onTapGesture {
@@ -380,17 +413,12 @@ private struct AIAssistantTimeline: View {
                     isAttachmentPanelPresented = false
                 }
                 .onAppear {
-                    if isActive, let latest = newestContentID {
-                        position(at: latest, proxy: proxy, anchor: .bottom)
-                    }
+                    logAIHistoryEvent("message-list appear session=\(model.selected) count=\(model.messages.count) first=\(model.messages.first?.id ?? "none") last=\(model.messages.last?.id ?? "none")")
                 }
                 .onChange(of: model.messages.first?.id) { _ in
                     if let anchor = prependAnchorID {
                         prependAnchorID = nil
                         position(at: anchor, proxy: proxy, anchor: .top)
-                    } else if followsLatest, sentUserMessageID == nil,
-                              let latest = newestContentID {
-                        position(at: latest, proxy: proxy, anchor: .bottom)
                     }
                 }
                 .onChange(of: model.scrollRequest) { _ in
@@ -411,29 +439,6 @@ private struct AIAssistantTimeline: View {
                         }
                         sentUserMessageID = nil
                     }
-                    if followsLatest, let target = newestContentID {
-                        position(at: target, proxy: proxy, anchor: .bottom)
-                    }
-                }
-                .onChange(of: model.messages.last?.id) { _ in
-                    guard followsLatest, sentUserMessageID == nil,
-                          let latest = newestContentID else { return }
-                    position(at: latest, proxy: proxy, anchor: .bottom)
-                }
-                .onChange(of: model.permissions) { _ in
-                    guard followsLatest, sentUserMessageID == nil,
-                          let latest = newestContentID else { return }
-                    position(at: latest, proxy: proxy, anchor: .bottom)
-                }
-                .onChange(of: model.questions) { _ in
-                    guard followsLatest, sentUserMessageID == nil,
-                          let latest = newestContentID else { return }
-                    position(at: latest, proxy: proxy, anchor: .bottom)
-                }
-                .onChange(of: geometry.size.height) { _ in
-                    guard followsLatest, sentUserMessageID == nil,
-                          let latest = newestContentID else { return }
-                    position(at: latest, proxy: proxy, anchor: .bottom)
                 }
                 .onChange(of: model.selected) { _ in
                     prependAnchorID = nil
@@ -444,22 +449,16 @@ private struct AIAssistantTimeline: View {
                     guard active else { return }
                     sentUserMessageID = nil
                     followsLatest = true
-                    if let latest = newestContentID {
-                        position(at: latest, proxy: proxy, anchor: .bottom)
-                    }
                 }
             }
         }
     }
 
     private func position(at id: String, proxy: ScrollViewProxy, anchor: UnitPoint) {
+        logAIHistoryEvent("scroll-request session=\(model.selected) target=\(id) first=\(model.messages.first?.id ?? "none") last=\(model.messages.last?.id ?? "none")")
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
         withTransaction(transaction) { proxy.scrollTo(id, anchor: anchor) }
-    }
-
-    private var newestContentID: String? {
-        model.questions.last?.id ?? model.permissions.last?.id ?? model.messages.last?.id
     }
 
     private var welcome: some View {
@@ -689,65 +688,61 @@ private struct AIMessageRow: View {
                     .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))
                 }
             } else {
-                ForEach(message.parts) { part in
-                    if part.kind == "text", let text = part.text, !text.isEmpty {
-                        MarkdownLikeText(text, retainsPreviousWhilePreparing: true,
-                                         bodyFont: AssistantMessageFont.body, assistantTypography: true)
-                    } else if part.kind == "reasoning", part.id == reasoningParts.first?.id,
-                              !reasoningText.isEmpty {
-                        AIExpandableBlock(title: "思考过程", systemImage: "brain") {
-                            Text(reasoningText)
-                                .font(AssistantMessageFont.detail)
-                                .lineSpacing(5)
-                                .textSelection(.enabled)
-                        }
-                    } else if part.kind == "tool", part.id == toolParts.first?.id {
-                        AIExpandableBlock(title: "工具调用 \(toolParts.count) 次 · \(toolGroupStatus)",
-                                          subtitle: toolSummary, systemImage: "terminal") {
-                            VStack(alignment: .leading, spacing: 10) {
-                                ForEach(toolParts) { tool in
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        Text("\(tool.tool ?? "工具") · \(toolStatus(tool.state))")
-                                            .font(AssistantMessageFont.detail.weight(.semibold))
-                                        Text(tool.input ?? "")
+                if !reasoningText.isEmpty {
+                    AIReasoningDisclosure(text: reasoningText,
+                                          active: message.active,
+                                          answerStarted: hasVisibleAnswerText,
+                                          durationSeconds: reasoningDurationSeconds)
+                }
+                if !toolParts.isEmpty {
+                    AIExpandableBlock(title: "工具调用 \(toolParts.count) 次 · \(toolGroupStatus)",
+                                      subtitle: toolSummary, systemImage: "terminal") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            ForEach(toolParts) { tool in
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text("\(tool.tool ?? "工具") · \(toolStatus(tool.state))")
+                                        .font(AssistantMessageFont.detail.weight(.semibold))
+                                    Text(tool.input ?? "")
+                                        .font(AssistantMessageFont.detailMonospaced)
+                                    if let output = tool.output, !output.isEmpty {
+                                        Text(output)
                                             .font(AssistantMessageFont.detailMonospaced)
-                                        if let output = tool.output, !output.isEmpty {
-                                            Text(output)
-                                                .font(AssistantMessageFont.detailMonospaced)
-                                        }
-                                        if let error = tool.error, !error.isEmpty {
-                                            Text(error).font(AssistantMessageFont.detail).foregroundStyle(.red)
-                                        }
                                     }
-                                    if tool.id != toolParts.last?.id { Divider() }
+                                    if let error = tool.error, !error.isEmpty {
+                                        Text(error).font(AssistantMessageFont.detail).foregroundStyle(.red)
+                                    }
                                 }
+                                if tool.id != toolParts.last?.id { Divider() }
                             }
-                            .textSelection(.enabled).padding(10)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color(uiColor: .secondarySystemBackground),
-                                        in: RoundedRectangle(cornerRadius: 8))
                         }
-                        ForEach(toolParts) { tool in
-                            if let path = pdfArtifactPath(for: tool) {
-                                AIPDFArtifactButton(path: path) {
-                                    if let url = validatedPDFURL(path: path) {
-                                        pdfPreview = AIPDFPreviewItem(url: url)
-                                    } else {
-                                        pdfPreviewError = true
-                                    }
+                        .textSelection(.enabled).padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color(uiColor: .secondarySystemBackground),
+                                    in: RoundedRectangle(cornerRadius: 8))
+                    }
+                    ForEach(toolParts) { tool in
+                        if let path = pdfArtifactPath(for: tool) {
+                            AIPDFArtifactButton(path: path) {
+                                if let url = validatedPDFURL(path: path) {
+                                    pdfPreview = AIPDFPreviewItem(url: url)
+                                } else {
+                                    pdfPreviewError = true
                                 }
                             }
                         }
                     }
                 }
-                if message.active {
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
-                        HStack(spacing: 8) {
-                            ProgressView().controlSize(.small)
-                            Text("正在思考 · \(max(0, Int(context.date.timeIntervalSince1970) - Int(message.created / 1000))) 秒")
-                        }.font(AssistantMessageFont.metadata).foregroundStyle(.secondary)
+                ForEach(message.parts) { part in
+                    if part.kind == "text", let text = part.text, !text.isEmpty {
+                        MarkdownLikeText(text, retainsPreviousWhilePreparing: true,
+                                         bodyFont: AssistantMessageFont.body, assistantTypography: true)
                     }
-                } else {
+                }
+                if message.active && reasoningText.isEmpty && toolParts.isEmpty &&
+                    !hasVisibleAnswerText {
+                    AIThinkingIndicator()
+                }
+                if !message.active {
                     HStack {
                         Text(message.completed == 0 ? "已中断" : "用时 \(max(0, (message.completed - message.created) / 1000)) 秒")
                             .font(AssistantMessageFont.metadata)
@@ -781,6 +776,15 @@ private struct AIMessageRow: View {
                   !text.isEmpty, seen.insert(text).inserted else { return nil }
             return text
         }.joined(separator: "\n\n")
+    }
+    private var reasoningDurationSeconds: Int64? {
+        guard message.completed > message.created else { return nil }
+        return (message.completed - message.created) / 1000
+    }
+    private var hasVisibleAnswerText: Bool {
+        message.parts.contains { part in
+            part.kind == "text" && !(part.text ?? "").isEmpty
+        }
     }
     private var toolParts: [AIPart] {
         message.parts.filter { $0.kind == "tool" }
@@ -1113,6 +1117,68 @@ private struct AIImagePreviewOverlay: View {
             }
         }
         .onChange(of: filePath) { _ in failed = false }
+    }
+}
+
+private struct AIThinkingIndicator: View {
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.35)) { context in
+            let highlighted = Int(context.date.timeIntervalSince1970 * 3) % 3
+            HStack(spacing: 5) {
+                ForEach(0..<3, id: \.self) { index in
+                    Circle()
+                        .fill(Color.secondary.opacity(index == highlighted ? 0.8 : 0.25))
+                        .frame(width: 6, height: 6)
+                }
+            }
+            .frame(height: 24)
+            .accessibilityLabel("正在思考")
+        }
+    }
+}
+
+private struct AIReasoningDisclosure: View {
+    let text: String
+    let active: Bool
+    let answerStarted: Bool
+    let durationSeconds: Int64?
+    @State private var manualExpanded: Bool?
+
+    private var expanded: Bool { manualExpanded ?? (active && !answerStarted) }
+    private var title: String {
+        if active && !answerStarted { return "正在思考" }
+        if let durationSeconds { return "已思考（用时 \(durationSeconds) 秒）" }
+        return "已思考"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button {
+                withAnimation(.easeOut(duration: 0.16)) { manualExpanded = !expanded }
+            } label: {
+                HStack(spacing: 8) {
+                    Text(title)
+                    Image(systemName: "chevron.right")
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                }
+                .font(AssistantMessageFont.detail)
+                .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            if expanded {
+                Text(text)
+                    .font(AssistantMessageFont.detail)
+                    .lineSpacing(5)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .padding(.leading, 16)
+                    .overlay(alignment: .leading) {
+                        Rectangle().fill(Color.secondary.opacity(0.25)).frame(width: 2)
+                    }
+            }
+        }
+        .onChange(of: answerStarted) { if $0 { manualExpanded = nil } }
+        .onChange(of: active) { if !$0 { manualExpanded = nil } }
     }
 }
 

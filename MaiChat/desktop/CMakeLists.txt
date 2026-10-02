@@ -231,7 +231,7 @@ if(WIN32 OR APPLE)
     if(WIN32)
       set(BUILD_LIST "core,imgproc,imgcodecs,dnn,objdetect" CACHE STRING "" FORCE)
     else()
-      set(BUILD_LIST "core,imgproc" CACHE STRING "" FORCE)
+      set(BUILD_LIST "core,imgproc,imgcodecs" CACHE STRING "" FORCE)
     endif()
     set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
     set(BUILD_WITH_STATIC_CRT OFF CACHE BOOL "" FORCE)
@@ -276,7 +276,8 @@ if(WIN32 OR APPLE)
     target_include_directories(maichat_opencv INTERFACE
       "${CMAKE_CURRENT_BINARY_DIR}"
       "${MAICHAT_OPENCV_SOURCE}/modules/core/include"
-      "${MAICHAT_OPENCV_SOURCE}/modules/imgproc/include")
+      "${MAICHAT_OPENCV_SOURCE}/modules/imgproc/include"
+      "${MAICHAT_OPENCV_SOURCE}/modules/imgcodecs/include")
     if(WIN32)
       target_include_directories(maichat_opencv INTERFACE
         "${MAICHAT_OPENCV_SOURCE}/modules/imgcodecs/include"
@@ -292,7 +293,7 @@ if(WIN32 OR APPLE)
       set(MAICHAT_PERSON_MODEL
         "${CMAKE_CURRENT_SOURCE_DIR}/../MobileAgentAdapter/models/human_segmentation_pphumanseg_2023mar.onnx")
     else()
-      target_link_libraries(maichat_opencv INTERFACE opencv_imgproc)
+      target_link_libraries(maichat_opencv INTERFACE opencv_imgcodecs)
     endif()
   endif()
 endif()
@@ -553,6 +554,29 @@ if(WIN32)
   target_sources(maichat PRIVATE resources/windows/app.rc)
 endif()
 if(APPLE)
+  if(MAICHAT_ENABLE_OPENCV AND TARGET maiagent_embedded_fftools AND
+     CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
+    set(MAICHAT_RVM_MODEL
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/models/rvm_mobilenetv3_fp32.onnx")
+    set(MAICHAT_ORT_RUNTIME
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/onnxruntime/macos-arm64/libonnxruntime.1.26.0.dylib")
+    if(EXISTS "${MAICHAT_RVM_MODEL}" AND EXISTS "${MAICHAT_ORT_RUNTIME}")
+      add_custom_command(TARGET maichat POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+                "$<TARGET_BUNDLE_DIR:maichat>/Contents/Resources/MaiAgentModels"
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+                "$<TARGET_BUNDLE_DIR:maichat>/Contents/Frameworks"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${MAICHAT_RVM_MODEL}"
+                "$<TARGET_BUNDLE_DIR:maichat>/Contents/Resources/MaiAgentModels/rvm_mobilenetv3_fp32.onnx"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/models/RVM_LICENSE"
+                "$<TARGET_BUNDLE_DIR:maichat>/Contents/Resources/MaiAgentModels/RVM_LICENSE"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${MAICHAT_ORT_RUNTIME}"
+                "$<TARGET_BUNDLE_DIR:maichat>/Contents/Frameworks/libonnxruntime.1.26.0.dylib")
+    endif()
+  endif()
   set(APP_ICON_MACOS "${CMAKE_CURRENT_SOURCE_DIR}/resources/macos/AppIcon.icns")
   set_source_files_properties("${APP_ICON_MACOS}" PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
   target_sources(maichat PRIVATE "${APP_ICON_MACOS}")
@@ -670,7 +694,8 @@ endif()
 if(MAICHAT_ENABLE_OPENCV AND
    (TARGET maiagent_embedded_fftools OR TARGET maichat_ffmpeg_tools))
   add_library(maiagent_cv_video_analysis STATIC
-    ../../MaiAgent/AgentTools/MaiCvVideoAnalysis.cpp)
+    ../../MaiAgent/AgentTools/MaiCvVideoAnalysis.cpp
+    ../../MaiAgent/AgentTools/MaiVideoMatting.cpp)
   target_include_directories(maiagent_cv_video_analysis PRIVATE
     ../../MaiAgent/include)
   target_link_libraries(maiagent_cv_video_analysis PRIVATE maichat_opencv)
@@ -691,6 +716,10 @@ if(MAICHAT_ENABLE_OPENCV AND
   endif()
   target_link_libraries(maichat_agent PRIVATE maiagent_cv_video_analysis)
   target_compile_definitions(maichat_agent PRIVATE MAICHAT_CV_VIDEO_ANALYSIS=1)
+  if(APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64" AND
+     EXISTS "${MAICHAT_RVM_MODEL}" AND EXISTS "${MAICHAT_ORT_RUNTIME}")
+    target_compile_definitions(maichat_agent PRIVATE MAICHAT_RVM_BUNDLED=1)
+  endif()
   add_executable(MaiCvVideoAnalysisTests
     ../../MaiAgent/tests/MaiCvVideoAnalysisTests.cpp)
   target_include_directories(MaiCvVideoAnalysisTests PRIVATE
@@ -699,6 +728,19 @@ if(MAICHAT_ENABLE_OPENCV AND
     maiagent_cv_video_analysis maiagent)
   add_test(NAME MaiCvVideoAnalysisTests COMMAND MaiCvVideoAnalysisTests
     ${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/tests/fixtures/cv-video-analysis.mp4)
+  add_executable(MaiVideoMattingTests tests/MaiVideoMattingTests.cpp)
+  target_include_directories(MaiVideoMattingTests PRIVATE ../../MaiAgent/include)
+  target_link_libraries(MaiVideoMattingTests PRIVATE maiagent_cv_video_analysis maiagent Qt5::Gui)
+  if(APPLE)
+    target_include_directories(MaiVideoMattingTests PRIVATE
+      "${CMAKE_CURRENT_BINARY_DIR}/maiagent/Graphics/ffmpeg-runtime/install/include")
+  elseif(WIN32)
+    target_include_directories(MaiVideoMattingTests PRIVATE
+      "${MAICHAT_FFMPEG_BUILD_DIR}/install/include")
+  endif()
+  add_test(NAME MaiVideoMattingTests COMMAND MaiVideoMattingTests
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Media/tests/fixtures/ffplay-av-subtitles.mkv
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/models/rvm_mobilenetv3_fp32.onnx)
 endif()
 
 add_executable(markdown_document_test tests/MarkdownDocumentTest.cpp)

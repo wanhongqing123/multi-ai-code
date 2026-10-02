@@ -168,6 +168,9 @@ add_library(maiagent STATIC
   AgentTools/MaiApplyPatchTool.cpp
   AgentTools/MaiWebFetchTool.cpp
   AgentTools/MaiDownloadFileTool.cpp
+  AgentTools/MaiRvmMatting.cpp
+  AgentTools/MaiRvmComposite.cpp
+  AgentTools/MaiVideoMattingTool.cpp
   AgentTools/MaiTodoWriteTool.cpp
   AgentTools/MaiQuestionTool.cpp
   AgentTools/MaiSubAgentTools.cpp
@@ -205,11 +208,12 @@ target_include_directories(maiagent
   # 而它想守的"别当公开 API 用"靠注释说一句就够了。
   PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/include
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nlohmann
+          ${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime/include
 )
 # libcurl 是 HTTP **客户端**（核心用它调大模型），
 # 和适配器里的 cpp-httplib（HTTP **服务端**）是两回事，两个都要。
 # sqlite、libcurl 和 md4c 都是 PRIVATE：它们是实现细节，公开头里不出现。
-target_link_libraries(maiagent PUBLIC Threads::Threads PRIVATE CURL::libcurl mai_sqlite mai_md4c)
+target_link_libraries(maiagent PUBLIC Threads::Threads PRIVATE CURL::libcurl mai_sqlite mai_md4c ${CMAKE_DL_LIBS})
 if(APPLE)
   target_link_libraries(maiagent PRIVATE iconv)
 endif()
@@ -281,6 +285,9 @@ if(MAIAGENT_BUILD_TESTS)
       MaiWebToolsTests      # webfetch 的 HTML 转文本和协议限制、todowrite 的校验
       MaiDownloadFileTests  # 本地 HTTP 的二进制、重定向、大小限制和路径边界
       MaiContextBuilderImageTests # 图像历史有界，当前用户附件仍然可见
+      MaiRvmMattingTests   # ONNX 递推状态和模型输入输出边界
+      MaiRvmCompositeTests # 前景原色、透明背景和边缘混合
+      MaiVideoMattingToolTests # 标准工具注册参数、路径和新文件契约
       MaiQuestionTests      # 问答闸门 + question 工具：等不到答案时绝不能编一个
       MaiSubAgentTests      # 子 Agent：深度上限、数量上限、不能戳别人的会话
       MaiShellToolTests     # shell：审批粒度、超时、取消、输出上限
@@ -297,6 +304,8 @@ if(MAIAGENT_BUILD_TESTS)
     endif()
     add_test(NAME ${test_name} COMMAND ${test_name})
   endforeach()
+  target_compile_definitions(MaiRvmMattingTests PRIVATE
+    MAI_RVM_MODEL_PATH="${CMAKE_CURRENT_SOURCE_DIR}/models/rvm_mobilenetv3_fp32.onnx")
   if(MAIAGENT_BUILD_GRAPHICS)
     add_subdirectory(Graphics/tests)
   endif()

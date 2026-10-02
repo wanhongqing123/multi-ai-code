@@ -5,6 +5,8 @@
 #if defined(MAICHAT_CV_VIDEO_ANALYSIS)
 #include "MaiCvVideoAnalysis.h"
 #include "MaiCvVideoTools.h"
+#include "MaiVideoMatting.h"
+#include "MaiVideoMattingTool.h"
 #endif
 #include "MaiPdfTool.h"
 #if defined(MAICHAT_EMBEDDED_FFMPEG)
@@ -16,6 +18,9 @@
 #include "MaiChatTools/DesktopVisionTools.h"
 #endif
 
+#include <QCoreApplication>
+#include <QDir>
+#include <QFileInfo>
 #include <QHash>
 #include <QMetaType>
 #include <QMimeDatabase>
@@ -104,6 +109,17 @@ std::unique_ptr<MaiAgent> buildAgent(std::unique_ptr<MaiModelClient> model,
 #if defined(MAICHAT_CV_VIDEO_ANALYSIS)
     tools->add(makeMaiCvSceneDetectTool(analyzeMaiCvVideo));
     tools->add(makeMaiCvMotionDetectTool(analyzeMaiCvVideo));
+#if defined(MAICHAT_RVM_BUNDLED)
+    const QDir applicationDirectory(QCoreApplication::applicationDirPath());
+    const QString modelPath = applicationDirectory.filePath(
+        QStringLiteral("../Resources/MaiAgentModels/rvm_mobilenetv3_fp32.onnx"));
+    const QString runtimePath = applicationDirectory.filePath(
+        QStringLiteral("../Frameworks/libonnxruntime.1.26.0.dylib"));
+    if (QFileInfo::exists(modelPath) && QFileInfo::exists(runtimePath)) {
+        tools->add(makeMaiVideoMattingTool(maiMatteVideo, toUtf8(modelPath),
+                                            toUtf8(runtimePath)));
+    }
+#endif
 #endif
     tools->add(makeMaiPdfTool(renderDesktopPdf));
 #if defined(MAICHAT_DESKTOP_VISION)

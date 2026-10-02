@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <mutex>
 #include <unordered_map>
+#include <variant>
 
 namespace {
 
@@ -81,6 +82,43 @@ public:
         auto it = mMessages.find(sessionId);
         if (it == mMessages.end()) return {};
         return it->second;
+    }
+
+    std::vector<MaiMessage> listMessagesPage(const std::string& sessionId,
+                                             const std::string& beforeId,
+                                             std::size_t limit) const override {
+        std::lock_guard<std::mutex> lock(mMutex);
+        std::vector<MaiMessage> page;
+        if (limit == 0) return page;
+        auto it = mMessages.find(sessionId);
+        if (it == mMessages.end()) return page;
+        page.reserve(std::min(limit, it->second.size()));
+        for (auto message = it->second.rbegin(); message != it->second.rend(); ++message) {
+            if (!beforeId.empty() && message->id >= beforeId) continue;
+            page.push_back(*message);
+            if (page.size() == limit) break;
+        }
+        return page;
+    }
+
+    void recoverInterruptedTools(const std::string& error, std::int64_t completedAt) override {
+        std::lock_guard<std::mutex> lock(mMutex);
+        for (auto& entry : mMessages) {
+            for (MaiMessage& message : entry.second) {
+                bool changed = false;
+                for (MaiMessagePart& part : message.parts) {
+                    auto* tool = std::get_if<MaiToolPart>(&part.body);
+                    if (!tool || (tool->state != MaiToolState::Pending &&
+                                  tool->state != MaiToolState::Running))
+                        continue;
+                    tool->state = MaiToolState::Error;
+                    tool->error = error;
+                    tool->output = error;
+                    changed = true;
+                }
+                if (changed && message.completed == 0) message.completed = completedAt;
+            }
+        }
     }
 
 private:

@@ -1,6 +1,8 @@
 #include <sqlite3.h>
 
+#include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <string>
@@ -268,6 +270,86 @@ public:
         return out;
     }
 
+    std::vector<MaiMessage> listMessagesPage(const std::string& sessionId,
+                                             const std::string& beforeId,
+                                             std::size_t limit) const override {
+        std::lock_guard<std::mutex> lock(mMutex);
+        std::vector<MaiMessage> page;
+        if (limit == 0) return page;
+        const bool hasCursor = !beforeId.empty();
+        sqlite3_stmt* statement =
+            prepareLocked(hasCursor ? "SELECT id, role, created, completed FROM messages "
+                                      "WHERE session_id = ?1 AND id < ?2 ORDER BY id DESC LIMIT ?3"
+                                    : "SELECT id, role, created, completed FROM messages "
+                                      "WHERE session_id = ?1 ORDER BY id DESC LIMIT ?2");
+        if (!statement) return page;
+        {
+            Reset guard(statement);
+            bindText(statement, 1, sessionId);
+            if (hasCursor) bindText(statement, 2, beforeId);
+            const auto boundedLimit = std::min(
+                limit, static_cast<std::size_t>(std::numeric_limits<sqlite3_int64>::max()));
+            sqlite3_bind_int64(statement, hasCursor ? 3 : 2,
+                               static_cast<sqlite3_int64>(boundedLimit));
+            while (sqlite3_step(statement) == SQLITE_ROW) {
+                MaiMessage message;
+                message.id = textColumn(statement, 0);
+                message.role = columnToRole(sqlite3_column_int(statement, 1));
+                message.created = sqlite3_column_int64(statement, 2);
+                message.completed = sqlite3_column_int64(statement, 3);
+                page.push_back(std::move(message));
+            }
+        }
+        for (auto& message : page) message.parts = readPartsLocked(message.id);
+        return page;
+    }
+
+    void recoverInterruptedTools(const std::string& error, std::int64_t completedAt) override {
+        std::lock_guard<std::mutex> lock(mMutex);
+        if (!exec("BEGIN IMMEDIATE")) return;
+
+        sqlite3_stmt* messages = prepareLocked(
+            "UPDATE messages SET completed = ?1 WHERE completed = 0 AND id IN "
+            "(SELECT message_id FROM parts WHERE kind = 2 AND state IN (0, 1))");
+        if (!messages) {
+            exec("ROLLBACK");
+            return;
+        }
+        bool updatedMessages = false;
+        {
+            Reset guard(messages);
+            sqlite3_bind_int64(messages, 1, completedAt);
+            updatedMessages = sqlite3_step(messages) == SQLITE_DONE;
+        }
+        if (!updatedMessages) {
+            noteError("interrupted message recovery failed: " +
+                      std::string(sqlite3_errmsg(mDatabase)));
+            exec("ROLLBACK");
+            return;
+        }
+
+        sqlite3_stmt* parts = prepareLocked(
+            "UPDATE parts SET state = 3, error = ?1, output = ?1 "
+            "WHERE kind = 2 AND state IN (0, 1)");
+        if (!parts) {
+            exec("ROLLBACK");
+            return;
+        }
+        bool updatedParts = false;
+        {
+            Reset guard(parts);
+            bindText(parts, 1, error);
+            updatedParts = sqlite3_step(parts) == SQLITE_DONE;
+        }
+        if (!updatedParts) {
+            noteError("interrupted tool recovery failed: " +
+                      std::string(sqlite3_errmsg(mDatabase)));
+            exec("ROLLBACK");
+            return;
+        }
+        exec("COMMIT");
+    }
+
     MaiError lastWriteError() const override {
         std::lock_guard<std::mutex> lock(mMutex);
         return mLastWriteError;
@@ -530,6 +612,10 @@ const char* kMigrationV2 =
     // 按父查孩子是 list_agents 每次都要做的事。
     "CREATE INDEX IF NOT EXISTS sessions_parent ON sessions(parent_id);";
 
+const char* kMigrationV3 =
+    "CREATE INDEX IF NOT EXISTS parts_unfinished_tool "
+    "ON parts(kind, state, message_id);";
+
 int readUserVersion(sqlite3* database) {
     sqlite3_stmt* statement = nullptr;
     if (sqlite3_prepare_v2(database, "PRAGMA user_version", -1, &statement, nullptr) != SQLITE_OK)
@@ -610,6 +696,17 @@ MaiResult<std::unique_ptr<MaiSessionStore>> makeMaiSqliteStore(
             return {MaiErrorCode::Internal, "cannot migrate schema to v2: " + what};
         }
         sqlite3_exec(database, "PRAGMA user_version=2", nullptr, nullptr, nullptr);
+    }
+
+    if (readUserVersion(database) < 3) {
+        char* migrationError = nullptr;
+        if (sqlite3_exec(database, kMigrationV3, nullptr, nullptr, &migrationError) != SQLITE_OK) {
+            const std::string what = migrationError ? migrationError : "unknown error";
+            sqlite3_free(migrationError);
+            sqlite3_close(database);
+            return {MaiErrorCode::Internal, "cannot migrate schema to v3: " + what};
+        }
+        sqlite3_exec(database, "PRAGMA user_version=3", nullptr, nullptr, nullptr);
     }
 
     return std::unique_ptr<MaiSessionStore>(new SqliteStore(database));

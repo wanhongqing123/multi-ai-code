@@ -425,6 +425,20 @@ int main() {
         });
         CHECK(partial.dump().find("reasoning") != std::string::npos);
         auto done = wait([](const Json& s) { return s["busy"] == false; });
+        const auto latestPage = call(agent, {{"op", "snapshot"}, {"session", session},
+                                             {"force", true}, {"messageLimit", 1}});
+        CHECK(latestPage["messages"].size() == 1);
+        CHECK(latestPage["messages"][0]["id"] == done["messages"].back()["id"]);
+        const auto latestId = latestPage["messages"][0]["id"].get<std::string>();
+        const auto olderPage = call(agent, {{"op", "messages_page"}, {"session", session},
+                                            {"before", latestId}, {"limit", 2}});
+        CHECK(olderPage["messages"].size() == 2);
+        CHECK(olderPage["messages"][0]["id"] < latestId);
+        CHECK(olderPage["messages"][1]["id"] < olderPage["messages"][0]["id"]);
+        const auto sessionOnly = call(agent, {{"op", "snapshot"}, {"session", session},
+                                              {"force", true}, {"messageLimit", 0}});
+        CHECK(sessionOnly["messages"].empty());
+        CHECK(!sessionOnly["sessions"].empty());
         for (const auto& part : done["messages"].back()["parts"]) {
             if (part["kind"] == "text")
                 CHECK(part["text"] == "hello world");

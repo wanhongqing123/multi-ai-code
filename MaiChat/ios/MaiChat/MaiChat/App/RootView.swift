@@ -16,6 +16,8 @@ struct RootView: View {
     @ObservedObject private var systemNotificationCenter = RemoteIMSystemNotificationCenter.shared
     @State private var selectedTab: AppTab = .messages
     @State private var previousMainTab: AppTab = .messages
+    @State private var hasOpenedAssistant = false
+    @State private var assistantOpenGeneration = 0
     @State private var activeChatContact: RemoteIMContact?
     @State private var isShowingAddContact = false
     @State private var movingContact: RemoteIMContact?
@@ -45,11 +47,12 @@ struct RootView: View {
                                 },
                                 bottomBar: AnyView(RootTabBar(
                                     selectedTab: $selectedTab,
-                                    remoteDesktop: appState.remoteDesktop
+                                    remoteDesktop: appState.remoteDesktop,
+                                    openAssistant: openAssistant
                                 ))
                             )
                         case .assistant:
-                            AIAssistantView(onExit: { selectedTab = previousMainTab })
+                            Color.clear
                         case .contacts:
                             ContactsView(
                                 selectedTab: $selectedTab,
@@ -76,10 +79,22 @@ struct RootView: View {
                        activeChatContact == nil {
                         RootTabBar(
                             selectedTab: $selectedTab,
-                            remoteDesktop: appState.remoteDesktop
+                            remoteDesktop: appState.remoteDesktop,
+                            openAssistant: openAssistant
                         )
                     }
                 }
+            }
+
+            if !appState.shouldShowInitialLogin &&
+                (selectedTab == .assistant || hasOpenedAssistant) {
+                AIAssistantView(
+                    isActive: selectedTab == .assistant,
+                    onExit: { selectedTab = previousMainTab }
+                )
+                .opacity(selectedTab == .assistant ? 1 : 0)
+                .allowsHitTesting(selectedTab == .assistant)
+                .accessibilityHidden(selectedTab != .assistant)
             }
 
             if isShowingAddContact, !appState.shouldShowInitialLogin {
@@ -148,6 +163,8 @@ struct RootView: View {
             }
         }
         .onChange(of: selectedTab) { tab in
+            if tab != .assistant { assistantOpenGeneration += 1 }
+            if tab == .assistant { hasOpenedAssistant = true }
             if tab != .assistant { previousMainTab = tab }
         }
         .animation(.easeOut(duration: 0.18), value: isShowingAddContact)
@@ -234,6 +251,23 @@ struct RootView: View {
             }
         }
         .animation(.easeOut(duration: 0.18), value: appState.errorMessage)
+    }
+
+    private func openAssistant() {
+        if hasOpenedAssistant {
+            selectedTab = .assistant
+            return
+        }
+        assistantOpenGeneration += 1
+        let generation = assistantOpenGeneration
+        let origin = selectedTab
+        Task {
+            await AIAssistantModel.shared.prepareFirstPage()
+            guard assistantOpenGeneration == generation,
+                  selectedTab == origin,
+                  !appState.shouldShowInitialLogin else { return }
+            selectedTab = .assistant
+        }
     }
 
     private func offerNotificationPermissionIfNeeded() async {
@@ -390,10 +424,11 @@ private extension ScenePhase {
 private struct RootTabBar: View {
     @Binding var selectedTab: AppTab
     @ObservedObject var remoteDesktop: RemoteDesktopSession
+    let openAssistant: () -> Void
 
     var body: some View {
         if selectedTab != .remote || !remoteDesktop.state.isActive {
-            CompactTabBar(selectedTab: $selectedTab)
+            CompactTabBar(selectedTab: $selectedTab, openAssistant: openAssistant)
         }
     }
 }
@@ -517,6 +552,7 @@ private struct InitialLoginView: View {
 
 private struct CompactTabBar: View {
     @Binding var selectedTab: AppTab
+    let openAssistant: () -> Void
     @EnvironmentObject private var appState: RemoteIMAppState
 
     var body: some View {
@@ -536,7 +572,7 @@ private struct CompactTabBar: View {
                 accent: RemoteIMStyle.navAssistant,
                 selected: selectedTab == .assistant
             ) {
-                selectedTab = .assistant
+                openAssistant()
             }
             TabButton(
                 title: "通讯录",

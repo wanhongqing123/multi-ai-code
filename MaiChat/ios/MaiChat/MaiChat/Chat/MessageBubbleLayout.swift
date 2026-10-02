@@ -178,6 +178,7 @@ struct MessageScrollPositionReader: UIViewRepresentable {
     var allowsBottomFollowing = true
     var onViewportResizeNeedsBottom: (() -> Void)? = nil
     var onUserScroll: (() -> Void)? = nil
+    var onUserReachedTop: (() -> Void)? = nil
     let onNearBottomChanged: (Bool) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -186,6 +187,7 @@ struct MessageScrollPositionReader: UIViewRepresentable {
         coordinator.allowsBottomFollowing = allowsBottomFollowing
         coordinator.onViewportResizeNeedsBottom = onViewportResizeNeedsBottom
         coordinator.onUserScroll = onUserScroll
+        coordinator.onUserReachedTop = onUserReachedTop
         return coordinator
     }
     func makeUIView(context: Context) -> UIView {
@@ -198,6 +200,7 @@ struct MessageScrollPositionReader: UIViewRepresentable {
         context.coordinator.onChanged = onNearBottomChanged
         context.coordinator.onViewportResizeNeedsBottom = onViewportResizeNeedsBottom
         context.coordinator.onUserScroll = onUserScroll
+        context.coordinator.onUserReachedTop = onUserReachedTop
         context.coordinator.setAllowsBottomFollowing(allowsBottomFollowing)
         context.coordinator.setRestoreInitialScrollableHistory(restoreInitialScrollableHistory)
         install(view, context.coordinator)
@@ -218,6 +221,7 @@ struct MessageScrollPositionReader: UIViewRepresentable {
         var onChanged: (Bool) -> Void
         var onViewportResizeNeedsBottom: (() -> Void)?
         var onUserScroll: (() -> Void)?
+        var onUserReachedTop: (() -> Void)?
         private weak var scroll: UIScrollView?
         private weak var contentMarker: UIView?
         private var observations: [NSKeyValueObservation] = []
@@ -229,6 +233,7 @@ struct MessageScrollPositionReader: UIViewRepresentable {
         private var correctingViewport = false
         private var followsLatest = false
         private var notifiedUserScroll = false
+        private var requestedTopForGesture = false
         private var restoreGeneration: UInt64 = 0
         init(_ onChanged: @escaping (Bool) -> Void) { self.onChanged = onChanged }
 
@@ -304,11 +309,23 @@ struct MessageScrollPositionReader: UIViewRepresentable {
             correctingViewport = false
             followsLatest = false
             notifiedUserScroll = false
+            requestedTopForGesture = false
         }
 
         @objc private func panChanged(_ gesture: UIPanGestureRecognizer) {
-            if gesture.state == .began { notifiedUserScroll = false }
-            if gesture.state == .began || gesture.state == .changed { userDidBeginScrolling() }
+            if gesture.state == .began {
+                notifiedUserScroll = false
+                requestedTopForGesture = false
+            }
+            if gesture.state == .began || gesture.state == .changed {
+                userDidBeginScrolling()
+            }
+            if gesture.state == .changed, !requestedTopForGesture,
+               let scroll, gesture.translation(in: scroll).y > 0,
+               scroll.contentOffset.y <= -scroll.adjustedContentInset.top + 1 {
+                requestedTopForGesture = true
+                onUserReachedTop?()
+            }
         }
 
         func userDidBeginScrolling() {

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <variant>
@@ -205,6 +206,11 @@ public:
     bool getSession(const std::string& id, MaiSession& out) const;
     // 按生成顺序。会话不存在时返回空 vector，和"会话存在但没有消息"分不开——要分清先用 getSession。
     std::vector<MaiMessage> listMessages(const std::string& sessionId) const;
+    // 按新到旧读取一个会话的一页已落库消息。空 beforeId 从最新开始，非空游标
+    // 不包含自身；limit 为 0 或会话不存在时返回空列表。纯读，可与运行中的轮次
+    // 并发调用；返回值归调用方持有。只用于界面分页，不改变模型轮次读取完整历史。
+    std::vector<MaiMessage> listMessagesPage(const std::string& sessionId,
+                                             const std::string& beforeId, std::size_t limit) const;
     // 这个会话现在有没有一轮在跑。注意这是**那一瞬间**的答案，
     // 拿它去做"没跑就发消息"的判断是有竞态的——直接 submit，忙的话会返回 Busy，那个判断在锁里做。
     bool isBusy(const std::string& sessionId) const;

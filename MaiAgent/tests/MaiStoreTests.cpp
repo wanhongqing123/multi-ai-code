@@ -18,6 +18,7 @@
 #include <vector>
 
 #include <json.hpp>
+#include <sqlite3.h>
 
 #include "MaiIdGenerator.h"
 #include "MaiSessionStore.h"
@@ -230,6 +231,100 @@ void contract_messages_and_parts(MaiSessionStore& store, const char* which) {
     CHECK(readText && readText->text == "done");
 }
 
+void contract_message_pages(MaiSessionStore& store, const char* which) {
+    std::printf("   [%s] message pages keep session and cursor boundaries\n", which);
+    const std::string sessionId = MaiIdGenerator::newSessionId();
+    const std::string otherSessionId = MaiIdGenerator::newSessionId();
+    store.putSession(makeSession(sessionId, "paged", 1));
+    store.putSession(makeSession(otherSessionId, "other", 1));
+
+    std::vector<std::string> ids;
+    for (int index = 0; index < 5; ++index) {
+        MaiMessage message = makeMessage(MaiIdGenerator::newMessageId(), MaiRole::User);
+        message.parts.push_back(textPart(MaiIdGenerator::newPartId(), "page text"));
+        ids.push_back(message.id);
+        store.putMessage(sessionId, message);
+    }
+    store.putMessage(otherSessionId, makeMessage(MaiIdGenerator::newMessageId(), MaiRole::User));
+
+    const auto newest = store.listMessagesPage(sessionId, "", 2);
+    CHECK(newest.size() == 2);
+    if (newest.size() != 2) return;
+    CHECK(newest[0].id == ids[4]);
+    CHECK(newest[1].id == ids[3]);
+    CHECK(newest[0].parts.size() == 1);
+
+    const auto older = store.listMessagesPage(sessionId, newest.back().id, 2);
+    CHECK(older.size() == 2);
+    if (older.size() != 2) return;
+    CHECK(older[0].id == ids[2]);
+    CHECK(older[1].id == ids[1]);
+    const auto oldest = store.listMessagesPage(sessionId, older.back().id, 2);
+    CHECK(oldest.size() == 1);
+    if (oldest.size() == 1) CHECK(oldest[0].id == ids[0]);
+    CHECK(store.listMessagesPage(sessionId, ids[0], 2).empty());
+    CHECK(store.listMessagesPage(sessionId, "", 0).empty());
+
+    MaiMessage later = makeMessage(MaiIdGenerator::newMessageId(), MaiRole::Assistant);
+    store.putMessage(sessionId, later);
+    const auto afterAppend = store.listMessagesPage(sessionId, newest.back().id, 2);
+    CHECK(afterAppend.size() == 2);
+    if (afterAppend.size() == 2) CHECK(afterAppend[0].id == ids[2]);
+}
+
+void contract_recovers_interrupted_tools(MaiSessionStore& store, const char* which) {
+    std::printf("   [%s] interrupted tools recover without changing completed calls\n", which);
+    const std::string sessionId = MaiIdGenerator::newSessionId();
+    const std::string otherSessionId = MaiIdGenerator::newSessionId();
+    store.putSession(makeSession(sessionId, "recover", 1));
+    store.putSession(makeSession(otherSessionId, "other", 1));
+
+    auto saveTool = [&](const std::string& session, MaiToolState state, bool finished) {
+        MaiMessage message = makeMessage(MaiIdGenerator::newMessageId(), MaiRole::Assistant);
+        if (!finished) message.completed = 0;
+        MaiMessagePart part;
+        part.id = MaiIdGenerator::newPartId();
+        MaiToolPart tool;
+        tool.tool = "shell";
+        tool.state = state;
+        part.body = tool;
+        message.parts.push_back(part);
+        store.putMessage(session, message);
+        return message.id;
+    };
+
+    const std::string pendingId = saveTool(sessionId, MaiToolState::Pending, false);
+    const std::string completedId = saveTool(sessionId, MaiToolState::Completed, true);
+    const std::string runningId = saveTool(otherSessionId, MaiToolState::Running, false);
+    store.recoverInterruptedTools("interrupted", 3000);
+
+    auto findMessage = [&](const std::string& session, const std::string& id) {
+        for (const auto& message : store.listMessages(session))
+            if (message.id == id) return message;
+        return MaiMessage{};
+    };
+    const auto pending = findMessage(sessionId, pendingId);
+    const auto completed = findMessage(sessionId, completedId);
+    const auto running = findMessage(otherSessionId, runningId);
+    CHECK(pending.completed == 3000);
+    CHECK(running.completed == 3000);
+    CHECK(completed.completed == 2001);
+    CHECK(pending.parts.size() == 1);
+    CHECK(running.parts.size() == 1);
+    CHECK(completed.parts.size() == 1);
+    if (pending.parts.size() != 1 || running.parts.size() != 1 || completed.parts.size() != 1)
+        return;
+    for (const MaiMessage* message : {&pending, &running}) {
+        const auto* tool = std::get_if<MaiToolPart>(&message->parts[0].body);
+        CHECK(tool && tool->state == MaiToolState::Error);
+        CHECK(tool && tool->error == "interrupted" && tool->output == "interrupted");
+    }
+    const auto* finishedTool = std::get_if<MaiToolPart>(&completed.parts[0].body);
+    CHECK(finishedTool && finishedTool->state == MaiToolState::Completed);
+    store.recoverInterruptedTools("second pass", 4000);
+    CHECK(findMessage(sessionId, pendingId).completed == 3000);
+}
+
 void contract_put_message_replaces_parts(MaiSessionStore& store, const char* which) {
     std::printf("   [%s] re-putting a message replaces it\n", which);
 
@@ -385,6 +480,8 @@ void runContract(MaiSessionStore& store, const char* which) {
     contract_session_crud(store, which);
     contract_list_sessions_ordering(store, which);
     contract_messages_and_parts(store, which);
+    contract_message_pages(store, which);
+    contract_recovers_interrupted_tools(store, which);
     contract_put_message_replaces_parts(store, which);
     contract_remove_session_takes_messages(store, which);
     contract_clear_messages_keeps_the_session(store, which);
@@ -440,6 +537,49 @@ void test_survives_reopen() {
             CHECK(text && text->text == "still here");
         }
     }
+}
+
+void test_migrates_unfinished_tool_index() {
+    std::printf("-> test_migrates_unfinished_tool_index\n");
+    TempDir temp;
+    const std::string path = temp.file("migration.db");
+    const std::string sessionId = MaiIdGenerator::newSessionId();
+    {
+        auto opened = makeMaiSqliteStore(path);
+        CHECK(opened.isOk());
+        if (!opened.isOk()) return;
+        auto store = std::move(opened.value());
+        store->putSession(makeSession(sessionId, "before migration", 1));
+    }
+
+    sqlite3* database = nullptr;
+    CHECK(sqlite3_open(path.c_str(), &database) == SQLITE_OK);
+    if (!database) return;
+    CHECK(sqlite3_exec(database, "DROP INDEX parts_unfinished_tool; PRAGMA user_version=2;",
+                       nullptr, nullptr, nullptr) == SQLITE_OK);
+    sqlite3_close(database);
+
+    auto reopened = makeMaiSqliteStore(path);
+    CHECK(reopened.isOk());
+    if (!reopened.isOk()) return;
+    MaiSession loaded;
+    CHECK(reopened.value()->getSession(sessionId, loaded));
+    reopened.value().reset();
+
+    database = nullptr;
+    CHECK(sqlite3_open(path.c_str(), &database) == SQLITE_OK);
+    if (!database) return;
+    int foundIndex = 0;
+    const auto countIndex = [](void* result, int, char**, char**) -> int {
+        ++*static_cast<int*>(result);
+        return 0;
+    };
+    CHECK(sqlite3_exec(database,
+                       "SELECT name FROM sqlite_master WHERE type='index' "
+                       "AND name='parts_unfinished_tool'",
+                       countIndex, &foundIndex, nullptr) == SQLITE_OK);
+    CHECK(foundIndex == 1);
+    sqlite3_close(database);
 }
 
 void test_creates_parent_directory() {
@@ -646,6 +786,7 @@ int main() {
     }
 
     test_survives_reopen();
+    test_migrates_unfinished_tool_index();
     test_creates_parent_directory();
     test_bad_path_reports_error();
     test_message_order_follows_id_order();

@@ -8,20 +8,21 @@ import UIKit
 import UniformTypeIdentifiers
 
 struct AIAssistantView: View {
+    let isActive: Bool
     let onExit: (() -> Void)?
     @ObservedObject private var model = AIAssistantModel.shared
     @Environment(\.scenePhase) private var scenePhase
     @State private var showSessions = false
     @State private var showActions = false
     @State private var confirmClear = false
-    @State private var followsBottom = true
     @State private var sessionDrawerOffset: CGFloat = 0
     @State private var sessionDrawerWidth: CGFloat = 320
     @State private var isAttachmentPanelPresented = false
     @State private var composerFocusController = AIComposerFocusController()
     @State private var transcriptionPresentation = VoiceTranscriptionPresentation()
 
-    init(onExit: (() -> Void)? = nil) {
+    init(isActive: Bool = true, onExit: (() -> Void)? = nil) {
+        self.isActive = isActive
         self.onExit = onExit
     }
 
@@ -50,55 +51,14 @@ struct AIAssistantView: View {
                 )
                 Divider().overlay(Color.black.opacity(0.06))
                 if !model.ready {
-                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                    Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    GeometryReader { _ in
-                        ScrollView {
-                            VStack(alignment: .leading, spacing: 24) {
-                                if model.messages.isEmpty {
-                                    VStack(spacing: 14) {
-                                        Image(systemName: "sparkles").font(.largeTitle).foregroundStyle(.blue)
-                                        Text("有什么可以帮你？").font(.title3.bold())
-                                        Text("可以聊天、分析文本和处理导入的文件。")
-                                            .font(.subheadline).foregroundStyle(.secondary)
-                                        if !model.configured {
-                                            Button("配置模型", action: { model.showSettings = true })
-                                                .buttonStyle(.plain).font(.system(size: 14, weight: .semibold))
-                                                .foregroundStyle(Color.white).padding(.horizontal, 16).frame(height: 38)
-                                                .background(Color.blue, in: RoundedRectangle(cornerRadius: 10))
-                                        }
-                                    }.frame(maxWidth: .infinity).padding(.vertical, 70)
-                                }
-                                if !model.messages.isEmpty {
-                                    LazyVStack(alignment: .leading, spacing: 24) {
-                                        ForEach(model.messages) { message in
-                                            AIMessageRow(message: message,
-                                                         workspacePath: model.workspacePath)
-                                        }
-                                    }
-                                }
-                                ForEach(model.permissions) { permission in AIPermissionCard(permission: permission, model: model) }
-                                ForEach(model.questions) { question in AIQuestionCard(question: question, model: model) }
-                                Color.clear.frame(height: 1).id("bottom")
-                                    .background(MessageScrollPositionReader(
-                                        restoreInitialScrollableHistory: !model.messages.isEmpty,
-                                        allowsBottomFollowing: followsBottom,
-                                        onUserScroll: {
-                                            followsBottom = false
-                                        }
-                                    ) { nearBottom in
-                                        if nearBottom { followsBottom = true }
-                                    })
-                            }.padding(18)
-                        }
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            composerFocusController.dismiss()
-                            isAttachmentPanelPresented = false
-                        }
-                        .onChange(of: model.scrollRequest) { _ in followsBottom = true }
-                        .onChange(of: model.selected) { _ in followsBottom = true }
-                    }
+                    AIAssistantTimeline(
+                        model: model,
+                        focusController: composerFocusController,
+                        isAttachmentPanelPresented: $isAttachmentPanelPresented,
+                        isActive: isActive
+                    )
                 }
                 if !model.error.isEmpty {
                     HStack(alignment: .top) {
@@ -187,8 +147,22 @@ struct AIAssistantView: View {
             Button("清空消息", role: .destructive) { Task { await model.action("clear") } }
         }
         .onAppear {
-            if !ProcessInfo.processInfo.arguments.contains("--ai-history-ui-test") {
+            if isActive &&
+                !ProcessInfo.processInfo.arguments.contains("--ai-history-ui-test") {
                 model.appear()
+            }
+        }
+        .onChange(of: isActive) { active in
+            guard !ProcessInfo.processInfo.arguments.contains("--ai-history-ui-test") else {
+                return
+            }
+            if active {
+                model.setPageActive(true)
+            } else {
+                composerFocusController.dismiss()
+                isAttachmentPanelPresented = false
+                transcriptionPresentation.onCancel?()
+                model.setPageActive(false)
             }
         }
         .onDisappear {
@@ -197,8 +171,11 @@ struct AIAssistantView: View {
             }
         }
         .onChange(of: scenePhase) { phase in
-            if ProcessInfo.processInfo.arguments.contains("--ai-history-ui-test") { return }
-            if phase == .active { model.appear() } else { model.disappear() }
+            if ProcessInfo.processInfo.arguments.contains("--ai-history-ui-test") {
+                return
+            }
+            if phase == .active { model.appear() }
+            else { model.disappear() }
         }
     }
 
@@ -331,6 +308,175 @@ struct AIAssistantView: View {
         }
         .background(Color(uiColor: .systemBackground))
         .accessibilityIdentifier("ai-session-drawer")
+    }
+}
+
+// Owns AI message positioning. Data refresh supplies stable message IDs;
+// keyboard resizing and streamed parts never replace the current scroll intent.
+private struct AIAssistantTimeline: View {
+    @ObservedObject var model: AIAssistantModel
+    let focusController: AIComposerFocusController
+    @Binding var isAttachmentPanelPresented: Bool
+    let isActive: Bool
+    @State private var followsLatest = true
+    @State private var prependAnchorID: String?
+    // A send first shows its user bubble; the assistant becomes the target only
+    // after it has a visible part instead of an empty in-progress record.
+    @State private var sentUserMessageID: String?
+
+    var body: some View {
+        GeometryReader { geometry in
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 24) {
+                        if model.messages.isEmpty && model.historyLoaded {
+                            welcome
+                        }
+                        if !model.messages.isEmpty {
+                            LazyVStack(alignment: .leading, spacing: 24) {
+                                ForEach(model.messages) { message in
+                                    AIMessageRow(message: message,
+                                                 workspacePath: model.workspacePath)
+                                        .id(message.id)
+                                }
+                            }
+                        }
+                        ForEach(model.permissions) { permission in
+                            AIPermissionCard(permission: permission, model: model)
+                                .id(permission.id)
+                        }
+                        ForEach(model.questions) { question in
+                            AIQuestionCard(question: question, model: model)
+                                .id(question.id)
+                        }
+                        Color.clear.frame(height: 1)
+                            .background(MessageScrollPositionReader(
+                                restoreInitialScrollableHistory: false,
+                                allowsBottomFollowing: false,
+                                onUserScroll: {
+                                    followsLatest = false
+                                    sentUserMessageID = nil
+                                },
+                                onUserReachedTop: {
+                                    guard prependAnchorID == nil,
+                                          let anchor = model.messages.first?.id else { return }
+                                    prependAnchorID = anchor
+                                    Task {
+                                        await model.loadOlderMessages()
+                                        if model.messages.first?.id == anchor {
+                                            prependAnchorID = nil
+                                        }
+                                    }
+                                }
+                            ) { nearBottom in
+                                if nearBottom { followsLatest = true }
+                            })
+                    }
+                    .padding(18)
+                }
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    focusController.dismiss()
+                    isAttachmentPanelPresented = false
+                }
+                .onAppear {
+                    if isActive, let latest = newestContentID {
+                        position(at: latest, proxy: proxy, anchor: .bottom)
+                    }
+                }
+                .onChange(of: model.messages.first?.id) { _ in
+                    if let anchor = prependAnchorID {
+                        prependAnchorID = nil
+                        position(at: anchor, proxy: proxy, anchor: .top)
+                    } else if followsLatest, sentUserMessageID == nil,
+                              let latest = newestContentID {
+                        position(at: latest, proxy: proxy, anchor: .bottom)
+                    }
+                }
+                .onChange(of: model.scrollRequest) { _ in
+                    followsLatest = true
+                    if let target = model.scrollTargetMessageID {
+                        let isSentUserMessage = model.messages.contains {
+                            $0.id == target && $0.role == "user"
+                        }
+                        sentUserMessageID = isSentUserMessage ? target : nil
+                        position(at: target, proxy: proxy, anchor: .bottom)
+                    }
+                }
+                .onChange(of: model.messages.last?.parts) { _ in
+                    guard let latest = model.messages.last else { return }
+                    if sentUserMessageID != nil {
+                        guard latest.role == "assistant", !latest.parts.isEmpty else {
+                            return
+                        }
+                        sentUserMessageID = nil
+                    }
+                    if followsLatest, let target = newestContentID {
+                        position(at: target, proxy: proxy, anchor: .bottom)
+                    }
+                }
+                .onChange(of: model.messages.last?.id) { _ in
+                    guard followsLatest, sentUserMessageID == nil,
+                          let latest = newestContentID else { return }
+                    position(at: latest, proxy: proxy, anchor: .bottom)
+                }
+                .onChange(of: model.permissions) { _ in
+                    guard followsLatest, sentUserMessageID == nil,
+                          let latest = newestContentID else { return }
+                    position(at: latest, proxy: proxy, anchor: .bottom)
+                }
+                .onChange(of: model.questions) { _ in
+                    guard followsLatest, sentUserMessageID == nil,
+                          let latest = newestContentID else { return }
+                    position(at: latest, proxy: proxy, anchor: .bottom)
+                }
+                .onChange(of: geometry.size.height) { _ in
+                    guard followsLatest, sentUserMessageID == nil,
+                          let latest = newestContentID else { return }
+                    position(at: latest, proxy: proxy, anchor: .bottom)
+                }
+                .onChange(of: model.selected) { _ in
+                    prependAnchorID = nil
+                    sentUserMessageID = nil
+                    followsLatest = true
+                }
+                .onChange(of: isActive) { active in
+                    guard active else { return }
+                    sentUserMessageID = nil
+                    followsLatest = true
+                    if let latest = newestContentID {
+                        position(at: latest, proxy: proxy, anchor: .bottom)
+                    }
+                }
+            }
+        }
+    }
+
+    private func position(at id: String, proxy: ScrollViewProxy, anchor: UnitPoint) {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { proxy.scrollTo(id, anchor: anchor) }
+    }
+
+    private var newestContentID: String? {
+        model.questions.last?.id ?? model.permissions.last?.id ?? model.messages.last?.id
+    }
+
+    private var welcome: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "sparkles").font(.largeTitle).foregroundStyle(.blue)
+            Text("有什么可以帮你？").font(.title3.bold())
+            Text("可以聊天、分析文本和处理导入的文件。")
+                .font(.subheadline).foregroundStyle(.secondary)
+            if !model.configured {
+                Button("配置模型", action: { model.showSettings = true })
+                    .buttonStyle(.plain).font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color.white).padding(.horizontal, 16).frame(height: 38)
+                    .background(Color.blue, in: RoundedRectangle(cornerRadius: 10))
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 70)
     }
 }
 

@@ -223,6 +223,15 @@ actor AIAssistantBackend {
         try call(operation, values: values.mapValues { $0 as Any }, force: force)
     }
 
+    func snapshot(session: String, limit: Int, force: Bool) throws -> AIResponse {
+        try call("snapshot", values: ["session": session, "messageLimit": limit], force: force)
+    }
+
+    func messagesPage(session: String, beforeId: String, limit: Int) throws -> [AIMessage] {
+        try call("messages_page", values: ["session": session, "before": beforeId,
+                                            "limit": limit]).messages ?? []
+    }
+
     func send(session: String, text: String, images: [AIImportedFile],
               videos: [AIImportedFile]) throws -> AIResponse {
         try call("send", values: [
@@ -333,9 +342,12 @@ final class AIAssistantModel: ObservableObject {
     @Published var configured = false
     @Published var error = ""
     @Published var ready = false
+    @Published var historyLoaded = false
+    @Published private(set) var hasOlderMessages = false
     @Published var isSubmitting = false
     @Published var showSettings = false
     @Published var scrollRequest = 0
+    @Published var scrollTargetMessageID: String?
     @Published private(set) var workspacePath = ""
     @Published var previewImage: AIImagePreview?
     var drafts: [String: String] = [:]
@@ -343,8 +355,12 @@ final class AIAssistantModel: ObservableObject {
     private let backend = AIAssistantBackend()
     private var poll: Task<Void, Never>?
     private var transientErrorTask: Task<Void, Never>?
-    private var opening = false
+    private var initialPreparation: Task<Void, Never>?
+    private var appearingTask: Task<Void, Never>?
+    private var pendingInitialPage: (session: String, newestID: String)?
+    private var loadingOlderMessages = false
     private var visible = false
+    private var pageActive = true
     var busy: Bool { sessions.first { $0.id == selected }?.busy == true }
 
     #if targetEnvironment(simulator)
@@ -380,30 +396,67 @@ final class AIAssistantModel: ObservableObject {
         }
     }
 
-    func appear() {
-        visible = true
-        guard !opening else { return }
-        opening = true
-        Task {
-            defer { opening = false }
+    func prepareFirstPage() async {
+        if historyLoaded { return }
+        if let initialPreparation {
+            await initialPreparation.value
+            return
+        }
+        let task = Task { @MainActor in
             do {
                 let opened = try await backend.open()
                 settings = opened.settings
                 workspacePath = opened.workspacePath
                 ready = true
-                await refresh(force: true)
-                if selected.isEmpty, let first = sessions.first { await select(first.id) }
-                startPolling()
+                if selected.isEmpty {
+                    let summary = try await backend.snapshot(session: "", limit: 0,
+                                                             force: true)
+                    sessions = summary.sessions ?? []
+                    configured = summary.configured ?? false
+                    selected = sessions.first?.id ?? ""
+                }
+                guard !selected.isEmpty else { historyLoaded = true; return }
+                let session = selected
+                if let newestID = try await showNewestMessage(for: session) {
+                    pendingInitialPage = (session, newestID)
+                }
             } catch { self.error = error.localizedDescription }
+        }
+        initialPreparation = task
+        await task.value
+        initialPreparation = nil
+    }
+
+    func appear() {
+        visible = true
+        guard appearingTask == nil else { return }
+        appearingTask = Task { @MainActor in
+            await prepareFirstPage()
+            if let pending = pendingInitialPage {
+                pendingInitialPage = nil
+                await completeInitialPage(for: pending.session, newestID: pending.newestID)
+            } else if historyLoaded {
+                await refresh(force: true)
+            }
+            startPolling()
+            appearingTask = nil
         }
     }
     func disappear() { visible = false; poll?.cancel(); poll = nil }
+    func setPageActive(_ active: Bool) {
+        pageActive = active
+        if active && poll == nil && ready { appear() }
+    }
     private func startPolling() {
         poll?.cancel()
         guard visible else { return }
         poll = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(self?.sessions.contains(where: \.busy) == true ? 100 : 500))
+                let busy = self?.sessions.contains(where: \.busy) == true
+                let interval: Duration = self?.pageActive == true
+                    ? .milliseconds(busy ? 100 : 500)
+                    : .milliseconds(busy ? 500 : 2_000)
+                try? await Task.sleep(for: interval)
                 guard !Task.isCancelled, let self else { return }
                 await self.refresh(force: false)
             }
@@ -412,20 +465,92 @@ final class AIAssistantModel: ObservableObject {
     private func refresh(force: Bool) async {
         let target = selected
         do {
-            let result = try await backend.request("snapshot", values: ["session": target], force: force)
+            let result = try await backend.snapshot(session: target, limit: 30, force: force)
             guard target == selected, result.changed == true else { return }
             if let value = result.sessions, value != sessions { sessions = value }
-            if let value = result.messages, value != messages { messages = value }
+            if let value = result.messages { mergeMessages(value) }
             if let value = result.permissions, value != permissions { permissions = value }
             if let value = result.questions, value != questions { questions = value }
             configured = result.configured ?? false
             if let detail = result.error, !detail.isEmpty { error = detail }
         } catch { self.error = error.localizedDescription }
     }
+
+    private func showNewestMessage(for session: String) async throws -> String? {
+        let latest = try await backend.messagesPage(session: session, beforeId: "", limit: 1)
+        guard selected == session else { return nil }
+        messages = Array(latest.reversed())
+        historyLoaded = true
+        scrollTargetMessageID = latest.first?.id
+        return latest.first?.id
+    }
+
+    private func completeInitialPage(for session: String, newestID: String) async {
+        do {
+            let earlier = try await backend.messagesPage(session: session,
+                                                         beforeId: newestID, limit: 29)
+            guard selected == session else { return }
+            mergeMessages(earlier)
+            hasOlderMessages = earlier.count == 29
+            await refresh(force: true)
+        } catch { self.error = error.localizedDescription }
+    }
+
+    private func mergeMessages(_ page: [AIMessage]) {
+        // A snapshot updates only its bounded newest page; keep older pages the
+        // user has already opened and replace matching rows by their stable ID.
+        guard !page.isEmpty else { return }
+        var merged = messages
+        var changed = false
+        for message in page {
+            var lower = 0
+            var upper = merged.count
+            while lower < upper {
+                let middle = (lower + upper) / 2
+                if merged[middle].id < message.id { lower = middle + 1 }
+                else { upper = middle }
+            }
+            if lower < merged.count, merged[lower].id == message.id {
+                if merged[lower] != message {
+                    merged[lower] = message
+                    changed = true
+                }
+            } else {
+                merged.insert(message, at: lower)
+                changed = true
+            }
+        }
+        if changed { messages = merged }
+    }
+
+    func loadOlderMessages() async {
+        guard !loadingOlderMessages, hasOlderMessages,
+              let oldest = messages.first?.id, !selected.isEmpty else { return }
+        loadingOlderMessages = true
+        defer { loadingOlderMessages = false }
+        let session = selected
+        do {
+            let page = try await backend.messagesPage(session: session,
+                                                      beforeId: oldest, limit: 30)
+            guard selected == session else { return }
+            mergeMessages(page)
+            hasOlderMessages = page.count == 30
+        } catch { self.error = error.localizedDescription }
+    }
+
     func select(_ id: String) async {
         selected = id; messages = []; permissions = []; questions = []; error = ""
-        await refresh(force: true)
-        scrollRequest += 1
+        historyLoaded = false
+        hasOlderMessages = false
+        scrollTargetMessageID = nil
+        pendingInitialPage = nil
+        do {
+            if let newestID = try await showNewestMessage(for: id) {
+                await completeInitialPage(for: id, newestID: newestID)
+            } else {
+                await refresh(force: true)
+            }
+        } catch { self.error = error.localizedDescription }
     }
     func create() async {
         do {
@@ -452,7 +577,20 @@ final class AIAssistantModel: ObservableObject {
             showTransientError("glm-5.3 仅支持文本，请先切换到 glm-5.3-flash")
             return false
         }
-        if selected.isEmpty { await create() }
+        if selected.isEmpty {
+            do {
+                let created = try await backend.request("create")
+                selected = created.id ?? ""
+                messages = []
+                permissions = []
+                questions = []
+                historyLoaded = false
+                hasOlderMessages = false
+            } catch {
+                self.error = error.localizedDescription
+                return false
+            }
+        }
         guard !selected.isEmpty else { return false }
         do {
             _ = try await backend.send(
@@ -464,6 +602,8 @@ final class AIAssistantModel: ObservableObject {
             pendingAttachments.removeValue(forKey: draftSession)
             error = ""
             await refresh(force: true)
+            historyLoaded = !messages.isEmpty
+            scrollTargetMessageID = messages.last(where: { $0.role == "user" })?.id
             scrollRequest += 1
             startPolling()
             return true
@@ -475,7 +615,12 @@ final class AIAssistantModel: ObservableObject {
         do {
             var values = values; values["session"] = target
             _ = try await backend.request(op, values: values)
-            if op == "delete", selected == target { selected = ""; messages = [] }
+            if op == "delete", selected == target {
+                selected = ""; messages = []; historyLoaded = true
+            }
+            if op == "clear", selected == target {
+                messages = []; historyLoaded = true
+            }
             await refresh(force: true)
         } catch { self.error = error.localizedDescription }
     }

@@ -29,6 +29,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <unordered_map>
+#include <unordered_set>
 
 using Json = nlohmann::json;
 
@@ -79,6 +80,7 @@ struct MaiMobileAgent {
     bool dirty = true;
     bool structureChanged = true;
     std::string cachedSession;
+    int cachedLimit = -1;
     std::vector<MaiMessage> cachedMessages;
     std::unordered_map<std::string, std::string> pendingDeltas;
     std::unordered_map<std::string, std::string> liveParts;
@@ -196,6 +198,7 @@ struct MaiMobileAgent {
         dirty = true;
         structureChanged = true;
         cachedSession.clear();
+        cachedLimit = -1;
         cachedMessages.clear();
         agent->eventBus().subscribe([this](const MaiEvent& event) {
             // 网络线程只合并增量，不读数据库、不解析 Markdown、不调用 UI。
@@ -209,34 +212,12 @@ struct MaiMobileAgent {
         });
     }
 
-    Json snapshot(const std::string& selected, bool force) {
-        std::unordered_map<std::string, std::string> errorCopy;
-        bool reload = force || cachedSession != selected;
-        {
-            std::lock_guard<std::mutex> lock(mutex);
-            if (!dirty && !force) return {{"ok", true}, {"changed", false}};
-            dirty = false;
-            reload |= structureChanged;
-            structureChanged = false;
-            for (auto& delta : pendingDeltas) liveParts[delta.first] += delta.second;
-            pendingDeltas.clear();
-            errorCopy = errors;
-        }
-        Json sessions = Json::array(), messages = Json::array();
-        bool busy = false;
-        for (const auto& session : agent->listSessions()) {
-            if (!session.isRoot()) continue;
-            const bool active = agent->isBusy(session.id);
-            busy |= active;
-            sessions.push_back({{"id", session.id}, {"title", session.title}, {"busy", active}});
-        }
-        // 增量期间复用消息结构，避免每个批次重新读整段 SQLite 历史。
-        if (reload) {
-            cachedMessages = agent->listMessages(selected);
-            cachedSession = selected;
-        }
-        const bool sessionBusy = agent->isBusy(selected);
-        for (const auto& message : cachedMessages) {
+    Json serializeMessages(const std::vector<MaiMessage>& source, bool sessionBusy) {
+        Json messages = Json::array();
+        std::string latestId;
+        for (const auto& message : source)
+            if (message.id > latestId) latestId = message.id;
+        for (const auto& message : source) {
             Json parts = Json::array();
             for (const auto& part : message.parts) {
                 Json value = {{"id", part.id}};
@@ -278,8 +259,62 @@ struct MaiMobileAgent {
                                 {"created", message.created},
                                 {"completed", message.completed},
                                 {"active", message.isInProgress() && sessionBusy &&
-                                               message.id == cachedMessages.back().id},
+                                               message.id == latestId},
                                 {"parts", parts}});
+        }
+        return messages;
+    }
+
+    Json snapshot(const std::string& selected, bool force, int limit) {
+        std::unordered_map<std::string, std::string> errorCopy;
+        std::unordered_set<std::string> changedParts;
+        bool reload = force || cachedSession != selected || cachedLimit != limit;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            if (!dirty && !force) return {{"ok", true}, {"changed", false}};
+            dirty = false;
+            reload |= structureChanged;
+            structureChanged = false;
+            for (auto& delta : pendingDeltas) {
+                liveParts[delta.first] += delta.second;
+                changedParts.insert(delta.first);
+            }
+            pendingDeltas.clear();
+            errorCopy = errors;
+        }
+        Json sessions = Json::array();
+        bool busy = false;
+        for (const auto& session : agent->listSessions()) {
+            if (!session.isRoot()) continue;
+            const bool active = agent->isBusy(session.id);
+            busy |= active;
+            sessions.push_back({{"id", session.id}, {"title", session.title}, {"busy", active}});
+        }
+        // 增量期间复用消息结构，避免每个批次重新读整段 SQLite 历史。
+        if (reload) {
+            if (limit < 0)
+                cachedMessages = agent->listMessages(selected);
+            else if (limit == 0)
+                cachedMessages.clear();
+            else
+                cachedMessages = agent->listMessagesPage(selected, "", limit);
+            cachedSession = selected;
+            cachedLimit = limit;
+        }
+        const bool sessionBusy = agent->isBusy(selected);
+        Json messages;
+        if (limit >= 0 && !reload && !changedParts.empty()) {
+            std::vector<MaiMessage> changedMessages;
+            for (const auto& message : cachedMessages) {
+                for (const auto& part : message.parts) {
+                    if (changedParts.count(part.id) == 0) continue;
+                    changedMessages.push_back(message);
+                    break;
+                }
+            }
+            messages = serializeMessages(changedMessages, sessionBusy);
+        } else {
+            messages = serializeMessages(cachedMessages, sessionBusy);
         }
         Json permissions = Json::array(), questions = Json::array();
         for (const auto& p : agent->listPendingPermissions())
@@ -314,7 +349,22 @@ struct MaiMobileAgent {
         }
         if (!agent) throw std::runtime_error("Agent is not initialized.");
         const std::string session = r.value("session", "");
-        if (op == "snapshot") return snapshot(session, r.value("force", false));
+        if (op == "snapshot") {
+            const int limit = r.value("messageLimit", -1);
+            if (limit < -1 || limit > 100)
+                throw std::runtime_error("messageLimit must be between 0 and 100.");
+            return snapshot(session, r.value("force", false), limit);
+        }
+        if (op == "messages_page") {
+            const int limit = r.value("limit", 30);
+            if (limit < 1 || limit > 100)
+                throw std::runtime_error("limit must be between 1 and 100.");
+            const std::string before = r.value("before", "");
+            const auto page = agent->listMessagesPage(session, before, limit);
+            return {{"ok", true},
+                    {"messages", serializeMessages(page,
+                                                    before.empty() && agent->isBusy(session))}};
+        }
         if (op == "suggest_replies") {
             if (!configured) throw std::runtime_error("Configure a model and API key first.");
             if (!r.contains("messages") || !r["messages"].is_array() || r["messages"].empty() ||

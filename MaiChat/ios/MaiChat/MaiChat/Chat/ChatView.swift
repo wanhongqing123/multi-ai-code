@@ -4174,14 +4174,18 @@ enum MarkdownPreparation {
 
 struct MarkdownLikeText: View {
     private let source: String
+    private let bodyFont: Font
     @State private var prepared: PreparedMarkdown?
     private let trailingTimestamp: String?
 
     private let retainsPreviousWhilePreparing: Bool
 
-    init(_ text: String, trailingTimestamp: String? = nil, retainsPreviousWhilePreparing: Bool = false) {
+    init(_ text: String, trailingTimestamp: String? = nil,
+         retainsPreviousWhilePreparing: Bool = false,
+         bodyFont: Font = .system(size: 14)) {
         self.retainsPreviousWhilePreparing = retainsPreviousWhilePreparing
         self.source = text
+        self.bodyFont = bodyFont
         _prepared = State(initialValue: MarkdownRenderCache.shared.cached(text))
         self.trailingTimestamp = trailingTimestamp
     }
@@ -4227,7 +4231,7 @@ struct MarkdownLikeText: View {
                 }
             }
         }
-        .font(.system(size: 14))
+        .font(bodyFont)
         .lineSpacing(4)
         .tint(RemoteIMStyle.blue)
         .lineLimit(nil)

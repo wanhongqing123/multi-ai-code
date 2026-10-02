@@ -1,6 +1,23 @@
 import XCTest
 
 final class AIAssistantUITests: XCTestCase {
+    func testToolCallsAndReasoningCollapseWithoutMovingFinalAnswer() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--transcript-ui-test"]
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        let reasoning = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS %@", "思考过程"))
+        let tools = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS %@", "工具调用 8 次"))
+        XCTAssertTrue(reasoning.firstMatch.waitForExistence(timeout: 15))
+        XCTAssertEqual(reasoning.count, 1)
+        XCTAssertEqual(tools.count, 1)
+        let answer = app.staticTexts["处理完成，结果已经准备好。"]
+        XCTAssertTrue(answer.waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(answer.frame.minY, tools.firstMatch.frame.maxY)
+    }
+
     func testVideoAttachmentAppearsAsPlayableMessageCard() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--ai-ui-test", "--video-bubble-ui-test"]

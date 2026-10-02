@@ -87,19 +87,25 @@ struct AIAssistantView: View {
                             }.padding(18)
                         }
                         .contentShape(Rectangle())
+                        .safeAreaInset(edge: .bottom, spacing: 0) {
+                            if !followsBottom {
+                                Button { followsBottom = true } label: {
+                                    Label("回到最新消息", systemImage: "arrow.down")
+                                        .font(.subheadline.weight(.medium))
+                                        .frame(maxWidth: .infinity)
+                                        .frame(height: 42)
+                                }
+                                .buttonStyle(.plain)
+                                .background(.regularMaterial)
+                                .accessibilityIdentifier("ai-back-to-latest")
+                            }
+                        }
                         .onTapGesture {
                             composerFocusController.dismiss()
                             isAttachmentPanelPresented = false
                         }
                         .onChange(of: model.scrollRequest) { _ in followsBottom = true }
                         .onChange(of: model.selected) { _ in followsBottom = true }
-                        .overlay(alignment: .bottomTrailing) {
-                            if !followsBottom {
-                                Button { followsBottom = true } label: {
-                                    Image(systemName: "arrow.down").padding(12).background(.regularMaterial, in: Circle())
-                                }.padding()
-                            }
-                        }
                     }
                 }
                 if !model.error.isEmpty {
@@ -519,7 +525,7 @@ private struct AIMessageRow: View {
                 HStack {
                     Spacer(minLength: 30)
                     VStack(alignment: .leading, spacing: 10) {
-                        Text(message.text).font(.system(size: 14)).textSelection(.enabled)
+                        Text(message.text).font(.body).textSelection(.enabled)
                         ForEach(Array(imagePaths.enumerated()), id: \.offset) { _, path in
                             AIWorkspaceImage(filePath: path)
                         }
@@ -533,29 +539,49 @@ private struct AIMessageRow: View {
                     .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))
                 }
             } else {
-                ForEach(message.parts.filter { $0.kind == "reasoning" } + message.parts.filter { $0.kind != "reasoning" }) { part in
+                ForEach(message.parts) { part in
                     if part.kind == "text", let text = part.text, !text.isEmpty {
-                        MarkdownLikeText(text, retainsPreviousWhilePreparing: true)
-                    } else if part.kind == "reasoning", let text = part.text, !text.isEmpty {
+                        MarkdownLikeText(text, retainsPreviousWhilePreparing: true,
+                                         bodyFont: .body)
+                    } else if part.kind == "reasoning", part.id == reasoningParts.first?.id,
+                              !reasoningText.isEmpty {
                         AIExpandableBlock(title: "思考过程", systemImage: "brain") {
-                            Text(text).font(.caption).textSelection(.enabled)
+                            Text(reasoningText).font(.subheadline).textSelection(.enabled)
                         }
-                    } else if part.kind == "tool" {
-                        AIExpandableBlock(title: "\(toolStatus(part.state)) \(part.tool ?? "")",
-                                          systemImage: "terminal") {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text(part.input ?? "").font(.system(.caption, design: .monospaced))
-                                if let output = part.output, !output.isEmpty { Text(output).font(.system(.caption, design: .monospaced)) }
-                                if let error = part.error, !error.isEmpty { Text(error).foregroundStyle(.red) }
-                            }.textSelection(.enabled).padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8))
+                    } else if part.kind == "tool", part.id == toolParts.first?.id {
+                        AIExpandableBlock(title: "工具调用 \(toolParts.count) 次 · \(toolGroupStatus)",
+                                          subtitle: toolSummary, systemImage: "terminal") {
+                            VStack(alignment: .leading, spacing: 10) {
+                                ForEach(toolParts) { tool in
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Text("\(tool.tool ?? "工具") · \(toolStatus(tool.state))")
+                                            .font(.subheadline.weight(.semibold))
+                                        Text(tool.input ?? "")
+                                            .font(.system(.footnote, design: .monospaced))
+                                        if let output = tool.output, !output.isEmpty {
+                                            Text(output)
+                                                .font(.system(.footnote, design: .monospaced))
+                                        }
+                                        if let error = tool.error, !error.isEmpty {
+                                            Text(error).font(.footnote).foregroundStyle(.red)
+                                        }
+                                    }
+                                    if tool.id != toolParts.last?.id { Divider() }
+                                }
+                            }
+                            .textSelection(.enabled).padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color(uiColor: .secondarySystemBackground),
+                                        in: RoundedRectangle(cornerRadius: 8))
                         }
-                        if let path = pdfArtifactPath(for: part) {
-                            AIPDFArtifactButton(path: path) {
-                                if let url = validatedPDFURL(path: path) {
-                                    pdfPreview = AIPDFPreviewItem(url: url)
-                                } else {
-                                    pdfPreviewError = true
+                        ForEach(toolParts) { tool in
+                            if let path = pdfArtifactPath(for: tool) {
+                                AIPDFArtifactButton(path: path) {
+                                    if let url = validatedPDFURL(path: path) {
+                                        pdfPreview = AIPDFPreviewItem(url: url)
+                                    } else {
+                                        pdfPreviewError = true
+                                    }
                                 }
                             }
                         }
@@ -590,6 +616,41 @@ private struct AIMessageRow: View {
             } message: {
                 Text("文件不存在、已移出 AI 工作区，或内容不是 PDF。")
             }
+    }
+    private var reasoningParts: [AIPart] {
+        message.parts.filter { $0.kind == "reasoning" }
+    }
+    private var reasoningText: String {
+        var seen = Set<String>()
+        return reasoningParts.compactMap { part -> String? in
+            guard let text = part.text?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !text.isEmpty, seen.insert(text).inserted else { return nil }
+            return text
+        }.joined(separator: "\n\n")
+    }
+    private var toolParts: [AIPart] {
+        message.parts.filter { $0.kind == "tool" }
+    }
+    private var toolSummary: String {
+        var counts: [(name: String, count: Int)] = []
+        for part in toolParts {
+            let name = part.tool ?? "工具"
+            if let index = counts.firstIndex(where: { $0.name == name }) {
+                counts[index].count += 1
+            } else {
+                counts.append((name, 1))
+            }
+        }
+        return counts.map { "\($0.name) ×\($0.count)" }.joined(separator: " · ")
+    }
+    private var toolGroupStatus: String {
+        let states = toolParts.map(\.state)
+        if states.contains("running") { return "运行中" }
+        if states.contains("pending") { return "等待授权" }
+        if states.contains("error") { return "有失败" }
+        if states.allSatisfy({ $0 == "canceled" }) { return "已取消" }
+        if states.contains("canceled") { return "部分取消" }
+        return "已完成"
     }
     private func pdfArtifactPath(for part: AIPart) -> String? {
         guard part.tool == "generate_pdf", part.state == "completed",
@@ -825,6 +886,28 @@ struct AIVideoBubbleUITestRoot: View {
         }
     }
 }
+
+struct AITranscriptUITestRoot: View {
+    private func part(_ id: String, kind: String, text: String? = nil,
+                      tool: String? = nil) -> AIPart {
+        AIPart(id: id, kind: kind, text: text, tool: tool,
+               input: tool == nil ? nil : "{}", output: tool == nil ? nil : "done",
+               error: nil, state: tool == nil ? nil : "completed",
+               path: nil, mimeType: nil)
+    }
+
+    var body: some View {
+        let parts = [part("reasoning-1", kind: "reasoning", text: "检查视频"),
+                     part("reasoning-2", kind: "reasoning", text: "检查视频")]
+            + (0..<4).map { part("ffmpeg-\($0)", kind: "tool", tool: "ffmpeg") }
+            + (0..<4).map { part("view-image-\($0)", kind: "tool", tool: "view_image") }
+            + [part("answer", kind: "text", text: "处理完成，结果已经准备好。")]
+        let message = AIMessage(id: "transcript", role: "assistant", created: 0,
+                                completed: 1, active: false, parts: parts)
+        AIMessageRow(message: message, workspacePath: "")
+            .padding(20)
+    }
+}
 #endif
 
 private struct AIImagePreviewOverlay: View {
@@ -862,12 +945,15 @@ private struct AIImagePreviewOverlay: View {
 
 private struct AIExpandableBlock<Content: View>: View {
     let title: String
+    let subtitle: String?
     let systemImage: String
     let content: Content
     @State private var expanded = false
 
-    init(title: String, systemImage: String, @ViewBuilder content: () -> Content) {
+    init(title: String, subtitle: String? = nil, systemImage: String,
+         @ViewBuilder content: () -> Content) {
         self.title = title
+        self.subtitle = subtitle
         self.systemImage = systemImage
         self.content = content()
     }
@@ -877,11 +963,16 @@ private struct AIExpandableBlock<Content: View>: View {
             Button { withAnimation(.easeOut(duration: 0.16)) { expanded.toggle() } } label: {
                 HStack(spacing: 8) {
                     Image(systemName: systemImage).frame(width: 16)
-                    Text(title).lineLimit(1)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title).font(.subheadline.weight(.medium)).lineLimit(1)
+                        if let subtitle, !subtitle.isEmpty {
+                            Text(subtitle).font(.caption).lineLimit(1)
+                        }
+                    }
                     Spacer()
                     Image(systemName: "chevron.right").rotationEffect(.degrees(expanded ? 90 : 0))
-                }.font(.system(size: 12, weight: .medium)).foregroundStyle(Color.secondary)
-                    .padding(.horizontal, 10).frame(height: 34)
+                }.foregroundStyle(Color.secondary)
+                    .padding(.horizontal, 10).frame(minHeight: subtitle == nil ? 38 : 52)
                     .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 9))
             }.buttonStyle(.plain)
             if expanded { content }

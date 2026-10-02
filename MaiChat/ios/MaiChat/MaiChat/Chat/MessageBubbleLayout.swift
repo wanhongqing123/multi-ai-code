@@ -109,21 +109,21 @@ struct MessageInitialScrollAnchor: ViewModifier {
 /// queued positioning immediately without causing a SwiftUI layout update.
 @MainActor
 final class MessageScrollIntent: ObservableObject {
-    private(set) var userBrowsedHistory = false
+    @Published private(set) var userBrowsedHistory = false
 
     private var generation = 0
 
     func userDidScroll() {
-        userBrowsedHistory = true
+        if !userBrowsedHistory { userBrowsedHistory = true }
         generation &+= 1
     }
 
     func followLatest() {
-        userBrowsedHistory = false
+        if userBrowsedHistory { userBrowsedHistory = false }
     }
 
     func didReachLatest() {
-        userBrowsedHistory = false
+        if userBrowsedHistory { userBrowsedHistory = false }
     }
 
     func beginPositioning() -> Int {
@@ -143,14 +143,6 @@ final class MessageScrollIntent: ObservableObject {
         }
     }
 
-    func positionWithKeyboard<ID: Hashable>(proxy: ScrollViewProxy, id: ID,
-                                            notification: Notification, anchor: UnitPoint = .bottom) {
-        let duration = (notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue ?? 0.25
-        schedulePositioning {
-            withAnimation(.easeOut(duration: duration)) { proxy.scrollTo(id, anchor: anchor) }
-        }
-    }
-
     func schedulePositioning(_ action: @escaping () -> Void) {
         let token = beginPositioning()
         DispatchQueue.main.async { [weak self] in
@@ -159,6 +151,49 @@ final class MessageScrollIntent: ObservableObject {
         }
     }
 
+}
+
+/// Saves the bottom proximity before keyboard layout changes the viewport.
+final class MessageScrollViewportState {
+    private struct Resize {
+        let fromHeight: Int
+        var toHeight: Int
+        let nearBottomBefore: Bool
+    }
+
+    private var visibleHeight = -1
+    private var pendingResize: Resize?
+    private(set) var nearBottom = true
+
+    func record(visible: CGFloat, nearBottom: Bool) {
+        let height = Int(visible.rounded())
+        if visibleHeight >= 0 && height != visibleHeight {
+            if pendingResize == nil {
+                pendingResize = Resize(fromHeight: visibleHeight, toHeight: height,
+                                       nearBottomBefore: self.nearBottom)
+            } else {
+                pendingResize?.toHeight = height
+            }
+        }
+        visibleHeight = height
+        self.nearBottom = nearBottom
+    }
+
+    func nearBottomBeforeKeyboard(opening: Bool) -> Bool {
+        defer { pendingResize = nil }
+        guard let resize = pendingResize,
+              opening ? resize.toHeight < resize.fromHeight :
+                        resize.toHeight > resize.fromHeight else { return nearBottom }
+        return resize.nearBottomBefore
+    }
+
+    func finishKeyboardTransition() { pendingResize = nil }
+
+    func reset() {
+        visibleHeight = -1
+        pendingResize = nil
+        nearBottom = true
+    }
 }
 
 /// Reads the scroll view's actual position without publishing per-pixel SwiftUI state.

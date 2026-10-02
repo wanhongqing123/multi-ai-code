@@ -264,7 +264,7 @@ struct AIAssistantView: View {
                             Task { await model.select(session.id) }
                         } label: {
                             HStack {
-                                Text(session.displayTitle).font(.system(size: 15, weight: .medium)).lineLimit(2)
+                            Text(session.displayTitle).font(ChatTypography.conversationTitle).lineLimit(2)
                                 Spacer(minLength: 12)
                                 if session.busy { ProgressView() }
                                 else if session.id == model.selected {
@@ -312,30 +312,16 @@ struct AIAssistantView: View {
 }
 
 private final class AIMessageViewportLog {
-    private struct Resize {
-        let fromHeight: Int
-        var toHeight: Int
-        let nearBottomBefore: Bool
-    }
-
+    private let state = MessageScrollViewportState()
     private var session = ""
     private var visibleHeight = -1
     private var lastReportedNearBottom: Bool?
-    private var pendingResize: Resize?
-    private(set) var nearBottom = true
+    var nearBottom: Bool { state.nearBottom }
 
     func record(session: String, content: CGFloat, visible: CGFloat,
                 offset: CGFloat, remaining: CGFloat, nearBottom: Bool) {
         let height = Int(visible.rounded())
-        if visibleHeight >= 0 && height != visibleHeight {
-            if pendingResize == nil {
-                pendingResize = Resize(fromHeight: visibleHeight, toHeight: height,
-                                       nearBottomBefore: self.nearBottom)
-            } else {
-                pendingResize?.toHeight = height
-            }
-        }
-        self.nearBottom = nearBottom
+        state.record(visible: visible, nearBottom: nearBottom)
         guard self.session != session || visibleHeight != height ||
             lastReportedNearBottom != nearBottom else {
             return
@@ -347,14 +333,17 @@ private final class AIMessageViewportLog {
     }
 
     func nearBottomBeforeKeyboard(opening: Bool) -> Bool {
-        defer { pendingResize = nil }
-        guard let resize = pendingResize,
-              opening ? resize.toHeight < resize.fromHeight :
-                        resize.toHeight > resize.fromHeight else { return nearBottom }
-        return resize.nearBottomBefore
+        state.nearBottomBeforeKeyboard(opening: opening)
     }
 
-    func finishKeyboardTransition() { pendingResize = nil }
+    func finishKeyboardTransition() { state.finishKeyboardTransition() }
+
+    func reset() {
+        state.reset()
+        session = ""
+        visibleHeight = -1
+        lastReportedNearBottom = nil
+    }
 }
 
 // Owns AI message positioning. Data refresh supplies stable message IDs;
@@ -460,6 +449,7 @@ private struct AIAssistantMessageList: View {
                 .onChange(of: model.selected) { _ in
                     prependAnchorID = nil
                     followsLatest = true
+                    viewportLog.reset()
                 }
                 .onChange(of: isActive) { active in
                     guard active else { return }
@@ -719,8 +709,9 @@ private struct AIMessageRow: View {
                     Spacer(minLength: 30)
                     VStack(alignment: .leading, spacing: 10) {
                         Text(message.text)
-                            .font(AssistantMessageFont.body)
-                            .lineSpacing(6)
+                            .font(ChatTypography.body)
+                            .lineSpacing(ChatTypography.lineSpacing)
+                            .foregroundStyle(RemoteIMStyle.textPrimary)
                             .textSelection(.enabled)
                         ForEach(Array(imagePaths.enumerated()), id: \.offset) { _, path in
                             AIWorkspaceImage(filePath: path)
@@ -781,7 +772,8 @@ private struct AIMessageRow: View {
                 ForEach(message.parts) { part in
                     if part.kind == "text", let text = part.text, !text.isEmpty {
                         MarkdownLikeText(text, retainsPreviousWhilePreparing: true,
-                                         bodyFont: AssistantMessageFont.body, assistantTypography: true)
+                                         bodyFont: ChatTypography.body, assistantTypography: true)
+                            .foregroundStyle(RemoteIMStyle.textPrimary)
                     }
                 }
                 if message.active && reasoningText.isEmpty && toolParts.isEmpty &&
@@ -1393,7 +1385,7 @@ private struct AIComposer: View {
                         if draft.isEmpty {
                             Text(composerPrompt)
                                 .foregroundStyle(RemoteIMStyle.textSecondary)
-                                .font(.system(size: 14, weight: isPressingVoice ? .semibold : .regular))
+                                .font(ChatTypography.body.weight(isPressingVoice ? .semibold : .regular))
                                 .padding(.horizontal, 13)
                                 .padding(.vertical, 13)
                                 .allowsHitTesting(false)

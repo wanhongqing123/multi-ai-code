@@ -1056,16 +1056,16 @@ private struct MessageSearchResultRow: View {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 8) {
                     Text(contact.displayName)
-                        .font(.system(size: 14, weight: .bold))
+                        .font(ChatTypography.conversationTitle)
                         .foregroundStyle(RemoteIMStyle.textPrimary)
                         .lineLimit(1)
                     Spacer(minLength: 8)
                     Text(RemoteIMTimestampTextPolicy.displayText(for: hit.message.createdAt))
-                        .font(.system(size: 11, weight: .medium))
+                        .font(ChatTypography.conversationTime)
                         .foregroundStyle(RemoteIMStyle.textSecondary)
                 }
                 Text(previewText)
-                    .font(.system(size: 13))
+                    .font(ChatTypography.conversationPreview)
                     .foregroundStyle(RemoteIMStyle.textSecondary)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
@@ -1146,21 +1146,21 @@ private struct ConversationRow: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
                     Text(contact.displayName)
-                        .font(.system(size: 16, weight: .bold))
+                        .font(ChatTypography.conversationTitle)
                         .foregroundStyle(RemoteIMStyle.textPrimary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Spacer(minLength: 8)
                     if let latestMessage {
                         Text(RemoteIMTimestampTextPolicy.displayText(for: latestMessage.createdAt))
-                            .font(.system(size: 11, weight: .medium))
+                            .font(ChatTypography.conversationTime)
                             .foregroundStyle(RemoteIMStyle.textSecondary)
                     }
                 }
 
                 HStack(spacing: 8) {
                     ConversationPreviewText(message: latestMessage)
-                        .font(.system(size: 13))
+                        .font(ChatTypography.conversationPreview)
                         .foregroundStyle(RemoteIMStyle.textSecondary)
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -2137,6 +2137,10 @@ private struct MessageListView: View {
     @State private var isLoadingEarlierMessages = false
     @State private var isVisible = false
     @State private var keyboardIsVisible = false
+    @State private var viewportState = MessageScrollViewportState()
+    @State private var keyboardFollowIntent: Bool?
+    @State private var keyboardTransitionOpening: Bool?
+    @State private var bottomCorrectionRequest = 0
 
     @EnvironmentObject private var navigationArrival: ChatNavigationArrival
     @State private var lastLoggedHistoryCount = -1
@@ -2264,9 +2268,17 @@ private struct MessageListView: View {
                                 searchTargetMessageID == nil,
                             allowsBottomFollowing: !scrollIntent.userBrowsedHistory &&
                                 searchTargetMessageID == nil,
-                            onUserScroll: { scrollIntent.userDidScroll() }
+                            bottomCorrectionRequest: bottomCorrectionRequest,
+                            userScrollAwayThreshold: 60,
+                            minimumOlderDragDistance: 24,
+                            onUserScroll: { scrollIntent.userDidScroll() },
+                            onViewportMeasured: { _, visible, _, _, nearBottom in
+                                viewportState.record(visible: visible, nearBottom: nearBottom)
+                            }
                         ) { nearBottom in
-                            if nearBottom { scrollIntent.didReachLatest() }
+                            if nearBottom && keyboardFollowIntent != false {
+                                scrollIntent.didReachLatest()
+                            }
                         })
                 }
                 .padding(.horizontal, MessageBubbleMetrics.horizontalInset)
@@ -2301,18 +2313,27 @@ private struct MessageListView: View {
                 voicePlayer.stop()
                 scrollIntent.cancelPendingPositioning()
             }
-            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { notification in
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
                 guard isVisible, !navigationArrival.isReturning, !keyboardIsVisible,
                       navigationArrival.composerView?.isFirstResponder == true else { return }
                 keyboardIsVisible = true
-                scrollIntent.positionWithKeyboard(
-                    proxy: proxy,
-                    id: "message-list-bottom",
-                    notification: notification,
-                    anchor: .bottom
-                )
+                captureKeyboardFollowIntent(opening: true)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+                guard isVisible, keyboardIsVisible else { return }
+                captureKeyboardFollowIntent(opening: false)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidShowNotification)) { _ in
+                if keyboardFollowIntent == true { bottomCorrectionRequest += 1 }
+                viewportState.finishKeyboardTransition()
+                keyboardFollowIntent = nil
+                keyboardTransitionOpening = nil
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in
+                if keyboardFollowIntent == true { bottomCorrectionRequest += 1 }
+                viewportState.finishKeyboardTransition()
+                keyboardFollowIntent = nil
+                keyboardTransitionOpening = nil
                 keyboardIsVisible = false
             }
             .onChange(of: appState.locallyQueuedMessageID) { id in
@@ -2321,17 +2342,7 @@ private struct MessageListView: View {
                 guard isVisible, !navigationArrival.isReturning, let id,
                       appState.chatState.message(id: id)?.toUserID == peerUserID else { return }
                 scrollIntent.followLatest()
-                scrollIntent.positionAtBottom(proxy: proxy, id: id, anchor: .bottom)
-            }
-            .onChange(of: messages.last?.id) { latestID in
-                guard !scrollIntent.userBrowsedHistory, let latestID else { return }
-                scrollIntent.positionAtBottom(
-                    proxy: proxy, id: latestID, anchor: .bottom)
-            }
-            .onChange(of: activity?.activityID) { _ in
-                guard !scrollIntent.userBrowsedHistory else { return }
-                scrollIntent.positionAtBottom(
-                    proxy: proxy, id: "message-list-bottom", anchor: .bottom)
+                bottomCorrectionRequest += 1
             }
             .onChange(of: messages.count) { _ in recordHistoryLayout() }
             .onChange(of: searchTargetMessageID) { targetID in
@@ -2340,8 +2351,14 @@ private struct MessageListView: View {
             .onChange(of: navigationArrival.hasArrived) { arrived in
                 guard arrived else { return }
                 if !scrollToSearchTarget(proxy: proxy, targetID: searchTargetMessageID) {
-                    scrollToLatestMessage(proxy: proxy)
+                    scrollIntent.followLatest()
+                    bottomCorrectionRequest += 1
                 }
+            }
+            .onChange(of: peerUserID) { _ in
+                viewportState.reset()
+                scrollIntent.followLatest()
+                bottomCorrectionRequest += 1
             }
 
         }
@@ -2385,11 +2402,13 @@ private struct MessageListView: View {
         return true
     }
 
-    private func scrollToLatestMessage(proxy: ScrollViewProxy) {
-        guard let latestID = appState.chatState.latestMessage(with: peerUserID)?.id else { return }
-        scrollIntent.followLatest()
-        scrollIntent.positionAtBottom(
-            proxy: proxy, id: latestID, anchor: .bottom)
+    private func captureKeyboardFollowIntent(opening: Bool) {
+        if keyboardTransitionOpening == opening { return }
+        keyboardTransitionOpening = opening
+        let nearBottom = viewportState.nearBottomBeforeKeyboard(opening: opening)
+        keyboardFollowIntent = nearBottom
+        if nearBottom { scrollIntent.followLatest() }
+        else { scrollIntent.userDidScroll() }
     }
 
     @MainActor
@@ -2688,9 +2707,8 @@ private struct MessageBubbleView: View {
 
     @ViewBuilder private var attachmentCaptionView: some View {
         if let attachmentCaption {
-            MarkdownLikeText(attachmentCaption)
-                .font(.system(size: 13, weight: .regular))
-                .lineSpacing(3)
+            MarkdownLikeText(attachmentCaption, bodyFont: ChatTypography.body,
+                             assistantTypography: true)
                 .foregroundStyle(RemoteIMStyle.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -2711,7 +2729,7 @@ private struct MessageBubbleView: View {
                             Text(quote.senderID.isEmpty
                                 ? quote.digest
                                 : "\(quote.senderID)：\(quote.digest)")
-                                .font(.system(size: 12))
+                                .font(ChatTypography.metadata)
                                 .foregroundStyle(RemoteIMStyle.textSecondary)
                                 .lineLimit(2)
                                 .multilineTextAlignment(.leading)
@@ -2766,9 +2784,8 @@ private struct MessageBubbleView: View {
                     }
                 } else if let approvalRequest = message.approvalRequest {
                     VStack(alignment: .leading, spacing: 12) {
-                        MarkdownLikeText(message.text)
-                            .font(.system(size: 13, weight: .regular))
-                            .lineSpacing(3)
+                        MarkdownLikeText(message.text, bodyFont: ChatTypography.body,
+                                         assistantTypography: true)
                             .foregroundStyle(RemoteIMStyle.textPrimary)
                             .lineLimit(nil)
                             .multilineTextAlignment(.leading)
@@ -2784,9 +2801,8 @@ private struct MessageBubbleView: View {
                         )
                     }
                 } else {
-                    MarkdownLikeText(message.text, trailingTimestamp: messageDate)
-                        .font(.system(size: 13, weight: .regular))
-                        .lineSpacing(3)
+                    MarkdownLikeText(message.text, trailingTimestamp: messageDate,
+                                     bodyFont: ChatTypography.body, assistantTypography: true)
                         .foregroundStyle(RemoteIMStyle.textPrimary)
                         .lineLimit(nil)
                         .multilineTextAlignment(.leading)
@@ -3315,9 +3331,9 @@ private struct SelectableMessageTextView: UIViewRepresentable {
         textView.isScrollEnabled = false
         textView.alwaysBounceVertical = false
         textView.backgroundColor = .clear
-        textView.font = .systemFont(ofSize: 13)
+        textView.font = ChatTypography.editor
         textView.adjustsFontForContentSizeCategory = true
-        textView.textColor = .label
+        textView.textColor = UIColor(RemoteIMStyle.textPrimary)
         textView.textContainerInset = .zero
         textView.textContainer.lineFragmentPadding = 0
         textView.textContainer.widthTracksTextView = true
@@ -4187,14 +4203,23 @@ enum MarkdownPreparation {
     }
 }
 
-enum AssistantMessageFont {
-    static let body = Font.system(size: 16)
-    static let emphasizedBody = Font.system(size: 16, weight: .semibold)
+enum ChatTypography {
+    static let bodyPointSize: CGFloat = 16
+    static let lineSpacing: CGFloat = 6
+    static let paragraphSpacing: CGFloat = 16
+    static let body = Font.system(size: bodyPointSize)
+    static let emphasizedBody = Font.system(size: bodyPointSize, weight: .semibold)
     static let heading = Font.system(size: 18, weight: .semibold)
     static let detail = Font.system(size: 14)
     static let detailMonospaced = Font.system(size: 14, design: .monospaced)
     static let metadata = Font.system(size: 12)
+    static let conversationTitle = Font.system(size: 16, weight: .semibold)
+    static let conversationPreview = Font.system(size: 14)
+    static let conversationTime = Font.system(size: 12, weight: .medium)
+    static let editor = UIFont.systemFont(ofSize: bodyPointSize)
 }
+
+typealias AssistantMessageFont = ChatTypography
 
 private struct MarkdownAssistantTypographyKey: EnvironmentKey {
     static let defaultValue = false
@@ -4218,7 +4243,7 @@ struct MarkdownLikeText: View {
 
     init(_ text: String, trailingTimestamp: String? = nil,
          retainsPreviousWhilePreparing: Bool = false,
-         bodyFont: Font = .system(size: 14),
+         bodyFont: Font = ChatTypography.detail,
          assistantTypography: Bool = false) {
         self.retainsPreviousWhilePreparing = retainsPreviousWhilePreparing
         self.source = text
@@ -4231,7 +4256,8 @@ struct MarkdownLikeText: View {
     var body: some View {
         let document = (prepared?.source == source ? prepared : nil) ?? MarkdownRenderCache.shared.cached(source) ?? (retainsPreviousWhilePreparing ? prepared : nil)
         let blocks = document?.blocks ?? []
-        return VStack(alignment: .leading, spacing: assistantTypography ? 16 : 12) {
+        return VStack(alignment: .leading,
+                      spacing: assistantTypography ? ChatTypography.paragraphSpacing : 12) {
             if document == nil { ProgressView() }
             if blocks.isEmpty, let trailingTimestamp {
                 MarkdownInlineText(text: "", trailingTimestamp: trailingTimestamp)
@@ -4271,7 +4297,7 @@ struct MarkdownLikeText: View {
             }
         }
         .font(bodyFont)
-        .lineSpacing(assistantTypography ? 6 : 4)
+        .lineSpacing(assistantTypography ? ChatTypography.lineSpacing : 4)
         .tint(RemoteIMStyle.blue)
         .lineLimit(nil)
         .multilineTextAlignment(.leading)
@@ -4349,8 +4375,8 @@ private struct MarkdownTrailingDate<Content: View>: View {
             HStack(alignment: .bottom, spacing: 8) {
                 content()
                 Text("· " + timestamp)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(RemoteIMStyle.blue)
+                    .font(ChatTypography.metadata)
+                    .foregroundStyle(RemoteIMStyle.textSecondary)
                     .fixedSize()
             }
         } else { content() }
@@ -5533,7 +5559,7 @@ private struct ComposerView: View {
 
             if draft.text.isEmpty {
                 Text(textComposerPrompt)
-                    .font(.system(size: 14, weight: isPressingVoice ? .semibold : .regular))
+                    .font(ChatTypography.body.weight(isPressingVoice ? .semibold : .regular))
                     .foregroundStyle(textComposerPromptColor)
                     .padding(.horizontal, 13)
                     .padding(.vertical, 13)
@@ -6449,8 +6475,8 @@ struct ComposerTextView: UIViewRepresentable {
         )
         textView.delegate = context.coordinator
         textView.backgroundColor = .clear
-        textView.font = .systemFont(ofSize: 14)
-        textView.textColor = .label
+        textView.font = ChatTypography.editor
+        textView.textColor = UIColor(RemoteIMStyle.textPrimary)
         textView.tintColor = UIColor(RemoteIMStyle.blue)
         textView.autocapitalizationType = .none
         textView.autocorrectionType = .no

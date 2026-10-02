@@ -196,10 +196,10 @@ struct MessageScrollPositionReader: UIViewRepresentable {
     }
     func updateUIView(_ view: UIView, context: Context) {
         context.coordinator.onChanged = onNearBottomChanged
-        context.coordinator.restoreInitialScrollableHistory = restoreInitialScrollableHistory
         context.coordinator.onViewportResizeNeedsBottom = onViewportResizeNeedsBottom
         context.coordinator.onUserScroll = onUserScroll
         context.coordinator.setAllowsBottomFollowing(allowsBottomFollowing)
+        context.coordinator.setRestoreInitialScrollableHistory(restoreInitialScrollableHistory)
         install(view, context.coordinator)
     }
     static func dismantleUIView(_ view: UIView, coordinator: Coordinator) { coordinator.uninstall() }
@@ -231,6 +231,18 @@ struct MessageScrollPositionReader: UIViewRepresentable {
         private var notifiedUserScroll = false
         private var restoreGeneration: UInt64 = 0
         init(_ onChanged: @escaping (Bool) -> Void) { self.onChanged = onChanged }
+
+        func setRestoreInitialScrollableHistory(_ enabled: Bool) {
+            guard restoreInitialScrollableHistory != enabled else { return }
+            restoreInitialScrollableHistory = enabled
+            guard enabled, allowsBottomFollowing, !notifiedUserScroll else { return }
+            followsLatest = true
+            if let scroll,
+               scroll.contentSize.height + scroll.adjustedContentInset.top +
+                   scroll.adjustedContentInset.bottom > scroll.bounds.height + 1 {
+                scheduleBottomCorrection()
+            }
+        }
 
         func setAllowsBottomFollowing(_ enabled: Bool) {
             guard allowsBottomFollowing != enabled else { return }

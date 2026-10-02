@@ -8,23 +8,34 @@ import UIKit
 import UniformTypeIdentifiers
 
 struct AIAssistantView: View {
+    let onExit: (() -> Void)?
     @ObservedObject private var model = AIAssistantModel.shared
     @Environment(\.scenePhase) private var scenePhase
     @State private var showSessions = false
     @State private var showActions = false
     @State private var confirmClear = false
     @State private var followsBottom = true
-    @State private var scrollGeneration = 0
     @State private var sessionDrawerOffset: CGFloat = 0
     @State private var sessionDrawerWidth: CGFloat = 320
     @State private var isAttachmentPanelPresented = false
     @State private var composerFocusController = AIComposerFocusController()
     @State private var transcriptionPresentation = VoiceTranscriptionPresentation()
 
+    init(onExit: (() -> Void)? = nil) {
+        self.onExit = onExit
+    }
+
     var body: some View {
         ZStack(alignment: .topTrailing) {
             VStack(spacing: 0) {
                 AIHeader(
+                    exit: onExit == nil ? nil : {
+                        composerFocusController.dismiss()
+                        isAttachmentPanelPresented = false
+                        showActions = false
+                        showSessions = false
+                        onExit?()
+                    },
                     openSessions: {
                         composerFocusController.dismiss()
                         isAttachmentPanelPresented = false
@@ -42,64 +53,51 @@ struct AIAssistantView: View {
                     ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     GeometryReader { _ in
-                        ScrollViewReader { proxy in
-                            ScrollView {
-                                LazyVStack(alignment: .leading, spacing: 24) {
-                                    if model.messages.isEmpty {
-                                        VStack(spacing: 14) {
-                                            Image(systemName: "sparkles").font(.largeTitle).foregroundStyle(.blue)
-                                            Text("有什么可以帮你？").font(.title3.bold())
-                                            Text("可以聊天、分析文本和处理导入的文件。")
-                                                .font(.subheadline).foregroundStyle(.secondary)
-                                            if !model.configured {
-                                                Button("配置模型", action: { model.showSettings = true })
-                                                    .buttonStyle(.plain).font(.system(size: 14, weight: .semibold))
-                                                    .foregroundStyle(Color.white).padding(.horizontal, 16).frame(height: 38)
-                                                    .background(Color.blue, in: RoundedRectangle(cornerRadius: 10))
-                                            }
-                                        }.frame(maxWidth: .infinity).padding(.vertical, 70)
-                                    }
-                                    ForEach(model.messages) { message in
-                                        AIMessageRow(message: message, workspacePath: model.workspacePath)
-                                    }
-                                    ForEach(model.permissions) { permission in AIPermissionCard(permission: permission, model: model) }
-                                    ForEach(model.questions) { question in AIQuestionCard(question: question, model: model) }
-                                    Color.clear.frame(height: 1).id("bottom")
-                                        .background(MessageScrollPositionReader(
-                                            restoreInitialScrollableHistory: !model.messages.isEmpty,
-                                            allowsBottomFollowing: followsBottom,
-                                            onUserScroll: {
-                                                scrollGeneration += 1
-                                                followsBottom = false
-                                            }
-                                        ) { nearBottom in
-                                            if nearBottom { followsBottom = true }
-                                        })
-                                }.padding(18)
-                            }
-                            .contentShape(Rectangle())
-                            .onAppear { scrollToLatest(proxy) }
-                            .onTapGesture {
-                                composerFocusController.dismiss()
-                                isAttachmentPanelPresented = false
-                            }
-                            .onChange(of: model.scrollRequest) { _ in scrollToLatest(proxy) }
-                            .onChange(of: model.selected) { _ in scrollToLatest(proxy) }
-                            .onChange(of: model.messages) { _ in
-                                if followsBottom { scrollToLatestRow(proxy) }
-                            }
-                            .onChange(of: model.permissions) { _ in
-                                if followsBottom { scrollToLatestRow(proxy) }
-                            }
-                            .onChange(of: model.questions) { _ in
-                                if followsBottom { scrollToLatestRow(proxy) }
-                            }
-                            .overlay(alignment: .bottomTrailing) {
-                                if !followsBottom {
-                                    Button { scrollToLatest(proxy) } label: {
-                                        Image(systemName: "arrow.down").padding(12).background(.regularMaterial, in: Circle())
-                                    }.padding()
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 24) {
+                                if model.messages.isEmpty {
+                                    VStack(spacing: 14) {
+                                        Image(systemName: "sparkles").font(.largeTitle).foregroundStyle(.blue)
+                                        Text("有什么可以帮你？").font(.title3.bold())
+                                        Text("可以聊天、分析文本和处理导入的文件。")
+                                            .font(.subheadline).foregroundStyle(.secondary)
+                                        if !model.configured {
+                                            Button("配置模型", action: { model.showSettings = true })
+                                                .buttonStyle(.plain).font(.system(size: 14, weight: .semibold))
+                                                .foregroundStyle(Color.white).padding(.horizontal, 16).frame(height: 38)
+                                                .background(Color.blue, in: RoundedRectangle(cornerRadius: 10))
+                                        }
+                                    }.frame(maxWidth: .infinity).padding(.vertical, 70)
                                 }
+                                ForEach(model.messages) { message in
+                                    AIMessageRow(message: message, workspacePath: model.workspacePath)
+                                }
+                                ForEach(model.permissions) { permission in AIPermissionCard(permission: permission, model: model) }
+                                ForEach(model.questions) { question in AIQuestionCard(question: question, model: model) }
+                                Color.clear.frame(height: 1).id("bottom")
+                                    .background(MessageScrollPositionReader(
+                                        restoreInitialScrollableHistory: !model.messages.isEmpty,
+                                        allowsBottomFollowing: followsBottom,
+                                        onUserScroll: {
+                                            followsBottom = false
+                                        }
+                                    ) { nearBottom in
+                                        if nearBottom { followsBottom = true }
+                                    })
+                            }.padding(18)
+                        }
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            composerFocusController.dismiss()
+                            isAttachmentPanelPresented = false
+                        }
+                        .onChange(of: model.scrollRequest) { _ in followsBottom = true }
+                        .onChange(of: model.selected) { _ in followsBottom = true }
+                        .overlay(alignment: .bottomTrailing) {
+                            if !followsBottom {
+                                Button { followsBottom = true } label: {
+                                    Image(systemName: "arrow.down").padding(12).background(.regularMaterial, in: Circle())
+                                }.padding()
                             }
                         }
                     }
@@ -194,28 +192,6 @@ struct AIAssistantView: View {
         .onDisappear { model.disappear() }
         .onChange(of: scenePhase) { phase in
             if phase == .active { model.appear() } else { model.disappear() }
-        }
-    }
-
-    private func scrollToLatest(_ proxy: ScrollViewProxy) {
-        scrollGeneration += 1
-        let generation = scrollGeneration
-        followsBottom = true
-        DispatchQueue.main.async {
-            guard scrollGeneration == generation && followsBottom else { return }
-            scrollToLatestRow(proxy)
-        }
-    }
-
-    private func scrollToLatestRow(_ proxy: ScrollViewProxy) {
-        if let question = model.questions.last {
-            proxy.scrollTo(question.id, anchor: .bottom)
-        } else if let permission = model.permissions.last {
-            proxy.scrollTo(permission.id, anchor: .bottom)
-        } else if let message = model.messages.last {
-            proxy.scrollTo(message.id, anchor: .bottom)
-        } else {
-            proxy.scrollTo("bottom", anchor: .bottom)
         }
     }
 
@@ -352,17 +328,22 @@ struct AIAssistantView: View {
 }
 
 private struct AIHeader: View {
+    let exit: (() -> Void)?
     let openSessions: () -> Void
     let openActions: () -> Void
 
     var body: some View {
-        HStack {
+        HStack(spacing: 8) {
+            if let exit {
+                AIHeaderButton(systemImage: "chevron.left", label: "返回主页面", action: exit)
+            }
             AIHeaderButton(systemImage: "sidebar.left", label: "对话列表", action: openSessions)
             Spacer()
-            Text("AI 助手").font(.system(size: 18, weight: .bold))
-            Spacer()
             AIHeaderButton(systemImage: "ellipsis", label: "更多", action: openActions)
-        }.padding(.horizontal, 16).frame(height: 54).background(Color(uiColor: .systemBackground))
+        }
+        .overlay { Text("AI 助手").font(.system(size: 18, weight: .bold)).allowsHitTesting(false) }
+        .padding(.horizontal, 16).frame(height: 54)
+        .background(Color(uiColor: .systemBackground))
     }
 }
 

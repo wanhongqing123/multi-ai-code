@@ -494,6 +494,33 @@ final class MarkdownPresentationTests: XCTestCase {
     }
 
     @MainActor
+    func testMessagesLoadedAfterInitialLayoutPositionAtLatest() async throws {
+        let scroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
+        scroll.contentSize = CGSize(width: 390, height: 120)
+        let marker = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 120))
+        scroll.addSubview(marker)
+        let coordinator = MessageScrollPositionReader.Coordinator { _ in }
+        coordinator.install(from: marker)
+        defer { coordinator.uninstall() }
+
+        scroll.contentSize.height = 3000
+        marker.frame.size.height = 3000
+        coordinator.setRestoreInitialScrollableHistory(true)
+        try await Task.sleep(for: .milliseconds(60))
+        XCTAssertEqual(scroll.contentOffset.y, 2300, accuracy: 1,
+                       "The first loaded long conversation must show its latest message")
+
+        coordinator.setRestoreInitialScrollableHistory(false)
+        scroll.contentOffset.y = 0
+        scroll.contentSize.height = 120
+        marker.frame.size.height = 120
+        coordinator.setRestoreInitialScrollableHistory(true)
+        try await Task.sleep(for: .milliseconds(60))
+        XCTAssertEqual(scroll.contentOffset.y, 0, accuracy: 1,
+                       "A short conversation must not create a blank area above its messages")
+    }
+
+    @MainActor
     func testLongBubbleContentUsesAvailableWidthInBothDirections() throws {
         for width: CGFloat in [320, 393, 430, 844] {
             for outgoing in [false, true] {

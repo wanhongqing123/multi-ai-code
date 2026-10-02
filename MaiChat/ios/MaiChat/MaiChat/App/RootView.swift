@@ -15,6 +15,7 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @ObservedObject private var systemNotificationCenter = RemoteIMSystemNotificationCenter.shared
     @State private var selectedTab: AppTab = .messages
+    @State private var previousMainTab: AppTab = .messages
     @State private var activeChatContact: RemoteIMContact?
     @State private var isShowingAddContact = false
     @State private var movingContact: RemoteIMContact?
@@ -48,7 +49,7 @@ struct RootView: View {
                                 ))
                             )
                         case .assistant:
-                            AIAssistantView()
+                            AIAssistantView(onExit: { selectedTab = previousMainTab })
                         case .contacts:
                             ContactsView(
                                 selectedTab: $selectedTab,
@@ -71,7 +72,8 @@ struct RootView: View {
                     // Messages owns its bar inside the navigation root. An
                     // outer conditional bar appears too late during back swipes
                     // and resizes both pages as soon as selection is cleared.
-                    if selectedTab != .messages && activeChatContact == nil {
+                    if selectedTab != .messages && selectedTab != .assistant &&
+                       activeChatContact == nil {
                         RootTabBar(
                             selectedTab: $selectedTab,
                             remoteDesktop: appState.remoteDesktop
@@ -144,6 +146,9 @@ struct RootView: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.96)))
                 .zIndex(70)
             }
+        }
+        .onChange(of: selectedTab) { tab in
+            if tab != .assistant { previousMainTab = tab }
         }
         .animation(.easeOut(duration: 0.18), value: isShowingAddContact)
         .animation(.easeOut(duration: 0.18), value: movingContact?.userID)

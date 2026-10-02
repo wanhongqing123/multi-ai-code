@@ -318,7 +318,8 @@ void MaiTurnRunner::executeTools(const std::vector<MaiToolInvocation>& calls,
 
         auto& stored = std::get<MaiToolPart>(mAssistant.parts.back().body);
         if (result.hasError()) {
-            stored.state = MaiToolState::Error;
+            stored.state = result.error().code() == MaiErrorCode::Canceled
+                               ? MaiToolState::Canceled : MaiToolState::Error;
             stored.error = result.error().message();
             // 错误也要回灌给模型——它需要知道失败了才能换个做法。
             stored.output = result.error().message();

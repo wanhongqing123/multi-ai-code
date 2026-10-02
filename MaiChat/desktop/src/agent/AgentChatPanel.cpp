@@ -497,6 +497,10 @@ public:
                 edge = kDanger;
                 label = QStringLiteral("失败");
                 break;
+            case MaiToolState::Canceled:
+                edge = kInkFaint;
+                label = QStringLiteral("已取消");
+                break;
         }
         state_->setText(label);
         state_->setStyleSheet(QStringLiteral("color:%1;background:transparent;")
@@ -1343,7 +1347,8 @@ void AgentChatPanel::refreshToolCard(const QString& messageId, const QString& pa
                         appendPdfPreview(partId, fromUtf8(tool->output),
                                          fromUtf8(session.directory));
                 }
-            } else if (tool->state == MaiToolState::Error) {
+            } else if (tool->state == MaiToolState::Error ||
+                       tool->state == MaiToolState::Canceled) {
                 card->setDetail(fromUtf8(tool->error));
             }
             scrollToBottom();

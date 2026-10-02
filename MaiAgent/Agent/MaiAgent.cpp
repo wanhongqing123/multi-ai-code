@@ -24,6 +24,14 @@ MaiSendPrompt::MaiSendPrompt(std::string sessionIdValue, std::string textValue,
       text(std::move(textValue)),
       images(std::move(imageValues)) {}
 
+MaiSendPrompt::MaiSendPrompt(std::string sessionIdValue, std::string textValue,
+                             std::vector<MaiModelImage> imageValues,
+                             std::vector<MaiVideoPart> videoValues)
+    : sessionId(std::move(sessionIdValue)),
+      text(std::move(textValue)),
+      images(std::move(imageValues)),
+      videos(std::move(videoValues)) {}
+
 namespace {
 
 // 一轮对话的在跑状态。MaiTurnRunner 负责跑，这个只负责"还在不在跑"和"叫停"。
@@ -466,6 +474,13 @@ MaiResult<std::string> MaiAgent::submit(const MaiOperation& operation) {
                     imagePart.body = MaiImagePart{image.path, image.mimeType};
                     imagePart.created = user.created;
                     user.parts.push_back(std::move(imagePart));
+                }
+                for (const auto& video : operation.videos) {
+                    MaiMessagePart videoPart;
+                    videoPart.id = MaiIdGenerator::newPartId();
+                    videoPart.body = video;
+                    videoPart.created = user.created;
+                    user.parts.push_back(std::move(videoPart));
                 }
                 mRuntime->store->putMessage(operation.sessionId, user);
                 mRuntime->emitter.emitMessage(MaiEventType::MessageUpdated, operation.sessionId,

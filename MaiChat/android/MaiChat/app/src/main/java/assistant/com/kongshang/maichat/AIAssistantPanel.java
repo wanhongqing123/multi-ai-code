@@ -302,9 +302,14 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         }
         String source = composer.getText().toString(), origin = selected;
         List<AIAssistantController.ImportedFile> sending = new ArrayList<>(currentAttachments());
-        if (source.trim().isEmpty() && !sending.isEmpty())
-            source = sending.size() == 1 ? "请查看这张图片。" : "请查看这些图片。";
-        if (!sending.isEmpty() && !AIAssistantMediaPolicy.supportsImages(state.model)) {
+        if (source.trim().isEmpty() && !sending.isEmpty()) {
+            boolean containsVideo = sending.stream().anyMatch(
+                file -> file.mimeType.startsWith("video/"));
+            source = containsVideo ? (sending.size() == 1 ? "请查看这个视频。" : "请查看这些媒体。")
+                : (sending.size() == 1 ? "请查看这张图片。" : "请查看这些图片。");
+        }
+        if (sending.stream().anyMatch(file -> file.image) &&
+            !AIAssistantMediaPolicy.supportsImages(state.model)) {
             Toast.makeText(activity, "glm-5.3 仅支持文本，请先切换到 glm-5.3-flash。",
                 Toast.LENGTH_LONG).show();
             return;
@@ -780,6 +785,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         String key = "";
         final Map<String, TextView> parts = new HashMap<>();
         final Map<String, ImageView> imageParts = new HashMap<>();
+        final Map<String, Button> videoParts = new HashMap<>();
         final Map<String, Button> pdfCards = new HashMap<>();
         TextView status;
         MessageRow() {
@@ -795,6 +801,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                     removeAllViews();
                     parts.clear();
                     imageParts.clear();
+                    videoParts.clear();
                     pdfCards.clear();
                     status = null;
                     TextView empty = text("有什么可以帮你？\n\n可以聊天、分析图片和文件，也可以语音转文字。", 16,
@@ -818,6 +825,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 removeAllViews();
                 parts.clear();
                 imageParts.clear();
+                videoParts.clear();
                 pdfCards.clear();
                 status = null;
                 if (outgoing) {
@@ -831,6 +839,17 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                         image.setScaleType(ImageView.ScaleType.CENTER_CROP);
                         bubble.addView(image, new LayoutParams(dp(220), dp(150)));
                         imageParts.put(part.optString("id"), image);
+                    }
+                    for (int i = 0; i < array.length(); i++) {
+                        JSONObject part = array.optJSONObject(i);
+                        if (part == null || !part.optString("kind").equals("video")) continue;
+                        Button video = new Button(activity);
+                        video.setAllCaps(false);
+                        video.setTextSize(14);
+                        video.setBackground(MaiChatTheme.bordered(
+                            MaiChatTheme.BLUE_SOFT, MaiChatTheme.BORDER, 10, activity));
+                        bubble.addView(video, new LayoutParams(dp(220), dp(88)));
+                        videoParts.put(part.optString("id"), video);
                     }
                     bubble.setPadding(dp(12), dp(10), dp(12), dp(10));
                     bubble.setBackground(MaiChatTheme.rounded(Color.rgb(244, 244, 247), 16, activity));
@@ -912,6 +931,19 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                             MessageImageLoader.load(file.getPath(), dp(220), dp(150), image,
                                 () -> image.setContentDescription("图片无法显示"));
                     }
+                    if (part.optString("kind").equals("video")) {
+                        Button card = videoParts.get(part.optString("id"));
+                        File file = controller.workspaceFile(part.optString("path"));
+                        if (card != null) {
+                            boolean playable = file != null && file.isFile();
+                            card.setText(playable ? "▶  " + file.getName() : "视频文件已丢失");
+                            card.setEnabled(playable && activity instanceof MainActivity);
+                            card.setOnClickListener(view -> {
+                                if (playable) ((MainActivity) activity).openAgentVideo(
+                                    file.getAbsolutePath());
+                            });
+                        }
+                    }
                 }
                 parts.get("user").setText(body.toString());
             } else
@@ -962,6 +994,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     }
     private String toolStatus(String state) {
         return state.equals("completed") ? "已完成"
+            : state.equals("canceled")   ? "已取消"
             : state.equals("error")      ? "失败"
             : state.equals("pending")    ? "等待授权"
                                          : "正在运行";

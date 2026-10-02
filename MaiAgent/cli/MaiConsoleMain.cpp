@@ -433,6 +433,7 @@ std::string MaiConsoleRenderer::formatPartUpdated(const MaiEvent& event) {
             line += "  (" + std::to_string(tool.output.size()) + " bytes)";
             break;
         case MaiToolState::Error: line += "  " + tool.error; break;
+        case MaiToolState::Canceled: line += "  " + tool.error; break;
         case MaiToolState::Running: break;
     }
     return atLineStart(mAtLineStart, line + "\n");

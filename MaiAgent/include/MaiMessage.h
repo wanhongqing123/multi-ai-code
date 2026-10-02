@@ -54,6 +54,13 @@ struct MaiImagePart {
     std::string mimeType;
 };
 
+// A local video attached to a user message. The host stores the file and keeps
+// the relative path stable; the context builder gives that path to the model.
+struct MaiVideoPart {
+    std::string path;
+    std::string mimeType;
+};
+
 // 一次工具调用走到哪一步了。
 //
 // 这几个值和 SQLite 里 parts.state 列的数字绑死（见 MaiSqliteStore.cpp），**不要改它们的顺序**，
@@ -65,6 +72,7 @@ enum class MaiToolState {
     Running,    // 正在执行
     Completed,  // 跑完了，output 有效
     Error,      // 失败了，error 和 output 都放着失败原因（要回灌给模型）
+    Canceled,   // 用户取消或授权超时；保留原因，但界面不显示为执行失败
 };
 
 const char* maiToolStateToString(MaiToolState state);
@@ -87,7 +95,8 @@ struct MaiToolPart {
     MaiToolState state = MaiToolState::Pending;
 };
 
-using MaiMessagePartBody = std::variant<MaiTextPart, MaiReasoningPart, MaiImagePart, MaiToolPart>;
+using MaiMessagePartBody =
+    std::variant<MaiTextPart, MaiReasoningPart, MaiImagePart, MaiToolPart, MaiVideoPart>;
 
 struct MaiMessagePart {
     // prt_...，**创建后永不改变**。

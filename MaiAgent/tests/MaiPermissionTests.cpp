@@ -466,7 +466,7 @@ void test_reject_blocks_write_and_tells_model() {
 
     MaiToolState state = MaiToolState::Completed;
     CHECK(toolPartState(*agent, sessionId, state));
-    CHECK(state == MaiToolState::Error);
+    CHECK(state == MaiToolState::Canceled);
 
     // 模型得知道发生了什么，而且得被明确告知别重试——否则它会拿同样的参数把 12 圈烧光。
     const std::string toolResultText = lastToolResultText(*model);

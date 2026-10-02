@@ -254,6 +254,10 @@ struct MaiMobileAgent {
                             value.update({{"kind", "image"},
                                           {"path", body.path},
                                           {"mimeType", body.mimeType}});
+                        } else if constexpr (std::is_same_v<T, MaiVideoPart>) {
+                            value.update({{"kind", "video"},
+                                          {"path", body.path},
+                                          {"mimeType", body.mimeType}});
                         } else {
                             std::string text = body.text;
                             auto live = liveParts.find(part.id);
@@ -378,7 +382,21 @@ struct MaiMobileAgent {
                         {value["path"].get<std::string>(), value["mimeType"].get<std::string>()});
                 }
             }
-            id = result(agent->submit(MaiSendPrompt{session, r.at("text"), std::move(images)}));
+            std::vector<MaiVideoPart> videos;
+            if (r.contains("videos")) {
+                if (!r["videos"].is_array() || r["videos"].size() > 10)
+                    throw std::runtime_error("Videos must be an array with at most 10 items.");
+                for (const auto& value : r["videos"]) {
+                    if (!value.is_object() || !value.contains("path") ||
+                        !value["path"].is_string() || !value.contains("mimeType") ||
+                        !value["mimeType"].is_string())
+                        throw std::runtime_error("Each video needs path and mimeType strings.");
+                    videos.push_back(
+                        {value["path"].get<std::string>(), value["mimeType"].get<std::string>()});
+                }
+            }
+            id = result(agent->submit(MaiSendPrompt{session, r.at("text"), std::move(images),
+                                                    std::move(videos)}));
         } else if (op == "stop")
             result(agent->submit(MaiInterrupt{session}));
         else if (op == "delete")

@@ -1,6 +1,20 @@
 import XCTest
 
 final class AIAssistantUITests: XCTestCase {
+    func testVideoAttachmentAppearsAsPlayableMessageCard() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--video-bubble-ui-test"]
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        let bubble = app.buttons["agent-video-bubble"]
+        XCTAssertTrue(bubble.waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["ffplay-sample.mp4"].exists)
+        bubble.tap()
+        XCTAssertTrue(app.buttons["ffplay-close"].waitForExistence(timeout: 15))
+        app.buttons["ffplay-close"].tap()
+        XCTAssertTrue(bubble.waitForExistence(timeout: 3))
+    }
+
     func testFfplayVideoPopupCanPauseSeekAndClose() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--ai-ui-test", "--ffplay-ui-test"]

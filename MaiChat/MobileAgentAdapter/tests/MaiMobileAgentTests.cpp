@@ -450,6 +450,22 @@ int main() {
                     foundImage = true;
         CHECK(foundImage);
 
+        CHECK(!MaiFileSystem::writeFile(MaiFilePath::fromUtf8(directory + "/clip.mp4"),
+                                        "video fixture"));
+        Json videoRequest = { {"op", "send"}, {"session", session},
+                              {"text", "Please inspect this video"},
+                              {"videos", Json::array({{{"path", "clip.mp4"},
+                                                       {"mimeType", "video/mp4"}}})} };
+        CHECK(call(agent, videoRequest)["ok"] == true);
+        const auto videoDone = wait([](const Json& s) { return s["busy"] == false; });
+        bool foundVideo = false;
+        for (const auto& message : videoDone["messages"])
+            for (const auto& part : message["parts"])
+                if (part["kind"] == "video" && part["path"] == "clip.mp4" &&
+                    part["mimeType"] == "video/mp4")
+                    foundVideo = true;
+        CHECK(foundVideo);
+
         // iOS 升级或恢复后，持久化数据库会跟着数据迁移，但应用容器的绝对路径
         // 可能变化。把同一张相对路径图片放进新工作区，再确认下一轮会先迁移
         // session.directory，历史图片不会继续从旧容器读取。

@@ -40,7 +40,7 @@ MaiRole columnToRole(int value) {
     return value == 0 ? MaiRole::User : MaiRole::Assistant;
 }
 
-enum PartKind { kText = 0, kReasoning = 1, kTool = 2, kImage = 3 };
+enum PartKind { kText = 0, kReasoning = 1, kTool = 2, kImage = 3, kVideo = 4 };
 
 int toolStateToColumn(MaiToolState state) {
     switch (state) {
@@ -48,6 +48,7 @@ int toolStateToColumn(MaiToolState state) {
         case MaiToolState::Running: return 1;
         case MaiToolState::Completed: return 2;
         case MaiToolState::Error: return 3;
+        case MaiToolState::Canceled: return 4;
     }
     return 0;
 }
@@ -57,6 +58,7 @@ MaiToolState columnToToolState(int value) {
         case 1: return MaiToolState::Running;
         case 2: return MaiToolState::Completed;
         case 3: return MaiToolState::Error;
+        case 4: return MaiToolState::Canceled;
         default: return MaiToolState::Pending;
     }
 }
@@ -370,6 +372,10 @@ private:
             kind = kImage;
             text = imageBody->path;
             output = imageBody->mimeType;
+        } else if (const auto* videoBody = std::get_if<MaiVideoPart>(&part.body)) {
+            kind = kVideo;
+            text = videoBody->path;
+            output = videoBody->mimeType;
         } else if (const auto* toolBody = std::get_if<MaiToolPart>(&part.body)) {
             kind = kTool;
             tool = toolBody->tool;
@@ -411,6 +417,8 @@ private:
                 part.body = MaiReasoningPart{textColumn(statement, 3)};
             } else if (kind == kImage) {
                 part.body = MaiImagePart{textColumn(statement, 3), textColumn(statement, 7)};
+            } else if (kind == kVideo) {
+                part.body = MaiVideoPart{textColumn(statement, 3), textColumn(statement, 7)};
             } else if (kind == kTool) {
                 MaiToolPart tool;
                 tool.tool = textColumn(statement, 4);

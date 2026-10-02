@@ -147,6 +147,10 @@ void contract_messages_and_parts(MaiSessionStore& store, const char* which) {
     image.created = 2000;
     image.body = MaiImagePart{"photo.png", "image/png"};
     user.parts.push_back(image);
+    MaiMessagePart video;
+    video.id = MaiIdGenerator::newPartId();
+    video.body = MaiVideoPart{"clip.mp4", "video/mp4"};
+    user.parts.push_back(video);
     store.putMessage(sessionId, user);
 
     // assistant 消息把三种 part 都带上：文本、推理、工具
@@ -168,6 +172,15 @@ void contract_messages_and_parts(MaiSessionStore& store, const char* which) {
     toolCall.body = tool;
     assistant.parts.push_back(toolCall);
 
+    MaiMessagePart canceledCall;
+    canceledCall.id = MaiIdGenerator::newPartId();
+    tool.callId = "call_2";
+    tool.state = MaiToolState::Canceled;
+    tool.error = "The user canceled this tool call.";
+    tool.output = tool.error;
+    canceledCall.body = tool;
+    assistant.parts.push_back(canceledCall);
+
     assistant.parts.push_back(textPart(MaiIdGenerator::newPartId(), "done"));
     store.putMessage(sessionId, assistant);
 
@@ -177,19 +190,22 @@ void contract_messages_and_parts(MaiSessionStore& store, const char* which) {
 
     CHECK(loaded[0].id == user.id);
     CHECK(loaded[0].role == MaiRole::User);
-    CHECK(loaded[0].parts.size() == 2);
-    if (loaded[0].parts.size() == 2) {
+    CHECK(loaded[0].parts.size() == 3);
+    if (loaded[0].parts.size() == 3) {
         const auto* readImage = std::get_if<MaiImagePart>(&loaded[0].parts[1].body);
         CHECK(readImage && readImage->path == "photo.png");
         CHECK(readImage && readImage->mimeType == "image/png");
+        const auto* readVideo = std::get_if<MaiVideoPart>(&loaded[0].parts[2].body);
+        CHECK(readVideo && readVideo->path == "clip.mp4");
+        CHECK(readVideo && readVideo->mimeType == "video/mp4");
     }
 
     CHECK(loaded[1].id == assistant.id);
     CHECK(loaded[1].role == MaiRole::Assistant);
     CHECK(loaded[1].created == 2000);
     CHECK(loaded[1].completed == 2001);
-    CHECK(loaded[1].parts.size() == 3);
-    if (loaded[1].parts.size() != 3) return;
+    CHECK(loaded[1].parts.size() == 4);
+    if (loaded[1].parts.size() != 4) return;
 
     // part 的顺序必须和放进去时一致：界面就按这个顺序渲染，
     // 乱了的话工具卡会跑到它触发的那段文字前面去。
@@ -206,7 +222,11 @@ void contract_messages_and_parts(MaiSessionStore& store, const char* which) {
         CHECK(readTool->state == MaiToolState::Completed);
     }
 
-    const auto* readText = std::get_if<MaiTextPart>(&loaded[1].parts[2].body);
+    const auto* readCanceled = std::get_if<MaiToolPart>(&loaded[1].parts[2].body);
+    CHECK(readCanceled && readCanceled->state == MaiToolState::Canceled);
+    CHECK(readCanceled && readCanceled->callId == "call_2");
+
+    const auto* readText = std::get_if<MaiTextPart>(&loaded[1].parts[3].body);
     CHECK(readText && readText->text == "done");
 }
 

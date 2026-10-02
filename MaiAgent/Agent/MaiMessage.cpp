@@ -6,6 +6,7 @@ const char* maiToolStateToString(MaiToolState state) {
         case MaiToolState::Running: return "running";
         case MaiToolState::Completed: return "completed";
         case MaiToolState::Error: return "error";
+        case MaiToolState::Canceled: return "canceled";
     }
     return "pending";
 }

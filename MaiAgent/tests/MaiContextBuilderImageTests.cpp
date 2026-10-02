@@ -74,10 +74,22 @@ void testSmallCurrentRequestKeepsEveryImage() {
     CHECK(request.back().images.front().path == "frame-3.jpg");
 }
 
+void testVideoAttachmentUsesAFileReferenceInsteadOfImagePixels() {
+    MaiMessage message = userMessage("Please edit this video", {});
+    MaiMessagePart video;
+    video.body = MaiVideoPart{"clips/input.mp4", "video/mp4"};
+    message.parts.push_back(std::move(video));
+    const std::vector<MaiModelMessage> request = MaiContextBuilder().build({message});
+    CHECK(request.size() == 1);
+    CHECK(request.front().images.empty());
+    CHECK(request.front().content.find("clips/input.mp4") != std::string::npos);
+}
+
 }  // namespace
 
 int main() {
     testCurrentRequestKeepsOnlyRecentToolPixels();
     testSmallCurrentRequestKeepsEveryImage();
+    testVideoAttachmentUsesAFileReferenceInsteadOfImagePixels();
     return failures == 0 ? 0 : 1;
 }

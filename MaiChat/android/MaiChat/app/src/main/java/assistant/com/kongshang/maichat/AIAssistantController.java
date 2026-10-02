@@ -407,11 +407,16 @@ public final class AIAssistantController {
                     selected = target;
                 }
                 JSONArray images = new JSONArray();
+                JSONArray videos = new JSONArray();
                 for (ImportedFile file : intendedAttachments) if (file.image) {
                     images.put(new JSONObject().put("path", file.relativePath)
                         .put("mimeType", file.mimeType));
+                } else if (file.mimeType.startsWith("video/")) {
+                    videos.put(new JSONObject().put("path", file.relativePath)
+                        .put("mimeType", file.mimeType));
                 }
-                call(op("send").put("session", target).put("text", text).put("images", images));
+                call(op("send").put("session", target).put("text", text)
+                    .put("images", images).put("videos", videos));
                 error = "";
                 success = true;
                 refresh(true);

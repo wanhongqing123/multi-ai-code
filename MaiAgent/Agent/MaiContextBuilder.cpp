@@ -42,6 +42,9 @@ std::vector<MaiModelMessage> MaiContextBuilder::build(
                         modelMessage.images.push_back({image->path, image->mimeType});
                     else
                         ++omittedImages;
+                } else if (const auto* video = std::get_if<MaiVideoPart>(&part.body)) {
+                    if (!modelMessage.content.empty()) modelMessage.content += "\n";
+                    modelMessage.content += "Attached video in the Agent workspace: " + video->path;
                 }
             }
             if (!modelMessage.content.empty() || !modelMessage.images.empty()) {
@@ -104,7 +107,8 @@ std::vector<MaiModelMessage> MaiContextBuilder::build(
             } else if (const auto* toolPart = std::get_if<MaiToolPart>(&part.body)) {
                 // 还没跑完的不回灌：模型看到一个没有结果的调用会以为它失败了。
                 if (toolPart->state == MaiToolState::Completed ||
-                    toolPart->state == MaiToolState::Error) {
+                    toolPart->state == MaiToolState::Error ||
+                    toolPart->state == MaiToolState::Canceled) {
                     batch.push_back(toolPart);
                 }
             } else if (const auto* image = std::get_if<MaiImagePart>(&part.body)) {

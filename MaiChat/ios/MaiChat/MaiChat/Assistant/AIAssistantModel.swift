@@ -223,11 +223,13 @@ actor AIAssistantBackend {
         try call(operation, values: values.mapValues { $0 as Any }, force: force)
     }
 
-    func send(session: String, text: String, images: [AIImportedFile]) throws -> AIResponse {
+    func send(session: String, text: String, images: [AIImportedFile],
+              videos: [AIImportedFile]) throws -> AIResponse {
         try call("send", values: [
             "session": session,
             "text": text,
-            "images": images.map { ["path": $0.relativePath, "mimeType": $0.mimeType] }
+            "images": images.map { ["path": $0.relativePath, "mimeType": $0.mimeType] },
+            "videos": videos.map { ["path": $0.relativePath, "mimeType": $0.mimeType] }
         ])
     }
 
@@ -416,6 +418,7 @@ final class AIAssistantModel: ObservableObject {
     func send(
         _ text: String,
         images: [AIImportedFile] = [],
+        videos: [AIImportedFile] = [],
         expectedSession: String? = nil
     ) async -> Bool {
         guard configured else { showSettings = true; return false }
@@ -424,7 +427,7 @@ final class AIAssistantModel: ObservableObject {
         defer { isSubmitting = false }
         let draftSession = selected
         guard expectedSession == nil || expectedSession == draftSession else { return false }
-        let attachments = pendingAttachments[draftSession, default: []] + images
+        let attachments = pendingAttachments[draftSession, default: []] + images + videos
         if attachments.contains(where: \.isImage),
            settings.model.trimmingCharacters(in: .whitespacesAndNewlines)
                .caseInsensitiveCompare("glm-5.3") == .orderedSame {
@@ -437,7 +440,8 @@ final class AIAssistantModel: ObservableObject {
             _ = try await backend.send(
                 session: selected,
                 text: text,
-                images: attachments.filter(\.isImage)
+                images: attachments.filter(\.isImage),
+                videos: attachments.filter { $0.mimeType.hasPrefix("video/") }
             )
             pendingAttachments.removeValue(forKey: draftSession)
             error = ""

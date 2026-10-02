@@ -512,6 +512,7 @@ private struct AIMessageRow: View {
     let workspacePath: String
     @State private var pdfPreview: AIPDFPreviewItem?
     @State private var pdfPreviewError = false
+    @State private var videoPreview: AIVideoPreviewItem?
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             if message.role == "user" {
@@ -521,6 +522,11 @@ private struct AIMessageRow: View {
                         Text(message.text).font(.system(size: 14)).textSelection(.enabled)
                         ForEach(Array(imagePaths.enumerated()), id: \.offset) { _, path in
                             AIWorkspaceImage(filePath: path)
+                        }
+                        ForEach(videoPaths, id: \.self) { path in
+                            AIWorkspaceVideoCard(filePath: path) {
+                                videoPreview = AIVideoPreviewItem(path: path)
+                            }
                         }
                     }
                     .padding(14)
@@ -575,6 +581,9 @@ private struct AIMessageRow: View {
         }.frame(maxWidth: .infinity, alignment: .leading)
             .sheet(item: $pdfPreview) { item in
                 AIPDFPreviewScreen(item: item) { pdfPreview = nil }
+            }
+            .fullScreenCover(item: $videoPreview) { item in
+                MaiFfplayVideoScreen(path: item.path) { videoPreview = nil }
             }
             .alert("无法预览 PDF", isPresented: $pdfPreviewError) {
                 Button("知道了", role: .cancel) {}
@@ -638,6 +647,23 @@ private struct AIMessageRow: View {
             return candidate.path
         }
     }
+    private var videoPaths: [String] {
+        guard !workspacePath.isEmpty else { return [] }
+        let root = URL(fileURLWithPath: workspacePath, isDirectory: true)
+            .standardizedFileURL.resolvingSymlinksInPath()
+        let prefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
+        var seen = Set<String>()
+        return message.parts.compactMap { part in
+            guard part.kind == "video", part.mimeType?.hasPrefix("video/") == true,
+                  let relative = part.path, !(relative as NSString).isAbsolutePath else {
+                return nil
+            }
+            let file = root.appendingPathComponent(relative)
+                .standardizedFileURL.resolvingSymlinksInPath()
+            guard file.path.hasPrefix(prefix), seen.insert(file.path).inserted else { return nil }
+            return file.path
+        }
+    }
     private static func isImage(_ url: URL) -> Bool {
         guard let type = UTType(filenameExtension: url.pathExtension) else { return false }
         return type.conforms(to: .image)
@@ -650,6 +676,11 @@ private struct AIMessageRow: View {
 private struct AIPDFPreviewItem: Identifiable {
     let url: URL
     var id: String { url.path }
+}
+
+private struct AIVideoPreviewItem: Identifiable {
+    let path: String
+    var id: String { path }
 }
 
 private struct AIPDFPreviewScreen: View {
@@ -712,6 +743,89 @@ private struct AIWorkspaceImage: View {
         }
     }
 }
+
+private struct AIWorkspaceVideoCard: View {
+    let filePath: String
+    let open: () -> Void
+    @State private var cover: UIImage?
+    @State private var durationSeconds = 0
+
+    private var exists: Bool { FileManager.default.fileExists(atPath: filePath) }
+
+    var body: some View {
+        Button(action: open) {
+            VStack(alignment: .leading, spacing: 6) {
+                ZStack {
+                    if let cover {
+                        Image(uiImage: cover).resizable().scaledToFill()
+                    } else {
+                        LinearGradient(colors: [Color(red: 0.10, green: 0.17, blue: 0.27),
+                                                Color(red: 0.18, green: 0.32, blue: 0.47)],
+                                       startPoint: .topLeading, endPoint: .bottomTrailing)
+                    }
+                    Image(systemName: exists ? "play.fill" : "exclamationmark.triangle.fill")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 52, height: 52)
+                        .background(.black.opacity(0.5), in: Circle())
+                    Text(String(format: "%d:%02d", durationSeconds / 60,
+                                durationSeconds % 60))
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 7)
+                        .frame(height: 22)
+                        .background(.black.opacity(0.56), in: Capsule())
+                        .frame(maxWidth: .infinity, maxHeight: .infinity,
+                               alignment: .bottomTrailing)
+                        .padding(8)
+                }
+                .frame(width: 220, height: 142)
+                .clipped()
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                Text(exists ? URL(fileURLWithPath: filePath).lastPathComponent : "视频文件已丢失")
+                    .font(.caption).lineLimit(1).truncationMode(.middle)
+                    .frame(width: 220, alignment: .leading)
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(!exists)
+        .accessibilityLabel(exists ? "播放视频" : "视频文件已丢失")
+        .accessibilityIdentifier("agent-video-bubble")
+        .task(id: filePath) {
+            guard exists else { return }
+            let asset = AVURLAsset(url: URL(fileURLWithPath: filePath))
+            if let duration = try? await asset.load(.duration),
+               duration.seconds.isFinite {
+                durationSeconds = max(0, Int(duration.seconds))
+            }
+            let generator = AVAssetImageGenerator(asset: asset)
+            generator.appliesPreferredTrackTransform = true
+            generator.maximumSize = CGSize(width: 440, height: 284)
+            let time = CMTime(seconds: durationSeconds > 1 ? 0.5 : 0,
+                              preferredTimescale: 600)
+            if let image = try? await generator.image(at: time), !Task.isCancelled {
+                cover = UIImage(cgImage: image.image)
+            }
+        }
+    }
+}
+
+#if targetEnvironment(simulator)
+struct AIVideoBubbleUITestRoot: View {
+    var body: some View {
+        if let video = Bundle.main.url(forResource: "ffplay-sample", withExtension: "mp4") {
+            let part = AIPart(id: "video", kind: "video", text: nil, tool: nil,
+                              input: nil, output: nil, error: nil, state: nil,
+                              path: video.lastPathComponent, mimeType: "video/mp4")
+            let message = AIMessage(id: "video-message", role: "user", created: 0,
+                                    completed: 1, active: false, parts: [part])
+            AIMessageRow(message: message,
+                         workspacePath: video.deletingLastPathComponent().path)
+                .padding(20)
+        }
+    }
+}
+#endif
 
 private struct AIImagePreviewOverlay: View {
     let filePath: String
@@ -971,7 +1085,7 @@ private struct AIComposer: View {
                 Divider().background(RemoteIMStyle.border)
                 ComposerAttachmentPanel(
                     canSendImage: true,
-                    canSendVideo: false,
+                    canSendVideo: true,
                     canSendFile: true,
                     canSendVoice: false,
                     openLibrary: {
@@ -1212,13 +1326,14 @@ private struct AIComposer: View {
                                    to targetSession: String) async {
         guard !images.isEmpty || !videos.isEmpty else { return }
         let existingDraft = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        let videoReferences = videos.map { "请查看工作区视频：\($0.relativePath)" }
-            .joined(separator: "\n")
+        let videoPrompt = videos.isEmpty ? "" :
+            (videos.count == 1 ? "请查看这个视频。" : "请查看这些视频。")
         let imagePrompt = images.isEmpty ? "" :
             (images.count == 1 ? "请查看这张图片。" : "请查看这些图片。")
-        let prompt = [existingDraft, videoReferences, imagePrompt]
+        let prompt = [existingDraft, videoPrompt, imagePrompt]
             .filter { !$0.isEmpty }.joined(separator: "\n")
-        if await model.send(prompt, images: images, expectedSession: targetSession) {
+        if await model.send(prompt, images: images, videos: videos,
+                            expectedSession: targetSession) {
             if existingDraft.isEmpty || draft == prompt { draft = "" }
             return
         }

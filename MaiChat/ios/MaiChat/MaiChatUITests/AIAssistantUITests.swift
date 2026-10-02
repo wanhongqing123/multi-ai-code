@@ -21,6 +21,15 @@ final class AIAssistantUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(latest.frame.minY, timeline.frame.minY - 2)
         XCTAssertLessThanOrEqual(latest.frame.maxY, timeline.frame.maxY + 2,
                                  "Opening the keyboard must keep the latest message visible")
+        timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap()
+        let keyboardHidden = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"),
+            object: app.keyboards.firstMatch
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [keyboardHidden], timeout: 3), .completed)
+        XCTAssertGreaterThanOrEqual(latest.frame.minY, timeline.frame.minY - 2)
+        XCTAssertLessThanOrEqual(latest.frame.maxY, timeline.frame.maxY + 2,
+                                 "Closing the keyboard must keep the latest message visible")
     }
 
     func testToolCallsAndReasoningCollapseWithoutMovingFinalAnswer() throws {

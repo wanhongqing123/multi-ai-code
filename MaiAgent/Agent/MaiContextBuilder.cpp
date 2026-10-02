@@ -1,5 +1,9 @@
 #include "MaiContextBuilder.h"
 
+#include <cstddef>
+#include <string>
+#include <utility>
+
 MaiContextBuilder::MaiContextBuilder() : MaiContextBuilder(Options{}) {}
 
 MaiContextBuilder::MaiContextBuilder(Options options) : mOptions(std::move(options)) {}
@@ -9,14 +13,36 @@ std::vector<MaiModelMessage> MaiContextBuilder::build(
     std::vector<MaiModelMessage> out;
     out.reserve(history.size());
 
-    for (const auto& message : history) {
+    std::size_t latestUserIndex = history.size();
+    for (std::size_t index = 0; index < history.size(); ++index) {
+        if (history[index].role == MaiRole::User) latestUserIndex = index;
+    }
+    std::size_t currentToolImages = 0;
+    for (std::size_t index = latestUserIndex; index < history.size(); ++index) {
+        if (history[index].role != MaiRole::Assistant) continue;
+        for (const auto& part : history[index].parts) {
+            if (std::holds_alternative<MaiImagePart>(part.body)) ++currentToolImages;
+        }
+    }
+    const std::size_t skipCurrentImages = currentToolImages > mOptions.maxRecentToolImages
+                                              ? currentToolImages - mOptions.maxRecentToolImages
+                                              : 0;
+    std::size_t currentImageIndex = 0;
+    std::size_t omittedImages = 0;
+
+    for (std::size_t messageIndex = 0; messageIndex < history.size(); ++messageIndex) {
+        const auto& message = history[messageIndex];
         if (message.role == MaiRole::User) {
             MaiModelMessage modelMessage;
             modelMessage.role = MaiModelRole::User;
             modelMessage.content = message.text();
             for (const auto& part : message.parts) {
-                if (const auto* image = std::get_if<MaiImagePart>(&part.body))
-                    modelMessage.images.push_back({image->path, image->mimeType});
+                if (const auto* image = std::get_if<MaiImagePart>(&part.body)) {
+                    if (messageIndex == latestUserIndex)
+                        modelMessage.images.push_back({image->path, image->mimeType});
+                    else
+                        ++omittedImages;
+                }
             }
             if (!modelMessage.content.empty() || !modelMessage.images.empty())
                 out.push_back(std::move(modelMessage));
@@ -81,6 +107,11 @@ std::vector<MaiModelMessage> MaiContextBuilder::build(
                     batch.push_back(toolPart);
                 }
             } else if (const auto* image = std::get_if<MaiImagePart>(&part.body)) {
+                const bool isCurrentTurn = messageIndex > latestUserIndex;
+                if (!isCurrentTurn || currentImageIndex++ < skipCurrentImages) {
+                    ++omittedImages;
+                    continue;
+                }
                 // Chat Completions only accepts image_url parts on a user message. Keep the tool
                 // result immediately after its assistant call, then add the captured image as the
                 // next observation so the model receives the actual pixels instead of a path.
@@ -97,6 +128,15 @@ std::vector<MaiModelMessage> MaiContextBuilder::build(
         if (!pending.content.empty() || !pending.invocations.empty()) {
             out.push_back(std::move(pending));
         }
+    }
+    if (omittedImages != 0) {
+        MaiModelMessage note;
+        note.role = MaiModelRole::User;
+        note.content = "Omitted " + std::to_string(omittedImages) +
+                       " older image observations from this request to keep the media payload "
+                       "bounded. The files remain available; use view_image on a relevant path "
+                       "again if its pixels are needed.";
+        out.push_back(std::move(note));
     }
     return out;
 }

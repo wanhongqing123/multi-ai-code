@@ -167,6 +167,7 @@ add_library(maiagent STATIC
   AgentTools/MaiTimeTool.cpp
   AgentTools/MaiApplyPatchTool.cpp
   AgentTools/MaiWebFetchTool.cpp
+  AgentTools/MaiDownloadFileTool.cpp
   AgentTools/MaiTodoWriteTool.cpp
   AgentTools/MaiQuestionTool.cpp
   AgentTools/MaiSubAgentTools.cpp
@@ -278,6 +279,8 @@ if(MAIAGENT_BUILD_TESTS)
       MaiEditToolTests      # edit：唯一匹配、替换全部、拒绝的那几种情况
       MaiApplyPatchToolTests  # apply_patch：多处/多文件、全有或全无、换行原样
       MaiWebToolsTests      # webfetch 的 HTML 转文本和协议限制、todowrite 的校验
+      MaiDownloadFileTests  # 本地 HTTP 的二进制、重定向、大小限制和路径边界
+      MaiContextBuilderImageTests # 图像历史有界，当前用户附件仍然可见
       MaiQuestionTests      # 问答闸门 + question 工具：等不到答案时绝不能编一个
       MaiSubAgentTests      # 子 Agent：深度上限、数量上限、不能戳别人的会话
       MaiShellToolTests     # shell：审批粒度、超时、取消、输出上限

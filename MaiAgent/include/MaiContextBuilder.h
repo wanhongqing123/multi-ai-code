@@ -1,4 +1,5 @@
 #pragma once
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -19,6 +20,10 @@ public:
     struct Options {
         // reasoning 不回灌。它是模型的草稿，回灌会污染下一轮上下文。
         bool includeReasoning = false;
+        // Keep the latest tool images from the active user turn. Older pixels remain on disk and
+        // in the conversation store, but repeatedly embedding all of them makes every subsequent
+        // model request grow until its streaming deadline is exhausted.
+        std::size_t maxRecentToolImages = 8;
     };
 
     MaiContextBuilder();

@@ -6,6 +6,7 @@
 #include "MaiFileSystem.h"
 #include "MaiProcess.h"
 #include "MaiApplyPatchTool.h"
+#include "MaiDownloadFileTool.h"
 #include "MaiEditTool.h"
 #include "MaiFileTools.h"
 #include "MaiQuestionTool.h"
@@ -151,6 +152,7 @@ void registerMaiBuiltinTools(MaiToolRegistry& registry) {
     registry.add(makeMaiApplyPatchTool());
     registry.add(makeMaiTodoWriteTool());
     registry.add(makeMaiWebFetchTool());
+    registry.add(makeMaiDownloadFileTool());
     registry.add(makeMaiQuestionTool());
     registry.add(makeMaiSpawnAgentTool());
     registry.add(makeMaiWaitAgentTool());

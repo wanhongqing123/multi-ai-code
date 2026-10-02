@@ -354,7 +354,7 @@ final class MarkdownPresentationTests: XCTestCase {
     }
 
     @MainActor
-    func testViewportResizeKeepsLatestButDoesNotMoveHistoryReaders() {
+    func testViewportResizeKeepsLatestButDoesNotMoveHistoryReaders() async throws {
         let scroll = TrackingScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
         scroll.contentSize = CGSize(width: 390, height: 3000)
         scroll.contentOffset.y = 2300
@@ -365,12 +365,15 @@ final class MarkdownPresentationTests: XCTestCase {
         defer { coordinator.uninstall() }
         // Keyboard opens, then closes; no new messages arrive.
         scroll.frame.size.height = 400
+        try await Task.sleep(for: .milliseconds(30))
         XCTAssertEqual(scroll.contentOffset.y, 2600, accuracy: 1)
         scroll.frame.size.height = 700
+        try await Task.sleep(for: .milliseconds(30))
         XCTAssertEqual(scroll.contentOffset.y, 2300, accuracy: 1)
         // Composer expands/collapses through several intermediate layout sizes.
         for height in [650.0, 550.0, 450.0, 700.0] {
             scroll.frame.size.height = height
+            try await Task.sleep(for: .milliseconds(30))
             XCTAssertEqual(scroll.contentOffset.y, 3000 - height, accuracy: 1)
         }
         // Explicitly reading earlier history must not jump to latest on resize.
@@ -378,12 +381,15 @@ final class MarkdownPresentationTests: XCTestCase {
         scroll.contentOffset.y = 900
         scroll.trackingForTest = false
         scroll.frame.size.height = 400
+        try await Task.sleep(for: .milliseconds(30))
         XCTAssertEqual(scroll.contentOffset.y, 900, accuracy: 1)
         scroll.frame.size.height = 700
+        try await Task.sleep(for: .milliseconds(30))
         XCTAssertEqual(scroll.contentOffset.y, 900, accuracy: 1)
         scroll.contentOffset.y = 2300
         coordinator.allowsBottomFollowing = false
         scroll.frame.size.height = 400
+        try await Task.sleep(for: .milliseconds(30))
         XCTAssertEqual(scroll.contentOffset.y, 2300, accuracy: 1, "Search positioning disables automatic bottom following")
     }
 
@@ -405,9 +411,65 @@ final class MarkdownPresentationTests: XCTestCase {
         scroll.contentOffset.y = 2600
         scroll.frame.size.height = 500
         try await Task.sleep(for: .milliseconds(60))
-        XCTAssertEqual(restorations, 2, "A real viewport resize may restore twice, then must settle")
+        XCTAssertEqual(scroll.contentOffset.y, 2500, accuracy: 1,
+                       "UIKit may clamp to the new bottom without a second correction")
+        XCTAssertLessThanOrEqual(restorations, 1)
         try await Task.sleep(for: .milliseconds(60))
+        XCTAssertLessThanOrEqual(restorations, 1)
+    }
+
+    @MainActor
+    func testLatestIntentRestoresBlankEntryAndResumesAfterSending() async throws {
+        let scroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
+        scroll.contentSize = CGSize(width: 390, height: 3000)
+        scroll.contentOffset.y = 3300
+        let marker = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 3000))
+        scroll.addSubview(marker)
+
+        let unchanged = UIScrollView(frame: scroll.frame)
+        unchanged.contentSize = scroll.contentSize
+        unchanged.contentOffset.y = 3300
+        let unchangedMarker = UIView(frame: marker.frame)
+        unchanged.addSubview(unchangedMarker)
+        let unchangedCoordinator = MessageScrollPositionReader.Coordinator { _ in }
+        unchangedCoordinator.install(from: unchangedMarker)
+        defer { unchangedCoordinator.uninstall() }
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(unchanged.contentOffset.y, 3300, accuracy: 1,
+                       "Without initial restoration the loaded conversation stays beyond its rows")
+
+        let coordinator = MessageScrollPositionReader.Coordinator { _ in }
+        coordinator.restoreInitialScrollableHistory = true
+        var restorations = 0
+        coordinator.onViewportResizeNeedsBottom = { restorations += 1 }
+        coordinator.install(from: marker)
+        defer { coordinator.uninstall() }
+        try await Task.sleep(for: .milliseconds(60))
+        XCTAssertEqual(scroll.contentOffset.y, 2300, accuracy: 1)
+        XCTAssertEqual(restorations, 1)
+
+        coordinator.setAllowsBottomFollowing(false)
+        coordinator.userDidBeginScrolling()
+        scroll.contentOffset.y = 900
+        coordinator.setAllowsBottomFollowing(true)
+        try await Task.sleep(for: .milliseconds(60))
+        XCTAssertEqual(scroll.contentOffset.y, 2300, accuracy: 1,
+                       "Sending after browsing history must restore the latest row")
         XCTAssertEqual(restorations, 2)
+
+        let shortScroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
+        shortScroll.contentSize = CGSize(width: 390, height: 120)
+        let shortMarker = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 120))
+        shortScroll.addSubview(shortMarker)
+        let shortCoordinator = MessageScrollPositionReader.Coordinator { _ in }
+        shortCoordinator.restoreInitialScrollableHistory = true
+        var shortRestorations = 0
+        shortCoordinator.onViewportResizeNeedsBottom = { shortRestorations += 1 }
+        shortCoordinator.install(from: shortMarker)
+        defer { shortCoordinator.uninstall() }
+        try await Task.sleep(for: .milliseconds(60))
+        XCTAssertEqual(shortScroll.contentOffset.y, 0, accuracy: 1)
+        XCTAssertEqual(shortRestorations, 0, "Short conversations remain top-aligned")
     }
 
     @MainActor
@@ -581,17 +643,16 @@ final class MarkdownPresentationTests: XCTestCase {
                                 .id(item.id)
                         }
                         Color.clear.frame(height: 1).id("bottom")
+                            .background(MessageScrollPositionReader(
+                                restoreInitialScrollableHistory: !model.items.isEmpty
+                            ) { probe.nearBottom = $0 })
                     }
-                    .background(MessageScrollPositionReader(onViewportResizeNeedsBottom: {
-                        proxy.scrollTo("bottom", anchor: .bottom)
-                    }) { probe.nearBottom = $0 })
                 }
                 .onAppear { probe.proxy = proxy }
                 .onChange(of: model.items.last?.id) { _ in
-                    // Match MessageListView's post-layout restoration on outgoing append.
+                    // Match MessageListView's single post-layout outgoing position.
                     DispatchQueue.main.async {
                         proxy.scrollTo("bottom", anchor: .bottom)
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.016) { proxy.scrollTo("bottom", anchor: .bottom) }
                     }
                 }
             }
@@ -633,13 +694,12 @@ final class MarkdownPresentationTests: XCTestCase {
                                 }.id(item.id)
                         }
                         Color.clear.frame(height: 1).id("bottom")
+                            .background(MessageScrollPositionReader(
+                                restoreInitialScrollableHistory: !messages.isEmpty,
+                                allowsBottomFollowing: !intent.userBrowsedHistory,
+                                onUserScroll: { intent.userDidScroll() }
+                            ) { probe.nearBottom = $0 })
                     }
-                    .background(MessageScrollPositionReader(onViewportResizeNeedsBottom: {
-                        guard !intent.userBrowsedHistory else { return }
-                        if let latestID = messages.last?.id {
-                            proxy.scrollTo(latestID, anchor: .bottom)
-                        }
-                    }, onUserScroll: { intent.userDidScroll() }) { probe.nearBottom = $0 })
                 }
                 .modifier(MessageInitialScrollAnchor())
                 .coordinateSpace(name: "entry")
@@ -805,8 +865,16 @@ final class MarkdownPresentationTests: XCTestCase {
             XCTAssertGreaterThan(latest.maxY, 0)
             XCTAssertLessThan(latest.minY, navigation.view.bounds.height,
                               "Long history must not leave a blank viewport")
+            func findScroll(_ view: UIView) -> UIScrollView? {
+                if let scroll = view as? UIScrollView { return scroll }
+                for child in view.subviews {
+                    if let scroll = findScroll(child) { return scroll }
+                }
+                return nil
+            }
+            let scroll = findScroll(navigation.view)
             XCTAssertEqual(probe.nearBottom, true,
-                           "Late row growth must keep the visible conversation at its latest message")
+                           "Late row growth must keep the visible conversation at its latest message. latest=\(latest) offset=\(String(describing: scroll?.contentOffset)) content=\(String(describing: scroll?.contentSize)) viewport=\(String(describing: scroll?.bounds))")
             navigation.update(root: root, detail: nil, selectionID: nil,
                               onPop: {}, animated: false)
             try await Task.sleep(for: .milliseconds(100))
@@ -903,7 +971,16 @@ final class MarkdownPresentationTests: XCTestCase {
             let last = try XCTUnwrap(probe.frames[349])
             XCTAssertGreaterThan(last.maxY, 0)
             XCTAssertLessThanOrEqual(last.maxY, height + 1)
-            XCTAssertEqual(probe.nearBottom, true)
+            func findScroll(_ view: UIView) -> UIScrollView? {
+                if let scroll = view as? UIScrollView { return scroll }
+                for child in view.subviews {
+                    if let scroll = findScroll(child) { return scroll }
+                }
+                return nil
+            }
+            let scroll = findScroll(window)
+            XCTAssertEqual(probe.nearBottom, true,
+                           "height=\(height) last=\(last) offset=\(String(describing: scroll?.contentOffset)) content=\(String(describing: scroll?.contentSize))")
         }
     }
 

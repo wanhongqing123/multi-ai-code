@@ -164,6 +164,17 @@ final class MessageScrollIntent: ObservableObject {
 /// Reads the scroll view's actual position without publishing per-pixel SwiftUI state.
 @MainActor
 struct MessageScrollPositionReader: UIViewRepresentable {
+    final class MarkerView: UIView {
+        var onGeometryChange: (() -> Void)?
+        override var frame: CGRect {
+            didSet { if frame != oldValue { onGeometryChange?() } }
+        }
+        override var bounds: CGRect {
+            didSet { if bounds != oldValue { onGeometryChange?() } }
+        }
+    }
+
+    var restoreInitialScrollableHistory = false
     var allowsBottomFollowing = true
     var onViewportResizeNeedsBottom: (() -> Void)? = nil
     var onUserScroll: (() -> Void)? = nil
@@ -171,22 +182,24 @@ struct MessageScrollPositionReader: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator {
         let coordinator = Coordinator(onNearBottomChanged)
+        coordinator.restoreInitialScrollableHistory = restoreInitialScrollableHistory
         coordinator.allowsBottomFollowing = allowsBottomFollowing
         coordinator.onViewportResizeNeedsBottom = onViewportResizeNeedsBottom
         coordinator.onUserScroll = onUserScroll
         return coordinator
     }
     func makeUIView(context: Context) -> UIView {
-        let view = UIView(frame: .zero)
+        let view = MarkerView(frame: .zero)
         view.isUserInteractionEnabled = false
         install(view, context.coordinator)
         return view
     }
     func updateUIView(_ view: UIView, context: Context) {
         context.coordinator.onChanged = onNearBottomChanged
-        context.coordinator.allowsBottomFollowing = allowsBottomFollowing
+        context.coordinator.restoreInitialScrollableHistory = restoreInitialScrollableHistory
         context.coordinator.onViewportResizeNeedsBottom = onViewportResizeNeedsBottom
         context.coordinator.onUserScroll = onUserScroll
+        context.coordinator.setAllowsBottomFollowing(allowsBottomFollowing)
         install(view, context.coordinator)
     }
     static func dismantleUIView(_ view: UIView, coordinator: Coordinator) { coordinator.uninstall() }
@@ -200,20 +213,36 @@ struct MessageScrollPositionReader: UIViewRepresentable {
 
     @MainActor
     final class Coordinator: NSObject {
+        var restoreInitialScrollableHistory = false
         var allowsBottomFollowing = true
         var onChanged: (Bool) -> Void
         var onViewportResizeNeedsBottom: (() -> Void)?
         var onUserScroll: (() -> Void)?
         private weak var scroll: UIScrollView?
+        private weak var contentMarker: UIView?
         private var observations: [NSKeyValueObservation] = []
         private var lastNearBottom: Bool?
         private var previousViewportSize: CGSize?
         private var previousContentSize: CGSize?
+        private var previousMarkerBottom: CGFloat?
+        private var markerUpdateScheduled = false
         private var correctingViewport = false
         private var followsLatest = false
         private var notifiedUserScroll = false
         private var restoreGeneration: UInt64 = 0
         init(_ onChanged: @escaping (Bool) -> Void) { self.onChanged = onChanged }
+
+        func setAllowsBottomFollowing(_ enabled: Bool) {
+            guard allowsBottomFollowing != enabled else { return }
+            allowsBottomFollowing = enabled
+            restoreGeneration &+= 1
+            followsLatest = enabled
+            if enabled, let scroll,
+               scroll.contentSize.height + scroll.adjustedContentInset.top +
+                   scroll.adjustedContentInset.bottom > scroll.bounds.height + 1 {
+                scheduleBottomCorrection()
+            }
+        }
 
         func install(from view: UIView) {
             var parent = view.superview
@@ -222,6 +251,17 @@ struct MessageScrollPositionReader: UIViewRepresentable {
             guard next !== scroll else { return }
             uninstall()
             scroll = next
+            contentMarker = view
+            (view as? MarkerView)?.onGeometryChange = { [weak self] in
+                guard let self, !self.markerUpdateScheduled else { return }
+                self.markerUpdateScheduled = true
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.markerUpdateScheduled = false
+                    self.updatePosition()
+                }
+            }
+            followsLatest = allowsBottomFollowing
             next.panGestureRecognizer.addTarget(self, action: #selector(panChanged(_:)))
             observations = [
                 next.observe(\.contentOffset, options: [.new]) { [weak self] _, _ in
@@ -243,9 +283,12 @@ struct MessageScrollPositionReader: UIViewRepresentable {
             observations.forEach { $0.invalidate() }
             observations.removeAll()
             scroll = nil
+            (contentMarker as? MarkerView)?.onGeometryChange = nil
+            contentMarker = nil
             lastNearBottom = nil
             previousViewportSize = nil
             previousContentSize = nil
+            previousMarkerBottom = nil
             correctingViewport = false
             followsLatest = false
             notifiedUserScroll = false
@@ -267,21 +310,40 @@ struct MessageScrollPositionReader: UIViewRepresentable {
             restoreGeneration &+= 1
         }
 
-        private func scheduleBottomRestore(generation: UInt64, passes: Int) {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.016) { [weak self] in
+        private func scheduleBottomCorrection() {
+            restoreGeneration &+= 1
+            let generation = restoreGeneration
+            DispatchQueue.main.async { [weak self] in
                 guard let self, let scroll = self.scroll,
                       self.restoreGeneration == generation, self.followsLatest,
                       self.allowsBottomFollowing, !scroll.isTracking,
                       !scroll.isDragging, !scroll.isDecelerating else { return }
-                self.onViewportResizeNeedsBottom?()
-                if passes > 1 {
-                    self.scheduleBottomRestore(generation: generation, passes: passes - 1)
+                scroll.layoutIfNeeded()
+                guard self.restoreGeneration == generation else { return }
+                let top = -scroll.adjustedContentInset.top
+                let contentMaximum = max(top, scroll.contentSize.height +
+                    scroll.adjustedContentInset.bottom - scroll.bounds.height)
+                let markerBottom: CGFloat
+                if let marker = self.contentMarker, marker.bounds.height > 0 {
+                    markerBottom = marker.convert(marker.bounds, to: scroll).maxY
+                } else {
+                    markerBottom = scroll.contentSize.height
                 }
+                let target = max(top, min(contentMaximum,
+                    markerBottom + scroll.adjustedContentInset.bottom - scroll.bounds.height))
+                guard target.isFinite, abs(scroll.contentOffset.y - target) > 1 else { return }
+                self.correctingViewport = true
+                scroll.setContentOffset(CGPoint(x: scroll.contentOffset.x, y: target),
+                                        animated: false)
+                self.correctingViewport = false
+                self.updatePosition()
+                self.onViewportResizeNeedsBottom?()
             }
         }
 
         private func updatePosition() {
             guard let scroll, scroll.bounds.height > 0, !correctingViewport else { return }
+            let firstMeasurement = previousViewportSize == nil
             let viewportSize = CGSize(width: scroll.bounds.width.rounded(), height: scroll.bounds.height.rounded())
             let viewportChanged = previousViewportSize.map { $0 != viewportSize } ?? false
             previousViewportSize = viewportSize
@@ -289,28 +351,28 @@ struct MessageScrollPositionReader: UIViewRepresentable {
                                      height: scroll.contentSize.height.rounded())
             let contentChanged = previousContentSize.map { $0 != contentSize } ?? false
             previousContentSize = contentSize
-            if (viewportChanged || contentChanged), followsLatest, allowsBottomFollowing,
+            let scrollable = scroll.contentSize.height + scroll.adjustedContentInset.top +
+                scroll.adjustedContentInset.bottom > scroll.bounds.height + 1
+            let bottom = contentMarker.flatMap { marker in
+                marker.bounds.height > 0 ? marker.convert(marker.bounds, to: scroll).maxY : nil
+            } ?? scroll.contentSize.height
+            let markerChanged = previousMarkerBottom.map { abs($0 - bottom) > 1 } ?? false
+            previousMarkerBottom = bottom
+            let needsBottom = (viewportChanged || contentChanged || markerChanged) ||
+                (firstMeasurement && restoreInitialScrollableHistory)
+            if needsBottom, scrollable, followsLatest, allowsBottomFollowing,
                !scroll.isTracking, !scroll.isDragging, !scroll.isDecelerating {
-                if onViewportResizeNeedsBottom != nil {
-                    // Never mutate UIScrollView's offset synchronously inside SwiftUI's
-                    // bounds/content-size KVO. Let its stable ID resolve the lazy layout.
-                    // Late Markdown height changes must also keep the newest row visible.
-                    restoreGeneration &+= 1
-                    scheduleBottomRestore(generation: restoreGeneration, passes: 2)
-                } else {
-                    correctingViewport = true
-                    let bottom = max(-scroll.adjustedContentInset.top,
-                        scroll.contentSize.height + scroll.adjustedContentInset.bottom - scroll.bounds.height)
-                    scroll.setContentOffset(CGPoint(x: scroll.contentOffset.x, y: bottom), animated: false)
-                    correctingViewport = false
-                }
+                // React to measured layout, coalescing KVO changes into one
+                // geometry-based correction after layout settles.
+                scheduleBottomCorrection()
             }
-            let remaining = scroll.contentSize.height + scroll.adjustedContentInset.bottom
+            let remaining = min(bottom, scroll.contentSize.height) +
+                scroll.adjustedContentInset.bottom
                 - scroll.contentOffset.y - scroll.bounds.height
             let nearBottom = remaining <= 60
             // Layout can temporarily change contentSize before bounds. Only a real
             // user scroll relinquishes the latest-message intent during that transition.
-            if scroll.isTracking || scroll.isDragging || scroll.isDecelerating {
+            if scroll.isTracking || scroll.isDragging {
                 userDidBeginScrolling()
             } else if nearBottom {
                 followsLatest = true

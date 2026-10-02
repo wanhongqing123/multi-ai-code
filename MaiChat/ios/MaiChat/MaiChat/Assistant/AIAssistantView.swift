@@ -40,7 +40,7 @@ struct AIAssistantView: View {
                 if !model.ready {
                     ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    GeometryReader { geometry in
+                    GeometryReader { _ in
                         ScrollViewReader { proxy in
                             ScrollView {
                                 LazyVStack(alignment: .leading, spacing: 24) {
@@ -64,28 +64,23 @@ struct AIAssistantView: View {
                                     ForEach(model.permissions) { permission in AIPermissionCard(permission: permission, model: model) }
                                     ForEach(model.questions) { question in AIQuestionCard(question: question, model: model) }
                                     Color.clear.frame(height: 1).id("bottom")
+                                        .background(MessageScrollPositionReader(
+                                            restoreInitialScrollableHistory: !model.messages.isEmpty,
+                                            allowsBottomFollowing: followsBottom,
+                                            onUserScroll: {
+                                                scrollGeneration += 1
+                                                followsBottom = false
+                                            }
+                                        ) { nearBottom in
+                                            if nearBottom { followsBottom = true }
+                                        })
                                 }.padding(18)
-                                .background(MessageScrollPositionReader(
-                                    allowsBottomFollowing: followsBottom,
-                                    onViewportResizeNeedsBottom: {
-                                        scrollToLatestRow(proxy)
-                                    },
-                                    onUserScroll: {
-                                        scrollGeneration += 1
-                                        followsBottom = false
-                                    }
-                                ) { nearBottom in
-                                    if nearBottom { followsBottom = true }
-                                })
                             }
                             .contentShape(Rectangle())
                             .onAppear { scrollToLatest(proxy) }
                             .onTapGesture {
                                 composerFocusController.dismiss()
                                 isAttachmentPanelPresented = false
-                            }
-                            .onChange(of: geometry.size.height) { _ in
-                                if followsBottom { scrollToLatestRow(proxy) }
                             }
                             .onChange(of: model.scrollRequest) { _ in scrollToLatest(proxy) }
                             .onChange(of: model.selected) { _ in scrollToLatest(proxy) }
@@ -206,10 +201,6 @@ struct AIAssistantView: View {
         let generation = scrollGeneration
         followsBottom = true
         DispatchQueue.main.async {
-            guard scrollGeneration == generation && followsBottom else { return }
-            scrollToLatestRow(proxy)
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
             guard scrollGeneration == generation && followsBottom else { return }
             scrollToLatestRow(proxy)
         }

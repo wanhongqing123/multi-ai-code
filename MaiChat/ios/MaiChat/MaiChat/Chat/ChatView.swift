@@ -2284,23 +2284,18 @@ private struct MessageListView: View {
                         }
                     }
                     Color.clear.frame(height: 1).id("message-list-bottom")
+                        .background(MessageScrollPositionReader(
+                            restoreInitialScrollableHistory: !messages.isEmpty &&
+                                searchTargetMessageID == nil,
+                            allowsBottomFollowing: !scrollIntent.userBrowsedHistory &&
+                                searchTargetMessageID == nil,
+                            onUserScroll: { scrollIntent.userDidScroll() }
+                        ) { nearBottom in
+                            if nearBottom { scrollIntent.didReachLatest() }
+                        })
                 }
                 .padding(.horizontal, MessageBubbleMetrics.horizontalInset)
                 .padding(.vertical, 18)
-                .background(MessageScrollPositionReader(
-                    onViewportResizeNeedsBottom: {
-                        guard !scrollIntent.userBrowsedHistory,
-                              searchTargetMessageID == nil else { return }
-                        if let latestID = messages.last?.id {
-                            proxy.scrollTo(latestID, anchor: .bottom)
-                        } else {
-                            proxy.scrollTo("message-list-bottom", anchor: .bottom)
-                        }
-                    },
-                    onUserScroll: { scrollIntent.userDidScroll() }
-                ) { nearBottom in
-                    if nearBottom { scrollIntent.didReachLatest() }
-                })
                 .background(
                     ScrollViewKeyboardDismissInstaller { window in
                         dismissAttachmentPanel()

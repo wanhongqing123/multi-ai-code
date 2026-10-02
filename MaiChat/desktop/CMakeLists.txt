@@ -552,6 +552,41 @@ if(WIN32)
   # 应用图标（任务栏/资源管理器/快捷方式）。
   enable_language(RC)
   target_sources(maichat PRIVATE resources/windows/app.rc)
+  if(MAICHAT_ENABLE_FFMPEG AND MAICHAT_ENABLE_OPENCV)
+    set(MAICHAT_RVM_MODEL
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/models/rvm_mobilenetv3_fp32.onnx")
+    set(MAICHAT_ORT_RUNTIME
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/onnxruntime/windows-x64/onnxruntime.dll")
+    set(MAICHAT_ORT_PROVIDER
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/onnxruntime/windows-x64/onnxruntime_providers_shared.dll")
+    if(EXISTS "${MAICHAT_RVM_MODEL}" AND EXISTS "${MAICHAT_ORT_RUNTIME}" AND
+       EXISTS "${MAICHAT_ORT_PROVIDER}")
+      set(MAICHAT_RVM_WINDOWS_ASSETS_AVAILABLE ON)
+      add_custom_command(TARGET maichat POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+          "$<TARGET_FILE_DIR:maichat>/MaiAgentModels"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          "${MAICHAT_RVM_MODEL}"
+          "$<TARGET_FILE_DIR:maichat>/MaiAgentModels/rvm_mobilenetv3_fp32.onnx"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/models/RVM_LICENSE"
+          "$<TARGET_FILE_DIR:maichat>/MaiAgentModels/RVM_LICENSE"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/onnxruntime/LICENSE"
+          "$<TARGET_FILE_DIR:maichat>/MaiAgentModels/ONNXRUNTIME_LICENSE"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/onnxruntime/ThirdPartyNotices.txt"
+          "$<TARGET_FILE_DIR:maichat>/MaiAgentModels/ONNXRUNTIME_ThirdPartyNotices.txt"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          "${MAICHAT_ORT_RUNTIME}"
+          "$<TARGET_FILE_DIR:maichat>/onnxruntime.dll"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          "${MAICHAT_ORT_PROVIDER}"
+          "$<TARGET_FILE_DIR:maichat>/onnxruntime_providers_shared.dll")
+    else()
+      message(STATUS "Windows RVM assets are incomplete; cv_video_matting will be unavailable")
+    endif()
+  endif()
 endif()
 if(APPLE)
   if(MAICHAT_ENABLE_OPENCV AND TARGET maiagent_embedded_fftools AND
@@ -716,8 +751,9 @@ if(MAICHAT_ENABLE_OPENCV AND
   endif()
   target_link_libraries(maichat_agent PRIVATE maiagent_cv_video_analysis)
   target_compile_definitions(maichat_agent PRIVATE MAICHAT_CV_VIDEO_ANALYSIS=1)
-  if(APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64" AND
-     EXISTS "${MAICHAT_RVM_MODEL}" AND EXISTS "${MAICHAT_ORT_RUNTIME}")
+  if(MAICHAT_RVM_WINDOWS_ASSETS_AVAILABLE OR
+     (APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64" AND
+      EXISTS "${MAICHAT_RVM_MODEL}" AND EXISTS "${MAICHAT_ORT_RUNTIME}"))
     target_compile_definitions(maichat_agent PRIVATE MAICHAT_RVM_BUNDLED=1)
   endif()
   add_executable(MaiCvVideoAnalysisTests
@@ -738,9 +774,18 @@ if(MAICHAT_ENABLE_OPENCV AND
     target_include_directories(MaiVideoMattingTests PRIVATE
       "${MAICHAT_FFMPEG_BUILD_DIR}/install/include")
   endif()
-  add_test(NAME MaiVideoMattingTests COMMAND MaiVideoMattingTests
-    ${CMAKE_CURRENT_SOURCE_DIR}/../Media/tests/fixtures/ffplay-av-subtitles.mkv
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/models/rvm_mobilenetv3_fp32.onnx)
+  if(WIN32 AND MAICHAT_RVM_WINDOWS_ASSETS_AVAILABLE)
+    add_dependencies(MaiVideoMattingTests maichat)
+    add_test(NAME MaiVideoMattingTests COMMAND ${CMAKE_COMMAND} -E env
+      "MAI_ONNXRUNTIME_LIBRARY=$<TARGET_FILE_DIR:maichat>/onnxruntime.dll"
+      $<TARGET_FILE:MaiVideoMattingTests>
+      ${CMAKE_CURRENT_SOURCE_DIR}/../Media/tests/fixtures/ffplay-av-subtitles.mkv
+      $<TARGET_FILE_DIR:maichat>/MaiAgentModels/rvm_mobilenetv3_fp32.onnx)
+  else()
+    add_test(NAME MaiVideoMattingTests COMMAND MaiVideoMattingTests
+      ${CMAKE_CURRENT_SOURCE_DIR}/../Media/tests/fixtures/ffplay-av-subtitles.mkv
+      ${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/models/rvm_mobilenetv3_fp32.onnx)
+  endif()
 endif()
 
 add_executable(markdown_document_test tests/MarkdownDocumentTest.cpp)
@@ -760,6 +805,10 @@ target_link_libraries(agent_controller_test PRIVATE remote_im_desktop_ui remote_
   remote_im_core maichat_agent maichat_markdown Qt5::Widgets Qt5::Test)
 if(TARGET maiagent_cv_video_analysis)
   target_compile_definitions(agent_controller_test PRIVATE MAICHAT_TEST_CV_VIDEO_ANALYSIS=1)
+endif()
+if(WIN32 AND MAICHAT_RVM_WINDOWS_ASSETS_AVAILABLE)
+  add_dependencies(agent_controller_test maichat)
+  target_compile_definitions(agent_controller_test PRIVATE MAICHAT_TEST_RVM_BUNDLED=1)
 endif()
 
 add_executable(agent_panel_session_test tests/AgentPanelSessionTest.cpp)

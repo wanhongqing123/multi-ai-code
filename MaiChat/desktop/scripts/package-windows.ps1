@@ -24,6 +24,8 @@ $buildPath = Join-Path $projectRoot $BuildDir
 # 定位新生成的程序，不能误用构建目录根部残留的旧 maichat.exe。
 $cachePath = Join-Path $buildPath 'CMakeCache.txt'
 if (-not (Test-Path $cachePath)) { throw "未找到 $cachePath，请先配置 Release 构建" }
+$ffmpegEnabled = Select-String -Path $cachePath -Pattern '^MAICHAT_ENABLE_FFMPEG:BOOL=(ON|TRUE|1)$' -Quiet
+$opencvEnabled = Select-String -Path $cachePath -Pattern '^MAICHAT_ENABLE_OPENCV:BOOL=(ON|TRUE|1)$' -Quiet
 $runtimeOutputLine = Select-String -Path $cachePath -Pattern '^EXECUTABLE_OUTPUT_PATH:PATH=(.+)$'
 $exeDir = $buildPath
 if ($runtimeOutputLine) {
@@ -59,16 +61,34 @@ Copy-Item $exePath (Join-Path $staging 'maichat.exe')
 # （应用界面文案为中文硬编码，不依赖 Qt 翻译文件）。
 # 注意：不用 --compiler-runtime——它依赖 vcvars 环境变量定位 VC 运行库，
 # 环境不满足时会静默跳过，下面改为显式拷贝，缺失即报错。
-& $windeployqt --release --no-translations `
-    --dir $staging (Join-Path $staging 'maichat.exe')
-if ($LASTEXITCODE -ne 0) { throw "windeployqt 失败，退出码 $LASTEXITCODE" }
+$previousErrorAction = $ErrorActionPreference
+try {
+    # Without VCINSTALLDIR, windeployqt writes a warning to stderr even though
+    # it succeeds; the CRT is explicitly copied below.
+    $ErrorActionPreference = 'Continue'
+    & $windeployqt --release --no-translations `
+        --dir $staging (Join-Path $staging 'maichat.exe')
+    $deployExitCode = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $previousErrorAction
+}
+if ($deployExitCode -ne 0) { throw "windeployqt 失败，退出码 $deployExitCode" }
 
 # 视频播放的解码后端是插件，不是 Qt5Multimedia.dll 本身。缺了它 QMediaPlayer
 # 不报错也不崩，只是永远停在 StoppedState、画面全黑——和当年缺 OpenSSL 导致
-# 「文字能收、图片收不到」是同一类静默故障。windeployqt 目前会自动带上，
-# 但这里显式校验，将来谁改坏了要立刻炸而不是发一个播不了视频的包。
+# 「文字能收、图片收不到」是同一类静默故障。windeployqt 在部分环境不会带上，
+# 因此从同一套 Qt 的插件目录显式复制并校验。
 $mediaserviceDir = Join-Path $staging 'mediaservice'
-$mediaBackends = @(Get-ChildItem (Join-Path $mediaserviceDir '*engine.dll') -ErrorAction SilentlyContinue)
+$qtMediaServiceDir = Join-Path (Split-Path -Parent $qtBin) 'plugins\mediaservice'
+New-Item -ItemType Directory -Force $mediaserviceDir | Out-Null
+foreach ($plugin in 'wmfengine.dll', 'dsengine.dll', 'qtmedia_audioengine.dll') {
+    $source = Join-Path $qtMediaServiceDir $plugin
+    if (Test-Path -LiteralPath $source) {
+        Copy-Item -LiteralPath $source -Destination (Join-Path $mediaserviceDir $plugin) -Force
+    }
+}
+$mediaBackends = @(Get-ChildItem $mediaserviceDir -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -in 'wmfengine.dll', 'dsengine.dll' })
 if ($mediaBackends.Count -eq 0) {
     throw "staging 里没有 mediaservice 解码插件（wmfengine/dsengine），视频消息将无法播放"
 }
@@ -130,6 +150,58 @@ if ($trtcBuildDlls.Count -gt 0) {
     Write-Host 'TRTC 运行时未参与构建，跳过旁挂（本包不含远程桌面）'
 }
 
+if ($ffmpegEnabled) {
+    foreach ($dll in 'maichat_ffplay_hosted.dll', 'maiagent_graphics.dll',
+                     'maiagent_obs_d3d11.dll', 'maiagent_obs_pthreads.dll') {
+        $source = Join-Path $exeDir $dll
+        if (-not (Test-Path -LiteralPath $source)) {
+            throw "进程内 FFplay/Graphics 构建产物缺失：$source"
+        }
+        Copy-Item -LiteralPath $source -Destination (Join-Path $staging $dll) -Force
+    }
+    $effectsSource = Join-Path $exeDir 'MaiAgentGraphics'
+    foreach ($effect in 'default.effect', 'video_conversion.effect') {
+        if (-not (Test-Path -LiteralPath (Join-Path $effectsSource $effect))) {
+            throw "Graphics effect 缺失：$effect"
+        }
+    }
+    $effectsTarget = Join-Path $staging 'MaiAgentGraphics'
+    New-Item -ItemType Directory -Force $effectsTarget | Out-Null
+    Copy-Item -Path (Join-Path $effectsSource '*') -Destination $effectsTarget -Recurse -Force
+    Write-Host '进程内 FFplay/Graphics 运行库及 effect 已打包'
+}
+
+# RVM 的 ONNX Runtime 通过 LoadLibraryW 动态加载，windeployqt 不会发现它。
+# 与 CMake 的资产开关一致：仅在 FFmpeg/OpenCV 和官方 Windows 运行时齐备时打包。
+$repositoryRoot = (Resolve-Path (Join-Path $projectRoot '..\..')).Path
+$rvmSourceModel = Join-Path $repositoryRoot 'MaiAgent\models\rvm_mobilenetv3_fp32.onnx'
+$ortSourceRuntime = Join-Path $repositoryRoot 'MaiAgent\third_party\onnxruntime\windows-x64\onnxruntime.dll'
+$ortSourceProvider = Join-Path $repositoryRoot 'MaiAgent\third_party\onnxruntime\windows-x64\onnxruntime_providers_shared.dll'
+if ($ffmpegEnabled -and $opencvEnabled -and
+    (Test-Path -LiteralPath $rvmSourceModel) -and
+    (Test-Path -LiteralPath $ortSourceRuntime) -and
+    (Test-Path -LiteralPath $ortSourceProvider)) {
+    foreach ($asset in @(
+        'onnxruntime.dll',
+        'onnxruntime_providers_shared.dll',
+        'MaiAgentModels\rvm_mobilenetv3_fp32.onnx',
+        'MaiAgentModels\RVM_LICENSE',
+        'MaiAgentModels\ONNXRUNTIME_LICENSE',
+        'MaiAgentModels\ONNXRUNTIME_ThirdPartyNotices.txt'
+    )) {
+        $source = Join-Path $exeDir $asset
+        if (-not (Test-Path -LiteralPath $source)) {
+            throw "Windows RVM 构建产物缺失：$source"
+        }
+        $target = Join-Path $staging $asset
+        New-Item -ItemType Directory -Force (Split-Path -Parent $target) | Out-Null
+        Copy-Item -LiteralPath $source -Destination $target -Force
+    }
+    Write-Host 'RVM 模型、ONNX Runtime DLL 和许可文件已打包'
+} else {
+    Write-Host 'Windows RVM 资产未启用，跳过打包（cv_video_matting 不注册）'
+}
+
 # 使用说明
 $readme = @"
 MaiChat 桌面客户端（Windows 免安装版）
@@ -141,6 +213,7 @@ MaiChat 桌面客户端（Windows 免安装版）
 - 首次启动在登录页输入账号 ID 后回车即可登录（UserSig 由内置密钥本地生成）。
 - 聊天记录等本地数据存放于当前用户目录，删除本目录即可完成"卸载"。
 - vendor\ 目录存放腾讯 IM SDK 动态库，请勿移动或删除。
+- MaiAgentModels\ 与 onnxruntime*.dll 是视频抠像资源，请勿移动或删除。
 "@
 [System.IO.File]::WriteAllText(
     (Join-Path $staging '使用说明.txt'),
@@ -168,7 +241,11 @@ if (-not $appSemver) { throw "无法从 $pkgJson 读取 version" }
 $zipName = "MaiChat-win64-v$appSemver-$(Get-Date -Format yyyyMMdd)-$gitHash.zip"
 $zipPath = Join-Path $distRoot $zipName
 if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
-Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $zipPath
+# ZipFile reads the staged files directly; PowerShell 5.1 Compress-Archive can
+# report a false sharing violation for the exe it has just copied.
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+[System.IO.Compression.ZipFile]::CreateFromDirectory(
+    $staging, $zipPath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
 
 $sizeMB = [math]::Round((Get-Item $zipPath).Length / 1MB, 1)
 Write-Host ""

@@ -111,11 +111,25 @@ std::unique_ptr<MaiAgent> buildAgent(std::unique_ptr<MaiModelClient> model,
     tools->add(makeMaiCvMotionDetectTool(analyzeMaiCvVideo));
 #if defined(MAICHAT_RVM_BUNDLED)
     const QDir applicationDirectory(QCoreApplication::applicationDirPath());
+#if defined(Q_OS_WIN)
+    const QString modelPath = applicationDirectory.filePath(
+        QStringLiteral("MaiAgentModels/rvm_mobilenetv3_fp32.onnx"));
+    const QString runtimePath = applicationDirectory.filePath(
+        QStringLiteral("onnxruntime.dll"));
+    const QString providerPath = applicationDirectory.filePath(
+        QStringLiteral("onnxruntime_providers_shared.dll"));
+    const bool assetsAvailable = QFileInfo::exists(modelPath) &&
+                                 QFileInfo::exists(runtimePath) &&
+                                 QFileInfo::exists(providerPath);
+#else
     const QString modelPath = applicationDirectory.filePath(
         QStringLiteral("../Resources/MaiAgentModels/rvm_mobilenetv3_fp32.onnx"));
     const QString runtimePath = applicationDirectory.filePath(
         QStringLiteral("../Frameworks/libonnxruntime.1.26.0.dylib"));
-    if (QFileInfo::exists(modelPath) && QFileInfo::exists(runtimePath)) {
+    const bool assetsAvailable = QFileInfo::exists(modelPath) &&
+                                 QFileInfo::exists(runtimePath);
+#endif
+    if (assetsAvailable) {
         tools->add(makeMaiVideoMattingTool(maiMatteVideo, toUtf8(modelPath),
                                             toUtf8(runtimePath)));
     }

@@ -1,5 +1,7 @@
 #include <QCoreApplication>
+#include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSignalSpy>
@@ -403,6 +405,9 @@ void AgentControllerTest::registers_host_tools_after_builtin_tools() {
     bool foundSceneDetect = false;
     bool foundMotionDetect = false;
 #endif
+#if defined(MAICHAT_TEST_RVM_BUNDLED)
+    bool foundVideoMatting = false;
+#endif
     for (const MaiToolSpec& tool : scripted->lastRequest().tools) {
         if (tool.name == "read") foundBuiltin = true;
         if (tool.name == "maichat_probe") foundHost = true;
@@ -410,12 +415,25 @@ void AgentControllerTest::registers_host_tools_after_builtin_tools() {
         if (tool.name == "cv_scene_detect") foundSceneDetect = true;
         if (tool.name == "cv_motion_detect") foundMotionDetect = true;
 #endif
+#if defined(MAICHAT_TEST_RVM_BUNDLED)
+        if (tool.name == "cv_video_matting") foundVideoMatting = true;
+#endif
     }
     QVERIFY(foundBuiltin);
     QVERIFY(foundHost);
 #if defined(MAICHAT_TEST_CV_VIDEO_ANALYSIS)
     QVERIFY(foundSceneDetect);
     QVERIFY(foundMotionDetect);
+#endif
+#if defined(MAICHAT_TEST_RVM_BUNDLED)
+    const QDir applicationDirectory(QCoreApplication::applicationDirPath());
+    const bool mattingAssetsPresent =
+        QFileInfo::exists(applicationDirectory.filePath(
+            QStringLiteral("MaiAgentModels/rvm_mobilenetv3_fp32.onnx"))) &&
+        QFileInfo::exists(applicationDirectory.filePath(QStringLiteral("onnxruntime.dll"))) &&
+        QFileInfo::exists(applicationDirectory.filePath(
+            QStringLiteral("onnxruntime_providers_shared.dll")));
+    QCOMPARE(foundVideoMatting, mattingAssetsPresent);
 #endif
 }
 

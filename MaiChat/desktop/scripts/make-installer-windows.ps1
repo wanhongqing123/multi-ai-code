@@ -36,6 +36,7 @@ MaiChat 桌面客户端（Windows）
 - 聊天记录等本地数据存放于 %APPDATA%\MaiChat\Desktop IM，卸载时不会删除。
 - 卸载：设置 → 应用 → 已安装的应用 → MaiChat。
 - vendor\ 目录存放腾讯 IM SDK 动态库，请勿移动或删除。
+- MaiAgentModels\ 与 onnxruntime*.dll 是视频抠像资源，请勿移动或删除。
 "@
 [System.IO.File]::WriteAllText(
     (Join-Path $staging '使用说明.txt'),

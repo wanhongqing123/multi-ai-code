@@ -11,7 +11,7 @@ MaiContextBuilder::MaiContextBuilder(Options options) : mOptions(std::move(optio
 std::vector<MaiModelMessage> MaiContextBuilder::build(
     const std::vector<MaiMessage>& history) const {
     std::vector<MaiModelMessage> out;
-    out.reserve(history.size());
+    out.reserve(history.size() + 1);
 
     std::size_t latestUserIndex = history.size();
     for (std::size_t index = 0; index < history.size(); ++index) {
@@ -44,8 +44,9 @@ std::vector<MaiModelMessage> MaiContextBuilder::build(
                         ++omittedImages;
                 }
             }
-            if (!modelMessage.content.empty() || !modelMessage.images.empty())
+            if (!modelMessage.content.empty() || !modelMessage.images.empty()) {
                 out.push_back(std::move(modelMessage));
+            }
             continue;
         }
 
@@ -131,12 +132,12 @@ std::vector<MaiModelMessage> MaiContextBuilder::build(
     }
     if (omittedImages != 0) {
         MaiModelMessage note;
-        note.role = MaiModelRole::User;
-        note.content = "Omitted " + std::to_string(omittedImages) +
-                       " older image observations from this request to keep the media payload "
-                       "bounded. The files remain available; use view_image on a relevant path "
-                       "again if its pixels are needed.";
-        out.push_back(std::move(note));
+        note.role = MaiModelRole::System;
+        note.content =
+            "[Omitted " + std::to_string(omittedImages) +
+            " older image observations to keep this request bounded. The files remain available; "
+            "use view_image on a relevant path again if its pixels are needed.]";
+        out.insert(out.begin(), std::move(note));
     }
     return out;
 }

@@ -57,8 +57,11 @@ void testCurrentRequestKeepsOnlyRecentToolPixels() {
     CHECK(images.front() == "current-user.jpg");
     for (int index = 0; index < 8; ++index)
         CHECK(images[index + 1] == "frame-" + std::to_string(index + 31) + ".jpg");
-    CHECK(request.back().content.find("Omitted 35 older image observations") != std::string::npos);
-    CHECK(request.back().content.find("view_image") != std::string::npos);
+    CHECK(request.front().role == MaiModelRole::System);
+    CHECK(request.front().content.find("Omitted 35 older image observations") != std::string::npos);
+    CHECK(request.front().content.find("view_image") != std::string::npos);
+    CHECK(request[2].content == "Analyze this video");
+    CHECK(request.back().images.front().path == "frame-38.jpg");
 }
 
 void testSmallCurrentRequestKeepsEveryImage() {

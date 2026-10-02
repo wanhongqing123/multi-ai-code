@@ -241,6 +241,8 @@ struct MaiChatApp: App {
                         AIVideoBubbleUITestRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--transcript-ui-test") {
                         AITranscriptUITestRoot()
+                    } else if ProcessInfo.processInfo.arguments.contains("--ai-history-ui-test") {
+                        AIHistoryUITestRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--ffplay-ui-test") {
                         MaiFfplayUITestRoot()
                     } else {

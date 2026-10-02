@@ -347,6 +347,24 @@ final class AIAssistantModel: ObservableObject {
     private var visible = false
     var busy: Bool { sessions.first { $0.id == selected }?.busy == true }
 
+    #if targetEnvironment(simulator)
+    func installHistoryUITestFixture() {
+        let session = "history-ui-test"
+        sessions = [AISession(id: session, title: "历史会话", busy: false)]
+        selected = session
+        messages = (0..<80).map { index in
+            let part = AIPart(id: "history-part-\(index)", kind: "text",
+                              text: "历史消息 \(index)\n第二行内容", tool: nil,
+                              input: nil, output: nil, error: nil, state: nil,
+                              path: nil, mimeType: nil)
+            return AIMessage(id: "history-message-\(index)", role: "assistant",
+                             created: Int64(index), completed: Int64(index + 1),
+                             active: false, parts: [part])
+        }
+        ready = true
+    }
+    #endif
+
     func suggestReplies(messages: [[String: String]]) async throws -> AIReplySuggestions {
         try await backend.suggestReplies(messages: messages)
     }

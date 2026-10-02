@@ -1,6 +1,28 @@
 import XCTest
 
 final class AIAssistantUITests: XCTestCase {
+    func testEnteringLongAIConversationShowsLatestMessage() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--ai-history-ui-test"]
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        let latest = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "历史消息 79")).firstMatch
+        XCTAssertTrue(latest.waitForExistence(timeout: 15))
+        let timeline = app.scrollViews.element(boundBy: 0)
+        XCTAssertGreaterThanOrEqual(latest.frame.minY, timeline.frame.minY - 2,
+                                    "The latest message must be inside the visible timeline")
+        XCTAssertLessThanOrEqual(latest.frame.maxY, timeline.frame.maxY + 2)
+        let editor = app.descendants(matching: .any)
+            .matching(identifier: "ai-composer").firstMatch
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        editor.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertGreaterThanOrEqual(latest.frame.minY, timeline.frame.minY - 2)
+        XCTAssertLessThanOrEqual(latest.frame.maxY, timeline.frame.maxY + 2,
+                                 "Opening the keyboard must keep the latest message visible")
+    }
+
     func testToolCallsAndReasoningCollapseWithoutMovingFinalAnswer() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--ai-ui-test", "--transcript-ui-test"]

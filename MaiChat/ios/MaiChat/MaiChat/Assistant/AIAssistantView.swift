@@ -54,7 +54,7 @@ struct AIAssistantView: View {
                 } else {
                     GeometryReader { _ in
                         ScrollView {
-                            LazyVStack(alignment: .leading, spacing: 24) {
+                            VStack(alignment: .leading, spacing: 24) {
                                 if model.messages.isEmpty {
                                     VStack(spacing: 14) {
                                         Image(systemName: "sparkles").font(.largeTitle).foregroundStyle(.blue)
@@ -69,8 +69,13 @@ struct AIAssistantView: View {
                                         }
                                     }.frame(maxWidth: .infinity).padding(.vertical, 70)
                                 }
-                                ForEach(model.messages) { message in
-                                    AIMessageRow(message: message, workspacePath: model.workspacePath)
+                                if !model.messages.isEmpty {
+                                    LazyVStack(alignment: .leading, spacing: 24) {
+                                        ForEach(model.messages) { message in
+                                            AIMessageRow(message: message,
+                                                         workspacePath: model.workspacePath)
+                                        }
+                                    }
                                 }
                                 ForEach(model.permissions) { permission in AIPermissionCard(permission: permission, model: model) }
                                 ForEach(model.questions) { question in AIQuestionCard(question: question, model: model) }
@@ -194,9 +199,18 @@ struct AIAssistantView: View {
         .confirmationDialog("清空当前对话的所有消息？", isPresented: $confirmClear, titleVisibility: .visible) {
             Button("清空消息", role: .destructive) { Task { await model.action("clear") } }
         }
-        .onAppear { model.appear() }
-        .onDisappear { model.disappear() }
+        .onAppear {
+            if !ProcessInfo.processInfo.arguments.contains("--ai-history-ui-test") {
+                model.appear()
+            }
+        }
+        .onDisappear {
+            if !ProcessInfo.processInfo.arguments.contains("--ai-history-ui-test") {
+                model.disappear()
+            }
+        }
         .onChange(of: scenePhase) { phase in
+            if ProcessInfo.processInfo.arguments.contains("--ai-history-ui-test") { return }
             if phase == .active { model.appear() } else { model.disappear() }
         }
     }
@@ -906,6 +920,13 @@ struct AITranscriptUITestRoot: View {
                                 completed: 1, active: false, parts: parts)
         AIMessageRow(message: message, workspacePath: "")
             .padding(20)
+    }
+}
+
+struct AIHistoryUITestRoot: View {
+    var body: some View {
+        AIAssistantView()
+            .onAppear { AIAssistantModel.shared.installHistoryUITestFixture() }
     }
 }
 #endif

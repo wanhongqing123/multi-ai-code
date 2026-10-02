@@ -713,6 +713,49 @@ final class MarkdownPresentationTests: XCTestCase {
     }
 
     @MainActor
+    private struct AIEntryHarness: View {
+        @ObservedObject var model: HistoryModel
+        let probe: HistoryProbe
+
+        var body: some View {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    if !model.items.isEmpty {
+                        LazyVStack(alignment: .leading, spacing: 24) {
+                            ForEach(model.items) { item in
+                                Text(String(repeating: "AI message \(item.id)\n", count: 5))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .onAppear { probe.mounted.insert(item.id) }
+                            }
+                        }
+                    }
+                    Color.clear.frame(height: 1)
+                        .background(MessageScrollPositionReader(
+                            restoreInitialScrollableHistory: !model.items.isEmpty
+                        ) { probe.nearBottom = $0 })
+                }
+                .padding(18)
+            }
+            .frame(width: 393, height: 640)
+        }
+    }
+
+    @MainActor
+    func testAIHistoryMountsBottomMarkerOutsideLazyRows() async throws {
+        let model = HistoryModel(0..<100)
+        let probe = HistoryProbe()
+        let host = UIHostingController(rootView: AIEntryHarness(model: model, probe: probe))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 640))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(probe.nearBottom, true)
+        XCTAssertTrue(probe.mounted.contains(99),
+                      "The latest lazy row must become visible on first entry")
+    }
+
+    @MainActor
     private struct EntryHistoryHarness: View {
         @ObservedObject var model: HistoryModel
         @EnvironmentObject var arrival: ChatNavigationArrival

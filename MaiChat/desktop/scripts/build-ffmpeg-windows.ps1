@@ -24,7 +24,7 @@ $msysBin = Split-Path -Parent $bash
 if (-not (Test-Path -LiteralPath (Join-Path $msysBin 'make.exe'))) {
     throw 'MSYS2 make.exe is required. Install it with: pacman -S make diffutils pkgconf'
 }
-foreach ($program in @('clang-cl.exe', 'lld-link.exe', 'lib.exe')) {
+foreach ($program in @('clang-cl.exe', 'lld-link.exe', 'lib.exe', 'nasm.exe')) {
     if (-not (Get-Command $program -ErrorAction SilentlyContinue)) {
         throw "$program is required in PATH; run from an MSVC x64 developer environment with LLVM installed"
     }
@@ -50,9 +50,10 @@ cd "$MAICHAT_FFMPEG_BUILD"
   --prefix="$MAICHAT_FFMPEG_BUILD/install" \
   --toolchain=msvc --cc=clang-cl.exe --ld=lld-link.exe --ar=lib.exe \
   --target-os=win64 --arch=x86_64 \
-  --disable-programs --disable-doc --disable-debug --disable-autodetect --disable-asm \
+  --disable-programs --disable-doc --disable-debug --disable-autodetect \
   --enable-gpl --disable-nonfree --enable-static --disable-shared --enable-pic \
   --enable-libdav1d --enable-libx264 --enable-libmp3lame --enable-zlib \
+  --x86asmexe=nasm.exe \
   --extra-cflags="/MD -I$MAICHAT_CODEC_INCLUDE" \
   --extra-ldflags="-libpath:$MAICHAT_CODEC_LIB"
 make clean
@@ -68,6 +69,10 @@ $ErrorActionPreference = 'Continue'
 $buildExit = $LASTEXITCODE
 $ErrorActionPreference = 'Stop'
 if ($buildExit -ne 0) { throw "FFmpeg build failed with exit code $buildExit" }
+if (-not (Select-String -LiteralPath (Join-Path $build 'config.h') `
+                       -Pattern '^#define HAVE_X86ASM 1$' -Quiet)) {
+    throw 'FFmpeg built without x86 assembly; check the NASM toolchain and configure log'
+}
 
 foreach ($library in @('avdevice', 'avfilter', 'avformat', 'avcodec', 'swresample', 'swscale', 'avutil')) {
     $archive = Join-Path $build "lib$library/$library.lib"

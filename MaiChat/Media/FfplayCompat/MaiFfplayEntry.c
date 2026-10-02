@@ -242,6 +242,7 @@ int maiFfplaySendCommand(const char* command)
         {"pause", SDLK_p}, {"step", SDLK_s},
         {"seek_forward", SDLK_RIGHT}, {"seek_backward", SDLK_LEFT},
         {"seek_minute_forward", SDLK_UP}, {"seek_minute_backward", SDLK_DOWN},
+        {"next_chapter", SDLK_PAGEUP}, {"previous_chapter", SDLK_PAGEDOWN},
         {"next_audio", SDLK_a}, {"next_video", SDLK_v},
         {"next_subtitle", SDLK_t}, {"next_program", SDLK_c},
         {"next_filter", SDLK_w}, {"mute", SDLK_m},

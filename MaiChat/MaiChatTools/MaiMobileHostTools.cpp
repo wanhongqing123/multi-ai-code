@@ -231,9 +231,9 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
         "IM video messages use the same player.",
         R"({"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false})");
     add("maichat_video_command",
-        "Control the currently open FFplay video: play, pause, step, relative or percent seek, "
+        "Control the currently open FFplay video: play, pause, step, relative, chapter, or percent seek, "
         "stream and filter cycling, mute, volume, fullscreen, or close.",
-        R"({"type":"object","properties":{"action":{"type":"string","enum":["play","pause","toggle_pause","step","seek_forward","seek_backward","seek_minute_forward","seek_minute_backward","seek_percent","next_audio","next_video","next_subtitle","next_program","next_filter","mute","volume_up","volume_down","fullscreen","close"]},"percent":{"type":"number","minimum":0,"maximum":100}},"required":["action"],"additionalProperties":false})");
+        R"({"type":"object","properties":{"action":{"type":"string","enum":["play","pause","toggle_pause","step","seek_forward","seek_backward","seek_minute_forward","seek_minute_backward","next_chapter","previous_chapter","seek_percent","next_audio","next_video","next_subtitle","next_program","next_filter","mute","volume_up","volume_down","fullscreen","close"]},"percent":{"type":"number","minimum":0,"maximum":100}},"required":["action"],"additionalProperties":false})");
 }
 
 void registerMobilePhotoTools(MaiToolRegistry& tools,

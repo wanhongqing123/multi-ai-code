@@ -31,7 +31,7 @@ if (Test-Path -LiteralPath (Join-Path $mesonPackageRoot 'mesonbuild')) {
 $install = Join-Path $build 'install'
 $lib = Join-Path $install 'lib'
 $include = Join-Path $install 'include'
-foreach ($program in @('cl.exe', 'lib.exe', 'msbuild.exe')) {
+foreach ($program in @('cl.exe', 'lib.exe', 'msbuild.exe', 'nasm.exe')) {
     if (-not (Get-Command $program -ErrorAction SilentlyContinue)) {
         throw "$program is required in an MSVC x64 developer environment"
     }
@@ -41,10 +41,10 @@ New-Item -ItemType Directory -Force $build, $install, $lib, $include | Out-Null
 $dav1dSource = Join-Path $source 'dav1d'
 $dav1dBuild = Join-Path $build 'dav1d'
 if (Test-Path -LiteralPath (Join-Path $dav1dBuild 'build.ninja')) {
-    & $mesonProgram setup --reconfigure $dav1dBuild $dav1dSource
+    & $mesonProgram setup --reconfigure $dav1dBuild $dav1dSource -Denable_asm=true
 } else {
     & $mesonProgram setup $dav1dBuild $dav1dSource "--prefix=$install" --libdir=lib `
-        --default-library=static -Denable_asm=false -Denable_tools=false `
+        --default-library=static -Denable_asm=true -Denable_tools=false `
         -Denable_tests=false -Denable_examples=false -Denable_docs=false
 }
 Assert-ExitCode 'dav1d configuration'
@@ -62,10 +62,11 @@ $x264Script = @'
 set -euo pipefail
 mkdir -p "$MAICHAT_CODEC_BUILD/x264"
 cd "$MAICHAT_CODEC_BUILD/x264"
-CC=cl.exe AR=lib.exe RANLIB=: "$MAICHAT_CODEC_SOURCE/x264/configure" \
+CC=cl.exe AS=nasm.exe AR=lib.exe RANLIB=: "$MAICHAT_CODEC_SOURCE/x264/configure" \
   --host=x86_64-w64-mingw32 --prefix="$MAICHAT_CODEC_BUILD/install" \
   --libdir="$MAICHAT_CODEC_BUILD/install/lib" --enable-static --disable-cli \
-  --disable-opencl --disable-asm --bit-depth=8
+  --disable-opencl --bit-depth=8
+make clean
 make -j"$MAICHAT_CODEC_JOBS"
 make install-lib-static
 '@
@@ -74,6 +75,10 @@ $x264ScriptFile = Join-Path $build 'build-maichat-x264.sh'
     [System.Text.UTF8Encoding]::new($false))
 & $bash -l (ConvertTo-MsysPath $x264ScriptFile)
 Assert-ExitCode 'x264 build'
+$x264Config = Join-Path $build 'x264/config.mak'
+if (-not (Select-String -LiteralPath $x264Config -Pattern '^AS=nasm(\.exe)?$' -Quiet)) {
+    throw 'x264 built without NASM assembly; check its configure log'
+}
 $x264Pc = Join-Path $lib 'pkgconfig/x264.pc'
 $msysInstall = ConvertTo-MsysPath $install
 $windowsInstall = $install.Replace('\', '/')

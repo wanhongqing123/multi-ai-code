@@ -79,11 +79,11 @@ public:
     std::string name() const override { return "maichat_video_command"; }
     std::string description() const override {
         return "Control the currently open FFplay video popup. Supported actions include "
-               "play, pause, step, relative seek, percent seek, stream/filter cycling, mute, volume, "
+               "play, pause, step, relative or chapter seek, percent seek, stream/filter cycling, mute, volume, "
                "fullscreen, and close.";
     }
     std::string parametersSchema() const override {
-        return R"({"type":"object","properties":{"action":{"type":"string","enum":["play","pause","toggle_pause","step","seek_forward","seek_backward","seek_minute_forward","seek_minute_backward","seek_percent","next_audio","next_video","next_subtitle","next_program","next_filter","mute","volume_up","volume_down","fullscreen","close"]},"percent":{"type":"number","minimum":0,"maximum":100}},"required":["action"],"additionalProperties":false})";
+        return R"({"type":"object","properties":{"action":{"type":"string","enum":["play","pause","toggle_pause","step","seek_forward","seek_backward","seek_minute_forward","seek_minute_backward","next_chapter","previous_chapter","seek_percent","next_audio","next_video","next_subtitle","next_program","next_filter","mute","volume_up","volume_down","fullscreen","close"]},"percent":{"type":"number","minimum":0,"maximum":100}},"required":["action"],"additionalProperties":false})";
     }
     MaiToolResult execute(const std::string& argumentsJson,
                           const MaiToolContext&) override {

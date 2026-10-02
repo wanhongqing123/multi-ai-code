@@ -307,5 +307,7 @@ void MaiFfplayVideoDialog::keyPressEvent(QKeyEvent* event) {
     else if (event->key() == Qt::Key_Space) sendCommand(QStringLiteral("pause"));
     else if (event->key() == Qt::Key_Left) sendCommand(QStringLiteral("seek_backward"));
     else if (event->key() == Qt::Key_Right) sendCommand(QStringLiteral("seek_forward"));
+    else if (event->key() == Qt::Key_PageUp) sendCommand(QStringLiteral("next_chapter"));
+    else if (event->key() == Qt::Key_PageDown) sendCommand(QStringLiteral("previous_chapter"));
     else QDialog::keyPressEvent(event);
 }

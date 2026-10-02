@@ -548,12 +548,20 @@ void RemoteIMApplication::sendApprovalDecision(const QString& token,
 }
 
 void RemoteIMApplication::sendImage(const QString& localPath, const QString& text, bool captionAbove) {
+    sendImageTo(state_.selectedPeerId(), localPath, text, captionAbove);
+}
+
+bool RemoteIMApplication::sendImageTo(const QString& peerId, const QString& localPath,
+                                      const QString& text, bool captionAbove) {
+    const QString target = peerId.trimmed();
     const QString cleanPath = localPath.trimmed();
-    if (cleanPath.isEmpty() || state_.selectedPeerId().isEmpty()) return;
+    if (cleanPath.isEmpty() || target.isEmpty()) return false;
 
     QFileInfo info(cleanPath);
+    if (!info.exists() || !info.isFile()) return false;
     const QString caption = text.trimmed();
-    RemoteIMMessage message = state_.queueOutgoingImage(cleanPath, 0, 0, info.size(), caption, captionAbove);
+    RemoteIMMessage message = state_.queueOutgoingImageTo(
+        target, cleanPath, 0, 0, info.size(), caption, captionAbove);
     persistMessage(message);
     emit stateChanged();
 
@@ -572,21 +580,29 @@ void RemoteIMApplication::sendImage(const QString& localPath, const QString& tex
     } else {
         client_->sendImageWithText(message.toUserId, cleanPath, caption, captionAbove, std::move(onDone));
     }
+    return true;
 }
 
 void RemoteIMApplication::sendFile(const QString& localPath, const QString& text, bool captionAbove) {
+    sendFileTo(state_.selectedPeerId(), localPath, text, captionAbove);
+}
+
+bool RemoteIMApplication::sendFileTo(const QString& peerId, const QString& localPath,
+                                     const QString& text, bool captionAbove) {
+    const QString target = peerId.trimmed();
     const QString cleanPath = localPath.trimmed();
-    if (cleanPath.isEmpty() || state_.selectedPeerId().isEmpty()) return;
+    if (cleanPath.isEmpty() || target.isEmpty()) return false;
 
     QFileInfo info(cleanPath);
     if (!info.exists() || !info.isFile()) {
         emit errorMessage(QStringLiteral("文件不存在或不可读：%1").arg(cleanPath));
-        return;
+        return false;
     }
     const QString fileName = info.fileName();
     const QString mimeType = QMimeDatabase().mimeTypeForFile(info).name();
     const QString caption = text.trimmed();
-    RemoteIMMessage message = state_.queueOutgoingFile(cleanPath, fileName, mimeType, info.size(), caption, captionAbove);
+    RemoteIMMessage message = state_.queueOutgoingFileTo(
+        target, cleanPath, fileName, mimeType, info.size(), caption, captionAbove);
     persistMessage(message);
     emit stateChanged();
 
@@ -605,6 +621,7 @@ void RemoteIMApplication::sendFile(const QString& localPath, const QString& text
     } else {
         client_->sendFileWithText(message.toUserId, cleanPath, fileName, caption, captionAbove, std::move(onDone));
     }
+    return true;
 }
 
 void RemoteIMApplication::sendVideo(const QString& localPath, const QString& text, bool captionAbove) {
@@ -633,8 +650,8 @@ bool RemoteIMApplication::sendVideoTo(const QString& peerId, const QString& loca
     if (metadata.durationSeconds <= 0) metadata.durationSeconds = 1;
 
     const QString coverDirectory =
-        QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
-            .filePath(QStringLiteral("maichat-video-cover"));
+        QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation))
+            .filePath(QStringLiteral("RemoteIMVideoCovers"));
     const VideoCoverImage cover = createVideoCoverImage(cleanPath, metadata, coverDirectory);
     if (!cover.valid) {
         emit errorMessage(QStringLiteral("视频封面生成失败，无法发送视频"));

@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import CoreFoundation
 import Darwin
@@ -127,6 +128,162 @@ extension AIMobileHostToolProvider {
             "peer_id": peerID,
             "message_id": appState.locallyQueuedMessageID?.uuidString ?? "",
         ])
+    }
+
+    func sendMedia(
+        appState: RemoteIMAppState,
+        arguments: [String: Any]
+    ) async -> AIMaiChatHostToolExecution {
+        let peerID = Self.string(arguments, key: "peer_id")
+        let kind = Self.string(arguments, key: "type")
+        let requestedPath = Self.string(arguments, key: "file_path")
+        let caption = Self.string(arguments, key: "caption")
+        guard Self.hasContact(appState, peerID: peerID),
+              appState.connectionState == .connected else {
+            return .failure(code: "invalid_input", message: "peer_id must be a connected MaiChat contact")
+        }
+        guard ["image", "video", "audio"].contains(kind),
+              let source = AIAssistantPathPolicy.resolve(
+                requestedPath, workspacePath: AIAssistantModel.shared.workspacePath
+              ), FileManager.default.fileExists(atPath: source.path) else {
+            return .failure(code: "invalid_input", message: "type and accessible file_path are required")
+        }
+        let fileType = UTType(filenameExtension: source.pathExtension)
+        guard (kind == "image" && fileType?.conforms(to: .image) == true) ||
+              (kind == "video" && fileType?.conforms(to: .movie) == true) ||
+              (kind == "audio" && fileType?.conforms(to: .audio) == true) else {
+            return .failure(code: "invalid_input", message: "file extension does not match type")
+        }
+
+        do {
+            let sent: Bool
+            switch kind {
+            case "image":
+                let image = try await Self.prepareAgentImage(source)
+                sent = await appState.sendImageFile(image, to: peerID)
+            case "video":
+                let video = try await Self.prepareAgentVideo(source)
+                sent = await appState.sendVideoFile(video, to: peerID)
+            default:
+                let audio = try await Self.prepareAgentAudio(source)
+                sent = await appState.sendFile(audio, to: peerID)
+            }
+            guard sent else {
+                return .failure(code: "internal",
+                                message: appState.errorMessage ?? "MaiChat did not send the media")
+            }
+            let mediaMessageID = appState.locallyQueuedMessageID?.uuidString ?? ""
+            var captionSent = true
+            if !caption.isEmpty { captionSent = await appState.sendText(caption, to: peerID) }
+            return Self.jsonSuccess([
+                "sent": true, "peer_id": peerID, "type": kind,
+                "message_kind": kind == "audio" ? "file" : kind,
+                "message_id": mediaMessageID, "caption_sent": captionSent,
+            ])
+        } catch {
+            return .failure(code: "internal", message: error.localizedDescription)
+        }
+    }
+
+    private static func prepareAgentImage(_ source: URL) async throws -> RemoteIMImageFile {
+        try await RemoteIMBackgroundWork.file {
+            let size = try source.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+            guard size > 0, size <= 20 * 1024 * 1024 else {
+                throw AIBackendError(message: "图片必须小于 20 MB")
+            }
+            let data = try Data(contentsOf: source)
+            return try makeRemoteIMImageFile(
+                data: data,
+                contentTypes: [UTType(filenameExtension: source.pathExtension) ?? .jpeg],
+                stem: "agent-image-" + UUID().uuidString
+            )
+        }
+    }
+
+    private static func copyAgentMedia(
+        _ source: URL, category: RemoteIMMediaStorage.Category
+    ) async throws -> URL {
+        try await RemoteIMBackgroundWork.file {
+            let size = try source.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+            guard size > 0, size <= 1024 * 1024 * 1024 else {
+                throw AIBackendError(message: "媒体文件必须小于 1 GB")
+            }
+            let target = RemoteIMMediaStorage.fileURL(
+                category: category,
+                stem: "agent-" + UUID().uuidString,
+                pathExtension: source.pathExtension
+            )
+            try FileManager.default.createDirectory(
+                at: target.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            do {
+                try FileManager.default.copyItem(at: source, to: target)
+            } catch {
+                try? FileManager.default.removeItem(at: target)
+                throw error
+            }
+            return target
+        }
+    }
+
+    private static func prepareAgentVideo(_ source: URL) async throws -> RemoteIMVideoFile {
+        let copied = try await copyAgentMedia(source, category: .outgoingVideos)
+        let asset = AVURLAsset(url: copied)
+        let duration = try await asset.load(.duration)
+        let durationValue = CMTimeGetSeconds(duration)
+        let videoTracks = try await asset.loadTracks(withMediaType: .video)
+        guard durationValue.isFinite, durationValue > 0,
+              let videoTrack = videoTracks.first else {
+            throw AIBackendError(message: "视频没有可播放的画面或时长")
+        }
+        let naturalSize = try await videoTrack.load(.naturalSize)
+        let transform = try await videoTrack.load(.preferredTransform)
+        let rect = CGRect(origin: .zero, size: naturalSize).applying(transform)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 1_280, height: 1_280)
+        let coverTime = CMTime(seconds: durationValue > 0.2 ? 0.1 : 0,
+                               preferredTimescale: 600)
+        let coverImage = try await generator.image(at: coverTime)
+        guard let coverBytes = UIImage(cgImage: coverImage.image)
+            .jpegData(compressionQuality: 0.86) else {
+            throw AIBackendError(message: "无法生成视频封面")
+        }
+        let coverURL = try await RemoteIMBackgroundWork.file {
+            let target = RemoteIMMediaStorage.fileURL(
+                category: .outgoingVideoCovers,
+                stem: copied.deletingPathExtension().lastPathComponent,
+                pathExtension: "jpg"
+            )
+            try coverBytes.write(to: target, options: .atomic)
+            return target
+        }
+        let bytes = try copied.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+        return RemoteIMVideoFile(
+            fileURL: copied, coverFileURL: coverURL,
+            fileType: copied.pathExtension.lowercased(),
+            durationSeconds: max(1, Int(ceil(durationValue))),
+            width: max(0, Int(abs(rect.width).rounded())),
+            height: max(0, Int(abs(rect.height).rounded())),
+            sizeBytes: Int64(bytes)
+        )
+    }
+
+    private static func prepareAgentAudio(_ source: URL) async throws -> RemoteIMFile {
+        let copied = try await copyAgentMedia(source, category: .outgoingFiles)
+        let asset = AVURLAsset(url: copied)
+        let tracks = try await asset.loadTracks(withMediaType: .audio)
+        guard !tracks.isEmpty else {
+            throw AIBackendError(message: "文件没有可播放的音轨")
+        }
+        let bytes = try copied.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+        return RemoteIMFile(
+            fileURL: copied, fileName: source.lastPathComponent,
+            mimeType: UTType(filenameExtension: source.pathExtension)?
+                .preferredMIMEType ?? "audio/mpeg",
+            sizeBytes: bytes
+        )
     }
 
     func replyMessage(

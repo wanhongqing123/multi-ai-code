@@ -1,6 +1,28 @@
 import Foundation
 import MaiChatCore
 import UIKit
+import UniformTypeIdentifiers
+
+nonisolated func makeRemoteIMImageFile(
+    data: Data,
+    contentTypes: [UTType],
+    stem: String = "remote-im-image-\(UUID().uuidString)"
+) throws -> RemoteIMImageFile {
+    let contentType = contentTypes.first(where: { $0.conforms(to: .image) })
+    let fileExtension = contentType?.preferredFilenameExtension ?? "jpg"
+    let fileURL = RemoteIMMediaStorage.fileURL(
+        category: .outgoingImages,
+        stem: stem,
+        pathExtension: fileExtension
+    )
+    try data.write(to: fileURL, options: .atomic)
+
+    let image = UIImage(data: data)
+    let width = image.map { Int($0.size.width * $0.scale) }
+    let height = image.map { Int($0.size.height * $0.scale) }
+    return RemoteIMImageFile(fileURL: fileURL, width: width,
+                             height: height, sizeBytes: data.count)
+}
 
 struct RemoteIMBroadcastResult: Equatable {
     let total: Int
@@ -1416,8 +1438,9 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         return id
     }
 
-    func sendVoiceRecording(_ recording: RemoteIMVoiceRecording, to recipient: String? = nil) async {
-        guard let peerID = outgoingRecipient(recipient) else { return }
+    @discardableResult
+    func sendVoiceRecording(_ recording: RemoteIMVoiceRecording, to recipient: String? = nil) async -> Bool {
+        guard let peerID = outgoingRecipient(recipient) else { return false }
 
         let identity = remoteDiagnosticsIdentity
         var queuedMessageID: UUID?
@@ -1431,7 +1454,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             locallyQueuedMessageID = message.id
             enqueueHistoryUpsert(message)
             let receipt = try await client.sendVoice(to: message.toUserID, recording: recording)
-            guard remoteDiagnosticsIdentity == identity else { return }
+            guard remoteDiagnosticsIdentity == identity else { return false }
             try chatState.updateMessageDelivery(
                 id: message.id,
                 remoteID: receipt.remoteID,
@@ -1439,13 +1462,15 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             )
             enqueueCurrentMessage(id: message.id)
             errorMessage = nil
+            return true
         } catch {
-            guard remoteDiagnosticsIdentity == identity else { return }
+            guard remoteDiagnosticsIdentity == identity else { return false }
             if let queuedMessageID {
                 try? chatState.updateMessageStatus(id: queuedMessageID, status: .failed)
                 enqueueCurrentMessage(id: queuedMessageID)
             }
             errorMessage = error.localizedDescription
+            return false
         }
     }
 
@@ -1487,8 +1512,9 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         }
     }
 
-    func sendVideoFile(_ video: RemoteIMVideoFile, to recipient: String? = nil) async {
-        guard let peerID = outgoingRecipient(recipient) else { return }
+    @discardableResult
+    func sendVideoFile(_ video: RemoteIMVideoFile, to recipient: String? = nil) async -> Bool {
+        guard let peerID = outgoingRecipient(recipient) else { return false }
 
         let identity = remoteDiagnosticsIdentity
         var queuedMessageID: UUID?
@@ -1506,7 +1532,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             locallyQueuedMessageID = message.id
             enqueueHistoryUpsert(message)
             let receipt = try await client.sendVideo(to: message.toUserID, video: video)
-            guard remoteDiagnosticsIdentity == identity else { return }
+            guard remoteDiagnosticsIdentity == identity else { return false }
             try chatState.updateMessageDelivery(
                 id: message.id,
                 remoteID: receipt.remoteID,
@@ -1514,18 +1540,21 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             )
             enqueueCurrentMessage(id: message.id)
             errorMessage = nil
+            return true
         } catch {
-            guard remoteDiagnosticsIdentity == identity else { return }
+            guard remoteDiagnosticsIdentity == identity else { return false }
             if let queuedMessageID {
                 try? chatState.updateMessageStatus(id: queuedMessageID, status: .failed)
                 enqueueCurrentMessage(id: queuedMessageID)
             }
             errorMessage = error.localizedDescription
+            return false
         }
     }
 
-    func sendFile(_ file: RemoteIMFile, to recipient: String? = nil) async {
-        guard let peerID = outgoingRecipient(recipient) else { return }
+    @discardableResult
+    func sendFile(_ file: RemoteIMFile, to recipient: String? = nil) async -> Bool {
+        guard let peerID = outgoingRecipient(recipient) else { return false }
 
         let identity = remoteDiagnosticsIdentity
         var queuedMessageID: UUID?
@@ -1541,7 +1570,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             locallyQueuedMessageID = message.id
             enqueueHistoryUpsert(message)
             let receipt = try await client.sendFile(to: message.toUserID, file: file)
-            guard remoteDiagnosticsIdentity == identity else { return }
+            guard remoteDiagnosticsIdentity == identity else { return false }
             try chatState.updateMessageDelivery(
                 id: message.id,
                 remoteID: receipt.remoteID,
@@ -1549,13 +1578,15 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             )
             enqueueCurrentMessage(id: message.id)
             errorMessage = nil
+            return true
         } catch {
-            guard remoteDiagnosticsIdentity == identity else { return }
+            guard remoteDiagnosticsIdentity == identity else { return false }
             if let queuedMessageID {
                 try? chatState.updateMessageStatus(id: queuedMessageID, status: .failed)
                 enqueueCurrentMessage(id: queuedMessageID)
             }
             errorMessage = error.localizedDescription
+            return false
         }
     }
 

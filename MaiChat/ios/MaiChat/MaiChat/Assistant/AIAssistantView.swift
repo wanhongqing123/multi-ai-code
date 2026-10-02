@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreTransferable
 import MaiChatCore
 import Photos
 import PhotosUI
@@ -801,6 +802,31 @@ private final class AIComposerFocusController {
     func dismiss() { textView?.resignFirstResponder() }
 }
 
+private struct AIPickedVideoTransfer: Transferable, Sendable {
+    let fileURL: URL
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(contentType: .movie) { video in
+            SentTransferredFile(video.fileURL)
+        } importing: { received in
+            let sourceURL = received.file
+            let targetURL = try await RemoteIMBackgroundWork.file {
+                let directory = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("AIAssistantImports", isDirectory: true)
+                try FileManager.default.createDirectory(at: directory,
+                                                        withIntermediateDirectories: true)
+                let fileExtension = sourceURL.pathExtension.isEmpty
+                    ? "mov" : sourceURL.pathExtension
+                let target = directory.appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension(fileExtension)
+                try FileManager.default.copyItem(at: sourceURL, to: target)
+                return target
+            }
+            return AIPickedVideoTransfer(fileURL: targetURL)
+        }
+    }
+}
+
 private struct AIComposer: View {
     @ObservedObject var model: AIAssistantModel
     let focusController: AIComposerFocusController
@@ -994,7 +1020,7 @@ private struct AIComposer: View {
                 selection: $selectedMediaItems,
                 maxSelectionCount: 10,
                 selectionBehavior: .ordered,
-                matching: .images,
+                matching: .any(of: [.images, .videos]),
                 photoLibrary: .shared()
             )
             .fullScreenCover(isPresented: $isCameraPresented) {
@@ -1009,14 +1035,19 @@ private struct AIComposer: View {
             }
             .fileImporter(
                 isPresented: $importing,
-                allowedContentTypes: [.plainText, .sourceCode, .json, .image]
+                allowedContentTypes: [.plainText, .sourceCode, .json, .image, .movie]
             ) { result in
                 if case let .success(url) = result {
                     let target = model.selected
                     Task {
-                        if let file = await model.importFile(url) {
+                        let type = UTType(filenameExtension: url.pathExtension)
+                        if type?.conforms(to: .movie) == true {
+                            if let file = await model.importVideoFile(url) {
+                                await sendImportedMedia([], videos: [file], to: target)
+                            }
+                        } else if let file = await model.importFile(url) {
                             if file.isImage {
-                                await sendImportedImages([file], to: target)
+                                await sendImportedMedia([file], to: target)
                             } else {
                                 appendImportedDocument(file, to: target)
                             }
@@ -1026,7 +1057,7 @@ private struct AIComposer: View {
             }
             .onChange(of: selectedMediaItems) { items in
                 guard !items.isEmpty else { return }
-                Task { await importSelectedImages(items) }
+                Task { await importSelectedMedia(items) }
             }
             .onAppear {
                 draftSession = model.selected
@@ -1125,13 +1156,26 @@ private struct AIComposer: View {
         }
     }
 
-    private func importSelectedImages(_ items: [PhotosPickerItem]) async {
+    private func importSelectedMedia(_ items: [PhotosPickerItem]) async {
         let targetSession = model.selected
         defer { selectedMediaItems = [] }
-        var imported: [AIImportedFile] = []
+        var images: [AIImportedFile] = []
+        var videos: [AIImportedFile] = []
         var failedCount = 0
         for item in items {
             do {
+                if item.supportedContentTypes.contains(where: { $0.conforms(to: .movie) }) {
+                    guard let picked = try await item.loadTransferable(type: AIPickedVideoTransfer.self)
+                    else { failedCount += 1; continue }
+                    let temporaryURL = picked.fileURL
+                    defer { Task { await Self.removeTemporaryFile(temporaryURL) } }
+                    guard let file = await model.importVideoFile(temporaryURL) else {
+                        failedCount += 1
+                        continue
+                    }
+                    videos.append(file)
+                    continue
+                }
                 guard let data = try await item.loadTransferable(type: Data.self),
                       data.count <= 20 * 1024 * 1024
                 else {
@@ -1148,19 +1192,19 @@ private struct AIComposer: View {
                     failedCount += 1
                     continue
                 }
-                imported.append(file)
+                images.append(file)
             } catch {
                 failedCount += 1
             }
         }
-        if !imported.isEmpty {
-            await sendImportedImages(imported, to: targetSession)
+        if !images.isEmpty || !videos.isEmpty {
+            await sendImportedMedia(images, videos: videos, to: targetSession)
         }
         if failedCount > 0 {
             model.showTransientError(
-                !imported.isEmpty
-                    ? "已发送\(imported.count)张图片，另有\(failedCount)张失败"
-                    : "所选图片读取失败"
+                !images.isEmpty || !videos.isEmpty
+                    ? "已导入\(images.count + videos.count)项，另有\(failedCount)项读取失败"
+                    : "所选照片或视频读取失败"
             )
         }
     }
@@ -1175,27 +1219,32 @@ private struct AIComposer: View {
             let temporaryURL = try await Self.writeTemporaryImage(data, pathExtension: "jpg")
             defer { Task { await Self.removeTemporaryFile(temporaryURL) } }
             if let file = await model.importFile(temporaryURL) {
-                await sendImportedImages([file], to: targetSession)
+                await sendImportedMedia([file], to: targetSession)
             }
         } catch {
             model.showTransientError("拍摄图片导入失败")
         }
     }
 
-    private func sendImportedImages(_ files: [AIImportedFile], to targetSession: String) async {
-        guard !files.isEmpty else { return }
+    private func sendImportedMedia(_ images: [AIImportedFile],
+                                   videos: [AIImportedFile] = [],
+                                   to targetSession: String) async {
+        guard !images.isEmpty || !videos.isEmpty else { return }
         let existingDraft = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        let prompt = existingDraft.isEmpty
-            ? (files.count == 1 ? "请查看这张图片。" : "请查看这些图片。")
-            : draft
-        if await model.send(prompt, images: files, expectedSession: targetSession) {
+        let videoReferences = videos.map { "请查看工作区视频：\($0.relativePath)" }
+            .joined(separator: "\n")
+        let imagePrompt = images.isEmpty ? "" :
+            (images.count == 1 ? "请查看这张图片。" : "请查看这些图片。")
+        let prompt = [existingDraft, videoReferences, imagePrompt]
+            .filter { !$0.isEmpty }.joined(separator: "\n")
+        if await model.send(prompt, images: images, expectedSession: targetSession) {
             if existingDraft.isEmpty || draft == prompt { draft = "" }
             return
         }
 
-        // 导入已经完成但发送条件在异步读取期间改变时，保留图片和提示，
+        // 导入已经完成但发送条件在异步读取期间改变时，保留媒体和提示，
         // 让用户之后按回车重试，不能丢掉刚选中的内容。
-        for file in files { model.addAttachment(file, to: targetSession) }
+        for file in images + videos { model.addAttachment(file, to: targetSession) }
         if targetSession == model.selected {
             if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { draft = prompt }
         } else if model.drafts[targetSession, default: ""]

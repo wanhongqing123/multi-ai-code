@@ -37,6 +37,7 @@ public final class MaiChatHostTools {
                 AIAssistantController.shared(activity).workspacePdfOutputForHost(
                     arguments.optString("output_path")));
         if (tool.equals("mobile_request_permission")) return permissions.request(arguments);
+        if (tool.equals("mobile_get_location")) return permissions.getCurrentLocation();
         if (tool.equals("maichat_play_video") || tool.equals("maichat_video_command"))
             return media.execute(tool, arguments);
         if (tool.startsWith("mobile_")) return photos.execute(tool, arguments);

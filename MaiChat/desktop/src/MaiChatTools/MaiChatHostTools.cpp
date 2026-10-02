@@ -3,10 +3,17 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QImageReader>
 #include <QMetaObject>
 #include <QPointer>
+#include <QSaveFile>
 #include <QSet>
+#include <QStandardPaths>
 #include <QThread>
+#include <QUuid>
 
 #include <algorithm>
 #include <memory>
@@ -27,6 +34,7 @@ enum class HostToolKind {
   SearchMessages,
   GetUnreadSummary,
   SendText,
+  SendMedia,
   ReplyMessage,
   BroadcastText,
 };
@@ -147,11 +155,13 @@ public:
   }
 
   MaiToolResult execute(const std::string &argumentsJson,
-                        const MaiToolContext &) override {
+                        const MaiToolContext &context) override {
     QJsonObject arguments;
     QString parseError;
     if (!parseObject(argumentsJson, &arguments, &parseError))
       return invalidInput(parseError);
+    if (mKind == HostToolKind::SendMedia)
+      return sendMedia(arguments, context);
     return onApplicationThread(mApp, [&](RemoteIMApplication &app) {
       switch (mKind) {
       case HostToolKind::ListContacts:
@@ -166,6 +176,8 @@ public:
         return unreadSummary(app);
       case HostToolKind::SendText:
         return sendText(app, arguments);
+      case HostToolKind::SendMedia:
+        break;
       case HostToolKind::ReplyMessage:
         return replyMessage(app, arguments);
       case HostToolKind::BroadcastText:
@@ -177,6 +189,92 @@ public:
   }
 
 private:
+  MaiToolResult sendMedia(const QJsonObject &arguments,
+                          const MaiToolContext &context) const {
+    const QString peerId = arguments.value(QStringLiteral("peer_id")).toString().trimmed();
+    const QString requested = arguments.value(QStringLiteral("file_path")).toString().trimmed();
+    const QString kind = arguments.value(QStringLiteral("type")).toString().trimmed();
+    const QString caption = arguments.value(QStringLiteral("caption")).toString().trimmed();
+    if (peerId.isEmpty() || requested.isEmpty() ||
+        (kind != QStringLiteral("image") && kind != QStringLiteral("video") &&
+         kind != QStringLiteral("audio"))) {
+      return invalidInput(QStringLiteral("peer_id, file_path, and type=image|video|audio are required"));
+    }
+    const std::string path = context.resolvePath(toStdString(requested.toUtf8()));
+    if (path.empty())
+      return invalidInput(QStringLiteral("file_path is outside the accessible area"));
+    const QFileInfo source(QString::fromUtf8(path.data(), static_cast<int>(path.size())));
+    const qint64 limit = kind == QStringLiteral("image") ? 20LL * 1024 * 1024
+                                                       : 1024LL * 1024 * 1024;
+    if (!source.isFile() || !source.isReadable() || source.size() <= 0 ||
+        source.size() > limit) {
+      return invalidInput(QStringLiteral("media file is missing, unreadable, empty, or too large"));
+    }
+    if (kind == QStringLiteral("image") && !QImageReader(source.filePath()).canRead())
+      return invalidInput(QStringLiteral("image file cannot be decoded"));
+    if (kind == QStringLiteral("video") &&
+        source.suffix().compare(QStringLiteral("mp4"), Qt::CaseInsensitive) != 0 &&
+        source.suffix().compare(QStringLiteral("mov"), Qt::CaseInsensitive) != 0) {
+      return invalidInput(QStringLiteral("video messages require mp4 or mov"));
+    }
+    const auto validatePeer = onApplicationThread(mApp, [&](RemoteIMApplication &app) {
+      return hasContact(app.chatState(), peerId)
+                 ? jsonResult({{QStringLiteral("valid"), true}})
+                 : invalidInput(QStringLiteral("peer_id is not a MaiChat contact"));
+    });
+    if (validatePeer.hasError()) return validatePeer;
+
+    const QString directory = QDir(QStandardPaths::writableLocation(
+        QStandardPaths::AppDataLocation)).filePath(QStringLiteral("AgentMedia"));
+    if (!QDir().mkpath(directory))
+      return MaiToolResult::failure(MaiErrorCode::Internal,
+                                    "cannot create MaiChat media storage");
+    const QString copiedPath = QDir(directory).filePath(
+        QUuid::createUuid().toString(QUuid::WithoutBraces) +
+        QStringLiteral("-") + source.fileName());
+    QFile input(source.filePath());
+    QSaveFile output(copiedPath);
+    if (!input.open(QIODevice::ReadOnly) || !output.open(QIODevice::WriteOnly))
+      return MaiToolResult::failure(MaiErrorCode::Internal,
+                                    "cannot read or save media file");
+    while (!input.atEnd()) {
+      if (context.isCanceled()) {
+        output.cancelWriting();
+        return MaiToolResult::failure(MaiErrorCode::Canceled,
+                                      "media send was canceled before queueing");
+      }
+      const QByteArray chunk = input.read(1024 * 1024);
+      if (chunk.isEmpty() || output.write(chunk) != chunk.size()) {
+        output.cancelWriting();
+        return MaiToolResult::failure(MaiErrorCode::Internal,
+                                      "failed to copy media into MaiChat storage");
+      }
+    }
+    if (!output.commit())
+      return MaiToolResult::failure(MaiErrorCode::Internal,
+                                    "failed to finalize media in MaiChat storage");
+    const auto result = onApplicationThread(mApp, [&](RemoteIMApplication &app) {
+      if (!hasContact(app.chatState(), peerId))
+        return invalidInput(QStringLiteral("peer_id is no longer a MaiChat contact"));
+      const bool queued = kind == QStringLiteral("image")
+          ? app.sendImageTo(peerId, copiedPath, caption)
+          : kind == QStringLiteral("video")
+              ? app.sendVideoTo(peerId, copiedPath, caption)
+              : app.sendFileTo(peerId, copiedPath, caption);
+      if (!queued)
+        return MaiToolResult::failure(MaiErrorCode::Internal,
+                                      "MaiChat did not queue the media message");
+      return jsonResult({{QStringLiteral("queued"), true},
+                         {QStringLiteral("peer_id"), peerId},
+                         {QStringLiteral("type"), kind},
+                         {QStringLiteral("message_kind"),
+                          kind == QStringLiteral("audio") ? QStringLiteral("file") : kind},
+                         {QStringLiteral("path"), copiedPath}});
+    });
+    if (result.hasError()) QFile::remove(copiedPath);
+    return result;
+  }
+
   static MaiToolResult listContacts(RemoteIMApplication &app,
                                     const QJsonObject &arguments) {
     const QString query =
@@ -437,6 +535,13 @@ void registerMaiChatHostTools(MaiToolRegistry &registry,
       "Queue a text message to a MaiChat contact. This changes external state "
       "and requires user approval.",
       R"({"type":"object","properties":{"peer_id":{"type":"string"},"text":{"type":"string"}},"required":["peer_id","text"]})",
+      app, true);
+  addTool(
+      registry, HostToolKind::SendMedia, "maichat_send_media",
+      "Send an Agent workspace image or video as a persistent MaiChat message "
+      "bubble, or audio as a file card. Optional caption is kept with the media. "
+      "This changes external state and requires user approval.",
+      R"({"type":"object","properties":{"peer_id":{"type":"string"},"file_path":{"type":"string"},"type":{"type":"string","enum":["image","video","audio"]},"caption":{"type":"string"}},"required":["peer_id","file_path","type"],"additionalProperties":false})",
       app, true);
   addTool(
       registry, HostToolKind::ReplyMessage, "maichat_reply_message",

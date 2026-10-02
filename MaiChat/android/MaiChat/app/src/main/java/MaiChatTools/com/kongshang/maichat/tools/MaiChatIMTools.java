@@ -1,12 +1,24 @@
 package com.kongshang.maichat.tools;
 
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.media.MediaMetadataRetriever;
+import android.os.Build;
+import com.kongshang.maichat.AIAssistantController;
 import com.kongshang.maichat.MainActivity;
 import com.kongshang.maichat.MessageQuote;
 import com.kongshang.maichat.RemoteIMContact;
 import com.kongshang.maichat.RemoteIMMessage;
 import com.kongshang.maichat.RemoteIMMessageSearchHit;
+import com.kongshang.maichat.RemoteIMMediaPaths;
+import com.kongshang.maichat.RemoteIMMediaStore;
 import com.kongshang.maichat.RemoteIMQuote;
 import com.kongshang.maichat.RemoteIMSessionController;
+import com.kongshang.maichat.RemoteIMVideoAttachment;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -35,6 +47,7 @@ final class MaiChatIMTools {
             case "maichat_search_messages": return hostSearchMessages(arguments);
             case "maichat_get_unread_summary": return hostUnreadSummary();
             case "maichat_send_text": return hostSendText(arguments, false);
+            case "maichat_send_media": return hostSendMedia(arguments);
             case "maichat_reply_message": return hostSendText(arguments, true);
             case "maichat_broadcast_text": return hostBroadcastText(arguments);
             default: throw new IllegalArgumentException("未知 MaiChat 宿主工具：" + tool);
@@ -140,6 +153,107 @@ final class MaiChatIMTools {
         RemoteIMMessage queued = session.sendTextMessageTo(peer, text, quote);
         return new JSONObject().put("sent", true).put("peer_id", peer)
             .put("message_id", queued.id());
+    }
+
+    private JSONObject hostSendMedia(JSONObject arguments) throws Exception {
+        String peer = arguments.optString("peer_id", "").trim();
+        String kind = arguments.optString("type", "").trim();
+        String caption = arguments.optString("caption", "").trim();
+        File source = AIAssistantController.shared(activity)
+            .workspaceFile(arguments.optString("file_path", ""));
+        boolean contactExists = false;
+        for (RemoteIMContact contact : session.chatState().contacts())
+            if (peer.equals(contact.userId())) contactExists = true;
+        if (!contactExists || source == null || !source.isFile())
+            throw new IllegalArgumentException("peer_id 和工作区 file_path 必须有效");
+        if (!kind.equals("image") && !kind.equals("video") && !kind.equals("audio"))
+            throw new IllegalArgumentException("type 只能是 image、video 或 audio");
+        if (source.length() <= 0 || source.length() > (kind.equals("image")
+            ? 20L * 1024 * 1024 : 1024L * 1024 * 1024))
+            throw new IllegalArgumentException("媒体文件为空或超出大小限制");
+        RemoteIMMediaStore store = new RemoteIMMediaStore(RemoteIMMediaPaths.forApp(activity));
+        File copied = store.createOutgoingFile("agent-" + java.util.UUID.randomUUID()
+            + source.getName());
+        try {
+            Files.copy(source.toPath(), copied.toPath());
+        } catch (IOException error) {
+            Files.deleteIfExists(copied.toPath());
+            throw error;
+        }
+        RemoteIMMessage queued;
+        if (kind.equals("image")) {
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            options.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(copied.getAbsolutePath(), options);
+            if (options.outWidth <= 0 || options.outHeight <= 0)
+                throw new IllegalArgumentException("图片无法解码");
+            queued = session.sendImageMessageTo(peer, copied.getAbsolutePath(),
+                options.outWidth, options.outHeight, copied.length());
+        } else if (kind.equals("video")) {
+            queued = session.sendVideoMessageTo(peer, prepareAgentVideo(copied, store));
+        } else {
+            queued = session.sendFileMessageTo(peer, copied.getAbsolutePath(),
+                source.getName(), audioMimeType(source.getName()), copied.length());
+        }
+        boolean captionQueued = true;
+        if (!caption.isEmpty()) {
+            try { session.sendTextMessageTo(peer, caption, null); }
+            catch (Exception error) { captionQueued = false; }
+        }
+        return new JSONObject().put("queued", true).put("peer_id", peer)
+            .put("type", kind).put("message_kind", kind.equals("audio") ? "file" : kind)
+            .put("message_id", queued.id()).put("caption_queued", captionQueued);
+    }
+
+    private static RemoteIMVideoAttachment prepareAgentVideo(
+        File file, RemoteIMMediaStore store
+    ) throws IOException {
+        MediaMetadataRetriever retriever = new MediaMetadataRetriever();
+        Bitmap cover = null;
+        try {
+            retriever.setDataSource(file.getAbsolutePath());
+            int width = mediaNumber(retriever.extractMetadata(
+                MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH));
+            int height = mediaNumber(retriever.extractMetadata(
+                MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT));
+            int duration = mediaNumber(retriever.extractMetadata(
+                MediaMetadataRetriever.METADATA_KEY_DURATION));
+            if (width <= 0 || height <= 0 || duration <= 0)
+                throw new IOException("视频没有可播放的画面或时长");
+            if (Build.VERSION.SDK_INT >= 27)
+                cover = retriever.getScaledFrameAtTime(0,
+                    MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 480,
+                    Math.max(1, Math.min(480, height * 480 / width)));
+            if (cover == null)
+                cover = retriever.getFrameAtTime(0,
+                    MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
+            if (cover == null) throw new IOException("无法生成视频封面");
+            File poster = store.createOutgoingFile("agent-cover-"
+                + java.util.UUID.randomUUID() + ".jpg");
+            try (FileOutputStream output = new FileOutputStream(poster)) {
+                if (!cover.compress(Bitmap.CompressFormat.JPEG, 85, output))
+                    throw new IOException("无法保存视频封面");
+            }
+            return new RemoteIMVideoAttachment(file.getAbsolutePath(),
+                poster.getAbsolutePath(), Math.max(1, (duration + 999) / 1000),
+                width, height, file.length());
+        } finally {
+            if (cover != null) cover.recycle();
+            retriever.release();
+        }
+    }
+
+    private static int mediaNumber(String value) {
+        try { return Integer.parseInt(value); }
+        catch (NumberFormatException error) { return 0; }
+    }
+
+    private static String audioMimeType(String name) {
+        String lower = name.toLowerCase(Locale.ROOT);
+        if (lower.endsWith(".m4a") || lower.endsWith(".aac")) return "audio/mp4";
+        if (lower.endsWith(".wav")) return "audio/wav";
+        if (lower.endsWith(".ogg")) return "audio/ogg";
+        return "audio/mpeg";
     }
 
     private JSONObject hostBroadcastText(JSONObject arguments) throws Exception {

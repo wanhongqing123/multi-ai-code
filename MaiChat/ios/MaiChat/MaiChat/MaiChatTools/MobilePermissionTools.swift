@@ -9,6 +9,52 @@ import UserNotifications
 
 @MainActor
 extension AIMobileHostToolProvider {
+    func getCurrentLocation() async -> AIMaiChatHostToolExecution {
+        guard UIApplication.shared.applicationState == .active else {
+            return Self.jsonSuccess(["code": "unavailable", "message": "Open MaiChat to read the current location."])
+        }
+        let request = MaiCurrentLocationRequest()
+        switch request.authorizationStatus {
+        case .authorizedWhenInUse, .authorizedAlways: break
+        case .notDetermined:
+            return Self.jsonSuccess([
+                "code": "permission_denied", "settings_required": false,
+                "message": "Call mobile_request_permission with location first.",
+            ])
+        case .denied, .restricted:
+            return Self.jsonSuccess([
+                "code": "permission_denied", "settings_required": true,
+                "message": "Enable MaiChat location access in Settings.",
+            ])
+        @unknown default:
+            return Self.jsonSuccess(["code": "permission_denied", "settings_required": true])
+        }
+        switch await request.readOnce() {
+        case .location(let location):
+            guard location.horizontalAccuracy >= 0,
+                  location.coordinate.latitude.isFinite,
+                  location.coordinate.longitude.isFinite else {
+                return Self.jsonSuccess(["code": "unavailable", "message": "Location accuracy is unavailable."])
+            }
+            var result: [String: Any] = [
+                "latitude": location.coordinate.latitude,
+                "longitude": location.coordinate.longitude,
+                "accuracy_m": location.horizontalAccuracy,
+                "timestamp_ms": Int64((location.timestamp.timeIntervalSince1970 * 1000).rounded()),
+                // CoreLocation does not disclose whether GPS, Wi-Fi, or cellular supplied a fix.
+                "source": "unknown",
+            ]
+            if location.verticalAccuracy >= 0, location.altitude.isFinite {
+                result["altitude_m"] = location.altitude
+            }
+            return Self.jsonSuccess(result)
+        case .timeout:
+            return Self.jsonSuccess(["code": "timeout", "message": "A location fix was not available within 10 seconds."])
+        case .unavailable:
+            return Self.jsonSuccess(["code": "unavailable", "message": "The device could not provide a location fix."])
+        }
+    }
+
     func requestSystemPermission(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
         let permission = Self.string(arguments, key: "permission")
         guard ["photos", "camera", "microphone", "location", "contacts",
@@ -142,6 +188,59 @@ extension AIMobileHostToolProvider {
             "settings_required": status == "denied" || status == "restricted",
             "access": access,
         ])
+    }
+}
+
+private enum MaiCurrentLocationResult {
+    case location(CLLocation)
+    case timeout
+    case unavailable
+}
+
+@MainActor
+private final class MaiCurrentLocationRequest: NSObject, CLLocationManagerDelegate {
+    private let manager = CLLocationManager()
+    private var continuation: CheckedContinuation<MaiCurrentLocationResult, Never>?
+    private var timeoutTask: Task<Void, Never>?
+
+    var authorizationStatus: CLAuthorizationStatus { manager.authorizationStatus }
+
+    func readOnce() async -> MaiCurrentLocationResult {
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+            manager.delegate = self
+            manager.desiredAccuracy = kCLLocationAccuracyBest
+            manager.requestLocation()
+            timeoutTask = Task { [weak self] in
+                do { try await Task.sleep(for: .seconds(10)) }
+                catch { return }
+                self?.finish(.timeout)
+            }
+        }
+    }
+
+    private func finish(_ result: MaiCurrentLocationResult) {
+        guard let continuation else { return }
+        self.continuation = nil
+        timeoutTask?.cancel()
+        timeoutTask = nil
+        manager.delegate = nil
+        continuation.resume(returning: result)
+    }
+
+    nonisolated func locationManager(
+        _ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]
+    ) {
+        Task { @MainActor in
+            if let location = locations.last { self.finish(.location(location)) }
+            else { self.finish(.unavailable) }
+        }
+    }
+
+    nonisolated func locationManager(
+        _ manager: CLLocationManager, didFailWithError error: Error
+    ) {
+        Task { @MainActor in self.finish(.unavailable) }
     }
 }
 

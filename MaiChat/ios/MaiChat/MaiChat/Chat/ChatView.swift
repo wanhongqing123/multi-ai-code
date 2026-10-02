@@ -438,31 +438,6 @@ private struct RemoteIMImageEncodingInput: @unchecked Sendable {
     let image: UIImage
 }
 
-nonisolated private func makeRemoteIMImageFile(
-    data: Data,
-    contentTypes: [UTType],
-    stem: String = "remote-im-image-\(UUID().uuidString)"
-) throws -> RemoteIMImageFile {
-    let contentType = contentTypes.first(where: { $0.conforms(to: .image) })
-    let fileExtension = contentType?.preferredFilenameExtension ?? "jpg"
-    let fileURL = RemoteIMMediaStorage.fileURL(
-        category: .outgoingImages,
-        stem: stem,
-        pathExtension: fileExtension
-    )
-    try data.write(to: fileURL, options: .atomic)
-
-    let image = UIImage(data: data)
-    let width = image.map { Int($0.size.width * $0.scale) }
-    let height = image.map { Int($0.size.height * $0.scale) }
-    return RemoteIMImageFile(
-        fileURL: fileURL,
-        width: width,
-        height: height,
-        sizeBytes: data.count
-    )
-}
-
 struct ChatView: View {
     @Binding var activeContact: RemoteIMContact?
     let showRemoteDesktop: () -> Void

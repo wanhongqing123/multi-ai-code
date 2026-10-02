@@ -1,5 +1,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QFileInfo>
+#include <QImage>
+#include <QTemporaryDir>
 #include <QtTest>
 
 #include <memory>
@@ -16,6 +19,7 @@ private slots:
   void registersMaiChatReadAndWriteTools();
   void readsContactsMessagesSearchAndUnreadState();
   void sendsAndRepliesOnlyThroughApprovalGatedTools();
+  void sendsAgentImageAsPersistentMediaMessage();
 };
 
 void MaiChatHostToolsTest::registersMaiChatReadAndWriteTools() {
@@ -27,22 +31,57 @@ void MaiChatHostToolsTest::registersMaiChatReadAndWriteTools() {
   for (const char *name :
        {"maichat_list_contacts", "maichat_list_conversations",
         "maichat_get_messages", "maichat_search_messages",
-        "maichat_get_unread_summary", "maichat_send_text",
+        "maichat_get_unread_summary", "maichat_send_text", "maichat_send_media",
         "maichat_reply_message", "maichat_broadcast_text"}) {
     QVERIFY2(registry.find(name) != nullptr, name);
   }
   QVERIFY(!registry.find("maichat_list_contacts")->requiresApproval("{}"));
   QVERIFY(registry.find("maichat_send_text")->requiresApproval("{}"));
+  QVERIFY(registry.find("maichat_send_media")->requiresApproval("{}"));
   QVERIFY(registry.find("maichat_reply_message")->requiresApproval("{}"));
   QVERIFY(registry.find("maichat_broadcast_text")->requiresApproval("{}"));
   QVERIFY(!registry.find("maichat_list_contacts")
                ->requiresPerCallApproval("{}"));
   QVERIFY(registry.find("maichat_send_text")
               ->requiresPerCallApproval("{}"));
+  QVERIFY(registry.find("maichat_send_media")
+              ->requiresPerCallApproval("{}"));
   QVERIFY(registry.find("maichat_reply_message")
               ->requiresPerCallApproval("{}"));
   QVERIFY(registry.find("maichat_broadcast_text")
               ->requiresPerCallApproval("{}"));
+}
+
+void MaiChatHostToolsTest::sendsAgentImageAsPersistentMediaMessage() {
+  QTemporaryDir workspace;
+  QVERIFY(workspace.isValid());
+  const QString source = workspace.filePath(QStringLiteral("picture.png"));
+  QImage image(2, 2, QImage::Format_ARGB32);
+  image.fill(Qt::red);
+  QVERIFY(image.save(source));
+
+  auto client = std::make_unique<FakeRemoteIMClient>();
+  RemoteIMApplication app(QStringLiteral("owner"), std::move(client));
+  app.addContact(QStringLiteral("alice"), QStringLiteral("Alice"));
+  MaiToolRegistry registry;
+  registerMaiChatHostTools(registry, app);
+  MaiToolContext context;
+  context.root = workspace.path().toUtf8().toStdString();
+  const auto sent = registry.find("maichat_send_media")->execute(
+      R"({"peer_id":"alice","file_path":"picture.png","type":"image","caption":"Processed image"})",
+      context);
+  QVERIFY2(!sent.hasError(), sent.error().message().c_str());
+  const auto messages = app.chatState().messagesWith(QStringLiteral("alice"));
+  QVERIFY(!messages.isEmpty());
+  QVERIFY(messages.last().hasImage);
+  QCOMPARE(messages.last().text, QStringLiteral("Processed image"));
+  QVERIFY(QFileInfo(messages.last().image.localPath).isFile());
+  QVERIFY(messages.last().image.localPath != source);
+
+  const auto denied = registry.find("maichat_send_media")->execute(
+      R"({"peer_id":"alice","file_path":"../picture.png","type":"image"})",
+      context);
+  QVERIFY(denied.hasError());
 }
 
 void MaiChatHostToolsTest::readsContactsMessagesSearchAndUnreadState() {

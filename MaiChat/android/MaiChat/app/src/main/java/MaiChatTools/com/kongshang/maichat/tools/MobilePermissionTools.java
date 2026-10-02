@@ -4,11 +4,15 @@ import android.Manifest;
 import android.app.NotificationManager;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
 import android.os.Build;
 import android.os.Looper;
 import com.kongshang.maichat.MainActivity;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.json.JSONObject;
 
 /** Requests only permissions used by MaiChat features, from the foreground Activity. */
@@ -39,6 +43,58 @@ final class MobilePermissionTools {
             pending = null;
         }
         return true;
+    }
+
+    JSONObject getCurrentLocation() throws Exception {
+        if (activity.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)
+                != PackageManager.PERMISSION_GRANTED &&
+            activity.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+                != PackageManager.PERMISSION_GRANTED)
+            return new JSONObject().put("code", "permission_denied")
+                .put("settings_required", true)
+                .put("message", "Call mobile_request_permission with location first.");
+        if (destroyed || !activity.isHostToolForeground())
+            return new JSONObject().put("code", "unavailable")
+                .put("message", "Open MaiChat to read the current location.");
+        if (Looper.myLooper() == Looper.getMainLooper())
+            throw new IllegalStateException("location lookup cannot block the UI thread");
+        LocationManager manager = (LocationManager) activity.getSystemService(Context.LOCATION_SERVICE);
+        if (manager == null)
+            return new JSONObject().put("code", "unavailable");
+        final String provider;
+        if (manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER))
+            provider = LocationManager.NETWORK_PROVIDER;
+        else if (activity.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+                    == PackageManager.PERMISSION_GRANTED &&
+                 manager.isProviderEnabled(LocationManager.GPS_PROVIDER))
+            provider = LocationManager.GPS_PROVIDER;
+        else return new JSONObject().put("code", "unavailable")
+            .put("message", "No permitted location provider is enabled.");
+
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Location> fix = new AtomicReference<>();
+        LocationListener listener = location -> {
+            fix.set(location);
+            latch.countDown();
+        };
+        manager.requestSingleUpdate(provider, listener, Looper.getMainLooper());
+        boolean received;
+        try { received = latch.await(10, TimeUnit.SECONDS); }
+        finally { manager.removeUpdates(listener); }
+        Location location = fix.get();
+        if (!received) return new JSONObject().put("code", "timeout")
+            .put("message", "A location fix was not available within 10 seconds.");
+        if (location == null || !location.hasAccuracy())
+            return new JSONObject().put("code", "unavailable");
+        JSONObject result = new JSONObject()
+            .put("latitude", location.getLatitude())
+            .put("longitude", location.getLongitude())
+            .put("accuracy_m", location.getAccuracy())
+            .put("timestamp_ms", location.getTime())
+            .put("source", LocationManager.GPS_PROVIDER.equals(location.getProvider())
+                ? "gps" : "unknown");
+        if (location.hasAltitude()) result.put("altitude_m", location.getAltitude());
+        return result;
     }
 
     JSONObject request(JSONObject arguments) throws Exception {

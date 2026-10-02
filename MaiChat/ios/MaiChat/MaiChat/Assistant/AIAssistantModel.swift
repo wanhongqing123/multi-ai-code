@@ -283,6 +283,34 @@ actor AIAssistantBackend {
             isImage: isImage
         )
     }
+
+    func importVideo(_ source: URL) throws -> AIImportedFile {
+        guard let root else { throw AIBackendError(message: "AI 助手尚未准备好") }
+        let scoped = source.startAccessingSecurityScopedResource()
+        defer { if scoped { source.stopAccessingSecurityScopedResource() } }
+        let values = try source.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey])
+        let type = values.contentType ?? UTType(filenameExtension: source.pathExtension)
+        guard type?.conforms(to: .movie) == true else {
+            throw AIBackendError(message: "所选文件不是可用的视频")
+        }
+        let size = values.fileSize ?? 0
+        guard size > 0, size <= 1024 * 1024 * 1024 else {
+            throw AIBackendError(message: "请选择不超过 1 GB 的视频")
+        }
+        let name = UUID().uuidString.prefix(8) + "-" + source.lastPathComponent
+        let target = root.appendingPathComponent("Workspace").appendingPathComponent(String(name))
+        do {
+            try FileManager.default.copyItem(at: source, to: target)
+        } catch {
+            try? FileManager.default.removeItem(at: target)
+            throw error
+        }
+        return AIImportedFile(
+            relativePath: String(name),
+            mimeType: type?.preferredMIMEType ?? "video/quicktime",
+            isImage: false
+        )
+    }
 }
 
 @MainActor
@@ -436,6 +464,11 @@ final class AIAssistantModel: ObservableObject {
     }
     func importFile(_ url: URL) async -> AIImportedFile? {
         do { return try await backend.importDocument(url) }
+        catch { self.error = error.localizedDescription; return nil }
+    }
+
+    func importVideoFile(_ url: URL) async -> AIImportedFile? {
+        do { return try await backend.importVideo(url) }
         catch { self.error = error.localizedDescription; return nil }
     }
 }

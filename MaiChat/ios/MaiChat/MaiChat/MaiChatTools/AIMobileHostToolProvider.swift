@@ -37,6 +37,7 @@ final class AIMobileHostToolProvider {
 
         switch name {
         case "mobile_request_permission": return await requestSystemPermission(arguments)
+        case "mobile_get_location": return await getCurrentLocation()
         case "mobile_decode_text": return decodeLegacyText(arguments)
         case "generate_pdf": return generatePDF(arguments)
         case "mobile_list_photos": return await listPhotos(arguments)
@@ -95,6 +96,8 @@ final class AIMobileHostToolProvider {
             return Self.unreadSummary(appState: appState)
         case "maichat_send_text":
             return await sendText(appState: appState, arguments: arguments)
+        case "maichat_send_media":
+            return await sendMedia(appState: appState, arguments: arguments)
         case "maichat_reply_message":
             return await replyMessage(appState: appState, arguments: arguments)
         case "maichat_broadcast_text":

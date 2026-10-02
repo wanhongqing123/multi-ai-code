@@ -76,9 +76,15 @@ public:
     // captionAbove：配文在附件上方（用户在输入框里就是这么排的）还是下方。
     void sendImage(const QString& localPath, const QString& text = QString(), bool captionAbove = false);
     void sendFile(const QString& localPath, const QString& text = QString(), bool captionAbove = false);
+    bool sendImageTo(const QString& peerId, const QString& localPath,
+                     const QString& text = QString(), bool captionAbove = false);
+    bool sendFileTo(const QString& peerId, const QString& localPath,
+                    const QString& text = QString(), bool captionAbove = false);
     // 发送视频（mp4/mov）。时长/尺寸从容器里解，封面在这里生成——IM SDK 两样都要，
     // 且都不会自己算。
     void sendVideo(const QString& localPath, const QString& text = QString(), bool captionAbove = false);
+    bool sendVideoTo(const QString& peerId, const QString& localPath,
+                     const QString& text = QString(), bool captionAbove = false);
     void sendVoicePlaceholder();
 
 signals:
@@ -112,10 +118,6 @@ private:
     void persistMessage(const RemoteIMMessage& message);
     // 发送成功后用 SDK 稳定 id 替换本地临时 UUID（内存+库），返回生效的 id。
     QString adoptRemoteMessageId(const QString& localId, const QString& remoteMessageId);
-    bool sendVideoTo(const QString& peerId,
-                     const QString& localPath,
-                     const QString& text,
-                     bool captionAbove);
     void applyActivity(const QString& peerId, const RemoteIMActivitySignal& signal);
     void clearActivity(const QString& peerId);
 

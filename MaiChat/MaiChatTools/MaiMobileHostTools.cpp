@@ -200,6 +200,12 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
         "Send text to a MaiChat contact through the host. Requires user approval.",
         R"({"type":"object","properties":{"peer_id":{"type":"string"},"text":{"type":"string"}},"required":["peer_id","text"]})",
         true);
+    add("maichat_send_media",
+        "Send an accessible Agent workspace image or video as a persistent media bubble, "
+        "or audio as a file card. The optional caption follows as a text message. "
+        "Requires user approval.",
+        R"({"type":"object","properties":{"peer_id":{"type":"string"},"file_path":{"type":"string"},"type":{"type":"string","enum":["image","video","audio"]},"caption":{"type":"string"}},"required":["peer_id","file_path","type"],"additionalProperties":false})",
+        true);
     add("maichat_reply_message",
         "Send a quoted reply to a MaiChat message through the host. Requires user approval.",
         R"({"type":"object","properties":{"peer_id":{"type":"string"},"message_id":{"type":"string"},"text":{"type":"string"}},"required":["peer_id","message_id","text"]})",
@@ -215,6 +221,11 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
         "required, and the access level (including approximate or precise location). A limited "
         "photo grant can still expose selected items. Location is foreground-only.",
         R"({"type":"object","properties":{"permission":{"type":"string","enum":["photos","camera","microphone","location","contacts","calendar","notifications"]}},"required":["permission"],"additionalProperties":false})");
+    add("mobile_get_location",
+        "Read one current foreground location after location permission is granted. "
+        "Returns latitude, longitude, horizontal accuracy, optional altitude, timestamp, "
+        "and source. If permission is missing, call mobile_request_permission first.",
+        R"({"type":"object","properties":{},"additionalProperties":false})");
     add("maichat_play_video",
         "Open a video from the Agent workspace in MaiChat's FFplay/Graphics popup. "
         "IM video messages use the same player.",

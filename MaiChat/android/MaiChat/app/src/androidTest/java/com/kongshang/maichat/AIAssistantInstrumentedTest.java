@@ -12,16 +12,65 @@ import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.UUID;
+import org.json.JSONObject;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public class AIAssistantInstrumentedTest {
+    @Test
+    public void bundledRvmProcessesVideoWithOriginalAudio() throws Exception {
+        Context app = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Context tests = InstrumentationRegistry.getInstrumentation().getContext();
+        File workspace = new File(app.getCacheDir(), "RvmIntegration-" + UUID.randomUUID());
+        assertTrue(workspace.mkdirs());
+        File input = new File(workspace, "sample.mp4");
+        File model = new File(workspace, "rvm_mobilenetv3_fp32.onnx");
+        File output = new File(workspace, "result.mp4");
+        try {
+            try (InputStream source = tests.getAssets().open("gallery-sample.mp4")) {
+                Files.copy(source, input.toPath());
+            }
+            try (InputStream source = app.getAssets().open(
+                     "MaiAgentModels/rvm_mobilenetv3_fp32.onnx")) {
+                Files.copy(source, model.toPath());
+            }
+            File runtime = new File(app.getApplicationInfo().nativeLibraryDir,
+                "libonnxruntime.so");
+            assertTrue("ONNX Runtime must be packaged in the app", runtime.isFile());
+            System.loadLibrary("maichat_agent");
+            JSONObject request = new JSONObject()
+                .put("input_path", input.getAbsolutePath())
+                .put("output_path", "result.mp4")
+                .put("background", new JSONObject().put("mode", "solid")
+                    .put("color", "#008040"));
+            byte[] response = AIAssistantController.nativeMatteVideo(
+                request.toString().getBytes(StandardCharsets.UTF_8),
+                workspace.getAbsolutePath().getBytes(StandardCharsets.UTF_8),
+                model.getAbsolutePath().getBytes(StandardCharsets.UTF_8),
+                runtime.getAbsolutePath().getBytes(StandardCharsets.UTF_8));
+            assertNotNull("Native video matting returned no response", response);
+            JSONObject result = new JSONObject(new String(response, StandardCharsets.UTF_8));
+            assertTrue(result.toString(), result.optBoolean("ok"));
+            JSONObject details = new JSONObject(result.getString("output"));
+            assertTrue(details.toString(), details.getInt("frames") > 1);
+            assertEquals(1, details.getInt("audio_streams_copied"));
+            assertTrue(output.isFile() && output.length() > 0);
+            assertTrue(input.isFile() && input.length() > 0);
+        } finally {
+            Files.deleteIfExists(output.toPath());
+            Files.deleteIfExists(input.toPath());
+            Files.deleteIfExists(model.toPath());
+            Files.deleteIfExists(workspace.toPath());
+        }
+    }
     private interface Check {
         boolean check(AIAssistantPanel panel) throws Exception;
     }

@@ -22,8 +22,8 @@ fi
 options=(
   "--prefix=$build_dir/install"
   --disable-programs --disable-doc --disable-debug
-  --disable-autodetect --disable-asm --enable-zlib
-  --disable-audiotoolbox --disable-videotoolbox
+  --disable-autodetect --enable-zlib
+  --disable-audiotoolbox
   --enable-gpl --disable-nonfree
   --enable-pic --enable-static --disable-shared
   "--cc=$compiler" "--ar=$archive_tool" "--ranlib=$ranlib_tool"
@@ -31,10 +31,11 @@ options=(
 
 case "$platform" in
   Android)
-    options+=(--target-os=android "--arch=$arch" --enable-cross-compile "--sysroot=$sysroot")
+    options+=(--target-os=android "--arch=$arch" --enable-cross-compile "--sysroot=$sysroot"
+      "--extra-cflags=-fvisibility=hidden")
     ;;
   iOS)
-    options+=(--enable-network --enable-securetransport
+    options+=(--enable-network --enable-securetransport --enable-videotoolbox
       --enable-protocol=http --enable-protocol=https
       --enable-protocol=tcp --enable-protocol=tls)
     target="$arch-apple-ios16.0"

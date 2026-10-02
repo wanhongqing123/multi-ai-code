@@ -27,6 +27,7 @@ struct MaiVideoMattingOptions {
 struct MaiVideoMattingResult {
     std::string outputPath;
     std::string error;
+    std::string encoderName;
     int frames = 0;
     int audioStreamsCopied = 0;
     double durationSeconds = 0;

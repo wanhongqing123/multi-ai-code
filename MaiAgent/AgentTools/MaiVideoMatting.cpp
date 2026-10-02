@@ -114,6 +114,7 @@ public:
             if (result.frames == 0) throw std::runtime_error("video contains no decodable frames");
             mComplete = true;
             result.audioStreamsCopied = mAudioStreamsCopied;
+            result.encoderName = mEncoderName;
         } catch (const std::exception& error) {
             result.error = error.what();
             result.outputPath.clear();
@@ -124,7 +125,7 @@ public:
 private:
     void initialize() {
         auto opened = MaiRvmMattingSession::open(mOptions.modelPath, mOptions.runtimePath,
-                                                mOptions.ortApiBase);
+                                                 mOptions.ortApiBase);
         if (!opened) throw std::runtime_error(opened.error().message());
         mMatting = std::move(opened.value());
         requireFfmpeg(avformat_open_input(&mInput, mInputPath.c_str(), nullptr, nullptr),
@@ -177,6 +178,7 @@ private:
         av_opt_set(mEncoder->priv_data, "preset", "veryfast", 0);
         av_opt_set(mEncoder->priv_data, "crf", "20", 0);
         requireFfmpeg(avcodec_open2(mEncoder, encoder, nullptr), "start H.264 encoder");
+        mEncoderName = encoder->name;
         mOutputVideo = avformat_new_stream(mOutput, nullptr);
         if (mOutputVideo == nullptr) throw std::runtime_error("create output video stream failed");
         mOutputVideo->time_base = mEncoder->time_base;
@@ -371,6 +373,7 @@ private:
 
     std::string mInputPath;
     std::string mOutputPath;
+    std::string mEncoderName;
     MaiVideoMattingOptions mOptions;
     const MaiToolContext& mContext;
     bool mComplete = false;

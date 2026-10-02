@@ -1,4 +1,5 @@
 PODS:
+  - onnxruntime-c (1.26.0)
   - QCloudRealTime (3.1.39):
     - VoiceCommon
   - TXIMSDK_Plus_iOS_XCFramework (9.0.7659)
@@ -8,12 +9,14 @@ PODS:
   - VoiceCommon (1.0.6)
 
 DEPENDENCIES:
+  - onnxruntime-c (= 1.26.0)
   - QCloudRealTime (= 3.1.39)
   - TXIMSDK_Plus_iOS_XCFramework
   - TXLiteAVSDK_TRTC (from `https://liteav.sdk.qcloud.com/pod/liteavsdkspec/TXLiteAVSDK_TRTC.podspec`)
 
 SPEC REPOS:
   trunk:
+    - onnxruntime-c
     - QCloudRealTime
     - TXIMSDK_Plus_iOS_XCFramework
     - VoiceCommon
@@ -23,11 +26,12 @@ EXTERNAL SOURCES:
     :podspec: https://liteav.sdk.qcloud.com/pod/liteavsdkspec/TXLiteAVSDK_TRTC.podspec
 
 SPEC CHECKSUMS:
+  onnxruntime-c: e6e9272f5996fed3ea3ca3c9bc843478b2ecbc73
   QCloudRealTime: 1fbd5af1d3fa3e13011ba8e2b72e4685f0b5ecad
   TXIMSDK_Plus_iOS_XCFramework: 650f87c12836d2e29f42faca4a665e92047bdaca
   TXLiteAVSDK_TRTC: ab7fa7bce8e703cfd894de0effe18fa3321b850d
   VoiceCommon: 606ceec730a561ec35916c176cf5e0f5b8a34b06
 
-PODFILE CHECKSUM: fdc0be20d5660093b6f969fc89144f8f39e2a92b
+PODFILE CHECKSUM: b538a09b66eeaf53733077ed19d3127a3ea4c0fb
 
 COCOAPODS: 1.16.2

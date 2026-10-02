@@ -152,6 +152,36 @@ Java_com_kongshang_maichat_AIAssistantController_nativeRequest(
 }
 
 extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_kongshang_maichat_AIAssistantController_nativeMatteVideo(
+    JNIEnv *env, jclass, jbyteArray arguments, jbyteArray workspace,
+    jbyteArray modelPath, jbyteArray runtimePath) {
+  if (arguments == nullptr || workspace == nullptr || modelPath == nullptr ||
+      runtimePath == nullptr)
+    return nullptr;
+  const auto read = [env](jbyteArray value) {
+    std::string output(static_cast<std::size_t>(env->GetArrayLength(value)), '\0');
+    env->GetByteArrayRegion(value, 0, static_cast<jsize>(output.size()),
+                            reinterpret_cast<jbyte *>(output.data()));
+    return output;
+  };
+  const std::string args = read(arguments);
+  const std::string root = read(workspace);
+  const std::string model = read(modelPath);
+  const std::string runtime = read(runtimePath);
+  if (env->ExceptionCheck()) return nullptr;
+  char *response = maiMobileMatteVideo(args.c_str(), root.c_str(), model.c_str(),
+                                        runtime.c_str(), nullptr);
+  if (response == nullptr) return nullptr;
+  const jsize size = static_cast<jsize>(std::strlen(response));
+  jbyteArray bytes = env->NewByteArray(size);
+  if (bytes != nullptr)
+    env->SetByteArrayRegion(bytes, 0, size,
+                            reinterpret_cast<const jbyte *>(response));
+  maiMobileAgentFree(response);
+  return bytes;
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_kongshang_maichat_AIAssistantController_nativeFilterBitmap(
     JNIEnv *env, jclass, jobject bitmap, jstring operation,
     jintArray dimensions) {

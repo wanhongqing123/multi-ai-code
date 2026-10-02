@@ -9,6 +9,17 @@ void* maiMobileAgentCreate(void);
 void maiMobileAgentDestroy(void* handle);
 char* maiMobileAgentRequest(void* handle, const char* request);
 void maiMobileAgentFree(char* response);
+// Register the address returned by OrtGetApiBase from a statically linked iOS ONNX Runtime
+// framework before configure. Android and desktop use a bundled dynamic library path instead.
+// The pointer is borrowed for the lifetime of the host process; call only on the Agent worker.
+int maiMobileAgentSetOrtApiBase(void* handle, const void* apiBase);
+
+// Direct host entry for video matting, sharing the same parameter schema and processor as the
+// cv_video_matting Agent tool. Paths are UTF-8; output_path in argumentsJson remains relative to
+// workspace. Returns an owned {ok,output|error} JSON string; release with maiMobileAgentFree.
+char* maiMobileMatteVideo(const char* argumentsJson, const char* workspace,
+                          const char* modelPath, const char* runtimePath,
+                          const void* apiBase);
 
 // MaiChat-specific tools are implemented by the embedding application. MaiAgent invokes handler
 // on an agent worker thread after its normal approval gate. The handler may be called concurrently

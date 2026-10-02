@@ -23,7 +23,7 @@ export PKG_CONFIG_PATH=
 if ! "$source_dir/configure" \
   "--prefix=$build_dir/install" \
   --disable-programs --disable-doc --disable-debug \
-  --disable-autodetect --disable-asm --enable-zlib \
+  --disable-autodetect --enable-zlib \
   --enable-audiotoolbox --enable-videotoolbox \
   --enable-gpl --disable-nonfree \
   --enable-libdav1d --enable-libx264 --enable-libmp3lame \

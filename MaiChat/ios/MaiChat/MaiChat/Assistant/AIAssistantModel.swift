@@ -104,6 +104,9 @@ actor AIAssistantBackend {
         let pointer = maiMobileAgentCreate()
         address = UInt(bitPattern: pointer)
         guard let pointer else { return }
+        if let apiBase = OrtGetApiBase() {
+            _ = maiMobileAgentSetOrtApiBase(pointer, UnsafeRawPointer(apiBase))
+        }
         let context = Unmanaged.passRetained(AIMaiChatHostToolCallbackContext()).toOpaque()
         let registered = maiMobileAgentSetHostToolHandler(
             pointer,
@@ -184,7 +187,10 @@ actor AIAssistantBackend {
         let appRootPath = AIAssistantPathPolicy.appRoot(workspacePath: workspace.path)
         _ = try call("configure", values: ["database": root.appendingPathComponent("sessions.sqlite").path,
             "workspace": workspace.path, "baseUrl": config.baseUrl, "apiKey": key,
-            "model": config.model, "policy": config.policy, "appRoot": appRootPath])
+            "model": config.model, "policy": config.policy, "appRoot": appRootPath,
+            "rvmModelPath": Bundle.main.url(
+                forResource: "rvm_mobilenetv3_fp32", withExtension: "onnx",
+                subdirectory: "MaiAgentModels")?.path ?? ""])
     }
 
     func save(_ config: AIModelSettings, newKey: String) throws {

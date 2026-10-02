@@ -19,6 +19,10 @@ meson_cross=""
 compiler_flags="-O2 -fPIC"
 cc_command="$compiler"
 host=""
+codec_asm=false
+case "$arch" in
+  arm64|aarch64|arm) codec_asm=true ;;
+esac
 
 if [[ "$platform" == iOS || "$platform" == Android ]]; then
   if [[ "$arch" == arm64 || "$arch" == aarch64 ]]; then
@@ -75,13 +79,13 @@ run_meson_setup() {
 if [[ -f "$build_root/dav1d/build.ninja" ]]; then
   run_meson_setup "$build_root/dav1d" "$source_root/dav1d" --reconfigure \
     --prefix="$install_root" --libdir=lib --default-library=static \
-    -Denable_asm=false -Denable_tools=false -Denable_tests=false \
+    "-Denable_asm=$codec_asm" -Denable_tools=false -Denable_tests=false \
     -Denable_examples=false -Denable_docs=false \
     > "$build_root/dav1d-config.log" 2>&1
 else
   run_meson_setup "$build_root/dav1d" "$source_root/dav1d" \
     --prefix="$install_root" --libdir=lib --default-library=static \
-    -Denable_asm=false -Denable_tools=false -Denable_tests=false \
+    "-Denable_asm=$codec_asm" -Denable_tools=false -Denable_tests=false \
     -Denable_examples=false -Denable_docs=false \
     > "$build_root/dav1d-config.log" 2>&1
 fi
@@ -89,12 +93,18 @@ meson compile -C "$build_root/dav1d" -j6 > "$build_root/dav1d-build.log" 2>&1
 meson install -C "$build_root/dav1d" > "$build_root/dav1d-install.log" 2>&1
 
 mkdir -p "$build_root/x264"
+if [[ "$codec_asm" == true && -f "$build_root/x264/config.mak" ]] &&
+    grep -q '^AS=$' "$build_root/x264/config.mak"; then
+  make -C "$build_root/x264" distclean > "$build_root/x264-clean.log" 2>&1
+fi
 if [[ ! -f "$build_root/x264/config.mak" ]]; then
+  x264_asm_options=(--enable-pic)
+  if [[ "$codec_asm" != true ]]; then x264_asm_options+=(--disable-asm); fi
   (cd "$build_root/x264" && CC="$cc_command" \
     AR="$archive_tool" RANLIB="$ranlib_tool" \
     "$source_root/x264/configure" "--prefix=$install_root" \
     "--libdir=$install_root/lib" --enable-static --disable-opencl \
-    --disable-cli --disable-asm --enable-pic \
+    --disable-cli "${x264_asm_options[@]}" \
     ${host:+--host=$host}) > "$build_root/x264-config.log" 2>&1
 fi
 make -C "$build_root/x264" -j6 > "$build_root/x264-build.log" 2>&1

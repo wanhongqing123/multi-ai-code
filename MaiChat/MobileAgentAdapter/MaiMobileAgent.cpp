@@ -5,7 +5,10 @@
 #include "MaiApplyPatchTool.h"
 #include "MaiCvVideoAnalysis.h"
 #include "MaiCvVideoTools.h"
+#include "MaiDownloadFileTool.h"
 #include "MaiEditTool.h"
+#include "MaiFilePath.h"
+#include "MaiFileSystem.h"
 #include "MaiFileTools.h"
 #include "MaiFfmpegTools.h"
 #include "MaiOpenAiClient.h"
@@ -15,6 +18,8 @@
 #include "MaiTimeTool.h"
 #include "MaiTodoWriteTool.h"
 #include "MaiViewImageTool.h"
+#include "MaiVideoMatting.h"
+#include "MaiVideoMattingTool.h"
 #include "MaiWebFetchTool.h"
 #include "mai_fftools_embed.h"
 #include <cstdlib>
@@ -60,6 +65,12 @@ std::string encodeBase64(const std::string& input) {
     return output;
 }
 
+char* ownedResponse(const std::string& response) {
+    char* result = static_cast<char*>(std::malloc(response.size() + 1));
+    if (result) std::memcpy(result, response.c_str(), response.size() + 1);
+    return result;
+}
+
 }  // namespace
 
 // 这是移动端适配器，JSON 只在语言边界，MaiAgent 的公开接口仍是领域对象。
@@ -76,6 +87,7 @@ struct MaiMobileAgent {
     std::string model;
     MaiModelConfig suggestionConfig;
     bool configured = false;
+    const void* ortApiBase = nullptr;
     std::shared_ptr<MaiMobileHostDispatcher> hostTools =
         makeMaiMobileHostDispatcher();
     // 最后销毁 agent：回调捕获的字段必须活到工作线程退出。
@@ -123,6 +135,7 @@ struct MaiMobileAgent {
         tools->add(makeMaiGlobTool());
         tools->add(makeMaiGrepTool());
         tools->add(makeMaiWebFetchTool(config.caBundlePath));
+        tools->add(makeMaiDownloadFileTool());
         tools->add(makeMaiQuestionTool());
         tools->add(makeMaiCurrentTimeTool());
         tools->add(makeMaiTodoWriteTool());
@@ -131,6 +144,15 @@ struct MaiMobileAgent {
         tools->add(makeMaiFfprobeTool(ffmpegEngine));
         tools->add(makeMaiCvSceneDetectTool(analyzeMaiCvVideo));
         tools->add(makeMaiCvMotionDetectTool(analyzeMaiCvVideo));
+        const std::string rvmModel = request.value("rvmModelPath", "");
+        const std::string ortRuntime = request.value("ortRuntimePath", "");
+        if (!rvmModel.empty() && MaiFileSystem::exists(MaiFilePath::fromUtf8(rvmModel))) {
+            if (ortApiBase != nullptr ||
+                (!ortRuntime.empty() && MaiFileSystem::exists(MaiFilePath::fromUtf8(ortRuntime)))) {
+                tools->add(makeMaiVideoMattingTool(maiMatteVideo, rvmModel, ortRuntime,
+                                                    ortApiBase));
+            }
+        }
         tools->add(makeMaiPdfTool([dispatcher = hostTools](
                                       const std::string& html, const std::string& output,
                                       const std::atomic<bool>* cancel) {
@@ -397,6 +419,36 @@ int maiMobileAgentSetHostToolHandler(void* handle, void* context,
     if (mobile->anyBusy()) return 0;
     return setMaiMobileHostToolHandler(mobile->hostTools, context, handler, responseFree, contextRelease) ? 1 : 0;
 }
+int maiMobileAgentSetOrtApiBase(void* handle, const void* apiBase) {
+    if (handle == nullptr || apiBase == nullptr) return 0;
+    auto* mobile = static_cast<MaiMobileAgent*>(handle);
+    if (mobile->agent != nullptr) return 0;
+    mobile->ortApiBase = apiBase;
+    return 1;
+}
+char* maiMobileMatteVideo(const char* argumentsJson, const char* workspace,
+                          const char* modelPath, const char* runtimePath,
+                          const void* apiBase) {
+    try {
+        if (argumentsJson == nullptr || workspace == nullptr || modelPath == nullptr)
+            return ownedResponse(R"({"ok":false,"error":"invalid matting arguments"})");
+        auto tool = makeMaiVideoMattingTool(maiMatteVideo, modelPath,
+                                             runtimePath != nullptr ? runtimePath : "", apiBase);
+        if (!tool)
+            return ownedResponse(R"({"ok":false,"error":"video matting is unavailable"})");
+        MaiToolContext context;
+        context.root = workspace;
+        context.allowOutsideWorkingDirectory = true;
+        const MaiToolResult result = tool->execute(argumentsJson, context);
+        if (result.hasError())
+            return ownedResponse(Json{{"ok", false},
+                                      {"errorCode", maiErrorCodeToString(result.error().code())},
+                                      {"error", result.error().message()}}.dump());
+        return ownedResponse(Json{{"ok", true}, {"output", result.output()}}.dump());
+    } catch (const std::exception& error) {
+        return ownedResponse(Json{{"ok", false}, {"error", error.what()}}.dump());
+    }
+}
 char* maiMobileAgentRequest(void* handle, const char* request) {
     std::string response;
     try {
@@ -407,9 +459,7 @@ char* maiMobileAgentRequest(void* handle, const char* request) {
     } catch (...) {
         response = "{\"ok\":false,\"error\":\"Native agent failure.\"}";
     }
-    char* result = static_cast<char*>(std::malloc(response.size() + 1));
-    if (result) std::memcpy(result, response.c_str(), response.size() + 1);
-    return result;
+    return ownedResponse(response);
 }
 void maiMobileAgentFree(char* response) {
     std::free(response);

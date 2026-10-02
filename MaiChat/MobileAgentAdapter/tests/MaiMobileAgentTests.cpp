@@ -144,7 +144,9 @@ int main() {
              hasMobileBeautify = false, hasMobileImageInfo = false, hasMobilePreview = false,
              hasFaceDetection = false, hasPersonSegmentation = false,
              hasMobilePhotoAlbumWrite = false, hasPermissionRequest = false,
-             hasSceneDetect = false, hasMotionDetect = false;
+             hasSceneDetect = false, hasMotionDetect = false,
+             hasDownloadFile = false, hasLocation = false, hasMaiChatMedia = false,
+             hasVideoMatting = false;
         for (const auto& tool : body["tools"]) {
             CHECK(tool["function"]["name"] != "shell");
             if (tool["function"]["name"] == "create_file") hasCreateFile = true;
@@ -154,6 +156,8 @@ int main() {
             if (tool["function"]["name"] == "generate_pdf") hasGeneratePdf = true;
             if (tool["function"]["name"] == "maichat_list_contacts") hasMaiChatContacts = true;
             if (tool["function"]["name"] == "maichat_send_text") hasMaiChatSend = true;
+            if (tool["function"]["name"] == "maichat_send_media") hasMaiChatMedia = true;
+            if (tool["function"]["name"] == "download_file") hasDownloadFile = true;
             if (tool["function"]["name"] == "maichat_broadcast_text")
                 hasMaiChatBroadcast = true;
             if (tool["function"]["name"] == "mobile_list_photos") hasMobilePhotos = true;
@@ -174,8 +178,10 @@ int main() {
             if (tool["function"]["name"] == "mobile_preview_image") hasMobilePreview = true;
             if (tool["function"]["name"] == "mobile_request_permission")
                 hasPermissionRequest = true;
+            if (tool["function"]["name"] == "mobile_get_location") hasLocation = true;
             if (tool["function"]["name"] == "cv_scene_detect") hasSceneDetect = true;
             if (tool["function"]["name"] == "cv_motion_detect") hasMotionDetect = true;
+            if (tool["function"]["name"] == "cv_video_matting") hasVideoMatting = true;
             if (kPhotoAlbumTool != nullptr && tool["function"]["name"] == kPhotoAlbumTool)
                 hasMobilePhotoAlbumWrite = true;
         }
@@ -186,6 +192,8 @@ int main() {
         CHECK(hasGeneratePdf);
         CHECK(hasMaiChatContacts);
         CHECK(hasMaiChatSend);
+        CHECK(hasMaiChatMedia);
+        CHECK(hasDownloadFile);
         CHECK(hasMaiChatBroadcast);
         CHECK(hasMobilePhotos);
         CHECK(hasMobileAlbums);
@@ -200,8 +208,10 @@ int main() {
         CHECK(hasPersonSegmentation);
         CHECK(hasMobilePreview);
         CHECK(hasPermissionRequest);
+        CHECK(hasLocation);
         CHECK(hasSceneDetect);
         CHECK(hasMotionDetect);
+        CHECK(hasVideoMatting);
         if (kPhotoAlbumTool != nullptr) CHECK(hasMobilePhotoAlbumWrite);
         const auto& last = body["messages"].back();
         std::string input;
@@ -333,6 +343,7 @@ int main() {
     CHECK(!MaiFileSystem::createDirectories(testRoot).hasError());
     const std::string directory = testRoot.toUtf8();
     void* agent = maiMobileAgentCreate();
+    int fakeOrtApi = 0;
     HostToolProbe hostProbe;
     int status = 0;
     try {
@@ -340,10 +351,14 @@ int main() {
         CHECK(maiMobileAgentSetHostToolHandler(agent, &hostProbe, hostToolHandler,
                                                freeHostToolResponse,
                                                releaseHostToolContext) == 1);
+        CHECK(maiMobileAgentSetOrtApiBase(agent, &fakeOrtApi) == 1);
+        const std::string modelPath = directory + "/rvm.onnx";
+        CHECK(!MaiFileSystem::writeFile(MaiFilePath::fromUtf8(modelPath), "model"));
         Json config = {
             {"op", "configure"},      {"baseUrl", "http://127.0.0.1:" + std::to_string(port)},
             {"apiKey", "test-key"},   {"model", "test"},
-            {"workspace", directory}, {"database", directory + "/sessions.db"}};
+            {"workspace", directory}, {"database", directory + "/sessions.db"},
+            {"rvmModelPath", modelPath}};
         CHECK(call(agent, config)["ok"] == true);
         const Json suggestions = call(
             agent,

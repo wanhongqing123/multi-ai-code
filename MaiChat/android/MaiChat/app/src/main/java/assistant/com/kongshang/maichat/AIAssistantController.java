@@ -12,6 +12,7 @@ import android.os.Looper;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.util.Base64;
+import android.util.Log;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -19,7 +20,10 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.security.KeyStore;
+import java.security.MessageDigest;
 import java.security.cert.X509Certificate;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -86,6 +90,8 @@ public final class AIAssistantController {
     private static native long nativeCreate();
     private static native void nativeDestroy(long handle);
     private static native byte[] nativeRequest(long handle, byte[] request);
+    static native byte[] nativeMatteVideo(byte[] arguments, byte[] workspace,
+        byte[] modelPath, byte[] runtimePath);
     private static native boolean nativeSetHostToolHandler(long handle, AIAssistantController owner);
     private static native byte[] nativeFilterBitmap(Bitmap bitmap, String operation, int[] dimensions);
 
@@ -100,6 +106,7 @@ public final class AIAssistantController {
         "glm-5.3", "on-request", "", false);
     private long handle;
     private File root;
+    private File rvmModelFile;
     private String selected = "", baseUrl = state.baseUrl, model = state.model, policy = state.policy,
                    error = "", apiKey = "";
     private JSONObject data = new JSONObject();
@@ -217,6 +224,8 @@ public final class AIAssistantController {
                 testEndpoint == null ? "AIAssistant" : "AIAssistantTest-" + UUID.randomUUID());
             if (!root.mkdirs() && !root.isDirectory())
                 throw new IllegalStateException("无法创建 AI 工作区");
+            try { rvmModelFile = prepareRvmModel(); }
+            catch (Exception failure) { Log.w("MaiChatAgent", "RVM model staging failed", failure); }
             File settings = new File(root, "settings.json");
             if (settings.isFile()) {
                 JSONObject saved =
@@ -273,6 +282,8 @@ public final class AIAssistantController {
         File workspace = new File(root, "Workspace");
         if (!workspace.mkdirs() && !workspace.isDirectory())
             throw new IllegalStateException("无法创建工作区");
+        File runtime = new File(context.getApplicationInfo().nativeLibraryDir,
+            "libonnxruntime.so");
         call(op("configure")
                 .put("baseUrl", url)
                 .put("apiKey", key)
@@ -281,7 +292,55 @@ public final class AIAssistantController {
                 .put("database", new File(root, "sessions.sqlite").getPath())
                 .put("workspace", workspace.getPath())
                 .put("appRoot", context.getFilesDir().getParentFile().getCanonicalPath())
+                .put("rvmModelPath", rvmModelFile != null ? rvmModelFile.getPath() : "")
+                .put("ortRuntimePath", runtime.isFile() ? runtime.getPath() : "")
                 .put("caBundle", new File(root, "trusted-roots.pem").getPath()));
+    }
+
+    private File prepareRvmModel() throws Exception {
+        final String expected = "88d4531297118f595bf2fd60f6f566aec2e559393802d1f436c380f0cbbd2828";
+        File directory = new File(root, "Models");
+        if (!directory.mkdirs() && !directory.isDirectory())
+            throw new IOException("Cannot create Agent model directory");
+        File target = new File(directory, "rvm_mobilenetv3_fp32.onnx");
+        if (target.isFile() && expected.equals(sha256(target))) return target;
+        File staged = new File(directory, "rvm_mobilenetv3_fp32.onnx.part");
+        try {
+            try (InputStream input = context.getAssets().open(
+                     "MaiAgentModels/rvm_mobilenetv3_fp32.onnx");
+                 FileOutputStream output = new FileOutputStream(staged)) {
+                byte[] bytes = new byte[1024 * 1024];
+                int count;
+                while ((count = input.read(bytes)) != -1) output.write(bytes, 0, count);
+                output.getFD().sync();
+            }
+            if (!expected.equals(sha256(staged)))
+                throw new IOException("Bundled RVM model checksum is invalid");
+            try {
+                Files.move(staged.toPath(), target.toPath(),
+                    StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException unsupported) {
+                Files.move(staged.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            }
+            return target;
+        } finally {
+            Files.deleteIfExists(staged.toPath());
+        }
+    }
+
+    private static String sha256(File file) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        try (InputStream input = Files.newInputStream(file.toPath())) {
+            byte[] bytes = new byte[1024 * 1024];
+            int count;
+            while ((count = input.read(bytes)) != -1) digest.update(bytes, 0, count);
+        }
+        StringBuilder hex = new StringBuilder(64);
+        for (byte value : digest.digest()) {
+            hex.append(Character.forDigit((value >> 4) & 15, 16));
+            hex.append(Character.forDigit(value & 15, 16));
+        }
+        return hex.toString();
     }
     private void refresh(boolean force) {
         try {

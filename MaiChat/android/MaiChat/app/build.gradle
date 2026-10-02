@@ -71,6 +71,10 @@ tasks.register("stageMaiAgentGraphicsEffects", Sync) {
         include "*.effect"
         into "MaiAgentGraphics"
     }
+    from(file("$projectDir/../../../../MaiAgent/models")) {
+        include "rvm_mobilenetv3_fp32.onnx", "RVM_LICENSE"
+        into "MaiAgentModels"
+    }
     into graphicsEffectsOutput
 }
 android.sourceSets.main.assets.srcDir(graphicsEffectsOutput)
@@ -99,6 +103,7 @@ dependencies {
     implementation "com.squareup.okhttp3:okhttp:4.12.0"
     implementation "com.google.mlkit:face-detection:16.1.7"
     implementation "com.google.mlkit:segmentation-selfie:16.0.0-beta6"
+    implementation "com.microsoft.onnxruntime:onnxruntime-android:1.26.0"
     implementation "io.noties.markwon:core:4.6.2"
     implementation "io.noties.markwon:ext-tables:4.6.2"
     implementation "io.noties.markwon:ext-strikethrough:4.6.2"

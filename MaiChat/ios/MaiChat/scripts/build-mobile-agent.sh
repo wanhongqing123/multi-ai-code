@@ -38,4 +38,8 @@ if [[ -n "${TARGET_BUILD_DIR:-}" && -n "${UNLOCALIZED_RESOURCES_FOLDER_PATH:-}" 
   mkdir -p "$effect_bundle"
   cp "$repo_dir/MaiAgent/Graphics/data/"*.effect "$effect_bundle/"
   cp "$repo_dir/MaiChat/Media/data/"*.effect "$effect_bundle/"
+  model_bundle="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/MaiAgentModels"
+  mkdir -p "$model_bundle"
+  cp "$repo_dir/MaiAgent/models/rvm_mobilenetv3_fp32.onnx" "$model_bundle/"
+  cp "$repo_dir/MaiAgent/models/RVM_LICENSE" "$model_bundle/"
 fi

@@ -148,12 +148,14 @@ public:
             return MaiToolResult::failure(MaiErrorCode::Canceled, "video matting was canceled");
         if (!processed.error.empty())
             return MaiToolResult::failure(MaiErrorCode::Internal, processed.error);
-        return MaiToolResult::success(Json{{"path", processed.outputPath},
-                                           {"frames", processed.frames},
-                                           {"duration_s", processed.durationSeconds},
-                                           {"method", "rvm_mobilenetv3_onnx"},
-                                           {"audio_streams_copied", processed.audioStreamsCopied}}
-                                          .dump());
+        return MaiToolResult::success(Json{
+            {"path", processed.outputPath},
+            {"frames", processed.frames},
+            {"duration_s", processed.durationSeconds},
+            {"method", "rvm_mobilenetv3_onnx"},
+            {"audio_streams_copied", processed.audioStreamsCopied},
+            {"encoder",
+             processed.encoderName}}.dump());
     }
 
 private:

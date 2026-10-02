@@ -31,7 +31,7 @@ if(ANDROID)
 endif()
 add_subdirectory(../../MaiAgent maiagent EXCLUDE_FROM_ALL)
 set(maichat_opencv_source "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/opencv")
-set(BUILD_LIST "core,imgproc" CACHE STRING "" FORCE)
+set(BUILD_LIST "core,imgproc,imgcodecs" CACHE STRING "" FORCE)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(BUILD_PERF_TESTS OFF CACHE BOOL "" FORCE)
@@ -129,15 +129,17 @@ foreach(library avdevice avfilter avformat avcodec swresample swscale avutil)
   add_dependencies(maichat_ffmpeg_${library} maichat_ffmpeg_build)
 endforeach()
 add_library(maiagent_cv_video_analysis STATIC
-  ../../MaiAgent/AgentTools/MaiCvVideoAnalysis.cpp)
+  ../../MaiAgent/AgentTools/MaiCvVideoAnalysis.cpp
+  ../../MaiAgent/AgentTools/MaiVideoMatting.cpp)
 target_include_directories(maiagent_cv_video_analysis PRIVATE
   ../../MaiAgent/include "${ffmpeg_build}/install/include"
   "${CMAKE_BINARY_DIR}"
   "${CMAKE_CURRENT_BINARY_DIR}"
   "${CMAKE_CURRENT_BINARY_DIR}/opencv"
   "${maichat_opencv_source}/modules/core/include"
-  "${maichat_opencv_source}/modules/imgproc/include")
-target_link_libraries(maiagent_cv_video_analysis PUBLIC opencv_imgproc)
+  "${maichat_opencv_source}/modules/imgproc/include"
+  "${maichat_opencv_source}/modules/imgcodecs/include")
+target_link_libraries(maiagent_cv_video_analysis PUBLIC opencv_imgproc opencv_imgcodecs)
 target_link_libraries(maiagent_cv_video_analysis PRIVATE
   maichat_ffmpeg_avformat maichat_ffmpeg_avcodec
   maichat_ffmpeg_swscale maichat_ffmpeg_avutil)
@@ -186,6 +188,9 @@ if(TARGET maiagent_graphics)
 endif()
 if(ANDROID)
   target_link_libraries(maichat_mobile PRIVATE camera2ndk mediandk)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+  target_link_libraries(maichat_mobile PRIVATE
+    "-framework CoreMedia" "-framework CoreVideo" "-framework VideoToolbox")
 endif()
 if(ANDROID OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
   add_library(maichat_ffplay_hosted SHARED
@@ -257,6 +262,15 @@ if(MAICHAT_MOBILE_TESTS)
       maichat_mobile maiagent android log jnigraphics)
   endif()
   if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND CMAKE_OSX_SYSROOT MATCHES "[Ss]imulator")
+    add_executable(MaiVideoMattingIosTests tests/MaiVideoMattingIosTests.cpp)
+    target_include_directories(MaiVideoMattingIosTests PRIVATE
+      ../../MaiAgent/include ../../MaiAgent/third_party/nlohmann
+      ../../MaiAgent/third_party/onnxruntime/include)
+    target_link_libraries(MaiVideoMattingIosTests PRIVATE
+      maichat_mobile maiagent
+      "${CMAKE_CURRENT_SOURCE_DIR}/../ios/MaiChat/Pods/onnxruntime-c/onnxruntime.xcframework/ios-arm64_x86_64-simulator/onnxruntime.framework/onnxruntime"
+      "-framework Accelerate" "-framework CoreML" "-framework Metal"
+      "-framework MetalPerformanceShaders" "-framework Foundation")
     add_executable(MaiCvVideoAnalysisTests
       ../../MaiAgent/tests/MaiCvVideoAnalysisTests.cpp)
     target_include_directories(MaiCvVideoAnalysisTests PRIVATE

@@ -5,6 +5,11 @@
 #include <chrono>
 #include <string>
 #include <thread>
+#include <vector>
+
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
 
 #include <json.hpp>
 
@@ -49,6 +54,17 @@ int captureConvertPaths(int argc, char** argv) {
         if (std::string(argv[index]) == "-i") sCapturedConvertInput = argv[index + 1];
     sCapturedConvertOutput = argv[argc - 1];
     return 0;
+}
+
+MaiToolResult runFilterGraph(MaiTool& convert, const MaiToolContext& context,
+                             const std::vector<std::string>& sources,
+                             const std::string& graph) {
+    std::vector<std::string> arguments;
+    for (const std::string& source : sources)
+        arguments.insert(arguments.end(), {"-f", "lavfi", "-i", source});
+    arguments.insert(arguments.end(), {"-filter_complex", graph, "-map", "[out]",
+                                       "-frames:v", "1", "-f", "null", "-"});
+    return convert.execute(nlohmann::json{{"arguments", arguments}}.dump(), context);
 }
 
 }  // namespace
@@ -209,6 +225,56 @@ int main(int argc, char** argv) {
         return 21;
     }
 
+    const std::vector<std::string> fourSources = {
+        "color=c=red:s=64x64:d=0.1:r=1", "color=c=white:s=64x64:d=0.1:r=1",
+        "color=c=gray:s=64x64:d=0.1:r=1", "color=c=blue:s=64x64:d=0.1:r=1"};
+    const std::string maskedMergeGraph =
+        "[0:v]format=rgb24[fg];[1:v]format=gray[pm];"
+        "[2:v]format=gray[dm];[pm][dm]blend=all_mode=lighten[cm];"
+        "[3:v]format=rgb24[bg];[bg][fg][cm]maskedmerge[out]";
+    const MaiToolResult mixedFormats = runFilterGraph(*convert, context, fourSources,
+                                                     maskedMergeGraph);
+    if (mixedFormats.hasError()) {
+        std::fprintf(stderr, "mixed-format maskedmerge failed: %s\n",
+                     mixedFormats.error().message().c_str());
+        return 29;
+    }
+    const MaiToolResult missingFourthInput = runFilterGraph(
+        *convert, context, {fourSources[0], fourSources[1], fourSources[2]}, maskedMergeGraph);
+    if (!missingFourthInput.hasError() ||
+        missingFourthInput.error().message().find("Invalid file index 3") ==
+            std::string::npos ||
+        missingFourthInput.error().message().find("needs a fourth -i input") ==
+            std::string::npos) {
+        std::fprintf(stderr, "fourth-input diagnostic missing: %s\n",
+                     missingFourthInput.hasError() ? missingFourthInput.error().message().c_str()
+                                                   : "no failure");
+        return 30;
+    }
+    const MaiToolResult extraOutputLabel = runFilterGraph(
+        *convert, context, {fourSources[0], fourSources[1], fourSources[2]},
+        "[0:v][1:v][2:v]maskedmerge[out][extra]");
+    if (!extraOutputLabel.hasError() ||
+        extraOutputLabel.error().message().find("More output link labels specified") ==
+            std::string::npos ||
+        extraOutputLabel.error().message().find("Pixel formats are negotiated later") ==
+            std::string::npos ||
+        extraOutputLabel.error().message().find("filter_complex as received") ==
+            std::string::npos) {
+        std::fprintf(stderr, "maskedmerge parser diagnostic missing: %s\n",
+                     extraOutputLabel.hasError() ? extraOutputLabel.error().message().c_str()
+                                                 : "no failure");
+        return 31;
+    }
+    const MaiToolResult nestedExpression = runFilterGraph(
+        *convert, context, {"testsrc2=s=128x128:d=0.1:r=1"},
+        R"([0:v]format=rgb24,split[t1][t2];[t1]boxblur=8[norm];[t2][norm]blend=all_mode=difference,geq=lum='255-100*pow(p(X\,Y)/255\,2)'[out])");
+    if (nestedExpression.hasError()) {
+        std::fprintf(stderr, "nested geq expression failed: %s\n",
+                     nestedExpression.error().message().c_str());
+        return 32;
+    }
+
     const MaiFilePath unsupportedOutput = MaiFileSystem::temporaryDirectory().append(
         MaiFilePath::fromUtf8(MaiIdGenerator::generate("mai_encoder_test_") + ".mp4"));
     const MaiToolResult unsupportedEncoder = convert->execute(
@@ -309,7 +375,7 @@ int main(int argc, char** argv) {
         return 28;
     }
 
-#ifdef __APPLE__
+#if defined(__APPLE__) && !TARGET_OS_SIMULATOR
     const MaiFilePath hardwareOutput = MaiFileSystem::temporaryDirectory().append(
         MaiFilePath::fromUtf8(MaiIdGenerator::generate("mai_videotoolbox_test_") + ".mp4"));
     const MaiToolResult hardwareEncode =

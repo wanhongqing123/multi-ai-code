@@ -75,6 +75,24 @@ std::string errorDescription(const MaiFfmpegEngine& engine, int status,
     return result;
 }
 
+std::string filterGraphFailureContext(const std::string& graph, const std::string& diagnostic) {
+    if (graph.empty()) return {};
+    std::string context;
+    if (diagnostic.find("More output link labels specified for filter 'maskedmerge'") !=
+        std::string::npos) {
+        context =
+            "\nmaskedmerge has one output. FFmpeg parsed two labels after that filter; "
+            "check the graph syntax near maskedmerge. Pixel formats are negotiated later.";
+    } else if (diagnostic.find("Invalid file index") != std::string::npos) {
+        context = "\nFilter input labels are zero-based: [3:v] needs a fourth -i input.";
+    }
+    constexpr std::size_t kMaximumGraphBytes = 1200;
+    const bool truncated = graph.size() > kMaximumGraphBytes;
+    context += "\nfilter_complex as received: " + json(graph.substr(0, kMaximumGraphBytes)).dump();
+    if (truncated) context += " [truncated]";
+    return context;
+}
+
 class MaiFfmpegTool final : public MaiTool {
 public:
     explicit MaiFfmpegTool(MaiFfmpegEngine engine) : mEngine(engine) {}
@@ -159,6 +177,10 @@ public:
         }
         if (context.isCanceled())
             return MaiToolResult::failure(MaiErrorCode::Canceled, "FFmpeg was canceled");
+        std::string filterGraph;
+        for (std::size_t index = 0; index + 1 < arguments.size(); ++index) {
+            if (arguments[index] == "-filter_complex") filterGraph = arguments[index + 1];
+        }
         std::string diagnostic;
         const int status = runEngine(mEngine.runFfmpeg, mEngine.setFfmpegCancelCheck, mEngine,
                                      std::move(arguments), context, diagnostic);
@@ -167,7 +189,8 @@ public:
         if (status != 0)
             return MaiToolResult::failure(
                 MaiErrorCode::InvalidInput,
-                "FFmpeg failed: " + errorDescription(mEngine, status, diagnostic));
+                "FFmpeg failed: " + errorDescription(mEngine, status, diagnostic) +
+                    filterGraphFailureContext(filterGraph, diagnostic));
         return MaiToolResult::success("FFmpeg completed with status 0.");
     }
 

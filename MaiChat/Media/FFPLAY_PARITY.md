@@ -28,3 +28,24 @@ surface and a native audio device without starting a child process or linking
 SDL. `MaiChat/Media/ffplay.c` must remain byte-identical to FFmpeg's original;
 the compatibility layer maps its platform calls to MaiChat. Agent commands
 must exercise the same playback session as MaiChat's own controls.
+
+## iOS picture quality: 2026-10-03 device evidence
+
+- On iPhone 14 Pro Max, the video popup initially requested a 430×839 Metal
+  drawable for a 430×839-point view, even though the screen scale is 3×. UIKit
+  enlarged that 1× output. The iOS host view now requests 1290×2517 pixels;
+  real-device logs confirmed `contentScale=3.0`, `screenScale=3.0` and a
+  1080×1920 source frame. The sampled playback status reported `fd=0` before
+  and after the change. The normal popup and Agent playback tool use this same
+  host view.
+- A sampled gallery MOV is HEVC Main10, BT.2020 HLG with a Dolby Vision
+  Profile 8 configuration record. The current FFplay compatibility renderer
+  advertises only 8-bit SDL texture formats and reports the presented frame as
+  I420/BT.709/limited. Full HDR color and 10-bit precision therefore remain
+  unverified and should not be marked as Photos-app parity. This is a separate
+  issue from the fixed 1× drawable blur.
+- `SWS_BILINEAR` in `MaiGraphicsPresenter::decodeImage` is used for image
+  decoding, not this video draw path. The video draw path currently samples
+  `default.effect` linearly. Compare the same source in Photos and the normal
+  MaiChat popup before changing scaling filters; preserve the upstream
+  `ffplay.c` constraint above.

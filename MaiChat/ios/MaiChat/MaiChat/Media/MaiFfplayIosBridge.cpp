@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <string>
 #include <thread>
 
@@ -15,6 +16,7 @@ struct MaiFfplayIosSession {
     std::thread worker;
     std::atomic<bool> finished{false};
     std::atomic<int> result{0};
+    std::atomic<bool> firstFrameLogged{false};
 };
 
 namespace {
@@ -22,6 +24,13 @@ namespace {
 bool presentVideo(void* user, const MaiVideoFrame* frame,
                   const MaiVideoSubtitle* subtitle) {
     auto* session = static_cast<MaiFfplayIosSession*>(user);
+#if !defined(NDEBUG)
+    if (frame && !session->firstFrameLogged.exchange(true)) {
+        std::fprintf(stderr, "[FFplayFrame] %ux%u format=%d colorspace=%d range=%d\n",
+                     frame->width, frame->height, static_cast<int>(frame->format),
+                     static_cast<int>(frame->color_space), static_cast<int>(frame->color_range));
+    }
+#endif
     return maiGraphicsPresenterShowVideoFrameWithSubtitle(session->viewId,
                                                           frame, subtitle, false);
 }
@@ -29,6 +38,11 @@ bool presentVideo(void* user, const MaiVideoFrame* frame,
 bool presentRgba(void* user, const uint8_t* pixels,
                  uint32_t width, uint32_t height, uint32_t stride) {
     auto* session = static_cast<MaiFfplayIosSession*>(user);
+#if !defined(NDEBUG)
+    if (!session->firstFrameLogged.exchange(true))
+        std::fprintf(stderr, "[FFplayFrame] %ux%u format=RGBA8 stride=%u\n",
+                     width, height, stride);
+#endif
     return maiGraphicsPresenterShowFrame(session->viewId, pixels, width,
                                          height, stride, false);
 }

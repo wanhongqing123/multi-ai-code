@@ -51,18 +51,33 @@ private final class MaiFfplayMetalView: UIView {
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        if window != nil { attach() }
+        if window != nil {
+            updateDisplayScale()
+            attach()
+        }
         else { stop() }
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        updateDisplayScale()
         guard viewID != 0 else { attach(); return }
         let size = CGSize(width: max(1, bounds.width * contentScaleFactor),
                           height: max(1, bounds.height * contentScaleFactor))
         guard size != lastSize else { return }
         lastSize = size
+        #if DEBUG
+        NSLog("[FFplayDisplay] resize %@", "view=\(Int(bounds.width))x\(Int(bounds.height)) scale=\(contentScaleFactor) pixels=\(Int(size.width))x\(Int(size.height))")
+        #endif
         maiGraphicsPresenterResize(viewID, UInt32(size.width), UInt32(size.height))
+    }
+
+    private func updateDisplayScale() {
+        guard let scale = window?.screen.scale else { return }
+        if contentScaleFactor != scale { contentScaleFactor = scale }
+        if let metalLayer = layer as? CAMetalLayer, metalLayer.contentsScale != scale {
+            metalLayer.contentsScale = scale
+        }
     }
 
     private func attach() {
@@ -78,6 +93,9 @@ private final class MaiFfplayMetalView: UIView {
         }
         lastSize = CGSize(width: max(1, bounds.width * contentScaleFactor),
                           height: max(1, bounds.height * contentScaleFactor))
+        #if DEBUG
+        NSLog("[FFplayDisplay] attach %@", "view=\(Int(bounds.width))x\(Int(bounds.height)) contentScale=\(contentScaleFactor) screenScale=\(window?.screen.scale ?? 0) pixels=\(Int(lastSize.width))x\(Int(lastSize.height))")
+        #endif
         viewID = maiGraphicsPresenterAttach(
             Unmanaged.passUnretained(layer).toOpaque(), UInt32(lastSize.width),
             UInt32(lastSize.height), maiFfplayRetainLayer, maiFfplayReleaseLayer

@@ -526,7 +526,10 @@ private struct AIMessageRow: View {
                 HStack {
                     Spacer(minLength: 30)
                     VStack(alignment: .leading, spacing: 10) {
-                        Text(message.text).font(.subheadline).textSelection(.enabled)
+                        Text(message.text)
+                            .font(AssistantMessageFont.body)
+                            .lineSpacing(6)
+                            .textSelection(.enabled)
                         ForEach(Array(imagePaths.enumerated()), id: \.offset) { _, path in
                             AIWorkspaceImage(filePath: path)
                         }
@@ -543,11 +546,14 @@ private struct AIMessageRow: View {
                 ForEach(message.parts) { part in
                     if part.kind == "text", let text = part.text, !text.isEmpty {
                         MarkdownLikeText(text, retainsPreviousWhilePreparing: true,
-                                         bodyFont: .subheadline, assistantTypography: true)
+                                         bodyFont: AssistantMessageFont.body, assistantTypography: true)
                     } else if part.kind == "reasoning", part.id == reasoningParts.first?.id,
                               !reasoningText.isEmpty {
                         AIExpandableBlock(title: "思考过程", systemImage: "brain") {
-                            Text(reasoningText).font(.subheadline).textSelection(.enabled)
+                            Text(reasoningText)
+                                .font(AssistantMessageFont.detail)
+                                .lineSpacing(5)
+                                .textSelection(.enabled)
                         }
                     } else if part.kind == "tool", part.id == toolParts.first?.id {
                         AIExpandableBlock(title: "工具调用 \(toolParts.count) 次 · \(toolGroupStatus)",
@@ -556,15 +562,15 @@ private struct AIMessageRow: View {
                                 ForEach(toolParts) { tool in
                                     VStack(alignment: .leading, spacing: 6) {
                                         Text("\(tool.tool ?? "工具") · \(toolStatus(tool.state))")
-                                            .font(.subheadline.weight(.semibold))
+                                            .font(AssistantMessageFont.detail.weight(.semibold))
                                         Text(tool.input ?? "")
-                                            .font(.system(size: 14, design: .monospaced))
+                                            .font(AssistantMessageFont.detailMonospaced)
                                         if let output = tool.output, !output.isEmpty {
                                             Text(output)
-                                                .font(.system(size: 14, design: .monospaced))
+                                                .font(AssistantMessageFont.detailMonospaced)
                                         }
                                         if let error = tool.error, !error.isEmpty {
-                                            Text(error).font(.system(size: 14)).foregroundStyle(.red)
+                                            Text(error).font(AssistantMessageFont.detail).foregroundStyle(.red)
                                         }
                                     }
                                     if tool.id != toolParts.last?.id { Divider() }
@@ -593,16 +599,17 @@ private struct AIMessageRow: View {
                         HStack(spacing: 8) {
                             ProgressView().controlSize(.small)
                             Text("正在思考 · \(max(0, Int(context.date.timeIntervalSince1970) - Int(message.created / 1000))) 秒")
-                        }.font(.caption).foregroundStyle(.secondary)
+                        }.font(AssistantMessageFont.metadata).foregroundStyle(.secondary)
                     }
                 } else {
                     HStack {
-                        Text(message.completed == 0 ? "已中断" : "用时 \(max(0, (message.completed - message.created) / 1000)) 秒").font(.caption)
+                        Text(message.completed == 0 ? "已中断" : "用时 \(max(0, (message.completed - message.created) / 1000)) 秒")
+                            .font(AssistantMessageFont.metadata)
                         Button { RemoteIMClipboard.writeText(message.text) } label: {
                             Image(systemName: "doc.on.doc")
                         }
                             .accessibilityLabel("复制回复")
-                    }.foregroundStyle(.secondary).font(.caption)
+                    }.foregroundStyle(.secondary).font(AssistantMessageFont.metadata)
                 }
             }
         }.frame(maxWidth: .infinity, alignment: .leading)
@@ -846,7 +853,7 @@ private struct AIWorkspaceVideoCard: View {
                 .clipped()
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 Text(exists ? URL(fileURLWithPath: filePath).lastPathComponent : "视频文件已丢失")
-                    .font(.system(size: 14)).lineLimit(1).truncationMode(.middle)
+                    .font(AssistantMessageFont.detail).lineLimit(1).truncationMode(.middle)
                     .frame(width: previewSize.width, alignment: .leading)
             }
         }
@@ -984,9 +991,9 @@ private struct AIExpandableBlock<Content: View>: View {
                 HStack(spacing: 8) {
                     Image(systemName: systemImage).frame(width: 16)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(title).font(.subheadline.weight(.medium)).lineLimit(1)
+                        Text(title).font(AssistantMessageFont.detail.weight(.medium)).lineLimit(1)
                         if let subtitle, !subtitle.isEmpty {
-                            Text(subtitle).font(.caption).lineLimit(1)
+                            Text(subtitle).font(AssistantMessageFont.metadata).lineLimit(1)
                         }
                     }
                     Spacer()

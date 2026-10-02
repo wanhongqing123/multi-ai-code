@@ -4187,6 +4187,15 @@ enum MarkdownPreparation {
     }
 }
 
+enum AssistantMessageFont {
+    static let body = Font.system(size: 16)
+    static let emphasizedBody = Font.system(size: 16, weight: .semibold)
+    static let heading = Font.system(size: 18, weight: .semibold)
+    static let detail = Font.system(size: 14)
+    static let detailMonospaced = Font.system(size: 14, design: .monospaced)
+    static let metadata = Font.system(size: 12)
+}
+
 private struct MarkdownAssistantTypographyKey: EnvironmentKey {
     static let defaultValue = false
 }
@@ -4222,7 +4231,7 @@ struct MarkdownLikeText: View {
     var body: some View {
         let document = (prepared?.source == source ? prepared : nil) ?? MarkdownRenderCache.shared.cached(source) ?? (retainsPreviousWhilePreparing ? prepared : nil)
         let blocks = document?.blocks ?? []
-        return VStack(alignment: .leading, spacing: 12) {
+        return VStack(alignment: .leading, spacing: assistantTypography ? 16 : 12) {
             if document == nil { ProgressView() }
             if blocks.isEmpty, let trailingTimestamp {
                 MarkdownInlineText(text: "", trailingTimestamp: trailingTimestamp)
@@ -4235,7 +4244,7 @@ struct MarkdownLikeText: View {
                 case .sourceNote(let text):
                     MarkdownTrailingDate(timestamp: timestamp) {
                         MarkdownInlineText(text: text)
-                            .font(assistantTypography ? .footnote.weight(.semibold)
+                            .font(assistantTypography ? AssistantMessageFont.detail.weight(.semibold)
                                                       : .system(size: 12, weight: .semibold))
                             .foregroundStyle(RemoteIMStyle.blue)
                             .padding(.horizontal, 6)
@@ -4262,7 +4271,7 @@ struct MarkdownLikeText: View {
             }
         }
         .font(bodyFont)
-        .lineSpacing(4)
+        .lineSpacing(assistantTypography ? 6 : 4)
         .tint(RemoteIMStyle.blue)
         .lineLimit(nil)
         .multilineTextAlignment(.leading)
@@ -4360,7 +4369,7 @@ private struct MarkdownInlineText: View {
                 .filter { $0.inlinePresentationIntent?.contains(.code) == true }
                 .map(\.range)
             for range in codeRanges {
-                rendered[range].font = .system(size: 14, design: .monospaced)
+                rendered[range].font = AssistantMessageFont.detailMonospaced
             }
         }
         if let trailingTimestamp {
@@ -4407,7 +4416,7 @@ private struct MarkdownQuoteView: View {
         VStack(alignment: .leading, spacing: 6) {
             if let kind = quote.kind {
                 Label(kind.title, systemImage: symbol)
-                    .font(assistantTypography ? .system(size: 14, weight: .semibold)
+                    .font(assistantTypography ? AssistantMessageFont.detail.weight(.semibold)
                                               : .system(size: 13, weight: .semibold))
                     .foregroundStyle(accent)
             }
@@ -4455,8 +4464,8 @@ private struct MarkdownHeadingView: View {
 
     private var assistantFont: Font {
         switch level {
-        case 1: .headline
-        default: .subheadline.weight(.semibold)
+        case 1: AssistantMessageFont.heading
+        default: AssistantMessageFont.emphasizedBody
         }
     }
 }
@@ -4467,7 +4476,7 @@ private struct MarkdownListView: View {
     @Environment(\.markdownAssistantTypography) private var assistantTypography
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: assistantTypography ? 10 : 8) {
             ForEach(list.items) { item in
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Group {
@@ -4479,14 +4488,15 @@ private struct MarkdownListView: View {
                             Text(item.marker).foregroundStyle(RemoteIMStyle.blue)
                         }
                     }
-                    .font(assistantTypography ? .subheadline.weight(.semibold)
+                    .font(assistantTypography ? AssistantMessageFont.emphasizedBody
                                               : .system(size: 13, weight: .semibold))
                     .frame(minWidth: 16, alignment: .trailing)
                     MarkdownInlineText(text: item.text,
                         trailingTimestamp: item.id == list.items.last?.id ? trailingTimestamp : nil)
-                        .font(assistantTypography ? .subheadline : .system(size: 14, weight: .regular))
+                        .font(assistantTypography ? AssistantMessageFont.body
+                                                  : .system(size: 14, weight: .regular))
                         .foregroundStyle(RemoteIMStyle.textPrimary)
-                        .lineSpacing(4)
+                        .lineSpacing(assistantTypography ? 6 : 4)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .padding(.leading, CGFloat(min(item.indent, 4)) * 12)
@@ -4513,7 +4523,7 @@ private struct MarkdownCodeBlock: View {
                 Text("\(lineCount) 行")
                     .foregroundStyle(RemoteIMStyle.textSecondary)
             }
-            .font(assistantTypography ? .caption.weight(.medium)
+            .font(assistantTypography ? AssistantMessageFont.metadata.weight(.medium)
                                       : .system(size: 11, weight: .medium))
             .foregroundStyle(Color(red: 0.11, green: 0.31, blue: 0.54))
             .padding(.horizontal, 12)
@@ -4523,7 +4533,7 @@ private struct MarkdownCodeBlock: View {
 
             ScrollView(.horizontal, showsIndicators: true) {
                 Text(code.isEmpty ? " " : code)
-                    .font(assistantTypography ? .system(size: 14, design: .monospaced)
+                    .font(assistantTypography ? AssistantMessageFont.detailMonospaced
                                               : .system(size: 12, weight: .regular, design: .monospaced))
                     .lineSpacing(4)
                     .foregroundStyle(RemoteIMStyle.textPrimary)
@@ -4594,11 +4604,11 @@ private struct MarkdownTableView: View {
     private func tableCell(_ text: String, isHeader: Bool, width: CGFloat) -> some View {
         MarkdownInlineText(text: text)
             .font(assistantTypography
-                ? (isHeader ? .subheadline.weight(.semibold) : .subheadline)
+                ? (isHeader ? AssistantMessageFont.emphasizedBody : AssistantMessageFont.body)
                 : .system(size: 12, weight: isHeader ? .semibold : .regular))
             .foregroundStyle(RemoteIMStyle.textPrimary)
             .lineLimit(nil)
-            .lineSpacing(3)
+            .lineSpacing(assistantTypography ? 5 : 3)
             .frame(width: max(1, width - 24), alignment: .topLeading)
             .padding(.horizontal, 12)
             .padding(.vertical, 10)

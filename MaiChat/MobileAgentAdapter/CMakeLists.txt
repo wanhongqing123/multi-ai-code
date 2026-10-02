@@ -207,7 +207,7 @@ if(ANDROID OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_link_libraries(maichat_ffplay_hosted PRIVATE
       "-framework AudioToolbox" "-framework CoreAudio"
       "-framework CoreFoundation" "-framework CoreMedia"
-      "-framework CoreVideo" "-framework VideoToolbox")
+      "-framework CoreVideo" "-framework Security" "-framework VideoToolbox")
   endif()
   add_dependencies(maichat_ffplay_hosted maichat_ffmpeg_build)
   set_target_properties(maichat_ffplay_hosted PROPERTIES

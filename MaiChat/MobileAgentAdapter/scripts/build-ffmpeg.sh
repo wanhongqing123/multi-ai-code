@@ -34,6 +34,9 @@ case "$platform" in
     options+=(--target-os=android "--arch=$arch" --enable-cross-compile "--sysroot=$sysroot")
     ;;
   iOS)
+    options+=(--enable-network --enable-securetransport
+      --enable-protocol=http --enable-protocol=https
+      --enable-protocol=tcp --enable-protocol=tls)
     target="$arch-apple-ios16.0"
     if [[ "$sysroot" == *iPhoneSimulator* ]]; then
       target="$arch-apple-ios16.0-simulator"

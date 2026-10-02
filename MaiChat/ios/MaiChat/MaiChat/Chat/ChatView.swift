@@ -4172,9 +4172,21 @@ enum MarkdownPreparation {
     }
 }
 
+private struct MarkdownAssistantTypographyKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+private extension EnvironmentValues {
+    var markdownAssistantTypography: Bool {
+        get { self[MarkdownAssistantTypographyKey.self] }
+        set { self[MarkdownAssistantTypographyKey.self] = newValue }
+    }
+}
+
 struct MarkdownLikeText: View {
     private let source: String
     private let bodyFont: Font
+    private let assistantTypography: Bool
     @State private var prepared: PreparedMarkdown?
     private let trailingTimestamp: String?
 
@@ -4182,10 +4194,12 @@ struct MarkdownLikeText: View {
 
     init(_ text: String, trailingTimestamp: String? = nil,
          retainsPreviousWhilePreparing: Bool = false,
-         bodyFont: Font = .system(size: 14)) {
+         bodyFont: Font = .system(size: 14),
+         assistantTypography: Bool = false) {
         self.retainsPreviousWhilePreparing = retainsPreviousWhilePreparing
         self.source = text
         self.bodyFont = bodyFont
+        self.assistantTypography = assistantTypography
         _prepared = State(initialValue: MarkdownRenderCache.shared.cached(text))
         self.trailingTimestamp = trailingTimestamp
     }
@@ -4206,7 +4220,8 @@ struct MarkdownLikeText: View {
                 case .sourceNote(let text):
                     MarkdownTrailingDate(timestamp: timestamp) {
                         MarkdownInlineText(text: text)
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(assistantTypography ? .subheadline.weight(.semibold)
+                                                      : .system(size: 12, weight: .semibold))
                             .foregroundStyle(RemoteIMStyle.blue)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
@@ -4237,6 +4252,7 @@ struct MarkdownLikeText: View {
         .lineLimit(nil)
         .multilineTextAlignment(.leading)
         .environment(\.preparedMarkdownInline, document?.inline ?? [:])
+        .environment(\.markdownAssistantTypography, assistantTypography)
         .task(id: source) {
             if prepared?.source == source { return }
             if let cached = MarkdownRenderCache.shared.cached(source) { prepared = cached; return }
@@ -4321,8 +4337,17 @@ private struct MarkdownInlineText: View {
     let text: String
     var trailingTimestamp: String? = nil
     @Environment(\.preparedMarkdownInline) private var inline
+    @Environment(\.markdownAssistantTypography) private var assistantTypography
     var body: some View {
         var rendered = inline[text] ?? AttributedString(text)
+        if assistantTypography {
+            let codeRanges = rendered.runs
+                .filter { $0.inlinePresentationIntent?.contains(.code) == true }
+                .map(\.range)
+            for range in codeRanges {
+                rendered[range].font = .system(.subheadline, design: .monospaced)
+            }
+        }
         if let trailingTimestamp {
             var date = AttributedString("  · " + trailingTimestamp)
             date.font = .system(size: 11, weight: .semibold)
@@ -4339,6 +4364,7 @@ private struct MarkdownInlineText: View {
 private struct MarkdownQuoteView: View {
     let quote: MarkdownQuotePresentation
     var trailingTimestamp: String? = nil
+    @Environment(\.markdownAssistantTypography) private var assistantTypography
 
     private var accent: Color {
         switch quote.kind {
@@ -4366,7 +4392,8 @@ private struct MarkdownQuoteView: View {
         VStack(alignment: .leading, spacing: 6) {
             if let kind = quote.kind {
                 Label(kind.title, systemImage: symbol)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(assistantTypography ? .subheadline.weight(.semibold)
+                                              : .system(size: 13, weight: .semibold))
                     .foregroundStyle(accent)
             }
             if !quote.text.isEmpty || trailingTimestamp != nil {
@@ -4389,10 +4416,11 @@ private struct MarkdownHeadingView: View {
     let level: Int
     let text: String
     var trailingTimestamp: String? = nil
+    @Environment(\.markdownAssistantTypography) private var assistantTypography
 
     var body: some View {
         MarkdownInlineText(text: text, trailingTimestamp: trailingTimestamp)
-            .font(.system(size: fontSize, weight: .semibold))
+            .font(assistantTypography ? assistantFont : .system(size: fontSize, weight: .semibold))
             .foregroundStyle(level <= 2 ? Color(red: 0.11, green: 0.31, blue: 0.54) : RemoteIMStyle.textPrimary)
             .lineSpacing(3)
             .padding(.top, level <= 2 ? 4 : 2)
@@ -4409,11 +4437,20 @@ private struct MarkdownHeadingView: View {
             return level == 3 ? 16 : 14
         }
     }
+
+    private var assistantFont: Font {
+        switch level {
+        case 1: .title3.weight(.semibold)
+        case 2: .headline
+        default: .body.weight(.semibold)
+        }
+    }
 }
 
 private struct MarkdownListView: View {
     let list: MarkdownList
     var trailingTimestamp: String? = nil
+    @Environment(\.markdownAssistantTypography) private var assistantTypography
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -4428,11 +4465,12 @@ private struct MarkdownListView: View {
                             Text(item.marker).foregroundStyle(RemoteIMStyle.blue)
                         }
                     }
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(assistantTypography ? .body.weight(.semibold)
+                                              : .system(size: 13, weight: .semibold))
                     .frame(minWidth: 16, alignment: .trailing)
                     MarkdownInlineText(text: item.text,
                         trailingTimestamp: item.id == list.items.last?.id ? trailingTimestamp : nil)
-                        .font(.system(size: 14, weight: .regular))
+                        .font(assistantTypography ? .body : .system(size: 14, weight: .regular))
                         .foregroundStyle(RemoteIMStyle.textPrimary)
                         .lineSpacing(4)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -4448,6 +4486,7 @@ private struct MarkdownCodeBlock: View {
     let language: String
     let code: String
     let lineCount: Int
+    @Environment(\.markdownAssistantTypography) private var assistantTypography
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -4460,7 +4499,8 @@ private struct MarkdownCodeBlock: View {
                 Text("\(lineCount) 行")
                     .foregroundStyle(RemoteIMStyle.textSecondary)
             }
-            .font(.system(size: 11, weight: .medium))
+            .font(assistantTypography ? .footnote.weight(.medium)
+                                      : .system(size: 11, weight: .medium))
             .foregroundStyle(Color(red: 0.11, green: 0.31, blue: 0.54))
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -4469,7 +4509,8 @@ private struct MarkdownCodeBlock: View {
 
             ScrollView(.horizontal, showsIndicators: true) {
                 Text(code.isEmpty ? " " : code)
-                    .font(.system(size: 12, weight: .regular, design: .monospaced))
+                    .font(assistantTypography ? .system(.subheadline, design: .monospaced)
+                                              : .system(size: 12, weight: .regular, design: .monospaced))
                     .lineSpacing(4)
                     .foregroundStyle(RemoteIMStyle.textPrimary)
                     .fixedSize(horizontal: true, vertical: true)
@@ -4488,6 +4529,7 @@ private struct MarkdownCodeBlock: View {
 private struct MarkdownTableView: View {
     let table: MarkdownTable
     private let columnWidths: [CGFloat]
+    @Environment(\.markdownAssistantTypography) private var assistantTypography
 
     init(table: MarkdownTable) {
         self.table = table
@@ -4537,7 +4579,9 @@ private struct MarkdownTableView: View {
 
     private func tableCell(_ text: String, isHeader: Bool, width: CGFloat) -> some View {
         MarkdownInlineText(text: text)
-            .font(.system(size: 12, weight: isHeader ? .semibold : .regular))
+            .font(assistantTypography
+                ? (isHeader ? .body.weight(.semibold) : .body)
+                : .system(size: 12, weight: isHeader ? .semibold : .regular))
             .foregroundStyle(RemoteIMStyle.textPrimary)
             .lineLimit(nil)
             .lineSpacing(3)

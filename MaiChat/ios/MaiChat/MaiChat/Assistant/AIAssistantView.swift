@@ -92,19 +92,6 @@ struct AIAssistantView: View {
                             }.padding(18)
                         }
                         .contentShape(Rectangle())
-                        .safeAreaInset(edge: .bottom, spacing: 0) {
-                            if !followsBottom {
-                                Button { followsBottom = true } label: {
-                                    Label("回到最新消息", systemImage: "arrow.down")
-                                        .font(.subheadline.weight(.medium))
-                                        .frame(maxWidth: .infinity)
-                                        .frame(height: 42)
-                                }
-                                .buttonStyle(.plain)
-                                .background(.regularMaterial)
-                                .accessibilityIdentifier("ai-back-to-latest")
-                            }
-                        }
                         .onTapGesture {
                             composerFocusController.dismiss()
                             isAttachmentPanelPresented = false
@@ -556,7 +543,7 @@ private struct AIMessageRow: View {
                 ForEach(message.parts) { part in
                     if part.kind == "text", let text = part.text, !text.isEmpty {
                         MarkdownLikeText(text, retainsPreviousWhilePreparing: true,
-                                         bodyFont: .body)
+                                         bodyFont: .body, assistantTypography: true)
                     } else if part.kind == "reasoning", part.id == reasoningParts.first?.id,
                               !reasoningText.isEmpty {
                         AIExpandableBlock(title: "思考过程", systemImage: "brain") {
@@ -571,13 +558,13 @@ private struct AIMessageRow: View {
                                         Text("\(tool.tool ?? "工具") · \(toolStatus(tool.state))")
                                             .font(.subheadline.weight(.semibold))
                                         Text(tool.input ?? "")
-                                            .font(.system(.footnote, design: .monospaced))
+                                            .font(.system(.subheadline, design: .monospaced))
                                         if let output = tool.output, !output.isEmpty {
                                             Text(output)
-                                                .font(.system(.footnote, design: .monospaced))
+                                                .font(.system(.subheadline, design: .monospaced))
                                         }
                                         if let error = tool.error, !error.isEmpty {
-                                            Text(error).font(.footnote).foregroundStyle(.red)
+                                            Text(error).font(.subheadline).foregroundStyle(.red)
                                         }
                                     }
                                     if tool.id != toolParts.last?.id { Divider() }
@@ -606,11 +593,11 @@ private struct AIMessageRow: View {
                         HStack(spacing: 8) {
                             ProgressView().controlSize(.small)
                             Text("正在思考 · \(max(0, Int(context.date.timeIntervalSince1970) - Int(message.created / 1000))) 秒")
-                        }.font(.caption).foregroundStyle(.secondary)
+                        }.font(.footnote).foregroundStyle(.secondary)
                     }
                 } else {
                     HStack {
-                        Text(message.completed == 0 ? "已中断" : "用时 \(max(0, (message.completed - message.created) / 1000)) 秒").font(.caption2)
+                        Text(message.completed == 0 ? "已中断" : "用时 \(max(0, (message.completed - message.created) / 1000)) 秒").font(.footnote)
                         Button { RemoteIMClipboard.writeText(message.text) } label: {
                             Image(systemName: "doc.on.doc")
                         }
@@ -858,7 +845,7 @@ private struct AIWorkspaceVideoCard: View {
                 .clipped()
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 Text(exists ? URL(fileURLWithPath: filePath).lastPathComponent : "视频文件已丢失")
-                    .font(.caption).lineLimit(1).truncationMode(.middle)
+                    .font(.subheadline).lineLimit(1).truncationMode(.middle)
                     .frame(width: 220, alignment: .leading)
             }
         }
@@ -987,7 +974,7 @@ private struct AIExpandableBlock<Content: View>: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(title).font(.subheadline.weight(.medium)).lineLimit(1)
                         if let subtitle, !subtitle.isEmpty {
-                            Text(subtitle).font(.caption).lineLimit(1)
+                            Text(subtitle).font(.footnote).lineLimit(1)
                         }
                     }
                     Spacer()

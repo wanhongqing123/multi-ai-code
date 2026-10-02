@@ -353,7 +353,6 @@ final class AIAssistantModel: ObservableObject {
     @Published var isSubmitting = false
     @Published var showSettings = false
     @Published var scrollRequest = 0
-    @Published var scrollTargetMessageID: String?
     @Published private(set) var workspacePath = ""
     @Published var previewImage: AIImagePreview?
     var drafts: [String: String] = [:]
@@ -494,7 +493,6 @@ final class AIAssistantModel: ObservableObject {
         guard selected == session else { return nil }
         messages = Array(latest.reversed())
         historyLoaded = true
-        scrollTargetMessageID = latest.first?.id
         logAIHistoryEvent("first-page session=\(session) count=\(latest.count) newest=\(latest.first?.id ?? "none") role=\(latest.first?.role ?? "none") parts=\(latest.first?.parts.count ?? 0)")
         return latest.first?.id
     }
@@ -560,7 +558,6 @@ final class AIAssistantModel: ObservableObject {
         selected = id; messages = []; permissions = []; questions = []; error = ""
         historyLoaded = false
         hasOlderMessages = false
-        scrollTargetMessageID = nil
         pendingInitialPage = nil
         do {
             if let newestID = try await showNewestMessage(for: id) {
@@ -621,7 +618,6 @@ final class AIAssistantModel: ObservableObject {
             error = ""
             await refresh(force: true)
             historyLoaded = !messages.isEmpty
-            scrollTargetMessageID = messages.last(where: { $0.role == "user" })?.id
             scrollRequest += 1
             startPolling()
             return true

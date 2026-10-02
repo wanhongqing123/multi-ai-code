@@ -312,21 +312,49 @@ struct AIAssistantView: View {
 }
 
 private final class AIMessageViewportLog {
+    private struct Resize {
+        let fromHeight: Int
+        var toHeight: Int
+        let nearBottomBefore: Bool
+    }
+
     private var session = ""
     private var visibleHeight = -1
-    private var nearBottom: Bool?
+    private var lastReportedNearBottom: Bool?
+    private var pendingResize: Resize?
+    private(set) var nearBottom = true
 
     func record(session: String, content: CGFloat, visible: CGFloat,
                 offset: CGFloat, remaining: CGFloat, nearBottom: Bool) {
         let height = Int(visible.rounded())
-        guard self.session != session || visibleHeight != height || self.nearBottom != nearBottom else {
+        if visibleHeight >= 0 && height != visibleHeight {
+            if pendingResize == nil {
+                pendingResize = Resize(fromHeight: visibleHeight, toHeight: height,
+                                       nearBottomBefore: self.nearBottom)
+            } else {
+                pendingResize?.toHeight = height
+            }
+        }
+        self.nearBottom = nearBottom
+        guard self.session != session || visibleHeight != height ||
+            lastReportedNearBottom != nearBottom else {
             return
         }
         self.session = session
         visibleHeight = height
-        self.nearBottom = nearBottom
+        lastReportedNearBottom = nearBottom
         logAIHistoryEvent("viewport session=\(session) content=\(Int(content)) visible=\(height) offset=\(Int(offset)) remaining=\(Int(remaining)) nearBottom=\(nearBottom)")
     }
+
+    func nearBottomBeforeKeyboard(opening: Bool) -> Bool {
+        defer { pendingResize = nil }
+        guard let resize = pendingResize,
+              opening ? resize.toHeight < resize.fromHeight :
+                        resize.toHeight > resize.fromHeight else { return nearBottom }
+        return resize.nearBottomBefore
+    }
+
+    func finishKeyboardTransition() { pendingResize = nil }
 }
 
 // Owns AI message positioning. Data refresh supplies stable message IDs;
@@ -338,10 +366,10 @@ private struct AIAssistantMessageList: View {
     let isActive: Bool
     @State private var followsLatest = true
     @State private var prependAnchorID: String?
-    // A send first shows its user bubble; the assistant becomes the target only
-    // after it has a visible part instead of an empty in-progress record.
-    @State private var sentUserMessageID: String?
     @State private var viewportLog = AIMessageViewportLog()
+    @State private var keyboardFollowIntent: Bool?
+    @State private var keyboardTransitionOpening: Bool?
+    @State private var bottomCorrectionRequest = 0
 
     var body: some View {
         GeometryReader { geometry in
@@ -377,13 +405,14 @@ private struct AIAssistantMessageList: View {
                     .background(alignment: .bottom) {
                         MessageScrollPositionReader(
                             restoreInitialScrollableHistory: isActive && followsLatest &&
-                                sentUserMessageID == nil && !model.messages.isEmpty,
-                            allowsBottomFollowing: isActive && followsLatest &&
-                                sentUserMessageID == nil,
+                                !model.messages.isEmpty,
+                            allowsBottomFollowing: isActive && followsLatest,
+                            bottomCorrectionRequest: bottomCorrectionRequest,
+                            userScrollAwayThreshold: 60,
+                            minimumOlderDragDistance: 24,
                             onUserScroll: {
                                 logAIHistoryEvent("user-scroll session=\(model.selected)")
                                 followsLatest = false
-                                sentUserMessageID = nil
                             },
                             onUserReachedTop: {
                                 guard prependAnchorID == nil,
@@ -402,7 +431,9 @@ private struct AIAssistantMessageList: View {
                                                    remaining: remaining, nearBottom: nearBottom)
                             }
                         ) { nearBottom in
-                            if nearBottom { followsLatest = true }
+                            if nearBottom && keyboardFollowIntent != false {
+                                followsLatest = true
+                            }
                         }
                         .frame(height: 1)
                     }
@@ -423,32 +454,38 @@ private struct AIAssistantMessageList: View {
                 }
                 .onChange(of: model.scrollRequest) { _ in
                     followsLatest = true
-                    if let target = model.scrollTargetMessageID {
-                        let isSentUserMessage = model.messages.contains {
-                            $0.id == target && $0.role == "user"
-                        }
-                        sentUserMessageID = isSentUserMessage ? target : nil
-                        position(at: target, proxy: proxy, anchor: .bottom)
-                    }
-                }
-                .onChange(of: model.messages.last?.parts) { _ in
-                    guard let latest = model.messages.last else { return }
-                    if sentUserMessageID != nil {
-                        guard latest.role == "assistant", !latest.parts.isEmpty else {
-                            return
-                        }
-                        sentUserMessageID = nil
-                    }
+                    bottomCorrectionRequest += 1
+                    logAIHistoryEvent("sent session=\(model.selected) following latest")
                 }
                 .onChange(of: model.selected) { _ in
                     prependAnchorID = nil
-                    sentUserMessageID = nil
                     followsLatest = true
                 }
                 .onChange(of: isActive) { active in
                     guard active else { return }
-                    sentUserMessageID = nil
                     followsLatest = true
+                }
+                .onReceive(NotificationCenter.default.publisher(
+                    for: UIResponder.keyboardWillShowNotification)) { _ in
+                    captureKeyboardFollowIntent(opening: true)
+                }
+                .onReceive(NotificationCenter.default.publisher(
+                    for: UIResponder.keyboardWillHideNotification)) { _ in
+                    captureKeyboardFollowIntent(opening: false)
+                }
+                .onReceive(NotificationCenter.default.publisher(
+                    for: UIResponder.keyboardDidShowNotification)) { _ in
+                    if keyboardFollowIntent == true { bottomCorrectionRequest += 1 }
+                    viewportLog.finishKeyboardTransition()
+                    keyboardFollowIntent = nil
+                    keyboardTransitionOpening = nil
+                }
+                .onReceive(NotificationCenter.default.publisher(
+                    for: UIResponder.keyboardDidHideNotification)) { _ in
+                    if keyboardFollowIntent == true { bottomCorrectionRequest += 1 }
+                    viewportLog.finishKeyboardTransition()
+                    keyboardFollowIntent = nil
+                    keyboardTransitionOpening = nil
                 }
             }
         }
@@ -459,6 +496,16 @@ private struct AIAssistantMessageList: View {
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
         withTransaction(transaction) { proxy.scrollTo(id, anchor: anchor) }
+    }
+
+    private func captureKeyboardFollowIntent(opening: Bool) {
+        guard isActive else { return }
+        if keyboardTransitionOpening == opening { return }
+        keyboardTransitionOpening = opening
+        let nearBottom = viewportLog.nearBottomBeforeKeyboard(opening: opening)
+        keyboardFollowIntent = nearBottom
+        followsLatest = nearBottom
+        logAIHistoryEvent("keyboard session=\(model.selected) opening=\(opening) nearBottomBefore=\(nearBottom)")
     }
 
     private var welcome: some View {
@@ -695,8 +742,7 @@ private struct AIMessageRow: View {
                                           durationSeconds: reasoningDurationSeconds)
                 }
                 if !toolParts.isEmpty {
-                    AIExpandableBlock(title: "工具调用 \(toolParts.count) 次 · \(toolGroupStatus)",
-                                      subtitle: toolSummary, systemImage: "terminal") {
+                    AIExpandableBlock(title: toolDisclosureTitle) {
                         VStack(alignment: .leading, spacing: 10) {
                             ForEach(toolParts) { tool in
                                 VStack(alignment: .leading, spacing: 6) {
@@ -800,6 +846,10 @@ private struct AIMessageRow: View {
             }
         }
         return counts.map { "\($0.name) ×\($0.count)" }.joined(separator: " · ")
+    }
+    private var toolDisclosureTitle: String {
+        let summary = "工具调用 \(toolParts.count) 次，\(toolGroupStatus)"
+        return toolSummary.isEmpty ? summary : "\(summary) · \(toolSummary)"
     }
     private var toolGroupStatus: String {
         let states = toolParts.map(\.state)
@@ -1184,16 +1234,11 @@ private struct AIReasoningDisclosure: View {
 
 private struct AIExpandableBlock<Content: View>: View {
     let title: String
-    let subtitle: String?
-    let systemImage: String
     let content: Content
     @State private var expanded = false
 
-    init(title: String, subtitle: String? = nil, systemImage: String,
-         @ViewBuilder content: () -> Content) {
+    init(title: String, @ViewBuilder content: () -> Content) {
         self.title = title
-        self.subtitle = subtitle
-        self.systemImage = systemImage
         self.content = content()
     }
 
@@ -1201,18 +1246,12 @@ private struct AIExpandableBlock<Content: View>: View {
         VStack(alignment: .leading, spacing: 8) {
             Button { withAnimation(.easeOut(duration: 0.16)) { expanded.toggle() } } label: {
                 HStack(spacing: 8) {
-                    Image(systemName: systemImage).frame(width: 16)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(title).font(AssistantMessageFont.detail.weight(.medium)).lineLimit(1)
-                        if let subtitle, !subtitle.isEmpty {
-                            Text(subtitle).font(AssistantMessageFont.metadata).lineLimit(1)
-                        }
-                    }
+                    Text(title).font(AssistantMessageFont.detail).lineLimit(1)
                     Spacer()
                     Image(systemName: "chevron.right").rotationEffect(.degrees(expanded ? 90 : 0))
-                }.foregroundStyle(Color.secondary)
-                    .padding(.horizontal, 10).frame(minHeight: subtitle == nil ? 38 : 52)
-                    .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 9))
+                }
+                .foregroundStyle(.secondary)
+                .frame(minHeight: 32)
             }.buttonStyle(.plain)
             if expanded { content }
         }

@@ -176,6 +176,9 @@ struct MessageScrollPositionReader: UIViewRepresentable {
 
     var restoreInitialScrollableHistory = false
     var allowsBottomFollowing = true
+    var bottomCorrectionRequest = 0
+    var userScrollAwayThreshold: CGFloat = 0
+    var minimumOlderDragDistance: CGFloat = 0
     var onViewportResizeNeedsBottom: (() -> Void)? = nil
     var onUserScroll: (() -> Void)? = nil
     var onUserReachedTop: (() -> Void)? = nil
@@ -186,6 +189,8 @@ struct MessageScrollPositionReader: UIViewRepresentable {
         let coordinator = Coordinator(onNearBottomChanged)
         coordinator.restoreInitialScrollableHistory = restoreInitialScrollableHistory
         coordinator.allowsBottomFollowing = allowsBottomFollowing
+        coordinator.userScrollAwayThreshold = userScrollAwayThreshold
+        coordinator.minimumOlderDragDistance = minimumOlderDragDistance
         coordinator.onViewportResizeNeedsBottom = onViewportResizeNeedsBottom
         coordinator.onUserScroll = onUserScroll
         coordinator.onUserReachedTop = onUserReachedTop
@@ -204,9 +209,12 @@ struct MessageScrollPositionReader: UIViewRepresentable {
         context.coordinator.onUserScroll = onUserScroll
         context.coordinator.onUserReachedTop = onUserReachedTop
         context.coordinator.onViewportMeasured = onViewportMeasured
+        context.coordinator.userScrollAwayThreshold = userScrollAwayThreshold
+        context.coordinator.minimumOlderDragDistance = minimumOlderDragDistance
         context.coordinator.setAllowsBottomFollowing(allowsBottomFollowing)
         context.coordinator.setRestoreInitialScrollableHistory(restoreInitialScrollableHistory)
         install(view, context.coordinator)
+        context.coordinator.requestBottomCorrection(bottomCorrectionRequest)
     }
     static func dismantleUIView(_ view: UIView, coordinator: Coordinator) { coordinator.uninstall() }
 
@@ -226,6 +234,8 @@ struct MessageScrollPositionReader: UIViewRepresentable {
         var onUserScroll: (() -> Void)?
         var onUserReachedTop: (() -> Void)?
         var onViewportMeasured: ((CGFloat, CGFloat, CGFloat, CGFloat, Bool) -> Void)?
+        var userScrollAwayThreshold: CGFloat = 0
+        var minimumOlderDragDistance: CGFloat = 0
         private weak var scroll: UIScrollView?
         private weak var contentMarker: UIView?
         private var observations: [NSKeyValueObservation] = []
@@ -238,7 +248,9 @@ struct MessageScrollPositionReader: UIViewRepresentable {
         private var followsLatest = false
         private var notifiedUserScroll = false
         private var requestedTopForGesture = false
+        private var draggedTowardOlderEnough = false
         private var restoreGeneration: UInt64 = 0
+        private var lastBottomCorrectionRequest = 0
         init(_ onChanged: @escaping (Bool) -> Void) { self.onChanged = onChanged }
 
         func setRestoreInitialScrollableHistory(_ enabled: Bool) {
@@ -263,6 +275,14 @@ struct MessageScrollPositionReader: UIViewRepresentable {
                    scroll.adjustedContentInset.bottom > scroll.bounds.height + 1 {
                 scheduleBottomCorrection()
             }
+        }
+
+        func requestBottomCorrection(_ request: Int) {
+            guard request != lastBottomCorrectionRequest else { return }
+            lastBottomCorrectionRequest = request
+            guard allowsBottomFollowing else { return }
+            followsLatest = true
+            scheduleBottomCorrection(allowDeceleration: true)
         }
 
         func install(from view: UIView) {
@@ -314,12 +334,19 @@ struct MessageScrollPositionReader: UIViewRepresentable {
             followsLatest = false
             notifiedUserScroll = false
             requestedTopForGesture = false
+            draggedTowardOlderEnough = false
+            lastBottomCorrectionRequest = 0
         }
 
         @objc private func panChanged(_ gesture: UIPanGestureRecognizer) {
             if gesture.state == .began {
                 notifiedUserScroll = false
                 requestedTopForGesture = false
+                draggedTowardOlderEnough = false
+            }
+            if gesture.state == .changed, let scroll,
+               gesture.translation(in: scroll).y >= minimumOlderDragDistance {
+                draggedTowardOlderEnough = true
             }
             if gesture.state == .began || gesture.state == .changed {
                 userDidBeginScrolling()
@@ -330,10 +357,19 @@ struct MessageScrollPositionReader: UIViewRepresentable {
                 requestedTopForGesture = true
                 onUserReachedTop?()
             }
+            if (gesture.state == .ended || gesture.state == .cancelled),
+               !notifiedUserScroll, allowsBottomFollowing,
+               restoreInitialScrollableHistory {
+                followsLatest = true
+                scheduleBottomCorrection(allowDeceleration: true)
+            }
         }
 
         func userDidBeginScrolling() {
-            if !notifiedUserScroll {
+            let leftBottom = userScrollAwayThreshold <= 0 ||
+                (draggedTowardOlderEnough &&
+                 (remainingDistance() ?? 0) > userScrollAwayThreshold)
+            if !notifiedUserScroll && leftBottom {
                 notifiedUserScroll = true
                 // The callback only invalidates non-published scroll intent;
                 // cancelling synchronously prevents an already queued jump.
@@ -343,14 +379,24 @@ struct MessageScrollPositionReader: UIViewRepresentable {
             restoreGeneration &+= 1
         }
 
-        private func scheduleBottomCorrection() {
+        private func remainingDistance() -> CGFloat? {
+            guard let scroll else { return nil }
+            let bottom = contentMarker.flatMap { marker in
+                marker.bounds.height > 0 ? marker.convert(marker.bounds, to: scroll).maxY : nil
+            } ?? scroll.contentSize.height
+            return min(bottom, scroll.contentSize.height) + scroll.adjustedContentInset.bottom
+                - scroll.contentOffset.y - scroll.bounds.height
+        }
+
+        private func scheduleBottomCorrection(allowDeceleration: Bool = false) {
             restoreGeneration &+= 1
             let generation = restoreGeneration
             DispatchQueue.main.async { [weak self] in
                 guard let self, let scroll = self.scroll,
                       self.restoreGeneration == generation, self.followsLatest,
                       self.allowsBottomFollowing, !scroll.isTracking,
-                      !scroll.isDragging, !scroll.isDecelerating else { return }
+                      !scroll.isDragging,
+                      (allowDeceleration || !scroll.isDecelerating) else { return }
                 scroll.layoutIfNeeded()
                 guard self.restoreGeneration == generation else { return }
                 let top = -scroll.adjustedContentInset.top
@@ -407,7 +453,9 @@ struct MessageScrollPositionReader: UIViewRepresentable {
                                 scroll.contentOffset.y, remaining, nearBottom)
             // Layout can temporarily change contentSize before bounds. Only a real
             // user scroll relinquishes the latest-message intent during that transition.
-            if scroll.isTracking || scroll.isDragging {
+            if scroll.isTracking || scroll.isDragging ||
+               (userScrollAwayThreshold > 0 && scroll.isDecelerating &&
+                draggedTowardOlderEnough && !notifiedUserScroll) {
                 userDidBeginScrolling()
             } else if nearBottom && restoreInitialScrollableHistory && allowsBottomFollowing {
                 followsLatest = true

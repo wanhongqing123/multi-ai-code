@@ -1,5 +1,6 @@
 #include "agent/AgentController.h"
 #include "MaiOpenAiClient.h"
+#include "MaiAgentSendMediaTool.h"
 #include "MaiMemoryStore.h"
 #include "MaiSqliteStore.h"
 #if defined(MAICHAT_FACE_BEAUTIFY)
@@ -104,6 +105,7 @@ std::unique_ptr<MaiAgent> buildAgent(std::unique_ptr<MaiModelClient> model,
     // 要不要把工具声明给模型看是 MaiContextBuilder 的事，不是这里的。
     auto tools = std::make_unique<MaiToolRegistry>();
     registerMaiBuiltinTools(*tools);
+    tools->add(makeMaiAgentSendMediaTool());
 #if defined(MAICHAT_EMBEDDED_FFMPEG)
     MaiFfmpegEngine ffmpegEngine{mai_ffmpeg_execute, mai_ffmpeg_set_cancel_check,
                                  mai_ffprobe_execute, mai_ffprobe_set_cancel_check,

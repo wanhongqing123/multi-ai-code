@@ -3,6 +3,7 @@
 #include <QString>
 #include <QStringList>
 #include <QWidget>
+#include <functional>
 #include <memory>
 
 class AgentController;
@@ -61,6 +62,9 @@ public:
     //（那表示「用 MaiAgent::Options 里的默认值」），而面板看不见那个默认值。
     // 自己编一个名字显示出去，用户看到的就可能不是实际在跑的那个。
     void setModelLabel(const QString& model);
+    void setOpenVideoCallback(std::function<void(const QString&)> callback);
+    void setForwardMediaCallback(
+        std::function<void(const QString&, const QString&)> callback);
 
     QString sessionId() const;
 
@@ -118,6 +122,8 @@ private:
     void refreshToolCard(const QString& messageId, const QString& partId);
     void appendPdfPreview(const QString& partId, const QString& output,
                           const QString& workspace);
+    bool appendAgentMediaCard(const QString& partId, const QString& output,
+                              const QString& workspace);
     void showApproval(const QString& permissionId);
 
     // 模型中途问了一句。
@@ -142,4 +148,6 @@ private:
 
     struct Runtime;
     std::unique_ptr<Runtime> runtime_;
+    std::function<void(const QString&)> openVideo_;
+    std::function<void(const QString&, const QString&)> forwardMedia_;
 };

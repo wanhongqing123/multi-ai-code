@@ -8,6 +8,7 @@
 class ImagePreviewDialog final : public QDialog {
 public:
     explicit ImagePreviewDialog(const QString& imagePath, QWidget* parent = nullptr);
+    explicit ImagePreviewDialog(const QPixmap& image, QWidget* parent = nullptr);
 
 protected:
     void keyPressEvent(QKeyEvent* event) override;
@@ -20,4 +21,3 @@ private:
     QLabel* imageLabel_ = nullptr;
     QPixmap image_;
 };
-

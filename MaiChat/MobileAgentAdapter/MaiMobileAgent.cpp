@@ -2,6 +2,7 @@
 #include "MaiMobileHostTools.h"
 
 #include "MaiAgent.h"
+#include "MaiAgentSendMediaTool.h"
 #include "MaiApplyPatchTool.h"
 #include "MaiCvVideoAnalysis.h"
 #include "MaiCvVideoTools.h"
@@ -145,6 +146,7 @@ struct MaiMobileAgent {
         tools->add(makeMaiGrepTool());
         tools->add(makeMaiWebFetchTool(config.caBundlePath));
         tools->add(makeMaiDownloadFileTool());
+        tools->add(makeMaiAgentSendMediaTool());
         tools->add(makeMaiQuestionTool());
         tools->add(makeMaiCurrentTimeTool());
         tools->add(makeMaiTodoWriteTool());

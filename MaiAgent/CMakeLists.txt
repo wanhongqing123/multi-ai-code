@@ -168,6 +168,7 @@ add_library(maiagent STATIC
   AgentTools/MaiApplyPatchTool.cpp
   AgentTools/MaiWebFetchTool.cpp
   AgentTools/MaiDownloadFileTool.cpp
+  AgentTools/MaiAgentSendMediaTool.cpp
   AgentTools/MaiRvmMatting.cpp
   AgentTools/MaiRvmComposite.cpp
   AgentTools/MaiVideoMattingTool.cpp
@@ -285,6 +286,7 @@ if(MAIAGENT_BUILD_TESTS)
       MaiApplyPatchToolTests  # apply_patch：多处/多文件、全有或全无、换行原样
       MaiWebToolsTests      # webfetch 的 HTML 转文本和协议限制、todowrite 的校验
       MaiDownloadFileTests  # 本地 HTTP 的二进制、重定向、大小限制和路径边界
+      MaiAgentSendMediaToolTests # 当前会话媒体交付、工作区边界与类型校验
       MaiContextBuilderImageTests # 图像历史有界，当前用户附件仍然可见
       MaiRvmMattingTests   # ONNX 递推状态和模型输入输出边界
       MaiRvmCompositeTests # 前景原色、透明背景和边缘混合

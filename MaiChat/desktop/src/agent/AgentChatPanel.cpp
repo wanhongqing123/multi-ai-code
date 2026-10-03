@@ -8,9 +8,12 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFileDialog>
+#include <QFile>
 #include <QFileInfo>
 #include <QFontMetrics>
 #include <QFrame>
+#include <QFutureWatcher>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QImageReader>
 #include <QJsonDocument>
@@ -19,11 +22,15 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QMenu>
+#include <QMediaPlayer>
+#include <QMessageBox>
 #include <QMimeData>
 #include <QPainter>
 #include <QPixmap>
 #include <QPolygonF>
 #include <QPushButton>
+#include <QScreen>
+#include <QSaveFile>
 #include <QSettings>
 #include <QSplitter>
 #include <QStandardPaths>
@@ -38,15 +45,19 @@
 #include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
+#include <QtConcurrent/QtConcurrent>
 #include <algorithm>
 #include <functional>
 #include <variant>
 
 #include "agent/AgentController.h"
+#include "MaiPathGuard.h"
 #include "markdown/MarkdownView.h"
 #include "ui/ComposerResizeSplitter.h"
 #include "ui/ComposerTextEdit.h"
 #include "ui/PdfPreviewDialog.h"
+#include "ui/ImagePreviewDialog.h"
+#include "ui/MessageImageLoader.h"
 #include "ui/UiZoom.h"
 
 namespace {
@@ -1005,6 +1016,15 @@ void AgentChatPanel::setModelLabel(const QString& model) {
     runtime_->modelChip->setEnabled(runtime_->modelConfigured && !runtime_->running);
 }
 
+void AgentChatPanel::setOpenVideoCallback(std::function<void(const QString&)> callback) {
+    openVideo_ = std::move(callback);
+}
+
+void AgentChatPanel::setForwardMediaCallback(
+    std::function<void(const QString&, const QString&)> callback) {
+    forwardMedia_ = std::move(callback);
+}
+
 void AgentChatPanel::selectApprovalPolicy(MaiApprovalPolicy policy) {
     if (!runtime_->controller->setApprovalPolicy(policy)) {
         appendNotice(runtime_->controller->lastError(), true);
@@ -1174,6 +1194,12 @@ void AgentChatPanel::reloadFromStore() {
                 if (message.completed == 0 &&
                     (tool->state == MaiToolState::Pending || tool->state == MaiToolState::Running))
                     activeAssistantHasVisibleActivity = true;
+                if (tool->tool == "agent_send_media" &&
+                    tool->state == MaiToolState::Completed) {
+                    if (appendAgentMediaCard(partId, fromUtf8(tool->output),
+                                             fromUtf8(selectedSession.directory)))
+                        continue;
+                }
                 ToolCard* card = toolCardFor(partId);
                 card->setCall(fromUtf8(tool->tool), fromUtf8(tool->input));
                 card->apply(tool->state, false);
@@ -1332,6 +1358,19 @@ void AgentChatPanel::refreshToolCard(const QString& messageId, const QString& pa
             const auto* tool = std::get_if<MaiToolPart>(&part.body);
             if (tool == nullptr) return;
 
+            if (tool->tool == "agent_send_media" &&
+                tool->state == MaiToolState::Completed) {
+                MaiSession session;
+                if (runtime_->controller->agent().getSession(toUtf8(runtime_->sessionId),
+                                                             session))
+                    if (appendAgentMediaCard(partId, fromUtf8(tool->output),
+                                             fromUtf8(session.directory))) {
+                        runtime_->toolCards.remove(partId);
+                        runtime_->view->removeItem(partId);
+                        return;
+                    }
+            }
+
             ToolCard* card = toolCardFor(partId);
             card->setCall(fromUtf8(tool->tool), fromUtf8(tool->input));
             // 还在等人点头的话，卡片保持授权态——那个状态由 permissionAsked 打开，
@@ -1391,6 +1430,144 @@ void AgentChatPanel::appendPdfPreview(const QString& partId, const QString& outp
     });
     runtime_->view->addWidget(id, button);
     scrollToBottom();
+}
+
+bool AgentChatPanel::appendAgentMediaCard(const QString& partId, const QString& output,
+                                          const QString& workspace) {
+    const QString id = partId + QStringLiteral("-agent-media");
+    if (runtime_->view->contains(id)) return true;
+    const QJsonObject artifact = QJsonDocument::fromJson(output.toUtf8()).object();
+    if (artifact.value(QStringLiteral("delivery")).toString() !=
+        QStringLiteral("current_ai_session")) return false;
+    const QString relative = artifact.value(QStringLiteral("path")).toString();
+    const QString type = artifact.value(QStringLiteral("type")).toString();
+    const QString mime = artifact.value(QStringLiteral("mime_type")).toString();
+    if (relative.isEmpty() || !QStringList{QStringLiteral("image"), QStringLiteral("video"),
+                                           QStringLiteral("audio")}.contains(type) ||
+        !mime.startsWith(type + QLatin1Char('/'))) return false;
+    const QString path = fromUtf8(maiResolvePathWithinRoot(toUtf8(workspace), toUtf8(relative)));
+    if (path.isEmpty() || !QFileInfo(path).isFile()) return false;
+
+    auto* card = new QWidget;
+    auto* layout = new QVBoxLayout(card);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(6);
+    if (type == QStringLiteral("image") || type == QStringLiteral("video")) {
+        auto* preview = new QFrame(card);
+        preview->setFixedSize(220, 180);
+        auto* cover = new QLabel(preview);
+        cover->setGeometry(0, 0, 220, 180);
+        cover->setAlignment(Qt::AlignCenter);
+        MessageImageLoader::instance().load(path, QSize(660, 540), cover,
+            [cover](const QPixmap& pixels) {
+                cover->setPixmap(pixels.scaled(220, 180, Qt::KeepAspectRatio,
+                                               Qt::SmoothTransformation));
+            });
+        if (type == QStringLiteral("image")) {
+            auto* open = new QPushButton(preview);
+            open->setObjectName(QStringLiteral("agentMediaImageOpen"));
+            open->setGeometry(0, 0, 220, 180);
+            open->setCursor(Qt::PointingHandCursor);
+            open->setStyleSheet(QStringLiteral("background:transparent;border:0"));
+            connect(open, &QPushButton::clicked, this, [this, card, path] {
+                const QScreen* screen = QGuiApplication::primaryScreen();
+                const qreal dpr = screen ? screen->devicePixelRatio() : 1;
+                const QSize size = screen ? screen->availableGeometry().size() : QSize(1200, 900);
+                MessageImageLoader::instance().load(
+                    path, (QSizeF(size) * dpr).toSize(), card,
+                    [this](const QPixmap& image) {
+                        ImagePreviewDialog dialog(image, this);
+                        dialog.exec();
+                    });
+            });
+        } else {
+            auto* play = new QPushButton(QStringLiteral("▶"), preview);
+            play->setObjectName(QStringLiteral("agentMediaVideoPlay"));
+            play->setGeometry(85, 65, 50, 50);
+            play->setCursor(Qt::PointingHandCursor);
+            connect(play, &QPushButton::clicked, this, [this, path] {
+                if (openVideo_) openVideo_(path);
+            });
+            auto* duration = new QLabel(QStringLiteral("0:00"), preview);
+            duration->setAlignment(Qt::AlignCenter);
+            duration->setGeometry(166, 152, 46, 22);
+            duration->setStyleSheet(QStringLiteral(
+                "color:white;background:rgba(0,0,0,160);border-radius:8px;"));
+            auto* metadata = new QMediaPlayer(preview);
+            connect(metadata, &QMediaPlayer::durationChanged, duration,
+                    [duration](qint64 milliseconds) {
+                const qint64 seconds = qMax<qint64>(0, milliseconds / 1000);
+                duration->setText(QStringLiteral("%1:%2").arg(seconds / 60)
+                                      .arg(seconds % 60, 2, 10, QLatin1Char('0')));
+            });
+            metadata->setMedia(QUrl::fromLocalFile(path));
+        }
+        layout->addWidget(preview);
+    } else {
+        auto* play = new QPushButton(QStringLiteral("▶  %1").arg(QFileInfo(path).fileName()), card);
+        play->setObjectName(QStringLiteral("agentMediaAudioPlay"));
+        play->setCursor(Qt::PointingHandCursor);
+        play->setMaximumWidth(300);
+        auto* audio = new QMediaPlayer(card);
+        audio->setMedia(QUrl::fromLocalFile(path));
+        connect(play, &QPushButton::clicked, audio, [audio] {
+            if (audio->state() == QMediaPlayer::PlayingState) audio->pause();
+            else audio->play();
+        });
+        connect(audio, &QMediaPlayer::stateChanged, play,
+                [play, path](QMediaPlayer::State state) {
+            play->setText(QStringLiteral("%1  %2")
+                .arg(state == QMediaPlayer::PlayingState ? QStringLiteral("❚❚")
+                                                       : QStringLiteral("▶"),
+                     QFileInfo(path).fileName()));
+        });
+        layout->addWidget(play);
+    }
+    const QString caption = artifact.value(QStringLiteral("caption")).toString();
+    if (!caption.isEmpty()) {
+        auto* label = new QLabel(caption, card);
+        label->setWordWrap(true);
+        layout->addWidget(label);
+    }
+    card->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(card, &QWidget::customContextMenuRequested, this,
+            [this, card, path, type](const QPoint& point) {
+        QMenu menu(card);
+        QAction* save = menu.addAction(QStringLiteral("保存副本…"));
+        QAction* forward = forwardMedia_ ? menu.addAction(QStringLiteral("转发给联系人…"))
+                                         : nullptr;
+        QAction* selected = menu.exec(card->mapToGlobal(point));
+        if (selected == save) {
+            const QString destination = QFileDialog::getSaveFileName(
+                this, QStringLiteral("保存媒体"), QFileInfo(path).fileName());
+            if (!destination.isEmpty() && QDir::cleanPath(destination) != QDir::cleanPath(path)) {
+                auto* watcher = new QFutureWatcher<bool>(this);
+                connect(watcher, &QFutureWatcher<bool>::finished, this, [this, watcher] {
+                    const bool saved = watcher->result();
+                    watcher->deleteLater();
+                    if (!saved)
+                        QMessageBox::warning(this, QStringLiteral("保存失败"),
+                                             QStringLiteral("媒体文件无法写入所选位置。"));
+                });
+                watcher->setFuture(QtConcurrent::run([path, destination] {
+                    QFile input(path);
+                    QSaveFile output(destination);
+                    if (!input.open(QIODevice::ReadOnly) || !output.open(QIODevice::WriteOnly))
+                        return false;
+                    while (!input.atEnd()) {
+                        const QByteArray bytes = input.read(1024 * 1024);
+                        if (bytes.isEmpty() || output.write(bytes) != bytes.size()) return false;
+                    }
+                    return output.commit();
+                }));
+            }
+        } else if (selected && selected == forward) {
+            forwardMedia_(path, type);
+        }
+    });
+    runtime_->view->addWidget(id, card);
+    scrollToBottom();
+    return true;
 }
 
 void AgentChatPanel::noteOtherSession(const QString& sessionId, const QString& text) {

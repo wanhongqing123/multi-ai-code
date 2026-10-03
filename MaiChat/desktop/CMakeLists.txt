@@ -52,7 +52,7 @@ endif()
 # Multimedia/MultimediaWidgets：视频消息的播放窗（QMediaPlayer + QVideoWidget）。
 # 注意 QMediaPlayer 的解码后端是插件（plugins/mediaservice 下的 wmfengine/dsengine），
 # 链接通过不代表能播——打包脚本会校验插件是否随包部署。
-find_package(Qt5 REQUIRED COMPONENTS Core Network Sql Widgets Svg Multimedia MultimediaWidgets Test)
+find_package(Qt5 REQUIRED COMPONENTS Core Network Sql Widgets Svg Multimedia MultimediaWidgets Concurrent Test)
 find_package(ZLIB REQUIRED)
 
 # md4c：CommonMark + GFM 扩展的 Markdown 解析器（与 Qt 内嵌同源，MIT）。
@@ -522,6 +522,7 @@ if(WIN32 AND TARGET maichat_ffmpeg_tools)
   target_link_libraries(remote_im_desktop_ui PRIVATE
     maichat_ffmpeg_avformat maichat_ffmpeg_avcodec
     maichat_ffmpeg_swscale maichat_ffmpeg_avutil)
+  target_compile_definitions(remote_im_desktop_ui PRIVATE MAICHAT_FFMPEG_IMAGE_DECODE=1)
 endif()
 
 if(APPLE AND TARGET maiagent_embedded_fftools)
@@ -739,8 +740,8 @@ add_library(maichat_agent
 )
 target_include_directories(maichat_agent PUBLIC src)
 target_include_directories(maichat_agent PRIVATE ../Media)
-target_link_libraries(maichat_agent PUBLIC Qt5::Core Qt5::Widgets maiagent maichat_markdown
-  maichat_pdf_preview)
+target_link_libraries(maichat_agent PUBLIC Qt5::Core Qt5::Widgets Qt5::Multimedia Qt5::Concurrent
+  maiagent maichat_markdown maichat_pdf_preview)
 if(TARGET maiagent_embedded_fftools OR TARGET maichat_ffmpeg_tools)
   target_include_directories(maichat_agent PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/ffmpeg/fftools")

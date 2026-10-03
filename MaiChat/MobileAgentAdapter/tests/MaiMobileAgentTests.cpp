@@ -146,7 +146,7 @@ int main() {
              hasMobilePhotoAlbumWrite = false, hasPermissionRequest = false,
              hasSceneDetect = false, hasMotionDetect = false,
              hasDownloadFile = false, hasLocation = false, hasMaiChatMedia = false,
-             hasVideoMatting = false;
+             hasVideoMatting = false, hasAgentMedia = false;
         for (const auto& tool : body["tools"]) {
             CHECK(tool["function"]["name"] != "shell");
             if (tool["function"]["name"] == "create_file") hasCreateFile = true;
@@ -157,6 +157,7 @@ int main() {
             if (tool["function"]["name"] == "maichat_list_contacts") hasMaiChatContacts = true;
             if (tool["function"]["name"] == "maichat_send_text") hasMaiChatSend = true;
             if (tool["function"]["name"] == "maichat_send_media") hasMaiChatMedia = true;
+            if (tool["function"]["name"] == "agent_send_media") hasAgentMedia = true;
             if (tool["function"]["name"] == "download_file") hasDownloadFile = true;
             if (tool["function"]["name"] == "maichat_broadcast_text")
                 hasMaiChatBroadcast = true;
@@ -193,6 +194,7 @@ int main() {
         CHECK(hasMaiChatContacts);
         CHECK(hasMaiChatSend);
         CHECK(hasMaiChatMedia);
+        CHECK(hasAgentMedia);
         CHECK(hasDownloadFile);
         CHECK(hasMaiChatBroadcast);
         CHECK(hasMobilePhotos);

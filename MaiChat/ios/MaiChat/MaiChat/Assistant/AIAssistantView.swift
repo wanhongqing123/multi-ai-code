@@ -702,6 +702,7 @@ private struct AIMessageRow: View {
     @State private var pdfPreview: AIPDFPreviewItem?
     @State private var pdfPreviewError = false
     @State private var videoPreview: AIVideoPreviewItem?
+    @State private var mediaSaveError: String?
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             if message.role == "user" {
@@ -772,6 +773,36 @@ private struct AIMessageRow: View {
                         }
                     }
                 }
+                ForEach(mediaArtifacts) { artifact in
+                    VStack(alignment: .leading, spacing: 8) {
+                        if artifact.type == "image" {
+                            AIWorkspaceImage(filePath: artifact.filePath)
+                        } else if artifact.type == "video" {
+                            AIWorkspaceVideoCard(filePath: artifact.filePath) {
+                                videoPreview = AIVideoPreviewItem(path: artifact.filePath)
+                            }
+                        } else {
+                            AIWorkspaceAudioCard(filePath: artifact.filePath)
+                        }
+                        if !artifact.caption.isEmpty {
+                            Text(artifact.caption)
+                                .font(ChatTypography.body)
+                                .foregroundStyle(RemoteIMStyle.textPrimary)
+                        }
+                    }
+                    .contextMenu {
+                        if artifact.type != "audio" {
+                            Button {
+                                Task { await saveMediaArtifact(artifact) }
+                            } label: {
+                                Label("保存到相册", systemImage: "square.and.arrow.down")
+                            }
+                        }
+                        ShareLink(item: URL(fileURLWithPath: artifact.filePath)) {
+                            Label("转发或分享", systemImage: "square.and.arrow.up")
+                        }
+                    }
+                }
                 ForEach(message.parts) { part in
                     if part.kind == "text", let text = part.text, !text.isEmpty {
                         MarkdownLikeText(text, retainsPreviousWhilePreparing: true,
@@ -780,6 +811,7 @@ private struct AIMessageRow: View {
                     }
                 }
                 if message.active && reasoningText.isEmpty && toolParts.isEmpty &&
+                    mediaArtifacts.isEmpty &&
                     !hasVisibleAnswerText {
                     AIThinkingIndicator()
                 }
@@ -806,6 +838,14 @@ private struct AIMessageRow: View {
             } message: {
                 Text("文件不存在、已移出 AI 工作区，或内容不是 PDF。")
             }
+            .alert("无法保存媒体", isPresented: Binding(
+                get: { mediaSaveError != nil },
+                set: { if !$0 { mediaSaveError = nil } }
+            )) {
+                Button("知道了", role: .cancel) { mediaSaveError = nil }
+            } message: {
+                Text(mediaSaveError ?? "请检查相册权限与媒体文件。")
+            }
     }
     private var reasoningParts: [AIPart] {
         message.parts.filter { $0.kind == "reasoning" }
@@ -828,7 +868,41 @@ private struct AIMessageRow: View {
         }
     }
     private var toolParts: [AIPart] {
-        message.parts.filter { $0.kind == "tool" }
+        message.parts.filter { $0.kind == "tool" && mediaArtifact(for: $0) == nil }
+    }
+    private var mediaArtifacts: [AIAgentMediaArtifact] {
+        message.parts.compactMap(mediaArtifact)
+    }
+    private func mediaArtifact(for part: AIPart) -> AIAgentMediaArtifact? {
+        guard part.kind == "tool", part.tool == "agent_send_media",
+              part.state == "completed",
+              let output = part.output?.data(using: .utf8),
+              let object = (try? JSONSerialization.jsonObject(with: output)) as? [String: Any],
+              object["delivery"] as? String == "current_ai_session",
+              let relative = object["path"] as? String,
+              let type = object["type"] as? String,
+              ["image", "video", "audio"].contains(type),
+              let mime = object["mime_type"] as? String,
+              mime.hasPrefix(type + "/"),
+              let fileURL = AIAssistantPathPolicy.resolve(relative,
+                                                           workspacePath: workspacePath)
+        else { return nil }
+        return AIAgentMediaArtifact(id: part.id, filePath: fileURL.path,
+                                    type: type, caption: object["caption"] as? String ?? "")
+    }
+    private func saveMediaArtifact(_ artifact: AIAgentMediaArtifact) async {
+        let url = URL(fileURLWithPath: artifact.filePath)
+        do {
+            try await PHPhotoLibrary.shared().performChanges {
+                if artifact.type == "image" {
+                    PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: url)
+                } else {
+                    PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
+                }
+            }
+        } catch {
+            mediaSaveError = error.localizedDescription
+        }
     }
     private var toolSummary: String {
         var counts: [(name: String, count: Int)] = []
@@ -942,6 +1016,13 @@ private struct AIMessageRow: View {
     private func toolStatus(_ state: String?) -> String {
         switch state { case "completed": return "已完成"; case "error": return "失败"; case "pending": return "等待授权"; default: return "正在运行" }
     }
+}
+
+private struct AIAgentMediaArtifact: Identifiable {
+    let id: String
+    let filePath: String
+    let type: String
+    let caption: String
 }
 
 private struct AIPDFPreviewItem: Identifiable {
@@ -1118,6 +1199,66 @@ private struct AIWorkspaceVideoCard: View {
 
     private var previewSize: CGSize {
         VideoBubbleSize.fitted(videoSize ?? .zero)
+    }
+}
+
+private struct AIWorkspaceAudioCard: View {
+    let filePath: String
+    @State private var player: AVPlayer?
+    @State private var isPlaying = false
+    @State private var durationSeconds = 0
+
+    var body: some View {
+        Button {
+            if isPlaying {
+                player?.pause()
+                isPlaying = false
+            } else {
+                if player == nil {
+                    player = AVPlayer(url: URL(fileURLWithPath: filePath))
+                }
+                player?.play()
+                isPlaying = true
+            }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                    .frame(width: 38, height: 38)
+                    .background(RemoteIMStyle.blueSoft, in: Circle())
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(URL(fileURLWithPath: filePath).lastPathComponent)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text(String(format: "%d:%02d", durationSeconds / 60,
+                                durationSeconds % 60))
+                        .font(AssistantMessageFont.metadata)
+                        .foregroundStyle(RemoteIMStyle.textSecondary)
+                }
+                Spacer(minLength: 0)
+            }
+            .font(ChatTypography.body)
+            .foregroundStyle(RemoteIMStyle.textPrimary)
+            .padding(10)
+            .frame(width: 240)
+            .background(Color(uiColor: .secondarySystemBackground),
+                        in: RoundedRectangle(cornerRadius: 12))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(isPlaying ? "暂停音频" : "播放音频")
+        .task(id: filePath) {
+            let asset = AVURLAsset(url: URL(fileURLWithPath: filePath))
+            if let duration = try? await asset.load(.duration), duration.seconds.isFinite {
+                durationSeconds = max(0, Int(duration.seconds))
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) {
+            notification in
+            if notification.object as? AVPlayerItem === player?.currentItem {
+                isPlaying = false
+                player?.seek(to: .zero)
+            }
+        }
+        .onDisappear { player?.pause(); isPlaying = false }
     }
 }
 

@@ -6,9 +6,14 @@ import android.app.AlertDialog;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.ContentValues;
 import android.content.Intent;
 import android.graphics.Color;
+import android.media.MediaMetadataRetriever;
+import android.media.MediaPlayer;
 import android.net.Uri;
+import android.os.Build;
+import android.os.Environment;
 import android.provider.MediaStore;
 import android.text.Editable;
 import android.text.TextWatcher;
@@ -19,6 +24,12 @@ import android.view.ViewGroup;
 import android.widget.*;
 import androidx.core.content.FileProvider;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.URLConnection;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.*;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -787,6 +798,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         final Map<String, ImageView> imageParts = new HashMap<>();
         final Map<String, Button> videoParts = new HashMap<>();
         final Map<String, Button> pdfCards = new HashMap<>();
+        final Map<String, LinearLayout> mediaCards = new HashMap<>();
         TextView status;
         MessageRow() {
             super(activity);
@@ -803,6 +815,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                     imageParts.clear();
                     videoParts.clear();
                     pdfCards.clear();
+                    mediaCards.clear();
                     status = null;
                     TextView empty = text("有什么可以帮你？\n\n可以聊天、分析图片和文件，也可以语音转文字。", 16,
                         MaiChatTheme.SECONDARY);
@@ -827,6 +840,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 imageParts.clear();
                 videoParts.clear();
                 pdfCards.clear();
+                mediaCards.clear();
                 status = null;
                 if (outgoing) {
                     LinearLayout bubble = column();
@@ -901,6 +915,12 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                                 LayoutParams cardLayout = matchWrap();
                                 cardLayout.bottomMargin = dp(12);
                                 addView(preview, cardLayout);
+                                LinearLayout media = column();
+                                media.setVisibility(GONE);
+                                mediaCards.put(id, media);
+                                LayoutParams mediaLayout = matchWrap();
+                                mediaLayout.bottomMargin = dp(12);
+                                addView(media, mediaLayout);
                             }
                         }
                     status = text("", 11, MaiChatTheme.SECONDARY);
@@ -978,6 +998,24 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                                 pdfCard.setText("PDF  " + new File(path).getName() + "  ·  预览");
                             }
                         }
+                        LinearLayout mediaCard = mediaCards.get(id);
+                        if (mediaCard != null) {
+                            JSONObject artifact = mediaFromToolOutput(part);
+                            String path = artifact == null ? "" : artifact.optString("path");
+                            String type = artifact == null ? "" : artifact.optString("type");
+                            File file = path.isEmpty() ? null : controller.workspaceFile(path);
+                            boolean available = file != null && file.isFile();
+                            mediaCard.setVisibility(available ? VISIBLE : GONE);
+                            if (available && !file.getPath().equals(mediaCard.getTag())) {
+                                mediaCard.setTag(file.getPath());
+                                showAgentMediaCard(mediaCard, file, type,
+                                    artifact.optString("caption"));
+                            }
+                            if (available && part.optString("tool").equals("agent_send_media")) {
+                                view.setVisibility(GONE);
+                                if (detail != null) detail.setVisibility(GONE);
+                            }
+                        }
                     }
                 }
             updateTime();
@@ -1015,6 +1053,194 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             if (path.toLowerCase(Locale.ROOT).endsWith(".pdf")) return path;
         }
         return null;
+    }
+    static JSONObject mediaFromToolOutput(JSONObject part) {
+        if (!part.optString("tool").equals("agent_send_media")
+            || !part.optString("state").equals("completed")) return null;
+        try {
+            JSONObject artifact = new JSONObject(part.optString("output"));
+            String type = artifact.optString("type");
+            if (artifact.optString("delivery").equals("current_ai_session")
+                && !artifact.optString("path").isEmpty()
+                && (type.equals("image") || type.equals("video") || type.equals("audio"))
+                && artifact.optString("mime_type").startsWith(type + "/")) return artifact;
+        } catch (org.json.JSONException ignored) { }
+        return null;
+    }
+    private void showAgentMediaCard(LinearLayout container, File file, String type,
+                                    String caption) {
+        container.removeAllViews();
+        if (type.equals("image") || type.equals("video")) {
+            FrameLayout preview = new FrameLayout(activity);
+            ImageView cover = new ImageView(activity);
+            cover.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            preview.addView(cover, new FrameLayout.LayoutParams(dp(220), dp(240)));
+            MessageImageLoader.load(file.getAbsolutePath(), dp(220), dp(240), cover,
+                () -> cover.setContentDescription("媒体无法显示"));
+            if (type.equals("video")) {
+                TextView play = text("▶", 30, Color.WHITE);
+                play.setGravity(Gravity.CENTER);
+                play.setBackground(MaiChatTheme.rounded(Color.argb(180, 0, 0, 0), 28, activity));
+                FrameLayout.LayoutParams playLayout = new FrameLayout.LayoutParams(dp(52), dp(52));
+                playLayout.gravity = Gravity.CENTER;
+                preview.addView(play, playLayout);
+                TextView duration = text("0:00", 12, Color.WHITE);
+                duration.setPadding(dp(5), dp(2), dp(5), dp(2));
+                duration.setBackground(MaiChatTheme.rounded(Color.argb(180, 0, 0, 0), 8, activity));
+                FrameLayout.LayoutParams durationLayout =
+                    new FrameLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT);
+                durationLayout.gravity = Gravity.RIGHT | Gravity.BOTTOM;
+                durationLayout.setMargins(0, 0, dp(8), dp(8));
+                preview.addView(duration, durationLayout);
+                new Thread(() -> {
+                    MediaMetadataRetriever metadata = new MediaMetadataRetriever();
+                    try {
+                        metadata.setDataSource(file.getAbsolutePath());
+                        long ms = Long.parseLong(metadata.extractMetadata(
+                            MediaMetadataRetriever.METADATA_KEY_DURATION));
+                        activity.runOnUiThread(() -> {
+                            if (file.getPath().equals(container.getTag()))
+                                duration.setText(String.format(Locale.ROOT, "%d:%02d",
+                                    ms / 60000, (ms / 1000) % 60));
+                        });
+                    } catch (Exception ignored) { }
+                    finally { try { metadata.release(); } catch (Exception ignored) { } }
+                }, "agent-video-metadata").start();
+                preview.setOnClickListener(view -> {
+                    if (activity instanceof MainActivity)
+                        ((MainActivity) activity).openAgentVideo(file.getAbsolutePath());
+                });
+            } else {
+                preview.setOnClickListener(view -> {
+                    if (activity instanceof MainActivity)
+                        ((MainActivity) activity).showFullScreenImage(file.getAbsolutePath());
+                });
+            }
+            container.addView(preview, new LayoutParams(dp(220), dp(240)));
+            preview.setOnLongClickListener(view -> {
+                showAgentMediaMenu(view, file, type); return true;
+            });
+        } else if (type.equals("audio")) {
+            Button audio = button("▶  " + file.getName(), "播放音频", null);
+            audio.setBackground(MaiChatTheme.bordered(
+                MaiChatTheme.BLUE_SOFT, MaiChatTheme.BORDER, 10, activity));
+            final MediaPlayer[] playback = new MediaPlayer[1];
+            final boolean[] ready = {false};
+            audio.setOnClickListener(view -> {
+                try {
+                    if (playback[0] == null) {
+                        MediaPlayer player = new MediaPlayer();
+                        playback[0] = player;
+                        player.setDataSource(file.getAbsolutePath());
+                        player.setOnPreparedListener(prepared -> {
+                            ready[0] = true;
+                            prepared.start(); audio.setText("❚❚  " + file.getName());
+                        });
+                        player.setOnCompletionListener(done -> {
+                            audio.setText("▶  " + file.getName());
+                            done.seekTo(0);
+                        });
+                        player.prepareAsync();
+                    } else if (!ready[0]) {
+                        return;
+                    } else if (playback[0].isPlaying()) {
+                        playback[0].pause(); audio.setText("▶  " + file.getName());
+                    } else {
+                        playback[0].start(); audio.setText("❚❚  " + file.getName());
+                    }
+                } catch (Exception failure) {
+                    audio.setText("音频无法播放");
+                }
+            });
+            audio.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+                @Override public void onViewAttachedToWindow(View view) { }
+                @Override public void onViewDetachedFromWindow(View view) {
+                    if (playback[0] != null) {
+                        playback[0].release(); playback[0] = null; ready[0] = false;
+                    }
+                }
+            });
+            audio.setOnLongClickListener(view -> {
+                showAgentMediaMenu(view, file, type); return true;
+            });
+            container.addView(audio, matchWrap());
+        }
+        if (!caption.isEmpty()) {
+            TextView description = MaiChatTypography.body(activity);
+            description.setText(caption);
+            container.addView(description, matchWrap());
+        }
+    }
+    private void showAgentMediaMenu(View anchor, File file, String type) {
+        PopupMenu menu = new PopupMenu(activity, anchor);
+        if (!type.equals("audio")) menu.getMenu().add("保存到相册");
+        menu.getMenu().add("转发或分享");
+        menu.setOnMenuItemClickListener(item -> {
+            if (item.getTitle().toString().equals("保存到相册")) saveAgentMedia(file, type);
+            else shareAgentMedia(file, type);
+            return true;
+        });
+        menu.show();
+    }
+    private void saveAgentMedia(File file, String type) {
+        if (Build.VERSION.SDK_INT < 29) {
+            Toast.makeText(activity, "请使用分享功能保存媒体", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        new Thread(() -> {
+            Uri target = null;
+            try {
+                String mime = URLConnection.guessContentTypeFromName(file.getName());
+                if (mime == null) mime = type + "/octet-stream";
+                ContentValues values = new ContentValues();
+                values.put(MediaStore.MediaColumns.DISPLAY_NAME, file.getName());
+                values.put(MediaStore.MediaColumns.MIME_TYPE, mime);
+                values.put(MediaStore.MediaColumns.RELATIVE_PATH,
+                    (type.equals("image") ? Environment.DIRECTORY_PICTURES
+                                          : Environment.DIRECTORY_MOVIES) + "/MaiChat");
+                values.put(MediaStore.MediaColumns.IS_PENDING, 1);
+                target = activity.getContentResolver().insert(type.equals("image")
+                    ? MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                    : MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values);
+                if (target == null) throw new IllegalStateException("Cannot create gallery entry");
+                try (InputStream input = new FileInputStream(file);
+                     OutputStream output = activity.getContentResolver().openOutputStream(target)) {
+                    if (output == null) throw new IllegalStateException("Cannot write gallery entry");
+                    byte[] buffer = new byte[64 * 1024];
+                    int count;
+                    while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+                }
+                values.clear(); values.put(MediaStore.MediaColumns.IS_PENDING, 0);
+                activity.getContentResolver().update(target, values, null, null);
+                activity.runOnUiThread(() -> Toast.makeText(activity, "已保存到相册",
+                    Toast.LENGTH_SHORT).show());
+            } catch (Exception failure) {
+                if (target != null) activity.getContentResolver().delete(target, null, null);
+                activity.runOnUiThread(() -> Toast.makeText(activity, "保存失败",
+                    Toast.LENGTH_SHORT).show());
+            }
+        }, "agent-media-save").start();
+    }
+    private void shareAgentMedia(File file, String type) {
+        new Thread(() -> {
+            try {
+                File shared = new File(activity.getCacheDir(),
+                    UUID.randomUUID() + "-" + file.getName());
+                Files.copy(file.toPath(), shared.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                Uri uri = FileProvider.getUriForFile(activity,
+                    activity.getPackageName() + ".files", shared);
+                String mime = URLConnection.guessContentTypeFromName(file.getName());
+                Intent intent = new Intent(Intent.ACTION_SEND);
+                intent.setType(mime == null ? type + "/*" : mime);
+                intent.putExtra(Intent.EXTRA_STREAM, uri);
+                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                activity.runOnUiThread(() -> activity.startActivity(
+                    Intent.createChooser(intent, "转发媒体")));
+            } catch (Exception failure) {
+                activity.runOnUiThread(() -> Toast.makeText(activity, "无法分享媒体",
+                    Toast.LENGTH_SHORT).show());
+            }
+        }, "agent-media-share").start();
     }
     private int dp(int value) {
         return MaiChatTheme.dp(activity, value);

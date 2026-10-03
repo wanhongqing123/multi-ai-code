@@ -9,7 +9,10 @@
 #include <QWindow>
 
 ImagePreviewDialog::ImagePreviewDialog(const QString& imagePath, QWidget* parent)
-    : QDialog(parent), image_(imagePath) {
+    : ImagePreviewDialog(QPixmap(imagePath), parent) {}
+
+ImagePreviewDialog::ImagePreviewDialog(const QPixmap& image, QWidget* parent)
+    : QDialog(parent), image_(image) {
     setWindowTitle(QStringLiteral("图片预览"));
     setModal(true);
     setSizeGripEnabled(true);

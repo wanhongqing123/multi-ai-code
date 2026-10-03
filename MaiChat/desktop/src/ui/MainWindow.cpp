@@ -3241,6 +3241,24 @@ void MainWindow::rebuildAgentPage() {
         }, this);
     agentSessions_ = new AgentSessionList(*agentController_, agentSplitter);
     agentPanel_ = new AgentChatPanel(*agentController_, agentSplitter);
+    #if defined(MAICHAT_HAS_FFPLAY)
+    agentPanel_->setOpenVideoCallback([this](const QString& path) {
+        auto* dialog = new MaiFfplayVideoDialog(path, this);
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        dialog->show();
+        if (!dialog->isStarted()) dialog->close();
+    });
+    #endif
+    agentPanel_->setForwardMediaCallback([this](const QString& path, const QString& type) {
+        const QList<RemoteIMContact> contacts = app_.chatState().contacts();
+        if (contacts.isEmpty()) return;
+        BroadcastDialog dialog(contacts, {}, QString(), BroadcastDialog::Mode::Forward, this);
+        if (dialog.exec() != QDialog::Accepted || dialog.selectedPeerIds().size() != 1) return;
+        app_.selectPeer(dialog.selectedPeerIds().first());
+        if (type == QStringLiteral("image")) app_.sendImage(path);
+        else if (type == QStringLiteral("video")) app_.sendVideo(path);
+        else app_.sendFile(path);
+    });
     agentPanel_->setModelLabel(modelConfig.baseUrl.isEmpty() || modelConfig.apiKey.isEmpty()
                                    ? QStringLiteral("未配置模型")
                                    : modelConfig.modelName);

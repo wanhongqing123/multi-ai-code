@@ -1,6 +1,8 @@
 #include "diagnostics/PerformanceLog.h"
 #include "ui/MessageImageLoader.h"
 
+#include <QColorSpace>
+
 #if defined(MAICHAT_FFMPEG_IMAGE_DECODE)
 #include "MaiImageDecode.h"
 #endif
@@ -40,6 +42,12 @@ public:
         if (decoded.rgba) {
             image = QImage(decoded.rgba, decoded.width, decoded.height, decoded.stride,
                            QImage::Format_RGBA8888).copy();
+            if (decoded.icc_profile && decoded.icc_size > 0) {
+                const QColorSpace color = QColorSpace::fromIccProfile(
+                    QByteArray(reinterpret_cast<const char*>(decoded.icc_profile),
+                               decoded.icc_size));
+                if (color.isValid()) image.setColorSpace(color);
+            }
             maiImageDecodeFree(decoded.rgba);
         }
 #else

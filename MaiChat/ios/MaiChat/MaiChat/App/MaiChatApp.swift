@@ -2,6 +2,25 @@ import MaiChatCore
 import SwiftUI
 import UserNotifications
 import UIKit
+import YTCommonXMagic
+
+private enum TencentEffectTrialLicense {
+    static let url = "https://1304255122.trtcube-license.cn/license/v2/1304255122_1/v_cube.license"
+    static let key = "3ba3f07d4e110370c011c97ee39313b5"
+
+    static func initialize() {
+        TELicenseCheck.setTELicense(url, key: key) { result, _ in
+            Task { @MainActor in
+                AppDiagnosticLog.shared.record(
+                    level: result == 0 ? .info : .warning,
+                    category: "tencent-effect",
+                    event: result == 0 ? "license-authorized" : "license-rejected",
+                    fields: ["code": String(result)]
+                )
+            }
+        }
+    }
+}
 
 @MainActor
 final class IOSBackgroundActivityKeeper {
@@ -228,6 +247,7 @@ struct MaiChatApp: App {
     init() {
         AppDiagnosticLog.shared.install()
         RemoteIMSystemNotificationCenter.shared.install()
+        TencentEffectTrialLicense.initialize()
     }
 
     var body: some Scene {

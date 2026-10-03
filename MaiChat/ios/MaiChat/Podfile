@@ -9,4 +9,5 @@ target 'MaiChat' do
   pod 'TXLiteAVSDK_TRTC', :podspec => 'https://liteav.sdk.qcloud.com/pod/liteavsdkspec/TXLiteAVSDK_TRTC.podspec'
   pod 'QCloudRealTime', '3.1.39'
   pod 'onnxruntime-c', '1.26.0'
+  pod 'TencentEffect_S1-07'
 end

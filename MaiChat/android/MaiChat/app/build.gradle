@@ -36,6 +36,8 @@ android {
         buildConfigField "String", "TENCENT_ASR_APP_ID", "\"${asrValue('tencent.asr.appId')}\""
         buildConfigField "String", "TENCENT_ASR_SECRET_ID", "\"${asrValue('tencent.asr.secretId')}\""
         buildConfigField "String", "TENCENT_ASR_SECRET_KEY", "\"${asrValue('tencent.asr.secretKey')}\""
+        buildConfigField "String", "TENCENT_EFFECT_LICENSE_URL", '"https://1304255122.trtcube-license.cn/license/v2/1304255122_1/v_cube.license"'
+        buildConfigField "String", "TENCENT_EFFECT_LICENSE_KEY", '"3ba3f07d4e110370c011c97ee39313b5"'
 
         externalNativeBuild { cmake { arguments "-DANDROID_STL=c++_shared", "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON" } }
 
@@ -125,6 +127,7 @@ dependencies {
     implementation "com.google.code.gson:gson:2.8.5"
     implementation "com.tencent.imsdk:imsdk-plus:9.0.7665"
     implementation "com.tencent.liteav:LiteAVSDK_TRTC:13.4.0.20477"
+    implementation "com.tencent.mediacloud:TencentEffect_S1-07:4.3.0.31"
 
     testImplementation "junit:junit:4.13.2"
     testImplementation "org.json:json:20240303"

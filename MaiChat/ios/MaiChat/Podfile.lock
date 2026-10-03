@@ -2,6 +2,9 @@ PODS:
   - onnxruntime-c (1.26.0)
   - QCloudRealTime (3.1.39):
     - VoiceCommon
+  - TencentEffect_S1-07 (4.3.0.25):
+    - TencentEffect_S1-07/Default (= 4.3.0.25)
+  - TencentEffect_S1-07/Default (4.3.0.25)
   - TXIMSDK_Plus_iOS_XCFramework (9.0.7659)
   - TXLiteAVSDK_TRTC (13.4.21067):
     - TXLiteAVSDK_TRTC/TRTC (= 13.4.21067)
@@ -11,6 +14,7 @@ PODS:
 DEPENDENCIES:
   - onnxruntime-c (= 1.26.0)
   - QCloudRealTime (= 3.1.39)
+  - TencentEffect_S1-07
   - TXIMSDK_Plus_iOS_XCFramework
   - TXLiteAVSDK_TRTC (from `https://liteav.sdk.qcloud.com/pod/liteavsdkspec/TXLiteAVSDK_TRTC.podspec`)
 
@@ -18,6 +22,7 @@ SPEC REPOS:
   trunk:
     - onnxruntime-c
     - QCloudRealTime
+    - TencentEffect_S1-07
     - TXIMSDK_Plus_iOS_XCFramework
     - VoiceCommon
 
@@ -28,10 +33,11 @@ EXTERNAL SOURCES:
 SPEC CHECKSUMS:
   onnxruntime-c: e6e9272f5996fed3ea3ca3c9bc843478b2ecbc73
   QCloudRealTime: 1fbd5af1d3fa3e13011ba8e2b72e4685f0b5ecad
+  TencentEffect_S1-07: 5f5d7679d46551f9240766492f76ee2b21cb1124
   TXIMSDK_Plus_iOS_XCFramework: 650f87c12836d2e29f42faca4a665e92047bdaca
   TXLiteAVSDK_TRTC: ab7fa7bce8e703cfd894de0effe18fa3321b850d
   VoiceCommon: 606ceec730a561ec35916c176cf5e0f5b8a34b06
 
-PODFILE CHECKSUM: b538a09b66eeaf53733077ed19d3127a3ea4c0fb
+PODFILE CHECKSUM: 91fc9efd554a564840e5f6b164af6b8c2f61495c
 
 COCOAPODS: 1.16.2

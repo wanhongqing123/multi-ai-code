@@ -61,6 +61,7 @@ import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 
 import com.tencent.rtmp.ui.TXCloudVideoView;
+import com.tencent.xmagic.telicense.TELicenseCheck;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -181,6 +182,10 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        TELicenseCheck.getInstance().setTELicense(
+            getApplicationContext(), BuildConfig.TENCENT_EFFECT_LICENSE_URL,
+            BuildConfig.TENCENT_EFFECT_LICENSE_KEY,
+            (code, message) -> Log.i("MaiChat.tencent-effect", "license status=" + code));
         MarkdownRenderer.initialize(getApplicationContext());
         diagnostics = new MainThreadMonitor(getWindow(), new File(getFilesDir(), "diagnostics"));
         getWindow().setStatusBarColor(Color.WHITE);

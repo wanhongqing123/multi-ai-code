@@ -33,7 +33,8 @@ private final class SpeechEngineHandle: @unchecked Sendable {
             config.enableDetectVolume = false
             config.endRecognizeWhenDetectSilence = false
             config.endRecognizeWhenDetectSilenceAutoStop = false
-            config.needvad = 1; config.filterPunc = 0; config.convertNumMode = 1; config.requestTimeout = 20
+            config.needvad = 1; config.maxSpeakTime = 5_000
+            config.filterPunc = 0; config.convertNumMode = 1; config.requestTimeout = 20
             return SpeechEngineHandle(QCloudRealTimeRecognizer(config: config))
         }
     }
@@ -91,6 +92,7 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
     private var sessionSequence: UInt64 = 0
     private var sessionStartedUptime: TimeInterval?
     private var firstTextUptime: TimeInterval?
+    private var firstCallbackUptime: TimeInterval?
     private var textUpdateCount = 0
     // Frozen at session start so delayed SDK callbacks retain their original conversation.
     private var diagnosticFields: [String: String] = [:]
@@ -156,6 +158,7 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
         recognizer = nextRecognizer
         recognizerID = nextRecognizer.id
         firstTextUptime = nil
+        firstCallbackUptime = nil
         textUpdateCount = 0
         liveText = ""
         isRecognizing = true
@@ -246,6 +249,7 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
         let callbackUptime = ProcessInfo.processInfo.systemUptime
         publish(
             resultText(from: result),
+            source: "slice",
             recognizerID: ObjectIdentifier(recognizer),
             callbackUptime: callbackUptime,
             callbackOnMainThread: Thread.isMainThread
@@ -259,6 +263,7 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
         let callbackUptime = ProcessInfo.processInfo.systemUptime
         publish(
             resultText(from: result),
+            source: "segment",
             recognizerID: ObjectIdentifier(recognizer),
             callbackUptime: callbackUptime,
             callbackOnMainThread: Thread.isMainThread
@@ -363,18 +368,30 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
     // included; interpret it alongside the foreground run-loop probe.
     private nonisolated func publish(
         _ text: String,
+        source: String,
         recognizerID: ObjectIdentifier,
         callbackUptime: TimeInterval,
         callbackOnMainThread: Bool
     ) {
-        guard !text.isEmpty else { return }
         let enqueuedUptime = ProcessInfo.processInfo.systemUptime
         Task { @MainActor [weak self] in
             guard let self, self.isCurrentRecognizer(recognizerID) else { return }
             let processedUptime = ProcessInfo.processInfo.systemUptime
+            if self.firstCallbackUptime == nil {
+                self.firstCallbackUptime = callbackUptime
+                self.log(level: .info, event: "first-callback", fields: [
+                    "session": String(self.sessionSequence),
+                    "source": source,
+                    "characters": String(text.count),
+                    "callback_latency_ms": self.elapsedMilliseconds(at: callbackUptime),
+                    "main_actor_wait_ms": Self.milliseconds(from: enqueuedUptime,
+                                                               to: processedUptime),
+                ])
+            }
             AppDiagnosticLog.shared.recordDuration(
                 .asrMainActorWait, since: enqueuedUptime, until: processedUptime
             )
+            guard !text.isEmpty else { return }
             guard self.liveText != text else { return }
             self.textUpdateCount += 1
             if self.firstTextUptime == nil {
@@ -395,6 +412,7 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
                             from: enqueuedUptime, to: processedUptime
                         ),
                         "characters": String(text.count),
+                        "source": source,
                     ]
                 )
             }

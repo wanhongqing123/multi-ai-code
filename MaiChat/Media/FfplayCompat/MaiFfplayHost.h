@@ -15,6 +15,7 @@ extern "C" {
 typedef struct MaiFfplayHost {
     void* user_data;
     uint64_t graphics_view_id;
+    int present_native_frames;
     bool (*present_video)(void* user_data, const MaiVideoFrame* frame,
                           const MaiVideoSubtitle* subtitle);
     bool (*present_rgba)(void* user_data, const uint8_t* pixels,
@@ -27,6 +28,8 @@ typedef struct MaiFfplayHost {
 } MaiFfplayHost;
 
 void maiFfplayBindHost(const MaiFfplayHost* host);
+MaiFfplayHost maiFfplayCurrentHost(void);
+int maiFfplaySourceHasHdrWithoutSubtitles(const char* path);
 
 #ifdef __cplusplus
 }

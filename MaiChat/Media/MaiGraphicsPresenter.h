@@ -36,7 +36,9 @@ typedef enum MaiVideoPixelFormat {
     MAI_VIDEO_PIXEL_RGBA,
     MAI_VIDEO_PIXEL_BGRA,
     MAI_VIDEO_PIXEL_NV12,
-    MAI_VIDEO_PIXEL_I420
+    MAI_VIDEO_PIXEL_I420,
+    MAI_VIDEO_PIXEL_P010,
+    MAI_VIDEO_PIXEL_I010
 } MaiVideoPixelFormat;
 
 typedef enum MaiVideoColorSpace {
@@ -50,10 +52,17 @@ typedef enum MaiVideoColorRange {
     MAI_VIDEO_RANGE_FULL
 } MaiVideoColorRange;
 
+typedef enum MaiVideoTransfer {
+    MAI_VIDEO_TRANSFER_SDR,
+    MAI_VIDEO_TRANSFER_HLG,
+    MAI_VIDEO_TRANSFER_PQ
+} MaiVideoTransfer;
+
 // Planes are borrowed until this call returns; the presenter copies them before
-// dispatching to its Graphics thread. RGBA/BGRA use plane 0, NV12 uses planes
-// 0-1, and I420 uses planes 0-2. A negative line size is accepted. Color
-// metadata is used only for YUV frames.
+// dispatching to its Graphics thread. RGBA/BGRA use plane 0, NV12/P010 use
+// planes 0-1, and I420/I010 use planes 0-2. P010 stores 10-bit samples in the
+// high bits of 16-bit words; I010 stores them in the low bits. A negative line
+// size is accepted. Color metadata is used only for YUV frames.
 typedef struct MaiVideoFrame {
     const uint8_t* data[3];
     int32_t linesize[3];
@@ -62,6 +71,7 @@ typedef struct MaiVideoFrame {
     MaiVideoPixelFormat format;
     MaiVideoColorSpace color_space;
     MaiVideoColorRange color_range;
+    MaiVideoTransfer color_transfer;
 } MaiVideoFrame;
 
 // Straight-alpha RGBA subtitle canvas in decoded video coordinates. The

@@ -39,11 +39,19 @@ must exercise the same playback session as MaiChat's own controls.
   and after the change. The normal popup and Agent playback tool use this same
   host view.
 - A sampled gallery MOV is HEVC Main10, BT.2020 HLG with a Dolby Vision
-  Profile 8 configuration record. The current FFplay compatibility renderer
-  advertises only 8-bit SDL texture formats and reports the presented frame as
-  I420/BT.709/limited. Full HDR color and 10-bit precision therefore remain
-  unverified and should not be marked as Photos-app parity. This is a separate
-  issue from the fixed 1× drawable blur.
+  Profile 8 configuration record. The ordinary SDL texture route advertises
+  8-bit formats and presents I420/BT.709/limited, losing source precision before
+  Graphics. For local HDR HEVC without subtitle streams, the iOS host now uses
+  FFplay's existing alternate AVFrame renderer entry point and VideoToolbox
+  decode. Graphics receives P010/BT.2020, runs the existing OBS HLG/PQ
+  conversion shader, and tone-maps to the app's SDR Metal swapchain. Other
+  files retain the ordinary SDL route. The upstream `ffplay.c` remains intact.
+- Real-device testing on the 29.6-second 1080×1920 HLG sample confirmed about
+  800 accepted frames and 800 Graphics-rendered frames, `fd=0`, no shader
+  errors, accepted pause/play controls, and a finite 50% seek. Dolby Vision
+  dynamic metadata and HDR/EDR display output are not implemented; visual
+  parity with Photos still requires comparison on the same device. HDR files
+  with subtitle streams currently retain the 8-bit compatibility route.
 - `SWS_BILINEAR` in `MaiGraphicsPresenter::decodeImage` is used for image
   decoding, not this video draw path. The video draw path currently samples
   `default.effect` linearly. Compare the same source in Photos and the normal

@@ -5,6 +5,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstddef>
+#include <cstdio>
 #include <cstring>
 #include <deque>
 #include <exception>
@@ -120,9 +121,12 @@ struct MaiGraphicsViewState {
     uint32_t subtitleWidth = 0;
     uint32_t subtitleHeight = 0;
     gs_texrender_t* convertedVideo = nullptr;
+    gs_color_format convertedVideoFormat = GS_UNKNOWN;
     MaiVideoPixelFormat videoFormat = MAI_VIDEO_PIXEL_RGBA;
     uint32_t videoWidth = 0;
     uint32_t videoHeight = 0;
+    bool highBitFailureLogged = false;
+    uint64_t highBitRendered = 0;
 };
 
 struct MaiDecodedImage {
@@ -137,13 +141,15 @@ struct MaiDecodedVideoFrame {
     MaiVideoPixelFormat format = MAI_VIDEO_PIXEL_RGBA;
     MaiVideoColorSpace colorSpace = MAI_VIDEO_COLOR_BT709;
     MaiVideoColorRange colorRange = MAI_VIDEO_RANGE_LIMITED;
+    MaiVideoTransfer colorTransfer = MAI_VIDEO_TRANSFER_SDR;
     std::array<std::vector<uint8_t>, 3> planes;
     std::array<uint32_t, 3> strides{};
     std::vector<uint8_t> subtitlePixels;
 };
 
 uint32_t planeCount(MaiVideoPixelFormat format) {
-    return format == MAI_VIDEO_PIXEL_I420 ? 3 : format == MAI_VIDEO_PIXEL_NV12 ? 2 : 1;
+    return format == MAI_VIDEO_PIXEL_I420 || format == MAI_VIDEO_PIXEL_I010 ? 3
+         : format == MAI_VIDEO_PIXEL_NV12 || format == MAI_VIDEO_PIXEL_P010 ? 2 : 1;
 }
 
 uint32_t planeWidth(uint32_t width, uint32_t index) {
@@ -157,6 +163,10 @@ uint32_t planeHeight(uint32_t height, uint32_t index) {
 uint32_t planeBytes(MaiVideoPixelFormat format, uint32_t width, uint32_t index) {
     if (index == 0 && (format == MAI_VIDEO_PIXEL_RGBA || format == MAI_VIDEO_PIXEL_BGRA))
         return width * 4;
+    if (format == MAI_VIDEO_PIXEL_P010)
+        return planeWidth(width, index) * (index == 0 ? 2 : 4);
+    if (format == MAI_VIDEO_PIXEL_I010)
+        return planeWidth(width, index) * 2;
     return format == MAI_VIDEO_PIXEL_NV12 && index == 1 ? planeWidth(width, index) * 2
                                                         : planeWidth(width, index);
 }
@@ -234,7 +244,8 @@ public:
                          MaiGraphicsPresentCallback callback, void* userData)
         : mBackend(std::move(backend)),
           mEffectFile(effectDirectory + "/default.effect"),
-          mConversionEffectFile(std::move(effectDirectory) + "/video_conversion.effect"),
+          mConversionEffectFile(effectDirectory + "/video_conversion.effect"),
+          mHdrConversionEffectFile(std::move(effectDirectory) + "/format_conversion.effect"),
           mCallback(callback),
           mUserData(userData),
           mGraphicsRunner("mai-graphics"),
@@ -263,6 +274,7 @@ public:
             }
             mGraphicsViews.clear();
             if (mConversionEffect) gs_effect_destroy(mConversionEffect);
+            if (mHdrConversionEffect) gs_effect_destroy(mHdrConversionEffect);
             if (mEffect) {
                 gs_effect_destroy(mEffect);
                 mEffect = nullptr;
@@ -393,7 +405,8 @@ public:
             return false;
         const MaiVideoPixelFormat format = source->format;
         if (format != MAI_VIDEO_PIXEL_RGBA && format != MAI_VIDEO_PIXEL_BGRA &&
-            format != MAI_VIDEO_PIXEL_NV12 && format != MAI_VIDEO_PIXEL_I420)
+            format != MAI_VIDEO_PIXEL_NV12 && format != MAI_VIDEO_PIXEL_I420 &&
+            format != MAI_VIDEO_PIXEL_P010 && format != MAI_VIDEO_PIXEL_I010)
             return false;
         std::shared_ptr<MaiGraphicsViewState> view = findView(id);
         if (!view) return false;
@@ -404,6 +417,7 @@ public:
         frame->format = format;
         frame->colorSpace = source->color_space;
         frame->colorRange = source->color_range;
+        frame->colorTransfer = source->color_transfer;
         for (uint32_t index = 0; index < planeCount(format); ++index) {
             const uint32_t rowBytes = planeBytes(format, source->width, index);
             const uint32_t rows = planeHeight(source->height, index);
@@ -524,6 +538,7 @@ private:
             if (mEffect) {
                 mImageParameter = gs_effect_get_param_by_name(mEffect, "image");
                 mDrawTechnique = gs_effect_get_technique(mEffect, "Draw");
+                mDrawTonemapTechnique = gs_effect_get_technique(mEffect, "DrawTonemap");
             }
         }
         return mImageParameter && mDrawTechnique;
@@ -539,9 +554,24 @@ private:
         return mConversionEffect != nullptr;
     }
 
+    bool ensureHdrConversionEffect() {
+        if (!mHdrConversionEffectAttempted) {
+            mHdrConversionEffectAttempted = true;
+            char* errors = nullptr;
+            mHdrConversionEffect = gs_effect_create_from_file(mHdrConversionEffectFile.c_str(),
+                                                              &errors);
+            if (errors) std::fprintf(stderr, "[MaiVideoHDR] shader: %s\n", errors);
+            if (errors) bfree(errors);
+        }
+        return mHdrConversionEffect != nullptr;
+    }
+
     bool drawTexture(MaiGraphicsViewState* view, gs_texture_t* texture, uint32_t sourceWidth,
-                     uint32_t sourceHeight, gs_texture_t* subtitle = nullptr) {
+                     uint32_t sourceHeight, gs_texture_t* subtitle = nullptr,
+                     bool hdr = false) {
         if (!view->swapchain || !texture || !ensureDrawEffect()) return false;
+        gs_technique_t* drawTechnique = hdr ? mDrawTonemapTechnique : mDrawTechnique;
+        if (!drawTechnique) return false;
         const uint32_t width = view->width;
         const uint32_t height = view->height;
         gs_load_swapchain(view->swapchain);
@@ -554,7 +584,8 @@ private:
         gs_clear(GS_CLEAR_COLOR, &black, 1.0f, 0);
         gs_set_cull_mode(GS_NEITHER);
         gs_enable_blending(false);
-        gs_effect_set_texture_srgb(mImageParameter, texture);
+        if (hdr) gs_effect_set_texture(mImageParameter, texture);
+        else gs_effect_set_texture_srgb(mImageParameter, texture);
         const float widthScale = static_cast<float>(width) / sourceWidth;
         const float heightScale = static_cast<float>(height) / sourceHeight;
         const float scale =
@@ -563,18 +594,18 @@ private:
         const float drawHeight = scale * sourceHeight;
         gs_matrix_push();
         gs_matrix_translate3f((width - drawWidth) / 2.0f, (height - drawHeight) / 2.0f, 0.0f);
-        const size_t passes = gs_technique_begin(mDrawTechnique);
+        const size_t passes = gs_technique_begin(drawTechnique);
         bool presented = passes > 0;
         for (size_t pass = 0; pass < passes; ++pass) {
-            if (!gs_technique_begin_pass(mDrawTechnique, pass)) {
+            if (!gs_technique_begin_pass(drawTechnique, pass)) {
                 presented = false;
                 break;
             }
             gs_draw_sprite(texture, 0, std::max<uint32_t>(1, drawWidth),
                            std::max<uint32_t>(1, drawHeight));
-            gs_technique_end_pass(mDrawTechnique);
+            gs_technique_end_pass(drawTechnique);
         }
-        gs_technique_end(mDrawTechnique);
+        gs_technique_end(drawTechnique);
         if (presented && subtitle) {
             gs_blend_state_push();
             gs_enable_blending(true);
@@ -638,6 +669,9 @@ private:
                 const gs_color_format textureFormat =
                     frame.format == MAI_VIDEO_PIXEL_RGBA                 ? GS_RGBA
                     : frame.format == MAI_VIDEO_PIXEL_BGRA               ? GS_BGRA
+                    : frame.format == MAI_VIDEO_PIXEL_P010 && index == 1 ? GS_RG16
+                    : frame.format == MAI_VIDEO_PIXEL_P010 ||
+                              frame.format == MAI_VIDEO_PIXEL_I010       ? GS_R16
                     : frame.format == MAI_VIDEO_PIXEL_NV12 && index == 1 ? GS_R8G8
                                                                          : GS_R8;
                 view->videoTextures[index] = gs_texture_create(
@@ -661,23 +695,45 @@ private:
     gs_texture_t* convertVideo(MaiGraphicsViewState* view, const MaiDecodedVideoFrame& frame) {
         if (frame.format == MAI_VIDEO_PIXEL_RGBA || frame.format == MAI_VIDEO_PIXEL_BGRA)
             return view->videoTextures[0];
-        if (!ensureConversionEffect()) return nullptr;
-        const char* techniqueName =
-            frame.format == MAI_VIDEO_PIXEL_NV12 ? "NV12_Reverse" : "I420_Reverse";
-        gs_technique_t* technique = gs_effect_get_technique(mConversionEffect, techniqueName);
-        gs_eparam_t* image = gs_effect_get_param_by_name(mConversionEffect, "image");
-        gs_eparam_t* image1 = gs_effect_get_param_by_name(mConversionEffect, "image1");
-        gs_eparam_t* image2 = gs_effect_get_param_by_name(mConversionEffect, "image2");
-        if (!technique || !image || !image1 || (frame.format == MAI_VIDEO_PIXEL_I420 && !image2))
+        const bool highBit = frame.format == MAI_VIDEO_PIXEL_P010 ||
+                             frame.format == MAI_VIDEO_PIXEL_I010;
+        if (highBit ? !ensureHdrConversionEffect() : !ensureConversionEffect()) return nullptr;
+        gs_effect_t* effect = highBit ? mHdrConversionEffect : mConversionEffect;
+        const char* techniqueName = nullptr;
+        if (highBit) {
+            const bool planar = frame.format == MAI_VIDEO_PIXEL_I010;
+            techniqueName = frame.colorTransfer == MAI_VIDEO_TRANSFER_HLG
+                                ? (planar ? "I010_HLG_2020_709_Reverse"
+                                          : "P010_HLG_2020_709_Reverse")
+                            : frame.colorTransfer == MAI_VIDEO_TRANSFER_PQ
+                                ? (planar ? "I010_PQ_2020_709_Reverse"
+                                          : "P010_PQ_2020_709_Reverse")
+                                : (planar ? "I010_SRGB_Reverse" : "P010_SRGB_Reverse");
+        } else {
+            techniqueName = frame.format == MAI_VIDEO_PIXEL_NV12
+                                ? "NV12_Reverse" : "I420_Reverse";
+        }
+        gs_technique_t* technique = gs_effect_get_technique(effect, techniqueName);
+        gs_eparam_t* image = gs_effect_get_param_by_name(effect, "image");
+        gs_eparam_t* image1 = gs_effect_get_param_by_name(effect, "image1");
+        gs_eparam_t* image2 = gs_effect_get_param_by_name(effect, "image2");
+        if (!technique || !image || !image1 ||
+            ((frame.format == MAI_VIDEO_PIXEL_I420 ||
+              frame.format == MAI_VIDEO_PIXEL_I010) && !image2))
             return nullptr;
-        if (!view->convertedVideo)
-            view->convertedVideo = gs_texrender_create(
+        const gs_color_format outputFormat =
+            highBit ? GS_RGBA16F :
 #if defined(__ANDROID__)
-                GS_RGBA_UNORM,
+                GS_RGBA_UNORM;
 #else
-                GS_RGBA,
+                GS_RGBA;
 #endif
-                GS_ZS_NONE);
+        if (!view->convertedVideo || view->convertedVideoFormat != outputFormat) {
+            if (view->convertedVideo) gs_texrender_destroy(view->convertedVideo);
+            view->convertedVideo = gs_texrender_create(
+                outputFormat, GS_ZS_NONE);
+            view->convertedVideoFormat = outputFormat;
+        }
         if (!view->convertedVideo) return nullptr;
         gs_texrender_reset(view->convertedVideo);
         if (!gs_texrender_begin(view->convertedVideo, frame.width, frame.height)) return nullptr;
@@ -689,31 +745,40 @@ private:
             struct vec4 value;
             vec4_set(&value, color.vectors[row][0], color.vectors[row][1], color.vectors[row][2],
                      color.vectors[row][3]);
-            gs_effect_set_vec4(gs_effect_get_param_by_name(mConversionEffect, colorNames[row]),
+            gs_effect_set_vec4(gs_effect_get_param_by_name(effect, colorNames[row]),
                                &value);
         }
-        gs_effect_set_val(gs_effect_get_param_by_name(mConversionEffect, "color_range_min"),
+        gs_effect_set_val(gs_effect_get_param_by_name(effect, "color_range_min"),
                           color.rangeMin, sizeof(color.rangeMin));
-        gs_effect_set_val(gs_effect_get_param_by_name(mConversionEffect, "color_range_max"),
+        gs_effect_set_val(gs_effect_get_param_by_name(effect, "color_range_max"),
                           color.rangeMax, sizeof(color.rangeMax));
-        gs_effect_set_float(gs_effect_get_param_by_name(mConversionEffect, "width"),
+        gs_effect_set_float(gs_effect_get_param_by_name(effect, "width"),
                             static_cast<float>(frame.width));
-        gs_effect_set_float(gs_effect_get_param_by_name(mConversionEffect, "height"),
+        gs_effect_set_float(gs_effect_get_param_by_name(effect, "height"),
                             static_cast<float>(frame.height));
-        gs_effect_set_float(gs_effect_get_param_by_name(mConversionEffect, "width_d2"),
+        gs_effect_set_float(gs_effect_get_param_by_name(effect, "width_d2"),
                             frame.width * 0.5f);
-        gs_effect_set_float(gs_effect_get_param_by_name(mConversionEffect, "height_d2"),
+        gs_effect_set_float(gs_effect_get_param_by_name(effect, "height_d2"),
                             frame.height * 0.5f);
-        gs_effect_set_float(gs_effect_get_param_by_name(mConversionEffect, "width_x2_i"),
+        gs_effect_set_float(gs_effect_get_param_by_name(effect, "width_x2_i"),
                             0.5f / frame.width);
-        gs_effect_set_float(gs_effect_get_param_by_name(mConversionEffect, "height_x2_i"),
+        gs_effect_set_float(gs_effect_get_param_by_name(effect, "height_x2_i"),
                             0.5f / frame.height);
+        if (highBit) {
+            const float maximumNits = frame.colorTransfer == MAI_VIDEO_TRANSFER_HLG
+                                          ? 1000.0f : 10000.0f;
+            gs_effect_set_float(gs_effect_get_param_by_name(effect,
+                                    "maximum_over_sdr_white_nits"), maximumNits / 300.0f);
+            gs_effect_set_float(gs_effect_get_param_by_name(effect, "hlg_exponent"), 0.2f);
+            gs_effect_set_float(gs_effect_get_param_by_name(effect, "hdr_lw"), 1000.0f);
+            gs_effect_set_float(gs_effect_get_param_by_name(effect, "hdr_lmax"), 1000.0f);
+        }
         gs_effect_set_texture(image, view->videoTextures[0]);
         gs_effect_set_texture(image1, view->videoTextures[1]);
-        if (frame.format == MAI_VIDEO_PIXEL_I420)
+        if (frame.format == MAI_VIDEO_PIXEL_I420 || frame.format == MAI_VIDEO_PIXEL_I010)
             gs_effect_set_texture(image2, view->videoTextures[2]);
         const bool previousSrgb = gs_framebuffer_srgb_enabled();
-        gs_enable_framebuffer_srgb(false);
+        gs_enable_framebuffer_srgb(highBit);
         gs_enable_blending(false);
         const size_t passes = gs_technique_begin(technique);
         bool converted = passes > 0;
@@ -751,7 +816,21 @@ private:
                                  frame.width * 4, false);
         const bool presented = drawTexture(view, texture, frame.width, frame.height,
                                            frame.subtitlePixels.empty() ? nullptr
-                                                                        : view->subtitleTexture);
+                                                                       : view->subtitleTexture,
+                                           frame.colorTransfer != MAI_VIDEO_TRANSFER_SDR);
+        if (!presented && frame.colorTransfer != MAI_VIDEO_TRANSFER_SDR &&
+            !view->highBitFailureLogged) {
+            view->highBitFailureLogged = true;
+            std::fprintf(stderr, "[MaiVideoHDR] render failed format=%d transfer=%d\n",
+                         static_cast<int>(frame.format),
+                         static_cast<int>(frame.colorTransfer));
+        }
+#if !defined(NDEBUG)
+        if (presented && frame.colorTransfer != MAI_VIDEO_TRANSFER_SDR &&
+            ++view->highBitRendered % 100 == 0)
+            std::fprintf(stderr, "[MaiVideoHDR] rendered=%llu\n",
+                         static_cast<unsigned long long>(view->highBitRendered));
+#endif
         gs_leave_context();
         return presented;
     }
@@ -759,12 +838,16 @@ private:
     std::string mBackend;
     std::string mEffectFile;
     std::string mConversionEffectFile;
+    std::string mHdrConversionEffectFile;
     gs_effect_t* mEffect = nullptr;
     gs_effect_t* mConversionEffect = nullptr;
+    gs_effect_t* mHdrConversionEffect = nullptr;
     gs_eparam_t* mImageParameter = nullptr;
     gs_technique_t* mDrawTechnique = nullptr;
+    gs_technique_t* mDrawTonemapTechnique = nullptr;
     bool mEffectAttempted = false;
     bool mConversionEffectAttempted = false;
+    bool mHdrConversionEffectAttempted = false;
     MaiGraphicsPresentCallback mCallback;
     void* mUserData;
     MaiGraphicsTaskRunner mGraphicsRunner;

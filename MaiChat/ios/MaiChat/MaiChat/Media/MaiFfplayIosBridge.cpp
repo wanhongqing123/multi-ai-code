@@ -17,6 +17,7 @@ struct MaiFfplayIosSession {
     std::atomic<bool> finished{false};
     std::atomic<int> result{0};
     std::atomic<bool> firstFrameLogged{false};
+    std::atomic<uint64_t> presentedFrames{0};
 };
 
 namespace {
@@ -24,7 +25,11 @@ namespace {
 bool presentVideo(void* user, const MaiVideoFrame* frame,
                   const MaiVideoSubtitle* subtitle) {
     auto* session = static_cast<MaiFfplayIosSession*>(user);
+    const uint64_t count = ++session->presentedFrames;
 #if !defined(NDEBUG)
+    if (count % 100 == 0)
+        std::fprintf(stderr, "[FFplayFrame] presented=%llu\n",
+                     static_cast<unsigned long long>(count));
     if (frame && !session->firstFrameLogged.exchange(true)) {
         std::fprintf(stderr, "[FFplayFrame] %ux%u format=%d colorspace=%d range=%d\n",
                      frame->width, frame->height, static_cast<int>(frame->format),
@@ -61,9 +66,26 @@ extern "C" MaiFfplayIosSession* maiFfplayIosStart(uint64_t viewId, const char* p
     try {
         session->worker = std::thread([session] {
             char name[] = "ffplay";
+            char nativeRenderer[] = "-enable_vulkan";
+            char hardwareDecode[] = "-hwaccel";
+            char videoToolbox[] = "videotoolbox";
             std::string input = session->path;
-            char* arguments[] = {name, &input[0]};
-            session->result = maiFfplayRun(&session->host, 2, arguments);
+            session->host.present_native_frames =
+                input.find("://") == std::string::npos &&
+                        maiFfplaySourceHasHdrWithoutSubtitles(input.c_str()) ? 1 : 0;
+            if (session->host.present_native_frames) {
+                char* arguments[] = {name, nativeRenderer, hardwareDecode,
+                                     videoToolbox, &input[0]};
+                session->result = maiFfplayRun(&session->host, 5, arguments);
+                if (session->result != 0 && session->presentedFrames == 0) {
+                    session->host.present_native_frames = 0;
+                    char* fallback[] = {name, &input[0]};
+                    session->result = maiFfplayRun(&session->host, 2, fallback);
+                }
+            } else {
+                char* arguments[] = {name, &input[0]};
+                session->result = maiFfplayRun(&session->host, 2, arguments);
+            }
             session->finished = true;
         });
     } catch (...) {

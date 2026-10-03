@@ -110,6 +110,11 @@ extern "C" void maiFfplayBindHost(const MaiFfplayHost* host) {
     sHost = host ? *host : MaiFfplayHost{};
 }
 
+extern "C" MaiFfplayHost maiFfplayCurrentHost(void) {
+    std::lock_guard<std::mutex> lock(sHostMutex);
+    return sHost;
+}
+
 extern "C" int maiFfplayWindowWidth(void) { return sWindowWidth; }
 
 extern "C" SDL_Window* SDL_CreateWindow(const char* title, int, int, int width,

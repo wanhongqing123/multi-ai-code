@@ -708,11 +708,16 @@ private struct AIMessageRow: View {
                 HStack {
                     Spacer(minLength: 30)
                     VStack(alignment: .leading, spacing: 10) {
-                        Text(message.text)
-                            .font(ChatTypography.body)
-                            .lineSpacing(ChatTypography.lineSpacing)
-                            .foregroundStyle(RemoteIMStyle.textPrimary)
-                            .textSelection(.enabled)
+                        if !userDisplayText.isEmpty {
+                            Text(userDisplayText)
+                                .font(ChatTypography.body)
+                                .lineSpacing(ChatTypography.lineSpacing)
+                                .foregroundStyle(RemoteIMStyle.textPrimary)
+                                .textSelection(.enabled)
+                                .padding(14)
+                                .background(Color(uiColor: .secondarySystemBackground),
+                                            in: RoundedRectangle(cornerRadius: 18))
+                        }
                         ForEach(Array(imagePaths.enumerated()), id: \.offset) { _, path in
                             AIWorkspaceImage(filePath: path)
                         }
@@ -722,8 +727,6 @@ private struct AIMessageRow: View {
                             }
                         }
                     }
-                    .padding(14)
-                    .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))
                 }
             } else {
                 if !reasoningText.isEmpty {
@@ -908,6 +911,13 @@ private struct AIMessageRow: View {
             return candidate.path
         }
     }
+    private var userDisplayText: String {
+        let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !imagePaths.isEmpty || !videoPaths.isEmpty else { return message.text }
+        let automatic = ["请查看这张图片。", "请查看这些图片。",
+                         "请查看这个视频。", "请查看这些视频。"]
+        return automatic.contains(text) ? "" : message.text
+    }
     private var videoPaths: [String] {
         guard !workspacePath.isEmpty else { return [] }
         let root = URL(fileURLWithPath: workspacePath, isDirectory: true)
@@ -985,23 +995,45 @@ private struct AIPDFArtifactButton: View {
 
 private struct AIWorkspaceImage: View {
     let filePath: String
+    @State private var decodedSize: CGSize?
+
+    private var previewSize: CGSize {
+        guard let decodedSize, decodedSize.width > 0, decodedSize.height > 0 else {
+            return CGSize(width: 240, height: 200)
+        }
+        let scale = min(240 / decodedSize.width, 300 / decodedSize.height)
+        return CGSize(width: decodedSize.width * scale,
+                      height: decodedSize.height * scale)
+    }
 
     var body: some View {
-        RemoteIMAsyncImage(filePath: filePath,
-                           maximumPointSize: CGSize(width: 240, height: 200)) { image in
+        Button {
+            AIAssistantModel.shared.previewImage = AIImagePreview(filePath: filePath)
+        } label: {
+            RemoteIMAsyncImage(filePath: filePath,
+                           maximumPointSize: previewSize) { image in
                 Image(uiImage: image).resizable().scaledToFit()
-                    .frame(width: 240, height: 200)
+                    .frame(width: previewSize.width, height: previewSize.height)
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .task(id: image.size) {
+                        if let pixels = image.cgImage {
+                            decodedSize = CGSize(width: pixels.width, height: pixels.height)
+                        }
+                    }
                     .accessibilityLabel("AI 助手图片附件")
-        } placeholder: { failed in
-            if failed {
-                Label("图片无法显示", systemImage: "photo")
-                    .foregroundStyle(Color.secondary)
-                    .frame(width: 180, height: 120)
-            } else {
-                Color.clear.frame(width: 240, height: 200)
+            } placeholder: { failed in
+                if failed {
+                    Label("图片无法显示", systemImage: "photo")
+                        .foregroundStyle(Color.secondary)
+                        .frame(width: previewSize.width, height: previewSize.height)
+                } else {
+                    Color.clear.frame(width: previewSize.width, height: previewSize.height)
+                }
             }
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel("放大图片")
+        .accessibilityIdentifier("agent-image-bubble")
     }
 }
 
@@ -1016,38 +1048,41 @@ private struct AIWorkspaceVideoCard: View {
 
     var body: some View {
         Button(action: open) {
-            VStack(alignment: .leading, spacing: 6) {
-                ZStack {
-                    if let cover {
-                        Image(uiImage: cover).resizable().scaledToFit()
-                    } else {
-                        LinearGradient(colors: [Color(red: 0.10, green: 0.17, blue: 0.27),
-                                                Color(red: 0.18, green: 0.32, blue: 0.47)],
-                                       startPoint: .topLeading, endPoint: .bottomTrailing)
-                    }
-                    Image(systemName: exists ? "play.fill" : "exclamationmark.triangle.fill")
-                        .font(.system(size: 20, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 52, height: 52)
-                        .background(.black.opacity(0.5), in: Circle())
-                    Text(String(format: "%d:%02d", durationSeconds / 60,
-                                durationSeconds % 60))
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 7)
-                        .frame(height: 22)
-                        .background(.black.opacity(0.56), in: Capsule())
-                        .frame(maxWidth: .infinity, maxHeight: .infinity,
-                               alignment: .bottomTrailing)
-                        .padding(8)
+            ZStack {
+                if let cover {
+                    Image(uiImage: cover).resizable().scaledToFit()
+                } else {
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0.10, green: 0.17, blue: 0.27),
+                            Color(red: 0.18, green: 0.32, blue: 0.47),
+                        ],
+                        startPoint: .topLeading, endPoint: .bottomTrailing)
                 }
-                .frame(width: previewSize.width, height: previewSize.height)
-                .clipped()
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                Text(exists ? URL(fileURLWithPath: filePath).lastPathComponent : "视频文件已丢失")
-                    .font(AssistantMessageFont.detail).lineLimit(1).truncationMode(.middle)
-                    .frame(width: previewSize.width, alignment: .leading)
+                Image(systemName: exists ? "play.fill" : "exclamationmark.triangle.fill")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 52, height: 52)
+                    .background(.black.opacity(0.5), in: Circle())
+                Text(
+                    String(
+                        format: "%d:%02d", durationSeconds / 60,
+                        durationSeconds % 60)
+                )
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 7)
+                .frame(height: 22)
+                .background(.black.opacity(0.56), in: Capsule())
+                .frame(
+                    maxWidth: .infinity, maxHeight: .infinity,
+                    alignment: .bottomTrailing
+                )
+                .padding(8)
             }
+            .frame(width: previewSize.width, height: previewSize.height)
+            .clipped()
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
         .buttonStyle(.plain)
         .disabled(!exists)
@@ -1057,20 +1092,23 @@ private struct AIWorkspaceVideoCard: View {
             guard exists else { return }
             let asset = AVURLAsset(url: URL(fileURLWithPath: filePath))
             if let track = try? await asset.loadTracks(withMediaType: .video).first,
-               let naturalSize = try? await track.load(.naturalSize),
-               let transform = try? await track.load(.preferredTransform) {
+                let naturalSize = try? await track.load(.naturalSize),
+                let transform = try? await track.load(.preferredTransform)
+            {
                 let displayed = CGRect(origin: .zero, size: naturalSize).applying(transform)
                 videoSize = CGSize(width: abs(displayed.width), height: abs(displayed.height))
             }
             if let duration = try? await asset.load(.duration),
-               duration.seconds.isFinite {
+                duration.seconds.isFinite
+            {
                 durationSeconds = max(0, Int(duration.seconds))
             }
             let generator = AVAssetImageGenerator(asset: asset)
             generator.appliesPreferredTrackTransform = true
             generator.maximumSize = CGSize(width: 440, height: 480)
-            let time = CMTime(seconds: durationSeconds > 1 ? 0.5 : 0,
-                              preferredTimescale: 600)
+            let time = CMTime(
+                seconds: durationSeconds > 1 ? 0.5 : 0,
+                preferredTimescale: 600)
             if let image = try? await generator.image(at: time), !Task.isCancelled {
                 videoSize = CGSize(width: image.image.width, height: image.image.height)
                 cover = UIImage(cgImage: image.image)
@@ -1132,20 +1170,24 @@ struct AIHistoryUITestRoot: View {
 private struct AIImagePreviewOverlay: View {
     let filePath: String
     let close: () -> Void
-    @State private var failed = false
 
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .topTrailing) {
                 Color.black.ignoresSafeArea()
-                if !failed {
-                    MaiGraphicsImageSurface(filePath: filePath) { failed = true }
+                RemoteIMAsyncImage(filePath: filePath,
+                                   maximumPointSize: geometry.size) { image in
+                    Image(uiImage: image).resizable().scaledToFit()
                         .frame(width: geometry.size.width, height: geometry.size.height)
                         .accessibilityLabel("Agent 处理后的图片预览")
-                } else {
-                    Label("图片无法显示", systemImage: "photo")
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } placeholder: { failed in
+                    if failed {
+                        Label("图片无法显示", systemImage: "photo")
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        ProgressView().tint(.white)
+                    }
                 }
                 Button(action: close) {
                     Image(systemName: "xmark")
@@ -1158,7 +1200,6 @@ private struct AIImagePreviewOverlay: View {
                 .padding(20)
             }
         }
-        .onChange(of: filePath) { _ in failed = false }
     }
 }
 

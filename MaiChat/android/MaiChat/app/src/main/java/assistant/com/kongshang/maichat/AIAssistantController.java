@@ -107,6 +107,8 @@ public final class AIAssistantController {
     private long handle;
     private File root;
     private File rvmModelFile;
+    private File faceDetectorModelFile;
+    private File faceLandmarkerModelFile;
     private String selected = "", baseUrl = state.baseUrl, model = state.model, policy = state.policy,
                    error = "", apiKey = "";
     private JSONObject data = new JSONObject();
@@ -224,8 +226,16 @@ public final class AIAssistantController {
                 testEndpoint == null ? "AIAssistant" : "AIAssistantTest-" + UUID.randomUUID());
             if (!root.mkdirs() && !root.isDirectory())
                 throw new IllegalStateException("无法创建 AI 工作区");
-            try { rvmModelFile = prepareRvmModel(); }
-            catch (Exception failure) { Log.w("MaiChatAgent", "RVM model staging failed", failure); }
+            try {
+                rvmModelFile = prepareBundledModel("rvm_mobilenetv3_fp32.onnx",
+                    "88d4531297118f595bf2fd60f6f566aec2e559393802d1f436c380f0cbbd2828");
+                faceDetectorModelFile = prepareBundledModel("face_detection_short_range.onnx",
+                    "2f2689b040becf555706d2cb978d2f0e3296ea82413734fba9a856c66c5f2b17");
+                faceLandmarkerModelFile = prepareBundledModel(
+                    "face_landmarker_Nx3x256x256.onnx",
+                    "111795f8703cdeb6d0c68a9f3cc966a0f23f8786bb00f4577a11f461fc4276ac");
+            }
+            catch (Exception failure) { Log.w("MaiChatAgent", "Agent model staging failed", failure); }
             File settings = new File(root, "settings.json");
             if (settings.isFile()) {
                 JSONObject saved =
@@ -293,21 +303,24 @@ public final class AIAssistantController {
                 .put("workspace", workspace.getPath())
                 .put("appRoot", context.getFilesDir().getParentFile().getCanonicalPath())
                 .put("rvmModelPath", rvmModelFile != null ? rvmModelFile.getPath() : "")
+                .put("faceDetectorModelPath", faceDetectorModelFile != null
+                    ? faceDetectorModelFile.getPath() : "")
+                .put("faceLandmarkerModelPath", faceLandmarkerModelFile != null
+                    ? faceLandmarkerModelFile.getPath() : "")
                 .put("ortRuntimePath", runtime.isFile() ? runtime.getPath() : "")
                 .put("caBundle", new File(root, "trusted-roots.pem").getPath()));
     }
 
-    private File prepareRvmModel() throws Exception {
-        final String expected = "88d4531297118f595bf2fd60f6f566aec2e559393802d1f436c380f0cbbd2828";
+    private File prepareBundledModel(String name, String expected) throws Exception {
         File directory = new File(root, "Models");
         if (!directory.mkdirs() && !directory.isDirectory())
             throw new IOException("Cannot create Agent model directory");
-        File target = new File(directory, "rvm_mobilenetv3_fp32.onnx");
+        File target = new File(directory, name);
         if (target.isFile() && expected.equals(sha256(target))) return target;
-        File staged = new File(directory, "rvm_mobilenetv3_fp32.onnx.part");
+        File staged = new File(directory, name + ".part");
         try {
             try (InputStream input = context.getAssets().open(
-                     "MaiAgentModels/rvm_mobilenetv3_fp32.onnx");
+                     "MaiAgentModels/" + name);
                  FileOutputStream output = new FileOutputStream(staged)) {
                 byte[] bytes = new byte[1024 * 1024];
                 int count;
@@ -315,7 +328,7 @@ public final class AIAssistantController {
                 output.getFD().sync();
             }
             if (!expected.equals(sha256(staged)))
-                throw new IOException("Bundled RVM model checksum is invalid");
+                throw new IOException("Bundled Agent model checksum is invalid: " + name);
             try {
                 Files.move(staged.toPath(), target.toPath(),
                     StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);

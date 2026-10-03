@@ -7,6 +7,9 @@
 #include "MaiCvVideoTools.h"
 #include "MaiDownloadFileTool.h"
 #include "MaiEditTool.h"
+#include "MaiFaceBeautify.h"
+#include "MaiFaceBeautifyTool.h"
+#include "MaiFaceImageCodecBridge.h"
 #include "MaiFilePath.h"
 #include "MaiFileSystem.h"
 #include "MaiFileTools.h"
@@ -22,6 +25,8 @@
 #include "MaiVideoMattingTool.h"
 #include "MaiWebFetchTool.h"
 #include "mai_fftools_embed.h"
+#include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <json.hpp>
@@ -45,7 +50,9 @@ constexpr auto kMarkdownBaseInstructions =
     "mobile_request_permission for that capability and retry once if granted. A limited grant "
     "may still allow the operation, such as reading selected photos or using approximate "
     "location; retry once when that access is sufficient. If the OS reports settings_required, "
-    "tell the user which permission to enable instead of retrying in a loop.";
+    "tell the user which permission to enable instead of retrying in a loop. For any gallery "
+    "photo edit, use mobile_export_photo_original as the input; mobile_read_photo returns a "
+    "bounded JPEG preview that loses resolution and wide-gamut metadata.";
 
 std::string encodeBase64(const std::string& input) {
     constexpr char kAlphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -154,6 +161,17 @@ struct MaiMobileAgent {
                 tools->add(makeMaiVideoMattingTool(maiMatteVideo, rvmModel, ortRuntime,
                                                     ortApiBase));
             }
+        }
+        const std::string faceDetector = request.value("faceDetectorModelPath", "");
+        const std::string faceLandmarker = request.value("faceLandmarkerModelPath", "");
+        if (!faceDetector.empty() && !faceLandmarker.empty() &&
+            MaiFileSystem::exists(MaiFilePath::fromUtf8(faceDetector)) &&
+            MaiFileSystem::exists(MaiFilePath::fromUtf8(faceLandmarker)) &&
+            (ortApiBase != nullptr ||
+             (!ortRuntime.empty() && MaiFileSystem::exists(MaiFilePath::fromUtf8(ortRuntime))))) {
+            tools->add(makeMaiFaceBeautifyTool(maiBeautifyFaceImage, faceDetector,
+                                                faceLandmarker, ortRuntime, ortApiBase,
+                                                maiDecodeFaceImage, maiEncodeFacePng));
         }
         tools->add(makeMaiPdfTool([dispatcher = hostTools](
                                       const std::string& html, const std::string& output,

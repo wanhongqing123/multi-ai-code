@@ -2,6 +2,11 @@
 #include "MaiOpenAiClient.h"
 #include "MaiMemoryStore.h"
 #include "MaiSqliteStore.h"
+#if defined(MAICHAT_FACE_BEAUTIFY)
+#include "MaiFaceBeautify.h"
+#include "MaiFaceBeautifyTool.h"
+#include "MaiFaceImageCodecBridge.h"
+#endif
 #if defined(MAICHAT_CV_VIDEO_ANALYSIS)
 #include "MaiCvVideoAnalysis.h"
 #include "MaiCvVideoTools.h"
@@ -24,6 +29,7 @@
 #include <QHash>
 #include <QMetaType>
 #include <QMimeDatabase>
+#include <cstddef>
 #include <variant>
 
 namespace {
@@ -134,6 +140,27 @@ std::unique_ptr<MaiAgent> buildAgent(std::unique_ptr<MaiModelClient> model,
                                             toUtf8(runtimePath)));
     }
 #endif
+#endif
+#if defined(MAICHAT_FACE_BEAUTIFY)
+    const QDir faceModelDirectory(QCoreApplication::applicationDirPath());
+#if defined(Q_OS_WIN)
+    const QString faceModelRoot = faceModelDirectory.filePath(QStringLiteral("MaiAgentModels"));
+    const QString faceRuntime = faceModelDirectory.filePath(QStringLiteral("onnxruntime.dll"));
+#else
+    const QString faceModelRoot = faceModelDirectory.filePath(
+        QStringLiteral("../Resources/MaiAgentModels"));
+    const QString faceRuntime = faceModelDirectory.filePath(
+        QStringLiteral("../Frameworks/libonnxruntime.1.26.0.dylib"));
+#endif
+    const QString detector = QDir(faceModelRoot).filePath(
+        QStringLiteral("face_detection_short_range.onnx"));
+    const QString landmarker = QDir(faceModelRoot).filePath(
+        QStringLiteral("face_landmarker_Nx3x256x256.onnx"));
+    if (QFileInfo::exists(detector) && QFileInfo::exists(landmarker) &&
+        QFileInfo::exists(faceRuntime))
+        tools->add(makeMaiFaceBeautifyTool(maiBeautifyFaceImage, toUtf8(detector),
+                                            toUtf8(landmarker), toUtf8(faceRuntime), nullptr,
+                                            maiDecodeFaceImage, maiEncodeFacePng));
 #endif
     tools->add(makeMaiPdfTool(renderDesktopPdf));
 #if defined(MAICHAT_DESKTOP_VISION)

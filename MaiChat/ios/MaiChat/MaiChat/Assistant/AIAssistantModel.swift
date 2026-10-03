@@ -196,6 +196,12 @@ actor AIAssistantBackend {
             "model": config.model, "policy": config.policy, "appRoot": appRootPath,
             "rvmModelPath": Bundle.main.url(
                 forResource: "rvm_mobilenetv3_fp32", withExtension: "onnx",
+                subdirectory: "MaiAgentModels")?.path ?? "",
+            "faceDetectorModelPath": Bundle.main.url(
+                forResource: "face_detection_short_range", withExtension: "onnx",
+                subdirectory: "MaiAgentModels")?.path ?? "",
+            "faceLandmarkerModelPath": Bundle.main.url(
+                forResource: "face_landmarker_Nx3x256x256", withExtension: "onnx",
                 subdirectory: "MaiAgentModels")?.path ?? ""])
     }
 

@@ -131,6 +131,18 @@ endforeach()
 add_library(maiagent_cv_video_analysis STATIC
   ../../MaiAgent/AgentTools/MaiCvVideoAnalysis.cpp
   ../../MaiAgent/AgentTools/MaiVideoMatting.cpp)
+add_library(maiagent_face_beautify STATIC
+  ../../MaiAgent/AgentTools/MaiFaceBeautify.cpp)
+target_include_directories(maiagent_face_beautify PRIVATE
+  ../../MaiAgent/include
+  ../../MaiAgent/third_party/onnxruntime/include
+  "${CMAKE_BINARY_DIR}"
+  "${CMAKE_CURRENT_BINARY_DIR}/opencv"
+  "${maichat_opencv_source}/modules/core/include"
+  "${maichat_opencv_source}/modules/imgproc/include"
+  "${maichat_opencv_source}/modules/imgcodecs/include")
+target_link_libraries(maiagent_face_beautify PUBLIC
+  opencv_imgproc opencv_imgcodecs maiagent)
 target_include_directories(maiagent_cv_video_analysis PRIVATE
   ../../MaiAgent/include "${ffmpeg_build}/install/include"
   "${CMAKE_BINARY_DIR}"
@@ -159,6 +171,8 @@ add_library(maichat_mobile STATIC
   ../Media/MaiVideoPlayback.cpp
   ../Media/MaiVideoColorParameters.cpp
   ../Media/MaiImageDecode.cpp
+  ../Media/MaiImageEncode.cpp
+  ../Media/MaiFaceImageCodecBridge.cpp
   ../MaiChatTools/MaiImageFilter.cpp
   ../MaiChatTools/MaiMobileHostTools.cpp)
 if(ANDROID)
@@ -175,6 +189,7 @@ target_include_directories(maichat_mobile PRIVATE
 target_include_directories(maichat_mobile PUBLIC . ../MaiChatTools ../Media
   PRIVATE ../../MaiAgent/third_party/nlohmann)
 target_link_libraries(maichat_mobile PRIVATE maiagent
+  maiagent_face_beautify
   maiagent_cv_video_analysis
   maichat_ffmpeg_tools
   maichat_ffmpeg_avdevice maichat_ffmpeg_avfilter maichat_ffmpeg_avformat

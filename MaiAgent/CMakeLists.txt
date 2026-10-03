@@ -171,6 +171,7 @@ add_library(maiagent STATIC
   AgentTools/MaiRvmMatting.cpp
   AgentTools/MaiRvmComposite.cpp
   AgentTools/MaiVideoMattingTool.cpp
+  AgentTools/MaiFaceBeautifyTool.cpp
   AgentTools/MaiTodoWriteTool.cpp
   AgentTools/MaiQuestionTool.cpp
   AgentTools/MaiSubAgentTools.cpp

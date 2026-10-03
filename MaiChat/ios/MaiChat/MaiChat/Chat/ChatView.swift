@@ -177,12 +177,28 @@ private actor RemoteIMImagePipeline {
         }
         let byteCount = Int(decoded.stride) * Int(decoded.height)
         let bytes = Data(bytes: pixels, count: byteCount)
+        let iccData = decoded.icc_profile.flatMap { profile -> Data? in
+            guard decoded.icc_size > 0 else { return nil }
+            return Data(bytes: profile, count: Int(decoded.icc_size))
+        }
         maiImageDecodeFree(UnsafeMutableRawPointer(pixels))
+        let imageURL = URL(fileURLWithPath: request.filePath)
+        let imageSource = CGImageSourceCreateWithURL(imageURL as CFURL, nil)
+        let previewOptions: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: 32,
+        ]
+        let sourceColorSpace = iccData.flatMap { CGColorSpace(iccData: $0 as CFData) }
+            ?? imageSource.flatMap {
+            CGImageSourceCreateThumbnailAtIndex($0, 0, previewOptions as CFDictionary)?.colorSpace
+        }
+        let displayColorSpace = sourceColorSpace?.model == .rgb
+            ? sourceColorSpace! : CGColorSpaceCreateDeviceRGB()
         guard let provider = CGDataProvider(data: bytes as CFData),
               let cgImage = CGImage(
                   width: Int(decoded.width), height: Int(decoded.height),
                   bitsPerComponent: 8, bitsPerPixel: 32,
-                  bytesPerRow: Int(decoded.stride), space: CGColorSpaceCreateDeviceRGB(),
+                  bytesPerRow: Int(decoded.stride), space: displayColorSpace,
                   bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue)
                       .union(.byteOrder32Big), provider: provider, decode: nil,
                   shouldInterpolate: true, intent: .defaultIntent
@@ -2823,9 +2839,10 @@ private struct MessageBubbleView: View {
                     .clipped()
                 }
             }
-            .padding(.horizontal, 13)
-            .padding(.vertical, 11)
-            .background(bubbleBackground, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .padding(.horizontal, isVisualMedia ? 0 : 13)
+            .padding(.vertical, isVisualMedia ? 0 : 11)
+            .background(isVisualMedia ? Color.clear : bubbleBackground,
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
             if message.direction == .outgoing {
                 StatusIcon(status: message.status)
@@ -2897,6 +2914,10 @@ private struct MessageBubbleView: View {
 
     private var bubbleBackground: Color {
         message.direction == .outgoing ? RemoteIMStyle.outgoingBubbleBackground : .clear
+    }
+
+    private var isVisualMedia: Bool {
+        message.imageAttachment != nil || message.videoAttachment != nil
     }
 }
 
@@ -3437,7 +3458,6 @@ private struct FullScreenImagePreviewView: View {
     let close: () -> Void
     @State private var isSaving = false
     @State private var saveResultText: String?
-    @State private var directFailed = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -3508,15 +3528,16 @@ private struct FullScreenImagePreviewView: View {
     }
 
     private func previewImage(frame: CGRect) -> some View {
-        Group {
-            if directFailed {
+        RemoteIMAsyncImage(filePath: presentation.item.localFilePath,
+                           maximumPointSize: UIScreen.main.bounds.size) { image in
+            Image(uiImage: image).resizable().scaledToFit()
+        } placeholder: { failed in
+            if failed {
                 Label("图片无法显示", systemImage: "photo")
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                MaiGraphicsImageSurface(filePath: presentation.item.localFilePath) {
-                    directFailed = true
-                }
+                ProgressView().tint(.white)
             }
         }
             .frame(width: frame.width, height: frame.height)
@@ -3862,96 +3883,88 @@ private struct VideoBubbleContent: View {
     @State private var coverSize: CGSize?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            ZStack {
-                if let cover = attachment.coverPath {
-                    RemoteIMAsyncImage(filePath: cover,
-                                       maximumPointSize: previewSize,
-                                       revision: appState.mediaFileRevision) { image in
-                        Image(uiImage: image).resizable().scaledToFit()
-                            .task(id: image.size) { coverSize = image.size }
-                    } placeholder: { _ in
-                        Color.clear
-                    }
-                    .frame(width: previewSize.width, height: previewSize.height)
-                    .clipped()
-                    .accessibilityLabel("视频封面")
-                    .accessibilityIdentifier("remote-im-video-cover")
-                } else {
-                    ZStack {
-                        LinearGradient(
-                            colors: [Color(red: 0.10, green: 0.17, blue: 0.27),
-                                     Color(red: 0.18, green: 0.32, blue: 0.47)],
-                            startPoint: .topLeading, endPoint: .bottomTrailing)
-                        Image(systemName: "video.fill")
-                            .font(.system(size: 30, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.72))
-                    }
-                    .frame(width: previewSize.width, height: previewSize.height)
+        ZStack {
+            if let cover = attachment.coverPath {
+                RemoteIMAsyncImage(
+                    filePath: cover,
+                    maximumPointSize: previewSize,
+                    revision: appState.mediaFileRevision
+                ) { image in
+                    Image(uiImage: image).resizable().scaledToFit()
+                        .task(id: image.size) { coverSize = image.size }
+                } placeholder: { _ in
+                    Color.clear
                 }
-
-                if fileState.isPlayable {
-                    Image(systemName: "play.fill")
-                        .font(.system(size: 20, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 52, height: 52)
-                        .background(.black.opacity(0.5), in: Circle())
-                        .overlay(Circle().stroke(.white.opacity(0.85), lineWidth: 1.5))
-                } else if fileState.isDownloading {
-                    VStack(spacing: 8) {
-                        ProgressView()
-                            .tint(.white)
-                        Text("视频下载中")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.white)
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(.black.opacity(0.5), in: Capsule())
-                } else {
-                    VStack(spacing: 8) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 20, weight: .bold))
-                        Text(isIncoming ? "视频文件已丢失" : "本地视频已丢失")
-                            .font(.system(size: 12, weight: .semibold))
-                    }
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(.black.opacity(0.56), in: Capsule())
+                .frame(width: previewSize.width, height: previewSize.height)
+                .clipped()
+                .accessibilityLabel("视频封面")
+                .accessibilityIdentifier("remote-im-video-cover")
+            } else {
+                ZStack {
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0.10, green: 0.17, blue: 0.27),
+                            Color(red: 0.18, green: 0.32, blue: 0.47),
+                        ],
+                        startPoint: .topLeading, endPoint: .bottomTrailing)
+                    Image(systemName: "video.fill")
+                        .font(.system(size: 30, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.72))
                 }
-
-                Text(durationText)
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 7)
-                    .frame(height: 22)
-                    .background(.black.opacity(0.56), in: Capsule())
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                    .padding(8)
+                .frame(width: previewSize.width, height: previewSize.height)
             }
-            .frame(width: previewSize.width, height: previewSize.height)
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .background(Color(red: 0.945, green: 0.957, blue: 0.973), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
-            Text(videoStatusText)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(RemoteIMStyle.textSecondary)
-                .frame(width: previewSize.width, alignment: .leading)
-                .accessibilityIdentifier("remote-im-video-status")
+            if fileState.isPlayable {
+                Image(systemName: "play.fill")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 52, height: 52)
+                    .background(.black.opacity(0.5), in: Circle())
+                    .overlay(Circle().stroke(.white.opacity(0.85), lineWidth: 1.5))
+            } else if fileState.isDownloading {
+                VStack(spacing: 8) {
+                    ProgressView()
+                        .tint(.white)
+                    Text("视频下载中")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(.black.opacity(0.5), in: Capsule())
+            } else {
+                VStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 20, weight: .bold))
+                    Text(isIncoming ? "视频文件已丢失" : "本地视频已丢失")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(.black.opacity(0.56), in: Capsule())
+            }
+
+            Text(durationText)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 7)
+                .frame(height: 22)
+                .background(.black.opacity(0.56), in: Capsule())
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                .padding(8)
         }
+        .frame(width: previewSize.width, height: previewSize.height)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .contentShape(Rectangle())
     }
 
-    private var videoStatusText: String {
-        if fileState.isPlayable { return "点击播放" }
-        if fileState.isDownloading { return "封面可先显示，视频正在后台下载" }
-        return isIncoming ? "视频文件已丢失，暂时无法播放" : "本地视频文件已丢失"
-    }
-
     private var previewSize: CGSize {
-        VideoBubbleSize.fitted(coverSize ?? CGSize(width: attachment.width,
-                                                 height: attachment.height))
+        VideoBubbleSize.fitted(
+            coverSize
+                ?? CGSize(
+                    width: attachment.width,
+                    height: attachment.height))
     }
 
     private var durationText: String {
@@ -3965,10 +3978,11 @@ private struct ImageBubbleContent: View {
     let attachment: RemoteIMImageAttachment
     let previewImage: (CGSize, CGRect) -> Void
     @EnvironmentObject private var appState: RemoteIMAppState
+    @State private var decodedSize: CGSize?
 
     private var imageSize: CGSize {
-        CGSize(width: max(1, attachment.width ?? 220),
-               height: max(1, attachment.height ?? 180))
+        decodedSize ?? CGSize(width: max(1, attachment.width ?? 220),
+                              height: max(1, attachment.height ?? 180))
     }
 
     private var thumbnailSize: CGSize {
@@ -3977,11 +3991,15 @@ private struct ImageBubbleContent: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            RemoteIMAsyncImage(filePath: attachment.localFilePath,
+        RemoteIMAsyncImage(filePath: attachment.localFilePath,
                                maximumPointSize: thumbnailSize,
                                revision: appState.mediaFileRevision) { image in
                 Image(uiImage: image).resizable().scaledToFit()
+                    .task(id: image.size) {
+                        if let pixels = image.cgImage {
+                            decodedSize = CGSize(width: pixels.width, height: pixels.height)
+                        }
+                    }
             } placeholder: { failed in
                 if failed {
                     Label("图片无法显示", systemImage: "photo")
@@ -3993,8 +4011,6 @@ private struct ImageBubbleContent: View {
             }
             .frame(width: thumbnailSize.width, height: thumbnailSize.height)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .background(Color(red: 0.945, green: 0.957, blue: 0.973),
-                        in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
                 GeometryReader { geometry in
                     Button {
@@ -4021,12 +4037,6 @@ private struct ImageBubbleContent: View {
                     .accessibilityIdentifier("remote-im-message-image")
                 }
             }
-            Text(URL(fileURLWithPath: attachment.localFilePath).lastPathComponent)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(RemoteIMStyle.textSecondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-        }
     }
 }
 

@@ -8,6 +8,20 @@
 
 int main(int argc, char** argv) {
     QGuiApplication application(argc, argv);
+    if (argc == 4 || argc == 5) {
+        const MaiImageDecodeResult image = maiImageDecodeFile(argv[1], 0, 0);
+        const int expectedWidth = QByteArray(argv[2]).toInt();
+        const int expectedHeight = QByteArray(argv[3]).toInt();
+        bool matches = image.rgba && image.error_code == 0 &&
+                       image.width == expectedWidth && image.height == expectedHeight;
+        if (matches && argc == 5) {
+            const QImage decoded(image.rgba, image.width, image.height, image.stride,
+                                 QImage::Format_RGBA8888);
+            matches = decoded.save(argv[4], "PNG");
+        }
+        maiImageDecodeFree(image.rgba);
+        return matches ? 0 : 8;
+    }
     QTemporaryDir temporary;
     if (!temporary.isValid()) return 2;
 

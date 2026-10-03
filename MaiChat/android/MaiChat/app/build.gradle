@@ -75,6 +75,15 @@ tasks.register("stageMaiAgentGraphicsEffects", Sync) {
         include "rvm_mobilenetv3_fp32.onnx", "RVM_LICENSE"
         into "MaiAgentModels"
     }
+    from(file("$projectDir/../../../../MaiAgent/models/face_landmarker")) {
+        include "face_detection_short_range.onnx", "face_landmarker_Nx3x256x256.onnx"
+        into "MaiAgentModels"
+    }
+    from(file("$projectDir/../../../../MaiAgent/models/face_landmarker")) {
+        include "LICENSE"
+        rename "LICENSE", "FACE_LANDMARKER_LICENSE"
+        into "MaiAgentModels"
+    }
     into graphicsEffectsOutput
 }
 android.sourceSets.main.assets.srcDir(graphicsEffectsOutput)

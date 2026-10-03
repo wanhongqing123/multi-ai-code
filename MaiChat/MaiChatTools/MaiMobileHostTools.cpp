@@ -251,7 +251,9 @@ void registerMobilePhotoTools(MaiToolRegistry& tools,
         R"({"type":"object","properties":{}})", dispatcher, false));
     tools.add(std::make_unique<MaiMobileHostTool>(
         "mobile_read_photo",
-        "Copy one photo preview by ID into the Agent working directory. Use "
+        "Copy one bounded JPEG preview by ID into the Agent working directory (up to 2048px). "
+        "This loses original resolution and wide-gamut metadata; never use it as an editing "
+        "source. Use mobile_export_photo_original before image processing. Use "
         "mobile_preview_image to show it to the user, or view_image with a vision-capable model. "
         "Only images authorized by the OS photo-library permission can be read.",
         R"({"type":"object","properties":{"id":{"type":"string"}},"required":["id"]})",
@@ -259,7 +261,8 @@ void registerMobilePhotoTools(MaiToolRegistry& tools,
     tools.add(std::make_unique<MaiMobileHostTool>(
         "mobile_export_photo_original",
         "Copy the original photo or video bytes by ID from the authorized system library into "
-        "the Agent working directory. The library item stays unchanged. For an iOS Live Photo, "
+        "the Agent working directory, preserving the source format and color metadata. Use this "
+        "for any image edit or media conversion. The library item stays unchanged. For an iOS Live Photo, "
         "component=video exports its paired video; otherwise its still photo is exported.",
         R"({"type":"object","properties":{"id":{"type":"string"},"component":{"type":"string","enum":["photo","video"]}},"required":["id"]})",
         dispatcher, false));

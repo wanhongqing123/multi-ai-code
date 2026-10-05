@@ -2997,6 +2997,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         return box;
     }
 
+    @SuppressLint("ClickableViewAccessibility")
     public void showFullScreenImage(String path) {
         Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
         FrameLayout frame = new FrameLayout(this);
@@ -3010,6 +3011,53 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                 toast("图片暂不可预览");
                 dialog.dismiss();
             });
+        final float[] scale = {1f};
+        final float[] last = {0f, 0f};
+        ScaleGestureDetector zoom = new ScaleGestureDetector(this,
+            new ScaleGestureDetector.SimpleOnScaleGestureListener() {
+                @Override
+                public boolean onScale(ScaleGestureDetector detector) {
+                    scale[0] = Math.max(1f, Math.min(4f,
+                        scale[0] * detector.getScaleFactor()));
+                    image.setScaleX(scale[0]);
+                    image.setScaleY(scale[0]);
+                    float maxX = image.getWidth() * (scale[0] - 1f) / 2f;
+                    float maxY = image.getHeight() * (scale[0] - 1f) / 2f;
+                    image.setTranslationX(Math.max(-maxX,
+                        Math.min(maxX, image.getTranslationX())));
+                    image.setTranslationY(Math.max(-maxY,
+                        Math.min(maxY, image.getTranslationY())));
+                    return true;
+                }
+            });
+        image.setOnTouchListener((view, event) -> {
+            zoom.onTouchEvent(event);
+            if (event.getActionMasked() == MotionEvent.ACTION_POINTER_UP) {
+                last[0] = event.getX(0);
+                last[1] = event.getY(0);
+                return true;
+            }
+            if (event.getPointerCount() > 1) return true;
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    last[0] = event.getX();
+                    last[1] = event.getY();
+                    return true;
+                case MotionEvent.ACTION_MOVE:
+                    if (scale[0] <= 1.01f) return true;
+                    float maxX = image.getWidth() * (scale[0] - 1f) / 2f;
+                    float maxY = image.getHeight() * (scale[0] - 1f) / 2f;
+                    image.setTranslationX(Math.max(-maxX,
+                        Math.min(maxX, image.getTranslationX() + event.getX() - last[0])));
+                    image.setTranslationY(Math.max(-maxY,
+                        Math.min(maxY, image.getTranslationY() + event.getY() - last[1])));
+                    last[0] = event.getX();
+                    last[1] = event.getY();
+                    return true;
+                default:
+                    return true;
+            }
+        });
         frame.addView(image, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT

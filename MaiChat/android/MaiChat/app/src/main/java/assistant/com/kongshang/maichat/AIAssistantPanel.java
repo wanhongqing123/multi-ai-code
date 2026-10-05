@@ -313,12 +313,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         }
         String source = composer.getText().toString(), origin = selected;
         List<AIAssistantController.ImportedFile> sending = new ArrayList<>(currentAttachments());
-        if (source.trim().isEmpty() && !sending.isEmpty()) {
-            boolean containsVideo = sending.stream().anyMatch(
-                file -> file.mimeType.startsWith("video/"));
-            source = containsVideo ? (sending.size() == 1 ? "请查看这个视频。" : "请查看这些媒体。")
-                : (sending.size() == 1 ? "请查看这张图片。" : "请查看这些图片。");
-        }
+        if (source.trim().isEmpty() && sending.isEmpty()) return;
         if (sending.stream().anyMatch(file -> file.image) &&
             !AIAssistantMediaPolicy.supportsImages(state.model)) {
             Toast.makeText(activity, "glm-5.3 仅支持文本，请先切换到 glm-5.3-flash。",
@@ -586,6 +581,75 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         }
         return value;
     }
+    private boolean isPaidGeneration(String tool) {
+        return tool.equals("wan_video") || tool.equals("wan_video_edit")
+            || tool.equals("seedance_video") || tool.equals("seedream_image")
+            || tool.equals("qwen_image") || tool.equals("glm_video") || tool.equals("glm_image");
+    }
+    private String paidApprovalTitle(String tool, JSONObject input) {
+        boolean video = tool.equals("wan_video") || tool.equals("wan_video_edit")
+            || tool.equals("seedance_video") || tool.equals("glm_video");
+        return "确认" + (isPaidRevision(tool, input) ? "编辑" : "生成")
+            + (video ? "视频" : "图片");
+    }
+    private boolean isPaidRevision(String tool, JSONObject input) {
+        return input.optString("action").equals("revise")
+            || input.optString("mode").equals("edit")
+            || input.optString("mode").equals("extend") || tool.equals("wan_video_edit");
+    }
+    private String paidProvider(String tool) {
+        if (tool.equals("wan_video") || tool.equals("wan_video_edit")) return "万相";
+        if (tool.equals("qwen_image")) return "通义千问";
+        if (tool.equals("glm_video") || tool.equals("glm_image")) return "GLM";
+        return tool.equals("seedance_video") ? "Seedance" : "Seedream";
+    }
+    private String paidSpecs(JSONObject input) {
+        JSONObject production = input.optJSONObject("production");
+        if (production == null) production = new JSONObject();
+        java.util.List<String> values = new java.util.ArrayList<>();
+        int duration = input.optInt("duration", production.optInt("duration", 0));
+        if (duration > 0) values.add(duration + " 秒");
+        String resolution = input.optString("resolution", production.optString("resolution"));
+        String ratio = input.optString("ratio", production.optString("ratio"));
+        if (!resolution.isEmpty()) values.add(resolution);
+        if (!ratio.isEmpty()) values.add(ratio);
+        if (!input.optString("virtual_avatar_asset_id").isEmpty())
+            values.add("平台虚拟人像");
+        if (!input.optString("authorized_portrait_asset_id").isEmpty())
+            values.add("已授权真人形象");
+        if (!input.optString("size").isEmpty()) values.add(input.optString("size"));
+        JSONArray images = input.optJSONArray("reference_image_paths");
+        if (images == null) images = input.optJSONArray("image_paths");
+        int imageCount = images != null ? images.length()
+            : input.optString("reference_image_path").isEmpty()
+                && input.optString("image_path").isEmpty() ? 0 : 1;
+        if (imageCount > 0) values.add("参考图片 " + imageCount + " 张");
+        if (!input.optString("video_path").isEmpty()) values.add("参考视频 1 个");
+        return android.text.TextUtils.join(" · ", values);
+    }
+    private String mediaDisplayText(String text, boolean hasMedia) {
+        if (!hasMedia) return text;
+        String visible = text.trim();
+        String[] automatic = {"请查看这张图片。", "请查看这些图片。",
+            "请查看这个视频。", "请查看这些视频。", "请查看这些媒体。"};
+        boolean changed;
+        do {
+            changed = false;
+            for (String phrase : automatic) {
+                if (visible.equals(phrase)) {
+                    visible = "";
+                    changed = true;
+                    break;
+                }
+                if (visible.endsWith("\n" + phrase)) {
+                    visible = visible.substring(0, visible.length() - phrase.length()).trim();
+                    changed = true;
+                    break;
+                }
+            }
+        } while (changed);
+        return visible;
+    }
     private void updatePending() {
         JSONArray permissions = state.data.optJSONArray("permissions"),
                   questions = state.data.optJSONArray("questions");
@@ -600,15 +664,46 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 if (permission == null)
                     continue;
                 String id = permission.optString("id");
-                TextView heading = text(
-                    "允许执行 " + permission.optString("tool") + "？ 点击查看参数", 13, MaiChatTheme.TEXT);
-                heading.setOnClickListener(v -> details("操作参数", permission.optString("input")));
-                pending.addView(heading, matchWrap());
+                String tool = permission.optString("tool");
+                boolean paid = isPaidGeneration(tool);
+                JSONObject input;
+                try { input = new JSONObject(permission.optString("input", "{}")); }
+                catch (Exception ignored) { input = new JSONObject(); }
+                if (paid) {
+                    pending.addView(text(paidApprovalTitle(tool, input), 17, MaiChatTheme.TEXT), matchWrap());
+                    String note = !input.optString("virtual_avatar_asset_id").isEmpty()
+                        ? "将使用平台虚拟人像，不保留真实人物长相。确认后提交给"
+                            + paidProvider(tool) + "，可能消耗模型额度。"
+                        : !input.optString("authorized_portrait_asset_id").isEmpty()
+                            ? "将使用已授权真人形象。确认后提交给" + paidProvider(tool)
+                                + "，可能消耗模型额度。"
+                            : "确认后将提交给" + paidProvider(tool) + "，可能消耗模型额度。";
+                    pending.addView(text(note, 13, MaiChatTheme.SECONDARY), matchWrap());
+                    String request = input.optString("message", input.optString("prompt"));
+                    if (!request.isEmpty()) {
+                        TextView summary = text(request, 15, MaiChatTheme.TEXT);
+                        summary.setMaxLines(5);
+                        summary.setOnClickListener(v -> details("任务内容", request));
+                        pending.addView(summary, matchWrap());
+                    }
+                    String specs = paidSpecs(input);
+                    if (!specs.isEmpty())
+                        pending.addView(text(specs, 13, MaiChatTheme.SECONDARY), matchWrap());
+                    TextView more = text("查看完整请求", 12, MaiChatTheme.SECONDARY);
+                    more.setOnClickListener(v -> details("完整请求", permission.optString("input")));
+                    pending.addView(more, matchWrap());
+                } else {
+                    TextView heading = text(
+                        "允许执行 " + tool + "？ 点击查看参数", 13, MaiChatTheme.TEXT);
+                    heading.setOnClickListener(v -> details("操作参数", permission.optString("input")));
+                    pending.addView(heading, matchWrap());
+                }
                 LinearLayout choices = row();
                 java.util.List<String[]> availableChoices = new java.util.ArrayList<>();
-                availableChoices.add(new String[] {"拒绝", "denied"});
+                availableChoices.add(new String[] {paid ? "取消" : "拒绝", "denied"});
                 availableChoices.add(new String[] {
-                    permission.optBoolean("rememberOnApproval")
+                    paid ? (isPaidRevision(tool, input) ? "确认编辑" : "确认生成")
+                    : permission.optBoolean("rememberOnApproval")
                         ? (permission.optInt("fileCount", 0) > 1
                             ? "允许并记住这些文件" : "允许并记住此文件")
                         : "允许一次", "approved"});
@@ -990,7 +1085,11 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                         }
                     }
                 }
-                parts.get("user").setText(body.toString());
+                TextView userText = parts.get("user");
+                String visible = mediaDisplayText(body.toString(),
+                    !imageParts.isEmpty() || !videoParts.isEmpty());
+                userText.setText(visible);
+                userText.setVisibility(visible.isEmpty() ? GONE : VISIBLE);
             } else
                 for (int i = 0; i < array.length(); i++) {
                     JSONObject part = array.optJSONObject(i);

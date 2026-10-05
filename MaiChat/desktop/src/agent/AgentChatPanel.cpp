@@ -119,6 +119,89 @@ QString toolActionText(const QString& tool, const QString& argument, MaiToolStat
     return text;
 }
 
+bool isPaidGenerationTool(const QString& tool) {
+    return tool == QStringLiteral("wan_video") ||
+           tool == QStringLiteral("wan_video_edit") ||
+           tool == QStringLiteral("seedance_video") ||
+           tool == QStringLiteral("seedream_image") ||
+           tool == QStringLiteral("qwen_image") ||
+           tool == QStringLiteral("glm_video") ||
+           tool == QStringLiteral("glm_image");
+}
+
+QString paidGenerationTitle(const QString& tool, const QString& arguments) {
+    const QJsonObject input = QJsonDocument::fromJson(arguments.toUtf8()).object();
+    const bool video = tool == QStringLiteral("wan_video") ||
+                       tool == QStringLiteral("wan_video_edit") ||
+                       tool == QStringLiteral("seedance_video") ||
+                       tool == QStringLiteral("glm_video");
+    const bool revision = input.value(QStringLiteral("action")).toString() ==
+                              QStringLiteral("revise") ||
+                          input.value(QStringLiteral("mode")).toString() ==
+                              QStringLiteral("edit") ||
+                          input.value(QStringLiteral("mode")).toString() ==
+                              QStringLiteral("extend") ||
+                          tool == QStringLiteral("wan_video_edit");
+    return QStringLiteral("确认%1%2").arg(revision ? QStringLiteral("编辑") : QStringLiteral("生成"),
+                                       video ? QStringLiteral("视频") : QStringLiteral("图片"));
+}
+
+QString paidGenerationDetail(const QString& tool, const QString& arguments) {
+    const QJsonObject input = QJsonDocument::fromJson(arguments.toUtf8()).object();
+    QString provider = QStringLiteral("Seedream");
+    if (tool == QStringLiteral("wan_video") || tool == QStringLiteral("wan_video_edit"))
+        provider = QStringLiteral("万相");
+    else if (tool == QStringLiteral("qwen_image"))
+        provider = QStringLiteral("通义千问");
+    else if (tool == QStringLiteral("seedance_video"))
+        provider = QStringLiteral("Seedance");
+    else if (tool == QStringLiteral("glm_video") || tool == QStringLiteral("glm_image"))
+        provider = QStringLiteral("GLM");
+    QString request = input.value(QStringLiteral("message")).toString().trimmed();
+    if (request.isEmpty()) request = input.value(QStringLiteral("prompt")).toString().trimmed();
+    QStringList specifications;
+    const QJsonObject production = input.value(QStringLiteral("production")).toObject();
+    const int duration = input.value(QStringLiteral("duration"))
+                             .toInt(production.value(QStringLiteral("duration")).toInt());
+    if (duration > 0) specifications.push_back(QStringLiteral("%1 秒").arg(duration));
+    QString resolution = input.value(QStringLiteral("resolution")).toString();
+    if (resolution.isEmpty()) resolution = production.value(QStringLiteral("resolution")).toString();
+    if (!resolution.isEmpty()) specifications.push_back(resolution);
+    QString ratio = input.value(QStringLiteral("ratio")).toString();
+    if (ratio.isEmpty()) ratio = production.value(QStringLiteral("ratio")).toString();
+    if (!ratio.isEmpty()) specifications.push_back(ratio);
+    const bool virtualAvatar =
+        !input.value(QStringLiteral("virtual_avatar_asset_id")).toString().isEmpty();
+    if (virtualAvatar) specifications.push_back(QStringLiteral("平台虚拟人像"));
+    if (!input.value(QStringLiteral("authorized_portrait_asset_id")).toString().isEmpty())
+        specifications.push_back(QStringLiteral("已授权真人形象"));
+    if (!input.value(QStringLiteral("size")).toString().isEmpty())
+        specifications.push_back(input.value(QStringLiteral("size")).toString());
+    const QString videoPath = input.value(QStringLiteral("video_path")).toString();
+    if (!videoPath.isEmpty())
+        specifications.push_back(QStringLiteral("参考视频：%1").arg(QFileInfo(videoPath).fileName()));
+    QJsonArray images = input.value(QStringLiteral("reference_image_paths")).toArray();
+    if (images.isEmpty()) images = input.value(QStringLiteral("image_paths")).toArray();
+    const int imageCount = images.isEmpty()
+                               ? (input.value(QStringLiteral("image_path")).toString().isEmpty() &&
+                                          input.value(QStringLiteral("reference_image_path")).toString().isEmpty()
+                                      ? 0 : 1)
+                               : images.size();
+    if (imageCount > 0)
+        specifications.push_back(QStringLiteral("参考图片 %1 张").arg(imageCount));
+    const bool authorizedPortrait =
+        !input.value(QStringLiteral("authorized_portrait_asset_id")).toString().isEmpty();
+    QString detail = virtualAvatar
+                         ? QStringLiteral("将使用平台虚拟人像，不保留真实人物长相。确认后提交给%1，可能消耗模型额度。").arg(provider)
+                         : authorizedPortrait
+                             ? QStringLiteral("将使用已授权真人形象。确认后提交给%1，可能消耗模型额度。").arg(provider)
+                             : QStringLiteral("确认后将提交给%1，可能消耗模型额度。").arg(provider);
+    if (!request.isEmpty()) detail += QStringLiteral("\n\n") + request;
+    if (!specifications.isEmpty())
+        detail += QStringLiteral("\n\n") + specifications.join(QStringLiteral(" · "));
+    return detail;
+}
+
 QLabel* makeLabel(const QString& text, int pixelSize, const char* color, bool bold = false) {
     auto* label = new QLabel(text);
     label->setTextFormat(Qt::PlainText);
@@ -489,8 +572,14 @@ public:
     void apply(MaiToolState toolState, bool waitingForUser) {
         const char* edge = kInkFaint;
         QString label;
+        const bool wasWaiting = waiting_;
         stateValue_ = toolState;
         waiting_ = waitingForUser;
+        if (isPaidGenerationTool(tool_) && wasWaiting && !waitingForUser) {
+            expanded_ = false;
+            detail_->hide();
+            expand_->setText(QStringLiteral("›"));
+        }
         switch (toolState) {
             case MaiToolState::Pending:
                 edge = waitingForUser ? "#d9a441" : kInkFaint;
@@ -532,7 +621,11 @@ public:
     void setApprovalBehavior(bool allow, bool rememberOnApproval, int fileCount) {
         allowForSession_ = allow;
         rememberOnApproval_ = rememberOnApproval;
-        allow_->setText(rememberOnApproval ? QStringLiteral("允许并记住") : QStringLiteral("允许"));
+        allow_->setText(isPaidGenerationTool(tool_) ?
+                            (paidGenerationTitle(tool_, arguments_).contains(QStringLiteral("编辑"))
+                                 ? QStringLiteral("确认编辑") : QStringLiteral("确认生成")) :
+                            (rememberOnApproval ? QStringLiteral("允许并记住") : QStringLiteral("允许")));
+        deny_->setText(isPaidGenerationTool(tool_) ? QStringLiteral("取消") : QStringLiteral("拒绝"));
         always_->setText(fileCount == 1 ? QStringLiteral("本会话允许此文件")
                          : fileCount > 1 ? QStringLiteral("本会话允许这些文件")
                                          : QStringLiteral("本会话都允许"));
@@ -562,6 +655,9 @@ public:
             const QString replyTo = object.value(QStringLiteral("message_id")).toString();
             if (!replyTo.isEmpty())
                 rendered += QStringLiteral("\n\n回复消息：%1").arg(replyTo);
+            if (!text.trimmed().isEmpty()) rendered += QStringLiteral("\n\n") + text.trimmed();
+        } else if (isPaidGenerationTool(tool_)) {
+            rendered = paidGenerationDetail(tool_, arguments_);
             if (!text.trimmed().isEmpty()) rendered += QStringLiteral("\n\n") + text.trimmed();
         } else {
             rendered = arguments_.trimmed();
@@ -598,7 +694,9 @@ public:
 
 private:
     void refreshSummary() {
-        name_->setText(toolActionText(tool_, primaryArgument_, stateValue_, waiting_));
+        name_->setText(isPaidGenerationTool(tool_) && waiting_
+                           ? paidGenerationTitle(tool_, arguments_)
+                           : toolActionText(tool_, primaryArgument_, stateValue_, waiting_));
     }
 
     QLabel* icon_ = nullptr;
@@ -1150,8 +1248,6 @@ void AgentChatPanel::reloadFromStore() {
         if (message.role == MaiRole::User) {
             // 历史里的气泡用消息 id：重开会话再画一遍时 id 要稳定，
             // 不然同一条消息会被当成两条。
-            runtime_->view->addItem(fromUtf8(message.id), MarkdownView::Style::Bubble,
-                                    fromUtf8(message.text()));
             QStringList images;
             for (const MaiMessagePart& part : message.parts) {
                 const auto* image = std::get_if<MaiImagePart>(&part.body);
@@ -1161,6 +1257,12 @@ void AgentChatPanel::reloadFromStore() {
                                      ? stored
                                      : QDir(fromUtf8(selectedSession.directory)).filePath(stored));
             }
+            QString userText = fromUtf8(message.text());
+            if (!images.isEmpty() && userText.trimmed() == QStringLiteral("请查看这些图片。"))
+                userText.clear();
+            if (!userText.isEmpty())
+                runtime_->view->addItem(fromUtf8(message.id), MarkdownView::Style::Bubble,
+                                        userText);
             appendUserImages(images);
             continue;
         }
@@ -1776,7 +1878,6 @@ void AgentChatPanel::onSend() {
     text = text.trimmed();
     const QStringList imagePaths = composerImagePaths();
     if (text.isEmpty() && imagePaths.isEmpty()) return;
-    if (text.isEmpty()) text = QStringLiteral("请查看这些图片。");
     if (!runtime_->modelConfigured) {
         emit modelConfigurationRequested();
         return;
@@ -1792,7 +1893,7 @@ void AgentChatPanel::onSend() {
         return;
     }
     runtime_->editor->clear();
-    appendUserBubble(text);
+    if (!text.isEmpty()) appendUserBubble(text);
     appendUserImages(imagePaths);
     setRunning(true);
     startPendingThinking();

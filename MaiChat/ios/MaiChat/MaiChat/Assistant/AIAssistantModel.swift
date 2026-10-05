@@ -592,12 +592,15 @@ final class AIAssistantModel: ObservableObject {
         expectedSession: String? = nil
     ) async -> Bool {
         guard configured else { showSettings = true; return false }
-        guard !isSubmitting, !busy, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-        isSubmitting = true
-        defer { isSubmitting = false }
         let draftSession = selected
         guard expectedSession == nil || expectedSession == draftSession else { return false }
         let attachments = pendingAttachments[draftSession, default: []] + images + videos
+        guard !isSubmitting, !busy,
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty else {
+            return false
+        }
+        isSubmitting = true
+        defer { isSubmitting = false }
         if attachments.contains(where: \.isImage),
            settings.model.trimmingCharacters(in: .whitespacesAndNewlines)
                .caseInsensitiveCompare("glm-5.3") == .orderedSame {

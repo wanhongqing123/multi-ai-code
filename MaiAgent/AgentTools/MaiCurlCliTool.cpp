@@ -173,6 +173,11 @@ public:
         return false;
     }
 
+    std::string approvalKey(const std::string& raw) const override {
+        const Json arguments = Json::parse(raw, nullptr, false);
+        return "curl:" + (arguments.is_discarded() ? raw : arguments.dump());
+    }
+
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const Json request = Json::parse(raw, nullptr, false);
         if (!request.is_object() || !request.value("arguments", Json{}).is_array() ||

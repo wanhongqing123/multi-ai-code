@@ -102,6 +102,8 @@ int main() {
     auto tool = makeMaiCurlCliTool();
     CHECK(tool->requiresApproval("{}"));
     CHECK(!tool->requiresPerCallApproval("{}"));
+    CHECK(tool->approvalKey(R"({"arguments":["https://a.example"]})") !=
+          tool->approvalKey(R"({"arguments":["https://b.example"]})"));
     const auto fetched =
         tool->execute(nlohmann::json{{"arguments", {server.url("/ok")}}}.dump(), context);
     CHECK(!fetched.hasError());

@@ -1,13 +1,13 @@
 # AI 助手工具清单
 
-本清单按代码中注册给 MaiAgent 主模型的**工具名**统计，核对位置为 2026-10-05 的当前工作区。相同工具在 iOS、Android、桌面重复注册只算一个；工具的参数、模式和子命令不另计。它统计的是源码可注册的上限，**不等于每台设备都能成功调用**：编译开关、模型文件、系统权限、API Key 和供应商授权仍会影响实际可用性。
+本清单按代码中注册给 MaiAgent 主模型的**工具名**统计，核对位置为 2026-10-06 的当前工作区。相同工具在 iOS、Android、桌面重复注册只算一个；工具的参数、模式和子命令不另计。它统计的是源码可注册的上限，**不等于每台设备都能成功调用**：编译开关、模型文件、系统权限、API Key 和供应商授权仍会影响实际可用性。
 
 | 口径 | 工具名数量 | 说明 |
 |---|---:|---|
-| iOS AI 助手 | 69 | 含 APP 存储管理及 iOS 专属相册工具；视频抠像需模型资源 |
-| Android AI 助手 | 68 | 暂不注册 APP 存储清理；包含 Android 专属相册工具，尚未做本轮构建验证 |
-| Qt 桌面 AI 助手 | macOS 最多 64；Windows 最多 65 | 含 APP 存储管理与 GPU 信息；Windows 暂保留两个类型化 OpenSSL 工具，桌面视觉等受编译条件限制 |
-| 各平台合并去重 | **82** | Windows 旧 OpenSSL 名称与 Mac/移动端新 `openssl` 名称分别计入 |
+| iOS AI 助手 | 71 | 含 APP 存储管理及 iOS 专属相册工具；视频抠像需模型资源 |
+| Android AI 助手 | 70 | 暂不注册 APP 存储清理；包含 Android 专属相册工具，尚未做本轮构建验证 |
+| Qt 桌面 AI 助手 | macOS 最多 66；Windows 最多 67 | 含 APP 存储管理与 GPU 信息；Windows 暂保留两个类型化 OpenSSL 工具，桌面视觉等受编译条件限制 |
+| 各平台合并去重 | **84** | Windows 旧 OpenSSL 名称与 Mac/移动端新 `openssl` 名称分别计入 |
 
 本轮将四个 `curl_*` 模型工具合并为复用上游命令入口的 `curl`；Mac/iOS/Android 将两个类型化 OpenSSL 模型工具合并为复用上游只读子命令的 `openssl`。类型化 EVP/X509 函数仍可供代码直接调用；Windows 仍注册原有两项，等待 CLI 嵌入端口。新增 `system_resources`、`network_ip`，并在 iOS 增加 `app_storage`。原有的 ffmpeg、ffprobe 扩展了能力；已删除的 mobile_beautify_face、尚在调研的视频超分不计入。
 
@@ -83,17 +83,19 @@
 | cv_document_corners | 定位清晰文档四边形的四个角。 |
 | cv_threshold_mask | 生成固定、自适应或 Otsu 阈值的二值掩码 PNG。 |
 
-### 专业模型：5 个
+### 专业模型：7 个
 
-火山方舟实现：[MaiArkMediaTools.cpp](../MaiAgent/AgentTools/MaiArkMediaTools.cpp)；阿里百炼实现：[MaiModelStudioTools.cpp](../MaiAgent/AgentTools/MaiModelStudioTools.cpp)。这些工具注册后仍可能因密钥、Workspace、额度、模型授权或内容审核而不可用。付费的 delegate/revise 每次需要确认；后台完成后会把最终回复交给主模型，continue 仅用于手动排障。
+火山方舟实现：[MaiArkMediaTools.cpp](../MaiAgent/AgentTools/MaiArkMediaTools.cpp)；阿里百炼实现：[MaiModelStudioTools.cpp](../MaiAgent/AgentTools/MaiModelStudioTools.cpp)；智谱 GLM 实现：[MaiGlmMediaTools.cpp](../MaiAgent/AgentTools/MaiGlmMediaTools.cpp)。这些工具注册后仍可能因密钥、Workspace、额度、模型授权或内容审核而不可用。付费的 delegate/revise 每次需要确认；后台完成后会把最终回复交给主模型，continue 仅用于手动排障。
 
 | 工具 | 绑定模型与用途 |
 |---|---|
-| seedance_video | Seedance 2.0：文生视频、首尾帧、已完成任务或 HTTPS 视频引用的编辑/延长；**本地视频直接上传未接通**。 |
+| seedance_video | Seedance 2.0：文生视频、首尾帧、预置虚拟人像或已授权真人 Asset ID、已完成任务或 HTTPS 视频引用的编辑/延长；**本地真人人脸素材直接上传未接通**。 |
 | seedream_image | Seedream 5.0 Flash：文生图、单图编辑、多图合成一张 PNG、按旧任务修订。 |
 | wan_video_edit | 万相 2.7 视频编辑：上传本地视频，按文字指令编辑，可带参考图片；当前临时上传方式用于开发测试。 |
 | wan_video | 万相 3.0 视频生成：文生视频、首尾帧、单个视频和参考图驱动的生成/编辑。 |
 | qwen_image | Qwen-Image-3.0-Pro：文生图、最多三张本地图编辑/合成、基于上一版修订。 |
+| glm_video | CogVideoX-3：文生视频、单张图生视频、首尾帧生视频；不支持编辑已有视频。 |
+| glm_image | GLM-Image：异步文生图；当前 API 不接受已有图片编辑输入。 |
 
 ### SSH：1 个
 

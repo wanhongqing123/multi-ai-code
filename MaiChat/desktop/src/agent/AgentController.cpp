@@ -1,6 +1,7 @@
 #include "agent/AgentController.h"
 #include "MaiAgentSendMediaTool.h"
 #include "MaiArkMediaTools.h"
+#include "MaiGlmMediaTools.h"
 #include "MaiModelStudioTools.h"
 #include "MaiMemoryStore.h"
 #include "MaiAppStorageTool.h"
@@ -116,7 +117,8 @@ std::unique_ptr<MaiAgent>
 buildAgent(std::unique_ptr<MaiModelClient> model,
            std::unique_ptr<MaiSessionStore> store, const QString &defaultModel,
            MaiApprovalPolicy approvalPolicy,
-           const AgentController::ToolRegistrar &hostTools) {
+           const AgentController::ToolRegistrar &hostTools,
+           const QString &glmApiKey = {}) {
   // MaiAgent 内置工具总是装着；平台不支持的能力由核心在注册时排除。
   // 会话没有工作目录时工具层会明确拒绝，
   // 要不要把工具声明给模型看是 MaiContextBuilder 的事，不是这里的。
@@ -138,6 +140,9 @@ buildAgent(std::unique_ptr<MaiModelClient> model,
   };
   tools->add(makeMaiSeedanceVideoTool(arkKey));
   tools->add(makeMaiSeedreamImageTool(arkKey));
+  const auto glmKey = [key = toUtf8(glmApiKey)] { return key; };
+  tools->add(makeMaiGlmVideoTool(glmKey));
+  tools->add(makeMaiGlmImageTool(glmKey));
   const auto wanCredentials = [] {
     return MaiWanCredentials{toUtf8(qEnvironmentVariable("MAICHAT_WAN_API_KEY")),
                              toUtf8(qEnvironmentVariable("MAICHAT_WAN_WORKSPACE_ID"))};
@@ -279,7 +284,9 @@ AgentController::AgentController(const ModelConfig &model,
   runtime_->modelName = model.modelName;
   runtime_->agent = buildAgent(
       std::move(client), openStore(databasePath, runtime_->openError),
-      model.modelName, model.approvalPolicy, hostTools);
+      model.modelName, model.approvalPolicy, hostTools,
+      model.baseUrl.startsWith(QStringLiteral("https://open.bigmodel.cn/"))
+          ? model.apiKey : QString());
 
   connect(this, &AgentController::eventQueued, this,
           &AgentController::onEventQueued, Qt::QueuedConnection);

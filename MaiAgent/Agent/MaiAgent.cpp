@@ -627,8 +627,8 @@ MaiResult<std::string> MaiAgent::submit(const MaiOperation& operation) {
                 return operation.sessionId;
 
             } else if constexpr (std::is_same_v<T, MaiSendPrompt>) {
-                if (operation.text.empty())
-                    return {MaiErrorCode::InvalidInput, "prompt text must not be empty"};
+                if (operation.text.empty() && operation.images.empty() && operation.videos.empty())
+                    return {MaiErrorCode::InvalidInput, "text or media is required"};
 
                 MaiSession session;
                 if (!mRuntime->store->getSession(operation.sessionId, session))
@@ -647,11 +647,13 @@ MaiResult<std::string> MaiAgent::submit(const MaiOperation& operation) {
                 user.role = MaiRole::User;
                 user.created = MaiTime::getCurrentTime();
                 user.completed = user.created;
-                MaiMessagePart up;
-                up.id = MaiIdGenerator::newPartId();
-                up.body = MaiTextPart{operation.text};
-                up.created = user.created;
-                user.parts.push_back(std::move(up));
+                if (!operation.text.empty()) {
+                    MaiMessagePart up;
+                    up.id = MaiIdGenerator::newPartId();
+                    up.body = MaiTextPart{operation.text};
+                    up.created = user.created;
+                    user.parts.push_back(std::move(up));
+                }
                 for (const auto& image : operation.images) {
                     MaiMessagePart imagePart;
                     imagePart.id = MaiIdGenerator::newPartId();

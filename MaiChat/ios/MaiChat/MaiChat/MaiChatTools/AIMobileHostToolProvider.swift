@@ -63,6 +63,11 @@ final class AIMobileHostToolProvider {
         case "ark_api_key":
             return Self.jsonSuccess(["key": KeychainSecretStore(account: "seedance-ark-api-key")
                 .readSecretKey()])
+        case "glm_api_key":
+            let endpoint = AIAssistantModel.shared.settings.baseUrl
+            let isGLM = URL(string: endpoint)?.host == "open.bigmodel.cn"
+            return Self.jsonSuccess(["key": isGLM
+                ? KeychainSecretStore(account: "ai-assistant-api-key").readSecretKey() : ""])
         case "wan_credentials":
             return Self.jsonSuccess([
                 "key": KeychainSecretStore(account: "wan-model-studio-api-key").readSecretKey(),

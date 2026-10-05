@@ -991,11 +991,18 @@ private struct AIMessageRow: View {
         }
     }
     private var userDisplayText: String {
-        let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !imagePaths.isEmpty || !videoPaths.isEmpty else { return message.text }
-        let automatic = ["请查看这张图片。", "请查看这些图片。",
-                         "请查看这个视频。", "请查看这些视频。"]
-        return automatic.contains(text) ? "" : message.text
+        guard !imagePaths.isEmpty || !videoPaths.isEmpty ||
+              message.parts.contains(where: { $0.kind == "image" || $0.kind == "video" }) else {
+            return message.text
+        }
+        let automatic: Set<String> = ["请查看这张图片。", "请查看这些图片。",
+                                      "请查看这个视频。", "请查看这些视频。", "请查看这些媒体。"]
+        var lines = message.text.components(separatedBy: "\n")
+        while let last = lines.last,
+              automatic.contains(last.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            lines.removeLast()
+        }
+        return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
     private var videoPaths: [String] {
         guard !workspacePath.isEmpty else { return [] }
@@ -1359,7 +1366,8 @@ private struct AIImagePreviewOverlay: View {
                     .ignoresSafeArea()
                     .onTapGesture(perform: shrinkAndClose)
                 RemoteIMAsyncImage(filePath: preview.filePath,
-                                   maximumPointSize: geometry.size) { image in
+                                   maximumPointSize: ImagePreviewZoomModifier.maximumDecodePointSize(
+                                    for: geometry.size)) { image in
                     Image(uiImage: image).resizable().scaledToFit()
                         .accessibilityLabel("Agent 处理后的图片预览")
                 } placeholder: { failed in
@@ -1372,6 +1380,9 @@ private struct AIImagePreviewOverlay: View {
                     }
                 }
                 .frame(width: imageFrame.width, height: imageFrame.height)
+                .modifier(ImagePreviewZoomModifier(enabled: isExpanded,
+                                                   imageSize: fittedSize,
+                                                   viewportSize: geometry.size))
                 .position(x: imageFrame.midX, y: imageFrame.midY)
                 .contentShape(Rectangle())
                 .onTapGesture(perform: shrinkAndClose)
@@ -1942,27 +1953,15 @@ private struct AIComposer: View {
                                    to targetSession: String) async {
         guard !images.isEmpty || !videos.isEmpty else { return }
         let existingDraft = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        let videoPrompt = videos.isEmpty ? "" :
-            (videos.count == 1 ? "请查看这个视频。" : "请查看这些视频。")
-        let imagePrompt = images.isEmpty ? "" :
-            (images.count == 1 ? "请查看这张图片。" : "请查看这些图片。")
-        let prompt = [existingDraft, videoPrompt, imagePrompt]
-            .filter { !$0.isEmpty }.joined(separator: "\n")
-        if await model.send(prompt, images: images, videos: videos,
+        if await model.send(existingDraft, images: images, videos: videos,
                             expectedSession: targetSession) {
-            if existingDraft.isEmpty || draft == prompt { draft = "" }
+            if draft.trimmingCharacters(in: .whitespacesAndNewlines) == existingDraft { draft = "" }
             return
         }
 
-        // 导入已经完成但发送条件在异步读取期间改变时，保留媒体和提示，
-        // 让用户之后按回车重试，不能丢掉刚选中的内容。
+        // 导入已完成但发送条件在异步读取期间改变时，保留媒体供下次发送。
         for file in images + videos { model.addAttachment(file, to: targetSession) }
-        if targetSession == model.selected {
-            if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { draft = prompt }
-        } else if model.drafts[targetSession, default: ""]
-            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            model.drafts[targetSession] = prompt
-        }
+        model.showTransientError("媒体已保留，请输入消息后重试")
     }
 
     private func appendImportedDocument(_ file: AIImportedFile, to targetSession: String) {
@@ -2232,6 +2231,62 @@ private struct AIPermissionCard: View {
         return fields
     }
     private var isSendText: Bool { permission.tool == "maichat_send_text" }
+    private var isPaidGeneration: Bool {
+        ["wan_video", "wan_video_edit", "seedance_video", "seedream_image", "qwen_image",
+         "glm_video", "glm_image"]
+            .contains(permission.tool)
+    }
+    private var isVideoGeneration: Bool {
+        ["wan_video", "wan_video_edit", "seedance_video", "glm_video"].contains(permission.tool)
+    }
+    private var isRevision: Bool {
+        (fields["action"] as? String) == "revise" ||
+        ["edit", "extend"].contains((fields["mode"] as? String) ?? "") ||
+        permission.tool == "wan_video_edit"
+    }
+    private var paidTitle: String {
+        if isVideoGeneration { return isRevision ? "确认编辑视频" : "确认生成视频" }
+        return isRevision ? "确认编辑图片" : "确认生成图片"
+    }
+    private var paidActionTitle: String { isRevision ? "确认编辑" : "确认生成" }
+    private var paidProvider: String {
+        switch permission.tool {
+        case "wan_video", "wan_video_edit": return "万相"
+        case "qwen_image": return "通义千问"
+        case "seedance_video": return "Seedance"
+        case "glm_video", "glm_image": return "GLM"
+        default: return "Seedream"
+        }
+    }
+    private var paidRequest: String {
+        ((fields["message"] as? String) ?? (fields["prompt"] as? String) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    private var paidDetails: String {
+        let production = fields["production"] as? [String: Any] ?? [:]
+        var details: [String] = []
+        if let duration = (fields["duration"] as? Int) ?? (production["duration"] as? Int) {
+            details.append("\(duration) 秒")
+        }
+        if let resolution = (fields["resolution"] as? String) ??
+            (production["resolution"] as? String) { details.append(resolution) }
+        if let ratio = (fields["ratio"] as? String) ??
+            (production["ratio"] as? String) { details.append(ratio) }
+        if (fields["virtual_avatar_asset_id"] as? String)?.isEmpty == false {
+            details.append("平台虚拟人像")
+        }
+        if (fields["authorized_portrait_asset_id"] as? String)?.isEmpty == false {
+            details.append("已授权真人形象")
+        }
+        if let size = fields["size"] as? String { details.append(size) }
+        let imageCount = (fields["reference_image_paths"] as? [String])?.count ??
+            (fields["image_paths"] as? [String])?.count ??
+            ((fields["reference_image_path"] as? String)?.isEmpty == false ? 1 : nil) ??
+            ((fields["image_path"] as? String)?.isEmpty == false ? 1 : 0)
+        if imageCount > 0 { details.append("参考图片 \(imageCount) 张") }
+        if (fields["video_path"] as? String)?.isEmpty == false { details.append("参考视频 1 个") }
+        return details.joined(separator: " · ")
+    }
     private var formattedInput: String {
         guard !fields.isEmpty,
               let data = try? JSONSerialization.data(withJSONObject: fields,
@@ -2245,10 +2300,36 @@ private struct AIPermissionCard: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Label(isSendText ? "确认发送消息" : "确认工具操作", systemImage: "hand.raised")
+            Label(isPaidGeneration ? paidTitle : (isSendText ? "确认发送消息" : "确认工具操作"),
+                  systemImage: isPaidGeneration ? "sparkles" : "hand.raised")
                 .font(.headline)
                 .foregroundStyle(Color.primary)
-            if isSendText, let peer = fields["peer_id"] as? String,
+            if isPaidGeneration {
+                Text((fields["virtual_avatar_asset_id"] as? String)?.isEmpty == false
+                     ? "将使用平台虚拟人像，不保留真实人物长相。确认后提交给\(paidProvider)，可能消耗模型额度。"
+                     : (fields["authorized_portrait_asset_id"] as? String)?.isEmpty == false
+                         ? "将使用已授权真人形象。确认后提交给\(paidProvider)，可能消耗模型额度。"
+                         : "确认后将提交给\(paidProvider)，可能消耗模型额度。")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                if !paidRequest.isEmpty {
+                    ScrollView {
+                        Text(paidRequest)
+                            .font(.body)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 150)
+                    .padding(12)
+                    .background(Color(uiColor: .systemBackground),
+                                in: RoundedRectangle(cornerRadius: 10))
+                }
+                if !paidDetails.isEmpty {
+                    Text(paidDetails)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            } else if isSendText, let peer = fields["peer_id"] as? String,
                let text = fields["text"] as? String {
                 Label(peer, systemImage: "person.crop.circle")
                     .font(.subheadline).foregroundStyle(.secondary)
@@ -2275,8 +2356,9 @@ private struct AIPermissionCard: View {
                 .background(Color(uiColor: .systemBackground),
                             in: RoundedRectangle(cornerRadius: 10))
             }
-            if isSendText {
-                DisclosureGroup("查看完整参数", isExpanded: $showsRawInput) {
+            if isSendText || isPaidGeneration {
+                DisclosureGroup(isPaidGeneration ? "查看完整请求" : "查看完整参数",
+                                isExpanded: $showsRawInput) {
                     ScrollView {
                         Text(formattedInput)
                             .font(.system(.caption, design: .monospaced))
@@ -2289,8 +2371,8 @@ private struct AIPermissionCard: View {
                 .font(.caption)
             }
             HStack {
-                action("拒绝", "denied")
-                action(approveTitle, "approved")
+                action(isPaidGeneration ? "取消" : "拒绝", "denied")
+                action(isPaidGeneration ? paidActionTitle : approveTitle, "approved")
             }
             if permission.allowForSession != false && permission.rememberOnApproval != true {
                 action("本会话允许", "approved_for_session")

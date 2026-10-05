@@ -1,14 +1,18 @@
 #include <cassert>
 #include <cstdio>
+#include <memory>
 #include <string>
 #include <thread>
 #include <set>
+#include <variant>
+#include <vector>
 
 #include "MaiBlockingCheck.h"
 #include "MaiIdGenerator.h"
 #include "MaiThread.h"
 #include "MaiAgent.h"
 #include "MaiMemoryStore.h"
+#include "MaiFakeModelClient.h"
 
 static int failures = 0;
 #define CHECK(cond)                                                     \
@@ -79,6 +83,32 @@ static void test_session_crud_and_events() {
     // 删不存在的不该发事件
     agent.submit(MaiDeleteSession{"ses_nope"});
     CHECK(deleted == 1);
+}
+
+static void test_media_only_prompt_has_no_placeholder_text() {
+    MaiFakeModelClient::Turn reply;
+    reply.textChunks = {"received"};
+    auto model =
+        std::make_unique<MaiFakeModelClient>(std::vector<MaiFakeModelClient::Turn>{reply, reply});
+    MaiAgent agent(makeMaiMemoryStore(), std::move(model), nullptr);
+    const std::string session = agent.submit(MaiCreateSession{"/tmp", "", "test-model"}).value();
+    CHECK(!agent.submit(MaiSendPrompt{session, ""}));
+    CHECK(agent.submit(MaiSendPrompt{session, "", {{"photo.jpg", "image/jpeg"}}}));
+    agent.waitIdle();
+    CHECK(agent.submit(MaiSendPrompt{session, "", {}, {{"clip.mp4", "video/mp4"}}}));
+    agent.waitIdle();
+    const auto messages = agent.listMessages(session);
+    int mediaOnly = 0;
+    for (const auto& message : messages) {
+        if (message.role != MaiRole::User) continue;
+        CHECK(message.text().empty());
+        CHECK(message.parts.size() == 1);
+        if (message.parts.size() == 1 &&
+            (std::holds_alternative<MaiImagePart>(message.parts[0].body) ||
+             std::holds_alternative<MaiVideoPart>(message.parts[0].body)))
+            ++mediaOnly;
+    }
+    CHECK(mediaOnly == 2);
 }
 
 static void test_interrupted_tool_is_recovered_on_startup() {
@@ -185,6 +215,7 @@ static void test_unsubscribe() {
 int main() {
     test_id_prefix_and_monotonic();
     test_session_crud_and_events();
+    test_media_only_prompt_has_no_placeholder_text();
     test_interrupted_tool_is_recovered_on_startup();
     test_event_handlers_run_with_blocking_disallowed();
     test_blocking_scopes_nest();

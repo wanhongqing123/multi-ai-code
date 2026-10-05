@@ -4,6 +4,7 @@
 #include "MaiAgent.h"
 #include "MaiAgentSendMediaTool.h"
 #include "MaiArkMediaTools.h"
+#include "MaiGlmMediaTools.h"
 #include "MaiModelStudioTools.h"
 #include "MaiCvVideoAnalysis.h"
 #include "MaiCvVideoTools.h"
@@ -259,6 +260,18 @@ struct MaiMobileAgent {
     };
     tools->add(makeMaiSeedanceVideoTool(arkKey, config.caBundlePath));
     tools->add(makeMaiSeedreamImageTool(arkKey, config.caBundlePath));
+    const auto glmKey = [dispatcher = hostTools]() -> std::string {
+      const MaiToolResult result =
+          callMaiMobileHostTool(dispatcher, "glm_api_key", "{}");
+      if (result.hasError())
+        return {};
+      const Json response = Json::parse(result.output(), nullptr, false);
+      return response.is_object() && response.value("key", Json{}).is_string()
+                 ? response["key"].get<std::string>()
+                 : std::string{};
+    };
+    tools->add(makeMaiGlmVideoTool(glmKey, config.caBundlePath));
+    tools->add(makeMaiGlmImageTool(glmKey, config.caBundlePath));
     const auto wanCredentials = [dispatcher = hostTools]() -> MaiWanCredentials {
       const MaiToolResult result =
           callMaiMobileHostTool(dispatcher, "wan_credentials", "{}");

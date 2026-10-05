@@ -3452,6 +3452,72 @@ private enum RemoteIMPhotoLibraryWriter {
     }
 }
 
+struct ImagePreviewZoomModifier: ViewModifier {
+    let enabled: Bool
+    let imageSize: CGSize
+    let viewportSize: CGSize
+    @State private var settledScale: CGFloat = 1
+    @State private var settledOffset: CGSize = .zero
+    @GestureState private var pinchScale: CGFloat = 1
+    @GestureState private var dragOffset: CGSize = .zero
+
+    static func maximumDecodePointSize(for viewport: CGSize) -> CGSize {
+        let limit = 4096 / UIScreen.main.scale
+        return CGSize(width: min(viewport.width * 3, limit),
+                      height: min(viewport.height * 3, limit))
+    }
+
+    private var scale: CGFloat {
+        enabled ? min(4, max(1, settledScale * pinchScale)) : 1
+    }
+
+    private func bounded(_ offset: CGSize, at scale: CGFloat) -> CGSize {
+        let horizontal = max(0, (imageSize.width * scale - viewportSize.width) / 2)
+        let vertical = max(0, (imageSize.height * scale - viewportSize.height) / 2)
+        return CGSize(width: min(horizontal, max(-horizontal, offset.width)),
+                      height: min(vertical, max(-vertical, offset.height)))
+    }
+
+    func body(content: Content) -> some View {
+        let offset = bounded(
+            CGSize(width: settledOffset.width + dragOffset.width,
+                   height: settledOffset.height + dragOffset.height), at: scale)
+        content
+            .scaleEffect(scale)
+            .offset(offset)
+            .simultaneousGesture(
+                MagnificationGesture()
+                    .updating($pinchScale) { value, state, _ in
+                        if enabled { state = value }
+                    }
+                    .onEnded { value in
+                        guard enabled else { return }
+                        settledScale = min(4, max(1, settledScale * value))
+                        settledOffset = bounded(settledOffset, at: settledScale)
+                    }
+            )
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 8)
+                    .updating($dragOffset) { value, state, _ in
+                        if enabled && scale > 1.01 { state = value.translation }
+                    }
+                    .onEnded { value in
+                        guard enabled && settledScale > 1.01 else { return }
+                        settledOffset = bounded(
+                            CGSize(width: settledOffset.width + value.translation.width,
+                                   height: settledOffset.height + value.translation.height),
+                            at: settledScale)
+                    }
+            )
+            .onChange(of: enabled) { expanded in
+                if !expanded {
+                    settledScale = 1
+                    settledOffset = .zero
+                }
+            }
+    }
+}
+
 private struct FullScreenImagePreviewView: View {
     let presentation: PresentedRemoteIMImage
     let isExpanded: Bool
@@ -3479,7 +3545,8 @@ private struct FullScreenImagePreviewView: View {
                     .ignoresSafeArea()
                     .onTapGesture(perform: close)
 
-                previewImage(frame: imageFrame)
+                previewImage(frame: imageFrame, fittedSize: fittedSize,
+                             viewportSize: geometry.size)
 
                 VStack(alignment: .trailing, spacing: 14) {
                     if let saveResultText {
@@ -3527,9 +3594,11 @@ private struct FullScreenImagePreviewView: View {
             }
     }
 
-    private func previewImage(frame: CGRect) -> some View {
+    private func previewImage(frame: CGRect, fittedSize: CGSize,
+                              viewportSize: CGSize) -> some View {
         RemoteIMAsyncImage(filePath: presentation.item.localFilePath,
-                           maximumPointSize: UIScreen.main.bounds.size) { image in
+                           maximumPointSize: ImagePreviewZoomModifier.maximumDecodePointSize(
+                            for: viewportSize)) { image in
             Image(uiImage: image).resizable().scaledToFit()
         } placeholder: { failed in
             if failed {
@@ -3541,6 +3610,9 @@ private struct FullScreenImagePreviewView: View {
             }
         }
             .frame(width: frame.width, height: frame.height)
+            .modifier(ImagePreviewZoomModifier(enabled: isExpanded,
+                                               imageSize: fittedSize,
+                                               viewportSize: viewportSize))
             .position(x: frame.midX, y: frame.midY)
             .contentShape(Rectangle())
             .onTapGesture(perform: close)

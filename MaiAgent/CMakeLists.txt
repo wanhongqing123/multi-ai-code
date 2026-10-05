@@ -275,6 +275,7 @@ add_library(maiagent STATIC
   AgentTools/MaiNetworkIpTool.cpp
   AgentTools/MaiSshTool.cpp
   AgentTools/MaiArkMediaTools.cpp
+  AgentTools/MaiGlmMediaTools.cpp
   AgentTools/MaiModelStudioTools.cpp
   AgentTools/MaiAgentSendMediaTool.cpp
   AgentTools/MaiRvmMatting.cpp
@@ -420,6 +421,7 @@ if(MAIAGENT_BUILD_TESTS)
       MaiAppStorageToolTests # only previewed, aged cache files can be deleted
       MaiSshToolTests # approval boundary and optional local SSH transport integration
       MaiArkMediaToolsTests # Ark model tools, dynamic key and input boundary checks
+      MaiGlmMediaToolsTests # GLM model tools, credentials and async task boundaries
       MaiModelStudioToolsTests # Wan/Qwen capabilities, credentials and workspace boundaries
       MaiCvImageToolsTests # OpenCV image wrapper path, output and parameter boundaries
       MaiAgentSendMediaToolTests # 当前会话媒体交付、工作区边界与类型校验

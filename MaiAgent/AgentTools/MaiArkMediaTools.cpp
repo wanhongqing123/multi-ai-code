@@ -31,6 +31,17 @@ bool isPaidGenerationAction(const std::string& raw) {
     return action != "discover" && action != "continue";
 }
 
+std::string arkAssetId(const std::string& value) {
+    const std::string id = value.rfind("asset://", 0) == 0 ? value.substr(8) : value;
+    if (id.size() < 10 || id.size() > 128 || id.rfind("asset-", 0) != 0 ||
+        !std::all_of(id.begin(), id.end(), [](unsigned char ch) {
+            return (ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'Z') ||
+                   (ch >= 'a' && ch <= 'z') || ch == '-' || ch == '_';
+        }))
+        return {};
+    return id;
+}
+
 constexpr char kVideoModel[] = "doubao-seedance-2-0-260128";
 constexpr char kImageModel[] = "doubao-seedream-5-0-flash-260915";
 constexpr char kVideoTasksUrl[] =
@@ -303,6 +314,12 @@ public:
              {"video_reference_from_url", true, true, unverified, {}},
              {"first_and_last_frame_to_video", true, true, unverified,
               "Requires image_path and last_frame_path"},
+             {"platform_virtual_avatar", true, true, unverified,
+              "Use a virtual avatar asset ID from the Ark Experience Center; it does not preserve "
+              "a real person's identity"},
+             {"authorized_real_portrait", true, true, unverified,
+              "Use an authorized real-person asset ID from the same Ark account; direct local "
+              "face uploads remain unsupported"},
              {"multi_reference_video", true, true, MaiSpecialistCapabilityStatus::NotImplemented,
               "Multiple references are not wired"},
              {"video_edit_from_local_file", true, true,
@@ -321,8 +338,15 @@ public:
                "first-and-last-frame, and reference-video paths are implemented; cloud validation "
                "is still needed for the shared C++ path. Confirm duration, ratio and resolution "
                "with the user before paid create or reference calls. Local video "
-               "upload is unavailable. Direct references containing real human faces are not "
-               "supported. The app checks tasks and hands completed results back automatically; "
+               "upload is unavailable. For a realistic but non-specific actor, pass a platform "
+               "virtual_avatar_asset_id selected in the Ark Experience Center. The tool sends "
+               "asset://<ID> as reference image 1; refer to it as image 1 in the message. It "
+               "does not preserve the identity in a user's real photo. For a specific real "
+               "person, pass authorized_portrait_asset_id only after Ark shows the asset as "
+               "authorized in this account. Both paths use asset:// references; direct local "
+               "face uploads remain unsupported. An optional face-free reference_image_path "
+               "can be image 2. The app checks tasks and hands "
+               "completed results back automatically; "
                "continue is for manual diagnostics only. Use agent_send_media to deliver a "
                "completed video.";
     }
@@ -333,6 +357,9 @@ public:
                R"("conversation_id":{"type":"string"},"mode":{"type":"string",)"
                R"("enum":["create","edit","extend","reference"]},)"
                R"("image_path":{"type":"string"},"last_frame_path":{"type":"string"},)"
+               R"("virtual_avatar_asset_id":{"type":"string"},)"
+               R"("authorized_portrait_asset_id":{"type":"string"},)"
+               R"("reference_image_path":{"type":"string"},)"
                R"("video_path":{"type":"string"},"video_url":{"type":"string"},)"
                R"("video_task_id":{"type":"string"},"poll_once":{"type":"boolean"},)"
                R"("production":{"type":"object",)"
@@ -346,7 +373,8 @@ public:
         if (!args.is_object()) return invalid("arguments must be an object");
         for (const char* field :
              {"action", "message", "context", "conversation_id", "mode", "image_path",
-              "last_frame_path", "video_path", "video_url", "video_task_id"}) {
+              "last_frame_path", "virtual_avatar_asset_id", "authorized_portrait_asset_id",
+              "reference_image_path", "video_path", "video_url", "video_task_id"}) {
             if (args.contains(field) && !args[field].is_string())
                 return invalid(std::string(field) + " must be a string");
         }
@@ -410,6 +438,14 @@ private:
             return invalid("unsupported video mode");
         const std::string imagePath = stringValue(args, "image_path");
         const std::string lastFramePath = stringValue(args, "last_frame_path");
+        const std::string avatarAssetInput = stringValue(args, "virtual_avatar_asset_id");
+        const std::string authorizedAssetInput =
+            stringValue(args, "authorized_portrait_asset_id");
+        const std::string selectedAssetInput =
+            avatarAssetInput.empty() ? authorizedAssetInput : avatarAssetInput;
+        const std::string selectedAssetId =
+            selectedAssetInput.empty() ? std::string{} : arkAssetId(selectedAssetInput);
+        const std::string referenceImagePath = stringValue(args, "reference_image_path");
         const std::string videoPath = stringValue(args, "video_path");
         const std::string videoUrl = stringValue(args, "video_url");
         const std::string videoTaskId = stringValue(args, "video_task_id");
@@ -420,6 +456,16 @@ private:
             return invalid("provide one video source for edit, extend, or reference only");
         if (!lastFramePath.empty() && (mode != "create" || imagePath.empty()))
             return invalid("last_frame_path requires create mode and image_path as first frame");
+        if (!avatarAssetInput.empty() && !authorizedAssetInput.empty())
+            return invalid("choose either a virtual avatar or an authorized portrait asset");
+        if (!selectedAssetInput.empty()) {
+            if (mode != "create" || !imagePath.empty() || !lastFramePath.empty())
+                return invalid("portrait asset requires create mode without first or last frame");
+            if (selectedAssetId.empty())
+                return invalid("portrait asset must be a valid platform asset ID");
+        }
+        if (!referenceImagePath.empty() && (mode != "create" || selectedAssetId.empty()))
+            return invalid("reference_image_path requires create mode and a portrait asset ID");
         if (!videoPath.empty())
             return fail(MaiErrorCode::NotConfigured, "upload_not_configured",
                         "Local video upload is unavailable; use video_url or video_task_id");
@@ -456,8 +502,29 @@ private:
                 "Extend reference video 1; preserve its subject and style. " + instruction;
         if (mode == "reference")
             instruction = "Create a video inspired by reference video 1. " + instruction;
+        if (!avatarAssetInput.empty())
+            instruction =
+                "Reference image 1 is a platform virtual actor. Preserve its "
+                "appearance; do not use the asset ID as a character name. " +
+                instruction;
+        if (!authorizedAssetInput.empty())
+            instruction =
+                "Reference image 1 is an authorized real-person portrait. Preserve this "
+                "person's identity; do not use the asset ID as a character name. " +
+                instruction;
         if (instruction.size() > 8000) return invalid("video instruction is too long");
         Json content = Json::array({Json{{"type", "text"}, {"text", instruction}}});
+        if (!selectedAssetId.empty())
+            content.push_back(Json{{"type", "image_url"},
+                                   {"image_url", {{"url", "asset://" + selectedAssetId}}},
+                                   {"role", "reference_image"}});
+        if (!referenceImagePath.empty()) {
+            Json referenceImage;
+            if (auto error = readImage(referenceImagePath, context, referenceImage)) return *error;
+            content.push_back(Json{{"type", "image_url"},
+                                   {"image_url", {{"url", referenceImage}}},
+                                   {"role", "reference_image"}});
+        }
         if (!imagePath.empty()) {
             Json image;
             if (auto error = readImage(imagePath, context, image)) return *error;
@@ -513,9 +580,10 @@ private:
             task.providerTaskId = taskId;
             task.intent = message;
             task.contextSummary = extra;
-            task.inputReference = !videoTaskId.empty() ? videoTaskId
-                                  : !videoUrl.empty()  ? videoUrl
-                                                       : imagePath;
+            task.inputReference = !videoTaskId.empty()      ? videoTaskId
+                                  : !videoUrl.empty()       ? videoUrl
+                                  : !selectedAssetId.empty() ? selectedAssetId
+                                                             : imagePath;
             task.created = MaiTime::getCurrentTime();
             const MaiError stored = context.specialistTasks->insertSpecialistTask(task);
             if (stored) {

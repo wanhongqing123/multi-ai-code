@@ -107,7 +107,7 @@ public final class AIAssistantController {
     private long handle;
     private File root;
     private File rvmModelFile;
-    private String selected = "", baseUrl = state.baseUrl, model = state.model, policy = state.policy,
+    private volatile String selected = "", baseUrl = state.baseUrl, model = state.model, policy = state.policy,
                    error = "", apiKey = "";
     private volatile String arkApiKey = "";
     private volatile String wanApiKey = "";
@@ -175,6 +175,17 @@ public final class AIAssistantController {
                     .toString().getBytes(StandardCharsets.UTF_8);
             } catch (Exception failure) {
                 return hostToolFailure("Ark key is unavailable", "not_configured");
+            }
+        }
+        if (tool.equals("glm_api_key")) {
+            try {
+                String key = new java.net.URI(baseUrl).getHost().equals("open.bigmodel.cn")
+                    ? apiKey : "";
+                return new JSONObject().put("ok", true)
+                    .put("output", new JSONObject().put("key", key))
+                    .toString().getBytes(StandardCharsets.UTF_8);
+            } catch (Exception failure) {
+                return hostToolFailure("GLM key is unavailable", "not_configured");
             }
         }
         if (tool.equals("wan_credentials")) {

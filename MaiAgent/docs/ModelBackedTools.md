@@ -250,6 +250,17 @@ iOS 工具层仍需单独验收。任意本地 `video_path` 的上传尚未接�
 本地上传应接服务端签发的短时上传／读取链接或等价的受控存储通道。
 接口取值参考[方舟创建视频生成任务文档](https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh)。
 
+对无需指定真人身份的写实人物视频，工具支持 `virtual_avatar_asset_id`：从方舟
+体验中心的预置虚拟人像库选取素材 ID，在请求中以 `asset://<ID>`、
+`image_url` 与 `reference_image` 角色提交。可选 `reference_image_path` 作为第二张
+非真人脸参考图片；提示词按“图片 1 / 图片 2”指代素材。此路径不支持用用户真人照片
+自动替换成虚拟人像。对已在方舟同账号通过真人认证、授权且状态可用的人像素材，
+使用独立的 `authorized_portrait_asset_id` 输入，同样通过 `asset://<ID>` 引用，
+不上传本地真人人脸图片。两项 Asset ID 互斥，均须先在方舟体验中心取得。
+预置素材须由账号先在体验中心开通并取得 Asset ID，
+当前工具不持有素材管理 API 所需的 AK/SK，也不自动检索头像库。
+参考[方舟含肖像视频指南](https://docs.volcengine.com/docs/ark/seedance-portrait-asset-guide?lang=zh)。
+
 当前给主控模型的 `MaiToolSpec` 仍只有名称、描述和 JSON Schema；内部能力快照尚未
 接入自动任务路由。当前视频工具已具备后台状态查询和完成转交，尚无完整的内部对话规划和自动质检。
 
@@ -267,13 +278,30 @@ iOS 工具层仍需单独验收。任意本地 `video_path` 的上传尚未接�
 其中首尾帧输入现已接通 `image_path` + `last_frame_path` 两张工作区图片，
 并补上文档允许的 `21:9` 与 `4k` 参数；Mac 共享核心已用真实视频任务验证，
 移动端尚未实测，设备侧仍报告为 `implemented_unverified`。
-多参考图／视频／音频仍是能力缺口，不能报告为已实现。
+除虚拟人像加一张本地对象参考图外，多参考图／视频／音频仍是能力缺口，不能报告为已实现。
 
 1. 为视频 URL／已完成的 Seedance 任务接通编辑、延长和参考生视频；本地视频上传独立验收。
 2. 在共享工具接口加入机器可读的模型绑定与能力元数据，并核对实际授权与服务状态。
 3. 长任务已具备持久化状态、后台查询和重启恢复；真实百分比进度仍需供应商支持。
 4. 加入有界的澄清、创意规划与质检重试；明确费用和停止条件。
 5. 其他模型服务复用同一特殊工具契约，逐步扩展到其他平台。
+
+### 智谱 GLM 图片与视频
+
+共享实现位于 `MaiAgent/AgentTools/MaiGlmMediaTools.cpp`，工具名 `glm_video` 和
+`glm_image`。移动端仅在主模型使用 `open.bigmodel.cn` 时从同一份 GLM 5.3
+密钥配置读取；桌面端复用相同供应商的模型配置密钥。密钥不进入工具参数、能力清单或
+持久化任务记录。两项工具的付费 `delegate` 都需逐次确认，提交后由既有协调器查询
+异步任务、下载产物并通知主模型，`continue` 仅供排障。
+
+`glm_video` 绑定 `cogvideox-3`，支持文生视频、本地 PNG/JPEG 单图生视频和首尾帧
+生视频；已有视频编辑不在此接口能力内。`glm_image` 绑定 `glm-image`，只支持异步
+文生图；已有图片编辑不在此接口能力内。能力状态在云端与移动端实测前均为
+`implemented_unverified`。密钥来自 GLM 5.3 配置不代表 Coding Plan 套餐自动拥有
+开放平台的图像／视频模型权限，供应商若拒绝会返回结构化错误，不能宣称生成成功。
+接口参考[视频生成异步 API](https://docs.bigmodel.cn/api-reference/%E6%A8%A1%E5%9E%8B-api/%E8%A7%86%E9%A2%91%E7%94%9F%E6%88%90%E5%BC%82%E6%AD%A5)、
+[图片生成异步 API](https://docs.bigmodel.cn/api-reference/%E6%A8%A1%E5%9E%8B-api/%E5%9B%BE%E5%83%8F%E7%94%9F%E6%88%90%E5%BC%82%E6%AD%A5)及
+[查询异步结果](https://docs.bigmodel.cn/api-reference/%E6%A8%A1%E5%9E%8B-api/%E6%9F%A5%E8%AF%A2%E5%BC%82%E6%AD%A5%E7%BB%93%E6%9E%9C)。
 
 ### 万相 2.7 视频编辑
 

@@ -24,6 +24,9 @@ public:
         // in the conversation store, but repeatedly embedding all of them makes every subsequent
         // model request grow until its streaming deadline is exhausted.
         std::size_t maxRecentToolImages = 8;
+        // Keep only recent user image references in model text. The active user's attachments
+        // are always included, so a newly sent image is never hidden by an older gallery.
+        std::size_t maxRecentUserImageReferences = 12;
     };
 
     MaiContextBuilder();

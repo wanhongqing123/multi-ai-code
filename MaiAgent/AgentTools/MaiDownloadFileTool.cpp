@@ -283,13 +283,17 @@ int checkCanceled(void* userData, curl_off_t, curl_off_t, curl_off_t, curl_off_t
 
 class MaiDownloadFileTool final : public MaiTool {
 public:
+    explicit MaiDownloadFileTool(std::string caBundlePath)
+        : mCaBundlePath(std::move(caBundlePath)) {}
+
     std::string name() const override {
-        return "download_file";
+        return "curl_download";
     }
     std::string description() const override {
         return "Download a binary file from a direct HTTP or HTTPS URL into the Agent workspace. "
                "The file is streamed, size-limited, and never executed. If output_path is omitted, "
-               "use the server filename hint or URL filename.";
+               "use the server filename hint or URL filename. Use curl_upload to send an existing "
+               "workspace file to an approved upload URL.";
     }
     std::string parametersSchema() const override {
         return R"({"type":"object","properties":{"url":{"type":"string"},"output_path":{"type":"string"},"max_size_mb":{"type":"number","minimum":1,"maximum":1024},"timeout_s":{"type":"number","minimum":1,"maximum":600}},"required":["url"],"additionalProperties":false})";
@@ -302,7 +306,7 @@ public:
         const std::string host = arguments.is_object() && arguments.value("url", Json{}).is_string()
                                      ? hostname(arguments["url"].get<std::string>())
                                      : std::string{};
-        return "download_file:" + (host.empty() ? "<unknown>" : host);
+        return "curl_download:" + (host.empty() ? "<unknown>" : host);
     }
 
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
@@ -351,7 +355,7 @@ public:
         transfer.sink = &sink;
         transfer.context = &context;
         transfer.maximumBytes = static_cast<std::uint64_t>(maximumMb * kMegabyte);
-        maiAssertBlockingAllowed("download_file");
+        maiAssertBlockingAllowed("curl_download");
         CURL* curl = curl_easy_init();
         if (curl == nullptr)
             return failure(MaiErrorCode::Internal, "internal",
@@ -370,6 +374,7 @@ public:
         curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
         curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
         curl_easy_setopt(curl, CURLOPT_USERAGENT, "MaiAgent/0.1");
+        if (!mCaBundlePath.empty()) curl_easy_setopt(curl, CURLOPT_CAINFO, mCaBundlePath.c_str());
 #if LIBCURL_VERSION_NUM >= 0x075500
         curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "http,https");
         curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
@@ -436,10 +441,13 @@ public:
             {"bytes", transfer.receivedBytes},
             {"mime_type", mime}}.dump());
     }
+
+private:
+    std::string mCaBundlePath;
 };
 
 }  // namespace
 
-std::unique_ptr<MaiTool> makeMaiDownloadFileTool() {
-    return std::make_unique<MaiDownloadFileTool>();
+std::unique_ptr<MaiTool> makeMaiDownloadFileTool(std::string caBundlePath) {
+    return std::make_unique<MaiDownloadFileTool>(std::move(caBundlePath));
 }

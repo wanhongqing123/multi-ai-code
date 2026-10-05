@@ -2,11 +2,17 @@
 
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
+#include <exception>
 #include <mutex>
 #include <set>
 #include <thread>
 #include <unordered_map>
 
+#include <json.hpp>
+
+#include "MaiFilePath.h"
+#include "MaiFileSystem.h"
 #include "MaiIdGenerator.h"
 #include "MaiThread.h"
 
@@ -38,10 +44,44 @@ namespace {
 struct ActiveTurn {
     std::thread worker;
     std::atomic<bool> cancel{false};
+    std::mutex startMutex;
+    std::condition_variable startWake;
+    bool ready = false;
+
+    void waitReady() {
+        std::unique_lock<std::mutex> lock(startMutex);
+        startWake.wait(lock, [this] { return ready; });
+    }
+
+    void signalReady() {
+        {
+            std::lock_guard<std::mutex> lock(startMutex);
+            ready = true;
+        }
+        startWake.notify_one();
+    }
 };
 
 constexpr const char* kInterruptedToolError =
     "Tool execution was interrupted when the app stopped. Retry if needed.";
+
+const char* specialistStatusName(MaiSpecialistTaskStatus status) {
+    switch (status) {
+        case MaiSpecialistTaskStatus::Submitted: return "submitted";
+        case MaiSpecialistTaskStatus::Running: return "running";
+        case MaiSpecialistTaskStatus::NeedsInput: return "needs_input";
+        case MaiSpecialistTaskStatus::Succeeded: return "succeeded";
+        case MaiSpecialistTaskStatus::Failed: return "failed";
+        case MaiSpecialistTaskStatus::Canceled: return "canceled";
+    }
+    return "unknown";
+}
+
+std::string jsonText(const nlohmann::json& value, const char* field) {
+    return value.is_object() && value.contains(field) && value[field].is_string()
+               ? value[field].get<std::string>()
+               : std::string{};
+}
 
 }  // namespace
 
@@ -68,6 +108,10 @@ struct MaiAgent::Runtime {
     std::unordered_map<std::string, std::shared_ptr<ActiveTurn>> active;
     // 被 close_agent 收掉的子 Agent。只是不再占名额，消息一条不删。
     std::set<std::string> closedSubAgents;
+    std::atomic<bool> stopSpecialists{false};
+    std::thread specialistWorker;
+    std::mutex specialistMutex;
+    std::condition_variable specialistWake;
 
     ~Runtime() {
         // 析构时把所有在跑的轮次叫停并等它们退出，否则工作线程会访问已经销毁的 store/emitter。
@@ -125,6 +169,7 @@ struct MaiAgent::Runtime {
             }
         }
         turnFinished.notify_all();
+        specialistWake.notify_one();
     }
 };
 
@@ -150,9 +195,162 @@ MaiAgent::MaiAgent(std::unique_ptr<MaiSessionStore> store, std::unique_ptr<MaiMo
     mRuntime->permissions = std::make_unique<MaiPermissionGate>(gateOptions);
     // 问答不设超时：超时等于替用户做了决定，而用户可能只是走开了。
     mRuntime->questions = std::make_unique<MaiQuestionGate>();
+    mRuntime->specialistWorker = std::thread([this] {
+        MaiThread::setCurrentName("mai-specialists");
+        while (!mRuntime->stopSpecialists.load(std::memory_order_relaxed)) {
+            try {
+                pollSpecialistTasks();
+            } catch (const std::exception&) {
+                // Provider replies are untrusted; retry on the next check instead of
+                // allowing a malformed response to terminate the host process.
+            } catch (...) {
+                // A third-party tool can also throw a non-standard exception.
+            }
+            std::unique_lock<std::mutex> lock(mRuntime->specialistMutex);
+            mRuntime->specialistWake.wait_for(lock, std::chrono::seconds(15));
+        }
+    });
 }
 
-MaiAgent::~MaiAgent() = default;
+MaiAgent::~MaiAgent() {
+    mRuntime->stopSpecialists.store(true, std::memory_order_relaxed);
+    mRuntime->specialistWake.notify_all();
+    if (mRuntime->specialistWorker.joinable()) mRuntime->specialistWorker.join();
+}
+
+void MaiAgent::pollSpecialistTasks() {
+    using Json = nlohmann::json;
+    const MaiMillis now = MaiTime::getCurrentTime();
+    for (const MaiSpecialistTask& task : mRuntime->store->listActiveSpecialistTasks(16)) {
+        if (mRuntime->stopSpecialists.load(std::memory_order_relaxed)) return;
+        if (task.lastCheckedAt != 0 && now - task.lastCheckedAt < 10'000) continue;
+        MaiTool* tool = mRuntime->tools ? mRuntime->tools->find(task.specialistName) : nullptr;
+        if (!tool) continue;
+        MaiSession session;
+        if (!mRuntime->store->getSession(task.ownerSessionId, session)) continue;
+        MaiToolContext context;
+        context.sessionId = task.ownerSessionId;
+        context.root = session.directory;
+        context.fileAccessRoot = mRuntime->options.fileAccessRoot;
+        context.allowOutsideWorkingDirectory = mRuntime->options.allowOutsideWorkingDirectory;
+        context.specialistTasks = mRuntime->store.get();
+        context.cancel = &mRuntime->stopSpecialists;
+        const std::string arguments = Json{
+            {"action", "continue"},
+            {"conversation_id", task.id},
+            {"message", ""},
+            {"poll_once", true}}.dump();
+        const MaiToolResult result = tool->execute(arguments, context);
+        if (mRuntime->stopSpecialists.load(std::memory_order_relaxed)) return;
+        const MaiMillis checkedAt = MaiTime::getCurrentTime();
+        if (result.hasError()) {
+            const Json error = Json::parse(result.error().message(), nullptr, false);
+            if (jsonText(error, "code") == "task_failed") {
+                const std::string message = jsonText(error, "message");
+                mRuntime->store->finishSpecialistTask(
+                    task.id, task.ownerSessionId, MaiSpecialistTaskStatus::Failed,
+                    message.empty() ? result.error().message() : message, {}, checkedAt);
+            } else {
+                mRuntime->store->updateSpecialistProgress(task.id, task.ownerSessionId, checkedAt);
+            }
+            continue;
+        }
+        const Json reply = Json::parse(result.output(), nullptr, false);
+        if (!reply.is_object()) {
+            mRuntime->store->updateSpecialistProgress(task.id, task.ownerSessionId, checkedAt);
+            continue;
+        }
+        const std::string status = jsonText(reply, "status");
+        if (status == "succeeded" || status == "SUCCEEDED") {
+            const std::string path = jsonText(reply, "path");
+            std::uint64_t bytes = 0;
+            if (path.empty() || !MaiFileSystem::fileSize(MaiFilePath::fromUtf8(path), bytes) ||
+                bytes == 0) {
+                mRuntime->store->updateSpecialistProgress(task.id, task.ownerSessionId, checkedAt);
+                continue;
+            }
+            mRuntime->store->finishSpecialistTask(task.id, task.ownerSessionId,
+                                                  MaiSpecialistTaskStatus::Succeeded,
+                                                  jsonText(reply, "reply"), path, checkedAt);
+        } else {
+            mRuntime->store->updateSpecialistProgress(task.id, task.ownerSessionId, checkedAt);
+        }
+    }
+    for (const MaiSpecialistTask& task : mRuntime->store->listUnnotifiedSpecialistTasks(16)) {
+        if (mRuntime->stopSpecialists.load(std::memory_order_relaxed)) return;
+        if (task.notificationAttemptAt != 0 && now - task.notificationAttemptAt < 30'000) continue;
+        forwardSpecialistReply(task);
+    }
+}
+
+void MaiAgent::forwardSpecialistReply(const MaiSpecialistTask& task) {
+    if (!mRuntime->model) return;
+    auto turn = std::make_shared<ActiveTurn>();
+    {
+        std::lock_guard<std::mutex> lock(mRuntime->mutex);
+        if (mRuntime->active.count(task.ownerSessionId)) return;
+        mRuntime->active[task.ownerSessionId] = turn;
+    }
+    const auto reservation = mRuntime->store->reserveSpecialistNotification(
+        task.id, task.ownerSessionId, MaiIdGenerator::newMessageId(), MaiTime::getCurrentTime());
+    if (!reservation) {
+        mRuntime->retire(task.ownerSessionId, turn);
+        return;
+    }
+    const std::string messageId = reservation.value();
+    const auto existing =
+        mRuntime->store->listMessagesPage(task.ownerSessionId, messageId + "~", 1);
+    MaiMessage assistant;
+    assistant.id = messageId;
+    assistant.role = MaiRole::Assistant;
+    assistant.created = !existing.empty() && existing.front().id == messageId
+                            ? existing.front().created
+                            : MaiTime::getCurrentTime();
+    mRuntime->store->putMessage(task.ownerSessionId, assistant);
+    if (mRuntime->store->lastWriteError()) {
+        mRuntime->retire(task.ownerSessionId, turn);
+        return;
+    }
+    mRuntime->emitter.emitMessage(MaiEventType::MessageUpdated, task.ownerSessionId, assistant.id);
+    using Json = nlohmann::json;
+    std::uint64_t outputBytes = 0;
+    const bool outputAvailable =
+        !task.outputPath.empty() &&
+        MaiFileSystem::fileSize(MaiFilePath::fromUtf8(task.outputPath), outputBytes) &&
+        outputBytes > 0;
+    const std::string reply = Json{
+        {"specialist", task.specialistName},
+        {"task_id", task.id},
+        {"status", specialistStatusName(task.status)},
+        {"original_intent", task.intent},
+        {"reply", task.finalText},
+        {"error", task.errorText},
+        {"output_path", task.outputPath},
+        {"output_available",
+         outputAvailable}}.dump();
+    auto dependencies = mRuntime->dependencies();
+    dependencies.specialistReply = reply;
+    try {
+        turn->worker = std::thread([this, task, turn, dependencies, assistant, messageId] {
+            turn->waitReady();
+            MaiThread::setCurrentName("mai-child-reply");
+            MaiTurnRunner runner(dependencies, task.ownerSessionId, assistant);
+            runner.run(turn->cancel);
+            if (runner.succeeded() && !turn->cancel.load(std::memory_order_relaxed)) {
+                const auto messages =
+                    mRuntime->store->listMessagesPage(task.ownerSessionId, messageId + "~", 1);
+                if (!messages.empty() && messages.front().id == messageId &&
+                    !messages.front().text().empty())
+                    mRuntime->store->markSpecialistNotified(task.id, task.ownerSessionId, messageId,
+                                                            MaiTime::getCurrentTime());
+            }
+            mRuntime->retire(task.ownerSessionId, turn);
+        });
+        turn->signalReady();
+    } catch (...) {
+        mRuntime->retire(task.ownerSessionId, turn);
+    }
+}
 
 std::vector<MaiSession> MaiAgent::listSessions() const {
     // **只给根会话。** 子 Agent 也是会话，但用户没开过它们，
@@ -495,6 +693,7 @@ MaiResult<std::string> MaiAgent::submit(const MaiOperation& operation) {
                 const std::string sessionId = operation.sessionId;
                 auto dependencies = mRuntime->dependencies();
                 turn->worker = std::thread([this, sessionId, turn, dependencies, assistant] {
+                    turn->waitReady();
                     // 给线程起名字。抓 dump 或者挂调试器时，
                     // 一堆并发的轮次才分得清谁是谁——否则只有一串线程 ID。Linux 上限 15 字节，
                     // 所以名字要短。
@@ -503,6 +702,7 @@ MaiResult<std::string> MaiAgent::submit(const MaiOperation& operation) {
                     runner.run(turn->cancel);
                     mRuntime->retire(sessionId, turn);
                 });
+                turn->signalReady();
                 return assistant.id;
 
             } else if constexpr (std::is_same_v<T, MaiInterrupt>) {

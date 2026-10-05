@@ -349,8 +349,8 @@ void test_shell_is_only_registered_where_processes_are_allowed() {
     CHECK(listed == maiIsProcessExecutionSupported());
 
     // 其余工具不受平台影响，哪儿都该在。
-    CHECK(registry.find("read") != nullptr);
-    CHECK(registry.find("edit") != nullptr);
+    CHECK(registry.find("file_read") != nullptr);
+    CHECK(registry.find("file_edit") != nullptr);
     CHECK(registry.find("current_time") != nullptr);
 }
 

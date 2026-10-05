@@ -84,15 +84,24 @@ if(ENABLE_CURLDEBUG)
   set_source_files_properties("../lib/curl_multibyte.c" PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)
 endif()
 
-add_executable(
-  ${EXE_NAME}
-  ${CURL_CFILES} ${CURLX_CFILES} ${CURL_HFILES}
-)
+if(BUILD_CURL_EXE)
+  add_executable(
+    ${EXE_NAME}
+    ${CURL_CFILES} ${CURLX_CFILES} ${CURL_HFILES}
+  )
 
-add_executable(
-  ${PROJECT_NAME}::${EXE_NAME}
-  ALIAS ${EXE_NAME}
-)
+  add_executable(
+    ${PROJECT_NAME}::${EXE_NAME}
+    ALIAS ${EXE_NAME}
+  )
+endif()
+
+if(MAI_CURL_EMBEDDED)
+  add_library(mai_curl_cli STATIC EXCLUDE_FROM_ALL
+    ${CURL_CFILES} ${CURLX_CFILES} ${CURL_HFILES})
+  target_compile_definitions(mai_curl_cli PRIVATE MAI_CURL_EMBEDDED CURL_STATICLIB)
+  target_link_libraries(mai_curl_cli PRIVATE ${LIB_SELECTED_FOR_EXE} ${CURL_LIBS})
+endif()
 
 add_library(
   curltool  # special libcurltool library just for unittests
@@ -103,13 +112,13 @@ add_library(
 target_compile_definitions(curltool PUBLIC "UNITTESTS" "CURL_STATICLIB")
 target_link_libraries(curltool PRIVATE ${CURL_LIBS})
 
-if(CURL_HAS_LTO)
+if(CURL_HAS_LTO AND BUILD_CURL_EXE)
   set_target_properties(${EXE_NAME} PROPERTIES
     INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE
     INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO TRUE)
 endif()
 
-if(ENABLE_UNICODE AND MINGW)
+if(ENABLE_UNICODE AND MINGW AND BUILD_CURL_EXE)
   target_link_libraries(${EXE_NAME} "-municode")
 endif()
 
@@ -125,12 +134,16 @@ include_directories(
 )
 
 # Build curl executable
-target_link_libraries(${EXE_NAME} ${LIB_SELECTED_FOR_EXE} ${CURL_LIBS})
+if(BUILD_CURL_EXE)
+  target_link_libraries(${EXE_NAME} ${LIB_SELECTED_FOR_EXE} ${CURL_LIBS})
+endif()
 
 ################################################################################
 
-install(TARGETS ${EXE_NAME} EXPORT ${TARGETS_EXPORT_NAME} DESTINATION ${CMAKE_INSTALL_BINDIR})
-export(TARGETS ${EXE_NAME}
-  FILE "${PROJECT_BINARY_DIR}/curl-target.cmake"
-  NAMESPACE ${PROJECT_NAME}::
-)
+if(BUILD_CURL_EXE)
+  install(TARGETS ${EXE_NAME} EXPORT ${TARGETS_EXPORT_NAME} DESTINATION ${CMAKE_INSTALL_BINDIR})
+  export(TARGETS ${EXE_NAME}
+    FILE "${PROJECT_BINARY_DIR}/curl-target.cmake"
+    NAMESPACE ${PROJECT_NAME}::
+  )
+endif()

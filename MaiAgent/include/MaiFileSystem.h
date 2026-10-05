@@ -47,6 +47,9 @@ public:
     static bool isSymbolicLink(const MaiFilePath& path);
     // 拿不到大小时返回 false，size 不动。
     static bool fileSize(const MaiFilePath& path, std::uint64_t& size);
+    // Modification time as seconds since the Unix epoch. Does not follow the final symlink.
+    // Returns false for missing paths or unsupported metadata; `seconds` is unchanged then.
+    static bool modifiedTime(const MaiFilePath& path, std::int64_t& seconds);
 
     // ── 读写 ────────────────────────────────────────────────────
     // 整个读进来。maxBytes 为 0 表示不限；
@@ -65,6 +68,11 @@ public:
     // 文件本来就不存在时返回 NotFound，而不是当成成功——调用方据此能分清
     // 「删掉了」和「压根没有」。
     static MaiError removeFile(const MaiFilePath& path);
+
+    // Publish a completed temporary file at a new path on the same filesystem, without
+    // replacing an existing destination. On failure the caller still owns the source path.
+    // The destination parent must already exist. This is a blocking operation.
+    static MaiError publishNewFile(const MaiFilePath& source, const MaiFilePath& destination);
 
     // ── 目录 ────────────────────────────────────────────────────
     // 逐级创建，已存在不算错。

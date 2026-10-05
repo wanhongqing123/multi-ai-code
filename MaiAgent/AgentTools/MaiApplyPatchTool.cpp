@@ -10,14 +10,14 @@
 #include "MaiFileSystem.h"
 #include "MaiApplyPatchTool.h"
 
-// apply_patch：一次提交多处改动。
+// file_patch：一次提交多处改动。
 //
-// ── 和 edit 的分工 ──────────────────────────────────────────────
+// ── 和 file_edit 的分工 ─────────────────────────────────────────
 //
-// edit 一次换一处。改五个地方就要调五次，每次都要用户点一次头，而且中间任何一次
+// file_edit 一次换一处。改五个地方就要调五次，每次都要用户点一次头，而且中间任何一次
 // 失败都会留下**改了一半**的文件——模型和用户都说不清当前是什么状态。
 //
-// apply_patch 把整批改动当一个事务：**全部能应用才落盘，任何一处对不上就整批不动**。
+// file_patch 把整批改动当一个事务：**全部能应用才落盘，任何一处对不上就整批不动**。
 // 跨文件的改动（改接口同时改所有调用方）只有这个能做对。
 //
 // ── 格式 ────────────────────────────────────────────────────────
@@ -345,12 +345,12 @@ struct PlannedWrite {
 class ApplyPatchTool final : public MaiTool {
 public:
     std::string name() const override {
-        return "apply_patch";
+        return "file_patch";
     }
 
     std::string description() const override {
         return "Apply a patch that changes several places, or several files, at once. Use it "
-               "instead of repeated edit calls when one change spans multiple files, such as "
+               "instead of repeated file_edit calls when a change spans multiple files, such as "
                "renaming something and updating every caller. Either the whole patch applies or "
                "nothing does. Format:\n"
                "*** Begin Patch\n"

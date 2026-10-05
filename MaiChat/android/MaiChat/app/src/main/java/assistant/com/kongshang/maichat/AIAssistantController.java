@@ -107,10 +107,11 @@ public final class AIAssistantController {
     private long handle;
     private File root;
     private File rvmModelFile;
-    private File faceDetectorModelFile;
-    private File faceLandmarkerModelFile;
     private String selected = "", baseUrl = state.baseUrl, model = state.model, policy = state.policy,
                    error = "", apiKey = "";
+    private volatile String arkApiKey = "";
+    private volatile String wanApiKey = "";
+    private volatile String wanWorkspaceId = "";
     private JSONObject data = new JSONObject();
     private boolean ready, closed;
     private final Runnable poll = new Runnable() {
@@ -165,6 +166,25 @@ public final class AIAssistantController {
                     .toString().getBytes(StandardCharsets.UTF_8);
             } catch (Throwable failure) {
                 return hostToolFailure(safeMessage(failure), "invalid_input");
+            }
+        }
+        if (tool.equals("ark_api_key")) {
+            try {
+                return new JSONObject().put("ok", true)
+                    .put("output", new JSONObject().put("key", arkApiKey))
+                    .toString().getBytes(StandardCharsets.UTF_8);
+            } catch (Exception failure) {
+                return hostToolFailure("Ark key is unavailable", "not_configured");
+            }
+        }
+        if (tool.equals("wan_credentials")) {
+            try {
+                return new JSONObject().put("ok", true)
+                    .put("output", new JSONObject().put("key", wanApiKey)
+                        .put("workspace_id", wanWorkspaceId))
+                    .toString().getBytes(StandardCharsets.UTF_8);
+            } catch (Exception failure) {
+                return hostToolFailure("Wan credentials are unavailable", "not_configured");
             }
         }
         HostToolHandler target = hostToolHandler;
@@ -229,11 +249,6 @@ public final class AIAssistantController {
             try {
                 rvmModelFile = prepareBundledModel("rvm_mobilenetv3_fp32.onnx",
                     "88d4531297118f595bf2fd60f6f566aec2e559393802d1f436c380f0cbbd2828");
-                faceDetectorModelFile = prepareBundledModel("face_detection_short_range.onnx",
-                    "2f2689b040becf555706d2cb978d2f0e3296ea82413734fba9a856c66c5f2b17");
-                faceLandmarkerModelFile = prepareBundledModel(
-                    "face_landmarker_Nx3x256x256.onnx",
-                    "111795f8703cdeb6d0c68a9f3cc966a0f23f8786bb00f4577a11f461fc4276ac");
             }
             catch (Exception failure) { Log.w("MaiChatAgent", "Agent model staging failed", failure); }
             File settings = new File(root, "settings.json");
@@ -243,11 +258,22 @@ public final class AIAssistantController {
                 baseUrl = saved.optString("baseUrl", baseUrl);
                 model = saved.optString("model", model);
                 policy = saved.optString("policy", policy);
+                wanWorkspaceId = saved.optString("wanWorkspaceId", "");
             }
             try {
                 apiKey = readKey();
             } catch (Exception e) {
                 error = "API Key 无法读取，请重新配置模型";
+            }
+            try {
+                arkApiKey = readEncryptedKey("ark-api-key.enc");
+            } catch (Exception e) {
+                Log.w("MaiChatAgent", "Ark key could not be read", e);
+            }
+            try {
+                wanApiKey = readEncryptedKey("wan-api-key.enc");
+            } catch (Exception e) {
+                Log.w("MaiChatAgent", "Wan key could not be read", e);
             }
             if (testEndpoint != null) {
                 baseUrl = testEndpoint;
@@ -303,10 +329,6 @@ public final class AIAssistantController {
                 .put("workspace", workspace.getPath())
                 .put("appRoot", context.getFilesDir().getParentFile().getCanonicalPath())
                 .put("rvmModelPath", rvmModelFile != null ? rvmModelFile.getPath() : "")
-                .put("faceDetectorModelPath", faceDetectorModelFile != null
-                    ? faceDetectorModelFile.getPath() : "")
-                .put("faceLandmarkerModelPath", faceLandmarkerModelFile != null
-                    ? faceLandmarkerModelFile.getPath() : "")
                 .put("ortRuntimePath", runtime.isFile() ? runtime.getPath() : "")
                 .put("caBundle", new File(root, "trusted-roots.pem").getPath()));
     }
@@ -487,6 +509,7 @@ public final class AIAssistantController {
                                         .put("baseUrl", url.trim())
                                         .put("model", name.trim())
                                         .put("policy", approval)
+                                        .put("wanWorkspaceId", wanWorkspaceId)
                                         .toString()
                                         .getBytes(StandardCharsets.UTF_8);
                     android.util.AtomicFile file =
@@ -519,6 +542,57 @@ public final class AIAssistantController {
             main.post(() -> completion.accept(saved));
         });
     }
+    void saveArkKey(String newKey, Consumer<Boolean> completion) {
+        worker.post(() -> {
+            boolean success = true;
+            if (!newKey.trim().isEmpty()) {
+                try {
+                    writeEncryptedKey("ark-api-key.enc", newKey.trim());
+                    arkApiKey = newKey.trim();
+                } catch (Exception failure) {
+                    error = safeMessage(failure);
+                    success = false;
+                }
+            }
+            boolean result = success;
+            main.post(() -> completion.accept(result));
+        });
+    }
+    void saveWanCredentials(String newKey, String workspaceId, Consumer<Boolean> completion) {
+        worker.post(() -> {
+            boolean success = true;
+            try {
+                String id = workspaceId.trim();
+                if (!id.isEmpty() && !id.matches("(?:ws|llm)-[A-Za-z0-9_-]+"))
+                    throw new IllegalArgumentException("百炼 Workspace ID 格式不正确");
+                if (!newKey.trim().isEmpty()) {
+                    writeEncryptedKey("wan-api-key.enc", newKey.trim());
+                    wanApiKey = newKey.trim();
+                }
+                wanWorkspaceId = id;
+                File settings = new File(root, "settings.json");
+                JSONObject saved = settings.isFile()
+                    ? new JSONObject(new String(Files.readAllBytes(settings.toPath()), StandardCharsets.UTF_8))
+                    : new JSONObject();
+                saved.put("wanWorkspaceId", id);
+                android.util.AtomicFile file = new android.util.AtomicFile(settings);
+                FileOutputStream out = file.startWrite();
+                try {
+                    out.write(saved.toString().getBytes(StandardCharsets.UTF_8));
+                    file.finishWrite(out);
+                } catch (Exception e) {
+                    file.failWrite(out);
+                    throw e;
+                }
+            } catch (Exception failure) {
+                error = safeMessage(failure);
+                success = false;
+            }
+            boolean result = success;
+            main.post(() -> completion.accept(result));
+        });
+    }
+    String wanWorkspaceId() { return wanWorkspaceId; }
     void importFile(Uri uri, Consumer<ImportedFile> completion) {
         worker.post(() -> {
             ImportedFile imported = null;
@@ -796,6 +870,9 @@ public final class AIAssistantController {
         return generator.generateKey();
     }
     private void writeKey(String key) throws Exception {
+        writeEncryptedKey("api-key.enc", key);
+    }
+    private void writeEncryptedKey(String name, String key) throws Exception {
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
         cipher.init(Cipher.ENCRYPT_MODE, encryptionKey());
         JSONObject value = new JSONObject()
@@ -803,7 +880,7 @@ public final class AIAssistantController {
                                .put("data",
                                    Base64.encodeToString(
                                        cipher.doFinal(key.getBytes(StandardCharsets.UTF_8)), Base64.NO_WRAP));
-        android.util.AtomicFile file = new android.util.AtomicFile(new File(root, "api-key.enc"));
+        android.util.AtomicFile file = new android.util.AtomicFile(new File(root, name));
         FileOutputStream out = file.startWrite();
         try {
             out.write(value.toString().getBytes(StandardCharsets.UTF_8));
@@ -814,7 +891,10 @@ public final class AIAssistantController {
         }
     }
     private String readKey() throws Exception {
-        File file = new File(root, "api-key.enc");
+        return readEncryptedKey("api-key.enc");
+    }
+    private String readEncryptedKey(String name) throws Exception {
+        File file = new File(root, name);
         if (!file.isFile())
             return "";
         JSONObject value =

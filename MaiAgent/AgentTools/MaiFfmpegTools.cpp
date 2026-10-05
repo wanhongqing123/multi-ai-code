@@ -1,6 +1,7 @@
 #include "MaiFfmpegTools.h"
 
 #include <atomic>
+#include <cmath>
 #include <cstddef>
 #include <memory>
 #include <mutex>
@@ -25,6 +26,8 @@ std::mutex sFfmpegCommandMutex;
 struct DiagnosticCapture {
     std::mutex mutex;
     std::string text;
+    std::size_t limit = kMaximumDiagnosticBytes;
+    bool truncated = false;
 };
 
 int shouldCancel(void* opaque) {
@@ -37,13 +40,17 @@ void captureDiagnostic(void* opaque, const char* line) {
     auto& capture = *static_cast<DiagnosticCapture*>(opaque);
     std::lock_guard<std::mutex> lock(capture.mutex);
     capture.text.append(line);
-    if (capture.text.size() > kMaximumDiagnosticBytes)
-        capture.text.erase(0, capture.text.size() - kMaximumDiagnosticBytes);
+    if (capture.text.size() > capture.limit) {
+        capture.text.erase(0, capture.text.size() - capture.limit);
+        capture.truncated = true;
+    }
 }
 
 int runEngine(int (*execute)(int, char**), void (*setCancelCheck)(int (*)(void*), void*),
               const MaiFfmpegEngine& engine, std::vector<std::string> arguments,
-              const MaiToolContext& context, std::string& diagnostic) {
+              const MaiToolContext& context, std::string& diagnostic,
+              bool* diagnosticTruncated = nullptr,
+              std::size_t diagnosticLimit = kMaximumDiagnosticBytes) {
     std::lock_guard<std::mutex> commandLock(sFfmpegCommandMutex);
     if (context.isCanceled()) return -1;
 
@@ -55,10 +62,12 @@ int runEngine(int (*execute)(int, char**), void (*setCancelCheck)(int (*)(void*)
         setCancelCheck(context.cancel ? shouldCancel : nullptr,
                        const_cast<std::atomic<bool>*>(context.cancel));
     DiagnosticCapture capture;
+    capture.limit = diagnosticLimit;
     if (engine.setLogSink) engine.setLogSink(captureDiagnostic, &capture);
     const int status = execute(static_cast<int>(argv.size()), argv.data());
     if (engine.setLogSink) engine.setLogSink(nullptr, nullptr);
     diagnostic = std::move(capture.text);
+    if (diagnosticTruncated != nullptr) *diagnosticTruncated = capture.truncated;
     if (setCancelCheck) setCancelCheck(nullptr, nullptr);
     return status;
 }
@@ -104,12 +113,15 @@ public:
     std::string description() const override {
         return "Transform an accessible local image, audio, or video using the in-process FFmpeg "
                "engine. Supply FFmpeg arguments without the program name. Stdin is disabled "
-               "and existing outputs cannot be overwritten; choose a new output path.";
+               "and existing outputs cannot be overwritten; choose a new output path. For "
+               "analysis filters such as volumedetect or blackdetect, set capture_log=true to "
+               "receive up to 16 KiB of FFmpeg diagnostic output.";
     }
 
     std::string parametersSchema() const override {
         return R"({"type":"object","properties":{"arguments":{"type":"array","items":)"
-               R"({"type":"string"},"minItems":1,"maxItems":64}},"required":["arguments"],)"
+               R"({"type":"string"},"minItems":1,"maxItems":64},)"
+               R"("capture_log":{"type":"boolean"}},"required":["arguments"],)"
                R"("additionalProperties":false})";
     }
 
@@ -125,11 +137,18 @@ public:
     MaiToolResult execute(const std::string& argumentsJson,
                           const MaiToolContext& context) override {
         const json request = json::parse(argumentsJson, nullptr, false);
-        if (request.is_discarded() || !request.is_object() || request.size() != 1 ||
+        if (request.is_discarded() || !request.is_object() || request.size() > 2 ||
             !request.contains("arguments") || !request["arguments"].is_array() ||
             request["arguments"].empty() || request["arguments"].size() > 64)
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,
                                           "ffmpeg requires 1-64 string arguments");
+        if (request.contains("capture_log") && !request["capture_log"].is_boolean())
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                          "capture_log must be boolean");
+        if (request.size() == 2 && !request.contains("capture_log"))
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                          "unsupported FFmpeg argument field");
+        const bool captureLog = request.value("capture_log", false);
 
         std::vector<std::string> arguments = {"ffmpeg", "-nostdin", "-n", "-hide_banner"};
         for (const json& item : request["arguments"]) {
@@ -182,8 +201,10 @@ public:
             if (arguments[index] == "-filter_complex") filterGraph = arguments[index + 1];
         }
         std::string diagnostic;
+        bool logTruncated = false;
         const int status = runEngine(mEngine.runFfmpeg, mEngine.setFfmpegCancelCheck, mEngine,
-                                     std::move(arguments), context, diagnostic);
+                                     std::move(arguments), context, diagnostic, &logTruncated,
+                                     captureLog ? 16 * 1024 : kMaximumDiagnosticBytes);
         if (context.isCanceled())
             return MaiToolResult::failure(MaiErrorCode::Canceled, "FFmpeg was canceled");
         if (status != 0)
@@ -191,6 +212,11 @@ public:
                 MaiErrorCode::InvalidInput,
                 "FFmpeg failed: " + errorDescription(mEngine, status, diagnostic) +
                     filterGraphFailureContext(filterGraph, diagnostic));
+        if (captureLog)
+            return MaiToolResult::success(
+                json{{"status", 0}, {"log_tail", diagnostic}, {"log_truncated", logTruncated}}
+                    .dump(),
+                logTruncated);
         return MaiToolResult::success("FFmpeg completed with status 0.");
     }
 
@@ -208,21 +234,64 @@ public:
 
     std::string description() const override {
         return "Read streams and container metadata from an accessible local media file "
-               "with the in-process FFprobe engine. Returns JSON.";
+               "with the in-process FFprobe engine. Metadata mode returns format, streams and "
+               "chapters, including codec, duration, frame rate, rotation and color/HDR fields "
+               "when present. Keyframes, frames and packets modes return bounded timestamp "
+               "ranges for timing analysis. This reads the file without modifying it and "
+               "returns complete JSON or an explicit size error.";
     }
 
     std::string parametersSchema() const override {
-        return R"({"type":"object","properties":{"path":{"type":"string"}},)"
+        return R"({"type":"object","properties":{"path":{"type":"string"},)"
+               R"("mode":{"type":"string","enum":["metadata","keyframes","frames","packets"]},)"
+               R"("include_chapters":{"type":"boolean"},"include_programs":{"type":"boolean"},)"
+               R"("count_frames":{"type":"boolean"},"select_streams":{"type":"string"},)"
+               R"("start_s":{"type":"number","minimum":0},)"
+               R"("duration_s":{"type":"number","minimum":0.1,"maximum":120}},)"
                R"("required":["path"],"additionalProperties":false})";
     }
 
     MaiToolResult execute(const std::string& argumentsJson,
                           const MaiToolContext& context) override {
         const json request = json::parse(argumentsJson, nullptr, false);
-        if (request.is_discarded() || !request.is_object() || request.size() != 1 ||
-            !request.contains("path") || !request["path"].is_string())
+        if (request.is_discarded() || !request.is_object() || !request.contains("path") ||
+            !request["path"].is_string())
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,
                                           "ffprobe requires one string path");
+        if (request.contains("mode") && !request["mode"].is_string())
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                          "ffprobe mode must be a string");
+        const std::string mode = request.value("mode", std::string("metadata"));
+        if (mode != "metadata" && mode != "keyframes" && mode != "frames" && mode != "packets")
+            return MaiToolResult::failure(
+                MaiErrorCode::InvalidInput,
+                "ffprobe mode must be metadata, keyframes, frames, or packets");
+        for (const char* field : {"include_chapters", "include_programs", "count_frames"}) {
+            if (request.contains(field) && !request[field].is_boolean())
+                return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                              std::string(field) + " must be boolean");
+        }
+        if (request.contains("select_streams") && !request["select_streams"].is_string())
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                          "select_streams must be a string");
+        const std::string selector = request.value("select_streams", std::string{});
+        if (!selector.empty() && !validStreamSelector(selector))
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                          "select_streams must be v, a, s, d or TYPE:INDEX");
+        if (mode == "keyframes" && !selector.empty() && selector[0] != 'v')
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                          "keyframes mode requires a video stream selector");
+        if (mode == "metadata" && (request.contains("start_s") || request.contains("duration_s")))
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                          "start_s and duration_s require a timing mode");
+        double start = 0;
+        double duration = mode == "keyframes" ? 30 : 5;
+        const double maximumDuration = mode == "keyframes" ? 120 : 30;
+        if (mode != "metadata" && (!number(request, "start_s", start, 0, 1'000'000) ||
+                                   !number(request, "duration_s", duration, 0.1, maximumDuration)))
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                          "invalid timing interval; keyframes allow 120 s, "
+                                          "frames and packets allow 30 s");
         const std::string input = context.resolvePath(request["path"].get<std::string>());
         if (input.empty())
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,
@@ -241,9 +310,38 @@ public:
         if (createError.hasError())
             return MaiToolResult::failure(createError.code(), createError.message());
 
-        std::vector<std::string> arguments = {"ffprobe",       "-v",  "error", "-show_format",
-                                              "-show_streams", "-of", "json",  "-o",
-                                              output.toUtf8(), input};
+        std::vector<std::string> arguments = {"ffprobe", "-v", "error"};
+        if (mode == "metadata") {
+            arguments.insert(arguments.end(), {"-show_format", "-show_streams"});
+            if (request.value("include_chapters", true)) arguments.push_back("-show_chapters");
+            if (request.value("include_programs", false)) arguments.push_back("-show_programs");
+            if (request.value("count_frames", false)) arguments.push_back("-count_frames");
+        } else if (mode == "keyframes") {
+            arguments.insert(
+                arguments.end(),
+                {"-skip_frame", "nokey", "-show_frames", "-show_entries",
+                 "frame=best_effort_timestamp_time,pkt_pts_time,pict_type,key_frame,"
+                 "pkt_pos,width,height",
+                 "-read_intervals", std::to_string(start) + "%+" + std::to_string(duration)});
+        } else if (mode == "frames") {
+            arguments.insert(
+                arguments.end(),
+                {"-show_frames", "-show_entries",
+                 "frame=media_type,stream_index,best_effort_timestamp_time,"
+                 "pkt_duration_time,pict_type,key_frame,width,height",
+                 "-read_intervals", std::to_string(start) + "%+" + std::to_string(duration)});
+        } else {
+            arguments.insert(
+                arguments.end(),
+                {"-show_packets", "-show_entries",
+                 "packet=stream_index,pts_time,dts_time,duration_time,size,flags,pos",
+                 "-read_intervals", std::to_string(start) + "%+" + std::to_string(duration)});
+        }
+        if (!selector.empty())
+            arguments.insert(arguments.end(), {"-select_streams", selector});
+        else if (mode != "metadata")
+            arguments.insert(arguments.end(), {"-select_streams", "v:0"});
+        arguments.insert(arguments.end(), {"-of", "json", "-o", output.toUtf8(), input});
         std::string diagnostic;
         const int status = runEngine(mEngine.runFfprobe, mEngine.setFfprobeCancelCheck, mEngine,
                                      std::move(arguments), context, diagnostic);
@@ -260,13 +358,39 @@ public:
                 "FFprobe failed to read media: " + errorDescription(mEngine, status, diagnostic));
         if (readError.hasError())
             return MaiToolResult::failure(readError.code(), readError.message());
+        if (truncated)
+            return MaiToolResult::failure(
+                MaiErrorCode::InvalidInput,
+                "FFprobe JSON exceeded 2 MiB; select one stream or shorten the interval");
         if (result.empty())
             return MaiToolResult::failure(MaiErrorCode::Internal,
                                           "FFprobe produced no metadata for: " + input);
-        return MaiToolResult::success(std::move(result), truncated);
+        if (json::parse(result, nullptr, false).is_discarded())
+            return MaiToolResult::failure(MaiErrorCode::Protocol, "FFprobe returned invalid JSON");
+        return MaiToolResult::success(std::move(result));
     }
 
 private:
+    static bool validStreamSelector(const std::string& selector) {
+        if (selector.empty() || selector.size() > 8 ||
+            std::string("vasd").find(selector[0]) == std::string::npos)
+            return false;
+        if (selector.size() == 1) return true;
+        if (selector[1] != ':' || selector.size() < 3) return false;
+        for (std::size_t index = 2; index < selector.size(); ++index) {
+            if (selector[index] < '0' || selector[index] > '9') return false;
+        }
+        return true;
+    }
+
+    static bool number(const json& request, const char* field, double& value, double minimum,
+                       double maximum) {
+        if (!request.contains(field)) return true;
+        if (!request[field].is_number()) return false;
+        value = request[field].get<double>();
+        return std::isfinite(value) && value >= minimum && value <= maximum;
+    }
+
     MaiFfmpegEngine mEngine;
 };
 

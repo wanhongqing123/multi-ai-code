@@ -126,7 +126,7 @@ public:
 
 class OutsideReadModel final : public MaiModelClient {
 public:
-    explicit OutsideReadModel(std::string arguments, std::string tool = "read")
+    explicit OutsideReadModel(std::string arguments, std::string tool = "file_read")
         : arguments_(std::move(arguments)), tool_(std::move(tool)) {}
     MaiError stream(const MaiModelRequest&, const MaiStreamSink& sink,
                     const std::atomic<bool>&) override {
@@ -205,7 +205,7 @@ void AgentControllerTest::desktopReadsOutsideSessionWorkingDirectory() {
     for (const MaiMessage& message : controller.agent().listMessages(sessionId.toStdString())) {
         for (const MaiMessagePart& part : message.parts) {
             const auto* tool = std::get_if<MaiToolPart>(&part.body);
-            if (tool != nullptr && tool->tool == "read" &&
+            if (tool != nullptr && tool->tool == "file_read" &&
                 tool->output.find("outside-visible") != std::string::npos)
                 readOutside = true;
         }
@@ -223,7 +223,7 @@ void AgentControllerTest::desktopWriteOutsideWaitsForApproval() {
         {QStringLiteral("path"), target}, {QStringLiteral("content"), QStringLiteral("approved")}})
                                       .toJson(QJsonDocument::Compact).toStdString();
     AgentController controller(
-        std::make_unique<OutsideReadModel>(arguments, "write"), QString());
+        std::make_unique<OutsideReadModel>(arguments, "file_write"), QString());
     const QString sessionId = controller.createSession(workspace.path());
     QVERIFY(controller.sendPrompt(sessionId, QStringLiteral("write outside")));
     QTRY_COMPARE(controller.agent().listPendingPermissions().size(), std::size_t(1));
@@ -410,7 +410,7 @@ void AgentControllerTest::registers_host_tools_after_builtin_tools() {
     bool foundVideoMatting = false;
 #endif
     for (const MaiToolSpec& tool : scripted->lastRequest().tools) {
-        if (tool.name == "read") foundBuiltin = true;
+        if (tool.name == "file_read") foundBuiltin = true;
         if (tool.name == "agent_send_media") foundAgentMedia = true;
         if (tool.name == "maichat_probe") foundHost = true;
 #if defined(MAICHAT_TEST_CV_VIDEO_ANALYSIS)

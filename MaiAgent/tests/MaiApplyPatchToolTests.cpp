@@ -302,7 +302,7 @@ void test_apply_patch_always_needs_approval() {
     auto tool = makeMaiApplyPatchTool();
     CHECK(tool->requiresApproval(patchArgs("*** Begin Patch\n*** End Patch\n")));
     CHECK(tool->requiresApproval("not json at all"));
-    CHECK(tool->approvalKey(patchArgs("anything")) == "apply_patch");
+    CHECK(tool->approvalKey(patchArgs("anything")) == "file_patch");
 }
 
 void test_delete_and_move_require_approval_for_each_affected_file() {

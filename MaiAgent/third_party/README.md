@@ -11,7 +11,10 @@
 | `nlohmann/json.hpp` | https://github.com/nlohmann/json | v3.11.3 |
 | `httplib/httplib.h` | https://github.com/yhirose/cpp-httplib | v0.18.3 |
 | `sqlite/sqlite3.{c,h}` | https://sqlite.org/ | 3.49.1（amalgamation） |
-| `curl/` | https://curl.se/ | 8.11.1（完整源码） |
+| `curl/` | https://curl.se/ | 8.11.1（完整源码基线，含内嵌 CLI 补丁） |
+| `zlib/` | https://zlib.net/ | 1.3.2（完整源码，SHA-256 `bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16`） |
+| `openssl/` | https://www.openssl.org/source/ | 3.5.9 LTS（源码基线，剔除示例私钥、测试与演示目录；原包 SHA-256 `603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a`） |
+| `libssh2/` | https://github.com/libssh2/libssh2 | 1.11.2 开发快照，固定提交 `740c2d33ad58720db1039031d2b6e13a3df9aab8` |
 | `ffmpeg/` | https://ffmpeg.org/ | 9.0.2（完整源码） |
 | `opencv/` | https://github.com/opencv/opencv | 4.14.0（完整源码） |
 | `simde/` | https://github.com/simd-everywhere/simde | 0.8.2（OBS 使用的头文件与许可文件） |
@@ -24,10 +27,20 @@ OpenCV 4.14.0 来自官方 tag 源码包
 [`opencv/LICENSE`](opencv/LICENSE)。桌面图像模型单独放在
 [`MaiChat/shared/agent/models/`](../../MaiChat/shared/agent/models/)。
 
+zlib 使用上游 CMake 目标生成静态库，编译时启用 `Z_PREFIX`，避免与 Qt 和
+FFmpeg 已链接的 zlib 符号冲突。OpenSSL 在上游源码上修改了 `apps` 的进程退出、
+BIO 与重复调用路径；[`scripts/build-openssl.sh`](../scripts/build-openssl.sh) 为移动端
+和 macOS 从源码生成 `libcrypto.a`、`libssl.a`、`libapps.a` 与内嵌 CLI 静态库。
+Windows 当前仍使用源码构建的 `libcrypto.lib` 和类型化摘要/证书工具。
+共享 SSH 客户端使用固定的 libssh2 源码快照和移动端同一份 OpenSSL `libcrypto.a`；
+这避免了 iOS、Android 分别维护两套 SSH 协议实现。
+该固定提交包含上游提交 `42e33d8`，修复 1.11.1 及更早版本的一处
+[连接前缓冲区溢出问题](https://github.com/advisories/GHSA-v6rf-8q4r-r495)。
+
 ## 用法边界
 
-`nlohmann/json.hpp` **只允许在 `adapters/` 下面 include**。核心
-（`include/mai/agent/` 与 `src/`）里一律用原生结构体，不出现 JSON 类型。
+`nlohmann/json.hpp` 用于模型协议和工具调用的 JSON 边界；公开核心头文件里用
+原生结构体，不暴露 JSON 类型。
 
 原因：nlohmann 的 DOM 每个节点一次堆分配、object 默认是 `std::map`，
 当成内部数据结构用会很慢。把它关在边界里，既保住性能，也保住了
@@ -49,8 +62,8 @@ SQLite 有个历史怪癖——双引号括起来的东西如果不是已知列�
 
 ## libcurl
 
-`curl/` 是 curl 8.11.1 的**完整发布包**，原样解开，一个文件没动。
-sha256 和官网一致：
+`curl/` 以 curl 8.11.1 完整发布包为基线；`src/` 的内嵌 CLI 补丁使上游
+`argc/argv` 执行入口能在 App 工作线程反复调用。原始发布包 SHA-256：
 
     a889ac9dbba3644271bd9d1302b5c22a088893719b72be3487bc3d401e5c4e80
 
@@ -59,7 +72,7 @@ sha256 和官网一致：
 直接和上游比对；而且构建里哪天需要某个被删掉的文件，报错会离原因很远。
 体积换确定性，这笔划算。
 
-构建时关掉的：`BUILD_CURL_EXE`（只要库，不要 curl.exe）、`BUILD_EXAMPLES`、
+构建时关掉的：`BUILD_CURL_EXE`（不生成外部进程；另编内嵌 CLI 静态库）、`BUILD_EXAMPLES`、
 `CURL_BUILD_TESTING`、文档。`HTTP_ONLY` 把 FTP/LDAP/SMTP/telnet 一律关掉——
 我们只打 HTTPS，少掉的这些既是体积也是攻击面。
 

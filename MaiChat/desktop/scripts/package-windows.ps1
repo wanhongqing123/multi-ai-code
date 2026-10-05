@@ -185,9 +185,6 @@ if ($ffmpegEnabled -and $opencvEnabled -and
         'onnxruntime.dll',
         'onnxruntime_providers_shared.dll',
         'MaiAgentModels\rvm_mobilenetv3_fp32.onnx',
-        'MaiAgentModels\face_detection_short_range.onnx',
-        'MaiAgentModels\face_landmarker_Nx3x256x256.onnx',
-        'MaiAgentModels\FACE_LANDMARKER_LICENSE',
         'MaiAgentModels\RVM_LICENSE',
         'MaiAgentModels\ONNXRUNTIME_LICENSE',
         'MaiAgentModels\ONNXRUNTIME_ThirdPartyNotices.txt'

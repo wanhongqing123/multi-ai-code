@@ -348,6 +348,29 @@ void test_remove_recursively() {
     CHECK(!fs::exists(tree));
 }
 
+void test_publish_new_file_without_overwrite() {
+    std::printf("-> test_publish_new_file_without_overwrite\n");
+    TempDir temp;
+    const fs::path source = temp.root / "source.part";
+    const fs::path destination = temp.root / "result.bin";
+    std::ofstream(source, std::ios::binary) << "first";
+    CHECK(!MaiFileSystem::publishNewFile(MaiFilePath::fromUtf8(source.u8string()),
+                                         MaiFilePath::fromUtf8(destination.u8string())));
+    CHECK(!fs::exists(source));
+    std::string contents;
+    CHECK(!MaiFileSystem::readFile(MaiFilePath::fromUtf8(destination.u8string()), contents));
+    CHECK(contents == "first");
+
+    std::ofstream(source, std::ios::binary) << "second";
+    CHECK(MaiFileSystem::publishNewFile(MaiFilePath::fromUtf8(source.u8string()),
+                                        MaiFilePath::fromUtf8(destination.u8string()))
+              .hasError());
+    CHECK(fs::exists(source));
+    contents.clear();
+    CHECK(!MaiFileSystem::readFile(MaiFilePath::fromUtf8(destination.u8string()), contents));
+    CHECK(contents == "first");
+}
+
 }  // namespace
 
 int main() {
@@ -368,6 +391,7 @@ int main() {
     test_non_ascii_paths();
     test_resolve();
     test_remove_recursively();
+    test_publish_new_file_without_overwrite();
 
     if (failures) {
         std::printf("\n%d checks failed\n", failures);

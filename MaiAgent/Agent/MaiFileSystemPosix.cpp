@@ -93,6 +93,14 @@ bool MaiFileSystem::fileSize(const MaiFilePath& path, std::uint64_t& size) {
     return true;
 }
 
+bool MaiFileSystem::modifiedTime(const MaiFilePath& path, std::int64_t& seconds) {
+    if (path.isEmpty()) return false;
+    struct stat info{};
+    if (::lstat(path.value().c_str(), &info) != 0) return false;
+    seconds = static_cast<std::int64_t>(info.st_mtime);
+    return true;
+}
+
 MaiError MaiFileSystem::readFile(const MaiFilePath& path, std::string& contents,
                                  std::uint64_t maxBytes, bool* truncated) {
     contents.clear();
@@ -177,6 +185,19 @@ MaiError MaiFileSystem::removeFile(const MaiFilePath& path) {
     maiAssertBlockingAllowed("MaiFileSystem::removeFile");
     if (::unlink(path.value().c_str()) == 0) return {};
     return errnoAs("cannot delete file");
+}
+
+MaiError MaiFileSystem::publishNewFile(const MaiFilePath& source, const MaiFilePath& destination) {
+    if (source.isEmpty() || destination.isEmpty())
+        return MaiError::make(MaiErrorCode::InvalidInput, "empty publish path");
+    maiAssertBlockingAllowed("MaiFileSystem::publishNewFile");
+    if (::link(source.value().c_str(), destination.value().c_str()) != 0)
+        return errnoAs("cannot publish file");
+    if (::unlink(source.value().c_str()) == 0) return {};
+    const int saved = errno;
+    ::unlink(destination.value().c_str());
+    errno = saved;
+    return errnoAs("cannot remove published temporary file");
 }
 
 MaiError MaiFileSystem::createDirectories(const MaiFilePath& path) {

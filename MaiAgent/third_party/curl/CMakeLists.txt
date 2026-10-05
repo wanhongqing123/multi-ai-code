@@ -1897,7 +1897,7 @@ endif()
 
 add_subdirectory(lib)
 
-if(BUILD_CURL_EXE)
+if(BUILD_CURL_EXE OR MAI_CURL_EMBEDDED)
   add_subdirectory(src)
 endif()
 

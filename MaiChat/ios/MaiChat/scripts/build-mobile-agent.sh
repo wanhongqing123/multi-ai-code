@@ -42,7 +42,4 @@ if [[ -n "${TARGET_BUILD_DIR:-}" && -n "${UNLOCALIZED_RESOURCES_FOLDER_PATH:-}" 
   mkdir -p "$model_bundle"
   cp "$repo_dir/MaiAgent/models/rvm_mobilenetv3_fp32.onnx" "$model_bundle/"
   cp "$repo_dir/MaiAgent/models/RVM_LICENSE" "$model_bundle/"
-  cp "$repo_dir/MaiAgent/models/face_landmarker/face_detection_short_range.onnx" "$model_bundle/"
-  cp "$repo_dir/MaiAgent/models/face_landmarker/face_landmarker_Nx3x256x256.onnx" "$model_bundle/"
-  cp "$repo_dir/MaiAgent/models/face_landmarker/LICENSE" "$model_bundle/FACE_LANDMARKER_LICENSE"
 fi

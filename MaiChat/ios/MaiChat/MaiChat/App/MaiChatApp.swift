@@ -1,26 +1,8 @@
 import MaiChatCore
+import CryptoKit
 import SwiftUI
 import UserNotifications
 import UIKit
-import YTCommonXMagic
-
-private enum TencentEffectTrialLicense {
-    static let url = "https://1304255122.trtcube-license.cn/license/v2/1304255122_1/v_cube.license"
-    static let key = "3ba3f07d4e110370c011c97ee39313b5"
-
-    static func initialize() {
-        TELicenseCheck.setTELicense(url, key: key) { result, _ in
-            Task { @MainActor in
-                AppDiagnosticLog.shared.record(
-                    level: result == 0 ? .info : .warning,
-                    category: "tencent-effect",
-                    event: result == 0 ? "license-authorized" : "license-rejected",
-                    fields: ["code": String(result)]
-                )
-            }
-        }
-    }
-}
 
 @MainActor
 final class IOSBackgroundActivityKeeper {
@@ -246,8 +228,23 @@ struct MaiChatApp: App {
 
     init() {
         AppDiagnosticLog.shared.install()
+        let wanKey = KeychainSecretStore(account: "wan-model-studio-api-key").readSecretKey()
+        let wanKeyPresent = !wanKey.isEmpty
+        let wanWorkspacePresent = !(UserDefaults.standard.string(
+            forKey: "wan-model-studio-workspace-id") ?? "").isEmpty
+        var wanCredentialFields = ["key_present": String(wanKeyPresent),
+                                   "workspace_id_present": String(wanWorkspacePresent)]
+        #if DEBUG
+        if wanKeyPresent {
+            wanCredentialFields["key_fingerprint"] = SHA256.hash(data: Data(wanKey.utf8))
+                .prefix(6).map { String(format: "%02x", $0) }.joined()
+        }
+        #endif
+        AppDiagnosticLog.shared.record(
+            level: .info, category: "model-studio", event: "credential-state",
+            fields: wanCredentialFields
+        )
         RemoteIMSystemNotificationCenter.shared.install()
-        TencentEffectTrialLicense.initialize()
     }
 
     var body: some Scene {

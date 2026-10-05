@@ -77,8 +77,8 @@ add_library(mai_md4c STATIC
 target_include_directories(mai_md4c PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/md4c)
 
 # ── libcurl：源码进仓库，和别的第三方一致 ─────────────────────
-# third_party/curl 是 curl 8.11.1 的**完整发布包**，原样解开，一个文件
-# 没动（sha256 对得上官网：a889ac9dbba3644271bd9d1302b5c22a088893719b72be3487bc3d401e5c4e80）。
+# third_party/curl 以 curl 8.11.1 完整发布包为基线；src/ 有内嵌 CLI 补丁，
+# 原始发布包 sha256 是 a889ac9dbba3644271bd9d1302b5c22a088893719b72be3487bc3d401e5c4e80。
 #
 # 曾经想过只留 lib/ include/ 把 29M 压到 7M，但那样它就不再是"那个版本"
 # 了：升级时要重新做一遍裁剪决定，出问题时也没法直接和上游比对。
@@ -94,6 +94,7 @@ target_include_directories(mai_md4c PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/third_par
 #   Linux    OpenSSL  —— 发行版自带
 #   嵌入式   mbedTLS  —— OpenSSL 三五兆，mbedTLS 两百来 K
 set(BUILD_CURL_EXE      OFF CACHE BOOL "" FORCE)
+set(MAI_CURL_EMBEDDED   ON  CACHE BOOL "" FORCE)
 set(BUILD_SHARED_LIBS   OFF CACHE BOOL "" FORCE)
 set(BUILD_STATIC_LIBS   ON  CACHE BOOL "" FORCE)
 set(BUILD_EXAMPLES      OFF CACHE BOOL "" FORCE)  # curl 自带的示例，不用编
@@ -134,8 +135,101 @@ else()
   set(CURL_USE_OPENSSL  ON  CACHE BOOL "" FORCE)
 endif()
 
+if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT MAI_OPENSSL_CLI_TARGET)
+  set(mai_openssl_build "${CMAKE_CURRENT_BINARY_DIR}/vendor/openssl-cli-build")
+  if(CMAKE_OSX_ARCHITECTURES)
+    set(mai_openssl_arch "${CMAKE_OSX_ARCHITECTURES}")
+  else()
+    set(mai_openssl_arch "${CMAKE_HOST_SYSTEM_PROCESSOR}")
+  endif()
+  if(NOT EXISTS "${mai_openssl_build}/libmai_openssl_cli.a")
+    execute_process(
+      COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/scripts/build-openssl.sh"
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/openssl" "${mai_openssl_build}"
+        macOS "${mai_openssl_arch}" "" ""
+      RESULT_VARIABLE mai_openssl_result
+      OUTPUT_FILE "${CMAKE_CURRENT_BINARY_DIR}/mai-openssl-build.log"
+      ERROR_FILE "${CMAKE_CURRENT_BINARY_DIR}/mai-openssl-build-error.log")
+    if(NOT mai_openssl_result EQUAL 0)
+      message(FATAL_ERROR "Vendored OpenSSL CLI build failed; see mai-openssl-build-error.log")
+    endif()
+  endif()
+  foreach(component cli apps ssl crypto)
+    add_library(mai_openssl_${component} STATIC IMPORTED GLOBAL)
+    if(component STREQUAL "cli")
+      set(archive "libmai_openssl_cli.a")
+    elseif(component STREQUAL "apps")
+      set(archive "apps/libapps.a")
+    else()
+      set(archive "lib${component}.a")
+    endif()
+    set_target_properties(mai_openssl_${component} PROPERTIES
+      IMPORTED_LOCATION "${mai_openssl_build}/${archive}")
+  endforeach()
+  set(MAI_OPENSSL_BUILD_DIR "${mai_openssl_build}")
+  set(MAI_OPENSSL_CLI_TARGET mai_openssl_cli)
+  set(MAI_OPENSSL_APPS_TARGET mai_openssl_apps)
+  set(MAI_OPENSSL_SSL_TARGET mai_openssl_ssl)
+  set(MAI_OPENSSL_CRYPTO_TARGET mai_openssl_crypto)
+  set(MAI_OPENSSL_INCLUDE_DIR "${mai_openssl_build}/include;${CMAKE_CURRENT_SOURCE_DIR}/third_party/openssl/include")
+  set(OPENSSL_CRYPTO_LIBRARY "${mai_openssl_build}/libcrypto.a" CACHE FILEPATH "" FORCE)
+  set(OPENSSL_SSL_LIBRARY "${mai_openssl_build}/libssl.a" CACHE FILEPATH "" FORCE)
+  set(OPENSSL_INCLUDE_DIR "${mai_openssl_build}/include" CACHE PATH "" FORCE)
+endif()
+
 # EXCLUDE_FROM_ALL：curl 自己那些辅助目标不要跟着我们的 all 一起构建。
 add_subdirectory(third_party/curl EXCLUDE_FROM_ALL)
+
+# A private prefixed zlib avoids colliding with Qt, FFmpeg, or platform zlib symbols.
+# Keep curl's transfer compression disabled; this copy serves explicit workspace tools.
+set(ZLIB_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(ZLIB_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(ZLIB_BUILD_STATIC ON CACHE BOOL "" FORCE)
+set(ZLIB_INSTALL OFF CACHE BOOL "" FORCE)
+set(ZLIB_PREFIX ON CACHE BOOL "" FORCE)
+add_subdirectory(third_party/zlib EXCLUDE_FROM_ALL)
+target_compile_definitions(zlibstatic PRIVATE Z_PREFIX)
+
+if(WIN32 AND NOT MAI_OPENSSL_CRYPTO_TARGET)
+  if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+    message(FATAL_ERROR "Vendored OpenSSL currently supports Windows x64 only")
+  endif()
+  set(mai_openssl_windows_build "${CMAKE_CURRENT_BINARY_DIR}/vendor/openssl-build")
+  if(NOT EXISTS "${mai_openssl_windows_build}/libcrypto.lib")
+    execute_process(
+      COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/build-openssl-windows.ps1"
+        -SourceDir "${CMAKE_CURRENT_SOURCE_DIR}/third_party/openssl"
+        -BuildDir "${mai_openssl_windows_build}"
+      RESULT_VARIABLE mai_openssl_windows_result
+      OUTPUT_FILE "${CMAKE_CURRENT_BINARY_DIR}/mai-openssl-build.log"
+      ERROR_FILE "${CMAKE_CURRENT_BINARY_DIR}/mai-openssl-build-error.log")
+    if(NOT mai_openssl_windows_result EQUAL 0)
+      message(FATAL_ERROR "Vendored OpenSSL build failed; see mai-openssl-build-error.log")
+    endif()
+  endif()
+  add_library(mai_openssl_windows STATIC IMPORTED GLOBAL)
+  set_target_properties(mai_openssl_windows PROPERTIES
+    IMPORTED_LOCATION "${mai_openssl_windows_build}/libcrypto.lib")
+  set(MAI_OPENSSL_CRYPTO_TARGET mai_openssl_windows)
+  set(MAI_OPENSSL_INCLUDE_DIR "${mai_openssl_windows_build}/include;${CMAKE_CURRENT_SOURCE_DIR}/third_party/openssl/include")
+  set(OPENSSL_CRYPTO_LIBRARY "${mai_openssl_windows_build}/libcrypto.lib" CACHE FILEPATH "" FORCE)
+  set(OPENSSL_INCLUDE_DIR "${mai_openssl_windows_build}/include" CACHE PATH "" FORCE)
+endif()
+
+
+set(LIBSSH2_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
+set(ENABLE_ZLIB_COMPRESSION OFF CACHE BOOL "" FORCE)
+set(CRYPTO_BACKEND OpenSSL CACHE STRING "" FORCE)
+add_subdirectory(third_party/libssh2 EXCLUDE_FROM_ALL)
+if(MAI_OPENSSL_BUILD_DIR)
+  target_include_directories(libcurl_static BEFORE PRIVATE
+    "${MAI_OPENSSL_BUILD_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/openssl/include")
+  target_include_directories(libssh2_static BEFORE PRIVATE
+    "${MAI_OPENSSL_BUILD_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/openssl/include")
+endif()
 
 find_package(Threads REQUIRED)
 
@@ -159,7 +253,9 @@ add_library(maiagent STATIC
   AgentTools/MaiPathGuard.cpp
   AgentTools/MaiTool.cpp
   AgentTools/MaiFfmpegTools.cpp
+  AgentTools/MaiVideoGeometryTool.cpp
   AgentTools/MaiCvVideoTools.cpp
+  AgentTools/MaiCvImageTools.cpp
   Agent/MaiPermission.cpp
   Agent/MaiQuestion.cpp
   AgentTools/MaiFileTools.cpp
@@ -167,12 +263,23 @@ add_library(maiagent STATIC
   AgentTools/MaiTimeTool.cpp
   AgentTools/MaiApplyPatchTool.cpp
   AgentTools/MaiWebFetchTool.cpp
+  AgentTools/MaiCurlTools.cpp
+  AgentTools/MaiCurlCliTool.cpp
   AgentTools/MaiDownloadFileTool.cpp
+  AgentTools/MaiHttpRequestTool.cpp
+  AgentTools/MaiUploadFileTool.cpp
+  AgentTools/MaiZlibTool.cpp
+  AgentTools/MaiOpenSslTool.cpp
+  AgentTools/MaiAppStorageTool.cpp
+  AgentTools/MaiSystemResourcesTool.cpp
+  AgentTools/MaiNetworkIpTool.cpp
+  AgentTools/MaiSshTool.cpp
+  AgentTools/MaiArkMediaTools.cpp
+  AgentTools/MaiModelStudioTools.cpp
   AgentTools/MaiAgentSendMediaTool.cpp
   AgentTools/MaiRvmMatting.cpp
   AgentTools/MaiRvmComposite.cpp
   AgentTools/MaiVideoMattingTool.cpp
-  AgentTools/MaiFaceBeautifyTool.cpp
   AgentTools/MaiTodoWriteTool.cpp
   AgentTools/MaiQuestionTool.cpp
   AgentTools/MaiSubAgentTools.cpp
@@ -210,17 +317,37 @@ target_include_directories(maiagent
   # 而它想守的"别当公开 API 用"靠注释说一句就够了。
   PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/include
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nlohmann
+          ${CMAKE_CURRENT_SOURCE_DIR}/third_party/curl/src
           ${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime/include
 )
 # libcurl 是 HTTP **客户端**（核心用它调大模型），
 # 和适配器里的 cpp-httplib（HTTP **服务端**）是两回事，两个都要。
 # sqlite、libcurl 和 md4c 都是 PRIVATE：它们是实现细节，公开头里不出现。
-target_link_libraries(maiagent PUBLIC Threads::Threads PRIVATE CURL::libcurl mai_sqlite mai_md4c ${CMAKE_DL_LIBS})
+target_link_libraries(maiagent PUBLIC Threads::Threads PRIVATE CURL::libcurl mai_curl_cli zlibstatic
+  libssh2_static mai_sqlite mai_md4c ${CMAKE_DL_LIBS})
+set_source_files_properties(AgentTools/MaiZlibTool.cpp PROPERTIES COMPILE_DEFINITIONS Z_PREFIX)
+if(MAI_OPENSSL_CLI_TARGET)
+  target_sources(maiagent PRIVATE AgentTools/MaiOpenSslCliTool.cpp)
+  target_compile_definitions(maiagent PRIVATE MAI_HAS_OPENSSL_CLI=1)
+  target_include_directories(maiagent PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/openssl/apps"
+    "${MAI_OPENSSL_BUILD_DIR}/apps/include")
+  target_link_libraries(maiagent PRIVATE ${MAI_OPENSSL_CLI_TARGET}
+    ${MAI_OPENSSL_APPS_TARGET} ${MAI_OPENSSL_SSL_TARGET})
+endif()
+if(MAI_OPENSSL_CRYPTO_TARGET)
+  target_include_directories(maiagent PRIVATE ${MAI_OPENSSL_INCLUDE_DIR})
+  target_link_libraries(maiagent PRIVATE ${MAI_OPENSSL_CRYPTO_TARGET})
+else()
+  find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+  target_link_libraries(maiagent PRIVATE OpenSSL::Crypto)
+endif()
 if(APPLE)
   target_link_libraries(maiagent PRIVATE iconv)
 endif()
 if(WIN32)
-  target_link_libraries(maiagent PRIVATE d3d11 dxgi windowscodecs ole32 user32 windowsapp)
+  target_link_libraries(maiagent PRIVATE d3d11 dxgi windowscodecs ole32 user32 windowsapp
+    ws2_32 iphlpapi crypt32 bcrypt advapi32)
 endif()
 
 # 公开头里的中文注释要能被**别人**正确编译。
@@ -286,6 +413,15 @@ if(MAIAGENT_BUILD_TESTS)
       MaiApplyPatchToolTests  # apply_patch：多处/多文件、全有或全无、换行原样
       MaiWebToolsTests      # webfetch 的 HTML 转文本和协议限制、todowrite 的校验
       MaiDownloadFileTests  # 本地 HTTP 的二进制、重定向、大小限制和路径边界
+      MaiHttpRequestTests # HTTP request methods, body, bounded responses and protocol checks
+      MaiUploadFileTests # raw PUT/POST streaming and remote data boundary
+      MaiZlibToolTests # gzip/zlib/deflate roundtrips and decompression bounds
+      MaiOpenSslToolTests # EVP known vectors and a real PEM X.509 certificate
+      MaiAppStorageToolTests # only previewed, aged cache files can be deleted
+      MaiSshToolTests # approval boundary and optional local SSH transport integration
+      MaiArkMediaToolsTests # Ark model tools, dynamic key and input boundary checks
+      MaiModelStudioToolsTests # Wan/Qwen capabilities, credentials and workspace boundaries
+      MaiCvImageToolsTests # OpenCV image wrapper path, output and parameter boundaries
       MaiAgentSendMediaToolTests # 当前会话媒体交付、工作区边界与类型校验
       MaiContextBuilderImageTests # 图像历史有界，当前用户附件仍然可见
       MaiRvmMattingTests   # ONNX 递推状态和模型输入输出边界
@@ -307,6 +443,18 @@ if(MAIAGENT_BUILD_TESTS)
     endif()
     add_test(NAME ${test_name} COMMAND ${test_name})
   endforeach()
+  add_executable(MaiCurlEmbeddedCliTests tests/MaiCurlEmbeddedCliTests.cpp)
+  target_include_directories(MaiCurlEmbeddedCliTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/curl/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/httplib)
+  target_link_libraries(MaiCurlEmbeddedCliTests PRIVATE
+    mai_curl_cli maiagent mai_thirdparty_for_tests)
+  add_test(NAME MaiCurlEmbeddedCliTests COMMAND MaiCurlEmbeddedCliTests)
+  target_compile_definitions(MaiOpenSslToolTests PRIVATE
+    MAI_OPENSSL_TEST_CERT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
+  if(MAI_OPENSSL_CLI_TARGET)
+    target_compile_definitions(MaiOpenSslToolTests PRIVATE MAI_HAS_OPENSSL_CLI=1)
+  endif()
   target_compile_definitions(MaiRvmMattingTests PRIVATE
     MAI_RVM_MODEL_PATH="${CMAKE_CURRENT_SOURCE_DIR}/models/rvm_mobilenetv3_fp32.onnx")
   if(MAIAGENT_BUILD_GRAPHICS)

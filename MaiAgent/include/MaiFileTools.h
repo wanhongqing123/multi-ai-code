@@ -14,3 +14,8 @@ std::unique_ptr<MaiTool> makeMaiDeleteFileTool();
 std::unique_ptr<MaiTool> makeMaiWriteTool();
 std::unique_ptr<MaiTool> makeMaiGlobTool();
 std::unique_ptr<MaiTool> makeMaiGrepTool();
+
+// Register the workspace file tools as one capability family. Implementations stay in their
+// paired files: plain file operations here, exact edits in MaiEditTool, and atomic multi-file
+// patches in MaiApplyPatchTool. Tool names and permission behavior remain unchanged.
+void registerMaiFileTools(MaiToolRegistry& registry);

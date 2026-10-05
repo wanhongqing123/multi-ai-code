@@ -81,7 +81,7 @@ void testBinaryRedirectAndFilename() {
     auto tool = makeMaiDownloadFileTool();
     CHECK(tool->requiresApproval("{}"));
     CHECK(tool->approvalKey(json{{"url", server.url("/binary")}}.dump()) ==
-          "download_file:127.0.0.1");
+          "curl_download:127.0.0.1");
     const MaiToolResult result =
         tool->execute(json{{"url", server.url("/redirect")}}.dump(), context);
     CHECK(!result.hasError());
@@ -131,6 +131,6 @@ int main() {
     testPathSizeHttpAndTimeoutFailures();
     MaiToolRegistry registry;
     registerMaiBuiltinTools(registry);
-    CHECK(registry.find("download_file") != nullptr);
+    CHECK(registry.find("curl") != nullptr);
     return failures == 0 ? 0 : 1;
 }

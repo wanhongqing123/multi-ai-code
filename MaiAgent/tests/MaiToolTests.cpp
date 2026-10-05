@@ -543,8 +543,9 @@ void test_registry() {
 
     // **按名字查，不比个数。** 比个数的话每加一个工具都要来改一次这里，
     // 而这条用例想守的是「这些工具都在」，不是「一共有几个」。
-    for (const char* n : {"read", "create_file", "create_directory", "delete_file", "write", "edit",
-                          "apply_patch", "glob", "grep", "current_time"}) {
+    for (const char* n :
+         {"file_read", "file_create", "file_create_directory", "file_delete", "file_write",
+          "file_edit", "file_patch", "file_glob", "file_grep", "current_time"}) {
         CHECK(reg.find(n) != nullptr);
     }
     CHECK(reg.find("no-such-tool") == nullptr);
@@ -560,9 +561,9 @@ void test_registry() {
         CHECK(!parsed.is_discarded());
         if (!parsed.is_discarded()) {
             CHECK(parsed.contains("properties"));
-            // 没有必填参数的工具（current_time）可以不写 required，
-            // 但有参数的必须写——不写的话模型不知道哪些是非给不可的。
-            if (!parsed["properties"].empty()) CHECK(parsed.contains("required"));
+            // 有参数的工具要在顶层 required 或 oneOf 中表达必填条件。
+            if (!parsed["properties"].empty())
+                CHECK(parsed.contains("required") || parsed.contains("oneOf"));
         }
     }
 

@@ -42,6 +42,16 @@ MaiRole columnToRole(int value) {
     return value == 0 ? MaiRole::User : MaiRole::Assistant;
 }
 
+int specialistStatusToColumn(MaiSpecialistTaskStatus status) {
+    return static_cast<int>(status);
+}
+
+MaiSpecialistTaskStatus columnToSpecialistStatus(int value) {
+    if (value >= 0 && value <= static_cast<int>(MaiSpecialistTaskStatus::Canceled))
+        return static_cast<MaiSpecialistTaskStatus>(value);
+    return MaiSpecialistTaskStatus::Submitted;
+}
+
 enum PartKind { kText = 0, kReasoning = 1, kTool = 2, kImage = 3, kVideo = 4 };
 
 int toolStateToColumn(MaiToolState state) {
@@ -188,6 +198,7 @@ public:
             "(SELECT id FROM messages WHERE session_id = ?1)",
             id);
         runWith("DELETE FROM messages WHERE session_id = ?1", id);
+        runWith("DELETE FROM specialist_tasks WHERE owner_session_id = ?1", id);
         runWith("DELETE FROM sessions WHERE id = ?1", id);
         const int removed = sqlite3_changes(mDatabase);
 
@@ -214,8 +225,243 @@ public:
             "(SELECT id FROM messages WHERE session_id = ?1)",
             sessionId);
         runWith("DELETE FROM messages WHERE session_id = ?1", sessionId);
+        runWith("DELETE FROM specialist_tasks WHERE owner_session_id = ?1", sessionId);
         exec("COMMIT");
         return true;
+    }
+
+    MaiError insertSpecialistTask(const MaiSpecialistTask& task) override {
+        if (task.id.empty() || task.ownerSessionId.empty() || task.specialistName.empty())
+            return MaiError::make(MaiErrorCode::InvalidInput, "invalid specialist task identity");
+        std::lock_guard<std::mutex> lock(mMutex);
+        sqlite3_stmt* statement = prepareLocked(
+            "INSERT INTO specialist_tasks(id, owner_session_id, specialist_name, parent_task_id, "
+            "provider_task_id, intent, context_summary, input_reference, output_path, created, "
+            "status, notified_at) "
+            "SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12 "
+            "WHERE EXISTS (SELECT 1 FROM sessions WHERE id = ?2) "
+            "AND (?4 = '' OR EXISTS (SELECT 1 FROM specialist_tasks WHERE id = ?4 "
+            "AND owner_session_id = ?2 AND specialist_name = ?3))");
+        if (!statement) return mLastWriteError;
+        Reset guard(statement);
+        bindText(statement, 1, task.id);
+        bindText(statement, 2, task.ownerSessionId);
+        bindText(statement, 3, task.specialistName);
+        bindText(statement, 4, task.parentTaskId);
+        bindText(statement, 5, task.providerTaskId);
+        bindText(statement, 6, task.intent);
+        bindText(statement, 7, task.contextSummary);
+        bindText(statement, 8, task.inputReference);
+        bindText(statement, 9, task.outputPath);
+        sqlite3_bind_int64(statement, 10, task.created);
+        sqlite3_bind_int(
+            statement, 11,
+            specialistStatusToColumn(task.outputPath.empty() ? MaiSpecialistTaskStatus::Submitted
+                                                             : MaiSpecialistTaskStatus::Succeeded));
+        sqlite3_bind_int64(statement, 12, task.outputPath.empty() ? 0 : task.created);
+        const int result = sqlite3_step(statement);
+        if (result != SQLITE_DONE) {
+            if (result == SQLITE_CONSTRAINT)
+                return MaiError::make(MaiErrorCode::InvalidInput,
+                                      "specialist task ID already exists");
+            noteError("specialist task write failed: " + std::string(sqlite3_errmsg(mDatabase)));
+            return mLastWriteError;
+        }
+        if (sqlite3_changes(mDatabase) != 1)
+            return MaiError::make(MaiErrorCode::InvalidInput,
+                                  "specialist task owner, parent, or ID is invalid");
+        return {};
+    }
+
+    bool getSpecialistTask(const std::string& id, const std::string& ownerSessionId,
+                           MaiSpecialistTask& out) const override {
+        std::lock_guard<std::mutex> lock(mMutex);
+        sqlite3_stmt* statement = prepareLocked(
+            "SELECT id, owner_session_id, specialist_name, parent_task_id, provider_task_id, "
+            "intent, context_summary, input_reference, output_path, created, status, "
+            "partial_text, final_text, error_text, last_checked_at, "
+            "notification_message_id, notification_attempt_at, notified_at "
+            "FROM specialist_tasks WHERE id = ?1 AND owner_session_id = ?2");
+        if (!statement) return false;
+        Reset guard(statement);
+        bindText(statement, 1, id);
+        bindText(statement, 2, ownerSessionId);
+        if (sqlite3_step(statement) != SQLITE_ROW) return false;
+        out = readSpecialistTaskLocked(statement);
+        return true;
+    }
+
+    MaiError appendSpecialistText(const std::string& taskId, const std::string& ownerSessionId,
+                                  const std::string& chunk, MaiMillis checkedAt) override {
+        if (chunk.size() > 16 * 1024 || checkedAt == 0)
+            return MaiError::make(MaiErrorCode::InvalidInput, "invalid specialist text");
+        std::lock_guard<std::mutex> lock(mMutex);
+        sqlite3_stmt* statement = prepareLocked(
+            "UPDATE specialist_tasks SET partial_text = partial_text || ?3, status = 1, "
+            "last_checked_at = ?4 WHERE id = ?1 AND owner_session_id = ?2 "
+            "AND status IN (0, 1) AND length(CAST(partial_text AS BLOB)) + "
+            "length(CAST(?3 AS BLOB)) <= 65536");
+        if (!statement) return mLastWriteError;
+        Reset guard(statement);
+        bindText(statement, 1, taskId);
+        bindText(statement, 2, ownerSessionId);
+        bindText(statement, 3, chunk);
+        sqlite3_bind_int64(statement, 4, checkedAt);
+        if (sqlite3_step(statement) != SQLITE_DONE)
+            return MaiError::make(MaiErrorCode::Internal, "specialist text write failed");
+        if (sqlite3_changes(mDatabase) != 1)
+            return MaiError::make(MaiErrorCode::InvalidInput,
+                                  "specialist task is unavailable or text is too large");
+        return {};
+    }
+
+    MaiError updateSpecialistProgress(const std::string& taskId, const std::string& ownerSessionId,
+                                      MaiMillis checkedAt) override {
+        if (checkedAt == 0)
+            return MaiError::make(MaiErrorCode::InvalidInput, "invalid specialist check time");
+        std::lock_guard<std::mutex> lock(mMutex);
+        sqlite3_stmt* statement = prepareLocked(
+            "UPDATE specialist_tasks SET status = 1, last_checked_at = ?3 "
+            "WHERE id = ?1 AND owner_session_id = ?2 AND status IN (0, 1)");
+        if (!statement) return mLastWriteError;
+        Reset guard(statement);
+        bindText(statement, 1, taskId);
+        bindText(statement, 2, ownerSessionId);
+        sqlite3_bind_int64(statement, 3, checkedAt);
+        if (sqlite3_step(statement) != SQLITE_DONE)
+            return MaiError::make(MaiErrorCode::Internal, "specialist progress write failed");
+        if (sqlite3_changes(mDatabase) != 1)
+            return MaiError::make(MaiErrorCode::NotFound, "specialist task is not running");
+        return {};
+    }
+
+    MaiError finishSpecialistTask(const std::string& taskId, const std::string& ownerSessionId,
+                                  MaiSpecialistTaskStatus status, const std::string& finalText,
+                                  const std::string& outputPath, MaiMillis finishedAt) override {
+        if ((status != MaiSpecialistTaskStatus::Succeeded &&
+             status != MaiSpecialistTaskStatus::NeedsInput &&
+             status != MaiSpecialistTaskStatus::Failed &&
+             status != MaiSpecialistTaskStatus::Canceled) ||
+            finalText.size() > 64 * 1024 || outputPath.size() > 4096 || finishedAt == 0)
+            return MaiError::make(MaiErrorCode::InvalidInput, "invalid specialist reply");
+        std::lock_guard<std::mutex> lock(mMutex);
+        sqlite3_stmt* statement = prepareLocked(
+            "UPDATE specialist_tasks SET status = ?3, "
+            "final_text = CASE WHEN ?4 = '' THEN partial_text ELSE ?4 END, "
+            "error_text = CASE WHEN ?3 IN (4, 5) "
+            "THEN CASE WHEN ?4 = '' THEN partial_text ELSE ?4 END ELSE '' END, "
+            "output_path = ?5, last_checked_at = ?6 "
+            "WHERE id = ?1 AND owner_session_id = ?2 AND status IN (0, 1) "
+            "AND (?3 != 3 OR ?4 != '' OR partial_text != '' OR ?5 != '')");
+        if (!statement) return mLastWriteError;
+        Reset guard(statement);
+        bindText(statement, 1, taskId);
+        bindText(statement, 2, ownerSessionId);
+        sqlite3_bind_int(statement, 3, specialistStatusToColumn(status));
+        bindText(statement, 4, finalText);
+        bindText(statement, 5, outputPath);
+        sqlite3_bind_int64(statement, 6, finishedAt);
+        if (sqlite3_step(statement) != SQLITE_DONE)
+            return MaiError::make(MaiErrorCode::Internal, "specialist reply write failed");
+        if (sqlite3_changes(mDatabase) != 1)
+            return MaiError::make(MaiErrorCode::NotFound, "specialist task is already finished");
+        return {};
+    }
+
+    std::vector<MaiSpecialistTask> listActiveSpecialistTasks(std::size_t limit) const override {
+        std::lock_guard<std::mutex> lock(mMutex);
+        std::vector<MaiSpecialistTask> tasks;
+        if (limit == 0) return tasks;
+        sqlite3_stmt* statement = prepareLocked(
+            "SELECT id, owner_session_id, specialist_name, parent_task_id, provider_task_id, "
+            "intent, context_summary, input_reference, output_path, created, status, "
+            "partial_text, final_text, error_text, last_checked_at, "
+            "notification_message_id, notification_attempt_at, notified_at "
+            "FROM specialist_tasks WHERE provider_task_id != '' AND status IN (0, 1) "
+            "ORDER BY last_checked_at, created LIMIT ?1");
+        if (!statement) return tasks;
+        Reset guard(statement);
+        sqlite3_bind_int64(statement, 1, static_cast<sqlite3_int64>(limit));
+        while (sqlite3_step(statement) == SQLITE_ROW)
+            tasks.push_back(readSpecialistTaskLocked(statement));
+        return tasks;
+    }
+
+    std::vector<MaiSpecialistTask> listUnnotifiedSpecialistTasks(std::size_t limit) const override {
+        std::lock_guard<std::mutex> lock(mMutex);
+        std::vector<MaiSpecialistTask> tasks;
+        if (limit == 0) return tasks;
+        sqlite3_stmt* statement = prepareLocked(
+            "SELECT id, owner_session_id, specialist_name, parent_task_id, provider_task_id, "
+            "intent, context_summary, input_reference, output_path, created, status, "
+            "partial_text, final_text, error_text, last_checked_at, "
+            "notification_message_id, notification_attempt_at, notified_at "
+            "FROM specialist_tasks WHERE status IN (2, 3, 4, 5) AND notified_at = 0 "
+            "ORDER BY last_checked_at, id LIMIT ?1");
+        if (!statement) return tasks;
+        Reset guard(statement);
+        sqlite3_bind_int64(statement, 1, static_cast<sqlite3_int64>(limit));
+        while (sqlite3_step(statement) == SQLITE_ROW)
+            tasks.push_back(readSpecialistTaskLocked(statement));
+        return tasks;
+    }
+
+    MaiResult<std::string> reserveSpecialistNotification(const std::string& taskId,
+                                                         const std::string& ownerSessionId,
+                                                         const std::string& proposedMessageId,
+                                                         MaiMillis attemptedAt) override {
+        if (proposedMessageId.empty() || attemptedAt == 0)
+            return {MaiErrorCode::InvalidInput, "invalid specialist notification"};
+        std::lock_guard<std::mutex> lock(mMutex);
+        sqlite3_stmt* update = prepareLocked(
+            "UPDATE specialist_tasks SET "
+            "notification_message_id = CASE WHEN notification_message_id = '' "
+            "THEN ?3 ELSE notification_message_id END, notification_attempt_at = ?4 "
+            "WHERE id = ?1 AND owner_session_id = ?2 AND notified_at = 0 "
+            "AND status IN (2, 3, 4, 5)");
+        if (!update) return mLastWriteError;
+        {
+            Reset guard(update);
+            bindText(update, 1, taskId);
+            bindText(update, 2, ownerSessionId);
+            bindText(update, 3, proposedMessageId);
+            sqlite3_bind_int64(update, 4, attemptedAt);
+            if (sqlite3_step(update) != SQLITE_DONE)
+                return {MaiErrorCode::Internal, "specialist notification reservation failed"};
+            if (sqlite3_changes(mDatabase) != 1)
+                return {MaiErrorCode::NotFound, "specialist reply is unavailable"};
+        }
+        sqlite3_stmt* read = prepareLocked(
+            "SELECT notification_message_id FROM specialist_tasks "
+            "WHERE id = ?1 AND owner_session_id = ?2");
+        if (!read) return mLastWriteError;
+        Reset guard(read);
+        bindText(read, 1, taskId);
+        bindText(read, 2, ownerSessionId);
+        if (sqlite3_step(read) != SQLITE_ROW)
+            return {MaiErrorCode::Internal, "specialist notification vanished"};
+        return textColumn(read, 0);
+    }
+
+    MaiError markSpecialistNotified(const std::string& taskId, const std::string& ownerSessionId,
+                                    const std::string& messageId, MaiMillis notifiedAt) override {
+        if (messageId.empty() || notifiedAt == 0)
+            return MaiError::make(MaiErrorCode::InvalidInput, "invalid specialist notification");
+        std::lock_guard<std::mutex> lock(mMutex);
+        sqlite3_stmt* statement = prepareLocked(
+            "UPDATE specialist_tasks SET notified_at = ?4 WHERE id = ?1 "
+            "AND owner_session_id = ?2 AND notification_message_id = ?3 AND notified_at = 0");
+        if (!statement) return mLastWriteError;
+        Reset guard(statement);
+        bindText(statement, 1, taskId);
+        bindText(statement, 2, ownerSessionId);
+        bindText(statement, 3, messageId);
+        sqlite3_bind_int64(statement, 4, notifiedAt);
+        if (sqlite3_step(statement) != SQLITE_DONE)
+            return MaiError::make(MaiErrorCode::Internal, "specialist notification write failed");
+        if (sqlite3_changes(mDatabase) != 1)
+            return MaiError::make(MaiErrorCode::NotFound, "specialist notification unavailable");
+        return {};
     }
 
     void putMessage(const std::string& sessionId, const MaiMessage& message) override {
@@ -408,6 +654,29 @@ private:
         session.created = sqlite3_column_int64(statement, 5);
         session.updated = sqlite3_column_int64(statement, 6);
         return session;
+    }
+
+    MaiSpecialistTask readSpecialistTaskLocked(sqlite3_stmt* statement) const {
+        MaiSpecialistTask task;
+        task.id = textColumn(statement, 0);
+        task.ownerSessionId = textColumn(statement, 1);
+        task.specialistName = textColumn(statement, 2);
+        task.parentTaskId = textColumn(statement, 3);
+        task.providerTaskId = textColumn(statement, 4);
+        task.intent = textColumn(statement, 5);
+        task.contextSummary = textColumn(statement, 6);
+        task.inputReference = textColumn(statement, 7);
+        task.outputPath = textColumn(statement, 8);
+        task.created = sqlite3_column_int64(statement, 9);
+        task.status = columnToSpecialistStatus(sqlite3_column_int(statement, 10));
+        task.partialText = textColumn(statement, 11);
+        task.finalText = textColumn(statement, 12);
+        task.errorText = textColumn(statement, 13);
+        task.lastCheckedAt = sqlite3_column_int64(statement, 14);
+        task.notificationMessageId = textColumn(statement, 15);
+        task.notificationAttemptAt = sqlite3_column_int64(statement, 16);
+        task.notifiedAt = sqlite3_column_int64(statement, 17);
+        return task;
     }
 
     void writeSessionLocked(const MaiSession& session) {
@@ -616,6 +885,29 @@ const char* kMigrationV3 =
     "CREATE INDEX IF NOT EXISTS parts_unfinished_tool "
     "ON parts(kind, state, message_id);";
 
+const char* kMigrationV4 =
+    "CREATE TABLE IF NOT EXISTS specialist_tasks("
+    "id TEXT PRIMARY KEY, owner_session_id TEXT NOT NULL, specialist_name TEXT NOT NULL, "
+    "parent_task_id TEXT NOT NULL DEFAULT '', provider_task_id TEXT NOT NULL DEFAULT '', "
+    "intent TEXT NOT NULL, context_summary TEXT NOT NULL DEFAULT '', "
+    "input_reference TEXT NOT NULL DEFAULT '', output_path TEXT NOT NULL DEFAULT '', "
+    "created INTEGER NOT NULL);"
+    "CREATE INDEX IF NOT EXISTS specialist_tasks_owner "
+    "ON specialist_tasks(owner_session_id, id);";
+
+const char* kMigrationV5 =
+    "ALTER TABLE specialist_tasks ADD COLUMN status INTEGER NOT NULL DEFAULT 0;"
+    "ALTER TABLE specialist_tasks ADD COLUMN partial_text TEXT NOT NULL DEFAULT '';"
+    "ALTER TABLE specialist_tasks ADD COLUMN final_text TEXT NOT NULL DEFAULT '';"
+    "ALTER TABLE specialist_tasks ADD COLUMN error_text TEXT NOT NULL DEFAULT '';"
+    "ALTER TABLE specialist_tasks ADD COLUMN last_checked_at INTEGER NOT NULL DEFAULT 0;"
+    "ALTER TABLE specialist_tasks ADD COLUMN notification_message_id TEXT NOT NULL DEFAULT '';"
+    "ALTER TABLE specialist_tasks ADD COLUMN notification_attempt_at INTEGER NOT NULL DEFAULT 0;"
+    "ALTER TABLE specialist_tasks ADD COLUMN notified_at INTEGER NOT NULL DEFAULT 0;"
+    "UPDATE specialist_tasks SET status = 3, notified_at = created WHERE output_path != '';"
+    "CREATE INDEX IF NOT EXISTS specialist_tasks_active "
+    "ON specialist_tasks(status, last_checked_at, created);";
+
 int readUserVersion(sqlite3* database) {
     sqlite3_stmt* statement = nullptr;
     if (sqlite3_prepare_v2(database, "PRAGMA user_version", -1, &statement, nullptr) != SQLITE_OK)
@@ -707,6 +999,31 @@ MaiResult<std::unique_ptr<MaiSessionStore>> makeMaiSqliteStore(
             return {MaiErrorCode::Internal, "cannot migrate schema to v3: " + what};
         }
         sqlite3_exec(database, "PRAGMA user_version=3", nullptr, nullptr, nullptr);
+    }
+
+    if (readUserVersion(database) < 4) {
+        char* migrationError = nullptr;
+        if (sqlite3_exec(database, kMigrationV4, nullptr, nullptr, &migrationError) != SQLITE_OK) {
+            const std::string what = migrationError ? migrationError : "unknown error";
+            sqlite3_free(migrationError);
+            sqlite3_close(database);
+            return {MaiErrorCode::Internal, "cannot migrate schema to v4: " + what};
+        }
+        sqlite3_exec(database, "PRAGMA user_version=4", nullptr, nullptr, nullptr);
+    }
+
+    if (readUserVersion(database) < 5) {
+        char* migrationError = nullptr;
+        const std::string migration =
+            std::string("BEGIN IMMEDIATE;") + kMigrationV5 + "PRAGMA user_version=5;COMMIT;";
+        if (sqlite3_exec(database, migration.c_str(), nullptr, nullptr, &migrationError) !=
+            SQLITE_OK) {
+            const std::string what = migrationError ? migrationError : "unknown error";
+            sqlite3_free(migrationError);
+            sqlite3_exec(database, "ROLLBACK", nullptr, nullptr, nullptr);
+            sqlite3_close(database);
+            return {MaiErrorCode::Internal, "cannot migrate schema to v5: " + what};
+        }
     }
 
     return std::unique_ptr<MaiSessionStore>(new SqliteStore(database));

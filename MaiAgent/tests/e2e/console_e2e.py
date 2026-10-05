@@ -29,7 +29,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 out = sys.stdout.buffer
 fails = []
 
-CONSOLE = r"E:\OpenSource\multi-ai-code\MaiAgent\build\bin\maiagent-console.exe"
+CONSOLE = os.environ.get(
+    "MAI_CONSOLE_BIN",
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "build", "bin",
+                                 "maiagent-console.exe" if os.name == "nt" else "maiagent-console")))
 
 
 def say(m):
@@ -145,7 +148,7 @@ GREETING = ("\u4f60\u597d\uff01\u6211\u662f\u8dd1\u5728 C++ "
 
 SCRIPTS[:] = [
     (GREETING, "", ""),                                                    # 第一轮：纯聊天
-    ("", "write", json.dumps({"path": "note.txt", "content": "written after approval"})),
+    ("", "file_write", json.dumps({"path": "note.txt", "content": "written after approval"})),
     ("Done, I wrote note.txt.", "", ""),                                   # 第二轮的收尾
 ]
 
@@ -267,7 +270,7 @@ check("streams the full multi-byte answer", wait_for(GREETING), repr(text()[-120
 # ── 第二轮：工具 + 授权 ────────────────────────────────────
 mark = len(text())
 send("write note.txt")
-check("tool card shows up as pending", wait_for("[tool] write  pending"))
+check("tool card shows up as pending", wait_for("[tool] file_write  pending"))
 check("tool card carries the arguments", "note.txt" in text()[mark:])
 check("console says how to answer", wait_for("/y approve"))
 check("the file is not there yet", not os.path.exists(os.path.join(workspace, "note.txt")))
@@ -275,7 +278,7 @@ check("the file is not there yet", not os.path.exists(os.path.join(workspace, "n
 mark = len(text())
 send("/y")
 check("approval is echoed", wait_after("approved", mark))
-check("tool runs to completion", wait_after("[tool] write  completed", mark))
+check("tool runs to completion", wait_after("[tool] file_write  completed", mark))
 check("model gets the last word", wait_after("Done, I wrote note.txt.", mark))
 
 note = os.path.join(workspace, "note.txt")
@@ -322,11 +325,11 @@ with served_lock:
     # 假模型走"剧本用完"那条分支返回空答案，而症状是"模型不说话"，很难一眼看出。
     served["n"] = 0
 SCRIPTS[:] = [
-    ("", "write", json.dumps({"path": "always-1.txt", "content": "first"})),
+    ("", "file_write", json.dumps({"path": "always-1.txt", "content": "first"})),
     ("First one done.", "", ""),
-    ("", "write", json.dumps({"path": "always-1.txt", "content": "second"})),
+    ("", "file_write", json.dumps({"path": "always-1.txt", "content": "second"})),
     ("Second one done.", "", ""),
-    ("", "write", json.dumps({"path": "always-2.txt", "content": "third"})),
+    ("", "file_write", json.dumps({"path": "always-2.txt", "content": "third"})),
     ("Third one done.", "", ""),
 ]
 
@@ -448,7 +451,7 @@ check("/sessions lists the current one", wait_after("ses_", mark))
 mark = len(text())
 send("/history")
 check("/history shows the user's words", wait_after("user", mark))
-check("/history shows the tool call", wait_after("[tool] write", mark))
+check("/history shows the tool call", wait_after("[tool] file_write", mark))
 
 mark = len(text())
 send("/help")

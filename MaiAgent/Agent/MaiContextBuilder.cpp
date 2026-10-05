@@ -4,6 +4,8 @@
 #include <string>
 #include <utility>
 
+#include <json.hpp>
+
 MaiContextBuilder::MaiContextBuilder() : MaiContextBuilder(Options{}) {}
 
 MaiContextBuilder::MaiContextBuilder(Options options) : mOptions(std::move(options)) {}
@@ -29,6 +31,17 @@ std::vector<MaiModelMessage> MaiContextBuilder::build(
                                               : 0;
     std::size_t currentImageIndex = 0;
     std::size_t omittedImages = 0;
+    std::size_t userImageCount = 0;
+    for (const MaiMessage& message : history) {
+        if (message.role != MaiRole::User) continue;
+        for (const MaiMessagePart& part : message.parts)
+            if (std::holds_alternative<MaiImagePart>(part.body)) ++userImageCount;
+    }
+    const std::size_t skippedUserReferences =
+        userImageCount > mOptions.maxRecentUserImageReferences
+            ? userImageCount - mOptions.maxRecentUserImageReferences
+            : 0;
+    std::size_t userImageIndex = 0;
 
     for (std::size_t messageIndex = 0; messageIndex < history.size(); ++messageIndex) {
         const auto& message = history[messageIndex];
@@ -36,9 +49,24 @@ std::vector<MaiModelMessage> MaiContextBuilder::build(
             MaiModelMessage modelMessage;
             modelMessage.role = MaiModelRole::User;
             modelMessage.content = message.text();
+            std::size_t attachmentIndex = 0;
             for (const auto& part : message.parts) {
                 if (const auto* image = std::get_if<MaiImagePart>(&part.body)) {
-                    if (messageIndex == latestUserIndex)
+                    ++attachmentIndex;
+                    const bool current = messageIndex == latestUserIndex;
+                    const bool recent = userImageIndex++ >= skippedUserReferences;
+                    if ((current || recent) && !image->path.empty()) {
+                        if (!modelMessage.content.empty()) modelMessage.content += "\n";
+                        modelMessage.content +=
+                            std::string(current ? "Current" : "Earlier") + " image attachment " +
+                            std::to_string(attachmentIndex) + " (id=" + part.id +
+                            ", workspace_path=" + nlohmann::json(image->path).dump() + ").";
+                        if (current)
+                            modelMessage.content +=
+                                " Use this exact path in file tools; do not search for this "
+                                "attachment by filename or time.";
+                    }
+                    if (current)
                         modelMessage.images.push_back({image->path, image->mimeType});
                     else
                         ++omittedImages;

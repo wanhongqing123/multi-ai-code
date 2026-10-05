@@ -173,7 +173,7 @@ struct Recorder {
 void test_tool_loop_closes() {
     Workspace workspace;
     // 第一次：要调 read。第二次：拿到内容后给出回答。
-    auto underTest = makeAgent({callTurn("read", R"({"path":"src/hello.txt"})", "call_read"),
+    auto underTest = makeAgent({callTurn("file_read", R"({"path":"src/hello.txt"})", "call_read"),
                                 sayTurn("The file has two lines.")});
     MaiAgent* agent = underTest.agent.get();
     MaiFakeModelClient* model = underTest.model;
@@ -194,7 +194,7 @@ void test_tool_loop_closes() {
     CHECK(!first.tools.empty());
     bool hasRead = false;
     for (const auto& tool : first.tools)
-        if (tool.name == "read") hasRead = true;
+        if (tool.name == "file_read") hasRead = true;
     CHECK(hasRead);
 
     // 3. 第二次请求里必须带着调用和结果，而且 toolCallId 对得上——
@@ -207,7 +207,7 @@ void test_tool_loop_closes() {
         if (message.role == MaiModelRole::Assistant && !message.invocations.empty()) {
             foundAssistantCall = true;
             callId = message.invocations[0].id;
-            CHECK(message.invocations[0].name == "read");
+            CHECK(message.invocations[0].name == "file_read");
         }
         if (message.role == MaiModelRole::ToolResult) {
             foundToolResult = true;
@@ -232,7 +232,7 @@ void test_tool_loop_closes() {
     }
     CHECK(toolPart != nullptr);
     if (toolPart) {
-        CHECK(toolPart->tool == "read");
+        CHECK(toolPart->tool == "file_read");
         CHECK(toolPart->state == MaiToolState::Completed);
         CHECK(toolPart->output.find("line one") != std::string::npos);
     }
@@ -344,7 +344,7 @@ void test_tool_image_keeps_parallel_tool_calls_in_one_assistant_batch() {
 
 void test_reasoning_only_after_tools_retries_for_final_answer() {
     Workspace workspace;
-    auto underTest = makeAgent({callTurn("read", R"({"path":"src/hello.txt"})", "call_read"),
+    auto underTest = makeAgent({callTurn("file_read", R"({"path":"src/hello.txt"})", "call_read"),
                                 reasoningTurn("I should summarize the tool output."),
                                 sayTurn("The file has two lines.")});
     MaiAgent& agent = *underTest.agent;
@@ -376,7 +376,7 @@ void test_reasoning_only_after_tools_retries_for_final_answer() {
 
 void test_repeated_missing_final_answer_reports_error() {
     Workspace workspace;
-    auto underTest = makeAgent({callTurn("read", R"({"path":"src/hello.txt"})"),
+    auto underTest = makeAgent({callTurn("file_read", R"({"path":"src/hello.txt"})"),
                                 reasoningTurn("I should summarize this."),
                                 reasoningTurn("I still did not provide the answer.")});
     MaiAgent& agent = *underTest.agent;
@@ -402,8 +402,8 @@ void test_repeated_missing_final_answer_reports_error() {
 void test_tool_error_is_fed_back() {
     Workspace workspace;
     // 模型要读一个不存在的文件，然后（拿到错误后）改口
-    auto underTest = makeAgent(
-        {callTurn("read", R"({"path":"no-such-file.txt"})"), sayTurn("That file does not exist.")});
+    auto underTest = makeAgent({callTurn("file_read", R"({"path":"no-such-file.txt"})"),
+                                sayTurn("That file does not exist.")});
     MaiAgent* agent = underTest.agent.get();
     MaiFakeModelClient* model = underTest.model;
     const std::string sessionId =
@@ -453,7 +453,7 @@ void test_unknown_tool_does_not_kill_the_turn() {
 
 void test_path_escape_through_model() {
     Workspace workspace;
-    auto underTest = makeAgent({callTurn("read", R"({"path":"../../../etc/passwd"})"),
+    auto underTest = makeAgent({callTurn("file_read", R"({"path":"../../../etc/passwd"})"),
                                 sayTurn("I cannot read that path.")});
     MaiAgent* agent = underTest.agent.get();
     const std::string sessionId =
@@ -477,7 +477,8 @@ void test_iteration_cap() {
     Workspace workspace;
     // 模型一直要调工具，永不收手——真实中会发生（它会绕圈）
     std::vector<MaiFakeModelClient::Turn> script;
-    for (int i = 0; i < 40; ++i) script.push_back(callTurn("read", R"({"path":"src/hello.txt"})"));
+    for (int i = 0; i < 40; ++i)
+        script.push_back(callTurn("file_read", R"({"path":"src/hello.txt"})"));
 
     MaiAgent::Options options;
     options.maxToolIterations = 3;  // 调小便于测试
@@ -508,9 +509,9 @@ void test_iteration_cap_provides_a_final_status() {
     Workspace workspace;
     MaiAgent::Options options;
     options.maxToolIterations = 3;
-    auto underTest = makeAgent({callTurn("read", R"({"path":"src/hello.txt"})"),
-                                callTurn("read", R"({"path":"src/hello.txt"})"),
-                                callTurn("read", R"({"path":"src/hello.txt"})"),
+    auto underTest = makeAgent({callTurn("file_read", R"({"path":"src/hello.txt"})"),
+                                callTurn("file_read", R"({"path":"src/hello.txt"})"),
+                                callTurn("file_read", R"({"path":"src/hello.txt"})"),
                                 sayTurn("I read the file, but the task needs more work.")},
                                options);
     Recorder recorder;
@@ -540,7 +541,7 @@ void test_distinct_tool_calls_continue_past_twelve_rounds() {
         const std::string path = "src/step" + std::to_string(i) + ".txt";
         CHECK(!MaiFileSystem::writeFile(MaiFilePath::fromUtf8(workspace.utf8Root() + "/" + path),
                                         "step " + std::to_string(i)));
-        script.push_back(callTurn("read", "{\"path\":\"" + path + "\"}"));
+        script.push_back(callTurn("file_read", "{\"path\":\"" + path + "\"}"));
     }
     script.push_back(sayTurn("All fifteen files have been inspected."));
     auto underTest = makeAgent(std::move(script));
@@ -564,7 +565,8 @@ void test_distinct_tool_calls_continue_past_twelve_rounds() {
 void test_repeated_tool_results_stop_before_hard_limit() {
     Workspace workspace;
     std::vector<MaiFakeModelClient::Turn> script;
-    for (int i = 0; i < 40; ++i) script.push_back(callTurn("read", R"({"path":"src/hello.txt"})"));
+    for (int i = 0; i < 40; ++i)
+        script.push_back(callTurn("file_read", R"({"path":"src/hello.txt"})"));
     auto underTest = makeAgent(std::move(script));
     Recorder recorder;
     recorder.attach(*underTest.agent);

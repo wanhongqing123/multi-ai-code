@@ -61,7 +61,7 @@ public:
 };
 
 MaiPermissionRequest makeRequest(const std::string& id, const std::string& sessionId,
-                                 const std::string& tool = "write") {
+                                 const std::string& tool = "file_write") {
     MaiPermissionRequest r;
     r.id = id;
     r.sessionId = sessionId;
@@ -153,20 +153,20 @@ void test_reject_and_always() {
     gate.reply("per_1", MaiPermissionDecision::Denied);
     t1.join();
     CHECK(first.load() == static_cast<int>(MaiPermissionDecision::Denied));
-    CHECK(!gate.isAllowedInSession("ses_1", "write"));
+    CHECK(!gate.isAllowedInSession("ses_1", "file_write"));
 
     std::thread t2([&] { gate.ask(makeRequest("per_2", "ses_1"), nullptr, kNeverCancel); });
     CHECK(waitFor([&] { return gate.listPending().size() == 1; }));
     gate.reply("per_2", MaiPermissionDecision::ApprovedForSession);
     t2.join();
 
-    CHECK(gate.isAllowedInSession("ses_1", "write"));
-    CHECK(!gate.isAllowedInSession("ses_1", "shell"));  // 只对那一个工具
-    CHECK(!gate.isAllowedInSession("ses_2", "write"));  // 只对那一个会话
+    CHECK(gate.isAllowedInSession("ses_1", "file_write"));
+    CHECK(!gate.isAllowedInSession("ses_1", "shell"));       // 只对那一个工具
+    CHECK(!gate.isAllowedInSession("ses_2", "file_write"));  // 只对那一个会话
 
     // 会话删掉之后授权不该留着：重建一个同 id 的会话会白捡上一个的授权。
     gate.forgetSession("ses_1");
-    CHECK(!gate.isAllowedInSession("ses_1", "write"));
+    CHECK(!gate.isAllowedInSession("ses_1", "file_write"));
 }
 
 void test_first_approval_remembers_each_file_without_granting_other_files() {
@@ -352,7 +352,7 @@ bool toolPartState(MaiAgent& agent, const std::string& sessionId, MaiToolState& 
 void test_write_waits_for_approval_then_runs() {
     Workspace workspace;
     auto underTest =
-        makeAgent({callTurn("write", R"({"path":"note.txt","content":"only after approval"})"),
+        makeAgent({callTurn("file_write", R"({"path":"note.txt","content":"only after approval"})"),
                    sayTurn("Written.")});
     MaiAgent* agent = underTest.agent.get();
     Recorder recorder;
@@ -368,7 +368,7 @@ void test_write_waits_for_approval_then_runs() {
 
     const auto pending = agent->listPendingPermissions();
     CHECK(pending.size() == 1);
-    CHECK(pending[0].toolName == "write");
+    CHECK(pending[0].toolName == "file_write");
     CHECK(pending[0].sessionId == sessionId);
     CHECK(pending[0].arguments.find("note.txt") != std::string::npos);
     CHECK(pending[0].id.rfind("per_", 0) == 0);
@@ -410,9 +410,9 @@ void test_write_waits_for_approval_then_runs() {
 void test_explicit_create_and_delete_tools_wait_for_file_approval() {
     Workspace workspace;
     auto underTest = makeAgent(
-        {callTurn("create_directory", R"({"path":"folder"})"), sayTurn("Folder created."),
-         callTurn("create_file", R"({"path":"folder/note.txt"})"), sayTurn("File created."),
-         callTurn("delete_file", R"({"path":"folder/note.txt"})"), sayTurn("File deleted.")});
+        {callTurn("file_create_directory", R"({"path":"folder"})"), sayTurn("Folder created."),
+         callTurn("file_create", R"({"path":"folder/note.txt"})"), sayTurn("File created."),
+         callTurn("file_delete", R"({"path":"folder/note.txt"})"), sayTurn("File deleted.")});
     MaiAgent& agent = *underTest.agent;
     const std::string sessionId =
         agent.submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
@@ -445,7 +445,7 @@ void test_explicit_create_and_delete_tools_wait_for_file_approval() {
 void test_reject_blocks_write_and_tells_model() {
     Workspace workspace;
     auto underTest =
-        makeAgent({callTurn("write", R"({"path":"nope.txt","content":"must not be written"})"),
+        makeAgent({callTurn("file_write", R"({"path":"nope.txt","content":"must not be written"})"),
                    sayTurn("All right, I will not write it.")});
     MaiAgent* agent = underTest.agent.get();
     MaiFakeModelClient* model = underTest.model;
@@ -478,8 +478,8 @@ void test_rejected_repeat_does_not_ask_again() {
     Workspace workspace;
     // 模型被拒之后原样再调一次——真实模型经常这么干。
     const char* args = R"({"path":"again.txt","content":"x"})";
-    auto underTest = makeAgent({callTurn("write", args, "call_1"),
-                                callTurn("write", args, "call_2"), sayTurn("Never mind.")});
+    auto underTest = makeAgent({callTurn("file_write", args, "call_1"),
+                                callTurn("file_write", args, "call_2"), sayTurn("Never mind.")});
     MaiAgent* agent = underTest.agent.get();
     MaiFakeModelClient* model = underTest.model;
     Recorder recorder;
@@ -506,10 +506,11 @@ void test_rejected_repeat_does_not_ask_again() {
 
 void test_session_grant_only_authorizes_named_file() {
     Workspace workspace;
-    auto underTest = makeAgent({callTurn("write", R"({"path":"a.txt","content":"1"})", "call_1"),
-                                callTurn("write", R"({"path":"b.txt","content":"2"})", "call_2"),
-                                callTurn("write", R"({"path":"a.txt","content":"3"})", "call_3"),
-                                sayTurn("Both files written.")});
+    auto underTest =
+        makeAgent({callTurn("file_write", R"({"path":"a.txt","content":"1"})", "call_1"),
+                   callTurn("file_write", R"({"path":"b.txt","content":"2"})", "call_2"),
+                   callTurn("file_write", R"({"path":"a.txt","content":"3"})", "call_3"),
+                   sayTurn("Both files written.")});
     MaiAgent* agent = underTest.agent.get();
     Recorder recorder;
     recorder.attach(*agent);
@@ -545,10 +546,11 @@ void test_session_grant_only_authorizes_named_file() {
 // 而他明明点过"本会话都允许"。
 void test_clearing_history_keeps_the_session_grant() {
     Workspace workspace;
-    auto underTest = makeAgent({callTurn("write", R"({"path":"a.txt","content":"1"})", "call_1"),
-                                sayTurn("Wrote a.txt."),
-                                callTurn("write", R"({"path":"a.txt","content":"2"})", "call_2"),
-                                sayTurn("Updated a.txt.")});
+    auto underTest =
+        makeAgent({callTurn("file_write", R"({"path":"a.txt","content":"1"})", "call_1"),
+                   sayTurn("Wrote a.txt."),
+                   callTurn("file_write", R"({"path":"a.txt","content":"2"})", "call_2"),
+                   sayTurn("Updated a.txt.")});
     MaiAgent* agent = underTest.agent.get();
     Recorder recorder;
     recorder.attach(*agent);
@@ -606,8 +608,8 @@ void test_clearing_history_keeps_the_session_grant() {
 // 最后剩一条来历不明的半截记录。界面该先 MaiInterrupt 再清。
 void test_clearing_a_busy_session_is_refused() {
     Workspace workspace;
-    auto underTest =
-        makeAgent({callTurn("write", R"({"path":"slow.txt","content":"x"})"), sayTurn("done")});
+    auto underTest = makeAgent(
+        {callTurn("file_write", R"({"path":"slow.txt","content":"x"})"), sayTurn("done")});
     MaiAgent* agent = underTest.agent.get();
 
     const std::string sessionId =
@@ -631,7 +633,7 @@ void test_clearing_a_busy_session_is_refused() {
 void test_read_never_asks() {
     Workspace workspace;
     std::ofstream(workspace.root / "x.txt", std::ios::binary) << "some content";
-    auto underTest = makeAgent({callTurn("read", R"({"path":"x.txt"})"), sayTurn("Got it.")});
+    auto underTest = makeAgent({callTurn("file_read", R"({"path":"x.txt"})"), sayTurn("Got it.")});
     MaiAgent* agent = underTest.agent.get();
     Recorder recorder;
     recorder.attach(*agent);
@@ -649,9 +651,9 @@ void test_read_never_asks() {
 void test_unless_trusted_asks_once_per_file() {
     Workspace workspace;
     auto underTest = makeAgent(
-        {callTurn("write", R"({"path":"trusted.txt","content":"first"})"),
-         callTurn("write", R"({"path":"other.txt","content":"other"})"),
-         callTurn("write", R"({"path":"trusted.txt","content":"again"})"), sayTurn("Done.")},
+        {callTurn("file_write", R"({"path":"trusted.txt","content":"first"})"),
+         callTurn("file_write", R"({"path":"other.txt","content":"other"})"),
+         callTurn("file_write", R"({"path":"trusted.txt","content":"again"})"), sayTurn("Done.")},
         MaiApprovalPolicy::UnlessTrusted);
     Recorder recorder;
     recorder.attach(*underTest.agent);
@@ -696,9 +698,9 @@ void test_unless_trusted_still_asks_for_risky_shell() {
 
 void test_never_policy_runs_without_prompting() {
     Workspace workspace;
-    auto underTest =
-        makeAgent({callTurn("write", R"({"path":"full.txt","content":"ok"})"), sayTurn("Done.")},
-                  MaiApprovalPolicy::Never);
+    auto underTest = makeAgent(
+        {callTurn("file_write", R"({"path":"full.txt","content":"ok"})"), sayTurn("Done.")},
+        MaiApprovalPolicy::Never);
     Recorder recorder;
     recorder.attach(*underTest.agent);
     const std::string sessionId =
@@ -746,8 +748,9 @@ void test_per_call_approval_ignores_policy_and_session_grants() {
 
 void test_interrupt_while_waiting_for_approval() {
     Workspace workspace;
-    auto underTest = makeAgent(
-        {callTurn("write", R"({"path":"interrupted.txt","content":"x"})"), sayTurn("Understood.")});
+    auto underTest =
+        makeAgent({callTurn("file_write", R"({"path":"interrupted.txt","content":"x"})"),
+                   sayTurn("Understood.")});
     MaiAgent* agent = underTest.agent.get();
     const std::string sessionId =
         agent->submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
@@ -766,8 +769,8 @@ void test_interrupt_while_waiting_for_approval() {
 
 void test_reply_to_stale_permission_is_not_found() {
     Workspace workspace;
-    auto underTest =
-        makeAgent({callTurn("write", R"({"path":"stale.txt","content":"x"})"), sayTurn("Done.")});
+    auto underTest = makeAgent(
+        {callTurn("file_write", R"({"path":"stale.txt","content":"x"})"), sayTurn("Done.")});
     MaiAgent* agent = underTest.agent.get();
     const std::string sessionId =
         agent->submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();

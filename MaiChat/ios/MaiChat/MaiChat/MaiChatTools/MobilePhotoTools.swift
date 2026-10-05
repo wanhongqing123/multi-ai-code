@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 import CoreFoundation
 import Darwin
 import CoreImage
@@ -254,6 +255,36 @@ extension AIMobileHostToolProvider {
                 PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: source)
             }
             return Self.jsonSuccess(["saved": true, "source_path": path])
+        } catch {
+            return .failure(code: "internal", message: error.localizedDescription)
+        }
+    }
+
+    func saveVideo(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
+        let status = await photoAuthorization()
+        guard status == .authorized || status == .limited else {
+            return .failure(code: "canceled", message: "photo library access was not granted")
+        }
+        let path = Self.string(arguments, key: "path")
+        guard let source = AIAssistantPathPolicy.resolve(
+            path, workspacePath: AIAssistantModel.shared.workspacePath) else {
+            return .failure(code: "invalid_input", message: "video must be inside the App container")
+        }
+        do {
+            let values = try source.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+            guard values.isRegularFile == true, let bytes = values.fileSize,
+                  bytes > 0, bytes <= 2 * 1024 * 1024 * 1024,
+                  ["mp4", "mov", "m4v"].contains(source.pathExtension.lowercased()) else {
+                return .failure(code: "invalid_input", message: "video must be an MP4, MOV, or M4V file up to 2 GB")
+            }
+            let tracks = try await AVURLAsset(url: source).loadTracks(withMediaType: .video)
+            guard !tracks.isEmpty else {
+                return .failure(code: "invalid_input", message: "file has no video track")
+            }
+            try await performPhotoChanges {
+                PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: source)
+            }
+            return Self.jsonSuccess(["saved": true, "source_path": path, "bytes": bytes])
         } catch {
             return .failure(code: "internal", message: error.localizedDescription)
         }

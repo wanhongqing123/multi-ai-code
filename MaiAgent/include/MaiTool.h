@@ -3,6 +3,7 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -11,6 +12,8 @@
 #include "MaiPathGuard.h"
 #include "MaiQuestion.h"
 #include "MaiSubAgent.h"
+#include "MaiSpecialist.h"
+#include "MaiSpecialistTask.h"
 
 // 工具执行时能看到的环境。
 //
@@ -50,6 +53,10 @@ struct MaiToolContext {
     // 子 Agent 的宿主。**可能为空**：宿主没接子 Agent 时就是空的，
     // 那组工具据此明说「这儿起不了」，而不是失败得莫名其妙。
     MaiSubAgentHost* subAgents = nullptr;
+
+    // Specialist revision records for this Agent. May be null in direct tool tests or hosts that
+    // have not wired persistence; tools must not claim to remember previous edits in that case.
+    MaiSpecialistTaskStore* specialistTasks = nullptr;
 
     // 中途问用户的闸门。**可能为空**：宿主没接问答时就是空的，
     // question 工具据此明说「这里问不了」，而不是干等到超时。
@@ -125,6 +132,11 @@ public:
     // 给模型看的 JSON Schema 原文。
     virtual std::string parametersSchema() const = 0;
 
+    // Model-backed tools expose their verified, current capability metadata to hosts and the
+    // Agent. Ordinary tools return no value. Query on a worker thread; credential providers may
+    // cross a host boundary. This query must not perform network I/O.
+    virtual std::optional<MaiSpecialistInfo> specialistInfo() const;
+
     // 这一次调用需要用户点头吗。
     //
     // **参数是要看的，不能只看工具名。** shell 最能说明问题：`git status` 和 `rm -rf /`
@@ -185,6 +197,8 @@ public:
 
     // 给模型的工具清单。
     std::vector<MaiToolSpec> specs() const;
+    // Snapshot model-backed experts on a worker thread, as specialistInfo() may read host secrets.
+    std::vector<MaiSpecialistInfo> specialists() const;
 
 private:
     std::vector<std::unique_ptr<MaiTool>> mTools;

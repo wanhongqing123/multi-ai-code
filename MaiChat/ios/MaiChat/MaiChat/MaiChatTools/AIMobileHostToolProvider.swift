@@ -3,6 +3,7 @@ import CoreFoundation
 import Darwin
 import CoreImage
 import ImageIO
+import Metal
 import MaiChatCore
 import Photos
 import SwiftUI
@@ -46,6 +47,10 @@ final class AIMobileHostToolProvider {
         case "mobile_export_photo_original": return await exportPhotoOriginal(arguments)
         case "mobile_export_media_original": return await exportPhotoOriginal(arguments)
         case "mobile_save_image": return await saveImage(arguments)
+        case "mobile_save_video": return await saveVideo(arguments)
+        case "mobile_ssh_password": return await requestSSHPassword(arguments)
+        case "mobile_ssh_trust_host": return await trustSSHHost(arguments)
+        case "mobile_gpu_info": return gpuInfo()
         case "mobile_transform_image": return await transformImage(arguments)
         case "mobile_beautify_image":
             var edit = arguments
@@ -56,6 +61,14 @@ final class AIMobileHostToolProvider {
         case "mobile_segment_person": return await segmentPerson(arguments)
         case "mobile_preview_image": return previewImage(arguments)
         case "mobile_photos_add_to_album": return await addPhotosToAlbum(arguments)
+        case "ark_api_key":
+            return Self.jsonSuccess(["key": KeychainSecretStore(account: "seedance-ark-api-key")
+                .readSecretKey()])
+        case "wan_credentials":
+            return Self.jsonSuccess([
+                "key": KeychainSecretStore(account: "wan-model-studio-api-key").readSecretKey(),
+                "workspace_id": UserDefaults.standard.string(forKey: "wan-model-studio-workspace-id") ?? ""
+            ])
         default: break
         }
         guard let appState else {
@@ -120,6 +133,22 @@ final class AIMobileHostToolProvider {
 
     static func string(_ arguments: [String: Any], key: String) -> String {
         (arguments[key] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private func gpuInfo() -> AIMaiChatHostToolExecution {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            return Self.jsonSuccess(["available": false])
+        }
+        var output: [String: Any] = [
+            "available": true,
+            "name": device.name,
+            "unified_memory": device.hasUnifiedMemory,
+            "app_allocated_bytes": device.currentAllocatedSize
+        ]
+        if #available(iOS 16.0, *) {
+            output["recommended_working_set_bytes"] = device.recommendedMaxWorkingSetSize
+        }
+        return Self.jsonSuccess(output)
     }
 
     static func jsonSuccess(_ object: [String: Any]) -> AIMaiChatHostToolExecution {

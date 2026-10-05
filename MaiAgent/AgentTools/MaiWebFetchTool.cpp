@@ -8,7 +8,7 @@
 #include "MaiBlockingCheck.h"
 #include "MaiWebFetchTool.h"
 
-// webfetch：抓一个网页，转成纯文本给模型。
+// curl_fetch：抓一个网页，转成纯文本给模型。
 //
 // ── 为什么要审批 ────────────────────────────────────────────────
 //
@@ -182,7 +182,7 @@ class WebFetchTool final : public MaiTool {
 public:
     explicit WebFetchTool(std::string caBundlePath) : mCaBundlePath(std::move(caBundlePath)) {}
     std::string name() const override {
-        return "webfetch";
+        return "curl_fetch";
     }
 
     std::string description() const override {
@@ -208,7 +208,7 @@ public:
     std::string approvalKey(const std::string& argumentsJson) const override {
         const json args = parseArguments(argumentsJson);
         const std::string host = hostOf(args.value("url", std::string{}));
-        return host.empty() ? "webfetch:<unknown>" : "webfetch:" + host;
+        return host.empty() ? "curl_fetch:<unknown>" : "curl_fetch:" + host;
     }
 
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
@@ -224,7 +224,7 @@ public:
                 "only http and https URLs can be fetched, but got: " + url);
         }
 
-        maiAssertBlockingAllowed("webfetch");
+        maiAssertBlockingAllowed("curl_fetch");
         CURL* curl = curl_easy_init();
         if (curl == nullptr) {
             return MaiToolResult::failure(MaiErrorCode::Internal, "curl_easy_init failed");
@@ -287,6 +287,10 @@ public:
 };
 
 }  // namespace
+
+std::string maiHtmlToText(std::string html) {
+    return htmlToText(std::move(html));
+}
 
 std::unique_ptr<MaiTool> makeMaiWebFetchTool(std::string caBundlePath) {
     return std::make_unique<WebFetchTool>(std::move(caBundlePath));

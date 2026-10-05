@@ -7,6 +7,10 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
+private enum AIImagePreviewLayout {
+    static let coordinateSpaceName = "ai-assistant-image-preview-space"
+}
+
 struct AIAssistantView: View {
     let isActive: Bool
     let onExit: (() -> Void)?
@@ -135,13 +139,14 @@ struct AIAssistantView: View {
             VoiceTranscriptionHighlightHost(presentation: transcriptionPresentation)
                 .zIndex(20)
             if let preview = model.previewImage {
-                AIImagePreviewOverlay(filePath: preview.filePath) {
+                AIImagePreviewOverlay(preview: preview) {
                     model.previewImage = nil
                 }
                 .id(preview.id)
                 .zIndex(30)
             }
         }
+        .coordinateSpace(name: AIImagePreviewLayout.coordinateSpaceName)
         .simultaneousGesture(sessionDrawerOpenGesture)
         .confirmationDialog("清空当前对话的所有消息？", isPresented: $confirmClear, titleVisibility: .visible) {
             Button("清空消息", role: .destructive) { Task { await model.action("clear") } }
@@ -1079,48 +1084,64 @@ private struct AIWorkspaceImage: View {
     @State private var decodedSize: CGSize?
 
     private var previewSize: CGSize {
-        guard let decodedSize, decodedSize.width > 0, decodedSize.height > 0 else {
-            return CGSize(width: 240, height: 200)
-        }
-        let scale = min(240 / decodedSize.width, 300 / decodedSize.height)
-        return CGSize(width: decodedSize.width * scale,
-                      height: decodedSize.height * scale)
+        ImageBubbleSize.fitted(decodedSize ?? CGSize(width: 220, height: 180),
+                               maximum: ImageBubbleSize.assistantMaximum)
     }
 
     var body: some View {
-        Button {
-            AIAssistantModel.shared.previewImage = AIImagePreview(filePath: filePath)
-        } label: {
-            RemoteIMAsyncImage(filePath: filePath,
-                           maximumPointSize: previewSize) { image in
-                Image(uiImage: image).resizable().scaledToFit()
-                    .frame(width: previewSize.width, height: previewSize.height)
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .task(id: image.size) {
-                        if let pixels = image.cgImage {
-                            decodedSize = CGSize(width: pixels.width, height: pixels.height)
+        GeometryReader { geometry in
+            Button {
+                let sourceFrame = geometry.frame(in: .named(
+                    AIImagePreviewLayout.coordinateSpaceName))
+                guard sourceFrame.width > 0, sourceFrame.height > 0 else { return }
+                AIAssistantModel.shared.previewImage = AIImagePreview(
+                    filePath: filePath,
+                    imageSize: decodedSize ?? previewSize,
+                    sourceFrame: sourceFrame)
+            } label: {
+                RemoteIMAsyncImage(filePath: filePath,
+                                   maximumPointSize: previewSize) { image in
+                    Image(uiImage: image).resizable().scaledToFit()
+                        .task(id: image.size) {
+                            if let pixels = image.cgImage {
+                                decodedSize = CGSize(width: pixels.width, height: pixels.height)
+                            }
                         }
+                        .accessibilityLabel("AI 助手图片附件")
+                } placeholder: { failed in
+                    if failed {
+                        Label("图片无法显示", systemImage: "photo")
+                            .foregroundStyle(Color.secondary)
+                            .frame(width: previewSize.width, height: previewSize.height)
+                    } else {
+                        Color.clear.frame(width: previewSize.width, height: previewSize.height)
                     }
-                    .accessibilityLabel("AI 助手图片附件")
-            } placeholder: { failed in
-                if failed {
-                    Label("图片无法显示", systemImage: "photo")
-                        .foregroundStyle(Color.secondary)
-                        .frame(width: previewSize.width, height: previewSize.height)
-                } else {
-                    Color.clear.frame(width: previewSize.width, height: previewSize.height)
+                }
+                .frame(width: previewSize.width, height: previewSize.height)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(alignment: .bottomTrailing) {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 25, height: 25)
+                        .background(.black.opacity(0.52), in: Circle())
+                        .padding(7)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
                 }
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("放大图片")
+            .accessibilityIdentifier("agent-image-bubble")
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("放大图片")
-        .accessibilityIdentifier("agent-image-bubble")
+        .frame(width: previewSize.width, height: previewSize.height)
     }
 }
 
 private struct AIWorkspaceVideoCard: View {
     let filePath: String
     let open: () -> Void
+    @Environment(\.displayScale) private var displayScale
     @State private var cover: UIImage?
     @State private var videoSize: CGSize?
     @State private var durationSeconds = 0
@@ -1186,7 +1207,9 @@ private struct AIWorkspaceVideoCard: View {
             }
             let generator = AVAssetImageGenerator(asset: asset)
             generator.appliesPreferredTrackTransform = true
-            generator.maximumSize = CGSize(width: 440, height: 480)
+            generator.maximumSize = CGSize(
+                width: VideoBubbleSize.assistantMaximum.width * min(displayScale, 3),
+                height: VideoBubbleSize.assistantMaximum.height * min(displayScale, 3))
             let time = CMTime(
                 seconds: durationSeconds > 1 ? 0.5 : 0,
                 preferredTimescale: 600)
@@ -1198,7 +1221,8 @@ private struct AIWorkspaceVideoCard: View {
     }
 
     private var previewSize: CGSize {
-        VideoBubbleSize.fitted(videoSize ?? .zero)
+        VideoBubbleSize.fitted(videoSize ?? .zero,
+                               maximum: VideoBubbleSize.assistantMaximum)
     }
 }
 
@@ -1309,17 +1333,34 @@ struct AIHistoryUITestRoot: View {
 #endif
 
 private struct AIImagePreviewOverlay: View {
-    let filePath: String
+    let preview: AIImagePreview
     let close: () -> Void
+    @State private var isExpanded = false
+
+    private var previewAnimation: Animation {
+        .interactiveSpring(response: 0.38, dampingFraction: 0.86, blendDuration: 0.08)
+    }
 
     var body: some View {
         GeometryReader { geometry in
+            let fittedSize = preview.imageSize.width > 0 && preview.imageSize.height > 0
+                ? aspectFitSize(imageSize: preview.imageSize, containerSize: geometry.size)
+                : geometry.size
+            let destinationFrame = CGRect(
+                x: (geometry.size.width - fittedSize.width) / 2,
+                y: (geometry.size.height - fittedSize.height) / 2,
+                width: fittedSize.width,
+                height: fittedSize.height)
+            let imageFrame = isExpanded ? destinationFrame
+                : (preview.sourceFrame ?? destinationFrame)
+
             ZStack(alignment: .topTrailing) {
-                Color.black.ignoresSafeArea()
-                RemoteIMAsyncImage(filePath: filePath,
+                Color.black.opacity(isExpanded ? 1 : 0)
+                    .ignoresSafeArea()
+                    .onTapGesture(perform: shrinkAndClose)
+                RemoteIMAsyncImage(filePath: preview.filePath,
                                    maximumPointSize: geometry.size) { image in
                     Image(uiImage: image).resizable().scaledToFit()
-                        .frame(width: geometry.size.width, height: geometry.size.height)
                         .accessibilityLabel("Agent 处理后的图片预览")
                 } placeholder: { failed in
                     if failed {
@@ -1330,7 +1371,13 @@ private struct AIImagePreviewOverlay: View {
                         ProgressView().tint(.white)
                     }
                 }
-                Button(action: close) {
+                .frame(width: imageFrame.width, height: imageFrame.height)
+                .position(x: imageFrame.midX, y: imageFrame.midY)
+                .contentShape(Rectangle())
+                .onTapGesture(perform: shrinkAndClose)
+                .accessibilityIdentifier("agent-image-preview")
+
+                Button(action: shrinkAndClose) {
                     Image(systemName: "xmark")
                         .font(.system(size: 17, weight: .bold))
                         .foregroundStyle(.white)
@@ -1339,8 +1386,34 @@ private struct AIImagePreviewOverlay: View {
                 }
                 .accessibilityLabel("关闭图片预览")
                 .padding(20)
+                .opacity(isExpanded ? 1 : 0)
+                .allowsHitTesting(isExpanded)
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+        }
+        .onAppear {
+            DispatchQueue.main.async {
+                withAnimation(previewAnimation) { isExpanded = true }
             }
         }
+        .accessibilityAction(.escape, shrinkAndClose)
+    }
+
+    private func shrinkAndClose() {
+        guard isExpanded else { return }
+        withAnimation(previewAnimation) { isExpanded = false }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) {
+            guard !isExpanded else { return }
+            close()
+        }
+    }
+
+    private func aspectFitSize(imageSize: CGSize, containerSize: CGSize) -> CGSize {
+        guard imageSize.width > 0, imageSize.height > 0,
+              containerSize.width > 0, containerSize.height > 0 else { return .zero }
+        let scale = min(containerSize.width / imageSize.width,
+                        containerSize.height / imageSize.height)
+        return CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
     }
 }
 
@@ -2287,6 +2360,13 @@ private struct AISettingsView: View {
     let close: () -> Void
     @State private var settings = AIModelSettings()
     @State private var apiKey = ""
+    @State private var seedanceKey = ""
+    @State private var seedanceConfigured = false
+    @State private var seedanceMessage = ""
+    @State private var wanKey = ""
+    @State private var wanWorkspaceId = ""
+    @State private var wanConfigured = false
+    @State private var wanMessage = ""
     @State private var saving = false
 
     var body: some View {
@@ -2335,6 +2415,42 @@ private struct AISettingsView: View {
                         SecureField(model.configured ? "留空保留原密钥" : "输入 API Key", text: $apiKey)
                             .textFieldStyle(.plain)
                     }
+                    settingsField("方舟创作 Key（Seedance / Seedream）", systemImage: "film") {
+                        SecureField(seedanceConfigured ? "已配置，留空则保留" : "输入方舟 API Key",
+                                    text: $seedanceKey)
+                            .textFieldStyle(.plain)
+                    }
+                    Button("保存方舟创作 Key") {
+                        do {
+                            try KeychainSecretStore(account: "seedance-ark-api-key")
+                                .saveSecretKey(seedanceKey)
+                            seedanceConfigured = !seedanceKey.isEmpty
+                            seedanceKey = ""
+                            seedanceMessage = seedanceConfigured ? "已保存到本机 Keychain" : "已清除方舟创作 Key"
+                        } catch {
+                            seedanceMessage = error.localizedDescription
+                        }
+                    }
+                    .disabled(seedanceKey.isEmpty)
+                    if !seedanceMessage.isEmpty {
+                        Text(seedanceMessage).font(.system(size: 12)).foregroundStyle(.secondary)
+                    }
+                    settingsField("百炼创作 Key（Wan / Qwen）", systemImage: "film.stack") {
+                        SecureField(wanConfigured ? "已配置，留空保留原密钥" : "输入百炼 API Key",
+                                    text: $wanKey)
+                            .textFieldStyle(.plain)
+                    }
+                    settingsField("百炼 Workspace ID", systemImage: "square.stack.3d.up") {
+                        TextField("ws-…", text: $wanWorkspaceId)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .textFieldStyle(.plain)
+                    }
+                    Text("点击下方“保存配置”，同时保存百炼 Key 和 Workspace ID。")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                    if !wanMessage.isEmpty {
+                        Text(wanMessage).font(.system(size: 12)).foregroundStyle(.secondary)
+                    }
                     Text("本地图片处理使用 FFmpeg（LGPLv2.1+）；完整源码随项目放在 MaiAgent/third_party/ffmpeg。")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                     if !model.error.isEmpty {
@@ -2346,6 +2462,10 @@ private struct AISettingsView: View {
                     Button {
                         saving = true
                         Task {
+                            guard saveWanConfiguration() else {
+                                saving = false
+                                return
+                            }
                             if await model.save(settings, key: apiKey) { close() }
                             saving = false
                         }
@@ -2368,8 +2488,43 @@ private struct AISettingsView: View {
             }
         }
         .background(Color(red: 0.97, green: 0.98, blue: 1.0).ignoresSafeArea())
-        .onAppear { settings = model.settings }
+        .onAppear {
+            settings = model.settings
+            seedanceConfigured = !KeychainSecretStore(account: "seedance-ark-api-key")
+                .readSecretKey().isEmpty
+            wanConfigured = !KeychainSecretStore(account: "wan-model-studio-api-key")
+                .readSecretKey().isEmpty
+            wanWorkspaceId = UserDefaults.standard.string(forKey: "wan-model-studio-workspace-id") ?? ""
+        }
         .accessibilityIdentifier("ai-model-settings")
+    }
+
+    private func saveWanConfiguration() -> Bool {
+        let workspaceId = wanWorkspaceId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = wanKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !workspaceId.isEmpty || !key.isEmpty || wanConfigured else { return true }
+        guard (workspaceId.hasPrefix("ws-") || workspaceId.hasPrefix("llm-")),
+              workspaceId.count > 4 else {
+            wanMessage = "请填写完整的百炼 Workspace ID"
+            return false
+        }
+        guard !key.isEmpty || wanConfigured else {
+            wanMessage = "请填写百炼 API Key"
+            return false
+        }
+        do {
+            if !key.isEmpty {
+                try KeychainSecretStore(account: "wan-model-studio-api-key").saveSecretKey(key)
+            }
+            UserDefaults.standard.set(workspaceId, forKey: "wan-model-studio-workspace-id")
+            wanConfigured = true
+            wanKey = ""
+            wanMessage = "百炼配置已保存"
+            return true
+        } catch {
+            wanMessage = error.localizedDescription
+            return false
+        }
     }
 
     private func settingsField<Content: View>(

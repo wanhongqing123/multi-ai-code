@@ -205,7 +205,7 @@ void test_edit_always_needs_approval() {
     CHECK(tool->requiresApproval(args({{"path", "a.txt"}})));
     CHECK(tool->requiresApproval("not json at all"));
     // 会话级豁免的键就是工具名——这个工具不需要更细的粒度。
-    CHECK(tool->approvalKey(args({{"path", "a.txt"}})) == "edit");
+    CHECK(tool->approvalKey(args({{"path", "a.txt"}})) == "file_edit");
 }
 
 void test_current_time_is_utc_iso8601() {

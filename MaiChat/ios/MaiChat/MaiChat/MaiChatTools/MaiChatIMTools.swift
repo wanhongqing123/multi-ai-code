@@ -72,7 +72,7 @@ extension AIMobileHostToolProvider {
             peerUserID: peerID,
             limit: Self.boundedLimit(arguments)
         )
-        let values = messages.map { Self.messageJSON($0, peerID: peerID) }
+        let values = messages.map { Self.messageJSON($0, peerID: peerID, includeImagePath: true) }
         return Self.jsonSuccess(["peer_id": peerID, "messages": values, "count": values.count])
     }
 
@@ -93,7 +93,9 @@ extension AIMobileHostToolProvider {
             .filter { peerID.isEmpty || $0.peerUserID == peerID }
             .prefix(limit))
         appState.chatState.mergeMessages(hits.map(\.message))
-        let values = hits.map { Self.messageJSON($0.message, peerID: $0.peerUserID) }
+        let values = hits.map {
+            Self.messageJSON($0.message, peerID: $0.peerUserID, includeImagePath: true)
+        }
         return Self.jsonSuccess(["query": query, "matches": values, "count": values.count])
     }
 
@@ -352,8 +354,9 @@ extension AIMobileHostToolProvider {
         !peerID.isEmpty && appState.chatState.contacts.contains(where: { $0.userID == peerID })
     }
 
-    private static func messageJSON(_ message: RemoteIMMessage, peerID: String) -> [String: Any] {
-        [
+    private static func messageJSON(_ message: RemoteIMMessage, peerID: String,
+                                    includeImagePath: Bool = false) -> [String: Any] {
+        var result: [String: Any] = [
             "id": message.id.uuidString,
             "peer_id": peerID,
             "direction": message.direction == .incoming ? "incoming" : "outgoing",
@@ -362,6 +365,36 @@ extension AIMobileHostToolProvider {
             "kind": messageKind(message),
             "created_at_ms": Int64((message.createdAt.timeIntervalSince1970 * 1_000).rounded()),
         ]
+        if includeImagePath, let path = imageWorkspaceReference(message) {
+            result["workspace_path"] = path
+            result["mime_type"] = UTType(filenameExtension: URL(fileURLWithPath: path)
+                .pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+        }
+        return result
+    }
+
+    private static func imageWorkspaceReference(_ message: RemoteIMMessage) -> String? {
+        guard let attachment = message.imageAttachment else { return nil }
+        let workspacePath = AIAssistantModel.shared.workspacePath
+        guard !workspacePath.isEmpty else { return nil }
+        let sourcePath = attachment.localFilePath
+        guard let source = AIAssistantPathPolicy.resolve(sourcePath, workspacePath: workspacePath),
+              FileManager.default.fileExists(atPath: source.path) else { return nil }
+        let file = try? source.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+        guard file?.isRegularFile == true, let size = file?.fileSize,
+              size > 0, size <= 20 * 1024 * 1024 else { return nil }
+        let suffix = source.pathExtension.lowercased()
+        guard ["jpg", "jpeg", "png", "webp", "gif", "heic", "heif"].contains(suffix) else {
+            return source.path
+        }
+        let name = "im-image-\(message.id.uuidString.lowercased()).\(suffix)"
+        let target = URL(fileURLWithPath: workspacePath, isDirectory: true)
+            .appendingPathComponent(name)
+        if !FileManager.default.fileExists(atPath: target.path) {
+            do { try FileManager.default.linkItem(at: source, to: target) }
+            catch { return source.path }
+        }
+        return name
     }
 
     private static func messageKind(_ message: RemoteIMMessage) -> String {

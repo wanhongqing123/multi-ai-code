@@ -504,8 +504,7 @@ target_link_libraries(remote_im_desktop_ui PUBLIC remote_im_desktop_app remote_i
   maichat_pdf_preview)
 if(APPLE AND TARGET maiagent_embedded_fftools)
   target_sources(remote_im_desktop_ui PRIVATE
-    ../Media/MaiImageDecode.cpp ../Media/MaiImageEncode.cpp
-    ../Media/MaiFaceImageCodecBridge.cpp)
+    ../Media/MaiImageDecode.cpp ../Media/MaiImageEncode.cpp)
   target_include_directories(remote_im_desktop_ui PUBLIC ../Media)
   target_include_directories(remote_im_desktop_ui PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}/maiagent/Graphics/ffmpeg-runtime/install/include")
@@ -514,8 +513,7 @@ if(APPLE AND TARGET maiagent_embedded_fftools)
 endif()
 if(WIN32 AND TARGET maichat_ffmpeg_tools)
   target_sources(remote_im_desktop_ui PRIVATE
-    ../Media/MaiImageDecode.cpp ../Media/MaiImageEncode.cpp
-    ../Media/MaiFaceImageCodecBridge.cpp)
+    ../Media/MaiImageDecode.cpp ../Media/MaiImageEncode.cpp)
   target_include_directories(remote_im_desktop_ui PUBLIC ../Media)
   target_include_directories(remote_im_desktop_ui PRIVATE
     "${MAICHAT_FFMPEG_BUILD_DIR}/install/include")
@@ -569,8 +567,6 @@ if(WIN32)
   if(MAICHAT_ENABLE_FFMPEG AND MAICHAT_ENABLE_OPENCV)
     set(MAICHAT_RVM_MODEL
       "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/models/rvm_mobilenetv3_fp32.onnx")
-    set(MAICHAT_FACE_MODEL_DIRECTORY
-      "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/models/face_landmarker")
     set(MAICHAT_ORT_RUNTIME
       "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/onnxruntime/windows-x64/onnxruntime.dll")
     set(MAICHAT_ORT_PROVIDER
@@ -584,15 +580,6 @@ if(WIN32)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
           "${MAICHAT_RVM_MODEL}"
           "$<TARGET_FILE_DIR:maichat>/MaiAgentModels/rvm_mobilenetv3_fp32.onnx"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-          "${MAICHAT_FACE_MODEL_DIRECTORY}/face_detection_short_range.onnx"
-          "$<TARGET_FILE_DIR:maichat>/MaiAgentModels/face_detection_short_range.onnx"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-          "${MAICHAT_FACE_MODEL_DIRECTORY}/face_landmarker_Nx3x256x256.onnx"
-          "$<TARGET_FILE_DIR:maichat>/MaiAgentModels/face_landmarker_Nx3x256x256.onnx"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-          "${MAICHAT_FACE_MODEL_DIRECTORY}/LICENSE"
-          "$<TARGET_FILE_DIR:maichat>/MaiAgentModels/FACE_LANDMARKER_LICENSE"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
           "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/models/RVM_LICENSE"
           "$<TARGET_FILE_DIR:maichat>/MaiAgentModels/RVM_LICENSE"
@@ -618,8 +605,6 @@ if(APPLE)
      CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
     set(MAICHAT_RVM_MODEL
       "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/models/rvm_mobilenetv3_fp32.onnx")
-    set(MAICHAT_FACE_MODEL_DIRECTORY
-      "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/models/face_landmarker")
     set(MAICHAT_ORT_RUNTIME
       "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/onnxruntime/macos-arm64/libonnxruntime.1.26.0.dylib")
     if(EXISTS "${MAICHAT_RVM_MODEL}" AND EXISTS "${MAICHAT_ORT_RUNTIME}")
@@ -631,15 +616,6 @@ if(APPLE)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${MAICHAT_RVM_MODEL}"
                 "$<TARGET_BUNDLE_DIR:maichat>/Contents/Resources/MaiAgentModels/rvm_mobilenetv3_fp32.onnx"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${MAICHAT_FACE_MODEL_DIRECTORY}/face_detection_short_range.onnx"
-                "$<TARGET_BUNDLE_DIR:maichat>/Contents/Resources/MaiAgentModels/face_detection_short_range.onnx"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${MAICHAT_FACE_MODEL_DIRECTORY}/face_landmarker_Nx3x256x256.onnx"
-                "$<TARGET_BUNDLE_DIR:maichat>/Contents/Resources/MaiAgentModels/face_landmarker_Nx3x256x256.onnx"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${MAICHAT_FACE_MODEL_DIRECTORY}/LICENSE"
-                "$<TARGET_BUNDLE_DIR:maichat>/Contents/Resources/MaiAgentModels/FACE_LANDMARKER_LICENSE"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/models/RVM_LICENSE"
                 "$<TARGET_BUNDLE_DIR:maichat>/Contents/Resources/MaiAgentModels/RVM_LICENSE"
@@ -738,6 +714,15 @@ add_library(maichat_agent
   src/agent/ReplySuggestionController.h
   src/agent/ReplySuggestionController.cpp
 )
+if(APPLE)
+  target_sources(maichat_agent PRIVATE
+    src/agent/MaiDesktopGpu.h src/agent/MaiDesktopGpuMac.mm)
+  target_link_libraries(maichat_agent PRIVATE "-framework Metal")
+elseif(WIN32)
+  target_sources(maichat_agent PRIVATE
+    src/agent/MaiDesktopGpu.h src/agent/MaiDesktopGpuWindows.cpp)
+  target_link_libraries(maichat_agent PRIVATE dxgi)
+endif()
 target_include_directories(maichat_agent PUBLIC src)
 target_include_directories(maichat_agent PRIVATE ../Media)
 target_link_libraries(maichat_agent PUBLIC Qt5::Core Qt5::Widgets Qt5::Multimedia Qt5::Concurrent
@@ -765,31 +750,8 @@ if(WIN32 AND MAICHAT_ENABLE_OPENCV)
 endif()
 if(MAICHAT_ENABLE_OPENCV AND
    (TARGET maiagent_embedded_fftools OR TARGET maichat_ffmpeg_tools))
-  add_library(maiagent_face_beautify STATIC
-    ../../MaiAgent/AgentTools/MaiFaceBeautify.cpp)
-  target_include_directories(maiagent_face_beautify PRIVATE
-    ../../MaiAgent/include
-    ../../MaiAgent/third_party/onnxruntime/include)
-  target_link_libraries(maiagent_face_beautify PRIVATE
-    maichat_opencv opencv_imgproc maiagent)
-  target_link_libraries(maichat_agent PRIVATE maiagent_face_beautify)
-  target_compile_definitions(maichat_agent PRIVATE MAICHAT_FACE_BEAUTIFY=1)
-  if(EXISTS "${MAICHAT_ORT_RUNTIME}" AND
-     EXISTS "${MAICHAT_FACE_MODEL_DIRECTORY}/face_detection_short_range.onnx")
-    add_executable(MaiFaceBeautifyTests
-      ../../MaiAgent/tests/MaiFaceBeautifyTests.cpp)
-    target_include_directories(MaiFaceBeautifyTests PRIVATE
-      ../../MaiAgent/include ../../MaiAgent/third_party/nlohmann ../Media)
-    target_link_libraries(MaiFaceBeautifyTests PRIVATE
-      maiagent_face_beautify maichat_opencv opencv_imgproc
-      remote_im_desktop_ui maiagent)
-    add_test(NAME MaiFaceBeautifyTests COMMAND MaiFaceBeautifyTests
-      "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/opencv/samples/data/lena.jpg"
-      "${MAICHAT_FACE_MODEL_DIRECTORY}/face_detection_short_range.onnx"
-      "${MAICHAT_FACE_MODEL_DIRECTORY}/face_landmarker_Nx3x256x256.onnx"
-      "${MAICHAT_ORT_RUNTIME}")
-  endif()
   add_library(maiagent_cv_video_analysis STATIC
+    ../../MaiAgent/AgentTools/MaiCvImageAnalysis.cpp
     ../../MaiAgent/AgentTools/MaiCvVideoAnalysis.cpp
     ../../MaiAgent/AgentTools/MaiVideoMatting.cpp)
   target_include_directories(maiagent_cv_video_analysis PRIVATE
@@ -825,6 +787,13 @@ if(MAICHAT_ENABLE_OPENCV AND
     maiagent_cv_video_analysis maiagent)
   add_test(NAME MaiCvVideoAnalysisTests COMMAND MaiCvVideoAnalysisTests
     ${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/tests/fixtures/cv-video-analysis.mp4)
+  add_executable(MaiCvImageAnalysisTests
+    ../../MaiAgent/tests/MaiCvImageAnalysisTests.cpp)
+  target_include_directories(MaiCvImageAnalysisTests PRIVATE
+    ../../MaiAgent/include ../../MaiAgent/third_party/nlohmann)
+  target_link_libraries(MaiCvImageAnalysisTests PRIVATE
+    maiagent_cv_video_analysis maiagent)
+  add_test(NAME MaiCvImageAnalysisTests COMMAND MaiCvImageAnalysisTests)
   add_executable(MaiVideoMattingTests tests/MaiVideoMattingTests.cpp)
   target_include_directories(MaiVideoMattingTests PRIVATE ../../MaiAgent/include)
   target_link_libraries(MaiVideoMattingTests PRIVATE maiagent_cv_video_analysis maiagent Qt5::Gui)

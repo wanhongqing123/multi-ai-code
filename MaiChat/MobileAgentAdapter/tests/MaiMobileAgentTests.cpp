@@ -49,7 +49,7 @@ static const char* hostToolHandler(void* context, const char* tool, const char* 
     const std::string response =
         Json{{"ok", true},
              {"output", probe->lastTool == "maichat_send_text" ? "sent"
-                        : probe->lastTool == "mobile_decode_text" ? "\u4f60\u597d" : "read"}}
+                        : probe->lastTool == "mobile_decode_text" ? "\u4f60\u597d" : "file_read"}}
             .dump();
     char* owned = static_cast<char*>(std::malloc(response.size() + 1));
     CHECK(owned != nullptr);
@@ -149,16 +149,16 @@ int main() {
              hasVideoMatting = false, hasAgentMedia = false;
         for (const auto& tool : body["tools"]) {
             CHECK(tool["function"]["name"] != "shell");
-            if (tool["function"]["name"] == "create_file") hasCreateFile = true;
-            if (tool["function"]["name"] == "create_directory") hasCreateDirectory = true;
-            if (tool["function"]["name"] == "delete_file") hasDeleteFile = true;
+            if (tool["function"]["name"] == "file_create") hasCreateFile = true;
+            if (tool["function"]["name"] == "file_create_directory") hasCreateDirectory = true;
+            if (tool["function"]["name"] == "file_delete") hasDeleteFile = true;
             if (tool["function"]["name"] == "view_image") hasViewImage = true;
             if (tool["function"]["name"] == "generate_pdf") hasGeneratePdf = true;
             if (tool["function"]["name"] == "maichat_list_contacts") hasMaiChatContacts = true;
             if (tool["function"]["name"] == "maichat_send_text") hasMaiChatSend = true;
             if (tool["function"]["name"] == "maichat_send_media") hasMaiChatMedia = true;
             if (tool["function"]["name"] == "agent_send_media") hasAgentMedia = true;
-            if (tool["function"]["name"] == "download_file") hasDownloadFile = true;
+            if (tool["function"]["name"] == "curl") hasDownloadFile = true;
             if (tool["function"]["name"] == "maichat_broadcast_text")
                 hasMaiChatBroadcast = true;
             if (tool["function"]["name"] == "mobile_list_photos") hasMobilePhotos = true;
@@ -231,13 +231,13 @@ int main() {
             response.set_content(R"({"error":{"message":"quota exhausted"}})", "application/json");
             return;
         }
-        if (input == "write") {
+        if (input == "file_write") {
             Json invocation = {
                 {"index", 0},
                 {"id", "call_write"},
                 {"type", "function"},
                 {"function",
-                 {{"name", "write"},
+                 {{"name", "file_write"},
                   {"arguments", "{\"path\":\"result.txt\",\"content\":\"saved\"}"}}}};
             response.set_content(frame({{"tool_calls", Json::array({invocation})}}, "tool_calls") +
                                      "data: [DONE]\n\n",
@@ -247,7 +247,7 @@ int main() {
         if (input == "read-app-sibling") {
             Json invocation = {
                 {"index", 0}, {"id", "call_read_sibling"}, {"type", "function"},
-                {"function", {{"name", "read"},
+                {"function", {{"name", "file_read"},
                               {"arguments", "{\"path\":\"../shared.txt\"}"}}}};
             response.set_content(frame({{"tool_calls", Json::array({invocation})}}, "tool_calls") +
                                      "data: [DONE]\n\n", "text/event-stream");
@@ -256,7 +256,7 @@ int main() {
         if (input == "read-legacy") {
             Json invocation = {
                 {"index", 0}, {"id", "call_read_legacy"}, {"type", "function"},
-                {"function", {{"name", "read"},
+                {"function", {{"name", "file_read"},
                               {"arguments", "{\"path\":\"legacy.txt\",\"encoding\":\"gb18030\"}"}}}};
             response.set_content(frame({{"tool_calls", Json::array({invocation})}}, "tool_calls") +
                                      "data: [DONE]\n\n", "text/event-stream");
@@ -515,7 +515,7 @@ int main() {
         CHECK(Json::parse(hostProbe.lastArguments).value("encoding", "") == "gb18030");
         CHECK(Json::parse(hostProbe.lastArguments).value("base64", "") == "xOO6ww==");
 
-        CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "write"}})["ok"] == true);
+        CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "file_write"}})["ok"] == true);
         auto pending = wait([](const Json& s) { return !s["permissions"].empty(); });
         std::string permission = pending["permissions"][0]["id"];
         CHECK(!MaiFileSystem::exists(MaiFilePath::fromUtf8(movedWorkspace + "/result.txt")));

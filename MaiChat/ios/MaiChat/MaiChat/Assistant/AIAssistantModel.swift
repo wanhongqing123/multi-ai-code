@@ -66,8 +66,17 @@ struct AIImportedFile: Sendable, Equatable {
     let isImage: Bool
 }
 struct AIImagePreview: Identifiable, Equatable {
-    let id = UUID()
+    let id: UUID
     let filePath: String
+    let imageSize: CGSize
+    let sourceFrame: CGRect?
+
+    init(filePath: String, imageSize: CGSize = .zero, sourceFrame: CGRect? = nil) {
+        id = UUID()
+        self.filePath = filePath
+        self.imageSize = imageSize
+        self.sourceFrame = sourceFrame
+    }
 }
 struct AIAssistantOpenResult: Sendable {
     let settings: AIModelSettings
@@ -194,14 +203,11 @@ actor AIAssistantBackend {
         _ = try call("configure", values: ["database": root.appendingPathComponent("sessions.sqlite").path,
             "workspace": workspace.path, "baseUrl": config.baseUrl, "apiKey": key,
             "model": config.model, "policy": config.policy, "appRoot": appRootPath,
+            "temporaryDirectory": FileManager.default.temporaryDirectory.path,
+            "cacheDirectory": try FileManager.default.url(for: .cachesDirectory,
+                in: .userDomainMask, appropriateFor: nil, create: true).path,
             "rvmModelPath": Bundle.main.url(
                 forResource: "rvm_mobilenetv3_fp32", withExtension: "onnx",
-                subdirectory: "MaiAgentModels")?.path ?? "",
-            "faceDetectorModelPath": Bundle.main.url(
-                forResource: "face_detection_short_range", withExtension: "onnx",
-                subdirectory: "MaiAgentModels")?.path ?? "",
-            "faceLandmarkerModelPath": Bundle.main.url(
-                forResource: "face_landmarker_Nx3x256x256", withExtension: "onnx",
                 subdirectory: "MaiAgentModels")?.path ?? ""])
     }
 

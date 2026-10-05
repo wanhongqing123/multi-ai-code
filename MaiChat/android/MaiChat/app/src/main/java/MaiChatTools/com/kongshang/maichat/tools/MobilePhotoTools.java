@@ -8,6 +8,7 @@ import android.content.ContentValues;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.BitmapFactory;
+import android.media.MediaMetadataRetriever;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
@@ -67,6 +68,7 @@ final class MobilePhotoTools {
             case "mobile_export_photo_original": return agentExportPhotoOriginal(arguments);
             case "mobile_export_media_original": return agentExportPhotoOriginal(arguments);
             case "mobile_save_image": return agentSaveImage(arguments);
+            case "mobile_save_video": return agentSaveVideo(arguments);
             case "mobile_transform_image": return agentTransformImage(arguments);
             case "mobile_beautify_image":
                 arguments.put("operation", "beautify");
@@ -245,6 +247,70 @@ final class MobilePhotoTools {
             .put("mime_type", file.mimeType)
             .put("mediaType", mediaType == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO
                 ? "video" : "photo");
+    }
+
+    private JSONObject agentSaveVideo(JSONObject arguments) throws Exception {
+        if (Build.VERSION.SDK_INT < 29)
+            throw new IllegalStateException("当前 Android 版本无法安全保存到系统图库");
+        String path = arguments.optString("path", "");
+        File source = AIAssistantController.shared(activity).workspaceFile(path);
+        if (source == null || !source.isFile() || source.length() < 1
+                || source.length() > 2L * 1024 * 1024 * 1024)
+            throw new IllegalArgumentException("视频必须是 App 目录内不超过 2 GB 的文件");
+        String lowerName = source.getName().toLowerCase(java.util.Locale.ROOT);
+        String extension;
+        String mime;
+        if (lowerName.endsWith(".mp4")) {
+            extension = "mp4";
+            mime = "video/mp4";
+        } else if (lowerName.endsWith(".mov")) {
+            extension = "mov";
+            mime = "video/quicktime";
+        } else if (lowerName.endsWith(".m4v")) {
+            extension = "m4v";
+            mime = "video/x-m4v";
+        } else {
+            throw new IllegalArgumentException("仅支持 MP4、MOV 或 M4V 视频");
+        }
+        MediaMetadataRetriever metadataReader = new MediaMetadataRetriever();
+        try {
+            metadataReader.setDataSource(source.getPath());
+            if (!"yes".equalsIgnoreCase(metadataReader.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_HAS_VIDEO)))
+                throw new IllegalArgumentException("文件没有视频轨道");
+        } finally {
+            metadataReader.release();
+        }
+        ContentValues metadata = new ContentValues();
+        metadata.put(MediaStore.MediaColumns.DISPLAY_NAME,
+            "MaiChat-" + java.util.UUID.randomUUID() + "." + extension);
+        metadata.put(MediaStore.MediaColumns.MIME_TYPE, mime);
+        metadata.put(MediaStore.MediaColumns.RELATIVE_PATH,
+            Environment.DIRECTORY_MOVIES + "/MaiChat/");
+        metadata.put(MediaStore.MediaColumns.IS_PENDING, 1);
+        Uri collection = MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);
+        Uri created = activity.getContentResolver().insert(collection, metadata);
+        if (created == null) throw new IOException("无法创建系统图库视频");
+        try {
+            try (InputStream input = new FileInputStream(source);
+                 OutputStream output = activity.getContentResolver().openOutputStream(created)) {
+                if (output == null) throw new IOException("无法写入系统图库视频");
+                byte[] buffer = new byte[64 * 1024];
+                int count;
+                while ((count = input.read(buffer)) >= 0)
+                    output.write(buffer, 0, count);
+            }
+            ContentValues visible = new ContentValues();
+            visible.put(MediaStore.MediaColumns.IS_PENDING, 0);
+            if (activity.getContentResolver().update(created, visible, null, null) < 1)
+                throw new IOException("无法完成系统图库视频");
+        } catch (Exception error) {
+            try { activity.getContentResolver().delete(created, null, null); }
+            catch (Exception ignored) { /* Only the newly created video is removed. */ }
+            throw error;
+        }
+        return new JSONObject().put("saved", true).put("id", Long.toString(ContentUris.parseId(created)))
+            .put("uri", created.toString()).put("source_path", path).put("bytes", source.length());
     }
 
     private JSONObject agentSaveImage(JSONObject arguments) throws Exception {

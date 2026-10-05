@@ -91,9 +91,9 @@ QString toolPrimaryArgument(const QString& tool, const QString& arguments) {
         return recipients.join(QStringLiteral("、"));
     }
     const QString key = tool == QStringLiteral("shell")      ? QStringLiteral("command")
-                        : tool == QStringLiteral("glob")     ? QStringLiteral("pattern")
-                        : tool == QStringLiteral("grep")     ? QStringLiteral("pattern")
-                        : tool == QStringLiteral("webfetch") ? QStringLiteral("url")
+                        : tool == QStringLiteral("file_glob")  ? QStringLiteral("pattern")
+                        : tool == QStringLiteral("file_grep")  ? QStringLiteral("pattern")
+                        : tool == QStringLiteral("curl_fetch") ? QStringLiteral("url")
                         : tool.startsWith(QStringLiteral("maichat_"))
                             ? QStringLiteral("peer_id")
                                                                : QStringLiteral("path");

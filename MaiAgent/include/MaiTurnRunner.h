@@ -43,6 +43,8 @@ public:
         MaiSubAgentHost* subAgents = nullptr;
         std::string defaultModel;
         std::string baseInstructions;
+        // One transient child reply. It is not stored as a user message or shown in the UI.
+        std::string specialistReply;
         // 模型可以连着调工具，一轮对话因此会有多次请求。
         // 重复结果会提前停止；这里限制仍不断产生新调用的极端情况。
         int maxIterations = 64;
@@ -56,6 +58,7 @@ public:
 
     // 阻塞跑完一轮。调用方负责把它放到自己的线程上。
     void run(const std::atomic<bool>& cancel);
+    bool succeeded() const;
 
 private:
     // run() 的实际工作。外层 run() 负责把任何未预期异常收敛成会话错误，不能让异常逃出

@@ -29,7 +29,77 @@ if(ANDROID)
   set(MBEDX509_LIBRARY mbedx509 CACHE STRING "" FORCE)
   set(MBEDCRYPTO_LIBRARY mbedcrypto CACHE STRING "" FORCE)
 endif()
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS" OR ANDROID)
+  set(mai_openssl_source "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/openssl")
+  set(mai_openssl_build "${CMAKE_CURRENT_BINARY_DIR}/vendor/openssl-cli-build")
+  set(mai_openssl_script "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/scripts/build-openssl.sh")
+  if(ANDROID)
+    set(mai_openssl_platform Android)
+    set(mai_openssl_arch "${ANDROID_ABI}")
+    set(mai_openssl_ndk "${CMAKE_ANDROID_NDK}")
+  else()
+    set(mai_openssl_platform iOS)
+    set(mai_openssl_arch "${CMAKE_OSX_ARCHITECTURES}")
+    set(mai_openssl_ndk "")
+  endif()
+  # libssh2's CMake calls find_package(OpenSSL) while configuring, so the static
+  # crypto archive and generated headers must exist before add_subdirectory.
+  if(NOT EXISTS "${mai_openssl_build}/libmai_openssl_cli.a")
+    execute_process(
+      COMMAND bash "${mai_openssl_script}" "${mai_openssl_source}"
+        "${mai_openssl_build}" "${mai_openssl_platform}" "${mai_openssl_arch}"
+        "${CMAKE_OSX_SYSROOT}" "${mai_openssl_ndk}"
+      RESULT_VARIABLE mai_openssl_result
+      OUTPUT_FILE "${CMAKE_CURRENT_BINARY_DIR}/mai-openssl-build.log"
+      ERROR_FILE "${CMAKE_CURRENT_BINARY_DIR}/mai-openssl-build-error.log")
+    if(NOT mai_openssl_result EQUAL 0)
+      message(FATAL_ERROR "Vendored OpenSSL build failed; see mai-openssl-build-error.log")
+    endif()
+  endif()
+  add_custom_command(OUTPUT "${mai_openssl_build}/libmai_openssl_cli.a"
+    COMMAND bash "${mai_openssl_script}" "${mai_openssl_source}" "${mai_openssl_build}"
+      "${mai_openssl_platform}" "${mai_openssl_arch}" "${CMAKE_OSX_SYSROOT}"
+      "${mai_openssl_ndk}"
+    DEPENDS "${mai_openssl_script}" "${mai_openssl_source}/Configure"
+            "${mai_openssl_source}/apps/openssl.c"
+            "${mai_openssl_source}/apps/lib/apps.c"
+            "${mai_openssl_source}/apps/lib/opt.c"
+            "${mai_openssl_source}/VERSION.dat"
+    VERBATIM)
+  add_custom_target(maichat_openssl_build DEPENDS "${mai_openssl_build}/libmai_openssl_cli.a")
+  add_library(mai_openssl_crypto STATIC IMPORTED GLOBAL)
+  set_target_properties(mai_openssl_crypto PROPERTIES
+    IMPORTED_LOCATION "${mai_openssl_build}/libcrypto.a")
+  add_dependencies(mai_openssl_crypto maichat_openssl_build)
+  foreach(component cli apps ssl)
+    add_library(mai_openssl_${component} STATIC IMPORTED GLOBAL)
+    if(component STREQUAL "cli")
+      set(archive "libmai_openssl_cli.a")
+    elseif(component STREQUAL "apps")
+      set(archive "apps/libapps.a")
+    else()
+      set(archive "libssl.a")
+    endif()
+    set_target_properties(mai_openssl_${component} PROPERTIES
+      IMPORTED_LOCATION "${mai_openssl_build}/${archive}")
+    add_dependencies(mai_openssl_${component} maichat_openssl_build)
+  endforeach()
+  set(MAI_OPENSSL_CRYPTO_TARGET mai_openssl_crypto)
+  set(MAI_OPENSSL_BUILD_DIR "${mai_openssl_build}")
+  set(MAI_OPENSSL_CLI_TARGET mai_openssl_cli)
+  set(MAI_OPENSSL_APPS_TARGET mai_openssl_apps)
+  set(MAI_OPENSSL_SSL_TARGET mai_openssl_ssl)
+  set(MAI_OPENSSL_INCLUDE_DIR "${mai_openssl_build}/include;${mai_openssl_source}/include")
+  set(OPENSSL_CRYPTO_LIBRARY "${mai_openssl_build}/libcrypto.a" CACHE FILEPATH "" FORCE)
+  set(OPENSSL_SSL_LIBRARY "${mai_openssl_build}/libssl.a" CACHE FILEPATH "" FORCE)
+  set(OPENSSL_INCLUDE_DIR "${mai_openssl_build}/include" CACHE PATH "" FORCE)
+endif()
 add_subdirectory(../../MaiAgent maiagent EXCLUDE_FROM_ALL)
+if(TARGET maichat_openssl_build)
+  add_dependencies(maiagent maichat_openssl_build)
+  add_dependencies(libssh2_static maichat_openssl_build)
+  target_include_directories(libssh2_static PRIVATE "${mai_openssl_build}/include")
+endif()
 set(maichat_opencv_source "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/opencv")
 set(BUILD_LIST "core,imgproc,imgcodecs" CACHE STRING "" FORCE)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
@@ -129,20 +199,9 @@ foreach(library avdevice avfilter avformat avcodec swresample swscale avutil)
   add_dependencies(maichat_ffmpeg_${library} maichat_ffmpeg_build)
 endforeach()
 add_library(maiagent_cv_video_analysis STATIC
+  ../../MaiAgent/AgentTools/MaiCvImageAnalysis.cpp
   ../../MaiAgent/AgentTools/MaiCvVideoAnalysis.cpp
   ../../MaiAgent/AgentTools/MaiVideoMatting.cpp)
-add_library(maiagent_face_beautify STATIC
-  ../../MaiAgent/AgentTools/MaiFaceBeautify.cpp)
-target_include_directories(maiagent_face_beautify PRIVATE
-  ../../MaiAgent/include
-  ../../MaiAgent/third_party/onnxruntime/include
-  "${CMAKE_BINARY_DIR}"
-  "${CMAKE_CURRENT_BINARY_DIR}/opencv"
-  "${maichat_opencv_source}/modules/core/include"
-  "${maichat_opencv_source}/modules/imgproc/include"
-  "${maichat_opencv_source}/modules/imgcodecs/include")
-target_link_libraries(maiagent_face_beautify PUBLIC
-  opencv_imgproc opencv_imgcodecs maiagent)
 target_include_directories(maiagent_cv_video_analysis PRIVATE
   ../../MaiAgent/include "${ffmpeg_build}/install/include"
   "${CMAKE_BINARY_DIR}"
@@ -172,7 +231,6 @@ add_library(maichat_mobile STATIC
   ../Media/MaiVideoColorParameters.cpp
   ../Media/MaiImageDecode.cpp
   ../Media/MaiImageEncode.cpp
-  ../Media/MaiFaceImageCodecBridge.cpp
   ../MaiChatTools/MaiImageFilter.cpp
   ../MaiChatTools/MaiMobileHostTools.cpp)
 if(ANDROID)
@@ -189,7 +247,6 @@ target_include_directories(maichat_mobile PRIVATE
 target_include_directories(maichat_mobile PUBLIC . ../MaiChatTools ../Media
   PRIVATE ../../MaiAgent/third_party/nlohmann)
 target_link_libraries(maichat_mobile PRIVATE maiagent
-  maiagent_face_beautify
   maiagent_cv_video_analysis
   maichat_ffmpeg_tools
   maichat_ffmpeg_avdevice maichat_ffmpeg_avfilter maichat_ffmpeg_avformat

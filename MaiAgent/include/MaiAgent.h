@@ -261,6 +261,8 @@ public:
     const MaiEventBus& eventBus() const;
 
 private:
+    void pollSpecialistTasks();
+    void forwardSpecialistReply(const MaiSpecialistTask& task);
     // pimpl。实现体叫 Runtime 而不是 Implementation：后者任何一个 pimpl 类都能叫，等于没说。
     // 这个名字说的是它装什么——运行时状态：依赖、事件管线、正在跑的轮次。
     //

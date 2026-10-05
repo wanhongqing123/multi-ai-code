@@ -10,7 +10,7 @@ static void *mai_log_opaque;
 
 static void mai_log_callback(void *context, int level, const char *format, va_list arguments)
 {
-    if (!mai_log_sink || level > AV_LOG_WARNING)
+    if (!mai_log_sink || level > AV_LOG_INFO)
         return;
 
     char line[1024];

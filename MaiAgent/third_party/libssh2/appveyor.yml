@@ -1,0 +1,142 @@
+# Copyright (C) Ruslan Baratov
+# Copyright (C) Alexander Lamaison
+# Copyright (C) Marc Hoersken
+# Copyright (C) Viktor Szakats
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# * Redistributions of source code must retain the above copyright notice, this
+#   list of conditions and the following disclaimer.
+#
+# * Redistributions in binary form must reproduce the above copyright notice,
+#   this list of conditions and the following disclaimer in the documentation
+#   and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+# https://www.appveyor.com/docs/windows-images-software/
+
+environment:
+  CMAKE_CONFIGURATION: 'Release'
+  CMAKE_NEW_VERSION: 4.2.1
+  CMAKE_NEW_SHA256: dfc2b2afac257555e3b9ce375b12b2883964283a366c17fec96cf4d17e4f1677
+  CMAKE_OLD_VERSION: 3.18.4
+  CMAKE_OLD_SHA256: a932bc0c8ee79f1003204466c525b38a840424d4ae29f9e5fb88959116f2407d
+  DO_NOT_TRACK: '1'
+  DOCKER_CLI_VERSION: 29.4.1
+  DOCKER_CLI_SHA256: 927cb16737c6b7916db15ce31789c0864cf86264a56f2655bae41faa25628d5b
+  FIXTURE_XFER_COUNT: 35020
+
+  matrix:
+    - job_name: 'VS2026, OpenSSL 3.6, x64, Server 2019, clang-cl'
+      APPVEYOR_BUILD_WORKER_IMAGE: 'Visual Studio 2026'
+      CMAKE_GENERATOR: 'Visual Studio 18 2026'
+      CMAKE_GENERATE: '-A x64 -T ClangCl -DCRYPTO_BACKEND=OpenSSL -DOPENSSL_ROOT_DIR=C:/OpenSSL-v36-Win64'
+      TESTS: 'skipall'  # FIXME
+
+    - job_name: 'VS2010, WinCNG, x64, Server 2012 R2, Build-only, non-unity, tests, examples, docs'
+      APPVEYOR_BUILD_WORKER_IMAGE: 'Visual Studio 2015'
+      CMAKE_GENERATOR: 'Visual Studio 10 2010'
+      CMAKE_GENERATE: '-A x64 -DCRYPTO_BACKEND=WinCNG -DCMAKE_UNITY_BUILD=OFF -DLIBSSH2_BUILD_DOCS=ON'
+      CMAKE_CONFIGURATION: 'Debug'
+      TESTS: 'skiprun'
+
+    - job_name: 'VS2022, OpenSSL 3.0, x64, Server 2019, Shared-only, docs'
+      APPVEYOR_BUILD_WORKER_IMAGE: 'Visual Studio 2022'
+      CMAKE_GENERATOR: 'Visual Studio 17 2022'
+      CMAKE_GENERATE: '-A x64 -DCRYPTO_BACKEND=OpenSSL -DOPENSSL_ROOT_DIR=C:/OpenSSL-v30-Win64 -DBUILD_STATIC_LIBS=OFF -DLIBSSH2_BUILD_DOCS=ON'
+      TESTS: 'skipall'  # FIXME
+
+    - job_name: 'VS2015, OpenSSL 1.1, x86, Server 2016, Static-only, Debug-logging'
+      APPVEYOR_BUILD_WORKER_IMAGE: 'Visual Studio 2017'
+      CMAKE_GENERATOR: 'Visual Studio 14 2015'
+      CMAKE_GENERATE: '-A Win32 -DCRYPTO_BACKEND=OpenSSL -DOPENSSL_ROOT_DIR=C:/OpenSSL-v111-Win64 -DBUILD_SHARED_LIBS=OFF -DENABLE_DEBUG_LOGGING=ON'
+      CMAKE_CONFIGURATION: 'Debug'
+      TESTS: 'skipall'  # FIXME
+
+    - job_name: 'VS2013, OpenSSL 1.1, x64, Server 2012 R2, Debug-logging'
+      APPVEYOR_BUILD_WORKER_IMAGE: 'Visual Studio 2015'
+      CMAKE_GENERATOR: 'Visual Studio 12 2013'
+      CMAKE_GENERATE: '-A x64 -DCRYPTO_BACKEND=OpenSSL -DOPENSSL_ROOT_DIR=C:/OpenSSL-v111-Win64 -DENABLE_UNICODE=ON -DENABLE_DEBUG_LOGGING=ON'
+      TESTS: 'skipall'  # FIXME
+
+  # Re-enable when tests work again
+  # - job_name: 'VS2026, WinCNG, x64, Server 2019, Debug-logging'
+  #   APPVEYOR_BUILD_WORKER_IMAGE: 'Visual Studio 2026'
+  #   CMAKE_GENERATOR: 'Visual Studio 18 2026'
+  #   CMAKE_GENERATE: '-A x64 -DCRYPTO_BACKEND=WinCNG'
+
+    - job_name: 'VS2015, WinCNG, x86, Server 2016, ECDSA'
+      APPVEYOR_BUILD_WORKER_IMAGE: 'Visual Studio 2017'
+      CMAKE_GENERATOR: 'Visual Studio 14 2015'
+      CMAKE_GENERATE: '-A Win32 -DCRYPTO_BACKEND=WinCNG -DENABLE_ECDSA_WINCNG=ON -DENABLE_DEBUG_LOGGING=ON'
+      TESTS: 'skipall'  # FIXME
+
+matrix:
+  fast_finish: true
+
+install:
+  - ps: $env:PATH = "C:/my-cmake/bin;C:/my-docker/docker;$env:PATH"
+  - ps: |
+      # prepare local SSH server for reverse tunneling from GitHub Actions hosting our docker container
+      $env:OPENSSH_SERVER_PORT = Get-Random -Minimum 2000 -Maximum 2300
+      [System.Environment]::SetEnvironmentVariable('OPENSSH_SERVER_PORT', $env:OPENSSH_SERVER_PORT)
+      ./scripts/appveyor/docker-bridge.ps1
+
+      if($env:TESTS -notlike '*skipall*' -and $env:TESTS -notlike '*skiprun*') {
+        Write-Host 'Waiting for SSH connection from GitHub Actions' -NoNewline
+        $endDate = (Get-Date).AddMinutes(5)
+        while((Get-Process -Name 'sshd' -ErrorAction SilentlyContinue).Count -eq 1 -and (Get-Date) -lt $endDate) {
+          Write-Host '.' -NoNewline
+          Start-Sleep -Seconds 1
+        }
+        if((Get-Process -Name 'sshd' -ErrorAction SilentlyContinue).Count -gt 1) {
+          $env:DOCKER_HOST = 'tcp://127.0.0.1:2375'
+          [System.Environment]::SetEnvironmentVariable('DOCKER_HOST', $env:DOCKER_HOST)
+          Write-Host '... ready.'
+        }
+        else {
+          Write-Host '... failed.'
+        }
+      }
+
+build_script:
+  - cmd: sh -c ./appveyor.sh
+
+on_failure:
+  - ps: |
+      if(Test-Path _bld/CMakeFiles/CMakeConfigureLog.yaml) { cat _bld/CMakeFiles/CMakeConfigureLog.yaml }
+      if(Test-Path _bld/CMakeFiles/CMakeOutput.log) { cat _bld/CMakeFiles/CMakeOutput.log }
+      if(Test-Path _bld/CMakeFiles/CMakeError.log) { cat _bld/CMakeFiles/CMakeError.log }
+
+on_finish:
+  - ps: |
+      if($env:TESTS -notlike '*skipall*' -and $env:TESTS -notlike '*skiprun*') {
+        Get-Process -Name 'sleep' -ErrorAction SilentlyContinue | Stop-Process
+        Start-Sleep -Seconds 3
+        Get-Process -Name 'sshd' -ErrorAction SilentlyContinue | Stop-Process
+      }
+
+skip_commits:
+  files:
+    - '.github/**/*'
+
+clone_depth: 10
+
+# Limit branches to avoid testing feature branches twice (as branch and as pull request)
+branches:
+  only:
+    - master

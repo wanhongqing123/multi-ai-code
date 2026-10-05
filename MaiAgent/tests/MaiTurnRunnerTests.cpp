@@ -13,6 +13,9 @@
 #include <vector>
 
 #include "MaiAgent.h"
+#include "MaiFilePath.h"
+#include "MaiFileSystem.h"
+#include "MaiIdGenerator.h"
 #include "MaiMemoryStore.h"
 #include "MaiSqliteStore.h"
 #include "MaiFakeModelClient.h"
@@ -69,6 +72,30 @@ public:
     MaiWireApi wireApi() const override {
         return MaiWireApi::ChatCompletions;
     }
+};
+
+class FinishedVideoTool final : public MaiTool {
+public:
+    explicit FinishedVideoTool(std::string path) : mPath(std::move(path)) {}
+
+    std::string name() const override {
+        return "fake_video";
+    }
+    std::string description() const override {
+        return "Fake completed video";
+    }
+    std::string parametersSchema() const override {
+        return "{}";
+    }
+    MaiToolResult execute(const std::string& arguments, const MaiToolContext& context) override {
+        (void)arguments;
+        (void)context;
+        return MaiToolResult::success("{\"status\":\"SUCCEEDED\",\"path\":\"" + mPath +
+                                      "\",\"reply\":\"Video ready\"}");
+    }
+
+private:
+    std::string mPath;
 };
 
 // 把事件流录下来，方便断言顺序和内容。
@@ -476,6 +503,119 @@ void test_streamed_text_is_checkpointed_before_network_finishes() {
     if (opened.isOk()) runCase(std::move(opened.value()));
 }
 
+void test_specialist_text_reply_reaches_parent_without_a_file() {
+    auto store = makeMaiMemoryStore();
+    MaiSessionStore* observer = store.get();
+    MaiSession session;
+    session.id = MaiIdGenerator::newSessionId();
+    session.directory = "/tmp";
+    session.created = MaiTime::getCurrentTime();
+    session.updated = session.created;
+    store->putSession(session);
+    MaiSpecialistTask task;
+    task.id = MaiIdGenerator::generate("spt_");
+    task.ownerSessionId = session.id;
+    task.specialistName = "text_specialist";
+    task.intent = "Summarize the result";
+    task.created = session.created;
+    CHECK(!store->insertSpecialistTask(task));
+    CHECK(!store->appendSpecialistText(task.id, session.id, "child answer", task.created));
+    CHECK(!store->finishSpecialistTask(task.id, session.id, MaiSpecialistTaskStatus::Succeeded, "",
+                                       "", task.created + 1));
+    const std::string messageId = MaiIdGenerator::newMessageId();
+    CHECK(store->reserveSpecialistNotification(task.id, session.id, messageId, 1));
+    MaiMessage interrupted;
+    interrupted.id = messageId;
+    interrupted.role = MaiRole::Assistant;
+    interrupted.created = task.created + 2;
+    interrupted.completed = task.created + 3;
+    MaiMessagePart partial;
+    partial.id = MaiIdGenerator::newPartId();
+    partial.body = MaiTextPart{"interrupted half-answer"};
+    partial.created = interrupted.created;
+    interrupted.parts.push_back(std::move(partial));
+    store->putMessage(session.id, interrupted);
+    MaiFakeModelClient::Turn first;
+    first.invocations.push_back(MaiToolInvocation{"check_1", "missing_tool", "{}"});
+    MaiFakeModelClient::Turn answer;
+    answer.textChunks = {"Parent reviewed the child answer."};
+    auto model =
+        std::make_unique<MaiFakeModelClient>(std::vector<MaiFakeModelClient::Turn>{first, answer});
+    MaiFakeModelClient* modelObserver = model.get();
+    MaiAgent agent(std::move(store), std::move(model));
+    MaiSpecialistTask loaded;
+    for (int attempt = 0; attempt < 200; ++attempt) {
+        if (observer->getSpecialistTask(task.id, session.id, loaded) && loaded.notifiedAt != 0)
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    CHECK(loaded.notifiedAt != 0);
+    CHECK(loaded.notificationMessageId == messageId);
+    agent.waitIdle();
+    CHECK(modelObserver->requestCount() == 2);
+    const auto request = modelObserver->request(0);
+    CHECK(request.messages.size() == 2);
+    if (request.messages.size() == 2) {
+        CHECK(request.messages[0].role == MaiModelRole::System);
+        CHECK(request.messages[1].content.find("child answer") != std::string::npos);
+        CHECK(request.messages[1].content.find("Summarize the result") != std::string::npos);
+    }
+    const auto afterTool = modelObserver->request(1);
+    CHECK(afterTool.messages.size() == 4);
+    if (afterTool.messages.size() == 4) {
+        CHECK(afterTool.messages[1].content.find("child answer") != std::string::npos);
+        CHECK(afterTool.messages[2].role == MaiModelRole::Assistant);
+        CHECK(afterTool.messages[3].role == MaiModelRole::ToolResult);
+    }
+    const auto messages = agent.listMessages(session.id);
+    CHECK(messages.size() == 1);
+    if (messages.size() == 1) {
+        CHECK(messages[0].id == messageId);
+        CHECK(messages[0].text() == "Parent reviewed the child answer.");
+    }
+}
+
+void test_completed_video_is_forwarded_without_a_user_poll() {
+    const MaiFilePath path = MaiFileSystem::temporaryDirectory().append(
+        MaiFilePath::fromUtf8("mai-specialist-" + MaiIdGenerator::generate("tmp_") + ".mp4"));
+    CHECK(!MaiFileSystem::writeFile(path, "fake video bytes"));
+    auto store = makeMaiMemoryStore();
+    MaiSessionStore* observer = store.get();
+    MaiSession session;
+    session.id = MaiIdGenerator::newSessionId();
+    session.directory = MaiFileSystem::temporaryDirectory().toUtf8();
+    session.created = MaiTime::getCurrentTime();
+    store->putSession(session);
+    MaiSpecialistTask task;
+    task.id = MaiIdGenerator::generate("spt_");
+    task.ownerSessionId = session.id;
+    task.specialistName = "fake_video";
+    task.providerTaskId = "provider-123";
+    task.intent = "Create a video";
+    task.created = session.created;
+    CHECK(!store->insertSpecialistTask(task));
+    auto tools = std::make_unique<MaiToolRegistry>();
+    tools->add(std::make_unique<FinishedVideoTool>(path.toUtf8()));
+    auto model = std::make_unique<MaiFakeModelClient>();
+    MaiFakeModelClient::Turn answer;
+    answer.textChunks = {"The video is ready."};
+    model->setRepeatingTurn(answer);
+    MaiAgent agent(std::move(store), std::move(model), std::move(tools));
+    MaiSpecialistTask loaded;
+    for (int attempt = 0; attempt < 200; ++attempt) {
+        if (observer->getSpecialistTask(task.id, session.id, loaded) && loaded.notifiedAt != 0)
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    CHECK(loaded.notifiedAt != 0);
+    CHECK(loaded.outputPath == path.toUtf8());
+    agent.waitIdle();
+    const auto messages = agent.listMessages(session.id);
+    CHECK(messages.size() == 1);
+    if (messages.size() == 1) CHECK(messages[0].text() == "The video is ready.");
+    MaiFileSystem::removeFile(path);
+}
+
 }  // namespace
 
 int main() {
@@ -492,6 +632,8 @@ int main() {
     test_concurrent_sessions();
     test_tool_completion_is_stored_before_update_event();
     test_streamed_text_is_checkpointed_before_network_finishes();
+    test_specialist_text_reply_reaches_parent_without_a_file();
+    test_completed_video_is_forwarded_without_a_user_poll();
     if (failures == 0) std::printf("loop tests passed\n");
     return failures == 0 ? 0 : 1;
 }

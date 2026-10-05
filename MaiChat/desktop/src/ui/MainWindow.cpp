@@ -47,11 +47,13 @@
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QInputMethodEvent>
+#include <QInputDialog>
 #include <QKeyEvent>
 #include <QLineEdit>
 #include <QShortcut>
 #include <QHash>
 #include <QMenu>
+#include <QMessageBox>
 #include <limits>
 #include <QPixmap>
 #include <QMouseEvent>
@@ -81,6 +83,7 @@
 #include <QTextDocument>
 #include <QTextOption>
 #include <QTimer>
+#include <QThread>
 #include <QVariant>
 #include <QtMath>
 #include <algorithm>
@@ -136,6 +139,7 @@
 #include "agent/AgentController.h"
 #include "agent/ReplySuggestionController.h"
 #include "MaiChatTools/MaiChatHostTools.h"
+#include "MaiSshTool.h"
 #include "agent/AgentSessionList.h"
 
 namespace {
@@ -3235,6 +3239,56 @@ void MainWindow::rebuildAgentPage() {
         modelConfig, agentDatabasePath(),
         [this](MaiToolRegistry& registry) {
             registerMaiChatHostTools(registry, app_);
+            const auto sshPassword = [this](const std::string& host, int port,
+                                            const std::string& username)
+                -> MaiResult<std::string> {
+                QString password;
+                bool accepted = false;
+                const auto prompt = [&] {
+                    password = QInputDialog::getText(
+                        this, QStringLiteral("SSH 登录"),
+                        QStringLiteral("%1@%2:%3 的密码：")
+                            .arg(QString::fromUtf8(username.c_str()),
+                                 QString::fromUtf8(host.c_str()))
+                            .arg(port),
+                        QLineEdit::Password, QString(), &accepted);
+                };
+                if (QThread::currentThread() == thread()) prompt();
+                else QMetaObject::invokeMethod(this, prompt, Qt::BlockingQueuedConnection);
+                if (!accepted) return {MaiErrorCode::Canceled, "SSH password entry was canceled"};
+                const QByteArray utf8 = password.toUtf8();
+                return std::string(utf8.constData(), static_cast<std::size_t>(utf8.size()));
+            };
+            const auto sshTrust = [this](const std::string& host, int port,
+                                         const std::string& fingerprint)
+                -> MaiResult<bool> {
+                bool trusted = false;
+                const auto verify = [&] {
+                    const QString key = QStringLiteral("ssh/known-hosts/%1:%2")
+                        .arg(QString::fromUtf8(host.c_str())).arg(port);
+                    QSettings settings;
+                    if (settings.contains(key)) {
+                        trusted = settings.value(key).toString() ==
+                            QString::fromUtf8(fingerprint.c_str());
+                        if (!trusted) QMessageBox::warning(
+                            this, QStringLiteral("SSH 服务器身份变化"),
+                            QStringLiteral("%1:%2 的主机指纹与以前不同，连接已拒绝。")
+                                .arg(QString::fromUtf8(host.c_str())).arg(port));
+                        return;
+                    }
+                    trusted = QMessageBox::question(
+                        this, QStringLiteral("确认 SSH 服务器身份"),
+                        QStringLiteral("%1:%2\n%3\n请先与云主机控制台核对指纹。")
+                            .arg(QString::fromUtf8(host.c_str())).arg(port)
+                            .arg(QString::fromUtf8(fingerprint.c_str())),
+                        QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
+                    if (trusted) settings.setValue(key, QString::fromUtf8(fingerprint.c_str()));
+                };
+                if (QThread::currentThread() == thread()) verify();
+                else QMetaObject::invokeMethod(this, verify, Qt::BlockingQueuedConnection);
+                return trusted;
+            };
+            registry.add(makeMaiSshTool(sshPassword, sshTrust));
             #if defined(MAICHAT_HAS_FFPLAY)
             registerDesktopMediaTools(registry, this);
             #endif

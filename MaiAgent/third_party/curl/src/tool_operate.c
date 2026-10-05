@@ -97,6 +97,9 @@
 #include "tool_progress.h"
 #include "tool_ipfs.h"
 #include "dynbuf.h"
+#ifdef MAI_CURL_EMBEDDED
+#include "mai_curl_embed.h"
+#endif
 #ifdef DEBUGBUILD
 /* libcurl's debug-only curl_easy_perform_ev() */
 CURL_EXTERN CURLcode curl_easy_perform_ev(CURL *easy);
@@ -877,6 +880,20 @@ static CURLcode set_cert_types(struct OperationConfig *config)
   return CURLE_OK;
 }
 
+#ifdef MAI_CURL_EMBEDDED
+static int mai_curl_progress_cb(void *opaque, curl_off_t download_total,
+                                curl_off_t downloaded, curl_off_t upload_total,
+                                curl_off_t uploaded)
+{
+  (void)opaque;
+  (void)download_total;
+  (void)downloaded;
+  (void)upload_total;
+  (void)uploaded;
+  return mai_curl_cancel_requested();
+}
+#endif
+
 static CURLcode config2setopts(struct GlobalConfig *global,
                                struct OperationConfig *config,
                                struct per_transfer *per,
@@ -1434,6 +1451,11 @@ static CURLcode config2setopts(struct GlobalConfig *global,
     my_setopt(curl, CURLOPT_XFERINFOFUNCTION, tool_readbusy_cb);
     my_setopt(curl, CURLOPT_XFERINFODATA, per);
   }
+#ifdef MAI_CURL_EMBEDDED
+  my_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+  my_setopt(curl, CURLOPT_XFERINFOFUNCTION, mai_curl_progress_cb);
+  my_setopt(curl, CURLOPT_XFERINFODATA, NULL);
+#endif
 
   /* new in libcurl 7.24.0: */
   if(config->dns_servers)

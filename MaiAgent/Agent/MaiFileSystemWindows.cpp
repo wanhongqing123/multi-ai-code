@@ -129,6 +129,18 @@ bool MaiFileSystem::fileSize(const MaiFilePath& path, std::uint64_t& size) {
     return true;
 }
 
+bool MaiFileSystem::modifiedTime(const MaiFilePath& path, std::int64_t& seconds) {
+    WIN32_FILE_ATTRIBUTE_DATA data{};
+    if (!attributesOf(path, data)) return false;
+    ULARGE_INTEGER stamp{};
+    stamp.LowPart = data.ftLastWriteTime.dwLowDateTime;
+    stamp.HighPart = data.ftLastWriteTime.dwHighDateTime;
+    constexpr std::uint64_t kEpochOffset = 116444736000000000ull;
+    if (stamp.QuadPart < kEpochOffset) return false;
+    seconds = static_cast<std::int64_t>((stamp.QuadPart - kEpochOffset) / 10000000ull);
+    return true;
+}
+
 MaiError MaiFileSystem::readFile(const MaiFilePath& path, std::string& contents,
                                  std::uint64_t maxBytes, bool* truncated) {
     contents.clear();
@@ -217,6 +229,15 @@ MaiError MaiFileSystem::removeFile(const MaiFilePath& path) {
     maiAssertBlockingAllowed("MaiFileSystem::removeFile");
     if (::DeleteFileW(path.value().c_str())) return {};
     return lastErrorAs("cannot delete file");
+}
+
+MaiError MaiFileSystem::publishNewFile(const MaiFilePath& source, const MaiFilePath& destination) {
+    if (source.isEmpty() || destination.isEmpty())
+        return MaiError::make(MaiErrorCode::InvalidInput, "empty publish path");
+    maiAssertBlockingAllowed("MaiFileSystem::publishNewFile");
+    if (::MoveFileExW(source.value().c_str(), destination.value().c_str(), MOVEFILE_WRITE_THROUGH))
+        return {};
+    return lastErrorAs("cannot publish file");
 }
 
 MaiError MaiFileSystem::createDirectories(const MaiFilePath& path) {

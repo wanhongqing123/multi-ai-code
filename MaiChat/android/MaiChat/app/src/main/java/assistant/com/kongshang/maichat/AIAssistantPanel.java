@@ -705,12 +705,22 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         LinearLayout form = column();
         form.setPadding(dp(18), dp(8), dp(18), dp(8));
         EditText url = field("HTTPS API 地址", state.baseUrl), name = field("模型名称", state.model),
-                 key = field("API Key（留空保留原密钥）", "");
+                 key = field("API Key（留空保留原密钥）", ""),
+                 arkKey = field("方舟创作 Key（留空保留原密钥）", ""),
+                 wanKey = field("百炼创作 Key（Wan / Qwen，留空保留原密钥）", ""),
+                 wanWorkspace = field("百炼 Workspace ID", controller.wanWorkspaceId());
         key.setInputType(
+            android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        arkKey.setInputType(
+            android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        wanKey.setInputType(
             android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
         form.addView(url, matchWrap());
         form.addView(name, matchWrap());
         form.addView(key, matchWrap());
+        form.addView(arkKey, matchWrap());
+        form.addView(wanKey, matchWrap());
+        form.addView(wanWorkspace, matchWrap());
         Spinner policy = new Spinner(activity);
         policy.setAdapter(new ArrayAdapter<>(activity, android.R.layout.simple_spinner_dropdown_item,
             new String[] {"请求批准", "帮我批准", "完全访问"}));
@@ -735,12 +745,27 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 controller.save(url.getText().toString(), name.getText().toString(),
                     new String[] {"on-request", "unless-trusted", "never"}[policy.getSelectedItemPosition()],
                     key.getText().toString(), success -> {
-                        if (success)
-                            dialog.dismiss();
-                        else {
+                        if (!success) {
                             validation.setText(controller.state.error);
                             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
+                            return;
                         }
+                        controller.saveArkKey(arkKey.getText().toString(), arkSaved -> {
+                            if (!arkSaved) {
+                                validation.setText(controller.state.error);
+                                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
+                                return;
+                            }
+                            controller.saveWanCredentials(wanKey.getText().toString(),
+                                wanWorkspace.getText().toString(), wanSaved -> {
+                                    if (wanSaved)
+                                        dialog.dismiss();
+                                    else {
+                                        validation.setText(controller.state.error);
+                                        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
+                                    }
+                                });
+                        });
                     });
             }));
         dialog.show();

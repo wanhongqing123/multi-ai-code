@@ -7,11 +7,11 @@
 #include "MaiFileSystem.h"
 #include "MaiEditTool.h"
 
-// edit：把文件里的一段原文换成另一段。
+// file_edit：把文件里的一段原文换成另一段。
 //
-// ── 为什么不能只有 write ────────────────────────────────────────
+// ── 为什么不能只有 file_write ───────────────────────────────────
 //
-// write 是整份覆写。要改一行，模型得把整个文件重新吐一遍：
+// file_write 是整份覆写。要改一行，模型得把整个文件重新吐一遍：
 //
 //   慢     一个 800 行的文件要吐 800 行，而真正变的只有一行
 //   贵     那 800 行按输出计费，每改一次付一次
@@ -64,11 +64,11 @@ std::string excerptAround(const std::string& text, std::size_t at, std::size_t l
 class EditTool final : public MaiTool {
 public:
     std::string name() const override {
-        return "edit";
+        return "file_edit";
     }
 
     std::string description() const override {
-        return "Replace an exact piece of text in a file. Prefer this over write when you are "
+        return "Replace an exact piece of text in a file. Prefer this over file_write when you are "
                "changing part of an existing file: it only sends the difference, so it is faster "
                "and cannot silently rewrite the parts you did not mean to touch. old_string must "
                "match the file exactly, including indentation, and must appear only once unless "
@@ -134,7 +134,7 @@ public:
         if (oldText.empty()) {
             return MaiToolResult::failure(
                 MaiErrorCode::InvalidInput,
-                "old_string is empty. Use write to create a file or replace all of its contents.");
+                "old_string is empty. Use file_write to replace the file contents.");
         }
         if (oldText == newText) {
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,

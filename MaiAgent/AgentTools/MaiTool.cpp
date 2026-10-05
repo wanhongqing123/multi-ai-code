@@ -5,10 +5,12 @@
 #include "MaiFilePath.h"
 #include "MaiFileSystem.h"
 #include "MaiProcess.h"
-#include "MaiApplyPatchTool.h"
-#include "MaiDownloadFileTool.h"
-#include "MaiEditTool.h"
+#include "MaiCurlTools.h"
 #include "MaiFileTools.h"
+#include "MaiOpenSslTool.h"
+#include "MaiOpenSslCliTool.h"
+#include "MaiSystemResourcesTool.h"
+#include "MaiNetworkIpTool.h"
 #include "MaiQuestionTool.h"
 #include "MaiScreenshot.h"
 #include "MaiScreenshotTool.h"
@@ -17,8 +19,8 @@
 #include "MaiTimeTool.h"
 #include "MaiTodoWriteTool.h"
 #include "MaiViewImageTool.h"
-#include "MaiWebFetchTool.h"
 #include "MaiWindowListTool.h"
+#include "MaiZlibTool.h"
 
 // ── MaiToolContext ──────────────────────────────────────────────
 
@@ -102,6 +104,21 @@ bool MaiTool::requiresPerCallApproval(const std::string& argumentsJson) const {
     return false;
 }
 
+std::optional<MaiSpecialistInfo> MaiTool::specialistInfo() const {
+    return std::nullopt;
+}
+
+const char* maiSpecialistCapabilityStatusToString(MaiSpecialistCapabilityStatus status) {
+    switch (status) {
+        case MaiSpecialistCapabilityStatus::Available: return "available";
+        case MaiSpecialistCapabilityStatus::ImplementedUnverified: return "implemented_unverified";
+        case MaiSpecialistCapabilityStatus::NotConfigured: return "not_configured";
+        case MaiSpecialistCapabilityStatus::NotImplemented: return "not_implemented";
+        case MaiSpecialistCapabilityStatus::UploadNotConfigured: return "upload_not_configured";
+    }
+    return "not_implemented";
+}
+
 // ── MaiToolRegistry ─────────────────────────────────────────────
 
 void MaiToolRegistry::add(std::unique_ptr<MaiTool> tool) {
@@ -142,25 +159,34 @@ std::vector<MaiToolSpec> MaiToolRegistry::specs() const {
     return out;
 }
 
+std::vector<MaiSpecialistInfo> MaiToolRegistry::specialists() const {
+    std::vector<MaiSpecialistInfo> out;
+    for (const auto& tool : mTools) {
+        if (auto info = tool->specialistInfo()) out.push_back(std::move(*info));
+    }
+    return out;
+}
+
 void registerMaiBuiltinTools(MaiToolRegistry& registry) {
-    registry.add(makeMaiReadTool());
-    registry.add(makeMaiCreateFileTool());
-    registry.add(makeMaiCreateDirectoryTool());
-    registry.add(makeMaiDeleteFileTool());
-    registry.add(makeMaiWriteTool());
-    registry.add(makeMaiEditTool());
-    registry.add(makeMaiApplyPatchTool());
+    registerMaiFileTools(registry);
     registry.add(makeMaiTodoWriteTool());
-    registry.add(makeMaiWebFetchTool());
-    registry.add(makeMaiDownloadFileTool());
+    registerMaiCurlTools(registry);
+    registry.add(makeMaiZlibCompressTool());
+    registry.add(makeMaiZlibDecompressTool());
+    registry.add(makeMaiSystemResourcesTool());
+    registry.add(makeMaiNetworkIpTool());
+#if MAI_HAS_OPENSSL_CLI
+    registry.add(makeMaiOpenSslCliTool());
+#else
+    registry.add(makeMaiOpenSslDigestTool());
+    registry.add(makeMaiOpenSslCertificateTool());
+#endif
     registry.add(makeMaiQuestionTool());
     registry.add(makeMaiSpawnAgentTool());
     registry.add(makeMaiWaitAgentTool());
     registry.add(makeMaiSendInputTool());
     registry.add(makeMaiListAgentsTool());
     registry.add(makeMaiCloseAgentTool());
-    registry.add(makeMaiGlobTool());
-    registry.add(makeMaiGrepTool());
     registry.add(makeMaiViewImageTool());
     if (maiIsScreenshotSupported()) registry.add(makeMaiScreenshotTool());
     if (maiIsScreenshotSupported()) registry.add(makeMaiWindowListTool());

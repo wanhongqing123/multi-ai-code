@@ -45,6 +45,9 @@
 #include "tool_main.h"
 #include "tool_libinfo.h"
 #include "tool_stderr.h"
+#ifdef MAI_CURL_EMBEDDED
+#include "mai_curl_embed.h"
+#endif
 
 /*
  * This is low-level hard-hacking memory leak tracking and similar. Using
@@ -52,6 +55,29 @@
  * anyway for convenience.
  */
 #include "memdebug.h" /* keep this as LAST include */
+
+#ifdef MAI_CURL_EMBEDDED
+static int (*mai_cancel_check)(void *);
+static void *mai_cancel_opaque;
+static FILE *mai_error_file;
+
+void mai_curl_set_cancel_check(int (*check)(void *), void *opaque)
+{
+  mai_cancel_check = check;
+  mai_cancel_opaque = opaque;
+}
+
+int mai_curl_cancel_requested(void)
+{
+  return mai_cancel_check ? mai_cancel_check(mai_cancel_opaque) : 0;
+}
+
+void mai_curl_set_error_file(FILE *stream)
+{
+  mai_error_file = stream;
+  tool_stderr = stream ? stream : stderr;
+}
+#endif
 
 #ifdef __VMS
 /*
@@ -76,6 +102,7 @@ int _CRT_glob = 0;
 /* if we build a static library for unit tests, there is no main() function */
 #ifndef UNITTESTS
 
+#ifndef MAI_CURL_EMBEDDED
 #if defined(HAVE_PIPE) && defined(HAVE_FCNTL)
 /*
  * Ensure that file descriptors 0, 1 and 2 (stdin, stdout, stderr) are
@@ -99,6 +126,7 @@ static int main_checkfds(void)
 }
 #else
 #define main_checkfds() 0
+#endif
 #endif
 
 #ifdef CURLDEBUG
@@ -156,7 +184,16 @@ static CURLcode main_init(struct GlobalConfig *config)
   config->first = config->last = malloc(sizeof(struct OperationConfig));
   if(config->first) {
     /* Perform the libcurl initialization */
+#ifdef MAI_CURL_EMBEDDED
+    static bool initialized = FALSE;
+    if(!initialized) {
+      result = curl_global_init(CURL_GLOBAL_DEFAULT);
+      if(!result)
+        initialized = TRUE;
+    }
+#else
     result = curl_global_init(CURL_GLOBAL_DEFAULT);
+#endif
     if(!result) {
       /* Get information about libcurl */
       result = get_libcurl_info();
@@ -203,7 +240,9 @@ static void main_free(struct GlobalConfig *config)
 {
   /* Cleanup the easy handle */
   /* Main cleanup */
+#ifndef MAI_CURL_EMBEDDED
   curl_global_cleanup();
+#endif
   free_globalconfig(config);
 
   /* Free the config structures */
@@ -215,7 +254,9 @@ static void main_free(struct GlobalConfig *config)
 /*
 ** curl tool main function.
 */
-#ifdef _UNICODE
+#ifdef MAI_CURL_EMBEDDED
+int mai_curl_execute(int argc, char *argv[])
+#elif defined(_UNICODE)
 #if defined(__GNUC__) || defined(__clang__)
 /* GCC does not know about wmain() */
 #pragma GCC diagnostic push
@@ -232,8 +273,13 @@ int main(int argc, char *argv[])
   memset(&global, 0, sizeof(global));
 
   tool_init_stderr();
+#ifdef MAI_CURL_EMBEDDED
+  if(mai_error_file)
+    tool_stderr = mai_error_file;
+#endif
 
 #ifdef _WIN32
+#ifndef MAI_CURL_EMBEDDED
   /* Undocumented diagnostic option to list the full paths of all loaded
      modules. This is purposely pre-init. */
   if(argc == 2 && !_tcscmp(argv[1], _T("--dump-module-paths"))) {
@@ -243,6 +289,7 @@ int main(int argc, char *argv[])
     curl_slist_free_all(head);
     return head ? 0 : 1;
   }
+#endif
   /* win32_init must be called before other init routines. */
   result = win32_init();
   if(result) {
@@ -251,6 +298,7 @@ int main(int argc, char *argv[])
   }
 #endif
 
+#ifndef MAI_CURL_EMBEDDED
   if(main_checkfds()) {
     errorf(&global, "out of file descriptors");
     return CURLE_FAILED_INIT;
@@ -262,6 +310,7 @@ int main(int argc, char *argv[])
 
   /* Initialize memory tracking */
   memory_tracking_init();
+#endif
 
   /* Initialize the curl library - do not call any libcurl functions before
      this point */
@@ -274,7 +323,7 @@ int main(int argc, char *argv[])
     main_free(&global);
   }
 
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(MAI_CURL_EMBEDDED)
   /* Flush buffers of all streams opened in write or update mode */
   fflush(NULL);
 #endif
@@ -286,7 +335,7 @@ int main(int argc, char *argv[])
 #endif
 }
 
-#ifdef _UNICODE
+#if defined(_UNICODE) && !defined(MAI_CURL_EMBEDDED)
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic pop
 #endif

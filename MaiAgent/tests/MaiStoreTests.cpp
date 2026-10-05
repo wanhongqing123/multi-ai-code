@@ -476,6 +476,63 @@ void contract_concurrent_writes(MaiSessionStore& store, const char* which) {
     CHECK(!store.lastWriteError().hasError());
 }
 
+void contract_specialist_reply(MaiSessionStore& store, const char* which) {
+    std::printf("   [%s] specialist text stream notifies parent once without an artifact\n", which);
+    const std::string owner = MaiIdGenerator::newSessionId();
+    const std::string stranger = MaiIdGenerator::newSessionId();
+    store.putSession(makeSession(owner, "owner", 1));
+    store.putSession(makeSession(stranger, "stranger", 1));
+    MaiSpecialistTask task;
+    task.id = MaiIdGenerator::generate("spt_");
+    task.ownerSessionId = owner;
+    task.specialistName = "text_specialist";
+    task.providerTaskId = "provider-task";
+    task.intent = "Write a short summary";
+    task.created = 1000;
+    CHECK(!store.insertSpecialistTask(task));
+    CHECK(!store.listActiveSpecialistTasks(10).empty());
+    CHECK(
+        store.finishSpecialistTask(task.id, owner, MaiSpecialistTaskStatus::Succeeded, "", "", 1000)
+            .hasError());
+    CHECK(!store.appendSpecialistText(task.id, owner, "hello ", 1001));
+    CHECK(!store.appendSpecialistText(task.id, owner, "world", 1002));
+    CHECK(!store.finishSpecialistTask(task.id, owner, MaiSpecialistTaskStatus::Succeeded, "", "",
+                                      1003));
+    MaiSpecialistTask loaded;
+    CHECK(store.getSpecialistTask(task.id, owner, loaded));
+    CHECK(loaded.status == MaiSpecialistTaskStatus::Succeeded);
+    CHECK(loaded.finalText == "hello world");
+    CHECK(loaded.outputPath.empty());
+    CHECK(store.listActiveSpecialistTasks(10).empty());
+    auto pending = store.listUnnotifiedSpecialistTasks(10);
+    CHECK(pending.size() == 1);
+    if (pending.size() == 1) CHECK(pending[0].finalText == "hello world");
+    const std::string firstMessage = MaiIdGenerator::newMessageId();
+    const std::string secondMessage = MaiIdGenerator::newMessageId();
+    const auto reserved = store.reserveSpecialistNotification(task.id, owner, firstMessage, 2000);
+    CHECK(reserved);
+    if (reserved) CHECK(reserved.value() == firstMessage);
+    const auto retried = store.reserveSpecialistNotification(task.id, owner, secondMessage, 3000);
+    CHECK(retried);
+    if (retried) CHECK(retried.value() == firstMessage);
+    CHECK(store.markSpecialistNotified(task.id, stranger, firstMessage, 4000).hasError());
+    CHECK(store.markSpecialistNotified(task.id, owner, secondMessage, 4000).hasError());
+    CHECK(!store.markSpecialistNotified(task.id, owner, firstMessage, 4000));
+    CHECK(store.listUnnotifiedSpecialistTasks(10).empty());
+    CHECK(store.appendSpecialistText(task.id, owner, "again", 4001).hasError());
+    MaiSpecialistTask failed = task;
+    failed.id = MaiIdGenerator::generate("spt_");
+    CHECK(!store.insertSpecialistTask(failed));
+    CHECK(!store.appendSpecialistText(failed.id, owner, "partial result", 4002));
+    CHECK(!store.finishSpecialistTask(failed.id, owner, MaiSpecialistTaskStatus::Failed, "", "",
+                                      4003));
+    CHECK(store.getSpecialistTask(failed.id, owner, loaded));
+    CHECK(loaded.errorText == "partial result");
+    CHECK(store.removeSession(owner));
+    CHECK(!store.getSpecialistTask(task.id, owner, loaded));
+    CHECK(!store.lastWriteError().hasError());
+}
+
 void runContract(MaiSessionStore& store, const char* which) {
     contract_session_crud(store, which);
     contract_list_sessions_ordering(store, which);
@@ -488,6 +545,42 @@ void runContract(MaiSessionStore& store, const char* which) {
     contract_mutate_session(store, which);
     contract_switch_model(store, which);
     contract_concurrent_writes(store, which);
+    contract_specialist_reply(store, which);
+    const std::string owner = MaiIdGenerator::newSessionId();
+    const std::string other = MaiIdGenerator::newSessionId();
+    store.putSession(makeSession(owner, "specialist owner", 1));
+    store.putSession(makeSession(other, "other owner", 1));
+    MaiSpecialistTask first;
+    first.id = MaiIdGenerator::generate("spt_");
+    first.ownerSessionId = owner;
+    first.specialistName = "seedance_video";
+    first.providerTaskId = "provider-1";
+    first.intent = "Replace the background";
+    first.contextSummary = "Keep the subject unchanged";
+    first.outputPath = "/tmp/result.mp4";
+    first.created = 1234;
+    CHECK(!store.insertSpecialistTask(first));
+    MaiSpecialistTask loaded;
+    CHECK(store.getSpecialistTask(first.id, owner, loaded));
+    CHECK(loaded.intent == first.intent);
+    CHECK(loaded.contextSummary == first.contextSummary);
+    CHECK(loaded.providerTaskId == first.providerTaskId);
+    CHECK(!store.getSpecialistTask(first.id, other, loaded));
+    CHECK(store.insertSpecialistTask(first).hasError());
+    MaiSpecialistTask revision = first;
+    revision.id = MaiIdGenerator::generate("spt_");
+    revision.parentTaskId = first.id;
+    revision.intent = "Fix the white halo";
+    CHECK(!store.insertSpecialistTask(revision));
+    CHECK(store.getSpecialistTask(revision.id, owner, loaded));
+    CHECK(loaded.parentTaskId == first.id);
+    MaiSpecialistTask crossOwner = revision;
+    crossOwner.id = MaiIdGenerator::generate("spt_");
+    crossOwner.ownerSessionId = other;
+    CHECK(store.insertSpecialistTask(crossOwner).hasError());
+    CHECK(store.clearMessages(owner));
+    CHECK(!store.getSpecialistTask(first.id, owner, loaded));
+    CHECK(!store.getSpecialistTask(revision.id, owner, loaded));
     CHECK(!store.lastWriteError().hasError());
 }
 
@@ -500,6 +593,7 @@ void test_survives_reopen() {
 
     std::string sessionId;
     std::string messageId;
+    std::string specialistTaskId;
     {
         auto opened = makeMaiSqliteStore(path);
         CHECK(opened.isOk());
@@ -513,6 +607,15 @@ void test_survives_reopen() {
         messageId = message.id;
         message.parts.push_back(textPart(MaiIdGenerator::newPartId(), "still here"));
         store->putMessage(sessionId, message);
+        MaiSpecialistTask task;
+        task.id = MaiIdGenerator::generate("spt_");
+        task.ownerSessionId = sessionId;
+        task.specialistName = "seedream_image";
+        task.intent = "Make a blue background";
+        task.outputPath = "/tmp/result.png";
+        task.created = 42;
+        specialistTaskId = task.id;
+        CHECK(!store->insertSpecialistTask(task));
         CHECK(!store->lastWriteError().hasError());
     }  // 析构 = 关库
 
@@ -526,6 +629,10 @@ void test_survives_reopen() {
     CHECK(store->getSession(sessionId, loaded));
     CHECK(loaded.title == "persisted");
     CHECK(loaded.updated == 42);
+    MaiSpecialistTask loadedTask;
+    CHECK(store->getSpecialistTask(specialistTaskId, sessionId, loadedTask));
+    CHECK(loadedTask.intent == "Make a blue background");
+    CHECK(loadedTask.outputPath == "/tmp/result.png");
 
     const auto messages = store->listMessages(sessionId);
     CHECK(messages.size() == 1);
@@ -537,6 +644,55 @@ void test_survives_reopen() {
             CHECK(text && text->text == "still here");
         }
     }
+}
+
+void test_specialist_reply_survives_reopen() {
+    std::printf("-> test_specialist_reply_survives_reopen\n");
+    TempDir temp;
+    const std::string path = temp.file("specialist-reply.db");
+    const std::string sessionId = MaiIdGenerator::newSessionId();
+    const std::string taskId = MaiIdGenerator::generate("spt_");
+    const std::string messageId = MaiIdGenerator::newMessageId();
+    {
+        auto opened = makeMaiSqliteStore(path);
+        CHECK(opened.isOk());
+        if (!opened.isOk()) return;
+        auto store = std::move(opened.value());
+        store->putSession(makeSession(sessionId, "owner", 1));
+        MaiSpecialistTask task;
+        task.id = taskId;
+        task.ownerSessionId = sessionId;
+        task.specialistName = "text_specialist";
+        task.intent = "summarize";
+        task.created = 1000;
+        CHECK(!store->insertSpecialistTask(task));
+        CHECK(!store->finishSpecialistTask(taskId, sessionId, MaiSpecialistTaskStatus::Succeeded,
+                                           "text-only reply", "", 2000));
+        const auto reserved =
+            store->reserveSpecialistNotification(taskId, sessionId, messageId, 3000);
+        CHECK(reserved);
+    }
+    {
+        auto opened = makeMaiSqliteStore(path);
+        CHECK(opened.isOk());
+        if (!opened.isOk()) return;
+        auto store = std::move(opened.value());
+        const auto pending = store->listUnnotifiedSpecialistTasks(10);
+        CHECK(pending.size() == 1);
+        if (pending.size() == 1) {
+            CHECK(pending[0].notificationMessageId == messageId);
+            CHECK(pending[0].finalText == "text-only reply");
+            CHECK(pending[0].outputPath.empty());
+        }
+        const auto reserved = store->reserveSpecialistNotification(
+            taskId, sessionId, MaiIdGenerator::newMessageId(), 4000);
+        CHECK(reserved);
+        if (reserved) CHECK(reserved.value() == messageId);
+        CHECK(!store->markSpecialistNotified(taskId, sessionId, messageId, 5000));
+    }
+    auto opened = makeMaiSqliteStore(path);
+    CHECK(opened.isOk());
+    if (opened.isOk()) CHECK(opened.value()->listUnnotifiedSpecialistTasks(10).empty());
 }
 
 void test_migrates_unfinished_tool_index() {
@@ -555,7 +711,10 @@ void test_migrates_unfinished_tool_index() {
     sqlite3* database = nullptr;
     CHECK(sqlite3_open(path.c_str(), &database) == SQLITE_OK);
     if (!database) return;
-    CHECK(sqlite3_exec(database, "DROP INDEX parts_unfinished_tool; PRAGMA user_version=2;",
+    CHECK(sqlite3_exec(database,
+                       "DROP INDEX parts_unfinished_tool;"
+                       "DROP TABLE specialist_tasks;"
+                       "PRAGMA user_version=2;",
                        nullptr, nullptr, nullptr) == SQLITE_OK);
     sqlite3_close(database);
 
@@ -786,6 +945,7 @@ int main() {
     }
 
     test_survives_reopen();
+    test_specialist_reply_survives_reopen();
     test_migrates_unfinished_tool_index();
     test_creates_parent_directory();
     test_bad_path_reports_error();

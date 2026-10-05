@@ -3833,13 +3833,33 @@ private struct RemoteIMVideoStatusKey: Equatable {
     let revision: UInt64
 }
 
+enum ImageBubbleSize {
+    static let maximum = CGSize(width: 220, height: 180)
+    static let assistantMaximum = CGSize(width: 280, height: 340)
+
+    static func fitted(_ source: CGSize, maximum: CGSize = ImageBubbleSize.maximum) -> CGSize {
+        guard source.width.isFinite, source.height.isFinite,
+              source.width > 0, source.height > 0 else {
+            return maximum
+        }
+        let scale = min(maximum.width / source.width, maximum.height / source.height)
+        return CGSize(width: max(1, (source.width * scale).rounded()),
+                      height: max(1, (source.height * scale).rounded()))
+    }
+}
+
 enum VideoBubbleSize {
     static let maximum = CGSize(width: 220, height: 240)
     static let fallback = CGSize(width: 220, height: 142)
+    static let assistantMaximum = CGSize(width: 280, height: 320)
 
-    static func fitted(_ source: CGSize) -> CGSize {
+    static func fitted(_ source: CGSize, maximum: CGSize = VideoBubbleSize.maximum) -> CGSize {
         guard source.width.isFinite, source.height.isFinite,
-              source.width > 0, source.height > 0 else { return fallback }
+              source.width > 0, source.height > 0 else {
+            let scale = maximum.width / VideoBubbleSize.maximum.width
+            return CGSize(width: maximum.width,
+                          height: min(maximum.height, (fallback.height * scale).rounded()))
+        }
         let scale = min(maximum.width / source.width, maximum.height / source.height)
         return CGSize(width: max(1, (source.width * scale).rounded()),
                       height: max(1, (source.height * scale).rounded()))
@@ -3986,8 +4006,7 @@ private struct ImageBubbleContent: View {
     }
 
     private var thumbnailSize: CGSize {
-        let scale = min(220 / imageSize.width, 180 / imageSize.height)
-        return CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
+        ImageBubbleSize.fitted(imageSize)
     }
 
     var body: some View {

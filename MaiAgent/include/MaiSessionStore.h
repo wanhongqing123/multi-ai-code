@@ -10,6 +10,7 @@
 #include "MaiError.h"
 #include "MaiMessage.h"
 #include "MaiSession.h"
+#include "MaiSpecialistTask.h"
 
 // 持久化接口。
 //
@@ -17,7 +18,7 @@
 // 任何人 include 领域模型就把存储接口也拖了进来。
 //
 // 第一天就抽接口的另一个原因：嵌入式上可能根本不落盘，或者换成别的 KV。
-class MaiSessionStore {
+class MaiSessionStore : public MaiSpecialistTaskStore {
 public:
     virtual ~MaiSessionStore() = default;
 

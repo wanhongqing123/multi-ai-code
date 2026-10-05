@@ -61,7 +61,7 @@ Java 的 `MaiChat-Agent` HandlerThread 负责 JNI、请求/响应 JSON、SQLite�
 
 AI 图片选择、拍照结果和文本文件会复制到应用私有的 `AIAssistant/Workspace`，历史只保存工作区相对路径。图片读取、格式探测、降采样和转换均在 `MaiChat-Agent` 线程执行；相机通过 Android `FileProvider` 交接临时文件。AI 助手与好友聊天共用单一录音控制器，切换页面时会结束当前录音，避免同时占用麦克风。
 
-API Key 用 Android Keystore 的 AES-GCM 密钥加密，配置与会话在应用私有 no-backup 目录；包和源码不包含用户配置的模型密钥。切换服务商域名时需重新填写密钥。Android TLS 使用校验过 SHA-256 的 Mbed TLS 源码包，系统根证书分别传入模型请求和 webfetch；不能关闭校验绕过错误。
+API Key 用 Android Keystore 的 AES-GCM 密钥加密，配置与会话在应用私有 no-backup 目录；包和源码不包含用户配置的模型密钥。切换服务商域名时需重新填写密钥。Android TLS 使用校验过 SHA-256 的 Mbed TLS 源码包，系统根证书分别传入模型请求和 curl_fetch；不能关闭校验绕过错误。
 
 Android 的测试使用 debug-only Activity 和独立临时工作区。Release 中没有测试 Activity 或测试入口。`mobile_model_server.py` 可通过 `adb reverse tcp:18189 tcp:18189` 供模拟器使用。HTTPS 测试使用无效测试 Key 检查握手后的 HTTP 错误，并确认过期证书被拒绝，不消耗用户模型额度。
 

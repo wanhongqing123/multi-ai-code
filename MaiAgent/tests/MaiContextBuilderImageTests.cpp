@@ -60,7 +60,8 @@ void testCurrentRequestKeepsOnlyRecentToolPixels() {
     CHECK(request.front().role == MaiModelRole::System);
     CHECK(request.front().content.find("Omitted 35 older image observations") != std::string::npos);
     CHECK(request.front().content.find("view_image") != std::string::npos);
-    CHECK(request[2].content == "Analyze this video");
+    CHECK(request[2].content.find("Analyze this video") != std::string::npos);
+    CHECK(request[2].content.find("current-user.jpg") != std::string::npos);
     CHECK(request.back().images.front().path == "frame-38.jpg");
 }
 
@@ -85,11 +86,53 @@ void testVideoAttachmentUsesAFileReferenceInsteadOfImagePixels() {
     CHECK(request.front().content.find("clips/input.mp4") != std::string::npos);
 }
 
+void testCurrentImagesHaveExactPathAndAttachmentIdentity() {
+    MaiMessage message = userMessage("Use these two grass photos", {});
+    MaiMessagePart first;
+    first.id = "prt_photo_one";
+    first.body = MaiImagePart{"gallery/child grass 1.jpg", "image/jpeg"};
+    message.parts.push_back(first);
+    MaiMessagePart second;
+    second.id = "prt_photo_two";
+    second.body = MaiImagePart{"gallery/child grass 2.jpg", "image/jpeg"};
+    message.parts.push_back(second);
+    const auto request = MaiContextBuilder().build({message});
+    CHECK(request.size() == 1);
+    CHECK(request[0].images.size() == 2);
+    CHECK(request[0].content.find("prt_photo_one") != std::string::npos);
+    CHECK(request[0].content.find("gallery/child grass 1.jpg") != std::string::npos);
+    CHECK(request[0].content.find("prt_photo_two") != std::string::npos);
+    CHECK(request[0].content.find("gallery/child grass 2.jpg") != std::string::npos);
+}
+
+void testRecentPreviousImagePathsRemainAvailableWithoutOldPixels() {
+    MaiContextBuilder::Options options;
+    options.maxRecentUserImageReferences = 2;
+    const std::vector<MaiMessage> history = {
+        userMessage("first", "oldest.jpg"), userMessage("second", "recent-one.jpg"),
+        userMessage("third", "recent-two.jpg"), userMessage("Use the last two", {})};
+    const auto request = MaiContextBuilder(options).build(history);
+    for (const auto& message : request) CHECK(message.images.empty());
+    bool sawOldest = false;
+    bool sawFirstRecent = false;
+    bool sawSecondRecent = false;
+    for (const auto& message : request) {
+        sawOldest |= message.content.find("oldest.jpg") != std::string::npos;
+        sawFirstRecent |= message.content.find("recent-one.jpg") != std::string::npos;
+        sawSecondRecent |= message.content.find("recent-two.jpg") != std::string::npos;
+    }
+    CHECK(!sawOldest);
+    CHECK(sawFirstRecent);
+    CHECK(sawSecondRecent);
+}
+
 }  // namespace
 
 int main() {
     testCurrentRequestKeepsOnlyRecentToolPixels();
     testSmallCurrentRequestKeepsEveryImage();
     testVideoAttachmentUsesAFileReferenceInsteadOfImagePixels();
+    testCurrentImagesHaveExactPathAndAttachmentIdentity();
+    testRecentPreviousImagePathsRemainAvailableWithoutOldPixels();
     return failures == 0 ? 0 : 1;
 }

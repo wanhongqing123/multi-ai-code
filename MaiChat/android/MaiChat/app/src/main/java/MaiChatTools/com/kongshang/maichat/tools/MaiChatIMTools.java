@@ -4,6 +4,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.media.MediaMetadataRetriever;
 import android.os.Build;
+import android.webkit.MimeTypeMap;
 import com.kongshang.maichat.AIAssistantController;
 import com.kongshang.maichat.MainActivity;
 import com.kongshang.maichat.MessageQuote;
@@ -99,7 +100,7 @@ final class MaiChatIMTools {
         int begin = Math.max(0, all.size() - hostToolLimit(arguments));
         JSONArray values = new JSONArray();
         for (int index = begin; index < all.size(); index += 1)
-            values.put(hostMessageJson(all.get(index), peer));
+            values.put(hostMessageJson(all.get(index), peer, true));
         return new JSONObject().put("peer_id", peer).put("messages", values)
             .put("count", values.length());
     }
@@ -111,7 +112,7 @@ final class MaiChatIMTools {
         JSONArray values = new JSONArray();
         for (RemoteIMMessageSearchHit hit : session.searchMessages(query, hostToolLimit(arguments))) {
             if (!peer.isEmpty() && !peer.equals(hit.peerUserId())) continue;
-            values.put(hostMessageJson(hit.message(), hit.peerUserId()));
+            values.put(hostMessageJson(hit.message(), hit.peerUserId(), true));
         }
         return new JSONObject().put("query", query).put("matches", values)
             .put("count", values.length());
@@ -284,7 +285,12 @@ final class MaiChatIMTools {
     }
 
     private JSONObject hostMessageJson(RemoteIMMessage message, String peer) throws JSONException {
-        return new JSONObject()
+        return hostMessageJson(message, peer, false);
+    }
+
+    private JSONObject hostMessageJson(RemoteIMMessage message, String peer,
+                                       boolean includeImagePath) throws JSONException {
+        JSONObject result = new JSONObject()
             .put("id", message.id())
             .put("peer_id", peer)
             .put("direction", message.direction() == RemoteIMMessage.Direction.OUTGOING
@@ -293,6 +299,43 @@ final class MaiChatIMTools {
             .put("text", message.text())
             .put("kind", MessageQuote.kind(message))
             .put("created_at_ms", message.createdAtMillis());
+        if (includeImagePath) {
+            String path = imageWorkspaceReference(message);
+            if (path != null) {
+                result.put("workspace_path", path);
+                int dot = path.lastIndexOf('.');
+                String extension = dot < 0 ? "" : path.substring(dot + 1).toLowerCase(Locale.ROOT);
+                String mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension);
+                result.put("mime_type", mime == null ? "application/octet-stream" : mime);
+            }
+        }
+        return result;
+    }
+
+    private String imageWorkspaceReference(RemoteIMMessage message) {
+        if (message.imageAttachment() == null) return null;
+        AIAssistantController controller = AIAssistantController.shared(activity);
+        File source = controller.workspaceFile(message.imageAttachment().localPath());
+        if (source == null || !source.isFile() || source.length() < 1
+                || source.length() > 20L * 1024 * 1024) return null;
+        String lower = source.getName().toLowerCase(Locale.ROOT);
+        int dot = lower.lastIndexOf('.');
+        if (dot < 0) return source.getAbsolutePath();
+        String suffix = lower.substring(dot + 1);
+        if (!suffix.equals("jpg") && !suffix.equals("jpeg") && !suffix.equals("png")
+                && !suffix.equals("webp") && !suffix.equals("gif")
+                && !suffix.equals("heic") && !suffix.equals("heif"))
+            return source.getAbsolutePath();
+        String name = "im-image-" + message.id().toLowerCase(Locale.ROOT) + "." + suffix;
+        File target = controller.workspaceFile(name);
+        if (target == null) return source.getAbsolutePath();
+        if (target.isFile() && target.length() > 0) return name;
+        try {
+            Files.createLink(target.toPath(), source.toPath());
+            return name;
+        } catch (IOException | UnsupportedOperationException | SecurityException ignored) {
+            return source.getAbsolutePath();
+        }
     }
 
     private static int hostToolLimit(JSONObject arguments) {

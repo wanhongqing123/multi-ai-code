@@ -112,8 +112,9 @@ public:
 
     std::string description() const override {
         return "Fallback for tasks built-in tools cannot perform. Run a shell command in the "
-               "working directory and return combined stdout and stderr. Prefer create_file, "
-               "create_directory, delete_file, read, write, edit, and apply_patch for file "
+               "working directory and return combined stdout and stderr. Prefer file_create, "
+               "file_create_directory, file_delete, file_read, file_write, file_edit, and "
+               "file_patch for file "
                "operations. Commands that only read run immediately; anything else asks first.";
     }
 

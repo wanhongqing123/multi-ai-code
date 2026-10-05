@@ -1,3 +1,5 @@
+#include "MaiFileTools.h"
+
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -15,8 +17,8 @@
 
 #include <json.hpp>
 
-#include "MaiFileTools.h"
-
+#include "MaiApplyPatchTool.h"
+#include "MaiEditTool.h"
 #include "MaiFilePath.h"
 #include "MaiFileSystem.h"
 
@@ -403,11 +405,11 @@ std::string toRelativePath(const std::string& root, const MaiFilePath& path) {
     return relative.isEmpty() ? path.toGenericUtf8() : relative.toGenericUtf8();
 }
 
-// ── read ────────────────────────────────────────────────────────
+// ── file_read ───────────────────────────────────────────────────
 class ReadTool final : public MaiTool {
 public:
     std::string name() const override {
-        return "read";
+        return "file_read";
     }
     std::string description() const override {
         return "Read a text file as UTF-8 with line numbers. UTF-8 and BOM-marked UTF-16 are "
@@ -438,7 +440,7 @@ public:
         if (MaiFileSystem::isDirectory(target))
             return MaiToolResult::failure(
                 MaiErrorCode::InvalidInput,
-                "That is a directory, not a file. Use glob to list its contents.");
+                "That is a directory, not a file. Use file_glob to list its contents.");
 
         // 一次读进来，再自己按行切。以前用 std::getline 一行行读，
         // 每行一次系统调用；一次读完再切，大文件上差别明显。读多少有上限，
@@ -507,11 +509,11 @@ public:
 class CreateFileTool final : public MaiTool {
 public:
     std::string name() const override {
-        return "create_file";
+        return "file_create";
     }
     std::string description() const override {
         return "Create a new empty file without overwriting an existing file. Missing parent "
-               "directories are created. Use write when the file needs content.";
+               "directories are created. Use file_write when the file needs content.";
     }
     std::string parametersSchema() const override {
         return R"({"type":"object","properties":{"path":{"type":"string","description":"Absolute path or path relative to the working directory"}},"required":["path"],"additionalProperties":false})";
@@ -530,7 +532,7 @@ public:
         const json args = parseArguments(raw);
         if (args.size() != 1 || !args.contains("path") || !args["path"].is_string())
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,
-                                          "create_file requires one string parameter named path");
+                                          "file_create requires one string parameter named path");
         auto resolved = resolveOrFail(context, stringArgument(args, "path"));
         if (!resolved.ok) return resolved.error;
         const MaiFilePath path = MaiFilePath::fromUtf8(resolved.path);
@@ -558,7 +560,7 @@ public:
 class CreateDirectoryTool final : public MaiTool {
 public:
     std::string name() const override {
-        return "create_directory";
+        return "file_create_directory";
     }
     std::string description() const override {
         return "Create a directory and any missing parents. An existing directory is accepted; "
@@ -582,7 +584,7 @@ public:
         if (args.size() != 1 || !args.contains("path") || !args["path"].is_string())
             return MaiToolResult::failure(
                 MaiErrorCode::InvalidInput,
-                "create_directory requires one string parameter named path");
+                "file_create_directory requires one string parameter named path");
         auto resolved = resolveOrFail(context, stringArgument(args, "path"));
         if (!resolved.ok) return resolved.error;
         const MaiFilePath path = MaiFilePath::fromUtf8(resolved.path);
@@ -604,7 +606,7 @@ public:
 class DeleteFileTool final : public MaiTool {
 public:
     std::string name() const override {
-        return "delete_file";
+        return "file_delete";
     }
     std::string description() const override {
         return "Delete one existing file. Directories are never deleted; this is not recursive.";
@@ -626,7 +628,7 @@ public:
         const json args = parseArguments(raw);
         if (args.size() != 1 || !args.contains("path") || !args["path"].is_string())
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,
-                                          "delete_file requires one string parameter named path");
+                                          "file_delete requires one string parameter named path");
         auto resolved = resolveOrFail(context, stringArgument(args, "path"));
         if (!resolved.ok) return resolved.error;
         const MaiFilePath path = MaiFilePath::fromUtf8(resolved.path);
@@ -635,25 +637,25 @@ public:
             requested = MaiFilePath::fromUtf8(context.root).append(requested);
         if (MaiFileSystem::isSymbolicLink(requested))
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,
-                                          "delete_file refuses symbolic links; use shell with "
+                                          "file_delete refuses symbolic links; use shell with "
                                           "explicit approval to remove the link itself");
         if (!MaiFileSystem::exists(path))
             return MaiToolResult::failure(MaiErrorCode::NotFound,
                                           "file does not exist: " + stringArgument(args, "path"));
         if (MaiFileSystem::isDirectory(path))
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,
-                                          "delete_file cannot delete a directory");
+                                          "file_delete cannot delete a directory");
         const MaiError error = MaiFileSystem::removeFile(path);
         if (error.hasError()) return MaiToolResult::failure(error.code(), error.message());
         return MaiToolResult::success("Deleted file " + toRelativePath(context.root, path));
     }
 };
 
-// ── write ───────────────────────────────────────────────────────
+// ── file_write ──────────────────────────────────────────────────
 class WriteTool final : public MaiTool {
 public:
     std::string name() const override {
-        return "write";
+        return "file_write";
     }
     std::string description() const override {
         return "Write content to a file, replacing whatever was "
@@ -707,11 +709,11 @@ public:
     }
 };
 
-// ── glob ────────────────────────────────────────────────────────
+// ── file_glob ───────────────────────────────────────────────────
 class GlobTool final : public MaiTool {
 public:
     std::string name() const override {
-        return "glob";
+        return "file_glob";
     }
     std::string description() const override {
         return "Find files by name pattern. Relative paths use the working directory. Supports *, "
@@ -804,11 +806,11 @@ public:
     }
 };
 
-// ── grep ────────────────────────────────────────────────────────
+// ── file_grep ───────────────────────────────────────────────────
 class GrepTool final : public MaiTool {
 public:
     std::string name() const override {
-        return "grep";
+        return "file_grep";
     }
     std::string description() const override {
         return "Search text files with a regular expression. Source bytes are converted to "
@@ -969,4 +971,16 @@ std::unique_ptr<MaiTool> makeMaiGlobTool() {
 }
 std::unique_ptr<MaiTool> makeMaiGrepTool() {
     return std::make_unique<GrepTool>();
+}
+
+void registerMaiFileTools(MaiToolRegistry& registry) {
+    registry.add(makeMaiReadTool());
+    registry.add(makeMaiCreateFileTool());
+    registry.add(makeMaiCreateDirectoryTool());
+    registry.add(makeMaiDeleteFileTool());
+    registry.add(makeMaiWriteTool());
+    registry.add(makeMaiEditTool());
+    registry.add(makeMaiApplyPatchTool());
+    registry.add(makeMaiGlobTool());
+    registry.add(makeMaiGrepTool());
 }

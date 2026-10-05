@@ -281,6 +281,13 @@ void registerMobilePhotoTools(MaiToolRegistry& tools,
         R"({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]})",
         dispatcher, false));
     tools.add(std::make_unique<MaiMobileHostTool>(
+        "mobile_save_video",
+        "Save a video file from the Agent workspace as a NEW video in the system photo library. "
+        "The source file remains unchanged. Accepts MP4, MOV, and M4V up to 2 GB. "
+        "Pass the exact workspace path returned by the video tool.",
+        R"({"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false})",
+        dispatcher, false));
+    tools.add(std::make_unique<MaiMobileHostTool>(
         "mobile_transform_image",
         "Create a NEW image in the Agent working directory using an on-device edit; the source "
         "is unchanged. Apply one operation per call: crop (top-left x,y,width,height), rotate "

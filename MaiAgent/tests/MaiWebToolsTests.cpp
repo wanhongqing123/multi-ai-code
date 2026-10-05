@@ -61,19 +61,19 @@ void test_every_host_needs_approval_and_the_key_is_the_host() {
 
     // 豁免收到域名这一级：给一个文档站点头，不该连别的站一起放行。
     CHECK(tool->approvalKey(args({{"url", "https://docs.example.com/a"}})) ==
-          "webfetch:docs.example.com");
+          "curl_fetch:docs.example.com");
     CHECK(tool->approvalKey(args({{"url", "https://docs.example.com/b?q=1"}})) ==
-          "webfetch:docs.example.com");
+          "curl_fetch:docs.example.com");
     CHECK(tool->approvalKey(args({{"url", "https://attacker.example/leak"}})) !=
           tool->approvalKey(args({{"url", "https://docs.example.com/a"}})));
 
     // 端口、大小写、URL 里的用户名都要归一化掉，否则同一个站会攒出好几份豁免，
     // 用户以为放行过了其实没有。
     CHECK(tool->approvalKey(args({{"url", "https://Docs.Example.com:8443/x"}})) ==
-          "webfetch:docs.example.com");
+          "curl_fetch:docs.example.com");
     CHECK(tool->approvalKey(args({{"url", "https://user:pw@docs.example.com/x"}})) ==
-          "webfetch:docs.example.com");
-    CHECK(tool->approvalKey(args({{"url", "garbage"}})) == "webfetch:<unknown>");
+          "curl_fetch:docs.example.com");
+    CHECK(tool->approvalKey(args({{"url", "garbage"}})) == "curl_fetch:<unknown>");
 }
 
 // ── todowrite ───────────────────────────────────────────────────
@@ -116,13 +116,12 @@ void test_rejects_malformed_lists() {
     // 空清单
     CHECK(tool->execute(args({{"todos", json::array()}}), bareContext()).hasError());
     // 状态词不认识
-    CHECK(tool->execute(args({{"todos", {{{"content", "a"}, {"status", "maybe"}}}}}),
-                        bareContext())
+    CHECK(tool->execute(args({{"todos", {{{"content", "a"}, {"status", "maybe"}}}}}), bareContext())
               .hasError());
     // 内容为空
-    CHECK(tool->execute(args({{"todos", {{{"content", ""}, {"status", "pending"}}}}}),
-                        bareContext())
-              .hasError());
+    CHECK(
+        tool->execute(args({{"todos", {{{"content", ""}, {"status", "pending"}}}}}), bareContext())
+            .hasError());
     // 参数根本不是 JSON
     CHECK(tool->execute("not json at all", bareContext()).hasError());
 }
@@ -138,7 +137,7 @@ void test_todowrite_needs_no_approval() {
 void test_both_tools_are_registered() {
     MaiToolRegistry registry;
     registerMaiBuiltinTools(registry);
-    CHECK(registry.find("webfetch") != nullptr);
+    CHECK(registry.find("curl") != nullptr);
     CHECK(registry.find("todowrite") != nullptr);
 }
 

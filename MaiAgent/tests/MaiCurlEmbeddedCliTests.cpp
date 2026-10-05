@@ -100,7 +100,8 @@ int main() {
     MaiToolContext context;
     context.root = root.toUtf8();
     auto tool = makeMaiCurlCliTool();
-    CHECK(tool->requiresPerCallApproval("{}"));
+    CHECK(tool->requiresApproval("{}"));
+    CHECK(!tool->requiresPerCallApproval("{}"));
     const auto fetched =
         tool->execute(nlohmann::json{{"arguments", {server.url("/ok")}}}.dump(), context);
     CHECK(!fetched.hasError());

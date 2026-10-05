@@ -4,10 +4,10 @@
 
 | 口径 | 工具名数量 | 说明 |
 |---|---:|---|
-| iOS AI 助手 | 70 | 含 APP 存储管理及 iOS 专属相册工具；视频抠像需模型资源 |
-| Android AI 助手 | 69 | 暂不注册 APP 存储清理；包含 Android 专属相册工具，尚未做本轮构建验证 |
+| iOS AI 助手 | 69 | 含 APP 存储管理及 iOS 专属相册工具；视频抠像需模型资源 |
+| Android AI 助手 | 68 | 暂不注册 APP 存储清理；包含 Android 专属相册工具，尚未做本轮构建验证 |
 | Qt 桌面 AI 助手 | macOS 最多 64；Windows 最多 65 | 含 APP 存储管理与 GPU 信息；Windows 暂保留两个类型化 OpenSSL 工具，桌面视觉等受编译条件限制 |
-| 各平台合并去重 | **83** | Windows 旧 OpenSSL 名称与 Mac/移动端新 `openssl` 名称分别计入 |
+| 各平台合并去重 | **82** | Windows 旧 OpenSSL 名称与 Mac/移动端新 `openssl` 名称分别计入 |
 
 本轮将四个 `curl_*` 模型工具合并为复用上游命令入口的 `curl`；Mac/iOS/Android 将两个类型化 OpenSSL 模型工具合并为复用上游只读子命令的 `openssl`。类型化 EVP/X509 函数仍可供代码直接调用；Windows 仍注册原有两项，等待 CLI 嵌入端口。新增 `system_resources`、`network_ip`，并在 iOS 增加 `app_storage`。原有的 ffmpeg、ffprobe 扩展了能力；已删除的 mobile_beautify_face、尚在调研的视频超分不计入。
 
@@ -35,7 +35,7 @@
 
 | 工具 | 用途 | 实现文件 |
 |---|---|---|
-| curl | 复用上游 curl 命令入口，支持有界 HTTP(S) 请求、网页提取、原始文件上传和新文件下载；参数和路径受限，逐次确认。 | MaiCurlCliTool.cpp |
+| curl | 复用上游 curl 命令入口，支持有界 HTTP(S) 请求、网页提取、原始文件上传和新文件下载；参数和路径受限，按授权策略审批，完全访问模式不弹确认。 | MaiCurlCliTool.cpp |
 | zlib_compress | 把工作区文件压成 gzip、zlib 或原始 deflate 新文件。 | MaiZlibTool.cpp |
 | zlib_decompress | 解压 gzip、zlib 或原始 deflate；源文件不变。 | MaiZlibTool.cpp |
 | openssl | Mac/iOS/Android：复用上游命令入口，只开放 version、受限 dgst、受限 x509 只读命令。 | MaiOpenSslCliTool.cpp |
@@ -143,9 +143,9 @@
 | detect_faces | 桌面端图像人脸框与关键点检测，不识别身份。 | DesktopVisionTools.cpp | 桌面（条件） |
 | segment_person | 桌面端人物分割并输出灰度掩码 PNG。 | DesktopVisionTools.cpp | 桌面（条件） |
 
-## 移动端额外工具：17 个不同名称
+## 移动端额外工具：16 个不同名称
 
-iOS、Android **各注册 16 个**：下面共同的 15 个，再加各自的一种相册操作。移动工具 C++ 壳注册在 [MaiMobileHostTools.cpp](../MaiChat/MaiChatTools/MaiMobileHostTools.cpp)；实际系统权限、相册、图片处理、预览在 [iOS MaiChatTools](../MaiChat/ios/MaiChat/MaiChat/MaiChatTools/) 与 [Android MaiChatTools](../MaiChat/android/MaiChat/app/src/main/java/MaiChatTools/)。
+iOS、Android **各注册 15 个**：下面共同的 14 个，再加各自的一种相册操作。图片尺寸、格式等信息可由三端已有的 `ffprobe` 查询。移动工具 C++ 壳注册在 [MaiMobileHostTools.cpp](../MaiChat/MaiChatTools/MaiMobileHostTools.cpp)；实际系统权限、相册、图片处理、预览在 [iOS MaiChatTools](../MaiChat/ios/MaiChat/MaiChat/MaiChatTools/) 与 [Android MaiChatTools](../MaiChat/android/MaiChat/app/src/main/java/MaiChatTools/)。
 
 | 工具 | 用途 | 平台 |
 |---|---|---|
@@ -160,7 +160,6 @@ iOS、Android **各注册 16 个**：下面共同的 15 个，再加各自的一
 | mobile_save_video | 将工作区 MP4/MOV/M4V 视频作为新视频存入相册，源文件不变。 | iOS、Android |
 | mobile_transform_image | 本机裁切、旋转、缩放、翻转、灰度、锐化、亮度/对比度调整或轻度整图美化。 | iOS、Android |
 | mobile_beautify_image | 轻度整图平滑、提亮与色彩调整；**不是人脸关键点级美颜**。 | iOS、Android |
-| mobile_image_info | 查询图像格式、尺寸和文件字节数。 | iOS、Android |
 | mobile_detect_faces | 本机检测人脸框与关键点，不识别身份。 | iOS、Android |
 | mobile_segment_person | 本机人物/背景分割，输出灰度掩码图。 | iOS、Android |
 | mobile_preview_image | 用手机原生全屏界面预览工作区图片。 | iOS、Android |

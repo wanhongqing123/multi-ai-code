@@ -73,7 +73,6 @@ final class MobilePhotoTools {
             case "mobile_beautify_image":
                 arguments.put("operation", "beautify");
                 return agentTransformImage(arguments);
-            case "mobile_image_info": return agentImageInfo(arguments);
             case "mobile_detect_faces": return agentDetectFaces(arguments);
             case "mobile_segment_person": return agentSegmentPerson(arguments);
             case "mobile_preview_image": return agentPreviewImage(arguments);

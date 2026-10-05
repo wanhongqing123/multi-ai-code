@@ -141,7 +141,7 @@ int main() {
              hasMobilePhotoRead = false, hasMobilePhotoOriginal = false,
              hasMobileMediaOriginal = false,
              hasMobilePhotoSave = false, hasMobileTransform = false,
-             hasMobileBeautify = false, hasMobileImageInfo = false, hasMobilePreview = false,
+             hasMobileBeautify = false, hasFfprobe = false, hasMobilePreview = false,
              hasFaceDetection = false, hasPersonSegmentation = false,
              hasMobilePhotoAlbumWrite = false, hasPermissionRequest = false,
              hasSceneDetect = false, hasMotionDetect = false,
@@ -173,7 +173,7 @@ int main() {
                 hasMobileTransform = true;
             if (tool["function"]["name"] == "mobile_beautify_image")
                 hasMobileBeautify = true;
-            if (tool["function"]["name"] == "mobile_image_info") hasMobileImageInfo = true;
+            if (tool["function"]["name"] == "ffprobe") hasFfprobe = true;
             if (tool["function"]["name"] == "mobile_detect_faces") hasFaceDetection = true;
             if (tool["function"]["name"] == "mobile_segment_person") hasPersonSegmentation = true;
             if (tool["function"]["name"] == "mobile_preview_image") hasMobilePreview = true;
@@ -205,7 +205,7 @@ int main() {
         CHECK(hasMobilePhotoSave);
         CHECK(hasMobileTransform);
         CHECK(hasMobileBeautify);
-        CHECK(hasMobileImageInfo);
+        CHECK(hasFfprobe);
         CHECK(hasFaceDetection);
         CHECK(hasPersonSegmentation);
         CHECK(hasMobilePreview);

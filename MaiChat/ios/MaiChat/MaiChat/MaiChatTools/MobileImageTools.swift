@@ -38,11 +38,6 @@ extension AIMobileHostToolProvider {
         ])
     }
 
-    func imageInfo(_ arguments: [String: Any]) -> AIMaiChatHostToolExecution {
-        do { return Self.jsonSuccess(try workspaceImageMetadata(arguments).metadata) }
-        catch { return .failure(code: "invalid_input", message: error.localizedDescription) }
-    }
-
     func detectFaces(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
         do {
             let source = try workspaceImageMetadata(arguments).url

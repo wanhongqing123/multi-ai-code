@@ -56,7 +56,6 @@ final class AIMobileHostToolProvider {
             var edit = arguments
             edit["operation"] = "beautify"
             return await transformImage(edit)
-        case "mobile_image_info": return imageInfo(arguments)
         case "mobile_detect_faces": return await detectFaces(arguments)
         case "mobile_segment_person": return await segmentPerson(arguments)
         case "mobile_preview_image": return previewImage(arguments)

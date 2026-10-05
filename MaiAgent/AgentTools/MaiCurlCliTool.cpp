@@ -161,7 +161,7 @@ public:
                "-T/--upload-file (workspace file), -I/--head and --compressed. Other CLI "
                "options are rejected. Use output_path for a new downloaded file; otherwise "
                "a bounded response body is returned. Set text_only=true to extract readable "
-               "text from HTML. Each call sends data only after approval.";
+               "text from HTML. Approval follows the Agent policy; full access does not prompt.";
     }
     std::string parametersSchema() const override {
         return R"({"type":"object","properties":{"arguments":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":32},"output_path":{"type":"string"},"text_only":{"type":"boolean"},"max_size_mb":{"type":"integer","minimum":1,"maximum":1024},"timeout_s":{"type":"integer","minimum":1,"maximum":600}},"required":["arguments"],"additionalProperties":false})";
@@ -170,7 +170,7 @@ public:
         return true;
     }
     bool requiresPerCallApproval(const std::string&) const override {
-        return true;
+        return false;
     }
 
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {

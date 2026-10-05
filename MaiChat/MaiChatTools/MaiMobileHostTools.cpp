@@ -307,12 +307,6 @@ void registerMobilePhotoTools(MaiToolRegistry& tools,
         R"({"type":"object","properties":{"path":{"type":"string"},"strength":{"type":"number","minimum":0,"maximum":1}},"required":["path"]})",
         dispatcher, false));
     tools.add(std::make_unique<MaiMobileHostTool>(
-        "mobile_image_info",
-        "Read dimensions, format, and byte size of an image inside the Agent working directory. "
-        "Use this before crop or resize when exact source dimensions are needed.",
-        R"({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]})",
-        dispatcher, false));
-    tools.add(std::make_unique<MaiMobileHostTool>(
         "mobile_detect_faces",
         "Find faces and facial landmarks in an image from the Agent working directory using "
         "on-device vision. Return top-left pixel bounds and landmark positions for local image "

@@ -391,6 +391,10 @@ struct MaiMobileAgent {
                 value.update({{"kind", "video"},
                               {"path", body.path},
                               {"mimeType", body.mimeType}});
+              } else if constexpr (std::is_same_v<T, MaiQuotePart>) {
+                value.update({{"kind", "quote"},
+                              {"messageId", body.messageId},
+                              {"preview", body.preview}});
               } else {
                 std::string text = body.text;
                 auto live = liveParts.find(part.id);
@@ -620,8 +624,11 @@ struct MaiMobileAgent {
                             value["mimeType"].get<std::string>()});
         }
       }
+      if (r.contains("quoteMessageId") && !r["quoteMessageId"].is_string())
+        throw std::runtime_error("quoteMessageId must be a string.");
       id = result(agent->submit(MaiSendPrompt{
-          session, r.at("text"), std::move(images), std::move(videos)}));
+          session, r.at("text"), std::move(images), std::move(videos),
+          r.value("quoteMessageId", std::string{})}));
     } else if (op == "stop")
       result(agent->submit(MaiInterrupt{session}));
     else if (op == "delete")

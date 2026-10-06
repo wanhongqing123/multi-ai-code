@@ -377,7 +377,11 @@ private struct AIAssistantMessageList: View {
                             VStack(alignment: .leading, spacing: 24) {
                                 ForEach(model.messages) { message in
                                     AIMessageRow(message: message,
-                                                 workspacePath: model.workspacePath)
+                                                 workspacePath: model.workspacePath,
+                                                 quote: {
+                                                     model.quotedMessage = message
+                                                     focusController.focus()
+                                                 })
                                         .id(message.id)
                                 }
                             }
@@ -704,6 +708,7 @@ private struct AIActionPanel: View {
 private struct AIMessageRow: View {
     let message: AIMessage
     let workspacePath: String
+    let quote: () -> Void
     @State private var pdfPreview: AIPDFPreviewItem?
     @State private var pdfPreviewError = false
     @State private var videoPreview: AIVideoPreviewItem?
@@ -714,6 +719,12 @@ private struct AIMessageRow: View {
                 HStack {
                     Spacer(minLength: 30)
                     VStack(alignment: .leading, spacing: 10) {
+                        ForEach(message.parts.filter { $0.kind == "quote" }) { part in
+                            Label(part.preview ?? "已引用消息", systemImage: "arrowshape.turn.up.left")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
                         if !userDisplayText.isEmpty {
                             Text(userDisplayText)
                                 .font(ChatTypography.body)
@@ -732,6 +743,12 @@ private struct AIMessageRow: View {
                                 videoPreview = AIVideoPreviewItem(path: path)
                             }
                         }
+                        Button(action: quote) {
+                            Label("引用", systemImage: "arrowshape.turn.up.left")
+                        }
+                        .buttonStyle(.plain)
+                        .font(AssistantMessageFont.metadata)
+                        .foregroundStyle(.secondary)
                     }
                 }
             } else {
@@ -796,6 +813,9 @@ private struct AIMessageRow: View {
                         }
                     }
                     .contextMenu {
+                        Button(action: quote) {
+                            Label("引用这条消息", systemImage: "arrowshape.turn.up.left")
+                        }
                         if artifact.type != "audio" {
                             Button {
                                 Task { await saveMediaArtifact(artifact) }
@@ -839,6 +859,10 @@ private struct AIMessageRow: View {
                             Image(systemName: "doc.on.doc")
                         }
                             .accessibilityLabel("复制回复")
+                        Button(action: quote) {
+                            Label("引用", systemImage: "arrowshape.turn.up.left")
+                        }
+                        .accessibilityLabel("引用这条消息")
                     }.foregroundStyle(.secondary).font(AssistantMessageFont.metadata)
                 }
             }
@@ -872,6 +896,20 @@ private struct AIMessageRow: View {
         }
         if text.hasPrefix("Image task failed. ") {
             return "图片任务失败：" + String(text.dropFirst("Image task failed. ".count))
+        }
+        if text.hasPrefix("Video task status unavailable. ") {
+            return "视频状态查询失败，云端结果未确认：" +
+                String(text.dropFirst("Video task status unavailable. ".count))
+        }
+        if text.hasPrefix("Image task status unavailable. ") {
+            return "图片状态查询失败，云端结果未确认：" +
+                String(text.dropFirst("Image task status unavailable. ".count))
+        }
+        if text.hasPrefix("Video output unavailable. ") {
+            return "视频产物获取失败：" + String(text.dropFirst("Video output unavailable. ".count))
+        }
+        if text.hasPrefix("Image output unavailable. ") {
+            return "图片产物获取失败：" + String(text.dropFirst("Image output unavailable. ".count))
         }
         return nil
     }
@@ -1323,7 +1361,7 @@ struct AIVideoBubbleUITestRoot: View {
             let message = AIMessage(id: "video-message", role: "user", created: 0,
                                     completed: 1, active: false, parts: [part])
             AIMessageRow(message: message,
-                         workspacePath: video.deletingLastPathComponent().path)
+                         workspacePath: video.deletingLastPathComponent().path, quote: {})
                 .padding(20)
         }
     }
@@ -1346,7 +1384,7 @@ struct AITranscriptUITestRoot: View {
             + [part("answer", kind: "text", text: "处理完成，结果已经准备好。")]
         let message = AIMessage(id: "transcript", role: "assistant", created: 0,
                                 completed: 1, active: false, parts: parts)
-        AIMessageRow(message: message, workspacePath: "")
+        AIMessageRow(message: message, workspacePath: "", quote: {})
             .padding(20)
     }
 }
@@ -1594,6 +1632,30 @@ private struct AIComposer: View {
     @State private var voiceStartTask: Task<Bool, Never>?
     var body: some View {
         VStack(spacing: 0) {
+            if let quoted = model.quotedMessage {
+                HStack(spacing: 10) {
+                    Image(systemName: "arrowshape.turn.up.left")
+                        .foregroundStyle(RemoteIMStyle.blue)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(quoted.role == "user" ? "引用你的消息" : "引用 AI 消息")
+                            .font(.caption.weight(.semibold))
+                        Text(quoted.quotePreview)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                    Spacer(minLength: 4)
+                    Button { model.quotedMessage = nil } label: {
+                        Image(systemName: "xmark.circle.fill")
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("取消引用")
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 9)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(uiColor: .secondarySystemBackground))
+            }
             HStack(alignment: .bottom, spacing: 8) {
                 Button {
                     composerEditMenuState = nil

@@ -37,6 +37,8 @@ struct AIPart: Codable, Identifiable, Sendable, Equatable {
     var state: String?
     var path: String?
     var mimeType: String?
+    var messageId: String? = nil
+    var preview: String? = nil
 }
 struct AIMessage: Codable, Identifiable, Sendable, Equatable {
     let id: String
@@ -46,6 +48,22 @@ struct AIMessage: Codable, Identifiable, Sendable, Equatable {
     let active: Bool
     let parts: [AIPart]
     var text: String { parts.filter { $0.kind == "text" }.compactMap(\.text).joined(separator: "\n") }
+    var quotePreview: String {
+        var media: [String] = []
+        for part in parts {
+            if part.kind == "image" { media.append("图片") }
+            if part.kind == "video" { media.append("视频") }
+            if part.kind == "tool", part.tool == "agent_send_media",
+               let output = part.output?.data(using: .utf8),
+               let payload = (try? JSONSerialization.jsonObject(with: output)) as? [String: Any],
+               let type = payload["type"] as? String {
+                media.append(type == "video" ? "视频" : type == "image" ? "图片" : "音频")
+            }
+        }
+        let summary = media.isEmpty ? "" : "[\(media.joined(separator: "、"))] "
+        let excerpt = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return summary + (excerpt.isEmpty ? "消息" : String(excerpt.prefix(80)))
+    }
 }
 struct AIPermission: Codable, Identifiable, Sendable, Equatable {
     let id: String
@@ -251,10 +269,11 @@ actor AIAssistantBackend {
     }
 
     func send(session: String, text: String, images: [AIImportedFile],
-              videos: [AIImportedFile]) throws -> AIResponse {
+              videos: [AIImportedFile], quoteMessageId: String) throws -> AIResponse {
         try call("send", values: [
             "session": session,
             "text": text,
+            "quoteMessageId": quoteMessageId,
             "images": images.map { ["path": $0.relativePath, "mimeType": $0.mimeType] },
             "videos": videos.map { ["path": $0.relativePath, "mimeType": $0.mimeType] }
         ])
@@ -367,6 +386,7 @@ final class AIAssistantModel: ObservableObject {
     @Published var scrollRequest = 0
     @Published private(set) var workspacePath = ""
     @Published var previewImage: AIImagePreview?
+    @Published var quotedMessage: AIMessage?
     var drafts: [String: String] = [:]
     private var pendingAttachments: [String: [AIImportedFile]] = [:]
     private let backend = AIAssistantBackend()
@@ -498,12 +518,16 @@ final class AIAssistantModel: ObservableObject {
                     !knownIDs.contains(message.id) && message.parts.contains { part in
                         part.kind == "text" &&
                         ((part.text?.hasPrefix("Video task failed. ") == true) ||
-                         (part.text?.hasPrefix("Image task failed. ") == true))
+                         (part.text?.hasPrefix("Image task failed. ") == true) ||
+                         (part.text?.hasPrefix("Video task status unavailable. ") == true) ||
+                         (part.text?.hasPrefix("Image task status unavailable. ") == true) ||
+                         (part.text?.hasPrefix("Video output unavailable. ") == true) ||
+                         (part.text?.hasPrefix("Image output unavailable. ") == true))
                     }
                 }
                 mergeMessages(value)
                 if newFailure {
-                    showTransientError("生成任务失败，详情见对话。", duration: .seconds(8))
+                    showTransientError("生成任务出现异常，详情见对话。", duration: .seconds(8))
                 }
             }
             if let value = result.permissions, value != permissions { permissions = value }
@@ -581,6 +605,7 @@ final class AIAssistantModel: ObservableObject {
 
     func select(_ id: String) async {
         selected = id; messages = []; permissions = []; questions = []; error = ""
+        quotedMessage = nil
         historyLoaded = false
         hasOlderMessages = false
         pendingInitialPage = nil
@@ -606,6 +631,7 @@ final class AIAssistantModel: ObservableObject {
     ) async -> Bool {
         guard configured else { showSettings = true; return false }
         let draftSession = selected
+        let quoteMessageId = quotedMessage?.id ?? ""
         guard expectedSession == nil || expectedSession == draftSession else { return false }
         let attachments = pendingAttachments[draftSession, default: []] + images + videos
         guard !isSubmitting, !busy,
@@ -640,9 +666,11 @@ final class AIAssistantModel: ObservableObject {
                 session: selected,
                 text: text,
                 images: attachments.filter(\.isImage),
-                videos: attachments.filter { $0.mimeType.hasPrefix("video/") }
+                videos: attachments.filter { $0.mimeType.hasPrefix("video/") },
+                quoteMessageId: quoteMessageId
             )
             pendingAttachments.removeValue(forKey: draftSession)
+            if quotedMessage?.id == quoteMessageId { quotedMessage = nil }
             error = ""
             await refresh(force: true)
             historyLoaded = !messages.isEmpty
@@ -659,9 +687,11 @@ final class AIAssistantModel: ObservableObject {
             _ = try await backend.request(op, values: values)
             if op == "delete", selected == target {
                 selected = ""; messages = []; historyLoaded = true
+                quotedMessage = nil
             }
             if op == "clear", selected == target {
                 messages = []; historyLoaded = true
+                quotedMessage = nil
             }
             await refresh(force: true)
         } catch { self.error = error.localizedDescription }

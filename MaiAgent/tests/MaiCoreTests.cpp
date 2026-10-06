@@ -111,6 +111,44 @@ static void test_media_only_prompt_has_no_placeholder_text() {
     CHECK(mediaOnly == 2);
 }
 
+static void test_quoted_message_is_scoped_and_persisted() {
+    MaiFakeModelClient::Turn reply;
+    reply.textChunks = {"received"};
+    auto model =
+        std::make_unique<MaiFakeModelClient>(std::vector<MaiFakeModelClient::Turn>{reply, reply});
+    MaiFakeModelClient* observer = model.get();
+    MaiAgent agent(makeMaiMemoryStore(), std::move(model), nullptr);
+    const std::string session = agent.submit(MaiCreateSession{"/tmp", "", "test-model"}).value();
+    const std::string other = agent.submit(MaiCreateSession{"/tmp", "", "test-model"}).value();
+    CHECK(agent.submit(MaiSendPrompt{session, "A video", {}, {{"clips/exact.mp4", "video/mp4"}}}));
+    agent.waitIdle();
+    std::string sourceId;
+    for (const auto& message : agent.listMessages(session))
+        if (message.role == MaiRole::User) sourceId = message.id;
+    CHECK(!sourceId.empty());
+    CHECK(!agent.submit(MaiSendPrompt{other, "Save it", {}, {}, sourceId}));
+    CHECK(agent.submit(MaiSendPrompt{session, "Save it", {}, {}, sourceId}));
+    agent.waitIdle();
+    bool storedQuote = false;
+    for (const auto& message : agent.listMessages(session)) {
+        if (message.role != MaiRole::User || message.id == sourceId) continue;
+        for (const auto& part : message.parts) {
+            const auto* quote = std::get_if<MaiQuotePart>(&part.body);
+            if (quote && quote->messageId == sourceId) storedQuote = true;
+        }
+    }
+    CHECK(storedQuote);
+    CHECK(observer->requestCount() >= 2);
+    bool exactPathInCurrentRequest = false;
+    for (const auto& message : observer->request(1).messages) {
+        if (message.role == MaiModelRole::User &&
+            message.content.find("clips/exact.mp4") != std::string::npos &&
+            message.content.find(sourceId) != std::string::npos)
+            exactPathInCurrentRequest = true;
+    }
+    CHECK(exactPathInCurrentRequest);
+}
+
 static void test_interrupted_tool_is_recovered_on_startup() {
     auto store = makeMaiMemoryStore();
     MaiSession session;
@@ -216,6 +254,7 @@ int main() {
     test_id_prefix_and_monotonic();
     test_session_crud_and_events();
     test_media_only_prompt_has_no_placeholder_text();
+    test_quoted_message_is_scoped_and_persisted();
     test_interrupted_tool_is_recovered_on_startup();
     test_event_handlers_run_with_blocking_disallowed();
     test_blocking_scopes_nest();

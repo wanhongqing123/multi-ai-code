@@ -74,9 +74,9 @@ void testDiscoveryAndBoundaries() {
                 R"({"action":"delegate","message":"Change the shirt","video_path":"x.mp4","resolution":"480P"})",
                 context)
             .hasError());
-    CHECK(tool->execute(R"({"action":"continue","message":"Status","conversation_id":"../other"})",
-                        context)
-              .hasError());
+    CHECK(
+        tool->execute(R"({"action":"continue","message":"","conversation_id":"../other"})", context)
+            .hasError());
 }
 
 void testRevisionIsSessionBound() {
@@ -110,6 +110,10 @@ void testOtherSpecialistBoundaries() {
     CHECK(video->requiresPerCallApproval(R"({"action":"delegate"})"));
     CHECK(image->requiresPerCallApproval(R"({"action":"delegate"})"));
     CHECK(!video->requiresPerCallApproval(R"({"action":"continue"})"));
+    CHECK(video
+              ->execute(R"({"action":"continue","message":"","conversation_id":"../other"})",
+                        MaiToolContext{})
+              .hasError());
     MaiToolContext context;
     context.root = MaiFileSystem::temporaryDirectory().toUtf8();
     const auto videoInfo = video->execute(R"({"action":"discover"})", context);

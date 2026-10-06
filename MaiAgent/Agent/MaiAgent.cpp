@@ -39,6 +39,16 @@ MaiSendPrompt::MaiSendPrompt(std::string sessionIdValue, std::string textValue,
       images(std::move(imageValues)),
       videos(std::move(videoValues)) {}
 
+MaiSendPrompt::MaiSendPrompt(std::string sessionIdValue, std::string textValue,
+                             std::vector<MaiModelImage> imageValues,
+                             std::vector<MaiVideoPart> videoValues,
+                             std::string quotedMessageIdValue)
+    : sessionId(std::move(sessionIdValue)),
+      text(std::move(textValue)),
+      images(std::move(imageValues)),
+      videos(std::move(videoValues)),
+      quotedMessageId(std::move(quotedMessageIdValue)) {}
+
 namespace {
 
 // 一轮对话的在跑状态。MaiTurnRunner 负责跑，这个只负责"还在不在跑"和"叫停"。
@@ -84,8 +94,36 @@ std::string jsonText(const nlohmann::json& value, const char* field) {
                : std::string{};
 }
 
+std::string quotedPreview(const MaiMessage& message) {
+    std::string preview = message.text();
+    if (preview.empty()) {
+        for (const MaiMessagePart& part : message.parts) {
+            if (std::holds_alternative<MaiImagePart>(part.body)) return "Image message";
+            if (std::holds_alternative<MaiVideoPart>(part.body)) return "Video message";
+            if (const auto* tool = std::get_if<MaiToolPart>(&part.body)) {
+                if (tool->tool == "agent_send_media" && tool->state == MaiToolState::Completed)
+                    return "Media message";
+            }
+        }
+        return "Message";
+    }
+    std::replace_if(
+        preview.begin(), preview.end(), [](unsigned char byte) { return byte < 0x20; }, ' ');
+    if (preview.size() > 160) {
+        std::size_t length = 160;
+        while (length > 0 && (static_cast<unsigned char>(preview[length]) & 0xc0) == 0x80) --length;
+        preview.resize(length);
+        preview += "...";
+    }
+    return preview;
+}
+
 std::string specialistFailureNotice(const MaiSpecialistTask& task) {
     std::string reason = task.errorText.empty() ? "The provider gave no reason." : task.errorText;
+    const bool statusUnavailable = reason.rfind("Status check failed: ", 0) == 0;
+    const bool outputUnavailable = reason.rfind("Output delivery failed: ", 0) == 0;
+    if (statusUnavailable) reason.erase(0, std::string("Status check failed: ").size());
+    if (outputUnavailable) reason.erase(0, std::string("Output delivery failed: ").size());
     std::replace_if(
         reason.begin(), reason.end(), [](unsigned char byte) { return byte < 0x20; }, ' ');
     if (reason.size() > 500) {
@@ -95,13 +133,18 @@ std::string specialistFailureNotice(const MaiSpecialistTask& task) {
         reason += "...";
     }
     const bool image = task.specialistName.find("image") != std::string::npos;
-    return std::string(image ? "Image task failed. " : "Video task failed. ") + reason;
+    const char* prefix =
+        statusUnavailable
+            ? (image ? "Image task status unavailable. " : "Video task status unavailable. ")
+        : outputUnavailable ? (image ? "Image output unavailable. " : "Video output unavailable. ")
+                            : (image ? "Image task failed. " : "Video task failed. ");
+    return std::string(prefix) + reason;
 }
 
-bool isTerminalSpecialistError(const nlohmann::json& error) {
+bool isTerminalStatusCheckError(const nlohmann::json& error) {
     const std::string code = jsonText(error, "code");
-    if (code == "task_failed" || code == "not_configured" || code == "not_found" ||
-        code == "invalid_input" || code == "protocol")
+    if (code == "not_configured" || code == "not_found" || code == "invalid_input" ||
+        code == "protocol")
         return true;
     if (code != "provider_error" || !error.is_object() || !error.contains("http_status") ||
         !error["http_status"].is_number_integer())
@@ -272,11 +315,20 @@ void MaiAgent::pollSpecialistTasks() {
         const MaiMillis checkedAt = MaiTime::getCurrentTime();
         if (result.hasError()) {
             const Json error = Json::parse(result.error().message(), nullptr, false);
-            if (isTerminalSpecialistError(error)) {
+            const std::string code = jsonText(error, "code");
+            if (code == "task_failed") {
                 const std::string message = jsonText(error, "message");
                 mRuntime->store->finishSpecialistTask(
                     task.id, task.ownerSessionId, MaiSpecialistTaskStatus::Failed,
                     message.empty() ? "The provider did not explain the task failure." : message,
+                    {}, checkedAt);
+            } else if (isTerminalStatusCheckError(error)) {
+                const std::string message = jsonText(error, "message");
+                mRuntime->store->finishSpecialistTask(
+                    task.id, task.ownerSessionId, MaiSpecialistTaskStatus::Failed,
+                    "Status check failed: " + (message.empty()
+                                                   ? "The cloud task result could not be verified."
+                                                   : message),
                     {}, checkedAt);
             } else {
                 mRuntime->store->updateSpecialistProgress(task.id, task.ownerSessionId, checkedAt);
@@ -287,7 +339,8 @@ void MaiAgent::pollSpecialistTasks() {
         if (!reply.is_object()) {
             mRuntime->store->finishSpecialistTask(
                 task.id, task.ownerSessionId, MaiSpecialistTaskStatus::Failed,
-                "The specialist returned invalid progress data.", {}, checkedAt);
+                "Status check failed: The specialist returned invalid progress data.", {},
+                checkedAt);
             continue;
         }
         const std::string status = jsonText(reply, "status");
@@ -298,8 +351,9 @@ void MaiAgent::pollSpecialistTasks() {
                 bytes == 0) {
                 mRuntime->store->finishSpecialistTask(
                     task.id, task.ownerSessionId, MaiSpecialistTaskStatus::Failed,
-                    "The provider completed the task, but no media output was available.", {},
-                    checkedAt);
+                    "Output delivery failed: The provider completed the task, but no media "
+                    "output was available.",
+                    {}, checkedAt);
                 continue;
             }
             mRuntime->store->finishSpecialistTask(task.id, task.ownerSessionId,
@@ -311,7 +365,8 @@ void MaiAgent::pollSpecialistTasks() {
         } else {
             mRuntime->store->finishSpecialistTask(
                 task.id, task.ownerSessionId, MaiSpecialistTaskStatus::Failed,
-                "The provider returned an unknown task status.", {}, checkedAt);
+                "Status check failed: The provider returned an unknown task status.", {},
+                checkedAt);
         }
     }
     for (const MaiSpecialistTask& task : mRuntime->store->listUnnotifiedSpecialistTasks(16)) {
@@ -350,7 +405,11 @@ void MaiAgent::forwardSpecialistReply(const MaiSpecialistTask& task) {
         const auto* text = std::get_if<MaiTextPart>(&assistant.parts.front().body);
         const bool statusNotice =
             text != nullptr && (text->text.rfind("Image task failed. ", 0) == 0 ||
-                                text->text.rfind("Video task failed. ", 0) == 0);
+                                text->text.rfind("Video task failed. ", 0) == 0 ||
+                                text->text.rfind("Image task status unavailable. ", 0) == 0 ||
+                                text->text.rfind("Video task status unavailable. ", 0) == 0 ||
+                                text->text.rfind("Image output unavailable. ", 0) == 0 ||
+                                text->text.rfind("Video output unavailable. ", 0) == 0);
         if (statusNotice)
             assistant.parts.resize(1);
         else
@@ -697,6 +756,18 @@ MaiResult<std::string> MaiAgent::submit(const MaiOperation& operation) {
                 if (!mRuntime->store->getSession(operation.sessionId, session))
                     return {MaiErrorCode::NotFound, "session not found"};
 
+                MaiMessage quoted;
+                if (!operation.quotedMessageId.empty()) {
+                    if (operation.quotedMessageId.rfind("msg_", 0) != 0)
+                        return {MaiErrorCode::InvalidInput, "invalid quoted message ID"};
+                    const auto page = mRuntime->store->listMessagesPage(
+                        operation.sessionId, operation.quotedMessageId + "~", 1);
+                    if (page.empty() || page.front().id != operation.quotedMessageId)
+                        return {MaiErrorCode::NotFound,
+                                "quoted message was not found in this conversation"};
+                    quoted = page.front();
+                }
+
                 {
                     std::lock_guard<std::mutex> lock(mRuntime->mutex);
                     if (mRuntime->options.rejectWhenBusy &&
@@ -710,6 +781,13 @@ MaiResult<std::string> MaiAgent::submit(const MaiOperation& operation) {
                 user.role = MaiRole::User;
                 user.created = MaiTime::getCurrentTime();
                 user.completed = user.created;
+                if (!operation.quotedMessageId.empty()) {
+                    MaiMessagePart quote;
+                    quote.id = MaiIdGenerator::newPartId();
+                    quote.body = MaiQuotePart{operation.quotedMessageId, quotedPreview(quoted)};
+                    quote.created = user.created;
+                    user.parts.push_back(std::move(quote));
+                }
                 if (!operation.text.empty()) {
                     MaiMessagePart up;
                     up.id = MaiIdGenerator::newPartId();

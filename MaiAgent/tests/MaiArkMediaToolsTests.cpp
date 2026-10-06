@@ -31,6 +31,10 @@ void testDynamicCredentialAndToolIdentity() {
     CHECK(image->name() == "seedream_image");
     CHECK(nlohmann::json::parse(video->parametersSchema(), nullptr, false).is_object());
     CHECK(nlohmann::json::parse(image->parametersSchema(), nullptr, false).is_object());
+    CHECK(nlohmann::json::parse(video->parametersSchema()).at("required") ==
+          nlohmann::json::array({"action"}));
+    CHECK(nlohmann::json::parse(image->parametersSchema()).at("required") ==
+          nlohmann::json::array({"action"}));
     CHECK(video->description().find("not configured") != std::string::npos);
     CHECK(image->description().find("not configured") != std::string::npos);
     const std::string discover = R"({"action":"discover","message":"capabilities"})";
@@ -41,6 +45,8 @@ void testDynamicCredentialAndToolIdentity() {
     CHECK(!video->requiresPerCallApproval(R"({"action":"continue"})"));
     auto videoInfo = nlohmann::json::parse(video->execute(discover, context).output());
     auto imageInfo = nlohmann::json::parse(image->execute(discover, context).output());
+    CHECK(!video->execute(R"({"action":"discover"})", context).hasError());
+    CHECK(!image->execute(R"({"action":"discover"})", context).hasError());
     CHECK(!videoInfo.at("configured").get<bool>());
     CHECK(!imageInfo.at("configured").get<bool>());
     CHECK(videoInfo.at("capabilities").is_array());
@@ -162,10 +168,12 @@ void testRevisionRejectsAnotherConversation() {
     CHECK(result.hasError());
     CHECK(result.error().code() == MaiErrorCode::NotFound);
     const nlohmann::json continuation = {
-        {"action", "continue"}, {"message", "Check status"}, {"conversation_id", prior.id}};
+        {"action", "continue"}, {"message", ""}, {"conversation_id", prior.id}};
     const MaiToolResult checked = video->execute(continuation.dump(), context);
     CHECK(checked.hasError());
     CHECK(checked.error().code() == MaiErrorCode::NotFound);
+    const nlohmann::json withoutMessage = {{"action", "continue"}, {"conversation_id", prior.id}};
+    CHECK(video->execute(withoutMessage.dump(), context).error().code() == MaiErrorCode::NotFound);
 
     MaiSpecialistTask imageTask = prior;
     imageTask.id = MaiIdGenerator::generate("spt_");

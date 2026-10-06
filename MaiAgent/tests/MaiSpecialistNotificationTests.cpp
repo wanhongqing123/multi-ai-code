@@ -125,7 +125,8 @@ void testAuthorizationFailureIsTerminalWithoutMainModel() {
     bool visible = false;
     for (int attempt = 0; attempt < 100; ++attempt) {
         for (const MaiMessage& message : scenario.agent->listMessages(scenario.sessionId)) {
-            if (message.text().find("Video task failed. Access denied") == 0) visible = true;
+            if (message.text().find("Video task status unavailable. Access denied") == 0)
+                visible = true;
         }
         if (visible) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -149,13 +150,31 @@ void testCompletedWithoutOutputShowsFailure() {
     bool visible = false;
     for (int attempt = 0; attempt < 100; ++attempt) {
         for (const MaiMessage& message : scenario.agent->listMessages(scenario.sessionId)) {
-            if (message.text().find("Video task failed. The provider completed the task") == 0)
+            if (message.text().find("Video output unavailable. The provider completed the task") ==
+                0)
                 visible = true;
         }
         if (visible) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     CHECK(visible);
+}
+
+void testLocalPollingInputErrorDoesNotClaimProviderFailure() {
+    auto scenario =
+        startScenario(R"({"code":"invalid_input","message":"message is required"})", false);
+    waitForStatus(scenario, MaiSpecialistTaskStatus::Failed);
+    bool trackingNotice = false;
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        for (const MaiMessage& message : scenario.agent->listMessages(scenario.sessionId)) {
+            if (message.text().find("Video task status unavailable. message is required") == 0)
+                trackingNotice = true;
+            CHECK(message.text().find("Video task failed.") == std::string::npos);
+        }
+        if (trackingNotice) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    CHECK(trackingNotice);
 }
 
 }  // namespace
@@ -165,5 +184,6 @@ int main() {
     testAuthorizationFailureIsTerminalWithoutMainModel();
     testRateLimitRemainsRetryable();
     testCompletedWithoutOutputShowsFailure();
+    testLocalPollingInputErrorDoesNotClaimProviderFailure();
     return failures == 0 ? 0 : 1;
 }

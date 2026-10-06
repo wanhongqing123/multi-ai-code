@@ -372,7 +372,7 @@ public:
                R"("production":{"type":"object",)"
                R"("properties":{"duration":{"type":"integer"},"ratio":{"type":"string"},)"
                R"("resolution":{"type":"string"},"generate_audio":{"type":"boolean"}},)"
-               R"("additionalProperties":false}},"required":["action","message"],)"
+               R"("additionalProperties":false}},"required":["action"],)"
                R"("additionalProperties":false})";
     }
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
@@ -387,7 +387,8 @@ public:
         }
         const std::string action = stringValue(args, "action");
         const std::string message = stringValue(args, "message");
-        if (message.empty()) return invalid("message is required");
+        if (message.empty() && (action == "delegate" || action == "revise"))
+            return invalid("message is required to start or revise a task");
         if (action == "discover") {
             return discoverSpecialist(*specialistInfo(),
                                       "I can create a video from text and return a local MP4. "
@@ -745,7 +746,7 @@ public:
                R"("items":{"type":"string"},"minItems":2,"maxItems":10},)"
                R"("parent_task_id":{"type":"string"},"output_path":{"type":"string"},)"
                R"("size":{"type":"string",)"
-               R"("enum":["1K","1.5K","2K"]}},"required":["action","message"],)"
+               R"("enum":["1K","1.5K","2K"]}},"required":["action"],)"
                R"("additionalProperties":false})";
     }
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
@@ -760,7 +761,8 @@ public:
             return invalid("image_paths must be an array of 2 to 10 paths");
         const std::string action = stringValue(args, "action");
         const std::string message = stringValue(args, "message");
-        if (message.empty()) return invalid("message is required");
+        if (message.empty() && (action == "delegate" || action == "revise"))
+            return invalid("message is required to start or revise a task");
         if (action == "discover") {
             return discoverSpecialist(*specialistInfo(),
                                       "I can create a PNG from text, edit one accessible image, "

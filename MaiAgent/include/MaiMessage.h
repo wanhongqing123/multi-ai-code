@@ -61,6 +61,14 @@ struct MaiVideoPart {
     std::string mimeType;
 };
 
+// A reference to an earlier message in the same session. The source ID is validated before
+// insertion. Preview is display-only; the context builder resolves the original message by ID
+// and supplies its actual media paths, so a preview never becomes an authority for file access.
+struct MaiQuotePart {
+    std::string messageId;
+    std::string preview;
+};
+
 // 一次工具调用走到哪一步了。
 //
 // 这几个值和 SQLite 里 parts.state 列的数字绑死（见 MaiSqliteStore.cpp），**不要改它们的顺序**，
@@ -95,8 +103,8 @@ struct MaiToolPart {
     MaiToolState state = MaiToolState::Pending;
 };
 
-using MaiMessagePartBody =
-    std::variant<MaiTextPart, MaiReasoningPart, MaiImagePart, MaiToolPart, MaiVideoPart>;
+using MaiMessagePartBody = std::variant<MaiTextPart, MaiReasoningPart, MaiImagePart, MaiToolPart,
+                                        MaiVideoPart, MaiQuotePart>;
 
 struct MaiMessagePart {
     // prt_...，**创建后永不改变**。

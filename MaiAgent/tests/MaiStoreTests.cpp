@@ -152,6 +152,10 @@ void contract_messages_and_parts(MaiSessionStore& store, const char* which) {
     video.id = MaiIdGenerator::newPartId();
     video.body = MaiVideoPart{"clip.mp4", "video/mp4"};
     user.parts.push_back(video);
+    MaiMessagePart quote;
+    quote.id = MaiIdGenerator::newPartId();
+    quote.body = MaiQuotePart{"msg_source", "Earlier video"};
+    user.parts.push_back(quote);
     store.putMessage(sessionId, user);
 
     // assistant 消息把三种 part 都带上：文本、推理、工具
@@ -191,14 +195,17 @@ void contract_messages_and_parts(MaiSessionStore& store, const char* which) {
 
     CHECK(loaded[0].id == user.id);
     CHECK(loaded[0].role == MaiRole::User);
-    CHECK(loaded[0].parts.size() == 3);
-    if (loaded[0].parts.size() == 3) {
+    CHECK(loaded[0].parts.size() == 4);
+    if (loaded[0].parts.size() == 4) {
         const auto* readImage = std::get_if<MaiImagePart>(&loaded[0].parts[1].body);
         CHECK(readImage && readImage->path == "photo.png");
         CHECK(readImage && readImage->mimeType == "image/png");
         const auto* readVideo = std::get_if<MaiVideoPart>(&loaded[0].parts[2].body);
         CHECK(readVideo && readVideo->path == "clip.mp4");
         CHECK(readVideo && readVideo->mimeType == "video/mp4");
+        const auto* readQuote = std::get_if<MaiQuotePart>(&loaded[0].parts[3].body);
+        CHECK(readQuote && readQuote->messageId == "msg_source");
+        CHECK(readQuote && readQuote->preview == "Earlier video");
     }
 
     CHECK(loaded[1].id == assistant.id);

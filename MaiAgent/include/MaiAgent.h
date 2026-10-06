@@ -63,11 +63,14 @@ struct MaiSendPrompt {
     std::string text;
     std::vector<MaiModelImage> images;
     std::vector<MaiVideoPart> videos;
+    std::string quotedMessageId;
 
     MaiSendPrompt(std::string sessionId, std::string text);
     MaiSendPrompt(std::string sessionId, std::string text, std::vector<MaiModelImage> images);
     MaiSendPrompt(std::string sessionId, std::string text, std::vector<MaiModelImage> images,
                   std::vector<MaiVideoPart> videos);
+    MaiSendPrompt(std::string sessionId, std::string text, std::vector<MaiModelImage> images,
+                  std::vector<MaiVideoPart> videos, std::string quotedMessageId);
 };
 
 // 中断正在跑的那一轮。

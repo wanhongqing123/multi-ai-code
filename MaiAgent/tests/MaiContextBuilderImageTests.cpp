@@ -126,6 +126,47 @@ void testRecentPreviousImagePathsRemainAvailableWithoutOldPixels() {
     CHECK(sawSecondRecent);
 }
 
+void testQuotedUserMediaUsesExactSourceMessage() {
+    MaiMessage source = userMessage("Earlier photo", "gallery/exact-photo.jpg");
+    source.id = "msg_photo";
+    source.parts.back().id = "prt_photo";
+    MaiMessage quoted = userMessage("Save the photo I quoted", {});
+    quoted.id = "msg_followup";
+    MaiMessagePart quote;
+    quote.body = MaiQuotePart{source.id, "Earlier photo"};
+    quoted.parts.insert(quoted.parts.begin(), quote);
+    const auto request = MaiContextBuilder().build({source, quoted});
+    CHECK(request.back().role == MaiModelRole::User);
+    CHECK(request.back().content.find("msg_photo") != std::string::npos);
+    CHECK(request.back().content.find("prt_photo") != std::string::npos);
+    CHECK(request.back().content.find("gallery/exact-photo.jpg") != std::string::npos);
+    CHECK(request.back().images.empty());
+}
+
+void testQuotedAssistantMediaUsesDeliveredArtifact() {
+    MaiMessage source;
+    source.id = "msg_generated";
+    source.role = MaiRole::Assistant;
+    MaiMessagePart artifact;
+    artifact.id = "prt_delivered_video";
+    MaiToolPart tool;
+    tool.tool = "agent_send_media";
+    tool.state = MaiToolState::Completed;
+    tool.output =
+        R"({"delivery":"current_ai_session","path":"generated/final.mp4","type":"video"})";
+    artifact.body = tool;
+    source.parts.push_back(artifact);
+    MaiMessage quoted = userMessage("Save that video", {});
+    quoted.id = "msg_followup";
+    MaiMessagePart quote;
+    quote.body = MaiQuotePart{source.id, "Media message"};
+    quoted.parts.insert(quoted.parts.begin(), quote);
+    const auto request = MaiContextBuilder().build({source, quoted});
+    CHECK(request.back().content.find("msg_generated") != std::string::npos);
+    CHECK(request.back().content.find("prt_delivered_video") != std::string::npos);
+    CHECK(request.back().content.find("generated/final.mp4") != std::string::npos);
+}
+
 }  // namespace
 
 int main() {
@@ -134,5 +175,7 @@ int main() {
     testVideoAttachmentUsesAFileReferenceInsteadOfImagePixels();
     testCurrentImagesHaveExactPathAndAttachmentIdentity();
     testRecentPreviousImagePathsRemainAvailableWithoutOldPixels();
+    testQuotedUserMediaUsesExactSourceMessage();
+    testQuotedAssistantMediaUsesDeliveredArtifact();
     return failures == 0 ? 0 : 1;
 }

@@ -52,7 +52,7 @@ MaiSpecialistTaskStatus columnToSpecialistStatus(int value) {
     return MaiSpecialistTaskStatus::Submitted;
 }
 
-enum PartKind { kText = 0, kReasoning = 1, kTool = 2, kImage = 3, kVideo = 4 };
+enum PartKind { kText = 0, kReasoning = 1, kTool = 2, kImage = 3, kVideo = 4, kQuote = 5 };
 
 int toolStateToColumn(MaiToolState state) {
     switch (state) {
@@ -727,6 +727,10 @@ private:
             kind = kVideo;
             text = videoBody->path;
             output = videoBody->mimeType;
+        } else if (const auto* quoteBody = std::get_if<MaiQuotePart>(&part.body)) {
+            kind = kQuote;
+            text = quoteBody->messageId;
+            output = quoteBody->preview;
         } else if (const auto* toolBody = std::get_if<MaiToolPart>(&part.body)) {
             kind = kTool;
             tool = toolBody->tool;
@@ -770,6 +774,8 @@ private:
                 part.body = MaiImagePart{textColumn(statement, 3), textColumn(statement, 7)};
             } else if (kind == kVideo) {
                 part.body = MaiVideoPart{textColumn(statement, 3), textColumn(statement, 7)};
+            } else if (kind == kQuote) {
+                part.body = MaiQuotePart{textColumn(statement, 3), textColumn(statement, 7)};
             } else if (kind == kTool) {
                 MaiToolPart tool;
                 tool.tool = textColumn(statement, 4);

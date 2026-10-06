@@ -68,6 +68,12 @@ final class AIMobileHostToolProvider {
             let isGLM = URL(string: endpoint)?.host == "open.bigmodel.cn"
             return Self.jsonSuccess(["key": isGLM
                 ? KeychainSecretStore(account: "ai-assistant-api-key").readSecretKey() : ""])
+        case "kling_api_key":
+            return Self.jsonSuccess(["key": KeychainSecretStore(account: "kling-creative-api-key")
+                .readSecretKey()])
+        case "minimax_api_key":
+            return Self.jsonSuccess(["key": KeychainSecretStore(account: "minimax-creative-api-key")
+                .readSecretKey()])
         case "wan_credentials":
             return Self.jsonSuccess([
                 "key": KeychainSecretStore(account: "wan-model-studio-api-key").readSecretKey(),

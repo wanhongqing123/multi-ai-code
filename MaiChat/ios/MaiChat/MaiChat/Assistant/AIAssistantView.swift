@@ -2315,11 +2315,12 @@ private struct AIPermissionCard: View {
     private var isSendText: Bool { permission.tool == "maichat_send_text" }
     private var isPaidGeneration: Bool {
         ["wan_video", "wan_video_edit", "seedance_video", "seedream_image", "qwen_image",
-         "glm_video", "glm_image"]
+         "glm_video", "glm_image", "kling_video", "kling_image", "minimax_video", "minimax_image"]
             .contains(permission.tool)
     }
     private var isVideoGeneration: Bool {
-        ["wan_video", "wan_video_edit", "seedance_video", "glm_video"].contains(permission.tool)
+        ["wan_video", "wan_video_edit", "seedance_video", "glm_video", "kling_video",
+         "minimax_video"].contains(permission.tool)
     }
     private var isRevision: Bool {
         (fields["action"] as? String) == "revise" ||
@@ -2337,6 +2338,8 @@ private struct AIPermissionCard: View {
         case "qwen_image": return "通义千问"
         case "seedance_video": return "Seedance"
         case "glm_video", "glm_image": return "GLM"
+        case "kling_video", "kling_image": return "可灵"
+        case "minimax_video", "minimax_image": return "海螺 / MiniMax"
         default: return "Seedream"
         }
     }
@@ -2531,6 +2534,11 @@ private struct AISettingsView: View {
     @State private var wanWorkspaceId = ""
     @State private var wanConfigured = false
     @State private var wanMessage = ""
+    @State private var klingKey = ""
+    @State private var klingConfigured = false
+    @State private var miniMaxKey = ""
+    @State private var miniMaxConfigured = false
+    @State private var creativeMessage = ""
     @State private var saving = false
 
     var body: some View {
@@ -2615,6 +2623,19 @@ private struct AISettingsView: View {
                     if !wanMessage.isEmpty {
                         Text(wanMessage).font(.system(size: 12)).foregroundStyle(.secondary)
                     }
+                    settingsField("可灵 API Key", systemImage: "film") {
+                        SecureField(klingConfigured ? "已配置，留空保留原密钥" : "输入可灵 API Key",
+                                    text: $klingKey)
+                            .textFieldStyle(.plain)
+                    }
+                    settingsField("海螺 / MiniMax API Key", systemImage: "photo.on.rectangle") {
+                        SecureField(miniMaxConfigured ? "已配置，留空保留原密钥" : "输入 MiniMax API Key",
+                                    text: $miniMaxKey)
+                            .textFieldStyle(.plain)
+                    }
+                    if !creativeMessage.isEmpty {
+                        Text(creativeMessage).font(.system(size: 12)).foregroundStyle(.secondary)
+                    }
                     Text("本地图片处理使用 FFmpeg（LGPLv2.1+）；完整源码随项目放在 MaiAgent/third_party/ffmpeg。")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                     if !model.error.isEmpty {
@@ -2627,6 +2648,10 @@ private struct AISettingsView: View {
                         saving = true
                         Task {
                             guard saveWanConfiguration() else {
+                                saving = false
+                                return
+                            }
+                            guard saveCreativeKeys() else {
                                 saving = false
                                 return
                             }
@@ -2659,6 +2684,10 @@ private struct AISettingsView: View {
             wanConfigured = !KeychainSecretStore(account: "wan-model-studio-api-key")
                 .readSecretKey().isEmpty
             wanWorkspaceId = UserDefaults.standard.string(forKey: "wan-model-studio-workspace-id") ?? ""
+            klingConfigured = !KeychainSecretStore(account: "kling-creative-api-key")
+                .readSecretKey().isEmpty
+            miniMaxConfigured = !KeychainSecretStore(account: "minimax-creative-api-key")
+                .readSecretKey().isEmpty
         }
         .accessibilityIdentifier("ai-model-settings")
     }
@@ -2687,6 +2716,28 @@ private struct AISettingsView: View {
             return true
         } catch {
             wanMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    private func saveCreativeKeys() -> Bool {
+        do {
+            let kling = klingKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            let miniMax = miniMaxKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !kling.isEmpty {
+                try KeychainSecretStore(account: "kling-creative-api-key").saveSecretKey(kling)
+                klingConfigured = true
+                klingKey = ""
+            }
+            if !miniMax.isEmpty {
+                try KeychainSecretStore(account: "minimax-creative-api-key").saveSecretKey(miniMax)
+                miniMaxConfigured = true
+                miniMaxKey = ""
+            }
+            if !kling.isEmpty || !miniMax.isEmpty { creativeMessage = "创作模型 Key 已保存到本机 Keychain" }
+            return true
+        } catch {
+            creativeMessage = error.localizedDescription
             return false
         }
     }

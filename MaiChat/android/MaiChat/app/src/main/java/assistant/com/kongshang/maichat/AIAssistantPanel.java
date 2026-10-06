@@ -584,11 +584,14 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     private boolean isPaidGeneration(String tool) {
         return tool.equals("wan_video") || tool.equals("wan_video_edit")
             || tool.equals("seedance_video") || tool.equals("seedream_image")
-            || tool.equals("qwen_image") || tool.equals("glm_video") || tool.equals("glm_image");
+            || tool.equals("qwen_image") || tool.equals("glm_video") || tool.equals("glm_image")
+            || tool.equals("kling_video") || tool.equals("kling_image")
+            || tool.equals("minimax_video") || tool.equals("minimax_image");
     }
     private String paidApprovalTitle(String tool, JSONObject input) {
         boolean video = tool.equals("wan_video") || tool.equals("wan_video_edit")
-            || tool.equals("seedance_video") || tool.equals("glm_video");
+            || tool.equals("seedance_video") || tool.equals("glm_video")
+            || tool.equals("kling_video") || tool.equals("minimax_video");
         return "确认" + (isPaidRevision(tool, input) ? "编辑" : "生成")
             + (video ? "视频" : "图片");
     }
@@ -601,6 +604,8 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         if (tool.equals("wan_video") || tool.equals("wan_video_edit")) return "万相";
         if (tool.equals("qwen_image")) return "通义千问";
         if (tool.equals("glm_video") || tool.equals("glm_image")) return "GLM";
+        if (tool.equals("kling_video") || tool.equals("kling_image")) return "可灵";
+        if (tool.equals("minimax_video") || tool.equals("minimax_image")) return "海螺 / MiniMax";
         return tool.equals("seedance_video") ? "Seedance" : "Seedream";
     }
     private String paidSpecs(JSONObject input) {
@@ -803,12 +808,18 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                  key = field("API Key（留空保留原密钥）", ""),
                  arkKey = field("方舟创作 Key（留空保留原密钥）", ""),
                  wanKey = field("百炼创作 Key（Wan / Qwen，留空保留原密钥）", ""),
-                 wanWorkspace = field("百炼 Workspace ID", controller.wanWorkspaceId());
+                 wanWorkspace = field("百炼 Workspace ID", controller.wanWorkspaceId()),
+                 klingKey = field("可灵 API Key（留空保留原密钥）", ""),
+                 miniMaxKey = field("海螺 / MiniMax API Key（留空保留原密钥）", "");
         key.setInputType(
             android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
         arkKey.setInputType(
             android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
         wanKey.setInputType(
+            android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        klingKey.setInputType(
+            android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        miniMaxKey.setInputType(
             android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
         form.addView(url, matchWrap());
         form.addView(name, matchWrap());
@@ -816,6 +827,8 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         form.addView(arkKey, matchWrap());
         form.addView(wanKey, matchWrap());
         form.addView(wanWorkspace, matchWrap());
+        form.addView(klingKey, matchWrap());
+        form.addView(miniMaxKey, matchWrap());
         Spinner policy = new Spinner(activity);
         policy.setAdapter(new ArrayAdapter<>(activity, android.R.layout.simple_spinner_dropdown_item,
             new String[] {"请求批准", "帮我批准", "完全访问"}));
@@ -853,9 +866,16 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                             }
                             controller.saveWanCredentials(wanKey.getText().toString(),
                                 wanWorkspace.getText().toString(), wanSaved -> {
-                                    if (wanSaved)
-                                        dialog.dismiss();
-                                    else {
+                                    if (wanSaved) {
+                                        controller.saveCreativeKeys(klingKey.getText().toString(),
+                                            miniMaxKey.getText().toString(), creativeSaved -> {
+                                                if (creativeSaved) dialog.dismiss();
+                                                else {
+                                                    validation.setText(controller.state.error);
+                                                    dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
+                                                }
+                                            });
+                                    } else {
                                         validation.setText(controller.state.error);
                                         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
                                     }

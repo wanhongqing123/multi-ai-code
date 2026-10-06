@@ -112,6 +112,8 @@ public final class AIAssistantController {
     private volatile String arkApiKey = "";
     private volatile String wanApiKey = "";
     private volatile String wanWorkspaceId = "";
+    private volatile String klingApiKey = "";
+    private volatile String miniMaxApiKey = "";
     private JSONObject data = new JSONObject();
     private boolean ready, closed;
     private final Runnable poll = new Runnable() {
@@ -196,6 +198,16 @@ public final class AIAssistantController {
                     .toString().getBytes(StandardCharsets.UTF_8);
             } catch (Exception failure) {
                 return hostToolFailure("Wan credentials are unavailable", "not_configured");
+            }
+        }
+        if (tool.equals("kling_api_key") || tool.equals("minimax_api_key")) {
+            try {
+                String key = tool.equals("kling_api_key") ? klingApiKey : miniMaxApiKey;
+                return new JSONObject().put("ok", true)
+                    .put("output", new JSONObject().put("key", key))
+                    .toString().getBytes(StandardCharsets.UTF_8);
+            } catch (Exception failure) {
+                return hostToolFailure("Creative model key is unavailable", "not_configured");
             }
         }
         HostToolHandler target = hostToolHandler;
@@ -285,6 +297,12 @@ public final class AIAssistantController {
                 wanApiKey = readEncryptedKey("wan-api-key.enc");
             } catch (Exception e) {
                 Log.w("MaiChatAgent", "Wan key could not be read", e);
+            }
+            try {
+                klingApiKey = readEncryptedKey("kling-api-key.enc");
+                miniMaxApiKey = readEncryptedKey("minimax-api-key.enc");
+            } catch (Exception e) {
+                Log.w("MaiChatAgent", "Creative model key could not be read", e);
             }
             if (testEndpoint != null) {
                 baseUrl = testEndpoint;
@@ -604,6 +622,26 @@ public final class AIAssistantController {
         });
     }
     String wanWorkspaceId() { return wanWorkspaceId; }
+    void saveCreativeKeys(String kling, String miniMax, Consumer<Boolean> completion) {
+        worker.post(() -> {
+            boolean success = true;
+            try {
+                if (!kling.trim().isEmpty()) {
+                    writeEncryptedKey("kling-api-key.enc", kling.trim());
+                    klingApiKey = kling.trim();
+                }
+                if (!miniMax.trim().isEmpty()) {
+                    writeEncryptedKey("minimax-api-key.enc", miniMax.trim());
+                    miniMaxApiKey = miniMax.trim();
+                }
+            } catch (Exception failure) {
+                error = safeMessage(failure);
+                success = false;
+            }
+            boolean result = success;
+            main.post(() -> completion.accept(result));
+        });
+    }
     void importFile(Uri uri, Consumer<ImportedFile> completion) {
         worker.post(() -> {
             ImportedFile imported = null;

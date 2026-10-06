@@ -2,6 +2,7 @@
 #include "MaiAgentSendMediaTool.h"
 #include "MaiArkMediaTools.h"
 #include "MaiGlmMediaTools.h"
+#include "MaiCreativeMediaTools.h"
 #include "MaiModelStudioTools.h"
 #include "MaiMemoryStore.h"
 #include "MaiAppStorageTool.h"
@@ -143,6 +144,16 @@ buildAgent(std::unique_ptr<MaiModelClient> model,
   const auto glmKey = [key = toUtf8(glmApiKey)] { return key; };
   tools->add(makeMaiGlmVideoTool(glmKey));
   tools->add(makeMaiGlmImageTool(glmKey));
+  const auto klingKey = [] {
+    return toUtf8(qEnvironmentVariable("MAICHAT_KLING_API_KEY"));
+  };
+  tools->add(makeMaiKlingVideoTool(klingKey));
+  tools->add(makeMaiKlingImageTool(klingKey));
+  const auto miniMaxKey = [] {
+    return toUtf8(qEnvironmentVariable("MAICHAT_MINIMAX_API_KEY"));
+  };
+  tools->add(makeMaiMiniMaxVideoTool(miniMaxKey));
+  tools->add(makeMaiMiniMaxImageTool(miniMaxKey));
   const auto wanCredentials = [] {
     return MaiWanCredentials{toUtf8(qEnvironmentVariable("MAICHAT_WAN_API_KEY")),
                              toUtf8(qEnvironmentVariable("MAICHAT_WAN_WORKSPACE_ID"))};

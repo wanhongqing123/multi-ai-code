@@ -5,6 +5,7 @@
 #include "MaiAgentSendMediaTool.h"
 #include "MaiArkMediaTools.h"
 #include "MaiGlmMediaTools.h"
+#include "MaiCreativeMediaTools.h"
 #include "MaiModelStudioTools.h"
 #include "MaiCvVideoAnalysis.h"
 #include "MaiCvVideoTools.h"
@@ -272,6 +273,28 @@ struct MaiMobileAgent {
     };
     tools->add(makeMaiGlmVideoTool(glmKey, config.caBundlePath));
     tools->add(makeMaiGlmImageTool(glmKey, config.caBundlePath));
+    const auto klingKey = [dispatcher = hostTools]() -> std::string {
+      const MaiToolResult result =
+          callMaiMobileHostTool(dispatcher, "kling_api_key", "{}");
+      if (result.hasError()) return {};
+      const Json response = Json::parse(result.output(), nullptr, false);
+      return response.is_object() && response.value("key", Json{}).is_string()
+                 ? response["key"].get<std::string>()
+                 : std::string{};
+    };
+    tools->add(makeMaiKlingVideoTool(klingKey, config.caBundlePath));
+    tools->add(makeMaiKlingImageTool(klingKey, config.caBundlePath));
+    const auto miniMaxKey = [dispatcher = hostTools]() -> std::string {
+      const MaiToolResult result =
+          callMaiMobileHostTool(dispatcher, "minimax_api_key", "{}");
+      if (result.hasError()) return {};
+      const Json response = Json::parse(result.output(), nullptr, false);
+      return response.is_object() && response.value("key", Json{}).is_string()
+                 ? response["key"].get<std::string>()
+                 : std::string{};
+    };
+    tools->add(makeMaiMiniMaxVideoTool(miniMaxKey, config.caBundlePath));
+    tools->add(makeMaiMiniMaxImageTool(miniMaxKey, config.caBundlePath));
     const auto wanCredentials = [dispatcher = hostTools]() -> MaiWanCredentials {
       const MaiToolResult result =
           callMaiMobileHostTool(dispatcher, "wan_credentials", "{}");

@@ -126,7 +126,11 @@ bool isPaidGenerationTool(const QString& tool) {
            tool == QStringLiteral("seedream_image") ||
            tool == QStringLiteral("qwen_image") ||
            tool == QStringLiteral("glm_video") ||
-           tool == QStringLiteral("glm_image");
+           tool == QStringLiteral("glm_image") ||
+           tool == QStringLiteral("kling_video") ||
+           tool == QStringLiteral("kling_image") ||
+           tool == QStringLiteral("minimax_video") ||
+           tool == QStringLiteral("minimax_image");
 }
 
 QString paidGenerationTitle(const QString& tool, const QString& arguments) {
@@ -134,7 +138,9 @@ QString paidGenerationTitle(const QString& tool, const QString& arguments) {
     const bool video = tool == QStringLiteral("wan_video") ||
                        tool == QStringLiteral("wan_video_edit") ||
                        tool == QStringLiteral("seedance_video") ||
-                       tool == QStringLiteral("glm_video");
+                       tool == QStringLiteral("glm_video") ||
+                       tool == QStringLiteral("kling_video") ||
+                       tool == QStringLiteral("minimax_video");
     const bool revision = input.value(QStringLiteral("action")).toString() ==
                               QStringLiteral("revise") ||
                           input.value(QStringLiteral("mode")).toString() ==
@@ -157,6 +163,10 @@ QString paidGenerationDetail(const QString& tool, const QString& arguments) {
         provider = QStringLiteral("Seedance");
     else if (tool == QStringLiteral("glm_video") || tool == QStringLiteral("glm_image"))
         provider = QStringLiteral("GLM");
+    else if (tool == QStringLiteral("kling_video") || tool == QStringLiteral("kling_image"))
+        provider = QStringLiteral("可灵");
+    else if (tool == QStringLiteral("minimax_video") || tool == QStringLiteral("minimax_image"))
+        provider = QStringLiteral("海螺 / MiniMax");
     QString request = input.value(QStringLiteral("message")).toString().trimmed();
     if (request.isEmpty()) request = input.value(QStringLiteral("prompt")).toString().trimmed();
     QStringList specifications;

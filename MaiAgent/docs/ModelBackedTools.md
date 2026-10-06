@@ -263,6 +263,16 @@ iOS 工具层仍需单独验收。任意本地 `video_path` 的上传尚未接�
 预置素材须由账号先在体验中心开通并取得 Asset ID，
 当前工具不持有素材管理 API 所需的 AK/SK，也不自动检索头像库。
 参考[方舟含肖像视频指南](https://docs.volcengine.com/docs/ark/seedance-portrait-asset-guide?lang=zh)。
+方舟已公开真人人像素材资产 API，但当前 `seedance_video` 未接入录入链路。
+公开流程是 `CreateVisualValidateSession` 让本人完成 H5 真人认证，
+`GetVisualValidateResult` 取得对应的 Asset Group ID；之后把同一人物的图片放到
+可访问的 HTTPS 地址，调用 `CreateAsset`，通过 `GetAsset` 等待 `Active`，最后才使用
+`asset://<Asset ID>`。接口要求 AK/SK，和现有的视频推理 API Key 不同；素材入库时
+还会做人脸一致性校验，多人脸图片不能入库。高级创作权益 Entry 可免费开通 Assets API，
+但需满足企业认证及平台开通条件。现有客户端缺少 AK/SK 服务端、认证回调和安全的图片暂存；
+仅凭一张本地真人照片无法在后台无感完成该授权流程。
+详见[真人人像素材资产使用指南](https://docs.volcengine.com/docs/ark/guide-preview?lang=zh)和
+[高级创作权益说明](https://docs.volcengine.com/docs/ark/seedance-2-0-purchase-guide?lang=zh)。
 
 当前给主控模型的 `MaiToolSpec` 仍只有名称、描述和 JSON Schema；内部能力快照尚未
 接入自动任务路由。当前视频工具已具备后台状态查询和完成转交，尚无完整的内部对话规划和自动质检。

@@ -46,6 +46,7 @@ void testDynamicCredentialAndToolIdentity() {
     CHECK(videoInfo.at("capabilities").is_array());
     CHECK(videoInfo.dump().find("platform_virtual_avatar") != std::string::npos);
     CHECK(videoInfo.dump().find("authorized_real_portrait") != std::string::npos);
+    CHECK(videoInfo.dump().find("local_portrait_asset_registration") != std::string::npos);
     CHECK(imageInfo.at("capabilities").is_array());
     CHECK(videoInfo.at("capabilities")[0].at("tool_status") == "not_configured");
     CHECK(imageInfo.at("capabilities")[0].at("tool_status") == "not_configured");
@@ -107,10 +108,12 @@ void testInvalidInputsDoNotReachNetwork() {
         context);
     CHECK(authorized.hasError());
     CHECK(authorized.error().message().find("confirm duration") != std::string::npos);
-    CHECK(video->execute(
-                   R"({"action":"delegate","message":"test","virtual_avatar_asset_id":"asset-20260401123823-6d4x2","authorized_portrait_asset_id":"asset-20261005230545-tb2zr"})",
-                   context)
-              .hasError());
+    CHECK(
+        video
+            ->execute(
+                R"({"action":"delegate","message":"test","virtual_avatar_asset_id":"asset-20260401123823-6d4x2","authorized_portrait_asset_id":"asset-20261005230545-tb2zr"})",
+                context)
+            .hasError());
     CHECK(
         video
             ->execute(

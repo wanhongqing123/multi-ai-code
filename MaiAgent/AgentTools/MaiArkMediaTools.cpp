@@ -320,6 +320,11 @@ public:
              {"authorized_real_portrait", true, true, unverified,
               "Use an authorized real-person asset ID from the same Ark account; direct local "
               "face uploads remain unsupported"},
+             {"local_portrait_asset_registration", true, true,
+              MaiSpecialistCapabilityStatus::NotImplemented,
+              "The public Assets API requires live-person verification, an authorized Asset "
+              "Group, AK/SK, and an accessible upload URL. This tool cannot silently register "
+              "an arbitrary local face photo"},
              {"multi_reference_video", true, true, MaiSpecialistCapabilityStatus::NotImplemented,
               "Multiple references are not wired"},
              {"video_edit_from_local_file", true, true,
@@ -344,7 +349,9 @@ public:
                "does not preserve the identity in a user's real photo. For a specific real "
                "person, pass authorized_portrait_asset_id only after Ark shows the asset as "
                "authorized in this account. Both paths use asset:// references; direct local "
-               "face uploads remain unsupported. An optional face-free reference_image_path "
+               "face uploads remain unsupported. Ark has a separate public Assets API for "
+               "verified portraits, but local photo registration is not connected here. "
+               "An optional face-free reference_image_path "
                "can be image 2. The app checks tasks and hands "
                "completed results back automatically; "
                "continue is for manual diagnostics only. Use agent_send_media to deliver a "

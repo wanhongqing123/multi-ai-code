@@ -325,8 +325,9 @@ public:
               "The public Assets API requires live-person verification, an authorized Asset "
               "Group, AK/SK, and an accessible upload URL. This tool cannot silently register "
               "an arbitrary local face photo"},
-             {"multi_reference_video", true, true, MaiSpecialistCapabilityStatus::NotImplemented,
-              "Multiple references are not wired"},
+             {"multi_reference_video", true, true, unverified,
+              "Seedance 2.0 accepts 1-9 reference images; reference mode cannot mix with strict "
+              "first/last-frame control"},
              {"video_edit_from_local_file", true, true,
               MaiSpecialistCapabilityStatus::UploadNotConfigured,
               "Local video upload is not configured"}}};
@@ -351,8 +352,9 @@ public:
                "authorized in this account. Both paths use asset:// references; direct local "
                "face uploads remain unsupported. Ark has a separate public Assets API for "
                "verified portraits, but local photo registration is not connected here. "
-               "An optional face-free reference_image_path "
-               "can be image 2. The app checks tasks and hands "
+               "Use reference_image_paths for up to 9 face-free reference images, or combine "
+               "one authorized portrait asset with face-free images. Reference images cannot "
+               "be mixed with strict first/last-frame control. The app checks tasks and hands "
                "completed results back automatically; "
                "continue is for manual diagnostics only. Use agent_send_media to deliver a "
                "completed video.";
@@ -367,6 +369,7 @@ public:
                R"("virtual_avatar_asset_id":{"type":"string"},)"
                R"("authorized_portrait_asset_id":{"type":"string"},)"
                R"("reference_image_path":{"type":"string"},)"
+               R"("reference_image_paths":{"type":"array","items":{"type":"string"}},)"
                R"("video_path":{"type":"string"},"video_url":{"type":"string"},)"
                R"("video_task_id":{"type":"string"},"poll_once":{"type":"boolean"},)"
                R"("production":{"type":"object",)"
@@ -385,6 +388,8 @@ public:
             if (args.contains(field) && !args[field].is_string())
                 return invalid(std::string(field) + " must be a string");
         }
+        if (args.contains("reference_image_paths") && !args["reference_image_paths"].is_array())
+            return invalid("reference_image_paths must be an array");
         const std::string action = stringValue(args, "action");
         const std::string message = stringValue(args, "message");
         if (message.empty() && (action == "delegate" || action == "revise"))
@@ -447,13 +452,13 @@ private:
         const std::string imagePath = stringValue(args, "image_path");
         const std::string lastFramePath = stringValue(args, "last_frame_path");
         const std::string avatarAssetInput = stringValue(args, "virtual_avatar_asset_id");
-        const std::string authorizedAssetInput =
-            stringValue(args, "authorized_portrait_asset_id");
+        const std::string authorizedAssetInput = stringValue(args, "authorized_portrait_asset_id");
         const std::string selectedAssetInput =
             avatarAssetInput.empty() ? authorizedAssetInput : avatarAssetInput;
         const std::string selectedAssetId =
             selectedAssetInput.empty() ? std::string{} : arkAssetId(selectedAssetInput);
         const std::string referenceImagePath = stringValue(args, "reference_image_path");
+        const Json referenceImagePaths = args.value("reference_image_paths", Json::array());
         const std::string videoPath = stringValue(args, "video_path");
         const std::string videoUrl = stringValue(args, "video_url");
         const std::string videoTaskId = stringValue(args, "video_task_id");
@@ -472,8 +477,17 @@ private:
             if (selectedAssetId.empty())
                 return invalid("portrait asset must be a valid platform asset ID");
         }
-        if (!referenceImagePath.empty() && (mode != "create" || selectedAssetId.empty()))
-            return invalid("reference_image_path requires create mode and a portrait asset ID");
+        const std::size_t referenceCount = referenceImagePaths.size() +
+                                           static_cast<std::size_t>(!referenceImagePath.empty()) +
+                                           static_cast<std::size_t>(!selectedAssetId.empty());
+        if (referenceCount > 9) return invalid("Seedance 2.0 accepts at most 9 reference images");
+        if (referenceCount != 0 &&
+            (mode != "create" || !imagePath.empty() || !lastFramePath.empty()))
+            return invalid("reference images require create mode without first/last frames");
+        for (const Json& candidate : referenceImagePaths) {
+            if (!candidate.is_string() || candidate.get<std::string>().empty())
+                return invalid("reference_image_paths entries must be nonempty strings");
+        }
         if (!videoPath.empty())
             return fail(MaiErrorCode::NotConfigured, "upload_not_configured",
                         "Local video upload is unavailable; use video_url or video_task_id");
@@ -533,6 +547,14 @@ private:
                                    {"image_url", {{"url", referenceImage}}},
                                    {"role", "reference_image"}});
         }
+        for (const Json& candidate : referenceImagePaths) {
+            Json referenceImage;
+            if (auto error = readImage(candidate.get<std::string>(), context, referenceImage))
+                return *error;
+            content.push_back(Json{{"type", "image_url"},
+                                   {"image_url", {{"url", referenceImage}}},
+                                   {"role", "reference_image"}});
+        }
         if (!imagePath.empty()) {
             Json image;
             if (auto error = readImage(imagePath, context, image)) return *error;
@@ -569,6 +591,8 @@ private:
                            {"ratio", ratio},
                            {"resolution", resolution},
                            {"generate_audio", production.value("generate_audio", true)}};
+        if (body.dump().size() > 64'000'000)
+            return invalid("Seedance request exceeds the 64 MB body limit");
         ArkResponse result = requestJson(kVideoTasksUrl, key, mCaBundle, &body, context);
         if (result.error) return *result.error;
         const std::string taskId = stringValue(result.data, "id");
@@ -588,8 +612,8 @@ private:
             task.providerTaskId = taskId;
             task.intent = message;
             task.contextSummary = extra;
-            task.inputReference = !videoTaskId.empty()      ? videoTaskId
-                                  : !videoUrl.empty()       ? videoUrl
+            task.inputReference = !videoTaskId.empty()       ? videoTaskId
+                                  : !videoUrl.empty()        ? videoUrl
                                   : !selectedAssetId.empty() ? selectedAssetId
                                                              : imagePath;
             task.created = MaiTime::getCurrentTime();

@@ -612,12 +612,15 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         JSONObject production = input.optJSONObject("production");
         if (production == null) production = new JSONObject();
         java.util.List<String> values = new java.util.ArrayList<>();
+        String model = input.optString("model");
+        if (model.equals("MiniMax-H3") || model.equals("MiniMax-H3-Max"))
+            values.add(model.equals("MiniMax-H3-Max") ? "H3 Max" : "H3");
         int duration = input.optInt("duration", production.optInt("duration", 0));
         if (duration > 0) values.add(duration + " 秒");
         String resolution = input.optString("resolution", production.optString("resolution"));
         String ratio = input.optString("ratio", production.optString("ratio"));
         if (!resolution.isEmpty()) values.add(resolution);
-        if (!ratio.isEmpty()) values.add(ratio);
+        if (!ratio.isEmpty()) values.add(ratio.equals("adaptive") ? "按素材比例" : ratio);
         if (!input.optString("virtual_avatar_asset_id").isEmpty())
             values.add("平台虚拟人像");
         if (!input.optString("authorized_portrait_asset_id").isEmpty())
@@ -625,11 +628,33 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         if (!input.optString("size").isEmpty()) values.add(input.optString("size"));
         JSONArray images = input.optJSONArray("reference_image_paths");
         if (images == null) images = input.optJSONArray("image_paths");
-        int imageCount = images != null ? images.length()
-            : input.optString("reference_image_path").isEmpty()
-                && input.optString("image_path").isEmpty() ? 0 : 1;
+        int imageCount = images == null ? 0 : images.length();
+        if (!input.optString("reference_image_path").isEmpty()) imageCount++;
+        if (!input.optString("image_path").isEmpty()
+            || !input.optString("first_frame").isEmpty()) imageCount++;
+        if (!input.optString("last_frame_path").isEmpty()
+            || !input.optString("last_frame").isEmpty()) imageCount++;
+        JSONArray content = input.optJSONArray("content");
+        int videoCount = !input.optString("video_path").isEmpty()
+            || !input.optString("reference_video_path").isEmpty()
+            || !input.optString("reference_video").isEmpty() ? 1 : 0;
+        int audioCount = !input.optString("reference_audio_path").isEmpty()
+            || !input.optString("reference_audio").isEmpty() ? 1 : 0;
+        if (content != null) {
+            for (int index = 0; index < content.length(); index++) {
+                JSONObject item = content.optJSONObject(index);
+                if (item == null) continue;
+                switch (item.optString("type")) {
+                    case "image_url": imageCount++; break;
+                    case "video_url": videoCount++; break;
+                    case "audio_url": audioCount++; break;
+                    default: break;
+                }
+            }
+        }
         if (imageCount > 0) values.add("参考图片 " + imageCount + " 张");
-        if (!input.optString("video_path").isEmpty()) values.add("参考视频 1 个");
+        if (videoCount > 0) values.add("参考视频 " + videoCount + " 个");
+        if (audioCount > 0) values.add("参考音频 " + audioCount + " 个");
         return android.text.TextUtils.join(" · ", values);
     }
     private String mediaDisplayText(String text, boolean hasMedia) {

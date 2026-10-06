@@ -50,11 +50,13 @@ private:
 struct Scenario {
     std::unique_ptr<MaiAgent> agent;
     MaiSpecialistTaskStore* store = nullptr;
+    MaiFakeModelClient* fakeModel = nullptr;
     std::string sessionId;
     std::string taskId;
 };
 
-Scenario startScenario(std::string result, bool withModel, bool success = false) {
+Scenario startScenario(std::string result, bool withModel, bool success = false,
+                       bool modelSucceeds = false) {
     auto store = makeMaiMemoryStore();
     Scenario scenario;
     scenario.store = store.get();
@@ -78,8 +80,12 @@ Scenario startScenario(std::string result, bool withModel, bool success = false)
     std::unique_ptr<MaiModelClient> model;
     if (withModel) {
         auto fake = std::make_unique<MaiFakeModelClient>();
+        scenario.fakeModel = fake.get();
         MaiFakeModelClient::Turn reply;
-        reply.error = MaiError::make(MaiErrorCode::Network, "Main model is offline");
+        if (modelSucceeds)
+            reply.textChunks = {"I will inspect the failure."};
+        else
+            reply.error = MaiError::make(MaiErrorCode::Network, "Main model is offline");
         fake->setRepeatingTurn(reply);
         model = std::move(fake);
     }
@@ -144,6 +150,59 @@ void testRateLimitRemainsRetryable() {
     CHECK(scenario.agent->listMessages(scenario.sessionId).empty());
 }
 
+void testBalanceErrorHandsTaskBackToMainWithoutExposingFailure() {
+    auto scenario = startScenario(
+        R"({"code":"provider_error","provider_code":1102,"http_status":429,"message":"Account balance not enough"})",
+        true, false, true);
+    waitForStatus(scenario, MaiSpecialistTaskStatus::Failed);
+    MaiSpecialistTask task;
+    CHECK(scenario.store->getSpecialistTask(scenario.taskId, scenario.sessionId, task));
+    CHECK(task.errorText.find("submitted task's outcome has not been verified") !=
+          std::string::npos);
+    for (int attempt = 0; attempt < 100 && scenario.fakeModel->requestCount() == 0; ++attempt)
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    CHECK(scenario.fakeModel->requestCount() > 0);
+    if (scenario.fakeModel->requestCount() == 0) return;
+    bool sawRecovery = false;
+    for (const MaiModelMessage& message : scenario.fakeModel->lastRequest().messages) {
+        if (message.role == MaiModelRole::System &&
+            message.content.find("Check other configured specialist tools") != std::string::npos)
+            sawRecovery = true;
+    }
+    CHECK(sawRecovery);
+    for (const MaiMessage& message : scenario.agent->listMessages(scenario.sessionId)) {
+        CHECK(message.text().find("Video task status unavailable.") == std::string::npos);
+        CHECK(message.text().find("Video task failed.") == std::string::npos);
+    }
+}
+
+void testRepeatedRateLimitEventuallyNotifiesMainConversation() {
+    auto scenario = startScenario(
+        R"({"code":"provider_error","http_status":429,"message":"Rate limited"})", false);
+    bool terminal = false;
+    for (int attempt = 0; attempt < 2500; ++attempt) {
+        MaiSpecialistTask task;
+        if (scenario.store->getSpecialistTask(scenario.taskId, scenario.sessionId, task) &&
+            task.status == MaiSpecialistTaskStatus::Failed) {
+            CHECK(task.errorText.find("Repeatedly failed after 3 attempts") != std::string::npos);
+            terminal = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    CHECK(terminal);
+    bool visible = false;
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        for (const MaiMessage& message : scenario.agent->listMessages(scenario.sessionId)) {
+            if (message.text().find("Video task status unavailable. Repeatedly failed") == 0)
+                visible = true;
+        }
+        if (visible) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    CHECK(visible);
+}
+
 void testCompletedWithoutOutputShowsFailure() {
     auto scenario = startScenario(R"({"status":"succeeded","reply":"Done"})", false, true);
     waitForStatus(scenario, MaiSpecialistTaskStatus::Failed);
@@ -158,6 +217,102 @@ void testCompletedWithoutOutputShowsFailure() {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     CHECK(visible);
+}
+
+void testProviderFailedStatusNotifiesMainConversation() {
+    auto scenario = startScenario(
+        R"json({"status":"failed","reply":"input text sensitive (1026)"})json", false, true);
+    waitForStatus(scenario, MaiSpecialistTaskStatus::Failed);
+    MaiSpecialistTask task;
+    CHECK(scenario.store->getSpecialistTask(scenario.taskId, scenario.sessionId, task));
+    CHECK(task.finalText == "input text sensitive (1026)");
+    bool visible = false;
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        for (const MaiMessage& message : scenario.agent->listMessages(scenario.sessionId)) {
+            if (message.text().find("Video task failed. input text sensitive (1026)") == 0)
+                visible = true;
+        }
+        if (visible) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    CHECK(visible);
+}
+
+void testFailedSpecialistAddsRecoveryInstructionToMainModel() {
+    auto scenario = startScenario(
+        R"({"status":"failed","reply":"Provider rejected the reference image"})", true, true, true);
+    waitForStatus(scenario, MaiSpecialistTaskStatus::Failed);
+    for (int attempt = 0; attempt < 100 && scenario.fakeModel->requestCount() == 0; ++attempt)
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    CHECK(scenario.fakeModel->requestCount() > 0);
+    if (scenario.fakeModel->requestCount() == 0) return;
+    const MaiModelRequest request = scenario.fakeModel->lastRequest();
+    bool sawRecovery = false;
+    for (const MaiModelMessage& message : request.messages) {
+        if (message.role == MaiModelRole::System &&
+            message.content.find(
+                "This attempt failed. The provider identified the reference image") !=
+                std::string::npos &&
+            message.content.find("new per-call approval") != std::string::npos)
+            sawRecovery = true;
+    }
+    CHECK(sawRecovery);
+}
+
+void testTextModerationGetsTargetedGuidance() {
+    auto scenario =
+        startScenario(R"({"status":"failed","reply":"input text sensitive"})", true, true, true);
+    waitForStatus(scenario, MaiSpecialistTaskStatus::Failed);
+    for (int attempt = 0; attempt < 100 && scenario.fakeModel->requestCount() == 0; ++attempt)
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    CHECK(scenario.fakeModel->requestCount() > 0);
+    if (scenario.fakeModel->requestCount() == 0) return;
+    bool targeted = false;
+    for (const MaiModelMessage& message : scenario.fakeModel->lastRequest().messages) {
+        if (message.role == MaiModelRole::System &&
+            message.content.find("provider labeled the text input as sensitive") !=
+                std::string::npos)
+            targeted = true;
+    }
+    CHECK(targeted);
+}
+
+void testAmbiguousModerationGivesConcreteInputPlan() {
+    auto scenario = startScenario(R"({"status":"failed","reply":"content blocked by moderation"})",
+                                  true, true, true);
+    waitForStatus(scenario, MaiSpecialistTaskStatus::Failed);
+    for (int attempt = 0; attempt < 100 && scenario.fakeModel->requestCount() == 0; ++attempt)
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    CHECK(scenario.fakeModel->requestCount() > 0);
+    if (scenario.fakeModel->requestCount() == 0) return;
+    bool targeted = false;
+    for (const MaiModelMessage& message : scenario.fakeModel->lastRequest().messages) {
+        if (message.role == MaiModelRole::System &&
+            message.content.find("smallest user-consistent visual edit") != std::string::npos &&
+            message.content.find("record which appearance or scene details") != std::string::npos &&
+            message.content.find("never launch diagnostic generations without approval") !=
+                std::string::npos)
+            targeted = true;
+    }
+    CHECK(targeted);
+}
+
+void testTechnicalFailureDoesNotGetModerationGuidance() {
+    auto scenario =
+        startScenario(R"({"status":"failed","reply":"unsupported dimensions"})", true, true, true);
+    waitForStatus(scenario, MaiSpecialistTaskStatus::Failed);
+    for (int attempt = 0; attempt < 100 && scenario.fakeModel->requestCount() == 0; ++attempt)
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    CHECK(scenario.fakeModel->requestCount() > 0);
+    if (scenario.fakeModel->requestCount() == 0) return;
+    bool genericOnly = false;
+    for (const MaiModelMessage& message : scenario.fakeModel->lastRequest().messages) {
+        if (message.role == MaiModelRole::System &&
+            message.content.find("A delegated specialist has replied") != std::string::npos &&
+            message.content.find("This attempt failed") == std::string::npos)
+            genericOnly = true;
+    }
+    CHECK(genericOnly);
 }
 
 void testLocalPollingInputErrorDoesNotClaimProviderFailure() {
@@ -183,7 +338,14 @@ int main() {
     testFailureVisibleEvenWhenMainModelFails();
     testAuthorizationFailureIsTerminalWithoutMainModel();
     testRateLimitRemainsRetryable();
+    testBalanceErrorHandsTaskBackToMainWithoutExposingFailure();
+    testRepeatedRateLimitEventuallyNotifiesMainConversation();
     testCompletedWithoutOutputShowsFailure();
+    testProviderFailedStatusNotifiesMainConversation();
+    testFailedSpecialistAddsRecoveryInstructionToMainModel();
+    testTextModerationGetsTargetedGuidance();
+    testAmbiguousModerationGivesConcreteInputPlan();
+    testTechnicalFailureDoesNotGetModerationGuidance();
     testLocalPollingInputErrorDoesNotClaimProviderFailure();
     return failures == 0 ? 0 : 1;
 }

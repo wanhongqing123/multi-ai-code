@@ -52,6 +52,7 @@ void testDynamicCredentialAndToolIdentity() {
     CHECK(videoInfo.at("capabilities").is_array());
     CHECK(videoInfo.dump().find("platform_virtual_avatar") != std::string::npos);
     CHECK(videoInfo.dump().find("authorized_real_portrait") != std::string::npos);
+    CHECK(videoInfo.dump().find("multi_reference_video") != std::string::npos);
     CHECK(videoInfo.dump().find("local_portrait_asset_registration") != std::string::npos);
     CHECK(imageInfo.at("capabilities").is_array());
     CHECK(videoInfo.at("capabilities")[0].at("tool_status") == "not_configured");
@@ -64,6 +65,7 @@ void testDynamicCredentialAndToolIdentity() {
     CHECK(videoInfo.at("configured").get<bool>());
     CHECK(imageInfo.at("configured").get<bool>());
     CHECK(videoInfo.at("capabilities")[0].at("tool_status") == "implemented_unverified");
+    CHECK(videoInfo.dump().find("reference images") != std::string::npos);
     CHECK(videoInfo.dump().find(key) == std::string::npos);
     CHECK(imageInfo.dump().find(key) == std::string::npos);
     MaiToolRegistry registry;
@@ -91,6 +93,20 @@ void testInvalidInputsDoNotReachNetwork() {
         video->execute(R"({"action":"delegate","message":"Create a video"})", context);
     CHECK(missingPlan.hasError());
     CHECK(missingPlan.error().message().find("confirm duration") != std::string::npos);
+    nlohmann::json tooManyReferences = {{"action", "delegate"},
+                                        {"message", "Create a video"},
+                                        {"reference_image_paths", nlohmann::json::array()}};
+    for (int index = 0; index < 10; ++index)
+        tooManyReferences["reference_image_paths"].push_back("image.png");
+    const auto excess = video->execute(tooManyReferences.dump(), context);
+    CHECK(excess.hasError());
+    CHECK(excess.error().message().find("at most 9") != std::string::npos);
+    CHECK(
+        video
+            ->execute(
+                R"({"action":"delegate","message":"Create a video","image_path":"first.png","reference_image_paths":["other.png"]})",
+                context)
+            .hasError());
     CHECK(video
               ->execute(
                   R"({"action":"delegate","message":"test","mode":"edit","video_path":"clip.mp4"})",

@@ -1,6 +1,7 @@
 #include "MaiAgent.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -94,6 +95,27 @@ std::string jsonText(const nlohmann::json& value, const char* field) {
                : std::string{};
 }
 
+bool isBalanceFailureText(std::string detail) {
+    std::transform(detail.begin(), detail.end(), detail.begin(),
+                   [](unsigned char byte) { return static_cast<char>(std::tolower(byte)); });
+    return detail.find("insufficient_balance") != std::string::npos ||
+           detail.find("insufficient balance") != std::string::npos ||
+           detail.find("balance insufficient") != std::string::npos ||
+           detail.find("balance not enough") != std::string::npos ||
+           detail.find("account balance") != std::string::npos ||
+           detail.find("arrears") != std::string::npos;
+}
+
+bool isBalanceFailure(const nlohmann::json& error) {
+    if (!error.is_object()) return false;
+    const auto providerCode = error.value("provider_code", nlohmann::json{});
+    if (providerCode.is_number_integer() && (providerCode == 1008 || providerCode == 1102))
+        return true;
+    return isBalanceFailureText(
+        jsonText(error, "message") + " " +
+        (providerCode.is_string() ? providerCode.get<std::string>() : std::string{}));
+}
+
 std::string quotedPreview(const MaiMessage& message) {
     std::string preview = message.text();
     if (preview.empty()) {
@@ -146,6 +168,7 @@ bool isTerminalStatusCheckError(const nlohmann::json& error) {
     if (code == "not_configured" || code == "not_found" || code == "invalid_input" ||
         code == "protocol")
         return true;
+    if (code == "provider_error" && isBalanceFailure(error)) return true;
     if (code != "provider_error" || !error.is_object() || !error.contains("http_status") ||
         !error["http_status"].is_number_integer())
         return false;
@@ -182,6 +205,9 @@ struct MaiAgent::Runtime {
     std::thread specialistWorker;
     std::mutex specialistMutex;
     std::condition_variable specialistWake;
+    // 只有专业工具工作线程会读写此表。短暂查询故障有界重试；
+    // 达到上限只说明状态无法确认，不代表云端生成失败。
+    std::unordered_map<std::string, int> specialistStatusFailures;
 
     ~Runtime() {
         // 析构时把所有在跑的轮次叫停并等它们退出，否则工作线程会访问已经销毁的 store/emitter。
@@ -295,7 +321,13 @@ void MaiAgent::pollSpecialistTasks() {
         if (mRuntime->stopSpecialists.load(std::memory_order_relaxed)) return;
         if (task.lastCheckedAt != 0 && now - task.lastCheckedAt < 10'000) continue;
         MaiTool* tool = mRuntime->tools ? mRuntime->tools->find(task.specialistName) : nullptr;
-        if (!tool) continue;
+        if (!tool) {
+            mRuntime->store->finishSpecialistTask(
+                task.id, task.ownerSessionId, MaiSpecialistTaskStatus::Failed,
+                "Status check failed: The specialist tool is no longer installed.", {}, now);
+            mRuntime->specialistStatusFailures.erase(task.id);
+            continue;
+        }
         MaiSession session;
         if (!mRuntime->store->getSession(task.ownerSessionId, session)) continue;
         MaiToolContext context;
@@ -310,31 +342,66 @@ void MaiAgent::pollSpecialistTasks() {
             {"conversation_id", task.id},
             {"message", ""},
             {"poll_once", true}}.dump();
-        const MaiToolResult result = tool->execute(arguments, context);
+        const MaiToolResult result = [&] {
+            try {
+                return tool->execute(arguments, context);
+            } catch (const std::exception&) {
+                return MaiToolResult::failure(
+                    MaiErrorCode::Internal,
+                    Json{{"code", "internal"},
+                         {"message", "The specialist status check threw an exception."}}
+                        .dump());
+            } catch (...) {
+                return MaiToolResult::failure(
+                    MaiErrorCode::Internal,
+                    Json{{"code", "internal"},
+                         {"message", "The specialist status check failed unexpectedly."}}
+                        .dump());
+            }
+        }();
         if (mRuntime->stopSpecialists.load(std::memory_order_relaxed)) return;
         const MaiMillis checkedAt = MaiTime::getCurrentTime();
         if (result.hasError()) {
             const Json error = Json::parse(result.error().message(), nullptr, false);
             const std::string code = jsonText(error, "code");
             if (code == "task_failed") {
+                mRuntime->specialistStatusFailures.erase(task.id);
                 const std::string message = jsonText(error, "message");
                 mRuntime->store->finishSpecialistTask(
                     task.id, task.ownerSessionId, MaiSpecialistTaskStatus::Failed,
                     message.empty() ? "The provider did not explain the task failure." : message,
                     {}, checkedAt);
             } else if (isTerminalStatusCheckError(error)) {
+                mRuntime->specialistStatusFailures.erase(task.id);
                 const std::string message = jsonText(error, "message");
+                const std::string reason =
+                    isBalanceFailure(error)
+                        ? "Provider balance insufficient; the submitted "
+                          "task's outcome has not been verified."
+                        : (message.empty() ? "The cloud task result could not be verified."
+                                           : message);
                 mRuntime->store->finishSpecialistTask(
                     task.id, task.ownerSessionId, MaiSpecialistTaskStatus::Failed,
-                    "Status check failed: " + (message.empty()
-                                                   ? "The cloud task result could not be verified."
-                                                   : message),
-                    {}, checkedAt);
+                    "Status check failed: " + reason, {}, checkedAt);
             } else {
-                mRuntime->store->updateSpecialistProgress(task.id, task.ownerSessionId, checkedAt);
+                const int failures = ++mRuntime->specialistStatusFailures[task.id];
+                if (failures >= 3) {
+                    const std::string message = jsonText(error, "message");
+                    mRuntime->store->finishSpecialistTask(
+                        task.id, task.ownerSessionId, MaiSpecialistTaskStatus::Failed,
+                        "Status check failed: Repeatedly failed after 3 attempts: " +
+                            (message.empty() ? "The cloud task result could not be verified."
+                                             : message),
+                        {}, checkedAt);
+                    mRuntime->specialistStatusFailures.erase(task.id);
+                } else {
+                    mRuntime->store->updateSpecialistProgress(task.id, task.ownerSessionId,
+                                                              checkedAt);
+                }
             }
             continue;
         }
+        mRuntime->specialistStatusFailures.erase(task.id);
         const Json reply = Json::parse(result.output(), nullptr, false);
         if (!reply.is_object()) {
             mRuntime->store->finishSpecialistTask(
@@ -359,6 +426,12 @@ void MaiAgent::pollSpecialistTasks() {
             mRuntime->store->finishSpecialistTask(task.id, task.ownerSessionId,
                                                   MaiSpecialistTaskStatus::Succeeded,
                                                   jsonText(reply, "reply"), path, checkedAt);
+        } else if (status == "failed" || status == "FAILED") {
+            const std::string message = jsonText(reply, "reply");
+            mRuntime->store->finishSpecialistTask(
+                task.id, task.ownerSessionId, MaiSpecialistTaskStatus::Failed,
+                message.empty() ? "The provider did not explain the task failure." : message, {},
+                checkedAt);
         } else if (status == "submitted" || status == "queued" || status == "running" ||
                    status == "PENDING" || status == "RUNNING" || status == "PROCESSING") {
             mRuntime->store->updateSpecialistProgress(task.id, task.ownerSessionId, checkedAt);
@@ -415,7 +488,8 @@ void MaiAgent::forwardSpecialistReply(const MaiSpecialistTask& task) {
         else
             assistant.parts.clear();
     }
-    if (task.status == MaiSpecialistTaskStatus::Failed && assistant.parts.empty()) {
+    if (task.status == MaiSpecialistTaskStatus::Failed && assistant.parts.empty() &&
+        !mRuntime->model) {
         MaiMessagePart notice;
         notice.id = MaiIdGenerator::newPartId();
         notice.created = MaiTime::getCurrentTime();
@@ -445,6 +519,7 @@ void MaiAgent::forwardSpecialistReply(const MaiSpecialistTask& task) {
         {"task_id", task.id},
         {"status", specialistStatusName(task.status)},
         {"original_intent", task.intent},
+        {"input_reference", task.inputReference},
         {"reply", task.finalText},
         {"error", task.errorText},
         {"output_path", task.outputPath},
@@ -465,6 +540,26 @@ void MaiAgent::forwardSpecialistReply(const MaiSpecialistTask& task) {
                     !messages.front().text().empty())
                     mRuntime->store->markSpecialistNotified(task.id, task.ownerSessionId, messageId,
                                                             MaiTime::getCurrentTime());
+            } else if (!turn->cancel.load(std::memory_order_relaxed) &&
+                       task.status == MaiSpecialistTaskStatus::Failed) {
+                const auto messages =
+                    mRuntime->store->listMessagesPage(task.ownerSessionId, messageId + "~", 1);
+                if (!messages.empty() && messages.front().id == messageId) {
+                    MaiMessage fallback = messages.front();
+                    MaiMessagePart notice;
+                    notice.id = MaiIdGenerator::newPartId();
+                    notice.created = MaiTime::getCurrentTime();
+                    notice.body = MaiTextPart{specialistFailureNotice(task)};
+                    fallback.parts.push_back(std::move(notice));
+                    fallback.completed = MaiTime::getCurrentTime();
+                    mRuntime->store->putMessage(task.ownerSessionId, fallback);
+                    if (!mRuntime->store->lastWriteError()) {
+                        mRuntime->emitter.emitMessage(MaiEventType::MessageUpdated,
+                                                      task.ownerSessionId, fallback.id);
+                        mRuntime->store->markSpecialistNotified(
+                            task.id, task.ownerSessionId, messageId, MaiTime::getCurrentTime());
+                    }
+                }
             }
             mRuntime->retire(task.ownerSessionId, turn);
         });

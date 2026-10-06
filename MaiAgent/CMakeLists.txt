@@ -276,7 +276,9 @@ add_library(maiagent STATIC
   AgentTools/MaiSshTool.cpp
   AgentTools/MaiArkMediaTools.cpp
   AgentTools/MaiGlmMediaTools.cpp
-  AgentTools/MaiCreativeMediaTools.cpp
+  AgentTools/MaiCreativeMediaSupport.cpp
+  AgentTools/MaiKlingMediaTools.cpp
+  AgentTools/MaiMiniMaxMediaTools.cpp
   AgentTools/MaiModelStudioTools.cpp
   AgentTools/MaiAgentSendMediaTool.cpp
   AgentTools/MaiRvmMatting.cpp
@@ -392,6 +394,15 @@ target_link_libraries(maiagent-console PRIVATE maiagent)
 
 # ── 测试 ────────────────────────────────────────────────────────
 option(MAIAGENT_BUILD_TESTS "Build MaiAgent tests" ON)
+option(MAIAGENT_BUILD_LIVE_PROVIDER_TOOLS "Build opt-in paid provider parity tools" OFF)
+if(MAIAGENT_BUILD_LIVE_PROVIDER_TOOLS)
+  add_executable(MaiGlmLiveParity tests/manual/MaiGlmLiveParity.cpp)
+  target_include_directories(MaiGlmLiveParity PRIVATE third_party/nlohmann)
+  target_link_libraries(MaiGlmLiveParity PRIVATE maiagent)
+  add_executable(MaiMiniMaxLiveParity tests/manual/MaiMiniMaxLiveParity.cpp)
+  target_include_directories(MaiMiniMaxLiveParity PRIVATE third_party/nlohmann)
+  target_link_libraries(MaiMiniMaxLiveParity PRIVATE maiagent)
+endif()
 if(MAIAGENT_BUILD_TESTS)
   enable_testing()
 

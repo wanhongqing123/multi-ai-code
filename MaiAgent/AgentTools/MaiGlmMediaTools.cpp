@@ -284,7 +284,11 @@ public:
     std::string description() const override {
         return mVideo
                    ? "GLM CogVideoX-3 specialist for paid text-to-video and image-to-video. "
-                     "Use action=discover to inspect capabilities, delegate to submit after "
+                     "When image_path is present, describe how the existing subject moves. "
+                     "For face fidelity, choose quality=quality and a 1080P-or-higher size; "
+                     "quality=speed and 720P are lower-quality previews. Quality defaults to "
+                     "quality. Use action=discover to "
+                     "inspect capabilities, delegate to submit after "
                      "confirmation, continue to check a task. Existing-video editing is not "
                      "supported. Completion is reported to the main Agent automatically."
                    : "GLM-Image specialist for paid text-to-image. Use action=discover to inspect "
@@ -310,6 +314,14 @@ public:
         if (mVideo) {
             info.capabilities.push_back(
                 {"image_to_video", true, true, ready, "PNG or JPEG input, maximum 5 MB per image"});
+            info.capabilities.push_back(
+                {"first_last_frame_video", true, true, ready,
+                 "image_url accepts exactly two ordered images: first frame, then last frame"});
+            info.capabilities.push_back(
+                {"multi_reference_video", false, false,
+                 MaiSpecialistCapabilityStatus::NotImplemented,
+                 "CogVideoX-3 video API accepts one first frame or exactly two first/last frames; "
+                 "arbitrary multi-image reference is not exposed"});
             info.capabilities.push_back({"existing_video_edit", false, false,
                                          MaiSpecialistCapabilityStatus::NotImplemented,
                                          "CogVideoX-3 generation API has no source-video input"});
@@ -426,7 +438,7 @@ private:
             const int fps = args.value("fps", 30);
             body["fps"] = fps;
             const std::string quality =
-                value(args, "quality").empty() ? "speed" : value(args, "quality");
+                value(args, "quality").empty() ? "quality" : value(args, "quality");
             if (quality != "speed" && quality != "quality")
                 return invalid("quality must be speed or quality");
             body["quality"] = quality;

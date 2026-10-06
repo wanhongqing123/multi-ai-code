@@ -1,18 +1,19 @@
 #include "agent/AgentController.h"
 #include "MaiAgentSendMediaTool.h"
+#include "MaiAppStorageTool.h"
 #include "MaiArkMediaTools.h"
 #include "MaiGlmMediaTools.h"
-#include "MaiCreativeMediaTools.h"
-#include "MaiModelStudioTools.h"
+#include "MaiKlingMediaTools.h"
 #include "MaiMemoryStore.h"
-#include "MaiAppStorageTool.h"
-#include "MaiSystemResourcesTool.h"
+#include "MaiMiniMaxMediaTools.h"
+#include "MaiModelStudioTools.h"
 #include "MaiOpenAiClient.h"
 #include "MaiSqliteStore.h"
+#include "MaiSystemResourcesTool.h"
 #if defined(MAICHAT_CV_VIDEO_ANALYSIS)
+#include "MaiCvImageTools.h"
 #include "MaiCvVideoAnalysis.h"
 #include "MaiCvVideoTools.h"
-#include "MaiCvImageTools.h"
 #include "MaiVideoMatting.h"
 #include "MaiVideoMattingTool.h"
 #endif
@@ -65,7 +66,23 @@ missing duration, resolution, or aspect ratio instead of silently using defaults
 is rejected, do not submit or retry. Use model tools for semantic changes such as person,
 clothes, scene, or action. Prefer local FFmpeg/OpenCV for geometry, crop, color,
 stabilization, frame joining, or speed changes to preserve identity pixels. Reuse existing
-cloud task IDs for progress checks instead of submitting a paid duplicate.)";
+cloud task IDs for progress checks instead of submitting a paid duplicate. For multiple user
+images, inspect the chosen video specialist's input limits and never silently drop an image.
+If the limit is exceeded, combine images with seedream_image for semantic fusion or FFmpeg for
+a visible layout, then show the plan before a paid call. On task failure, inspect the provider
+stage and reason, repair technical inputs when possible, and seek a new per-call approval before
+any paid retry. Do not loop on provider content rejection or imply that an ambiguous error
+identifies one input. Treat a specialist error as internal work to resolve, not an immediate
+user-facing answer. Keep the original task and media references. If one provider lacks balance
+or access, discover another capable configured specialist and continue the task there; never
+ask the user to recharge while a practical alternative remains. If an accepted task's status
+is unknown, preserve its task ID and do not silently submit a duplicate. After delivering the
+result, you may briefly explain a provider change. Only if no viable route remains should you
+tell the user why the task could not be completed. For technical image fixes, preserve the
+original and try the least destructive change first. Record what changed and which visual
+details were lost; use accurate
+text to preserve the user's intended appearance when the provider allows the input. Strong
+stylization is a separate creative choice, not a routine repair.)";
 
 std::string toUtf8(const QString &text) {
   const QByteArray bytes = text.toUtf8();
@@ -128,9 +145,12 @@ buildAgent(std::unique_ptr<MaiModelClient> model,
 #if defined(Q_OS_MAC) || defined(Q_OS_WIN)
   tools->add(makeMaiSystemResourcesTool(maiDesktopGpuResources));
 #endif
-  const QString cache = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
-  const QString temporaryBase = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
-  const QString temporary = QDir(temporaryBase).filePath(QStringLiteral("MaiChatAgentTemp"));
+  const QString cache =
+      QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+  const QString temporaryBase =
+      QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+  const QString temporary =
+      QDir(temporaryBase).filePath(QStringLiteral("MaiChatAgentTemp"));
   if (!cache.isEmpty() && !temporaryBase.isEmpty() && QDir().mkpath(cache) &&
       QDir().mkpath(temporary)) {
     tools->add(makeMaiAppStorageTool({toUtf8(temporary), toUtf8(cache), {}}));
@@ -155,8 +175,9 @@ buildAgent(std::unique_ptr<MaiModelClient> model,
   tools->add(makeMaiMiniMaxVideoTool(miniMaxKey));
   tools->add(makeMaiMiniMaxImageTool(miniMaxKey));
   const auto wanCredentials = [] {
-    return MaiWanCredentials{toUtf8(qEnvironmentVariable("MAICHAT_WAN_API_KEY")),
-                             toUtf8(qEnvironmentVariable("MAICHAT_WAN_WORKSPACE_ID"))};
+    return MaiWanCredentials{
+        toUtf8(qEnvironmentVariable("MAICHAT_WAN_API_KEY")),
+        toUtf8(qEnvironmentVariable("MAICHAT_WAN_WORKSPACE_ID"))};
   };
   tools->add(makeMaiWanVideoEditTool(wanCredentials));
   tools->add(makeMaiWanVideoTool(wanCredentials));
@@ -297,7 +318,8 @@ AgentController::AgentController(const ModelConfig &model,
       std::move(client), openStore(databasePath, runtime_->openError),
       model.modelName, model.approvalPolicy, hostTools,
       model.baseUrl.startsWith(QStringLiteral("https://open.bigmodel.cn/"))
-          ? model.apiKey : QString());
+          ? model.apiKey
+          : QString());
 
   connect(this, &AgentController::eventQueued, this,
           &AgentController::onEventQueued, Qt::QueuedConnection);

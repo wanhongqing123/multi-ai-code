@@ -123,6 +123,40 @@ public:
     }
 };
 
+class BalanceErrorTool final : public MaiTool {
+public:
+    std::string name() const override {
+        return "paid_video";
+    }
+    std::string description() const override {
+        return "Fake paid video provider";
+    }
+    std::string parametersSchema() const override {
+        return R"({"type":"object"})";
+    }
+    MaiToolResult execute(const std::string&, const MaiToolContext&) override {
+        return MaiToolResult::failure(
+            MaiErrorCode::Network,
+            R"({"code":"provider_error","provider_code":1102,"http_status":429,"message":"Account balance not enough"})");
+    }
+};
+
+class AlternateVideoTool final : public MaiTool {
+public:
+    std::string name() const override {
+        return "alternate_video";
+    }
+    std::string description() const override {
+        return "Fake alternative video provider";
+    }
+    std::string parametersSchema() const override {
+        return R"({"type":"object"})";
+    }
+    MaiToolResult execute(const std::string&, const MaiToolContext&) override {
+        return MaiToolResult::success(R"({"status":"submitted","task_id":"alternate-task"})");
+    }
+};
+
 AgentUnderTest makeAgent(std::vector<MaiFakeModelClient::Turn> script,
                          MaiAgent::Options options = {}, bool withTools = true) {
     auto model = std::make_unique<MaiFakeModelClient>(std::move(script));
@@ -245,6 +279,41 @@ void test_tool_loop_closes() {
     for (const auto& e : recorder.all())
         if (e.type == MaiEventType::MessagePartUpdated) ++partUpdates;
     CHECK(partUpdates >= 2);  // 至少 running 和 completed 各一次
+}
+
+void test_balance_error_routes_back_to_main_model() {
+    Workspace workspace;
+    auto model = std::make_unique<MaiFakeModelClient>(std::vector<MaiFakeModelClient::Turn>{
+        callTurn("paid_video", R"({"message":"create a cat video"})"),
+        callTurn("alternate_video", R"({"message":"create a cat video"})"),
+        sayTurn("The video task is underway.")});
+    MaiFakeModelClient* observer = model.get();
+    auto tools = std::make_unique<MaiToolRegistry>();
+    tools->add(std::make_unique<BalanceErrorTool>());
+    tools->add(std::make_unique<AlternateVideoTool>());
+    MaiAgent agent(makeMaiMemoryStore(), std::move(model), std::move(tools));
+    const std::string sessionId =
+        agent.submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
+    agent.submit(MaiSendPrompt{sessionId, "create a video"});
+    agent.waitIdle();
+
+    CHECK(observer->requestCount() == 3);
+    bool sawRecovery = false;
+    for (const MaiModelMessage& message : observer->request(1).messages) {
+        if (message.role == MaiModelRole::ToolResult &&
+            message.content.find("\"provider_code\":1102") != std::string::npos &&
+            message.content.find("Check other configured specialist tools") != std::string::npos &&
+            message.content.find("ask for a top-up") != std::string::npos)
+            sawRecovery = true;
+    }
+    CHECK(sawRecovery);
+    bool sawAlternative = false;
+    for (const MaiModelMessage& message : observer->request(2).messages) {
+        if (message.role == MaiModelRole::ToolResult &&
+            message.content.find("alternate-task") != std::string::npos)
+            sawAlternative = true;
+    }
+    CHECK(sawAlternative);
 }
 
 void test_tool_image_is_persisted_and_fed_back_to_the_model() {
@@ -634,6 +703,7 @@ void test_model_exception_becomes_a_session_error() {
 
 int main() {
     test_tool_loop_closes();
+    test_balance_error_routes_back_to_main_model();
     test_tool_image_is_persisted_and_fed_back_to_the_model();
     test_tool_image_keeps_parallel_tool_calls_in_one_assistant_batch();
     test_reasoning_only_after_tools_retries_for_final_answer();

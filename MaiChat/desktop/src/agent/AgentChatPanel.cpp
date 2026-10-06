@@ -170,6 +170,11 @@ QString paidGenerationDetail(const QString& tool, const QString& arguments) {
     QString request = input.value(QStringLiteral("message")).toString().trimmed();
     if (request.isEmpty()) request = input.value(QStringLiteral("prompt")).toString().trimmed();
     QStringList specifications;
+    const QString model = input.value(QStringLiteral("model")).toString();
+    if (model == QStringLiteral("MiniMax-H3") || model == QStringLiteral("MiniMax-H3-Max"))
+        specifications.push_back(model == QStringLiteral("MiniMax-H3-Max")
+                                     ? QStringLiteral("H3 Max")
+                                     : QStringLiteral("H3"));
     const QJsonObject production = input.value(QStringLiteral("production")).toObject();
     const int duration = input.value(QStringLiteral("duration"))
                              .toInt(production.value(QStringLiteral("duration")).toInt());
@@ -179,7 +184,10 @@ QString paidGenerationDetail(const QString& tool, const QString& arguments) {
     if (!resolution.isEmpty()) specifications.push_back(resolution);
     QString ratio = input.value(QStringLiteral("ratio")).toString();
     if (ratio.isEmpty()) ratio = production.value(QStringLiteral("ratio")).toString();
-    if (!ratio.isEmpty()) specifications.push_back(ratio);
+    if (!ratio.isEmpty())
+        specifications.push_back(ratio == QStringLiteral("adaptive")
+                                     ? QStringLiteral("按素材比例")
+                                     : ratio);
     const bool virtualAvatar =
         !input.value(QStringLiteral("virtual_avatar_asset_id")).toString().isEmpty();
     if (virtualAvatar) specifications.push_back(QStringLiteral("平台虚拟人像"));
@@ -187,18 +195,38 @@ QString paidGenerationDetail(const QString& tool, const QString& arguments) {
         specifications.push_back(QStringLiteral("已授权真人形象"));
     if (!input.value(QStringLiteral("size")).toString().isEmpty())
         specifications.push_back(input.value(QStringLiteral("size")).toString());
-    const QString videoPath = input.value(QStringLiteral("video_path")).toString();
-    if (!videoPath.isEmpty())
-        specifications.push_back(QStringLiteral("参考视频：%1").arg(QFileInfo(videoPath).fileName()));
     QJsonArray images = input.value(QStringLiteral("reference_image_paths")).toArray();
     if (images.isEmpty()) images = input.value(QStringLiteral("image_paths")).toArray();
-    const int imageCount = images.isEmpty()
-                               ? (input.value(QStringLiteral("image_path")).toString().isEmpty() &&
-                                          input.value(QStringLiteral("reference_image_path")).toString().isEmpty()
-                                      ? 0 : 1)
-                               : images.size();
+    int imageCount = images.size();
+    if (!input.value(QStringLiteral("reference_image_path")).toString().isEmpty()) ++imageCount;
+    if (!input.value(QStringLiteral("image_path")).toString().isEmpty() ||
+        !input.value(QStringLiteral("first_frame")).toString().isEmpty())
+        ++imageCount;
+    if (!input.value(QStringLiteral("last_frame_path")).toString().isEmpty() ||
+        !input.value(QStringLiteral("last_frame")).toString().isEmpty())
+        ++imageCount;
+    int videoCount = !input.value(QStringLiteral("video_path")).toString().isEmpty() ||
+                             !input.value(QStringLiteral("reference_video_path")).toString().isEmpty() ||
+                             !input.value(QStringLiteral("reference_video")).toString().isEmpty()
+                         ? 1
+                         : 0;
+    int audioCount = !input.value(QStringLiteral("reference_audio_path")).toString().isEmpty() ||
+                             !input.value(QStringLiteral("reference_audio")).toString().isEmpty()
+                         ? 1
+                         : 0;
+    const QJsonArray content = input.value(QStringLiteral("content")).toArray();
+    for (const QJsonValue& item : content) {
+        const QString type = item.toObject().value(QStringLiteral("type")).toString();
+        if (type == QStringLiteral("image_url")) ++imageCount;
+        if (type == QStringLiteral("video_url")) ++videoCount;
+        if (type == QStringLiteral("audio_url")) ++audioCount;
+    }
     if (imageCount > 0)
         specifications.push_back(QStringLiteral("参考图片 %1 张").arg(imageCount));
+    if (videoCount > 0)
+        specifications.push_back(QStringLiteral("参考视频 %1 个").arg(videoCount));
+    if (audioCount > 0)
+        specifications.push_back(QStringLiteral("参考音频 %1 个").arg(audioCount));
     const bool authorizedPortrait =
         !input.value(QStringLiteral("authorized_portrait_asset_id")).toString().isEmpty();
     QString detail = virtualAvatar

@@ -2349,14 +2349,20 @@ private struct AIPermissionCard: View {
     }
     private var paidDetails: String {
         let production = fields["production"] as? [String: Any] ?? [:]
+        let content = fields["content"] as? [[String: Any]] ?? []
         var details: [String] = []
+        if permission.tool == "minimax_video", let model = fields["model"] as? String {
+            details.append(model == "MiniMax-H3-Max" ? "H3 Max" : "H3")
+        }
         if let duration = (fields["duration"] as? Int) ?? (production["duration"] as? Int) {
             details.append("\(duration) 秒")
         }
         if let resolution = (fields["resolution"] as? String) ??
             (production["resolution"] as? String) { details.append(resolution) }
         if let ratio = (fields["ratio"] as? String) ??
-            (production["ratio"] as? String) { details.append(ratio) }
+            (production["ratio"] as? String) {
+            details.append(ratio == "adaptive" ? "按素材比例" : ratio)
+        }
         if (fields["virtual_avatar_asset_id"] as? String)?.isEmpty == false {
             details.append("平台虚拟人像")
         }
@@ -2364,12 +2370,24 @@ private struct AIPermissionCard: View {
             details.append("已授权真人形象")
         }
         if let size = fields["size"] as? String { details.append(size) }
-        let imageCount = (fields["reference_image_paths"] as? [String])?.count ??
-            (fields["image_paths"] as? [String])?.count ??
-            ((fields["reference_image_path"] as? String)?.isEmpty == false ? 1 : nil) ??
-            ((fields["image_path"] as? String)?.isEmpty == false ? 1 : 0)
+        let imageCount = ((fields["reference_image_paths"] as? [String])?.count ??
+                          (fields["image_paths"] as? [String])?.count ?? 0)
+            + (content.filter { ($0["type"] as? String) == "image_url" }.count)
+            + (((fields["reference_image_path"] as? String)?.isEmpty == false) ? 1 : 0)
+            + ((((fields["image_path"] as? String)?.isEmpty == false) ||
+                ((fields["first_frame"] as? String)?.isEmpty == false)) ? 1 : 0)
+            + ((((fields["last_frame_path"] as? String)?.isEmpty == false) ||
+                ((fields["last_frame"] as? String)?.isEmpty == false)) ? 1 : 0)
         if imageCount > 0 { details.append("参考图片 \(imageCount) 张") }
-        if (fields["video_path"] as? String)?.isEmpty == false { details.append("参考视频 1 个") }
+        let videoCount = content.filter { ($0["type"] as? String) == "video_url" }.count
+            + ((((fields["reference_video_path"] as? String)?.isEmpty == false) ||
+                ((fields["reference_video"] as? String)?.isEmpty == false) ||
+                ((fields["video_path"] as? String)?.isEmpty == false)) ? 1 : 0)
+        if videoCount > 0 { details.append("参考视频 \(videoCount) 个") }
+        let audioCount = content.filter { ($0["type"] as? String) == "audio_url" }.count
+            + ((((fields["reference_audio_path"] as? String)?.isEmpty == false) ||
+                ((fields["reference_audio"] as? String)?.isEmpty == false)) ? 1 : 0)
+        if audioCount > 0 { details.append("参考音频 \(audioCount) 个") }
         return details.joined(separator: " · ")
     }
     private var formattedInput: String {

@@ -3,33 +3,34 @@
 
 #include "MaiAgent.h"
 #include "MaiAgentSendMediaTool.h"
+#include "MaiAppStorageTool.h"
 #include "MaiArkMediaTools.h"
-#include "MaiGlmMediaTools.h"
-#include "MaiCreativeMediaTools.h"
-#include "MaiModelStudioTools.h"
+#include "MaiCurlTools.h"
+#include "MaiCvImageTools.h"
 #include "MaiCvVideoAnalysis.h"
 #include "MaiCvVideoTools.h"
-#include "MaiCvImageTools.h"
-#include "MaiCurlTools.h"
 #include "MaiFfmpegTools.h"
 #include "MaiFilePath.h"
 #include "MaiFileSystem.h"
 #include "MaiFileTools.h"
-#include "MaiOpenSslTool.h"
-#include "MaiOpenSslCliTool.h"
-#include "MaiAppStorageTool.h"
-#include "MaiSystemResourcesTool.h"
+#include "MaiGlmMediaTools.h"
+#include "MaiKlingMediaTools.h"
+#include "MaiMiniMaxMediaTools.h"
+#include "MaiModelStudioTools.h"
 #include "MaiNetworkIpTool.h"
-#include "MaiSshTool.h"
 #include "MaiOpenAiClient.h"
+#include "MaiOpenSslCliTool.h"
+#include "MaiOpenSslTool.h"
 #include "MaiPdfTool.h"
 #include "MaiQuestionTool.h"
 #include "MaiSqliteStore.h"
+#include "MaiSshTool.h"
+#include "MaiSystemResourcesTool.h"
 #include "MaiTimeTool.h"
 #include "MaiTodoWriteTool.h"
+#include "MaiVideoGeometryTool.h"
 #include "MaiVideoMatting.h"
 #include "MaiVideoMattingTool.h"
-#include "MaiVideoGeometryTool.h"
 #include "MaiViewImageTool.h"
 #include "MaiZlibTool.h"
 #include "mai_fftools_embed.h"
@@ -75,15 +76,56 @@ constexpr auto kMarkdownBaseInstructions =
     "When the user writes in Chinese, write the final answer and any reasoning "
     "text exposed by the model in Simplified Chinese. Preserve code, paths, "
     "commands, and quoted tool output in their original form. "
-    "Before calling delegate or revise on any paid image or video generation specialist, "
-    "show the user the concrete plan and let the tool's per-call approval be the final "
-    "confirmation. For video, name subject, clothing, scene, action, duration, resolution, "
-    "and aspect ratio. Ask for missing duration, resolution, or aspect ratio instead of "
-    "silently using defaults. If the user rejects the approval, do not submit or retry. "
-    "Use video/image model tools for semantic changes such as person, clothes, scene, or "
-    "action. Prefer local FFmpeg/OpenCV for geometry, crop, color, stabilization, frame "
-    "joining, or speed changes so identity pixels can remain untouched. Reuse an existing "
-    "cloud task ID when checking progress; do not submit a paid duplicate.";
+    "Before calling delegate or revise on any paid image or video generation "
+    "specialist, "
+    "show the user the concrete plan and let the tool's per-call approval be "
+    "the final "
+    "confirmation. For video, name subject, clothing, scene, action, duration, "
+    "resolution, "
+    "and aspect ratio. Ask for missing duration, resolution, or aspect ratio "
+    "instead of "
+    "silently using defaults. If the user rejects the approval, do not submit "
+    "or retry. "
+    "Use video/image model tools for semantic changes such as person, clothes, "
+    "scene, or "
+    "action. Prefer local FFmpeg/OpenCV for geometry, crop, color, "
+    "stabilization, frame "
+    "joining, or speed changes so identity pixels can remain untouched. Reuse "
+    "an existing "
+    "cloud task ID when checking progress; do not submit a paid duplicate. "
+    "For multiple user images, inspect the chosen video specialist's input "
+    "limits and never "
+    "silently drop an image. If the limit is exceeded, combine images with "
+    "seedream_image "
+    "for semantic fusion or FFmpeg for a visible layout, then show the plan "
+    "before the paid "
+    "call. On task failure, inspect the provider stage and reason, repair "
+    "technical inputs "
+    "when possible, and seek a new per-call approval before any paid retry. Do "
+    "not loop on "
+    "a provider content rejection or imply that an ambiguous error identifies "
+    "one input. "
+    "Treat a specialist error as internal work to resolve, not an immediate "
+    "user-facing "
+    "answer. Keep the original task and media references. If one provider "
+    "lacks balance or "
+    "access, discover another capable configured specialist and continue the "
+    "task there; "
+    "never ask the user to recharge while a practical alternative remains. If "
+    "an accepted "
+    "task's status is unknown, preserve its task ID and do not silently submit "
+    "a duplicate. "
+    "After delivering the result, you may briefly explain any provider change. "
+    "Only if no "
+    "viable route remains should you tell the user why the task could not be "
+    "completed. "
+    "For technical image fixes, preserve the original and try the least "
+    "destructive change "
+    "first. Record what changed and what visual details were lost; use "
+    "accurate text to "
+    "preserve the user's intended appearance when the provider allows the "
+    "input. Strong "
+    "stylization is a separate creative choice, not a routine repair.";
 
 std::string encodeBase64(const std::string &input) {
   constexpr char kAlphabet[] =
@@ -181,52 +223,64 @@ struct MaiMobileAgent {
     tools->add(makeMaiZlibCompressTool());
     tools->add(makeMaiZlibDecompressTool());
     tools->add(makeMaiOpenSslCliTool());
-    tools->add(makeMaiSystemResourcesTool([dispatcher = hostTools]()
-        -> std::optional<MaiGpuResources> {
-      const MaiToolResult response = callMaiMobileHostTool(dispatcher, "mobile_gpu_info", "{}");
-      if (response.hasError()) return std::nullopt;
-      const Json parsed = Json::parse(response.output(), nullptr, false);
-      if (!parsed.is_object() || !parsed.value("available", false)) return std::nullopt;
-      MaiGpuResources gpu;
-      gpu.name = parsed.value("name", std::string{});
-      gpu.unifiedMemory = parsed.value("unified_memory", false);
-      if (parsed.value("app_allocated_bytes", Json{}).is_number_unsigned())
-        gpu.appAllocatedBytes = parsed["app_allocated_bytes"].get<std::uint64_t>();
-      if (parsed.value("recommended_working_set_bytes", Json{}).is_number_unsigned())
-        gpu.recommendedWorkingSetBytes =
-            parsed["recommended_working_set_bytes"].get<std::uint64_t>();
-      return gpu;
-    }));
+    tools->add(makeMaiSystemResourcesTool(
+        [dispatcher = hostTools]() -> std::optional<MaiGpuResources> {
+          const MaiToolResult response =
+              callMaiMobileHostTool(dispatcher, "mobile_gpu_info", "{}");
+          if (response.hasError())
+            return std::nullopt;
+          const Json parsed = Json::parse(response.output(), nullptr, false);
+          if (!parsed.is_object() || !parsed.value("available", false))
+            return std::nullopt;
+          MaiGpuResources gpu;
+          gpu.name = parsed.value("name", std::string{});
+          gpu.unifiedMemory = parsed.value("unified_memory", false);
+          if (parsed.value("app_allocated_bytes", Json{}).is_number_unsigned())
+            gpu.appAllocatedBytes =
+                parsed["app_allocated_bytes"].get<std::uint64_t>();
+          if (parsed.value("recommended_working_set_bytes", Json{})
+                  .is_number_unsigned())
+            gpu.recommendedWorkingSetBytes =
+                parsed["recommended_working_set_bytes"].get<std::uint64_t>();
+          return gpu;
+        }));
     tools->add(makeMaiNetworkIpTool(config.caBundlePath));
     if (request.value("temporaryDirectory", Json{}).is_string() &&
         request.value("cacheDirectory", Json{}).is_string()) {
-      tools->add(makeMaiAppStorageTool({
-          request["temporaryDirectory"].get<std::string>(),
-          request["cacheDirectory"].get<std::string>(),
-          request.at("workspace").get<std::string>()}));
+      tools->add(makeMaiAppStorageTool(
+          {request["temporaryDirectory"].get<std::string>(),
+           request["cacheDirectory"].get<std::string>(),
+           request.at("workspace").get<std::string>()}));
     }
-    const auto sshPassword = [dispatcher = hostTools](const std::string &host, int port,
-                                                      const std::string &username)
-        -> MaiResult<std::string> {
+    const auto sshPassword =
+        [dispatcher =
+             hostTools](const std::string &host, int port,
+                        const std::string &username) -> MaiResult<std::string> {
       const MaiToolResult response = callMaiMobileHostTool(
           dispatcher, "mobile_ssh_password",
           Json{{"host", host}, {"port", port}, {"username", username}}.dump());
-      if (response.hasError()) return response.error();
+      if (response.hasError())
+        return response.error();
       const Json parsed = Json::parse(response.output(), nullptr, false);
       if (!parsed.is_object() || !parsed.value("password", Json{}).is_string())
-        return {MaiErrorCode::Protocol, "SSH password dialog returned no password"};
+        return {MaiErrorCode::Protocol,
+                "SSH password dialog returned no password"};
       return parsed["password"].get<std::string>();
     };
-    const auto sshTrust = [dispatcher = hostTools](const std::string &host, int port,
-                                                   const std::string &fingerprint)
-        -> MaiResult<bool> {
+    const auto sshTrust =
+        [dispatcher =
+             hostTools](const std::string &host, int port,
+                        const std::string &fingerprint) -> MaiResult<bool> {
       const MaiToolResult response = callMaiMobileHostTool(
           dispatcher, "mobile_ssh_trust_host",
-          Json{{"host", host}, {"port", port}, {"fingerprint", fingerprint}}.dump());
-      if (response.hasError()) return response.error();
+          Json{{"host", host}, {"port", port}, {"fingerprint", fingerprint}}
+              .dump());
+      if (response.hasError())
+        return response.error();
       const Json parsed = Json::parse(response.output(), nullptr, false);
       if (!parsed.is_object() || !parsed.value("trusted", Json{}).is_boolean())
-        return {MaiErrorCode::Protocol, "SSH host-key dialog returned no decision"};
+        return {MaiErrorCode::Protocol,
+                "SSH host-key dialog returned no decision"};
       return parsed["trusted"].get<bool>();
     };
     tools->add(makeMaiSshTool(sshPassword, sshTrust));
@@ -276,7 +330,8 @@ struct MaiMobileAgent {
     const auto klingKey = [dispatcher = hostTools]() -> std::string {
       const MaiToolResult result =
           callMaiMobileHostTool(dispatcher, "kling_api_key", "{}");
-      if (result.hasError()) return {};
+      if (result.hasError())
+        return {};
       const Json response = Json::parse(result.output(), nullptr, false);
       return response.is_object() && response.value("key", Json{}).is_string()
                  ? response["key"].get<std::string>()
@@ -287,7 +342,8 @@ struct MaiMobileAgent {
     const auto miniMaxKey = [dispatcher = hostTools]() -> std::string {
       const MaiToolResult result =
           callMaiMobileHostTool(dispatcher, "minimax_api_key", "{}");
-      if (result.hasError()) return {};
+      if (result.hasError())
+        return {};
       const Json response = Json::parse(result.output(), nullptr, false);
       return response.is_object() && response.value("key", Json{}).is_string()
                  ? response["key"].get<std::string>()
@@ -295,7 +351,8 @@ struct MaiMobileAgent {
     };
     tools->add(makeMaiMiniMaxVideoTool(miniMaxKey, config.caBundlePath));
     tools->add(makeMaiMiniMaxImageTool(miniMaxKey, config.caBundlePath));
-    const auto wanCredentials = [dispatcher = hostTools]() -> MaiWanCredentials {
+    const auto wanCredentials = [dispatcher =
+                                     hostTools]() -> MaiWanCredentials {
       const MaiToolResult result =
           callMaiMobileHostTool(dispatcher, "wan_credentials", "{}");
       if (result.hasError())

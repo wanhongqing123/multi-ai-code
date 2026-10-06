@@ -422,6 +422,7 @@ if(MAIAGENT_BUILD_TESTS)
       MaiSshToolTests # approval boundary and optional local SSH transport integration
       MaiArkMediaToolsTests # Ark model tools, dynamic key and input boundary checks
       MaiGlmMediaToolsTests # GLM model tools, credentials and async task boundaries
+      MaiSpecialistNotificationTests # terminal failures notify without relying on the main model
       MaiModelStudioToolsTests # Wan/Qwen capabilities, credentials and workspace boundaries
       MaiCvImageToolsTests # OpenCV image wrapper path, output and parameter boundaries
       MaiAgentSendMediaToolTests # 当前会话媒体交付、工作区边界与类型校验

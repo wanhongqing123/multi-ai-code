@@ -492,7 +492,20 @@ final class AIAssistantModel: ObservableObject {
             let result = try await backend.snapshot(session: target, limit: 30, force: force)
             guard target == selected, result.changed == true else { return }
             if let value = result.sessions, value != sessions { sessions = value }
-            if let value = result.messages { mergeMessages(value) }
+            if let value = result.messages {
+                let knownIDs = Set(messages.map(\.id))
+                let newFailure = value.contains { message in
+                    !knownIDs.contains(message.id) && message.parts.contains { part in
+                        part.kind == "text" &&
+                        ((part.text?.hasPrefix("Video task failed. ") == true) ||
+                         (part.text?.hasPrefix("Image task failed. ") == true))
+                    }
+                }
+                mergeMessages(value)
+                if newFailure {
+                    showTransientError("生成任务失败，详情见对话。", duration: .seconds(8))
+                }
+            }
             if let value = result.permissions, value != permissions { permissions = value }
             if let value = result.questions, value != questions { questions = value }
             configured = result.configured ?? false

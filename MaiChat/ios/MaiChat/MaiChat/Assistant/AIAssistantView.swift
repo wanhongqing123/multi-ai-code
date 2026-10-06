@@ -810,9 +810,20 @@ private struct AIMessageRow: View {
                 }
                 ForEach(message.parts) { part in
                     if part.kind == "text", let text = part.text, !text.isEmpty {
-                        MarkdownLikeText(text, retainsPreviousWhilePreparing: true,
-                                         bodyFont: ChatTypography.body, assistantTypography: true)
-                            .foregroundStyle(RemoteIMStyle.textPrimary)
+                        if let failure = specialistFailureText(text) {
+                            Label(failure, systemImage: "exclamationmark.triangle.fill")
+                                .font(ChatTypography.body)
+                                .foregroundStyle(.red)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(12)
+                                .background(Color.red.opacity(0.08),
+                                            in: RoundedRectangle(cornerRadius: 12))
+                                .textSelection(.enabled)
+                        } else {
+                            MarkdownLikeText(text, retainsPreviousWhilePreparing: true,
+                                             bodyFont: ChatTypography.body, assistantTypography: true)
+                                .foregroundStyle(RemoteIMStyle.textPrimary)
+                        }
                     }
                 }
                 if message.active && reasoningText.isEmpty && toolParts.isEmpty &&
@@ -854,6 +865,15 @@ private struct AIMessageRow: View {
     }
     private var reasoningParts: [AIPart] {
         message.parts.filter { $0.kind == "reasoning" }
+    }
+    private func specialistFailureText(_ text: String) -> String? {
+        if text.hasPrefix("Video task failed. ") {
+            return "视频任务失败：" + String(text.dropFirst("Video task failed. ".count))
+        }
+        if text.hasPrefix("Image task failed. ") {
+            return "图片任务失败：" + String(text.dropFirst("Image task failed. ".count))
+        }
+        return nil
     }
     private var reasoningText: String {
         var seen = Set<String>()

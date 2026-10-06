@@ -1,5 +1,6 @@
 #include "MaiAgent.h"
 
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -81,6 +82,32 @@ std::string jsonText(const nlohmann::json& value, const char* field) {
     return value.is_object() && value.contains(field) && value[field].is_string()
                ? value[field].get<std::string>()
                : std::string{};
+}
+
+std::string specialistFailureNotice(const MaiSpecialistTask& task) {
+    std::string reason = task.errorText.empty() ? "The provider gave no reason." : task.errorText;
+    std::replace_if(
+        reason.begin(), reason.end(), [](unsigned char byte) { return byte < 0x20; }, ' ');
+    if (reason.size() > 500) {
+        std::size_t length = 500;
+        while (length > 0 && (static_cast<unsigned char>(reason[length]) & 0xc0) == 0x80) --length;
+        reason.resize(length);
+        reason += "...";
+    }
+    const bool image = task.specialistName.find("image") != std::string::npos;
+    return std::string(image ? "Image task failed. " : "Video task failed. ") + reason;
+}
+
+bool isTerminalSpecialistError(const nlohmann::json& error) {
+    const std::string code = jsonText(error, "code");
+    if (code == "task_failed" || code == "not_configured" || code == "not_found" ||
+        code == "invalid_input" || code == "protocol")
+        return true;
+    if (code != "provider_error" || !error.is_object() || !error.contains("http_status") ||
+        !error["http_status"].is_number_integer())
+        return false;
+    const auto& status = error["http_status"];
+    return status >= 400 && status < 500 && status != 408 && status != 429;
 }
 
 }  // namespace
@@ -245,11 +272,12 @@ void MaiAgent::pollSpecialistTasks() {
         const MaiMillis checkedAt = MaiTime::getCurrentTime();
         if (result.hasError()) {
             const Json error = Json::parse(result.error().message(), nullptr, false);
-            if (jsonText(error, "code") == "task_failed") {
+            if (isTerminalSpecialistError(error)) {
                 const std::string message = jsonText(error, "message");
                 mRuntime->store->finishSpecialistTask(
                     task.id, task.ownerSessionId, MaiSpecialistTaskStatus::Failed,
-                    message.empty() ? result.error().message() : message, {}, checkedAt);
+                    message.empty() ? "The provider did not explain the task failure." : message,
+                    {}, checkedAt);
             } else {
                 mRuntime->store->updateSpecialistProgress(task.id, task.ownerSessionId, checkedAt);
             }
@@ -257,7 +285,9 @@ void MaiAgent::pollSpecialistTasks() {
         }
         const Json reply = Json::parse(result.output(), nullptr, false);
         if (!reply.is_object()) {
-            mRuntime->store->updateSpecialistProgress(task.id, task.ownerSessionId, checkedAt);
+            mRuntime->store->finishSpecialistTask(
+                task.id, task.ownerSessionId, MaiSpecialistTaskStatus::Failed,
+                "The specialist returned invalid progress data.", {}, checkedAt);
             continue;
         }
         const std::string status = jsonText(reply, "status");
@@ -266,14 +296,22 @@ void MaiAgent::pollSpecialistTasks() {
             std::uint64_t bytes = 0;
             if (path.empty() || !MaiFileSystem::fileSize(MaiFilePath::fromUtf8(path), bytes) ||
                 bytes == 0) {
-                mRuntime->store->updateSpecialistProgress(task.id, task.ownerSessionId, checkedAt);
+                mRuntime->store->finishSpecialistTask(
+                    task.id, task.ownerSessionId, MaiSpecialistTaskStatus::Failed,
+                    "The provider completed the task, but no media output was available.", {},
+                    checkedAt);
                 continue;
             }
             mRuntime->store->finishSpecialistTask(task.id, task.ownerSessionId,
                                                   MaiSpecialistTaskStatus::Succeeded,
                                                   jsonText(reply, "reply"), path, checkedAt);
-        } else {
+        } else if (status == "submitted" || status == "queued" || status == "running" ||
+                   status == "PENDING" || status == "RUNNING" || status == "PROCESSING") {
             mRuntime->store->updateSpecialistProgress(task.id, task.ownerSessionId, checkedAt);
+        } else {
+            mRuntime->store->finishSpecialistTask(
+                task.id, task.ownerSessionId, MaiSpecialistTaskStatus::Failed,
+                "The provider returned an unknown task status.", {}, checkedAt);
         }
     }
     for (const MaiSpecialistTask& task : mRuntime->store->listUnnotifiedSpecialistTasks(16)) {
@@ -284,7 +322,7 @@ void MaiAgent::pollSpecialistTasks() {
 }
 
 void MaiAgent::forwardSpecialistReply(const MaiSpecialistTask& task) {
-    if (!mRuntime->model) return;
+    if (!mRuntime->model && task.status != MaiSpecialistTaskStatus::Failed) return;
     auto turn = std::make_shared<ActiveTurn>();
     {
         std::lock_guard<std::mutex> lock(mRuntime->mutex);
@@ -300,18 +338,43 @@ void MaiAgent::forwardSpecialistReply(const MaiSpecialistTask& task) {
     const std::string messageId = reservation.value();
     const auto existing =
         mRuntime->store->listMessagesPage(task.ownerSessionId, messageId + "~", 1);
-    MaiMessage assistant;
+    MaiMessage assistant = task.status == MaiSpecialistTaskStatus::Failed && !existing.empty() &&
+                                   existing.front().id == messageId
+                               ? existing.front()
+                               : MaiMessage{};
     assistant.id = messageId;
     assistant.role = MaiRole::Assistant;
-    assistant.created = !existing.empty() && existing.front().id == messageId
-                            ? existing.front().created
-                            : MaiTime::getCurrentTime();
+    if (assistant.created == 0) assistant.created = MaiTime::getCurrentTime();
+    assistant.completed = 0;
+    if (task.status == MaiSpecialistTaskStatus::Failed && !assistant.parts.empty()) {
+        const auto* text = std::get_if<MaiTextPart>(&assistant.parts.front().body);
+        const bool statusNotice =
+            text != nullptr && (text->text.rfind("Image task failed. ", 0) == 0 ||
+                                text->text.rfind("Video task failed. ", 0) == 0);
+        if (statusNotice)
+            assistant.parts.resize(1);
+        else
+            assistant.parts.clear();
+    }
+    if (task.status == MaiSpecialistTaskStatus::Failed && assistant.parts.empty()) {
+        MaiMessagePart notice;
+        notice.id = MaiIdGenerator::newPartId();
+        notice.created = MaiTime::getCurrentTime();
+        notice.body = MaiTextPart{specialistFailureNotice(task)};
+        assistant.parts.push_back(std::move(notice));
+    }
     mRuntime->store->putMessage(task.ownerSessionId, assistant);
     if (mRuntime->store->lastWriteError()) {
         mRuntime->retire(task.ownerSessionId, turn);
         return;
     }
     mRuntime->emitter.emitMessage(MaiEventType::MessageUpdated, task.ownerSessionId, assistant.id);
+    if (!mRuntime->model) {
+        mRuntime->store->markSpecialistNotified(task.id, task.ownerSessionId, messageId,
+                                                MaiTime::getCurrentTime());
+        mRuntime->retire(task.ownerSessionId, turn);
+        return;
+    }
     using Json = nlohmann::json;
     std::uint64_t outputBytes = 0;
     const bool outputAvailable =

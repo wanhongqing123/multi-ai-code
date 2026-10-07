@@ -150,6 +150,9 @@ void ReplySuggestionController::setConfig(const Config &config) {
   MaiModelConfig modelConfig;
   modelConfig.baseUrl = toUtf8(config.baseUrl.trimmed());
   modelConfig.apiKey = toUtf8(config.apiKey);
+  modelConfig.wire = config.modelName == QStringLiteral("deepseek-flash")
+                         ? MaiWireApi::Responses
+                         : MaiWireApi::ChatCompletions;
   runtime_->model = makeMaiModelClient(std::move(modelConfig));
 }
 

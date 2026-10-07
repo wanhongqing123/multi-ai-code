@@ -15,6 +15,7 @@
 #include "MaiFilePath.h"
 #include "MaiFileSystem.h"
 #include "MaiPathGuard.h"
+#include "MaiResponsesClient.h"
 
 namespace {
 
@@ -435,8 +436,8 @@ bool waitBeforeRetry(long delayMs, const std::atomic<bool>& cancel) {
     return !cancel.load(std::memory_order_relaxed);
 }
 
-// Chat Completions 的实现。Responses 将来是同一个接口的另一个实现，
-// 上层一行都不用改——这正是把 MaiModelClient 做成中立抽象的目的。
+// Chat Completions 的实现。Responses 在独立的 wire 文件里，
+// 上层通过同一个 MaiModelClient 接口使用。
 class ChatCompletionsClient final : public MaiModelClient {
 public:
     explicit ChatCompletionsClient(MaiModelConfig config) : mConfig(std::move(config)) {}
@@ -602,14 +603,12 @@ std::unique_ptr<MaiModelClient> makeMaiModelClient(MaiModelConfig config) {
     switch (config.wire) {
         case MaiWireApi::ChatCompletions:
             return std::make_unique<ChatCompletionsClient>(std::move(config));
-        case MaiWireApi::Responses:
-            // 枚举已经立着，加实现时只动这里。
-            return nullptr;
+        case MaiWireApi::Responses: return makeMaiResponsesClient(std::move(config));
     }
     return nullptr;
 }
 
-const char* to_string(MaiWireApi wireApi) {
+const char* maiWireApiToString(MaiWireApi wireApi) {
     switch (wireApi) {
         case MaiWireApi::ChatCompletions: return "chat_completions";
         case MaiWireApi::Responses: return "responses";

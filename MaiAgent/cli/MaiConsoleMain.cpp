@@ -56,7 +56,7 @@ namespace {
 // 直接把 UTF-8 字节 fwrite 给 stdout，屏幕上出来的是一堆问号；
 // 直接把控制台给的字节当 UTF-8 送进核心，模型收到的是乱码。两个方向都得转。
 //
-// 这个坑在这个项目里已经付过两次代价了——端到端脚本刻意不走 shell 传参就是为了躲开它（见 
+// 这个坑在这个项目里已经付过两次代价了——端到端脚本刻意不走 shell 传参就是为了躲开它（见
 // tests/e2e/console_e2e.py 开头）。
 
 #if defined(_WIN32)
@@ -342,8 +342,7 @@ std::string MaiConsoleRenderer::format(const MaiEvent& event) {
                                    event.type == MaiEventType::QuestionAsked;
             if (!needsUser) {
                 if (event.type != MaiEventType::SessionIdle) return {};
-                return atLineStart(mAtLineStart,
-                                   "[sub-agent " + event.sessionId + "] finished\n");
+                return atLineStart(mAtLineStart, "[sub-agent " + event.sessionId + "] finished\n");
             }
             return atLineStart(mAtLineStart, "[sub-agent " + event.sessionId + "] " +
                                                  maiEventTypeToString(event.type) + "\n");
@@ -379,10 +378,8 @@ std::string MaiConsoleRenderer::format(const MaiEvent& event) {
         case MaiEventType::QuestionAsked:
             // 问题本身不在事件里（它在那个工具 part 的参数上，重复一份就有两个真相），
             // 所以这里只说怎么答。问题文本由 /ans 之前的那条 part 更新打出来。
-            return atLineStart(mAtLineStart,
-                               "       the model is asking -> /ans <your answer>\n");
-        case MaiEventType::QuestionAnswered:
-            return atLineStart(mAtLineStart, "       answered\n");
+            return atLineStart(mAtLineStart, "       the model is asking -> /ans <your answer>\n");
+        case MaiEventType::QuestionAnswered: return atLineStart(mAtLineStart, "       answered\n");
         default:
             // SessionCreated / SessionDeleted / MessageUpdated / MessageRemoved /
             // MessagePartRemoved / SessionStatus：控制台上没什么好说的。
@@ -475,6 +472,7 @@ void usage() {
         "                         http://127.0.0.1:11434/v1              (Ollama)\n"
         "  --model-key <key>    API key; MAIAGENT_API_KEY works too\n"
         "  --model <name>       Default model name, default glm-5.3\n"
+        "  --wire <name>        chat_completions (default) or responses\n"
         "  --db <path>          SQLite file for sessions and messages.\n"
         "                       Omitted means in-memory: everything is gone on exit.\n"
         "  --reasoning          Also print the model's thinking. Off by default: it\n"
@@ -534,8 +532,7 @@ bool replyOldestPermission(MaiAgent& agent, MaiConsoleRenderer& renderer,
 }
 
 // 和授权一样，待回答的列表直接问核心，不在这边存一份——存一份就有两个真相。
-bool replyOldestQuestion(MaiAgent& agent, MaiConsoleRenderer& renderer,
-                         const std::string& answer) {
+bool replyOldestQuestion(MaiAgent& agent, MaiConsoleRenderer& renderer, const std::string& answer) {
     std::vector<MaiQuestionRequest> pending = agent.listPendingQuestions();
     if (pending.empty()) {
         renderer.say("[console] nothing is waiting for an answer\n");
@@ -613,6 +610,7 @@ int main(int argc, char** argv) {
     std::string modelUrl;
     std::string modelKey = envOrEmpty("MAIAGENT_API_KEY");
     std::string modelName = "glm-5.3";
+    MaiWireApi wire = MaiWireApi::ChatCompletions;
     std::string databasePath;
     MaiMillis permissionTimeoutMs = 0;
     bool showReasoning = false;
@@ -631,6 +629,16 @@ int main(int argc, char** argv) {
             modelKey = argv[++i];
         } else if (argument == "--model" && hasNext) {
             modelName = argv[++i];
+        } else if (argument == "--wire" && hasNext) {
+            const std::string selected = argv[++i];
+            if (selected == "responses")
+                wire = MaiWireApi::Responses;
+            else if (selected == "chat_completions")
+                wire = MaiWireApi::ChatCompletions;
+            else {
+                std::fprintf(stderr, "unknown wire protocol: %s\n", selected.c_str());
+                return 2;
+            }
         } else if (argument == "--db" && hasNext) {
             databasePath = argv[++i];
         } else if (argument == "--permission-timeout" && hasNext) {
@@ -656,6 +664,7 @@ int main(int argc, char** argv) {
         MaiModelConfig config;
         config.baseUrl = modelUrl;
         config.apiKey = modelKey;
+        config.wire = wire;
         model = makeMaiModelClient(config);
     }
 

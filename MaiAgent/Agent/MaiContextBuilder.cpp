@@ -182,9 +182,11 @@ std::vector<MaiModelMessage> MaiContextBuilder::build(
                 if (!pending.content.empty()) pending.content += "\n";
                 pending.content += text->text;
             } else if (const auto* toolResult = std::get_if<MaiReasoningPart>(&part.body)) {
-                // 默认不回灌。reasoning 是模型的草稿，喂回去会污染下一轮的判断。
+                flush_batch();
+                if (!pending.reasoning.empty()) pending.reasoning += "\n";
+                pending.reasoning += toolResult->text;
+                // 旧 Chat 路径默认不把草稿拼到可见正文；Responses 单独发送 reasoning item。
                 if (mOptions.includeReasoning) {
-                    flush_batch();
                     if (!pending.content.empty()) pending.content += "\n";
                     pending.content += toolResult->text;
                 }

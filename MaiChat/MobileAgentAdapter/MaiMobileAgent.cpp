@@ -210,6 +210,13 @@ struct MaiMobileAgent {
     config.baseUrl = request.at("baseUrl").get<std::string>();
     config.apiKey = request.value("apiKey", "");
     config.caBundlePath = request.value("caBundle", "");
+    const std::string wire = request.value("wire", std::string{});
+    if (wire == "responses" ||
+        (wire.empty() &&
+         request.value("model", std::string{}) == "deepseek-flash"))
+      config.wire = MaiWireApi::Responses;
+    else if (!wire.empty() && wire != "chat_completions")
+      throw std::runtime_error("Unsupported model wire protocol.");
     MaiFfmpegEngine ffmpegEngine{
         mai_ffmpeg_execute,       mai_ffmpeg_set_cancel_check,
         mai_ffprobe_execute,      mai_ffprobe_set_cancel_check,

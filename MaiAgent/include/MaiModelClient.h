@@ -18,8 +18,8 @@
 // 要么在上层写一堆 if。
 
 enum class MaiWireApi {
-    ChatCompletions,  // 第一版只实现这个
-    Responses,        // 枚举先立着，加实现时只动工厂函数
+    ChatCompletions,
+    Responses,
 };
 
 const char* maiWireApiToString(MaiWireApi wire);
@@ -57,7 +57,7 @@ enum class MaiModelRole {
     System,  // 某一圈临时追加的系统指令，不属于对话历史
     User,
     Assistant,
-    ToolResult,  // 一次工具调用的结果。线格式里是 role="tool"
+    ToolResult,  // 一次工具调用的结果。Chat 是 role="tool"；Responses 是 function_call_output。
 };
 
 // 发给模型的一条消息。
@@ -81,9 +81,12 @@ struct MaiModelMessage {
     // 正文。assistant 发起工具调用的那条可以是空的（那时候 invocations 非空），
     // 线格式里对应 content: null。
     std::string content;
+    // Responses 线协议可把同一轮原有的思考内容作为 reasoning item 回传。
+    // Chat Completions 忽略此字段，避免把草稿混入可见正文。
+    std::string reasoning;
     std::vector<MaiModelImage> images;
-    // ToolResult 时**必填**：这条结果对应哪次调用。线上字段名是 tool_call_id（snake_case），
-    // 别写成驼峰——那个 bug 犯过一次，见 MaiModelClientTests 里的线格式用例。
+    // ToolResult 时**必填**：这条结果对应哪次调用。Chat 线上字段名为 tool_call_id，
+    // Responses 使用 call_id；两种格式都必须原样配对，见 MaiModelClientTests。
     std::string toolCallId;
     // Assistant 发起调用时填。一条消息可以同时发起多个调用。
     std::vector<MaiToolInvocation> invocations;
@@ -155,7 +158,7 @@ using MaiModelImagePreparer =
     std::function<MaiResult<std::string>(const std::string& source, const std::string& workspace)>;
 
 struct MaiModelConfig {
-    // 不带末尾斜杠，也不带具体路径。客户端自己拼 "/chat/completions"。例如：
+    // 不带末尾斜杠，也不带具体路径。客户端按 wire 拼接端点。例如：
     //   https://open.bigmodel.cn/api/paas/v4   GLM
     //   http://127.0.0.1:11434/v1              Ollama
     std::string baseUrl;

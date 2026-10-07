@@ -303,6 +303,7 @@ AgentController::AgentController(const ModelConfig &model,
     MaiModelConfig config;
     config.baseUrl = toUtf8(model.baseUrl);
     config.apiKey = toUtf8(model.apiKey);
+    config.wire = model.wire;
 #if defined(MAICHAT_EMBEDDED_FFMPEG)
     MaiFfmpegEngine ffmpegEngine{
         mai_ffmpeg_execute,       mai_ffmpeg_set_cancel_check,

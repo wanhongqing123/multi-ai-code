@@ -58,8 +58,7 @@ struct FakeServer {
     std::string lastAuthorization;
 
     void start() {
-        server.Post("/chat/completions", [this](const httplib::Request& request,
-                                                httplib::Response& response) {
+        auto handle = [this](const httplib::Request& request, httplib::Response& response) {
             const int requestNumber = ++requestCount;
             {
                 std::lock_guard<std::mutex> lock(mutex);
@@ -136,7 +135,9 @@ struct FakeServer {
                     *pos += n;
                     return ok;
                 });
-        });
+        };
+        server.Post("/chat/completions", handle);
+        server.Post("/responses", handle);
         port = server.bind_to_any_port("127.0.0.1");
         th = std::thread([this] { server.listen_after_bind(); });
         for (int i = 0; i < 200 && !server.is_running(); ++i)
@@ -163,10 +164,12 @@ struct Collected {
     bool done = false;
 };
 
-Collected runAgainst(FakeServer& fake, const MaiModelRequest& request) {
+Collected runAgainst(FakeServer& fake, const MaiModelRequest& request,
+                     MaiWireApi wire = MaiWireApi::ChatCompletions) {
     MaiModelConfig config;
     config.baseUrl = fake.base();
     config.apiKey = "test-key";
+    config.wire = wire;
     auto client = makeMaiModelClient(config);
 
     Collected collected;
@@ -940,6 +943,162 @@ void test_invalid_utf8_history_is_replaced_before_serialization() {
           std::string::npos);
 }
 
+void test_responses_streams_reasoning_text_and_function_calls() {
+    FakeServer fake;
+    fake.chunk = 1;
+    fake.script =
+        sse(json{{"type", "response.created"}}) +
+        sse(json{{"type", "response.reasoning_text.delta"},
+                 {"output_index", 0},
+                 {"content_index", 0},
+                 {"delta", "Think"}}) +
+        sse(json{{"type", "response.output_text.delta"},
+                 {"output_index", 1},
+                 {"content_index", 0},
+                 {"delta", "Ready"}}) +
+        sse(json{
+            {"type", "response.output_item.added"},
+            {"output_index", 2},
+            {"item", {{"type", "function_call"}, {"call_id", "call_7"}, {"name", "status"}}}}) +
+        sse(json{{"type", "response.function_call_arguments.delta"},
+                 {"output_index", 2},
+                 {"delta", "{\"pa"}}) +
+        sse(json{{"type", "response.function_call_arguments.delta"},
+                 {"output_index", 2},
+                 {"delta", "th\":\"a\"}"}}) +
+        sse(json{{"type", "response.function_call_arguments.done"},
+                 {"output_index", 2},
+                 {"arguments", R"({"path":"a"})"}}) +
+        sse(json{
+            {"type", "response.completed"},
+            {"response",
+             {{"status", "completed"},
+              {"output", json::array({json{{"type", "reasoning"},
+                                           {"content", json::array({json{{"type", "reasoning_text"},
+                                                                         {"text", "Think"}}})}},
+                                      json{{"type", "message"},
+                                           {"content", json::array({json{{"type", "output_text"},
+                                                                         {"text", "Ready"}}})}},
+                                      json{{"type", "function_call"},
+                                           {"call_id", "call_7"},
+                                           {"name", "status"},
+                                           {"arguments", R"({"path":"a"})"}}})}}}});
+    fake.start();
+    MaiModelRequest request;
+    request.model = "deepseek-flash";
+    MaiModelMessage user;
+    user.role = MaiModelRole::User;
+    user.content = "Check status";
+    request.messages.push_back(std::move(user));
+    const Collected result = runAgainst(fake, request, MaiWireApi::Responses);
+    CHECK(result.done);
+    CHECK(result.text == "Ready");
+    CHECK(result.reasoning == "Think");
+    CHECK(result.calls.size() == 1);
+    if (result.calls.size() == 1) {
+        CHECK(result.calls[0].id == "call_7");
+        CHECK(result.calls[0].name == "status");
+        CHECK(result.calls[0].arguments == R"({"path":"a"})");
+    }
+}
+
+void test_responses_serializes_history_images_and_flat_tools() {
+    FakeServer fake;
+    fake.script = sse(json{{"type", "response.completed"},
+                           {"response", {{"status", "completed"}, {"output", json::array()}}}});
+    fake.start();
+    const MaiFilePath root = MaiFileSystem::temporaryDirectory().append(
+        MaiFilePath::fromUtf8("mai-responses-image-test"));
+    CHECK(!MaiFileSystem::createDirectories(root));
+    CHECK(!MaiFileSystem::writeFile(root.append(MaiFilePath::fromUtf8("photo.png")),
+                                    std::string("\x89PNG", 4)));
+    MaiModelRequest request;
+    request.model = "deepseek-flash";
+    request.baseInstructions = "Follow the user request.";
+    request.workingDirectory = root.toUtf8();
+    MaiModelMessage user;
+    user.role = MaiModelRole::User;
+    user.content = "Inspect this";
+    user.images.push_back({"photo.png", "image/png"});
+    request.messages.push_back(std::move(user));
+    MaiModelMessage assistant;
+    assistant.role = MaiModelRole::Assistant;
+    assistant.reasoning = "I should check the value.";
+    assistant.invocations.push_back({"call_8", "lookup", R"({"query":"x"})"});
+    request.messages.push_back(std::move(assistant));
+    MaiModelMessage result;
+    result.role = MaiModelRole::ToolResult;
+    result.toolCallId = "call_8";
+    result.content = "found";
+    request.messages.push_back(std::move(result));
+    request.tools.push_back({"lookup", "Look up a value", R"({"type":"object"})"});
+    const Collected answer = runAgainst(fake, request, MaiWireApi::Responses);
+    CHECK(answer.done);
+    std::string wire;
+    {
+        std::lock_guard<std::mutex> lock(fake.mutex);
+        wire = fake.lastBody;
+    }
+    const json body = json::parse(wire);
+    CHECK(body["model"] == "deepseek-flash");
+    CHECK(body["instructions"] == "Follow the user request.");
+    CHECK(body["input"].size() == 4);
+    CHECK(body["input"][0]["role"] == "user");
+    CHECK(body["input"][0]["content"][1]["type"] == "input_image");
+    CHECK(body["input"][0]["content"][1]["image_url"].get<std::string>().find(
+              "data:image/png;base64,") == 0);
+    CHECK(body["input"][1]["type"] == "reasoning");
+    CHECK(body["input"][1]["content"][0]["text"] == "I should check the value.");
+    CHECK(body["input"][2]["type"] == "function_call");
+    CHECK(body["input"][2]["call_id"] == "call_8");
+    CHECK(body["input"][3]["type"] == "function_call_output");
+    CHECK(body["input"][3]["call_id"] == "call_8");
+    CHECK(body["tools"][0]["name"] == "lookup");
+    CHECK(!body["tools"][0].contains("function"));
+    MaiFileSystem::removeRecursively(root);
+}
+
+void test_responses_needs_terminal_event_and_reports_incomplete() {
+    MaiModelRequest request;
+    request.model = "deepseek-flash";
+    MaiModelMessage user;
+    user.role = MaiModelRole::User;
+    user.content = "Hello";
+    request.messages.push_back(std::move(user));
+    {
+        FakeServer fake;
+        fake.script = sse(json{{"type", "response.output_text.delta"}, {"delta", "partial"}});
+        fake.start();
+        const Collected result = runAgainst(fake, request, MaiWireApi::Responses);
+        CHECK(!result.done);
+        CHECK(result.text == "partial");
+        CHECK(result.error.find("without a terminal event") != std::string::npos);
+    }
+    {
+        FakeServer fake;
+        fake.script = sse(json{{"type", "response.incomplete"},
+                               {"response",
+                                {{"output", json::array()},
+                                 {"incomplete_details", {{"reason", "max_output_tokens"}}}}}});
+        fake.start();
+        const Collected result = runAgainst(fake, request, MaiWireApi::Responses);
+        CHECK(!result.done);
+        CHECK(result.error.find("max_output_tokens") != std::string::npos);
+    }
+    {
+        FakeServer fake;
+        fake.script = sse(
+            json{{"type", "response.failed"},
+                 {"response",
+                  {{"output", json::array()},
+                   {"error", {{"code", "provider_error"}, {"message", "generation failed"}}}}}});
+        fake.start();
+        const Collected result = runAgainst(fake, request, MaiWireApi::Responses);
+        CHECK(!result.done);
+        CHECK(result.error.find("generation failed") != std::string::npos);
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -966,6 +1125,9 @@ int main() {
     test_missing_historical_image_does_not_break_later_turns();
     test_missing_current_image_is_reported();
     test_invalid_utf8_history_is_replaced_before_serialization();
+    test_responses_streams_reasoning_text_and_function_calls();
+    test_responses_serializes_history_images_and_flat_tools();
+    test_responses_needs_terminal_event_and_reports_incomplete();
     if (failures == 0) std::printf("llm tests passed\n");
     return failures == 0 ? 0 : 1;
 }

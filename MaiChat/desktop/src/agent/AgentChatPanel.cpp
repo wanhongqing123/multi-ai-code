@@ -925,7 +925,8 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     auto* modelMenu = new QMenu(runtime_->modelChip);
     applyAgentMenuStyle(modelMenu);
     for (const QString& model : {QStringLiteral("glm-5.3"),
-                                 QStringLiteral("glm-5.3-flash")}) {
+                                 QStringLiteral("glm-5.3-flash"),
+                                 QStringLiteral("deepseek-flash")}) {
         QAction* action = modelMenu->addAction(model);
         action->setData(model);
         action->setCheckable(true);

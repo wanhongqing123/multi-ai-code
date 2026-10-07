@@ -245,6 +245,7 @@ add_library(maiagent STATIC
   Agent/MaiMemoryStore.cpp
   Agent/MaiSqliteStore.cpp
   Agent/MaiOpenAiClient.cpp
+  Agent/MaiResponsesClient.cpp
   # 路径与文件系统：不用 std::filesystem，走系统 API。
   # 纯词法的那一半（MaiFilePath.cpp）是可移植的；真正调系统调用的那一半
   # 按平台各一份。形状参考 chromium 的 base/files。
@@ -402,6 +403,8 @@ if(MAIAGENT_BUILD_LIVE_PROVIDER_TOOLS)
   add_executable(MaiMiniMaxLiveParity tests/manual/MaiMiniMaxLiveParity.cpp)
   target_include_directories(MaiMiniMaxLiveParity PRIVATE third_party/nlohmann)
   target_link_libraries(MaiMiniMaxLiveParity PRIVATE maiagent)
+  add_executable(MaiResponsesLiveSmoke tests/manual/MaiResponsesLiveSmoke.cpp)
+  target_link_libraries(MaiResponsesLiveSmoke PRIVATE maiagent)
 endif()
 if(MAIAGENT_BUILD_TESTS)
   enable_testing()

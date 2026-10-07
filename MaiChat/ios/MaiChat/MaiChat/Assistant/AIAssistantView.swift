@@ -91,8 +91,19 @@ struct AIAssistantView: View {
                     selectModel: { selected in
                         guard selected != model.settings.model else { return }
                         var next = model.settings
+                        if selected == "deepseek-flash" {
+                            next.glmBaseUrl = next.baseUrl
+                            next.baseUrl = "https://api.deepseek.com"
+                            next.wire = "responses"
+                        } else if next.model == "deepseek-flash" {
+                            next.baseUrl = next.glmBaseUrl ??
+                                "https://open.bigmodel.cn/api/coding/paas/v4"
+                            next.wire = "chat_completions"
+                        }
                         next.model = selected
-                        Task { _ = await model.save(next, key: "") }
+                        Task {
+                            if !(await model.save(next, key: "")) { model.showSettings = true }
+                        }
                     },
                     selectPolicy: { policy in
                         guard policy != model.settings.policy else { return }
@@ -587,6 +598,7 @@ private struct AIActionPanel: View {
                 optionGroup(identifier: "ai-model-menu") {
                     modelOption("glm-5.3")
                     modelOption("glm-5.3-flash")
+                    modelOption("deepseek-flash")
                 }
             }
             Divider().padding(.leading, 42)
@@ -2587,7 +2599,7 @@ private struct AISettingsView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("连接你的模型服务").font(.system(size: 22, weight: .bold))
-                        Text("支持兼容 Chat Completions 的接口，密钥只保存在本机 Keychain。")
+                        Text("支持 Chat Completions 与 Responses，密钥只保存在本机 Keychain。")
                             .font(.system(size: 13)).foregroundStyle(.secondary)
                     }
 
@@ -2604,8 +2616,21 @@ private struct AISettingsView: View {
                             .autocorrectionDisabled()
                             .textFieldStyle(.plain)
                     }
-                    settingsField("API Key", systemImage: "key") {
-                        SecureField(model.configured ? "留空保留原密钥" : "输入 API Key", text: $apiKey)
+                    settingsField("接口协议", systemImage: "arrow.left.arrow.right") {
+                        Picker("接口协议", selection: Binding(
+                            get: { settings.wire ?? (settings.model == "deepseek-flash"
+                                ? "responses" : "chat_completions") },
+                            set: { settings.wire = $0 }
+                        )) {
+                            Text("Chat Completions").tag("chat_completions")
+                            Text("Responses").tag("responses")
+                        }
+                        .pickerStyle(.segmented)
+                        .disabled(settings.model == "deepseek-flash")
+                    }
+                    settingsField(settings.model == "deepseek-flash"
+                                  ? "DeepSeek API Key" : "API Key", systemImage: "key") {
+                        SecureField("输入或留空使用此模型已保存的密钥", text: $apiKey)
                             .textFieldStyle(.plain)
                     }
                     settingsField("方舟创作 Key（Seedance / Seedream）", systemImage: "film") {
@@ -2709,6 +2734,21 @@ private struct AISettingsView: View {
                 .readSecretKey().isEmpty
             miniMaxConfigured = !KeychainSecretStore(account: "minimax-creative-api-key")
                 .readSecretKey().isEmpty
+        }
+        .onChange(of: settings.model) { selected in
+            if selected == "deepseek-flash" {
+                if URL(string: settings.baseUrl)?.host?.hasSuffix("bigmodel.cn") == true {
+                    settings.glmBaseUrl = settings.baseUrl
+                    settings.baseUrl = "https://api.deepseek.com"
+                }
+                settings.wire = "responses"
+            } else if selected == "glm-5.3" || selected == "glm-5.3-flash" {
+                if URL(string: settings.baseUrl)?.host == "api.deepseek.com" {
+                    settings.baseUrl = settings.glmBaseUrl ??
+                        "https://open.bigmodel.cn/api/coding/paas/v4"
+                }
+                settings.wire = "chat_completions"
+            }
         }
         .accessibilityIdentifier("ai-model-settings")
     }

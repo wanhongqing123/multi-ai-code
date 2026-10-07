@@ -17,6 +17,7 @@
 #include <QCoreApplication>
 #include <QApplication>
 #include <QClipboard>
+#include <QComboBox>
 #include <QCloseEvent>
 #include <QAction>
 #include <QContextMenuEvent>
@@ -1371,10 +1372,21 @@ AgentController::ModelConfig loadAgentModelConfig() {
     AgentController::ModelConfig config;
 
     QSettings settings;
-    config.baseUrl = settings.value(QStringLiteral("agent/baseUrl")).toString();
-    config.apiKey = settings.value(QStringLiteral("agent/apiKey")).toString();
     config.modelName =
         settings.value(QStringLiteral("agent/model"), QStringLiteral("glm-5.3")).toString();
+    const bool deepseek = config.modelName == QStringLiteral("deepseek-flash");
+    config.baseUrl =
+        settings.value(deepseek ? QStringLiteral("agent/deepseekBaseUrl")
+                                : QStringLiteral("agent/baseUrl"),
+                       deepseek ? QStringLiteral("https://api.deepseek.com") : QString())
+            .toString();
+    config.apiKey = settings.value(deepseek ? QStringLiteral("agent/deepseekApiKey")
+                                            : QStringLiteral("agent/apiKey"))
+                        .toString();
+    config.wire = deepseek || settings.value(QStringLiteral("agent/wire")).toString() ==
+                                    QStringLiteral("responses")
+                      ? MaiWireApi::Responses
+                      : MaiWireApi::ChatCompletions;
     const QString policy = settings
                                .value(QStringLiteral("agent/approvalPolicy"),
                                       QStringLiteral("on_request"))
@@ -3411,6 +3423,17 @@ void MainWindow::editAgentModelSettings() {
     model->setClearButtonEnabled(true);
     content->addWidget(model);
 
+    auto* wireLabel = new QLabel(QStringLiteral("接口协议"), panel);
+    wireLabel->setObjectName(QStringLiteral("agentModelFieldLabel"));
+    content->addWidget(wireLabel);
+    auto* wire = new QComboBox(panel);
+    wire->setObjectName(QStringLiteral("agentModelWire"));
+    wire->addItem(QStringLiteral("Chat Completions"), QStringLiteral("chat_completions"));
+    wire->addItem(QStringLiteral("Responses"), QStringLiteral("responses"));
+    wire->setCurrentIndex(current.wire == MaiWireApi::Responses ? 1 : 0);
+    wire->setEnabled(current.modelName != QStringLiteral("deepseek-flash"));
+    content->addWidget(wire);
+
     auto* apiKeyLabel = new QLabel(QStringLiteral("API Key"), panel);
     apiKeyLabel->setObjectName(QStringLiteral("agentModelFieldLabel"));
     content->addWidget(apiKeyLabel);
@@ -3470,7 +3493,7 @@ void MainWindow::editAgentModelSettings() {
             font-weight: 700;
             margin-top: 5px;
         }
-        #agentModelBaseUrl, #agentModelName, #agentModelApiKey {
+        #agentModelBaseUrl, #agentModelName, #agentModelApiKey, #agentModelWire {
             min-height: 42px;
             background: #ffffff;
             border: 1px solid #d8e2ef;
@@ -3480,7 +3503,8 @@ void MainWindow::editAgentModelSettings() {
             padding: 0 12px;
             selection-background-color: #cfe8ff;
         }
-        #agentModelBaseUrl:focus, #agentModelName:focus, #agentModelApiKey:focus {
+        #agentModelBaseUrl:focus, #agentModelName:focus, #agentModelApiKey:focus,
+        #agentModelWire:focus {
             border: 1px solid #42a5e8;
             background: #fbfdff;
         }
@@ -3528,21 +3552,54 @@ void MainWindow::editAgentModelSettings() {
         }
     )")));
 
-    const auto updateSave = [=] {
+    const auto updateSave = [=, &settings] {
+        const bool deepseek = model->text().trimmed() == QStringLiteral("deepseek-flash");
+        const QString storedKey = settings.value(deepseek ? QStringLiteral("agent/deepseekApiKey")
+                                                     : QStringLiteral("agent/apiKey"))
+                                      .toString();
         save->setEnabled(!baseUrl->text().trimmed().isEmpty() &&
                          !model->text().trimmed().isEmpty() &&
-                         (!apiKey->text().trimmed().isEmpty() || !current.apiKey.isEmpty()));
+                         (!apiKey->text().trimmed().isEmpty() || !storedKey.isEmpty()));
     };
     connect(baseUrl, &QLineEdit::textChanged, &dialog, updateSave);
     connect(model, &QLineEdit::textChanged, &dialog, updateSave);
     connect(apiKey, &QLineEdit::textChanged, &dialog, updateSave);
+    connect(model, &QLineEdit::textChanged, &dialog, [=, &settings](const QString& name) {
+        const bool deepseek = name.trimmed() == QStringLiteral("deepseek-flash");
+        if (deepseek) {
+            baseUrl->setText(settings.value(QStringLiteral("agent/deepseekBaseUrl"),
+                                             QStringLiteral("https://api.deepseek.com"))
+                                 .toString());
+            wire->setCurrentIndex(1);
+        } else if (name.trimmed().startsWith(QStringLiteral("glm-"))) {
+            baseUrl->setText(settings.value(QStringLiteral("agent/baseUrl"),
+                                             QStringLiteral("https://open.bigmodel.cn/api/coding/paas/v4"))
+                                 .toString());
+            wire->setCurrentIndex(settings.value(QStringLiteral("agent/wire")).toString() ==
+                                          QStringLiteral("responses")
+                                      ? 1
+                                      : 0);
+        }
+        wire->setEnabled(!deepseek);
+        const QString storedKey = settings.value(deepseek ? QStringLiteral("agent/deepseekApiKey")
+                                                     : QStringLiteral("agent/apiKey"))
+                                      .toString();
+        apiKey->setPlaceholderText(storedKey.isEmpty()
+                                       ? QStringLiteral("请输入 API Key")
+                                       : QStringLiteral("已配置；留空保持不变"));
+        updateSave();
+    });
     connect(cancel, &QPushButton::clicked, &dialog, &QDialog::reject);
     connect(save, &QPushButton::clicked, &dialog, [&] {
         QString url = baseUrl->text().trimmed();
         while (url.endsWith(QLatin1Char('/'))) url.chop(1);
         const QString modelName = model->text().trimmed();
         const QString enteredKey = apiKey->text().trimmed();
-        const QString key = enteredKey.isEmpty() ? current.apiKey : enteredKey;
+        const bool deepseek = modelName == QStringLiteral("deepseek-flash");
+        const QString keySetting = deepseek ? QStringLiteral("agent/deepseekApiKey")
+                                            : QStringLiteral("agent/apiKey");
+        const QString key = enteredKey.isEmpty() ? settings.value(keySetting).toString()
+                                                  : enteredKey;
         const QUrl parsed(url);
         if (!parsed.isValid() || (parsed.scheme() != QStringLiteral("https") &&
                                   parsed.scheme() != QStringLiteral("http"))) {
@@ -3555,14 +3612,21 @@ void MainWindow::editAgentModelSettings() {
             error->show();
             return;
         }
+        if (deepseek && parsed.host() != QStringLiteral("api.deepseek.com")) {
+            error->setText(QStringLiteral("DeepSeek 模型请使用 https://api.deepseek.com。"));
+            error->show();
+            return;
+        }
         if (key.isEmpty()) {
             error->setText(QStringLiteral("请填写 API Key。"));
             error->show();
             return;
         }
-        settings.setValue(QStringLiteral("agent/baseUrl"), url);
+        settings.setValue(deepseek ? QStringLiteral("agent/deepseekBaseUrl")
+                                  : QStringLiteral("agent/baseUrl"), url);
         settings.setValue(QStringLiteral("agent/model"), modelName);
-        settings.setValue(QStringLiteral("agent/apiKey"), key);
+        settings.setValue(keySetting, key);
+        if (!deepseek) settings.setValue(QStringLiteral("agent/wire"), wire->currentData());
         settings.sync();
         if (settings.status() != QSettings::NoError) {
             error->setText(QStringLiteral("模型配置保存失败，请检查当前用户的设置目录权限。"));

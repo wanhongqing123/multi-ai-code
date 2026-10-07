@@ -473,9 +473,9 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     }
     private void modelMenu() {
         if (state == null) return;
-        String[] choices = {"glm-5.3", "glm-5.3-flash", "模型与权限设置"};
+        String[] choices = {"glm-5.3", "glm-5.3-flash", "deepseek-flash", "模型与权限设置"};
         new AlertDialog.Builder(activity).setTitle("选择模型").setItems(choices, (dialog, which) -> {
-            if (which == 2) { settings(); return; }
+            if (which == choices.length - 1) { settings(); return; }
             if (state.busy()) {
                 Toast.makeText(activity, "请先停止当前任务再切换模型", Toast.LENGTH_LONG).show();
                 return;

@@ -53,6 +53,7 @@ public:
         QString baseUrl;
         QString apiKey;
         QString modelName = QStringLiteral("glm-5.3");
+        MaiWireApi wire = MaiWireApi::ChatCompletions;
         MaiApprovalPolicy approvalPolicy = MaiApprovalPolicy::OnRequest;
     };
 

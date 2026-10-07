@@ -19,6 +19,8 @@ struct AIModelSettings: Codable, Sendable, Equatable {
     var baseUrl = "https://open.bigmodel.cn/api/coding/paas/v4"
     var model = "glm-5.3"
     var policy = "on-request"
+    var wire: String? = nil
+    var glmBaseUrl: String? = nil
 }
 struct AISession: Codable, Identifiable, Sendable, Equatable {
     let id: String
@@ -132,6 +134,11 @@ actor AIAssistantBackend {
     private var root: URL?
     private var initialized = false
     private let keys = KeychainSecretStore(account: "ai-assistant-api-key")
+    private let deepseekKeys = KeychainSecretStore(account: "ai-assistant-deepseek-api-key")
+
+    private func keyStore(for model: String) -> KeychainSecretStore {
+        model == "deepseek-flash" ? deepseekKeys : keys
+    }
 
     init() {
         let pointer = maiMobileAgentCreate()
@@ -193,7 +200,11 @@ actor AIAssistantBackend {
         if FileManager.default.fileExists(atPath: file.path) {
             settings = try JSONDecoder().decode(AIModelSettings.self, from: Data(contentsOf: file))
         }
-        var key = keys.readSecretKey()
+        if settings.model == "deepseek-flash" {
+            settings.baseUrl = "https://api.deepseek.com"
+            settings.wire = "responses"
+        }
+        var key = keyStore(for: settings.model).readSecretKey()
         #if targetEnvironment(simulator)
         if uiTest {
             settings.baseUrl = "http://127.0.0.1:18189"
@@ -220,6 +231,8 @@ actor AIAssistantBackend {
         let appRootPath = AIAssistantPathPolicy.appRoot(workspacePath: workspace.path)
         _ = try call("configure", values: ["database": root.appendingPathComponent("sessions.sqlite").path,
             "workspace": workspace.path, "baseUrl": config.baseUrl, "apiKey": key,
+            "wire": config.model == "deepseek-flash" ? "responses" :
+                (config.wire ?? "chat_completions"),
             "model": config.model, "policy": config.policy, "appRoot": appRootPath,
             "temporaryDirectory": FileManager.default.temporaryDirectory.path,
             "cacheDirectory": try FileManager.default.url(for: .cachesDirectory,
@@ -235,22 +248,28 @@ actor AIAssistantBackend {
               !config.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw AIBackendError(message: "请填写有效的 HTTPS API 地址和模型名称")
         }
+        if config.model == "deepseek-flash", url.host != "api.deepseek.com" {
+            throw AIBackendError(message: "DeepSeek 模型请使用 https://api.deepseek.com")
+        }
         let key = newKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        if key.isEmpty, url.host != URL(string: settings.baseUrl)?.host {
+        let knownModel = ["glm-5.3", "glm-5.3-flash", "deepseek-flash"].contains(config.model)
+        if key.isEmpty, !knownModel, url.host != URL(string: settings.baseUrl)?.host {
             throw AIBackendError(message: "更换模型服务商时，请重新填写 API Key")
         }
-        let effectiveKey = key.isEmpty ? keys.readSecretKey() : key
+        let targetStore = keyStore(for: config.model)
+        let previousTargetKey = targetStore.readSecretKey()
+        let effectiveKey = key.isEmpty ? previousTargetKey : key
         guard !effectiveKey.isEmpty else { throw AIBackendError(message: "请填写 API Key") }
         let previous = settings
-        let oldKey = keys.readSecretKey()
+        let previousKey = keyStore(for: previous.model).readSecretKey()
         try configure(config, key: effectiveKey) // 正在工作时核心拒绝，不能先覆盖已保存配置。
         do {
-            if !key.isEmpty { try keys.saveSecretKey(key) }
+            if !key.isEmpty { try targetStore.saveSecretKey(key) }
             try JSONEncoder().encode(config).write(to: root!.appendingPathComponent("settings.json"), options: .atomic)
             settings = config
         } catch {
-            try? keys.saveSecretKey(oldKey)
-            try? configure(previous, key: oldKey)
+            if !key.isEmpty { try? targetStore.saveSecretKey(previousTargetKey) }
+            try? configure(previous, key: previousKey)
             throw error
         }
     }

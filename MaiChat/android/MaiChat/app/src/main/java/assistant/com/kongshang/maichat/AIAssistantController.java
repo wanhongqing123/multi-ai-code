@@ -109,6 +109,8 @@ public final class AIAssistantController {
     private File rvmModelFile;
     private volatile String selected = "", baseUrl = state.baseUrl, model = state.model, policy = state.policy,
                    error = "", apiKey = "";
+    private volatile String glmBaseUrl = "https://open.bigmodel.cn/api/coding/paas/v4";
+    private volatile String deepseekApiKey = "";
     private volatile String arkApiKey = "";
     private volatile String wanApiKey = "";
     private volatile String wanWorkspaceId = "";
@@ -281,10 +283,14 @@ public final class AIAssistantController {
                 baseUrl = saved.optString("baseUrl", baseUrl);
                 model = saved.optString("model", model);
                 policy = saved.optString("policy", policy);
+                glmBaseUrl = saved.optString("glmBaseUrl",
+                    model.equals("deepseek-flash") ? glmBaseUrl : baseUrl);
                 wanWorkspaceId = saved.optString("wanWorkspaceId", "");
             }
+            if (model.equals("deepseek-flash")) baseUrl = "https://api.deepseek.com";
             try {
-                apiKey = readKey();
+                deepseekApiKey = readEncryptedKey("deepseek-main-api-key.enc");
+                apiKey = model.equals("deepseek-flash") ? deepseekApiKey : readKey();
             } catch (Exception e) {
                 error = "API Key 无法读取，请重新配置模型";
             }
@@ -352,6 +358,7 @@ public final class AIAssistantController {
         call(op("configure")
                 .put("baseUrl", url)
                 .put("apiKey", key)
+                .put("wire", name.equals("deepseek-flash") ? "responses" : "chat_completions")
                 .put("model", name)
                 .put("policy", approval)
                 .put("database", new File(root, "sessions.sqlite").getPath())
@@ -493,7 +500,19 @@ public final class AIAssistantController {
         });
     }
     void switchModel(String name, Consumer<Boolean> completion) {
-        save(baseUrl, name, policy, "", completion);
+        if (name.equals("deepseek-flash"))
+            save("https://api.deepseek.com", name, policy, deepseekApiKey, completion);
+        else
+            worker.post(() -> {
+                try {
+                    String key = readKey();
+                    main.post(() -> save(glmBaseUrl, name, policy, key, completion));
+                } catch (Exception failure) {
+                    error = safeMessage(failure);
+                    emit();
+                    main.post(() -> completion.accept(false));
+                }
+            });
     }
     void action(String operation, JSONObject values, Runnable completion) {
         String target = state.selected;
@@ -525,19 +544,25 @@ public final class AIAssistantController {
                     || uri.getRawUserInfo() != null || uri.getRawQuery() != null
                     || uri.getRawFragment() != null || name.trim().isEmpty())
                     throw new IllegalArgumentException("请填写有效的 HTTPS API 地址和模型名称");
-                if (newKey.trim().isEmpty()
+                boolean deepseek = name.trim().equals("deepseek-flash");
+                if (deepseek && !"api.deepseek.com".equals(uri.getHost()))
+                    throw new IllegalArgumentException("DeepSeek 模型请使用 https://api.deepseek.com");
+                if (newKey.trim().isEmpty() && !deepseek
                     && !java.util.Objects.equals(uri.getHost(), new java.net.URI(baseUrl).getHost()))
                     throw new IllegalArgumentException("更换模型服务商时，请重新填写 API Key");
-                String key = newKey.trim().isEmpty() ? apiKey : newKey.trim();
+                String key = newKey.trim().isEmpty()
+                    ? (deepseek ? deepseekApiKey : apiKey) : newKey.trim();
                 if (key.isEmpty())
                     throw new IllegalArgumentException("请填写 API Key");
                 configure(url.trim(), name.trim(), approval, key);
                 try {
-                    writeKey(key);
+                    if (deepseek) writeEncryptedKey("deepseek-main-api-key.enc", key);
+                    else writeKey(key);
                     byte[] config = new JSONObject()
                                         .put("baseUrl", url.trim())
                                         .put("model", name.trim())
                                         .put("policy", approval)
+                                        .put("glmBaseUrl", deepseek ? glmBaseUrl : url.trim())
                                         .put("wanWorkspaceId", wanWorkspaceId)
                                         .toString()
                                         .getBytes(StandardCharsets.UTF_8);
@@ -552,7 +577,8 @@ public final class AIAssistantController {
                         throw e;
                     }
                 } catch (Exception e) {
-                    writeKey(apiKey);
+                    if (deepseek) writeEncryptedKey("deepseek-main-api-key.enc", deepseekApiKey);
+                    else writeKey(apiKey);
                     configure(baseUrl, model, policy, apiKey);
                     throw e;
                 }
@@ -560,6 +586,8 @@ public final class AIAssistantController {
                 model = name.trim();
                 policy = approval;
                 apiKey = key;
+                if (deepseek) deepseekApiKey = key;
+                else glmBaseUrl = url.trim();
                 error = "";
                 success = true;
                 refresh(true);

@@ -2,10 +2,35 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <limits>
 #include <string>
 #include <utility>
 
 #include <json.hpp>
+
+namespace {
+
+std::string boundedText(const std::string& source, std::size_t maximum, const char* kind) {
+    if (maximum == 0 || source.size() <= maximum) return source;
+    std::size_t head = maximum / 2;
+    while (head > 0 && (static_cast<unsigned char>(source[head]) & 0xc0) == 0x80) --head;
+    std::size_t tail = source.size() - maximum / 4;
+    while (tail < source.size() && (static_cast<unsigned char>(source[tail]) & 0xc0) == 0x80)
+        ++tail;
+    return source.substr(0, head) + "\n[" + kind + ": " + std::to_string(tail - head) +
+           " bytes omitted from model context; the full text remains in the conversation. "
+           "Use a narrower tool query when more detail is needed.]\n" +
+           source.substr(tail);
+}
+
+std::size_t modelMessageBytes(const MaiModelMessage& message) {
+    std::size_t bytes = message.content.size() + message.reasoning.size();
+    for (const MaiToolInvocation& call : message.invocations)
+        bytes += call.id.size() + call.name.size() + call.arguments.size();
+    return bytes;
+}
+
+}  // namespace
 
 MaiContextBuilder::MaiContextBuilder() : MaiContextBuilder(Options{}) {}
 
@@ -15,6 +40,7 @@ std::vector<MaiModelMessage> MaiContextBuilder::build(
     const std::vector<MaiMessage>& history) const {
     std::vector<MaiModelMessage> out;
     out.reserve(history.size() + 1);
+    std::size_t currentUserOutputIndex = std::numeric_limits<std::size_t>::max();
 
     std::size_t latestUserIndex = history.size();
     for (std::size_t index = 0; index < history.size(); ++index) {
@@ -132,6 +158,7 @@ std::vector<MaiModelMessage> MaiContextBuilder::build(
                 }
             }
             if (!modelMessage.content.empty() || !modelMessage.images.empty()) {
+                if (messageIndex == latestUserIndex) currentUserOutputIndex = out.size();
                 out.push_back(std::move(modelMessage));
             }
             continue;
@@ -227,6 +254,47 @@ std::vector<MaiModelMessage> MaiContextBuilder::build(
             "[Omitted " + std::to_string(omittedImages) +
             " older image observations to keep this request bounded. The files remain available; "
             "use view_image on a relevant path again if its pixels are needed.]";
+        out.insert(out.begin(), std::move(note));
+        if (currentUserOutputIndex != std::numeric_limits<std::size_t>::max())
+            ++currentUserOutputIndex;
+    }
+    const std::size_t latestUser =
+        currentUserOutputIndex < out.size() ? currentUserOutputIndex : out.size();
+    for (std::size_t index = 0; index < out.size(); ++index) {
+        MaiModelMessage& message = out[index];
+        const std::size_t limit = message.role == MaiModelRole::ToolResult
+                                      ? mOptions.maxToolResultBytes
+                                  : index == latestUser ? mOptions.maxHistoryTextBytes
+                                                        : mOptions.maxOlderMessageBytes;
+        message.content =
+            boundedText(message.content, limit,
+                        message.role == MaiModelRole::ToolResult ? "Tool output shortened"
+                                                                 : "Older message shortened");
+        message.reasoning =
+            boundedText(message.reasoning, mOptions.maxReasoningBytes, "Reasoning shortened");
+    }
+    std::size_t bytes = 0;
+    std::size_t start = 0;
+    for (std::size_t index = out.size(); index > 0; --index) {
+        const std::size_t cost = modelMessageBytes(out[index - 1]);
+        if (index - 1 < latestUser && bytes + cost > mOptions.maxHistoryTextBytes) {
+            start = index;
+            break;
+        }
+        bytes += cost;
+    }
+    if (start > 0)
+        while (latestUser != out.size() && start < latestUser && start < out.size() &&
+               out[start].role != MaiModelRole::User)
+            ++start;
+    if (start > 0 && start < out.size()) {
+        out.erase(out.begin(), out.begin() + static_cast<std::ptrdiff_t>(start));
+        MaiModelMessage note;
+        note.role = MaiModelRole::System;
+        note.content =
+            "[Earlier conversation omitted from this model request to keep it responsive. "
+            "The full messages remain in the session; quote a specific message or use a file "
+            "tool when its details are needed.]";
         out.insert(out.begin(), std::move(note));
     }
     return out;

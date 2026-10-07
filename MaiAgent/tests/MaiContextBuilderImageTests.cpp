@@ -143,6 +143,57 @@ void testQuotedUserMediaUsesExactSourceMessage() {
     CHECK(request.back().images.empty());
 }
 
+void testLargeProbeOutputDoesNotFloodTheNextRequest() {
+    MaiMessage probe = userMessage("Inspect video", {});
+    MaiMessage assistant;
+    assistant.role = MaiRole::Assistant;
+    MaiToolPart tool;
+    tool.tool = "ffprobe";
+    tool.callId = "call_probe";
+    tool.input = R"({"mode":"frames"})";
+    tool.output = std::string(1'600'000, 'x');
+    tool.state = MaiToolState::Completed;
+    MaiMessagePart part;
+    part.body = std::move(tool);
+    assistant.parts.push_back(std::move(part));
+    const MaiMessage followup = userMessage("j", {});
+    const auto request = MaiContextBuilder().build({probe, assistant, followup});
+    std::size_t total = 0;
+    bool sawCall = false;
+    bool sawShortenedResult = false;
+    for (const MaiModelMessage& message : request) {
+        total += message.content.size() + message.reasoning.size();
+        if (!message.invocations.empty() && message.invocations.front().id == "call_probe")
+            sawCall = true;
+        if (message.role == MaiModelRole::ToolResult && message.toolCallId == "call_probe") {
+            sawShortenedResult = message.content.find("Tool output shortened") != std::string::npos;
+            CHECK(message.content.size() < 17 * 1024);
+        }
+    }
+    CHECK(sawCall);
+    CHECK(sawShortenedResult);
+    CHECK(total < 32 * 1024);
+    CHECK(request.back().role == MaiModelRole::User);
+    CHECK(request.back().content == "j");
+    CHECK(std::get<MaiToolPart>(assistant.parts.front().body).output.size() == 1'600'000);
+}
+
+void testOldTurnsAreOmittedWhileTheCurrentUserStays() {
+    std::vector<MaiMessage> history;
+    for (int index = 0; index < 20; ++index)
+        history.push_back(userMessage(
+            "Earlier turn " + std::to_string(index) + " " + std::string(20'000, 'a'), {}));
+    history.push_back(userMessage("Current request", {}));
+    const auto request = MaiContextBuilder().build(history);
+    std::size_t total = 0;
+    for (const MaiModelMessage& message : request) total += message.content.size();
+    CHECK(total < 300 * 1024);
+    CHECK(request.front().role == MaiModelRole::System);
+    CHECK(request.front().content.find("Earlier conversation omitted") != std::string::npos);
+    CHECK(request.back().role == MaiModelRole::User);
+    CHECK(request.back().content == "Current request");
+}
+
 void testQuotedAssistantMediaUsesDeliveredArtifact() {
     MaiMessage source;
     source.id = "msg_generated";
@@ -176,6 +227,8 @@ int main() {
     testCurrentImagesHaveExactPathAndAttachmentIdentity();
     testRecentPreviousImagePathsRemainAvailableWithoutOldPixels();
     testQuotedUserMediaUsesExactSourceMessage();
+    testLargeProbeOutputDoesNotFloodTheNextRequest();
+    testOldTurnsAreOmittedWhileTheCurrentUserStays();
     testQuotedAssistantMediaUsesDeliveredArtifact();
     return failures == 0 ? 0 : 1;
 }

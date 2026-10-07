@@ -519,7 +519,8 @@ public:
                         std::to_string(mConfig.inactivityTimeoutSeconds) + " seconds (request " +
                         std::to_string(body.size()) + " bytes, " + std::to_string(imageCount) +
                         " images; received " + std::to_string(context.responseBytes) +
-                        " bytes). Reduce image size or retry the request.");
+                        " bytes). The provider did not start a model response; retry later or "
+                        "choose another available model.");
 
             const bool transient = curlResult != CURLE_OK ? isRetryableCurlError(curlResult)
                                                           : status == 408 || status >= 500;

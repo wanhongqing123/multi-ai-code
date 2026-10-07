@@ -411,6 +411,7 @@ final class AIAssistantModel: ObservableObject {
     private let backend = AIAssistantBackend()
     private var poll: Task<Void, Never>?
     private var transientErrorTask: Task<Void, Never>?
+    private var lastBackendError = ""
     private var initialPreparation: Task<Void, Never>?
     private var appearingTask: Task<Void, Never>?
     private var pendingInitialPage: (session: String, newestID: String)?
@@ -552,8 +553,18 @@ final class AIAssistantModel: ObservableObject {
             if let value = result.permissions, value != permissions { permissions = value }
             if let value = result.questions, value != questions { questions = value }
             configured = result.configured ?? false
-            if let detail = result.error, !detail.isEmpty { error = detail }
-        } catch { self.error = error.localizedDescription }
+            if let detail = result.error, !detail.isEmpty {
+                if detail != lastBackendError {
+                    lastBackendError = detail
+                    let display = detail.hasPrefix("model stream inactive")
+                        ? "模型暂时没有响应，本次等待已结束。稍后可继续对话。"
+                        : detail
+                    showTransientError(display, duration: .seconds(8))
+                }
+            } else {
+                lastBackendError = ""
+            }
+        } catch { showTransientError(error.localizedDescription, duration: .seconds(8)) }
     }
 
     private func showNewestMessage(for session: String) async throws -> String? {
@@ -690,6 +701,7 @@ final class AIAssistantModel: ObservableObject {
             )
             pendingAttachments.removeValue(forKey: draftSession)
             if quotedMessage?.id == quoteMessageId { quotedMessage = nil }
+            lastBackendError = ""
             error = ""
             await refresh(force: true)
             historyLoaded = !messages.isEmpty

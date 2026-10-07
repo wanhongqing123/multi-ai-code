@@ -471,6 +471,7 @@ void test_heartbeats_do_not_extend_model_inactivity() {
     CHECK(result.code() == MaiErrorCode::Network);
     CHECK(result.message().find("inactive") != std::string::npos);
     CHECK(result.message().find("0 images; received ") != std::string::npos);
+    CHECK(result.message().find("Reduce image size") == std::string::npos);
     CHECK(elapsed < std::chrono::seconds(3));
 }
 

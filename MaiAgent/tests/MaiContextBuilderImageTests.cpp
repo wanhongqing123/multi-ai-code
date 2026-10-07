@@ -218,6 +218,25 @@ void testQuotedAssistantMediaUsesDeliveredArtifact() {
     CHECK(request.back().content.find("generated/final.mp4") != std::string::npos);
 }
 
+void testStoredReasoningDoesNotEnterDefaultHistory() {
+    MaiMessage assistant;
+    assistant.role = MaiRole::Assistant;
+    MaiMessagePart reasoning;
+    reasoning.body = MaiReasoningPart{"Private draft from the previous model"};
+    assistant.parts.push_back(std::move(reasoning));
+    MaiMessagePart answer;
+    answer.body = MaiTextPart{"Public answer"};
+    assistant.parts.push_back(std::move(answer));
+
+    const auto request = MaiContextBuilder().build(
+        {userMessage("First question", {}), assistant, userMessage("Follow-up", {})});
+    CHECK(request.size() == 3);
+    if (request.size() != 3) return;
+    CHECK(request[1].role == MaiModelRole::Assistant);
+    CHECK(request[1].content == "Public answer");
+    CHECK(request[1].reasoning.empty());
+}
+
 }  // namespace
 
 int main() {
@@ -230,5 +249,6 @@ int main() {
     testLargeProbeOutputDoesNotFloodTheNextRequest();
     testOldTurnsAreOmittedWhileTheCurrentUserStays();
     testQuotedAssistantMediaUsesDeliveredArtifact();
+    testStoredReasoningDoesNotEnterDefaultHistory();
     return failures == 0 ? 0 : 1;
 }

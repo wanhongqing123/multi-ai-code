@@ -18,7 +18,8 @@
 class MaiContextBuilder {
 public:
     struct Options {
-        // Chat 正文默认不混入 reasoning；Responses 可独立回传 reasoning item。
+        // 默认不回灌历史思考草稿，避免 Chat 与 Responses 的上下文出现差异。
+        // 显式启用时才把草稿交给模型。
         bool includeReasoning = false;
         // Keep the latest tool images from the active user turn. Older pixels remain on disk and
         // in the conversation store, but repeatedly embedding all of them makes every subsequent

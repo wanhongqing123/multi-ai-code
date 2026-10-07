@@ -54,6 +54,12 @@
 
 ## 多图能力与主模型路由
 
-Seedance 2.0 的[官方创建任务文档](https://docs.volcengine.com/docs/82379/1520757?lang=zh)使用 `content[]` 中重复的 `image_url` 项，并将每项 `role` 设为 `reference_image`，上限 9 张；不是单独的 `image_urls` 顶层数组。`seedance_video` 已按此格式接入 `reference_image_paths`，并在 discover 中标明上限和与严格首尾帧模式互斥。CogVideoX-3 仅支持单首帧或严格首尾帧两张。主模型提示词要求先查上限，不得静默丢图；超限时先拟定图像融合或可见排版方案，再走付费确认。
+Seedance 2.0 的[官方创建任务文档](https://docs.volcengine.com/docs/82379/1520757?lang=zh)使用 `content[]` 中重复的 `image_url` 项，并将每项 `role` 设为 `reference_image`，上限 9 张；不是单独的 `image_urls` 顶层数组。当时 `seedance_video` 按此格式接入 `reference_image_paths`，并在 discover 中标明上限和与严格首尾帧模式互斥。CogVideoX-3 仅支持单首帧或严格首尾帧两张。主模型提示词要求先查上限，不得静默丢图；超限时先拟定图像融合或可见排版方案，再走付费确认。
+
+2026-10-08 更新：`seedance_video` 已改绑 Seedance 2.5。2.5 单次输出支持 4–30 秒，
+参考图上限为 30 张，输出分辨率最高 1080p；首帧、编辑、延长任务的宽高比规则
+与 2.0 不同，工具按任务类型提前校验并设置 `omni_reference_task_type`。
+上述 2.0 实测结果保留为历史记录，不能作为 2.5 云端验收。
+依据：[Seedance 2.5 教程](https://docs.volcengine.com/docs/ark/seedance-2-5)。
 
 失败后的主模型回灌先区分平台明确给出的原因与推断。技术性图片问题按最小改动顺序处理并记录损失；每次付费重试都需要新确认。内容审核错误 `1026` 在 MiniMax 官方表中只定义为“输入内容涉敏”，不区分图片与文本，更没有单独的“真人儿童照片”代码。工具会保留原始错误与参考文件存在信息，不把不确定归因说成事实。

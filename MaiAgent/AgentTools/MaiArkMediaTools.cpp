@@ -42,7 +42,7 @@ std::string arkAssetId(const std::string& value) {
     return id;
 }
 
-constexpr char kVideoModel[] = "doubao-seedance-2-0-260128";
+constexpr char kVideoModel[] = "doubao-seedance-2-5-260628";
 constexpr char kImageModel[] = "doubao-seedream-5-0-flash-260915";
 constexpr char kVideoTasksUrl[] =
     "https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks";
@@ -325,8 +325,10 @@ public:
             kVideoModel,
             configured,
             {{"text_to_video", true, true, unverified,
-              "The shared C++ request path still needs a live Ark validation"},
-             {"first_frame_to_video", true, true, unverified, {}},
+              "Seedance 2.5 supports 4-30 second output; this Ark account's model entitlement "
+              "and the new binding need live validation"},
+             {"first_frame_to_video", true, true, unverified,
+              "Seedance 2.5 requires ratio=adaptive when using first/last frames"},
              {"video_edit_from_url", true, true, unverified, {}},
              {"video_edit_from_seedance_task", true, true, unverified, {}},
              {"video_extend_from_url", true, true, unverified, {}},
@@ -345,8 +347,8 @@ public:
               "Group, AK/SK, and an accessible upload URL. This tool cannot silently register "
               "an arbitrary local face photo"},
              {"multi_reference_video", true, true, unverified,
-              "Seedance 2.0 accepts 1-9 reference images; reference mode cannot mix with strict "
-              "first/last-frame control"},
+              "Seedance 2.5 accepts 1-30 reference images; reference mode cannot mix with strict "
+              "first/last-frame control. This tool accepts one reference video"},
              {"video_edit_from_local_file", true, true, localVideoStatus,
               mUploadVideo
                   ? "iOS requires connected Tencent IM; local video is staged in IM "
@@ -356,7 +358,7 @@ public:
     }
     std::string description() const override {
         if (!specialistInfo()->configured)
-            return "Seedance video specialist bound to doubao-seedance-2-0-260128. Ark API Key "
+            return "Seedance video specialist bound to doubao-seedance-2-5-260628. Ark API Key "
                    "is not configured on this device. Use discover for capabilities, or ask the "
                    "user to configure the key before delegating.";
         return "A model-backed Seedance video tool. Use discover for capabilities, delegate "
@@ -365,10 +367,13 @@ public:
                "video in the same AI session. Text, first-frame, "
                "first-and-last-frame, and reference-video paths are implemented; cloud validation "
                "is still needed for the shared C++ path. Confirm duration, ratio and resolution "
-               "with the user before paid create or reference calls. Local video_path is uploaded "
+               "with the user before paid create or reference calls. Output duration is 4-30 "
+               "seconds or -1 for automatic duration. Seedance 2.5 supports 480p, 720p, and "
+               "1080p output, not 4k. First/last-frame, edit, and extend tasks require an "
+               "adaptive ratio; edit also requires duration=-1. Local video_path is uploaded "
                "by the host media service when configured; discover reports its availability. "
-               "Before a paid local-video task, use ffprobe to check the Seedance 2.0 input "
-               "duration of 2-15 seconds and frame rate of 24-60 FPS. "
+               "Before a paid local-video task, use ffprobe to check the Seedance 2.5 input "
+               "duration of 2-30 seconds (4-30 for edit) and frame rate of 24-60 FPS. "
                "For a realistic but non-specific actor, pass a platform "
                "virtual_avatar_asset_id selected in the Ark Experience Center. The tool sends "
                "asset://<ID> as reference image 1; refer to it as image 1 in the message. It "
@@ -510,7 +515,7 @@ private:
         const std::size_t referenceCount = referenceImagePaths.size() +
                                            static_cast<std::size_t>(!referenceImagePath.empty()) +
                                            static_cast<std::size_t>(!selectedAssetId.empty());
-        if (referenceCount > 9) return invalid("Seedance 2.0 accepts at most 9 reference images");
+        if (referenceCount > 30) return invalid("Seedance 2.5 accepts at most 30 reference images");
         if (referenceCount != 0 &&
             (mode != "create" || !imagePath.empty() || !lastFramePath.empty()))
             return invalid("reference images require create mode without first/last frames");
@@ -554,14 +559,19 @@ private:
             production.value("duration", mode == "edit" || mode == "extend" ? -1 : 5);
         const std::string ratio = production.value("ratio", std::string("adaptive"));
         const std::string resolution = production.value("resolution", std::string("720p"));
-        if (duration != -1 && (duration < 4 || duration > 15))
-            return invalid("duration must be -1 or 4 to 15 seconds");
+        if (duration != -1 && (duration < 4 || duration > 30))
+            return invalid("duration must be -1 or 4 to 30 seconds");
         if (ratio != "adaptive" && ratio != "16:9" && ratio != "9:16" && ratio != "1:1" &&
             ratio != "4:3" && ratio != "3:4" && ratio != "21:9")
             return invalid("unsupported video ratio");
-        if (resolution != "480p" && resolution != "720p" && resolution != "1080p" &&
-            resolution != "4k")
-            return invalid("unsupported video resolution");
+        if (resolution != "480p" && resolution != "720p" && resolution != "1080p")
+            return invalid("Seedance 2.5 resolution must be 480p, 720p, or 1080p");
+        if ((mode == "edit" || mode == "extend" || (mode == "create" && !imagePath.empty())) &&
+            ratio != "adaptive")
+            return invalid(
+                "Seedance 2.5 requires ratio=adaptive for edit, extend, or first frames");
+        if (mode == "edit" && duration != -1)
+            return invalid("Seedance 2.5 edit requires duration=-1");
         std::string instruction = message;
         if (!extra.empty()) instruction += "\nRelevant context: " + extra;
         if (mode == "edit")
@@ -639,12 +649,16 @@ private:
                                    {"video_url", {{"url", reference}}},
                                    {"role", "reference_video"}});
         }
-        const Json body = {{"model", kVideoModel},
-                           {"content", content},
-                           {"duration", duration},
-                           {"ratio", ratio},
-                           {"resolution", resolution},
-                           {"generate_audio", production.value("generate_audio", true)}};
+        Json body = {{"model", kVideoModel},
+                     {"content", content},
+                     {"duration", duration},
+                     {"ratio", ratio},
+                     {"resolution", resolution},
+                     {"generate_audio", production.value("generate_audio", true)}};
+        if (mode == "edit" || mode == "extend" || mode == "reference")
+            body["omni_reference_task_type"] = mode;
+        else if (referenceCount != 0)
+            body["omni_reference_task_type"] = "reference";
         if (body.dump().size() > 64'000'000)
             return invalid("Seedance request exceeds the 64 MB body limit");
         ArkResponse result = requestJson(kVideoTasksUrl, key, mCaBundle, &body, context);

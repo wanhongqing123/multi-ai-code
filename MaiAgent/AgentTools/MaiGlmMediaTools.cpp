@@ -283,7 +283,8 @@ public:
     }
     std::string description() const override {
         return mVideo
-                   ? "GLM CogVideoX-3 specialist for paid text-to-video and image-to-video. "
+                   ? "GLM CogVideoX-3 specialist for paid 5 or 10 second text-to-video and "
+                     "image-to-video. "
                      "When image_path is present, describe how the existing subject moves. "
                      "For face fidelity, choose quality=quality and a 1080P-or-higher size; "
                      "quality=speed and 720P are lower-quality previews. Quality defaults to "
@@ -309,8 +310,11 @@ public:
         info.toolName = name();
         info.modelId = mVideo ? kVideoModel : kImageModel;
         info.configured = configured;
-        info.capabilities.push_back({mVideo ? "text_to_video" : "text_to_image", true, true, ready,
-                                     "Provider entitlement must be checked with a live call"});
+        info.capabilities.push_back(
+            {mVideo ? "text_to_video" : "text_to_image", true, true, ready,
+             mVideo ? "Output duration is 5 or 10 seconds; provider entitlement must be checked "
+                      "with a live call"
+                    : "Provider entitlement must be checked with a live call"});
         if (mVideo) {
             info.capabilities.push_back(
                 {"image_to_video", true, true, ready, "PNG or JPEG input, maximum 5 MB per image"});

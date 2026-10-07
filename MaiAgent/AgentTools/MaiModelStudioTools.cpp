@@ -431,7 +431,8 @@ public:
             name(),
             kVideoEditModel,
             configured,
-            {{"instruction_video_edit", true, true, status, "Input video: 2-10 seconds"},
+            {{"instruction_video_edit", true, true, status,
+              "Input video: 2-10 seconds; output normally keeps the source duration"},
              {"reference_image_video_edit", true, true, status,
               "Up to four JPEG, PNG, or WebP images"},
              {"local_video_upload", true, true, status,
@@ -749,7 +750,9 @@ public:
             name(),
             kWanVideoModel,
             configured,
-            {{"text_to_video", true, true, status, "Creates a new video from text"},
+            {{"text_to_video", true, true, status,
+              "Creates a 2-30 second video from text; video input and output must total at most 30 "
+              "seconds"},
              {"first_frame_to_video", true, true, status, "Accepts a local first-frame image"},
              {"first_last_frame_to_video", true, true, status,
               "Accepts local first and last frame images"},
@@ -761,7 +764,8 @@ public:
     }
 
     std::string description() const override {
-        return "Wan3.0 model-backed video specialist. Use discover for capabilities and diagnose "
+        return "Wan3.0 model-backed video specialist supporting 2-30 second output. Use discover "
+               "for capabilities and diagnose "
                "for a read-only model access check. "
                "Delegate a text goal to create a video, optionally with first/last frames; "
                "delegate an edit or extend goal with video_path to reference Video 1. A reference "

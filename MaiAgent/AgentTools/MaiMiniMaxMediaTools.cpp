@@ -319,8 +319,9 @@ public:
                         "or multimodal reference images/videos/audio using workspace paths. "
                         "For content[] multi-image input, use role=reference_image; role=reference "
                         "or omitted roles are normalized. Roles on text items are ignored. "
-                        "duration and resolution are top-level fields. H3 supports 768P or 2K "
-                        "only; H3 Max supports 480P or 768P, neither supports native 1080P. "
+                        "duration and resolution are top-level fields. H3 supports 4-15 "
+                        "seconds at 768P or 2K; H3 Max supports 5-15 seconds at 480P or "
+                        "768P. Neither supports native 1080P. "
                         "For an exact 1080P delivery, disclose a 2K generation plus local "
                         "downscale before paid approval. Model MiniMax-H3-Max is "
                         "selectable. Use validate to inspect local inputs without upload or "
@@ -344,9 +345,9 @@ public:
         info.modelId = mVideo ? "MiniMax-H3" : "image-01";
         info.configured = configured;
         if (mVideo) {
-            info.capabilities.push_back(
-                {"text_to_video", true, true, ready,
-                 "H3 V2 text-to-video completed a live account smoke test"});
+            info.capabilities.push_back({"text_to_video", true, true, ready,
+                                         "H3: 4-15 seconds; H3 Max: 5-15 seconds. H3 V2 "
+                                         "text-to-video passed a live smoke test"});
             info.capabilities.push_back(
                 {"image_to_video", true, true, ready,
                  "First frame uses source aspect ratio; PNG/JPEG/WEBP/HEIC/HEIF"});

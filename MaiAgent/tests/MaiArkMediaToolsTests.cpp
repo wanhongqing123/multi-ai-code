@@ -70,8 +70,9 @@ void testDynamicCredentialAndToolIdentity() {
     imageInfo = nlohmann::json::parse(image->execute(discover, context).output());
     CHECK(videoInfo.at("configured").get<bool>());
     CHECK(imageInfo.at("configured").get<bool>());
+    CHECK(videoInfo.at("bound_model") == "doubao-seedance-2-5-260628");
     CHECK(videoInfo.at("capabilities")[0].at("tool_status") == "implemented_unverified");
-    CHECK(videoInfo.dump().find("reference images") != std::string::npos);
+    CHECK(videoInfo.dump().find("1-30 reference images") != std::string::npos);
     CHECK(video->description().find("mode=create with reference_image_paths") != std::string::npos);
     CHECK(video->description().find("cannot list the account's portrait assets") !=
           std::string::npos);
@@ -105,11 +106,36 @@ void testInvalidInputsDoNotReachNetwork() {
     nlohmann::json tooManyReferences = {{"action", "delegate"},
                                         {"message", "Create a video"},
                                         {"reference_image_paths", nlohmann::json::array()}};
-    for (int index = 0; index < 10; ++index)
+    for (int index = 0; index < 31; ++index)
         tooManyReferences["reference_image_paths"].push_back("image.png");
     const auto excess = video->execute(tooManyReferences.dump(), context);
     CHECK(excess.hasError());
-    CHECK(excess.error().message().find("at most 9") != std::string::npos);
+    CHECK(excess.error().message().find("at most 30") != std::string::npos);
+    const auto tooLong = video->execute(
+        R"({"action":"delegate","message":"Create a video","production":{"duration":31,"ratio":"16:9","resolution":"720p"}})",
+        context);
+    CHECK(tooLong.hasError());
+    CHECK(tooLong.error().message().find("4 to 30") != std::string::npos);
+    const auto thirtySeconds = video->execute(
+        R"({"action":"delegate","message":"Animate the frame","image_path":"missing.png","production":{"duration":30,"ratio":"adaptive","resolution":"1080p"}})",
+        context);
+    CHECK(thirtySeconds.hasError());
+    CHECK(thirtySeconds.error().message().find("image_path must contain") != std::string::npos);
+    const auto unsupported4k = video->execute(
+        R"({"action":"delegate","message":"Create a video","production":{"duration":20,"ratio":"16:9","resolution":"4k"}})",
+        context);
+    CHECK(unsupported4k.hasError());
+    CHECK(unsupported4k.error().message().find("1080p") != std::string::npos);
+    const auto invalidFirstFrameRatio = video->execute(
+        R"({"action":"delegate","message":"Animate the frame","image_path":"first.png","production":{"duration":20,"ratio":"9:16","resolution":"720p"}})",
+        context);
+    CHECK(invalidFirstFrameRatio.hasError());
+    CHECK(invalidFirstFrameRatio.error().message().find("ratio=adaptive") != std::string::npos);
+    const auto invalidEditDuration = video->execute(
+        R"({"action":"delegate","mode":"edit","message":"Change the scene","video_url":"https://example.com/source.mp4","production":{"duration":20,"ratio":"adaptive","resolution":"720p"}})",
+        context);
+    CHECK(invalidEditDuration.hasError());
+    CHECK(invalidEditDuration.error().message().find("duration=-1") != std::string::npos);
     CHECK(
         video
             ->execute(
@@ -298,7 +324,7 @@ void testLiveArkWhenExplicitlyConfigured() {
 
     auto video = makeMaiSeedanceVideoTool([apiKey] { return apiKey; });
     const MaiToolResult submitted = video->execute(
-        R"({"action":"delegate","message":"Make a smooth abstract transition from the first frame to the last frame. No people or text.","mode":"create","image_path":"first.png","last_frame_path":"last.png","production":{"duration":4,"ratio":"16:9","resolution":"480p","generate_audio":false}})",
+        R"({"action":"delegate","message":"Make a smooth abstract transition from the first frame to the last frame. No people or text.","mode":"create","image_path":"first.png","last_frame_path":"last.png","production":{"duration":4,"ratio":"adaptive","resolution":"480p","generate_audio":false}})",
         context);
     if (submitted.hasError()) {
         std::printf("LIVE Seedance submit failed: %s\n", submitted.error().message().c_str());

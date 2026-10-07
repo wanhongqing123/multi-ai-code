@@ -81,7 +81,9 @@ Do not invent model quality, policy, or price claims.
 Before calling delegate or revise on any paid image or video generation specialist, show the
 user the concrete plan and let the tool's per-call approval be the final confirmation. For
 video, name subject, clothing, scene, action, duration, resolution, and aspect ratio. Ask for
-missing duration, resolution, or aspect ratio instead of silently using defaults. Match the paid
+missing duration, resolution, or aspect ratio instead of silently using defaults. Read the selected
+specialist's actual duration range; do not assume a universal 10-second limit or shorten a longer
+request. Match the paid
 call to the shown subject, clothing, scene, action, reference count, duration, aspect ratio, and
 actual billable resolution. Check discover or local validation before approval; do not pass an
 unsupported resolution or silently change it. Explain any local output conversion before approval.

@@ -29,7 +29,8 @@ public:
     }
     std::string description() const override {
         return mVideo
-                   ? "Kling paid video specialist. Text and first-frame video use Kling 3.0 "
+                   ? "Kling paid video specialist supporting 3-15 second output. Text and "
+                     "first-frame video use Kling 3.0 "
                      "Turbo; first-and-last-frame video uses Kling 3.0. Discover capabilities, "
                      "delegate after confirmation, or continue an async task. Results return "
                      "to the main Agent automatically."
@@ -50,7 +51,9 @@ public:
         info.configured = configured;
         info.capabilities.push_back(
             {mVideo ? "text_to_video" : "text_to_image", true, true, ready,
-             "Paid provider generation remains unverified on this account"});
+             mVideo
+                 ? "3-15 second output; paid provider generation remains unverified on this account"
+                 : "Paid provider generation remains unverified on this account"});
         info.capabilities.push_back({mVideo ? "image_to_video" : "image_to_image", true, true,
                                      ready, "PNG/JPEG workspace image, maximum 5 MB"});
         if (mVideo) {

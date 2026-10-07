@@ -13,7 +13,7 @@
                 └─特殊工具：视频创作工具
                              │  显式声明绑定模型、能力、约束和任务策略
                              │  接收高层意图、相关上下文与后续消息
-                             └─绑定的视频模型：Seedance 2.0
+                             └─绑定的视频模型：Seedance 2.5
 ```
 
 特殊工具始终是注册表中的**工具**，不是泛型 `MaiSubAgent` 会话。它有稳定的名称和契约，
@@ -229,7 +229,7 @@ queued → submitting → running → succeeded
 
 ## 当前落地与后续
 
-iOS 已验证 Seedance 文生视频的云端生成、下载与会话媒体交付。当前
+iOS 曾用 Seedance 2.0 验证文生视频的云端生成、下载与会话媒体交付。当前
 `seedance_video` 和 `seedream_image` 的请求、校验、任务状态及下载实现已迁入
 `MaiAgent/AgentTools/MaiArkMediaTools.cpp`；iOS 从 Keychain 提供方舟 Key，Android 从
 Keystore 提供，桌面端从 `MAICHAT_ARK_API_KEY` 环境变量提供。各端注册同一套工具，
@@ -251,8 +251,9 @@ FFmpeg 全片解码通过。两个结果都带 `revision_of` 指向旧任务；�
 图片创作使用单一 `seedream_image` 入口，绑定 Seedream 5.0 flash：文生图时提交提示词，
 编辑时主控只传已有图片的工作区路径与指令，由工具层读取图片、编码提交并将新 PNG 保存回工作区。
 图片接口支持 Base64 输入，因此这条本地图片交接路径不依赖视频所需的 TOS 上传通道。
-Seedance 2.0 模型和视频生成接口支持视频参考、编辑与延长。当前工具已接入
-HTTPS 视频 URL 或已完成 Seedance 任务的引用路径；编辑请求已在方舟服务端验证出片，
+`seedance_video` 现绑定 `doubao-seedance-2-5-260628`，单次输出允许 4–30 秒，
+并接入 HTTPS 视频 URL 或已完成 Seedance 任务的引用路径。此前 2.0 的编辑请求
+已在方舟服务端验证出片；切换到 2.5 后仍需重新实测，
 iOS 工具层仍需单独验收。iOS 宿主现可通过腾讯 IM SDK 的视频文件上传接口把
 `video_path` 转为 HTTPS URL，再提交给 Seedance；素材会进入腾讯 IM 云文件服务，
 不会发送成聊天消息。iOS 上传通道按腾讯 IM 视频文件 100 MB 上限保守限制，
@@ -296,12 +297,14 @@ iOS 工具层仍需单独验收。iOS 宿主现可通过腾讯 IM SDK 的视频�
 移动端仍需独立验收，因此设备侧状态保持 `implemented_unverified`。
 图层拆分仍为 `not_implemented`，连续组图输出是该模型不支持。
 方舟[视频任务 API 文档](https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh)
-列出 Seedance 2.0 的首尾帧与多模态参考能力；模型支持不等于工具已验收，
+列出 Seedance 2.5 的首尾帧与多模态参考能力；模型支持不等于工具已验收，
 不能仅因模型支持就向主控报告为可用。
 其中首尾帧输入现已接通 `image_path` + `last_frame_path` 两张工作区图片，
-并补上文档允许的 `21:9` 与 `4k` 参数；Mac 共享核心已用真实视频任务验证，
-移动端尚未实测，设备侧仍报告为 `implemented_unverified`。
-除虚拟人像加一张本地对象参考图外，多参考图／视频／音频仍是能力缺口，不能报告为已实现。
+其 `ratio` 必须为 `adaptive`。2.5 输出档位为 480p／720p／1080p，不支持旧版的
+`4k` 档。参考图路径最多接入 30 张；工具仍只接入单个参考视频，参考音频尚未接入。
+视频编辑使用 `ratio=adaptive`、`duration=-1`；视频延长使用 `ratio=adaptive`。
+此前 Mac 共享核心验证的是 2.0，新绑定的 2.5 与各移动端仍未实测，
+设备侧保持 `implemented_unverified`。
 
 1. 为视频 URL／已完成的 Seedance 任务接通编辑、延长和参考生视频；本地视频上传独立验收。
 2. 在共享工具接口加入机器可读的模型绑定与能力元数据，并核对实际授权与服务状态。

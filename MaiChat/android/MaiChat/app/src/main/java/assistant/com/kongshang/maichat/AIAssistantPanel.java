@@ -848,6 +848,60 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
         form.addView(url, matchWrap());
         form.addView(name, matchWrap());
+        form.addView(text("接口协议", 14, MaiChatTheme.SECONDARY), matchWrap());
+        Spinner wire = new Spinner(activity);
+        wire.setAdapter(new ArrayAdapter<>(activity, android.R.layout.simple_spinner_dropdown_item,
+            new String[] {"Chat Completions", "Responses"}));
+        wire.setSelection(controller.currentWire().equals("chat_completions") ? 0 : 1);
+        form.addView(wire, matchWrap());
+        final String[] glmChatUrl = {controller.glmChatBaseUrl()};
+        Runnable updateEndpoint = () -> {
+            String selectedName = name.getText().toString().trim();
+            String currentUrl = url.getText().toString().trim();
+            if (selectedName.startsWith("glm-") &&
+                currentUrl.startsWith("https://open.bigmodel.cn/")) {
+                if (wire.getSelectedItemPosition() == 1 &&
+                    !currentUrl.equals(AIAssistantController.GLM_RESPONSES_URL)) {
+                    glmChatUrl[0] = currentUrl;
+                    url.setText(AIAssistantController.GLM_RESPONSES_URL);
+                } else if (wire.getSelectedItemPosition() == 0 &&
+                           currentUrl.equals(AIAssistantController.GLM_RESPONSES_URL)) {
+                    url.setText(glmChatUrl[0]);
+                }
+            } else if (selectedName.equals("deepseek-flash") &&
+                       !currentUrl.equals(AIAssistantController.DEEPSEEK_URL)) {
+                url.setText(AIAssistantController.DEEPSEEK_URL);
+            }
+        };
+        wire.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(android.widget.AdapterView<?> parent, View view,
+                                                 int position, long id) { updateEndpoint.run(); }
+            @Override public void onNothingSelected(android.widget.AdapterView<?> parent) {}
+        });
+        final String[] lastProvider = {state.model.equals("deepseek-flash") ? "deepseek"
+            : state.model.startsWith("glm-") ? "glm" : "custom"};
+        name.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence text, int start, int count,
+                                                    int after) {}
+            @Override public void onTextChanged(CharSequence text, int start, int before,
+                                                int count) {}
+            @Override public void afterTextChanged(Editable text) {
+                String selected = text.toString().trim();
+                String provider = selected.equals("deepseek-flash") ? "deepseek"
+                    : selected.startsWith("glm-") ? "glm" : "custom";
+                if (!provider.equals(lastProvider[0])) {
+                    if (provider.equals("deepseek")) {
+                        url.setText(AIAssistantController.DEEPSEEK_URL);
+                        wire.setSelection(controller.deepseekWire().equals("chat_completions") ? 0 : 1);
+                    } else if (provider.equals("glm")) {
+                        url.setText(controller.glmBaseUrl());
+                        wire.setSelection(controller.glmWire().equals("chat_completions") ? 0 : 1);
+                    }
+                    lastProvider[0] = provider;
+                }
+                updateEndpoint.run();
+            }
+        });
         form.addView(key, matchWrap());
         form.addView(arkKey, matchWrap());
         form.addView(wanKey, matchWrap());
@@ -877,7 +931,8 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
                 controller.save(url.getText().toString(), name.getText().toString(),
                     new String[] {"on-request", "unless-trusted", "never"}[policy.getSelectedItemPosition()],
-                    key.getText().toString(), success -> {
+                    key.getText().toString(), wire.getSelectedItemPosition() == 0
+                        ? "chat_completions" : "responses", glmChatUrl[0], success -> {
                         if (!success) {
                             validation.setText(controller.state.error);
                             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);

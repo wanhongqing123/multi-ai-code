@@ -2,6 +2,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QClipboard>
+#include <QComboBox>
 #include <QDateTime>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -1946,6 +1947,7 @@ void MainWindowLayoutTest::agentSettingsDialogExposesSecureModelFields() {
 
     bool sawDialog = false;
     bool keyIsMasked = false;
+    bool protocolUpdatesAddress = false;
     QTimer::singleShot(100, [&] {
         auto* dialog = window.findChild<QDialog*>(QStringLiteral("agentModelDialog"));
         if (dialog == nullptr) return;
@@ -1955,14 +1957,31 @@ void MainWindowLayoutTest::agentSettingsDialogExposesSecureModelFields() {
         auto* model = dialog->findChild<QLineEdit*>(QStringLiteral("agentModelName"));
         auto* apiKey =
             dialog->findChild<QLineEdit*>(QStringLiteral("agentModelApiKey"));
+        auto* wire = dialog->findChild<QComboBox*>(QStringLiteral("agentModelWire"));
         keyIsMasked = baseUrl != nullptr && model != nullptr && apiKey != nullptr &&
                       apiKey->echoMode() == QLineEdit::Password;
+        if (baseUrl != nullptr && model != nullptr && wire != nullptr) {
+            model->setText(QStringLiteral("glm-5.3"));
+            wire->setCurrentIndex(0);
+            baseUrl->setText(QStringLiteral("https://open.bigmodel.cn/api/coding/paas/v4"));
+            wire->setCurrentIndex(1);
+            const bool glmResponses =
+                baseUrl->text() == QStringLiteral("https://open.bigmodel.cn/api/v1");
+            wire->setCurrentIndex(0);
+            const bool glmChat = baseUrl->text() ==
+                                 QStringLiteral("https://open.bigmodel.cn/api/coding/paas/v4");
+            model->setText(QStringLiteral("deepseek-flash"));
+            wire->setCurrentIndex(0);
+            protocolUpdatesAddress = glmResponses && glmChat && wire->isEnabled() &&
+                                     baseUrl->text() == QStringLiteral("https://api.deepseek.com");
+        }
         dialog->reject();
     });
     button->click();
 
     QVERIFY(sawDialog);
     QVERIFY(keyIsMasked);
+    QVERIFY(protocolUpdatesAddress);
 }
 
 void MainWindowLayoutTest::agentSettingsSaveAppliesWithoutRestart() {

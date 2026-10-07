@@ -1375,18 +1375,34 @@ AgentController::ModelConfig loadAgentModelConfig() {
     config.modelName =
         settings.value(QStringLiteral("agent/model"), QStringLiteral("glm-5.3")).toString();
     const bool deepseek = config.modelName == QStringLiteral("deepseek-flash");
+    const QString wireSetting = settings.value(deepseek ? QStringLiteral("agent/deepseekWire")
+                                                       : QStringLiteral("agent/wire"))
+                                    .toString();
+    const bool legacyGlmChat = !deepseek && !settings.contains(QStringLiteral("agent/wire")) &&
+                               settings.contains(QStringLiteral("agent/baseUrl"));
+    config.wire = wireSetting == QStringLiteral("chat_completions") || legacyGlmChat
+                      ? MaiWireApi::ChatCompletions
+                      : MaiWireApi::Responses;
     config.baseUrl =
         settings.value(deepseek ? QStringLiteral("agent/deepseekBaseUrl")
                                 : QStringLiteral("agent/baseUrl"),
-                       deepseek ? QStringLiteral("https://api.deepseek.com") : QString())
+                       deepseek ? QStringLiteral("https://api.deepseek.com")
+                                : config.wire == MaiWireApi::Responses
+                                      ? QStringLiteral("https://open.bigmodel.cn/api/v1")
+                                      : QStringLiteral("https://open.bigmodel.cn/api/coding/paas/v4"))
             .toString();
+    if (!deepseek && QUrl(config.baseUrl).host() == QStringLiteral("open.bigmodel.cn")) {
+        if (config.wire == MaiWireApi::Responses)
+            config.baseUrl = QStringLiteral("https://open.bigmodel.cn/api/v1");
+        else if (config.baseUrl == QStringLiteral("https://open.bigmodel.cn/api/v1"))
+            config.baseUrl = settings.value(
+                QStringLiteral("agent/glmChatBaseUrl"),
+                QStringLiteral("https://open.bigmodel.cn/api/coding/paas/v4"))
+                                 .toString();
+    }
     config.apiKey = settings.value(deepseek ? QStringLiteral("agent/deepseekApiKey")
                                             : QStringLiteral("agent/apiKey"))
                         .toString();
-    config.wire = deepseek || settings.value(QStringLiteral("agent/wire")).toString() ==
-                                    QStringLiteral("responses")
-                      ? MaiWireApi::Responses
-                      : MaiWireApi::ChatCompletions;
     const QString policy = settings
                                .value(QStringLiteral("agent/approvalPolicy"),
                                       QStringLiteral("on_request"))
@@ -3375,6 +3391,14 @@ void MainWindow::editAgentModelSettings() {
 
     QSettings settings;
     const AgentController::ModelConfig current = loadAgentModelConfig();
+    QString glmChatBaseUrl = settings.value(
+        QStringLiteral("agent/glmChatBaseUrl"),
+        QStringLiteral("https://open.bigmodel.cn/api/coding/paas/v4"))
+                                 .toString();
+    if (current.modelName.startsWith(QStringLiteral("glm-")) &&
+        current.wire == MaiWireApi::ChatCompletions &&
+        QUrl(current.baseUrl).host() == QStringLiteral("open.bigmodel.cn"))
+        glmChatBaseUrl = current.baseUrl;
     QDialog dialog(this);
     dialog.setObjectName(QStringLiteral("agentModelDialog"));
     dialog.setWindowTitle(QStringLiteral("配置 AI 助手模型"));
@@ -3431,7 +3455,6 @@ void MainWindow::editAgentModelSettings() {
     wire->addItem(QStringLiteral("Chat Completions"), QStringLiteral("chat_completions"));
     wire->addItem(QStringLiteral("Responses"), QStringLiteral("responses"));
     wire->setCurrentIndex(current.wire == MaiWireApi::Responses ? 1 : 0);
-    wire->setEnabled(current.modelName != QStringLiteral("deepseek-flash"));
     content->addWidget(wire);
 
     auto* apiKeyLabel = new QLabel(QStringLiteral("API Key"), panel);
@@ -3564,23 +3587,44 @@ void MainWindow::editAgentModelSettings() {
     connect(baseUrl, &QLineEdit::textChanged, &dialog, updateSave);
     connect(model, &QLineEdit::textChanged, &dialog, updateSave);
     connect(apiKey, &QLineEdit::textChanged, &dialog, updateSave);
-    connect(model, &QLineEdit::textChanged, &dialog, [=, &settings](const QString& name) {
+    connect(wire, QOverload<int>::of(&QComboBox::currentIndexChanged), &dialog,
+            [=, &glmChatBaseUrl](int index) {
+                const QString name = model->text().trimmed();
+                if (name.startsWith(QStringLiteral("glm-")) &&
+                    QUrl(baseUrl->text()).host() == QStringLiteral("open.bigmodel.cn")) {
+                    if (index == 1 &&
+                        baseUrl->text() != QStringLiteral("https://open.bigmodel.cn/api/v1")) {
+                        glmChatBaseUrl = baseUrl->text().trimmed();
+                        baseUrl->setText(QStringLiteral("https://open.bigmodel.cn/api/v1"));
+                    } else if (index == 0 &&
+                               baseUrl->text() ==
+                                   QStringLiteral("https://open.bigmodel.cn/api/v1")) {
+                        baseUrl->setText(glmChatBaseUrl);
+                    }
+                } else if (name == QStringLiteral("deepseek-flash")) {
+                    baseUrl->setText(QStringLiteral("https://api.deepseek.com"));
+                }
+            });
+    connect(model, &QLineEdit::textChanged, &dialog, [=, &settings, &glmChatBaseUrl](const QString& name) {
         const bool deepseek = name.trimmed() == QStringLiteral("deepseek-flash");
         if (deepseek) {
             baseUrl->setText(settings.value(QStringLiteral("agent/deepseekBaseUrl"),
                                              QStringLiteral("https://api.deepseek.com"))
                                  .toString());
-            wire->setCurrentIndex(1);
+            wire->setCurrentIndex(settings.value(QStringLiteral("agent/deepseekWire")) ==
+                                          QStringLiteral("chat_completions")
+                                      ? 0
+                                      : 1);
         } else if (name.trimmed().startsWith(QStringLiteral("glm-"))) {
-            baseUrl->setText(settings.value(QStringLiteral("agent/baseUrl"),
-                                             QStringLiteral("https://open.bigmodel.cn/api/coding/paas/v4"))
-                                 .toString());
-            wire->setCurrentIndex(settings.value(QStringLiteral("agent/wire")).toString() ==
-                                          QStringLiteral("responses")
-                                      ? 1
-                                      : 0);
+            const bool legacyChat = !settings.contains(QStringLiteral("agent/wire")) &&
+                                    settings.contains(QStringLiteral("agent/baseUrl"));
+            const bool chat = settings.value(QStringLiteral("agent/wire")) ==
+                                  QStringLiteral("chat_completions") ||
+                              legacyChat;
+            baseUrl->setText(chat ? glmChatBaseUrl
+                                  : QStringLiteral("https://open.bigmodel.cn/api/v1"));
+            wire->setCurrentIndex(chat ? 0 : 1);
         }
-        wire->setEnabled(!deepseek);
         const QString storedKey = settings.value(deepseek ? QStringLiteral("agent/deepseekApiKey")
                                                      : QStringLiteral("agent/apiKey"))
                                       .toString();
@@ -3626,7 +3670,13 @@ void MainWindow::editAgentModelSettings() {
                                   : QStringLiteral("agent/baseUrl"), url);
         settings.setValue(QStringLiteral("agent/model"), modelName);
         settings.setValue(keySetting, key);
-        if (!deepseek) settings.setValue(QStringLiteral("agent/wire"), wire->currentData());
+        settings.setValue(deepseek ? QStringLiteral("agent/deepseekWire")
+                                   : QStringLiteral("agent/wire"),
+                          wire->currentData());
+        if (modelName.startsWith(QStringLiteral("glm-"))) {
+            if (wire->currentIndex() == 0) glmChatBaseUrl = url;
+            settings.setValue(QStringLiteral("agent/glmChatBaseUrl"), glmChatBaseUrl);
+        }
         settings.sync();
         if (settings.status() != QSettings::NoError) {
             error->setText(QStringLiteral("模型配置保存失败，请检查当前用户的设置目录权限。"));

@@ -16,11 +16,66 @@ func logAIHistoryEvent(_ message: @autoclosure () -> String) {
 }
 
 struct AIModelSettings: Codable, Sendable, Equatable {
-    var baseUrl = "https://open.bigmodel.cn/api/coding/paas/v4"
+    static let glmChatUrl = "https://open.bigmodel.cn/api/coding/paas/v4"
+    static let glmResponsesUrl = "https://open.bigmodel.cn/api/v1"
+    static let deepSeekUrl = "https://api.deepseek.com"
+
+    var baseUrl = AIModelSettings.glmResponsesUrl
     var model = "glm-5.3"
     var policy = "on-request"
-    var wire: String? = nil
+    var wire: String? = "responses"
     var glmBaseUrl: String? = nil
+    var glmWire: String? = nil
+    var deepSeekWire: String? = nil
+
+    var effectiveWire: String {
+        wire ?? (model == "deepseek-flash" ? "responses" : "chat_completions")
+    }
+
+    mutating func selectWire(_ selected: String) {
+        wire = selected
+        if model == "deepseek-flash" {
+            deepSeekWire = selected
+            baseUrl = Self.deepSeekUrl
+        } else if model.hasPrefix("glm-") {
+            glmWire = selected
+            if selected == "responses", isBigModelUrl(baseUrl), baseUrl != Self.glmResponsesUrl {
+                glmBaseUrl = baseUrl
+                baseUrl = Self.glmResponsesUrl
+            } else if selected == "chat_completions", baseUrl == Self.glmResponsesUrl {
+                baseUrl = glmBaseUrl ?? Self.glmChatUrl
+            }
+        }
+    }
+
+    mutating func selectModel(_ selected: String) {
+        guard selected != model else { return }
+        if selected == "deepseek-flash" {
+            if isBigModelUrl(baseUrl) {
+                glmWire = effectiveWire
+                if effectiveWire == "chat_completions" { glmBaseUrl = baseUrl }
+            }
+            model = selected
+            wire = deepSeekWire ?? "responses"
+            baseUrl = Self.deepSeekUrl
+        } else if selected.hasPrefix("glm-"), baseUrl == Self.deepSeekUrl {
+            deepSeekWire = effectiveWire
+            model = selected
+            wire = glmWire ?? (glmBaseUrl == nil || glmBaseUrl == Self.glmResponsesUrl
+                ? "responses" : "chat_completions")
+            baseUrl = wire == "responses" ? Self.glmResponsesUrl : (glmBaseUrl ?? Self.glmChatUrl)
+        } else if selected.hasPrefix("glm-"), !model.hasPrefix("glm-") {
+            model = selected
+            wire = glmWire ?? "responses"
+            baseUrl = wire == "responses" ? Self.glmResponsesUrl : (glmBaseUrl ?? Self.glmChatUrl)
+        } else {
+            model = selected
+        }
+    }
+
+    private func isBigModelUrl(_ value: String) -> Bool {
+        URL(string: value)?.host == "open.bigmodel.cn"
+    }
 }
 struct AISession: Codable, Identifiable, Sendable, Equatable {
     let id: String
@@ -201,8 +256,8 @@ actor AIAssistantBackend {
             settings = try JSONDecoder().decode(AIModelSettings.self, from: Data(contentsOf: file))
         }
         if settings.model == "deepseek-flash" {
-            settings.baseUrl = "https://api.deepseek.com"
-            settings.wire = "responses"
+            settings.baseUrl = AIModelSettings.deepSeekUrl
+            if settings.wire == nil { settings.wire = "responses" }
         }
         var key = keyStore(for: settings.model).readSecretKey()
         #if targetEnvironment(simulator)
@@ -231,8 +286,7 @@ actor AIAssistantBackend {
         let appRootPath = AIAssistantPathPolicy.appRoot(workspacePath: workspace.path)
         _ = try call("configure", values: ["database": root.appendingPathComponent("sessions.sqlite").path,
             "workspace": workspace.path, "baseUrl": config.baseUrl, "apiKey": key,
-            "wire": config.model == "deepseek-flash" ? "responses" :
-                (config.wire ?? "chat_completions"),
+            "wire": config.effectiveWire,
             "model": config.model, "policy": config.policy, "appRoot": appRootPath,
             "temporaryDirectory": FileManager.default.temporaryDirectory.path,
             "cacheDirectory": try FileManager.default.url(for: .cachesDirectory,

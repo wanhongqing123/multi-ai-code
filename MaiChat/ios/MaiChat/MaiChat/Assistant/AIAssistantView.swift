@@ -91,16 +91,7 @@ struct AIAssistantView: View {
                     selectModel: { selected in
                         guard selected != model.settings.model else { return }
                         var next = model.settings
-                        if selected == "deepseek-flash" {
-                            next.glmBaseUrl = next.baseUrl
-                            next.baseUrl = "https://api.deepseek.com"
-                            next.wire = "responses"
-                        } else if next.model == "deepseek-flash" {
-                            next.baseUrl = next.glmBaseUrl ??
-                                "https://open.bigmodel.cn/api/coding/paas/v4"
-                            next.wire = "chat_completions"
-                        }
-                        next.model = selected
+                        next.selectModel(selected)
                         Task {
                             if !(await model.save(next, key: "")) { model.showSettings = true }
                         }
@@ -807,6 +798,24 @@ private struct AIMessageRow: View {
                         }
                     }
                 }
+                ForEach(message.parts) { part in
+                    if part.kind == "text", let text = part.text, !text.isEmpty {
+                        if let failure = specialistFailureText(text) {
+                            Label(failure, systemImage: "exclamationmark.triangle.fill")
+                                .font(ChatTypography.body)
+                                .foregroundStyle(.red)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(12)
+                                .background(Color.red.opacity(0.08),
+                                            in: RoundedRectangle(cornerRadius: 12))
+                                .textSelection(.enabled)
+                        } else {
+                            MarkdownLikeText(text, retainsPreviousWhilePreparing: true,
+                                             bodyFont: ChatTypography.body, assistantTypography: true)
+                                .foregroundStyle(RemoteIMStyle.textPrimary)
+                        }
+                    }
+                }
                 ForEach(mediaArtifacts) { artifact in
                     VStack(alignment: .leading, spacing: 8) {
                         if artifact.type == "image" {
@@ -837,24 +846,6 @@ private struct AIMessageRow: View {
                         }
                         ShareLink(item: URL(fileURLWithPath: artifact.filePath)) {
                             Label("转发或分享", systemImage: "square.and.arrow.up")
-                        }
-                    }
-                }
-                ForEach(message.parts) { part in
-                    if part.kind == "text", let text = part.text, !text.isEmpty {
-                        if let failure = specialistFailureText(text) {
-                            Label(failure, systemImage: "exclamationmark.triangle.fill")
-                                .font(ChatTypography.body)
-                                .foregroundStyle(.red)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(12)
-                                .background(Color.red.opacity(0.08),
-                                            in: RoundedRectangle(cornerRadius: 12))
-                                .textSelection(.enabled)
-                        } else {
-                            MarkdownLikeText(text, retainsPreviousWhilePreparing: true,
-                                             bodyFont: ChatTypography.body, assistantTypography: true)
-                                .foregroundStyle(RemoteIMStyle.textPrimary)
                         }
                     }
                 }
@@ -2606,9 +2597,9 @@ private struct AISettingsView: View {
 
                     settingsField("选择主模型", systemImage: "sparkles") {
                         Menu {
-                            Button("GLM-5.3") { settings.model = "glm-5.3" }
-                            Button("GLM-5.3-Flash") { settings.model = "glm-5.3-flash" }
-                            Button("DeepSeek V4.1 Flash") { settings.model = "deepseek-flash" }
+                            Button("GLM-5.3") { selectSettingsModel("glm-5.3") }
+                            Button("GLM-5.3-Flash") { selectSettingsModel("glm-5.3-flash") }
+                            Button("DeepSeek V4.1 Flash") { selectSettingsModel("deepseek-flash") }
                         } label: {
                             HStack {
                                 Text(selectedModelTitle)
@@ -2625,24 +2616,24 @@ private struct AISettingsView: View {
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .textFieldStyle(.plain)
+                            .accessibilityIdentifier("ai-model-base-url")
                     }
                     settingsField("模型名称", systemImage: "cpu") {
-                        TextField("模型名称", text: $settings.model)
+                        TextField("模型名称", text: modelSelection)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .textFieldStyle(.plain)
                     }
                     settingsField("接口协议", systemImage: "arrow.left.arrow.right") {
                         Picker("接口协议", selection: Binding(
-                            get: { settings.wire ?? (settings.model == "deepseek-flash"
-                                ? "responses" : "chat_completions") },
-                            set: { settings.wire = $0 }
+                            get: { settings.effectiveWire },
+                            set: { settings.selectWire($0) }
                         )) {
                             Text("Chat Completions").tag("chat_completions")
                             Text("Responses").tag("responses")
                         }
                         .pickerStyle(.segmented)
-                        .disabled(settings.model == "deepseek-flash")
+                        .accessibilityIdentifier("ai-model-wire")
                     }
                     settingsField(settings.model == "deepseek-flash"
                                   ? "DeepSeek API Key" : "API Key", systemImage: "key") {
@@ -2753,24 +2744,17 @@ private struct AISettingsView: View {
             miniMaxConfigured = !KeychainSecretStore(account: "minimax-creative-api-key")
                 .readSecretKey().isEmpty
         }
-        .onChange(of: settings.model) { selected in
-            apiKey = ""
-            modelKeyConfigured = hasSavedModelKey(for: selected)
-            if selected == "deepseek-flash" {
-                if URL(string: settings.baseUrl)?.host?.hasSuffix("bigmodel.cn") == true {
-                    settings.glmBaseUrl = settings.baseUrl
-                    settings.baseUrl = "https://api.deepseek.com"
-                }
-                settings.wire = "responses"
-            } else if selected == "glm-5.3" || selected == "glm-5.3-flash" {
-                if URL(string: settings.baseUrl)?.host == "api.deepseek.com" {
-                    settings.baseUrl = settings.glmBaseUrl ??
-                        "https://open.bigmodel.cn/api/coding/paas/v4"
-                }
-                settings.wire = "chat_completions"
-            }
-        }
         .accessibilityIdentifier("ai-model-settings")
+    }
+
+    private var modelSelection: Binding<String> {
+        Binding(get: { settings.model }, set: { selected in selectSettingsModel(selected) })
+    }
+
+    private func selectSettingsModel(_ selected: String) {
+        settings.selectModel(selected)
+        apiKey = ""
+        modelKeyConfigured = hasSavedModelKey(for: selected)
     }
 
     private var selectedModelTitle: String {

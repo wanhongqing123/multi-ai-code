@@ -102,14 +102,19 @@ public final class AIAssistantController {
     private final String testEndpoint;
     private volatile Listener listener;
     private volatile HostToolHandler hostToolHandler;
-    volatile State state = new State(new JSONObject(), "", "https://open.bigmodel.cn/api/coding/paas/v4",
+    static final String GLM_CHAT_URL = "https://open.bigmodel.cn/api/coding/paas/v4";
+    static final String GLM_RESPONSES_URL = "https://open.bigmodel.cn/api/v1";
+    static final String DEEPSEEK_URL = "https://api.deepseek.com";
+    volatile State state = new State(new JSONObject(), "", GLM_RESPONSES_URL,
         "glm-5.3", "on-request", "", false);
     private long handle;
     private File root;
     private File rvmModelFile;
     private volatile String selected = "", baseUrl = state.baseUrl, model = state.model, policy = state.policy,
-                   error = "", apiKey = "";
-    private volatile String glmBaseUrl = "https://open.bigmodel.cn/api/coding/paas/v4";
+                   error = "", apiKey = "", wire = "responses";
+    private volatile String glmBaseUrl = GLM_RESPONSES_URL;
+    private volatile String glmChatBaseUrl = GLM_CHAT_URL;
+    private volatile String glmWire = "responses", deepseekWire = "responses";
     private volatile String deepseekApiKey = "";
     private volatile String arkApiKey = "";
     private volatile String wanApiKey = "";
@@ -285,9 +290,23 @@ public final class AIAssistantController {
                 policy = saved.optString("policy", policy);
                 glmBaseUrl = saved.optString("glmBaseUrl",
                     model.equals("deepseek-flash") ? glmBaseUrl : baseUrl);
+                wire = saved.optString("wire", model.equals("deepseek-flash")
+                    ? "responses" : "chat_completions");
+                glmWire = saved.optString("glmWire", glmBaseUrl.equals(GLM_RESPONSES_URL)
+                    ? "responses" : "chat_completions");
+                deepseekWire = saved.optString("deepseekWire", model.equals("deepseek-flash")
+                    ? wire : "responses");
+                glmChatBaseUrl = saved.optString("glmChatBaseUrl",
+                    glmWire.equals("chat_completions") ? glmBaseUrl : GLM_CHAT_URL);
                 wanWorkspaceId = saved.optString("wanWorkspaceId", "");
             }
-            if (model.equals("deepseek-flash")) baseUrl = "https://api.deepseek.com";
+            if (model.equals("deepseek-flash")) baseUrl = DEEPSEEK_URL;
+            else if (model.startsWith("glm-") &&
+                     "open.bigmodel.cn".equals(new java.net.URI(baseUrl).getHost())) {
+                if (wire.equals("responses")) baseUrl = GLM_RESPONSES_URL;
+                else if (baseUrl.equals(GLM_RESPONSES_URL)) baseUrl = glmChatBaseUrl;
+                glmBaseUrl = baseUrl;
+            }
             try {
                 deepseekApiKey = readEncryptedKey("deepseek-main-api-key.enc");
                 apiKey = model.equals("deepseek-flash") ? deepseekApiKey : readKey();
@@ -313,10 +332,11 @@ public final class AIAssistantController {
             if (testEndpoint != null) {
                 baseUrl = testEndpoint;
                 model = "test-model";
+                wire = "chat_completions";
                 apiKey = "test-key";
             }
             exportSystemCertificates();
-            configure(baseUrl, model, policy, apiKey);
+            configure(baseUrl, model, policy, apiKey, wire);
             ready = true;
             refresh(true);
             JSONArray sessions = data.optJSONArray("sessions");
@@ -349,7 +369,8 @@ public final class AIAssistantController {
     private JSONObject op(String name) throws Exception {
         return new JSONObject().put("op", name).put("session", selected);
     }
-    private void configure(String url, String name, String approval, String key) throws Exception {
+    private void configure(String url, String name, String approval, String key,
+                           String selectedWire) throws Exception {
         File workspace = new File(root, "Workspace");
         if (!workspace.mkdirs() && !workspace.isDirectory())
             throw new IllegalStateException("无法创建工作区");
@@ -358,7 +379,7 @@ public final class AIAssistantController {
         call(op("configure")
                 .put("baseUrl", url)
                 .put("apiKey", key)
-                .put("wire", name.equals("deepseek-flash") ? "responses" : "chat_completions")
+                .put("wire", selectedWire)
                 .put("model", name)
                 .put("policy", approval)
                 .put("database", new File(root, "sessions.sqlite").getPath())
@@ -501,12 +522,14 @@ public final class AIAssistantController {
     }
     void switchModel(String name, Consumer<Boolean> completion) {
         if (name.equals("deepseek-flash"))
-            save("https://api.deepseek.com", name, policy, deepseekApiKey, completion);
+            save(DEEPSEEK_URL, name, policy, deepseekApiKey, deepseekWire,
+                glmChatBaseUrl, completion);
         else
             worker.post(() -> {
                 try {
                     String key = readKey();
-                    main.post(() -> save(glmBaseUrl, name, policy, key, completion));
+                    main.post(() -> save(glmBaseUrl, name, policy, key, glmWire,
+                        glmChatBaseUrl, completion));
                 } catch (Exception failure) {
                     error = safeMessage(failure);
                     emit();
@@ -536,15 +559,29 @@ public final class AIAssistantController {
         });
     }
     void save(String url, String name, String approval, String newKey, Consumer<Boolean> completion) {
+        save(url, name, approval, newKey, wire, glmChatBaseUrl, completion);
+    }
+    void save(String url, String name, String approval, String newKey,
+              String selectedWire, String chatUrl, Consumer<Boolean> completion) {
         worker.post(() -> {
             boolean success = false;
             try {
-                java.net.URI uri = new java.net.URI(url.trim());
+                if (!selectedWire.equals("responses") &&
+                    !selectedWire.equals("chat_completions"))
+                    throw new IllegalArgumentException("接口协议不支持");
+                String selectedName = name.trim();
+                String nextChatUrl = chatUrl.trim().isEmpty() ? GLM_CHAT_URL : chatUrl.trim();
+                if (selectedName.startsWith("glm-") && selectedWire.equals("responses") &&
+                    url.startsWith("https://open.bigmodel.cn/") &&
+                    !url.trim().equals(GLM_RESPONSES_URL))
+                    nextChatUrl = url.trim();
+                String effectiveUrl = endpointFor(selectedName, selectedWire, url.trim(), nextChatUrl);
+                java.net.URI uri = new java.net.URI(effectiveUrl);
                 if (!"https".equals(uri.getScheme()) || uri.getHost() == null
                     || uri.getRawUserInfo() != null || uri.getRawQuery() != null
-                    || uri.getRawFragment() != null || name.trim().isEmpty())
+                    || uri.getRawFragment() != null || selectedName.isEmpty())
                     throw new IllegalArgumentException("请填写有效的 HTTPS API 地址和模型名称");
-                boolean deepseek = name.trim().equals("deepseek-flash");
+                boolean deepseek = selectedName.equals("deepseek-flash");
                 if (deepseek && !"api.deepseek.com".equals(uri.getHost()))
                     throw new IllegalArgumentException("DeepSeek 模型请使用 https://api.deepseek.com");
                 if (newKey.trim().isEmpty() && !deepseek
@@ -554,15 +591,21 @@ public final class AIAssistantController {
                     ? (deepseek ? deepseekApiKey : apiKey) : newKey.trim();
                 if (key.isEmpty())
                     throw new IllegalArgumentException("请填写 API Key");
-                configure(url.trim(), name.trim(), approval, key);
+                configure(effectiveUrl, selectedName, approval, key, selectedWire);
                 try {
                     if (deepseek) writeEncryptedKey("deepseek-main-api-key.enc", key);
                     else writeKey(key);
                     byte[] config = new JSONObject()
-                                        .put("baseUrl", url.trim())
-                                        .put("model", name.trim())
+                                        .put("baseUrl", effectiveUrl)
+                                        .put("model", selectedName)
                                         .put("policy", approval)
-                                        .put("glmBaseUrl", deepseek ? glmBaseUrl : url.trim())
+                                        .put("wire", selectedWire)
+                                        .put("glmBaseUrl", selectedName.startsWith("glm-")
+                                            ? effectiveUrl : glmBaseUrl)
+                                        .put("glmChatBaseUrl", nextChatUrl)
+                                        .put("glmWire", selectedName.startsWith("glm-")
+                                            ? selectedWire : glmWire)
+                                        .put("deepseekWire", deepseek ? selectedWire : deepseekWire)
                                         .put("wanWorkspaceId", wanWorkspaceId)
                                         .toString()
                                         .getBytes(StandardCharsets.UTF_8);
@@ -579,15 +622,22 @@ public final class AIAssistantController {
                 } catch (Exception e) {
                     if (deepseek) writeEncryptedKey("deepseek-main-api-key.enc", deepseekApiKey);
                     else writeKey(apiKey);
-                    configure(baseUrl, model, policy, apiKey);
+                    configure(baseUrl, model, policy, apiKey, wire);
                     throw e;
                 }
-                baseUrl = url.trim();
-                model = name.trim();
+                baseUrl = effectiveUrl;
+                model = selectedName;
                 policy = approval;
                 apiKey = key;
-                if (deepseek) deepseekApiKey = key;
-                else glmBaseUrl = url.trim();
+                wire = selectedWire;
+                if (deepseek) {
+                    deepseekApiKey = key;
+                    deepseekWire = selectedWire;
+                } else if (selectedName.startsWith("glm-")) {
+                    glmBaseUrl = effectiveUrl;
+                    glmChatBaseUrl = nextChatUrl;
+                    glmWire = selectedWire;
+                }
                 error = "";
                 success = true;
                 refresh(true);
@@ -599,6 +649,18 @@ public final class AIAssistantController {
             main.post(() -> completion.accept(saved));
         });
     }
+    static String endpointFor(String name, String selectedWire, String url, String chatUrl) {
+        if (name.equals("deepseek-flash")) return DEEPSEEK_URL;
+        if (!name.startsWith("glm-") || !url.startsWith("https://open.bigmodel.cn/"))
+            return url;
+        if (selectedWire.equals("responses")) return GLM_RESPONSES_URL;
+        return url.equals(GLM_RESPONSES_URL) ? chatUrl : url;
+    }
+    String currentWire() { return wire; }
+    String glmWire() { return glmWire; }
+    String deepseekWire() { return deepseekWire; }
+    String glmBaseUrl() { return glmBaseUrl; }
+    String glmChatBaseUrl() { return glmChatBaseUrl; }
     void saveArkKey(String newKey, Consumer<Boolean> completion) {
         worker.post(() -> {
             boolean success = true;

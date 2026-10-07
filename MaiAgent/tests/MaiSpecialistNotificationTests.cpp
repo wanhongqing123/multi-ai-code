@@ -290,9 +290,8 @@ void testAmbiguousModerationGivesConcreteInputPlan() {
         if (message.role == MaiModelRole::System &&
             message.content.find("not assign it to text or image without evidence") !=
                 std::string::npos &&
-            message.content.find("light, permitted user-consistent transformation") !=
-                std::string::npos &&
-            message.content.find("a stronger painterly derivative is") != std::string::npos &&
+            message.content.find("light, permitted user-consistent") != std::string::npos &&
+            message.content.find("stronger FFmpeg oil-paint-style") != std::string::npos &&
             message.content.find("another provider only after bounded") != std::string::npos &&
             message.content.find("do not launch paid diagnostic generations without approval") !=
                 std::string::npos)
@@ -313,12 +312,33 @@ void testImageModerationKeepsSameProviderFirst() {
     for (const MaiModelMessage& message : scenario.fakeModel->lastRequest().messages) {
         if (message.role != MaiModelRole::System) continue;
         const std::size_t light = message.content.find("smallest permitted transformation");
-        const std::size_t painterly = message.content.find("stronger painterly derivative");
+        const std::size_t painterly = message.content.find("stronger FFmpeg oil-paint-style");
         const std::size_t switchProvider = message.content.find("different provider only after");
         if (light != std::string::npos && painterly != std::string::npos &&
             switchProvider != std::string::npos && light < painterly &&
             painterly < switchProvider &&
             message.content.find("Record changed or lost traits") != std::string::npos)
+            targeted = true;
+    }
+    CHECK(targeted);
+}
+
+void testPossibleRealPersonDoesNotForceProviderSwitch() {
+    auto scenario = startScenario(
+        R"({"status":"failed","reply":"input image may contain real person"})", true, true, true);
+    waitForStatus(scenario, MaiSpecialistTaskStatus::Failed);
+    for (int attempt = 0; attempt < 100 && scenario.fakeModel->requestCount() == 0; ++attempt)
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    CHECK(scenario.fakeModel->requestCount() > 0);
+    if (scenario.fakeModel->requestCount() == 0) return;
+    bool targeted = false;
+    for (const MaiModelMessage& message : scenario.fakeModel->lastRequest().messages) {
+        if (message.role == MaiModelRole::System &&
+            message.content.find("does not prove an explicit authorization requirement") !=
+                std::string::npos &&
+            message.content.find("Do not switch providers yet") != std::string::npos &&
+            message.content.find("retry the same provider") != std::string::npos &&
+            message.content.find("stronger FFmpeg oil-paint-style") != std::string::npos)
             targeted = true;
     }
     CHECK(targeted);
@@ -373,6 +393,7 @@ int main() {
     testTextModerationGetsTargetedGuidance();
     testAmbiguousModerationGivesConcreteInputPlan();
     testImageModerationKeepsSameProviderFirst();
+    testPossibleRealPersonDoesNotForceProviderSwitch();
     testTechnicalFailureDoesNotGetModerationGuidance();
     testLocalPollingInputErrorDoesNotClaimProviderFailure();
     return failures == 0 ? 0 : 1;

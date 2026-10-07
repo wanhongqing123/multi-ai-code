@@ -68,7 +68,8 @@ constexpr const char* kBalanceRecovery =
     "This provider cannot accept more work because its balance is insufficient. Do not stop "
     "the user's task, ask for a top-up, or retry this provider. Keep the original request and "
     "media references. Check other configured specialist tools and continue with a suitable "
-    "provider, using the normal paid-call approval for any new submission. Report an obstacle "
+    "provider, using the normal paid-call approval for any new submission. For video generation, "
+    "confirm a different model choice with the user before its paid call. Report an obstacle "
     "to the user only after practical alternatives have been exhausted. If this error came "
     "from checking an already-submitted task, its outcome is unverified; do not claim that "
     "generation failed or silently submit a duplicate paid task.";
@@ -102,11 +103,15 @@ std::string specialistFailureGuidance(const nlohmann::json& specialist) {
     if (detail.find("real person") != std::string::npos ||
         detail.find("human face") != std::string::npos ||
         detail.find("portrait") != std::string::npos) {
-        return " This attempt failed. The provider identified a person in the reference image. "
-               "Inspect the exact submitted image and role, preserve the original, then first "
-               "use available image tools for a light, legitimate transformation. Preview the "
+        return " This attempt failed. The provider reported a possible real person in the "
+               "reference image. This signal alone does not prove an explicit authorization "
+               "requirement. Inspect the raw provider wording and exact submitted image. Do not "
+               "switch providers yet. Preserve the original, then first "
+               "use local FFmpeg/OpenCV image tools for a light, legitimate transformation. "
+               "Preview the "
                "derivative and retry the same provider with new per-call approval. If it is still "
-               "rejected, consider a stronger painterly derivative as a last image-processing "
+               "rejected, consider a stronger FFmpeg oil-paint-style derivative as a last "
+               "image-processing "
                "step. Record details lost at each step and describe permitted details accurately "
                "in the next prompt so the result remains close to the original goal. Consider "
                "another provider only after these bounded same-provider attempts. If the "
@@ -117,10 +122,12 @@ std::string specialistFailureGuidance(const nlohmann::json& specialist) {
     if (detail.find("image sensitive") != std::string::npos ||
         detail.find("reference image") != std::string::npos) {
         return " This attempt failed. The provider identified the reference image. Inspect its "
-               "actual content and role, preserve the original, then use image tools for the "
+               "actual content and role, preserve the original, then use FFmpeg/OpenCV image tools "
+               "for the "
                "smallest permitted transformation that still serves the user's goal. Preview "
                "the derivative and retry this provider with new per-call approval. Only if that "
-               "fails, consider a stronger painterly derivative as the last image-processing "
+               "fails, consider a stronger FFmpeg oil-paint-style derivative as the last "
+               "image-processing "
                "step. Record changed or lost traits and describe desired permitted details in "
                "the next prompt. Consider a different provider only after these bounded "
                "same-provider attempts.";
@@ -130,10 +137,13 @@ std::string specialistFailureGuidance(const nlohmann::json& specialist) {
         detail.find("1026") != std::string::npos) {
         return " This attempt failed. The provider gave an ambiguous input-moderation result. Do "
                "not assign it to text or image without evidence. Inspect the exact submitted "
-               "prompt and source image. When a photo is involved, preserve the original and "
-               "first use image tools for a light, permitted user-consistent transformation; "
+               "prompt and source image. If evidence points to the photo, preserve the original "
+               "and "
+               "first use FFmpeg/OpenCV image tools for a light, permitted user-consistent "
+               "transformation; "
                "preview the derivative and retry the same provider with new per-call approval. "
-               "If image evidence still points to the image, a stronger painterly derivative is "
+               "If image evidence still points to the image, a stronger FFmpeg oil-paint-style "
+               "derivative is "
                "the last image-processing step. Record changed or lost details and describe "
                "desired permitted details in the next prompt. Change text separately if its "
                "wording is implicated. Consider another provider only after bounded, "

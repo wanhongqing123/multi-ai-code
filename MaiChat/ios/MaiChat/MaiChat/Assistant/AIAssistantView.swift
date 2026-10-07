@@ -2560,6 +2560,7 @@ private struct AISettingsView: View {
     let close: () -> Void
     @State private var settings = AIModelSettings()
     @State private var apiKey = ""
+    @State private var modelKeyConfigured = false
     @State private var seedanceKey = ""
     @State private var seedanceConfigured = false
     @State private var seedanceMessage = ""
@@ -2603,6 +2604,21 @@ private struct AISettingsView: View {
                             .font(.system(size: 13)).foregroundStyle(.secondary)
                     }
 
+                    settingsField("选择主模型", systemImage: "sparkles") {
+                        Menu {
+                            Button("GLM-5.3") { settings.model = "glm-5.3" }
+                            Button("GLM-5.3-Flash") { settings.model = "glm-5.3-flash" }
+                            Button("DeepSeek V4.1 Flash") { settings.model = "deepseek-flash" }
+                        } label: {
+                            HStack {
+                                Text(selectedModelTitle)
+                                Spacer()
+                                Image(systemName: "chevron.up.chevron.down")
+                            }
+                            .foregroundStyle(Color.primary)
+                        }
+                        .accessibilityIdentifier("ai-primary-model-picker")
+                    }
                     settingsField("API 地址", systemImage: "link") {
                         TextField("https://example.com/v1", text: $settings.baseUrl)
                             .keyboardType(.URL)
@@ -2630,7 +2646,8 @@ private struct AISettingsView: View {
                     }
                     settingsField(settings.model == "deepseek-flash"
                                   ? "DeepSeek API Key" : "API Key", systemImage: "key") {
-                        SecureField("输入或留空使用此模型已保存的密钥", text: $apiKey)
+                        SecureField(modelKeyConfigured ? "已配置，留空则保留" : "请输入此模型的 API Key",
+                                    text: $apiKey)
                             .textFieldStyle(.plain)
                     }
                     settingsField("方舟创作 Key（Seedance / Seedream）", systemImage: "film") {
@@ -2725,6 +2742,7 @@ private struct AISettingsView: View {
         .background(Color(red: 0.97, green: 0.98, blue: 1.0).ignoresSafeArea())
         .onAppear {
             settings = model.settings
+            modelKeyConfigured = hasSavedModelKey(for: settings.model)
             seedanceConfigured = !KeychainSecretStore(account: "seedance-ark-api-key")
                 .readSecretKey().isEmpty
             wanConfigured = !KeychainSecretStore(account: "wan-model-studio-api-key")
@@ -2736,6 +2754,8 @@ private struct AISettingsView: View {
                 .readSecretKey().isEmpty
         }
         .onChange(of: settings.model) { selected in
+            apiKey = ""
+            modelKeyConfigured = hasSavedModelKey(for: selected)
             if selected == "deepseek-flash" {
                 if URL(string: settings.baseUrl)?.host?.hasSuffix("bigmodel.cn") == true {
                     settings.glmBaseUrl = settings.baseUrl
@@ -2751,6 +2771,21 @@ private struct AISettingsView: View {
             }
         }
         .accessibilityIdentifier("ai-model-settings")
+    }
+
+    private var selectedModelTitle: String {
+        switch settings.model {
+        case "glm-5.3": return "GLM-5.3"
+        case "glm-5.3-flash": return "GLM-5.3-Flash"
+        case "deepseek-flash": return "DeepSeek V4.1 Flash"
+        default: return "自定义模型"
+        }
+    }
+
+    private func hasSavedModelKey(for selected: String) -> Bool {
+        let account = selected == "deepseek-flash"
+            ? "ai-assistant-deepseek-api-key" : "ai-assistant-api-key"
+        return !KeychainSecretStore(account: account).readSecretKey().isEmpty
     }
 
     private func saveWanConfiguration() -> Bool {

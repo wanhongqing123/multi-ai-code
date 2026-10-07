@@ -385,9 +385,10 @@ void AgentPanelSessionTest::modelChipOffersTheTextAndVisionModels() {
     QPushButton* chip = harness.panel->findChild<QPushButton*>(QStringLiteral("agentModelChip"));
     QVERIFY(chip != nullptr);
     QVERIFY(chip->menu() != nullptr);
-    QCOMPARE(chip->menu()->actions().size(), 2);
+    QCOMPARE(chip->menu()->actions().size(), 3);
     QCOMPARE(chip->menu()->actions()[0]->text(), QStringLiteral("glm-5.3"));
     QCOMPARE(chip->menu()->actions()[1]->text(), QStringLiteral("glm-5.3-flash"));
+    QCOMPARE(chip->menu()->actions()[2]->text(), QStringLiteral("deepseek-flash"));
 
     QSignalSpy selected(harness.panel.get(), &AgentChatPanel::modelSelected);
     chip->menu()->actions()[1]->trigger();
@@ -909,6 +910,10 @@ void AgentPanelSessionTest::desktopAgentSuppliesMarkdownSystemPrompt() {
     QVERIFY(prompt.contains(QStringLiteral("GitHub Flavored Markdown")));
     QVERIFY(prompt.contains(QStringLiteral("table row")));
     QVERIFY(prompt.contains(QStringLiteral("delimiter row")));
+    QVERIFY(prompt.contains(QStringLiteral("ask the user to choose")));
+    QVERIFY(prompt.contains(QStringLiteral("A model choice is")));
+    QVERIFY(prompt.contains(QStringLiteral("FFmpeg/OpenCV image tools for a light")));
+    QVERIFY(prompt.contains(QStringLiteral("FFmpeg oil-paint-style derivative")));
 }
 
 void AgentPanelSessionTest::composerMatchesImLayoutAndUsesEmbeddedSendAction() {

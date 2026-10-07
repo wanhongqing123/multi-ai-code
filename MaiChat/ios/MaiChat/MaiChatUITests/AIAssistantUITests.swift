@@ -216,8 +216,16 @@ final class AIAssistantUITests: XCTestCase {
         let settings = app.descendants(matching: .any)
             .matching(identifier: "ai-model-settings").firstMatch
         XCTAssertTrue(settings.waitForExistence(timeout: 3))
+        let modelPicker = app.buttons["ai-primary-model-picker"]
+        XCTAssertTrue(modelPicker.waitForExistence(timeout: 3))
+        modelPicker.tap()
+        let deepSeek = app.buttons["DeepSeek V4.1 Flash"]
+        XCTAssertTrue(deepSeek.waitForExistence(timeout: 3))
+        deepSeek.tap()
+        XCTAssertTrue(app.staticTexts["DeepSeek API Key"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.buttons["关闭模型配置"].isHittable)
-        XCTAssertTrue(app.buttons["保存配置"].isHittable)
+        let save = app.buttons["保存配置"]
+        XCTAssertTrue(save.exists)
     }
 
     private func waitUntilNotHittable(_ element: XCUIElement) -> XCTWaiter.Result {

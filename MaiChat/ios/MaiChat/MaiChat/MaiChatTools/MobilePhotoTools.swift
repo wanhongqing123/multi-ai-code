@@ -232,6 +232,7 @@ extension AIMobileHostToolProvider {
     }
 
     func saveImage(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
+        let saveRequestedAt = Date()
         let status = await photoAuthorization()
         guard status == .authorized || status == .limited else {
             return .failure(code: "canceled", message: "photo library access was not granted")
@@ -252,7 +253,8 @@ extension AIMobileHostToolProvider {
                 return .failure(code: "invalid_input", message: "image must be a JPEG, PNG, or HEIF file up to 50 MB")
             }
             try await performPhotoChanges {
-                PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: source)
+                PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: source)?
+                    .creationDate = saveRequestedAt
             }
             return Self.jsonSuccess(["saved": true, "source_path": path])
         } catch {
@@ -261,6 +263,7 @@ extension AIMobileHostToolProvider {
     }
 
     func saveVideo(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
+        let saveRequestedAt = Date()
         let status = await photoAuthorization()
         guard status == .authorized || status == .limited else {
             return .failure(code: "canceled", message: "photo library access was not granted")
@@ -282,7 +285,8 @@ extension AIMobileHostToolProvider {
                 return .failure(code: "invalid_input", message: "file has no video track")
             }
             try await performPhotoChanges {
-                PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: source)
+                PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: source)?
+                    .creationDate = saveRequestedAt
             }
             return Self.jsonSuccess(["saved": true, "source_path": path, "bytes": bytes])
         } catch {

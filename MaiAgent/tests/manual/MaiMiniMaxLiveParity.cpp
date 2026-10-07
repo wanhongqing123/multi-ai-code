@@ -21,19 +21,23 @@ std::string value(const Json& data, const char* field) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    const bool references = argc == 4 && std::string(argv[1]) == "--references";
+    const bool references = argc == 5 && std::string(argv[1]) == "--references";
+    const bool validateReferences = argc == 5 && std::string(argv[1]) == "--validate-references";
     const bool high = argc == 3 && std::string(argv[1]) == "--high";
-    if (argc != 2 && !references && !high) {
+    if (argc != 2 && !references && !validateReferences && !high) {
         std::cerr << "usage: MaiMiniMaxLiveParity <first-frame-path> | "
-                     "--high <first-frame-path> | --references <image-one> <image-two>\n";
+                     "--high <first-frame-path> | --validate-references <image-one> "
+                     "<image-two> <image-three> | --references <image-one> <image-two> "
+                     "<image-three>\n";
         return 2;
     }
     const char* key = std::getenv("MAIAGENT_MINIMAX_LIVE_KEY");
-    if (key == nullptr || *key == '\0') {
+    if (!validateReferences && (key == nullptr || *key == '\0')) {
         std::cerr << "MAIAGENT_MINIMAX_LIVE_KEY is required\n";
         return 2;
     }
-    auto tool = makeMaiMiniMaxVideoTool([credential = std::string(key)] { return credential; });
+    auto tool = makeMaiMiniMaxVideoTool(
+        [credential = key == nullptr ? std::string{} : std::string(key)] { return credential; });
     MaiToolContext context;
     context.root = "/tmp";
     Json request = {
@@ -52,22 +56,30 @@ int main(int argc, char** argv) {
         request["duration"] = 10;
         request["resolution"] = "2K";
     }
-    if (references) {
+    if (references || validateReferences) {
         request.erase("image_path");
         request["message"] =
-            "A red apple rolls across a clean white tabletop. Use both "
-            "reference images for its shape and lighting; no people.";
+            "Use all three photos as references for the same child. The child "
+            "stands safely under a covered walkway during gentle evening rain, "
+            "smiles and waves. Preserve facial proportions and the white outfit, "
+            "with natural movement and no dialogue.";
         request["content"] = Json::array(
-            {Json{{"type", "image_url"}, {"role", "reference_image"}, {"path", argv[2]}},
-             Json{{"type", "image_url"}, {"role", "reference_image"}, {"path", argv[3]}}});
-        request["ratio"] = "16:9";
+            {Json{{"type", "image_url"}, {"role", "reference"}, {"path", argv[2]}},
+             Json{{"type", "image_url"}, {"path", argv[3]}},
+             Json{{"type", "image_url"}, {"role", "reference_image"}, {"path", argv[4]}}});
+        request["ratio"] = "9:16";
     }
+    if (validateReferences) request["action"] = "validate";
     const MaiToolResult submitted = tool->execute(request.dump(), context);
     if (submitted.hasError()) {
         std::cerr << "submit_error " << submitted.error().message() << '\n';
         return 1;
     }
     Json reply = Json::parse(submitted.output(), nullptr, false);
+    if (validateReferences) {
+        std::cout << reply.dump(2) << std::endl;
+        return value(reply, "status") == "validated" ? 0 : 1;
+    }
     if (value(reply, "status") == "succeeded") {
         std::cout << "succeeded " << value(reply, "path") << std::endl;
         return 0;

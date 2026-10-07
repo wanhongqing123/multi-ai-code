@@ -954,13 +954,16 @@ private struct AIMessageRow: View {
                                     type: type, caption: object["caption"] as? String ?? "")
     }
     private func saveMediaArtifact(_ artifact: AIAgentMediaArtifact) async {
+        let saveRequestedAt = Date()
         let url = URL(fileURLWithPath: artifact.filePath)
         do {
             try await PHPhotoLibrary.shared().performChanges {
                 if artifact.type == "image" {
-                    PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: url)
+                    PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: url)?
+                        .creationDate = saveRequestedAt
                 } else {
-                    PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
+                    PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)?
+                        .creationDate = saveRequestedAt
                 }
             }
         } catch {

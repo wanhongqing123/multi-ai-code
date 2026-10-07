@@ -27,16 +27,28 @@
 | 官方字段/步骤 | 当前工具映射 | 边界 |
 |---|---|---|
 | `POST /v2/video_generation` | `delegate` 调 V2；默认 `MiniMax-H3`，可选 `MiniMax-H3-Max` | 付费调用仍需逐次确认。 |
-| `content[]` 文本 | `message`、可选 `context` 和 `content` 中的文本合并为一项 `type:text` | 必须有非空文本；工具不把媒体 Base64 塞进文本字段。 |
+| `content[]` 文本 | `message`、可选 `context` 和 `content` 中的文本合并为一项 `type:text` | 必须有非空文本；工具不把媒体 Base64 塞进文本字段。text 条目上误带的媒体 role 会被忽略。 |
 | 首/尾帧 | 工作区路径先以 `purpose=video_generation_input` 上传，取得 `mm_file://`；按 `first_frame` / `last_frame` 填入 `image_url` | 支持 JPG/JPEG/PNG/WEBP/HEIC/HEIF；图生视频与多模态参考模式互斥。 |
-| 多模态参考 | `content` 中按 `reference_image` / `reference_video` / `reference_audio` 逐项上传和引用 | 最多 9 图、3 视频、3 音频；文件规格由工具和平台共同校验。 |
-| `duration` | H3：4–15 秒；H3 Max：5–15 秒 | 只接受整数。 |
-| `resolution` | H3：768P/2K；H3 Max：480P/768P | H3 V2 **没有 1080P**，不会暗中升级收费或回退到 V1。 |
+| 多模态参考 | `content` 中按 `reference_image` / `reference_video` / `reference_audio` 逐项上传和引用；多图省略 role 或写 `reference` 会按媒体类型归一化 | 最多 9 图、3 视频、3 音频。单张无 role 图片按官方默认视为首帧；多张无 role 图片按参考图处理。文件规格由工具和平台共同校验。 |
+| `duration` | H3：4–15 秒；H3 Max：5–15 秒 | 只接受顶层整数；缺失时明确指出顶层字段。 |
+| `resolution` | H3：768P/2K；H3 Max：480P/768P | 只能放在顶层；H3 V2 **没有 1080P**，不会暗中升级收费或回退到 V1。 |
 | `ratio` | 文生视频必须指定具体比例；首/尾帧输入传 `adaptive` | 首/尾帧场景的画幅由源图片决定；传 `9:16` 也不能强制把横图变竖图。 |
 | 音频 | 可输入参考音频；输出音轨由 H3 生成 | 官方 V2 无独立 `with_audio` 开关；实测 H3 产物含 AAC。 |
 | 异步终态 | `GET /v2/query/video_generation/{task_id}`，读取 `task.status` 与 `task.content.url` | `failed` 含平台错误码和原因；后台落库并通知主模型。暂时性查询错误有界重试。 |
 
+`minimax_video action=validate` 复用正式提交的参数归一化与本地文件检查，返回带
+`reference_image` 角色和文件大小的 `request_preview`，不读取密钥、不上传、不提交、
+不计费。正式提交仍会逐个上传原文件，拿到 `mm_file://` 后构造 V2 `content[]`。
+`duration` 与 `resolution` 必须是工具调用的顶层字段；缺少时会分别指出。
+
 已完成的直接与原生工具对照：同一张 `seedream-baby-only.png`、同一提示词、4 秒/768P/源图自适应，官方直连与 MaiAgent 原生工具均出片；产物均为 1024×768 H.264、约 4.46 秒且含 AAC。首帧人物和服装保留，未观察到工具上传/下载额外压缩。
+
+三图引用付费验收：三张同一人物的不同照片通过本地 `validate`，三项均归一化为
+`reference_image`，随后由共享核心一次提交 H3 V2 成功（任务 ID
+`449705623331104`）。服务商任务回执的 `usage.input_image_count` 为 **3**；
+输出为 768×1344、约 4.46 秒的 H.264/AAC MP4。
+这证明多图上传、角色映射、提交、查询、下载的链路可用；人物还原度仍由用户看成片
+验收，iOS 宿主工具需随新包复测。
 
 真人半身照 `baby-halfbody3.jpg` 的一条 10 秒/2K 直连任务被服务商拦截；相同文本不带图片的 4 秒/768P 任务成功。同一真人照通过 MaiAgent 原生工具生成的 4 秒/768P 和 **10 秒/2K** 两条任务均成功；后者产物为 2048×1440 H.264、10.13 秒、含 AAC。因此不能从一次笼统拦截推断“真人照一律不允许”，也不能判定是工具层系统性丢图。两次 10 秒/2K 请求的图片字节、提示词和主要生成参数一致，但上传记录不同；服务商的单次审核结果不稳定，具体触发项仍未由平台给出。用户界面应先呈现是否完成和下一步，而不是反复展示内部错误数字。
 

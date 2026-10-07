@@ -3441,9 +3441,11 @@ private enum RemoteIMPhotoLibraryWriter {
     // performChanges 的函数上，调用方无论来自哪个 actor，都不会把 MainActor
     // 隔离传进 change block。
     nonisolated static func saveImage(at fileURL: URL) async -> String? {
+        let saveRequestedAt = Date()
         do {
             try await PHPhotoLibrary.shared().performChanges {
-                PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: fileURL)
+                PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: fileURL)?
+                    .creationDate = saveRequestedAt
             }
             return nil
         } catch {

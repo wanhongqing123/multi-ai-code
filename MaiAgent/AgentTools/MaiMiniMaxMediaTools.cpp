@@ -47,37 +47,53 @@ struct UploadedReference {
     std::optional<MaiToolResult> error;
 };
 
-UploadedReference uploadReference(const Attachment& attachment, const std::string& key,
-                                  const std::string& caBundle, const MaiToolContext& context) {
-    const std::string path = context.resolvePath(attachment.path);
-    if (path.empty()) return {{}, maiCreativeInvalid("Reference file is not accessible")};
-    const std::size_t dot = path.find_last_of('.');
+struct LocalReference {
+    std::string path;
+    std::string extension;
+    std::uint64_t size = 0;
+};
+
+std::optional<MaiToolResult> inspectReference(const Attachment& attachment,
+                                              const MaiToolContext& context,
+                                              LocalReference& local) {
+    local.path = context.resolvePath(attachment.path);
+    if (local.path.empty()) return maiCreativeInvalid("Reference file is not accessible");
+    const std::size_t dot = local.path.find_last_of('.');
     if (dot == std::string::npos)
-        return {{}, maiCreativeInvalid("Reference file needs a supported extension")};
-    std::string extension = path.substr(dot);
-    std::transform(extension.begin(), extension.end(), extension.begin(),
+        return maiCreativeInvalid("Reference file needs a supported extension");
+    local.extension = local.path.substr(dot);
+    std::transform(local.extension.begin(), local.extension.end(), local.extension.begin(),
                    [](unsigned char byte) { return static_cast<char>(std::tolower(byte)); });
-    const bool supported =
-        attachment.kind == MediaKind::Image
-            ? extension == ".jpg" || extension == ".jpeg" || extension == ".png" ||
-                  extension == ".webp" || extension == ".heic" || extension == ".heif"
-        : attachment.kind == MediaKind::Video ? extension == ".mp4" || extension == ".mov"
-                                              : extension == ".wav" || extension == ".mp3";
-    if (!supported) return {{}, maiCreativeInvalid("Reference file format is unsupported")};
+    const bool supported = attachment.kind == MediaKind::Image
+                               ? local.extension == ".jpg" || local.extension == ".jpeg" ||
+                                     local.extension == ".png" || local.extension == ".webp" ||
+                                     local.extension == ".heic" || local.extension == ".heif"
+                           : attachment.kind == MediaKind::Video
+                               ? local.extension == ".mp4" || local.extension == ".mov"
+                               : local.extension == ".wav" || local.extension == ".mp3";
+    if (!supported) return maiCreativeInvalid("Reference file format is unsupported");
     const std::uint64_t maximum = attachment.kind == MediaKind::Image   ? 30'000'000
                                   : attachment.kind == MediaKind::Video ? 50'000'000
                                                                         : 15'000'000;
-    std::uint64_t size = 0;
-    if (!MaiFileSystem::fileSize(MaiFilePath::fromUtf8(path), size) || size == 0 || size > maximum)
-        return {{}, maiCreativeInvalid("Reference file exceeds its provider size limit")};
+    if (!MaiFileSystem::fileSize(MaiFilePath::fromUtf8(local.path), local.size) ||
+        local.size == 0 || local.size > maximum)
+        return maiCreativeInvalid("Reference file exceeds its provider size limit");
+    return std::nullopt;
+}
+
+UploadedReference uploadReference(const Attachment& attachment, const std::string& key,
+                                  const std::string& caBundle, const MaiToolContext& context) {
+    LocalReference local;
+    if (auto error = inspectReference(attachment, context, local)) return {{}, *error};
     std::string bytes;
     bool truncated = false;
-    if (MaiFileSystem::readFile(MaiFilePath::fromUtf8(path), bytes, maximum + 1, &truncated) ||
+    if (MaiFileSystem::readFile(MaiFilePath::fromUtf8(local.path), bytes, local.size + 1,
+                                &truncated) ||
         truncated)
         return {{}, maiCreativeInvalid("Reference file could not be read")};
     const MaiCreativeHttpResult uploaded =
         maiCreativeUploadFile(std::string(kApiBase) + "/v1/files/upload", key, caBundle,
-                              "asset" + extension, bytes, "video_generation_input", context);
+                              "asset" + local.extension, bytes, "video_generation_input", context);
     if (uploaded.error) return {{}, *uploaded.error};
     const Json data = Json::parse(uploaded.body, nullptr, false);
     const std::string id = idValue(data.value("file", Json::object()), "file_id");
@@ -91,31 +107,28 @@ UploadedReference uploadReference(const Attachment& attachment, const std::strin
 std::optional<MaiToolResult> appendAttachment(std::vector<Attachment>& attachments, MediaKind kind,
                                               const std::string& role, const std::string& path) {
     if (path.empty()) return maiCreativeInvalid("Reference path is required");
-    const bool validRole =
-        kind == MediaKind::Image
-            ? role == "first_frame" || role == "last_frame" || role == "reference_image"
-        : kind == MediaKind::Video ? role == "reference_video"
-                                   : role == "reference_audio";
+    const bool validRole = kind == MediaKind::Image
+                               ? role.empty() || role == "reference" || role == "first_frame" ||
+                                     role == "last_frame" || role == "reference_image"
+                           : kind == MediaKind::Video
+                               ? role.empty() || role == "reference" || role == "reference_video"
+                               : role.empty() || role == "reference" || role == "reference_audio";
     if (!validRole) return maiCreativeInvalid("Reference role does not match its media type");
     attachments.push_back({kind, role, path});
     return std::nullopt;
 }
 
+const char* referenceRole(MediaKind kind) {
+    return kind == MediaKind::Image   ? "reference_image"
+           : kind == MediaKind::Video ? "reference_video"
+                                      : "reference_audio";
+}
+
 std::optional<MaiToolResult> prepareH3Request(const Json& args, const std::string& model,
                                               std::string prompt, const std::string& key,
                                               const std::string& caBundle,
-                                              const MaiToolContext& context, Json& body,
-                                              std::string& inputReference) {
-    if (!args.contains("duration") || !args.contains("resolution"))
-        return maiCreativeInvalid("Confirm duration and resolution before paid video generation");
-    const int duration = args["duration"].get<int>();
-    const std::string resolution = value(args, "resolution");
-    if (model == "MiniMax-H3" &&
-        (duration < 4 || duration > 15 || (resolution != "768P" && resolution != "2K")))
-        return maiCreativeInvalid("MiniMax-H3 supports 4-15 seconds at 768P or 2K");
-    if (model == "MiniMax-H3-Max" &&
-        (duration < 5 || duration > 15 || (resolution != "480P" && resolution != "768P")))
-        return maiCreativeInvalid("MiniMax-H3-Max supports 5-15 seconds at 480P or 768P");
+                                              const MaiToolContext& context, bool localOnly,
+                                              Json& body, std::string& inputReference) {
     std::vector<Attachment> attachments;
     const std::string first =
         value(args, "first_frame").empty() ? value(args, "image_path") : value(args, "first_frame");
@@ -147,6 +160,8 @@ std::optional<MaiToolResult> prepareH3Request(const Json& args, const std::strin
         if (!args["content"].is_array()) return maiCreativeInvalid("content must be an array");
         for (const Json& item : args["content"]) {
             if (!item.is_object()) return maiCreativeInvalid("content entries must be objects");
+            if (item.contains("role") && !item["role"].is_string())
+                return maiCreativeInvalid("content role must be a string");
             const std::string type = value(item, "type");
             if (type == "text") {
                 const std::string text = value(item, "text");
@@ -166,6 +181,33 @@ std::optional<MaiToolResult> prepareH3Request(const Json& args, const std::strin
                 return error;
         }
     }
+    const std::size_t imageCount = static_cast<std::size_t>(
+        std::count_if(attachments.begin(), attachments.end(),
+                      [](const Attachment& item) { return item.kind == MediaKind::Image; }));
+    const bool referenceMode =
+        imageCount > 1 ||
+        std::any_of(attachments.begin(), attachments.end(), [](const Attachment& item) {
+            return item.kind != MediaKind::Image || item.role == "reference" ||
+                   item.role == "reference_image";
+        });
+    for (Attachment& item : attachments) {
+        if (item.role == "reference") item.role = referenceRole(item.kind);
+        if (item.role.empty())
+            item.role = item.kind == MediaKind::Image && !referenceMode ? "first_frame"
+                                                                        : referenceRole(item.kind);
+    }
+    if (!args.contains("duration"))
+        return maiCreativeInvalid("Missing top-level duration for paid video generation");
+    if (!args.contains("resolution"))
+        return maiCreativeInvalid("Missing top-level resolution for paid video generation");
+    const int duration = args["duration"].get<int>();
+    const std::string resolution = value(args, "resolution");
+    if (model == "MiniMax-H3" &&
+        (duration < 4 || duration > 15 || (resolution != "768P" && resolution != "2K")))
+        return maiCreativeInvalid("MiniMax-H3 supports 4-15 seconds at 768P or 2K");
+    if (model == "MiniMax-H3-Max" &&
+        (duration < 5 || duration > 15 || (resolution != "480P" && resolution != "768P")))
+        return maiCreativeInvalid("MiniMax-H3-Max supports 5-15 seconds at 480P or 768P");
     if (prompt.empty() || prompt.size() > 8000)
         return maiCreativeInvalid("A text instruction is required and must be at most 8000 bytes");
     std::size_t firstCount = 0;
@@ -201,12 +243,21 @@ std::optional<MaiToolResult> prepareH3Request(const Json& args, const std::strin
         return maiCreativeInvalid("prompt_expansion_mode requires MiniMax-H3-Max");
     Json content = Json::array({Json{{"type", "text"}, {"text", prompt}}});
     for (const Attachment& item : attachments) {
-        const UploadedReference uploaded = uploadReference(item, key, caBundle, context);
-        if (uploaded.error) return uploaded.error;
         if (inputReference.empty()) inputReference = item.path;
         const char* type = item.kind == MediaKind::Image   ? "image_url"
                            : item.kind == MediaKind::Video ? "video_url"
                                                            : "audio_url";
+        if (localOnly) {
+            LocalReference local;
+            if (auto error = inspectReference(item, context, local)) return error;
+            content.push_back(Json{{"type", type},
+                                   {"role", item.role},
+                                   {"path", item.path},
+                                   {"file_size_bytes", local.size}});
+            continue;
+        }
+        const UploadedReference uploaded = uploadReference(item, key, caBundle, context);
+        if (uploaded.error) return uploaded.error;
         content.push_back(
             Json{{"type", type}, {type, Json{{"url", uploaded.reference}}}, {"role", item.role}});
     }
@@ -252,16 +303,19 @@ public:
     std::string description() const override {
         return mVideo ? "MiniMax H3 paid video specialist. Delegate text, first/last frame images, "
                         "or multimodal reference images/videos/audio using workspace paths. "
-                        "Model MiniMax-H3-Max is selectable. Use discover, delegate after "
-                        "confirmation, or "
-                        "continue. The main Agent receives terminal results automatically."
+                        "For content[] multi-image input, use role=reference_image; role=reference "
+                        "or omitted roles are normalized. Roles on text items are ignored. "
+                        "duration and resolution are top-level fields. Model MiniMax-H3-Max is "
+                        "selectable. Use validate to inspect local inputs without upload or "
+                        "charge, then delegate after confirmation or continue a task. "
+                        "The main Agent receives terminal results automatically."
                       : "MiniMax image-01 paid image specialist. Text-to-image and character "
                         "reference image generation are wired. Use discover or delegate after "
                         "confirmation; image generation completes in the delegate call.";
     }
     std::string parametersSchema() const override {
         return mVideo
-                   ? R"({"type":"object","properties":{"action":{"type":"string","enum":["discover","delegate","continue"]},"model":{"type":"string","enum":["MiniMax-H3","MiniMax-H3-Max"]},"message":{"type":"string"},"context":{"type":"string"},"image_path":{"type":"string"},"first_frame":{"type":"string"},"last_frame_path":{"type":"string"},"last_frame":{"type":"string"},"reference_image_paths":{"type":"array","items":{"type":"string"}},"reference_video_path":{"type":"string"},"reference_video":{"type":"string"},"video_path":{"type":"string"},"reference_audio_path":{"type":"string"},"reference_audio":{"type":"string"},"content":{"type":"array","items":{"type":"object","properties":{"type":{"type":"string","enum":["text","image_url","video_url","audio_url"]},"text":{"type":"string"},"path":{"type":"string"},"role":{"type":"string"}},"required":["type"]}},"duration":{"type":"integer"},"resolution":{"type":"string"},"ratio":{"type":"string"},"prompt_expansion_mode":{"type":"string"},"conversation_id":{"type":"string"},"parent_task_id":{"type":"string"},"poll_once":{"type":"boolean"}},"required":["action"]})"
+                   ? R"({"type":"object","properties":{"action":{"type":"string","enum":["discover","validate","delegate","continue"]},"model":{"type":"string","enum":["MiniMax-H3","MiniMax-H3-Max"]},"message":{"type":"string"},"context":{"type":"string"},"image_path":{"type":"string"},"first_frame":{"type":"string"},"last_frame_path":{"type":"string"},"last_frame":{"type":"string"},"reference_image_paths":{"type":"array","items":{"type":"string"}},"reference_video_path":{"type":"string"},"reference_video":{"type":"string"},"video_path":{"type":"string"},"reference_audio_path":{"type":"string"},"reference_audio":{"type":"string"},"content":{"type":"array","items":{"type":"object","properties":{"type":{"type":"string","enum":["text","image_url","video_url","audio_url"]},"text":{"type":"string"},"path":{"type":"string"},"role":{"type":"string"}},"required":["type"]}},"duration":{"type":"integer"},"resolution":{"type":"string"},"ratio":{"type":"string"},"prompt_expansion_mode":{"type":"string"},"conversation_id":{"type":"string"},"parent_task_id":{"type":"string"},"poll_once":{"type":"boolean"}},"required":["action"]})"
                    : R"({"type":"object","properties":{"action":{"type":"string","enum":["discover","delegate"]},"message":{"type":"string"},"context":{"type":"string"},"image_path":{"type":"string"},"ratio":{"type":"string"}},"required":["action"]})";
     }
     std::optional<MaiSpecialistInfo> specialistInfo() const override {
@@ -284,7 +338,10 @@ public:
                  "One first and one last frame; source aspect ratio applies"});
             info.capabilities.push_back(
                 {"multi_reference_video", true, true, ready,
-                 "Up to 9 images, 3 videos, and 3 audio clips via file upload"});
+                 "Up to 9 images, 3 videos, and 3 audio clips via file upload; "
+                 "content image role reference_image or reference, or omit roles for multiple "
+                 "images. Three-image H3 generation passed on the Mac shared core; iOS host "
+                 "delivery remains unverified"});
             info.capabilities.push_back(
                 {"native_audio_output", true, true, ready,
                  "H3 smoke test produced AAC; the V2 API has no separate audio-output switch"});
@@ -307,7 +364,7 @@ public:
     bool requiresPerCallApproval(const std::string& argumentsJson) const override {
         const Json args = Json::parse(argumentsJson, nullptr, false);
         const std::string action = value(args, "action");
-        return action != "discover" && action != "continue";
+        return action != "discover" && action != "validate" && action != "continue";
     }
     MaiToolResult execute(const std::string& argumentsJson,
                           const MaiToolContext& context) override {
@@ -337,12 +394,16 @@ public:
             return MaiToolResult::success(Json{{"tool_kind", "model_backed"},
                                                {"bound_model", info.modelId},
                                                {"configured", info.configured},
+                                               {"local_validation", mVideo},
                                                {"capabilities", std::move(capabilities)},
                                                {"reply", "MiniMax capabilities listed"}}
                                               .dump());
         }
+        if (action == "validate")
+            return mVideo ? validate(args, context)
+                          : maiCreativeInvalid("Local validation is only available for H3 video");
         if (action != "delegate" && action != "continue")
-            return maiCreativeInvalid("action must be discover, delegate, or continue");
+            return maiCreativeInvalid("action must be discover, validate, delegate, or continue");
         if (!mVideo && action == "continue")
             return maiCreativeInvalid("MiniMax image generation completes during delegate");
         if (args.contains("video_url"))
@@ -356,6 +417,31 @@ public:
     }
 
 private:
+    MaiToolResult validate(const Json& args, const MaiToolContext& context) const {
+        if (context.root.empty()) return maiCreativeInvalid("Agent workspace is required");
+        std::string model = value(args, "model");
+        if (model.empty()) model = "MiniMax-H3";
+        if (model != "MiniMax-H3" && model != "MiniMax-H3-Max")
+            return maiCreativeInvalid("Select MiniMax-H3 or MiniMax-H3-Max");
+        std::string prompt = value(args, "message");
+        const std::string extra = value(args, "context");
+        if (prompt.size() > 4000 || extra.size() > 4000)
+            return maiCreativeInvalid("message/context must be at most 4000 bytes");
+        if (!extra.empty()) prompt += "\nRelevant context: " + extra;
+        Json body;
+        std::string inputReference;
+        if (auto error = prepareH3Request(args, model, prompt, {}, mCaBundle, context, true, body,
+                                          inputReference))
+            return *error;
+        return MaiToolResult::success(Json{
+            {"status", "validated"},
+            {"submitted", false},
+            {"uploaded", false},
+            {"charged", false},
+            {"request_preview",
+             std::move(body)}}.dump());
+    }
+
     MaiToolResult delegate(const Json& args, const std::string& key,
                            const MaiToolContext& context) const {
         const std::string message = value(args, "message");
@@ -372,7 +458,7 @@ private:
             return maiCreativeInvalid("Select MiniMax-H3 or MiniMax-H3-Max");
         Json body;
         std::string inputReference;
-        if (auto error = prepareH3Request(args, model, prompt, key, mCaBundle, context, body,
+        if (auto error = prepareH3Request(args, model, prompt, key, mCaBundle, context, false, body,
                                           inputReference))
             return *error;
         prompt = value(body["content"][0], "text");

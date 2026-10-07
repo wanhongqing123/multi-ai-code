@@ -42,6 +42,8 @@ void testDynamicCredentialAndToolIdentity() {
     CHECK(!image->requiresPerCallApproval(discover));
     CHECK(video->requiresPerCallApproval(R"({"action":"delegate","message":"create"})"));
     CHECK(!video->requiresPerCallApproval(
+        R"({"action":"delegate","mode":"edit","video_path":"clip.mp4"})"));
+    CHECK(!video->requiresPerCallApproval(
         R"({"action":"delegate","mode":"reference","reference_image_paths":["first.jpg"]})"));
     CHECK(video->requiresPerCallApproval(
         R"({"action":"delegate","mode":"reference","video_url":"https://example.com/source.mp4"})"));
@@ -209,6 +211,52 @@ void testRevisionRejectsAnotherConversation() {
     const MaiToolResult imageResult = image->execute(imageRevision.dump(), context);
     CHECK(imageResult.hasError());
     CHECK(imageResult.error().code() == MaiErrorCode::NotFound);
+}
+
+void testLocalVideoUploadHandoffWithoutArkSubmission() {
+    const MaiFilePath root = MaiFileSystem::temporaryDirectory().append(
+        MaiFilePath::fromUtf8(MaiIdGenerator::generate("mai-ark-video-upload-")));
+    CHECK(!MaiFileSystem::createDirectories(root));
+    const MaiFilePath source = root.append(MaiFilePath::fromUtf8("clip.mp4"));
+    CHECK(!MaiFileSystem::writeFile(source, "synthetic video fixture"));
+    int uploads = 0;
+    auto video = makeMaiSeedanceVideoTool(
+        [] { return std::string("test-key"); }, {},
+        [&](const std::string& localPath, const MaiToolContext&) -> MaiResult<std::string> {
+            ++uploads;
+            std::uint64_t bytes = 0;
+            CHECK(MaiFileSystem::fileSize(MaiFilePath::fromUtf8(localPath), bytes));
+            CHECK(bytes == std::string("synthetic video fixture").size());
+            return std::string("http://example.com/video.mp4");
+        });
+    MaiToolContext context;
+    context.root = root.toUtf8();
+    const auto discovered =
+        nlohmann::json::parse(video->execute(R"({"action":"discover"})", context).output());
+    bool uploadListed = false;
+    for (const auto& capability : discovered.at("capabilities")) {
+        if (capability.value("id", std::string{}) == "video_edit_from_local_file") {
+            uploadListed = true;
+            CHECK(capability.at("tool_status") == "implemented_unverified");
+        }
+    }
+    CHECK(uploadListed);
+    CHECK(discovered.at("reply").get<std::string>().find("local video upload is not configured") ==
+          std::string::npos);
+    const nlohmann::json valid = {{"action", "delegate"},
+                                  {"mode", "edit"},
+                                  {"message", "Change the background"},
+                                  {"video_path", "clip.mp4"}};
+    auto missing = valid;
+    missing["video_path"] = "missing.mp4";
+    CHECK(video->execute(missing.dump(), context).hasError());
+    CHECK(uploads == 0);
+    const MaiToolResult result = video->execute(valid.dump(), context);
+    CHECK(result.hasError());
+    if (result.hasError())
+        CHECK(result.error().message().find("public HTTPS URL") != std::string::npos);
+    CHECK(uploads == 1);
+    MaiFileSystem::removeRecursively(root);
 }
 
 void testLiveArkWhenExplicitlyConfigured() {
@@ -394,6 +442,7 @@ int main() {
     testDynamicCredentialAndToolIdentity();
     testInvalidInputsDoNotReachNetwork();
     testRevisionRejectsAnotherConversation();
+    testLocalVideoUploadHandoffWithoutArkSubmission();
     testLiveArkWhenExplicitlyConfigured();
     testLiveRevisionWhenExplicitlyConfigured();
     return failures == 0 ? 0 : 1;

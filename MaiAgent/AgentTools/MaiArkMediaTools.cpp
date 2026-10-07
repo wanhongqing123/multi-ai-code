@@ -285,8 +285,11 @@ MaiToolResult downloadResult(const std::string& url, const std::string& relative
 
 class MaiSeedanceVideoTool final : public MaiTool {
 public:
-    MaiSeedanceVideoTool(MaiArkApiKeyProvider provider, std::string caBundle)
-        : mKey(std::move(provider)), mCaBundle(std::move(caBundle)) {}
+    MaiSeedanceVideoTool(MaiArkApiKeyProvider provider, std::string caBundle,
+                         MaiArkVideoUploadProvider uploadVideo)
+        : mKey(std::move(provider)),
+          mCaBundle(std::move(caBundle)),
+          mUploadVideo(std::move(uploadVideo)) {}
 
     std::string name() const override {
         return "seedance_video";
@@ -297,6 +300,7 @@ public:
     bool requiresPerCallApproval(const std::string& raw) const override {
         const Json args = Json::parse(raw, nullptr, false);
         if (args.is_object() && stringValue(args, "action") == "delegate") {
+            if (!mUploadVideo && !stringValue(args, "video_path").empty()) return false;
             const std::string mode = stringValue(args, "mode");
             if (mode == "reference" || mode == "edit" || mode == "extend") {
                 const int sourceCount =
@@ -312,6 +316,10 @@ public:
         const bool configured = mKey && !mKey().empty();
         const auto unverified = configured ? MaiSpecialistCapabilityStatus::ImplementedUnverified
                                            : MaiSpecialistCapabilityStatus::NotConfigured;
+        const auto localVideoStatus = !configured ? MaiSpecialistCapabilityStatus::NotConfigured
+                                      : mUploadVideo
+                                          ? MaiSpecialistCapabilityStatus::ImplementedUnverified
+                                          : MaiSpecialistCapabilityStatus::UploadNotConfigured;
         return MaiSpecialistInfo{
             name(),
             kVideoModel,
@@ -339,9 +347,12 @@ public:
              {"multi_reference_video", true, true, unverified,
               "Seedance 2.0 accepts 1-9 reference images; reference mode cannot mix with strict "
               "first/last-frame control"},
-             {"video_edit_from_local_file", true, true,
-              MaiSpecialistCapabilityStatus::UploadNotConfigured,
-              "Local video upload is not configured"}}};
+             {"video_edit_from_local_file", true, true, localVideoStatus,
+              mUploadVideo
+                  ? "iOS requires connected Tencent IM; local video is staged in IM "
+                    "cloud (up to 100 MB) and its HTTPS URL is handed to Ark. Live Ark fetch "
+                    "is unverified"
+                  : "Local video upload is not configured"}}};
     }
     std::string description() const override {
         if (!specialistInfo()->configured)
@@ -354,8 +365,11 @@ public:
                "video in the same AI session. Text, first-frame, "
                "first-and-last-frame, and reference-video paths are implemented; cloud validation "
                "is still needed for the shared C++ path. Confirm duration, ratio and resolution "
-               "with the user before paid create or reference calls. Local video "
-               "upload is unavailable. For a realistic but non-specific actor, pass a platform "
+               "with the user before paid create or reference calls. Local video_path is uploaded "
+               "by the host media service when configured; discover reports its availability. "
+               "Before a paid local-video task, use ffprobe to check the Seedance 2.0 input "
+               "duration of 2-15 seconds and frame rate of 24-60 FPS. "
+               "For a realistic but non-specific actor, pass a platform "
                "virtual_avatar_asset_id selected in the Ark Experience Center. The tool sends "
                "asset://<ID> as reference image 1; refer to it as image 1 in the message. It "
                "does not preserve the identity in a user's real photo. For a specific real "
@@ -413,7 +427,8 @@ public:
             return discoverSpecialist(*specialistInfo(),
                                       "I can create a video from text and return a local MP4. "
                                       "Ask for the capability list before delegating reference "
-                                      "media; local video upload is not configured.");
+                                      "media. Check video_edit_from_local_file before passing "
+                                      "video_path; its availability depends on the host.");
         }
         const std::string key = mKey ? mKey() : std::string{};
         if (key.empty())
@@ -503,9 +518,27 @@ private:
             if (!candidate.is_string() || candidate.get<std::string>().empty())
                 return invalid("reference_image_paths entries must be nonempty strings");
         }
-        if (!videoPath.empty())
-            return fail(MaiErrorCode::NotConfigured, "upload_not_configured",
-                        "Local video upload is unavailable; use video_url or video_task_id");
+        std::string localVideoPath;
+        if (!videoPath.empty()) {
+            if (!mUploadVideo)
+                return fail(MaiErrorCode::NotConfigured, "upload_not_configured",
+                            "Local video upload is unavailable; use video_url or video_task_id");
+            localVideoPath = context.resolvePath(videoPath);
+            if (localVideoPath.empty()) return invalid("video_path is outside the accessible area");
+            const std::string extension = MaiFilePath::fromUtf8(localVideoPath).baseName().toUtf8();
+            const std::size_t dot = extension.find_last_of('.');
+            std::string suffix = dot == std::string::npos ? std::string{} : extension.substr(dot);
+            std::transform(suffix.begin(), suffix.end(), suffix.begin(), [](unsigned char value) {
+                return static_cast<char>(std::tolower(value));
+            });
+            if (suffix != ".mp4" && suffix != ".mov")
+                return invalid("video_path must be an MP4 or MOV file");
+            std::uint64_t bytes = 0;
+            if (MaiFileSystem::isDirectory(MaiFilePath::fromUtf8(localVideoPath)) ||
+                !MaiFileSystem::fileSize(MaiFilePath::fromUtf8(localVideoPath), bytes) ||
+                bytes == 0 || bytes > 200'000'000)
+                return invalid("video_path must contain 1 to 200000000 bytes");
+        }
         const Json production = args.value("production", Json::object());
         if (!production.is_object()) return invalid("production must be an object");
         if ((mode == "create" || mode == "reference") &&
@@ -594,6 +627,12 @@ private:
                 return invalid("video_task_id is not a completed task");
             reference = stringValue(task.data.value("content", Json::object()), "video_url");
         }
+        if (!localVideoPath.empty()) {
+            auto uploaded = mUploadVideo(localVideoPath, context);
+            if (!uploaded)
+                return fail(uploaded.error().code(), "upload_failed", uploaded.error().message());
+            reference = uploaded.value();
+        }
         if (!reference.empty()) {
             if (!isHttpsUrl(reference)) return invalid("video_url must be a public HTTPS URL");
             content.push_back(Json{{"type", "video_url"},
@@ -628,6 +667,7 @@ private:
             task.intent = message;
             task.contextSummary = extra;
             task.inputReference = !videoTaskId.empty()       ? videoTaskId
+                                  : !videoPath.empty()       ? videoPath
                                   : !videoUrl.empty()        ? videoUrl
                                   : !selectedAssetId.empty() ? selectedAssetId
                                                              : imagePath;
@@ -729,6 +769,7 @@ private:
 
     MaiArkApiKeyProvider mKey;
     std::string mCaBundle;
+    MaiArkVideoUploadProvider mUploadVideo;
 };
 
 class MaiSeedreamImageTool final : public MaiTool {
@@ -927,8 +968,10 @@ private:
 }  // namespace
 
 std::unique_ptr<MaiTool> makeMaiSeedanceVideoTool(MaiArkApiKeyProvider apiKey,
-                                                  std::string caBundlePath) {
-    return std::make_unique<MaiSeedanceVideoTool>(std::move(apiKey), std::move(caBundlePath));
+                                                  std::string caBundlePath,
+                                                  MaiArkVideoUploadProvider uploadVideo) {
+    return std::make_unique<MaiSeedanceVideoTool>(std::move(apiKey), std::move(caBundlePath),
+                                                  std::move(uploadVideo));
 }
 
 std::unique_ptr<MaiTool> makeMaiSeedreamImageTool(MaiArkApiKeyProvider apiKey,

@@ -11,11 +11,18 @@
 // tool worker; an empty value leaves discovery available but disables task submission.
 using MaiArkApiKeyProvider = std::function<std::string()>;
 
+// Uploads one validated local video through a host-owned storage service and returns an HTTPS
+// URL that Ark can fetch. The host owns credentials and transfer policy; this callback may block
+// and must honor context cancellation where possible. No storage credentials enter tool arguments.
+using MaiArkVideoUploadProvider = std::function<MaiResult<std::string>(
+    const std::string& localPath, const MaiToolContext& context)>;
+
 // Shared Seedance video tool. It owns task submission, status polling, and workspace downloads.
-// Local video upload remains unavailable until a host supplies a secure upload route. Calls may
+// Local video upload is available only when a host supplies a secure upload route. Calls may
 // block on network I/O and honor MaiToolContext cancellation; no UI thread may execute them.
 std::unique_ptr<MaiTool> makeMaiSeedanceVideoTool(MaiArkApiKeyProvider apiKey,
-                                                  std::string caBundlePath = {});
+                                                  std::string caBundlePath = {},
+                                                  MaiArkVideoUploadProvider uploadVideo = {});
 
 // Shared Seedream image tool. It reads one accessible image, sends it to Ark, and creates a new
 // PNG below the Agent workspace. The source is never modified. The same threading, cancellation,

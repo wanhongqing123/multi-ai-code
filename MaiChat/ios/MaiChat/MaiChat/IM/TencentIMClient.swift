@@ -273,8 +273,16 @@ final class TencentIMClient:
     }
 
     func uploadAvatar(fileURL: URL) async throws -> String {
+        try await uploadFile(fileURL: fileURL, fileType: 1)
+    }
+
+    func uploadModelReferenceVideo(fileURL: URL) async throws -> String {
+        try await uploadFile(fileURL: fileURL, fileType: 2)
+    }
+
+    private func uploadFile(fileURL: URL, fileType: Int) async throws -> String {
         let data = try JSONSerialization.data(withJSONObject: [
-            "filePath": fileURL.path, "fileType": 1,
+            "filePath": fileURL.path, "fileType": fileType,
         ])
         let parameters = String(decoding: data, as: UTF8.self)
         return try await withCheckedThrowingContinuation { continuation in
@@ -284,7 +292,7 @@ final class TencentIMClient:
                     succ: { result in
                         guard let url = result as? String, !url.isEmpty else {
                             continuation.resume(throwing: RemoteIMClientError.operationFailed(
-                                code: -1, description: "Avatar upload returned no URL"
+                                code: -1, description: "Media upload returned no URL"
                             ))
                             return
                         }

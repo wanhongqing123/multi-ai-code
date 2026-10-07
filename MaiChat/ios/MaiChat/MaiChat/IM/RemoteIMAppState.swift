@@ -303,6 +303,15 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         }
     }
 
+    func uploadAgentVideoReference(fileURL: URL) async throws -> String {
+        guard connectionState == .connected else {
+            throw RemoteIMClientError.operationFailed(
+                code: -1, description: "Connect IM before uploading a video reference"
+            )
+        }
+        return try await client.uploadModelReferenceVideo(fileURL: fileURL)
+    }
+
     var shouldShowInitialLogin: Bool {
         !hasCompletedInitialLogin
     }

@@ -253,10 +253,14 @@ FFmpeg 全片解码通过。两个结果都带 `revision_of` 指向旧任务；�
 图片接口支持 Base64 输入，因此这条本地图片交接路径不依赖视频所需的 TOS 上传通道。
 Seedance 2.0 模型和视频生成接口支持视频参考、编辑与延长。当前工具已接入
 HTTPS 视频 URL 或已完成 Seedance 任务的引用路径；编辑请求已在方舟服务端验证出片，
-iOS 工具层仍需单独验收。任意本地 `video_path` 的上传尚未接通，因此 discover 必须
-将其报告为 `upload_not_configured`，不能和已验证的文生视频混作一个“可用”状态。
-方舟视频生成接口要求视频 URL 或素材 ID；长效存储的 AK/SK 不应下发到手机，
-本地上传应接服务端签发的短时上传／读取链接或等价的受控存储通道。
+iOS 工具层仍需单独验收。iOS 宿主现可通过腾讯 IM SDK 的视频文件上传接口把
+`video_path` 转为 HTTPS URL，再提交给 Seedance；素材会进入腾讯 IM 云文件服务，
+不会发送成聊天消息。iOS 上传通道按腾讯 IM 视频文件 100 MB 上限保守限制，
+因此 100–200 MB 的视频即使符合方舟输入上限，也需另行提供受控存储通道。
+共享核心将此能力上报为 `implemented_unverified`，直到
+真实 iOS 上传和方舟读取均通过。未提供宿主上传回调的平台仍上报
+`upload_not_configured`。方舟视频生成接口要求视频 URL 或素材 ID；长期 AK/SK
+不下发到手机，不能把仅有 Ark API Key 误认为对象存储的上传权限。
 接口取值参考[方舟创建视频生成任务文档](https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh)。
 
 对无需指定真人身份的写实人物视频，工具支持 `virtual_avatar_asset_id`：从方舟

@@ -44,6 +44,9 @@ MaiResult<MaiSshExecResult> maiExecuteSsh(const MaiSshExecRequest& request,
                                           const std::atomic<bool>* cancel = nullptr);
 
 // Model tool wrapper. Both callbacks must be backed by a secure host UI or credential store.
-// Missing callbacks must fail closed. Every remote command requires per-call approval.
+// Missing callbacks fail closed. The tool reuses a live authenticated connection within the
+// same Agent conversation for commands submitted less than ten minutes apart; commands use
+// separate SSH channels and do not share shell state. The connection is not persisted across
+// process restarts. Every remote command requires per-call approval.
 std::unique_ptr<MaiTool> makeMaiSshTool(MaiSshPasswordProvider passwordProvider,
                                         MaiSshHostKeyVerifier verifyHostKey);

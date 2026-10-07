@@ -912,8 +912,10 @@ void AgentPanelSessionTest::desktopAgentSuppliesMarkdownSystemPrompt() {
     QVERIFY(prompt.contains(QStringLiteral("delimiter row")));
     QVERIFY(prompt.contains(QStringLiteral("ask the user to choose")));
     QVERIFY(prompt.contains(QStringLiteral("A model choice is")));
-    QVERIFY(prompt.contains(QStringLiteral("FFmpeg/OpenCV image tools for a light")));
+    QVERIFY(prompt.contains(QStringLiteral("Classify an input rejection")));
+    QVERIFY(prompt.contains(QStringLiteral("FFmpeg/OpenCV edit")));
     QVERIFY(prompt.contains(QStringLiteral("FFmpeg oil-paint-style derivative")));
+    QVERIFY(prompt.contains(QStringLiteral("explicitly forbids a recognizable real-person")));
 }
 
 void AgentPanelSessionTest::composerMatchesImLayoutAndUsesEmbeddedSendAction() {

@@ -363,6 +363,8 @@ public:
                "authorized in this account. Both paths use asset:// references; direct local "
                "face uploads remain unsupported. Ark has a separate public Assets API for "
                "verified portraits, but local photo registration is not connected here. "
+               "This tool cannot list the account's portrait assets; a missing asset ID in "
+               "the request is not proof that the account has none. "
                "For photos without a source video, use mode=create with "
                "reference_image_paths; mode=reference requires one existing video source. "
                "Use reference_image_paths for up to 9 face-free reference images, or combine "

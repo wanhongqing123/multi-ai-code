@@ -336,7 +336,9 @@ void testPossibleRealPersonDoesNotForceProviderSwitch() {
         if (message.role == MaiModelRole::System &&
             message.content.find("does not prove an explicit authorization requirement") !=
                 std::string::npos &&
-            message.content.find("Do not switch providers yet") != std::string::npos &&
+            message.content.find("do not hide the face in an edited image") != std::string::npos &&
+            message.content.find("authorized-asset path") != std::string::npos &&
+            message.content.find("do not switch providers yet") != std::string::npos &&
             message.content.find("retry the same provider") != std::string::npos &&
             message.content.find("stronger FFmpeg oil-paint-style") != std::string::npos)
             targeted = true;

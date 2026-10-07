@@ -105,8 +105,13 @@ std::string specialistFailureGuidance(const nlohmann::json& specialist) {
         detail.find("portrait") != std::string::npos) {
         return " This attempt failed. The provider reported a possible real person in the "
                "reference image. This signal alone does not prove an explicit authorization "
-               "requirement. Inspect the raw provider wording and exact submitted image. Do not "
-               "switch providers yet. Preserve the original, then first "
+               "requirement. Inspect the raw provider wording, selected tool limitation, and "
+               "exact submitted image. If the provider explicitly forbids recognizable "
+               "real-person references without an authorized asset and the user's goal needs "
+               "the same identity, do not hide the face in an edited image and reconstruct it "
+               "with text. Briefly offer the authorized-asset path or a visibly fictional "
+               "subject; ask before proposing another model. Otherwise, for a permitted "
+               "derivative, do not switch providers yet. Preserve the original, then first "
                "use local FFmpeg/OpenCV image tools for a light, legitimate transformation. "
                "Preview the "
                "derivative and retry the same provider with new per-call approval. If it is still "
@@ -114,10 +119,7 @@ std::string specialistFailureGuidance(const nlohmann::json& specialist) {
                "image-processing "
                "step. Record details lost at each step and describe permitted details accurately "
                "in the next prompt so the result remains close to the original goal. Consider "
-               "another provider only after these bounded same-provider attempts. If the "
-               "provider explicitly requires authorization for a recognizable "
-               "real person's identity, the retry must meet that requirement; do not disguise "
-               "a prohibited input and ask the model to reconstruct it.";
+               "another provider only after these bounded same-provider attempts.";
     }
     if (detail.find("image sensitive") != std::string::npos ||
         detail.find("reference image") != std::string::npos) {

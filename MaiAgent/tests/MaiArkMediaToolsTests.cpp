@@ -71,6 +71,8 @@ void testDynamicCredentialAndToolIdentity() {
     CHECK(videoInfo.at("capabilities")[0].at("tool_status") == "implemented_unverified");
     CHECK(videoInfo.dump().find("reference images") != std::string::npos);
     CHECK(video->description().find("mode=create with reference_image_paths") != std::string::npos);
+    CHECK(video->description().find("cannot list the account's portrait assets") !=
+          std::string::npos);
     CHECK(videoInfo.dump().find(key) == std::string::npos);
     CHECK(imageInfo.dump().find(key) == std::string::npos);
     MaiToolRegistry registry;

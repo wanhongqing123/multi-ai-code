@@ -7,10 +7,15 @@ platform="$3"
 arch="$4"
 sysroot="$5"
 ndk_root="$6"
+archive_tool="${AR:-ar}"
 
 mkdir -p "$build_dir"
 if [[ -f "$build_dir/libcrypto.a" && -f "$build_dir/libmai_openssl_cli.a" ]]; then
-  exit 0
+  cli_size=$(wc -c < "$build_dir/libmai_openssl_cli.a")
+  if ((cli_size > 4096)); then
+    exit 0
+  fi
+  rm "$build_dir/libmai_openssl_cli.a"
 fi
 
 if [[ "$platform" == iOS ]]; then
@@ -46,8 +51,10 @@ elif [[ "$platform" == Android ]]; then
   export ANDROID_NDK_ROOT="$ndk_root"
   if [[ -d "$ndk_root/toolchains/llvm/prebuilt/darwin-x86_64/bin" ]]; then
     export PATH="$ndk_root/toolchains/llvm/prebuilt/darwin-x86_64/bin:$PATH"
+    archive_tool="$ndk_root/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-ar"
   elif [[ -d "$ndk_root/toolchains/llvm/prebuilt/linux-x86_64/bin" ]]; then
     export PATH="$ndk_root/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
+    archive_tool="$ndk_root/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
   else
     echo "Android NDK compiler toolchain was not found" >&2
     exit 1
@@ -85,4 +92,4 @@ if [[ "${#cli_objects[@]}" -lt 3 || ! -f apps/libapps.a || ! -f libssl.a ]]; the
   echo "OpenSSL CLI objects or supporting archives are missing" >&2
   exit 1
 fi
-ar rcs libmai_openssl_cli.a "${cli_objects[@]}"
+"$archive_tool" rcs libmai_openssl_cli.a "${cli_objects[@]}"

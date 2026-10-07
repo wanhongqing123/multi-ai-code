@@ -31,7 +31,8 @@ void checkTool(MaiTool& tool, const std::string& expectedName, const std::string
     CHECK(nlohmann::json::parse(tool.parametersSchema()).is_object());
     CHECK(!tool.requiresPerCallApproval(R"({"action":"discover"})"));
     CHECK(!tool.requiresPerCallApproval(R"({"action":"continue"})"));
-    CHECK(tool.requiresPerCallApproval(R"({"action":"delegate"})"));
+    CHECK(tool.requiresPerCallApproval(R"({"action":"delegate"})") ==
+          (expectedName != "minimax_video"));
     CHECK(tool.requiresPerCallApproval("broken json"));
     const auto discovered =
         nlohmann::json::parse(tool.execute(R"({"action":"discover"})", context).output());
@@ -159,6 +160,29 @@ void testH3ContentRolesAndRequiredFields() {
           "Missing top-level resolution for paid video generation");
 }
 
+void testH3RejectsUnsupportedOutputBeforePaidApproval() {
+    auto video = makeMaiMiniMaxVideoTool([] { return std::string("test-key"); });
+    MaiToolContext context;
+    context.root = MaiFileSystem::temporaryDirectory().toUtf8();
+    for (const std::string& resolution : {"1080P", "720P"}) {
+        const nlohmann::json args = {{"action", "delegate"},
+                                     {"model", "MiniMax-H3"},
+                                     {"message", "A running cat"},
+                                     {"duration", 10},
+                                     {"resolution", resolution}};
+        CHECK(!video->requiresPerCallApproval(args.dump()));
+        CHECK(localErrorMessage(*video, args, context).find("native 1080P and 720P") !=
+              std::string::npos);
+    }
+    for (const std::string& resolution : {"768P", "2K"}) {
+        const nlohmann::json args = {{"action", "delegate"},
+                                     {"model", "MiniMax-H3"},
+                                     {"duration", 10},
+                                     {"resolution", resolution}};
+        CHECK(video->requiresPerCallApproval(args.dump()));
+    }
+}
+
 void testH3LocalValidationChecksAllReferencePathsWithoutBilling() {
     using Json = nlohmann::json;
     const MaiFilePath root = MaiFileSystem::temporaryDirectory().append(
@@ -220,6 +244,7 @@ void testH3LocalValidationChecksAllReferencePathsWithoutBilling() {
 int main() {
     testFailedTaskIsStableWithoutProviderRequest();
     testH3ContentRolesAndRequiredFields();
+    testH3RejectsUnsupportedOutputBeforePaidApproval();
     testH3LocalValidationChecksAllReferencePathsWithoutBilling();
     std::string key;
     auto klingVideo = makeMaiKlingVideoTool([&] { return key; });

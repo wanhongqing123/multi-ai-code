@@ -124,6 +124,29 @@ const char* referenceRole(MediaKind kind) {
                                       : "reference_audio";
 }
 
+std::optional<MaiToolResult> validateH3OutputSpec(const Json& args, const std::string& model) {
+    if (model != "MiniMax-H3" && model != "MiniMax-H3-Max")
+        return maiCreativeInvalid("Select MiniMax-H3 or MiniMax-H3-Max");
+    if (!args.contains("duration"))
+        return maiCreativeInvalid("Missing top-level duration for paid video generation");
+    if (!args["duration"].is_number_integer())
+        return maiCreativeInvalid("duration must be an integer");
+    if (!args.contains("resolution"))
+        return maiCreativeInvalid("Missing top-level resolution for paid video generation");
+    if (!args["resolution"].is_string()) return maiCreativeInvalid("resolution must be a string");
+    const int duration = args["duration"].get<int>();
+    const std::string resolution = value(args, "resolution");
+    if (model == "MiniMax-H3" &&
+        (duration < 4 || duration > 15 || (resolution != "768P" && resolution != "2K")))
+        return maiCreativeInvalid(
+            "MiniMax-H3 supports 4-15 seconds at 768P or 2K; "
+            "native 1080P and 720P are unavailable");
+    if (model == "MiniMax-H3-Max" &&
+        (duration < 5 || duration > 15 || (resolution != "480P" && resolution != "768P")))
+        return maiCreativeInvalid("MiniMax-H3-Max supports 5-15 seconds at 480P or 768P");
+    return std::nullopt;
+}
+
 std::optional<MaiToolResult> prepareH3Request(const Json& args, const std::string& model,
                                               std::string prompt, const std::string& key,
                                               const std::string& caBundle,
@@ -196,18 +219,9 @@ std::optional<MaiToolResult> prepareH3Request(const Json& args, const std::strin
             item.role = item.kind == MediaKind::Image && !referenceMode ? "first_frame"
                                                                         : referenceRole(item.kind);
     }
-    if (!args.contains("duration"))
-        return maiCreativeInvalid("Missing top-level duration for paid video generation");
-    if (!args.contains("resolution"))
-        return maiCreativeInvalid("Missing top-level resolution for paid video generation");
+    if (auto error = validateH3OutputSpec(args, model)) return error;
     const int duration = args["duration"].get<int>();
     const std::string resolution = value(args, "resolution");
-    if (model == "MiniMax-H3" &&
-        (duration < 4 || duration > 15 || (resolution != "768P" && resolution != "2K")))
-        return maiCreativeInvalid("MiniMax-H3 supports 4-15 seconds at 768P or 2K");
-    if (model == "MiniMax-H3-Max" &&
-        (duration < 5 || duration > 15 || (resolution != "480P" && resolution != "768P")))
-        return maiCreativeInvalid("MiniMax-H3-Max supports 5-15 seconds at 480P or 768P");
     if (prompt.empty() || prompt.size() > 8000)
         return maiCreativeInvalid("A text instruction is required and must be at most 8000 bytes");
     std::size_t firstCount = 0;
@@ -305,7 +319,10 @@ public:
                         "or multimodal reference images/videos/audio using workspace paths. "
                         "For content[] multi-image input, use role=reference_image; role=reference "
                         "or omitted roles are normalized. Roles on text items are ignored. "
-                        "duration and resolution are top-level fields. Model MiniMax-H3-Max is "
+                        "duration and resolution are top-level fields. H3 supports 768P or 2K "
+                        "only; H3 Max supports 480P or 768P, neither supports native 1080P. "
+                        "For an exact 1080P delivery, disclose a 2K generation plus local "
+                        "downscale before paid approval. Model MiniMax-H3-Max is "
                         "selectable. Use validate to inspect local inputs without upload or "
                         "charge, then delegate after confirmation or continue a task. "
                         "The main Agent receives terminal results automatically."
@@ -347,7 +364,8 @@ public:
                  "H3 smoke test produced AAC; the V2 API has no separate audio-output switch"});
             info.capabilities.push_back(
                 {"two_k_video", true, true, ready,
-                 "MiniMax-H3 supports 2K; H3 Max is limited to 480P or 768P"});
+                 "MiniMax-H3 supports 768P or 2K, never native 1080P; H3 Max supports "
+                 "480P or 768P"});
         } else {
             info.capabilities.push_back(
                 {"text_to_image", true, true, ready,
@@ -364,6 +382,11 @@ public:
     bool requiresPerCallApproval(const std::string& argumentsJson) const override {
         const Json args = Json::parse(argumentsJson, nullptr, false);
         const std::string action = value(args, "action");
+        if (mVideo && action == "delegate" && args.is_object()) {
+            const std::string model =
+                value(args, "model").empty() ? "MiniMax-H3" : value(args, "model");
+            if (validateH3OutputSpec(args, model)) return false;
+        }
         return action != "discover" && action != "validate" && action != "continue";
     }
     MaiToolResult execute(const std::string& argumentsJson,

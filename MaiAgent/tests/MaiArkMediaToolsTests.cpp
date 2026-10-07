@@ -41,6 +41,10 @@ void testDynamicCredentialAndToolIdentity() {
     CHECK(!video->requiresPerCallApproval(discover));
     CHECK(!image->requiresPerCallApproval(discover));
     CHECK(video->requiresPerCallApproval(R"({"action":"delegate","message":"create"})"));
+    CHECK(!video->requiresPerCallApproval(
+        R"({"action":"delegate","mode":"reference","reference_image_paths":["first.jpg"]})"));
+    CHECK(video->requiresPerCallApproval(
+        R"({"action":"delegate","mode":"reference","video_url":"https://example.com/source.mp4"})"));
     CHECK(image->requiresPerCallApproval(R"({"action":"revise","message":"adjust"})"));
     CHECK(!video->requiresPerCallApproval(R"({"action":"continue"})"));
     auto videoInfo = nlohmann::json::parse(video->execute(discover, context).output());
@@ -66,6 +70,7 @@ void testDynamicCredentialAndToolIdentity() {
     CHECK(imageInfo.at("configured").get<bool>());
     CHECK(videoInfo.at("capabilities")[0].at("tool_status") == "implemented_unverified");
     CHECK(videoInfo.dump().find("reference images") != std::string::npos);
+    CHECK(video->description().find("mode=create with reference_image_paths") != std::string::npos);
     CHECK(videoInfo.dump().find(key) == std::string::npos);
     CHECK(imageInfo.dump().find(key) == std::string::npos);
     MaiToolRegistry registry;

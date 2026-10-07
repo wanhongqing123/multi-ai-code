@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <exception>
 #include <map>
 #include <tuple>
@@ -74,10 +75,19 @@ constexpr const char* kBalanceRecovery =
 
 std::string specialistFailureGuidance(const nlohmann::json& specialist) {
     if (isBalanceFailure(specialist)) return std::string(" ") + kBalanceRecovery;
-    const nlohmann::json error = specialist.value("error", nlohmann::json{});
-    const nlohmann::json reply = specialist.value("reply", nlohmann::json{});
-    std::string detail = error.is_string() ? error.get<std::string>() : std::string{};
-    if (detail.empty() && reply.is_string()) detail = reply.get<std::string>();
+    std::string detail;
+    for (const char* field : {"message", "error", "reply", "provider_message"}) {
+        if (!specialist.contains(field)) continue;
+        const nlohmann::json& value = specialist[field];
+        if (value.is_string()) detail += value.get<std::string>() + " ";
+        if (value.is_object() && value.value("message", nlohmann::json{}).is_string())
+            detail += value["message"].get<std::string>() + " ";
+    }
+    if (specialist.contains("provider_code")) {
+        const nlohmann::json& code = specialist["provider_code"];
+        if (code.is_string()) detail += code.get<std::string>();
+        if (code.is_number_integer()) detail += std::to_string(code.get<std::int64_t>());
+    }
     std::transform(detail.begin(), detail.end(), detail.begin(),
                    [](unsigned char byte) { return static_cast<char>(std::tolower(byte)); });
     if (detail.find("text sensitive") != std::string::npos ||
@@ -93,35 +103,42 @@ std::string specialistFailureGuidance(const nlohmann::json& specialist) {
         detail.find("human face") != std::string::npos ||
         detail.find("portrait") != std::string::npos) {
         return " This attempt failed. The provider identified a person in the reference image. "
-               "Inspect the submitted "
-               "image and role, preserve the original, and check whether this provider offers "
-               "an authorized-person input path. If a permitted user-requested creative "
-               "change is appropriate, propose the smallest visual edit, record changed or "
-               "lost traits, and describe the intended result faithfully. Obtain new per-call "
-               "approval before a paid retry; do not disguise an explicitly prohibited input.";
+               "Inspect the exact submitted image and role, preserve the original, then first "
+               "use available image tools for a light, legitimate transformation. Preview the "
+               "derivative and retry the same provider with new per-call approval. If it is still "
+               "rejected, consider a stronger painterly derivative as a last image-processing "
+               "step. Record details lost at each step and describe permitted details accurately "
+               "in the next prompt so the result remains close to the original goal. Consider "
+               "another provider only after these bounded same-provider attempts. If the "
+               "provider explicitly requires authorization for a recognizable "
+               "real person's identity, the retry must meet that requirement; do not disguise "
+               "a prohibited input and ask the model to reconstruct it.";
     }
     if (detail.find("image sensitive") != std::string::npos ||
         detail.find("reference image") != std::string::npos) {
-        return " This attempt failed. The provider identified the reference image. Inspect the "
-               "actual image content "
-               "and role, preserve the original, and propose the smallest creative adjustment "
-               "that still serves the user's intent. Record changed or lost traits so the next "
-               "prompt can describe the intended result accurately. Obtain new per-call approval "
-               "before a paid retry.";
+        return " This attempt failed. The provider identified the reference image. Inspect its "
+               "actual content and role, preserve the original, then use image tools for the "
+               "smallest permitted transformation that still serves the user's goal. Preview "
+               "the derivative and retry this provider with new per-call approval. Only if that "
+               "fails, consider a stronger painterly derivative as the last image-processing "
+               "step. Record changed or lost traits and describe desired permitted details in "
+               "the next prompt. Consider a different provider only after these bounded "
+               "same-provider attempts.";
     }
     if (detail.find("sensitive") != std::string::npos ||
         detail.find("moderation") != std::string::npos ||
         detail.find("1026") != std::string::npos) {
         return " This attempt failed. The provider gave an ambiguous input-moderation result. Do "
                "not assign it to text or image without evidence. Inspect the exact submitted "
-               "prompt and the referenced source image. Use results already available to choose "
-               "one change at a time: clarify unnecessary or ambiguous text, or preserve the "
-               "original image and make the smallest user-consistent visual edit with image "
-               "tools. Preview the edited image, record which appearance or scene details "
-               "changed or were lost, and describe only the traits the user still wants in "
-               "the next prompt. Do not change text and image together without a reason. "
-               "Explain the candidate repair before a paid retry and obtain new per-call "
-               "approval; never launch diagnostic generations without approval.";
+               "prompt and source image. When a photo is involved, preserve the original and "
+               "first use image tools for a light, permitted user-consistent transformation; "
+               "preview the derivative and retry the same provider with new per-call approval. "
+               "If image evidence still points to the image, a stronger painterly derivative is "
+               "the last image-processing step. Record changed or lost details and describe "
+               "desired permitted details in the next prompt. Change text separately if its "
+               "wording is implicated. Consider another provider only after bounded, "
+               "justified same-provider attempts have failed; do not launch paid diagnostic "
+               "generations without approval or conceal explicitly prohibited material.";
     }
     if (detail.find("output delivery failed") != std::string::npos) {
         return " The provider finished, but delivery of its output failed. First recover the "

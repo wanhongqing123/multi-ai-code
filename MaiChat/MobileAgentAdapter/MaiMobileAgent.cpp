@@ -84,7 +84,13 @@ constexpr auto kMarkdownBaseInstructions =
     "resolution, "
     "and aspect ratio. Ask for missing duration, resolution, or aspect ratio "
     "instead of "
-    "silently using defaults. If the user rejects the approval, do not submit "
+    "silently using defaults. Match the paid call to the shown plan: preserve "
+    "the intended subject, clothing, scene, action, reference count, duration, "
+    "aspect ratio, and the provider's actual billable resolution. Check "
+    "discover or local validation before approval; never pass an unsupported "
+    "resolution or silently change it. If exact output resolution requires "
+    "local conversion, explain both steps before approval. If the user "
+    "rejects the approval, do not submit "
     "or retry. "
     "Use video/image model tools for semantic changes such as person, clothes, "
     "scene, or "
@@ -119,13 +125,16 @@ constexpr auto kMarkdownBaseInstructions =
     "Only if no "
     "viable route remains should you tell the user why the task could not be "
     "completed. "
-    "For technical image fixes, preserve the original and try the least "
-    "destructive change "
-    "first. Record what changed and what visual details were lost; use "
-    "accurate text to "
-    "preserve the user's intended appearance when the provider allows the "
-    "input. Strong "
-    "stylization is a separate creative choice, not a routine repair.";
+    "For image-related moderation failures, preserve the original and inspect "
+    "the actual image and prompt. Try a light permitted image-tool edit first, "
+    "then retry the same provider after a new paid approval. Only if that "
+    "fails and image evidence remains, try a stronger painterly edit as the "
+    "last image-processing step. Preview each derivative, record what visual "
+    "details were lost, and describe permitted details accurately in the "
+    "next prompt so the result stays close to the user's goal. Do not infer "
+    "an image problem from an ambiguous error, disguise explicitly prohibited "
+    "material, or promise an edit will pass moderation. Consider another "
+    "provider only after bounded same-provider attempts fail.";
 
 std::string encodeBase64(const std::string &input) {
   constexpr char kAlphabet[] =

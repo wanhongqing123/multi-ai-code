@@ -288,10 +288,37 @@ void testAmbiguousModerationGivesConcreteInputPlan() {
     bool targeted = false;
     for (const MaiModelMessage& message : scenario.fakeModel->lastRequest().messages) {
         if (message.role == MaiModelRole::System &&
-            message.content.find("smallest user-consistent visual edit") != std::string::npos &&
-            message.content.find("record which appearance or scene details") != std::string::npos &&
-            message.content.find("never launch diagnostic generations without approval") !=
+            message.content.find("not assign it to text or image without evidence") !=
+                std::string::npos &&
+            message.content.find("light, permitted user-consistent transformation") !=
+                std::string::npos &&
+            message.content.find("a stronger painterly derivative is") != std::string::npos &&
+            message.content.find("another provider only after bounded") != std::string::npos &&
+            message.content.find("do not launch paid diagnostic generations without approval") !=
                 std::string::npos)
+            targeted = true;
+    }
+    CHECK(targeted);
+}
+
+void testImageModerationKeepsSameProviderFirst() {
+    auto scenario = startScenario(R"({"status":"failed","reply":"reference image sensitive"})",
+                                  true, true, true);
+    waitForStatus(scenario, MaiSpecialistTaskStatus::Failed);
+    for (int attempt = 0; attempt < 100 && scenario.fakeModel->requestCount() == 0; ++attempt)
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    CHECK(scenario.fakeModel->requestCount() > 0);
+    if (scenario.fakeModel->requestCount() == 0) return;
+    bool targeted = false;
+    for (const MaiModelMessage& message : scenario.fakeModel->lastRequest().messages) {
+        if (message.role != MaiModelRole::System) continue;
+        const std::size_t light = message.content.find("smallest permitted transformation");
+        const std::size_t painterly = message.content.find("stronger painterly derivative");
+        const std::size_t switchProvider = message.content.find("different provider only after");
+        if (light != std::string::npos && painterly != std::string::npos &&
+            switchProvider != std::string::npos && light < painterly &&
+            painterly < switchProvider &&
+            message.content.find("Record changed or lost traits") != std::string::npos)
             targeted = true;
     }
     CHECK(targeted);
@@ -345,6 +372,7 @@ int main() {
     testFailedSpecialistAddsRecoveryInstructionToMainModel();
     testTextModerationGetsTargetedGuidance();
     testAmbiguousModerationGivesConcreteInputPlan();
+    testImageModerationKeepsSameProviderFirst();
     testTechnicalFailureDoesNotGetModerationGuidance();
     testLocalPollingInputErrorDoesNotClaimProviderFailure();
     return failures == 0 ? 0 : 1;

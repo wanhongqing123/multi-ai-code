@@ -292,9 +292,20 @@ public:
         return "seedance_video";
     }
     bool requiresApproval(const std::string& raw) const override {
-        return isPaidGenerationAction(raw);
+        return requiresPerCallApproval(raw);
     }
     bool requiresPerCallApproval(const std::string& raw) const override {
+        const Json args = Json::parse(raw, nullptr, false);
+        if (args.is_object() && stringValue(args, "action") == "delegate") {
+            const std::string mode = stringValue(args, "mode");
+            if (mode == "reference" || mode == "edit" || mode == "extend") {
+                const int sourceCount =
+                    static_cast<int>(!stringValue(args, "video_path").empty()) +
+                    static_cast<int>(!stringValue(args, "video_url").empty()) +
+                    static_cast<int>(!stringValue(args, "video_task_id").empty());
+                if (sourceCount != 1) return false;
+            }
+        }
         return isPaidGenerationAction(raw);
     }
     std::optional<MaiSpecialistInfo> specialistInfo() const override {
@@ -352,6 +363,8 @@ public:
                "authorized in this account. Both paths use asset:// references; direct local "
                "face uploads remain unsupported. Ark has a separate public Assets API for "
                "verified portraits, but local photo registration is not connected here. "
+               "For photos without a source video, use mode=create with "
+               "reference_image_paths; mode=reference requires one existing video source. "
                "Use reference_image_paths for up to 9 face-free reference images, or combine "
                "one authorized portrait asset with face-free images. Reference images cannot "
                "be mixed with strict first/last-frame control. The app checks tasks and hands "

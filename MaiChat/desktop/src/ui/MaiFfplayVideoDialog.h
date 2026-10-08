@@ -6,6 +6,7 @@
 
 #include <thread>
 #include <atomic>
+#include <functional>
 
 #include "MaiFfplayEntry.h"
 
@@ -28,6 +29,7 @@ public:
     bool isStarted() const { return started_; }
     bool isPlaying() const { return playing_; }
     uint64_t presentedFrames() const;
+    void setForwardAction(std::function<void()> action);
 
 protected:
     void showEvent(QShowEvent* event) override;
@@ -47,6 +49,8 @@ private:
     static void showWindow(void* userData);
     bool startPlayback();
     void stopPlayback();
+    void saveCopy();
+    void forwardVideo();
 
     QString path_;
     QWidget* surface_ = nullptr;
@@ -62,4 +66,5 @@ private:
     bool started_ = false;
     bool playing_ = true;
     std::atomic<bool> playbackFinished_{false};
+    std::function<void()> forwardAction_;
 };

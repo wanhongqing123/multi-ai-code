@@ -2,6 +2,8 @@ package com.kongshang.maichat;
 
 import android.content.Context;
 import android.graphics.Color;
+import android.graphics.Typeface;
+import android.content.res.ColorStateList;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
@@ -40,7 +42,8 @@ public final class MaiFfplayVideoView extends FrameLayout {
                 if (!seeking) seekBar.setProgress((int) (position * 1000 / status[1]));
                 timeLabel.setText(timestamp(position) + " / " + timestamp(status[1]));
                 playing = status[3] == 0;
-                playButton.setText(playing ? "暂停" : "播放");
+                playButton.setText(playing ? "Ⅱ" : "▶");
+                playButton.setContentDescription(playing ? "暂停视频" : "播放视频");
             }
             MAIN.postDelayed(this, 500);
         }
@@ -75,14 +78,24 @@ public final class MaiFfplayVideoView extends FrameLayout {
         LinearLayout controls = new LinearLayout(context);
         controls.setOrientation(LinearLayout.HORIZONTAL);
         controls.setGravity(Gravity.CENTER_VERTICAL);
-        controls.setPadding(12, 0, 12, 0);
-        controls.setBackgroundColor(Color.argb(160, 0, 0, 0));
+        controls.setPadding(dp(12), dp(4), dp(12), dp(4));
+        controls.setBackgroundColor(Color.argb(125, 0, 0, 0));
         playButton = new Button(context);
-        playButton.setText("暂停");
+        playButton.setText("Ⅱ");
+        playButton.setTextSize(27);
+        playButton.setTextColor(Color.WHITE);
+        playButton.setBackgroundColor(Color.TRANSPARENT);
+        playButton.setContentDescription("暂停视频");
+        playButton.setMinWidth(0);
+        playButton.setMinimumWidth(0);
         playButton.setOnClickListener(view -> command(playing ? "pause" : "play"));
-        controls.addView(playButton, new LinearLayout.LayoutParams(90, LayoutParams.WRAP_CONTENT));
+        controls.addView(playButton, new LinearLayout.LayoutParams(dp(56), dp(58)));
+        LinearLayout timeline = new LinearLayout(context);
+        timeline.setOrientation(LinearLayout.VERTICAL);
         seekBar = new SeekBar(context);
         seekBar.setMax(1000);
+        seekBar.setProgressTintList(ColorStateList.valueOf(Color.WHITE));
+        seekBar.setThumbTintList(ColorStateList.valueOf(Color.WHITE));
         seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar bar, int value, boolean fromUser) {}
             @Override public void onStartTrackingTouch(SeekBar bar) { seeking = true; }
@@ -91,11 +104,15 @@ public final class MaiFfplayVideoView extends FrameLayout {
                 seekPercent(bar.getProgress() / 1000.0);
             }
         });
-        controls.addView(seekBar, new LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1));
         timeLabel = new TextView(context);
         timeLabel.setText("0:00 / 0:00");
         timeLabel.setTextColor(Color.WHITE);
-        controls.addView(timeLabel);
+        timeLabel.setTextSize(14);
+        timeLabel.setTypeface(Typeface.MONOSPACE);
+        timeline.addView(timeLabel);
+        timeline.addView(seekBar, new LinearLayout.LayoutParams(
+            LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
+        controls.addView(timeline, new LinearLayout.LayoutParams(0, dp(64), 1));
         addView(controls, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT,
             Gravity.BOTTOM));
     }
@@ -103,6 +120,10 @@ public final class MaiFfplayVideoView extends FrameLayout {
     private static String timestamp(long microseconds) {
         long seconds = Math.max(0, microseconds / 1_000_000);
         return String.format(Locale.US, "%d:%02d", seconds / 60, seconds % 60);
+    }
+
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
     public static MaiFfplayVideoView activeView() { return active.get(); }
@@ -153,7 +174,8 @@ public final class MaiFfplayVideoView extends FrameLayout {
         boolean accepted = nativeCommand(playbackHandle, action);
         if (accepted && action.equals("pause")) {
             playing = !playing;
-            playButton.setText(playing ? "暂停" : "播放");
+            playButton.setText(playing ? "Ⅱ" : "▶");
+            playButton.setContentDescription(playing ? "暂停视频" : "播放视频");
         }
         return accepted;
     }

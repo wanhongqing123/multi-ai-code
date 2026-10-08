@@ -2,6 +2,7 @@
 
 #include <QDialog>
 #include <QString>
+#include <functional>
 
 class QLabel;
 class QCloseEvent;
@@ -22,6 +23,7 @@ class VideoPreviewDialog final : public QDialog {
 public:
     explicit VideoPreviewDialog(const QString& videoPath, const QString& title, QWidget* parent = nullptr);
     ~VideoPreviewDialog() override;
+    void setForwardAction(std::function<void()> action);
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -31,6 +33,7 @@ private:
     void togglePlayback();
     void shutdownPlayer(bool stopPlayback, const char* reason);
     void showError(const QString& message);
+    void saveCopy();
     static QString formatDuration(qint64 milliseconds);
 
     QString videoPath_;
@@ -41,4 +44,5 @@ private:
     QLabel* positionLabel_ = nullptr;
     QLabel* errorLabel_ = nullptr;
     bool sliderPressed_ = false;
+    std::function<void()> forwardAction_;
 };

@@ -1,4 +1,5 @@
 import AVFoundation
+import Photos
 import QuartzCore
 import SwiftUI
 import UIKit
@@ -164,8 +165,11 @@ final class MaiFfplayVideoController: UIViewController {
     private let seekSlider = UISlider()
     private let timeLabel = UILabel()
     private let errorLabel = UILabel()
+    private let saveButton = UIButton(type: .system)
+    private let saveStatusLabel = UILabel()
     private var playbackTimer: Timer?
     private var playing = true
+    private var saving = false
 
     init(path: String, close: @escaping () -> Void) {
         self.path = path
@@ -192,27 +196,71 @@ final class MaiFfplayVideoController: UIViewController {
         errorLabel.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(errorLabel)
 
-        pauseButton.setTitle("暂停", for: .normal)
+        pauseButton.setImage(UIImage(systemName: "pause.fill"), for: .normal)
+        pauseButton.accessibilityLabel = "暂停视频"
         pauseButton.accessibilityIdentifier = "ffplay-pause"
         pauseButton.tintColor = .white
         pauseButton.addTarget(self, action: #selector(togglePause), for: .touchUpInside)
+        pauseButton.translatesAutoresizingMaskIntoConstraints = false
+        pauseButton.widthAnchor.constraint(equalToConstant: 54).isActive = true
+        pauseButton.heightAnchor.constraint(equalToConstant: 54).isActive = true
+        seekSlider.minimumTrackTintColor = .white
+        seekSlider.maximumTrackTintColor = UIColor.white.withAlphaComponent(0.35)
+        seekSlider.thumbTintColor = .white
         seekSlider.addTarget(self, action: #selector(seekReleased), for: .touchUpInside)
         seekSlider.accessibilityIdentifier = "ffplay-seek"
         seekSlider.addTarget(self, action: #selector(seekReleased), for: .touchUpOutside)
         timeLabel.text = "0:00 / 0:00"
         timeLabel.textColor = .white
-        timeLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
-        let controls = UIStackView(arrangedSubviews: [pauseButton, seekSlider, timeLabel])
+        timeLabel.font = .monospacedDigitSystemFont(ofSize: 15, weight: .medium)
+        let timeline = UIStackView(arrangedSubviews: [timeLabel, seekSlider])
+        timeline.axis = .vertical
+        timeline.spacing = 1
+        let controls = UIStackView(arrangedSubviews: [pauseButton, timeline])
         controls.axis = .horizontal
-        controls.spacing = 16
-        controls.backgroundColor = UIColor.black.withAlphaComponent(0.6)
+        controls.alignment = .center
+        controls.spacing = 12
         controls.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(controls)
 
+        let shareButton = actionButton("square.and.arrow.up", label: "转发或分享",
+                                       identifier: "ffplay-share", action: #selector(shareTapped))
+        saveButton.setImage(UIImage(systemName: "square.and.arrow.down"), for: .normal)
+        saveButton.accessibilityLabel = "保存到相册"
+        saveButton.accessibilityIdentifier = "ffplay-save"
+        saveButton.tintColor = .white
+        saveButton.backgroundColor = UIColor.white.withAlphaComponent(0.18)
+        saveButton.layer.cornerRadius = 25
+        saveButton.addTarget(self, action: #selector(saveTapped), for: .touchUpInside)
+        saveButton.translatesAutoresizingMaskIntoConstraints = false
+        saveButton.widthAnchor.constraint(equalToConstant: 50).isActive = true
+        saveButton.heightAnchor.constraint(equalToConstant: 50).isActive = true
+        let moreButton = actionButton("ellipsis", label: "更多操作",
+                                      identifier: "ffplay-more", action: #selector(moreTapped))
+        let actions = UIStackView(arrangedSubviews: [shareButton, saveButton, moreButton])
+        actions.axis = .horizontal
+        actions.spacing = 12
+        actions.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(actions)
+
+        saveStatusLabel.textColor = .white
+        saveStatusLabel.font = .systemFont(ofSize: 14, weight: .medium)
+        saveStatusLabel.textAlignment = .center
+        saveStatusLabel.numberOfLines = 2
+        saveStatusLabel.backgroundColor = UIColor.black.withAlphaComponent(0.7)
+        saveStatusLabel.layer.cornerRadius = 10
+        saveStatusLabel.clipsToBounds = true
+        saveStatusLabel.isHidden = true
+        saveStatusLabel.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(saveStatusLabel)
+
         let closeButton = UIButton(type: .system)
-        closeButton.setImage(UIImage(systemName: "xmark.circle.fill"), for: .normal)
+        closeButton.setImage(UIImage(systemName: "xmark"), for: .normal)
         closeButton.accessibilityIdentifier = "ffplay-close"
+        closeButton.accessibilityLabel = "关闭视频"
         closeButton.tintColor = .white
+        closeButton.backgroundColor = UIColor.white.withAlphaComponent(0.2)
+        closeButton.layer.cornerRadius = 25
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(closeButton)
@@ -226,13 +274,21 @@ final class MaiFfplayVideoController: UIViewController {
             errorLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
             controls.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             controls.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            controls.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor,
-                                             constant: -12),
-            closeButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -18),
+            controls.bottomAnchor.constraint(equalTo: actions.topAnchor, constant: -16),
+            actions.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -18),
+            actions.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor,
+                                           constant: -12),
+            saveStatusLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            saveStatusLabel.bottomAnchor.constraint(equalTo: controls.topAnchor, constant: -18),
+            saveStatusLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 160),
+            saveStatusLabel.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor,
+                                                  constant: -32),
+            saveStatusLabel.heightAnchor.constraint(equalToConstant: 40),
+            closeButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 18),
             closeButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor,
                                              constant: 12),
-            closeButton.widthAnchor.constraint(equalToConstant: 44),
-            closeButton.heightAnchor.constraint(equalToConstant: 44),
+            closeButton.widthAnchor.constraint(equalToConstant: 50),
+            closeButton.heightAnchor.constraint(equalToConstant: 50),
         ])
     }
 
@@ -259,7 +315,7 @@ final class MaiFfplayVideoController: UIViewController {
         }
         timeLabel.text = "\(Self.timestamp(position)) / \(Self.timestamp(status.duration_us))"
         playing = status.paused == 0
-        pauseButton.setTitle(playing ? "暂停" : "播放", for: .normal)
+        refreshPlayButton()
     }
 
     private static func timestamp(_ microseconds: Int64) -> String {
@@ -290,7 +346,7 @@ final class MaiFfplayVideoController: UIViewController {
         let accepted = metalView.sendCommand(command)
         if accepted && command == "pause" {
             playing.toggle()
-            pauseButton.setTitle(playing ? "暂停" : "播放", for: .normal)
+            refreshPlayButton()
         }
         return accepted
     }
@@ -304,6 +360,88 @@ final class MaiFfplayVideoController: UIViewController {
     @objc private func togglePause() { _ = sendCommand("toggle_pause") }
     @objc private func seekReleased() { _ = seekPercent(Double(seekSlider.value)) }
     @objc private func closeTapped() { close() }
+
+    private func refreshPlayButton() {
+        pauseButton.setImage(UIImage(systemName: playing ? "pause.fill" : "play.fill"), for: .normal)
+        pauseButton.accessibilityLabel = playing ? "暂停视频" : "播放视频"
+    }
+
+    private func actionButton(_ symbol: String, label: String, identifier: String,
+                              action: Selector) -> UIButton {
+        let button = UIButton(type: .system)
+        button.setImage(UIImage(systemName: symbol), for: .normal)
+        button.accessibilityLabel = label
+        button.accessibilityIdentifier = identifier
+        button.tintColor = .white
+        button.backgroundColor = UIColor.white.withAlphaComponent(0.18)
+        button.layer.cornerRadius = 25
+        button.addTarget(self, action: action, for: .touchUpInside)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.widthAnchor.constraint(equalToConstant: 50).isActive = true
+        button.heightAnchor.constraint(equalToConstant: 50).isActive = true
+        return button
+    }
+
+    private func showStatus(_ message: String) {
+        saveStatusLabel.text = "  \(message)  "
+        saveStatusLabel.isHidden = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+            self?.saveStatusLabel.isHidden = true
+        }
+    }
+
+    @objc private func shareTapped() {
+        let sheet = UIActivityViewController(activityItems: [URL(fileURLWithPath: path)],
+                                             applicationActivities: nil)
+        sheet.popoverPresentationController?.sourceView = view
+        sheet.popoverPresentationController?.sourceRect = CGRect(
+            x: view.bounds.midX, y: view.bounds.maxY - 50, width: 1, height: 1)
+        present(sheet, animated: true)
+    }
+
+    @objc private func saveTapped() {
+        guard !saving else { return }
+        saving = true
+        saveButton.isEnabled = false
+        let requestedAt = Date()
+        let fileURL = URL(fileURLWithPath: path)
+        Task { @MainActor in
+            let current = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+            let status = current == .notDetermined
+                ? await PHPhotoLibrary.requestAuthorization(for: .readWrite) : current
+            guard status == .authorized || status == .limited else {
+                showStatus("请允许访问相册")
+                saving = false
+                saveButton.isEnabled = true
+                return
+            }
+            do {
+                try await PHPhotoLibrary.shared().performChanges {
+                    PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: fileURL)?
+                        .creationDate = requestedAt
+                }
+                showStatus("已保存到相册")
+            } catch {
+                showStatus("保存失败：\(error.localizedDescription)")
+            }
+            saving = false
+            saveButton.isEnabled = true
+        }
+    }
+
+    @objc private func moreTapped() {
+        let menu = UIAlertController(title: URL(fileURLWithPath: path).lastPathComponent,
+                                     message: nil, preferredStyle: .actionSheet)
+        menu.addAction(UIAlertAction(title: "复制文件路径", style: .default) { [weak self] _ in
+            UIPasteboard.general.string = self?.path
+            self?.showStatus("已复制文件路径")
+        })
+        menu.addAction(UIAlertAction(title: "取消", style: .cancel))
+        menu.popoverPresentationController?.sourceView = view
+        menu.popoverPresentationController?.sourceRect = CGRect(
+            x: view.bounds.midX, y: view.bounds.maxY - 50, width: 1, height: 1)
+        present(menu, animated: true)
+    }
 }
 
 struct MaiFfplayVideoScreen: UIViewControllerRepresentable {
@@ -333,6 +471,8 @@ struct MaiFfplayUITestRoot: View {
             .fullScreenCover(isPresented: $showingVideo) {
                 if let file = Bundle.main.url(forResource: "ffplay-sample", withExtension: "mp4") {
                     MaiFfplayVideoScreen(path: file.path) { showingVideo = false }
+                        .ignoresSafeArea()
+                        .statusBarHidden()
                 }
             }
             .task { showingVideo = true }

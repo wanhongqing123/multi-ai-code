@@ -875,6 +875,8 @@ private struct AIMessageRow: View {
             }
             .fullScreenCover(item: $videoPreview) { item in
                 MaiFfplayVideoScreen(path: item.path) { videoPreview = nil }
+                    .ignoresSafeArea()
+                    .statusBarHidden()
             }
             .alert("无法预览 PDF", isPresented: $pdfPreviewError) {
                 Button("知道了", role: .cancel) {}

@@ -1,14 +1,20 @@
 #include "ui/VideoPreviewDialog.h"
 
 #include <QFileInfo>
+#include <QFile>
+#include <QFileDialog>
+#include <QDesktopServices>
 #include <QCloseEvent>
 #include <QDebug>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QMediaPlayer>
+#include <QMessageBox>
+#include <QMenu>
 #include <QPushButton>
 #include <QSlider>
+#include <QSaveFile>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QVideoWidget>
@@ -20,7 +26,7 @@ VideoPreviewDialog::VideoPreviewDialog(const QString& videoPath, const QString& 
     setWindowTitle(title.isEmpty() ? QStringLiteral("视频") : title);
     setMinimumSize(UiZoom::s(640), UiZoom::s(420));
     setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
-        QDialog { background: #10151f; }
+        QDialog { background: #000000; }
         QLabel { color: #d9e4ef; font-size: 13px; }
         QLabel#videoError { color: #ffb4b4; font-size: 13px; }
         QPushButton {
@@ -54,6 +60,25 @@ VideoPreviewDialog::VideoPreviewDialog(const QString& videoPath, const QString& 
     controls->addWidget(positionSlider_, 1);
     controls->addWidget(positionLabel_);
     layout->addLayout(controls);
+    auto* actions = new QHBoxLayout();
+    actions->addStretch();
+    auto* forward = new QPushButton(QStringLiteral("↗  转发"), this);
+    connect(forward, &QPushButton::clicked, this, [this] {
+        if (forwardAction_) forwardAction_();
+    });
+    actions->addWidget(forward);
+    auto* save = new QPushButton(QStringLiteral("↓  保存视频"), this);
+    connect(save, &QPushButton::clicked, this, &VideoPreviewDialog::saveCopy);
+    actions->addWidget(save);
+    auto* more = new QPushButton(QStringLiteral("⋯"), this);
+    connect(more, &QPushButton::clicked, this, [this, more] {
+        QMenu menu(this);
+        QAction* openFolder = menu.addAction(QStringLiteral("打开所在文件夹"));
+        if (menu.exec(more->mapToGlobal(more->rect().bottomLeft())) == openFolder)
+            QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(videoPath_).absolutePath()));
+    });
+    actions->addWidget(more);
+    layout->addLayout(actions);
 
     player_ = new QMediaPlayer(this);
     player_->setVideoOutput(videoWidget_);
@@ -98,6 +123,37 @@ VideoPreviewDialog::~VideoPreviewDialog() {
     // 父窗口直接析构等少数路径没有 closeEvent，此处只做无 stop 的兜底释放：
     // macOS AVFoundation 后端在原生视图已关闭后调用 stop() 会访问悬空 CALayer。
     shutdownPlayer(false, "destructor-fallback");
+}
+
+void VideoPreviewDialog::setForwardAction(std::function<void()> action) {
+    forwardAction_ = std::move(action);
+}
+
+void VideoPreviewDialog::saveCopy() {
+    const QString target = QFileDialog::getSaveFileName(
+        this, QStringLiteral("保存视频"), QFileInfo(videoPath_).fileName(),
+        QStringLiteral("视频文件 (*.mp4 *.mov *.m4v);;所有文件 (*)"));
+    if (target.isEmpty()) return;
+    if (QFileInfo(target).absoluteFilePath() == QFileInfo(videoPath_).absoluteFilePath()) return;
+    QFile source(videoPath_);
+    QSaveFile output(target);
+    if (!source.open(QIODevice::ReadOnly) || !output.open(QIODevice::WriteOnly)) {
+        QMessageBox::warning(this, QStringLiteral("保存失败"), QStringLiteral("无法读取或写入视频文件。"));
+        return;
+    }
+    while (!source.atEnd()) {
+        const QByteArray bytes = source.read(1024 * 1024);
+        if (bytes.isEmpty() || output.write(bytes) != bytes.size()) {
+            output.cancelWriting();
+            QMessageBox::warning(this, QStringLiteral("保存失败"), QStringLiteral("复制视频时发生错误。"));
+            return;
+        }
+    }
+    if (!output.commit()) {
+        QMessageBox::warning(this, QStringLiteral("保存失败"), QStringLiteral("无法完成视频保存。"));
+        return;
+    }
+    QMessageBox::information(this, QStringLiteral("已保存"), QStringLiteral("视频副本已保存。"));
 }
 
 void VideoPreviewDialog::closeEvent(QCloseEvent* event) {

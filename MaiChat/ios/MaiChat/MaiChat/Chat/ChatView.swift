@@ -3687,6 +3687,8 @@ private struct FullScreenVideoPreviewView: View {
 
     var body: some View {
         MaiFfplayVideoScreen(path: item.localFilePath, close: close)
+            .ignoresSafeArea()
+            .statusBarHidden()
             .accessibilityIdentifier("remote-im-video-preview")
     }
 }

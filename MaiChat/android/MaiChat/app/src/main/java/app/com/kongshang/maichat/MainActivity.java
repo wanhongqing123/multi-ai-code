@@ -23,6 +23,7 @@ import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
+import android.media.MediaScannerConnection;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Build;
@@ -98,6 +99,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private static final int REQUEST_PICK_FILE = 1005;
     private static final int REQUEST_POST_NOTIFICATIONS = 1006;
     private static final int REQUEST_GALLERY_ACCESS = 1008;
+    private static final int REQUEST_SAVE_VIDEO_PERMISSION = 1009;
     private static final String TAG = "MaiChat.notify";
     private static final String MESSAGE_CHANNEL_ID = "maichat-new-messages";
     private static final String MESSAGE_GROUP_KEY = "maichat-private-messages";
@@ -108,6 +110,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private RemoteIMMediaStore mediaStore;
     private AIAssistantPanel aiAssistant;
     private Dialog videoDialog;
+    private String pendingVideoSavePath;
     private Runnable pendingGalleryAction;
     private RemoteIMTab activeTab = RemoteIMTab.MESSAGES;
     private LinearLayout root;
@@ -365,6 +368,13 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             Runnable action = pendingGalleryAction;
             pendingGalleryAction = null;
             if (action != null && !destroyed) action.run();
+            return;
+        }
+        if (requestCode == REQUEST_SAVE_VIDEO_PERMISSION) {
+            String path = pendingVideoSavePath;
+            pendingVideoSavePath = null;
+            if (granted && path != null) savePreviewVideo(path);
+            else if (!granted) toast("没有存储权限，无法保存视频");
             return;
         }
         if (requestCode == REQUEST_RECORD_AUDIO) {
@@ -2930,8 +2940,12 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private void openVideoPlayer(String path) {
         if (videoDialog != null) videoDialog.dismiss();
         Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
+        LinearLayout rootView = new LinearLayout(this);
+        rootView.setOrientation(LinearLayout.VERTICAL);
+        rootView.setBackgroundColor(Color.BLACK);
         FrameLayout frame = new FrameLayout(this);
-        frame.setBackgroundColor(Color.BLACK);
+        rootView.addView(frame, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
         MaiFfplayVideoView video = new MaiFfplayVideoView(this);
         video.setVideoPath(path);
@@ -2943,21 +2957,148 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         frame.addView(video, videoParams);
 
         TextView close = iconButton("×", 26, Color.WHITE);
-        close.setBackground(MaiChatTheme.rounded(Color.argb(160, 0, 0, 0), 20, this));
+        close.setContentDescription("关闭视频");
+        close.setBackground(MaiChatTheme.rounded(Color.argb(175, 55, 55, 55), 25, this));
         close.setOnClickListener(view -> dialog.dismiss());
         FrameLayout.LayoutParams closeParams =
-            new FrameLayout.LayoutParams(dp(44), dp(44), Gravity.TOP | Gravity.END);
-        closeParams.setMargins(0, dp(14), dp(14), 0);
+            new FrameLayout.LayoutParams(dp(50), dp(50), Gravity.TOP | Gravity.START);
+        closeParams.setMargins(dp(18), dp(16), 0, 0);
         frame.addView(close, closeParams);
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        actions.setPadding(dp(16), 0, dp(18), dp(10));
+        TextView share = videoAction("↗", "转发或分享");
+        share.setOnClickListener(view -> sharePreviewVideo(path));
+        actions.addView(share, new LinearLayout.LayoutParams(dp(50), dp(50)));
+        TextView save = videoAction("↓", "保存到相册");
+        save.setOnClickListener(view -> savePreviewVideo(path));
+        LinearLayout.LayoutParams actionSpacing = new LinearLayout.LayoutParams(dp(50), dp(50));
+        actionSpacing.leftMargin = dp(12);
+        actions.addView(save, actionSpacing);
+        TextView more = videoAction("⋯", "更多操作");
+        more.setOnClickListener(view -> new AlertDialog.Builder(this)
+            .setTitle(new File(path).getName())
+            .setItems(new String[]{"复制文件路径"}, (whichDialog, which) -> copyToClipboard(path))
+            .setNegativeButton("取消", null).show());
+        LinearLayout.LayoutParams moreSpacing = new LinearLayout.LayoutParams(dp(50), dp(50));
+        moreSpacing.leftMargin = dp(12);
+        actions.addView(more, moreSpacing);
+        rootView.addView(actions, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(72)));
 
         dialog.setOnDismissListener(d -> {
             video.stop();
             if (videoDialog == dialog) videoDialog = null;
         });
-        dialog.setContentView(frame);
+        dialog.setContentView(rootView);
         allowKeyboardLocation = false;
         videoDialog = dialog;
         dialog.show();
+    }
+
+    private TextView videoAction(String icon, String label) {
+        TextView button = iconButton(icon, 26, Color.WHITE);
+        button.setContentDescription(label);
+        button.setBackground(MaiChatTheme.rounded(Color.argb(105, 255, 255, 255), 25, this));
+        return button;
+    }
+
+    private void sharePreviewVideo(String path) {
+        File source = new File(path);
+        if (!source.isFile()) { toast("视频文件已丢失"); return; }
+        try {
+            Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".files", source);
+            Intent share = new Intent(Intent.ACTION_SEND);
+            share.setType("video/*");
+            share.putExtra(Intent.EXTRA_STREAM, uri);
+            share.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(Intent.createChooser(share, "转发或分享视频"));
+        } catch (Exception error) {
+            toast("无法分享视频");
+        }
+    }
+
+    private void savePreviewVideo(String path) {
+        File source = new File(path);
+        if (!source.isFile()) { toast("视频文件已丢失"); return; }
+        if (Build.VERSION.SDK_INT < 29) {
+            if (checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                != PackageManager.PERMISSION_GRANTED) {
+                pendingVideoSavePath = path;
+                requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},
+                    REQUEST_SAVE_VIDEO_PERMISSION);
+                return;
+            }
+            saveLegacyPreviewVideo(source);
+            return;
+        }
+        mediaExecutor.execute(() -> {
+            Uri target = null;
+            try {
+                String extension = source.getName().toLowerCase(Locale.US).endsWith(".mov")
+                    ? ".mov" : ".mp4";
+                ContentValues values = new ContentValues();
+                values.put(MediaStore.MediaColumns.DISPLAY_NAME, "MaiChat-"
+                    + new SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.US).format(new Date())
+                    + extension);
+                values.put(MediaStore.MediaColumns.MIME_TYPE,
+                    extension.equals(".mov") ? "video/quicktime" : "video/mp4");
+                values.put(MediaStore.MediaColumns.RELATIVE_PATH,
+                    Environment.DIRECTORY_MOVIES + "/MaiChat");
+                values.put(MediaStore.Video.Media.DATE_TAKEN, System.currentTimeMillis());
+                values.put(MediaStore.MediaColumns.IS_PENDING, 1);
+                target = getContentResolver().insert(
+                    MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values);
+                if (target == null) throw new IOException("Cannot create gallery video");
+                try (InputStream input = new FileInputStream(source);
+                     OutputStream output = getContentResolver().openOutputStream(target)) {
+                    if (output == null) throw new IOException("Cannot write gallery video");
+                    byte[] buffer = new byte[64 * 1024];
+                    int count;
+                    while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+                }
+                values.clear();
+                values.put(MediaStore.MediaColumns.IS_PENDING, 0);
+                getContentResolver().update(target, values, null, null);
+                runOnUiThread(() -> toast("已保存到相册"));
+            } catch (Exception error) {
+                if (target != null) getContentResolver().delete(target, null, null);
+                runOnUiThread(() -> toast("保存视频失败"));
+            }
+        });
+    }
+
+    private void saveLegacyPreviewVideo(File source) {
+        mediaExecutor.execute(() -> {
+            File destination = null;
+            try {
+                File directory = new File(Environment.getExternalStoragePublicDirectory(
+                    Environment.DIRECTORY_MOVIES), "MaiChat");
+                if (!directory.isDirectory() && !directory.mkdirs())
+                    throw new IOException("Cannot create gallery directory");
+                String extension = source.getName().toLowerCase(Locale.US).endsWith(".mov")
+                    ? ".mov" : ".mp4";
+                destination = new File(directory, "MaiChat-"
+                    + new SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.US).format(new Date())
+                    + extension);
+                try (InputStream input = new FileInputStream(source);
+                     OutputStream output = new FileOutputStream(destination)) {
+                    byte[] buffer = new byte[64 * 1024];
+                    int count;
+                    while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+                }
+                destination.setLastModified(System.currentTimeMillis());
+                MediaScannerConnection.scanFile(this,
+                    new String[]{destination.getAbsolutePath()},
+                    new String[]{extension.equals(".mov") ? "video/quicktime" : "video/mp4"},
+                    null);
+                runOnUiThread(() -> toast("视频已保存"));
+            } catch (Exception error) {
+                if (destination != null) destination.delete();
+                runOnUiThread(() -> toast("保存视频失败"));
+            }
+        });
     }
 
     public boolean openAgentVideo(String path) {

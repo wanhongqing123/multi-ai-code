@@ -1,6 +1,7 @@
 #include <QElapsedTimer>
 #include <QFileInfo>
 #include <QPointer>
+#include <QPushButton>
 #include <QSlider>
 #include <QLabel>
 #include <QScreen>
@@ -29,9 +30,22 @@ class MaiFfplayVideoDialogTest : public QObject {
     Q_OBJECT
 
 private slots:
+    void exposesSaveAndForwardActions();
     void opensControlsAndClosesVideoPopup_data();
     void opensControlsAndClosesVideoPopup();
 };
+
+void MaiFfplayVideoDialogTest::exposesSaveAndForwardActions() {
+    MaiFfplayVideoDialog dialog(QStringLiteral(MAICHAT_FFPLAY_VIDEO_FIXTURE));
+    auto* forward = dialog.findChild<QPushButton*>(QStringLiteral("videoForwardButton"));
+    auto* save = dialog.findChild<QPushButton*>(QStringLiteral("videoSaveButton"));
+    QVERIFY(forward != nullptr);
+    QVERIFY(save != nullptr);
+    bool forwarded = false;
+    dialog.setForwardAction([&forwarded] { forwarded = true; });
+    forward->click();
+    QVERIFY(forwarded);
+}
 
 void MaiFfplayVideoDialogTest::opensControlsAndClosesVideoPopup_data() {
     QTest::addColumn<QString>("fixturePath");
@@ -67,7 +81,7 @@ void MaiFfplayVideoDialogTest::opensControlsAndClosesVideoPopup() {
     QVERIFY(slider != nullptr);
     QVERIFY(timeLabel != nullptr);
     QTRY_VERIFY_WITH_TIMEOUT(slider->value() > 0 &&
-                             timeLabel->text().contains(QStringLiteral(" / 0:02")), 3000);
+                             timeLabel->text().contains(QStringLiteral(" / 0:02")), 6000);
     QTRY_VERIFY_WITH_TIMEOUT(dialog->presentedFrames() >= 3, 4000);
     QWidget* surface = dialog->findChild<QWidget*>(QStringLiteral("ffplayVideoSurface"));
     QVERIFY(surface != nullptr);

@@ -1,20 +1,30 @@
 #include "ui/MaiFfplayVideoDialog.h"
 
 #include <QCloseEvent>
+#include <QApplication>
+#include <QClipboard>
 #include <QCoreApplication>
 #include <QDebug>
+#include <QDesktopServices>
 #include <QDir>
+#include <QFile>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QMetaObject>
+#include <QMessageBox>
+#include <QMimeData>
+#include <QMenu>
 #include <QPushButton>
 #include <QResizeEvent>
+#include <QSaveFile>
 #include <QShowEvent>
 #include <QSlider>
 #include <QThread>
 #include <QTimer>
+#include <QUrl>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -79,7 +89,8 @@ MaiFfplayVideoDialog::MaiFfplayVideoDialog(const QString& path, QWidget* parent)
     errorLabel_->hide();
     layout->addWidget(errorLabel_);
     auto* controls = new QHBoxLayout();
-    pauseButton_ = new QPushButton(QStringLiteral("暂停"), this);
+    pauseButton_ = new QPushButton(QStringLiteral("Ⅱ"), this);
+    pauseButton_->setToolTip(QStringLiteral("暂停视频"));
     seekSlider_ = new QSlider(Qt::Horizontal, this);
     seekSlider_->setObjectName(QStringLiteral("ffplaySeekSlider"));
     seekSlider_->setRange(0, 1000);
@@ -106,7 +117,8 @@ MaiFfplayVideoDialog::MaiFfplayVideoDialog(const QString& path, QWidget* parent)
         timeLabel_->setText(clockText(position) + QStringLiteral(" / ") +
                             clockText(status.duration_us));
         playing_ = status.paused == 0;
-        pauseButton_->setText(playing_ ? QStringLiteral("暂停") : QStringLiteral("播放"));
+        pauseButton_->setText(playing_ ? QStringLiteral("Ⅱ") : QStringLiteral("▶"));
+        pauseButton_->setToolTip(playing_ ? QStringLiteral("暂停视频") : QStringLiteral("播放视频"));
     });
     connect(pauseButton_, &QPushButton::clicked, this, [this] {
         sendCommand(QStringLiteral("pause"));
@@ -114,6 +126,79 @@ MaiFfplayVideoDialog::MaiFfplayVideoDialog(const QString& path, QWidget* parent)
     connect(seekSlider_, &QSlider::sliderReleased, this, [this] {
         seekPercent(seekSlider_->value() / 1000.0);
     });
+    auto* actions = new QHBoxLayout();
+    actions->addStretch(1);
+    auto* forward = new QPushButton(QStringLiteral("↗"), this);
+    forward->setObjectName(QStringLiteral("videoForwardButton"));
+    forward->setStyleSheet(QStringLiteral(
+        "color:white;background:#363636;border:0;border-radius:20px;"
+        "min-width:40px;min-height:40px;"));
+    forward->setToolTip(QStringLiteral("转发视频"));
+    connect(forward, &QPushButton::clicked, this, &MaiFfplayVideoDialog::forwardVideo);
+    actions->addWidget(forward);
+    auto* save = new QPushButton(QStringLiteral("↓"), this);
+    save->setObjectName(QStringLiteral("videoSaveButton"));
+    save->setStyleSheet(forward->styleSheet());
+    save->setToolTip(QStringLiteral("保存视频副本"));
+    connect(save, &QPushButton::clicked, this, &MaiFfplayVideoDialog::saveCopy);
+    actions->addWidget(save);
+    auto* more = new QPushButton(QStringLiteral("⋯"), this);
+    more->setToolTip(QStringLiteral("更多操作"));
+    more->setStyleSheet(forward->styleSheet());
+    connect(more, &QPushButton::clicked, this, [this, more] {
+        QMenu menu(this);
+        QAction* copyPath = menu.addAction(QStringLiteral("复制文件路径"));
+        QAction* openFolder = menu.addAction(QStringLiteral("打开所在文件夹"));
+        QAction* chosen = menu.exec(more->mapToGlobal(more->rect().bottomLeft()));
+        if (chosen == copyPath) QApplication::clipboard()->setText(path_);
+        else if (chosen == openFolder)
+            QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path_).absolutePath()));
+    });
+    actions->addWidget(more);
+    layout->addLayout(actions);
+}
+
+void MaiFfplayVideoDialog::setForwardAction(std::function<void()> action) {
+    forwardAction_ = std::move(action);
+}
+
+void MaiFfplayVideoDialog::forwardVideo() {
+    if (forwardAction_) {
+        forwardAction_();
+        return;
+    }
+    auto* media = new QMimeData();
+    media->setUrls({QUrl::fromLocalFile(path_)});
+    QApplication::clipboard()->setMimeData(media);
+    QMessageBox::information(this, QStringLiteral("视频已复制"),
+                             QStringLiteral("可在支持粘贴文件的应用中转发。"));
+}
+
+void MaiFfplayVideoDialog::saveCopy() {
+    const QString target = QFileDialog::getSaveFileName(
+        this, QStringLiteral("保存视频"), QFileInfo(path_).fileName(),
+        QStringLiteral("视频文件 (*.mp4 *.mov *.m4v);;所有文件 (*)"));
+    if (target.isEmpty()) return;
+    if (QFileInfo(target).absoluteFilePath() == QFileInfo(path_).absoluteFilePath()) return;
+    QFile source(path_);
+    QSaveFile output(target);
+    if (!source.open(QIODevice::ReadOnly) || !output.open(QIODevice::WriteOnly)) {
+        QMessageBox::warning(this, QStringLiteral("保存失败"), QStringLiteral("无法读取或写入视频文件。"));
+        return;
+    }
+    while (!source.atEnd()) {
+        const QByteArray bytes = source.read(1024 * 1024);
+        if (bytes.isEmpty() || output.write(bytes) != bytes.size()) {
+            output.cancelWriting();
+            QMessageBox::warning(this, QStringLiteral("保存失败"), QStringLiteral("复制视频时发生错误。"));
+            return;
+        }
+    }
+    if (!output.commit()) {
+        QMessageBox::warning(this, QStringLiteral("保存失败"), QStringLiteral("无法完成视频保存。"));
+        return;
+    }
+    QMessageBox::information(this, QStringLiteral("已保存"), QStringLiteral("视频副本已保存。"));
 }
 
 MaiFfplayVideoDialog::~MaiFfplayVideoDialog() { stopPlayback(); }

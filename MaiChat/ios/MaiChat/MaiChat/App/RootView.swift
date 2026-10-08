@@ -178,6 +178,8 @@ struct RootView: View {
             MaiFfplayVideoScreen(path: presentation.path) {
                 appState.agentVideoPresentation = nil
             }
+            .ignoresSafeArea()
+            .statusBarHidden()
         }
         .task {
             if !appState.shouldShowInitialLogin {

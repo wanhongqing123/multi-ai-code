@@ -3326,6 +3326,7 @@ void MainWindow::rebuildAgentPage() {
     #if defined(MAICHAT_HAS_FFPLAY)
     agentPanel_->setOpenVideoCallback([this](const QString& path) {
         auto* dialog = new MaiFfplayVideoDialog(path, this);
+        dialog->setForwardAction([this, path] { forwardLocalVideo(path); });
         dialog->setAttribute(Qt::WA_DeleteOnClose);
         dialog->show();
         if (!dialog->isStarted()) dialog->close();
@@ -4662,6 +4663,7 @@ void MainWindow::openVideoPreview(const RemoteIMVideoAttachment& attachment) {
     #else
     auto* dialog = new VideoPreviewDialog(path, title, this);
     #endif
+    dialog->setForwardAction([this, path] { forwardLocalVideo(path); });
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->show();
     #if defined(MAICHAT_HAS_FFPLAY)
@@ -4672,6 +4674,20 @@ void MainWindow::openVideoPreview(const RemoteIMVideoAttachment& attachment) {
                                QStringLiteral("FFplay 渲染后端或视频文件不可用。"));
     }
     #endif
+}
+
+void MainWindow::forwardLocalVideo(const QString& path) {
+    if (!QFileInfo(path).isFile()) {
+        AppMessageDialog::show(this, AppMessageDialog::Kind::Warning,
+                               QStringLiteral("无法转发"), QStringLiteral("视频文件已丢失。"));
+        return;
+    }
+    const QList<RemoteIMContact> contacts = app_.chatState().contacts();
+    if (contacts.isEmpty()) return;
+    BroadcastDialog dialog(contacts, {}, QString(), BroadcastDialog::Mode::Forward, this);
+    if (dialog.exec() != QDialog::Accepted || dialog.selectedPeerIds().size() != 1) return;
+    app_.selectPeer(dialog.selectedPeerIds().first());
+    app_.sendVideo(path);
 }
 
 void MainWindow::openImagePreview(const QString& imagePath) {

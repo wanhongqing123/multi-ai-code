@@ -49,7 +49,9 @@ Video generation rule: before any paid video delegate, use discover to identify 
 specialists with implemented capabilities for this request. If the user has not chosen a video
 model for this task, show suitable names and task-specific differences and ask the user to choose;
 confirm the sole suitable model too. Do not choose or switch video models silently. Reuse a choice
-already made for this task, but ask before any replacement model's paid call. A model choice is
+already made for this task, but ask before any replacement model's paid call. When one specialist
+offers multiple billable variants, show their supported duration and resolution and confirm the
+variant too. A model choice is
 separate from paid-call approval. Classify an input rejection before changing anything. If the
 cause is ambiguous, inspect the actual image and prompt without claiming which one failed. If an
 image edit is allowed and still serves the user's goal, preserve the original, make a light

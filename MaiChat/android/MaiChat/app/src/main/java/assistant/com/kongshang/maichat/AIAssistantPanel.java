@@ -608,11 +608,17 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         if (tool.equals("minimax_video") || tool.equals("minimax_image")) return "海螺 / MiniMax";
         return tool.equals("seedance_video") ? "Seedance" : "Seedream";
     }
-    private String paidSpecs(JSONObject input) {
+    private String paidSpecs(String tool, JSONObject input) {
         JSONObject production = input.optJSONObject("production");
         if (production == null) production = new JSONObject();
         java.util.List<String> values = new java.util.ArrayList<>();
         String model = input.optString("model");
+        if (tool.equals("seedance_video")) {
+            if (model.equals("doubao-seedance-2-0-fast-260128")) values.add("Seedance 2.0 Fast");
+            else if (model.equals("doubao-seedance-2-0-mini-260615")) values.add("Seedance 2.0 Mini");
+            else values.add(model.isEmpty() && input.optString("action").equals("revise")
+                ? "沿用上一任务型号" : "Seedance 2.5");
+        }
         if (model.equals("MiniMax-H3") || model.equals("MiniMax-H3-Max"))
             values.add(model.equals("MiniMax-H3-Max") ? "H3 Max" : "H3");
         int duration = input.optInt("duration", production.optInt("duration", 0));
@@ -716,7 +722,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                         summary.setOnClickListener(v -> details("任务内容", request));
                         pending.addView(summary, matchWrap());
                     }
-                    String specs = paidSpecs(input);
+                    String specs = paidSpecs(tool, input);
                     if (!specs.isEmpty())
                         pending.addView(text(specs, 13, MaiChatTheme.SECONDARY), matchWrap());
                     TextView more = text("查看完整请求", 12, MaiChatTheme.SECONDARY);

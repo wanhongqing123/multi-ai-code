@@ -62,4 +62,12 @@ Seedance 2.0 的[官方创建任务文档](https://docs.volcengine.com/docs/8237
 上述 2.0 实测结果保留为历史记录，不能作为 2.5 云端验收。
 依据：[Seedance 2.5 教程](https://docs.volcengine.com/docs/ark/seedance-2-5)。
 
+2026-10-08 补充：同一个 `seedance_video` 工具支持显式选择 Seedance 2.0 Fast
+和 Seedance 2.0 Mini。两者使用同一方舟异步视频任务端点，但单次输出上限为 15 秒、
+仅 480p／720p、参考图最多 9 张；2.5 专有的 `omni_reference_task_type` 不向这两款
+发送。`discover` 和付费确认均展示实际型号。未以这两个型号做付费实测，
+当前账号的模型开通状态也未核实。
+依据：[视频生成任务 API](https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh)、
+[模型价格与限时优惠到期规则](https://docs.volcengine.com/docs/ark/seedance-2-0-mini-fast-limited-time-discount)。
+
 失败后的主模型回灌先区分平台明确给出的原因与推断。技术性图片问题按最小改动顺序处理并记录损失；每次付费重试都需要新确认。内容审核错误 `1026` 在 MiniMax 官方表中只定义为“输入内容涉敏”，不区分图片与文本，更没有单独的“真人儿童照片”代码。工具会保留原始错误与参考文件存在信息，不把不确定归因说成事实。

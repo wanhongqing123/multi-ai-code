@@ -171,6 +171,17 @@ QString paidGenerationDetail(const QString& tool, const QString& arguments) {
     if (request.isEmpty()) request = input.value(QStringLiteral("prompt")).toString().trimmed();
     QStringList specifications;
     const QString model = input.value(QStringLiteral("model")).toString();
+    if (tool == QStringLiteral("seedance_video")) {
+        if (model == QStringLiteral("doubao-seedance-2-0-fast-260128"))
+            specifications.push_back(QStringLiteral("Seedance 2.0 Fast"));
+        else if (model == QStringLiteral("doubao-seedance-2-0-mini-260615"))
+            specifications.push_back(QStringLiteral("Seedance 2.0 Mini"));
+        else specifications.push_back(
+            model.isEmpty() && input.value(QStringLiteral("action")).toString() ==
+                                   QStringLiteral("revise")
+                ? QStringLiteral("沿用上一任务型号")
+                : QStringLiteral("Seedance 2.5"));
+    }
     if (model == QStringLiteral("MiniMax-H3") || model == QStringLiteral("MiniMax-H3-Max"))
         specifications.push_back(model == QStringLiteral("MiniMax-H3-Max")
                                      ? QStringLiteral("H3 Max")

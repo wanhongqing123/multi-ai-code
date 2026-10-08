@@ -2359,6 +2359,16 @@ private struct AIPermissionCard: View {
         let production = fields["production"] as? [String: Any] ?? [:]
         let content = fields["content"] as? [[String: Any]] ?? []
         var details: [String] = []
+        if permission.tool == "seedance_video" {
+            let selected = fields["model"] as? String
+            switch selected {
+            case "doubao-seedance-2-0-fast-260128": details.append("Seedance 2.0 Fast")
+            case "doubao-seedance-2-0-mini-260615": details.append("Seedance 2.0 Mini")
+            default:
+                details.append((fields["action"] as? String) == "revise" && selected == nil
+                               ? "沿用上一任务型号" : "Seedance 2.5")
+            }
+        }
         if permission.tool == "minimax_video", let model = fields["model"] as? String {
             details.append(model == "MiniMax-H3-Max" ? "H3 Max" : "H3")
         }

@@ -33,6 +33,11 @@ void testDynamicCredentialAndToolIdentity() {
     CHECK(nlohmann::json::parse(image->parametersSchema(), nullptr, false).is_object());
     CHECK(nlohmann::json::parse(video->parametersSchema()).at("required") ==
           nlohmann::json::array({"action"}));
+    CHECK(nlohmann::json::parse(video->parametersSchema())
+              .at("properties")
+              .at("model")
+              .at("enum")
+              .size() == 3);
     CHECK(nlohmann::json::parse(image->parametersSchema()).at("required") ==
           nlohmann::json::array({"action"}));
     CHECK(video->description().find("not configured") != std::string::npos);
@@ -71,6 +76,10 @@ void testDynamicCredentialAndToolIdentity() {
     CHECK(videoInfo.at("configured").get<bool>());
     CHECK(imageInfo.at("configured").get<bool>());
     CHECK(videoInfo.at("bound_model") == "doubao-seedance-2-5-260628");
+    CHECK(videoInfo.at("models").size() == 3);
+    CHECK(videoInfo.at("models")[1].at("id") == "doubao-seedance-2-0-fast-260128");
+    CHECK(videoInfo.at("models")[2].at("id") == "doubao-seedance-2-0-mini-260615");
+    CHECK(videoInfo.at("models")[2].at("duration_seconds").at("maximum") == 15);
     CHECK(videoInfo.at("capabilities")[0].at("tool_status") == "implemented_unverified");
     CHECK(videoInfo.dump().find("1-30 reference images") != std::string::npos);
     CHECK(video->description().find("mode=create with reference_image_paths") != std::string::npos);
@@ -136,6 +145,31 @@ void testInvalidInputsDoNotReachNetwork() {
         context);
     CHECK(invalidEditDuration.hasError());
     CHECK(invalidEditDuration.error().message().find("duration=-1") != std::string::npos);
+    const auto fastTooLong = video->execute(
+        R"({"action":"delegate","model":"doubao-seedance-2-0-fast-260128","message":"Create a video","production":{"duration":16,"ratio":"16:9","resolution":"720p"}})",
+        context);
+    CHECK(fastTooLong.hasError());
+    CHECK(fastTooLong.error().message().find("4 to 15") != std::string::npos);
+    const auto miniHighResolution = video->execute(
+        R"({"action":"delegate","model":"doubao-seedance-2-0-mini-260615","message":"Create a video","production":{"duration":10,"ratio":"16:9","resolution":"1080p"}})",
+        context);
+    CHECK(miniHighResolution.hasError());
+    CHECK(miniHighResolution.error().message().find("480p or 720p") != std::string::npos);
+    nlohmann::json fastReferences = {{"action", "delegate"},
+                                     {"model", "doubao-seedance-2-0-fast-260128"},
+                                     {"message", "Create a video"},
+                                     {"reference_image_paths", nlohmann::json::array()}};
+    for (int index = 0; index < 10; ++index)
+        fastReferences["reference_image_paths"].push_back("missing.png");
+    const auto tooManyFastImages = video->execute(fastReferences.dump(), context);
+    CHECK(tooManyFastImages.hasError());
+    CHECK(tooManyFastImages.error().message().find("at most 9") != std::string::npos);
+    const auto miniFifteenSeconds = video->execute(
+        R"({"action":"delegate","model":"doubao-seedance-2-0-mini-260615","message":"Animate a still","image_path":"missing.png","production":{"duration":15,"ratio":"16:9","resolution":"720p"}})",
+        context);
+    CHECK(miniFifteenSeconds.hasError());
+    CHECK(miniFifteenSeconds.error().message().find("image_path must contain") !=
+          std::string::npos);
     CHECK(
         video
             ->execute(

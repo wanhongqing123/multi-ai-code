@@ -43,11 +43,36 @@ std::string arkAssetId(const std::string& value) {
 }
 
 constexpr char kVideoModel[] = "doubao-seedance-2-5-260628";
+constexpr char kFastVideoModel[] = "doubao-seedance-2-0-fast-260128";
+constexpr char kMiniVideoModel[] = "doubao-seedance-2-0-mini-260615";
 constexpr char kImageModel[] = "doubao-seedream-5-0-flash-260915";
 constexpr char kVideoTasksUrl[] =
     "https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks";
 constexpr char kImagesUrl[] = "https://ark.cn-beijing.volces.com/api/v3/images/generations";
 constexpr std::size_t kMaxResponseBytes = 2 * 1024 * 1024;
+
+struct MaiSeedanceModelSpec {
+    const char* id;
+    const char* label;
+    int maximumDuration;
+    int maximumReferenceImages;
+    int maximumInputVideoDuration;
+    bool supports1080p;
+    bool usesOmniTaskType;
+};
+
+constexpr MaiSeedanceModelSpec kSeedanceModels[] = {
+    {kVideoModel, "Seedance 2.5", 30, 30, 30, true, true},
+    {kFastVideoModel, "Seedance 2.0 Fast", 15, 9, 15, false, false},
+    {kMiniVideoModel, "Seedance 2.0 Mini", 15, 9, 15, false, false},
+};
+
+const MaiSeedanceModelSpec* seedanceModelSpec(const std::string& modelId) {
+    for (const auto& model : kSeedanceModels) {
+        if (modelId == model.id) return &model;
+    }
+    return nullptr;
+}
 
 std::string stringValue(const Json& object, const char* key) {
     if (!object.is_object() || !object.contains(key) || !object[key].is_string()) return {};
@@ -325,8 +350,12 @@ public:
             kVideoModel,
             configured,
             {{"text_to_video", true, true, unverified,
-              "Seedance 2.5 supports 4-30 second output; this Ark account's model entitlement "
-              "and the new binding need live validation"},
+              "Default Seedance 2.5 supports 4-30 seconds; use model for 2.0 Fast or Mini. "
+              "Each model entitlement needs live validation"},
+             {"seedance_2_0_fast", true, true, unverified,
+              "2.0 Fast supports 4-15 seconds, 480p/720p, and up to 9 reference images"},
+             {"seedance_2_0_mini", true, true, unverified,
+              "2.0 Mini supports 4-15 seconds, 480p/720p, and up to 9 reference images"},
              {"first_frame_to_video", true, true, unverified,
               "Seedance 2.5 requires ratio=adaptive when using first/last frames"},
              {"video_edit_from_url", true, true, unverified, {}},
@@ -360,19 +389,22 @@ public:
             return "Seedance video specialist bound to doubao-seedance-2-5-260628. Ark API Key "
                    "is not configured on this device. Use discover for capabilities, or ask the "
                    "user to configure the key before delegating.";
-        return "A model-backed Seedance video tool. Use discover for capabilities, delegate "
+        return "A model-backed Seedance video tool. model selects Seedance 2.5 (default), "
+               "2.0 Fast, or 2.0 Mini. Ask the user which tier to use before a paid call and "
+               "show its actual duration and resolution. Use discover for capabilities, delegate "
                "to start a task, or revise with a previous "
                "conversation_id and new feedback. Revision keeps the previous goal and source "
                "video in the same AI session. Text, first-frame, "
                "first-and-last-frame, and reference-video paths are implemented; cloud validation "
                "is still needed for the shared C++ path. Confirm duration, ratio and resolution "
-               "with the user before paid create or reference calls. Output duration is 4-30 "
-               "seconds or -1 for automatic duration. Seedance 2.5 supports 480p, 720p, and "
-               "1080p output, not 4k. First/last-frame, edit, and extend tasks require an "
-               "adaptive ratio; edit also requires duration=-1. Local video_path is uploaded "
+               "with the user before paid create or reference calls. Seedance 2.5 supports "
+               "4-30 seconds and 480p/720p/1080p; 2.0 Fast and Mini support 4-15 seconds and "
+               "480p/720p. All three accept -1 for automatic duration. Only 2.5 requires "
+               "adaptive ratio for first/last-frame, edit, and extend tasks and duration=-1 "
+               "for edit. Local video_path is uploaded "
                "by the host media service when configured; discover reports its availability. "
-               "Before a paid local-video task, use ffprobe to check the Seedance 2.5 input "
-               "duration of 2-30 seconds (4-30 for edit) and frame rate of 24-60 FPS. "
+               "Before a paid local-video task, use ffprobe to check input duration: 2-30 "
+               "seconds for 2.5 (4-30 for edit), or 2-15 seconds for Fast/Mini; FPS 24-60. "
                "For a realistic but non-specific actor, pass a platform "
                "virtual_avatar_asset_id selected in the Ark Experience Center. The tool sends "
                "asset://<ID> as reference image 1; refer to it as image 1 in the message. It "
@@ -385,7 +417,8 @@ public:
                "the request is not proof that the account has none. "
                "For photos without a source video, use mode=create with "
                "reference_image_paths; mode=reference requires one existing video source. "
-               "Use reference_image_paths for up to 9 face-free reference images, or combine "
+               "Use reference_image_paths for up to 30 face-free reference images on 2.5 or "
+               "9 on Fast/Mini, or combine "
                "one authorized portrait asset with face-free images. Reference images cannot "
                "be mixed with strict first/last-frame control. The app checks tasks and hands "
                "completed results back automatically; "
@@ -395,6 +428,8 @@ public:
     std::string parametersSchema() const override {
         return R"({"type":"object","properties":{)"
                R"("action":{"type":"string","enum":["discover","delegate","continue","revise"]},)"
+               R"("model":{"type":"string","enum":["doubao-seedance-2-5-260628",)"
+               R"("doubao-seedance-2-0-fast-260128","doubao-seedance-2-0-mini-260615"]},)"
                R"("message":{"type":"string"},"context":{"type":"string"},)"
                R"("conversation_id":{"type":"string"},"mode":{"type":"string",)"
                R"("enum":["create","edit","extend","reference"]},)"
@@ -415,7 +450,7 @@ public:
         const Json args = Json::parse(raw, nullptr, false);
         if (!args.is_object()) return invalid("arguments must be an object");
         for (const char* field :
-             {"action", "message", "context", "conversation_id", "mode", "image_path",
+             {"action", "model", "message", "context", "conversation_id", "mode", "image_path",
               "last_frame_path", "virtual_avatar_asset_id", "authorized_portrait_asset_id",
               "reference_image_path", "video_path", "video_url", "video_task_id"}) {
             if (args.contains(field) && !args[field].is_string())
@@ -428,11 +463,25 @@ public:
         if (message.empty() && (action == "delegate" || action == "revise"))
             return invalid("message is required to start or revise a task");
         if (action == "discover") {
-            return discoverSpecialist(*specialistInfo(),
-                                      "I can create a video from text and return a local MP4. "
-                                      "Ask for the capability list before delegating reference "
-                                      "media. Check video_edit_from_local_file before passing "
-                                      "video_path; its availability depends on the host.");
+            const MaiToolResult base = discoverSpecialist(
+                *specialistInfo(),
+                "Choose Seedance 2.5, 2.0 Fast, or 2.0 Mini with model before paid generation. "
+                "Check video_edit_from_local_file before passing video_path; its availability "
+                "depends on the host.");
+            Json info = Json::parse(base.output());
+            Json models = Json::array();
+            for (const auto& model : kSeedanceModels) {
+                models.push_back(Json{
+                    {"id", model.id},
+                    {"label", model.label},
+                    {"duration_seconds", {{"minimum", 4}, {"maximum", model.maximumDuration}}},
+                    {"resolutions", model.supports1080p ? Json::array({"480p", "720p", "1080p"})
+                                                        : Json::array({"480p", "720p"})},
+                    {"maximum_reference_images", model.maximumReferenceImages},
+                    {"entitlement_verified", false}});
+            }
+            info["models"] = std::move(models);
+            return MaiToolResult::success(info.dump());
         }
         const std::string key = mKey ? mKey() : std::string{};
         if (key.empty())
@@ -455,7 +504,23 @@ public:
                 !stringValue(args, "video_path").empty() ||
                 !stringValue(args, "video_task_id").empty())
                 return invalid("revise uses the previous task video; do not override its source");
+            if (!validTaskId(previous.providerTaskId))
+                return invalid("previous Seedance task ID is invalid");
+            ArkResponse priorTask =
+                requestJson(std::string(kVideoTasksUrl) + "/" + previous.providerTaskId, key,
+                            mCaBundle, nullptr, context);
+            if (priorTask.error) return *priorTask.error;
+            const std::string previousModel = stringValue(priorTask.data, "model");
+            if (seedanceModelSpec(previousModel) == nullptr)
+                return fail(MaiErrorCode::Protocol, "unsupported_model",
+                            "Previous Seedance model is not available for revision");
+            const std::string requestedModel = stringValue(args, "model");
+            if (!requestedModel.empty() && requestedModel != previousModel)
+                return invalid(
+                    "revise must use the previous Seedance model; delegate a new task "
+                    "to switch models");
             Json revision = args;
+            revision["model"] = previousModel;
             revision["mode"] = "edit";
             revision["video_task_id"] = previous.providerTaskId;
             revision["parent_task_id"] = previous.id;
@@ -475,6 +540,10 @@ public:
 private:
     MaiToolResult delegate(const Json& args, const std::string& key,
                            const MaiToolContext& context) const {
+        const std::string modelId = stringValue(args, "model").empty() ? std::string(kVideoModel)
+                                                                       : stringValue(args, "model");
+        const MaiSeedanceModelSpec* model = seedanceModelSpec(modelId);
+        if (model == nullptr) return invalid("unsupported Seedance model");
         const std::string message = stringValue(args, "message");
         if (message.size() > 4000) return invalid("message must be at most 4000 characters");
         const std::string extra = stringValue(args, "context");
@@ -514,7 +583,9 @@ private:
         const std::size_t referenceCount = referenceImagePaths.size() +
                                            static_cast<std::size_t>(!referenceImagePath.empty()) +
                                            static_cast<std::size_t>(!selectedAssetId.empty());
-        if (referenceCount > 30) return invalid("Seedance 2.5 accepts at most 30 reference images");
+        if (referenceCount > static_cast<std::size_t>(model->maximumReferenceImages))
+            return invalid(std::string(model->label) + " accepts at most " +
+                           std::to_string(model->maximumReferenceImages) + " reference images");
         if (referenceCount != 0 &&
             (mode != "create" || !imagePath.empty() || !lastFramePath.empty()))
             return invalid("reference images require create mode without first/last frames");
@@ -558,18 +629,23 @@ private:
             production.value("duration", mode == "edit" || mode == "extend" ? -1 : 5);
         const std::string ratio = production.value("ratio", std::string("adaptive"));
         const std::string resolution = production.value("resolution", std::string("720p"));
-        if (duration != -1 && (duration < 4 || duration > 30))
-            return invalid("duration must be -1 or 4 to 30 seconds");
+        if (duration != -1 && (duration < 4 || duration > model->maximumDuration))
+            return invalid(std::string(model->label) + " duration must be -1 or 4 to " +
+                           std::to_string(model->maximumDuration) + " seconds");
         if (ratio != "adaptive" && ratio != "16:9" && ratio != "9:16" && ratio != "1:1" &&
             ratio != "4:3" && ratio != "3:4" && ratio != "21:9")
             return invalid("unsupported video ratio");
-        if (resolution != "480p" && resolution != "720p" && resolution != "1080p")
-            return invalid("Seedance 2.5 resolution must be 480p, 720p, or 1080p");
-        if ((mode == "edit" || mode == "extend" || (mode == "create" && !imagePath.empty())) &&
+        if (resolution != "480p" && resolution != "720p" &&
+            !(model->supports1080p && resolution == "1080p"))
+            return invalid(std::string(model->label) +
+                           (model->supports1080p ? " resolution must be 480p, 720p, or 1080p"
+                                                 : " resolution must be 480p or 720p"));
+        if (model->usesOmniTaskType &&
+            (mode == "edit" || mode == "extend" || (mode == "create" && !imagePath.empty())) &&
             ratio != "adaptive")
             return invalid(
                 "Seedance 2.5 requires ratio=adaptive for edit, extend, or first frames");
-        if (mode == "edit" && duration != -1)
+        if (model->usesOmniTaskType && mode == "edit" && duration != -1)
             return invalid("Seedance 2.5 edit requires duration=-1");
         std::string instruction = message;
         if (!extra.empty()) instruction += "\nRelevant context: " + extra;
@@ -648,16 +724,18 @@ private:
                                    {"video_url", {{"url", reference}}},
                                    {"role", "reference_video"}});
         }
-        Json body = {{"model", kVideoModel},
+        Json body = {{"model", modelId},
                      {"content", content},
                      {"duration", duration},
                      {"ratio", ratio},
                      {"resolution", resolution},
                      {"generate_audio", production.value("generate_audio", true)}};
-        if (mode == "edit" || mode == "extend" || mode == "reference")
-            body["omni_reference_task_type"] = mode;
-        else if (referenceCount != 0)
-            body["omni_reference_task_type"] = "reference";
+        if (model->usesOmniTaskType) {
+            if (mode == "edit" || mode == "extend" || mode == "reference")
+                body["omni_reference_task_type"] = mode;
+            else if (referenceCount != 0)
+                body["omni_reference_task_type"] = "reference";
+        }
         if (body.dump().size() > 64'000'000)
             return invalid("Seedance request exceeds the 64 MB body limit");
         ArkResponse result = requestJson(kVideoTasksUrl, key, mCaBundle, &body, context);
@@ -668,7 +746,7 @@ private:
         Json output = {{"task_id", taskId},
                        {"conversation_id", taskId},
                        {"status", stringValue(result.data, "status")},
-                       {"bound_model", kVideoModel},
+                       {"bound_model", modelId},
                        {"reply", "The video task has started. The app will report its result."}};
         if (context.specialistTasks != nullptr && !context.sessionId.empty()) {
             MaiSpecialistTask task;
@@ -736,6 +814,7 @@ private:
                 }
             }
         }
+        const std::string boundModel = stringValue(task.data, "model");
         if (status == "failed" || status == "cancelled" || status == "expired") {
             const Json detail = task.data.value("error", Json::object());
             const std::string message = stringValue(detail, "message");
@@ -746,6 +825,7 @@ private:
             return MaiToolResult::success(
                 Json{{"conversation_id", conversationId},
                      {"task_id", taskId},
+                     {"bound_model", boundModel},
                      {"status", status},
                      {"reply", "The video task is still " + status + "."},
                      {"notice", "continue checks status only; use revise for new feedback"}}
@@ -763,6 +843,7 @@ private:
             return MaiToolResult::success(
                 Json{{"task_id", taskId},
                      {"conversation_id", conversationId},
+                     {"bound_model", boundModel},
                      {"status", status},
                      {"path", path},
                      {"bytes", size},
@@ -775,6 +856,7 @@ private:
         Json output = Json::parse(result.output());
         output.update(Json{{"task_id", taskId},
                            {"conversation_id", conversationId},
+                           {"bound_model", boundModel},
                            {"status", status},
                            {"reply", "The video is complete and saved locally."}});
         return MaiToolResult::success(output.dump());

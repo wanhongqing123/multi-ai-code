@@ -43,8 +43,10 @@ std::string arkAssetId(const std::string& value) {
 }
 
 constexpr char kVideoModel[] = "doubao-seedance-2-5-260628";
+constexpr char kStandardVideoModel[] = "doubao-seedance-2-0-260128";
 constexpr char kFastVideoModel[] = "doubao-seedance-2-0-fast-260128";
 constexpr char kMiniVideoModel[] = "doubao-seedance-2-0-mini-260615";
+constexpr const char* kDefaultVideoModel = kMiniVideoModel;
 constexpr char kImageModel[] = "doubao-seedream-5-0-flash-260915";
 constexpr char kVideoTasksUrl[] =
     "https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks";
@@ -58,13 +60,15 @@ struct MaiSeedanceModelSpec {
     int maximumReferenceImages;
     int maximumInputVideoDuration;
     bool supports1080p;
+    bool supports4k;
     bool usesOmniTaskType;
 };
 
 constexpr MaiSeedanceModelSpec kSeedanceModels[] = {
-    {kVideoModel, "Seedance 2.5", 30, 30, 30, true, true},
-    {kFastVideoModel, "Seedance 2.0 Fast", 15, 9, 15, false, false},
-    {kMiniVideoModel, "Seedance 2.0 Mini", 15, 9, 15, false, false},
+    {kMiniVideoModel, "Seedance 2.0 Mini", 15, 9, 15, false, false, false},
+    {kFastVideoModel, "Seedance 2.0 Fast", 15, 9, 15, false, false, false},
+    {kStandardVideoModel, "Seedance 2.0", 15, 9, 15, true, true, false},
+    {kVideoModel, "Seedance 2.5", 30, 30, 30, true, false, true},
 };
 
 const MaiSeedanceModelSpec* seedanceModelSpec(const std::string& modelId) {
@@ -324,6 +328,7 @@ public:
     }
     bool requiresPerCallApproval(const std::string& raw) const override {
         const Json args = Json::parse(raw, nullptr, false);
+        if (args.is_object() && stringValue(args, "model") == kVideoModel) return false;
         if (args.is_object() && stringValue(args, "action") == "delegate") {
             if (!mUploadVideo && !stringValue(args, "video_path").empty()) return false;
             const std::string mode = stringValue(args, "mode");
@@ -347,17 +352,20 @@ public:
                                           : MaiSpecialistCapabilityStatus::UploadNotConfigured;
         return MaiSpecialistInfo{
             name(),
-            kVideoModel,
+            kDefaultVideoModel,
             configured,
             {{"text_to_video", true, true, unverified,
-              "Default Seedance 2.5 supports 4-30 seconds; use model for 2.0 Fast or Mini. "
+              "Default Seedance 2.0 Mini supports 4-15 seconds. Fast and standard 2.0 are "
+              "available with model. Seedance 2.5 is disabled. "
               "Each model entitlement needs live validation"},
              {"seedance_2_0_fast", true, true, unverified,
               "2.0 Fast supports 4-15 seconds, 480p/720p, and up to 9 reference images"},
              {"seedance_2_0_mini", true, true, unverified,
               "2.0 Mini supports 4-15 seconds, 480p/720p, and up to 9 reference images"},
+             {"seedance_2_0_standard", true, true, unverified,
+              "2.0 supports 4-15 seconds, 480p/720p/1080p/4k, and up to 9 reference images"},
              {"first_frame_to_video", true, true, unverified,
-              "Seedance 2.5 requires ratio=adaptive when using first/last frames"},
+              "Seedance 2.0 Mini accepts a first frame; confirm the output settings before paying"},
              {"video_edit_from_url", true, true, unverified, {}},
              {"video_edit_from_seedance_task", true, true, unverified, {}},
              {"video_extend_from_url", true, true, unverified, {}},
@@ -376,7 +384,7 @@ public:
               "Group, AK/SK, and an accessible upload URL. This tool cannot silently register "
               "an arbitrary local face photo"},
              {"multi_reference_video", true, true, unverified,
-              "Seedance 2.5 accepts 1-30 reference images; reference mode cannot mix with strict "
+              "Seedance 2.0 accepts 1-9 reference images; reference mode cannot mix with strict "
               "first/last-frame control. This tool accepts one reference video"},
              {"video_edit_from_local_file", true, true, localVideoStatus,
               mUploadVideo
@@ -386,25 +394,26 @@ public:
     }
     std::string description() const override {
         if (!specialistInfo()->configured)
-            return "Seedance video specialist bound to doubao-seedance-2-5-260628. Ark API Key "
+            return "Seedance video specialist defaults to doubao-seedance-2-0-mini-260615. Ark "
+                   "API Key "
                    "is not configured on this device. Use discover for capabilities, or ask the "
                    "user to configure the key before delegating.";
-        return "A model-backed Seedance video tool. model selects Seedance 2.5 (default), "
-               "2.0 Fast, or 2.0 Mini. Ask the user which tier to use before a paid call and "
+        return "A model-backed Seedance video tool. model selects Seedance 2.0 Mini "
+               "(default), 2.0 Fast, or standard 2.0. Seedance 2.5 is disabled because of "
+               "its cost. Ask the user which tier to use before a paid call and "
                "show its actual duration and resolution. Use discover for capabilities, delegate "
                "to start a task, or revise with a previous "
                "conversation_id and new feedback. Revision keeps the previous goal and source "
                "video in the same AI session. Text, first-frame, "
                "first-and-last-frame, and reference-video paths are implemented; cloud validation "
                "is still needed for the shared C++ path. Confirm duration, ratio and resolution "
-               "with the user before paid create or reference calls. Seedance 2.5 supports "
-               "4-30 seconds and 480p/720p/1080p; 2.0 Fast and Mini support 4-15 seconds and "
-               "480p/720p. All three accept -1 for automatic duration. Only 2.5 requires "
-               "adaptive ratio for first/last-frame, edit, and extend tasks and duration=-1 "
-               "for edit. Local video_path is uploaded "
+               "with the user before paid create or reference calls. Standard 2.0 supports "
+               "4-15 seconds and 480p/720p/1080p/4k; 2.0 Fast and Mini support 4-15 seconds "
+               "and 480p/720p. All three accept -1 for automatic duration. Local video_path is "
+               "uploaded "
                "by the host media service when configured; discover reports its availability. "
-               "Before a paid local-video task, use ffprobe to check input duration: 2-30 "
-               "seconds for 2.5 (4-30 for edit), or 2-15 seconds for Fast/Mini; FPS 24-60. "
+               "Before a paid local-video task, use ffprobe to check input duration: 2-15 "
+               "seconds; FPS 24-60. "
                "For a realistic but non-specific actor, pass a platform "
                "virtual_avatar_asset_id selected in the Ark Experience Center. The tool sends "
                "asset://<ID> as reference image 1; refer to it as image 1 in the message. It "
@@ -417,8 +426,7 @@ public:
                "the request is not proof that the account has none. "
                "For photos without a source video, use mode=create with "
                "reference_image_paths; mode=reference requires one existing video source. "
-               "Use reference_image_paths for up to 30 face-free reference images on 2.5 or "
-               "9 on Fast/Mini, or combine "
+               "Use reference_image_paths for up to 9 face-free reference images, or combine "
                "one authorized portrait asset with face-free images. Reference images cannot "
                "be mixed with strict first/last-frame control. The app checks tasks and hands "
                "completed results back automatically; "
@@ -428,8 +436,8 @@ public:
     std::string parametersSchema() const override {
         return R"({"type":"object","properties":{)"
                R"("action":{"type":"string","enum":["discover","delegate","continue","revise"]},)"
-               R"("model":{"type":"string","enum":["doubao-seedance-2-5-260628",)"
-               R"("doubao-seedance-2-0-fast-260128","doubao-seedance-2-0-mini-260615"]},)"
+               R"("model":{"type":"string","enum":["doubao-seedance-2-0-mini-260615",)"
+               R"("doubao-seedance-2-0-fast-260128","doubao-seedance-2-0-260128"]},)"
                R"("message":{"type":"string"},"context":{"type":"string"},)"
                R"("conversation_id":{"type":"string"},"mode":{"type":"string",)"
                R"("enum":["create","edit","extend","reference"]},)"
@@ -465,18 +473,21 @@ public:
         if (action == "discover") {
             const MaiToolResult base = discoverSpecialist(
                 *specialistInfo(),
-                "Choose Seedance 2.5, 2.0 Fast, or 2.0 Mini with model before paid generation. "
+                "Choose Seedance 2.0 Mini (default), 2.0 Fast, or standard 2.0 with model "
+                "before paid generation. Seedance 2.5 is disabled. "
                 "Check video_edit_from_local_file before passing video_path; its availability "
                 "depends on the host.");
             Json info = Json::parse(base.output());
             Json models = Json::array();
             for (const auto& model : kSeedanceModels) {
+                if (std::string(model.id) == kVideoModel) continue;
                 models.push_back(Json{
                     {"id", model.id},
                     {"label", model.label},
                     {"duration_seconds", {{"minimum", 4}, {"maximum", model.maximumDuration}}},
-                    {"resolutions", model.supports1080p ? Json::array({"480p", "720p", "1080p"})
-                                                        : Json::array({"480p", "720p"})},
+                    {"resolutions", model.supports4k ? Json::array({"480p", "720p", "1080p", "4k"})
+                                    : model.supports1080p ? Json::array({"480p", "720p", "1080p"})
+                                                          : Json::array({"480p", "720p"})},
                     {"maximum_reference_images", model.maximumReferenceImages},
                     {"entitlement_verified", false}});
             }
@@ -540,8 +551,13 @@ public:
 private:
     MaiToolResult delegate(const Json& args, const std::string& key,
                            const MaiToolContext& context) const {
-        const std::string modelId = stringValue(args, "model").empty() ? std::string(kVideoModel)
-                                                                       : stringValue(args, "model");
+        const std::string modelId = stringValue(args, "model").empty()
+                                        ? std::string(kDefaultVideoModel)
+                                        : stringValue(args, "model");
+        if (modelId == kVideoModel)
+            return invalid(
+                "Seedance 2.5 is disabled because of its cost; choose 2.0 Mini, "
+                "2.0 Fast, or standard 2.0");
         const MaiSeedanceModelSpec* model = seedanceModelSpec(modelId);
         if (model == nullptr) return invalid("unsupported Seedance model");
         const std::string message = stringValue(args, "message");
@@ -636,10 +652,12 @@ private:
             ratio != "4:3" && ratio != "3:4" && ratio != "21:9")
             return invalid("unsupported video ratio");
         if (resolution != "480p" && resolution != "720p" &&
-            !(model->supports1080p && resolution == "1080p"))
+            !(model->supports1080p && resolution == "1080p") &&
+            !(model->supports4k && resolution == "4k"))
             return invalid(std::string(model->label) +
-                           (model->supports1080p ? " resolution must be 480p, 720p, or 1080p"
-                                                 : " resolution must be 480p or 720p"));
+                           (model->supports4k      ? " resolution must be 480p, 720p, 1080p, or 4k"
+                            : model->supports1080p ? " resolution must be 480p, 720p, or 1080p"
+                                                   : " resolution must be 480p or 720p"));
         if (model->usesOmniTaskType &&
             (mode == "edit" || mode == "extend" || (mode == "create" && !imagePath.empty())) &&
             ratio != "adaptive")

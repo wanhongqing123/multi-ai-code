@@ -616,8 +616,10 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         if (tool.equals("seedance_video")) {
             if (model.equals("doubao-seedance-2-0-fast-260128")) values.add("Seedance 2.0 Fast");
             else if (model.equals("doubao-seedance-2-0-mini-260615")) values.add("Seedance 2.0 Mini");
+            else if (model.equals("doubao-seedance-2-0-260128")) values.add("Seedance 2.0");
+            else if (model.equals("doubao-seedance-2-5-260628")) values.add("Seedance 2.5");
             else values.add(model.isEmpty() && input.optString("action").equals("revise")
-                ? "沿用上一任务型号" : "Seedance 2.5");
+                ? "沿用上一任务型号" : (model.isEmpty() ? "Seedance 2.0 Mini" : model));
         }
         if (model.equals("MiniMax-H3") || model.equals("MiniMax-H3-Max"))
             values.add(model.equals("MiniMax-H3-Max") ? "H3 Max" : "H3");

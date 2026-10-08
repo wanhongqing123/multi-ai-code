@@ -50,6 +50,9 @@ final class AIMobileHostToolProvider {
         case "mobile_save_video": return await saveVideo(arguments)
         case "mobile_ssh_password": return await requestSSHPassword(arguments)
         case "mobile_ssh_trust_host": return await trustSSHHost(arguments)
+        case "oss_video_upload_config":
+            return Self.jsonSuccess(["configured": ossSignerConfiguration() != nil])
+        case "mobile_oss_upload_video": return await uploadOssVideo(arguments)
         case "mobile_gpu_info": return gpuInfo()
         case "mobile_transform_image": return await transformImage(arguments)
         case "mobile_beautify_image":
@@ -159,6 +162,88 @@ final class AIMobileHostToolProvider {
             output["recommended_working_set_bytes"] = device.recommendedMaxWorkingSetSize
         }
         return Self.jsonSuccess(output)
+    }
+
+    private func ossSignerConfiguration() -> (url: URL, token: String)? {
+        let rawURL = UserDefaults.standard.string(forKey: "oss-media-signer-url") ?? ""
+        let token = KeychainSecretStore(account: "oss-media-signer-token").readSecretKey()
+        guard token.count >= 32, let components = URLComponents(string: rawURL),
+              components.scheme == "https", components.host?.isEmpty == false,
+              components.user == nil, components.password == nil,
+              components.query == nil, components.fragment == nil,
+              components.path.hasSuffix("/sign-upload"), let url = components.url else {
+            return nil
+        }
+        return (url, token)
+    }
+
+    private func uploadOssVideo(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
+        guard let signer = ossSignerConfiguration() else {
+            return .failure(code: "not_configured", message: "Configure the OSS signer in model settings")
+        }
+        let path = Self.string(arguments, key: "path")
+        guard let source = AIAssistantPathPolicy.resolve(
+            path, workspacePath: AIAssistantModel.shared.workspacePath
+        ), ["mp4", "mov"].contains(source.pathExtension.lowercased()),
+           let values = try? source.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+           values.isRegularFile == true, let size = values.fileSize,
+           size > 0, size <= 200_000_000 else {
+            return .failure(code: "invalid_input", message: "Video must be an accessible MP4/MOV under 200 MB")
+        }
+        do {
+            var signRequest = URLRequest(url: signer.url)
+            signRequest.httpMethod = "POST"
+            signRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            signRequest.setValue("Bearer \(signer.token)", forHTTPHeaderField: "Authorization")
+            signRequest.httpBody = try JSONSerialization.data(withJSONObject: [
+                "filename": source.lastPathComponent, "size_bytes": size
+            ])
+            let configuration = URLSessionConfiguration.default
+            configuration.timeoutIntervalForRequest = 60
+            configuration.timeoutIntervalForResource = 900
+            configuration.waitsForConnectivity = true
+            let session = URLSession(configuration: configuration)
+            defer { session.finishTasksAndInvalidate() }
+            let (signedData, signedResponse) = try await session.data(for: signRequest)
+            guard let http = signedResponse as? HTTPURLResponse else {
+                return .failure(code: "protocol", message: "OSS signer returned no HTTP response")
+            }
+            if http.statusCode == 401 {
+                return .failure(code: "not_configured", message: "OSS signer token was rejected")
+            }
+            if http.statusCode == 503 {
+                return .failure(code: "not_configured", message: "OSS signer is not configured")
+            }
+            guard http.statusCode == 200, signedData.count <= 16_384,
+                  let signed = try JSONSerialization.jsonObject(with: signedData) as? [String: Any],
+                  let uploadText = signed["upload_url"] as? String,
+                  let readText = signed["read_url"] as? String,
+                  let upload = URLComponents(string: uploadText),
+                  let read = URLComponents(string: readText),
+                  upload.scheme == "https", read.scheme == "https",
+                  upload.host?.isEmpty == false, upload.host == read.host,
+                  upload.path == read.path,
+                  upload.user == nil, read.user == nil,
+                  upload.password == nil, read.password == nil,
+                  let uploadURL = upload.url, let readURL = read.url,
+                  let headers = signed["upload_headers"] as? [String: String],
+                  let contentType = headers["Content-Type"],
+                  contentType == (source.pathExtension.lowercased() == "mov"
+                    ? "video/quicktime" : "video/mp4") else {
+                return .failure(code: "upload_failed", message: "OSS did not return valid upload links")
+            }
+            var uploadRequest = URLRequest(url: uploadURL)
+            uploadRequest.httpMethod = "PUT"
+            uploadRequest.setValue(contentType, forHTTPHeaderField: "Content-Type")
+            let (_, uploadResponse) = try await session.upload(for: uploadRequest, fromFile: source)
+            guard let result = uploadResponse as? HTTPURLResponse,
+                  (200...299).contains(result.statusCode) else {
+                return .failure(code: "upload_failed", message: "OSS rejected the video upload; check the signed URL and Bucket permissions")
+            }
+            return Self.jsonSuccess(["url": readURL.absoluteString])
+        } catch {
+            return .failure(code: "upload_failed", message: error.localizedDescription)
+        }
     }
 
     static func jsonSuccess(_ object: [String: Any]) -> AIMaiChatHostToolExecution {

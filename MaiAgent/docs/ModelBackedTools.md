@@ -254,12 +254,14 @@ FFmpeg 全片解码通过。两个结果都带 `revision_of` 指向旧任务；�
 `seedance_video` 现绑定 `doubao-seedance-2-5-260628`，单次输出允许 4–30 秒，
 并接入 HTTPS 视频 URL 或已完成 Seedance 任务的引用路径。此前 2.0 的编辑请求
 已在方舟服务端验证出片；切换到 2.5 后仍需重新实测，
-iOS 工具层仍需单独验收。用户选择独立的阿里云 OSS 存储后，iOS 宿主已停用
-曾接入的腾讯 IM 云文件上传入口；在 OSS 上传签名服务接通前，本地 `video_path`
-上报为 `upload_not_configured`，HTTPS 视频 URL 和已有 Seedance 任务引用仍可用。
-共享核心保留宿主上传回调，供 OSS 接入时复用。方舟视频生成接口要求视频 URL
-或素材 ID；长期 AK/SK 不下发到手机，不能把仅有 Ark API Key 误认为对象存储
-的上传权限。
+iOS 工具层仍需单独验收。用户选择独立的阿里云 OSS 存储后，iOS 宿主停用了
+曾接入的腾讯 IM 云文件上传入口。现有 OSS 签名服务实现放在
+`services/oss-media-signer/`：iOS 从签名服务取得短期 PUT/GET URL，直接上传
+本地 `video_path`，上传成功后把临时 GET URL 交给方舟。未在模型配置中填写完整
+签名服务地址和令牌时，能力上报 `upload_not_configured`；配置后上报
+`implemented_unverified`，直到真实 iOS 上传和方舟读取均通过。HTTPS 视频 URL
+和已有 Seedance 任务引用仍可用。方舟视频生成接口要求视频 URL 或素材 ID；
+长期 AK/SK 不下发到手机，不能把仅有 Ark API Key 误认为对象存储的上传权限。
 接口取值参考[方舟创建视频生成任务文档](https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh)。
 
 对无需指定真人身份的写实人物视频，工具支持 `virtual_avatar_asset_id`：从方舟

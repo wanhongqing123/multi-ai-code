@@ -351,9 +351,8 @@ public:
               "first/last-frame control. This tool accepts one reference video"},
              {"video_edit_from_local_file", true, true, localVideoStatus,
               mUploadVideo
-                  ? "iOS requires connected Tencent IM; local video is staged in IM "
-                    "cloud (up to 100 MB) and its HTTPS URL is handed to Ark. Live Ark fetch "
-                    "is unverified"
+                  ? "The host uploads a local video to private object storage and hands Ark a "
+                    "temporary HTTPS read URL. Live Ark fetch is unverified"
                   : "Local video upload is not configured"}}};
     }
     std::string description() const override {

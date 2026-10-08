@@ -359,7 +359,32 @@ struct MaiMobileAgent {
                  ? response["key"].get<std::string>()
                  : std::string{};
     };
+#if defined(__APPLE__)
+    const MaiToolResult ossStatus = callMaiMobileHostTool(hostTools, "oss_video_upload_config", "{}");
+    const Json ossConfig = ossStatus.hasError()
+                               ? Json::object()
+                               : Json::parse(ossStatus.output(), nullptr, false);
+    if (ossConfig.is_object() && ossConfig.value("configured", false)) {
+      const MaiArkVideoUploadProvider uploadArkVideo =
+          [dispatcher = hostTools](const std::string &path,
+                                   const MaiToolContext &context) -> MaiResult<std::string> {
+        if (context.isCanceled()) return {MaiErrorCode::Canceled, "Video upload was canceled"};
+        const MaiToolResult response = callMaiMobileHostTool(
+            dispatcher, "mobile_oss_upload_video", Json{{"path", path}}.dump());
+        if (response.hasError()) return response.error();
+        if (context.isCanceled()) return {MaiErrorCode::Canceled, "Video upload was canceled"};
+        const Json parsed = Json::parse(response.output(), nullptr, false);
+        if (!parsed.is_object() || !parsed.value("url", Json{}).is_string())
+          return {MaiErrorCode::Protocol, "OSS upload returned no read URL"};
+        return parsed["url"].get<std::string>();
+      };
+      tools->add(makeMaiSeedanceVideoTool(arkKey, config.caBundlePath, uploadArkVideo));
+    } else {
+      tools->add(makeMaiSeedanceVideoTool(arkKey, config.caBundlePath));
+    }
+#else
     tools->add(makeMaiSeedanceVideoTool(arkKey, config.caBundlePath));
+#endif
     tools->add(makeMaiSeedreamImageTool(arkKey, config.caBundlePath));
     const auto glmKey = [dispatcher = hostTools]() -> std::string {
       const MaiToolResult result =

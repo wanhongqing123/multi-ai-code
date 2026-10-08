@@ -2440,6 +2440,12 @@ private struct AIPermissionCard: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
+                if permission.tool == "seedance_video",
+                   (fields["video_path"] as? String)?.isEmpty == false {
+                    Text("本地视频将上传到你配置的私有阿里云 OSS，再由 Seedance 通过临时链接读取。")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
             } else if isSendText, let peer = fields["peer_id"] as? String,
                let text = fields["text"] as? String {
                 Label(peer, systemImage: "person.crop.circle")
@@ -2557,6 +2563,11 @@ private struct AISettingsView: View {
     @State private var seedanceKey = ""
     @State private var seedanceConfigured = false
     @State private var seedanceMessage = ""
+    @State private var ossSignerURL = ""
+    @State private var ossSignerToken = ""
+    @State private var ossConfigured = false
+    @State private var ossMessage = ""
+    @State private var ossTesting = false
     @State private var wanKey = ""
     @State private var wanWorkspaceId = ""
     @State private var wanConfigured = false
@@ -2663,6 +2674,31 @@ private struct AISettingsView: View {
                     if !seedanceMessage.isEmpty {
                         Text(seedanceMessage).font(.system(size: 12)).foregroundStyle(.secondary)
                     }
+                    settingsField("OSS 视频上传签名地址", systemImage: "externaldrive") {
+                        TextField("https://…/sign-upload", text: $ossSignerURL)
+                            .keyboardType(.URL)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .textFieldStyle(.plain)
+                    }
+                    settingsField("OSS 签名服务令牌", systemImage: "key.horizontal") {
+                        SecureField(ossConfigured ? "已配置，留空保留原令牌" : "输入签名服务令牌",
+                                    text: $ossSignerToken)
+                            .textFieldStyle(.plain)
+                    }
+                    Text("这里只填签名服务地址和令牌；OSS AccessKey/Secret 留在阿里云服务端。")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                    Button(ossTesting ? "正在测试 OSS 签名服务" : "测试 OSS 签名服务") {
+                        ossTesting = true
+                        Task {
+                            await testOssSigner()
+                            ossTesting = false
+                        }
+                    }
+                    .disabled(ossTesting || ossSignerURL.isEmpty)
+                    if !ossMessage.isEmpty {
+                        Text(ossMessage).font(.system(size: 12)).foregroundStyle(.secondary)
+                    }
                     settingsField("百炼创作 Key（Wan / Qwen）", systemImage: "film.stack") {
                         SecureField(wanConfigured ? "已配置，留空保留原密钥" : "输入百炼 API Key",
                                     text: $wanKey)
@@ -2711,6 +2747,10 @@ private struct AISettingsView: View {
                                 saving = false
                                 return
                             }
+                            guard saveOssConfiguration() else {
+                                saving = false
+                                return
+                            }
                             if await model.save(settings, key: apiKey) { close() }
                             saving = false
                         }
@@ -2738,6 +2778,9 @@ private struct AISettingsView: View {
             modelKeyConfigured = hasSavedModelKey(for: settings.model)
             seedanceConfigured = !KeychainSecretStore(account: "seedance-ark-api-key")
                 .readSecretKey().isEmpty
+            ossSignerURL = UserDefaults.standard.string(forKey: "oss-media-signer-url") ?? ""
+            ossConfigured = !ossSignerURL.isEmpty &&
+                KeychainSecretStore(account: "oss-media-signer-token").readSecretKey().count >= 32
             wanConfigured = !KeychainSecretStore(account: "wan-model-studio-api-key")
                 .readSecretKey().isEmpty
             wanWorkspaceId = UserDefaults.standard.string(forKey: "wan-model-studio-workspace-id") ?? ""
@@ -2821,6 +2864,78 @@ private struct AISettingsView: View {
         } catch {
             creativeMessage = error.localizedDescription
             return false
+        }
+    }
+
+    private func saveOssConfiguration() -> Bool {
+        let address = ossSignerURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let token = ossSignerToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        if address.isEmpty && token.isEmpty && !ossConfigured { return true }
+        guard let parts = URLComponents(string: address), parts.scheme == "https",
+              parts.host?.isEmpty == false, parts.user == nil, parts.password == nil,
+              parts.query == nil, parts.fragment == nil,
+              parts.path.hasSuffix("/sign-upload") else {
+            ossMessage = "请输入签名服务完整的 HTTPS /sign-upload 地址"
+            return false
+        }
+        guard token.isEmpty ? ossConfigured : token.count >= 32 else {
+            ossMessage = "签名服务令牌至少需要 32 个字符"
+            return false
+        }
+        do {
+            if !token.isEmpty {
+                try KeychainSecretStore(account: "oss-media-signer-token").saveSecretKey(token)
+            }
+            UserDefaults.standard.set(address, forKey: "oss-media-signer-url")
+            ossConfigured = true
+            ossSignerToken = ""
+            ossMessage = "OSS 签名服务配置已保存"
+            return true
+        } catch {
+            ossMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    private func testOssSigner() async {
+        let address = ossSignerURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let entered = ossSignerToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        let token = entered.isEmpty
+            ? KeychainSecretStore(account: "oss-media-signer-token").readSecretKey() : entered
+        guard token.count >= 32, let parts = URLComponents(string: address),
+              parts.scheme == "https", parts.host?.isEmpty == false,
+              parts.user == nil, parts.password == nil,
+              parts.query == nil, parts.fragment == nil,
+              parts.path.hasSuffix("/sign-upload"), let url = parts.url else {
+            ossMessage = "请先填写完整的 HTTPS 地址和签名服务令牌"
+            return
+        }
+        do {
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.httpBody = try JSONSerialization.data(withJSONObject: [
+                "filename": "maichat-connection-check.mp4", "size_bytes": 1
+            ])
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                ossMessage = "签名服务没有返回 HTTP 响应"
+                return
+            }
+            if http.statusCode == 401 { ossMessage = "签名服务令牌不匹配"; return }
+            if http.statusCode == 503 { ossMessage = "阿里云签名函数尚未配置完成"; return }
+            guard http.statusCode == 200,
+                  let signed = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let upload = signed["upload_url"] as? String,
+                  let read = signed["read_url"] as? String,
+                  upload.hasPrefix("https://"), read.hasPrefix("https://") else {
+                ossMessage = "签名服务未返回有效的临时链接"
+                return
+            }
+            ossMessage = "签名服务连接成功；尚未上传视频或产生视频生成费用"
+        } catch {
+            ossMessage = "连接失败：\(error.localizedDescription)"
         }
     }
 

@@ -1,0 +1,115 @@
+'use strict';
+
+const { randomUUID, timingSafeEqual } = require('node:crypto');
+const path = require('node:path');
+
+const MAX_VIDEO_BYTES = 200_000_000;
+const UPLOAD_TTL_SECONDS = 15 * 60;
+const READ_TTL_SECONDS = 24 * 60 * 60;
+
+function jsonResponse(statusCode, value) {
+  return {
+    statusCode,
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store'
+    },
+    body: JSON.stringify(value)
+  };
+}
+
+function headerValue(headers, name) {
+  const entry = Object.entries(headers || {}).find(([key]) => key.toLowerCase() === name);
+  return typeof entry?.[1] === 'string' ? entry[1] : '';
+}
+
+function hasBearerToken(headers, expected) {
+  const actual = headerValue(headers, 'authorization');
+  const expectedHeader = `Bearer ${expected}`;
+  const left = Buffer.from(actual);
+  const right = Buffer.from(expectedHeader);
+  return left.length === right.length && timingSafeEqual(left, right);
+}
+
+function requestBody(event) {
+  let body = event.body || '';
+  if (event.isBase64Encoded) body = Buffer.from(body, 'base64').toString('utf8');
+  if (typeof body !== 'string' || Buffer.byteLength(body) > 4096) return null;
+  try { return JSON.parse(body); } catch { return null; }
+}
+
+function createHandler(options = {}) {
+  const env = options.env || process.env;
+  const makeClient = options.makeClient || ((configuration) => {
+    const OSS = require('ali-oss');
+    return new OSS(configuration);
+  });
+  const newID = options.newID || randomUUID;
+  const currentTime = options.currentTime || (() => new Date());
+  let client;
+
+  return async function handle(eventInput) {
+    let event;
+    try {
+      event = typeof eventInput === 'string' || Buffer.isBuffer(eventInput)
+        ? JSON.parse(eventInput.toString()) : eventInput;
+    } catch {
+      return jsonResponse(400, { error: 'Invalid request' });
+    }
+    const method = event?.requestContext?.http?.method || event?.httpMethod || event?.method;
+    const route = event?.rawPath || event?.path || '/sign-upload';
+    if (method !== 'POST' || !route.endsWith('/sign-upload'))
+      return jsonResponse(404, { error: 'Not found' });
+
+    const token = env.MAICHAT_OSS_SIGNER_TOKEN || '';
+    const bucket = env.MAICHAT_OSS_BUCKET || '';
+    const region = env.MAICHAT_OSS_REGION || '';
+    if (token.length < 32 || !bucket || !/^oss-[a-z0-9-]+$/.test(region) ||
+        !env.ALIBABA_CLOUD_ACCESS_KEY_ID || !env.ALIBABA_CLOUD_ACCESS_KEY_SECRET)
+      return jsonResponse(503, { error: 'Storage signer is not configured' });
+    if (!hasBearerToken(event.headers, token))
+      return jsonResponse(401, { error: 'Unauthorized' });
+
+    const body = requestBody(event);
+    const filename = body?.filename;
+    const size = body?.size_bytes;
+    const extension = typeof filename === 'string'
+      ? path.extname(filename).toLowerCase() : '';
+    if (!['.mp4', '.mov'].includes(extension) || !Number.isSafeInteger(size) ||
+        size < 1 || size > MAX_VIDEO_BYTES)
+      return jsonResponse(400, { error: 'Provide an MP4/MOV file of at most 200 MB' });
+
+    try {
+      if (!client) client = makeClient({
+        accessKeyId: env.ALIBABA_CLOUD_ACCESS_KEY_ID,
+        accessKeySecret: env.ALIBABA_CLOUD_ACCESS_KEY_SECRET,
+        bucket,
+        region,
+        authorizationV4: true,
+        secure: true
+      });
+      const objectKey = `seedance-inputs/${currentTime().toISOString().slice(0, 10)}/${newID()}${extension}`;
+      const contentType = extension === '.mov' ? 'video/quicktime' : 'video/mp4';
+      const uploadHeaders = { 'Content-Type': contentType };
+      const uploadUrl = await client.signatureUrlV4(
+        'PUT', UPLOAD_TTL_SECONDS, { headers: uploadHeaders }, objectKey);
+      const readUrl = await client.signatureUrlV4(
+        'GET', READ_TTL_SECONDS, { headers: {} }, objectKey);
+      if (!uploadUrl.startsWith('https://') || !readUrl.startsWith('https://'))
+        throw new Error('OSS signer returned a non-HTTPS URL');
+      return jsonResponse(200, {
+        upload_url: uploadUrl,
+        upload_headers: uploadHeaders,
+        read_url: readUrl,
+        object_key: objectKey,
+        upload_expires_in: UPLOAD_TTL_SECONDS,
+        read_expires_in: READ_TTL_SECONDS
+      });
+    } catch {
+      return jsonResponse(502, { error: 'Could not sign the video upload' });
+    }
+  };
+}
+
+exports.handler = createHandler();
+exports.createHandler = createHandler;

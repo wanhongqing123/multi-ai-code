@@ -118,7 +118,7 @@ enum AICloudCredentialSync {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(service.token)", forHTTPHeaderField: "Authorization")
         request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "action": "fetch", "providers": ["ark", "glm", "deepseek", "wan", "kling", "minimax"]
+            "action": "fetch", "providers": ["ark", "glm", "deepseek", "wan", "minimax"]
         ])
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 15
@@ -138,7 +138,6 @@ enum AICloudCredentialSync {
             "glm": "ai-assistant-glm-api-key",
             "deepseek": "ai-assistant-deepseek-api-key",
             "wan": "wan-model-studio-api-key",
-            "kling": "kling-creative-api-key",
             "minimax": "minimax-creative-api-key"
         ]
         var savedProviders: [String] = []

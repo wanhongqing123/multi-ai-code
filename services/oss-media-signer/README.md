@@ -52,7 +52,6 @@ MP4/MOV 或 JPEG/PNG 直接 PUT 到私有阿里云 OSS Bucket，再将视频 24 
    | `MAICHAT_GLM_API_KEY` | GLM 主模型与图像／视频工具 API Key |
    | `MAICHAT_DEEPSEEK_API_KEY` | DeepSeek 主模型 API Key |
    | `MAICHAT_WAN_API_KEY`、`MAICHAT_WAN_WORKSPACE_ID` | 百炼 Wan／Qwen 凭据 |
-   | `MAICHAT_KLING_API_KEY` | 可灵创作 API Key |
    | `MAICHAT_MINIMAX_API_KEY` | 海螺 MiniMax API Key |
 
 可以用 `openssl rand -hex 32` 生成令牌。长期密钥只放服务器配置，不填在
@@ -86,6 +85,8 @@ api.example.com {
 `https://…/sign-upload` 配置仍兼容。保存时只把服务端已配置的模型 API Key
 同步到 iOS Keychain／Android Keystore 加密文件，未配置的模型 Key 不会清除
 本机原值。打开 AI 助手时也会尝试同步；网络不可用时继续使用本机已保存的 Key。
+移动端模型配置页不再暴露主模型 API 地址、API Key 或协议选择，GLM 与 DeepSeek
+默认使用 Responses；Chat Completions 实现仍保留用于兼容已有配置。
 只配置火山 AK/SK 时，`ark_assets` 可使用已有 HTTPS 图片 URL 操作素材库；
 `seedance_video discover` 的 `video_edit_from_local_file` 仍为
 `upload_not_configured`。等 OSS 最后配置完成，该能力才进入待实盘验证状态。
@@ -100,7 +101,7 @@ Desktop 的云端密钥同步仍需接入，不能仅因移动端已接通就宣
 
 `POST /credentials` 仅接受 Bearer 服务令牌。`{"action":"status"}` 返回已配置
 模型名与火山 Assets／OSS 的配置状态，不返回密钥。`{"action":"fetch", "providers":
-["ark","glm","deepseek","wan","kling","minimax"]}` 只返回服务端已配置且请求中列出的
+["ark","glm","deepseek","wan","minimax"]}` 只返回服务端已配置且请求中列出的
 模型 API Key；不支持读取火山或阿里云 AccessKey。所有响应带
 `Cache-Control: no-store`，Nginx 入口应关闭该路径的访问日志并限制请求速率。
 

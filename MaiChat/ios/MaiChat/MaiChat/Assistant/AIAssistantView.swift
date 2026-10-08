@@ -2570,25 +2570,11 @@ private struct AISettingsView: View {
     @ObservedObject var model: AIAssistantModel
     let close: () -> Void
     @State private var settings = AIModelSettings()
-    @State private var apiKey = ""
-    @State private var modelKeyConfigured = false
-    @State private var seedanceKey = ""
-    @State private var seedanceConfigured = false
-    @State private var seedanceMessage = ""
     @State private var ossSignerURL = ""
     @State private var ossSignerToken = ""
     @State private var ossConfigured = false
     @State private var ossMessage = ""
     @State private var ossTesting = false
-    @State private var wanKey = ""
-    @State private var wanWorkspaceId = ""
-    @State private var wanConfigured = false
-    @State private var wanMessage = ""
-    @State private var klingKey = ""
-    @State private var klingConfigured = false
-    @State private var miniMaxKey = ""
-    @State private var miniMaxConfigured = false
-    @State private var creativeMessage = ""
     @State private var saving = false
 
     var body: some View {
@@ -2616,7 +2602,7 @@ private struct AISettingsView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("连接你的模型服务").font(.system(size: 22, weight: .bold))
-                        Text("支持 Chat Completions 与 Responses，密钥只保存在本机 Keychain。")
+                        Text("默认使用 Responses；模型密钥由云端同步到本机 Keychain。")
                             .font(.system(size: 13)).foregroundStyle(.secondary)
                     }
 
@@ -2635,56 +2621,11 @@ private struct AISettingsView: View {
                         }
                         .accessibilityIdentifier("ai-primary-model-picker")
                     }
-                    settingsField("API 地址", systemImage: "link") {
-                        TextField("https://example.com/v1", text: $settings.baseUrl)
-                            .keyboardType(.URL)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .textFieldStyle(.plain)
-                            .accessibilityIdentifier("ai-model-base-url")
-                    }
                     settingsField("模型名称", systemImage: "cpu") {
                         TextField("模型名称", text: modelSelection)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .textFieldStyle(.plain)
-                    }
-                    settingsField("接口协议", systemImage: "arrow.left.arrow.right") {
-                        Picker("接口协议", selection: Binding(
-                            get: { settings.effectiveWire },
-                            set: { settings.selectWire($0) }
-                        )) {
-                            Text("Chat Completions").tag("chat_completions")
-                            Text("Responses").tag("responses")
-                        }
-                        .pickerStyle(.segmented)
-                        .accessibilityIdentifier("ai-model-wire")
-                    }
-                    settingsField(settings.model == "deepseek-flash"
-                                  ? "DeepSeek API Key" : "API Key", systemImage: "key") {
-                        SecureField(modelKeyConfigured ? "已配置，留空则保留" : "请输入此模型的 API Key",
-                                    text: $apiKey)
-                            .textFieldStyle(.plain)
-                    }
-                    settingsField("方舟创作 Key（Seedance / Seedream）", systemImage: "film") {
-                        SecureField(seedanceConfigured ? "已配置，留空则保留" : "输入方舟 API Key",
-                                    text: $seedanceKey)
-                            .textFieldStyle(.plain)
-                    }
-                    Button("保存方舟创作 Key") {
-                        do {
-                            try KeychainSecretStore(account: "seedance-ark-api-key")
-                                .saveSecretKey(seedanceKey)
-                            seedanceConfigured = !seedanceKey.isEmpty
-                            seedanceKey = ""
-                            seedanceMessage = seedanceConfigured ? "已保存到本机 Keychain" : "已清除方舟创作 Key"
-                        } catch {
-                            seedanceMessage = error.localizedDescription
-                        }
-                    }
-                    .disabled(seedanceKey.isEmpty)
-                    if !seedanceMessage.isEmpty {
-                        Text(seedanceMessage).font(.system(size: 12)).foregroundStyle(.secondary)
                     }
                     settingsField("云端密钥服务地址", systemImage: "externaldrive") {
                         TextField("https://ichat.life/maichat", text: $ossSignerURL)
@@ -2711,35 +2652,8 @@ private struct AISettingsView: View {
                     if !ossMessage.isEmpty {
                         Text(ossMessage).font(.system(size: 12)).foregroundStyle(.secondary)
                     }
-                    settingsField("百炼创作 Key（Wan / Qwen）", systemImage: "film.stack") {
-                        SecureField(wanConfigured ? "已配置，留空保留原密钥" : "输入百炼 API Key",
-                                    text: $wanKey)
-                            .textFieldStyle(.plain)
-                    }
-                    settingsField("百炼 Workspace ID", systemImage: "square.stack.3d.up") {
-                        TextField("ws-…", text: $wanWorkspaceId)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .textFieldStyle(.plain)
-                    }
-                    Text("点击下方“保存配置”，同时保存百炼 Key 和 Workspace ID。")
+                    Text("Seedance、GLM、DeepSeek、Wan、Wan Workspace ID 和海螺密钥由云端服务统一同步。")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
-                    if !wanMessage.isEmpty {
-                        Text(wanMessage).font(.system(size: 12)).foregroundStyle(.secondary)
-                    }
-                    settingsField("可灵 API Key", systemImage: "film") {
-                        SecureField(klingConfigured ? "已配置，留空保留原密钥" : "输入可灵 API Key",
-                                    text: $klingKey)
-                            .textFieldStyle(.plain)
-                    }
-                    settingsField("海螺 / MiniMax API Key", systemImage: "photo.on.rectangle") {
-                        SecureField(miniMaxConfigured ? "已配置，留空保留原密钥" : "输入 MiniMax API Key",
-                                    text: $miniMaxKey)
-                            .textFieldStyle(.plain)
-                    }
-                    if !creativeMessage.isEmpty {
-                        Text(creativeMessage).font(.system(size: 12)).foregroundStyle(.secondary)
-                    }
                     Text("本地图片处理使用 FFmpeg（LGPLv2.1+）；完整源码随项目放在 MaiAgent/third_party/ffmpeg。")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                     if !model.error.isEmpty {
@@ -2751,14 +2665,7 @@ private struct AISettingsView: View {
                     Button {
                         saving = true
                         Task {
-                            guard saveWanConfiguration() else {
-                                saving = false
-                                return
-                            }
-                            guard saveCreativeKeys() else {
-                                saving = false
-                                return
-                            }
+                            settings.selectWire("responses")
                             guard saveOssConfiguration() else {
                                 saving = false
                                 return
@@ -2766,29 +2673,13 @@ private struct AISettingsView: View {
                             if AICloudCredentialSync.serviceEndpoint() != nil {
                                 do {
                                     _ = try await AICloudCredentialSync.syncIfConfigured()
-                                    modelKeyConfigured = hasSavedModelKey(for: settings.model)
-                                    seedanceConfigured = !KeychainSecretStore(
-                                        account: "seedance-ark-api-key"
-                                    ).readSecretKey().isEmpty
-                                    wanConfigured = !KeychainSecretStore(
-                                        account: "wan-model-studio-api-key"
-                                    ).readSecretKey().isEmpty
-                                    wanWorkspaceId = UserDefaults.standard.string(
-                                        forKey: "wan-model-studio-workspace-id"
-                                    ) ?? wanWorkspaceId
-                                    klingConfigured = !KeychainSecretStore(
-                                        account: "kling-creative-api-key"
-                                    ).readSecretKey().isEmpty
-                                    miniMaxConfigured = !KeychainSecretStore(
-                                        account: "minimax-creative-api-key"
-                                    ).readSecretKey().isEmpty
                                 } catch {
                                     ossMessage = "云端密钥同步失败：\(error.localizedDescription)"
                                     saving = false
                                     return
                                 }
                             }
-                            if await model.save(settings, key: apiKey) { close() }
+                            if await model.save(settings, key: "") { close() }
                             saving = false
                         }
                     } label: {
@@ -2812,19 +2703,10 @@ private struct AISettingsView: View {
         .background(Color(red: 0.97, green: 0.98, blue: 1.0).ignoresSafeArea())
         .onAppear {
             settings = model.settings
-            modelKeyConfigured = hasSavedModelKey(for: settings.model)
-            seedanceConfigured = !KeychainSecretStore(account: "seedance-ark-api-key")
-                .readSecretKey().isEmpty
+            settings.selectWire("responses")
             ossSignerURL = UserDefaults.standard.string(forKey: "oss-media-signer-url") ?? ""
             ossConfigured = !ossSignerURL.isEmpty &&
                 KeychainSecretStore(account: "oss-media-signer-token").readSecretKey().count >= 32
-            wanConfigured = !KeychainSecretStore(account: "wan-model-studio-api-key")
-                .readSecretKey().isEmpty
-            wanWorkspaceId = UserDefaults.standard.string(forKey: "wan-model-studio-workspace-id") ?? ""
-            klingConfigured = !KeychainSecretStore(account: "kling-creative-api-key")
-                .readSecretKey().isEmpty
-            miniMaxConfigured = !KeychainSecretStore(account: "minimax-creative-api-key")
-                .readSecretKey().isEmpty
         }
         .accessibilityIdentifier("ai-model-settings")
     }
@@ -2835,8 +2717,7 @@ private struct AISettingsView: View {
 
     private func selectSettingsModel(_ selected: String) {
         settings.selectModel(selected)
-        apiKey = ""
-        modelKeyConfigured = hasSavedModelKey(for: selected)
+        settings.selectWire("responses")
     }
 
     private var selectedModelTitle: String {
@@ -2845,64 +2726,6 @@ private struct AISettingsView: View {
         case "glm-5.3-flash": return "GLM-5.3-Flash"
         case "deepseek-flash": return "DeepSeek V4.1 Flash"
         default: return "自定义模型"
-        }
-    }
-
-    private func hasSavedModelKey(for selected: String) -> Bool {
-        let account = selected == "deepseek-flash"
-            ? "ai-assistant-deepseek-api-key" : "ai-assistant-api-key"
-        return !KeychainSecretStore(account: account).readSecretKey().isEmpty
-    }
-
-    private func saveWanConfiguration() -> Bool {
-        let workspaceId = wanWorkspaceId.trimmingCharacters(in: .whitespacesAndNewlines)
-        let key = wanKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !workspaceId.isEmpty || !key.isEmpty || wanConfigured else { return true }
-        guard (workspaceId.hasPrefix("ws-") || workspaceId.hasPrefix("llm-")),
-              workspaceId.count > 4 else {
-            wanMessage = "请填写完整的百炼 Workspace ID"
-            return false
-        }
-        guard !key.isEmpty || wanConfigured else {
-            wanMessage = "请填写百炼 API Key"
-            return false
-        }
-        do {
-            if !key.isEmpty {
-                try KeychainSecretStore(account: "wan-model-studio-api-key").saveSecretKey(key)
-            }
-            UserDefaults.standard.set(workspaceId, forKey: "wan-model-studio-workspace-id")
-            wanConfigured = true
-            wanKey = ""
-            wanMessage = "百炼配置已保存"
-            return true
-        } catch {
-            wanMessage = error.localizedDescription
-            return false
-        }
-    }
-
-    private func saveCreativeKeys() -> Bool {
-        do {
-            let kling = klingKey.trimmingCharacters(in: .whitespacesAndNewlines)
-            let miniMax = miniMaxKey.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !kling.isEmpty {
-                try KeychainSecretStore(account: "kling-creative-api-key").saveSecretKey(kling)
-                klingConfigured = true
-                klingKey = ""
-            }
-            if !miniMax.isEmpty {
-                try KeychainSecretStore(account: "minimax-creative-api-key").saveSecretKey(miniMax)
-                miniMaxConfigured = true
-                miniMaxKey = ""
-            }
-            if !kling.isEmpty || !miniMax.isEmpty {
-                creativeMessage = "创作模型 Key 已保存到本机 Keychain"
-            }
-            return true
-        } catch {
-            creativeMessage = error.localizedDescription
-            return false
         }
     }
 

@@ -71,15 +71,35 @@ function createHandler(options = {}) {
 
     const body = requestBody(event);
     if (route === '/credentials') {
-      if (body?.action !== 'status')
-        return jsonResponse(400, { error: 'Unsupported service action' });
-      return jsonResponse(200, {
-        configured: [],
-        assets_configured: !!(env.VOLC_ACCESS_KEY_ID && env.VOLC_SECRET_ACCESS_KEY),
-        storage_configured: !!(env.MAICHAT_OSS_BUCKET &&
-          /^oss-[a-z0-9-]+$/.test(env.MAICHAT_OSS_REGION || '') &&
-          env.ALIBABA_CLOUD_ACCESS_KEY_ID && env.ALIBABA_CLOUD_ACCESS_KEY_SECRET)
-      });
+      const keys = {
+        ark: env.MAICHAT_ARK_API_KEY || '',
+        glm: env.MAICHAT_GLM_API_KEY || '',
+        deepseek: env.MAICHAT_DEEPSEEK_API_KEY || '',
+        wan: env.MAICHAT_WAN_API_KEY || '',
+        kling: env.MAICHAT_KLING_API_KEY || '',
+        minimax: env.MAICHAT_MINIMAX_API_KEY || ''
+      };
+      if (body?.action === 'status')
+        return jsonResponse(200, {
+          configured: Object.keys(keys).filter((name) => !!keys[name]),
+          assets_configured: !!(env.VOLC_ACCESS_KEY_ID && env.VOLC_SECRET_ACCESS_KEY),
+          storage_configured: !!(env.MAICHAT_OSS_BUCKET &&
+            /^oss-[a-z0-9-]+$/.test(env.MAICHAT_OSS_REGION || '') &&
+            env.ALIBABA_CLOUD_ACCESS_KEY_ID && env.ALIBABA_CLOUD_ACCESS_KEY_SECRET)
+        });
+      if (body?.action !== 'fetch' || !Array.isArray(body.providers) ||
+          body.providers.length < 1 || body.providers.length > Object.keys(keys).length ||
+          new Set(body.providers).size !== body.providers.length ||
+          !body.providers.every((name) => typeof name === 'string' &&
+            Object.hasOwn(keys, name)))
+        return jsonResponse(400, { error: 'Choose valid provider names' });
+      const selected = {};
+      for (const name of body.providers) {
+        if (keys[name]) selected[name] = keys[name];
+      }
+      return jsonResponse(200, { api_keys: selected,
+        wan_workspace_id: body.providers.includes('wan')
+          ? env.MAICHAT_WAN_WORKSPACE_ID || '' : '' });
     }
     if (route.endsWith('/ark-assets')) {
       const accessKeyId = env.VOLC_ACCESS_KEY_ID || '';

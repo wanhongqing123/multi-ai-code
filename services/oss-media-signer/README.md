@@ -38,6 +38,9 @@
    | `MAICHAT_MEDIA_SERVICE_TOKEN` | 至少 32 字符的客户端 Bearer 令牌；兼容旧名 `MAICHAT_OSS_SIGNER_TOKEN` |
    | `VOLC_ACCESS_KEY_ID`、`VOLC_SECRET_ACCESS_KEY` | 火山 Assets API 签名凭据 |
    | `VOLC_ARK_PROJECT_NAME` | 方舟项目名，默认 `default`，须与生成任务使用的项目一致 |
+   | `MAICHAT_ARK_API_KEY`、`MAICHAT_GLM_API_KEY`、`MAICHAT_DEEPSEEK_API_KEY` | 可选，方舟、GLM、DeepSeek 模型 API Key |
+   | `MAICHAT_WAN_API_KEY`、`MAICHAT_WAN_WORKSPACE_ID` | 可选，百炼 API Key 和 Workspace ID |
+   | `MAICHAT_KLING_API_KEY`、`MAICHAT_MINIMAX_API_KEY` | 可选，可灵、海螺 API Key |
    | `MAICHAT_OSS_BUCKET`、`MAICHAT_OSS_REGION` | 可选，OSS Bucket 与地域 |
    | `ALIBABA_CLOUD_ACCESS_KEY_ID`、`ALIBABA_CLOUD_ACCESS_KEY_SECRET` | 可选，专用 OSS RAM 身份 |
 
@@ -47,6 +50,18 @@
    `/etc/maichat/volc-iam-api-key.json`（仅 root 可读），当前服务不会加载它。
    若使用函数计算，HTTP 触发器也必须保留鉴权；
    若改用现有业务后端，保持下面的接口格式即可。
+
+## 模型 API Key 同步
+
+`POST /credentials` 只接受服务 Bearer 令牌。`{"action":"status"}` 返回已配置的
+模型名和 Assets／OSS 状态，不返回密钥。`{"action":"fetch","providers":
+["ark","glm","deepseek","wan","kling","minimax"]}` 只返回请求中指定且服务端
+已配置的模型 API Key。火山和阿里云 AccessKey、预留的 IAM API Key 不在返回范围。
+响应禁止缓存，Nginx 入口关闭访问日志并限制速率。
+
+移动端把取回的模型 Key 存入 iOS Keychain／Android Keystore 加密文件，未配置的
+模型不会覆盖原有本机 Key。这满足集中配置，但完整模型 Key 仍会到达设备；如果
+以后要求密钥完全不落到客户端，应改用服务端模型请求代理。
 
 ## Ark Assets 素材接口
 
@@ -64,7 +79,8 @@ AccessKey，且不接收图片字节。本地照片没有 HTTPS 地址时，需�
 它不要求 OSS。`upload_image` 尚不能从 App 本地照片直接上传，会明确返回
 `upload_not_configured`。`seedance_video discover` 只有在服务确认 OSS 已配置后，
 才把 `video_edit_from_local_file` 上报为待实盘验证。Android、Desktop 的
-素材服务仍需各自接线。
+素材服务仍需各自接线。iOS／Android 的模型 API Key 同步使用同一服务地址和
+令牌；打开 AI 助手时会尝试同步已配置的型号，网络不可用时保留本机已有 Key。
 
 ## 签名接口
 

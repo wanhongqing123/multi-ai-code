@@ -2686,7 +2686,7 @@ private struct AISettingsView: View {
                     if !seedanceMessage.isEmpty {
                         Text(seedanceMessage).font(.system(size: 12)).foregroundStyle(.secondary)
                     }
-                    settingsField("私有素材服务地址", systemImage: "externaldrive") {
+                    settingsField("云端密钥与素材服务地址", systemImage: "externaldrive") {
                         TextField("https://ichat.life/maichat", text: $ossSignerURL)
                             .keyboardType(.URL)
                             .textInputAutocapitalization(.never)
@@ -2698,7 +2698,7 @@ private struct AISettingsView: View {
                                     text: $ossSignerToken)
                             .textFieldStyle(.plain)
                     }
-                    Text("火山 AccessKey 保存在服务器；本地照片上传要等后续 OSS 接线。")
+                    Text("云端已配置的模型 Key 会同步到本机 Keychain；手动填写可作兜底。火山 AccessKey 留在服务器。")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                     Button(ossTesting ? "正在测试素材服务" : "测试素材服务") {
                         ossTesting = true
@@ -2763,6 +2763,26 @@ private struct AISettingsView: View {
                                 saving = false
                                 return
                             }
+                            if AICloudCredentialSync.serviceEndpoint() != nil {
+                                do {
+                                    _ = try await AICloudCredentialSync.syncIfConfigured()
+                                    modelKeyConfigured = hasSavedModelKey(for: settings.model)
+                                    seedanceConfigured = !KeychainSecretStore(
+                                        account: "seedance-ark-api-key").readSecretKey().isEmpty
+                                    wanConfigured = !KeychainSecretStore(
+                                        account: "wan-model-studio-api-key").readSecretKey().isEmpty
+                                    wanWorkspaceId = UserDefaults.standard.string(
+                                        forKey: "wan-model-studio-workspace-id") ?? wanWorkspaceId
+                                    klingConfigured = !KeychainSecretStore(
+                                        account: "kling-creative-api-key").readSecretKey().isEmpty
+                                    miniMaxConfigured = !KeychainSecretStore(
+                                        account: "minimax-creative-api-key").readSecretKey().isEmpty
+                                } catch {
+                                    ossMessage = "云端密钥同步失败：\(error.localizedDescription)"
+                                    saving = false
+                                    return
+                                }
+                            }
                             if await model.save(settings, key: apiKey) { close() }
                             saving = false
                         }
@@ -2824,6 +2844,11 @@ private struct AISettingsView: View {
     }
 
     private func hasSavedModelKey(for selected: String) -> Bool {
+        if selected.hasPrefix("glm-") {
+            let current = KeychainSecretStore(account: "ai-assistant-glm-api-key").readSecretKey()
+            return !current.isEmpty || !KeychainSecretStore(
+                account: "ai-assistant-api-key").readSecretKey().isEmpty
+        }
         let account = selected == "deepseek-flash"
             ? "ai-assistant-deepseek-api-key" : "ai-assistant-api-key"
         return !KeychainSecretStore(account: account).readSecretKey().isEmpty

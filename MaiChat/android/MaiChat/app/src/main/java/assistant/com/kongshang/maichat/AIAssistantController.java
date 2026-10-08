@@ -116,11 +116,13 @@ public final class AIAssistantController {
     private volatile String glmChatBaseUrl = GLM_CHAT_URL;
     private volatile String glmWire = "responses", deepseekWire = "responses";
     private volatile String deepseekApiKey = "";
+    private volatile String glmApiKey = "";
     private volatile String arkApiKey = "";
     private volatile String wanApiKey = "";
     private volatile String wanWorkspaceId = "";
     private volatile String klingApiKey = "";
     private volatile String miniMaxApiKey = "";
+    private volatile String cloudServiceUrl = "";
     private JSONObject data = new JSONObject();
     private boolean ready, closed;
     private final Runnable poll = new Runnable() {
@@ -189,7 +191,7 @@ public final class AIAssistantController {
         if (tool.equals("glm_api_key")) {
             try {
                 String key = new java.net.URI(baseUrl).getHost().equals("open.bigmodel.cn")
-                    ? apiKey : "";
+                    ? glmApiKey : "";
                 return new JSONObject().put("ok", true)
                     .put("output", new JSONObject().put("key", key))
                     .toString().getBytes(StandardCharsets.UTF_8);
@@ -307,9 +309,24 @@ public final class AIAssistantController {
                 else if (baseUrl.equals(GLM_RESPONSES_URL)) baseUrl = glmChatBaseUrl;
                 glmBaseUrl = baseUrl;
             }
+            File cloudUrlFile = new File(root, "cloud-service-url.txt");
+            if (cloudUrlFile.isFile())
+                cloudServiceUrl = new String(Files.readAllBytes(cloudUrlFile.toPath()),
+                    StandardCharsets.UTF_8).trim();
+            if (testEndpoint == null && !cloudServiceUrl.isEmpty()) {
+                try {
+                    String token = readEncryptedKey("cloud-service-token.enc");
+                    if (!token.isEmpty()) applyCloudCredentials(fetchCloudCredentials(cloudServiceUrl, token));
+                } catch (Exception failure) {
+                    Log.w("MaiChatAgent", "Cloud credential synchronization is unavailable");
+                }
+            }
             try {
                 deepseekApiKey = readEncryptedKey("deepseek-main-api-key.enc");
-                apiKey = model.equals("deepseek-flash") ? deepseekApiKey : readKey();
+                glmApiKey = readEncryptedKey("glm-main-api-key.enc");
+                if (glmApiKey.isEmpty()) glmApiKey = readKey();
+                apiKey = model.equals("deepseek-flash") ? deepseekApiKey
+                    : model.startsWith("glm-") ? glmApiKey : readKey();
             } catch (Exception e) {
                 error = "API Key 无法读取，请重新配置模型";
             }
@@ -522,20 +539,11 @@ public final class AIAssistantController {
     }
     void switchModel(String name, Consumer<Boolean> completion) {
         if (name.equals("deepseek-flash"))
-            save(DEEPSEEK_URL, name, policy, deepseekApiKey, deepseekWire,
+            save(DEEPSEEK_URL, name, policy, deepseekApiKey, "responses",
                 glmChatBaseUrl, completion);
         else
-            worker.post(() -> {
-                try {
-                    String key = readKey();
-                    main.post(() -> save(glmBaseUrl, name, policy, key, glmWire,
-                        glmChatBaseUrl, completion));
-                } catch (Exception failure) {
-                    error = safeMessage(failure);
-                    emit();
-                    main.post(() -> completion.accept(false));
-                }
-            });
+            save(GLM_RESPONSES_URL, name, policy, glmApiKey, "responses",
+                glmChatBaseUrl, completion);
     }
     void action(String operation, JSONObject values, Runnable completion) {
         String target = state.selected;
@@ -584,16 +592,18 @@ public final class AIAssistantController {
                 boolean deepseek = selectedName.equals("deepseek-flash");
                 if (deepseek && !"api.deepseek.com".equals(uri.getHost()))
                     throw new IllegalArgumentException("DeepSeek 模型请使用 https://api.deepseek.com");
-                if (newKey.trim().isEmpty() && !deepseek
+                boolean glm = selectedName.startsWith("glm-");
+                if (newKey.trim().isEmpty() && !deepseek && !glm
                     && !java.util.Objects.equals(uri.getHost(), new java.net.URI(baseUrl).getHost()))
                     throw new IllegalArgumentException("更换模型服务商时，请重新填写 API Key");
                 String key = newKey.trim().isEmpty()
-                    ? (deepseek ? deepseekApiKey : apiKey) : newKey.trim();
+                    ? (deepseek ? deepseekApiKey : glm ? glmApiKey : apiKey) : newKey.trim();
                 if (key.isEmpty())
                     throw new IllegalArgumentException("请填写 API Key");
                 configure(effectiveUrl, selectedName, approval, key, selectedWire);
                 try {
                     if (deepseek) writeEncryptedKey("deepseek-main-api-key.enc", key);
+                    else if (glm) writeEncryptedKey("glm-main-api-key.enc", key);
                     else writeKey(key);
                     byte[] config = new JSONObject()
                                         .put("baseUrl", effectiveUrl)
@@ -621,6 +631,7 @@ public final class AIAssistantController {
                     }
                 } catch (Exception e) {
                     if (deepseek) writeEncryptedKey("deepseek-main-api-key.enc", deepseekApiKey);
+                    else if (glm) writeEncryptedKey("glm-main-api-key.enc", glmApiKey);
                     else writeKey(apiKey);
                     configure(baseUrl, model, policy, apiKey, wire);
                     throw e;
@@ -634,6 +645,7 @@ public final class AIAssistantController {
                     deepseekApiKey = key;
                     deepseekWire = selectedWire;
                 } else if (selectedName.startsWith("glm-")) {
+                    glmApiKey = key;
                     glmBaseUrl = effectiveUrl;
                     glmChatBaseUrl = nextChatUrl;
                     glmWire = selectedWire;
@@ -731,6 +743,122 @@ public final class AIAssistantController {
             boolean result = success;
             main.post(() -> completion.accept(result));
         });
+    }
+    String cloudServiceUrl() { return cloudServiceUrl; }
+    void saveCloudService(String address, String newToken, Consumer<Boolean> completion) {
+        worker.post(() -> {
+            boolean success = false;
+            try {
+                String nextUrl = address.trim();
+                if (nextUrl.isEmpty() && newToken.trim().isEmpty()) {
+                    success = true;
+                } else {
+                    String token = newToken.trim().isEmpty()
+                        ? readEncryptedKey("cloud-service-token.enc") : newToken.trim();
+                    JSONObject response = fetchCloudCredentials(nextUrl, token);
+                    applyCloudCredentials(response);
+                    if (!newToken.trim().isEmpty())
+                        writeEncryptedKey("cloud-service-token.enc", token);
+                    android.util.AtomicFile file =
+                        new android.util.AtomicFile(new File(root, "cloud-service-url.txt"));
+                    FileOutputStream out = file.startWrite();
+                    try {
+                        out.write(nextUrl.getBytes(StandardCharsets.UTF_8));
+                        file.finishWrite(out);
+                    } catch (Exception failure) {
+                        file.failWrite(out);
+                        throw failure;
+                    }
+                    cloudServiceUrl = nextUrl;
+                    success = true;
+                }
+                error = "";
+            } catch (Exception failure) {
+                error = safeMessage(failure);
+                emit();
+            }
+            boolean result = success;
+            main.post(() -> completion.accept(result));
+        });
+    }
+    private JSONObject fetchCloudCredentials(String address, String token) throws Exception {
+        java.net.URI source = new java.net.URI(address);
+        if (!"https".equals(source.getScheme()) || source.getHost() == null ||
+            source.getRawUserInfo() != null || source.getRawQuery() != null ||
+            source.getRawFragment() != null || token.length() < 32 ||
+            token.contains("\r") || token.contains("\n"))
+            throw new IllegalArgumentException("请填写有效的云端服务 HTTPS 地址和令牌");
+        String basePath = source.getPath() == null ? "" : source.getPath();
+        if (basePath.endsWith("/sign-upload"))
+            basePath = basePath.substring(0, basePath.length() - "sign-upload".length());
+        else if (!basePath.endsWith("/")) basePath += "/";
+        java.net.URI endpoint = new java.net.URI("https", null, source.getHost(), source.getPort(),
+            basePath + "credentials", null, null);
+        javax.net.ssl.HttpsURLConnection connection =
+            (javax.net.ssl.HttpsURLConnection) endpoint.toURL().openConnection();
+        connection.setRequestMethod("POST");
+        connection.setConnectTimeout(10_000);
+        connection.setReadTimeout(20_000);
+        connection.setUseCaches(false);
+        connection.setInstanceFollowRedirects(false);
+        connection.setDoOutput(true);
+        connection.setRequestProperty("Authorization", "Bearer " + token);
+        connection.setRequestProperty("Content-Type", "application/json");
+        byte[] body = new JSONObject().put("action", "fetch")
+            .put("providers", new JSONArray()
+                .put("ark").put("glm").put("deepseek").put("wan").put("kling").put("minimax"))
+            .toString().getBytes(StandardCharsets.UTF_8);
+        try {
+            try (java.io.OutputStream output = connection.getOutputStream()) { output.write(body); }
+            int status = connection.getResponseCode();
+            if (status != 200)
+                throw new IOException(status == 401 ? "云端服务令牌不匹配" : "云端密钥服务暂时不可用");
+            try (InputStream input = connection.getInputStream();
+                 java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream()) {
+                byte[] buffer = new byte[2048];
+                int count;
+                while ((count = input.read(buffer)) >= 0) {
+                    if (bytes.size() + count > 16_384)
+                        throw new IOException("云端密钥响应过大");
+                    bytes.write(buffer, 0, count);
+                }
+                return new JSONObject(bytes.toString(StandardCharsets.UTF_8.name()));
+            }
+        } finally {
+            connection.disconnect();
+        }
+    }
+    private void applyCloudCredentials(JSONObject response) throws Exception {
+        JSONObject keys = response.optJSONObject("api_keys");
+        if (keys == null) throw new IOException("云端密钥响应无效");
+        String[][] accounts = {
+            {"ark", "ark-api-key.enc"}, {"glm", "glm-main-api-key.enc"},
+            {"deepseek", "deepseek-main-api-key.enc"}, {"wan", "wan-api-key.enc"},
+            {"kling", "kling-api-key.enc"}, {"minimax", "minimax-api-key.enc"}
+        };
+        for (String[] account : accounts) {
+            String value = keys.optString(account[0], "");
+            if (value.isEmpty() || value.length() > 4096 ||
+                value.indexOf('\r') >= 0 || value.indexOf('\n') >= 0) continue;
+            writeEncryptedKey(account[1], value);
+            switch (account[0]) {
+            case "ark": arkApiKey = value; break;
+            case "glm":
+                glmApiKey = value;
+                if (model.startsWith("glm-")) apiKey = value;
+                break;
+            case "deepseek":
+                deepseekApiKey = value;
+                if (model.equals("deepseek-flash")) apiKey = value;
+                break;
+            case "wan": wanApiKey = value; break;
+            case "kling": klingApiKey = value; break;
+            case "minimax": miniMaxApiKey = value; break;
+            default: break;
+            }
+        }
+        String workspace = response.optString("wan_workspace_id", "");
+        if (workspace.matches("(?:ws|llm)-[A-Za-z0-9_-]{1,120}")) wanWorkspaceId = workspace;
     }
     void importFile(Uri uri, Consumer<ImportedFile> completion) {
         worker.post(() -> {

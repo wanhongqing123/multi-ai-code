@@ -838,6 +838,8 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         LinearLayout form = column();
         form.setPadding(dp(18), dp(8), dp(18), dp(8));
         EditText url = field("HTTPS API 地址", state.baseUrl), name = field("模型名称", state.model),
+                 cloudUrl = field("云端密钥与素材服务地址", controller.cloudServiceUrl()),
+                 cloudToken = field("云端服务令牌（留空保留原令牌）", ""),
                  key = field("API Key（留空保留原密钥）", ""),
                  arkKey = field("方舟创作 Key（留空保留原密钥）", ""),
                  wanKey = field("百炼创作 Key（Wan / Qwen，留空保留原密钥）", ""),
@@ -845,6 +847,8 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                  klingKey = field("可灵 API Key（留空保留原密钥）", ""),
                  miniMaxKey = field("海螺 / MiniMax API Key（留空保留原密钥）", "");
         key.setInputType(
+            android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        cloudToken.setInputType(
             android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
         arkKey.setInputType(
             android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
@@ -911,6 +915,10 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             }
         });
         form.addView(key, matchWrap());
+        form.addView(cloudUrl, matchWrap());
+        form.addView(cloudToken, matchWrap());
+        form.addView(text("云端已配置的模型 Key 会同步到 Android Keystore 加密文件；手动填写可作兜底。火山 AccessKey 留在服务器。",
+                         12, MaiChatTheme.SECONDARY), matchWrap());
         form.addView(arkKey, matchWrap());
         form.addView(wanKey, matchWrap());
         form.addView(wanWorkspace, matchWrap());
@@ -937,7 +945,16 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         dialog.setOnShowListener(
             v -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(button -> {
                 dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
-                controller.save(url.getText().toString(), name.getText().toString(),
+                controller.saveCloudService(cloudUrl.getText().toString(),
+                    cloudToken.getText().toString(), cloudSaved -> {
+                    if (!cloudSaved) {
+                        validation.setText(controller.state.error);
+                        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
+                        return;
+                    }
+                    if (wanWorkspace.getText().toString().trim().isEmpty())
+                        wanWorkspace.setText(controller.wanWorkspaceId());
+                    controller.save(url.getText().toString(), name.getText().toString(),
                     new String[] {"on-request", "unless-trusted", "never"}[policy.getSelectedItemPosition()],
                     key.getText().toString(), wire.getSelectedItemPosition() == 0
                         ? "chat_completions" : "responses", glmChatUrl[0], success -> {
@@ -970,6 +987,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                                 });
                         });
                     });
+                });
             }));
         dialog.show();
     }

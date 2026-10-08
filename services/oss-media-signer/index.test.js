@@ -120,6 +120,37 @@ test('Ark Assets works without OSS configuration', async () => {
   assert.deepEqual(JSON.parse(status.body), {
     configured: [], assets_configured: true, storage_configured: false
   });
-  assert.equal((await handle({ ...create, rawPath: '/credentials',
-    body: JSON.stringify({ action: 'fetch', providers: ['ark'] }) })).statusCode, 400);
+  const fetched = await handle({ ...create, rawPath: '/credentials',
+    body: JSON.stringify({ action: 'fetch', providers: ['ark'] }) });
+  assert.deepEqual(JSON.parse(fetched.body).api_keys, {});
+});
+
+test('synchronizes only requested model keys and never returns AccessKeys', async () => {
+  const configured = { ...env,
+    MAICHAT_ARK_API_KEY: 'ark-project-key', MAICHAT_GLM_API_KEY: 'glm-key',
+    MAICHAT_DEEPSEEK_API_KEY: 'deepseek-key', MAICHAT_WAN_API_KEY: 'wan-key',
+    MAICHAT_WAN_WORKSPACE_ID: 'ws-example', MAICHAT_KLING_API_KEY: 'kling-key',
+    MAICHAT_MINIMAX_API_KEY: 'minimax-key',
+    VOLC_ACCESS_KEY_ID: 'volc-ak', VOLC_SECRET_ACCESS_KEY: 'volc-sk' };
+  const handle = createHandler({ env: configured });
+  const credentials = body => ({ ...request(body), rawPath: '/credentials' });
+  const status = await handle(credentials({ action: 'status' }));
+  assert.deepEqual(JSON.parse(status.body).configured,
+    ['ark', 'glm', 'deepseek', 'wan', 'kling', 'minimax']);
+  const fetched = await handle(credentials({ action: 'fetch',
+    providers: ['ark', 'wan', 'kling'] }));
+  assert.deepEqual(JSON.parse(fetched.body), {
+    api_keys: { ark: 'ark-project-key', wan: 'wan-key', kling: 'kling-key' },
+    wan_workspace_id: 'ws-example'
+  });
+  assert.equal(fetched.headers['Cache-Control'], 'no-store');
+  assert.equal(fetched.headers.Pragma, 'no-cache');
+  assert.ok(!fetched.body.includes('volc-sk'));
+  assert.ok(!fetched.body.includes('deepseek-key'));
+  assert.equal((await handle(credentials({ action: 'fetch',
+    providers: ['volc_access'] }))).statusCode, 400);
+  assert.equal((await handle(credentials({ action: 'fetch',
+    providers: ['ark', 'ark'] }))).statusCode, 400);
+  assert.equal((await handle({ ...credentials({ action: 'fetch', providers: ['ark'] }),
+    headers: { Authorization: 'Bearer wrong' } })).statusCode, 401);
 });

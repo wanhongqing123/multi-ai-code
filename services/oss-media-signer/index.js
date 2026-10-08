@@ -12,7 +12,8 @@ function jsonResponse(statusCode, value) {
     statusCode,
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
-      'Cache-Control': 'no-store'
+      'Cache-Control': 'no-store',
+      Pragma: 'no-cache'
     },
     body: JSON.stringify(value)
   };
@@ -46,6 +47,7 @@ function createHandler(options = {}) {
   });
   const newID = options.newID || randomUUID;
   const currentTime = options.currentTime || (() => new Date());
+  const callArk = options.callArk || require('./ark-sign').callArk;
   let client;
 
   return async function handle(eventInput) {
@@ -58,19 +60,69 @@ function createHandler(options = {}) {
     }
     const method = event?.requestContext?.http?.method || event?.httpMethod || event?.method;
     const route = event?.rawPath || event?.path || '/sign-upload';
-    if (method !== 'POST' || !route.endsWith('/sign-upload'))
+    if (method !== 'POST' || (!route.endsWith('/sign-upload') && !route.endsWith('/ark-assets')))
       return jsonResponse(404, { error: 'Not found' });
 
-    const token = env.MAICHAT_OSS_SIGNER_TOKEN || '';
-    const bucket = env.MAICHAT_OSS_BUCKET || '';
-    const region = env.MAICHAT_OSS_REGION || '';
-    if (token.length < 32 || !bucket || !/^oss-[a-z0-9-]+$/.test(region) ||
-        !env.ALIBABA_CLOUD_ACCESS_KEY_ID || !env.ALIBABA_CLOUD_ACCESS_KEY_SECRET)
-      return jsonResponse(503, { error: 'Storage signer is not configured' });
+    const token = env.MAICHAT_MEDIA_SERVICE_TOKEN || env.MAICHAT_OSS_SIGNER_TOKEN || '';
+    if (token.length < 32) return jsonResponse(503, { error: 'Service token is not configured' });
     if (!hasBearerToken(event.headers, token))
       return jsonResponse(401, { error: 'Unauthorized' });
 
     const body = requestBody(event);
+    if (route.endsWith('/ark-assets')) {
+      const accessKeyId = env.VOLC_ACCESS_KEY_ID || '';
+      const secretKey = env.VOLC_SECRET_ACCESS_KEY || '';
+      if (!accessKeyId || !secretKey)
+        return jsonResponse(503, { error: 'Ark Assets credentials are not configured' });
+      const action = body?.action;
+      const project = env.VOLC_ARK_PROJECT_NAME || 'default';
+      let payload;
+      if (action === 'create_group' && validText(body.name, 64)) {
+        payload = { Name: body.name, Description: validText(body.description, 300)
+          ? body.description : '', GroupType: 'AIGC', ProjectName: project };
+      } else if (action === 'create_asset' && validId(body.group_id, 'group-') &&
+                 validHttpsUrl(body.url) && validText(body.name || 'Image', 64)) {
+        payload = { GroupId: body.group_id, URL: body.url, AssetType: 'Image',
+          Name: body.name || 'Image', ProjectName: project };
+      } else if (action === 'get_asset' && validId(body.asset_id, 'asset-')) {
+        payload = { Id: body.asset_id, ProjectName: project };
+      } else if (action === 'list_groups') {
+        payload = { Filter: { GroupType: 'AIGC' }, MaxResults: 100, ProjectName: project };
+        if (body.next_token && validText(body.next_token, 2048))
+          payload.NextToken = body.next_token;
+      } else if (action === 'list_assets') {
+        payload = { Filter: { GroupType: 'AIGC' }, MaxResults: 100, ProjectName: project };
+        if (body.group_id && validId(body.group_id, 'group-'))
+          payload.Filter.GroupIds = [body.group_id];
+        if (body.next_token && validText(body.next_token, 2048))
+          payload.NextToken = body.next_token;
+      } else {
+        return jsonResponse(400, { error: 'Invalid Ark Assets request' });
+      }
+      const arkAction = {
+        create_group: 'CreateAssetGroup', create_asset: 'CreateAsset',
+        get_asset: 'GetAsset', list_groups: 'ListAssetGroups', list_assets: 'ListAssets'
+      }[action];
+      try {
+        const response = await callArk(arkAction, payload, { accessKeyId, secretKey });
+        const error = response?.ResponseMetadata?.Error;
+        if (error) return jsonResponse(502, { error: error.Message || 'Ark rejected the request',
+          provider_code: error.Code || '', request_id: response.ResponseMetadata.RequestId || '' });
+        const result = response?.Result || response;
+        if (!result || typeof result !== 'object')
+          return jsonResponse(502, { error: 'Ark returned an invalid response' });
+        return jsonResponse(200, { result });
+      } catch (error) {
+        return jsonResponse(502, { error: 'Ark Assets request failed',
+          provider_code: error?.response?.data?.ResponseMetadata?.Error?.Code || '',
+          provider_message: error?.response?.data?.ResponseMetadata?.Error?.Message || '' });
+      }
+    }
+    const bucket = env.MAICHAT_OSS_BUCKET || '';
+    const region = env.MAICHAT_OSS_REGION || '';
+    if (!bucket || !/^oss-[a-z0-9-]+$/.test(region) ||
+        !env.ALIBABA_CLOUD_ACCESS_KEY_ID || !env.ALIBABA_CLOUD_ACCESS_KEY_SECRET)
+      return jsonResponse(503, { error: 'Storage signer is not configured' });
     const filename = body?.filename;
     const size = body?.size_bytes;
     const extension = typeof filename === 'string'
@@ -109,6 +161,24 @@ function createHandler(options = {}) {
       return jsonResponse(502, { error: 'Could not sign the video upload' });
     }
   };
+}
+
+function validText(value, maximumBytes) {
+  return typeof value === 'string' && value.trim().length > 0 &&
+    Buffer.byteLength(value) <= maximumBytes;
+}
+
+function validId(value, prefix) {
+  return typeof value === 'string' && value.startsWith(prefix) && value.length <= 128 &&
+    /^[a-zA-Z0-9_-]+$/.test(value);
+}
+
+function validHttpsUrl(value) {
+  if (typeof value !== 'string' || value.length > 3000) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && !!url.hostname && !url.username && !url.password;
+  } catch { return false; }
 }
 
 exports.handler = createHandler();

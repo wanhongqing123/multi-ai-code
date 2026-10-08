@@ -1,6 +1,11 @@
-# MaiChat Seedance 视频 OSS 签名服务
+# MaiChat 素材签名服务
 
-这个函数只签发临时链接，不接收视频字节。iPhone 将原始 MP4/MOV 直接 PUT 到私有
+当前服务提供独立的火山 Ark Assets 素材接口，使用服务器持有的 AccessKey 签名。
+已有方舟可访问的 HTTPS 图片 URL 时，可直接创建 AIGC 素材，不需要 OSS。
+本地照片先上传到 OSS 的能力排在后续；**服务器签名接口已接入，不等于 App
+本地照片一键入库已完成**。
+
+原有 OSS 视频签名接口仍保留：它只签发临时链接，不接收视频字节。iPhone 将原始 MP4/MOV 直接 PUT 到私有
 阿里云 OSS Bucket，再将最长 24 小时有效的签名 GET 链接交给 Seedance。视频不经过
 腾讯 IM 云文件服务。方舟能否读取这个具体 Bucket 的签名链接，仍需配置完成后做一次
 真实小视频验证。
@@ -23,21 +28,33 @@
      }]
    }
    ```
-3. 在函数计算创建 Node.js 20 函数，运行 Handler `index.handler`，配置 HTTPS
-   HTTP 触发器。函数代码和依赖可在本目录执行 `npm ci --omit=dev` 后打包上传。
-4. 在**函数环境变量**配置：
+3. 可以在函数计算运行 `index.handler`，也可在普通 Linux 云服务器上运行
+   `node server.js`，由 Nginx 为其提供 HTTPS 入口。运行环境使用 Node.js 20 及以上；
+   OSS 功能需要执行 `npm ci --omit=dev` 安装依赖，只有 Ark Assets 时不需要 OSS SDK。
+4. 在**服务器受限环境文件**配置：
 
    | 名称 | 内容 |
    |---|---|
-   | `MAICHAT_OSS_BUCKET` | Bucket 名称 |
-   | `MAICHAT_OSS_REGION` | `oss-cn-hangzhou` 这类 OSS 地域 |
-   | `ALIBABA_CLOUD_ACCESS_KEY_ID` | 专用 RAM 身份的 AccessKey ID |
-   | `ALIBABA_CLOUD_ACCESS_KEY_SECRET` | 专用 RAM 身份的 Secret |
-   | `MAICHAT_OSS_SIGNER_TOKEN` | 自行生成的至少 32 字符随机令牌 |
+   | `MAICHAT_MEDIA_SERVICE_TOKEN` | 至少 32 字符的客户端 Bearer 令牌；兼容旧名 `MAICHAT_OSS_SIGNER_TOKEN` |
+   | `VOLC_ACCESS_KEY_ID`、`VOLC_SECRET_ACCESS_KEY` | 火山 Assets API 签名凭据 |
+   | `VOLC_ARK_PROJECT_NAME` | 方舟项目名，默认 `default`，须与生成任务使用的项目一致 |
+   | `MAICHAT_OSS_BUCKET`、`MAICHAT_OSS_REGION` | 可选，OSS Bucket 与地域 |
+   | `ALIBABA_CLOUD_ACCESS_KEY_ID`、`ALIBABA_CLOUD_ACCESS_KEY_SECRET` | 可选，专用 OSS RAM 身份 |
 
-   可以用 `openssl rand -hex 32` 生成令牌。长期 OSS 密钥只放函数配置，不填在
-   MaiChat App，也不要提交到仓库。函数的 HTTP 触发器由代码检查 Bearer 令牌；
+   可以用 `openssl rand -hex 32` 生成令牌。长期 AK/SK 只放服务器配置，不填在
+   MaiChat App，也不要提交到仓库。服务器只监听 `127.0.0.1:9000`，公网通过 HTTPS
+   反向代理访问；所有请求都检查 Bearer 令牌。预留的火山 IAM API Key 另存于
+   `/etc/maichat/volc-iam-api-key.json`（仅 root 可读），当前服务不会加载它。
+   若使用函数计算，HTTP 触发器也必须保留鉴权；
    若改用现有业务后端，保持下面的接口格式即可。
+
+## Ark Assets 素材接口
+
+`POST /ark-assets` 的 JSON `action` 支持 `list_groups`、`create_group`、
+`create_asset`、`get_asset`、`list_assets`。`create_asset` 接收 `group_id`、
+方舟可访问的 HTTPS `url` 与可选名称；`get_asset` 返回实际异步状态，只有
+`Active` 的素材 ID 才可作为 `asset://<ID>` 给 Seedance 使用。服务端不返回
+AccessKey，且不接收图片字节。本地照片没有 HTTPS 地址时，需等待后续的 OSS 上传接线。
 
 ## App 配置
 

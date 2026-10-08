@@ -68,3 +68,51 @@ test('fails closed when credentials or route are missing', async () => {
   wrongRoute.rawPath = '/other';
   assert.equal((await active(wrongRoute)).statusCode, 404);
 });
+
+test('uses the Ark signing key only for validated asset actions', async () => {
+  const calls = [];
+  const assetEnv = { ...env, VOLC_ACCESS_KEY_ID: 'volc-ak',
+    VOLC_SECRET_ACCESS_KEY: 'volc-sk', VOLC_ARK_PROJECT_NAME: 'my-project' };
+  const handle = createHandler({ env: assetEnv, callArk: async (action, payload, credentials) => {
+    calls.push({ action, payload, credentials });
+    if (action === 'CreateAssetGroup') return { Result: { Id: 'group-1234567890' } };
+    if (action === 'CreateAsset') return { Result: { Id: 'asset-1234567890' } };
+    return { Result: { Id: 'asset-1234567890', Status: 'Active' } };
+  } });
+  const assetRequest = body => ({ ...request(body), rawPath: '/ark-assets' });
+  const group = await handle(assetRequest({ action: 'create_group', name: 'portrait' }));
+  assert.equal(JSON.parse(group.body).result.Id, 'group-1234567890');
+  const asset = await handle(assetRequest({ action: 'create_asset',
+    group_id: 'group-1234567890', name: 'portrait',
+    url: 'https://images.example.com/portrait.jpg' }));
+  assert.equal(JSON.parse(asset.body).result.Id, 'asset-1234567890');
+  const state = await handle(assetRequest({ action: 'get_asset', asset_id: 'asset-1234567890' }));
+  assert.equal(JSON.parse(state.body).result.Status, 'Active');
+  assert.equal(calls[0].payload.GroupType, 'AIGC');
+  assert.equal(calls[0].payload.ProjectName, 'my-project');
+  assert.equal(calls[1].payload.AssetType, 'Image');
+  assert.equal(calls[1].credentials.secretKey, 'volc-sk');
+  assert.ok(!asset.body.includes('volc-sk'));
+  const invalid = await handle(assetRequest({ action: 'create_asset',
+    group_id: 'group-1234567890', url: 'http://localhost/photo.jpg' }));
+  assert.equal(invalid.statusCode, 400);
+  assert.equal(calls.length, 3);
+});
+
+test('Ark Assets works without OSS configuration', async () => {
+  const assetEnv = {
+    MAICHAT_MEDIA_SERVICE_TOKEN: 'abcdef0123456789abcdef0123456789',
+    VOLC_ACCESS_KEY_ID: 'ark-ak', VOLC_SECRET_ACCESS_KEY: 'ark-sk'
+  };
+  const handle = createHandler({ env: assetEnv, callArk: async (action, payload) => {
+    assert.equal(action, 'CreateAsset');
+    assert.equal(payload.URL, 'https://images.example.com/portrait.png');
+    return { Result: { Id: 'asset-1234567890' } };
+  } });
+  const create = { rawPath: '/ark-assets', requestContext: { http: { method: 'POST' } },
+    headers: { Authorization: `Bearer ${assetEnv.MAICHAT_MEDIA_SERVICE_TOKEN}` },
+    body: JSON.stringify({ action: 'create_asset', group_id: 'group-1234567890',
+      url: 'https://images.example.com/portrait.png' }) };
+  assert.equal((await handle(create)).statusCode, 200);
+  assert.equal((await handle({ ...create, rawPath: '/sign-upload' })).statusCode, 503);
+});

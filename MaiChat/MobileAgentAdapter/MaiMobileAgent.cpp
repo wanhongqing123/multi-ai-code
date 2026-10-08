@@ -5,7 +5,6 @@
 #include "MaiAgentSendMediaTool.h"
 #include "MaiAppStorageTool.h"
 #include "MaiArkMediaTools.h"
-#include "MaiArkAssetTools.h"
 #include "MaiCurlTools.h"
 #include "MaiCvImageTools.h"
 #include "MaiCvVideoAnalysis.h"
@@ -67,12 +66,11 @@ constexpr auto kMarkdownBaseInstructions =
     "and retry the selected model with new paid approval. If image-related "
     "rejection persists, consider an FFmpeg oil-paint-style derivative and "
     "describe permitted details lost in processing. Do not switch models "
-    "before these bounded same-model attempts. If direct photo submission is "
-    "rejected, check ark_assets for an existing Active private asset or, when "
-    "the user has rights to the source, submit it for Ark review. Use only an "
-    "Active asset and trust the actual Ark result; do not promise that a face "
-    "will pass. If Ark requires a specific authorization route, explain it. "
-    "Do not transform a prohibited identity merely to evade a provider rule. "
+    "before these bounded same-model attempts. But if the provider explicitly "
+    "forbids a recognizable real-person reference without an authorized asset "
+    "and the user needs that person's identity, do not transform the photo to "
+    "hide the face and reconstruct it in the prompt. Keep the selected model; "
+    "briefly offer its authorized-asset path or a visibly fictional character. "
     "Offer another model only if the user wants the original person's likeness, "
     "and ask before switching. Do not claim the account has no authorized "
     "portrait assets unless a tool actually checked; ask for an asset ID. "
@@ -386,22 +384,8 @@ struct MaiMobileAgent {
     } else {
       tools->add(makeMaiSeedanceVideoTool(arkKey, config.caBundlePath));
     }
-    if (ossConfig.is_object() && ossConfig.value("assets_configured", false)) {
-      tools->add(makeMaiArkAssetTool(
-          [dispatcher = hostTools](const std::string &request,
-                                   const MaiToolContext &context) -> MaiResult<std::string> {
-            if (context.isCanceled()) return {MaiErrorCode::Canceled, "Asset request was canceled"};
-            const MaiToolResult response =
-                callMaiMobileHostTool(dispatcher, "mobile_ark_assets", request);
-            if (response.hasError()) return response.error();
-            return response.output();
-          }));
-    } else {
-      tools->add(makeMaiArkAssetTool());
-    }
 #else
     tools->add(makeMaiSeedanceVideoTool(arkKey, config.caBundlePath));
-    tools->add(makeMaiArkAssetTool());
 #endif
     tools->add(makeMaiSeedreamImageTool(arkKey, config.caBundlePath));
     const auto glmKey = [dispatcher = hostTools]() -> std::string {

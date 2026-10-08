@@ -1,4 +1,5 @@
 import MaiChatCore
+import CryptoKit
 import SwiftUI
 import UserNotifications
 import UIKit
@@ -231,15 +232,18 @@ struct MaiChatApp: App {
         let wanKeyPresent = !wanKey.isEmpty
         let wanWorkspacePresent = !(UserDefaults.standard.string(
             forKey: "wan-model-studio-workspace-id") ?? "").isEmpty
-        let wanCredentialFields = ["key_present": String(wanKeyPresent),
+        var wanCredentialFields = ["key_present": String(wanKeyPresent),
                                    "workspace_id_present": String(wanWorkspacePresent)]
+        #if DEBUG
+        if wanKeyPresent {
+            wanCredentialFields["key_fingerprint"] = SHA256.hash(data: Data(wanKey.utf8))
+                .prefix(6).map { String(format: "%02x", $0) }.joined()
+        }
+        #endif
         AppDiagnosticLog.shared.record(
             level: .info, category: "model-studio", event: "credential-state",
             fields: wanCredentialFields
         )
-        Task.detached(priority: .utility) {
-            _ = try? await AICloudCredentialSync.syncIfConfigured()
-        }
         RemoteIMSystemNotificationCenter.shared.install()
     }
 

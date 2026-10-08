@@ -5,7 +5,6 @@
 #include <json.hpp>
 
 #include "MaiArkMediaTools.h"
-#include "MaiArkAssetTools.h"
 #include "MaiFilePath.h"
 #include "MaiFileSystem.h"
 #include "MaiIdGenerator.h"
@@ -76,21 +75,15 @@ void testDynamicCredentialAndToolIdentity() {
     imageInfo = nlohmann::json::parse(image->execute(discover, context).output());
     CHECK(videoInfo.at("configured").get<bool>());
     CHECK(imageInfo.at("configured").get<bool>());
-    CHECK(videoInfo.at("bound_model") == "doubao-seedance-2-0-mini-260615");
+    CHECK(videoInfo.at("bound_model") == "doubao-seedance-2-5-260628");
     CHECK(videoInfo.at("models").size() == 3);
-    CHECK(videoInfo.at("models")[0].at("id") == "doubao-seedance-2-0-mini-260615");
     CHECK(videoInfo.at("models")[1].at("id") == "doubao-seedance-2-0-fast-260128");
-    CHECK(videoInfo.at("models")[2].at("id") == "doubao-seedance-2-0-260128");
+    CHECK(videoInfo.at("models")[2].at("id") == "doubao-seedance-2-0-mini-260615");
     CHECK(videoInfo.at("models")[2].at("duration_seconds").at("maximum") == 15);
-    CHECK(videoInfo.at("models")[2].at("resolutions").dump().find("4k") != std::string::npos);
-    CHECK(videoInfo.at("models").dump().find("doubao-seedance-2-5-260628") == std::string::npos);
     CHECK(videoInfo.at("capabilities")[0].at("tool_status") == "implemented_unverified");
-    CHECK(videoInfo.dump().find("1-9 reference images") != std::string::npos);
-    CHECK(video->description().find("Seedance 2.0 Mini (default)") != std::string::npos);
-    CHECK(video->description().find("Seedance 2.5 is disabled") != std::string::npos);
-    CHECK(video->parametersSchema().find("doubao-seedance-2-5-260628") == std::string::npos);
+    CHECK(videoInfo.dump().find("1-30 reference images") != std::string::npos);
     CHECK(video->description().find("mode=create with reference_image_paths") != std::string::npos);
-    CHECK(video->description().find("cannot list the account's portrait assets itself") !=
+    CHECK(video->description().find("cannot list the account's portrait assets") !=
           std::string::npos);
     CHECK(videoInfo.dump().find(key) == std::string::npos);
     CHECK(imageInfo.dump().find(key) == std::string::npos);
@@ -122,28 +115,36 @@ void testInvalidInputsDoNotReachNetwork() {
     nlohmann::json tooManyReferences = {{"action", "delegate"},
                                         {"message", "Create a video"},
                                         {"reference_image_paths", nlohmann::json::array()}};
-    for (int index = 0; index < 10; ++index)
+    for (int index = 0; index < 31; ++index)
         tooManyReferences["reference_image_paths"].push_back("image.png");
     const auto excess = video->execute(tooManyReferences.dump(), context);
     CHECK(excess.hasError());
-    CHECK(excess.error().message().find("at most 9") != std::string::npos);
+    CHECK(excess.error().message().find("at most 30") != std::string::npos);
     const auto tooLong = video->execute(
-        R"({"action":"delegate","message":"Create a video","production":{"duration":16,"ratio":"16:9","resolution":"720p"}})",
+        R"({"action":"delegate","message":"Create a video","production":{"duration":31,"ratio":"16:9","resolution":"720p"}})",
         context);
     CHECK(tooLong.hasError());
-    CHECK(tooLong.error().message().find("4 to 15") != std::string::npos);
-    const auto disabled = video->execute(
-        R"({"action":"delegate","model":"doubao-seedance-2-5-260628","message":"Create a video","production":{"duration":4,"ratio":"16:9","resolution":"480p"}})",
+    CHECK(tooLong.error().message().find("4 to 30") != std::string::npos);
+    const auto thirtySeconds = video->execute(
+        R"({"action":"delegate","message":"Animate the frame","image_path":"missing.png","production":{"duration":30,"ratio":"adaptive","resolution":"1080p"}})",
         context);
-    CHECK(disabled.hasError());
-    CHECK(disabled.error().message().find("disabled") != std::string::npos);
-    CHECK(!video->requiresPerCallApproval(
-        R"({"action":"delegate","model":"doubao-seedance-2-5-260628","message":"Create a video"})"));
+    CHECK(thirtySeconds.hasError());
+    CHECK(thirtySeconds.error().message().find("image_path must contain") != std::string::npos);
     const auto unsupported4k = video->execute(
-        R"({"action":"delegate","message":"Create a video","production":{"duration":10,"ratio":"16:9","resolution":"4k"}})",
+        R"({"action":"delegate","message":"Create a video","production":{"duration":20,"ratio":"16:9","resolution":"4k"}})",
         context);
     CHECK(unsupported4k.hasError());
-    CHECK(unsupported4k.error().message().find("480p or 720p") != std::string::npos);
+    CHECK(unsupported4k.error().message().find("1080p") != std::string::npos);
+    const auto invalidFirstFrameRatio = video->execute(
+        R"({"action":"delegate","message":"Animate the frame","image_path":"first.png","production":{"duration":20,"ratio":"9:16","resolution":"720p"}})",
+        context);
+    CHECK(invalidFirstFrameRatio.hasError());
+    CHECK(invalidFirstFrameRatio.error().message().find("ratio=adaptive") != std::string::npos);
+    const auto invalidEditDuration = video->execute(
+        R"({"action":"delegate","mode":"edit","message":"Change the scene","video_url":"https://example.com/source.mp4","production":{"duration":20,"ratio":"adaptive","resolution":"720p"}})",
+        context);
+    CHECK(invalidEditDuration.hasError());
+    CHECK(invalidEditDuration.error().message().find("duration=-1") != std::string::npos);
     const auto fastTooLong = video->execute(
         R"({"action":"delegate","model":"doubao-seedance-2-0-fast-260128","message":"Create a video","production":{"duration":16,"ratio":"16:9","resolution":"720p"}})",
         context);
@@ -154,16 +155,6 @@ void testInvalidInputsDoNotReachNetwork() {
         context);
     CHECK(miniHighResolution.hasError());
     CHECK(miniHighResolution.error().message().find("480p or 720p") != std::string::npos);
-    const auto standardFullHd = video->execute(
-        R"({"action":"delegate","model":"doubao-seedance-2-0-260128","message":"Animate this portrait","image_path":"missing.png","production":{"duration":15,"ratio":"3:4","resolution":"1080p"}})",
-        context);
-    CHECK(standardFullHd.hasError());
-    CHECK(standardFullHd.error().message().find("image_path must contain") != std::string::npos);
-    const auto standard4k = video->execute(
-        R"({"action":"delegate","model":"doubao-seedance-2-0-260128","message":"Animate this portrait","image_path":"missing.png","production":{"duration":15,"ratio":"3:4","resolution":"4k"}})",
-        context);
-    CHECK(standard4k.hasError());
-    CHECK(standard4k.error().message().find("image_path must contain") != std::string::npos);
     nlohmann::json fastReferences = {{"action", "delegate"},
                                      {"model", "doubao-seedance-2-0-fast-260128"},
                                      {"message", "Create a video"},
@@ -505,59 +496,6 @@ void testLiveRevisionWhenExplicitlyConfigured() {
     ++failures;
 }
 
-void testVirtualAssetFlow() {
-    const MaiFilePath workspace = MaiFileSystem::temporaryDirectory().append(
-        MaiFilePath::fromUtf8(MaiIdGenerator::generate("ark_assets_")));
-    CHECK(!MaiFileSystem::createDirectories(workspace));
-    const MaiFilePath image = workspace.append(MaiFilePath::fromUtf8("portrait.jpg"));
-    CHECK(!MaiFileSystem::writeFile(image, "test image bytes"));
-    MaiToolContext context;
-    context.root = workspace.toUtf8();
-    int calls = 0;
-    auto tool = makeMaiArkAssetTool(
-        [&](const std::string& raw, const MaiToolContext&) -> MaiResult<std::string> {
-            const auto request = nlohmann::json::parse(raw);
-            ++calls;
-            if (request.at("action") == "upload_image") {
-                const MaiFilePath submitted =
-                    MaiFilePath::fromUtf8(request.at("image_path").get<std::string>());
-                CHECK(submitted.baseName().toUtf8() == "portrait.jpg");
-                CHECK(MaiFileSystem::exists(submitted));
-                CHECK(request.at("group_id") == "group-1234567890");
-                return std::string{R"({"Id":"asset-1234567890","Status":"Processing"})"};
-            }
-            if (request.at("action") == "create_asset") {
-                CHECK(request.at("url") == "https://example.com/portrait.jpg");
-                return std::string{R"({"Id":"asset-1234567890","Status":"Processing"})"};
-            }
-            return std::string{R"({"Id":"asset-1234567890","Status":"Active"})"};
-        });
-    CHECK(tool->name() == "ark_assets");
-    CHECK(!tool->requiresApproval(R"({"action":"get_asset","asset_id":"asset-1234567890"})"));
-    CHECK(tool->requiresApproval(R"({"action":"upload_image"})"));
-    const auto uploaded = tool->execute(
-        R"({"action":"upload_image","group_id":"group-1234567890","image_path":"portrait.jpg"})",
-        context);
-    CHECK(!uploaded.hasError());
-    CHECK(nlohmann::json::parse(uploaded.output()).at("Status") == "Processing");
-    const auto fromUrl = tool->execute(
-        R"({"action":"create_asset","group_id":"group-1234567890","url":"https://example.com/portrait.jpg"})",
-        context);
-    CHECK(!fromUrl.hasError());
-    const auto ready =
-        tool->execute(R"({"action":"get_asset","asset_id":"asset-1234567890"})", context);
-    CHECK(!ready.hasError());
-    CHECK(nlohmann::json::parse(ready.output()).at("asset_uri") == "asset://asset-1234567890");
-    CHECK(calls == 3);
-    CHECK(
-        tool->execute(
-                R"({"action":"upload_image","group_id":"group-1234567890","image_path":"missing.jpg"})",
-                context)
-            .hasError());
-    CHECK(calls == 3);
-    CHECK(!MaiFileSystem::removeFile(image));
-}
-
 }  // namespace
 
 int main() {
@@ -565,7 +503,6 @@ int main() {
     testInvalidInputsDoNotReachNetwork();
     testRevisionRejectsAnotherConversation();
     testLocalVideoUploadHandoffWithoutArkSubmission();
-    testVirtualAssetFlow();
     testLiveArkWhenExplicitlyConfigured();
     testLiveRevisionWhenExplicitlyConfigured();
     return failures == 0 ? 0 : 1;

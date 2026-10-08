@@ -51,9 +51,8 @@ final class AIMobileHostToolProvider {
         case "mobile_ssh_password": return await requestSSHPassword(arguments)
         case "mobile_ssh_trust_host": return await trustSSHHost(arguments)
         case "oss_video_upload_config":
-            return await privateServiceStatus()
-        case "mobile_oss_upload_video": return await uploadOssMedia(arguments, image: false)
-        case "mobile_ark_assets": return await arkAssets(arguments)
+            return Self.jsonSuccess(["configured": ossSignerConfiguration() != nil])
+        case "mobile_oss_upload_video": return await uploadOssVideo(arguments)
         case "mobile_gpu_info": return gpuInfo()
         case "mobile_transform_image": return await transformImage(arguments)
         case "mobile_beautify_image":
@@ -65,15 +64,13 @@ final class AIMobileHostToolProvider {
         case "mobile_preview_image": return previewImage(arguments)
         case "mobile_photos_add_to_album": return await addPhotosToAlbum(arguments)
         case "ark_api_key":
-            AIAssistantModel.shared.importPendingArkApiKey()
             return Self.jsonSuccess(["key": KeychainSecretStore(account: "seedance-ark-api-key")
                 .readSecretKey()])
         case "glm_api_key":
             let endpoint = AIAssistantModel.shared.settings.baseUrl
             let isGLM = URL(string: endpoint)?.host == "open.bigmodel.cn"
-            let current = KeychainSecretStore(account: "ai-assistant-glm-api-key").readSecretKey()
-            let legacy = KeychainSecretStore(account: "ai-assistant-api-key").readSecretKey()
-            return Self.jsonSuccess(["key": isGLM ? (current.isEmpty ? legacy : current) : ""])
+            return Self.jsonSuccess(["key": isGLM
+                ? KeychainSecretStore(account: "ai-assistant-api-key").readSecretKey() : ""])
         case "kling_api_key":
             return Self.jsonSuccess(["key": KeychainSecretStore(account: "kling-creative-api-key")
                 .readSecretKey()])
@@ -170,68 +167,28 @@ final class AIMobileHostToolProvider {
     private func ossSignerConfiguration() -> (url: URL, token: String)? {
         let rawURL = UserDefaults.standard.string(forKey: "oss-media-signer-url") ?? ""
         let token = KeychainSecretStore(account: "oss-media-signer-token").readSecretKey()
-        guard token.count >= 32, var components = URLComponents(string: rawURL),
+        guard token.count >= 32, let components = URLComponents(string: rawURL),
               components.scheme == "https", components.host?.isEmpty == false,
               components.user == nil, components.password == nil,
               components.query == nil, components.fragment == nil,
-              AICloudCredentialSync.credentialEndpoint(address: rawURL, token: token) != nil else {
+              components.path.hasSuffix("/sign-upload"), let url = components.url else {
             return nil
         }
-        if !components.path.hasSuffix("/sign-upload") {
-            let basePath = components.path.hasSuffix("/") ? components.path : components.path + "/"
-            components.path = basePath + "sign-upload"
-        }
-        guard let url = components.url else { return nil }
         return (url, token)
     }
 
-    private func privateServiceStatus() async -> AIMaiChatHostToolExecution {
-        guard let service = AICloudCredentialSync.serviceEndpoint() else {
-            return Self.jsonSuccess(["configured": false, "assets_configured": false])
-        }
-        do {
-            var request = URLRequest(url: service.url)
-            request.httpMethod = "POST"
-            request.cachePolicy = .reloadIgnoringLocalCacheData
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("Bearer \(service.token)", forHTTPHeaderField: "Authorization")
-            request.httpBody = try JSONSerialization.data(withJSONObject: ["action": "status"])
-            let configuration = URLSessionConfiguration.ephemeral
-            configuration.timeoutIntervalForRequest = 10
-            let session = URLSession(configuration: configuration,
-                                     delegate: AICloudNoRedirectDelegate(), delegateQueue: nil)
-            defer { session.finishTasksAndInvalidate() }
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200,
-                  data.count <= 16_384,
-                  let status = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                return Self.jsonSuccess(["configured": false, "assets_configured": false])
-            }
-            return Self.jsonSuccess([
-                "configured": status["storage_configured"] as? Bool ?? false,
-                "assets_configured": status["assets_configured"] as? Bool ?? false
-            ])
-        } catch {
-            return Self.jsonSuccess(["configured": false, "assets_configured": false])
-        }
-    }
-
-    private func uploadOssMedia(_ arguments: [String: Any], image: Bool) async -> AIMaiChatHostToolExecution {
+    private func uploadOssVideo(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
         guard let signer = ossSignerConfiguration() else {
             return .failure(code: "not_configured", message: "Configure the OSS signer in model settings")
         }
         let path = Self.string(arguments, key: "path")
-        let extensions = image ? ["jpg", "jpeg", "png"] : ["mp4", "mov"]
-        let maximumSize = image ? 30_000_000 : 200_000_000
         guard let source = AIAssistantPathPolicy.resolve(
             path, workspacePath: AIAssistantModel.shared.workspacePath
-        ), extensions.contains(source.pathExtension.lowercased()),
+        ), ["mp4", "mov"].contains(source.pathExtension.lowercased()),
            let values = try? source.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
            values.isRegularFile == true, let size = values.fileSize,
-           size > 0, size <= maximumSize else {
-            return .failure(code: "invalid_input", message: image
-                ? "Image must be an accessible JPEG/PNG under 30 MB"
-                : "Video must be an accessible MP4/MOV under 200 MB")
+           size > 0, size <= 200_000_000 else {
+            return .failure(code: "invalid_input", message: "Video must be an accessible MP4/MOV under 200 MB")
         }
         do {
             var signRequest = URLRequest(url: signer.url)
@@ -271,9 +228,8 @@ final class AIMobileHostToolProvider {
                   let uploadURL = upload.url, let readURL = read.url,
                   let headers = signed["upload_headers"] as? [String: String],
                   let contentType = headers["Content-Type"],
-                  contentType == (image
-                    ? (source.pathExtension.lowercased() == "png" ? "image/png" : "image/jpeg")
-                    : (source.pathExtension.lowercased() == "mov" ? "video/quicktime" : "video/mp4")) else {
+                  contentType == (source.pathExtension.lowercased() == "mov"
+                    ? "video/quicktime" : "video/mp4") else {
                 return .failure(code: "upload_failed", message: "OSS did not return valid upload links")
             }
             var uploadRequest = URLRequest(url: uploadURL)
@@ -282,63 +238,11 @@ final class AIMobileHostToolProvider {
             let (_, uploadResponse) = try await session.upload(for: uploadRequest, fromFile: source)
             guard let result = uploadResponse as? HTTPURLResponse,
                   (200...299).contains(result.statusCode) else {
-                return .failure(code: "upload_failed", message: "OSS rejected the media upload; check the signed URL and Bucket permissions")
+                return .failure(code: "upload_failed", message: "OSS rejected the video upload; check the signed URL and Bucket permissions")
             }
             return Self.jsonSuccess(["url": readURL.absoluteString])
         } catch {
             return .failure(code: "upload_failed", message: error.localizedDescription)
-        }
-    }
-
-    private func arkAssets(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
-        guard let signer = ossSignerConfiguration(),
-              var endpoint = URLComponents(url: signer.url, resolvingAgainstBaseURL: false) else {
-            return .failure(code: "not_configured", message: "Configure the private media service in model settings")
-        }
-        endpoint.path = String(endpoint.path.dropLast("sign-upload".count)) + "ark-assets"
-        guard let url = endpoint.url else {
-            return .failure(code: "not_configured", message: "The private media service URL is invalid")
-        }
-        var requestBody = arguments
-        if Self.string(arguments, key: "action") == "upload_image" {
-            let uploaded = await uploadOssMedia(["path": Self.string(arguments, key: "image_path")], image: true)
-            guard let output = uploaded.output,
-                  let data = output.data(using: .utf8),
-                  let info = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let readURL = info["url"] as? String else {
-                return uploaded.errorCode == nil
-                    ? .failure(code: "upload_failed", message: "OSS returned no image URL") : uploaded
-            }
-            requestBody = ["action": "create_asset", "group_id": Self.string(arguments, key: "group_id"),
-                           "url": readURL, "name": Self.string(arguments, key: "name")]
-        }
-        do {
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("Bearer \(signer.token)", forHTTPHeaderField: "Authorization")
-            request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
-            let configuration = URLSessionConfiguration.default
-            configuration.timeoutIntervalForRequest = 60
-            let session = URLSession(configuration: configuration)
-            defer { session.finishTasksAndInvalidate() }
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse, data.count <= 1_000_000,
-                  let envelope = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                return .failure(code: "protocol", message: "Ark Assets service returned an invalid response")
-            }
-            if http.statusCode != 200 {
-                let reason = envelope["provider_message"] as? String ?? envelope["error"] as? String
-                    ?? "Ark Assets request failed"
-                let code = envelope["provider_code"] as? String ?? "provider_error"
-                return .failure(code: code, message: reason)
-            }
-            guard let result = envelope["result"] as? [String: Any] else {
-                return .failure(code: "protocol", message: "Ark Assets service returned no result")
-            }
-            return Self.jsonSuccess(result)
-        } catch {
-            return .failure(code: "network", message: error.localizedDescription)
         }
     }
 

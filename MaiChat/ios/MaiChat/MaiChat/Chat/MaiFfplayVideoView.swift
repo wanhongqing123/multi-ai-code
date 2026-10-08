@@ -200,6 +200,7 @@ final class MaiFfplayVideoController: UIViewController {
         pauseButton.accessibilityLabel = "暂停视频"
         pauseButton.accessibilityIdentifier = "ffplay-pause"
         pauseButton.tintColor = .white
+        pauseButton.contentEdgeInsets = UIEdgeInsets(top: 14, left: 0, bottom: 0, right: 0)
         pauseButton.addTarget(self, action: #selector(togglePause), for: .touchUpInside)
         pauseButton.translatesAutoresizingMaskIntoConstraints = false
         pauseButton.widthAnchor.constraint(equalToConstant: 54).isActive = true
@@ -274,10 +275,10 @@ final class MaiFfplayVideoController: UIViewController {
             errorLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
             controls.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             controls.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            controls.bottomAnchor.constraint(equalTo: actions.topAnchor, constant: -16),
+            controls.bottomAnchor.constraint(equalTo: actions.topAnchor, constant: -4),
             actions.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -18),
             actions.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor,
-                                           constant: -12),
+                                           constant: -4),
             saveStatusLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             saveStatusLabel.bottomAnchor.constraint(equalTo: controls.topAnchor, constant: -18),
             saveStatusLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 160),

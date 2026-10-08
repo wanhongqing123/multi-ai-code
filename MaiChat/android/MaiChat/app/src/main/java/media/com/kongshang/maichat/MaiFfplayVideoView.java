@@ -88,6 +88,7 @@ public final class MaiFfplayVideoView extends FrameLayout {
         playButton.setContentDescription("暂停视频");
         playButton.setMinWidth(0);
         playButton.setMinimumWidth(0);
+        playButton.setPadding(0, dp(18), 0, 0);
         playButton.setOnClickListener(view -> command(playing ? "pause" : "play"));
         controls.addView(playButton, new LinearLayout.LayoutParams(dp(56), dp(58)));
         LinearLayout timeline = new LinearLayout(context);

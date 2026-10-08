@@ -78,6 +78,7 @@ function createHandler(options = {}) {
         glm: env.MAICHAT_GLM_API_KEY || '',
         deepseek: env.MAICHAT_DEEPSEEK_API_KEY || '',
         wan: env.MAICHAT_WAN_API_KEY || '',
+        kling: env.MAICHAT_KLING_API_KEY || '',
         minimax: env.MAICHAT_MINIMAX_API_KEY || ''
       };
       if (body?.action === 'status')

@@ -147,7 +147,7 @@ test('returns only requested static API keys to an authenticated client', async 
     MAICHAT_DEEPSEEK_API_KEY: 'deepseek-key',
     MAICHAT_WAN_API_KEY: 'wan-key',
     MAICHAT_WAN_WORKSPACE_ID: 'ws-example',
-    MAICHAT_KLING_API_KEY: 'must-not-be-returned',
+    MAICHAT_KLING_API_KEY: 'kling-key',
     MAICHAT_MINIMAX_API_KEY: 'minimax-key',
     VOLC_ACCESS_KEY_ID: 'volc-access-id',
     VOLC_SECRET_ACCESS_KEY: 'volc-access-secret' };
@@ -157,26 +157,24 @@ test('returns only requested static API keys to an authenticated client', async 
   const status = await handle(call({ action: 'status' }));
   assert.equal(status.statusCode, 200);
   assert.deepEqual(JSON.parse(status.body), {
-    configured: ['ark', 'glm', 'deepseek', 'wan', 'minimax'],
+    configured: ['ark', 'glm', 'deepseek', 'wan', 'kling', 'minimax'],
     assets_configured: true, storage_configured: true
   });
   const fetched = await handle(call({ action: 'fetch',
-    providers: ['ark', 'glm', 'deepseek', 'wan', 'minimax'] }));
+    providers: ['ark', 'glm', 'deepseek', 'wan', 'kling', 'minimax'] }));
   assert.equal(fetched.statusCode, 200);
   assert.deepEqual(JSON.parse(fetched.body), {
     api_keys: {
       ark: 'ark-project-key', glm: 'glm-key', deepseek: 'deepseek-key',
-      wan: 'wan-key', minimax: 'minimax-key'
+      wan: 'wan-key', kling: 'kling-key', minimax: 'minimax-key'
     },
     wan_workspace_id: 'ws-example'
   });
   assert.equal(fetched.headers['Cache-Control'], 'no-store');
   assert.equal(fetched.headers.Pragma, 'no-cache');
   assert.ok(!fetched.body.includes('volc-access-secret'));
-  assert.ok(!fetched.body.includes('must-not-be-returned'));
   assert.equal((await handle(call({ action: 'fetch', providers: ['glm'] }, 'wrong'))).statusCode, 401);
   assert.equal((await handle(call({ action: 'fetch', providers: ['access_key'] }))).statusCode, 400);
-  assert.equal((await handle(call({ action: 'fetch', providers: ['kling'] }))).statusCode, 400);
   assert.equal((await handle(call({ action: 'fetch', providers: ['volc_access'] }))).statusCode, 400);
   assert.equal((await handle(call({ action: 'fetch', providers: ['glm', 'glm'] }))).statusCode, 400);
 });

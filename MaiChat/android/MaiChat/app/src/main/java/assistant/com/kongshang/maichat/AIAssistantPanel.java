@@ -837,19 +837,59 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             return;
         LinearLayout form = column();
         form.setPadding(dp(18), dp(8), dp(18), dp(8));
-        EditText name = field("模型名称", state.model),
+        EditText url = field("HTTPS API 地址", state.baseUrl), name = field("模型名称", state.model),
                  cloudUrl = field("云端密钥服务地址", controller.cloudServiceUrl()),
                  cloudToken = field("云端服务令牌（留空保留原令牌）", ""),
+                 key = field("API Key（留空保留原密钥）", ""),
                  arkKey = field("方舟创作 Key（留空保留原密钥）", ""),
-                 klingKey = field("可灵 API Key（留空保留原密钥）", "");
+                 wanKey = field("百炼创作 Key（Wan / Qwen，留空保留原密钥）", ""),
+                 wanWorkspace = field("百炼 Workspace ID", controller.wanWorkspaceId()),
+                 klingKey = field("可灵 API Key（留空保留原密钥）", ""),
+                 miniMaxKey = field("海螺 / MiniMax API Key（留空保留原密钥）", "");
+        key.setInputType(
+            android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
         cloudToken.setInputType(
             android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
         arkKey.setInputType(
             android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        wanKey.setInputType(
+            android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
         klingKey.setInputType(
             android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        miniMaxKey.setInputType(
+            android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        form.addView(url, matchWrap());
         form.addView(name, matchWrap());
-        final String[] endpoint = {state.baseUrl};
+        form.addView(text("接口协议", 14, MaiChatTheme.SECONDARY), matchWrap());
+        Spinner wire = new Spinner(activity);
+        wire.setAdapter(new ArrayAdapter<>(activity, android.R.layout.simple_spinner_dropdown_item,
+            new String[] {"Chat Completions", "Responses"}));
+        wire.setSelection(controller.currentWire().equals("chat_completions") ? 0 : 1);
+        form.addView(wire, matchWrap());
+        final String[] glmChatUrl = {controller.glmChatBaseUrl()};
+        Runnable updateEndpoint = () -> {
+            String selectedName = name.getText().toString().trim();
+            String currentUrl = url.getText().toString().trim();
+            if (selectedName.startsWith("glm-") &&
+                currentUrl.startsWith("https://open.bigmodel.cn/")) {
+                if (wire.getSelectedItemPosition() == 1 &&
+                    !currentUrl.equals(AIAssistantController.GLM_RESPONSES_URL)) {
+                    glmChatUrl[0] = currentUrl;
+                    url.setText(AIAssistantController.GLM_RESPONSES_URL);
+                } else if (wire.getSelectedItemPosition() == 0 &&
+                           currentUrl.equals(AIAssistantController.GLM_RESPONSES_URL)) {
+                    url.setText(glmChatUrl[0]);
+                }
+            } else if (selectedName.equals("deepseek-flash") &&
+                       !currentUrl.equals(AIAssistantController.DEEPSEEK_URL)) {
+                url.setText(AIAssistantController.DEEPSEEK_URL);
+            }
+        };
+        wire.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(android.widget.AdapterView<?> parent, View view,
+                                                 int position, long id) { updateEndpoint.run(); }
+            @Override public void onNothingSelected(android.widget.AdapterView<?> parent) {}
+        });
         final String[] lastProvider = {state.model.equals("deepseek-flash") ? "deepseek"
             : state.model.startsWith("glm-") ? "glm" : "custom"};
         name.addTextChangedListener(new TextWatcher() {
@@ -862,22 +902,28 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 String provider = selected.equals("deepseek-flash") ? "deepseek"
                     : selected.startsWith("glm-") ? "glm" : "custom";
                 if (!provider.equals(lastProvider[0])) {
-                    if (provider.equals("deepseek"))
-                        endpoint[0] = AIAssistantController.DEEPSEEK_URL;
-                    else if (provider.equals("glm"))
-                        endpoint[0] = AIAssistantController.GLM_RESPONSES_URL;
+                    if (provider.equals("deepseek")) {
+                        url.setText(AIAssistantController.DEEPSEEK_URL);
+                        wire.setSelection(controller.deepseekWire().equals("chat_completions") ? 0 : 1);
+                    } else if (provider.equals("glm")) {
+                        url.setText(controller.glmBaseUrl());
+                        wire.setSelection(controller.glmWire().equals("chat_completions") ? 0 : 1);
+                    }
                     lastProvider[0] = provider;
                 }
+                updateEndpoint.run();
             }
         });
+        form.addView(key, matchWrap());
         form.addView(cloudUrl, matchWrap());
         form.addView(cloudToken, matchWrap());
         form.addView(text("模型 API Key 从云端同步并用 Android Keystore 加密；火山 AccessKey 留在服务器。",
                          12, MaiChatTheme.SECONDARY), matchWrap());
         form.addView(arkKey, matchWrap());
+        form.addView(wanKey, matchWrap());
+        form.addView(wanWorkspace, matchWrap());
         form.addView(klingKey, matchWrap());
-        form.addView(text("Seedance、GLM、DeepSeek、Wan、Wan Workspace ID 和海螺密钥由云端服务统一同步。",
-                         12, MaiChatTheme.SECONDARY), matchWrap());
+        form.addView(miniMaxKey, matchWrap());
         Spinner policy = new Spinner(activity);
         policy.setAdapter(new ArrayAdapter<>(activity, android.R.layout.simple_spinner_dropdown_item,
             new String[] {"请求批准", "帮我批准", "完全访问"}));
@@ -906,9 +952,10 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
                         return;
                     }
-                    controller.save(endpoint[0], name.getText().toString(),
+                    controller.save(url.getText().toString(), name.getText().toString(),
                     new String[] {"on-request", "unless-trusted", "never"}[policy.getSelectedItemPosition()],
-                    "", "responses", controller.glmChatBaseUrl(), success -> {
+                    key.getText().toString(), wire.getSelectedItemPosition() == 0
+                        ? "chat_completions" : "responses", glmChatUrl[0], success -> {
                         if (!success) {
                             validation.setText(controller.state.error);
                             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
@@ -920,10 +967,18 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                                 dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
                                 return;
                             }
-                            controller.saveCreativeKeys(klingKey.getText().toString(), "",
-                                creativeSaved -> {
-                                    if (creativeSaved) dialog.dismiss();
-                                    else {
+                            controller.saveWanCredentials(wanKey.getText().toString(),
+                                wanWorkspace.getText().toString(), wanSaved -> {
+                                    if (wanSaved) {
+                                        controller.saveCreativeKeys(klingKey.getText().toString(),
+                                            miniMaxKey.getText().toString(), creativeSaved -> {
+                                                if (creativeSaved) dialog.dismiss();
+                                                else {
+                                                    validation.setText(controller.state.error);
+                                                    dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
+                                                }
+                                            });
+                                    } else {
                                         validation.setText(controller.state.error);
                                         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
                                     }

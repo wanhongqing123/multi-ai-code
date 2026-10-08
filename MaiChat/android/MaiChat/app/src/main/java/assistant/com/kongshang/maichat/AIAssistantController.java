@@ -539,11 +539,20 @@ public final class AIAssistantController {
     }
     void switchModel(String name, Consumer<Boolean> completion) {
         if (name.equals("deepseek-flash"))
-            save(DEEPSEEK_URL, name, policy, deepseekApiKey, "responses",
+            save(DEEPSEEK_URL, name, policy, deepseekApiKey, deepseekWire,
                 glmChatBaseUrl, completion);
         else
-            save(GLM_RESPONSES_URL, name, policy, glmApiKey, "responses",
-                glmChatBaseUrl, completion);
+            worker.post(() -> {
+                try {
+                    String key = readKey();
+                    main.post(() -> save(glmBaseUrl, name, policy, key, glmWire,
+                        glmChatBaseUrl, completion));
+                } catch (Exception failure) {
+                    error = safeMessage(failure);
+                    emit();
+                    main.post(() -> completion.accept(false));
+                }
+            });
     }
     void action(String operation, JSONObject values, Runnable completion) {
         String target = state.selected;
@@ -806,7 +815,7 @@ public final class AIAssistantController {
         connection.setRequestProperty("Content-Type", "application/json");
         byte[] body = new JSONObject().put("action", "fetch")
             .put("providers", new JSONArray()
-                .put("ark").put("glm").put("deepseek").put("wan").put("minimax"))
+                .put("ark").put("glm").put("deepseek").put("wan").put("kling").put("minimax"))
             .toString().getBytes(StandardCharsets.UTF_8);
         try {
             try (java.io.OutputStream output = connection.getOutputStream()) { output.write(body); }
@@ -834,7 +843,7 @@ public final class AIAssistantController {
         String[][] accounts = {
             {"ark", "ark-api-key.enc"}, {"glm", "glm-main-api-key.enc"},
             {"deepseek", "deepseek-main-api-key.enc"}, {"wan", "wan-api-key.enc"},
-            {"minimax", "minimax-api-key.enc"}
+            {"kling", "kling-api-key.enc"}, {"minimax", "minimax-api-key.enc"}
         };
         for (String[] account : accounts) {
             String value = keys.optString(account[0], "");
@@ -852,6 +861,7 @@ public final class AIAssistantController {
                 if (model.equals("deepseek-flash")) apiKey = value;
                 break;
             case "wan": wanApiKey = value; break;
+            case "kling": klingApiKey = value; break;
             case "minimax": miniMaxApiKey = value; break;
             default: break;
             }

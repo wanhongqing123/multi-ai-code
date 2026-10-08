@@ -50,7 +50,6 @@ final class AIMobileHostToolProvider {
         case "mobile_save_video": return await saveVideo(arguments)
         case "mobile_ssh_password": return await requestSSHPassword(arguments)
         case "mobile_ssh_trust_host": return await trustSSHHost(arguments)
-        case "mobile_ark_upload_video": return await uploadArkVideo(arguments)
         case "mobile_gpu_info": return gpuInfo()
         case "mobile_transform_image": return await transformImage(arguments)
         case "mobile_beautify_image":
@@ -160,31 +159,6 @@ final class AIMobileHostToolProvider {
             output["recommended_working_set_bytes"] = device.recommendedMaxWorkingSetSize
         }
         return Self.jsonSuccess(output)
-    }
-
-    private func uploadArkVideo(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
-        guard let appState, appState.connectionState == .connected else {
-            return .failure(code: "not_configured", message: "Connect IM to upload a local video")
-        }
-        let path = Self.string(arguments, key: "path")
-        guard let source = AIAssistantPathPolicy.resolve(
-            path, workspacePath: AIAssistantModel.shared.workspacePath
-        ), ["mp4", "mov"].contains(source.pathExtension.lowercased()),
-           let values = try? source.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
-           values.isRegularFile == true, let size = values.fileSize,
-           size > 0, size <= 100_000_000 else {
-            return .failure(code: "invalid_input", message: "Video must be an accessible MP4/MOV under 100 MB")
-        }
-        do {
-            let uploaded = try await appState.uploadAgentVideoReference(fileURL: source)
-            guard let url = URLComponents(string: uploaded), url.scheme == "https",
-                  url.host?.isEmpty == false, url.user == nil, url.password == nil else {
-                return .failure(code: "protocol", message: "Media upload did not return an HTTPS URL")
-            }
-            return Self.jsonSuccess(["url": uploaded])
-        } catch {
-            return .failure(code: "upload_failed", message: error.localizedDescription)
-        }
     }
 
     static func jsonSuccess(_ object: [String: Any]) -> AIMaiChatHostToolExecution {

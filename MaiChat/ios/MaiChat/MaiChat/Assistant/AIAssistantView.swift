@@ -2440,12 +2440,6 @@ private struct AIPermissionCard: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
-                if permission.tool == "seedance_video",
-                   (fields["video_path"] as? String)?.isEmpty == false {
-                    Text("本地视频将先上传到腾讯 IM 云文件服务，再由 Seedance 读取。")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
             } else if isSendText, let peer = fields["peer_id"] as? String,
                let text = fields["text"] as? String {
                 Label(peer, systemImage: "person.crop.circle")

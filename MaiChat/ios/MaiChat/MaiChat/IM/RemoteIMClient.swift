@@ -167,7 +167,6 @@ protocol RemoteIMClient: AnyObject {
     func refreshUserProfiles(userIDs: [String]) async throws -> [RemoteIMUserProfile]
     func setSelfAvatar(url: String) async throws
     func uploadAvatar(fileURL: URL) async throws -> String
-    func uploadModelReferenceVideo(fileURL: URL) async throws -> String
     func refreshPresenceStatuses(userIDs: [String]) async throws -> [String: RemoteIMPresenceStatus]
     func subscribePresenceStatuses(userIDs: [String]) async throws
     func updateApplicationBadgeCount(_ count: Int)
@@ -175,10 +174,6 @@ protocol RemoteIMClient: AnyObject {
 
 extension RemoteIMClient {
     func uploadAvatar(fileURL: URL) async throws -> String {
-        throw RemoteIMClientError.sdkNotIntegrated
-    }
-
-    func uploadModelReferenceVideo(fileURL: URL) async throws -> String {
         throw RemoteIMClientError.sdkNotIntegrated
     }
 

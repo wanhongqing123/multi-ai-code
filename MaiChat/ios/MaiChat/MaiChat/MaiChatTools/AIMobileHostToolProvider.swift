@@ -68,11 +68,10 @@ final class AIMobileHostToolProvider {
             return Self.jsonSuccess(["key": KeychainSecretStore(account: "seedance-ark-api-key")
                 .readSecretKey()])
         case "glm_api_key":
-            let endpoint = AIAssistantModel.shared.settings.baseUrl
-            let isGLM = URL(string: endpoint)?.host == "open.bigmodel.cn"
+            let video = KeychainSecretStore(account: "glm-video-api-key").readSecretKey()
             let current = KeychainSecretStore(account: "ai-assistant-glm-api-key").readSecretKey()
             let legacy = KeychainSecretStore(account: "ai-assistant-api-key").readSecretKey()
-            return Self.jsonSuccess(["key": isGLM ? (current.isEmpty ? legacy : current) : ""])
+            return Self.jsonSuccess(["key": !video.isEmpty ? video : (current.isEmpty ? legacy : current)])
         case "kling_api_key":
             return Self.jsonSuccess(["key": KeychainSecretStore(account: "kling-creative-api-key")
                 .readSecretKey()])

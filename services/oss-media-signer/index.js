@@ -74,6 +74,7 @@ function createHandler(options = {}) {
       const keys = {
         ark: env.MAICHAT_ARK_API_KEY || '',
         glm: env.MAICHAT_GLM_API_KEY || '',
+        glm_video: env.MAICHAT_GLM_API_KEY || '',
         deepseek: env.MAICHAT_DEEPSEEK_API_KEY || '',
         wan: env.MAICHAT_WAN_API_KEY || '',
         kling: env.MAICHAT_KLING_API_KEY || '',
@@ -81,7 +82,7 @@ function createHandler(options = {}) {
       };
       if (body?.action === 'status')
         return jsonResponse(200, {
-          configured: Object.keys(keys).filter((name) => !!keys[name]),
+          configured: Object.keys(keys).filter((name) => name !== 'glm_video' && !!keys[name]),
           assets_configured: !!(env.VOLC_ACCESS_KEY_ID && env.VOLC_SECRET_ACCESS_KEY),
           storage_configured: !!(env.MAICHAT_OSS_BUCKET &&
             /^oss-[a-z0-9-]+$/.test(env.MAICHAT_OSS_REGION || '') &&

@@ -1403,6 +1403,7 @@ AgentController::ModelConfig loadAgentModelConfig() {
     config.apiKey = settings.value(deepseek ? QStringLiteral("agent/deepseekApiKey")
                                             : QStringLiteral("agent/apiKey"))
                         .toString();
+    config.glmApiKey = settings.value(QStringLiteral("agent/apiKey")).toString();
     const QString policy = settings
                                .value(QStringLiteral("agent/approvalPolicy"),
                                       QStringLiteral("on_request"))

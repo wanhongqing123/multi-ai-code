@@ -138,9 +138,10 @@ test('synchronizes only requested model keys and never returns AccessKeys', asyn
   assert.deepEqual(JSON.parse(status.body).configured,
     ['ark', 'glm', 'deepseek', 'wan', 'kling', 'minimax']);
   const fetched = await handle(credentials({ action: 'fetch',
-    providers: ['ark', 'wan', 'kling'] }));
+    providers: ['ark', 'glm', 'glm_video', 'wan', 'kling'] }));
   assert.deepEqual(JSON.parse(fetched.body), {
-    api_keys: { ark: 'ark-project-key', wan: 'wan-key', kling: 'kling-key' },
+    api_keys: { ark: 'ark-project-key', glm: 'glm-key', glm_video: 'glm-key',
+      wan: 'wan-key', kling: 'kling-key' },
     wan_workspace_id: 'ws-example'
   });
   assert.equal(fetched.headers['Cache-Control'], 'no-store');

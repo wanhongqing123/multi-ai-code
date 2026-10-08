@@ -55,8 +55,10 @@
 
 `POST /credentials` 只接受服务 Bearer 令牌。`{"action":"status"}` 返回已配置的
 模型名和 Assets／OSS 状态，不返回密钥。`{"action":"fetch","providers":
-["ark","glm","deepseek","wan","kling","minimax"]}` 只返回请求中指定且服务端
-已配置的模型 API Key。火山和阿里云 AccessKey、预留的 IAM API Key 不在返回范围。
+["ark","glm","glm_video","deepseek","wan","kling","minimax"]}` 只返回请求中指定且
+服务端已配置的模型 API Key。`glm` 给 GLM 主模型，`glm_video` 给 CogVideoX-3；
+两个下发项都读取同一个 `MAICHAT_GLM_API_KEY`，不需要第二把 GLM Key。
+火山和阿里云 AccessKey、预留的 IAM API Key 不在返回范围。
 响应禁止缓存，Nginx 入口关闭访问日志并限制速率。
 
 移动端把取回的模型 Key 存入 iOS Keychain／Android Keystore 加密文件，未配置的

@@ -52,6 +52,8 @@ public:
         //   http://127.0.0.1:11434/v1                     Ollama
         QString baseUrl;
         QString apiKey;
+        // Media specialists use the GLM credential even when DeepSeek is the main model.
+        QString glmApiKey;
         QString modelName = QStringLiteral("glm-5.3");
         MaiWireApi wire = MaiWireApi::ChatCompletions;
         MaiApprovalPolicy approvalPolicy = MaiApprovalPolicy::OnRequest;

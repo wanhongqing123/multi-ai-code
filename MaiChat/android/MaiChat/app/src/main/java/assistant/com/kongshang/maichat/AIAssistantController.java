@@ -117,6 +117,7 @@ public final class AIAssistantController {
     private volatile String glmWire = "responses", deepseekWire = "responses";
     private volatile String deepseekApiKey = "";
     private volatile String glmApiKey = "";
+    private volatile String glmVideoApiKey = "";
     private volatile String arkApiKey = "";
     private volatile String wanApiKey = "";
     private volatile String wanWorkspaceId = "";
@@ -190,10 +191,9 @@ public final class AIAssistantController {
         }
         if (tool.equals("glm_api_key")) {
             try {
-                String key = new java.net.URI(baseUrl).getHost().equals("open.bigmodel.cn")
-                    ? glmApiKey : "";
                 return new JSONObject().put("ok", true)
-                    .put("output", new JSONObject().put("key", key))
+                    .put("output", new JSONObject().put("key",
+                        glmVideoApiKey.isEmpty() ? glmApiKey : glmVideoApiKey))
                     .toString().getBytes(StandardCharsets.UTF_8);
             } catch (Exception failure) {
                 return hostToolFailure("GLM key is unavailable", "not_configured");
@@ -325,6 +325,8 @@ public final class AIAssistantController {
                 deepseekApiKey = readEncryptedKey("deepseek-main-api-key.enc");
                 glmApiKey = readEncryptedKey("glm-main-api-key.enc");
                 if (glmApiKey.isEmpty()) glmApiKey = readKey();
+                glmVideoApiKey = readEncryptedKey("glm-video-api-key.enc");
+                if (glmVideoApiKey.isEmpty()) glmVideoApiKey = glmApiKey;
                 apiKey = model.equals("deepseek-flash") ? deepseekApiKey
                     : model.startsWith("glm-") ? glmApiKey : readKey();
             } catch (Exception e) {
@@ -806,7 +808,8 @@ public final class AIAssistantController {
         connection.setRequestProperty("Content-Type", "application/json");
         byte[] body = new JSONObject().put("action", "fetch")
             .put("providers", new JSONArray()
-                .put("ark").put("glm").put("deepseek").put("wan").put("kling").put("minimax"))
+                .put("ark").put("glm").put("glm_video").put("deepseek")
+                .put("wan").put("kling").put("minimax"))
             .toString().getBytes(StandardCharsets.UTF_8);
         try {
             try (java.io.OutputStream output = connection.getOutputStream()) { output.write(body); }
@@ -833,6 +836,7 @@ public final class AIAssistantController {
         if (keys == null) throw new IOException("云端密钥响应无效");
         String[][] accounts = {
             {"ark", "ark-api-key.enc"}, {"glm", "glm-main-api-key.enc"},
+            {"glm_video", "glm-video-api-key.enc"},
             {"deepseek", "deepseek-main-api-key.enc"}, {"wan", "wan-api-key.enc"},
             {"kling", "kling-api-key.enc"}, {"minimax", "minimax-api-key.enc"}
         };
@@ -847,6 +851,7 @@ public final class AIAssistantController {
                 glmApiKey = value;
                 if (model.startsWith("glm-")) apiKey = value;
                 break;
+            case "glm_video": glmVideoApiKey = value; break;
             case "deepseek":
                 deepseekApiKey = value;
                 if (model.equals("deepseek-flash")) apiKey = value;

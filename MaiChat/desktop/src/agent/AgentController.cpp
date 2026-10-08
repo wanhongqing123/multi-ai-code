@@ -349,9 +349,10 @@ AgentController::AgentController(const ModelConfig &model,
   runtime_->agent = buildAgent(
       std::move(client), openStore(databasePath, runtime_->openError),
       model.modelName, model.approvalPolicy, hostTools,
-      model.baseUrl.startsWith(QStringLiteral("https://open.bigmodel.cn/"))
+      model.glmApiKey.isEmpty() &&
+              model.baseUrl.startsWith(QStringLiteral("https://open.bigmodel.cn/"))
           ? model.apiKey
-          : QString());
+          : model.glmApiKey);
 
   connect(this, &AgentController::eventQueued, this,
           &AgentController::onEventQueued, Qt::QueuedConnection);

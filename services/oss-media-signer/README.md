@@ -58,11 +58,13 @@ AccessKey，且不接收图片字节。本地照片没有 HTTPS 地址时，需�
 
 ## App 配置
 
-在 iOS MaiChat 的“模型配置”中填写函数完整的 HTTPS 地址
-`https://…/sign-upload` 与同一个签名服务令牌，点“保存配置”。
-`seedance_video discover` 的 `video_edit_from_local_file` 会从
-`upload_not_configured` 变为 `implemented_unverified`。目前 Android、Desktop
-仍需各自接入签名服务配置，不能仅因已创建 Bucket 就上报可用。
+在 iOS MaiChat 的“模型配置”中填写素材服务 HTTPS 基址，例如
+`https://ichat.life/maichat`，或旧式完整地址 `https://…/sign-upload`，再填写
+同一个服务令牌。`ark_assets` 可经 `/ark-assets` 列出、创建和查询素材；
+它不要求 OSS。`upload_image` 尚不能从 App 本地照片直接上传，会明确返回
+`upload_not_configured`。`seedance_video discover` 只有在服务确认 OSS 已配置后，
+才把 `video_edit_from_local_file` 上报为待实盘验证。Android、Desktop 的
+素材服务仍需各自接线。
 
 ## 签名接口
 

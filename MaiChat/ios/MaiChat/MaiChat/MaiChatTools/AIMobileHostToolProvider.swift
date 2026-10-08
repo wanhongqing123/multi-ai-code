@@ -51,8 +51,9 @@ final class AIMobileHostToolProvider {
         case "mobile_ssh_password": return await requestSSHPassword(arguments)
         case "mobile_ssh_trust_host": return await trustSSHHost(arguments)
         case "oss_video_upload_config":
-            return Self.jsonSuccess(["configured": ossSignerConfiguration() != nil])
+            return await privateServiceStatus()
         case "mobile_oss_upload_video": return await uploadOssVideo(arguments)
+        case "mobile_ark_assets": return await arkAssets(arguments)
         case "mobile_gpu_info": return gpuInfo()
         case "mobile_transform_image": return await transformImage(arguments)
         case "mobile_beautify_image":
@@ -164,17 +165,55 @@ final class AIMobileHostToolProvider {
         return Self.jsonSuccess(output)
     }
 
-    private func ossSignerConfiguration() -> (url: URL, token: String)? {
+    private func privateServiceEndpoint(_ action: String) -> (url: URL, token: String)? {
         let rawURL = UserDefaults.standard.string(forKey: "oss-media-signer-url") ?? ""
         let token = KeychainSecretStore(account: "oss-media-signer-token").readSecretKey()
-        guard token.count >= 32, let components = URLComponents(string: rawURL),
+        guard token.count >= 32, var components = URLComponents(string: rawURL),
               components.scheme == "https", components.host?.isEmpty == false,
               components.user == nil, components.password == nil,
-              components.query == nil, components.fragment == nil,
-              components.path.hasSuffix("/sign-upload"), let url = components.url else {
+              components.query == nil, components.fragment == nil else {
             return nil
         }
+        if components.path.hasSuffix("/sign-upload") {
+            components.path = String(components.path.dropLast("sign-upload".count))
+        } else if !components.path.hasSuffix("/") {
+            components.path += "/"
+        }
+        components.path += action
+        guard let url = components.url else { return nil }
         return (url, token)
+    }
+
+    private func ossSignerConfiguration() -> (url: URL, token: String)? {
+        privateServiceEndpoint("sign-upload")
+    }
+
+    private func privateServiceStatus() async -> AIMaiChatHostToolExecution {
+        guard let service = privateServiceEndpoint("credentials") else {
+            return Self.jsonSuccess(["configured": false, "assets_configured": false])
+        }
+        do {
+            var request = URLRequest(url: service.url)
+            request.httpMethod = "POST"
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Bearer \(service.token)", forHTTPHeaderField: "Authorization")
+            request.httpBody = try JSONSerialization.data(withJSONObject: ["action": "status"])
+            let session = URLSession(configuration: .ephemeral)
+            defer { session.finishTasksAndInvalidate() }
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  data.count <= 16_384,
+                  let status = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return Self.jsonSuccess(["configured": false, "assets_configured": false])
+            }
+            return Self.jsonSuccess([
+                "configured": status["storage_configured"] as? Bool ?? false,
+                "assets_configured": status["assets_configured"] as? Bool ?? false
+            ])
+        } catch {
+            return Self.jsonSuccess(["configured": false, "assets_configured": false])
+        }
     }
 
     private func uploadOssVideo(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
@@ -243,6 +282,45 @@ final class AIMobileHostToolProvider {
             return Self.jsonSuccess(["url": readURL.absoluteString])
         } catch {
             return .failure(code: "upload_failed", message: error.localizedDescription)
+        }
+    }
+
+    private func arkAssets(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
+        guard Self.string(arguments, key: "action") != "upload_image" else {
+            return .failure(code: "upload_not_configured",
+                            message: "Local image upload awaits private OSS storage; use an accessible HTTPS image URL")
+        }
+        guard let service = privateServiceEndpoint("ark-assets") else {
+            return .failure(code: "not_configured", message: "Configure the private Ark Assets service")
+        }
+        do {
+            var request = URLRequest(url: service.url)
+            request.httpMethod = "POST"
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Bearer \(service.token)", forHTTPHeaderField: "Authorization")
+            request.httpBody = try JSONSerialization.data(withJSONObject: arguments)
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.timeoutIntervalForRequest = 60
+            let session = URLSession(configuration: configuration)
+            defer { session.finishTasksAndInvalidate() }
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse, data.count <= 1_000_000,
+                  let envelope = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return .failure(code: "protocol", message: "Ark Assets service returned an invalid response")
+            }
+            if http.statusCode != 200 {
+                let reason = envelope["provider_message"] as? String ?? envelope["error"] as? String
+                    ?? "Ark Assets request failed"
+                let code = envelope["provider_code"] as? String ?? "provider_error"
+                return .failure(code: code, message: reason)
+            }
+            guard let result = envelope["result"] as? [String: Any] else {
+                return .failure(code: "protocol", message: "Ark Assets service returned no result")
+            }
+            return Self.jsonSuccess(result)
+        } catch {
+            return .failure(code: "network", message: error.localizedDescription)
         }
     }
 

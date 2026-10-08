@@ -115,4 +115,11 @@ test('Ark Assets works without OSS configuration', async () => {
       url: 'https://images.example.com/portrait.png' }) };
   assert.equal((await handle(create)).statusCode, 200);
   assert.equal((await handle({ ...create, rawPath: '/sign-upload' })).statusCode, 503);
+  const status = await handle({ ...create, rawPath: '/credentials',
+    body: JSON.stringify({ action: 'status' }) });
+  assert.deepEqual(JSON.parse(status.body), {
+    configured: [], assets_configured: true, storage_configured: false
+  });
+  assert.equal((await handle({ ...create, rawPath: '/credentials',
+    body: JSON.stringify({ action: 'fetch', providers: ['ark'] }) })).statusCode, 400);
 });

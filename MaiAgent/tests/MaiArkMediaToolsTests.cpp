@@ -5,6 +5,7 @@
 #include <json.hpp>
 
 #include "MaiArkMediaTools.h"
+#include "MaiArkAssetTools.h"
 #include "MaiFilePath.h"
 #include "MaiFileSystem.h"
 #include "MaiIdGenerator.h"
@@ -88,7 +89,7 @@ void testDynamicCredentialAndToolIdentity() {
     CHECK(video->description().find("Seedance 2.0 Mini (default)") != std::string::npos);
     CHECK(video->parametersSchema().find("doubao-seedance-2-5-260628") == std::string::npos);
     CHECK(video->description().find("mode=create with reference_image_paths") != std::string::npos);
-    CHECK(video->description().find("cannot list the account's portrait assets") !=
+    CHECK(video->description().find("cannot list authorized real-portrait assets") !=
           std::string::npos);
     CHECK(videoInfo.dump().find(key) == std::string::npos);
     CHECK(imageInfo.dump().find(key) == std::string::npos);
@@ -503,6 +504,59 @@ void testLiveRevisionWhenExplicitlyConfigured() {
     ++failures;
 }
 
+void testVirtualAssetFlow() {
+    const MaiFilePath workspace = MaiFileSystem::temporaryDirectory().append(
+        MaiFilePath::fromUtf8(MaiIdGenerator::generate("ark_assets_")));
+    CHECK(!MaiFileSystem::createDirectories(workspace));
+    const MaiFilePath image = workspace.append(MaiFilePath::fromUtf8("portrait.jpg"));
+    CHECK(!MaiFileSystem::writeFile(image, "test image bytes"));
+    MaiToolContext context;
+    context.root = workspace.toUtf8();
+    int calls = 0;
+    auto tool = makeMaiArkAssetTool(
+        [&](const std::string& raw, const MaiToolContext&) -> MaiResult<std::string> {
+            const auto request = nlohmann::json::parse(raw);
+            ++calls;
+            if (request.at("action") == "upload_image") {
+                const MaiFilePath submitted =
+                    MaiFilePath::fromUtf8(request.at("image_path").get<std::string>());
+                CHECK(submitted.baseName().toUtf8() == "portrait.jpg");
+                CHECK(MaiFileSystem::exists(submitted));
+                CHECK(request.at("group_id") == "group-1234567890");
+                return std::string{R"({"Id":"asset-1234567890","Status":"Processing"})"};
+            }
+            if (request.at("action") == "create_asset") {
+                CHECK(request.at("url") == "https://example.com/portrait.jpg");
+                return std::string{R"({"Id":"asset-1234567890","Status":"Processing"})"};
+            }
+            return std::string{R"({"Id":"asset-1234567890","Status":"Active"})"};
+        });
+    CHECK(tool->name() == "ark_assets");
+    CHECK(!tool->requiresApproval(R"({"action":"get_asset","asset_id":"asset-1234567890"})"));
+    CHECK(tool->requiresApproval(R"({"action":"upload_image"})"));
+    const auto uploaded = tool->execute(
+        R"({"action":"upload_image","group_id":"group-1234567890","image_path":"portrait.jpg"})",
+        context);
+    CHECK(!uploaded.hasError());
+    CHECK(nlohmann::json::parse(uploaded.output()).at("Status") == "Processing");
+    const auto fromUrl = tool->execute(
+        R"({"action":"create_asset","group_id":"group-1234567890","url":"https://example.com/portrait.jpg"})",
+        context);
+    CHECK(!fromUrl.hasError());
+    const auto ready =
+        tool->execute(R"({"action":"get_asset","asset_id":"asset-1234567890"})", context);
+    CHECK(!ready.hasError());
+    CHECK(nlohmann::json::parse(ready.output()).at("asset_uri") == "asset://asset-1234567890");
+    CHECK(calls == 3);
+    CHECK(
+        tool->execute(
+                R"({"action":"upload_image","group_id":"group-1234567890","image_path":"missing.jpg"})",
+                context)
+            .hasError());
+    CHECK(calls == 3);
+    CHECK(!MaiFileSystem::removeFile(image));
+}
+
 }  // namespace
 
 int main() {
@@ -510,6 +564,7 @@ int main() {
     testInvalidInputsDoNotReachNetwork();
     testRevisionRejectsAnotherConversation();
     testLocalVideoUploadHandoffWithoutArkSubmission();
+    testVirtualAssetFlow();
     testLiveArkWhenExplicitlyConfigured();
     testLiveRevisionWhenExplicitlyConfigured();
     return failures == 0 ? 0 : 1;

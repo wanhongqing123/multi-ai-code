@@ -2686,21 +2686,21 @@ private struct AISettingsView: View {
                     if !seedanceMessage.isEmpty {
                         Text(seedanceMessage).font(.system(size: 12)).foregroundStyle(.secondary)
                     }
-                    settingsField("OSS 视频上传签名地址", systemImage: "externaldrive") {
-                        TextField("https://…/sign-upload", text: $ossSignerURL)
+                    settingsField("私有素材服务地址", systemImage: "externaldrive") {
+                        TextField("https://ichat.life/maichat", text: $ossSignerURL)
                             .keyboardType(.URL)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .textFieldStyle(.plain)
                     }
-                    settingsField("OSS 签名服务令牌", systemImage: "key.horizontal") {
+                    settingsField("素材服务令牌", systemImage: "key.horizontal") {
                         SecureField(ossConfigured ? "已配置，留空保留原令牌" : "输入签名服务令牌",
                                     text: $ossSignerToken)
                             .textFieldStyle(.plain)
                     }
-                    Text("这里只填签名服务地址和令牌；OSS AccessKey/Secret 留在阿里云服务端。")
+                    Text("火山 AccessKey 保存在服务器；本地照片上传要等后续 OSS 接线。")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
-                    Button(ossTesting ? "正在测试 OSS 签名服务" : "测试 OSS 签名服务") {
+                    Button(ossTesting ? "正在测试素材服务" : "测试素材服务") {
                         ossTesting = true
                         Task {
                             await testOssSigner()
@@ -2885,13 +2885,12 @@ private struct AISettingsView: View {
         if address.isEmpty && token.isEmpty && !ossConfigured { return true }
         guard let parts = URLComponents(string: address), parts.scheme == "https",
               parts.host?.isEmpty == false, parts.user == nil, parts.password == nil,
-              parts.query == nil, parts.fragment == nil,
-              parts.path.hasSuffix("/sign-upload") else {
-            ossMessage = "请输入签名服务完整的 HTTPS /sign-upload 地址"
+              parts.query == nil, parts.fragment == nil else {
+            ossMessage = "请输入素材服务的 HTTPS 地址"
             return false
         }
         guard token.isEmpty ? ossConfigured : token.count >= 32 else {
-            ossMessage = "签名服务令牌至少需要 32 个字符"
+            ossMessage = "素材服务令牌至少需要 32 个字符"
             return false
         }
         do {
@@ -2901,7 +2900,7 @@ private struct AISettingsView: View {
             UserDefaults.standard.set(address, forKey: "oss-media-signer-url")
             ossConfigured = true
             ossSignerToken = ""
-            ossMessage = "OSS 签名服务配置已保存"
+            ossMessage = "私有素材服务配置已保存"
             return true
         } catch {
             ossMessage = error.localizedDescription
@@ -2914,38 +2913,44 @@ private struct AISettingsView: View {
         let entered = ossSignerToken.trimmingCharacters(in: .whitespacesAndNewlines)
         let token = entered.isEmpty
             ? KeychainSecretStore(account: "oss-media-signer-token").readSecretKey() : entered
-        guard token.count >= 32, let parts = URLComponents(string: address),
+        guard token.count >= 32, var parts = URLComponents(string: address),
               parts.scheme == "https", parts.host?.isEmpty == false,
               parts.user == nil, parts.password == nil,
-              parts.query == nil, parts.fragment == nil,
-              parts.path.hasSuffix("/sign-upload"), let url = parts.url else {
-            ossMessage = "请先填写完整的 HTTPS 地址和签名服务令牌"
+              parts.query == nil, parts.fragment == nil else {
+            ossMessage = "请先填写素材服务地址和令牌"
             return
         }
+        if parts.path.hasSuffix("/sign-upload") {
+            parts.path = String(parts.path.dropLast("sign-upload".count))
+        } else if !parts.path.hasSuffix("/") {
+            parts.path += "/"
+        }
+        parts.path += "credentials"
+        guard let url = parts.url else { ossMessage = "素材服务地址无效"; return }
         do {
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
+            request.cachePolicy = .reloadIgnoringLocalCacheData
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            request.httpBody = try JSONSerialization.data(withJSONObject: [
-                "filename": "maichat-connection-check.mp4", "size_bytes": 1
-            ])
-            let (data, response) = try await URLSession.shared.data(for: request)
+            request.httpBody = try JSONSerialization.data(withJSONObject: ["action": "status"])
+            let session = URLSession(configuration: .ephemeral)
+            defer { session.finishTasksAndInvalidate() }
+            let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else {
-                ossMessage = "签名服务没有返回 HTTP 响应"
+                ossMessage = "素材服务没有返回 HTTP 响应"
                 return
             }
-            if http.statusCode == 401 { ossMessage = "签名服务令牌不匹配"; return }
-            if http.statusCode == 503 { ossMessage = "阿里云签名函数尚未配置完成"; return }
+            if http.statusCode == 401 { ossMessage = "素材服务令牌不匹配"; return }
             guard http.statusCode == 200,
-                  let signed = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let upload = signed["upload_url"] as? String,
-                  let read = signed["read_url"] as? String,
-                  upload.hasPrefix("https://"), read.hasPrefix("https://") else {
-                ossMessage = "签名服务未返回有效的临时链接"
+                  data.count <= 16_384,
+                  let status = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let assetsReady = status["assets_configured"] as? Bool else {
+                ossMessage = "素材服务返回的数据无效"
                 return
             }
-            ossMessage = "签名服务连接成功；尚未上传视频或产生视频生成费用"
+            ossMessage = assetsReady ? "火山素材接口可用；OSS 上传尚未配置"
+                : "服务已连接；火山素材接口尚未配置"
         } catch {
             ossMessage = "连接失败：\(error.localizedDescription)"
         }

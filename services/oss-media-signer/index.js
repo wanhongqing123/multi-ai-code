@@ -60,7 +60,8 @@ function createHandler(options = {}) {
     }
     const method = event?.requestContext?.http?.method || event?.httpMethod || event?.method;
     const route = event?.rawPath || event?.path || '/sign-upload';
-    if (method !== 'POST' || (!route.endsWith('/sign-upload') && !route.endsWith('/ark-assets')))
+    if (method !== 'POST' || (!route.endsWith('/sign-upload') &&
+        !route.endsWith('/ark-assets') && route !== '/credentials'))
       return jsonResponse(404, { error: 'Not found' });
 
     const token = env.MAICHAT_MEDIA_SERVICE_TOKEN || env.MAICHAT_OSS_SIGNER_TOKEN || '';
@@ -69,6 +70,17 @@ function createHandler(options = {}) {
       return jsonResponse(401, { error: 'Unauthorized' });
 
     const body = requestBody(event);
+    if (route === '/credentials') {
+      if (body?.action !== 'status')
+        return jsonResponse(400, { error: 'Unsupported service action' });
+      return jsonResponse(200, {
+        configured: [],
+        assets_configured: !!(env.VOLC_ACCESS_KEY_ID && env.VOLC_SECRET_ACCESS_KEY),
+        storage_configured: !!(env.MAICHAT_OSS_BUCKET &&
+          /^oss-[a-z0-9-]+$/.test(env.MAICHAT_OSS_REGION || '') &&
+          env.ALIBABA_CLOUD_ACCESS_KEY_ID && env.ALIBABA_CLOUD_ACCESS_KEY_SECRET)
+      });
+    }
     if (route.endsWith('/ark-assets')) {
       const accessKeyId = env.VOLC_ACCESS_KEY_ID || '';
       const secretKey = env.VOLC_SECRET_ACCESS_KEY || '';

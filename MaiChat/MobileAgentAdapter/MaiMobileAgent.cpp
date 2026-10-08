@@ -5,6 +5,7 @@
 #include "MaiAgentSendMediaTool.h"
 #include "MaiAppStorageTool.h"
 #include "MaiArkMediaTools.h"
+#include "MaiArkAssetTools.h"
 #include "MaiCurlTools.h"
 #include "MaiCvImageTools.h"
 #include "MaiCvVideoAnalysis.h"
@@ -384,8 +385,22 @@ struct MaiMobileAgent {
     } else {
       tools->add(makeMaiSeedanceVideoTool(arkKey, config.caBundlePath));
     }
+    if (ossConfig.is_object() && ossConfig.value("assets_configured", false)) {
+      tools->add(makeMaiArkAssetTool(
+          [dispatcher = hostTools](const std::string &request,
+                                   const MaiToolContext &context) -> MaiResult<std::string> {
+            if (context.isCanceled()) return {MaiErrorCode::Canceled, "Asset request was canceled"};
+            const MaiToolResult response =
+                callMaiMobileHostTool(dispatcher, "mobile_ark_assets", request);
+            if (response.hasError()) return response.error();
+            return response.output();
+          }));
+    } else {
+      tools->add(makeMaiArkAssetTool());
+    }
 #else
     tools->add(makeMaiSeedanceVideoTool(arkKey, config.caBundlePath));
+    tools->add(makeMaiArkAssetTool());
 #endif
     tools->add(makeMaiSeedreamImageTool(arkKey, config.caBundlePath));
     const auto glmKey = [dispatcher = hostTools]() -> std::string {

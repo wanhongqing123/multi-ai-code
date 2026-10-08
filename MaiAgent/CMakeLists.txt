@@ -276,6 +276,7 @@ add_library(maiagent STATIC
   AgentTools/MaiNetworkIpTool.cpp
   AgentTools/MaiSshTool.cpp
   AgentTools/MaiArkMediaTools.cpp
+  AgentTools/MaiArkAssetTools.cpp
   AgentTools/MaiGlmMediaTools.cpp
   AgentTools/MaiCreativeMediaSupport.cpp
   AgentTools/MaiKlingMediaTools.cpp

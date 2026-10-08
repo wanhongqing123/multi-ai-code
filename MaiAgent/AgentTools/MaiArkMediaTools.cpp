@@ -373,16 +373,16 @@ public:
              {"first_and_last_frame_to_video", true, true, unverified,
               "Requires image_path and last_frame_path"},
              {"platform_virtual_avatar", true, true, unverified,
-              "Use a virtual avatar asset ID from the Ark Experience Center; it does not preserve "
-              "a real person's identity"},
+              "Use an Active AIGC asset ID from ark_assets or the Ark Experience Center; "
+              "Ark validates uploaded content"},
              {"authorized_real_portrait", true, true, unverified,
               "Use an authorized real-person asset ID from the same Ark account; direct local "
               "face uploads remain unsupported"},
              {"local_portrait_asset_registration", true, true,
               MaiSpecialistCapabilityStatus::NotImplemented,
-              "The public Assets API requires live-person verification, an authorized Asset "
-              "Group, AK/SK, and an accessible upload URL. This tool cannot silently register "
-              "an arbitrary local face photo"},
+              "AIGC assets can be managed with ark_assets and an Ark-accessible HTTPS image URL. "
+              "Direct local image upload awaits private storage; real-person H5 authorization "
+              "is a separate unimplemented flow"},
              {"multi_reference_video", true, true, unverified,
               "Seedance 2.0 accepts 1-9 reference images; reference mode cannot mix with strict "
               "first/last-frame control. This tool accepts one reference video"},
@@ -414,16 +414,14 @@ public:
                "by the host media service when configured; discover reports its availability. "
                "Before a paid local-video task, use ffprobe to check input duration: 2-15 "
                "seconds; FPS 24-60. "
-               "For a realistic but non-specific actor, pass a platform "
-               "virtual_avatar_asset_id selected in the Ark Experience Center. The tool sends "
-               "asset://<ID> as reference image 1; refer to it as image 1 in the message. It "
-               "does not preserve the identity in a user's real photo. For a specific real "
-               "person, pass authorized_portrait_asset_id only after Ark shows the asset as "
-               "authorized in this account. Both paths use asset:// references; direct local "
-               "face uploads remain unsupported. Ark has a separate public Assets API for "
-               "verified portraits, but local photo registration is not connected here. "
-               "This tool cannot list the account's portrait assets; a missing asset ID in "
-               "the request is not proof that the account has none. "
+               "For a private virtual avatar, use ark_assets to submit an Ark-accessible HTTPS "
+               "image and wait for Active, or select an existing asset in the Ark Experience "
+               "Center. Pass its virtual_avatar_asset_id. The tool sends asset://<ID> as "
+               "reference image 1; refer to it as image 1 in the message. Ark decides whether "
+               "the asset is acceptable. For a separately authorized real-person portrait, "
+               "pass authorized_portrait_asset_id only after Ark marks it authorized in this "
+               "account. Direct local image upload still awaits private storage. Use ark_assets "
+               "to list AIGC assets; this tool cannot list authorized real-portrait assets. "
                "For photos without a source video, use mode=create with "
                "reference_image_paths; mode=reference requires one existing video source. "
                "Use reference_image_paths for up to 9 face-free reference images, or combine "

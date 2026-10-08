@@ -4,8 +4,8 @@
 #include "MaiAgent.h"
 #include "MaiAgentSendMediaTool.h"
 #include "MaiAppStorageTool.h"
-#include "MaiArkMediaTools.h"
 #include "MaiArkAssetTools.h"
+#include "MaiArkMediaTools.h"
 #include "MaiCurlTools.h"
 #include "MaiCvImageTools.h"
 #include "MaiCvVideoAnalysis.h"
@@ -62,17 +62,33 @@ constexpr auto kMarkdownBaseInstructions =
     "replacement model's paid call. A model choice is separate from paid-call "
     "approval. Classify an input rejection before changing anything. If the "
     "cause is ambiguous, inspect the actual image and prompt without claiming "
-    "which one failed. If an image edit is allowed and still serves the user's "
-    "goal, preserve the original, make a light FFmpeg/OpenCV edit, preview it, "
+    "which one failed. For Seedance, first submit the original user images "
+    "normally. "
+    "Only if Ark rejects that attempt for a possible real face, check for "
+    "existing Active "
+    "assets or use ark_assets upload_image on each required original photo, "
+    "wait for Active, "
+    "then retry the same Seedance model with asset:// IDs and new paid "
+    "approval. Do not "
+    "silently drop any photo or assume asset review will accept every face. If "
+    "registration "
+    "fails or Ark requires H5 authorization, follow its actual result. Do not "
+    "default to "
+    "flipping or oil-painting a real face to evade review. For other image "
+    "issues, if an edit "
+    "is allowed and still serves the user's goal, preserve the original, make "
+    "a light "
+    "FFmpeg/OpenCV edit, preview it, "
     "and retry the selected model with new paid approval. If image-related "
     "rejection persists, consider an FFmpeg oil-paint-style derivative and "
     "describe permitted details lost in processing. Do not switch models "
-    "before these bounded same-model attempts. But if the provider explicitly "
+    "before these bounded same-model attempts. If the provider explicitly "
     "forbids a recognizable real-person reference without an authorized asset "
     "and the user needs that person's identity, do not transform the photo to "
     "hide the face and reconstruct it in the prompt. Keep the selected model; "
     "briefly offer its authorized-asset path or a visibly fictional character. "
-    "Offer another model only if the user wants the original person's likeness, "
+    "Offer another model only if the user wants the original person's "
+    "likeness, "
     "and ask before switching. Do not claim the account has no authorized "
     "portrait assets unless a tool actually checked; ask for an asset ID. "
     "Avoid lengthy technical error narration. "
@@ -111,7 +127,8 @@ constexpr auto kMarkdownBaseInstructions =
     "resolution, "
     "and aspect ratio. Ask for missing duration, resolution, or aspect ratio "
     "instead of "
-    "silently using defaults. Read the selected specialist's actual duration range; "
+    "silently using defaults. Read the selected specialist's actual duration "
+    "range; "
     "do not assume a universal 10-second limit or shorten a longer request. "
     "Match the paid call to the shown plan: preserve "
     "the intended subject, clothing, scene, action, reference count, duration, "
@@ -363,45 +380,56 @@ struct MaiMobileAgent {
                  : std::string{};
     };
 #if defined(__APPLE__)
-    const MaiToolResult ossStatus = callMaiMobileHostTool(hostTools, "oss_video_upload_config", "{}");
-    const Json ossConfig = ossStatus.hasError()
-                               ? Json::object()
-                               : Json::parse(ossStatus.output(), nullptr, false);
+    const MaiToolResult ossStatus =
+        callMaiMobileHostTool(hostTools, "oss_video_upload_config", "{}");
+    const Json ossConfig =
+        ossStatus.hasError() ? Json::object()
+                             : Json::parse(ossStatus.output(), nullptr, false);
     if (ossConfig.is_object() && ossConfig.value("configured", false)) {
       const MaiArkVideoUploadProvider uploadArkVideo =
-          [dispatcher = hostTools](const std::string &path,
-                                   const MaiToolContext &context) -> MaiResult<std::string> {
-        if (context.isCanceled()) return {MaiErrorCode::Canceled, "Video upload was canceled"};
+          [dispatcher = hostTools](
+              const std::string &path,
+              const MaiToolContext &context) -> MaiResult<std::string> {
+        if (context.isCanceled())
+          return {MaiErrorCode::Canceled, "Video upload was canceled"};
         const MaiToolResult response = callMaiMobileHostTool(
             dispatcher, "mobile_oss_upload_video", Json{{"path", path}}.dump());
-        if (response.hasError()) return response.error();
-        if (context.isCanceled()) return {MaiErrorCode::Canceled, "Video upload was canceled"};
+        if (response.hasError())
+          return response.error();
+        if (context.isCanceled())
+          return {MaiErrorCode::Canceled, "Video upload was canceled"};
         const Json parsed = Json::parse(response.output(), nullptr, false);
         if (!parsed.is_object() || !parsed.value("url", Json{}).is_string())
           return {MaiErrorCode::Protocol, "OSS upload returned no read URL"};
         return parsed["url"].get<std::string>();
       };
-      tools->add(makeMaiSeedanceVideoTool(arkKey, config.caBundlePath, uploadArkVideo));
+      tools->add(makeMaiSeedanceVideoTool(arkKey, config.caBundlePath,
+                                          uploadArkVideo));
     } else {
       tools->add(makeMaiSeedanceVideoTool(arkKey, config.caBundlePath));
     }
-    if (ossConfig.is_object() && ossConfig.value("assets_configured", false)) {
-      tools->add(makeMaiArkAssetTool(
-          [dispatcher = hostTools](const std::string &request,
-                                   const MaiToolContext &context) -> MaiResult<std::string> {
-            if (context.isCanceled()) return {MaiErrorCode::Canceled, "Asset request was canceled"};
-            const MaiToolResult response =
-                callMaiMobileHostTool(dispatcher, "mobile_ark_assets", request);
-            if (response.hasError()) return response.error();
-            return response.output();
-          }));
-    } else {
-      tools->add(makeMaiArkAssetTool());
-    }
 #else
     tools->add(makeMaiSeedanceVideoTool(arkKey, config.caBundlePath));
-    tools->add(makeMaiArkAssetTool());
 #endif
+    const auto assetSettings =
+        [dispatcher = hostTools]() -> MaiResult<MaiArkAssetServiceSettings> {
+      const MaiToolResult response =
+          callMaiMobileHostTool(dispatcher, "mobile_ark_service_config", "{}");
+      if (response.hasError())
+        return response.error();
+      const Json value = Json::parse(response.output(), nullptr, false);
+      if (!value.is_object() || !value.value("base_url", Json{}).is_string() ||
+          !value.value("token", Json{}).is_string())
+        return {MaiErrorCode::Protocol,
+                "Ark Assets service configuration is invalid"};
+      return MaiArkAssetServiceSettings{value["base_url"].get<std::string>(),
+                                        value["token"].get<std::string>()};
+    };
+    if (assetSettings())
+      tools->add(makeMaiArkAssetTool(
+          makeMaiArkAssetServiceProvider(assetSettings, config.caBundlePath)));
+    else
+      tools->add(makeMaiArkAssetTool());
     tools->add(makeMaiSeedreamImageTool(arkKey, config.caBundlePath));
     const auto glmKey = [dispatcher = hostTools]() -> std::string {
       const MaiToolResult result =

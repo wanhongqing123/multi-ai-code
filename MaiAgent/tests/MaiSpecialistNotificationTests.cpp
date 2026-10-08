@@ -25,11 +25,11 @@ int failures = 0;
 
 class StaticMediaTool final : public MaiTool {
 public:
-    StaticMediaTool(std::string result, bool success)
-        : mResult(std::move(result)), mSuccess(success) {}
+    StaticMediaTool(std::string result, bool success, std::string toolName)
+        : mResult(std::move(result)), mSuccess(success), mToolName(std::move(toolName)) {}
 
     std::string name() const override {
-        return "wan_video";
+        return mToolName;
     }
     std::string description() const override {
         return "Fake video task for notification tests";
@@ -45,6 +45,7 @@ public:
 private:
     std::string mResult;
     bool mSuccess;
+    std::string mToolName;
 };
 
 struct Scenario {
@@ -56,7 +57,7 @@ struct Scenario {
 };
 
 Scenario startScenario(std::string result, bool withModel, bool success = false,
-                       bool modelSucceeds = false) {
+                       bool modelSucceeds = false, std::string specialistName = "wan_video") {
     auto store = makeMaiMemoryStore();
     Scenario scenario;
     scenario.store = store.get();
@@ -70,7 +71,7 @@ Scenario startScenario(std::string result, bool withModel, bool success = false,
     MaiSpecialistTask task;
     task.id = MaiIdGenerator::generate("spt_");
     task.ownerSessionId = session.id;
-    task.specialistName = "wan_video";
+    task.specialistName = specialistName;
     task.providerTaskId = "provider-task";
     task.intent = "Create a video";
     task.created = MaiTime::getCurrentTime();
@@ -90,7 +91,8 @@ Scenario startScenario(std::string result, bool withModel, bool success = false,
         model = std::move(fake);
     }
     auto tools = std::make_unique<MaiToolRegistry>();
-    tools->add(std::make_unique<StaticMediaTool>(std::move(result), success));
+    tools->add(
+        std::make_unique<StaticMediaTool>(std::move(result), success, std::move(specialistName)));
     scenario.agent =
         std::make_unique<MaiAgent>(std::move(store), std::move(model), std::move(tools));
     return scenario;
@@ -346,6 +348,25 @@ void testPossibleRealPersonDoesNotForceProviderSwitch() {
     CHECK(targeted);
 }
 
+void testSeedanceRealFaceUsesOriginalAssetRoute() {
+    auto scenario = startScenario(R"({"status":"failed","reply":"image may contain real person"})",
+                                  true, true, true, "seedance_video");
+    waitForStatus(scenario, MaiSpecialistTaskStatus::Failed);
+    for (int attempt = 0; attempt < 100 && scenario.fakeModel->requestCount() == 0; ++attempt)
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    CHECK(scenario.fakeModel->requestCount() > 0);
+    if (scenario.fakeModel->requestCount() == 0) return;
+    bool targeted = false;
+    for (const MaiModelMessage& message : scenario.fakeModel->lastRequest().messages) {
+        if (message.role == MaiModelRole::System &&
+            message.content.find("ark_assets upload_image") != std::string::npos &&
+            message.content.find("get_asset until it is Active") != std::string::npos &&
+            message.content.find("Do not default to flipping, oil-painting") != std::string::npos)
+            targeted = true;
+    }
+    CHECK(targeted);
+}
+
 void testTechnicalFailureDoesNotGetModerationGuidance() {
     auto scenario =
         startScenario(R"({"status":"failed","reply":"unsupported dimensions"})", true, true, true);
@@ -396,6 +417,7 @@ int main() {
     testAmbiguousModerationGivesConcreteInputPlan();
     testImageModerationKeepsSameProviderFirst();
     testPossibleRealPersonDoesNotForceProviderSwitch();
+    testSeedanceRealFaceUsesOriginalAssetRoute();
     testTechnicalFailureDoesNotGetModerationGuidance();
     testLocalPollingInputErrorDoesNotClaimProviderFailure();
     return failures == 0 ? 0 : 1;

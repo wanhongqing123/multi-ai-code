@@ -57,7 +57,24 @@ test('rejects unauthorized and oversized requests before signing', async () => {
   assert.equal((await handle(request({ filename: 'clip.mp4', size_bytes: 1 }, 'wrong'))).statusCode, 401);
   assert.equal((await handle(request({ filename: 'clip.mp4', size_bytes: 200_000_001 }))).statusCode, 400);
   assert.equal((await handle(request({ filename: 'clip.exe', size_bytes: 12 }))).statusCode, 400);
+  assert.equal((await handle(request({ filename: 'photo.jpg', size_bytes: 30_000_001 }))).statusCode, 400);
   assert.equal(created, false);
+});
+
+test('signs direct JPEG uploads for private Ark input storage', async () => {
+  const calls = [];
+  const handle = createHandler({ env, newID: () => 'image-id',
+    currentTime: () => new Date('2026-10-08T00:00:00Z'),
+    makeClient: () => ({ signatureUrlV4: async (...args) => {
+      calls.push(args);
+      return `https://example.oss-cn-hangzhou.aliyuncs.com/${args[3]}?signed=yes`;
+    } }) });
+  const result = await handle(request({ filename: 'photo.JPG', size_bytes: 1_000_000 }));
+  assert.equal(result.statusCode, 200);
+  const body = JSON.parse(result.body);
+  assert.equal(body.object_key, 'ark-asset-inputs/2026-10-08/image-id.jpg');
+  assert.equal(body.upload_headers['Content-Type'], 'image/jpeg');
+  assert.deepEqual(calls.map(call => call[0]), ['PUT', 'GET']);
 });
 
 test('fails closed when credentials or route are missing', async () => {

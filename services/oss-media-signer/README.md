@@ -2,8 +2,8 @@
 
 当前服务提供独立的火山 Ark Assets 素材接口，使用服务器持有的 AccessKey 签名。
 已有方舟可访问的 HTTPS 图片 URL 时，可直接创建 AIGC 素材，不需要 OSS。
-本地照片先上传到 OSS 的能力排在后续；**服务器签名接口已接入，不等于 App
-本地照片一键入库已完成**。
+本地 JPEG/PNG 由 App 取得短期 PUT/GET 链接后直传私有 OSS，再由服务器用
+`CreateAsset` 登记；文件字节不经过服务器。真实 Bucket 仍需实盘验证。
 
 原有 OSS 视频签名接口仍保留：它只签发临时链接，不接收视频字节。iPhone 将原始 MP4/MOV 直接 PUT 到私有
 阿里云 OSS Bucket，再将最长 24 小时有效的签名 GET 链接交给 Seedance。视频不经过
@@ -12,9 +12,10 @@
 
 ## 阿里云侧准备
 
-1. 创建**私有** OSS Bucket，记录 Bucket 名称和地域，如 `oss-cn-hangzhou`。
-   给 `seedance-inputs/` 前缀设置约两天的生命周期删除规则，避免临时视频长期堆积。
-2. 创建专用 RAM 身份，仅授予该 Bucket 的 `seedance-inputs/*` 对象
+1. 创建**私有** OSS Bucket。当前目标是 `maichat-ai-video-resource`，地域
+   `oss-cn-guangzhou`。给 `seedance-inputs/` 和 `ark-asset-inputs/` 设置生命周期规则。
+2. 创建专用 RAM 身份，仅授予该 Bucket 的 `seedance-inputs/*` 与
+   `ark-asset-inputs/*` 对象
    `oss:PutObject`、`oss:GetObject` 权限。不要使用主账号 AccessKey。将下面的
    `YOUR_BUCKET` 换成实际 Bucket 名称后，可作为 RAM 自定义策略的起点：
 
@@ -24,7 +25,8 @@
      "Statement": [{
        "Effect": "Allow",
        "Action": ["oss:PutObject", "oss:GetObject"],
-       "Resource": ["acs:oss:*:*:YOUR_BUCKET/seedance-inputs/*"]
+       "Resource": ["acs:oss:*:*:YOUR_BUCKET/seedance-inputs/*",
+                    "acs:oss:*:*:YOUR_BUCKET/ark-asset-inputs/*"]
      }]
    }
    ```
@@ -71,15 +73,16 @@
 `create_asset`、`get_asset`、`list_assets`。`create_asset` 接收 `group_id`、
 方舟可访问的 HTTPS `url` 与可选名称；`get_asset` 返回实际异步状态，只有
 `Active` 的素材 ID 才可作为 `asset://<ID>` 给 Seedance 使用。服务端不返回
-AccessKey，且不接收图片字节。本地照片没有 HTTPS 地址时，需等待后续的 OSS 上传接线。
+AccessKey，且不接收图片字节。已配置签发服务的 App 可通过共享 C++ 上传工具先把
+工作区 JPEG/PNG 直传 OSS，再将限时读取 URL 交给本接口。
 
 ## App 配置
 
 在 iOS MaiChat 的“模型配置”中填写素材服务 HTTPS 基址，例如
 `https://ichat.life/maichat`，或旧式完整地址 `https://…/sign-upload`，再填写
 同一个服务令牌。`ark_assets` 可经 `/ark-assets` 列出、创建和查询素材；
-它不要求 OSS。`upload_image` 尚不能从 App 本地照片直接上传，会明确返回
-`upload_not_configured`。`seedance_video discover` 只有在服务确认 OSS 已配置后，
+已有 HTTPS URL 不要求 OSS。`upload_image` 从 App 工作区读取 JPEG/PNG，向签发服务
+取短期 URL，再用共享 C++ 直传 OSS。`seedance_video discover` 只有在服务确认 OSS 已配置后，
 才把 `video_edit_from_local_file` 上报为待实盘验证。Android、Desktop 的
 素材服务仍需各自接线。iOS／Android 的模型 API Key 同步使用同一服务地址和
 令牌；打开 AI 助手时会尝试同步已配置的型号，网络不可用时保留本机已有 Key。
@@ -96,8 +99,9 @@ AccessKey，且不接收图片字节。本地照片没有 HTTPS 地址时，需�
 响应包含 `upload_url`、`upload_headers`（包括 Content-Type）和 `read_url`。
 客户端按响应 Header 将**文件字节** PUT 至 `upload_url`；OSS 返回 2xx 后，
 才把 `read_url` 交给方舟。PUT 链接有效 15 分钟，GET 链接有效 24 小时；
-每次请求使用随机对象名，Bucket 保持私有。服务只允许 MP4/MOV 和声明不超过
-200 MB 的文件，实际 Bucket 用量与访问权限仍应在阿里云控制台监控。
+每次请求使用随机对象名，Bucket 保持私有。服务允许 JPEG/PNG（不超过 30 MB）
+和 MP4/MOV（不超过 200 MB），分别写入 `ark-asset-inputs/` 与 `seedance-inputs/`。
+实际 Bucket 用量与访问权限仍应在阿里云控制台监控。
 
 参考：[OSS 预签名 PUT 上传](https://help.aliyun.com/zh/oss/developer-reference/upload-objects-using-a-signed-url-generated-with-oss-sdk-for-node-js/)、
 [V4 签名 GET/PUT](https://help.aliyun.com/zh/oss/developer-reference/add-signatures-to-urls)、

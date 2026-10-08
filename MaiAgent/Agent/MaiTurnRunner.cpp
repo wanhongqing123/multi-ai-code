@@ -91,6 +91,21 @@ std::string specialistFailureGuidance(const nlohmann::json& specialist) {
     }
     std::transform(detail.begin(), detail.end(), detail.begin(),
                    [](unsigned char byte) { return static_cast<char>(std::tolower(byte)); });
+    if (specialist.value("specialist", std::string{}) == "seedance_video" &&
+        (detail.find("real person") != std::string::npos ||
+         detail.find("human face") != std::string::npos ||
+         detail.find("portrait") != std::string::npos)) {
+        return " The original-image Seedance attempt was rejected for a possible real face. "
+               "Keep every original reference unchanged. Check whether an Active asset for the "
+               "same image already exists; otherwise use ark_assets upload_image with the "
+               "original local image, then get_asset until it is Active or Failed. If Active, "
+               "retry the selected Seedance model with its asset:// ID and new paid-call "
+               "approval. For several required photos, register each separately and do not "
+               "silently drop one. Do not default to flipping, oil-painting, or rewriting a face "
+               "to evade review. If asset registration fails or requires a real-person "
+               "authorization step, report the actual provider result to the main model and "
+               "follow that authorized path; do not claim every real photo is accepted.";
+    }
     if (detail.find("text sensitive") != std::string::npos ||
         detail.find("prompt sensitive") != std::string::npos) {
         return " This attempt failed. The provider labeled the text input as sensitive. Inspect "
@@ -509,6 +524,7 @@ void MaiTurnRunner::executeTools(const std::vector<MaiToolInvocation>& calls,
             auto error = nlohmann::json::parse(stored.error, nullptr, false);
             if (error.is_object() && error.value("code", nlohmann::json{}).is_string() &&
                 (error["code"] == "provider_error" || error["code"] == "task_failed")) {
+                error["specialist"] = call.name;
                 error["agent_next_step"] = specialistFailureGuidance(error);
                 stored.output = error.dump();
             }

@@ -378,11 +378,11 @@ public:
              {"authorized_real_portrait", true, true, unverified,
               "Use an authorized real-person asset ID from the same Ark account; direct local "
               "face uploads remain unsupported"},
-             {"local_portrait_asset_registration", true, true,
-              MaiSpecialistCapabilityStatus::NotImplemented,
-              "AIGC assets can be managed with ark_assets and an Ark-accessible HTTPS image URL. "
-              "Direct local image upload awaits private storage; real-person H5 authorization "
-              "is a separate unimplemented flow"},
+             {"local_portrait_asset_registration", true, true, unverified,
+              "ark_assets can upload a local JPEG/PNG directly to private OSS when its signer "
+              "is configured, then register it as an Ark AIGC asset. Confirm Active before use. "
+              "Ark may reject a real face or require separate H5 authorization; that flow "
+              "is not implemented"},
              {"multi_reference_video", true, true, unverified,
               "Seedance 2.0 accepts 1-9 reference images; reference mode cannot mix with strict "
               "first/last-frame control. This tool accepts one reference video"},
@@ -420,7 +420,11 @@ public:
                "reference image 1; refer to it as image 1 in the message. Ark decides whether "
                "the asset is acceptable. For a separately authorized real-person portrait, "
                "pass authorized_portrait_asset_id only after Ark marks it authorized in this "
-               "account. Direct local image upload still awaits private storage. Use ark_assets "
+               "account. Submit original reference images first. If Ark rejects a photo for a "
+               "possible real face, use ark_assets to register the unchanged image and wait for "
+               "Active before retrying the same model with its asset ID. Registration can also "
+               "fail or require a separate authorization path; follow the actual provider "
+               "result. Use ark_assets "
                "to list AIGC assets; this tool cannot list authorized real-portrait assets. "
                "For photos without a source video, use mode=create with "
                "reference_image_paths; mode=reference requires one existing video source. "

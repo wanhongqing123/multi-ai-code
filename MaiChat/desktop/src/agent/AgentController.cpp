@@ -1,6 +1,7 @@
 #include "agent/AgentController.h"
 #include "MaiAgentSendMediaTool.h"
 #include "MaiAppStorageTool.h"
+#include "MaiArkAssetTools.h"
 #include "MaiArkMediaTools.h"
 #include "MaiGlmMediaTools.h"
 #include "MaiKlingMediaTools.h"
@@ -54,11 +55,17 @@ offers multiple billable variants, show their supported duration and resolution 
 variant too. A model choice is
 separate from paid-call approval. Classify an input rejection before changing anything. If the
 cause is ambiguous, inspect the actual image and prompt without claiming which one failed. If an
-image edit is allowed and still serves the user's goal, preserve the original, make a light
+Seedance is selected, first submit the original user images normally. Only if Ark rejects that
+attempt for a possible real face, check for existing Active assets or use ark_assets upload_image
+on each required original photo, wait for Active, then retry the same Seedance model with
+asset:// IDs and new paid approval. Do not silently drop a photo or assume every face will pass
+asset review. If Ark requires H5 authorization, follow its actual result. Do not default to
+flipping or oil-painting a real face to evade review. For other image issues, if an image edit is
+allowed and still serves the user's goal, preserve the original, make a light
 FFmpeg/OpenCV edit, preview it, and retry the selected model with new paid approval. If
 image-related rejection persists, consider an FFmpeg oil-paint-style derivative and describe
 permitted details lost in processing. Do not switch models before these bounded same-model
-attempts. But if the provider explicitly forbids a recognizable real-person reference without
+attempts. If the provider explicitly forbids a recognizable real-person reference without
 an authorized asset and the user needs that person's identity, do not transform the photo to hide
 the face and reconstruct it in the prompt. Keep the selected model; briefly offer its authorized-
 asset path or a visibly fictional character. Offer another model only if the user wants the
@@ -191,6 +198,17 @@ buildAgent(std::unique_ptr<MaiModelClient> model,
     return toUtf8(qEnvironmentVariable("MAICHAT_ARK_API_KEY"));
   };
   tools->add(makeMaiSeedanceVideoTool(arkKey));
+  const auto assetSettings = []() -> MaiResult<MaiArkAssetServiceSettings> {
+    const std::string base = toUtf8(qEnvironmentVariable("MAICHAT_MEDIA_SERVICE_URL"));
+    const std::string token = toUtf8(qEnvironmentVariable("MAICHAT_MEDIA_SERVICE_TOKEN"));
+    if (base.empty() || token.empty())
+      return {MaiErrorCode::NotConfigured, "Ark Assets service is not configured"};
+    return MaiArkAssetServiceSettings{base, token};
+  };
+  if (assetSettings())
+    tools->add(makeMaiArkAssetTool(makeMaiArkAssetServiceProvider(assetSettings)));
+  else
+    tools->add(makeMaiArkAssetTool());
   tools->add(makeMaiSeedreamImageTool(arkKey));
   const auto glmKey = [key = toUtf8(glmApiKey)] { return key; };
   tools->add(makeMaiGlmVideoTool(glmKey));

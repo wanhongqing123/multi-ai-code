@@ -4,6 +4,7 @@ const { randomUUID, timingSafeEqual } = require('node:crypto');
 const path = require('node:path');
 
 const MAX_VIDEO_BYTES = 200_000_000;
+const MAX_IMAGE_BYTES = 30_000_000;
 const UPLOAD_TTL_SECONDS = 15 * 60;
 const READ_TTL_SECONDS = 24 * 60 * 60;
 
@@ -160,9 +161,11 @@ function createHandler(options = {}) {
     const size = body?.size_bytes;
     const extension = typeof filename === 'string'
       ? path.extname(filename).toLowerCase() : '';
-    if (!['.mp4', '.mov'].includes(extension) || !Number.isSafeInteger(size) ||
-        size < 1 || size > MAX_VIDEO_BYTES)
-      return jsonResponse(400, { error: 'Provide an MP4/MOV file of at most 200 MB' });
+    const video = ['.mp4', '.mov'].includes(extension);
+    const image = ['.jpg', '.jpeg', '.png'].includes(extension);
+    if ((!video && !image) || !Number.isSafeInteger(size) || size < 1 ||
+        size > (image ? MAX_IMAGE_BYTES : MAX_VIDEO_BYTES))
+      return jsonResponse(400, { error: 'Provide a JPEG/PNG under 30 MB or MP4/MOV under 200 MB' });
 
     try {
       if (!client) client = makeClient({
@@ -173,8 +176,10 @@ function createHandler(options = {}) {
         authorizationV4: true,
         secure: true
       });
-      const objectKey = `seedance-inputs/${currentTime().toISOString().slice(0, 10)}/${newID()}${extension}`;
-      const contentType = extension === '.mov' ? 'video/quicktime' : 'video/mp4';
+      const prefix = image ? 'ark-asset-inputs' : 'seedance-inputs';
+      const objectKey = `${prefix}/${currentTime().toISOString().slice(0, 10)}/${newID()}${extension}`;
+      const contentType = image ? (extension === '.png' ? 'image/png' : 'image/jpeg')
+        : (extension === '.mov' ? 'video/quicktime' : 'video/mp4');
       const uploadHeaders = { 'Content-Type': contentType };
       const uploadUrl = await client.signatureUrlV4(
         'PUT', UPLOAD_TTL_SECONDS, { headers: uploadHeaders }, objectKey);
@@ -191,7 +196,7 @@ function createHandler(options = {}) {
         read_expires_in: READ_TTL_SECONDS
       });
     } catch {
-      return jsonResponse(502, { error: 'Could not sign the video upload' });
+      return jsonResponse(502, { error: 'Could not sign the media upload' });
     }
   };
 }

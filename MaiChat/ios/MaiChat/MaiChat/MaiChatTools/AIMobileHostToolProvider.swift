@@ -53,7 +53,17 @@ final class AIMobileHostToolProvider {
         case "oss_video_upload_config":
             return await privateServiceStatus()
         case "mobile_oss_upload_video": return await uploadOssVideo(arguments)
-        case "mobile_ark_assets": return await arkAssets(arguments)
+        case "mobile_ark_service_config":
+            guard let endpoint = privateServiceEndpoint("ark-assets"),
+                  var parts = URLComponents(url: endpoint.url, resolvingAgainstBaseURL: false),
+                  parts.path.hasSuffix("/ark-assets") else {
+                return .failure(code: "not_configured", message: "Ark Assets service is not configured")
+            }
+            parts.path = String(parts.path.dropLast("/ark-assets".count))
+            guard let base = parts.url else {
+                return .failure(code: "not_configured", message: "Ark Assets service URL is invalid")
+            }
+            return Self.jsonSuccess(["base_url": base.absoluteString, "token": endpoint.token])
         case "mobile_gpu_info": return gpuInfo()
         case "mobile_transform_image": return await transformImage(arguments)
         case "mobile_beautify_image":
@@ -282,45 +292,6 @@ final class AIMobileHostToolProvider {
             return Self.jsonSuccess(["url": readURL.absoluteString])
         } catch {
             return .failure(code: "upload_failed", message: error.localizedDescription)
-        }
-    }
-
-    private func arkAssets(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
-        guard Self.string(arguments, key: "action") != "upload_image" else {
-            return .failure(code: "upload_not_configured",
-                            message: "Local image upload awaits private OSS storage; use an accessible HTTPS image URL")
-        }
-        guard let service = privateServiceEndpoint("ark-assets") else {
-            return .failure(code: "not_configured", message: "Configure the private Ark Assets service")
-        }
-        do {
-            var request = URLRequest(url: service.url)
-            request.httpMethod = "POST"
-            request.cachePolicy = .reloadIgnoringLocalCacheData
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("Bearer \(service.token)", forHTTPHeaderField: "Authorization")
-            request.httpBody = try JSONSerialization.data(withJSONObject: arguments)
-            let configuration = URLSessionConfiguration.ephemeral
-            configuration.timeoutIntervalForRequest = 60
-            let session = URLSession(configuration: configuration)
-            defer { session.finishTasksAndInvalidate() }
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse, data.count <= 1_000_000,
-                  let envelope = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                return .failure(code: "protocol", message: "Ark Assets service returned an invalid response")
-            }
-            if http.statusCode != 200 {
-                let reason = envelope["provider_message"] as? String ?? envelope["error"] as? String
-                    ?? "Ark Assets request failed"
-                let code = envelope["provider_code"] as? String ?? "provider_error"
-                return .failure(code: code, message: reason)
-            }
-            guard let result = envelope["result"] as? [String: Any] else {
-                return .failure(code: "protocol", message: "Ark Assets service returned no result")
-            }
-            return Self.jsonSuccess(result)
-        } catch {
-            return .failure(code: "network", message: error.localizedDescription)
         }
     }
 

@@ -189,6 +189,28 @@ public final class AIAssistantController {
                 return hostToolFailure("Ark key is unavailable", "not_configured");
             }
         }
+        if (tool.equals("mobile_ark_service_config")) {
+            try {
+                String token = readEncryptedKey("cloud-service-token.enc");
+                java.net.URI source = new java.net.URI(cloudServiceUrl);
+                if (!"https".equals(source.getScheme()) || source.getHost() == null ||
+                    source.getRawUserInfo() != null || source.getRawQuery() != null ||
+                    source.getRawFragment() != null || token.length() < 32)
+                    return hostToolFailure("Ark Assets service is not configured", "not_configured");
+                String path = source.getPath() == null ? "" : source.getPath();
+                if (path.endsWith("/sign-upload"))
+                    path = path.substring(0, path.length() - "/sign-upload".length());
+                while (path.endsWith("/")) path = path.substring(0, path.length() - 1);
+                java.net.URI base = new java.net.URI("https", null, source.getHost(),
+                    source.getPort(), path, null, null);
+                return new JSONObject().put("ok", true)
+                    .put("output", new JSONObject().put("base_url", base.toString())
+                        .put("token", token))
+                    .toString().getBytes(StandardCharsets.UTF_8);
+            } catch (Exception failure) {
+                return hostToolFailure("Ark Assets service is not configured", "not_configured");
+            }
+        }
         if (tool.equals("glm_api_key")) {
             try {
                 return new JSONObject().put("ok", true)

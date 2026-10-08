@@ -557,6 +557,40 @@ void testVirtualAssetFlow() {
     CHECK(!MaiFileSystem::removeFile(image));
 }
 
+void testLiveAssetServiceWhenExplicitlyConfigured() {
+    const char* address = std::getenv("MAI_ARK_ASSET_SERVICE_TEST_URL");
+    const char* token = std::getenv("MAI_ARK_ASSET_SERVICE_TEST_TOKEN");
+    if (address == nullptr || *address == '\0' || token == nullptr || *token == '\0') return;
+    auto tool = makeMaiArkAssetTool(makeMaiArkAssetServiceProvider([address, token] {
+        return MaiResult<MaiArkAssetServiceSettings>(MaiArkAssetServiceSettings{address, token});
+    }));
+    MaiToolContext context;
+    const MaiToolResult result = tool->execute(R"({"action":"list_groups"})", context);
+    CHECK(!result.hasError());
+    if (!result.hasError()) {
+        const auto groups = nlohmann::json::parse(result.output(), nullptr, false);
+        CHECK(groups.is_object());
+        CHECK(groups.value("Items", nlohmann::json{}).is_array());
+    }
+    const char* image = std::getenv("MAI_ARK_ASSET_SERVICE_TEST_IMAGE");
+    const char* group = std::getenv("MAI_ARK_ASSET_SERVICE_TEST_GROUP");
+    if (image == nullptr || *image == '\0' || group == nullptr || *group == '\0') return;
+    context.root = MaiFilePath::fromUtf8(image).dirName().toUtf8();
+    const std::string input = nlohmann::json{{"action", "upload_image"},
+                                             {"group_id", group},
+                                             {"image_path", image},
+                                             {"name", "MaiChat OSS integration check"}}
+                                  .dump();
+    const MaiToolResult uploaded = tool->execute(input, context);
+    CHECK(!uploaded.hasError());
+    if (!uploaded.hasError()) {
+        const auto asset = nlohmann::json::parse(uploaded.output(), nullptr, false);
+        CHECK(asset.value("Id", nlohmann::json{}).is_string());
+        if (asset.value("Id", nlohmann::json{}).is_string())
+            std::printf("LIVE Ark asset created: %s\n", asset["Id"].get<std::string>().c_str());
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -565,6 +599,7 @@ int main() {
     testRevisionRejectsAnotherConversation();
     testLocalVideoUploadHandoffWithoutArkSubmission();
     testVirtualAssetFlow();
+    testLiveAssetServiceWhenExplicitlyConfigured();
     testLiveArkWhenExplicitlyConfigured();
     testLiveRevisionWhenExplicitlyConfigured();
     return failures == 0 ? 0 : 1;

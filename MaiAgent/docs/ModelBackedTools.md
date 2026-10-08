@@ -270,15 +270,17 @@ iOS 工具层仍需单独验收。用户选择独立的阿里云 OSS 存储后�
 长期 AK/SK 不下发到手机，不能把仅有 Ark API Key 误认为对象存储的上传权限。
 接口取值参考[方舟创建视频生成任务文档](https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh)。
 
-对无需指定真人身份的写实人物视频，工具支持 `virtual_avatar_asset_id`：从方舟
-体验中心的预置虚拟人像库选取素材 ID，在请求中以 `asset://<ID>`、
+对已经取得有效素材 ID 的视频，工具支持 `virtual_avatar_asset_id`：从方舟
+私域素材库或体验中心选取素材 ID，在请求中以 `asset://<ID>`、
 `image_url` 与 `reference_image` 角色提交。可选 `reference_image_path` 作为第二张
 非真人脸参考图片；提示词按“图片 1 / 图片 2”指代素材。此路径不支持用用户真人照片
 自动替换成虚拟人像。对已在方舟同账号通过真人认证、授权且状态可用的人像素材，
 使用独立的 `authorized_portrait_asset_id` 输入，同样通过 `asset://<ID>` 引用，
 不上传本地真人人脸图片。两项 Asset ID 互斥，均须先在方舟体验中心取得。
-预置素材须由账号先在体验中心开通并取得 Asset ID，
-当前工具不持有素材管理 API 所需的 AK/SK，也不自动检索头像库。
+`ark_assets` 可在配置的服务端列出、创建、查询 AIGC 素材。App 先用原始照片
+正常提交 Seedance；若平台明确因真人肖像拒绝，再检查现有 Active 素材，或将
+相关原图直传私有 OSS 并逐张入库，等 `GetAsset` 返回 Active 后用素材 ID 重试。
+不默认翻转或油画化照片以规避审核；入库是否通过仍由方舟决定。
 参考[方舟含肖像视频指南](https://docs.volcengine.com/docs/ark/seedance-portrait-asset-guide?lang=zh)。
 方舟已公开真人人像素材资产 API，但当前 `seedance_video` 未接入录入链路。
 公开流程是 `CreateVisualValidateSession` 让本人完成 H5 真人认证，
@@ -286,8 +288,8 @@ iOS 工具层仍需单独验收。用户选择独立的阿里云 OSS 存储后�
 可访问的 HTTPS 地址，调用 `CreateAsset`，通过 `GetAsset` 等待 `Active`，最后才使用
 `asset://<Asset ID>`。接口要求 AK/SK，和现有的视频推理 API Key 不同；素材入库时
 还会做人脸一致性校验，多人脸图片不能入库。高级创作权益 Entry 可免费开通 Assets API，
-但需满足企业认证及平台开通条件。现有客户端缺少 AK/SK 服务端、认证回调和安全的图片暂存；
-仅凭一张本地真人照片无法在后台无感完成该授权流程。
+但需满足企业认证及平台开通条件。当前 H5 真人认证会话与回调尚未接入；
+仅凭一张本地照片无法在后台无感完成该授权流程。
 详见[真人人像素材资产使用指南](https://docs.volcengine.com/docs/ark/guide-preview?lang=zh)和
 [高级创作权益说明](https://docs.volcengine.com/docs/ark/seedance-2-0-purchase-guide?lang=zh)。
 

@@ -77,6 +77,87 @@ struct AIModelSettings: Codable, Sendable, Equatable {
         URL(string: value)?.host == "open.bigmodel.cn"
     }
 }
+
+final class AICloudNoRedirectDelegate: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest,
+                    completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+}
+
+enum AICloudCredentialSync {
+    static func serviceEndpoint() -> (url: URL, token: String)? {
+        let address = UserDefaults.standard.string(forKey: "oss-media-signer-url") ?? ""
+        let token = KeychainSecretStore(account: "oss-media-signer-token").readSecretKey()
+        return credentialEndpoint(address: address, token: token)
+    }
+
+    static func credentialEndpoint(address: String, token: String) -> (url: URL, token: String)? {
+        guard token.count >= 32, var parts = URLComponents(string: address),
+              parts.scheme == "https", parts.host?.isEmpty == false,
+              parts.user == nil, parts.password == nil,
+              parts.query == nil, parts.fragment == nil else { return nil }
+        var basePath = parts.path
+        if basePath.hasSuffix("/sign-upload") {
+            basePath = String(basePath.dropLast("sign-upload".count))
+        } else if !basePath.hasSuffix("/") {
+            basePath += "/"
+        }
+        parts.path = basePath + "credentials"
+        guard let url = parts.url else { return nil }
+        return (url, token)
+    }
+
+    static func syncIfConfigured() async throws -> Bool {
+        guard let service = serviceEndpoint() else { return false }
+        var request = URLRequest(url: service.url)
+        request.httpMethod = "POST"
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(service.token)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "action": "fetch", "providers": ["ark", "glm", "deepseek", "wan", "minimax"]
+        ])
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 15
+        configuration.timeoutIntervalForResource = 30
+        let session = URLSession(configuration: configuration,
+                                 delegate: AICloudNoRedirectDelegate(), delegateQueue: nil)
+        defer { session.finishTasksAndInvalidate() }
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+              data.count <= 16_384,
+              let body = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let keys = body["api_keys"] as? [String: String] else {
+            throw AIBackendError(message: "云端密钥服务暂时不可用")
+        }
+        let accounts = [
+            "ark": "seedance-ark-api-key",
+            "glm": "ai-assistant-glm-api-key",
+            "deepseek": "ai-assistant-deepseek-api-key",
+            "wan": "wan-model-studio-api-key",
+            "minimax": "minimax-creative-api-key"
+        ]
+        var savedProviders: [String] = []
+        for (name, account) in accounts {
+            guard let key = keys[name], !key.isEmpty, key.utf8.count <= 4_096,
+                  key.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) })
+            else { continue }
+            try KeychainSecretStore(account: account).saveSecretKey(key)
+            savedProviders.append(name)
+        }
+        if let workspace = body["wan_workspace_id"] as? String,
+           (workspace.hasPrefix("ws-") || workspace.hasPrefix("llm-")),
+           workspace.count <= 128 {
+            UserDefaults.standard.set(workspace, forKey: "wan-model-studio-workspace-id")
+        }
+        UserDefaults.standard.set(Date(), forKey: "cloud-credentials-last-sync")
+        UserDefaults.standard.set(savedProviders.sorted(), forKey: "cloud-credentials-synced-providers")
+        return true
+    }
+}
 struct AISession: Codable, Identifiable, Sendable, Equatable {
     let id: String
     let title: String
@@ -189,10 +270,16 @@ actor AIAssistantBackend {
     private var root: URL?
     private var initialized = false
     private let keys = KeychainSecretStore(account: "ai-assistant-api-key")
+    private let glmKeys = KeychainSecretStore(account: "ai-assistant-glm-api-key")
     private let deepseekKeys = KeychainSecretStore(account: "ai-assistant-deepseek-api-key")
 
     private func keyStore(for model: String) -> KeychainSecretStore {
-        model == "deepseek-flash" ? deepseekKeys : keys
+        model == "deepseek-flash" ? deepseekKeys : model.hasPrefix("glm-") ? glmKeys : keys
+    }
+
+    private func storedKey(for model: String) -> String {
+        let current = keyStore(for: model).readSecretKey()
+        return current.isEmpty && model.hasPrefix("glm-") ? keys.readSecretKey() : current
     }
 
     init() {
@@ -236,7 +323,7 @@ actor AIAssistantBackend {
         return decoded
     }
 
-    func open() throws -> AIAssistantOpenResult {
+    func open() async throws -> AIAssistantOpenResult {
         if initialized {
             return AIAssistantOpenResult(
                 settings: settings,
@@ -259,7 +346,8 @@ actor AIAssistantBackend {
             settings.baseUrl = AIModelSettings.deepSeekUrl
             if settings.wire == nil { settings.wire = "responses" }
         }
-        var key = keyStore(for: settings.model).readSecretKey()
+        _ = try? await AICloudCredentialSync.syncIfConfigured()
+        var key = storedKey(for: settings.model)
         #if targetEnvironment(simulator)
         if uiTest {
             settings.baseUrl = "http://127.0.0.1:18189"
@@ -312,10 +400,10 @@ actor AIAssistantBackend {
         }
         let targetStore = keyStore(for: config.model)
         let previousTargetKey = targetStore.readSecretKey()
-        let effectiveKey = key.isEmpty ? previousTargetKey : key
+        let effectiveKey = key.isEmpty ? storedKey(for: config.model) : key
         guard !effectiveKey.isEmpty else { throw AIBackendError(message: "请填写 API Key") }
         let previous = settings
-        let previousKey = keyStore(for: previous.model).readSecretKey()
+        let previousKey = storedKey(for: previous.model)
         try configure(config, key: effectiveKey) // 正在工作时核心拒绝，不能先覆盖已保存配置。
         do {
             if !key.isEmpty { try targetStore.saveSecretKey(key) }
@@ -352,8 +440,8 @@ actor AIAssistantBackend {
         ])
     }
 
-    func suggestReplies(messages: [[String: String]]) throws -> AIReplySuggestions {
-        _ = try open()
+    func suggestReplies(messages: [[String: String]]) async throws -> AIReplySuggestions {
+        _ = try await open()
         let response = try call("suggest_replies", values: ["messages": messages])
         guard let natural = response.natural?.trimmingCharacters(in: .whitespacesAndNewlines),
               let casual = response.casual?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -508,6 +596,8 @@ final class AIAssistantModel: ObservableObject {
     }
 
     func prepareFirstPage() async {
+        importPendingCloudService()
+        importPendingArkApiKey()
         if historyLoaded {
             logAIHistoryEvent("prepare skip selected=\(selected) count=\(messages.count)")
             return
@@ -543,6 +633,44 @@ final class AIAssistantModel: ObservableObject {
         initialPreparation = task
         await task.value
         initialPreparation = nil
+    }
+
+    private func importPendingCloudService() {
+        guard let documents = FileManager.default.urls(for: .documentDirectory,
+                                                        in: .userDomainMask).first else { return }
+        let source = documents.appendingPathComponent("cloud-service-setup.json")
+        guard let data = try? Data(contentsOf: source) else { return }
+        defer { try? FileManager.default.removeItem(at: source) }
+        guard let body = try? JSONSerialization.jsonObject(with: data) as? [String: String],
+              let url = body["url"], let token = body["token"],
+              AICloudCredentialSync.credentialEndpoint(address: url, token: token) != nil else {
+            return
+        }
+        do {
+            try KeychainSecretStore(account: "oss-media-signer-token").saveSecretKey(token)
+            UserDefaults.standard.set(url, forKey: "oss-media-signer-url")
+        } catch {
+            showTransientError("云端服务配置导入失败")
+        }
+    }
+
+    func importPendingArkApiKey() {
+        guard let documents = FileManager.default.urls(for: .documentDirectory,
+                                                       in: .userDomainMask).first else { return }
+        let source = documents.appendingPathComponent("ark-api-key-update.txt", isDirectory: false)
+        guard let contents = try? String(contentsOf: source, encoding: .utf8),
+              let line = contents.split(whereSeparator: \.isNewline)
+                .first(where: { $0.hasPrefix("API Key Secret:") }) else { return }
+        let key = line.dropFirst("API Key Secret:".count)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (32...4096).contains(key.utf8.count),
+              key.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else { return }
+        do {
+            try KeychainSecretStore(account: "seedance-ark-api-key").saveSecretKey(key)
+            try FileManager.default.removeItem(at: source)
+        } catch {
+            logAIHistoryEvent("Ark API Key provision failed")
+        }
     }
 
     func appear() {

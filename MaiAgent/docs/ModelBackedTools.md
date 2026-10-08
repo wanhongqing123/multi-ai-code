@@ -13,7 +13,7 @@
                 └─特殊工具：视频创作工具
                              │  显式声明绑定模型、能力、约束和任务策略
                              │  接收高层意图、相关上下文与后续消息
-                             └─默认 Seedance 2.5；可选 2.0 Fast / Mini
+                             └─默认 Seedance 2.0 Mini；可选 Fast / 标准版，2.5 禁用
 ```
 
 特殊工具始终是注册表中的**工具**，不是泛型 `MaiSubAgent` 会话。它有稳定的名称和契约，
@@ -251,14 +251,18 @@ FFmpeg 全片解码通过。两个结果都带 `revision_of` 指向旧任务；�
 图片创作使用单一 `seedream_image` 入口，绑定 Seedream 5.0 flash：文生图时提交提示词，
 编辑时主控只传已有图片的工作区路径与指令，由工具层读取图片、编码提交并将新 PNG 保存回工作区。
 图片接口支持 Base64 输入，因此这条本地图片交接路径不依赖视频所需的 TOS 上传通道。
-`seedance_video` 默认选择 `doubao-seedance-2-5-260628`，单次输出允许 4–30 秒；
-调用者也可通过 `model` 显式选择 `doubao-seedance-2-0-fast-260128` 或
-`doubao-seedance-2-0-mini-260615`，两者只支持 4–15 秒、480p／720p 和最多 9 张
-参考图。2.5 支持 480p／720p／1080p 和最多 30 张参考图。`discover` 分别列出
+`seedance_video` 默认选择 `doubao-seedance-2-0-mini-260615`，单次输出允许 4–15 秒；
+调用者也可通过 `model` 显式选择 `doubao-seedance-2-0-fast-260128` 或标准版
+`doubao-seedance-2-0-260128`。2.5 实现代码保留，但因费用高已禁用：工具参数 schema
+不提供该型号，运行时也拒绝显式传入，避免自动升级、失败回退或旧会话修订时误调用。
+标准版支持 4–15 秒、480p／720p／1080p／4k；Fast 和 Mini 支持 4–15 秒、
+480p／720p；三者最多 9 张参考图。2.5 的代码保留 480p／720p／1080p 和最多
+30 张参考图的校验，但当前不开放调用。
+`discover` 分别列出
 型号规格，付费确认界面显示实际型号；修订会从原方舟任务查询型号并保持一致。
 Fast/Mini 的历史限时折扣已于 2026-10-07 14:00 结束，不能把活动价作为现价。
-工具同时接入 HTTPS 视频 URL 或已完成 Seedance 任务的引用路径。此前 2.0 的编辑请求
-已在方舟服务端验证出片；切换到 2.5 后仍需重新实测，
+工具同时接入 HTTPS 视频 URL 或已完成 Seedance 任务的引用路径。标准 2.0、Fast、Mini
+的 4 秒／480p 视频编辑均已在方舟服务端验证出片；2.5 已禁用，
 iOS 工具层仍需单独验收。用户选择独立的阿里云 OSS 存储后，iOS 宿主停用了
 曾接入的腾讯 IM 云文件上传入口。现有 OSS 签名服务实现放在
 `services/oss-media-signer/`：iOS 从签名服务取得短期 PUT/GET URL，直接上传
@@ -269,15 +273,21 @@ iOS 工具层仍需单独验收。用户选择独立的阿里云 OSS 存储后�
 长期 AK/SK 不下发到手机，不能把仅有 Ark API Key 误认为对象存储的上传权限。
 接口取值参考[方舟创建视频生成任务文档](https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh)。
 
-对无需指定真人身份的写实人物视频，工具支持 `virtual_avatar_asset_id`：从方舟
-体验中心的预置虚拟人像库选取素材 ID，在请求中以 `asset://<ID>`、
+对私域虚拟人像素材，工具支持 `virtual_avatar_asset_id`：从方舟体验中心选取或用
+`ark_assets` 的 `create_group → create_asset → get_asset` 建立素材，等状态达到
+`Active` 后取得素材 ID，在请求中以 `asset://<ID>`、
 `image_url` 与 `reference_image` 角色提交。可选 `reference_image_path` 作为第二张
-非真人脸参考图片；提示词按“图片 1 / 图片 2”指代素材。此路径不支持用用户真人照片
-自动替换成虚拟人像。对已在方舟同账号通过真人认证、授权且状态可用的人像素材，
+非真人脸参考图片；提示词按“图片 1 / 图片 2”指代素材。对用户提交的照片，
+`ark_assets` 可以按虚拟库接口提交，实际能否入库以 Ark 异步审核结果为准。
+对已在方舟同账号通过真人认证、授权且状态可用的人像素材，
 使用独立的 `authorized_portrait_asset_id` 输入，同样通过 `asset://<ID>` 引用，
-不上传本地真人人脸图片。两项 Asset ID 互斥，均须先在方舟体验中心取得。
-预置素材须由账号先在体验中心开通并取得 Asset ID，
-当前工具不持有素材管理 API 所需的 AK/SK，也不自动检索头像库。
+不上传本地真人人脸图片。两项 Asset ID 互斥，均须先取得可用的 Asset ID。
+素材须在当前账号和与视频 API Key 一致的 Project 下入库。`ark_assets` 可通过
+独立的服务端代理列举、创建和查询虚拟素材；火山 AK/SK 只保存在代理服务端。
+`CreateAsset` 要求图片已有方舟可访问的 URL，现成 URL 可以直接提交；仅本地图片
+没有可访问地址时，iOS 的 `upload_image` 可选通过私有 OSS 临时中转。
+素材入库后的存储由方舟管理，不是用户的临时 OSS。代理服务端尚需部署、配置并实盘验证。
+公开的虚拟库使用说明对素材有独立要求，Ark 会异步审核；提交成功不代表素材可用。
 参考[方舟含肖像视频指南](https://docs.volcengine.com/docs/ark/seedance-portrait-asset-guide?lang=zh)。
 方舟已公开真人人像素材资产 API，但当前 `seedance_video` 未接入录入链路。
 公开流程是 `CreateVisualValidateSession` 让本人完成 H5 真人认证，
@@ -302,14 +312,12 @@ iOS 工具层仍需单独验收。用户选择独立的阿里云 OSS 存储后�
 移动端仍需独立验收，因此设备侧状态保持 `implemented_unverified`。
 图层拆分仍为 `not_implemented`，连续组图输出是该模型不支持。
 方舟[视频任务 API 文档](https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh)
-列出 Seedance 2.5 的首尾帧与多模态参考能力；模型支持不等于工具已验收，
-不能仅因模型支持就向主控报告为可用。
-其中首尾帧输入现已接通 `image_path` + `last_frame_path` 两张工作区图片，
-其 `ratio` 必须为 `adaptive`。2.5 输出档位为 480p／720p／1080p，不支持旧版的
-`4k` 档。参考图路径最多接入 30 张；工具仍只接入单个参考视频，参考音频尚未接入。
-视频编辑使用 `ratio=adaptive`、`duration=-1`；视频延长使用 `ratio=adaptive`。
-此前 Mac 共享核心验证的是 2.0，新绑定的 2.5 与各移动端仍未实测，
-设备侧保持 `implemented_unverified`。
+列出 Seedance 2.5 的首尾帧与多模态参考能力；该型号当前已禁用，不能仅因
+官方模型支持就向主控报告为可用。保留的 2.5 实现中，首尾帧输入接收
+`image_path` + `last_frame_path`，其 `ratio` 必须为 `adaptive`；输出档位为
+480p／720p／1080p，参考图路径最多 30 张；编辑使用 `ratio=adaptive`、
+`duration=-1`。这些仅作为保留代码说明。当前对主控开放的是 2.0 Mini、
+2.0 Fast 和标准 2.0；工具仍只接入单个参考视频，参考音频尚未接入。
 
 1. 为视频 URL／已完成的 Seedance 任务接通编辑、延长和参考生视频；本地视频上传独立验收。
 2. 在共享工具接口加入机器可读的模型绑定与能力元数据，并核对实际授权与服务状态。

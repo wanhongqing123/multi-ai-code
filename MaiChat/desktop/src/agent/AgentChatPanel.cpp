@@ -176,11 +176,15 @@ QString paidGenerationDetail(const QString& tool, const QString& arguments) {
             specifications.push_back(QStringLiteral("Seedance 2.0 Fast"));
         else if (model == QStringLiteral("doubao-seedance-2-0-mini-260615"))
             specifications.push_back(QStringLiteral("Seedance 2.0 Mini"));
+        else if (model == QStringLiteral("doubao-seedance-2-0-260128"))
+            specifications.push_back(QStringLiteral("Seedance 2.0"));
+        else if (model == QStringLiteral("doubao-seedance-2-5-260628"))
+            specifications.push_back(QStringLiteral("Seedance 2.5"));
         else specifications.push_back(
             model.isEmpty() && input.value(QStringLiteral("action")).toString() ==
                                    QStringLiteral("revise")
                 ? QStringLiteral("沿用上一任务型号")
-                : QStringLiteral("Seedance 2.5"));
+                : (model.isEmpty() ? QStringLiteral("Seedance 2.0 Mini") : model));
     }
     if (model == QStringLiteral("MiniMax-H3") || model == QStringLiteral("MiniMax-H3-Max"))
         specifications.push_back(model == QStringLiteral("MiniMax-H3-Max")

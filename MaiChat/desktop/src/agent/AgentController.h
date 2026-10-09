@@ -54,8 +54,15 @@ public:
         QString apiKey;
         // Media specialists use the GLM credential even when DeepSeek is the main model.
         QString glmApiKey;
+        QString arkApiKey;
+        QString klingApiKey;
+        QString miniMaxApiKey;
+        QString wanApiKey;
+        QString wanWorkspaceId;
+        QString cloudServiceUrl;
+        QString cloudServiceToken;
         QString modelName = QStringLiteral("glm-5.3");
-        MaiWireApi wire = MaiWireApi::ChatCompletions;
+        MaiWireApi wire = MaiWireApi::Responses;
         MaiApprovalPolicy approvalPolicy = MaiApprovalPolicy::OnRequest;
     };
 

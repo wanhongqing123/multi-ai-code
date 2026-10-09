@@ -39,6 +39,7 @@
 #include <QTextFragment>
 #include <QDesktopServices>
 #include <QDialog>
+#include <QEventLoop>
 #include <QEvent>
 #include <QFile>
 #include <QFileDialog>
@@ -132,6 +133,7 @@
 
 #include <QFile>
 #include <QJsonDocument>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QSettings>
 #include <QStandardPaths>
@@ -1364,46 +1366,106 @@ QString readTextFile(const QString& path) {
 
 namespace {
 
-// AI 助手连哪个模型。
-//
-// 唯一来源是设置页（QSettings）。不再偷读其它工具的认证文件：用户在 MaiChat
-// 里没配置过，就应当明确显示未配置，不能静默借用一把来历不明的 key。
+QJsonObject cloudModelKeys(const QString& address, const QString& token) {
+    static QString lastAddress;
+    static QString lastToken;
+    static QJsonObject cached;
+    static qint64 lastAttempt = 0;
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (address == lastAddress && token == lastToken &&
+        (!cached.isEmpty() || now - lastAttempt < 30'000))
+        return cached;
+    lastAddress = address;
+    lastToken = token;
+    lastAttempt = now;
+    cached = {};
+    QUrl endpoint(address);
+    if (token.size() < 32 || endpoint.scheme() != QStringLiteral("https") ||
+        endpoint.host().isEmpty() || !endpoint.userName().isEmpty() ||
+        !endpoint.password().isEmpty() || !endpoint.query().isEmpty() ||
+        !endpoint.fragment().isEmpty()) {
+        return {};
+    }
+    QString path = endpoint.path();
+    if (path.endsWith(QStringLiteral("/sign-upload")))
+        path.chop(QStringLiteral("sign-upload").size());
+    else if (!path.endsWith(QLatin1Char('/')))
+        path += QLatin1Char('/');
+    endpoint.setPath(path + QStringLiteral("credentials"));
+    QNetworkAccessManager manager;
+    QNetworkRequest request(endpoint);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::ManualRedirectPolicy);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    request.setRawHeader("Authorization", QByteArray("Bearer ") + token.toUtf8());
+    const QJsonArray providers = {QStringLiteral("ark"), QStringLiteral("glm"),
+        QStringLiteral("glm_video"), QStringLiteral("deepseek"), QStringLiteral("wan"),
+        QStringLiteral("kling"), QStringLiteral("minimax")};
+    QNetworkReply* reply = manager.post(request, QJsonDocument(QJsonObject{
+        {QStringLiteral("action"), QStringLiteral("fetch")},
+        {QStringLiteral("providers"), providers}}).toJson(QJsonDocument::Compact));
+    QEventLoop loop;
+    QTimer timer;
+    timer.setSingleShot(true);
+    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+    QObject::connect(&timer, &QTimer::timeout, reply, &QNetworkReply::abort);
+    timer.start(5'000);
+    loop.exec();
+    const QByteArray body = reply->readAll();
+    const bool valid = reply->error() == QNetworkReply::NoError &&
+        reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 200 &&
+        body.size() <= 16'384;
+    reply->deleteLater();
+    if (!valid) return {};
+    cached = QJsonDocument::fromJson(body).object();
+    return cached;
+}
+
+// Only the selected model and cloud-service connection persist locally. The Responses endpoint
+// is fixed per provider, while model credentials live only in this process after retrieval.
 AgentController::ModelConfig loadAgentModelConfig() {
     AgentController::ModelConfig config;
 
     QSettings settings;
+    bool removedLegacySetting = false;
+    for (const char* obsolete : {"agent/apiKey", "agent/deepseekApiKey", "agent/baseUrl",
+                                 "agent/deepseekBaseUrl", "agent/wire", "agent/deepseekWire",
+                                 "agent/glmChatBaseUrl"}) {
+        const QString key = QLatin1String(obsolete);
+        if (!settings.contains(key)) continue;
+        settings.remove(key);
+        removedLegacySetting = true;
+    }
+    if (removedLegacySetting) settings.sync();
     config.modelName =
         settings.value(QStringLiteral("agent/model"), QStringLiteral("glm-5.3")).toString();
+    if (config.modelName != QStringLiteral("glm-5.3") &&
+        config.modelName != QStringLiteral("glm-5.3-flash") &&
+        config.modelName != QStringLiteral("deepseek-flash"))
+        config.modelName = QStringLiteral("glm-5.3");
     const bool deepseek = config.modelName == QStringLiteral("deepseek-flash");
-    const QString wireSetting = settings.value(deepseek ? QStringLiteral("agent/deepseekWire")
-                                                       : QStringLiteral("agent/wire"))
-                                    .toString();
-    const bool legacyGlmChat = !deepseek && !settings.contains(QStringLiteral("agent/wire")) &&
-                               settings.contains(QStringLiteral("agent/baseUrl"));
-    config.wire = wireSetting == QStringLiteral("chat_completions") || legacyGlmChat
-                      ? MaiWireApi::ChatCompletions
-                      : MaiWireApi::Responses;
-    config.baseUrl =
-        settings.value(deepseek ? QStringLiteral("agent/deepseekBaseUrl")
-                                : QStringLiteral("agent/baseUrl"),
-                       deepseek ? QStringLiteral("https://api.deepseek.com")
-                                : config.wire == MaiWireApi::Responses
-                                      ? QStringLiteral("https://open.bigmodel.cn/api/v1")
-                                      : QStringLiteral("https://open.bigmodel.cn/api/coding/paas/v4"))
-            .toString();
-    if (!deepseek && QUrl(config.baseUrl).host() == QStringLiteral("open.bigmodel.cn")) {
-        if (config.wire == MaiWireApi::Responses)
-            config.baseUrl = QStringLiteral("https://open.bigmodel.cn/api/v1");
-        else if (config.baseUrl == QStringLiteral("https://open.bigmodel.cn/api/v1"))
-            config.baseUrl = settings.value(
-                QStringLiteral("agent/glmChatBaseUrl"),
-                QStringLiteral("https://open.bigmodel.cn/api/coding/paas/v4"))
-                                 .toString();
-    }
-    config.apiKey = settings.value(deepseek ? QStringLiteral("agent/deepseekApiKey")
-                                            : QStringLiteral("agent/apiKey"))
+    config.wire = MaiWireApi::Responses;
+    config.baseUrl = deepseek ? QStringLiteral("https://api.deepseek.com")
+                              : QStringLiteral("https://open.bigmodel.cn/api/v1");
+    const QString serviceUrl = settings.value(QStringLiteral("agent/cloudServiceUrl"),
+                                              qEnvironmentVariable("MAICHAT_MEDIA_SERVICE_URL"))
+                                   .toString();
+    const QString serviceToken = settings.value(QStringLiteral("agent/cloudServiceToken"),
+                                                qEnvironmentVariable("MAICHAT_MEDIA_SERVICE_TOKEN"))
+                                     .toString();
+    config.cloudServiceUrl = serviceUrl;
+    config.cloudServiceToken = serviceToken;
+    const QJsonObject response = cloudModelKeys(serviceUrl, serviceToken);
+    const QJsonObject keys = response.value(QStringLiteral("api_keys")).toObject();
+    config.apiKey = keys.value(deepseek ? QStringLiteral("deepseek") : QStringLiteral("glm"))
                         .toString();
-    config.glmApiKey = settings.value(QStringLiteral("agent/apiKey")).toString();
+    config.glmApiKey = keys.value(QStringLiteral("glm_video")).toString();
+    if (config.glmApiKey.isEmpty()) config.glmApiKey = keys.value(QStringLiteral("glm")).toString();
+    config.arkApiKey = keys.value(QStringLiteral("ark")).toString();
+    config.klingApiKey = keys.value(QStringLiteral("kling")).toString();
+    config.miniMaxApiKey = keys.value(QStringLiteral("minimax")).toString();
+    config.wanApiKey = keys.value(QStringLiteral("wan")).toString();
+    config.wanWorkspaceId = response.value(QStringLiteral("wan_workspace_id")).toString();
     const QString policy = settings
                                .value(QStringLiteral("agent/approvalPolicy"),
                                       QStringLiteral("on_request"))
@@ -2248,7 +2310,7 @@ void MainWindow::buildUi() {
     settingsPanelLayout->addWidget(createSettingsRow(QStringLiteral("登录签名"), signatureValue, QStringLiteral("启动时自动生成，不需要用户手动填写。")));
     auto* agentSettingsRow = createSettingsRow(
         QStringLiteral("AI 助手模型"), settingsAgentModelValue_,
-        QStringLiteral("配置 OpenAI 兼容地址、模型名称和 API Key。Key 仅保存在当前系统用户的应用设置中。"));
+        QStringLiteral("选择主模型并连接云端服务；模型密钥仅在运行期间使用。"));
     auto* agentSettingsButton = new QPushButton(QStringLiteral("配置"), agentSettingsRow);
     agentSettingsButton->setObjectName(QStringLiteral("settingsAgentModelButton"));
     agentSettingsButton->setProperty("settingsRowButton", true);
@@ -3371,7 +3433,10 @@ void MainWindow::rebuildAgentPage() {
         if (selected.isEmpty() || selected == loadAgentModelConfig().modelName) return;
         QSettings settings;
         settings.setValue(QStringLiteral("agent/model"), selected);
-        refreshSettings();
+        QTimer::singleShot(0, this, [this] {
+            rebuildAgentPage();
+            refreshSettings();
+        });
     });
     if (!sessionToRestore.isEmpty()) agentPanel_->openSession(sessionToRestore);
 }
@@ -3393,302 +3458,105 @@ void MainWindow::editAgentModelSettings() {
 
     QSettings settings;
     const AgentController::ModelConfig current = loadAgentModelConfig();
-    QString glmChatBaseUrl = settings.value(
-        QStringLiteral("agent/glmChatBaseUrl"),
-        QStringLiteral("https://open.bigmodel.cn/api/coding/paas/v4"))
-                                 .toString();
-    if (current.modelName.startsWith(QStringLiteral("glm-")) &&
-        current.wire == MaiWireApi::ChatCompletions &&
-        QUrl(current.baseUrl).host() == QStringLiteral("open.bigmodel.cn"))
-        glmChatBaseUrl = current.baseUrl;
     QDialog dialog(this);
     dialog.setObjectName(QStringLiteral("agentModelDialog"));
     dialog.setWindowTitle(QStringLiteral("配置 AI 助手模型"));
     dialog.setModal(true);
-    dialog.setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);
-    dialog.setAttribute(Qt::WA_TranslucentBackground);
-    dialog.setMinimumWidth(UiZoom::s(560));
-    auto* root = new QVBoxLayout(&dialog);
-    root->setContentsMargins(UiZoom::s(18), UiZoom::s(18), UiZoom::s(18), UiZoom::s(18));
-    root->setSpacing(0);
+    dialog.setMinimumWidth(UiZoom::s(500));
+    auto* content = new QVBoxLayout(&dialog);
+    content->setContentsMargins(UiZoom::s(28), UiZoom::s(24), UiZoom::s(28), UiZoom::s(24));
+    content->setSpacing(UiZoom::s(12));
 
-    auto* panel = new QFrame(&dialog);
-    panel->setObjectName(QStringLiteral("agentModelPanel"));
-    root->addWidget(panel);
-    auto* content = new QVBoxLayout(panel);
-    content->setContentsMargins(UiZoom::s(30), UiZoom::s(26), UiZoom::s(30), UiZoom::s(24));
-    content->setSpacing(UiZoom::s(10));
-
-    auto* title = new QLabel(QStringLiteral("配置 AI 助手模型"), panel);
+    auto* title = new QLabel(QStringLiteral("配置 AI 助手模型"), &dialog);
     title->setObjectName(QStringLiteral("agentModelTitle"));
     content->addWidget(title);
     auto* subtitle = new QLabel(
-        QStringLiteral("连接兼容 OpenAI 接口的模型服务。API Key 只保存在本机设置中。"), panel);
+        QStringLiteral("主模型统一使用 Responses；模型密钥从云端获取，仅在运行期间使用。"),
+        &dialog);
     subtitle->setObjectName(QStringLiteral("agentModelSubtitle"));
     subtitle->setWordWrap(true);
     content->addWidget(subtitle);
-    content->addSpacing(UiZoom::s(8));
 
-    auto* baseUrlLabel = new QLabel(QStringLiteral("接口地址"), panel);
-    baseUrlLabel->setObjectName(QStringLiteral("agentModelFieldLabel"));
-    content->addWidget(baseUrlLabel);
-    auto* baseUrl = new QLineEdit(panel);
-    baseUrl->setObjectName(QStringLiteral("agentModelBaseUrl"));
-    baseUrl->setText(current.baseUrl.isEmpty()
-                         ? QStringLiteral("https://open.bigmodel.cn/api/coding/paas/v4")
-                         : current.baseUrl);
-    baseUrl->setClearButtonEnabled(true);
-    content->addWidget(baseUrl);
-
-    auto* modelLabel = new QLabel(QStringLiteral("模型"), panel);
-    modelLabel->setObjectName(QStringLiteral("agentModelFieldLabel"));
-    content->addWidget(modelLabel);
-    auto* model = new QLineEdit(panel);
+    content->addWidget(new QLabel(QStringLiteral("主模型"), &dialog));
+    auto* model = new QComboBox(&dialog);
     model->setObjectName(QStringLiteral("agentModelName"));
-    model->setText(current.modelName.isEmpty() ? QStringLiteral("glm-5.3") : current.modelName);
-    model->setClearButtonEnabled(true);
+    model->addItem(QStringLiteral("GLM-5.3"), QStringLiteral("glm-5.3"));
+    model->addItem(QStringLiteral("GLM-5.3-Flash"), QStringLiteral("glm-5.3-flash"));
+    model->addItem(QStringLiteral("DeepSeek V4.1 Flash"), QStringLiteral("deepseek-flash"));
+    model->setCurrentIndex(std::max(0, model->findData(current.modelName)));
     content->addWidget(model);
 
-    auto* wireLabel = new QLabel(QStringLiteral("接口协议"), panel);
-    wireLabel->setObjectName(QStringLiteral("agentModelFieldLabel"));
-    content->addWidget(wireLabel);
-    auto* wire = new QComboBox(panel);
-    wire->setObjectName(QStringLiteral("agentModelWire"));
-    wire->addItem(QStringLiteral("Chat Completions"), QStringLiteral("chat_completions"));
-    wire->addItem(QStringLiteral("Responses"), QStringLiteral("responses"));
-    wire->setCurrentIndex(current.wire == MaiWireApi::Responses ? 1 : 0);
-    content->addWidget(wire);
+    content->addWidget(new QLabel(QStringLiteral("云端服务地址"), &dialog));
+    auto* serviceUrl = new QLineEdit(&dialog);
+    serviceUrl->setObjectName(QStringLiteral("agentCloudServiceUrl"));
+    serviceUrl->setPlaceholderText(QStringLiteral("https://ichat.life/maichat"));
+    serviceUrl->setText(settings.value(QStringLiteral("agent/cloudServiceUrl"),
+                                       qEnvironmentVariable("MAICHAT_MEDIA_SERVICE_URL")).toString());
+    content->addWidget(serviceUrl);
+    content->addWidget(new QLabel(QStringLiteral("服务令牌"), &dialog));
+    auto* serviceToken = new QLineEdit(&dialog);
+    serviceToken->setObjectName(QStringLiteral("agentCloudServiceToken"));
+    serviceToken->setEchoMode(QLineEdit::Password);
+    serviceToken->setPlaceholderText(QStringLiteral("留空则保留已配置的服务令牌"));
+    content->addWidget(serviceToken);
 
-    auto* apiKeyLabel = new QLabel(QStringLiteral("API Key"), panel);
-    apiKeyLabel->setObjectName(QStringLiteral("agentModelFieldLabel"));
-    content->addWidget(apiKeyLabel);
-    auto* apiKey = new QLineEdit(panel);
-    apiKey->setObjectName(QStringLiteral("agentModelApiKey"));
-    apiKey->setEchoMode(QLineEdit::Password);
-    apiKey->setPlaceholderText(current.apiKey.isEmpty()
-                                   ? QStringLiteral("请输入 API Key")
-                                   : QStringLiteral("已配置；留空保持不变"));
-    content->addWidget(apiKey);
-
-    auto* error = new QLabel(panel);
+    auto* error = new QLabel(&dialog);
     error->setObjectName(QStringLiteral("agentModelError"));
     error->setWordWrap(true);
     error->hide();
     content->addWidget(error);
-
     auto* actions = new QHBoxLayout;
-    actions->setContentsMargins(0, UiZoom::s(8), 0, 0);
-    actions->setSpacing(UiZoom::s(10));
     actions->addStretch(1);
-    auto* cancel = new QPushButton(QStringLiteral("取消"), panel);
+    auto* cancel = new QPushButton(QStringLiteral("取消"), &dialog);
     cancel->setObjectName(QStringLiteral("agentModelCancel"));
-    cancel->setCursor(Qt::PointingHandCursor);
     actions->addWidget(cancel);
-    auto* save = new QPushButton(QStringLiteral("保存"), panel);
+    auto* save = new QPushButton(QStringLiteral("保存"), &dialog);
     save->setObjectName(QStringLiteral("agentModelSave"));
-    save->setCursor(Qt::PointingHandCursor);
     save->setDefault(true);
     actions->addWidget(save);
     content->addLayout(actions);
-
-    dialog.setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
-        QDialog#agentModelDialog {
-            background: transparent;
-        }
-        #agentModelPanel {
-            background: #ffffff;
-            border: 1px solid #dbe5f0;
-            border-radius: 18px;
-        }
-        #agentModelTitle {
-            background: transparent;
-            color: #172033;
-            font-size: 20px;
-            font-weight: 700;
-        }
-        #agentModelSubtitle {
-            background: transparent;
-            color: #667085;
-            font-size: 12px;
-        }
-        #agentModelFieldLabel {
-            background: transparent;
-            color: #344054;
-            font-size: 12px;
-            font-weight: 700;
-            margin-top: 5px;
-        }
-        #agentModelBaseUrl, #agentModelName, #agentModelApiKey, #agentModelWire {
-            min-height: 42px;
-            background: #ffffff;
-            border: 1px solid #d8e2ef;
-            border-radius: 9px;
-            color: #172033;
-            font-size: 13px;
-            padding: 0 12px;
-            selection-background-color: #cfe8ff;
-        }
-        #agentModelBaseUrl:focus, #agentModelName:focus, #agentModelApiKey:focus,
-        #agentModelWire:focus {
-            border: 1px solid #42a5e8;
-            background: #fbfdff;
-        }
-        #agentModelError {
-            background: #fff5f3;
-            border: 1px solid #fecdca;
-            border-radius: 8px;
-            color: #b42318;
-            font-size: 12px;
-            padding: 8px 10px;
-        }
-        #agentModelCancel, #agentModelSave {
-            min-width: 88px;
-            min-height: 38px;
-            border-radius: 9px;
-            font-size: 13px;
-            font-weight: 700;
-            padding: 0 16px;
-        }
-        #agentModelCancel {
-            background: #f6f8fb;
-            border: 1px solid #d8e2ef;
-            color: #475467;
-        }
-        #agentModelCancel:hover {
-            background: #edf2f7;
-        }
-        #agentModelSave {
-            background: #0b67b7;
-            border: 1px solid #0b67b7;
-            color: #ffffff;
-        }
-        #agentModelSave:hover {
-            background: #095a9f;
-            border-color: #095a9f;
-        }
-        #agentModelSave:pressed {
-            background: #084d87;
-            border-color: #084d87;
-        }
-        #agentModelSave:disabled {
-            background: #d7e4ef;
-            border-color: #d7e4ef;
-            color: #f8fafc;
-        }
-    )")));
-
-    const auto updateSave = [=, &settings] {
-        const bool deepseek = model->text().trimmed() == QStringLiteral("deepseek-flash");
-        const QString storedKey = settings.value(deepseek ? QStringLiteral("agent/deepseekApiKey")
-                                                     : QStringLiteral("agent/apiKey"))
-                                      .toString();
-        save->setEnabled(!baseUrl->text().trimmed().isEmpty() &&
-                         !model->text().trimmed().isEmpty() &&
-                         (!apiKey->text().trimmed().isEmpty() || !storedKey.isEmpty()));
-    };
-    connect(baseUrl, &QLineEdit::textChanged, &dialog, updateSave);
-    connect(model, &QLineEdit::textChanged, &dialog, updateSave);
-    connect(apiKey, &QLineEdit::textChanged, &dialog, updateSave);
-    connect(wire, QOverload<int>::of(&QComboBox::currentIndexChanged), &dialog,
-            [=, &glmChatBaseUrl](int index) {
-                const QString name = model->text().trimmed();
-                if (name.startsWith(QStringLiteral("glm-")) &&
-                    QUrl(baseUrl->text()).host() == QStringLiteral("open.bigmodel.cn")) {
-                    if (index == 1 &&
-                        baseUrl->text() != QStringLiteral("https://open.bigmodel.cn/api/v1")) {
-                        glmChatBaseUrl = baseUrl->text().trimmed();
-                        baseUrl->setText(QStringLiteral("https://open.bigmodel.cn/api/v1"));
-                    } else if (index == 0 &&
-                               baseUrl->text() ==
-                                   QStringLiteral("https://open.bigmodel.cn/api/v1")) {
-                        baseUrl->setText(glmChatBaseUrl);
-                    }
-                } else if (name == QStringLiteral("deepseek-flash")) {
-                    baseUrl->setText(QStringLiteral("https://api.deepseek.com"));
-                }
-            });
-    connect(model, &QLineEdit::textChanged, &dialog, [=, &settings, &glmChatBaseUrl](const QString& name) {
-        const bool deepseek = name.trimmed() == QStringLiteral("deepseek-flash");
-        if (deepseek) {
-            baseUrl->setText(settings.value(QStringLiteral("agent/deepseekBaseUrl"),
-                                             QStringLiteral("https://api.deepseek.com"))
-                                 .toString());
-            wire->setCurrentIndex(settings.value(QStringLiteral("agent/deepseekWire")) ==
-                                          QStringLiteral("chat_completions")
-                                      ? 0
-                                      : 1);
-        } else if (name.trimmed().startsWith(QStringLiteral("glm-"))) {
-            const bool legacyChat = !settings.contains(QStringLiteral("agent/wire")) &&
-                                    settings.contains(QStringLiteral("agent/baseUrl"));
-            const bool chat = settings.value(QStringLiteral("agent/wire")) ==
-                                  QStringLiteral("chat_completions") ||
-                              legacyChat;
-            baseUrl->setText(chat ? glmChatBaseUrl
-                                  : QStringLiteral("https://open.bigmodel.cn/api/v1"));
-            wire->setCurrentIndex(chat ? 0 : 1);
-        }
-        const QString storedKey = settings.value(deepseek ? QStringLiteral("agent/deepseekApiKey")
-                                                     : QStringLiteral("agent/apiKey"))
-                                      .toString();
-        apiKey->setPlaceholderText(storedKey.isEmpty()
-                                       ? QStringLiteral("请输入 API Key")
-                                       : QStringLiteral("已配置；留空保持不变"));
-        updateSave();
-    });
     connect(cancel, &QPushButton::clicked, &dialog, &QDialog::reject);
     connect(save, &QPushButton::clicked, &dialog, [&] {
-        QString url = baseUrl->text().trimmed();
-        while (url.endsWith(QLatin1Char('/'))) url.chop(1);
-        const QString modelName = model->text().trimmed();
-        const QString enteredKey = apiKey->text().trimmed();
-        const bool deepseek = modelName == QStringLiteral("deepseek-flash");
-        const QString keySetting = deepseek ? QStringLiteral("agent/deepseekApiKey")
-                                            : QStringLiteral("agent/apiKey");
-        const QString key = enteredKey.isEmpty() ? settings.value(keySetting).toString()
-                                                  : enteredKey;
-        const QUrl parsed(url);
-        if (!parsed.isValid() || (parsed.scheme() != QStringLiteral("https") &&
-                                  parsed.scheme() != QStringLiteral("http"))) {
-            error->setText(QStringLiteral("接口地址必须是完整的 http:// 或 https:// 地址。"));
+        const QString address = serviceUrl->text().trimmed();
+        const QString entered = serviceToken->text().trimmed();
+        const QString token = entered.isEmpty()
+            ? settings.value(QStringLiteral("agent/cloudServiceToken"),
+                             qEnvironmentVariable("MAICHAT_MEDIA_SERVICE_TOKEN")).toString()
+            : entered;
+        const QUrl endpoint(address);
+        if (endpoint.scheme() != QStringLiteral("https") || endpoint.host().isEmpty() ||
+            !endpoint.userName().isEmpty() || !endpoint.password().isEmpty() ||
+            !endpoint.query().isEmpty() || !endpoint.fragment().isEmpty() || token.size() < 32) {
+            error->setText(QStringLiteral("请填写有效的云端服务地址和令牌。"));
             error->show();
             return;
         }
-        if (modelName.isEmpty()) {
-            error->setText(QStringLiteral("请填写模型名称。"));
+        const QJsonObject keys = cloudModelKeys(address, token)
+                                     .value(QStringLiteral("api_keys")).toObject();
+        const QString selected = model->currentData().toString();
+        const QString provider = selected == QStringLiteral("deepseek-flash")
+            ? QStringLiteral("deepseek") : QStringLiteral("glm");
+        if (keys.value(provider).toString().isEmpty()) {
+            error->setText(QStringLiteral("云端服务未提供所选模型的密钥，请检查连接。"));
             error->show();
             return;
         }
-        if (deepseek && parsed.host() != QStringLiteral("api.deepseek.com")) {
-            error->setText(QStringLiteral("DeepSeek 模型请使用 https://api.deepseek.com。"));
-            error->show();
-            return;
-        }
-        if (key.isEmpty()) {
-            error->setText(QStringLiteral("请填写 API Key。"));
-            error->show();
-            return;
-        }
-        settings.setValue(deepseek ? QStringLiteral("agent/deepseekBaseUrl")
-                                  : QStringLiteral("agent/baseUrl"), url);
-        settings.setValue(QStringLiteral("agent/model"), modelName);
-        settings.setValue(keySetting, key);
-        settings.setValue(deepseek ? QStringLiteral("agent/deepseekWire")
-                                   : QStringLiteral("agent/wire"),
-                          wire->currentData());
-        if (modelName.startsWith(QStringLiteral("glm-"))) {
-            if (wire->currentIndex() == 0) glmChatBaseUrl = url;
-            settings.setValue(QStringLiteral("agent/glmChatBaseUrl"), glmChatBaseUrl);
-        }
+        settings.setValue(QStringLiteral("agent/model"), selected);
+        settings.setValue(QStringLiteral("agent/cloudServiceUrl"), address);
+        if (!entered.isEmpty())
+            settings.setValue(QStringLiteral("agent/cloudServiceToken"), entered);
+        for (const char* obsolete : {"agent/apiKey", "agent/deepseekApiKey", "agent/baseUrl",
+                                     "agent/deepseekBaseUrl", "agent/wire", "agent/deepseekWire",
+                                     "agent/glmChatBaseUrl"})
+            settings.remove(QLatin1String(obsolete));
         settings.sync();
         if (settings.status() != QSettings::NoError) {
-            error->setText(QStringLiteral("模型配置保存失败，请检查当前用户的设置目录权限。"));
+            error->setText(QStringLiteral("模型配置保存失败，请检查设置目录权限。"));
             error->show();
             return;
         }
         dialog.accept();
     });
-    updateSave();
-
     if (dialog.exec() != QDialog::Accepted) return;
     rebuildAgentPage();
     refreshSettings();

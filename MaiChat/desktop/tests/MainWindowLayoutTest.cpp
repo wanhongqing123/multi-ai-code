@@ -118,7 +118,7 @@ private slots:
     void contactsCurrentSelectionDoesNotLeaveContactsPage();
     void settingsNavigationShowsAccountAndSdkDefaults();
     void agentSettingsDialogExposesSecureModelFields();
-    void agentSettingsSaveAppliesWithoutRestart();
+    void agentSettingsRejectsInvalidCloudService();
     void agentSettingsDialogUsesMaiChatVisualStyle();
     void leftNavigationRailIsResizableAndWider();
     void navigationIconsSitNearTopEdge();
@@ -1946,51 +1946,38 @@ void MainWindowLayoutTest::agentSettingsDialogExposesSecureModelFields() {
     QVERIFY(button != nullptr);
 
     bool sawDialog = false;
-    bool keyIsMasked = false;
-    bool protocolUpdatesAddress = false;
+    bool serviceTokenIsMasked = false;
+    bool legacyFieldsGone = false;
     QTimer::singleShot(100, [&] {
         auto* dialog = window.findChild<QDialog*>(QStringLiteral("agentModelDialog"));
         if (dialog == nullptr) return;
         sawDialog = true;
-        auto* baseUrl =
-            dialog->findChild<QLineEdit*>(QStringLiteral("agentModelBaseUrl"));
-        auto* model = dialog->findChild<QLineEdit*>(QStringLiteral("agentModelName"));
-        auto* apiKey =
-            dialog->findChild<QLineEdit*>(QStringLiteral("agentModelApiKey"));
-        auto* wire = dialog->findChild<QComboBox*>(QStringLiteral("agentModelWire"));
-        keyIsMasked = baseUrl != nullptr && model != nullptr && apiKey != nullptr &&
-                      apiKey->echoMode() == QLineEdit::Password;
-        if (baseUrl != nullptr && model != nullptr && wire != nullptr) {
-            model->setText(QStringLiteral("glm-5.3"));
-            wire->setCurrentIndex(0);
-            baseUrl->setText(QStringLiteral("https://open.bigmodel.cn/api/coding/paas/v4"));
-            wire->setCurrentIndex(1);
-            const bool glmResponses =
-                baseUrl->text() == QStringLiteral("https://open.bigmodel.cn/api/v1");
-            wire->setCurrentIndex(0);
-            const bool glmChat = baseUrl->text() ==
-                                 QStringLiteral("https://open.bigmodel.cn/api/coding/paas/v4");
-            model->setText(QStringLiteral("deepseek-flash"));
-            wire->setCurrentIndex(0);
-            protocolUpdatesAddress = glmResponses && glmChat && wire->isEnabled() &&
-                                     baseUrl->text() == QStringLiteral("https://api.deepseek.com");
-        }
+        auto* model = dialog->findChild<QComboBox*>(QStringLiteral("agentModelName"));
+        auto* token = dialog->findChild<QLineEdit*>(QStringLiteral("agentCloudServiceToken"));
+        auto* url = dialog->findChild<QLineEdit*>(QStringLiteral("agentCloudServiceUrl"));
+        serviceTokenIsMasked = model != nullptr && url != nullptr && token != nullptr &&
+                               token->echoMode() == QLineEdit::Password;
+        legacyFieldsGone = dialog->findChild<QLineEdit*>(QStringLiteral("agentModelApiKey")) == nullptr &&
+                           dialog->findChild<QComboBox*>(QStringLiteral("agentModelWire")) == nullptr &&
+                           dialog->findChild<QLineEdit*>(QStringLiteral("agentModelBaseUrl")) == nullptr;
         dialog->reject();
     });
     button->click();
 
     QVERIFY(sawDialog);
-    QVERIFY(keyIsMasked);
-    QVERIFY(protocolUpdatesAddress);
+    QVERIFY(serviceTokenIsMasked);
+    QVERIFY(legacyFieldsGone);
 }
 
-void MainWindowLayoutTest::agentSettingsSaveAppliesWithoutRestart() {
+void MainWindowLayoutTest::agentSettingsRejectsInvalidCloudService() {
     const QString originalOrganization = QCoreApplication::organizationName();
     const QString originalApplication = QCoreApplication::applicationName();
     QCoreApplication::setOrganizationName(QStringLiteral("MaiChatTests"));
     QCoreApplication::setApplicationName(QStringLiteral("AgentSettingsSave"));
     QSettings settings;
     settings.clear();
+    settings.setValue(QStringLiteral("agent/apiKey"), QStringLiteral("legacy-test-key"));
+    settings.setValue(QStringLiteral("agent/deepseekApiKey"), QStringLiteral("legacy-deepseek-key"));
 
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
@@ -2002,33 +1989,27 @@ void MainWindowLayoutTest::agentSettingsSaveAppliesWithoutRestart() {
     QVERIFY(button != nullptr);
     QVERIFY(value != nullptr);
 
-    bool submitted = false;
+    bool rejected = false;
     QTimer::singleShot(100, [&] {
         auto* dialog = window.findChild<QDialog*>(QStringLiteral("agentModelDialog"));
         if (dialog == nullptr) return;
-        auto* baseUrl =
-            dialog->findChild<QLineEdit*>(QStringLiteral("agentModelBaseUrl"));
-        auto* model = dialog->findChild<QLineEdit*>(QStringLiteral("agentModelName"));
-        auto* apiKey =
-            dialog->findChild<QLineEdit*>(QStringLiteral("agentModelApiKey"));
+        auto* serviceUrl = dialog->findChild<QLineEdit*>(QStringLiteral("agentCloudServiceUrl"));
+        auto* serviceToken = dialog->findChild<QLineEdit*>(QStringLiteral("agentCloudServiceToken"));
+        auto* error = dialog->findChild<QLabel*>(QStringLiteral("agentModelError"));
         auto* save = dialog->findChild<QPushButton*>(QStringLiteral("agentModelSave"));
-        if (baseUrl == nullptr || model == nullptr || apiKey == nullptr || save == nullptr) return;
-        baseUrl->setText(QStringLiteral("https://example.test/v1/"));
-        model->setText(QStringLiteral("test-model"));
-        apiKey->setText(QStringLiteral("test-key"));
-        submitted = true;
+        if (serviceUrl == nullptr || serviceToken == nullptr || save == nullptr || error == nullptr) return;
+        serviceUrl->setText(QStringLiteral("http://example.test"));
+        serviceToken->setText(QStringLiteral("0123456789abcdef0123456789abcdef"));
         save->click();
+        rejected = error->isVisible();
+        dialog->reject();
     });
     button->click();
 
-    QVERIFY(submitted);
-    QCOMPARE(value->text(), QStringLiteral("test-model · 已配置"));
-    QCOMPARE(settings.value(QStringLiteral("agent/baseUrl")).toString(),
-             QStringLiteral("https://example.test/v1"));
-    QCOMPARE(settings.value(QStringLiteral("agent/model")).toString(),
-             QStringLiteral("test-model"));
-    QCOMPARE(settings.value(QStringLiteral("agent/apiKey")).toString(),
-             QStringLiteral("test-key"));
+    QVERIFY(rejected);
+    QCOMPARE(value->text(), QStringLiteral("未配置"));
+    QVERIFY(!settings.contains(QStringLiteral("agent/apiKey")));
+    QVERIFY(!settings.contains(QStringLiteral("agent/deepseekApiKey")));
 
     settings.clear();
     QCoreApplication::setOrganizationName(originalOrganization);
@@ -2047,18 +2028,12 @@ void MainWindowLayoutTest::agentSettingsDialogUsesMaiChatVisualStyle() {
     QTimer::singleShot(100, [&] {
         auto* dialog = window.findChild<QDialog*>(QStringLiteral("agentModelDialog"));
         if (dialog == nullptr) return;
-        auto* panel = dialog->findChild<QWidget*>(QStringLiteral("agentModelPanel"));
         auto* title = dialog->findChild<QLabel*>(QStringLiteral("agentModelTitle"));
         auto* subtitle = dialog->findChild<QLabel*>(QStringLiteral("agentModelSubtitle"));
         auto* cancel = dialog->findChild<QPushButton*>(QStringLiteral("agentModelCancel"));
         auto* save = dialog->findChild<QPushButton*>(QStringLiteral("agentModelSave"));
-        verified = panel != nullptr && title != nullptr && subtitle != nullptr && cancel != nullptr &&
-                   save != nullptr &&
-                   dialog->windowFlags().testFlag(Qt::FramelessWindowHint) &&
-                   dialog->testAttribute(Qt::WA_TranslucentBackground) &&
-                   dialog->styleSheet().contains(QStringLiteral("#agentModelPanel")) &&
-                   dialog->styleSheet().contains(QStringLiteral("#agentModelBaseUrl:focus")) &&
-                   dialog->styleSheet().contains(QStringLiteral("#agentModelSave:disabled"));
+        verified = title != nullptr && subtitle != nullptr && cancel != nullptr &&
+                   save != nullptr && dialog->minimumWidth() > 400;
         dialog->reject();
     });
     button->click();

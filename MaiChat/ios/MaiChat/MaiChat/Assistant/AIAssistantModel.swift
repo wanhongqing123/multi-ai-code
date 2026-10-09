@@ -16,66 +16,20 @@ func logAIHistoryEvent(_ message: @autoclosure () -> String) {
 }
 
 struct AIModelSettings: Codable, Sendable, Equatable {
-    static let glmChatUrl = "https://open.bigmodel.cn/api/coding/paas/v4"
     static let glmResponsesUrl = "https://open.bigmodel.cn/api/v1"
     static let deepSeekUrl = "https://api.deepseek.com"
 
     var baseUrl = AIModelSettings.glmResponsesUrl
     var model = "glm-5.3"
     var policy = "on-request"
-    var wire: String? = "responses"
-    var glmBaseUrl: String? = nil
-    var glmWire: String? = nil
-    var deepSeekWire: String? = nil
-
-    var effectiveWire: String {
-        wire ?? (model == "deepseek-flash" ? "responses" : "chat_completions")
-    }
-
-    mutating func selectWire(_ selected: String) {
-        wire = selected
-        if model == "deepseek-flash" {
-            deepSeekWire = selected
-            baseUrl = Self.deepSeekUrl
-        } else if model.hasPrefix("glm-") {
-            glmWire = selected
-            if selected == "responses", isBigModelUrl(baseUrl), baseUrl != Self.glmResponsesUrl {
-                glmBaseUrl = baseUrl
-                baseUrl = Self.glmResponsesUrl
-            } else if selected == "chat_completions", baseUrl == Self.glmResponsesUrl {
-                baseUrl = glmBaseUrl ?? Self.glmChatUrl
-            }
-        }
-    }
+    var effectiveWire: String { "responses" }
 
     mutating func selectModel(_ selected: String) {
-        guard selected != model else { return }
-        if selected == "deepseek-flash" {
-            if isBigModelUrl(baseUrl) {
-                glmWire = effectiveWire
-                if effectiveWire == "chat_completions" { glmBaseUrl = baseUrl }
-            }
-            model = selected
-            wire = deepSeekWire ?? "responses"
-            baseUrl = Self.deepSeekUrl
-        } else if selected.hasPrefix("glm-"), baseUrl == Self.deepSeekUrl {
-            deepSeekWire = effectiveWire
-            model = selected
-            wire = glmWire ?? (glmBaseUrl == nil || glmBaseUrl == Self.glmResponsesUrl
-                ? "responses" : "chat_completions")
-            baseUrl = wire == "responses" ? Self.glmResponsesUrl : (glmBaseUrl ?? Self.glmChatUrl)
-        } else if selected.hasPrefix("glm-"), !model.hasPrefix("glm-") {
-            model = selected
-            wire = glmWire ?? "responses"
-            baseUrl = wire == "responses" ? Self.glmResponsesUrl : (glmBaseUrl ?? Self.glmChatUrl)
-        } else {
-            model = selected
-        }
+        model = selected
+        if selected == "deepseek-flash" { baseUrl = Self.deepSeekUrl }
+        else if selected.hasPrefix("glm-") { baseUrl = Self.glmResponsesUrl }
     }
 
-    private func isBigModelUrl(_ value: String) -> Bool {
-        URL(string: value)?.host == "open.bigmodel.cn"
-    }
 }
 
 final class AICloudNoRedirectDelegate: NSObject, URLSessionTaskDelegate {
@@ -87,7 +41,34 @@ final class AICloudNoRedirectDelegate: NSObject, URLSessionTaskDelegate {
     }
 }
 
+final class AICloudCredentialStore: @unchecked Sendable {
+    static let shared = AICloudCredentialStore()
+    private let lock = NSLock()
+    private var values: [String: String] = [:]
+
+    func replace(_ next: [String: String]) {
+        lock.lock()
+        values = next
+        lock.unlock()
+    }
+
+    func key(_ provider: String) -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return values[provider] ?? ""
+    }
+}
+
 enum AICloudCredentialSync {
+    static func clearLegacyStoredModelKeys() {
+        for account in ["ai-assistant-api-key", "ai-assistant-glm-api-key",
+                        "ai-assistant-deepseek-api-key", "seedance-ark-api-key",
+                        "glm-video-api-key", "wan-model-studio-api-key",
+                        "kling-creative-api-key", "minimax-creative-api-key"] {
+            try? KeychainSecretStore(account: account).saveSecretKey("")
+        }
+    }
+
     static func serviceEndpoint() -> (url: URL, token: String)? {
         let address = UserDefaults.standard.string(forKey: "oss-media-signer-url") ?? ""
         let token = KeychainSecretStore(account: "oss-media-signer-token").readSecretKey()
@@ -133,23 +114,17 @@ enum AICloudCredentialSync {
               let keys = body["api_keys"] as? [String: String] else {
             throw AIBackendError(message: "云端密钥服务暂时不可用")
         }
-        let accounts = [
-            "ark": "seedance-ark-api-key",
-            "glm": "ai-assistant-glm-api-key",
-            "glm_video": "glm-video-api-key",
-            "deepseek": "ai-assistant-deepseek-api-key",
-            "wan": "wan-model-studio-api-key",
-            "kling": "kling-creative-api-key",
-            "minimax": "minimax-creative-api-key"
-        ]
+        let providers = ["ark", "glm", "glm_video", "deepseek", "wan", "kling", "minimax"]
+        var validKeys: [String: String] = [:]
         var savedProviders: [String] = []
-        for (name, account) in accounts {
+        for name in providers {
             guard let key = keys[name], !key.isEmpty, key.utf8.count <= 4_096,
                   key.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) })
             else { continue }
-            try KeychainSecretStore(account: account).saveSecretKey(key)
+            validKeys[name] = key
             savedProviders.append(name)
         }
+        AICloudCredentialStore.shared.replace(validKeys)
         if let workspace = body["wan_workspace_id"] as? String,
            (workspace.hasPrefix("ws-") || workspace.hasPrefix("llm-")),
            workspace.count <= 128 {
@@ -271,17 +246,8 @@ actor AIAssistantBackend {
     private var settings = AIModelSettings()
     private var root: URL?
     private var initialized = false
-    private let keys = KeychainSecretStore(account: "ai-assistant-api-key")
-    private let glmKeys = KeychainSecretStore(account: "ai-assistant-glm-api-key")
-    private let deepseekKeys = KeychainSecretStore(account: "ai-assistant-deepseek-api-key")
-
-    private func keyStore(for model: String) -> KeychainSecretStore {
-        model == "deepseek-flash" ? deepseekKeys : model.hasPrefix("glm-") ? glmKeys : keys
-    }
-
     private func storedKey(for model: String) -> String {
-        let current = keyStore(for: model).readSecretKey()
-        return current.isEmpty && model.hasPrefix("glm-") ? keys.readSecretKey() : current
+        AICloudCredentialStore.shared.key(model == "deepseek-flash" ? "deepseek" : "glm")
     }
 
     init() {
@@ -344,10 +310,11 @@ actor AIAssistantBackend {
         if FileManager.default.fileExists(atPath: file.path) {
             settings = try JSONDecoder().decode(AIModelSettings.self, from: Data(contentsOf: file))
         }
-        if settings.model == "deepseek-flash" {
-            settings.baseUrl = AIModelSettings.deepSeekUrl
-            if settings.wire == nil { settings.wire = "responses" }
+        AICloudCredentialSync.clearLegacyStoredModelKeys()
+        if !["glm-5.3", "glm-5.3-flash", "deepseek-flash"].contains(settings.model) {
+            settings.model = "glm-5.3"
         }
+        settings.selectModel(settings.model)
         _ = try? await AICloudCredentialSync.syncIfConfigured()
         var key = storedKey(for: settings.model)
         #if targetEnvironment(simulator)
@@ -386,33 +353,20 @@ actor AIAssistantBackend {
                 subdirectory: "MaiAgentModels")?.path ?? ""])
     }
 
-    func save(_ config: AIModelSettings, newKey: String) throws {
-        guard let url = URL(string: config.baseUrl), url.scheme == "https", url.host != nil,
-              url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
-              !config.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw AIBackendError(message: "请填写有效的 HTTPS API 地址和模型名称")
+    func save(_ config: AIModelSettings) throws {
+        guard ["glm-5.3", "glm-5.3-flash", "deepseek-flash"].contains(config.model) else {
+            throw AIBackendError(message: "请选择受支持的主模型")
         }
-        if config.model == "deepseek-flash", url.host != "api.deepseek.com" {
-            throw AIBackendError(message: "DeepSeek 模型请使用 https://api.deepseek.com")
-        }
-        let key = newKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        let knownModel = ["glm-5.3", "glm-5.3-flash", "deepseek-flash"].contains(config.model)
-        if key.isEmpty, !knownModel, url.host != URL(string: settings.baseUrl)?.host {
-            throw AIBackendError(message: "更换模型服务商时，请重新填写 API Key")
-        }
-        let targetStore = keyStore(for: config.model)
-        let previousTargetKey = targetStore.readSecretKey()
-        let effectiveKey = key.isEmpty ? storedKey(for: config.model) : key
-        guard !effectiveKey.isEmpty else { throw AIBackendError(message: "请填写 API Key") }
+        var normalized = config
+        normalized.selectModel(config.model)
+        let effectiveKey = storedKey(for: normalized.model)
         let previous = settings
         let previousKey = storedKey(for: previous.model)
-        try configure(config, key: effectiveKey) // 正在工作时核心拒绝，不能先覆盖已保存配置。
+        try configure(normalized, key: effectiveKey) // 正在工作时核心拒绝，不能先覆盖已保存配置。
         do {
-            if !key.isEmpty { try targetStore.saveSecretKey(key) }
-            try JSONEncoder().encode(config).write(to: root!.appendingPathComponent("settings.json"), options: .atomic)
-            settings = config
+            try JSONEncoder().encode(normalized).write(to: root!.appendingPathComponent("settings.json"), options: .atomic)
+            settings = normalized
         } catch {
-            if !key.isEmpty { try? targetStore.saveSecretKey(previousTargetKey) }
             try? configure(previous, key: previousKey)
             throw error
         }
@@ -599,7 +553,7 @@ final class AIAssistantModel: ObservableObject {
 
     func prepareFirstPage() async {
         importPendingCloudService()
-        importPendingArkApiKey()
+        removePendingArkApiKey()
         if historyLoaded {
             logAIHistoryEvent("prepare skip selected=\(selected) count=\(messages.count)")
             return
@@ -656,22 +610,12 @@ final class AIAssistantModel: ObservableObject {
         }
     }
 
-    func importPendingArkApiKey() {
+    private func removePendingArkApiKey() {
         guard let documents = FileManager.default.urls(for: .documentDirectory,
                                                        in: .userDomainMask).first else { return }
         let source = documents.appendingPathComponent("ark-api-key-update.txt", isDirectory: false)
-        guard let contents = try? String(contentsOf: source, encoding: .utf8),
-              let line = contents.split(whereSeparator: \.isNewline)
-                .first(where: { $0.hasPrefix("API Key Secret:") }) else { return }
-        let key = line.dropFirst("API Key Secret:".count)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard (32...4096).contains(key.utf8.count),
-              key.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else { return }
-        do {
-            try KeychainSecretStore(account: "seedance-ark-api-key").saveSecretKey(key)
-            try FileManager.default.removeItem(at: source)
-        } catch {
-            logAIHistoryEvent("Ark API Key provision failed")
+        if FileManager.default.fileExists(atPath: source.path) {
+            try? FileManager.default.removeItem(at: source)
         }
     }
 
@@ -911,10 +855,12 @@ final class AIAssistantModel: ObservableObject {
             await refresh(force: true)
         } catch { self.error = error.localizedDescription }
     }
-    func save(_ config: AIModelSettings, key: String) async -> Bool {
+    func save(_ config: AIModelSettings) async -> Bool {
         do {
-            try await backend.save(config, newKey: key)
-            settings = config; error = ""
+            var normalized = config
+            normalized.selectModel(config.model)
+            try await backend.save(normalized)
+            settings = normalized; error = ""
             await refresh(force: true)
             return true
         } catch { self.error = error.localizedDescription; return false }

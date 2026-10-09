@@ -63,9 +63,10 @@
 火山和阿里云 AccessKey、预留的 IAM API Key 不在返回范围。
 响应禁止缓存，Nginx 入口关闭访问日志并限制速率。
 
-移动端把取回的模型 Key 存入 iOS Keychain／Android Keystore 加密文件，未配置的
-模型不会覆盖原有本机 Key。这满足集中配置，但完整模型 Key 仍会到达设备；如果
-以后要求密钥完全不落到客户端，应改用服务端模型请求代理。
+iOS、Android、Desktop 取回模型 Key 后仅在当前 App 进程内使用，不再保存本机副本；
+旧的本机模型 Key 会在升级后清理。App 重启后需要重新连接此服务，离线时不能用
+云端模型。连接服务所需的地址和令牌仍由 App 保存，未来账号登录后再替换这层认证。
+完整模型 Key 目前仍会到达设备；若要求 Key 完全不下发，需要另行设计服务端模型代理。
 
 ## Ark Assets 素材接口
 
@@ -83,9 +84,9 @@ AccessKey，且不接收图片字节。已配置签发服务的 App 可通过共
 同一个服务令牌。`ark_assets` 可经 `/ark-assets` 列出、创建和查询素材；
 已有 HTTPS URL 不要求 OSS。`upload_image` 从 App 工作区读取 JPEG/PNG，向签发服务
 取短期 URL，再用共享 C++ 直传 OSS。`seedance_video discover` 只有在服务确认 OSS 已配置后，
-才把 `video_edit_from_local_file` 上报为待实盘验证。Android、Desktop 的
-素材服务仍需各自接线。iOS／Android 的模型 API Key 同步使用同一服务地址和
-令牌；打开 AI 助手时会尝试同步已配置的型号，网络不可用时保留本机已有 Key。
+才把 `video_edit_from_local_file` 上报为待实盘验证。三端的 `ark_assets` 共用
+MaiAgent C++ 上传与服务端接口；iOS／Android 打开 AI 助手时会获取当前模型 Key，
+Desktop 在连接服务时获取，均不依赖旧的本机 Key 缓存。
 
 ## 签名接口
 

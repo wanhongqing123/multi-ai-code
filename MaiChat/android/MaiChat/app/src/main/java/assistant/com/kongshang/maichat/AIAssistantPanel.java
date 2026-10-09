@@ -833,161 +833,67 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             .show();
     }
     private void settings() {
-        if (state == null || !state.ready)
-            return;
+        if (state == null || !state.ready) return;
         LinearLayout form = column();
         form.setPadding(dp(18), dp(8), dp(18), dp(8));
-        EditText url = field("HTTPS API 地址", state.baseUrl), name = field("模型名称", state.model),
-                 cloudUrl = field("云端密钥与素材服务地址", controller.cloudServiceUrl()),
-                 cloudToken = field("云端服务令牌（留空保留原令牌）", ""),
-                 key = field("API Key（留空保留原密钥）", ""),
-                 arkKey = field("方舟创作 Key（留空保留原密钥）", ""),
-                 wanKey = field("百炼创作 Key（Wan / Qwen，留空保留原密钥）", ""),
-                 wanWorkspace = field("百炼 Workspace ID", controller.wanWorkspaceId()),
-                 klingKey = field("可灵 API Key（留空保留原密钥）", ""),
-                 miniMaxKey = field("海螺 / MiniMax API Key（留空保留原密钥）", "");
-        key.setInputType(
-            android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        cloudToken.setInputType(
-            android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        arkKey.setInputType(
-            android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        wanKey.setInputType(
-            android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        klingKey.setInputType(
-            android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        miniMaxKey.setInputType(
-            android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        form.addView(url, matchWrap());
-        form.addView(name, matchWrap());
-        form.addView(text("接口协议", 14, MaiChatTheme.SECONDARY), matchWrap());
-        Spinner wire = new Spinner(activity);
-        wire.setAdapter(new ArrayAdapter<>(activity, android.R.layout.simple_spinner_dropdown_item,
-            new String[] {"Chat Completions", "Responses"}));
-        wire.setSelection(controller.currentWire().equals("chat_completions") ? 0 : 1);
-        form.addView(wire, matchWrap());
-        final String[] glmChatUrl = {controller.glmChatBaseUrl()};
-        Runnable updateEndpoint = () -> {
-            String selectedName = name.getText().toString().trim();
-            String currentUrl = url.getText().toString().trim();
-            if (selectedName.startsWith("glm-") &&
-                currentUrl.startsWith("https://open.bigmodel.cn/")) {
-                if (wire.getSelectedItemPosition() == 1 &&
-                    !currentUrl.equals(AIAssistantController.GLM_RESPONSES_URL)) {
-                    glmChatUrl[0] = currentUrl;
-                    url.setText(AIAssistantController.GLM_RESPONSES_URL);
-                } else if (wire.getSelectedItemPosition() == 0 &&
-                           currentUrl.equals(AIAssistantController.GLM_RESPONSES_URL)) {
-                    url.setText(glmChatUrl[0]);
-                }
-            } else if (selectedName.equals("deepseek-flash") &&
-                       !currentUrl.equals(AIAssistantController.DEEPSEEK_URL)) {
-                url.setText(AIAssistantController.DEEPSEEK_URL);
-            }
-        };
-        wire.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
-            @Override public void onItemSelected(android.widget.AdapterView<?> parent, View view,
-                                                 int position, long id) { updateEndpoint.run(); }
-            @Override public void onNothingSelected(android.widget.AdapterView<?> parent) {}
-        });
-        final String[] lastProvider = {state.model.equals("deepseek-flash") ? "deepseek"
-            : state.model.startsWith("glm-") ? "glm" : "custom"};
-        name.addTextChangedListener(new TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence text, int start, int count,
-                                                    int after) {}
-            @Override public void onTextChanged(CharSequence text, int start, int before,
-                                                int count) {}
-            @Override public void afterTextChanged(Editable text) {
-                String selected = text.toString().trim();
-                String provider = selected.equals("deepseek-flash") ? "deepseek"
-                    : selected.startsWith("glm-") ? "glm" : "custom";
-                if (!provider.equals(lastProvider[0])) {
-                    if (provider.equals("deepseek")) {
-                        url.setText(AIAssistantController.DEEPSEEK_URL);
-                        wire.setSelection(controller.deepseekWire().equals("chat_completions") ? 0 : 1);
-                    } else if (provider.equals("glm")) {
-                        url.setText(controller.glmBaseUrl());
-                        wire.setSelection(controller.glmWire().equals("chat_completions") ? 0 : 1);
-                    }
-                    lastProvider[0] = provider;
-                }
-                updateEndpoint.run();
-            }
-        });
-        form.addView(key, matchWrap());
+        form.addView(text("主模型", 14, MaiChatTheme.SECONDARY), matchWrap());
+        Spinner modelPicker = new Spinner(activity);
+        modelPicker.setAdapter(new ArrayAdapter<>(activity,
+            android.R.layout.simple_spinner_dropdown_item,
+            new String[] {"GLM-5.3", "GLM-5.3-Flash", "DeepSeek V4.1 Flash"}));
+        modelPicker.setSelection(state.model.equals("deepseek-flash") ? 2
+            : state.model.equals("glm-5.3-flash") ? 1 : 0);
+        form.addView(modelPicker, matchWrap());
+        form.addView(text("主模型使用 Responses；模型密钥从云端获取，仅在运行期间使用。",
+            12, MaiChatTheme.SECONDARY), matchWrap());
+        EditText cloudUrl = field("云端服务地址", controller.cloudServiceUrl());
+        EditText cloudToken = field("服务令牌（留空保留原令牌）", "");
+        cloudToken.setInputType(android.text.InputType.TYPE_CLASS_TEXT |
+            android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
         form.addView(cloudUrl, matchWrap());
         form.addView(cloudToken, matchWrap());
-        form.addView(text("云端已配置的模型 Key 会同步到 Android Keystore 加密文件；手动填写可作兜底。火山 AccessKey 留在服务器。",
-                         12, MaiChatTheme.SECONDARY), matchWrap());
-        form.addView(arkKey, matchWrap());
-        form.addView(wanKey, matchWrap());
-        form.addView(wanWorkspace, matchWrap());
-        form.addView(klingKey, matchWrap());
-        form.addView(miniMaxKey, matchWrap());
         Spinner policy = new Spinner(activity);
-        policy.setAdapter(new ArrayAdapter<>(activity, android.R.layout.simple_spinner_dropdown_item,
+        policy.setAdapter(new ArrayAdapter<>(activity,
+            android.R.layout.simple_spinner_dropdown_item,
             new String[] {"请求批准", "帮我批准", "完全访问"}));
-        policy.setSelection(state.policy.equals("never") ? 2 : state.policy.equals("unless-trusted") ? 1 : 0);
+        policy.setSelection(state.policy.equals("never") ? 2
+            : state.policy.equals("unless-trusted") ? 1 : 0);
         form.addView(policy, matchWrap());
-        form.addView(text("密钥使用系统 Keystore 加密保存。三种模式均可访问 App 目录；帮我批准会在首次修改每个文件时询问，完全访问不逐次询问。",
-                         12, MaiChatTheme.SECONDARY),
-            matchWrap());
-        form.addView(text("本地图片处理使用 FFmpeg（LGPLv2.1+）；完整源码随项目放在 MaiAgent/third_party/ffmpeg。",
-                         12, MaiChatTheme.SECONDARY), matchWrap());
         TextView validation = text("", 12, Color.RED);
         form.addView(validation, matchWrap());
         AlertDialog dialog = new AlertDialog.Builder(activity)
-                                 .setTitle("模型与权限")
-                                 .setView(form)
-                                 .setNegativeButton("取消", null)
-                                 .setPositiveButton("保存", null)
-                                 .create();
-        dialog.setOnShowListener(
-            v -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(button -> {
+            .setTitle("模型与权限")
+            .setView(form)
+            .setNegativeButton("取消", null)
+            .setPositiveButton("保存", null)
+            .create();
+        dialog.setOnShowListener(v -> dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            .setOnClickListener(button -> {
+                if (cloudUrl.getText().toString().trim().isEmpty()) {
+                    validation.setText("请先填写云端服务地址");
+                    return;
+                }
                 dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
                 controller.saveCloudService(cloudUrl.getText().toString(),
                     cloudToken.getText().toString(), cloudSaved -> {
-                    if (!cloudSaved) {
-                        validation.setText(controller.state.error);
-                        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
-                        return;
-                    }
-                    if (wanWorkspace.getText().toString().trim().isEmpty())
-                        wanWorkspace.setText(controller.wanWorkspaceId());
-                    controller.save(url.getText().toString(), name.getText().toString(),
-                    new String[] {"on-request", "unless-trusted", "never"}[policy.getSelectedItemPosition()],
-                    key.getText().toString(), wire.getSelectedItemPosition() == 0
-                        ? "chat_completions" : "responses", glmChatUrl[0], success -> {
-                        if (!success) {
+                        if (!cloudSaved) {
                             validation.setText(controller.state.error);
                             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
                             return;
                         }
-                        controller.saveArkKey(arkKey.getText().toString(), arkSaved -> {
-                            if (!arkSaved) {
-                                validation.setText(controller.state.error);
-                                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
-                                return;
-                            }
-                            controller.saveWanCredentials(wanKey.getText().toString(),
-                                wanWorkspace.getText().toString(), wanSaved -> {
-                                    if (wanSaved) {
-                                        controller.saveCreativeKeys(klingKey.getText().toString(),
-                                            miniMaxKey.getText().toString(), creativeSaved -> {
-                                                if (creativeSaved) dialog.dismiss();
-                                                else {
-                                                    validation.setText(controller.state.error);
-                                                    dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
-                                                }
-                                            });
-                                    } else {
+                        String selected = new String[] {"glm-5.3", "glm-5.3-flash",
+                            "deepseek-flash"}[modelPicker.getSelectedItemPosition()];
+                        controller.save(selected,
+                            new String[] {"on-request", "unless-trusted", "never"}[
+                                policy.getSelectedItemPosition()], success -> {
+                                    if (success) dialog.dismiss();
+                                    else {
                                         validation.setText(controller.state.error);
-                                        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
+                                        dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+                                            .setEnabled(true);
                                     }
                                 });
-                        });
                     });
-                });
             }));
         dialog.show();
     }

@@ -112,9 +112,6 @@ public final class AIAssistantController {
     private File rvmModelFile;
     private volatile String selected = "", baseUrl = state.baseUrl, model = state.model, policy = state.policy,
                    error = "", apiKey = "", wire = "responses";
-    private volatile String glmBaseUrl = GLM_RESPONSES_URL;
-    private volatile String glmChatBaseUrl = GLM_CHAT_URL;
-    private volatile String glmWire = "responses", deepseekWire = "responses";
     private volatile String deepseekApiKey = "";
     private volatile String glmApiKey = "";
     private volatile String glmVideoApiKey = "";
@@ -306,31 +303,20 @@ public final class AIAssistantController {
             }
             catch (Exception failure) { Log.w("MaiChatAgent", "Agent model staging failed", failure); }
             File settings = new File(root, "settings.json");
+            clearLegacyModelKeyFiles();
             if (settings.isFile()) {
                 JSONObject saved =
                     new JSONObject(new String(Files.readAllBytes(settings.toPath()), StandardCharsets.UTF_8));
                 baseUrl = saved.optString("baseUrl", baseUrl);
                 model = saved.optString("model", model);
                 policy = saved.optString("policy", policy);
-                glmBaseUrl = saved.optString("glmBaseUrl",
-                    model.equals("deepseek-flash") ? glmBaseUrl : baseUrl);
-                wire = saved.optString("wire", model.equals("deepseek-flash")
-                    ? "responses" : "chat_completions");
-                glmWire = saved.optString("glmWire", glmBaseUrl.equals(GLM_RESPONSES_URL)
-                    ? "responses" : "chat_completions");
-                deepseekWire = saved.optString("deepseekWire", model.equals("deepseek-flash")
-                    ? wire : "responses");
-                glmChatBaseUrl = saved.optString("glmChatBaseUrl",
-                    glmWire.equals("chat_completions") ? glmBaseUrl : GLM_CHAT_URL);
                 wanWorkspaceId = saved.optString("wanWorkspaceId", "");
             }
+            if (!model.equals("glm-5.3") && !model.equals("glm-5.3-flash") &&
+                !model.equals("deepseek-flash")) model = "glm-5.3";
+            wire = "responses";
             if (model.equals("deepseek-flash")) baseUrl = DEEPSEEK_URL;
-            else if (model.startsWith("glm-") &&
-                     "open.bigmodel.cn".equals(new java.net.URI(baseUrl).getHost())) {
-                if (wire.equals("responses")) baseUrl = GLM_RESPONSES_URL;
-                else if (baseUrl.equals(GLM_RESPONSES_URL)) baseUrl = glmChatBaseUrl;
-                glmBaseUrl = baseUrl;
-            }
+            else baseUrl = GLM_RESPONSES_URL;
             File cloudUrlFile = new File(root, "cloud-service-url.txt");
             if (cloudUrlFile.isFile())
                 cloudServiceUrl = new String(Files.readAllBytes(cloudUrlFile.toPath()),
@@ -343,33 +329,7 @@ public final class AIAssistantController {
                     Log.w("MaiChatAgent", "Cloud credential synchronization is unavailable");
                 }
             }
-            try {
-                deepseekApiKey = readEncryptedKey("deepseek-main-api-key.enc");
-                glmApiKey = readEncryptedKey("glm-main-api-key.enc");
-                if (glmApiKey.isEmpty()) glmApiKey = readKey();
-                glmVideoApiKey = readEncryptedKey("glm-video-api-key.enc");
-                if (glmVideoApiKey.isEmpty()) glmVideoApiKey = glmApiKey;
-                apiKey = model.equals("deepseek-flash") ? deepseekApiKey
-                    : model.startsWith("glm-") ? glmApiKey : readKey();
-            } catch (Exception e) {
-                error = "API Key 无法读取，请重新配置模型";
-            }
-            try {
-                arkApiKey = readEncryptedKey("ark-api-key.enc");
-            } catch (Exception e) {
-                Log.w("MaiChatAgent", "Ark key could not be read", e);
-            }
-            try {
-                wanApiKey = readEncryptedKey("wan-api-key.enc");
-            } catch (Exception e) {
-                Log.w("MaiChatAgent", "Wan key could not be read", e);
-            }
-            try {
-                klingApiKey = readEncryptedKey("kling-api-key.enc");
-                miniMaxApiKey = readEncryptedKey("minimax-api-key.enc");
-            } catch (Exception e) {
-                Log.w("MaiChatAgent", "Creative model key could not be read", e);
-            }
+            apiKey = model.equals("deepseek-flash") ? deepseekApiKey : glmApiKey;
             if (testEndpoint != null) {
                 baseUrl = testEndpoint;
                 model = "test-model";
@@ -562,12 +522,7 @@ public final class AIAssistantController {
         });
     }
     void switchModel(String name, Consumer<Boolean> completion) {
-        if (name.equals("deepseek-flash"))
-            save(DEEPSEEK_URL, name, policy, deepseekApiKey, "responses",
-                glmChatBaseUrl, completion);
-        else
-            save(GLM_RESPONSES_URL, name, policy, glmApiKey, "responses",
-                glmChatBaseUrl, completion);
+        save(name, policy, completion);
     }
     void action(String operation, JSONObject values, Runnable completion) {
         String target = state.selected;
@@ -590,95 +545,43 @@ public final class AIAssistantController {
             }
         });
     }
-    void save(String url, String name, String approval, String newKey, Consumer<Boolean> completion) {
-        save(url, name, approval, newKey, wire, glmChatBaseUrl, completion);
-    }
-    void save(String url, String name, String approval, String newKey,
-              String selectedWire, String chatUrl, Consumer<Boolean> completion) {
+    void save(String name, String approval, Consumer<Boolean> completion) {
         worker.post(() -> {
             boolean success = false;
             try {
-                if (!selectedWire.equals("responses") &&
-                    !selectedWire.equals("chat_completions"))
-                    throw new IllegalArgumentException("接口协议不支持");
                 String selectedName = name.trim();
-                String nextChatUrl = chatUrl.trim().isEmpty() ? GLM_CHAT_URL : chatUrl.trim();
-                if (selectedName.startsWith("glm-") && selectedWire.equals("responses") &&
-                    url.startsWith("https://open.bigmodel.cn/") &&
-                    !url.trim().equals(GLM_RESPONSES_URL))
-                    nextChatUrl = url.trim();
-                String effectiveUrl = endpointFor(selectedName, selectedWire, url.trim(), nextChatUrl);
-                java.net.URI uri = new java.net.URI(effectiveUrl);
-                if (!"https".equals(uri.getScheme()) || uri.getHost() == null
-                    || uri.getRawUserInfo() != null || uri.getRawQuery() != null
-                    || uri.getRawFragment() != null || selectedName.isEmpty())
-                    throw new IllegalArgumentException("请填写有效的 HTTPS API 地址和模型名称");
-                boolean deepseek = selectedName.equals("deepseek-flash");
-                if (deepseek && !"api.deepseek.com".equals(uri.getHost()))
-                    throw new IllegalArgumentException("DeepSeek 模型请使用 https://api.deepseek.com");
-                boolean glm = selectedName.startsWith("glm-");
-                if (newKey.trim().isEmpty() && !deepseek && !glm
-                    && !java.util.Objects.equals(uri.getHost(), new java.net.URI(baseUrl).getHost()))
-                    throw new IllegalArgumentException("更换模型服务商时，请重新填写 API Key");
-                String key = newKey.trim().isEmpty()
-                    ? (deepseek ? deepseekApiKey : glm ? glmApiKey : apiKey) : newKey.trim();
-                if (key.isEmpty())
-                    throw new IllegalArgumentException("请填写 API Key");
-                configure(effectiveUrl, selectedName, approval, key, selectedWire);
+                if (!selectedName.equals("glm-5.3") && !selectedName.equals("glm-5.3-flash") &&
+                    !selectedName.equals("deepseek-flash"))
+                    throw new IllegalArgumentException("请选择受支持的主模型");
+                String effectiveUrl = selectedName.equals("deepseek-flash")
+                    ? DEEPSEEK_URL : GLM_RESPONSES_URL;
+                String key = selectedName.equals("deepseek-flash") ? deepseekApiKey : glmApiKey;
+                configure(effectiveUrl, selectedName, approval, key, "responses");
+                byte[] config = new JSONObject().put("baseUrl", effectiveUrl)
+                    .put("model", selectedName).put("policy", approval)
+                    .put("wire", "responses").put("wanWorkspaceId", wanWorkspaceId)
+                    .toString().getBytes(StandardCharsets.UTF_8);
+                android.util.AtomicFile file =
+                    new android.util.AtomicFile(new File(root, "settings.json"));
+                FileOutputStream out = file.startWrite();
                 try {
-                    if (deepseek) writeEncryptedKey("deepseek-main-api-key.enc", key);
-                    else if (glm) writeEncryptedKey("glm-main-api-key.enc", key);
-                    else writeKey(key);
-                    byte[] config = new JSONObject()
-                                        .put("baseUrl", effectiveUrl)
-                                        .put("model", selectedName)
-                                        .put("policy", approval)
-                                        .put("wire", selectedWire)
-                                        .put("glmBaseUrl", selectedName.startsWith("glm-")
-                                            ? effectiveUrl : glmBaseUrl)
-                                        .put("glmChatBaseUrl", nextChatUrl)
-                                        .put("glmWire", selectedName.startsWith("glm-")
-                                            ? selectedWire : glmWire)
-                                        .put("deepseekWire", deepseek ? selectedWire : deepseekWire)
-                                        .put("wanWorkspaceId", wanWorkspaceId)
-                                        .toString()
-                                        .getBytes(StandardCharsets.UTF_8);
-                    android.util.AtomicFile file =
-                        new android.util.AtomicFile(new File(root, "settings.json"));
-                    FileOutputStream out = file.startWrite();
-                    try {
-                        out.write(config);
-                        file.finishWrite(out);
-                    } catch (Exception e) {
-                        file.failWrite(out);
-                        throw e;
-                    }
-                } catch (Exception e) {
-                    if (deepseek) writeEncryptedKey("deepseek-main-api-key.enc", deepseekApiKey);
-                    else if (glm) writeEncryptedKey("glm-main-api-key.enc", glmApiKey);
-                    else writeKey(apiKey);
-                    configure(baseUrl, model, policy, apiKey, wire);
-                    throw e;
+                    out.write(config);
+                    file.finishWrite(out);
+                } catch (Exception failure) {
+                    file.failWrite(out);
+                    configure(baseUrl, model, policy, apiKey, "responses");
+                    throw failure;
                 }
                 baseUrl = effectiveUrl;
                 model = selectedName;
                 policy = approval;
                 apiKey = key;
-                wire = selectedWire;
-                if (deepseek) {
-                    deepseekApiKey = key;
-                    deepseekWire = selectedWire;
-                } else if (selectedName.startsWith("glm-")) {
-                    glmApiKey = key;
-                    glmBaseUrl = effectiveUrl;
-                    glmChatBaseUrl = nextChatUrl;
-                    glmWire = selectedWire;
-                }
+                wire = "responses";
                 error = "";
                 success = true;
                 refresh(true);
-            } catch (Exception e) {
-                error = safeMessage(e);
+            } catch (Exception failure) {
+                error = safeMessage(failure);
                 emit();
             }
             boolean saved = success;
@@ -692,82 +595,7 @@ public final class AIAssistantController {
         if (selectedWire.equals("responses")) return GLM_RESPONSES_URL;
         return url.equals(GLM_RESPONSES_URL) ? chatUrl : url;
     }
-    String currentWire() { return wire; }
-    String glmWire() { return glmWire; }
-    String deepseekWire() { return deepseekWire; }
-    String glmBaseUrl() { return glmBaseUrl; }
-    String glmChatBaseUrl() { return glmChatBaseUrl; }
-    void saveArkKey(String newKey, Consumer<Boolean> completion) {
-        worker.post(() -> {
-            boolean success = true;
-            if (!newKey.trim().isEmpty()) {
-                try {
-                    writeEncryptedKey("ark-api-key.enc", newKey.trim());
-                    arkApiKey = newKey.trim();
-                } catch (Exception failure) {
-                    error = safeMessage(failure);
-                    success = false;
-                }
-            }
-            boolean result = success;
-            main.post(() -> completion.accept(result));
-        });
-    }
-    void saveWanCredentials(String newKey, String workspaceId, Consumer<Boolean> completion) {
-        worker.post(() -> {
-            boolean success = true;
-            try {
-                String id = workspaceId.trim();
-                if (!id.isEmpty() && !id.matches("(?:ws|llm)-[A-Za-z0-9_-]+"))
-                    throw new IllegalArgumentException("百炼 Workspace ID 格式不正确");
-                if (!newKey.trim().isEmpty()) {
-                    writeEncryptedKey("wan-api-key.enc", newKey.trim());
-                    wanApiKey = newKey.trim();
-                }
-                wanWorkspaceId = id;
-                File settings = new File(root, "settings.json");
-                JSONObject saved = settings.isFile()
-                    ? new JSONObject(new String(Files.readAllBytes(settings.toPath()), StandardCharsets.UTF_8))
-                    : new JSONObject();
-                saved.put("wanWorkspaceId", id);
-                android.util.AtomicFile file = new android.util.AtomicFile(settings);
-                FileOutputStream out = file.startWrite();
-                try {
-                    out.write(saved.toString().getBytes(StandardCharsets.UTF_8));
-                    file.finishWrite(out);
-                } catch (Exception e) {
-                    file.failWrite(out);
-                    throw e;
-                }
-            } catch (Exception failure) {
-                error = safeMessage(failure);
-                success = false;
-            }
-            boolean result = success;
-            main.post(() -> completion.accept(result));
-        });
-    }
     String wanWorkspaceId() { return wanWorkspaceId; }
-    void saveCreativeKeys(String kling, String miniMax, Consumer<Boolean> completion) {
-        worker.post(() -> {
-            boolean success = true;
-            try {
-                if (!kling.trim().isEmpty()) {
-                    writeEncryptedKey("kling-api-key.enc", kling.trim());
-                    klingApiKey = kling.trim();
-                }
-                if (!miniMax.trim().isEmpty()) {
-                    writeEncryptedKey("minimax-api-key.enc", miniMax.trim());
-                    miniMaxApiKey = miniMax.trim();
-                }
-            } catch (Exception failure) {
-                error = safeMessage(failure);
-                success = false;
-            }
-            boolean result = success;
-            main.post(() -> completion.accept(result));
-        });
-    }
     String cloudServiceUrl() { return cloudServiceUrl; }
     void saveCloudService(String address, String newToken, Consumer<Boolean> completion) {
         worker.post(() -> {
@@ -856,34 +684,25 @@ public final class AIAssistantController {
     private void applyCloudCredentials(JSONObject response) throws Exception {
         JSONObject keys = response.optJSONObject("api_keys");
         if (keys == null) throw new IOException("云端密钥响应无效");
-        String[][] accounts = {
-            {"ark", "ark-api-key.enc"}, {"glm", "glm-main-api-key.enc"},
-            {"glm_video", "glm-video-api-key.enc"},
-            {"deepseek", "deepseek-main-api-key.enc"}, {"wan", "wan-api-key.enc"},
-            {"kling", "kling-api-key.enc"}, {"minimax", "minimax-api-key.enc"}
-        };
-        for (String[] account : accounts) {
-            String value = keys.optString(account[0], "");
+        arkApiKey = glmApiKey = glmVideoApiKey = deepseekApiKey = "";
+        wanApiKey = klingApiKey = miniMaxApiKey = "";
+        for (String provider : new String[] {"ark", "glm", "glm_video", "deepseek",
+                "wan", "kling", "minimax"}) {
+            String value = keys.optString(provider, "");
             if (value.isEmpty() || value.length() > 4096 ||
                 value.indexOf('\r') >= 0 || value.indexOf('\n') >= 0) continue;
-            writeEncryptedKey(account[1], value);
-            switch (account[0]) {
+            switch (provider) {
             case "ark": arkApiKey = value; break;
-            case "glm":
-                glmApiKey = value;
-                if (model.startsWith("glm-")) apiKey = value;
-                break;
+            case "glm": glmApiKey = value; break;
             case "glm_video": glmVideoApiKey = value; break;
-            case "deepseek":
-                deepseekApiKey = value;
-                if (model.equals("deepseek-flash")) apiKey = value;
-                break;
+            case "deepseek": deepseekApiKey = value; break;
             case "wan": wanApiKey = value; break;
             case "kling": klingApiKey = value; break;
             case "minimax": miniMaxApiKey = value; break;
             default: break;
             }
         }
+        apiKey = model.equals("deepseek-flash") ? deepseekApiKey : glmApiKey;
         String workspace = response.optString("wan_workspace_id", "");
         if (workspace.matches("(?:ws|llm)-[A-Za-z0-9_-]{1,120}")) wanWorkspaceId = workspace;
     }
@@ -1163,8 +982,15 @@ public final class AIAssistantController {
                 .build());
         return generator.generateKey();
     }
-    private void writeKey(String key) throws Exception {
-        writeEncryptedKey("api-key.enc", key);
+    private void clearLegacyModelKeyFiles() {
+        for (String name : new String[] {"api-key.enc", "ark-api-key.enc",
+                "glm-main-api-key.enc", "glm-video-api-key.enc",
+                "deepseek-main-api-key.enc", "wan-api-key.enc",
+                "kling-api-key.enc", "minimax-api-key.enc"}) {
+            new File(root, name).delete();
+            new File(root, name + ".bak").delete();
+            new File(root, name + ".new").delete();
+        }
     }
     private void writeEncryptedKey(String name, String key) throws Exception {
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
@@ -1183,9 +1009,6 @@ public final class AIAssistantController {
             file.failWrite(out);
             throw e;
         }
-    }
-    private String readKey() throws Exception {
-        return readEncryptedKey("api-key.enc");
     }
     private String readEncryptedKey(String name) throws Exception {
         File file = new File(root, name);

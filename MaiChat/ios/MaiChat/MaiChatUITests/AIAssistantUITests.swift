@@ -224,21 +224,14 @@ final class AIAssistantUITests: XCTestCase {
         let glm = app.buttons["GLM-5.3"]
         XCTAssertTrue(glm.waitForExistence(timeout: 3))
         glm.tap()
-        let url = app.textFields["ai-model-base-url"]
-        XCTAssertEqual(url.value as? String, "https://open.bigmodel.cn/api/v1")
-        let wire = app.segmentedControls["ai-model-wire"]
-        XCTAssertTrue(wire.waitForExistence(timeout: 3))
-        wire.buttons["Chat Completions"].tap()
-        XCTAssertEqual(url.value as? String, "https://open.bigmodel.cn/api/coding/paas/v4")
-        wire.buttons["Responses"].tap()
-        XCTAssertEqual(url.value as? String, "https://open.bigmodel.cn/api/v1")
+        XCTAssertFalse(app.textFields["ai-model-base-url"].exists)
+        XCTAssertFalse(app.segmentedControls["ai-model-wire"].exists)
+        XCTAssertTrue(app.textFields["ai-cloud-service-url"].exists)
         modelPicker.tap()
         let deepSeek = app.buttons["DeepSeek V4.1 Flash"]
         XCTAssertTrue(deepSeek.waitForExistence(timeout: 3))
         deepSeek.tap()
-        XCTAssertTrue(app.staticTexts["DeepSeek API Key"].waitForExistence(timeout: 3))
-        wire.buttons["Chat Completions"].tap()
-        XCTAssertEqual(url.value as? String, "https://api.deepseek.com")
+        XCTAssertFalse(app.staticTexts["DeepSeek API Key"].exists)
         XCTAssertTrue(app.buttons["关闭模型配置"].isHittable)
         let save = app.buttons["保存配置"]
         XCTAssertTrue(save.exists)

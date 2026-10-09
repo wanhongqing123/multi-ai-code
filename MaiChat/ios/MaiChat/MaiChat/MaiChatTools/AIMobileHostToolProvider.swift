@@ -75,22 +75,18 @@ final class AIMobileHostToolProvider {
         case "mobile_preview_image": return previewImage(arguments)
         case "mobile_photos_add_to_album": return await addPhotosToAlbum(arguments)
         case "ark_api_key":
-            return Self.jsonSuccess(["key": KeychainSecretStore(account: "seedance-ark-api-key")
-                .readSecretKey()])
+            return Self.jsonSuccess(["key": AICloudCredentialStore.shared.key("ark")])
         case "glm_api_key":
-            let video = KeychainSecretStore(account: "glm-video-api-key").readSecretKey()
-            let current = KeychainSecretStore(account: "ai-assistant-glm-api-key").readSecretKey()
-            let legacy = KeychainSecretStore(account: "ai-assistant-api-key").readSecretKey()
-            return Self.jsonSuccess(["key": !video.isEmpty ? video : (current.isEmpty ? legacy : current)])
+            let video = AICloudCredentialStore.shared.key("glm_video")
+            let main = AICloudCredentialStore.shared.key("glm")
+            return Self.jsonSuccess(["key": video.isEmpty ? main : video])
         case "kling_api_key":
-            return Self.jsonSuccess(["key": KeychainSecretStore(account: "kling-creative-api-key")
-                .readSecretKey()])
+            return Self.jsonSuccess(["key": AICloudCredentialStore.shared.key("kling")])
         case "minimax_api_key":
-            return Self.jsonSuccess(["key": KeychainSecretStore(account: "minimax-creative-api-key")
-                .readSecretKey()])
+            return Self.jsonSuccess(["key": AICloudCredentialStore.shared.key("minimax")])
         case "wan_credentials":
             return Self.jsonSuccess([
-                "key": KeychainSecretStore(account: "wan-model-studio-api-key").readSecretKey(),
+                "key": AICloudCredentialStore.shared.key("wan"),
                 "workspace_id": UserDefaults.standard.string(forKey: "wan-model-studio-workspace-id") ?? ""
             ])
         default: break

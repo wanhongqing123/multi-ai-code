@@ -227,16 +227,7 @@ struct MaiChatApp: App {
 
     init() {
         AppDiagnosticLog.shared.install()
-        let wanKey = KeychainSecretStore(account: "wan-model-studio-api-key").readSecretKey()
-        let wanKeyPresent = !wanKey.isEmpty
-        let wanWorkspacePresent = !(UserDefaults.standard.string(
-            forKey: "wan-model-studio-workspace-id") ?? "").isEmpty
-        let wanCredentialFields = ["key_present": String(wanKeyPresent),
-                                   "workspace_id_present": String(wanWorkspacePresent)]
-        AppDiagnosticLog.shared.record(
-            level: .info, category: "model-studio", event: "credential-state",
-            fields: wanCredentialFields
-        )
+        AICloudCredentialSync.clearLegacyStoredModelKeys()
         Task.detached(priority: .utility) {
             _ = try? await AICloudCredentialSync.syncIfConfigured()
         }

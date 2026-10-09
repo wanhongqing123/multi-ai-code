@@ -150,9 +150,7 @@ void ReplySuggestionController::setConfig(const Config &config) {
   MaiModelConfig modelConfig;
   modelConfig.baseUrl = toUtf8(config.baseUrl.trimmed());
   modelConfig.apiKey = toUtf8(config.apiKey);
-  modelConfig.wire = config.modelName == QStringLiteral("deepseek-flash")
-                         ? MaiWireApi::Responses
-                         : MaiWireApi::ChatCompletions;
+  modelConfig.wire = MaiWireApi::Responses;
   runtime_->model = makeMaiModelClient(std::move(modelConfig));
 }
 
@@ -174,7 +172,7 @@ quint64 ReplySuggestionController::requestSuggestions(
             if (guard)
               emit guard->suggestionsFailed(
                   requestId, accountId, peerId, latestMessageId,
-                  QStringLiteral("请先在 AI 助手设置中配置模型和 API Key。"));
+                  QStringLiteral("请先连接云端模型服务。"));
           },
           Qt::QueuedConnection);
       return;

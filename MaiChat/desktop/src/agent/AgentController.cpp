@@ -174,7 +174,7 @@ buildAgent(std::unique_ptr<MaiModelClient> model,
            std::unique_ptr<MaiSessionStore> store, const QString &defaultModel,
            MaiApprovalPolicy approvalPolicy,
            const AgentController::ToolRegistrar &hostTools,
-           const QString &glmApiKey = {}) {
+           const AgentController::ModelConfig &credentials) {
   // MaiAgent 内置工具总是装着；平台不支持的能力由核心在注册时排除。
   // 会话没有工作目录时工具层会明确拒绝，
   // 要不要把工具声明给模型看是 MaiContextBuilder 的事，不是这里的。
@@ -194,13 +194,11 @@ buildAgent(std::unique_ptr<MaiModelClient> model,
     tools->add(makeMaiAppStorageTool({toUtf8(temporary), toUtf8(cache), {}}));
   }
   tools->add(makeMaiAgentSendMediaTool());
-  const auto arkKey = [] {
-    return toUtf8(qEnvironmentVariable("MAICHAT_ARK_API_KEY"));
-  };
+  const auto arkKey = [key = toUtf8(credentials.arkApiKey)] { return key; };
   tools->add(makeMaiSeedanceVideoTool(arkKey));
-  const auto assetSettings = []() -> MaiResult<MaiArkAssetServiceSettings> {
-    const std::string base = toUtf8(qEnvironmentVariable("MAICHAT_MEDIA_SERVICE_URL"));
-    const std::string token = toUtf8(qEnvironmentVariable("MAICHAT_MEDIA_SERVICE_TOKEN"));
+  const auto assetSettings = [base = toUtf8(credentials.cloudServiceUrl),
+                              token = toUtf8(credentials.cloudServiceToken)]()
+      -> MaiResult<MaiArkAssetServiceSettings> {
     if (base.empty() || token.empty())
       return {MaiErrorCode::NotConfigured, "Ark Assets service is not configured"};
     return MaiArkAssetServiceSettings{base, token};
@@ -210,23 +208,18 @@ buildAgent(std::unique_ptr<MaiModelClient> model,
   else
     tools->add(makeMaiArkAssetTool());
   tools->add(makeMaiSeedreamImageTool(arkKey));
-  const auto glmKey = [key = toUtf8(glmApiKey)] { return key; };
+  const auto glmKey = [key = toUtf8(credentials.glmApiKey)] { return key; };
   tools->add(makeMaiGlmVideoTool(glmKey));
   tools->add(makeMaiGlmImageTool(glmKey));
-  const auto klingKey = [] {
-    return toUtf8(qEnvironmentVariable("MAICHAT_KLING_API_KEY"));
-  };
+  const auto klingKey = [key = toUtf8(credentials.klingApiKey)] { return key; };
   tools->add(makeMaiKlingVideoTool(klingKey));
   tools->add(makeMaiKlingImageTool(klingKey));
-  const auto miniMaxKey = [] {
-    return toUtf8(qEnvironmentVariable("MAICHAT_MINIMAX_API_KEY"));
-  };
+  const auto miniMaxKey = [key = toUtf8(credentials.miniMaxApiKey)] { return key; };
   tools->add(makeMaiMiniMaxVideoTool(miniMaxKey));
   tools->add(makeMaiMiniMaxImageTool(miniMaxKey));
-  const auto wanCredentials = [] {
-    return MaiWanCredentials{
-        toUtf8(qEnvironmentVariable("MAICHAT_WAN_API_KEY")),
-        toUtf8(qEnvironmentVariable("MAICHAT_WAN_WORKSPACE_ID"))};
+  const auto wanCredentials = [key = toUtf8(credentials.wanApiKey),
+                               workspace = toUtf8(credentials.wanWorkspaceId)] {
+    return MaiWanCredentials{key, workspace};
   };
   tools->add(makeMaiWanVideoEditTool(wanCredentials));
   tools->add(makeMaiWanVideoTool(wanCredentials));
@@ -316,7 +309,8 @@ AgentController::AgentController(std::unique_ptr<MaiModelClient> model,
 
   runtime_->agent =
       buildAgent(std::move(model), openStore(databasePath, runtime_->openError),
-                 QString(), MaiApprovalPolicy::OnRequest, hostTools);
+                 QString(), MaiApprovalPolicy::OnRequest, hostTools,
+                 AgentController::ModelConfig{});
 
   // **显式 QueuedConnection，不用 Auto。**
   //
@@ -366,11 +360,7 @@ AgentController::AgentController(const ModelConfig &model,
   runtime_->modelName = model.modelName;
   runtime_->agent = buildAgent(
       std::move(client), openStore(databasePath, runtime_->openError),
-      model.modelName, model.approvalPolicy, hostTools,
-      model.glmApiKey.isEmpty() &&
-              model.baseUrl.startsWith(QStringLiteral("https://open.bigmodel.cn/"))
-          ? model.apiKey
-          : model.glmApiKey);
+      model.modelName, model.approvalPolicy, hostTools, model);
 
   connect(this, &AgentController::eventQueued, this,
           &AgentController::onEventQueued, Qt::QueuedConnection);

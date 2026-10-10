@@ -118,7 +118,6 @@ public final class AIAssistantController {
     private volatile String arkApiKey = "";
     private volatile String wanApiKey = "";
     private volatile String wanWorkspaceId = "";
-    private volatile String klingApiKey = "";
     private volatile String miniMaxApiKey = "";
     private volatile String cloudServiceUrl = "";
     private JSONObject data = new JSONObject();
@@ -228,11 +227,10 @@ public final class AIAssistantController {
                 return hostToolFailure("Wan credentials are unavailable", "not_configured");
             }
         }
-        if (tool.equals("kling_api_key") || tool.equals("minimax_api_key")) {
+        if (tool.equals("minimax_api_key")) {
             try {
-                String key = tool.equals("kling_api_key") ? klingApiKey : miniMaxApiKey;
                 return new JSONObject().put("ok", true)
-                    .put("output", new JSONObject().put("key", key))
+                    .put("output", new JSONObject().put("key", miniMaxApiKey))
                     .toString().getBytes(StandardCharsets.UTF_8);
             } catch (Exception failure) {
                 return hostToolFailure("Creative model key is unavailable", "not_configured");
@@ -659,7 +657,7 @@ public final class AIAssistantController {
         byte[] body = new JSONObject().put("action", "fetch")
             .put("providers", new JSONArray()
                 .put("ark").put("glm").put("glm_video").put("deepseek")
-                .put("wan").put("kling").put("minimax"))
+                .put("wan").put("minimax"))
             .toString().getBytes(StandardCharsets.UTF_8);
         try {
             try (java.io.OutputStream output = connection.getOutputStream()) { output.write(body); }
@@ -685,9 +683,9 @@ public final class AIAssistantController {
         JSONObject keys = response.optJSONObject("api_keys");
         if (keys == null) throw new IOException("云端密钥响应无效");
         arkApiKey = glmApiKey = glmVideoApiKey = deepseekApiKey = "";
-        wanApiKey = klingApiKey = miniMaxApiKey = "";
+        wanApiKey = miniMaxApiKey = "";
         for (String provider : new String[] {"ark", "glm", "glm_video", "deepseek",
-                "wan", "kling", "minimax"}) {
+                "wan", "minimax"}) {
             String value = keys.optString(provider, "");
             if (value.isEmpty() || value.length() > 4096 ||
                 value.indexOf('\r') >= 0 || value.indexOf('\n') >= 0) continue;
@@ -697,7 +695,6 @@ public final class AIAssistantController {
             case "glm_video": glmVideoApiKey = value; break;
             case "deepseek": deepseekApiKey = value; break;
             case "wan": wanApiKey = value; break;
-            case "kling": klingApiKey = value; break;
             case "minimax": miniMaxApiKey = value; break;
             default: break;
             }

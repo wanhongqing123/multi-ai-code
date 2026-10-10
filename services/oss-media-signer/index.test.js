@@ -77,6 +77,25 @@ test('signs direct JPEG uploads for private Ark input storage', async () => {
   assert.deepEqual(calls.map(call => call[0]), ['PUT', 'GET']);
 });
 
+test('signs private Wan document uploads with their real MIME type and 100 MB cap', async () => {
+  const calls = [];
+  const handle = createHandler({ env, newID: () => 'document-id',
+    currentTime: () => new Date('2026-10-08T00:00:00Z'),
+    makeClient: () => ({ signatureUrlV4: async (...args) => {
+      calls.push(args);
+      return `https://example.oss-cn-hangzhou.aliyuncs.com/${args[3]}?signed=yes`;
+    } }) });
+  const result = await handle(request({ filename: 'proposal.PPTX', size_bytes: 2_000_000 }));
+  assert.equal(result.statusCode, 200);
+  const signed = JSON.parse(result.body);
+  assert.equal(signed.object_key, 'seedance-inputs/2026-10-08/document-id.pptx');
+  assert.equal(signed.upload_headers['Content-Type'],
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation');
+  assert.deepEqual(calls.map(call => call[0]), ['PUT', 'GET']);
+  assert.equal((await handle(request({ filename: 'proposal.pptx',
+    size_bytes: 100_000_001 }))).statusCode, 400);
+});
+
 test('fails closed when credentials or route are missing', async () => {
   const missing = createHandler({ env: { ...env, ALIBABA_CLOUD_ACCESS_KEY_SECRET: '' } });
   assert.equal((await missing(request({ filename: 'clip.mp4', size_bytes: 12 }))).statusCode, 503);
@@ -140,6 +159,54 @@ test('Ark Assets works without OSS configuration', async () => {
   const fetched = await handle({ ...create, rawPath: '/credentials',
     body: JSON.stringify({ action: 'fetch', providers: ['ark'] }) });
   assert.deepEqual(JSON.parse(fetched.body).api_keys, {});
+});
+
+test('reports Ark upstream status, code, and request id without exposing credentials', async () => {
+  const assetEnv = { ...env, VOLC_ACCESS_KEY_ID: 'ark-ak',
+    VOLC_SECRET_ACCESS_KEY: 'ark-sk' };
+  const handle = createHandler({ env: assetEnv, callArk: async () => {
+    throw { response: { status: 503, data: { ResponseMetadata: {
+      RequestId: 'provider-request-123', Error: {
+        Code: 'ServiceUnavailable', Message: 'Try again later' }
+    } } } };
+  } });
+  const result = await handle({ ...request({ action: 'list_groups' }), rawPath: '/ark-assets' });
+  assert.equal(result.statusCode, 502);
+  const body = JSON.parse(result.body);
+  assert.equal(body.provider_http_status, 503);
+  assert.equal(body.provider_code, 'ServiceUnavailable');
+  assert.equal(body.request_id, 'provider-request-123');
+  assert.ok(!result.body.includes('ark-sk'));
+});
+
+test('creates a real-portrait H5 link and resolves its verified group', async () => {
+  const calls = [];
+  const assetEnv = { ...env, VOLC_ACCESS_KEY_ID: 'ark-ak',
+    VOLC_SECRET_ACCESS_KEY: 'ark-sk' };
+  const handle = createHandler({ env: assetEnv, callArk: async (action, payload) => {
+    calls.push({ action, payload });
+    if (action === 'CreateVisualValidateSession')
+      return { Result: { BytedToken: 'vvs-test-token',
+        H5Link: 'https://ark.example.com/verify?token=test' } };
+    if (action === 'GetVisualValidateResult')
+      return { Result: { GroupId: 'group-real-123456' } };
+    return { Result: { Items: [] } };
+  } });
+  const assetRequest = body => ({ ...request(body), rawPath: '/ark-assets' });
+  const begin = await handle(assetRequest({ action: 'begin_real_validation' }));
+  assert.equal(begin.statusCode, 200);
+  assert.equal(JSON.parse(begin.body).result.BytedToken, 'vvs-test-token');
+  assert.deepEqual(calls[0], { action: 'CreateVisualValidateSession', payload: {
+    CallbackURL: 'https://ichat.life/maichat/portrait-auth-callback',
+    ProjectName: 'default' } });
+  const finish = await handle(assetRequest({ action: 'get_real_validation',
+    byted_token: 'vvs-test-token' }));
+  assert.equal(JSON.parse(finish.body).result.GroupId, 'group-real-123456');
+  assert.equal(calls[1].payload.BytedToken, 'vvs-test-token');
+  await handle(assetRequest({ action: 'list_groups', group_type: 'LivenessFace' }));
+  assert.equal(calls[2].payload.Filter.GroupType, 'LivenessFace');
+  const invalid = await handle(assetRequest({ action: 'get_real_validation', byted_token: '' }));
+  assert.equal(invalid.statusCode, 400);
 });
 
 test('synchronizes only requested model keys and never returns AccessKeys', async () => {

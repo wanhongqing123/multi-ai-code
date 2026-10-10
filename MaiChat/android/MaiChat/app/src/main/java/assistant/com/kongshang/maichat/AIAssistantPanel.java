@@ -582,29 +582,29 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         return value;
     }
     private boolean isPaidGeneration(String tool) {
-        return tool.equals("wan_video") || tool.equals("wan_video_edit")
+        return tool.equals("wan_video") || tool.equals("wan_image")
             || tool.equals("seedance_video") || tool.equals("seedream_image")
-            || tool.equals("qwen_image") || tool.equals("glm_video") || tool.equals("glm_image")
-            || tool.equals("kling_video") || tool.equals("kling_image")
+            || tool.equals("glm_video") || tool.equals("glm_image")
+            || tool.equals("kling_bailian_video") || tool.equals("kling_bailian_image")
             || tool.equals("minimax_video") || tool.equals("minimax_image");
     }
     private String paidApprovalTitle(String tool, JSONObject input) {
-        boolean video = tool.equals("wan_video") || tool.equals("wan_video_edit")
+        boolean video = tool.equals("wan_video")
             || tool.equals("seedance_video") || tool.equals("glm_video")
-            || tool.equals("kling_video") || tool.equals("minimax_video");
+            || tool.equals("kling_bailian_video") || tool.equals("minimax_video");
         return "确认" + (isPaidRevision(tool, input) ? "编辑" : "生成")
             + (video ? "视频" : "图片");
     }
     private boolean isPaidRevision(String tool, JSONObject input) {
         return input.optString("action").equals("revise")
             || input.optString("mode").equals("edit")
-            || input.optString("mode").equals("extend") || tool.equals("wan_video_edit");
+            || input.optString("mode").equals("extend")
+            || input.optString("task_mode").equals("edit");
     }
     private String paidProvider(String tool) {
-        if (tool.equals("wan_video") || tool.equals("wan_video_edit")) return "万相";
-        if (tool.equals("qwen_image")) return "通义千问";
+        if (tool.equals("wan_video") || tool.equals("wan_image")) return "万相";
         if (tool.equals("glm_video") || tool.equals("glm_image")) return "GLM";
-        if (tool.equals("kling_video") || tool.equals("kling_image")) return "可灵";
+        if (tool.equals("kling_bailian_video") || tool.equals("kling_bailian_image")) return "可灵 · 百炼";
         if (tool.equals("minimax_video") || tool.equals("minimax_image")) return "海螺 / MiniMax";
         return tool.equals("seedance_video") ? "Seedance" : "Seedream";
     }
@@ -623,6 +623,11 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         }
         if (model.equals("MiniMax-H3") || model.equals("MiniMax-H3-Max"))
             values.add(model.equals("MiniMax-H3-Max") ? "H3 Max" : "H3");
+        if (tool.equals("kling_bailian_video") || tool.equals("kling_bailian_image"))
+            values.add(model.contains("omni") ? "可灵 V3 Omni"
+                : model.contains("turbo") ||
+                    (model.isEmpty() && tool.equals("kling_bailian_video"))
+                    ? "可灵 V3 Turbo" : "可灵 V3");
         int duration = input.optInt("duration", production.optInt("duration", 0));
         if (duration > 0) values.add(duration + " 秒");
         String resolution = input.optString("resolution", production.optString("resolution"));
@@ -633,11 +638,13 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             values.add("平台虚拟人像");
         if (!input.optString("authorized_portrait_asset_id").isEmpty())
             values.add("已授权真人形象");
+        JSONArray registeredAssets = input.optJSONArray("reference_asset_ids");
+        if (registeredAssets != null && registeredAssets.length() > 0)
+            values.add("已登记参考素材 " + registeredAssets.length() + " 张");
         if (!input.optString("size").isEmpty()) values.add(input.optString("size"));
-        JSONArray images = input.optJSONArray("reference_image_paths");
+        JSONArray images = input.optJSONArray("local_image_paths");
         if (images == null) images = input.optJSONArray("image_paths");
         int imageCount = images == null ? 0 : images.length();
-        if (!input.optString("reference_image_path").isEmpty()) imageCount++;
         if (!input.optString("image_path").isEmpty()
             || !input.optString("first_frame").isEmpty()) imageCount++;
         if (!input.optString("last_frame_path").isEmpty()
@@ -707,9 +714,34 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 JSONObject input;
                 try { input = new JSONObject(permission.optString("input", "{}")); }
                 catch (Exception ignored) { input = new JSONObject(); }
-                if (paid) {
+                boolean providerCanCancel = tool.equals("wan_video") ||
+                    tool.equals("seedance_video") || tool.equals("kling_bailian_video");
+                boolean taskManagement = ((providerCanCancel ||
+                    tool.equals("glm_video") || tool.equals("minimax_video")) &&
+                    input.optString("action").equals("delete")) ||
+                    (providerCanCancel && input.optString("action").equals("cancel"));
+                boolean taskDelete = input.optString("action").equals("delete");
+                paid = paid && !taskManagement;
+                boolean portraitValidation = tool.equals("ark_assets") &&
+                    input.optString("action").equals("begin_real_validation");
+                if (taskManagement) {
+                    pending.addView(text(taskDelete ? "删除视频任务记录" : "取消视频任务",
+                        17, MaiChatTheme.TEXT), matchWrap());
+                    pending.addView(text(taskDelete
+                        ? (tool.equals("seedance_video")
+                           ? "删除方舟中的已结束任务记录及本地索引；已保存的视频保留。"
+                           : "只删除本地已交付记录；云端任务和已保存的视频保留。")
+                        : "仅排队中的任务可以取消；运行中任务会被平台拒绝。",
+                        13, MaiChatTheme.SECONDARY), matchWrap());
+                    pending.addView(text("任务：" + input.optString("conversation_id"),
+                        13, MaiChatTheme.SECONDARY), matchWrap());
+                } else if (paid) {
                     pending.addView(text(paidApprovalTitle(tool, input), 17, MaiChatTheme.TEXT), matchWrap());
-                    String note = !input.optString("virtual_avatar_asset_id").isEmpty()
+                    JSONArray registeredAssets = input.optJSONArray("reference_asset_ids");
+                    String note = registeredAssets != null && registeredAssets.length() > 0
+                        ? "将使用已登记的参考素材；平台仍会审核。确认后提交给"
+                            + paidProvider(tool) + "，可能消耗模型额度。"
+                        : !input.optString("virtual_avatar_asset_id").isEmpty()
                         ? "将使用平台虚拟人像，不保留真实人物长相。确认后提交给"
                             + paidProvider(tool) + "，可能消耗模型额度。"
                         : !input.optString("authorized_portrait_asset_id").isEmpty()
@@ -730,6 +762,10 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                     TextView more = text("查看完整请求", 12, MaiChatTheme.SECONDARY);
                     more.setOnClickListener(v -> details("完整请求", permission.optString("input")));
                     pending.addView(more, matchWrap());
+                } else if (portraitValidation) {
+                    pending.addView(text("创建真人验证链接", 17, MaiChatTheme.TEXT), matchWrap());
+                    pending.addView(text("将创建一次性 H5 链接，请由照片中的本人打开并完成验证。认证凭证有效期为 30 分钟。",
+                        13, MaiChatTheme.SECONDARY), matchWrap());
                 } else {
                     TextView heading = text(
                         "允许执行 " + tool + "？ 点击查看参数", 13, MaiChatTheme.TEXT);
@@ -738,14 +774,17 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 }
                 LinearLayout choices = row();
                 java.util.List<String[]> availableChoices = new java.util.ArrayList<>();
-                availableChoices.add(new String[] {paid ? "取消" : "拒绝", "denied"});
                 availableChoices.add(new String[] {
-                    paid ? (isPaidRevision(tool, input) ? "确认编辑" : "确认生成")
+                    taskManagement ? "返回" : paid || portraitValidation ? "取消" : "拒绝", "denied"});
+                availableChoices.add(new String[] {
+                    taskManagement ? (taskDelete ? "确认删除" : "确认取消任务")
+                    : paid ? (isPaidRevision(tool, input) ? "确认编辑" : "确认生成")
+                    : portraitValidation ? "生成验证链接"
                     : permission.optBoolean("rememberOnApproval")
                         ? (permission.optInt("fileCount", 0) > 1
                             ? "允许并记住这些文件" : "允许并记住此文件")
                         : "允许一次", "approved"});
-                if (permission.optBoolean("allowForSession", true)
+                if (!portraitValidation && !taskManagement && permission.optBoolean("allowForSession", true)
                     && !permission.optBoolean("rememberOnApproval"))
                     availableChoices.add(new String[] {"本会话允许", "approved_for_session"});
                 for (String[] choice : availableChoices)
@@ -836,15 +875,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         if (state == null || !state.ready) return;
         LinearLayout form = column();
         form.setPadding(dp(18), dp(8), dp(18), dp(8));
-        form.addView(text("主模型", 14, MaiChatTheme.SECONDARY), matchWrap());
-        Spinner modelPicker = new Spinner(activity);
-        modelPicker.setAdapter(new ArrayAdapter<>(activity,
-            android.R.layout.simple_spinner_dropdown_item,
-            new String[] {"GLM-5.3", "GLM-5.3-Flash", "DeepSeek V4.1 Flash"}));
-        modelPicker.setSelection(state.model.equals("deepseek-flash") ? 2
-            : state.model.equals("glm-5.3-flash") ? 1 : 0);
-        form.addView(modelPicker, matchWrap());
-        form.addView(text("主模型使用 Responses；模型密钥从云端获取，仅在运行期间使用。",
+        form.addView(text("主模型可在聊天页切换；统一使用 Responses。",
             12, MaiChatTheme.SECONDARY), matchWrap());
         EditText cloudUrl = field("云端服务地址", controller.cloudServiceUrl());
         EditText cloudToken = field("服务令牌（留空保留原令牌）", "");
@@ -881,9 +912,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
                             return;
                         }
-                        String selected = new String[] {"glm-5.3", "glm-5.3-flash",
-                            "deepseek-flash"}[modelPicker.getSelectedItemPosition()];
-                        controller.save(selected,
+                        controller.save(state.model,
                             new String[] {"on-request", "unless-trusted", "never"}[
                                 policy.getSelectedItemPosition()], success -> {
                                     if (success) dialog.dismiss();

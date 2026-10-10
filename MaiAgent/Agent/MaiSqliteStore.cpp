@@ -291,6 +291,26 @@ public:
         return true;
     }
 
+    MaiError deleteCompletedSpecialistTask(const std::string& taskId,
+                                           const std::string& ownerSessionId) override {
+        std::lock_guard<std::mutex> lock(mMutex);
+        sqlite3_stmt* statement = prepareLocked(
+            "DELETE FROM specialist_tasks WHERE id = ?1 AND owner_session_id = ?2 "
+            "AND status NOT IN (0, 1) AND notified_at != 0 "
+            "AND NOT EXISTS (SELECT 1 FROM specialist_tasks child "
+            "WHERE child.parent_task_id = ?1)");
+        if (!statement) return mLastWriteError;
+        Reset guard(statement);
+        bindText(statement, 1, taskId);
+        bindText(statement, 2, ownerSessionId);
+        if (sqlite3_step(statement) != SQLITE_DONE)
+            return MaiError::make(MaiErrorCode::Internal, "specialist task deletion failed");
+        if (sqlite3_changes(mDatabase) != 1)
+            return MaiError::make(MaiErrorCode::InvalidInput,
+                                  "specialist task is absent, active, or awaiting delivery");
+        return {};
+    }
+
     MaiError appendSpecialistText(const std::string& taskId, const std::string& ownerSessionId,
                                   const std::string& chunk, MaiMillis checkedAt) override {
         if (chunk.size() > 16 * 1024 || checkedAt == 0)

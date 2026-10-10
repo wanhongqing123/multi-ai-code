@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <new>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "MaiBlockingCheck.h"
@@ -264,16 +265,26 @@ MaiCvImageAnalysisResult analyzeMaiCvImage(const std::string& firstPath,
             if (!result.error.empty()) return result;
             result.secondWidth = second.cols;
             result.secondHeight = second.rows;
-            if (first.size() != second.size()) {
-                result.error = "Images have different dimensions; align them before comparison";
-                return result;
+            const bool sameDimensions = first.size() == second.size();
+            if (!sameDimensions) {
+                // 尺寸不同是常见的缩略图场景；仅为计算指标缩放副本，原图保持不变。
+                // 画幅比例不同会造成形变，必须在结果中明确标记，不能冒充逐像素对齐。
+                result.aspectRatioChanged = static_cast<std::int64_t>(first.cols) * second.rows !=
+                                            static_cast<std::int64_t>(second.cols) * first.rows;
+                result.comparisonAlignment = "resize_second_to_first";
+                cv::Mat resized;
+                const int interpolation =
+                    second.total() > first.total() ? cv::INTER_AREA : cv::INTER_LINEAR;
+                cv::resize(second, resized, first.size(), 0, 0, interpolation);
+                second = std::move(resized);
             }
             cv::Mat difference;
             cv::absdiff(first, second, difference);
             const cv::Scalar average = cv::mean(difference);
             result.meanAbsoluteDifference = (average[0] + average[1] + average[2]) / (3 * 255.0);
-            result.identical = cv::countNonZero(difference.reshape(1)) == 0;
-            if (!result.identical) result.psnrDb = cv::PSNR(first, second);
+            result.alignedIdentical = cv::countNonZero(difference.reshape(1)) == 0;
+            result.identical = sameDimensions && result.alignedIdentical;
+            if (!result.alignedIdentical) result.psnrDb = cv::PSNR(first, second);
             cv::Mat secondGray;
             cv::cvtColor(second, secondGray, cv::COLOR_BGR2GRAY);
             cv::Mat grayDifference;

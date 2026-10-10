@@ -111,6 +111,8 @@ public:
     }
 
     std::string description() const override {
+        // FFmpeg 在进程内执行：只接参数数组，不提供 stdin，目标文件必须是新路径。
+        // 分析滤镜需要 capture_log=true 才会把诊断日志交回主模型。
         return "Transform an accessible local image, audio, or video using the in-process FFmpeg "
                "engine. Supply FFmpeg arguments without the program name. Stdin is disabled "
                "and existing outputs cannot be overwritten; choose a new output path. For "
@@ -119,6 +121,7 @@ public:
     }
 
     std::string parametersSchema() const override {
+        // arguments 不包含 ffmpeg 程序名；capture_log 只在需要诊断滤镜日志时开启。
         return R"({"type":"object","properties":{"arguments":{"type":"array","items":)"
                R"({"type":"string"},"minItems":1,"maxItems":64},)"
                R"("capture_log":{"type":"boolean"}},"required":["arguments"],)"
@@ -233,6 +236,7 @@ public:
     }
 
     std::string description() const override {
+        // FFprobe 仅读取容器和码流元数据；帧/包模式有范围限制，不会改动媒体。
         return "Read streams and container metadata from an accessible local media file "
                "with the in-process FFprobe engine. Metadata mode returns format, streams and "
                "chapters, including codec, duration, frame rate, rotation and color/HDR fields "
@@ -242,6 +246,7 @@ public:
     }
 
     std::string parametersSchema() const override {
+        // path 为输入媒体；mode 选择整体元数据或有界帧/包时间窗。
         return R"({"type":"object","properties":{"path":{"type":"string"},)"
                R"("mode":{"type":"string","enum":["metadata","keyframes","frames","packets"]},)"
                R"("include_chapters":{"type":"boolean"},"include_programs":{"type":"boolean"},)"
@@ -301,7 +306,7 @@ public:
             return MaiToolResult::failure(MaiErrorCode::NotFound,
                                           "media file does not exist: " + input);
 
-        // fileAccessRoot is an access boundary, not a scratch directory.
+        // fileAccessRoot 是文件访问边界，不是可随意写入的临时目录。
         const MaiFilePath directory = context.root.empty() ? MaiFileSystem::temporaryDirectory()
                                                            : MaiFilePath::fromUtf8(context.root);
         const MaiFilePath output = directory.append(

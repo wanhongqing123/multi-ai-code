@@ -158,12 +158,16 @@ public:
         return "curl_upload";
     }
     std::string description() const override {
+        // 把已存在的工作区文件原样作为 PUT/POST 请求体流式上传，适合短期签名链接。
+        // 不是 multipart 表单，也不会自动公开上传后的对象地址。
         return "Stream an existing workspace file as the raw body of one HTTP(S) PUT or POST "
                "request, for example to a user-approved short-lived upload URL. This is not "
                "multipart form upload. The source remains unchanged; the remote host and file "
                "path need approval for every call. Never put permanent credentials in the URL.";
     }
     std::string parametersSchema() const override {
+        // url/path 指向上传目标和本地文件；method 仅 PUT/POST；content_type
+        // 必须与签名时使用的类型一致。大小和超时字段限制单次上传资源。
         return R"({"type":"object","properties":{"url":{"type":"string"},"path":{"type":"string"},"method":{"type":"string","enum":["PUT","POST"]},"content_type":{"type":"string"},"max_size_mb":{"type":"integer","minimum":1,"maximum":1024},"timeout_s":{"type":"integer","minimum":1,"maximum":1800}},"required":["url","path"],"additionalProperties":false})";
     }
     bool requiresApproval(const std::string&) const override {

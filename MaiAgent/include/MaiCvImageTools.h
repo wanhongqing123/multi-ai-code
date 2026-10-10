@@ -6,9 +6,9 @@
 #include "MaiCvImageAnalysis.h"
 #include "MaiTool.h"
 
-// Hosts that build OpenCV provide this callback; other hosts do not register the image tools.
-// The wrapper resolves input paths and output destinations before calling the analyzer. The
-// callback runs on an Agent worker, may decode tens of megapixels, and must honor cancellation.
+// 编译了 OpenCV 的宿主提供这个回调；其他宿主不注册图像分析工具。
+// 包装层先检查输入和输出路径，再交给分析器。回调在 Agent 工作线程执行，
+// 可能解码数千万像素的图片，必须响应取消请求。
 using MaiCvImageAnalyzer = MaiCvImageAnalysisResult (*)(const std::string& firstPath,
                                                         const std::string& secondPath,
                                                         const MaiCvImageAnalysisOptions& options,

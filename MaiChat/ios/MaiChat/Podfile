@@ -2,11 +2,18 @@ platform :ios, '16.0'
 
 project 'MaiChat.xcodeproj'
 
+# iOS 与其他平台统一使用仓库内 ONNX Runtime 源码构建的产物。
+# 首次运行 MaiAgent/scripts/build-onnxruntime-ios-pod.sh 生成本地 Pod。
+onnxruntime_pod = '../../../MaiAgent/build/vendor/onnxruntime-ios-pods/onnxruntime-c'
+unless File.file?(File.expand_path(File.join(onnxruntime_pod, 'onnxruntime-c.podspec'), __dir__))
+  raise 'Build the local ONNX Runtime pod with MaiAgent/scripts/build-onnxruntime-ios-pod.sh first'
+end
+
 target 'MaiChat' do
   use_frameworks!
 
   pod 'TXIMSDK_Plus_iOS_XCFramework'
   pod 'TXLiteAVSDK_TRTC', :podspec => 'https://liteav.sdk.qcloud.com/pod/liteavsdkspec/TXLiteAVSDK_TRTC.podspec'
   pod 'QCloudRealTime', '3.1.39'
-  pod 'onnxruntime-c', '1.26.0'
+  pod 'onnxruntime-c', :path => onnxruntime_pod
 end

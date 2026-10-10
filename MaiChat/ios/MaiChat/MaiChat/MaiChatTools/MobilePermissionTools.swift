@@ -7,6 +7,11 @@ import Photos
 import UIKit
 import UserNotifications
 
+private func hasLimitedContactAccess(_ status: CNAuthorizationStatus) -> Bool {
+    if #available(iOS 18.0, *) { return status == .limited }
+    return false
+}
+
 @MainActor
 extension AIMobileHostToolProvider {
     func getCurrentLocation() async -> AIMaiChatHostToolExecution {
@@ -41,7 +46,7 @@ extension AIMobileHostToolProvider {
                 "longitude": location.coordinate.longitude,
                 "accuracy_m": location.horizontalAccuracy,
                 "timestamp_ms": Int64((location.timestamp.timeIntervalSince1970 * 1000).rounded()),
-                // CoreLocation does not disclose whether GPS, Wi-Fi, or cellular supplied a fix.
+                // CoreLocation 不告知这次定位具体来自 GPS、Wi-Fi 还是蜂窝网络。
                 "source": "unknown",
             ]
             if location.verticalAccuracy >= 0, location.altitude.isFinite {
@@ -55,7 +60,56 @@ extension AIMobileHostToolProvider {
         }
     }
 
+    func listSystemContacts(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
+        // 系统通讯录不同于 MaiChat 好友；只在 App 前台且已获授权时分页读取。
+        guard UIApplication.shared.applicationState == .active else {
+            return .failure(code: "unavailable", message: "Open MaiChat to read system contacts")
+        }
+        let status = CNContactStore.authorizationStatus(for: .contacts)
+        guard status == .authorized || hasLimitedContactAccess(status) else {
+            return Self.jsonSuccess([
+                "code": "permission_denied", "permission": "contacts",
+                "settings_required": status == .denied || status == .restricted,
+                "message": "Call mobile_request_permission with contacts first."
+            ])
+        }
+        let query = Self.string(arguments, key: "query")
+        let offset = arguments["offset"] as? Int ?? 0
+        let limit = arguments["limit"] as? Int ?? 20
+        guard query.utf8.count <= 256, offset >= 0, offset <= 1_000,
+              limit >= 1, limit <= 50 else {
+            return .failure(code: "invalid_input", message: "query, offset, or limit is invalid")
+        }
+        let access = hasLimitedContactAccess(status) ? "limited" : "full"
+        return await Task.detached(priority: .userInitiated) {
+            readSystemContacts(query: query, offset: offset, limit: limit, access: access)
+        }.value
+    }
+
+    func getSystemContact(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
+        // 只接受列表返回的系统联系人 ID；有限授权下未共享的联系人不可读取。
+        guard UIApplication.shared.applicationState == .active else {
+            return .failure(code: "unavailable", message: "Open MaiChat to read system contacts")
+        }
+        let status = CNContactStore.authorizationStatus(for: .contacts)
+        guard status == .authorized || hasLimitedContactAccess(status) else {
+            return Self.jsonSuccess([
+                "code": "permission_denied", "permission": "contacts",
+                "settings_required": status == .denied || status == .restricted,
+                "message": "Call mobile_request_permission with contacts first."
+            ])
+        }
+        let identifier = Self.string(arguments, key: "id")
+        guard !identifier.isEmpty, identifier.utf8.count <= 256 else {
+            return .failure(code: "invalid_input", message: "a contact id is required")
+        }
+        return await Task.detached(priority: .userInitiated) {
+            readSystemContact(identifier: identifier)
+        }.value
+    }
+
     func requestSystemPermission(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
+        // 按用户当前任务申请单项权限；不能一次性弹出所有系统授权。
         let permission = Self.string(arguments, key: "permission")
         guard ["photos", "camera", "microphone", "location", "contacts",
                "calendar", "notifications"].contains(permission) else {
@@ -128,13 +182,17 @@ extension AIMobileHostToolProvider {
                     }
                 }
             }
-            switch CNContactStore.authorizationStatus(for: .contacts) {
-            case .authorized: status = "granted"
-            case .limited: status = "limited"
-            case .denied: status = "denied"
-            case .restricted: status = "restricted"
-            case .notDetermined: status = "not_determined"
-            @unknown default: status = "restricted"
+            let final = CNContactStore.authorizationStatus(for: .contacts)
+            if hasLimitedContactAccess(final) {
+                status = "limited"
+            } else {
+                switch final {
+                case .authorized: status = "granted"
+                case .denied: status = "denied"
+                case .restricted: status = "restricted"
+                case .notDetermined: status = "not_determined"
+                @unknown default: status = "restricted"
+                }
             }
         case "calendar":
             let store = EKEventStore()
@@ -188,6 +246,85 @@ extension AIMobileHostToolProvider {
             "settings_required": status == "denied" || status == "restricted",
             "access": access,
         ])
+    }
+}
+
+private func systemContactKeys() -> [CNKeyDescriptor] {
+    [CNContactIdentifierKey as CNKeyDescriptor,
+     CNContactOrganizationNameKey as CNKeyDescriptor,
+     CNContactPhoneNumbersKey as CNKeyDescriptor,
+     CNContactEmailAddressesKey as CNKeyDescriptor,
+     CNContactFormatter.descriptorForRequiredKeys(for: .fullName)]
+}
+
+private func systemContactSummary(_ contact: CNContact) -> [String: Any] {
+    let formatted = CNContactFormatter.string(from: contact, style: .fullName) ?? ""
+    let name = formatted.isEmpty ? contact.organizationName : formatted
+    return [
+        "id": contact.identifier,
+        "name": String(name.prefix(256)),
+        "phone_numbers": contact.phoneNumbers.prefix(20).map {
+            String($0.value.stringValue.prefix(128))
+        },
+        "emails": contact.emailAddresses.prefix(20).map {
+            String(($0.value as String).prefix(320))
+        }
+    ]
+}
+
+private func systemContactResult(_ value: [String: Any]) -> AIMaiChatHostToolExecution {
+    guard JSONSerialization.isValidJSONObject(value),
+          let data = try? JSONSerialization.data(withJSONObject: value),
+          let text = String(data: data, encoding: .utf8) else {
+        return .failure(code: "internal", message: "Could not encode system contacts")
+    }
+    return .success(text)
+}
+
+private func readSystemContacts(query: String, offset: Int, limit: Int,
+                                access: String) -> AIMaiChatHostToolExecution {
+    let store = CNContactStore()
+    let fetch = CNContactFetchRequest(keysToFetch: systemContactKeys())
+    fetch.sortOrder = .userDefault
+    let search = query.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+    let digits = query.filter(\.isNumber)
+    var skipped = 0
+    var items: [[String: Any]] = []
+    var hasMore = false
+    do {
+        try store.enumerateContacts(with: fetch) { contact, stop in
+            let summary = systemContactSummary(contact)
+            let phones = summary["phone_numbers"] as? [String] ?? []
+            let emails = summary["emails"] as? [String] ?? []
+            let name = summary["name"] as? String ?? ""
+            let matches = search.isEmpty || name.folding(
+                options: [.caseInsensitive, .diacriticInsensitive], locale: .current
+            ).contains(search) || phones.contains(where: { number in
+                number.localizedCaseInsensitiveContains(query) ||
+                    (digits.count >= 3 && number.filter(\.isNumber).contains(digits))
+            }) || emails.contains(where: { $0.localizedCaseInsensitiveContains(query) })
+            guard matches else { return }
+            if skipped < offset { skipped += 1; return }
+            if items.count == limit { hasMore = true; stop.pointee = true; return }
+            items.append(summary)
+        }
+        return systemContactResult([
+            "contacts": items, "offset": offset, "count": items.count,
+            "has_more": hasMore, "access": access
+        ])
+    } catch {
+        return .failure(code: "unavailable", message: "Could not read system contacts")
+    }
+}
+
+private func readSystemContact(identifier: String) -> AIMaiChatHostToolExecution {
+    do {
+        let contact = try CNContactStore().unifiedContact(
+            withIdentifier: identifier, keysToFetch: systemContactKeys()
+        )
+        return systemContactResult(systemContactSummary(contact))
+    } catch {
+        return .failure(code: "not_found", message: "Contact is unavailable or not shared")
     }
 }
 

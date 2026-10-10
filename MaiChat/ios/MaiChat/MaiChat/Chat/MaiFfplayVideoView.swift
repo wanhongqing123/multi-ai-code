@@ -1,5 +1,4 @@
 import AVFoundation
-import Photos
 import QuartzCore
 import SwiftUI
 import UIKit
@@ -248,6 +247,7 @@ final class MaiFfplayVideoController: UIViewController {
         saveStatusLabel.font = .systemFont(ofSize: 14, weight: .medium)
         saveStatusLabel.textAlignment = .center
         saveStatusLabel.numberOfLines = 2
+        saveStatusLabel.accessibilityIdentifier = "ffplay-save-status"
         saveStatusLabel.backgroundColor = UIColor.black.withAlphaComponent(0.7)
         saveStatusLabel.layer.cornerRadius = 10
         saveStatusLabel.clipsToBounds = true
@@ -385,6 +385,7 @@ final class MaiFfplayVideoController: UIViewController {
 
     private func showStatus(_ message: String) {
         saveStatusLabel.text = "  \(message)  "
+        saveStatusLabel.accessibilityLabel = message
         saveStatusLabel.isHidden = false
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
             self?.saveStatusLabel.isHidden = true
@@ -407,26 +408,28 @@ final class MaiFfplayVideoController: UIViewController {
         let requestedAt = Date()
         let fileURL = URL(fileURLWithPath: path)
         Task { @MainActor in
-            let current = PHPhotoLibrary.authorizationStatus(for: .readWrite)
-            let status = current == .notDetermined
-                ? await PHPhotoLibrary.requestAuthorization(for: .readWrite) : current
-            guard status == .authorized || status == .limited else {
-                showStatus("请允许访问相册")
+            defer {
                 saving = false
                 saveButton.isEnabled = true
-                return
             }
             do {
-                try await PHPhotoLibrary.shared().performChanges {
-                    PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: fileURL)?
-                        .creationDate = requestedAt
+                // 先检查真实文件和视频轨道；无效文件不应进入 Photos 的变更块。
+                let values = try fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+                guard values.isRegularFile == true, (values.fileSize ?? 0) > 0,
+                      !(try await AVURLAsset(url: fileURL).loadTracks(withMediaType: .video)).isEmpty else {
+                    showStatus("视频文件不可用，无法保存")
+                    return
                 }
+                // 保存只需要向相册添加作品，无需为播放器请求整个图库的读取权限。
+                guard await MaiPhotoLibraryMediaWriter.requestAddAccess() else {
+                    showStatus("请允许添加视频到相册")
+                    return
+                }
+                try await MaiPhotoLibraryMediaWriter.saveVideo(at: fileURL, createdAt: requestedAt)
                 showStatus("已保存到相册")
             } catch {
                 showStatus("保存失败：\(error.localizedDescription)")
             }
-            saving = false
-            saveButton.isEnabled = true
         }
     }
 

@@ -123,6 +123,8 @@ public:
         return "curl_request";
     }
     std::string description() const override {
+        // 对外发 HTTP 请求的通用入口；GET/HEAD 用于只读核对，修改性方法需用户授权。
+        // 响应大小和可回传的头部受到限制，不能把密钥塞进模型可见的结果。
         return "Send a bounded HTTP(S) request using libcurl. Use GET/HEAD to inspect an API, "
                "or POST/PUT/PATCH/DELETE for explicitly requested API actions. Returns status, "
                "selected headers, body, and timing. Use curl_download for large responses and "
@@ -130,6 +132,8 @@ public:
                "Every call requires approval; never put passwords or private keys in arguments.";
     }
     std::string parametersSchema() const override {
+        // url 必填；method 只能在列出的六种 HTTP 方法中选择。
+        // headers/body 是请求内容，timeout_seconds 限制等待，执行层另有响应大小限制。
         return R"({"type":"object","properties":{"url":{"type":"string"},"method":{"type":"string","enum":["GET","HEAD","POST","PUT","PATCH","DELETE"]},"headers":{"type":"object","additionalProperties":{"type":"string"}},"body":{"type":"string"},"timeout_seconds":{"type":"integer","minimum":1,"maximum":120}},"required":["url"],"additionalProperties":false})";
     }
     bool requiresApproval(const std::string&) const override {

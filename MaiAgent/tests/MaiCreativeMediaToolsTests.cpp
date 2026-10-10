@@ -3,8 +3,8 @@
 
 #include <json.hpp>
 
-#include "MaiKlingMediaTools.h"
 #include "MaiMiniMaxMediaTools.h"
+#include "MaiCreativeMediaSupport.h"
 #include "MaiFilePath.h"
 #include "MaiFileSystem.h"
 #include "MaiIdGenerator.h"
@@ -43,11 +43,16 @@ void checkTool(MaiTool& tool, const std::string& expectedName, const std::string
     if (expectedName == "minimax_video") {
         CHECK(discovered.dump().find("Hailuo-2.3") == std::string::npos);
         CHECK(tool.parametersSchema().find("MiniMax-Hailuo-2.3") == std::string::npos);
+        const auto schema = nlohmann::json::parse(tool.parametersSchema());
+        CHECK(schema["properties"]["content"]["description"].get<std::string>().find(
+                  "nine reference images") != std::string::npos);
+        CHECK(schema["properties"]["ratio"]["description"].get<std::string>().find(
+                  "Concrete ratio required for text-only") != std::string::npos);
+        CHECK(discovered.dump().find("source_video_edit") != std::string::npos);
+        CHECK(discovered.at("capabilities")[0].contains("model_support"));
     }
     CHECK(tool.execute(R"({"action":"delegate","message":"A running cat"})", context).hasError());
     CHECK(tool.execute(R"({"action":"continue","conversation_id":"missing"})", context).hasError());
-    if (video && expectedName == "kling_video")
-        CHECK(discovered.dump().find("existing_video_edit") != std::string::npos);
     if (video && expectedName == "minimax_video")
         CHECK(discovered.dump().find("multi_reference_video") != std::string::npos);
 }
@@ -242,24 +247,33 @@ void testH3LocalValidationChecksAllReferencePathsWithoutBilling() {
 }  // namespace
 
 int main() {
+    CHECK(maiCreativeHttpsUrl("https://example.com/object.jpg?signature=abc"));
+    CHECK(!maiCreativeHttpsUrl("http://example.com/object.jpg"));
+    CHECK(!maiCreativeHttpsUrl("https://name@example.com/object.jpg"));
     testFailedTaskIsStableWithoutProviderRequest();
     testH3ContentRolesAndRequiredFields();
     testH3RejectsUnsupportedOutputBeforePaidApproval();
     testH3LocalValidationChecksAllReferencePathsWithoutBilling();
     std::string key;
-    auto klingVideo = makeMaiKlingVideoTool([&] { return key; });
-    auto klingImage = makeMaiKlingImageTool([&] { return key; });
     auto miniMaxVideo = makeMaiMiniMaxVideoTool([&] { return key; });
     auto miniMaxImage = makeMaiMiniMaxImageTool([&] { return key; });
-    checkTool(*klingVideo, "kling_video", "kling-3.0-turbo", true);
-    checkTool(*klingImage, "kling_image", "kling-v3-omni", false);
+    const std::string deprecatedField = std::string("reference_image_") + "paths";
+    const nlohmann::json deprecatedInput = {{"action", "discover"},
+                                            {deprecatedField, nlohmann::json::array()}};
+    CHECK(miniMaxVideo->execute(deprecatedInput.dump(), MaiToolContext{}).hasError());
     checkTool(*miniMaxVideo, "minimax_video", "MiniMax-H3", true);
+    CHECK(nlohmann::json::parse(miniMaxVideo->parametersSchema())["properties"]["action"]["enum"]
+              .dump()
+              .find("delete") != std::string::npos);
+    CHECK(miniMaxVideo->requiresPerCallApproval(R"({"action":"delete"})"));
+    CHECK(miniMaxVideo
+              ->execute(R"({"action":"delete","conversation_id":"spt_unknown"})", MaiToolContext{})
+              .hasError());
     checkTool(*miniMaxImage, "minimax_image", "image-01", false);
     key = "secret-test-key";
     MaiToolContext context;
     context.root = MaiFileSystem::temporaryDirectory().toUtf8();
-    for (MaiTool* tool :
-         {klingVideo.get(), klingImage.get(), miniMaxVideo.get(), miniMaxImage.get()}) {
+    for (MaiTool* tool : {miniMaxVideo.get(), miniMaxImage.get()}) {
         const auto discovered =
             nlohmann::json::parse(tool->execute(R"({"action":"discover"})", context).output());
         CHECK(discovered.at("configured") == true);
@@ -269,17 +283,6 @@ int main() {
                             context)
                   .hasError());
     }
-    CHECK(
-        klingVideo
-            ->execute(R"({"action":"delegate","message":"A cat","duration":7,"resolution":"720p"})",
-                      context)
-            .hasError());
-    CHECK(
-        klingVideo
-            ->execute(
-                R"({"action":"delegate","message":"A cat","duration":5,"resolution":"720p","last_frame_path":"last.jpg"})",
-                context)
-            .hasError());
     CHECK(miniMaxVideo
               ->execute(
                   R"({"action":"delegate","message":"A cat","duration":10,"resolution":"1080P"})",
@@ -303,7 +306,5 @@ int main() {
                 R"({"action":"delegate","model":"MiniMax-H3","message":"A cat","duration":10,"resolution":"768P","ratio":"9:16","content":[{"type":"image_url","role":"reference_image","path":"missing.jpg"}]})",
                 context)
             .hasError());
-    CHECK(klingImage->execute(R"({"action":"delegate","message":"A cat","ratio":"3:4"})", context)
-              .hasError());
     return failures == 0 ? 0 : 1;
 }

@@ -125,9 +125,11 @@ if(WIN32)
   set(CURL_USE_SCHANNEL ON  CACHE BOOL "" FORCE)
   set(CURL_USE_OPENSSL  OFF CACHE BOOL "" FORCE)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
-  # iOS 使用系统证书库，不能误链宿主机的 OpenSSL。
-  set(CURL_USE_SECTRANSP ON CACHE BOOL "" FORCE)
-  set(CURL_USE_OPENSSL OFF CACHE BOOL "" FORCE)
+  # Secure Transport 后端的上游实现只协商到 TLS 1.2；当前签名服务的公网
+  # 链路会断开这类握手。iOS 改用已为本平台构建的 OpenSSL 3，CA 根证书由
+  # 宿主 App 通过 caBundle 提供，仍保持服务端证书与域名校验。
+  set(CURL_USE_SECTRANSP OFF CACHE BOOL "" FORCE)
+  set(CURL_USE_OPENSSL ON CACHE BOOL "" FORCE)
 elseif(ANDROID AND TARGET mbedtls)
   set(CURL_USE_MBEDTLS ON CACHE BOOL "" FORCE)
   set(CURL_USE_OPENSSL OFF CACHE BOOL "" FORCE)
@@ -279,13 +281,13 @@ add_library(maiagent STATIC
   AgentTools/MaiArkAssetTools.cpp
   AgentTools/MaiGlmMediaTools.cpp
   AgentTools/MaiCreativeMediaSupport.cpp
-  AgentTools/MaiKlingMediaTools.cpp
   AgentTools/MaiMiniMaxMediaTools.cpp
   AgentTools/MaiModelStudioTools.cpp
   AgentTools/MaiAgentSendMediaTool.cpp
   AgentTools/MaiRvmMatting.cpp
   AgentTools/MaiRvmComposite.cpp
   AgentTools/MaiVideoMattingTool.cpp
+  AgentTools/MaiWatermarkRemovalTool.cpp
   AgentTools/MaiTodoWriteTool.cpp
   AgentTools/MaiQuestionTool.cpp
   AgentTools/MaiSubAgentTools.cpp
@@ -324,7 +326,9 @@ target_include_directories(maiagent
   PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/include
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nlohmann
           ${CMAKE_CURRENT_SOURCE_DIR}/third_party/curl/src
-          ${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime/include
+          # RVM 只使用 C API 头；运行库由各宿主平台打包。
+          # 头文件取自仓库内的官方 ONNX Runtime 源码，避免和预编译包维护两份。
+          ${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime/include/onnxruntime/core/session
 )
 # libcurl 是 HTTP **客户端**（核心用它调大模型），
 # 和适配器里的 cpp-httplib（HTTP **服务端**）是两回事，两个都要。
@@ -438,7 +442,7 @@ if(MAIAGENT_BUILD_TESTS)
       MaiSshToolTests # approval boundary and optional local SSH transport integration
       MaiArkMediaToolsTests # Ark model tools, dynamic key and input boundary checks
       MaiGlmMediaToolsTests # GLM model tools, credentials and async task boundaries
-      MaiCreativeMediaToolsTests # Kling and MiniMax capability and paid-call boundaries
+      MaiCreativeMediaToolsTests # MiniMax capability and paid-call boundaries
       MaiSpecialistNotificationTests # terminal failures notify without relying on the main model
       MaiModelStudioToolsTests # Wan/Qwen capabilities, credentials and workspace boundaries
       MaiCvImageToolsTests # OpenCV image wrapper path, output and parameter boundaries
@@ -447,6 +451,7 @@ if(MAIAGENT_BUILD_TESTS)
       MaiRvmMattingTests   # ONNX 递推状态和模型输入输出边界
       MaiRvmCompositeTests # 前景原色、透明背景和边缘混合
       MaiVideoMattingToolTests # 标准工具注册参数、路径和新文件契约
+      MaiWatermarkRemovalToolTests # 去水印一次探测一次处理、路径与区域边界
       MaiQuestionTests      # 问答闸门 + question 工具：等不到答案时绝不能编一个
       MaiSubAgentTests      # 子 Agent：深度上限、数量上限、不能戳别人的会话
       MaiShellToolTests     # shell：审批粒度、超时、取消、输出上限

@@ -121,6 +121,11 @@ final class MobilePermissionTools {
             case "location": required = new String[]{Manifest.permission.ACCESS_COARSE_LOCATION};
                 break;
             case "contacts": required = new String[]{Manifest.permission.READ_CONTACTS}; break;
+            case "phone_number":
+                required = new String[]{Manifest.permission.READ_PHONE_NUMBERS}; break;
+            case "sms":
+                required = new String[]{Manifest.permission.READ_SMS};
+                break;
             case "calendar": required = new String[]{Manifest.permission.READ_CALENDAR}; break;
             case "notifications":
                 if (Build.VERSION.SDK_INT < 33) {
@@ -133,7 +138,7 @@ final class MobilePermissionTools {
                 required = new String[]{Manifest.permission.POST_NOTIFICATIONS};
                 break;
             default: throw new IllegalArgumentException(
-                "支持的权限：photos、camera、microphone、location、contacts、calendar、notifications");
+                "支持的权限：photos、camera、microphone、location、contacts、calendar、notifications、phone_number、sms");
         }
         boolean prompted = !hasAll(required);
         if (prompted) {
@@ -162,7 +167,8 @@ final class MobilePermissionTools {
         boolean all = hasAll(required);
         boolean some = hasAny(required);
         String status = all ? "granted" : some ? "limited" : "denied";
-        boolean settingsRequired = !all && prompted && !hasRationale(required);
+        boolean settingsRequired = !all && (permission.equals("sms") ||
+            (prompted && !hasRationale(required)));
         String access = permission.equals("location")
             ? !all ? "none" : activity.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
                 == PackageManager.PERMISSION_GRANTED ? "precise" : "approximate"

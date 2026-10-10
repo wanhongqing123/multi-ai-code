@@ -342,8 +342,8 @@ bool globMatch(const std::string& pattern, const std::string& text) {
     return cursor == pattern.size();
 }
 
-// A small, bounded brace expansion covers common extension lists without letting a model
-// accidentally create an unbounded number of patterns.
+// 花括号展开只覆盖常见扩展名组合，并严格限制展开数量；
+// 不能让模型通过一个模式意外产生无界的搜索任务。
 bool expandGlobBraces(const std::string& pattern, std::vector<std::string>& expanded) {
     if (pattern.size() > 512) return false;
     expanded = {pattern};
@@ -412,12 +412,15 @@ public:
         return "file_read";
     }
     std::string description() const override {
+        // 以行号读取文本；自动识别 UTF-8 与带 BOM 的 UTF-16，旧编码歧义时显式指定。
         return "Read a text file as UTF-8 with line numbers. UTF-8 and BOM-marked UTF-16 are "
                "detected automatically; for ambiguous legacy text, set encoding explicitly "
                "(for example gb18030, gbk, or windows-1252). Relative paths use the session "
                "working directory.";
     }
     std::string parametersSchema() const override {
+        // 读取：path 是目标文件；encoding 可覆盖自动识别；offset/limit 控制返回行段，
+        // 避免一次把大文件全文塞进模型上下文。
         return R"({"type":"object","properties":{)"
                R"("path":{"type":"string","description":"Absolute path or path relative to the working directory"},)"
                R"("encoding":{"type":"string","description":"Source text encoding; default auto. Examples: utf-8, utf-16le, utf-16be, gb18030, gbk, windows-1252"},)"
@@ -512,10 +515,12 @@ public:
         return "file_create";
     }
     std::string description() const override {
+        // 只创建不存在的空文件；路径已有文件时不覆盖。
         return "Create a new empty file without overwriting an existing file. Missing parent "
                "directories are created. Use file_write when the file needs content.";
     }
     std::string parametersSchema() const override {
+        // 创建空文件只需 path；路径可相对工作目录，但执行时不允许覆盖已有文件。
         return R"({"type":"object","properties":{"path":{"type":"string","description":"Absolute path or path relative to the working directory"}},"required":["path"],"additionalProperties":false})";
     }
     bool requiresApproval(const std::string&) const override {
@@ -563,10 +568,12 @@ public:
         return "file_create_directory";
     }
     std::string description() const override {
+        // 递归补齐父目录；若目标路径已被普通文件占用则返回错误。
         return "Create a directory and any missing parents. An existing directory is accepted; "
                "a file at that path is an error.";
     }
     std::string parametersSchema() const override {
+        // 创建目录只需 path；已存在的目录可复用，普通文件占位则报错。
         return R"({"type":"object","properties":{"path":{"type":"string","description":"Absolute path or path relative to the working directory"}},"required":["path"],"additionalProperties":false})";
     }
     bool requiresApproval(const std::string&) const override {
@@ -609,9 +616,11 @@ public:
         return "file_delete";
     }
     std::string description() const override {
+        // 只删除指定的单个文件，不删目录也不递归。
         return "Delete one existing file. Directories are never deleted; this is not recursive.";
     }
     std::string parametersSchema() const override {
+        // 删除指定 path 的单个文件；没有递归目录参数。
         return R"({"type":"object","properties":{"path":{"type":"string","description":"Absolute path or path relative to the working directory"}},"required":["path"],"additionalProperties":false})";
     }
     bool requiresApproval(const std::string&) const override {
@@ -658,10 +667,12 @@ public:
         return "file_write";
     }
     std::string description() const override {
+        // 写入会替换目标文件的全部内容；局部编辑优先使用 file_edit 或补丁工具。
         return "Write content to a file, replacing whatever was "
                "there. Parent directories are created as needed.";
     }
     std::string parametersSchema() const override {
+        // path 是目标文件，content 是写入的全部文本，不是追加片段。
         return R"({"type":"object","properties":{)"
                R"("path":{"type":"string","description":"Absolute path or path relative to the working directory"},)"
                R"("content":{"type":"string","description":"The full content to write"}},)"
@@ -716,12 +727,14 @@ public:
         return "file_glob";
     }
     std::string description() const override {
+        // 按文件名模式查找，支持跨目录通配和扩展名列表；范围过大时应收窄目录。
         return "Find files by name pattern. Relative paths use the working directory. Supports *, "
                "?, ** to "
                "cross directories, and brace lists such as *.{png,jpg}. For a broad search, "
                "provide a subdirectory in path.";
     }
     std::string parametersSchema() const override {
+        // pattern 是文件名通配模式；path 限定起始目录，省略时从工作目录搜索。
         return R"({"type":"object","properties":{)"
                R"("pattern":{"type":"string","description":"For example **/*.cpp or src/*.h"},)"
                R"("path":{"type":"string","description":"Subdirectory to search from, defaults to the working directory root"}},)"
@@ -813,11 +826,13 @@ public:
         return "file_grep";
     }
     std::string description() const override {
+        // 对文本内容做正则搜索；编码先转成 UTF-8，无法可靠识别的旧编码需指定。
         return "Search text files with a regular expression. Source bytes are converted to "
                "UTF-8 before matching; set encoding for ambiguous legacy text. Relative paths "
                "use the working directory. Returns the file, line number and matching line.";
     }
     std::string parametersSchema() const override {
+        // pattern 是内容正则，path 限定搜索目录；encoding 处理自动识别不了的旧文本。
         return R"({"type":"object","properties":{)"
                R"("pattern":{"type":"string","description":"Regular expression"},)"
                R"("path":{"type":"string","description":"Subdirectory to search from, defaults to the working directory root"},)"

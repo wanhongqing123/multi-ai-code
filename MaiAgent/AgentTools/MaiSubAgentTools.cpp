@@ -54,6 +54,8 @@ public:
     }
 
     std::string description() const override {
+        // 将边界清晰、可独立完成的较大工作交给子 Agent；返回 ID 后主模型继续执行。
+        // 子 Agent 与主模型共用目录，但看不到当前完整对话，任务描述必须自包含。
         return "Start a sub-agent to do one self-contained piece of work, and keep going "
                "yourself. It returns an id immediately; use wait_agent when you need its answer. "
                "The point is to keep a large search out of your own context: let it read thirty "
@@ -63,6 +65,7 @@ public:
     }
 
     std::string parametersSchema() const override {
+        // task_name 用于状态列表；prompt 必须自包含，子 Agent 看不到当前对话全文。
         return R"({"type":"object","properties":{)"
                R"("task_name":{"type":"string","description":"A short name for the task, used when reporting status"},)"
                R"("prompt":{"type":"string","description":"The whole task. The sub-agent cannot see this conversation, so say everything it needs."}},)"
@@ -86,8 +89,8 @@ public:
         if (!spawned) {
             return MaiToolResult::failure(spawned.error().code(), spawned.error().message());
         }
-        return MaiToolResult::success("Started sub-agent " + spawned.value() +
-                                      " for \"" + taskName +
+        return MaiToolResult::success("Started sub-agent " + spawned.value() + " for \"" +
+                                      taskName +
                                       "\". Use wait_agent with that id when you need its answer.");
     }
 };
@@ -100,12 +103,14 @@ public:
     }
 
     std::string description() const override {
+        // 等待已经启动的子 Agent；超时只代表本次等待结束，不代表子任务失败。
         return "Wait for a sub-agent to finish what it is doing and return what it said. If it "
                "is still working when the timeout runs out, you get told that instead, and you "
                "can wait again.";
     }
 
     std::string parametersSchema() const override {
+        // agent_id 来自 spawn_agent；timeout_ms 只控制本次等待，超时后仍可再次等待。
         return R"({"type":"object","properties":{)"
                R"("agent_id":{"type":"string","description":"The id spawn_agent gave you"},)"
                R"("timeout_ms":{"type":"integer","description":"Give up waiting after this long, default 120000, max 600000"}},)"
@@ -160,12 +165,14 @@ public:
     }
 
     std::string description() const override {
+        // 只有新要求依赖子 Agent 已掌握的上下文时才复用它；否则创建独立任务。
         return "Give a sub-agent you already started another instruction, for example to answer "
                "a question it raised or to redirect it. Reuse a sub-agent this way when the new "
                "work depends on what it already learned; start a fresh one when it does not.";
     }
 
     std::string parametersSchema() const override {
+        // agent_id 指已有子任务，prompt 是新的补充指令，不会创建新子 Agent。
         return R"({"type":"object","properties":{)"
                R"("agent_id":{"type":"string","description":"The id spawn_agent gave you"},)"
                R"("prompt":{"type":"string","description":"What to tell it"}},)"
@@ -200,10 +207,12 @@ public:
     }
 
     std::string description() const override {
+        // 只列当前主会话启动的子 Agent 及状态，不暴露其他会话任务。
         return "List the sub-agents you started and whether each one is running, idle or closed.";
     }
 
     std::string parametersSchema() const override {
+        // 无参数，只列出当前主会话的子 Agent。
         return R"({"type":"object","properties":{}})";
     }
 
@@ -237,11 +246,13 @@ public:
     }
 
     std::string description() const override {
+        // 用完后关闭以释放并发槽位；已返回的结论仍保留在会话记录中。
         return "Close a sub-agent you are done with. It stops whatever it is doing and frees up "
                "a slot, so do this rather than leaving finished ones open. What it said is kept.";
     }
 
     std::string parametersSchema() const override {
+        // agent_id 必须指向当前会话启动的子 Agent；关闭不抹除已有报告。
         return R"({"type":"object","properties":{)"
                R"("agent_id":{"type":"string","description":"The id spawn_agent gave you"}},)"
                R"("required":["agent_id"]})";

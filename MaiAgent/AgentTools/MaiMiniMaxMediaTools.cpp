@@ -27,6 +27,87 @@ std::string value(const Json& data, const char* field) {
                : std::string{};
 }
 
+std::string describeMiniMaxVideoSchema(const std::string& raw) {
+    Json schema = Json::parse(raw);
+    Json& fields = schema["properties"];
+    // H3 的扁平字段和 content[] 最终合并为一次请求；主模型须先选清控制方式。
+    // action：discover 查当前能力；validate 只在本地检查且不上传、不扣费；
+    // delegate 才付费生成；continue 查询旧任务；delete 只删本地已交付记录。
+    fields["action"]["description"] =
+        "discover lists capabilities; validate checks locally without upload or charge; "
+        "delegate is paid; continue polls; delete removes only a delivered local record";
+    // model：H3 可生成 4–15 秒的 768P/2K，H3 Max 为 5–15 秒的 480P/768P；
+    // 两者都没有原生 1080P。duration、resolution 要放在顶层并匹配型号。
+    fields["model"]["description"] =
+        "MiniMax-H3: 4-15 seconds at 768P/2K; MiniMax-H3-Max: 5-15 seconds at 480P/768P; "
+        "neither natively supports 1080P";
+    fields["duration"]["description"] = "Required top-level output duration in seconds";
+    fields["resolution"]["enum"] = Json::array({"480P", "768P", "2K"});
+    fields["resolution"]["description"] =
+        "Required top-level resolution matching the selected H3 or H3 Max variant";
+    // ratio：纯文生必须显式给具体画幅；首尾帧或多模态参考可用 adaptive。
+    fields["ratio"]["enum"] =
+        Json::array({"adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"});
+    fields["ratio"]["description"] =
+        "Concrete ratio required for text-only generation; reference/frame modes may use "
+        "adaptive. Values: 21:9, 16:9, 4:3, 1:1, 3:4, 9:16, adaptive";
+    // message/context 分别是本次目标与相关背景；不能塞入媒体字节或完整聊天历史。
+    fields["message"]["description"] = "Required scene or edit instruction for this task";
+    fields["context"]["description"] =
+        "Only task-relevant constraints; not the entire conversation or media bytes";
+    // first_frame 与 image_path 同义，last_frame_path 与 last_frame 同义。
+    // 它们是严格首尾帧，不得与多模态参考混合；不是无限多图输入。
+    fields["first_frame"]["description"] =
+        "One strict opening frame; alias image_path. Cannot mix with multimodal references";
+    fields["image_path"]["description"] = "Alias for one strict first_frame image";
+    fields["last_frame_path"]["description"] =
+        "One strict ending frame; alias last_frame. Cannot mix with multimodal references";
+    fields["last_frame"]["description"] = "Alias for one strict last_frame_path image";
+    // local_image_paths 是最多九张参考图；图片/视频经私有 OSS，
+    // 参考音频仍通过 MiniMax 自己的媒体上传接口，不走这条 OSS 图片路径。
+    fields["local_image_paths"]["maxItems"] = 9;
+    fields["local_image_paths"]["description"] =
+        "Up to nine reference images uploaded to private OSS; not strict first/last frames";
+    // reference_video_path、reference_video、video_path 只是单个参考视频别名，
+    // 不是可保证保留原视频画面的专用视频编辑模式。更多视频可在 content 中列出。
+    fields["reference_video_path"]["description"] =
+        "One local reference video, uploaded to private OSS; up to three videos via content";
+    fields["reference_video"]["description"] = "Alias for reference_video_path";
+    fields["video_path"]["description"] =
+        "Alias for one reference video; not a dedicated source-video edit mode";
+    fields["reference_audio_path"]["description"] =
+        "One local reference audio uploaded by provider media API; up to three via content";
+    fields["reference_audio"]["description"] = "Alias for reference_audio_path";
+    // content[] 用 type 标记文字/图片/视频/音频，媒体条目还需本地 path 和角色。
+    // 图片可用 reference_image 或兼容的 reference；省略多图角色会自动归一化。
+    // 最多九图、三视频、三音频；不得和严格首尾帧控制混用。
+    fields["content"]["description"] =
+        "Multimodal items: text or local media paths with roles. Up to nine reference images, "
+        "three videos, three audio clips. Strict frames cannot mix with references";
+    Json& itemFields = fields["content"]["items"]["properties"];
+    itemFields["type"]["description"] =
+        "text, image_url, video_url, or audio_url; media path is a local source file";
+    itemFields["text"]["description"] = "Additional text instruction for this item";
+    itemFields["role"]["description"] =
+        "For media use first_frame, last_frame, reference_image, reference_video, or "
+        "reference_audio. Generic reference and omitted image roles are normalized";
+    itemFields["path"]["description"] =
+        "Local file path, not Base64 or a public URL; images/videos use private OSS";
+    // prompt_expansion_mode 只允许 H3 Max 使用 disabled/balanced/quality；
+    // conversation_id 用旧任务做查询/删除，parent_task_id 仅建立本地修订链；
+    // poll_once 仅查一次，正常结果交付由 App 后台自动完成。
+    fields["prompt_expansion_mode"]["enum"] = Json::array({"disabled", "balanced", "quality"});
+    fields["prompt_expansion_mode"]["description"] =
+        "Only for MiniMax-H3-Max: disabled, balanced, or quality";
+    fields["conversation_id"]["description"] =
+        "Saved spt_ task ID for continue or local-record delete in this AI conversation";
+    fields["parent_task_id"]["description"] =
+        "Optional prior local task ID for revision lineage; inputs are not reused automatically";
+    fields["poll_once"]["description"] =
+        "Query status once; the App normally polls and delivers the result automatically";
+    return schema.dump();
+}
+
 std::string idValue(const Json& data, const char* field) {
     if (!data.is_object() || !data.contains(field)) return {};
     const Json& id = data[field];
@@ -150,6 +231,7 @@ std::optional<MaiToolResult> validateH3OutputSpec(const Json& args, const std::s
 std::optional<MaiToolResult> prepareH3Request(const Json& args, const std::string& model,
                                               std::string prompt, const std::string& key,
                                               const std::string& caBundle,
+                                              const MaiCreativeMediaUploadProvider& uploadMedia,
                                               const MaiToolContext& context, bool localOnly,
                                               Json& body, std::string& inputReference) {
     std::vector<Attachment> attachments;
@@ -170,12 +252,12 @@ std::optional<MaiToolResult> prepareH3Request(const Json& args, const std::strin
                                            : value(args, "reference_audio_path");
     if (!referenceAudio.empty())
         attachments.push_back({MediaKind::Audio, "reference_audio", referenceAudio});
-    if (args.contains("reference_image_paths")) {
-        if (!args["reference_image_paths"].is_array())
-            return maiCreativeInvalid("reference_image_paths must be an array");
-        for (const Json& path : args["reference_image_paths"]) {
+    if (args.contains("local_image_paths")) {
+        if (!args["local_image_paths"].is_array())
+            return maiCreativeInvalid("local_image_paths must be an array");
+        for (const Json& path : args["local_image_paths"]) {
             if (!path.is_string())
-                return maiCreativeInvalid("reference_image_paths entries must be strings");
+                return maiCreativeInvalid("local_image_paths entries must be strings");
             attachments.push_back({MediaKind::Image, "reference_image", path.get<std::string>()});
         }
     }
@@ -270,10 +352,29 @@ std::optional<MaiToolResult> prepareH3Request(const Json& args, const std::strin
                                    {"file_size_bytes", local.size}});
             continue;
         }
-        const UploadedReference uploaded = uploadReference(item, key, caBundle, context);
-        if (uploaded.error) return uploaded.error;
+        std::string reference;
+        if (item.kind != MediaKind::Audio) {
+            // 图像、视频必须先传私有 OSS；上传失败时停在付费提交之前。
+            LocalReference local;
+            if (auto error = inspectReference(item, context, local)) return error;
+            if (!uploadMedia)
+                return maiCreativeFailure(MaiErrorCode::NotConfigured, "upload_not_configured",
+                                          "Private OSS media upload is not configured");
+            const auto uploaded = uploadMedia(item.path, context);
+            if (!uploaded)
+                return maiCreativeFailure(uploaded.error().code(), "upload_failed",
+                                          uploaded.error().message());
+            reference = uploaded.value();
+            if (!maiCreativeHttpsUrl(reference))
+                return maiCreativeFailure(MaiErrorCode::Protocol, "upload_failed",
+                                          "OSS returned no HTTPS media URL");
+        } else {
+            const UploadedReference uploaded = uploadReference(item, key, caBundle, context);
+            if (uploaded.error) return uploaded.error;
+            reference = uploaded.reference;
+        }
         content.push_back(
-            Json{{"type", type}, {type, Json{{"url", uploaded.reference}}}, {"role", item.role}});
+            Json{{"type", type}, {type, Json{{"url", reference}}}, {"role", item.role}});
     }
     body = {{"model", model},
             {"content", std::move(content)},
@@ -308,71 +409,128 @@ std::string providerFailure(const MaiToolResult& result) {
 
 class MaiMiniMaxMediaTool final : public MaiTool {
 public:
-    MaiMiniMaxMediaTool(bool video, MaiMiniMaxApiKeyProvider key, std::string caBundle)
-        : mVideo(video), mKey(std::move(key)), mCaBundle(std::move(caBundle)) {}
+    MaiMiniMaxMediaTool(bool video, MaiMiniMaxApiKeyProvider key, std::string caBundle,
+                        MaiCreativeMediaUploadProvider uploadMedia)
+        : mVideo(video),
+          mKey(std::move(key)),
+          mCaBundle(std::move(caBundle)),
+          mUploadMedia(std::move(uploadMedia)) {}
 
     std::string name() const override {
         return mVideo ? "minimax_video" : "minimax_image";
     }
     std::string description() const override {
-        return mVideo ? "MiniMax H3 paid video specialist. Delegate text, first/last frame images, "
-                        "or multimodal reference images/videos/audio using workspace paths. "
-                        "For content[] multi-image input, use role=reference_image; role=reference "
-                        "or omitted roles are normalized. Roles on text items are ignored. "
-                        "duration and resolution are top-level fields. H3 supports 4-15 "
-                        "seconds at 768P or 2K; H3 Max supports 5-15 seconds at 480P or "
-                        "768P. Neither supports native 1080P. "
-                        "For an exact 1080P delivery, disclose a 2K generation plus local "
-                        "downscale before paid approval. Model MiniMax-H3-Max is "
-                        "selectable. Use validate to inspect local inputs without upload or "
-                        "charge, then delegate after confirmation or continue a task. "
-                        "The main Agent receives terminal results automatically."
+        // 视频分支英文描述的对应含义：MiniMax H3 为付费视频工具，接文本、首尾帧，
+        // 也接图片/视频/音频的多模态参考。content[] 的图片角色用 reference_image；
+        // 工具兼容 reference 或省略角色的旧写法，文本条目的 role 会忽略。
+        // duration/resolution 位于顶层；H3 支持 4–15 秒、768P/2K；H3 Max 支持
+        // 5–15 秒、480P/768P。两者都无原生 1080P，若用户必须要该规格，先说明
+        // “2K 生成后本地降采样”再付费确认。H3 Max 可用 model 显式选择。
+        // 严格首尾帧不可与多模态参考混用；纯文生视频必须给具体画幅。
+        // 参考视频只用来引导生成，当前没有承诺逐像素保留原视频的专用编辑模式。
+        // validate 只做本地校验不上传不扣费，delegate 确认后生成，continue 查任务；
+        // delete 仅移除已交付的本地任务记录，没有已核实的云端取消接口。
+        // 终态结果会自动回灌主模型。图片分支 image-01 支持文生图及角色参考图，
+        // discover 查能力，delegate 需付费确认且在本次调用内完成生成。
+        return mVideo ? "MiniMax H3 video specialist. Call discover before model selection; "
+                        "validate checks a plan locally without upload or charge. H3 creates "
+                        "4-15 seconds at native 768P/2K; H3 Max creates 5-15 seconds at "
+                        "480P/768P. Neither natively outputs 1080P. Text-only, one first "
+                        "frame or first+last frames, and multimodal reference generation are "
+                        "wired. Multimodal limits: up to nine images, three videos, three "
+                        "audio clips; strict first/last frames cannot mix with references. "
+                        "content[] media roles are reference_image/reference_video/"
+                        "reference_audio; local image and video paths go through private OSS. "
+                        "A reference video is not a guaranteed source-video edit. Text-only "
+                        "requires a concrete ratio. Confirm model, duration, resolution and "
+                        "ratio before paid delegate. Continue checks the existing task; delete "
+                        "removes only a delivered local record. No verified cloud cancel API "
+                        "is wired. For exact 1080P, explain 2K generation then local downscale."
                       : "MiniMax image-01 paid image specialist. Text-to-image and character "
                         "reference image generation are wired. Use discover or delegate after "
                         "confirmation; image generation completes in the delegate call.";
     }
     std::string parametersSchema() const override {
+        // content[] 是 V2 多模态输入；image_path 等扁平字段保留单图便利写法。
+        // duration、resolution 位于顶层；content 条目用 type/role/path 描述媒体。
+        // 参数形状通过后，仍需执行层检查媒体角色、数量和模型规格组合。
         return mVideo
-                   ? R"({"type":"object","properties":{"action":{"type":"string","enum":["discover","validate","delegate","continue"]},"model":{"type":"string","enum":["MiniMax-H3","MiniMax-H3-Max"]},"message":{"type":"string"},"context":{"type":"string"},"image_path":{"type":"string"},"first_frame":{"type":"string"},"last_frame_path":{"type":"string"},"last_frame":{"type":"string"},"reference_image_paths":{"type":"array","items":{"type":"string"}},"reference_video_path":{"type":"string"},"reference_video":{"type":"string"},"video_path":{"type":"string"},"reference_audio_path":{"type":"string"},"reference_audio":{"type":"string"},"content":{"type":"array","items":{"type":"object","properties":{"type":{"type":"string","enum":["text","image_url","video_url","audio_url"]},"text":{"type":"string"},"path":{"type":"string"},"role":{"type":"string"}},"required":["type"]}},"duration":{"type":"integer"},"resolution":{"type":"string"},"ratio":{"type":"string"},"prompt_expansion_mode":{"type":"string"},"conversation_id":{"type":"string"},"parent_task_id":{"type":"string"},"poll_once":{"type":"boolean"}},"required":["action"]})"
+                   ? describeMiniMaxVideoSchema(
+                         R"({"type":"object","properties":{"action":{"type":"string","enum":["discover","validate","delegate","continue","delete"]},"model":{"type":"string","enum":["MiniMax-H3","MiniMax-H3-Max"]},"message":{"type":"string"},"context":{"type":"string"},"image_path":{"type":"string"},"first_frame":{"type":"string"},"last_frame_path":{"type":"string"},"last_frame":{"type":"string"},"local_image_paths":{"type":"array","items":{"type":"string"}},"reference_video_path":{"type":"string"},"reference_video":{"type":"string"},"video_path":{"type":"string"},"reference_audio_path":{"type":"string"},"reference_audio":{"type":"string"},"content":{"type":"array","items":{"type":"object","properties":{"type":{"type":"string","enum":["text","image_url","video_url","audio_url"]},"text":{"type":"string"},"path":{"type":"string"},"role":{"type":"string"}},"required":["type"]}},"duration":{"type":"integer"},"resolution":{"type":"string"},"ratio":{"type":"string"},"prompt_expansion_mode":{"type":"string"},"conversation_id":{"type":"string"},"parent_task_id":{"type":"string"},"poll_once":{"type":"boolean"}},"required":["action"]})")
                    : R"({"type":"object","properties":{"action":{"type":"string","enum":["discover","delegate"]},"message":{"type":"string"},"context":{"type":"string"},"image_path":{"type":"string"},"ratio":{"type":"string"}},"required":["action"]})";
     }
     std::optional<MaiSpecialistInfo> specialistInfo() const override {
         const bool configured = mKey && !mKey().empty();
         const auto ready = configured ? MaiSpecialistCapabilityStatus::ImplementedUnverified
                                       : MaiSpecialistCapabilityStatus::NotConfigured;
+        const auto mediaReady = !configured ? MaiSpecialistCapabilityStatus::NotConfigured
+                                : mUploadMedia
+                                    ? MaiSpecialistCapabilityStatus::ImplementedUnverified
+                                    : MaiSpecialistCapabilityStatus::UploadNotConfigured;
         MaiSpecialistInfo info;
         info.toolName = name();
         info.modelId = mVideo ? "MiniMax-H3" : "image-01";
         info.configured = configured;
         if (mVideo) {
-            info.capabilities.push_back({"text_to_video", true, true, ready,
-                                         "H3: 4-15 seconds; H3 Max: 5-15 seconds. H3 V2 "
-                                         "text-to-video passed a live smoke test"});
+            // text_to_video：H3 为 4–15 秒，H3 Max 为 5–15 秒；
+            // H3 V2 文生视频在当前账号做过一次实盘冒烟测试。
             info.capabilities.push_back(
-                {"image_to_video", true, true, ready,
-                 "First frame uses source aspect ratio; PNG/JPEG/WEBP/HEIC/HEIF"});
+                {"text_to_video", true, true, ready,
+                 "H3: 4-15 seconds at 768P/2K. H3 Max: 5-15 seconds at "
+                 "480P/768P. Text-only requires an explicit non-adaptive "
+                 "ratio. H3 V2 text-to-video passed a live Mac smoke test"});
+            // image_to_video：首帧决定画幅。底层本地校验可识别多种扩展名，
+            // 但当前私有 OSS 签发器只已打通 JPG/PNG，不能向主模型宣称
+            // WEBP/HEIC/HEIF 也已经端到端可用。
             info.capabilities.push_back(
-                {"first_last_frame_video", true, true, ready,
-                 "One first and one last frame; source aspect ratio applies"});
+                {"image_to_video", true, true, mediaReady,
+                 "One first_frame/image_path uses source aspect ratio; local JPG/PNG uploads "
+                 "through private OSS"});
+            // first_last_frame_video：只接一张首帧和一张尾帧，比例仍由原图决定。
             info.capabilities.push_back(
-                {"multi_reference_video", true, true, ready,
-                 "Up to 9 images, 3 videos, and 3 audio clips via file upload; "
-                 "content image role reference_image or reference, or omit roles for multiple "
-                 "images. Three-image H3 generation passed on the Mac shared core; iOS host "
-                 "delivery remains unverified"});
+                {"first_last_frame_video", true, true, mediaReady,
+                 "One first and one last frame control the opening and ending frames; "
+                 "cannot mix with multimodal reference images/videos/audio"});
+            // multi_reference_video：最多九图、三视频、三音频，经文件上传进入 content。
+            // 图片 role 可为 reference_image/reference，也可省略；Mac 共享核心的三图
+            // 生成已实测，iOS 宿主交付尚未验证，不能误写成全平台已验收。
+            info.capabilities.push_back(
+                {"multi_reference_video", true, true, mediaReady,
+                 "Up to nine reference images, three videos, and three audio clips. Images "
+                 "and videos use private OSS; audio uses provider upload. content image role "
+                 "reference_image or reference is accepted. Three-image H3 generation passed "
+                 "on Mac; iOS host delivery remains unverified"});
+            // native_audio_output：H3 冒烟测试产出 AAC；V2 API 没有独立的音频输出开关。
             info.capabilities.push_back(
                 {"native_audio_output", true, true, ready,
                  "H3 smoke test produced AAC; the V2 API has no separate audio-output switch"});
+            // two_k_video：H3 原生只有 768P/2K，绝无原生 1080P；H3 Max 为 480P/768P。
             info.capabilities.push_back(
                 {"two_k_video", true, true, ready,
                  "MiniMax-H3 supports 768P or 2K, never native 1080P; H3 Max supports "
                  "480P or 768P"});
+            // 参考视频是条件输入；没有单独的源视频编辑契约，不能承诺精确保留画面。
+            info.capabilities.push_back(
+                {"source_video_edit", false, false, MaiSpecialistCapabilityStatus::NotImplemented,
+                 "Reference videos guide generation; this tool has no dedicated source-video "
+                 "editing mode or pixel-preservation contract"});
+            // 当前没有经过核实的 MiniMax 云端取消接口；不能假装停止本地轮询就停费。
+            info.capabilities.push_back({"cloud_task_cancel", false, false,
+                                         MaiSpecialistCapabilityStatus::NotImplemented,
+                                         "No verified provider cancellation API is wired"});
+            // 已交付记录可在本地删除，但云端任务和已下载 MP4 均保留。
+            info.capabilities.push_back(
+                {"local_record_delete", false, false,
+                 MaiSpecialistCapabilityStatus::ImplementedUnverified,
+                 "delete requires a delivered task; cloud output and downloaded MP4 remain"});
         } else {
+            // text_to_image：image-01 文生图已在当前账号做过实盘冒烟测试。
             info.capabilities.push_back(
                 {"text_to_image", true, true, ready,
                  "image-01 text generation completed a live account smoke test"});
+            // character_reference_image：参考图必须含角色人物，仅支持小于 5 MB 的 PNG/JPEG。
             info.capabilities.push_back(
-                {"character_reference_image", true, true, ready,
+                {"character_reference_image", true, true, mediaReady,
                  "Reference image must contain a character; PNG/JPEG under 5 MB"});
         }
         return info;
@@ -392,8 +550,16 @@ public:
     }
     MaiToolResult execute(const std::string& argumentsJson,
                           const MaiToolContext& context) override {
+        // validate 只核对本地字段和媒体文件；delegate 才上传并付费创建 H3 任务。
+        // content[] 先按 type/role 归一化，完成后以原 task ID 查询和下载。
         const Json args = Json::parse(argumentsJson, nullptr, false);
         if (!args.is_object()) return maiCreativeInvalid("arguments must be a JSON object");
+        // 模型即使带旧字段直调 execute，也要拒绝而非遗漏图片后付费提交。
+        const Json schema = Json::parse(parametersSchema(), nullptr, false);
+        for (auto field = args.begin(); field != args.end(); ++field) {
+            if (!schema["properties"].contains(field.key()))
+                return maiCreativeInvalid("unsupported MiniMax parameter: " + field.key());
+        }
         for (const char* field :
              {"action", "model", "message", "context", "image_path", "first_frame",
               "last_frame_path", "last_frame", "reference_video_path", "reference_video",
@@ -413,6 +579,8 @@ public:
             for (const MaiSpecialistCapability& capability : info.capabilities)
                 capabilities.push_back(
                     {{"id", capability.id},
+                     {"model_support", capability.modelSupported},
+                     {"api_support", capability.apiSupported},
                      {"tool_status", maiSpecialistCapabilityStatusToString(capability.status)},
                      {"limitation", capability.limitation}});
             return MaiToolResult::success(Json{{"tool_kind", "model_backed"},
@@ -426,8 +594,30 @@ public:
         if (action == "validate")
             return mVideo ? validate(args, context)
                           : maiCreativeInvalid("Local validation is only available for H3 video");
+        if (mVideo && action == "delete") {
+            // 删除仅是本地索引整理；尚在生成的云端任务不能通过此入口伪装成停止。
+            const std::string id = value(args, "conversation_id");
+            MaiSpecialistTask task;
+            if (id.compare(0, 4, "spt_") != 0 || context.specialistTasks == nullptr ||
+                !context.specialistTasks->getSpecialistTask(id, context.sessionId, task) ||
+                task.specialistName != name())
+                return maiCreativeFailure(MaiErrorCode::NotFound, "not_found",
+                                          "MiniMax video task was not found in this conversation");
+            const MaiError removed =
+                context.specialistTasks->deleteCompletedSpecialistTask(id, context.sessionId);
+            if (removed)
+                return maiCreativeFailure(removed.code(), "delete_unavailable", removed.message());
+            return MaiToolResult::success(
+                Json{{"conversation_id", id},
+                     {"task_id", task.providerTaskId},
+                     {"status", "local_record_deleted"},
+                     {"provider_deleted", false},
+                     {"reply", "Local MiniMax task record deleted; cloud job and output remain."}}
+                    .dump());
+        }
         if (action != "delegate" && action != "continue")
-            return maiCreativeInvalid("action must be discover, validate, delegate, or continue");
+            return maiCreativeInvalid(
+                "action must be discover, validate, delegate, continue, or delete for video");
         if (!mVideo && action == "continue")
             return maiCreativeInvalid("MiniMax image generation completes during delegate");
         if (args.contains("video_url"))
@@ -454,8 +644,8 @@ private:
         if (!extra.empty()) prompt += "\nRelevant context: " + extra;
         Json body;
         std::string inputReference;
-        if (auto error = prepareH3Request(args, model, prompt, {}, mCaBundle, context, true, body,
-                                          inputReference))
+        if (auto error = prepareH3Request(args, model, prompt, {}, mCaBundle, mUploadMedia, context,
+                                          true, body, inputReference))
             return *error;
         return MaiToolResult::success(Json{
             {"status", "validated"},
@@ -482,8 +672,8 @@ private:
             return maiCreativeInvalid("Select MiniMax-H3 or MiniMax-H3-Max");
         Json body;
         std::string inputReference;
-        if (auto error = prepareH3Request(args, model, prompt, key, mCaBundle, context, false, body,
-                                          inputReference))
+        if (auto error = prepareH3Request(args, model, prompt, key, mCaBundle, mUploadMedia,
+                                          context, false, body, inputReference))
             return *error;
         prompt = value(body["content"][0], "text");
         const std::string endpoint = std::string(kApiBase) + "/v2/video_generation";
@@ -556,8 +746,18 @@ private:
                      {"n", 1}};
         const std::string imagePath = value(args, "image_path");
         if (!imagePath.empty()) {
-            std::string image;
-            if (auto error = maiCreativeReadImage(imagePath, context, true, image)) return *error;
+            // image-01 的 image_file 接受 URL；不再把本地图转成 data URL。
+            if (!mUploadMedia)
+                return maiCreativeFailure(MaiErrorCode::NotConfigured, "upload_not_configured",
+                                          "Private OSS media upload is not configured");
+            const auto uploaded = mUploadMedia(imagePath, context);
+            if (!uploaded)
+                return maiCreativeFailure(uploaded.error().code(), "upload_failed",
+                                          uploaded.error().message());
+            std::string image = uploaded.value();
+            if (!maiCreativeHttpsUrl(image))
+                return maiCreativeFailure(MaiErrorCode::Protocol, "upload_failed",
+                                          "OSS returned no HTTPS image URL");
             body["subject_reference"] =
                 Json::array({Json{{"type", "character"}, {"image_file", std::move(image)}}});
         }
@@ -718,16 +918,21 @@ private:
     bool mVideo;
     MaiMiniMaxApiKeyProvider mKey;
     std::string mCaBundle;
+    MaiCreativeMediaUploadProvider mUploadMedia;
 };
 
 }  // namespace
 
 std::unique_ptr<MaiTool> makeMaiMiniMaxVideoTool(MaiMiniMaxApiKeyProvider apiKey,
-                                                 std::string caBundlePath) {
-    return std::make_unique<MaiMiniMaxMediaTool>(true, std::move(apiKey), std::move(caBundlePath));
+                                                 std::string caBundlePath,
+                                                 MaiCreativeMediaUploadProvider uploadMedia) {
+    return std::make_unique<MaiMiniMaxMediaTool>(true, std::move(apiKey), std::move(caBundlePath),
+                                                 std::move(uploadMedia));
 }
 
 std::unique_ptr<MaiTool> makeMaiMiniMaxImageTool(MaiMiniMaxApiKeyProvider apiKey,
-                                                 std::string caBundlePath) {
-    return std::make_unique<MaiMiniMaxMediaTool>(false, std::move(apiKey), std::move(caBundlePath));
+                                                 std::string caBundlePath,
+                                                 MaiCreativeMediaUploadProvider uploadMedia) {
+    return std::make_unique<MaiMiniMaxMediaTool>(false, std::move(apiKey), std::move(caBundlePath),
+                                                 std::move(uploadMedia));
 }

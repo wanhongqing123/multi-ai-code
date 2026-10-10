@@ -95,12 +95,14 @@ public:
         return "openssl";
     }
     std::string description() const override {
+        // 只开放只读的摘要与证书检查子命令，不把完整 OpenSSL CLI 暴露给模型。
         return "Run a safe, read-only subset of the embedded OpenSSL CLI: version; dgst "
                "with SHA-256, SHA-512, SHA3-256, BLAKE2b-512 or MD5; x509 certificate "
                "inspection. Pass arguments as an array without the program name. "
                "Inputs must be workspace files. No keys, signing, output files or network.";
     }
     std::string parametersSchema() const override {
+        // arguments 是最多 12 项的受限 OpenSSL 参数；执行层还会拦截未开放的子命令。
         return R"({"type":"object","properties":{"arguments":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":12}},"required":["arguments"],"additionalProperties":false})";
     }
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
@@ -117,20 +119,19 @@ public:
         auto result = maiRunOpenSslCommand(arguments, context);
         if (!result) return MaiToolResult::failure(result.error().code(), result.error().message());
         const MaiOpenSslCommandResult& command = result.value();
-        return MaiToolResult::success(
-            Json{{"exit_code", command.exitCode},
-                 {"stdout", command.standardOutput},
-                 {"stderr", command.errorOutput},
-                 {"truncated", command.truncated}}
-                .dump(-1, ' ', false, Json::error_handler_t::replace),
-            command.truncated);
+        return MaiToolResult::success(Json{{"exit_code", command.exitCode},
+                                           {"stdout", command.standardOutput},
+                                           {"stderr", command.errorOutput},
+                                           {"truncated", command.truncated}}
+                                          .dump(-1, ' ', false, Json::error_handler_t::replace),
+                                      command.truncated);
     }
 };
 
 }  // namespace
 
-MaiResult<MaiOpenSslCommandResult> maiRunOpenSslCommand(
-    const std::vector<std::string>& arguments, const MaiToolContext& context) {
+MaiResult<MaiOpenSslCommandResult> maiRunOpenSslCommand(const std::vector<std::string>& arguments,
+                                                        const MaiToolContext& context) {
     auto checked = checkedArguments(arguments, context);
     if (!checked) return checked.error();
     if (context.isCanceled()) return {MaiErrorCode::Canceled, "command was canceled"};
@@ -147,7 +148,7 @@ MaiResult<MaiOpenSslCommandResult> maiRunOpenSslCommand(
     const int status = mai_openssl_execute(static_cast<int>(values.size()), argv.data());
     mai_openssl_set_output_sink(nullptr, nullptr);
     return MaiOpenSslCommandResult{status, std::move(output.standard), std::move(output.error),
-                                    output.truncated};
+                                   output.truncated};
 }
 
 std::unique_ptr<MaiTool> makeMaiOpenSslCliTool() {

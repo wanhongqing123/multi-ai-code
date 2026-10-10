@@ -1952,12 +1952,12 @@ void MainWindowLayoutTest::agentSettingsDialogExposesSecureModelFields() {
         auto* dialog = window.findChild<QDialog*>(QStringLiteral("agentModelDialog"));
         if (dialog == nullptr) return;
         sawDialog = true;
-        auto* model = dialog->findChild<QComboBox*>(QStringLiteral("agentModelName"));
         auto* token = dialog->findChild<QLineEdit*>(QStringLiteral("agentCloudServiceToken"));
         auto* url = dialog->findChild<QLineEdit*>(QStringLiteral("agentCloudServiceUrl"));
-        serviceTokenIsMasked = model != nullptr && url != nullptr && token != nullptr &&
+        serviceTokenIsMasked = url != nullptr && token != nullptr &&
                                token->echoMode() == QLineEdit::Password;
         legacyFieldsGone = dialog->findChild<QLineEdit*>(QStringLiteral("agentModelApiKey")) == nullptr &&
+                           dialog->findChild<QComboBox*>(QStringLiteral("agentModelName")) == nullptr &&
                            dialog->findChild<QComboBox*>(QStringLiteral("agentModelWire")) == nullptr &&
                            dialog->findChild<QLineEdit*>(QStringLiteral("agentModelBaseUrl")) == nullptr;
         dialog->reject();

@@ -109,6 +109,10 @@ std::optional<MaiSpecialistInfo> MaiTool::specialistInfo() const {
 }
 
 const char* maiSpecialistCapabilityStatusToString(MaiSpecialistCapabilityStatus status) {
+    // 能力状态是给主模型的可执行性信号：available 已验证可用；
+    // implemented_unverified 已接线待实测；not_configured 缺账号配置；
+    // not_implemented 没有工具路径；upload_not_configured 只缺上传通道。
+    // 不得把“模型理论上支持”直接翻译成 available。
     switch (status) {
         case MaiSpecialistCapabilityStatus::Available: return "available";
         case MaiSpecialistCapabilityStatus::ImplementedUnverified: return "implemented_unverified";

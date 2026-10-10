@@ -112,14 +112,24 @@ void testPathSizeHttpAndTimeoutFailures() {
     const auto checkCode = [&](const json& arguments, const char* code) {
         const MaiToolResult result = tool->execute(arguments.dump(), context);
         CHECK(result.hasError());
-        if (result.hasError())
-            CHECK(json::parse(result.error().message()).value("code", "") == code);
+        if (result.hasError()) {
+            const json detail = json::parse(result.error().message());
+            CHECK(detail.value("code", "") == code);
+            if (std::string(code) == "timeout" || std::string(code) == "http_error") {
+                CHECK(detail.value("request_host", "") == "127.0.0.1");
+                CHECK(detail.value("attempts", 0) == 1);
+                CHECK(detail.contains("curl_code"));
+                CHECK(detail.contains("http_status"));
+                CHECK(detail.contains("stage"));
+                CHECK(detail.dump().find("private_token") == std::string::npos);
+            }
+        }
     };
     checkCode({{"url", "file:///etc/passwd"}}, "invalid_url");
     checkCode({{"url", server.url("/binary")}, {"output_path", 42}}, "invalid_path");
     checkCode({{"url", server.url("/binary")}, {"output_path", "../outside.mp3"}}, "invalid_path");
     checkCode({{"url", server.url("/large")}, {"max_size_mb", 1}}, "too_large");
-    checkCode({{"url", server.url("/missing")}}, "http_error");
+    checkCode({{"url", server.url("/missing?private_token=test-secret")}}, "http_error");
     checkCode({{"url", server.url("/slow")}, {"timeout_s", 1}}, "timeout");
     MaiFileSystem::removeRecursively(root);
 }

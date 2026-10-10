@@ -117,8 +117,7 @@ public:
 };
 
 MaiResult<std::unique_ptr<MaiRvmMattingSession>> MaiRvmMattingSession::open(
-    const std::string& modelPath, const std::string& runtimePath,
-    const void* apiBase) {
+    const std::string& modelPath, const std::string& runtimePath, const void* apiBase) {
     const MaiFilePath model = MaiFilePath::fromUtf8(modelPath);
     if (model.isEmpty() || !MaiFileSystem::exists(model) || MaiFileSystem::isDirectory(model))
         return {MaiErrorCode::NotFound, "RVM model file is missing"};

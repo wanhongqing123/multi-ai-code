@@ -1,6 +1,22 @@
 import XCTest
 
 final class AIAssistantUITests: XCTestCase {
+    func testTypingWhileAssistantStreamsRemainsResponsive() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--ai-stream-typing-ui-test"]
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        let editor = app.descendants(matching: .any)
+            .matching(identifier: "ai-composer").firstMatch
+        XCTAssertTrue(editor.waitForExistence(timeout: 15))
+        editor.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        let started = Date()
+        editor.typeText("typing during streaming")
+        XCTAssertLessThan(Date().timeIntervalSince(started), 15)
+        XCTAssertTrue((editor.value as? String)?.contains("typing during streaming") == true)
+    }
+
     func testEnteringLongAIConversationShowsLatestMessage() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--ai-ui-test", "--ai-history-ui-test"]
@@ -81,6 +97,21 @@ final class AIAssistantUITests: XCTestCase {
         add(capture)
         app.buttons["ffplay-close"].tap()
         XCTAssertFalse(app.buttons["ffplay-close"].waitForExistence(timeout: 3))
+    }
+
+    func testFfplaySaveKeepsPlayerAlive() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--ffplay-ui-test"]
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        let save = app.buttons["ffplay-save"]
+        XCTAssertTrue(save.waitForExistence(timeout: 20))
+        save.tap()
+        let status = app.staticTexts["ffplay-save-status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 20))
+        XCTAssertEqual(status.label, "已保存到相册")
+        XCTAssertTrue(app.buttons["ffplay-close"].exists,
+                      "Saving must report a result without terminating the player")
     }
 
     func testComposerAcceptsTypingWithoutSendButton() throws {
@@ -218,19 +249,11 @@ final class AIAssistantUITests: XCTestCase {
         let settings = app.descendants(matching: .any)
             .matching(identifier: "ai-model-settings").firstMatch
         XCTAssertTrue(settings.waitForExistence(timeout: 3))
-        let modelPicker = app.buttons["ai-primary-model-picker"]
-        XCTAssertTrue(modelPicker.waitForExistence(timeout: 3))
-        modelPicker.tap()
-        let glm = app.buttons["GLM-5.3"]
-        XCTAssertTrue(glm.waitForExistence(timeout: 3))
-        glm.tap()
+        XCTAssertFalse(app.buttons["ai-primary-model-picker"].exists)
         XCTAssertFalse(app.textFields["ai-model-base-url"].exists)
         XCTAssertFalse(app.segmentedControls["ai-model-wire"].exists)
         XCTAssertTrue(app.textFields["ai-cloud-service-url"].exists)
-        modelPicker.tap()
-        let deepSeek = app.buttons["DeepSeek V4.1 Flash"]
-        XCTAssertTrue(deepSeek.waitForExistence(timeout: 3))
-        deepSeek.tap()
+        XCTAssertFalse(app.buttons["测试连接"].exists)
         XCTAssertFalse(app.staticTexts["DeepSeek API Key"].exists)
         XCTAssertTrue(app.buttons["关闭模型配置"].isHittable)
         let save = app.buttons["保存配置"]

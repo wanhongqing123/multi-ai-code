@@ -99,6 +99,25 @@ public:
         return true;
     }
 
+    MaiError deleteCompletedSpecialistTask(const std::string& taskId,
+                                           const std::string& ownerSessionId) override {
+        std::lock_guard<std::mutex> lock(mMutex);
+        auto it = mSpecialistTasks.find(taskId);
+        if (it == mSpecialistTasks.end() || it->second.ownerSessionId != ownerSessionId)
+            return MaiError::make(MaiErrorCode::NotFound, "specialist task was not found");
+        if (it->second.status == MaiSpecialistTaskStatus::Submitted ||
+            it->second.status == MaiSpecialistTaskStatus::Running || it->second.notifiedAt == 0)
+            return MaiError::make(MaiErrorCode::InvalidInput,
+                                  "specialist task is active or delivery is pending");
+        for (const auto& [_, child] : mSpecialistTasks) {
+            if (child.parentTaskId == taskId)
+                return MaiError::make(MaiErrorCode::InvalidInput,
+                                      "specialist task has revision children");
+        }
+        mSpecialistTasks.erase(it);
+        return {};
+    }
+
     MaiError appendSpecialistText(const std::string& taskId, const std::string& ownerSessionId,
                                   const std::string& chunk, MaiMillis checkedAt) override {
         std::lock_guard<std::mutex> lock(mMutex);

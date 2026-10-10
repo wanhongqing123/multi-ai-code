@@ -83,11 +83,13 @@ public:
         return "crypto_digest";
     }
     std::string description() const override {
+        // 文件或短文本摘要用于校验内容；MD5 仅用于旧系统对照，不能当安全签名。
         return "Compute a SHA-256, SHA-512, SHA3-256, BLAKE2b-512, or MD5 checksum of a "
                "workspace file or short text using OpenSSL. MD5 is for legacy checksum matching, "
                "not security. Specify exactly one of path or text. File limit 64 MB.";
     }
     std::string parametersSchema() const override {
+        // path 与 text 必须二选一；algorithm 限于列出的摘要算法。
         return R"({"type":"object","properties":{"path":{"type":"string"},"text":{"type":"string"},"algorithm":{"type":"string","enum":["sha256","sha512","sha3-256","blake2b-512","md5"]}},"oneOf":[{"required":["path"]},{"required":["text"]}],"additionalProperties":false})";
     }
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
@@ -127,11 +129,13 @@ public:
         return "crypto_certificate_info";
     }
     std::string description() const override {
+        // 只解析工作区内证书，返回主体、签发者、有效期与指纹；不修改证书文件。
         return "Inspect a PEM or DER X.509 certificate file in the workspace using OpenSSL. "
                "Returns subject, issuer, validity, SHA-256 fingerprint, public key type, "
                "and DNS names. Does not change the certificate or contact a network service.";
     }
     std::string parametersSchema() const override {
+        // path 必须是工作区可访问的 PEM 或 DER X.509 证书。
         return R"({"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false})";
     }
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {

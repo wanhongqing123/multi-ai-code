@@ -44,11 +44,13 @@ public:
         return "system_resources";
     }
     std::string description() const override {
+        // 读取 App 自身资源状态，不是系统全局性能诊断；CPU 占比需两次采样才有意义。
         return "Read this App's CPU time and memory footprint, device total memory and CPU count, "
                "and available GPU allocation/budget counters. CPU percent needs two samples. "
                "On unified-memory iPhones dedicated VRAM and GPU utilization are unavailable.";
     }
     std::string parametersSchema() const override {
+        // 无参数；工具读取当前 App 的资源快照，不接受任意进程 ID。
         return R"({"type":"object","properties":{},"required":[],"additionalProperties":false})";
     }
     MaiToolResult execute(const std::string& raw, const MaiToolContext&) override {

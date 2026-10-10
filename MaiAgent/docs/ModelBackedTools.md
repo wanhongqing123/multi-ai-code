@@ -1,4 +1,4 @@
-# 主控 Agent 与带模型工具
+#主控 Agent 与带模型工具
 
 状态：产品方向已确认；本文区分目标设计与已交付功能。
 
@@ -26,6 +26,29 @@
 普通工具继续接收路径、坐标、滤镜参数等精确输入。特殊工具自己把高层需求转成模型所需参数，
 管理任务状态，并把能力说明、澄清需求、进度或结果交回主控。主控是用户的唯一对话入口。
 
+当前实现的能力读取分两层：`MaiTurnRunner::buildRequest` 每轮把工具的 `name`、
+`description()` 和 `parametersSchema()` 直接送给主模型，供它初筛模型与构造调用。
+`specialistInfo()` 本身不会自动全文放入初始请求；主模型调用候选工具的
+`action="discover"` 后，才读到该工具的 `model_support`、`api_support`、
+`tool_status` 和具体 `limitation`。视频任务的系统提示词要求对候选模型逐个
+`discover`，以当前工具实际接线状态为准；厂商 API 宣称支持不等于 App 已接通。
+
+当前注册的视频工具按**工具已接线能力**对比，供维护时核对描述与实现：
+
+| 工具 | 当前已接线的输入 | 输出与主要边界 | 当前未接线 |
+|---|---|---|---|
+| `seedance_video` | 2.0 Mini/Fast/标准版；文生、严格首尾帧、最多九张参考图、单段视频参考/编辑/延长；真人图需已登记资产或本人授权路径 | 4–15 秒；Mini/Fast 仅 480p/720p，标准版另有 1080p/4k；2.5 禁用 | 多段视频同时参考 |
+| `wan_video` | Wan3.0；文生、首尾帧、最多十张图加一段视频、单文档或单网页、视频编辑/延长 | 2–30 秒或智能时长；480P/720P/1080P；有视频时输入与输出总时长≤30 秒 | 多段参考视频、参考音频 |
+| `kling_bailian_video` | Turbo 文生/首帧；标准版加首尾帧；Omni 加最多七张图、单段特征视频及源视频编辑 | 通常 3–15 秒；带特征视频时 3–10 秒；视频加图最多四张；Turbo 无 4k | 主体元素、多镜头、原声保留参数 |
+| `glm_video` | CogVideoX-3 文生、单首帧、严格首尾帧 | 5 或 10 秒；尺寸、30/60 fps 和有声开关按 Schema | 任意多图参考、源视频编辑 |
+| `minimax_video` | H3/H3 Max 文生、严格首尾帧；最多九图、三视频、三音频多模态参考 | H3 为 4–15 秒 768P/2K；H3 Max 为 5–15 秒 480P/768P；均无原生 1080P | 专用源视频编辑模式、已核实的云端取消 |
+
+各行还要以运行时 `discover.tool_status` 及当前账号权益为准；
+例如只有供应商支持而 App 未接入的功能会显示为 `not_implemented`。
+厂商资料见[方舟视频生成 API](https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh)、
+[Wan3.0 指南](https://help.aliyun.com/zh/model-studio/wan3-video-generation-guide)、
+[百炼可灵视频 API](https://help.aliyun.com/zh/model-studio/kling-video-generation-api-reference/)。
+
 同一个特殊工具入口可以支持以下往返，不向主控暴露“创建视频任务”和“查询任务”两个底层工具：
 
 ```text
@@ -38,6 +61,12 @@ seedance_video(action="delegate", message="按用户偏好制作小猫奔跑视�
 
 seedance_video(action="continue", conversation_id="...", message="进展如何？")
   → 进度或成品；后续要求仍走同一个工具入口
+
+seedance_video(action="cancel", conversation_id="spt_...")
+  → 仅排队中任务可取消；运行中供应商会拒绝
+
+seedance_video(action="delete", conversation_id="spt_...")
+  → 删除已结束且已交付的方舟任务记录；已下载视频保留
 ```
 
 `action` 是工具协议中的交互意图，不是要求主控替视频模型选择底层 `duration`、`ratio` 等参数。
@@ -185,8 +214,9 @@ App 重启后可以续查任务并避免重复生成用户气泡。详见
 
 ## 状态、恢复和费用边界
 
-以下是后续扩展目标；当前实现只记录 submitted、running、needs_input、succeeded、failed、
-canceled，不支持供应商取消、自动付费重试或百分比进度。
+当前实现记录 submitted、running、needs_input、succeeded、failed、canceled；
+Seedance、万相 3.0、百炼可灵视频工具已支持供应商允许的排队任务取消。
+自动付费重试和百分比进度仍未实现。
 
 ```text
 queued → submitting → running → succeeded
@@ -204,6 +234,15 @@ queued → submitting → running → succeeded
 `submission_unknown`；已完成任务只校验本地文件存在，不重新生成。
 
 `cancel_requested` 不是 `cancelled`：本地停止等待不等于云端任务已经取消或不会计费。
+工具仅在供应商确认后把任务记为 canceled。方舟 `DELETE` 只可取消 queued，
+或删除 succeeded、failed、expired 的云端记录；running 不支持。
+百炼万相与百炼可灵使用通用异步任务接口，只能取消 PENDING；未提供视频任务
+云端删除 API，因此其 `delete` 只移除已交付的本地任务索引，云端记录和已下载视频不受影响。
+GLM 与 MiniMax 的当前视频适配器未接入可核实的供应商取消接口，只提供
+已交付任务的本地记录删除，不能把停止本地轮询说成云端取消。
+所有管理动作都要求当前会话的 `spt_` ID；删除前还须确认后台通知已完成，
+且没有依赖该任务的修订子任务。相关限制见[方舟取消或删除视频任务](https://docs.volcengine.com/docs/ark/cancel-or-delete-video-generation-tasks-api?lang=zh)
+和[百炼异步任务管理](https://help.aliyun.com/zh/model-studio/manage-asynchronous-tasks)。
 自动重试和自动质检都必须有次数、时长和费用上限；未设预算前只做可证明不会重复付费的重试。
 同一任务的晚到回调要靠状态版本号或比较更新拒绝，避免完成后又被旧的 `running` 覆盖。
 
@@ -249,8 +288,8 @@ FFmpeg 全片解码通过。两个结果都带 `revision_of` 指向旧任务；�
 `seedance_create_video`、`seedance_get_video` 已从主控工具清单撤下，只保留
 `seedance_video` 特殊工具入口；任务提交与查询留在工具内部。
 图片创作使用单一 `seedream_image` 入口，绑定 Seedream 5.0 flash：文生图时提交提示词，
-编辑时主控只传已有图片的工作区路径与指令，由工具层读取图片、编码提交并将新 PNG 保存回工作区。
-图片接口支持 Base64 输入，因此这条本地图片交接路径不依赖视频所需的 TOS 上传通道。
+编辑时主控只传已有图片的工作区路径与指令；工具先把本地图片直传私有 OSS，
+再将短期 HTTPS 读取地址交给方舟，并将新 PNG 保存回工作区。OSS 上传失败时不会提交付费请求。
 `seedance_video` 默认选择 `doubao-seedance-2-0-mini-260615`，单次输出允许 4–15 秒；
 调用者也可通过 `model` 显式选择 `doubao-seedance-2-0-fast-260128` 或标准版
 `doubao-seedance-2-0-260128`。三者最多 9 张参考图；标准版支持 480p／720p／
@@ -270,26 +309,26 @@ iOS 工具层仍需单独验收。用户选择独立的阿里云 OSS 存储后�
 长期 AK/SK 不下发到手机，不能把仅有 Ark API Key 误认为对象存储的上传权限。
 接口取值参考[方舟创建视频生成任务文档](https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh)。
 
-对已经取得有效素材 ID 的视频，工具支持 `virtual_avatar_asset_id`：从方舟
-私域素材库或体验中心选取素材 ID，在请求中以 `asset://<ID>`、
-`image_url` 与 `reference_image` 角色提交。可选 `reference_image_path` 作为第二张
-非真人脸参考图片；提示词按“图片 1 / 图片 2”指代素材。此路径不支持用用户真人照片
-自动替换成虚拟人像。对已在方舟同账号通过真人认证、授权且状态可用的人像素材，
-使用独立的 `authorized_portrait_asset_id` 输入，同样通过 `asset://<ID>` 引用，
-不上传本地真人人脸图片。两项 Asset ID 互斥，均须先在方舟体验中心取得。
-`ark_assets` 可在配置的服务端列出、创建、查询 AIGC 素材。App 先用原始照片
-正常提交 Seedance；若平台明确因真人肖像拒绝，再检查现有 Active 素材，或将
-相关原图直传私有 OSS 并逐张入库，等 `GetAsset` 返回 Active 后用素材 ID 重试。
-不默认翻转或油画化照片以规避审核；入库是否通过仍由方舟决定。
+对已经取得有效素材 ID 的视频，单张可用 `virtual_avatar_asset_id` 或
+`authorized_portrait_asset_id`；多张用 `reference_asset_ids`（Seedance 2.0 最多 9 张）。
+工具把每个 ID 转成 `content.image_url.url=asset://<ID>`，`role=reference_image`。
+`local_image_paths` 是多张本地文件的上传入口，工具逐张直传私有 OSS 后只将
+短期 HTTPS 地址交给方舟，不再生成 Base64 请求体。素材入库后不要再把同一照片作为
+本地路径传入，应改用 `reference_asset_ids`；以上两种单张字段不与多张字段混用。
+
+图片有清晰真人且仍要使用 Seedance 时，在首次付费前让用户选择：普通私人照片可先
+尝试 AIGC 虚拟资产入库；公众人物或需要正式真人肖像验证时建议 H5 路径。AIGC
+素材的 `Active` 仅代表入库成功，不等于真人授权，也不保证视频生成审核通过。
+`ark_assets` 可列出、创建、查询 AIGC 素材；本地图先直传私有 OSS，再通过
+`CreateAsset` 入库，`GetAsset` 返回 Active 后才引用素材 ID。素材审核结果以方舟为准。
 参考[方舟含肖像视频指南](https://docs.volcengine.com/docs/ark/seedance-portrait-asset-guide?lang=zh)。
-方舟已公开真人人像素材资产 API，但当前 `seedance_video` 未接入录入链路。
-公开流程是 `CreateVisualValidateSession` 让本人完成 H5 真人认证，
-`GetVisualValidateResult` 取得对应的 Asset Group ID；之后把同一人物的图片放到
-可访问的 HTTPS 地址，调用 `CreateAsset`，通过 `GetAsset` 等待 `Active`，最后才使用
-`asset://<Asset ID>`。接口要求 AK/SK，和现有的视频推理 API Key 不同；素材入库时
-还会做人脸一致性校验，多人脸图片不能入库。高级创作权益 Entry 可免费开通 Assets API，
-但需满足企业认证及平台开通条件。当前 H5 真人认证会话与回调尚未接入；
-仅凭一张本地照片无法在后台无感完成该授权流程。
+真人验证使用 `ark_assets begin_real_validation` 获取一次性 H5Link 和 BytedToken；
+由本人打开链接完成认证。随后用 `get_real_validation` 和 BytedToken 查询 GroupId，
+把同一人的照片经 OSS 上传到该组，逐张等 `GetAsset` 返回 Active，再把资产 ID
+交给 `reference_asset_ids`。每个 H5 组只对应一人，含多张人脸的合照不能直接登记到
+该真人组。BytedToken 有效期 30 分钟，无法替本人无感完成认证。
+工具可用 `group_type=LivenessFace` 查询本账号的真人素材组；跨账号授权素材可能不可见。
+服务端使用 AK/SK，App 不持有。真实 H5 链路仍需在已开通相应权益的账号实测。
 详见[真人人像素材资产使用指南](https://docs.volcengine.com/docs/ark/guide-preview?lang=zh)和
 [高级创作权益说明](https://docs.volcengine.com/docs/ark/seedance-2-0-purchase-guide?lang=zh)。
 
@@ -335,56 +374,89 @@ iOS 工具层仍需单独验收。用户选择独立的阿里云 OSS 存储后�
 [图片生成异步 API](https://docs.bigmodel.cn/api-reference/%E6%A8%A1%E5%9E%8B-api/%E5%9B%BE%E5%83%8F%E7%94%9F%E6%88%90%E5%BC%82%E6%AD%A5)及
 [查询异步结果](https://docs.bigmodel.cn/api-reference/%E6%A8%A1%E5%9E%8B-api/%E6%9F%A5%E8%AF%A2%E5%BC%82%E6%AD%A5%E7%BB%93%E6%9E%9C)。
 
-### 万相 2.7 视频编辑
+### 万相 3.0 视频生成
 
-`wan_video_edit` 是独立于 Seedance 的专业工具，绑定 `wan2.7-videoedit`，沿用
-`discover` → `delegate` → `continue` → `revise` 的任务契约。主控传工作区视频路径、
-编辑目标及可选的参考图路径；工具上传素材、提交异步编辑任务、查询状态并把 MP4 保存回
-工作区。修订只接受同一 AI 会话中已完成的上一版任务。能力元数据按实际配置返回，
-不会把万相 3.0 的实测结果算作 2.7 的验收。
+`wan_video` 对外支持文生视频、单首帧、严格首尾帧、最多十张本地参考图加一段
+本地参考视频，以及 Wan3 的单个文档/网页参考。`file_url` 接公开 HTTPS 文档；
+`file_path` 先把本地 DOC/DOCX、XLS/XLSX、PPT/PPTX、PDF、TXT、KEY、
+PAGES、NUMBERS、MD 直传私有 OSS 后再引用签名 HTTPS 链接；`link_url`
+接无需登录的公开网页。文档和网页二选一，也不得与严格首尾帧混用；有文档或
+网页时强制 `prompt_extend=true`。OSS 签发器将文档限制在 100 MB；官方另对
+部分文档要求最多 50 页，具体能否解析仍由百炼返回结果决定。
 
-模型仅接受 2–10 秒 MP4/MOV，最多 4 张参考图，输出 720P 或 1080P。默认保留原声，
-不截断视频；超长素材应由主控先明确分段，再决定是否拼接。iOS 的 API Key 存在
-Keychain、Workspace ID 存在本机设置；Android 的 Key 存在 Keystore；Desktop 从
-`MAICHAT_WAN_API_KEY` 与 `MAICHAT_WAN_WORKSPACE_ID` 读取。密钥不进入仓库。
+当前工具只接一段参考视频；官方 API 的多视频/参考音频上限更高，但尚未接成
+对外参数，不能把 API 理论能力当作当前工具能力。上述文档路径已通过本地
+校验和签发器测试，未发起付费生成验证。
+[万相 3.0 API 参考](https://help.aliyun.com/zh/model-studio/wan3-video-generation-api-reference)。
 
-当前本地上传使用百炼的私有临时存储，按官方说明**仅供开发与测试**，URL 48 小时后
-失效；生产部署要换成长期可用的 OSS 受控上传通道。生成结果链接仅保留 24 小时，
-`continue` 在任务完成时立即下载。
-2026-10-04 Mac 共享核心真实验证：用 7.593 秒成人公开样本，`delegate` 上传并提交
-`wan2.7-videoedit`，`continue` 下载 7.57 秒 H.264/AAC MP4（1280×720、227 帧、
-4,653,511 字节），FFmpeg 全片解码通过；对照帧确认黑 T 恤变为蓝色牛仔外套。
-MaiAgent 的 31 项 CTest 通过，iOS 无签名构建通过。iOS 真机云端调用、Android 和
-Desktop 尚未验证；不能把上述 Mac 验收扩展成各端都已可用。
-接口：[视频编辑 API](https://help.aliyun.com/zh/model-studio/wan-video-editing-api-reference)、
-[临时文件上传](https://help.aliyun.com/zh/model-studio/get-temporary-file-url)。
+### 万相 2.7 视频编辑（当前未注册）
+
+根据先前“视频统一走 Wan3.0”的要求，当前 App 只注册 `wan_video`；
+`wan_video_edit` 尚未注册。Wan3.0 支持参考视频编辑和延长，但官方仍将
+`wan2.7-videoedit` 列为专门的视频指令编辑模型，适用于风格、人物服装、动作和运镜等
+编辑，并支持最多四张参考图。因此不能仅凭“Wan3 也能编辑”推断两个模型的效果等价。
+2.7 的限制是输入视频 2–10 秒、输出 720P/1080P；以后若重新启用，应作为独立
+选项接入和验收。历史上 2026-10-04 的 Mac 共享核心测试曾用 7.593 秒公开样本
+成功生成并下载 7.57 秒 MP4，这不是当前 App 注册状态的证明。
+官方资料：[视频编辑 2.7 指南](https://help.aliyun.com/zh/model-studio/wan-video-editing-guide)、
+[API 参考](https://help.aliyun.com/zh/model-studio/wan-video-editing-api-reference)。
+
+### 阿里云百炼可灵视频
+
+可灵视频统一使用 `kling_bailian_video`，不再注册原有可灵直连工具。
+百炼入口复用万相的北京地域 API Key 和 Workspace ID，但账号仍须在百炼控制台
+单独开通可灵模型权限。可选 Turbo、标准版和 Omni，输出 3–15 秒；Omni
+另接图片参考、视频特征参考和源视频编辑。`discover` 可离线查已接能力，
+`delegate` 为付费异步提交，`continue` 查询并把 MP4 下载到工作区。
+本地 JPEG/PNG、MP4/MOV 全部通过宿主私有 OSS 直传，百炼仅收到短期 HTTPS
+读取地址；上传失败不会提交付费任务，也不会回退 Base64 或百炼临时存储。
+该入口目前仅完成代码和本地校验，账号开通状态及付费实盘仍需验证。
+接口见[百炼可灵视频 API](https://help.aliyun.com/zh/model-studio/kling-video-generation-api-reference/)。
+
+百炼任务查询和结果下载是两次独立的 HTTPS 请求。iOS 的内嵌 OpenSSL 需要把 App
+打包的 CA 根证书同时传给这两处；漏传下载分支会把“任务已成功但取片失败”误显示成
+状态查询错误。现已统一传入 CA，GET 状态查询只对短暂网络故障做有界重试，
+付费 POST 不自动重提。后台遇到网络或下载故障时保留原任务 ID，等待下一次查询，
+不会再把三次传输失败写成供应商生成失败。下载错误只显示媒体主机名和 TLS/curl
+诊断，不回显带签名的完整 URL。
+
+### 本地去水印工具
+
+`media_remove_watermark` 是独立的免费本地工具，输入一个 JPEG/PNG 或 MP4/MOV、
+一个新输出路径，以及 1–4 个像素矩形；视频矩形可指定生效的起止时间。工具内部
+一次探测、一次 FFmpeg `delogo` 处理，不让主模型反复拼 FFmpeg/OpenCV 命令。
+原文件不覆盖，输出区域由周围像素估算，无法恢复被遮盖的真实画面。仅在用户
+明确要求去水印时调用；人物替换、生成视频不自动附带这一步。如果区域不明确，
+最多检查一张代表帧或请用户指定，不循环尝试大量裁切与检测调用。
 
 同一百炼配置现在还供两个独立工具使用：
 
 - `wan_video` 绑定 `wan3.0-video`，接通文生视频、首帧/首尾帧、本地单段视频参考编辑和
-  延长、最多十张本地参考图；多段参考视频、音频、文档和网页输入仍未接通，不能报告可用。
+  延长、最多十张本地参考图，以及单个文档或网页参考；多段参考视频和音频输入尚未接通。
   提交后以 `continue` 查询并保存 MP4；`revise` 仅继承同一 AI 会话的已完成任务。
-- `qwen_image` 绑定 `qwen-image-3.0-pro`，文生图或最多三张本地图片编辑后保存新 PNG。
-  模型接口是同步生成，工具不提供虚构的轮询进度；`revise` 读取本会话上一版 PNG。
+- `wan_image` 绑定 `wan2.7-image`，文生图或最多九张本地图片编辑，异步查询后保存
+  新 PNG；`revise` 读取本会话上一版 PNG。`kling_bailian_image` 通过百炼接可灵 V3
+  文生图、单图参考与 Omni 多图参考，产物也由异步任务下载。
 
 两者的真实 Mac 共享核心验证（2026-10-04）：Wan3.0 用成人公开视频的 7.59 秒输入
 生成 5 秒、854×480、150 帧 H.264 MP4（2,282,521 字节），FFmpeg 全片解码通过，
-对照帧可见黑 T 恤换成牛仔外套；Qwen 用合成图编辑生成 1024×1024 RGB PNG，画面为
+对照帧可见黑 T 恤换成牛仔外套；此前 Qwen 用合成图编辑生成 1024×1024 RGB PNG，画面为
 淡蓝背景上的黄色纸飞机，并用纯文字生成了奶油色背景上的绿色折纸船 PNG。
-它们不是 iOS/Android 真机的云端验收；设备侧能力仍按
+该 Qwen 历史验收不能算作新接入的 Wan2.7-Image 或可灵图片验收。
+这些历史调用也不是 iOS/Android 真机的云端验收；设备侧能力仍按
 `implemented_unverified` 上报。接口：[Wan3.0 视频生成](https://help.aliyun.com/zh/model-studio/wan3-video-generation-api-reference)、
-[Qwen-Image-3.0-Pro](https://help.aliyun.com/zh/model-studio/qwen-image-generation-and-editing-api-reference)。
+[Wan2.7-Image](https://help.aliyun.com/zh/model-studio/wan-image-generation-and-editing-api-reference)。
 
 当前工具选择仍由主模型完成：`MaiTurnRunner::buildRequest` 把注册表中的工具名称、描述和
 参数格式随每次模型请求送出，主模型自行调用 `discover` 和 `delegate`。
 模型工具失败后的任务接续原则见 [SpecialistFailureRecovery.md](SpecialistFailureRecovery.md)。
 `MaiToolRegistry::specialists()` 目前只有内部/测试调用，没有自动路由或供应商默认优先级。
 因此“生成一个视频”同时匹配 Seedance 与 Wan3.0，不能声称一定选中某个服务；用户明确
-点名模型时应遵从。编辑已有短视频应优先考虑 `wan_video_edit`，含更多参考素材或更长
-生成时可考虑 `wan_video`，但这些只是工具描述给主模型的能力线索，不是已实现的硬路由。
+点名模型时应遵从。当前编辑已有视频走 `wan_video`；若将来重新启用 2.7，
+应由用户明确选择模型，不能把其中一个工具的实测结果算作另一个的验收。
 
-排查百炼授权时三个工具提供无生成费用的 `action="diagnose"`：用当前设备保存的 Key 和
+排查百炼授权时视频与图片工具提供无生成费用的 `action="diagnose"`：用当前设备保存的 Key 和
 Workspace ID 查询该模型在限额列表里是否可见，并返回请求频率/用量上限；不回传 Key，
 也**不代表**已核对免费余额或每一类生成请求的权限。供应商拒绝时工具保留 HTTP 状态、
 `provider_code` 和 `request_id`，方便将手机端与 Mac 端请求对照。Mac 使用此前提供的
-CSV 凭据对三个模型运行此诊断均返回 `model_visible=true`；iPhone 端需独立验证。
+CSV 凭据对当时的模型运行此诊断均返回 `model_visible=true`；新接入模型与 iPhone 端需独立验证。

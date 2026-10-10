@@ -22,11 +22,13 @@ public:
     }
 
     std::string description() const override {
+        // 先列出可见窗口，再将准确窗口标识交给 screenshot，避免猜测窗口标题。
         return "List visible top-level windows that can be passed to screenshot mode=window. "
                "Use this when the user names an application but its exact window title is unknown.";
     }
 
     std::string parametersSchema() const override {
+        // 无参数，只返回当前可见顶层窗口清单。
         return R"({"type":"object","properties":{},"required":[],"additionalProperties":false})";
     }
 

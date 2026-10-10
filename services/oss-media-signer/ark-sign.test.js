@@ -29,3 +29,16 @@ test('sends only to fixed Ark endpoint and parses provider response', async () =
     });
   assert.equal(response.Result.Status, 'Active');
 });
+
+test('preserves Ark HTTP status and request headers on invalid upstream responses', async () => {
+  await assert.rejects(
+    callArk('ListAssetGroups', {}, { accessKeyId: 'TEST_AK', secretKey: 'TEST_SK' },
+      async () => ({ ok: false, status: 503,
+        headers: { get: name => ({ 'x-request-id': 'req-123',
+          'x-error-code': 'ServiceUnavailable' })[name] || '' },
+        text: async () => 'temporarily unavailable' })),
+    error => error.response.status === 503 &&
+      error.response.data.ResponseMetadata.RequestId === 'req-123' &&
+      error.response.data.ResponseMetadata.Error.Code === 'ServiceUnavailable'
+  );
+});

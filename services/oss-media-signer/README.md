@@ -71,7 +71,13 @@ iOS、Android、Desktop 取回模型 Key 后仅在当前 App 进程内使用，�
 ## Ark Assets 素材接口
 
 `POST /ark-assets` 的 JSON `action` 支持 `list_groups`、`create_group`、
-`create_asset`、`get_asset`、`list_assets`。`create_asset` 接收 `group_id`、
+`create_asset`、`get_asset`、`list_assets`、`begin_real_validation`、
+`get_real_validation`。`list_groups` / `list_assets` 可带 `group_type=LivenessFace`
+查询本账号真人组，默认 `AIGC`。`begin_real_validation` 用服务器固定的 CallbackURL
+向方舟创建一次性 H5Link；本人完成认证后，用返回的 BytedToken 调
+`get_real_validation` 取得 GroupId。H5 回调页为
+`GET /maichat/portrait-auth-callback`，不展示或记录 BytedToken。
+`create_asset` 接收 `group_id`、
 方舟可访问的 HTTPS `url` 与可选名称；`get_asset` 返回实际异步状态，只有
 `Active` 的素材 ID 才可作为 `asset://<ID>` 给 Seedance 使用。服务端不返回
 AccessKey，且不接收图片字节。已配置签发服务的 App 可通过共享 C++ 上传工具先把
@@ -100,8 +106,10 @@ Desktop 在连接服务时获取，均不依赖旧的本机 Key 缓存。
 响应包含 `upload_url`、`upload_headers`（包括 Content-Type）和 `read_url`。
 客户端按响应 Header 将**文件字节** PUT 至 `upload_url`；OSS 返回 2xx 后，
 才把 `read_url` 交给方舟。PUT 链接有效 15 分钟，GET 链接有效 24 小时；
-每次请求使用随机对象名，Bucket 保持私有。服务允许 JPEG/PNG（不超过 30 MB）
-和 MP4/MOV（不超过 200 MB），分别写入 `ark-asset-inputs/` 与 `seedance-inputs/`。
+每次请求使用随机对象名，Bucket 保持私有。服务允许 JPEG/PNG（不超过 30 MB）、
+MP4/MOV（不超过 200 MB），以及 Wan3 参考文档 DOC/DOCX、XLS/XLSX、
+PPT/PPTX、PDF、TXT、KEY、PAGES、NUMBERS、MD（不超过 100 MB）。图片写入
+`ark-asset-inputs/`，视频和文档复用已有授权的 `seedance-inputs/` 前缀。
 实际 Bucket 用量与访问权限仍应在阿里云控制台监控。
 
 参考：[OSS 预签名 PUT 上传](https://help.aliyun.com/zh/oss/developer-reference/upload-objects-using-a-signed-url-generated-with-oss-sdk-for-node-js/)、

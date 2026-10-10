@@ -37,6 +37,19 @@ std::string imageBytes(int rectangleOffset) {
     return image;
 }
 
+std::string resizedImageBytes(int width, int height) {
+    std::string image = "P6\n" + std::to_string(width) + " " + std::to_string(height) + "\n255\n";
+    image.reserve(image.size() + width * height * 3);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const bool dark = x >= width * 20 / 128 && x < width * 100 / 128 &&
+                              y >= height * 30 / 128 && y < height * 90 / 128;
+            image.append(3, dark ? '\0' : static_cast<char>(255));
+        }
+    }
+    return image;
+}
+
 std::string templateBytes() {
     std::string image = "P6\n32 32\n255\n";
     for (int y = 0; y < 32; ++y) {
@@ -57,9 +70,13 @@ int main() {
     const MaiFilePath first = root.append(MaiFilePath::fromUtf8("first.ppm"));
     const MaiFilePath second = root.append(MaiFilePath::fromUtf8("second.ppm"));
     const MaiFilePath pattern = root.append(MaiFilePath::fromUtf8("pattern.ppm"));
+    const MaiFilePath smaller = root.append(MaiFilePath::fromUtf8("smaller.ppm"));
+    const MaiFilePath wide = root.append(MaiFilePath::fromUtf8("wide.ppm"));
     CHECK(!MaiFileSystem::writeFile(first, imageBytes(0)));
     CHECK(!MaiFileSystem::writeFile(second, imageBytes(8)));
     CHECK(!MaiFileSystem::writeFile(pattern, templateBytes()));
+    CHECK(!MaiFileSystem::writeFile(smaller, resizedImageBytes(64, 64)));
+    CHECK(!MaiFileSystem::writeFile(wide, resizedImageBytes(96, 64)));
     MaiToolContext context;
     context.root = root.toUtf8();
 
@@ -85,6 +102,24 @@ int main() {
         const auto data = nlohmann::json::parse(different.output());
         CHECK(data.at("identical") == false);
         CHECK(data.at("changed_pixel_fraction").get<double>() > 0);
+    }
+    const auto resized =
+        compare->execute(R"({"path":"first.ppm","second_path":"smaller.ppm"})", context);
+    CHECK(!resized.hasError());
+    if (!resized.hasError()) {
+        const auto data = nlohmann::json::parse(resized.output());
+        CHECK(data.at("second_width") == 64);
+        CHECK(data.at("comparison_alignment") == "resize_second_to_first");
+        CHECK(data.at("aspect_ratio_changed") == false);
+        CHECK(data.at("identical") == false);
+    }
+    const auto changedAspect =
+        compare->execute(R"({"path":"first.ppm","second_path":"wide.ppm"})", context);
+    CHECK(!changedAspect.hasError());
+    if (!changedAspect.hasError()) {
+        const auto data = nlohmann::json::parse(changedAspect.output());
+        CHECK(data.at("aspect_ratio_changed") == true);
+        CHECK(data.at("comparison_alignment") == "resize_second_to_first");
     }
 
     auto contours = makeMaiCvFindContoursTool(analyzeMaiCvImage);

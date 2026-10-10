@@ -39,6 +39,8 @@ final class AIMobileHostToolProvider {
         switch name {
         case "mobile_request_permission": return await requestSystemPermission(arguments)
         case "mobile_get_location": return await getCurrentLocation()
+        case "mobile_list_contacts": return await listSystemContacts(arguments)
+        case "mobile_get_contact": return await getSystemContact(arguments)
         case "mobile_decode_text": return decodeLegacyText(arguments)
         case "generate_pdf": return generatePDF(arguments)
         case "mobile_list_photos": return await listPhotos(arguments)
@@ -80,8 +82,6 @@ final class AIMobileHostToolProvider {
             let video = AICloudCredentialStore.shared.key("glm_video")
             let main = AICloudCredentialStore.shared.key("glm")
             return Self.jsonSuccess(["key": video.isEmpty ? main : video])
-        case "kling_api_key":
-            return Self.jsonSuccess(["key": AICloudCredentialStore.shared.key("kling")])
         case "minimax_api_key":
             return Self.jsonSuccess(["key": AICloudCredentialStore.shared.key("minimax")])
         case "wan_credentials":

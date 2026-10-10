@@ -206,26 +206,13 @@ public class AIAssistantInstrumentedTest {
             CountDownLatch saved = new CountDownLatch(1);
             AtomicBoolean savedOK = new AtomicBoolean();
             scenario.onActivity(a
-                -> a.panel.controller.save("https://open.bigmodel.cn/api/coding/paas/v4", "glm-5.3",
-                    "on-request", "test-keystore-value", ok -> {
+                -> a.panel.controller.save("glm-5.3", "on-request", ok -> {
                         savedOK.set(ok);
                         saved.countDown();
                     }));
             assertTrue(saved.await(8, TimeUnit.SECONDS));
             assertTrue(savedOK.get());
             Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
-            boolean checked = false;
-            for (File directory : context.getNoBackupFilesDir().listFiles())
-                if (directory.getName().startsWith("AIAssistantTest-")) {
-                    File key = new File(directory, "api-key.enc");
-                    if (key.exists()) {
-                        String encrypted =
-                            new String(Files.readAllBytes(key.toPath()), StandardCharsets.UTF_8);
-                        assertFalse(encrypted.contains("test-keystore-value"));
-                        checked = true;
-                    }
-                }
-            assertTrue("Encrypted API key file not found", checked);
             Bitmap screenshot =
                 InstrumentationRegistry.getInstrumentation().getUiAutomation().takeScreenshot();
             File captures = new File(context.getExternalFilesDir(null), "test-captures");

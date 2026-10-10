@@ -30,6 +30,7 @@ public:
     }
 
     std::string description() const override {
+        // 记录完整任务清单及状态，每次更新提交全量列表，不能只报本次变化的一项。
         return "Record the task list for the work you are doing, and update it as you go. Send "
                "the whole list every time, not just the part that changed. Use it for anything "
                "that takes more than a couple of steps, so nothing gets dropped. Exactly one item "
@@ -37,6 +38,7 @@ public:
     }
 
     std::string parametersSchema() const override {
+        // todos 每次传完整清单；每项的 content 描述步骤，status 表示执行状态。
         return R"({"type":"object","properties":{)"
                R"("todos":{"type":"array","description":"The whole task list, in order",)"
                R"("items":{"type":"object","properties":{)"
@@ -95,15 +97,15 @@ public:
         }
         if (running > 1) {
             // 同时干好几件事正是跑偏的开始。**说清楚为什么**，它下一圈才改得对。
-            return MaiToolResult::failure(
-                MaiErrorCode::InvalidInput,
-                "only one item may be in_progress at a time, but " + std::to_string(running) +
-                    " are. Finish one before starting the next.");
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                          "only one item may be in_progress at a time, but " +
+                                              std::to_string(running) +
+                                              " are. Finish one before starting the next.");
         }
 
-        return MaiToolResult::success(
-            "Task list updated (" + std::to_string(done) + " of " +
-            std::to_string(static_cast<int>(todos.size())) + " done):\n" + listing);
+        return MaiToolResult::success("Task list updated (" + std::to_string(done) + " of " +
+                                      std::to_string(static_cast<int>(todos.size())) + " done):\n" +
+                                      listing);
     }
 };
 

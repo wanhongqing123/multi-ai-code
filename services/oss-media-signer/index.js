@@ -5,6 +5,21 @@ const path = require('node:path');
 
 const MAX_VIDEO_BYTES = 200_000_000;
 const MAX_IMAGE_BYTES = 30_000_000;
+const MAX_DOCUMENT_BYTES = 100_000_000;
+const DOCUMENT_TYPES = Object.freeze({
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.doc': 'application/msword',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.xls': 'application/vnd.ms-excel',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  '.ppt': 'application/vnd.ms-powerpoint',
+  '.pdf': 'application/pdf',
+  '.txt': 'text/plain',
+  '.key': 'application/vnd.apple.keynote',
+  '.pages': 'application/vnd.apple.pages',
+  '.numbers': 'application/vnd.apple.numbers',
+  '.md': 'text/markdown'
+});
 const UPLOAD_TTL_SECONDS = 15 * 60;
 const READ_TTL_SECONDS = 24 * 60 * 60;
 
@@ -17,6 +32,21 @@ function jsonResponse(statusCode, value) {
       Pragma: 'no-cache'
     },
     body: JSON.stringify(value)
+  };
+}
+
+function portraitCallbackResponse() {
+  return {
+    statusCode: 200,
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'Referrer-Policy': 'no-referrer',
+      'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'"
+    },
+    body: '<!doctype html><html lang="zh"><meta charset="utf-8"><title>认证流程已结束</title>' +
+      '<body style="font:16px sans-serif;padding:32px"><h1>认证流程已结束</h1>' +
+      '<p>请返回 MaiChat，最终认证结果以应用查询为准。</p></body></html>'
   };
 }
 
@@ -61,6 +91,8 @@ function createHandler(options = {}) {
     }
     const method = event?.requestContext?.http?.method || event?.httpMethod || event?.method;
     const route = event?.rawPath || event?.path || '/sign-upload';
+    if (method === 'GET' && route === '/portrait-auth-callback')
+      return portraitCallbackResponse();
     if (method !== 'POST' || (!route.endsWith('/sign-upload') &&
         !route.endsWith('/ark-assets') && route !== '/credentials'))
       return jsonResponse(404, { error: 'Not found' });
@@ -110,6 +142,9 @@ function createHandler(options = {}) {
         return jsonResponse(503, { error: 'Ark Assets credentials are not configured' });
       const action = body?.action;
       const project = env.VOLC_ARK_PROJECT_NAME || 'default';
+      const groupType = body?.group_type || 'AIGC';
+      if (groupType !== 'AIGC' && groupType !== 'LivenessFace')
+        return jsonResponse(400, { error: 'Invalid asset group type' });
       let payload;
       if (action === 'create_group' && validText(body.name, 64)) {
         payload = { Name: body.name, Description: validText(body.description, 300)
@@ -121,21 +156,31 @@ function createHandler(options = {}) {
       } else if (action === 'get_asset' && validId(body.asset_id, 'asset-')) {
         payload = { Id: body.asset_id, ProjectName: project };
       } else if (action === 'list_groups') {
-        payload = { Filter: { GroupType: 'AIGC' }, MaxResults: 100, ProjectName: project };
+        payload = { Filter: { GroupType: groupType }, MaxResults: 100, ProjectName: project };
         if (body.next_token && validText(body.next_token, 2048))
           payload.NextToken = body.next_token;
       } else if (action === 'list_assets') {
-        payload = { Filter: { GroupType: 'AIGC' }, MaxResults: 100, ProjectName: project };
+        payload = { Filter: { GroupType: groupType }, MaxResults: 100, ProjectName: project };
         if (body.group_id && validId(body.group_id, 'group-'))
           payload.Filter.GroupIds = [body.group_id];
         if (body.next_token && validText(body.next_token, 2048))
           payload.NextToken = body.next_token;
+      } else if (action === 'begin_real_validation') {
+        payload = { CallbackURL: env.MAICHAT_PORTRAIT_CALLBACK_URL ||
+          'https://ichat.life/maichat/portrait-auth-callback', ProjectName: project };
+        if (!validHttpsUrl(payload.CallbackURL))
+          return jsonResponse(503, { error: 'Portrait callback URL is not configured' });
+      } else if (action === 'get_real_validation' &&
+                 validText(body.byted_token, 512)) {
+        payload = { BytedToken: body.byted_token, ProjectName: project };
       } else {
         return jsonResponse(400, { error: 'Invalid Ark Assets request' });
       }
       const arkAction = {
         create_group: 'CreateAssetGroup', create_asset: 'CreateAsset',
-        get_asset: 'GetAsset', list_groups: 'ListAssetGroups', list_assets: 'ListAssets'
+        get_asset: 'GetAsset', list_groups: 'ListAssetGroups', list_assets: 'ListAssets',
+        begin_real_validation: 'CreateVisualValidateSession',
+        get_real_validation: 'GetVisualValidateResult'
       }[action];
       try {
         const response = await callArk(arkAction, payload, { accessKeyId, secretKey });
@@ -147,9 +192,12 @@ function createHandler(options = {}) {
           return jsonResponse(502, { error: 'Ark returned an invalid response' });
         return jsonResponse(200, { result });
       } catch (error) {
+        const metadata = error?.response?.data?.ResponseMetadata || {};
         return jsonResponse(502, { error: 'Ark Assets request failed',
-          provider_code: error?.response?.data?.ResponseMetadata?.Error?.Code || '',
-          provider_message: error?.response?.data?.ResponseMetadata?.Error?.Message || '' });
+          provider_code: metadata.Error?.Code || '',
+          provider_message: metadata.Error?.Message || '',
+          request_id: metadata.RequestId || '',
+          provider_http_status: error?.response?.status || 0 });
       }
     }
     const bucket = env.MAICHAT_OSS_BUCKET || '';
@@ -163,9 +211,10 @@ function createHandler(options = {}) {
       ? path.extname(filename).toLowerCase() : '';
     const video = ['.mp4', '.mov'].includes(extension);
     const image = ['.jpg', '.jpeg', '.png'].includes(extension);
-    if ((!video && !image) || !Number.isSafeInteger(size) || size < 1 ||
-        size > (image ? MAX_IMAGE_BYTES : MAX_VIDEO_BYTES))
-      return jsonResponse(400, { error: 'Provide a JPEG/PNG under 30 MB or MP4/MOV under 200 MB' });
+    const document = Object.hasOwn(DOCUMENT_TYPES, extension);
+    if ((!video && !image && !document) || !Number.isSafeInteger(size) || size < 1 ||
+        size > (image ? MAX_IMAGE_BYTES : video ? MAX_VIDEO_BYTES : MAX_DOCUMENT_BYTES))
+      return jsonResponse(400, { error: 'Provide supported media or a document within its size limit' });
 
     try {
       if (!client) client = makeClient({
@@ -176,10 +225,12 @@ function createHandler(options = {}) {
         authorizationV4: true,
         secure: true
       });
+      // 文档复用已授权的媒体前缀，避免要求线上 RAM 临时扩大 Bucket 权限。
       const prefix = image ? 'ark-asset-inputs' : 'seedance-inputs';
       const objectKey = `${prefix}/${currentTime().toISOString().slice(0, 10)}/${newID()}${extension}`;
       const contentType = image ? (extension === '.png' ? 'image/png' : 'image/jpeg')
-        : (extension === '.mov' ? 'video/quicktime' : 'video/mp4');
+        : video ? (extension === '.mov' ? 'video/quicktime' : 'video/mp4')
+          : DOCUMENT_TYPES[extension];
       const uploadHeaders = { 'Content-Type': contentType };
       const uploadUrl = await client.signatureUrlV4(
         'PUT', UPLOAD_TTL_SECONDS, { headers: uploadHeaders }, objectKey);

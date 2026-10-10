@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 
+#include "MaiCreativeMediaSupport.h"
 #include "MaiTool.h"
 
 // Credentials are read at call time so a host can update or revoke them without recreating the
@@ -15,21 +16,27 @@ struct MaiWanCredentials {
 };
 using MaiWanCredentialsProvider = std::function<MaiWanCredentials()>;
 
-// Edits a 2-10 second MP4/MOV with wan2.7-videoedit. Local input is uploaded to Alibaba's private
-// temporary storage; the output is downloaded into the Agent workspace. The source is unchanged.
-// execute() can block for upload/download and checks MaiToolContext cancellation. An empty
-// credential leaves discovery available but refuses paid submission.
-std::unique_ptr<MaiTool> makeMaiWanVideoEditTool(MaiWanCredentialsProvider credentials,
-                                                 std::string caBundlePath = {});
-
-// Wan3.0 generates a new video from text, first/last frames, or reference media. Local video
-// references use the same private temporary upload route as Wan2.7. Task submission is async;
+// Wan3.0 根据文本、首尾帧或参考素材生成视频；本地素材同样经私有 OSS 上传。任务异步提交；
 // the completed MP4 is downloaded to the Agent workspace by continue().
 std::unique_ptr<MaiTool> makeMaiWanVideoTool(MaiWanCredentialsProvider credentials,
-                                             std::string caBundlePath = {});
+                                             std::string caBundlePath = {},
+                                             MaiCreativeMediaUploadProvider uploadMedia = {});
 
-// Qwen-Image-3.0-Pro creates or edits a PNG from text and up to three local images. It sends
-// bounded Base64 image content to Model Studio, saves a new PNG under the Agent workspace, and
-// never modifies the source images. Calls can block while the remote model generates an image.
-std::unique_ptr<MaiTool> makeMaiQwenImageTool(MaiWanCredentialsProvider credentials,
-                                              std::string caBundlePath = {});
+// 百炼可灵视频与万相共用北京地域 Key/Workspace，但需单独开通可灵模型权限。
+// 本地 JPEG/PNG 和 MP4/MOV 经宿主私有 OSS 直传，再提交异步任务；无上传通道时
+// 文生视频仍可用，媒体输入会在付费提交前被拒绝。App 只注册此百炼可灵入口。
+std::unique_ptr<MaiTool> makeMaiBailianKlingVideoTool(
+    MaiWanCredentialsProvider credentials, std::string caBundlePath = {},
+    MaiCreativeMediaUploadProvider uploadMedia = {});
+
+// Wan2.7-Image 接受文本及最多九张本地参考图；图片先上传私有 OSS，模型只收到 HTTPS
+// 地址。同步生成一张工作区 PNG，原图不修改；调用可能阻塞，必须在工具工作线程执行。
+std::unique_ptr<MaiTool> makeMaiWanImageTool(MaiWanCredentialsProvider credentials,
+                                             std::string caBundlePath = {},
+                                             MaiCreativeMediaUploadProvider uploadMedia = {});
+
+// 百炼可灵图像：标准版文生/单图，Omni 支持多图。异步任务保存 ID 并由 continue
+// 下载 PNG；只生成一张，原图不修改。本地参考图使用与万相一致的私有 OSS 回调。
+std::unique_ptr<MaiTool> makeMaiBailianKlingImageTool(
+    MaiWanCredentialsProvider credentials, std::string caBundlePath = {},
+    MaiCreativeMediaUploadProvider uploadMedia = {});

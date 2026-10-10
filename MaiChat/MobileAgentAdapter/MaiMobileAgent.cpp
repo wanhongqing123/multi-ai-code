@@ -15,7 +15,6 @@
 #include "MaiFileSystem.h"
 #include "MaiFileTools.h"
 #include "MaiGlmMediaTools.h"
-#include "MaiKlingMediaTools.h"
 #include "MaiMiniMaxMediaTools.h"
 #include "MaiModelStudioTools.h"
 #include "MaiNetworkIpTool.h"
@@ -33,6 +32,7 @@
 #include "MaiVideoMatting.h"
 #include "MaiVideoMattingTool.h"
 #include "MaiViewImageTool.h"
+#include "MaiWatermarkRemovalTool.h"
 #include "MaiZlibTool.h"
 #include "mai_fftools_embed.h"
 #include <cstddef>
@@ -51,9 +51,21 @@ using Json = nlohmann::json;
 namespace {
 
 constexpr auto kMarkdownBaseInstructions =
+    // 工具名和 description 只用于初筛；推荐前必须逐个调用候选视频工具的
+    // discover， 读取 tool_status 和输入组合限制。厂商宣称支持不等于当前 App
+    // 已接通。
+    // 付费视频任务再确认模型及型号；遇到失败先判断原因并保持用户已选方案。
     "Video generation rule: before any paid video delegate, use discover to "
     "identify configured specialists with implemented capabilities for this "
-    "request. If the user has not chosen a video model for this task, show "
+    "request. Read the tool description for initial routing, then call "
+    "discover "
+    "on each plausible video specialist before recommending one. Compare the "
+    "actual tool_status and input combination limits; model_support or "
+    "api_support alone does not mean the App can execute a path. Use the JSON "
+    "schema for exact fields. Do not infer a missing feature from a model "
+    "name, "
+    "marketing page, or another model's limits. If the user has not chosen a "
+    "video model for this task, show "
     "suitable names and task-specific differences and ask the user to choose; "
     "confirm the sole suitable model too. Do not choose or switch video models "
     "silently. When one specialist offers multiple billable model variants, "
@@ -62,18 +74,91 @@ constexpr auto kMarkdownBaseInstructions =
     "replacement model's paid call. A model choice is separate from paid-call "
     "approval. Classify an input rejection before changing anything. If the "
     "cause is ambiguous, inspect the actual image and prompt without claiming "
-    "which one failed. For Seedance, first submit the original user images "
-    "normally. "
-    "Only if Ark rejects that attempt for a possible real face, check for "
-    "existing Active "
-    "assets or use ark_assets upload_image on each required original photo, "
-    "wait for Active, "
-    "then retry the same Seedance model with asset:// IDs and new paid "
-    "approval. Do not "
-    "silently drop any photo or assume asset review will accept every face. If "
-    "registration "
-    "fails or Ark requires H5 authorization, follow its actual result. Do not "
-    "default to "
+    "which one failed. "
+    // 人物替换应直接规划视频编辑；水印、字幕和片尾不是默认预处理任务。
+    // 用户明确要求去水印时才用独立工具，一次处理后回到原目标，避免反复探测。
+    "When the user asks to replace a person in a source video, keep the source "
+    "video and references intact and plan the selected video model's edit "
+    "path. "
+    "Do not remove watermarks, subtitles, or end cards as an unrequested "
+    "preparation step. If the user explicitly requests watermark removal, use "
+    "media_remove_watermark with a known rectangle; inspect at most one "
+    "representative frame if needed. Do not loop through FFmpeg/OpenCV to "
+    "hunt for regions. After one result, return to the original task. "
+    // 图片与视频专业模型的本地素材统一走私有 OSS；上传故障不能回退为 Base64。
+    "For image and video specialist tools, local media paths are upload "
+    "inputs: "
+    "the tool sends short-lived private OSS HTTPS URLs to the provider. If OSS "
+    "upload fails, stop before paid submission and report the upload stage. Do "
+    "not retry by embedding local image or video bytes as Base64. "
+    // 可灵只走百炼入口，复用万相的北京地域 Key；仍要确认具体型号。
+    "For Kling video, use kling_bailian_video with the Beijing Wan API Key and "
+    "Workspace. Kling model activation is required. Confirm its Turbo, "
+    "Standard, "
+    "or Omni variant before paid submission. "
+    "For Kling images use kling_bailian_image with the same Beijing "
+    "credentials; "
+    "for Wan images use wan_image. "
+    // 真人参考图分为普通资产登记和 H5 真人认证两条路径，必须使用真正返回的资产
+    // ID。
+    "Before paid Seedance generation with a recognizable real person, "
+    "explain two asset paths and let the user choose once in the plan. "
+    "For ordinary private photos, suggest trying AIGC virtual-asset "
+    "registration; "
+    "for public figures or a verified real-person likeness, suggest H5 "
+    "real-portrait "
+    "authorization. Do not identify someone as a public figure from the photo "
+    "alone. "
+    "Do not describe an AIGC asset as real-person authorization. For the AIGC "
+    "path, "
+    "check matching Active assets or use ark_assets upload_image for each "
+    "required "
+    "image, then wait for Active. Ark may still reject the image or video. For "
+    "the "
+    "real-portrait path, use an existing authorized asset or call ark_assets "
+    "begin_real_validation, give its H5Link to the user to send to the person, "
+    "and wait for that person to finish. Then call get_real_validation with "
+    "the "
+    "BytedToken within 30 minutes; only after it returns a GroupId, use "
+    "upload_image "
+    "for matching single-person photos in that group and wait for Active. Each "
+    "H5 "
+    "group belongs to one person; a multi-face family photo cannot be uploaded "
+    "as that person's verified portrait. Do not create a normal "
+    "AIGC group for the H5 path. "
+    // 资产状态变成 Active 后只传 ID；多张图逐张登记，不能再用本地路径重复提交。
+    "After either path has Active assets, submit all selected IDs in "
+    "reference_asset_ids with paid-call "
+    "approval. Do not pass the same photos through local_image_paths "
+    "again; "
+    "that would resubmit local files. "
+    // 视频编辑需要把源视频先直传 OSS，再把临时 URL 和人物素材 ID 一起交给
+    // Seedance。
+    "If the task edits a user-uploaded video, "
+    "use video_path as the source; the tool uploads it to private OSS and "
+    "passes "
+    "its temporary URL to Seedance. Add the chosen Active portrait assets in "
+    "reference_asset_ids so the source video and all selected photos are both "
+    "included. "
+    // 非真人图片的本地路径先直传 OSS，再由 Seedance 读取短期 HTTPS 链接。
+    "For images without recognizable real people, "
+    "pass local paths to the Seedance tool; it uploads them to private OSS and "
+    "sends "
+    "short-lived HTTPS URLs, never Base64 bytes, to Ark. If Ark rejects an "
+    "uncertain "
+    "original for a possible real face, return to the two asset paths before "
+    "changing models. Do not silently drop photos or assume asset review will "
+    "accept every face. If registration fails or Ark requires H5 "
+    "authorization, "
+    "follow its actual result. "
+    // 资产服务故障是传输问题；保留原方案并重试，不能误判成内容审核失败。
+    "Do not treat an ark_assets transport error as an image moderation "
+    "decision. "
+    "Keep the selected Seedance model and the original references while the "
+    "asset service is temporarily unreachable; do not propose another model "
+    "solely because of that outage. "
+    // 仅在允许的前提下处理图像：轻度处理优先，油画化是兜底；记录损失并补偿描述。
+    "Do not default to "
     "flipping or oil-painting a real face to evade review. For other image "
     "issues, if an edit "
     "is allowed and still serves the user's goal, preserve the original, make "
@@ -92,6 +177,7 @@ constexpr auto kMarkdownBaseInstructions =
     "and ask before switching. Do not claim the account has no authorized "
     "portrait assets unless a tool actually checked; ask for an asset ID. "
     "Avoid lengthy technical error narration. "
+    // 消息用真正的 Markdown 换行；图像附件直接看，缺 OS 权限先申请再重试。
     "Write user-facing responses in valid GitHub-Flavored Markdown. Preserve "
     "real line breaks. "
     "For tables, put the header, separator, and every row on separate lines, "
@@ -99,6 +185,7 @@ constexpr auto kMarkdownBaseInstructions =
     "before and after the table. Use headings, lists, fenced code blocks, and "
     "tables only when "
     "they improve readability. Never emit table pipes as one continuous line. "
+    // 用户消息自带的图像已作为视觉输入；相册编辑必须导出原件，预览图不能当源图。
     "Images included "
     "in a user message are already available as visual input; analyze them "
     "directly and do not "
@@ -119,6 +206,7 @@ constexpr auto kMarkdownBaseInstructions =
     "text exposed by the model in Simplified Chinese. Preserve code, paths, "
     "commands, and quoted tool output in their original form. "
     "Do not invent model quality, policy, or price claims. "
+    // 付费调用前展示人物、场景和规格；闸门是最终确认，不能悄悄改时长或分辨率。
     "Before calling delegate or revise on any paid image or video generation "
     "specialist, "
     "show the user the concrete plan and let the tool's per-call approval be "
@@ -138,6 +226,7 @@ constexpr auto kMarkdownBaseInstructions =
     "local conversion, explain both steps before approval. If the user "
     "rejects the approval, do not submit "
     "or retry. "
+    // 语义创作交给生成模型；裁剪、几何、色彩和速度调整优先使用本地工具。
     "Use video/image model tools for semantic changes such as person, clothes, "
     "scene, or "
     "action. Prefer local FFmpeg/OpenCV for geometry, crop, color, "
@@ -145,6 +234,18 @@ constexpr auto kMarkdownBaseInstructions =
     "joining, or speed changes so identity pixels can remain untouched. Reuse "
     "an existing "
     "cloud task ID when checking progress; do not submit a paid duplicate. "
+    // 取消与删除必须走已保存的任务上下文；取消仅限供应商仍在排队的任务。
+    // 百炼没有云端视频任务删除 API，其 delete 只移除已交付的本地记录。
+    "When the user asks to cancel a video job, call the selected specialist's "
+    "cancel action with its saved conversation_id. Ark and Model Studio can "
+    "cancel only queued/PENDING jobs; if the provider says it has started, "
+    "preserve the task and continue polling. Ark can delete completed cloud "
+    "task records. Wan and Bailian Kling delete only the delivered local task "
+    "record, leaving cloud results and downloaded videos intact. GLM and "
+    "MiniMax also allow local-record deletion after delivery, but no verified "
+    "provider cancel API is wired for them; never claim a local stop canceled "
+    "their cloud job. "
+    // 多图任务先查模型上限；超出时用图像融合或可见拼接，让每张输入都进入流程。
     "For multiple user images, inspect the chosen video specialist's input "
     "limits and never "
     "silently drop an image. If the limit is exceeded, combine images with "
@@ -157,6 +258,8 @@ constexpr auto kMarkdownBaseInstructions =
     "not loop on "
     "a provider content rejection or imply that an ambiguous error identifies "
     "one input. "
+    // 子工具失败先由主模型处理；欠费找替代能力，状态未知保留任务 ID
+    // 防重复扣费。
     "Treat a specialist error as internal work to resolve, not an immediate "
     "user-facing "
     "answer. Keep the original task and media references. If one provider "
@@ -172,6 +275,7 @@ constexpr auto kMarkdownBaseInstructions =
     "Only if no "
     "viable route remains should you tell the user why the task could not be "
     "completed. "
+    // 模糊图像审核先辨别实际输入，再在同一模型内有界处理和重试，换模型放最后。
     "For ambiguous image-related moderation failures, preserve the original "
     "and inspect the actual image and prompt. Try a light permitted image-tool "
     "edit first, "
@@ -260,6 +364,7 @@ struct MaiMobileAgent {
   }
 
   void configure(const Json &request) {
+    // 切换主模型时不能中断正在运行的任务；先创建共享存储，再配置线协议和工具集。
     if (anyBusy())
       throw std::runtime_error("Stop active tasks before changing the model.");
     auto store = makeMaiSqliteStore(request.at("database").get<std::string>());
@@ -269,6 +374,7 @@ struct MaiMobileAgent {
     config.baseUrl = request.at("baseUrl").get<std::string>();
     config.apiKey = request.value("apiKey", "");
     config.caBundlePath = request.value("caBundle", "");
+    // Responses/Chat 是主模型线协议，和 Seedance 等专业工具的供应商 API 无关。
     const std::string wire = request.value("wire", std::string{});
     if (wire == "responses" ||
         (wire.empty() &&
@@ -357,6 +463,7 @@ struct MaiMobileAgent {
     tools->add(makeMaiViewImageTool(makeMaiFfmpegImagePreview(ffmpegEngine)));
     tools->add(makeMaiFfmpegTool(ffmpegEngine));
     tools->add(makeMaiFfprobeTool(ffmpegEngine));
+    tools->add(makeMaiWatermarkRemovalTool(ffmpegEngine));
     tools->add(makeMaiStretchLowerVideoTool(ffmpegEngine));
     tools->add(makeMaiCvSceneDetectTool(analyzeMaiCvVideo));
     tools->add(makeMaiCvMotionDetectTool(analyzeMaiCvVideo));
@@ -379,38 +486,6 @@ struct MaiMobileAgent {
                  ? response["key"].get<std::string>()
                  : std::string{};
     };
-#if defined(__APPLE__)
-    const MaiToolResult ossStatus =
-        callMaiMobileHostTool(hostTools, "oss_video_upload_config", "{}");
-    const Json ossConfig =
-        ossStatus.hasError() ? Json::object()
-                             : Json::parse(ossStatus.output(), nullptr, false);
-    if (ossConfig.is_object() && ossConfig.value("configured", false)) {
-      const MaiArkVideoUploadProvider uploadArkVideo =
-          [dispatcher = hostTools](
-              const std::string &path,
-              const MaiToolContext &context) -> MaiResult<std::string> {
-        if (context.isCanceled())
-          return {MaiErrorCode::Canceled, "Video upload was canceled"};
-        const MaiToolResult response = callMaiMobileHostTool(
-            dispatcher, "mobile_oss_upload_video", Json{{"path", path}}.dump());
-        if (response.hasError())
-          return response.error();
-        if (context.isCanceled())
-          return {MaiErrorCode::Canceled, "Video upload was canceled"};
-        const Json parsed = Json::parse(response.output(), nullptr, false);
-        if (!parsed.is_object() || !parsed.value("url", Json{}).is_string())
-          return {MaiErrorCode::Protocol, "OSS upload returned no read URL"};
-        return parsed["url"].get<std::string>();
-      };
-      tools->add(makeMaiSeedanceVideoTool(arkKey, config.caBundlePath,
-                                          uploadArkVideo));
-    } else {
-      tools->add(makeMaiSeedanceVideoTool(arkKey, config.caBundlePath));
-    }
-#else
-    tools->add(makeMaiSeedanceVideoTool(arkKey, config.caBundlePath));
-#endif
     const auto assetSettings =
         [dispatcher = hostTools]() -> MaiResult<MaiArkAssetServiceSettings> {
       const MaiToolResult response =
@@ -425,12 +500,27 @@ struct MaiMobileAgent {
       return MaiArkAssetServiceSettings{value["base_url"].get<std::string>(),
                                         value["token"].get<std::string>()};
     };
-    if (assetSettings())
+    // 所有图片和视频创作工具共用私有 OSS 直传；模型只收到短期 HTTPS 读取链接。
+    const bool assetsConfigured = static_cast<bool>(assetSettings());
+    const MaiCreativeMediaUploadProvider uploadMedia =
+        assetsConfigured
+            ? makeMaiPrivateOssMediaUploader(assetSettings, config.caBundlePath)
+            : MaiCreativeMediaUploadProvider{};
+    if (assetsConfigured) {
+      // 资产登记与视频直传共用 C++ 网络通道，iOS/Android
+      // 都不依赖各自的上传实现。
+      // 密钥和服务令牌由宿主提供；工具拿到的是回调，不把凭据写进模型提示词。
+      tools->add(
+          makeMaiSeedanceVideoTool(arkKey, config.caBundlePath, uploadMedia));
       tools->add(makeMaiArkAssetTool(
           makeMaiArkAssetServiceProvider(assetSettings, config.caBundlePath)));
-    else
+    } else {
+      tools->add(
+          makeMaiSeedanceVideoTool(arkKey, config.caBundlePath, uploadMedia));
       tools->add(makeMaiArkAssetTool());
-    tools->add(makeMaiSeedreamImageTool(arkKey, config.caBundlePath));
+    }
+    tools->add(
+        makeMaiSeedreamImageTool(arkKey, config.caBundlePath, uploadMedia));
     const auto glmKey = [dispatcher = hostTools]() -> std::string {
       const MaiToolResult result =
           callMaiMobileHostTool(dispatcher, "glm_api_key", "{}");
@@ -441,20 +531,8 @@ struct MaiMobileAgent {
                  ? response["key"].get<std::string>()
                  : std::string{};
     };
-    tools->add(makeMaiGlmVideoTool(glmKey, config.caBundlePath));
+    tools->add(makeMaiGlmVideoTool(glmKey, config.caBundlePath, uploadMedia));
     tools->add(makeMaiGlmImageTool(glmKey, config.caBundlePath));
-    const auto klingKey = [dispatcher = hostTools]() -> std::string {
-      const MaiToolResult result =
-          callMaiMobileHostTool(dispatcher, "kling_api_key", "{}");
-      if (result.hasError())
-        return {};
-      const Json response = Json::parse(result.output(), nullptr, false);
-      return response.is_object() && response.value("key", Json{}).is_string()
-                 ? response["key"].get<std::string>()
-                 : std::string{};
-    };
-    tools->add(makeMaiKlingVideoTool(klingKey, config.caBundlePath));
-    tools->add(makeMaiKlingImageTool(klingKey, config.caBundlePath));
     const auto miniMaxKey = [dispatcher = hostTools]() -> std::string {
       const MaiToolResult result =
           callMaiMobileHostTool(dispatcher, "minimax_api_key", "{}");
@@ -465,8 +543,10 @@ struct MaiMobileAgent {
                  ? response["key"].get<std::string>()
                  : std::string{};
     };
-    tools->add(makeMaiMiniMaxVideoTool(miniMaxKey, config.caBundlePath));
-    tools->add(makeMaiMiniMaxImageTool(miniMaxKey, config.caBundlePath));
+    tools->add(
+        makeMaiMiniMaxVideoTool(miniMaxKey, config.caBundlePath, uploadMedia));
+    tools->add(
+        makeMaiMiniMaxImageTool(miniMaxKey, config.caBundlePath, uploadMedia));
     const auto wanCredentials = [dispatcher =
                                      hostTools]() -> MaiWanCredentials {
       const MaiToolResult result =
@@ -479,9 +559,14 @@ struct MaiMobileAgent {
       return {response.value("key", std::string{}),
               response.value("workspace_id", std::string{})};
     };
-    tools->add(makeMaiWanVideoEditTool(wanCredentials, config.caBundlePath));
-    tools->add(makeMaiWanVideoTool(wanCredentials, config.caBundlePath));
-    tools->add(makeMaiQwenImageTool(wanCredentials, config.caBundlePath));
+    tools->add(
+        makeMaiWanVideoTool(wanCredentials, config.caBundlePath, uploadMedia));
+    tools->add(makeMaiBailianKlingVideoTool(wanCredentials, config.caBundlePath,
+                                            uploadMedia));
+    tools->add(
+        makeMaiWanImageTool(wanCredentials, config.caBundlePath, uploadMedia));
+    tools->add(makeMaiBailianKlingImageTool(wanCredentials, config.caBundlePath,
+                                            uploadMedia));
     const std::string rvmModel = request.value("rvmModelPath", "");
     const std::string ortRuntime = request.value("ortRuntimePath", "");
     if (!rvmModel.empty() &&

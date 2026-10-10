@@ -29,6 +29,11 @@ test('HTTP adapter keeps the service on an authenticated route', async () => {
       headers: { Authorization: `Bearer ${env.MAICHAT_MEDIA_SERVICE_TOKEN}` },
       body: 'x'.repeat(5000) });
     assert.equal(oversized.status, 413);
+    const callback = await fetch(`http://127.0.0.1:${server.address().port}` +
+      '/portrait-auth-callback?bytedToken=secret');
+    assert.equal(callback.status, 200);
+    assert.match(callback.headers.get('content-type'), /text\/html/);
+    assert.ok(!(await callback.text()).includes('secret'));
   } finally {
     await new Promise(resolve => server.close(resolve));
   }

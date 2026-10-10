@@ -2,7 +2,10 @@
 set -euo pipefail
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 repo_dir="$(cd "$PROJECT_DIR/../../.." && pwd)"
-agent_build="$DERIVED_FILE_DIR/MobileAgentAdapter-$PLATFORM_NAME-graphics"
+# OpenSSL、FFmpeg、OpenCV 和 MaiAgent 共用稳定的分平台构建目录。
+# Xcode 切换或清理 DerivedData 时，只重做最终归档和 App 链接，不重编第三方源码。
+agent_arch="${ARCHS// /-}"
+agent_build="$repo_dir/MaiAgent/build/vendor/mobile-agent-$PLATFORM_NAME-$agent_arch"
 cmake -S "$repo_dir/MaiChat/MobileAgentAdapter" -B "$agent_build" -G Ninja \
   -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT="$SDKROOT" \
   -DCMAKE_OSX_ARCHITECTURES="${ARCHS// /;}" -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0 \
@@ -42,4 +45,8 @@ if [[ -n "${TARGET_BUILD_DIR:-}" && -n "${UNLOCALIZED_RESOURCES_FOLDER_PATH:-}" 
   mkdir -p "$model_bundle"
   cp "$repo_dir/MaiAgent/models/rvm_mobilenetv3_fp32.onnx" "$model_bundle/"
   cp "$repo_dir/MaiAgent/models/RVM_LICENSE" "$model_bundle/"
+  # iOS 的 OpenSSL libcurl 需要随 App 打包的受信任 CA，不能关闭证书校验。
+  cert_bundle="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/MaiAgentCertificates"
+  mkdir -p "$cert_bundle"
+  cp "$repo_dir/MaiAgent/certs/cacert.pem" "$cert_bundle/"
 fi

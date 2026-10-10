@@ -244,6 +244,8 @@ struct MaiDownloadTransfer {
     bool tooLarge = false;
     bool writeFailed = false;
     std::string contentDisposition;
+    std::string requestId;
+    std::string upstreamErrorCode;
 };
 
 std::size_t receiveBytes(char* data, std::size_t size, std::size_t count, void* userData) {
@@ -267,12 +269,27 @@ std::size_t receiveHeader(char* data, std::size_t size, std::size_t count, void*
     if (count != 0 && size > SIZE_MAX / count) return 0;
     const std::size_t bytes = size * count;
     const std::string line(data, bytes);
-    if (line.compare(0, 5, "HTTP/") == 0) transfer.contentDisposition.clear();
+    if (line.compare(0, 5, "HTTP/") == 0) {
+        transfer.contentDisposition.clear();
+        transfer.requestId.clear();
+        transfer.upstreamErrorCode.clear();
+    }
     std::string lower = line;
     std::transform(lower.begin(), lower.end(), lower.begin(),
                    [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     if (lower.compare(0, 20, "content-disposition:") == 0)
         transfer.contentDisposition = line.substr(20);
+    const auto headerValue = [&](std::size_t prefix) {
+        std::string value = line.substr(prefix);
+        while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())))
+            value.erase(0, 1);
+        while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back())))
+            value.pop_back();
+        return value.size() <= 128 ? value : std::string{};
+    };
+    if (lower.rfind("x-request-id:", 0) == 0) transfer.requestId = headerValue(13);
+    if (lower.rfind("x-oss-request-id:", 0) == 0) transfer.requestId = headerValue(17);
+    if (lower.rfind("x-error-code:", 0) == 0) transfer.upstreamErrorCode = headerValue(13);
     return bytes;
 }
 
@@ -290,12 +307,14 @@ public:
         return "curl_download";
     }
     std::string description() const override {
+        // 下载直链到工作区新文件，边传边限量；不会执行下载内容或覆盖已有产物。
         return "Download a binary file from a direct HTTP or HTTPS URL into the Agent workspace. "
                "The file is streamed, size-limited, and never executed. If output_path is omitted, "
                "use the server filename hint or URL filename. Use curl_upload to send an existing "
                "workspace file to an approved upload URL.";
     }
     std::string parametersSchema() const override {
+        // url 是下载直链；output_path 可选但必须是新文件，大小和超时可设上限。
         return R"({"type":"object","properties":{"url":{"type":"string"},"output_path":{"type":"string"},"max_size_mb":{"type":"number","minimum":1,"maximum":1024},"timeout_s":{"type":"number","minimum":1,"maximum":600}},"required":["url"],"additionalProperties":false})";
     }
     bool requiresApproval(const std::string&) const override {
@@ -360,6 +379,8 @@ public:
         if (curl == nullptr)
             return failure(MaiErrorCode::Internal, "internal",
                            "Could not initialize the HTTP client");
+        char curlError[CURL_ERROR_SIZE] = {};
+        curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curlError);
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, receiveBytes);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &transfer);
@@ -390,6 +411,11 @@ public:
         curl_easy_getinfo(curl, CURLINFO_CONTENT_TYPE, &contentType);
         char* finalUrl = nullptr;
         curl_easy_getinfo(curl, CURLINFO_EFFECTIVE_URL, &finalUrl);
+        char* primaryIp = nullptr;
+        curl_easy_getinfo(curl, CURLINFO_PRIMARY_IP, &primaryIp);
+        const std::string connectedIp = primaryIp != nullptr ? std::string(primaryIp) : "";
+        long sslVerifyResult = 0;
+        curl_easy_getinfo(curl, CURLINFO_SSL_VERIFYRESULT, &sslVerifyResult);
         const std::string mime =
             contentType != nullptr ? std::string(contentType) : "application/octet-stream";
         const std::string landed = finalUrl != nullptr ? std::string(finalUrl) : url;
@@ -402,13 +428,40 @@ public:
                            "Could not write the downloaded bytes");
         if (context.isCanceled())
             return failure(MaiErrorCode::Canceled, "canceled", "Download was canceled");
-        if (curlResult == CURLE_OPERATION_TIMEDOUT)
-            return failure(MaiErrorCode::Network, "timeout", "Download timed out");
-        if (curlResult != CURLE_OK)
-            return failure(MaiErrorCode::Network, "network_error", curl_easy_strerror(curlResult));
-        if (httpStatus < 200 || httpStatus >= 300)
-            return failure(MaiErrorCode::Network, "http_error", "Server returned an HTTP error",
-                           httpStatus);
+        if (curlResult != CURLE_OK || httpStatus < 200 || httpStatus >= 300) {
+            // 带签名的媒体 URL 查询串相当于临时凭据，模型可见错误只给主机名，
+            // 不回显完整 URL。TLS 失败没有 HTTP 状态和 request ID，明确保留空值。
+            const char* code = curlResult == CURLE_OPERATION_TIMEDOUT ? "timeout"
+                               : curlResult != CURLE_OK               ? "network_error"
+                                                                      : "http_error";
+            std::string detail = curlError[0] != '\0' ? curlError : curl_easy_strerror(curlResult);
+            if (detail.find('?') != std::string::npos ||
+                detail.find("Authorization") != std::string::npos)
+                detail = curl_easy_strerror(curlResult);
+            return MaiToolResult::failure(
+                MaiErrorCode::Network,
+                Json{{"code", code},
+                     {"stage", curlResult == CURLE_PEER_FAILED_VERIFICATION ? "tls_verify"
+                               : curlResult != CURLE_OK                     ? "download_transport"
+                                                                            : "download_http"},
+                     {"method", "GET"},
+                     {"request_host", hostname(url)},
+                     {"effective_host", hostname(landed)},
+                     {"connected_ip", connectedIp},
+                     {"curl_code", static_cast<int>(curlResult)},
+                     {"curl_error", curlResult == CURLE_OK ? Json(nullptr) : Json(detail)},
+                     {"ssl_verify_result", sslVerifyResult},
+                     {"http_status", httpStatus},
+                     {"attempts", 1},
+                     {"request_id",
+                      transfer.requestId.empty() ? Json(nullptr) : Json(transfer.requestId)},
+                     {"upstream_error_code", transfer.upstreamErrorCode.empty()
+                                                 ? Json(nullptr)
+                                                 : Json(transfer.upstreamErrorCode)},
+                     {"message", curlResult == CURLE_OK ? "Server returned an HTTP error"
+                                                        : curl_easy_strerror(curlResult)}}
+                    .dump());
+        }
         if (!sink.close())
             return failure(MaiErrorCode::Internal, sink.isDiskFull() ? "disk_full" : "io_error",
                            "Could not finalize download file");

@@ -227,7 +227,6 @@ struct MaiChatApp: App {
 
     init() {
         AppDiagnosticLog.shared.install()
-        AICloudCredentialSync.clearLegacyStoredModelKeys()
         Task.detached(priority: .utility) {
             _ = try? await AICloudCredentialSync.syncIfConfigured()
         }
@@ -247,6 +246,8 @@ struct MaiChatApp: App {
                         AITranscriptUITestRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--ai-history-ui-test") {
                         AIHistoryUITestRoot()
+                    } else if ProcessInfo.processInfo.arguments.contains("--ai-stream-typing-ui-test") {
+                        AIStreamTypingUITestRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--ffplay-ui-test") {
                         MaiFfplayUITestRoot()
                     } else {

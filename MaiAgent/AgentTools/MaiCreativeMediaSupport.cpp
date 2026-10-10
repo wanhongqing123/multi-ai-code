@@ -112,22 +112,6 @@ MaiCreativeHttpResult finishResponse(const ResponseBuffer& response, CURLcode tr
     return {response.bytes, std::nullopt};
 }
 
-std::string encodeBase64(const std::string& bytes) {
-    constexpr char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::string encoded;
-    encoded.reserve(((bytes.size() + 2) / 3) * 4);
-    for (std::size_t index = 0; index < bytes.size(); index += 3) {
-        const auto a = static_cast<unsigned char>(bytes[index]);
-        const auto b = index + 1 < bytes.size() ? static_cast<unsigned char>(bytes[index + 1]) : 0;
-        const auto c = index + 2 < bytes.size() ? static_cast<unsigned char>(bytes[index + 2]) : 0;
-        encoded.push_back(alphabet[a >> 2]);
-        encoded.push_back(alphabet[((a & 3) << 4) | (b >> 4)]);
-        encoded.push_back(index + 1 < bytes.size() ? alphabet[((b & 15) << 2) | (c >> 6)] : '=');
-        encoded.push_back(index + 2 < bytes.size() ? alphabet[c & 63] : '=');
-    }
-    return encoded;
-}
-
 }  // namespace
 
 MaiToolResult maiCreativeFailure(MaiErrorCode error, const char* code, const std::string& message) {
@@ -146,6 +130,22 @@ bool maiCreativeValidId(const std::string& id) {
                       (character >= 'a' && character <= 'z') || character == '-' ||
                       character == '_';
            });
+}
+
+bool maiCreativeHttpsUrl(const std::string& url) {
+    if (url.compare(0, 8, "https://") != 0) return false;
+    CURLU* parsed = curl_url();
+    if (parsed == nullptr) return false;
+    char* host = nullptr;
+    char* user = nullptr;
+    const bool valid = curl_url_set(parsed, CURLUPART_URL, url.c_str(), 0) == CURLUE_OK;
+    const bool hasHost = valid && curl_url_get(parsed, CURLUPART_HOST, &host, 0) == CURLUE_OK &&
+                         host != nullptr && *host != '\0';
+    const bool hasUser = valid && curl_url_get(parsed, CURLUPART_USER, &user, 0) == CURLUE_OK;
+    if (host != nullptr) curl_free(host);
+    if (user != nullptr) curl_free(user);
+    curl_url_cleanup(parsed);
+    return hasHost && !hasUser;
 }
 
 MaiCreativeHttpResult maiCreativeRequestJson(const std::string& url, const std::string& key,
@@ -222,31 +222,6 @@ MaiCreativeHttpResult maiCreativeUploadFile(const std::string& url, const std::s
     curl_mime_free(mime);
     curl_easy_cleanup(curl);
     return finishResponse(response, transfer, status, context);
-}
-
-std::optional<MaiToolResult> maiCreativeReadImage(const std::string& candidate,
-                                                  const MaiToolContext& context, bool dataUrl,
-                                                  std::string& encoded) {
-    const std::string path = context.resolvePath(candidate);
-    if (path.empty()) return maiCreativeInvalid("image_path is not accessible");
-    std::uint64_t size = 0;
-    if (!MaiFileSystem::fileSize(MaiFilePath::fromUtf8(path), size) || size == 0 ||
-        size > 5'000'000)
-        return maiCreativeInvalid("image_path must contain 1 to 5000000 bytes");
-    std::string bytes;
-    bool truncated = false;
-    if (MaiFileSystem::readFile(MaiFilePath::fromUtf8(path), bytes, 5'000'001, &truncated) ||
-        truncated)
-        return maiCreativeInvalid("image_path could not be read within 5 MB");
-    const bool png = bytes.size() >= 8 && bytes.compare(0, 8, "\x89PNG\r\n\x1a\n", 8) == 0;
-    const bool jpeg = bytes.size() >= 3 && static_cast<unsigned char>(bytes[0]) == 0xff &&
-                      static_cast<unsigned char>(bytes[1]) == 0xd8 &&
-                      static_cast<unsigned char>(bytes[2]) == 0xff;
-    if (!png && !jpeg) return maiCreativeInvalid("image_path must be PNG or JPEG");
-    encoded = (dataUrl ? std::string("data:") + (png ? "image/png" : "image/jpeg") + ";base64,"
-                       : std::string{}) +
-              encodeBase64(bytes);
-    return std::nullopt;
 }
 
 MaiToolResult maiCreativeDownloadMedia(const std::string& url, bool video,

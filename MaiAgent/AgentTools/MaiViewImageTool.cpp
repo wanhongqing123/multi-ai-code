@@ -40,6 +40,7 @@ public:
     }
 
     std::string description() const override {
+        // 查看现有图片并生成有界预览供模型理解；用户消息附件已有视觉输入时无需重复调用。
         return "View an existing PNG, JPEG, WebP, or GIF file accessible to this host. "
                "MaiChat prepares a bounded JPEG preview for model analysis. "
                "Images attached by the user are already in the current prompt; inspect them "
@@ -47,6 +48,7 @@ public:
     }
 
     std::string parametersSchema() const override {
+        // path 是宿主可访问的现有图片；工具只返回预览，不负责保存或编辑。
         return R"({"type":"object","properties":{)"
                R"("path":{"type":"string","description":"Absolute or relative image path"}},)"
                R"("required":["path"],"additionalProperties":false})";

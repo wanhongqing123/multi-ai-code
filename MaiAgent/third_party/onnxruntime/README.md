@@ -1,28 +1,52 @@
-# ONNX Runtime C API
+<p align="center"><img width="50%" src="docs/images/ONNX_Runtime_logo_dark.png" /></p>
 
-`include/onnxruntime_c_api.h` comes from ONNX Runtime `v1.26.0`:
+**ONNX Runtime is a cross-platform inference and training machine-learning accelerator**.
 
-<https://github.com/microsoft/onnxruntime/blob/v1.26.0/include/onnxruntime/core/session/onnxruntime_c_api.h>
+**ONNX Runtime inference** can enable faster customer experiences and lower costs, supporting models from deep learning frameworks such as PyTorch and TensorFlow/Keras as well as classical machine learning libraries such as scikit-learn, LightGBM, XGBoost, etc. ONNX Runtime is compatible with different hardware, drivers, and operating systems, and provides optimal performance by leveraging hardware accelerators where applicable alongside graph optimizations and transforms. [Learn more &rarr;](https://www.onnxruntime.ai/docs/#onnx-runtime-for-inferencing)
 
-It is licensed under MIT (`LICENSE`). The header is used by MaiAgent's shared
-video-matting implementation. The application must bundle a matching ONNX Runtime
-library for each target platform; a host-installed Python package is never used
-by a shipped app.
+**ONNX Runtime training** can accelerate the model training time on multi-node NVIDIA GPUs for transformer models with a one-line addition for existing PyTorch training scripts. [Learn more &rarr;](https://www.onnxruntime.ai/docs/#onnx-runtime-for-training)
 
-The macOS arm64 dylib is from the official
-[`onnxruntime-osx-arm64-1.26.0.tgz`](https://github.com/microsoft/onnxruntime/releases/download/v1.26.0/onnxruntime-osx-arm64-1.26.0.tgz)
-release. Its SHA-256 is
-`30afadcfc3c704f7671f8430d6252956651c1972373901d2be629da2e6a4d8ee`.
-The accompanying `ThirdPartyNotices.txt` is included here.
+## Get Started & Resources
 
-The Windows x64 CPU runtime is extracted from the official
-[`onnxruntime-win-x64-1.26.0.zip`](https://github.com/microsoft/onnxruntime/releases/download/v1.26.0/onnxruntime-win-x64-1.26.0.zip)
-release (archive SHA-256
-`6ebe99b5564bf4d029b6e93eac9ff423682b6212eade769e9ca3f685eaf500b4`).
-Only `onnxruntime.dll` and its `onnxruntime_providers_shared.dll` companion are
-vendored in `windows-x64/`; the debug PDBs and import libraries are not needed
-because MaiAgent loads the C API dynamically. Their respective SHA-256 values
-are `b2ba7ca16e0e4fe71ad5148744ab885a2f5809e52a0c3de4d9ba3853a03977f9`
-and `679ca9a81354d15e150f885a3ce1b52e08e05d2f7e8d8cb5fab32be1f1f9eecb`.
-The app bundle includes the MIT license and third-party notices beside the RVM
-model license.
+* **General Information**: [onnxruntime.ai](https://onnxruntime.ai)
+
+* **Usage documentation and tutorials**: [onnxruntime.ai/docs](https://onnxruntime.ai/docs)
+
+* **YouTube video tutorials**: [youtube.com/@ONNXRuntime](https://www.youtube.com/@ONNXRuntime)
+
+* [**Upcoming Release Roadmap**](https://onnxruntime.ai/roadmap)
+
+* **Companion sample repositories**:
+  - ONNX Runtime Inferencing: [microsoft/onnxruntime-inference-examples](https://github.com/microsoft/onnxruntime-inference-examples)
+  - ONNX Runtime Training: [microsoft/onnxruntime-training-examples](https://github.com/microsoft/onnxruntime-training-examples)
+
+* **Plugin EP repositories**:
+  - ONNX Runtime QNN Plugin EP: [onnxruntime/onnxruntime-qnn](https://github.com/onnxruntime/onnxruntime-qnn)
+
+## Releases
+
+The current release and past releases can be found here: https://github.com/microsoft/onnxruntime/releases.
+
+For details on the upcoming release, including release dates, announcements, features, and guidance on submitting feature requests, please visit the release roadmap: https://onnxruntime.ai/roadmap.
+
+## Data/Telemetry
+
+Windows distributions of this project may collect usage data and send it to Microsoft to help improve our products and services. See the [privacy statement](docs/Privacy.md) for more details.
+
+## Contributions and Feedback
+
+We welcome contributions! Please see the [contribution guidelines](CONTRIBUTING.md).
+
+For feature requests or bug reports, please file a [GitHub Issue](https://github.com/Microsoft/onnxruntime/issues).
+
+For general discussion or questions, please use [GitHub Discussions](https://github.com/microsoft/onnxruntime/discussions).
+
+## Code of Conduct
+
+This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
+For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/)
+or contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).

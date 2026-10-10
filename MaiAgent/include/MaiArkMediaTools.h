@@ -4,28 +4,27 @@
 #include <memory>
 #include <string>
 
+#include "MaiCreativeMediaSupport.h"
 #include "MaiTool.h"
 
-// Supplies the Ark API key at execution time. Hosts retain ownership of the secret and may
-// replace or revoke it without rebuilding the Agent. The callback must be safe to call from a
-// tool worker; an empty value leaves discovery available but disables task submission.
+// 每次执行时从宿主获取方舟 API Key；密钥仍由宿主保管，可随时轮换或撤销。
+// 回调在工具工作线程上调用，必须保证线程安全。返回空值时仍可查询能力，但不能提交任务。
 using MaiArkApiKeyProvider = std::function<std::string()>;
 
-// Uploads one validated local video through a host-owned storage service and returns an HTTPS
-// URL that Ark can fetch. The host owns credentials and transfer policy; this callback may block
-// and must honor context cancellation where possible. No storage credentials enter tool arguments.
-using MaiArkVideoUploadProvider = std::function<MaiResult<std::string>(
-    const std::string& localPath, const MaiToolContext& context)>;
+// 将已经校验的本地视频上传到宿主管理的存储，返回方舟可读取的 HTTPS 地址。
+// 宿主负责密钥和传输策略；回调可能阻塞，须尽量响应 context 取消。
+// 存储密钥不得放进模型可见的工具参数。
+using MaiArkVideoUploadProvider = MaiCreativeMediaUploadProvider;
 
-// Shared Seedance video tool. It owns task submission, status polling, and workspace downloads.
-// Local video upload is available only when a host supplies a secure upload route. Calls may
-// block on network I/O and honor MaiToolContext cancellation; no UI thread may execute them.
+// 跨平台 Seedance 视频工具：提交任务、轮询状态并将成片下载到工作区。
+// 只有宿主提供安全上传通道时才接受本地视频。网络调用可能阻塞，不能在 UI 线程执行；
+// 取消请求通过 MaiToolContext 传入。
 std::unique_ptr<MaiTool> makeMaiSeedanceVideoTool(MaiArkApiKeyProvider apiKey,
                                                   std::string caBundlePath = {},
-                                                  MaiArkVideoUploadProvider uploadVideo = {});
+                                                  MaiCreativeMediaUploadProvider uploadMedia = {});
 
-// Shared Seedream image tool. It reads one accessible image, sends it to Ark, and creates a new
-// PNG below the Agent workspace. The source is never modified. The same threading, cancellation,
-// and key lifetime contract as makeMaiSeedanceVideoTool applies.
+// 跨平台 Seedream 图像工具：读取可访问的输入图，调用方舟，在工作区创建新的 PNG。
+// 原图不修改；线程、取消和密钥生命周期与 Seedance 视频工具相同。
 std::unique_ptr<MaiTool> makeMaiSeedreamImageTool(MaiArkApiKeyProvider apiKey,
-                                                  std::string caBundlePath = {});
+                                                  std::string caBundlePath = {},
+                                                  MaiCreativeMediaUploadProvider uploadMedia = {});

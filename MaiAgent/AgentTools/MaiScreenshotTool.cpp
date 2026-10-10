@@ -21,6 +21,7 @@ public:
     }
 
     std::string description() const override {
+        // 屏幕或窗口截图必须通过可见区域和授权边界，返回图像供后续检查。
         return "Capture a display or a visible top-level window and inspect the returned image. "
                "Use mode=display for the display containing the mouse pointer. Use mode=window "
                "with windowTitle when the user names a specific window; call list_windows first "
@@ -28,6 +29,7 @@ public:
     }
 
     std::string parametersSchema() const override {
+        // mode=display 截光标所在屏幕；mode=window 需要可见窗口标题 windowTitle。
         return R"({"type":"object","properties":{)"
                R"("mode":{"type":"string","enum":["display","window"],"default":"display"},)"
                R"("windowTitle":{"type":"string","description":"Visible window title; required for window mode"}},)"

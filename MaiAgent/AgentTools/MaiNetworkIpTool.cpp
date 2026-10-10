@@ -49,11 +49,13 @@ public:
         return "network_ip";
     }
     std::string description() const override {
+        // 本机接口地址不需要联网；公网出口地址来自外部查询，可能是运营商 NAT 的地址。
         return "Get local IPv4/IPv6 interface addresses without network access, or query the "
                "public address observed by api64.ipify.org over HTTPS. Public IP may be a "
                "carrier NAT, VPN or proxy exit address, not an address assigned to the device.";
     }
     std::string parametersSchema() const override {
+        // scope=local 查网卡地址，public 查网络出口，all 两者都查；默认为工具自己的安全值。
         return R"({"type":"object","properties":{"scope":{"type":"string","enum":["local","public","all"]}},"required":[],"additionalProperties":false})";
     }
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {

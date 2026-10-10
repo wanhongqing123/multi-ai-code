@@ -24,6 +24,8 @@ public:
     }
 
     std::string description() const override {
+        // 场景切分看镜头变化，运动检测看帧差；两者只返回时间片段，
+        // 不理解剧情，也不识别人脸或人物身份，源视频保持不变。
         if (mKind == MaiCvVideoAnalysisKind::Scene)
             return "Stream-decode a local video and detect visual shot changes with OpenCV. "
                    "Return ordered start/end time segments in seconds. This is visual change "
@@ -35,6 +37,8 @@ public:
     }
 
     std::string parametersSchema() const override {
+        // 两种分析共用本地视频 path；采样间隔和阈值控制速度/灵敏度，
+        // max_segments 限制输出大小，不能把结果当成语义识别。
         if (mKind == MaiCvVideoAnalysisKind::Scene)
             return R"({"type":"object","properties":{"path":{"type":"string"},"sample_interval_s":{"type":"number","minimum":0.1,"maximum":5},"threshold":{"type":"number","exclusiveMinimum":0,"exclusiveMaximum":1},"min_scene_s":{"type":"number","minimum":0,"maximum":30},"max_segments":{"type":"integer","minimum":1,"maximum":2000}},"required":["path"],"additionalProperties":false})";
         return R"({"type":"object","properties":{"path":{"type":"string"},"sample_interval_s":{"type":"number","minimum":0.1,"maximum":5},"motion_ratio_threshold":{"type":"number","exclusiveMinimum":0,"exclusiveMaximum":1},"pixel_threshold":{"type":"integer","minimum":1,"maximum":255},"min_motion_s":{"type":"number","minimum":0,"maximum":30},"max_segments":{"type":"integer","minimum":1,"maximum":2000}},"required":["path"],"additionalProperties":false})";

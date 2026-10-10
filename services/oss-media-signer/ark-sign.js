@@ -52,7 +52,29 @@ async function callArk(action, payload, credentials, fetcher = fetch) {
   });
   const raw = await response.text();
   if (Buffer.byteLength(raw) > 1_000_000) throw new Error('Ark response is too large');
-  return JSON.parse(raw);
+  let parsed;
+  let parsedValid = true;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    parsedValid = false;
+    parsed = {};
+  }
+  if (response.ok === false || !parsedValid || !parsed || typeof parsed !== 'object' ||
+      Array.isArray(parsed) || raw.length === 0) {
+    const metadata = parsed?.ResponseMetadata || {};
+    const header = name => response.headers?.get?.(name) || '';
+    const error = new Error('Ark HTTP request failed');
+    error.response = { status: response.status || 0, data: { ResponseMetadata: {
+      RequestId: metadata.RequestId || header('x-request-id'),
+      Error: {
+        Code: metadata.Error?.Code || header('x-error-code'),
+        Message: metadata.Error?.Message || 'Ark returned an invalid response'
+      }
+    } } };
+    throw error;
+  }
+  return parsed;
 }
 
 exports.callArk = callArk;

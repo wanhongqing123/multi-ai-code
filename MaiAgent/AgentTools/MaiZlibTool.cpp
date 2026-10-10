@@ -45,6 +45,7 @@ public:
         return mCompress ? "zlib_compress" : "zlib_decompress";
     }
     std::string description() const override {
+        // 压缩与解压均创建工作区新文件，不修改输入；分别限制输入 16 MB、输出 64 MB。
         return mCompress
                    ? "Compress a workspace file to a new gzip, zlib, or raw deflate file. "
                      "The source is unchanged; input limit 16 MB."
@@ -53,6 +54,8 @@ public:
                      "the source is unchanged.";
     }
     std::string parametersSchema() const override {
+        // input_path 为现有文件，output_path 为新文件；format 可显式选
+        // gzip/zlib/deflate，解压时 auto 仅自动识别 gzip 或 zlib。
         return R"({"type":"object","properties":{"input_path":{"type":"string"},"output_path":{"type":"string"},"format":{"type":"string","enum":["gzip","zlib","deflate","auto"]}},"required":["input_path"],"additionalProperties":false})";
     }
     bool requiresApproval(const std::string&) const override {

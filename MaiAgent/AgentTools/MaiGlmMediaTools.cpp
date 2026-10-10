@@ -53,6 +53,48 @@ bool validId(const std::string& id) {
            });
 }
 
+std::string describeGlmVideoSchema(const std::string& raw) {
+    Json schema = Json::parse(raw);
+    Json& fields = schema["properties"];
+    // 以下英文会随 JSON Schema 直接交给主模型；中文解释每个关键参数的实际含义。
+    // 视频和图片工具共用类，但绝不能把图片工具的参数拿来构造视频请求。
+    // action：discover 查询；delegate 付费提交；continue 查旧任务；
+    // delete 仅删除已交付本地索引，不向 GLM 发云端删除请求。
+    fields["action"]["description"] =
+        "discover lists actual tool capabilities; delegate is paid; continue checks the "
+        "existing task; delete removes only a delivered local record";
+    // message 是视频动作说明，context 只放必要背景，不传完整聊天历史或媒体字节。
+    fields["message"]["description"] = "Video scene and motion instruction";
+    fields["context"]["description"] =
+        "Only task-relevant background; do not place media bytes or full chat history here";
+    // image_path 只是一张严格首帧，本地 JPG/PNG 不超过 5 MB，先上传私有 OSS。
+    fields["image_path"]["description"] =
+        "Optional single local JPG/PNG first frame, at most 5 MB, uploaded to private OSS";
+    // last_frame_path 必须配合 image_path 才是严格首尾帧；
+    // 这不等于模型支持任意张图片共同参考。
+    fields["last_frame_path"]["description"] =
+        "Optional local strict last frame; requires image_path. Arbitrary multi-image "
+        "references are unsupported";
+    // duration 只可选 5/10 秒；size 必须从枚举里选，不能自行拼一个分辨率。
+    fields["duration"]["description"] = "Output duration is exactly 5 or 10 seconds";
+    fields["size"]["description"] =
+        "Choose one schema-listed output size; unsupported sizes fail before paid submission";
+    // fps 为 30/60；quality 是 speed/quality 档；with_audio 是声音开关。
+    fields["fps"]["description"] = "Output frames per second: 30 or 60";
+    fields["quality"]["description"] = "Generation quality mode: speed or quality";
+    fields["with_audio"]["description"] = "Whether generated video includes audio";
+    // conversation_id 只引用本会话的旧 spt_ 任务；poll_once 仅做单次排障查询。
+    // 正常任务完成由 App 后台自动跟进并交付。
+    fields["conversation_id"]["description"] =
+        "Saved spt_ task ID for continue or local-record delete in this AI conversation";
+    // parent_task_id 只建立本地修订链关系，不会自动沿用上次图片或视频素材。
+    fields["parent_task_id"]["description"] =
+        "Optional prior local task ID for revision lineage; inputs are not reused automatically";
+    fields["poll_once"]["description"] =
+        "Query status once; the App normally polls and delivers the result automatically";
+    return schema.dump();
+}
+
 bool httpsUrl(const std::string& url) {
     if (url.compare(0, 8, "https://") != 0) return false;
     CURLU* parsed = curl_url();
@@ -164,45 +206,6 @@ HttpResult requestJson(const std::string& url, const std::string& key, const std
     return {std::move(data), std::nullopt};
 }
 
-std::string encodeBase64(const std::string& bytes) {
-    constexpr char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::string encoded;
-    encoded.reserve(((bytes.size() + 2) / 3) * 4);
-    for (std::size_t index = 0; index < bytes.size(); index += 3) {
-        const auto a = static_cast<unsigned char>(bytes[index]);
-        const auto b = index + 1 < bytes.size() ? static_cast<unsigned char>(bytes[index + 1]) : 0;
-        const auto c = index + 2 < bytes.size() ? static_cast<unsigned char>(bytes[index + 2]) : 0;
-        encoded.push_back(alphabet[a >> 2]);
-        encoded.push_back(alphabet[((a & 3) << 4) | (b >> 4)]);
-        encoded.push_back(index + 1 < bytes.size() ? alphabet[((b & 15) << 2) | (c >> 6)] : '=');
-        encoded.push_back(index + 2 < bytes.size() ? alphabet[c & 63] : '=');
-    }
-    return encoded;
-}
-
-std::optional<MaiToolResult> imageData(const std::string& candidate, const MaiToolContext& context,
-                                       std::string& encoded) {
-    const std::string path = context.resolvePath(candidate);
-    if (path.empty()) return invalid("image_path is not accessible");
-    std::uint64_t size = 0;
-    if (!MaiFileSystem::fileSize(MaiFilePath::fromUtf8(path), size) || size == 0 ||
-        size > 5'000'000)
-        return invalid("image_path must contain 1 to 5000000 bytes");
-    std::string bytes;
-    bool truncated = false;
-    const MaiError error =
-        MaiFileSystem::readFile(MaiFilePath::fromUtf8(path), bytes, 5'000'001, &truncated);
-    if (error || truncated) return invalid("image_path could not be read within 5 MB");
-    const bool png = bytes.size() >= 8 && bytes.compare(0, 8, "\x89PNG\r\n\x1a\n", 8) == 0;
-    const bool jpeg = bytes.size() >= 3 && static_cast<unsigned char>(bytes[0]) == 0xff &&
-                      static_cast<unsigned char>(bytes[1]) == 0xd8 &&
-                      static_cast<unsigned char>(bytes[2]) == 0xff;
-    if (!png && !jpeg) return invalid("image_path must contain PNG or JPEG image bytes");
-    encoded = std::string("data:") + (png ? "image/png" : "image/jpeg") + ";base64," +
-              encodeBase64(bytes);
-    return std::nullopt;
-}
-
 bool validImageSize(const std::string& size) {
     const std::size_t x = size.find('x');
     if (x == std::string::npos || size.find('x', x + 1) != std::string::npos) return false;
@@ -275,61 +278,101 @@ MaiToolResult downloadMedia(const std::string& url, const std::string& relative,
 
 class MaiGlmMediaTool final : public MaiTool {
 public:
-    MaiGlmMediaTool(bool video, MaiGlmApiKeyProvider key, std::string caBundle)
-        : mVideo(video), mKey(std::move(key)), mCaBundle(std::move(caBundle)) {}
+    MaiGlmMediaTool(bool video, MaiGlmApiKeyProvider key, std::string caBundle,
+                    MaiCreativeMediaUploadProvider uploadMedia = {})
+        : mVideo(video),
+          mKey(std::move(key)),
+          mCaBundle(std::move(caBundle)),
+          mUploadMedia(std::move(uploadMedia)) {}
 
     std::string name() const override {
         return mVideo ? "glm_video" : "glm_image";
     }
     std::string description() const override {
+        // 视频分支英文描述的对应含义：CogVideoX-3 只接文生视频、单首帧或严格
+        // 首尾帧，输出时长为 5/10 秒。图片先经私有 OSS，帧率可选 30/60，
+        // 画质可选 speed/quality，可决定是否生成声音；实际尺寸只能取 schema 列表。
+        // discover 用于选模型前查真实能力；delegate 才付费，continue 仅查询。
+        // 不支持已有视频编辑或任意多图参考；delete 只删除已交付的本地任务记录，
+        // 没有已核实的云端取消接口。GLM Coding Plan Key 不代表视频权益已开通。
+        // 图片分支是付费文生图，不提供已有图片编辑；动作和结果交接规则相同。
         return mVideo
-                   ? "GLM CogVideoX-3 specialist for paid 5 or 10 second text-to-video and "
-                     "image-to-video. "
-                     "When image_path is present, describe how the existing subject moves. "
-                     "For face fidelity, choose quality=quality and a 1080P-or-higher size; "
-                     "quality=speed and 720P are lower-quality previews. Quality defaults to "
-                     "quality. Use action=discover to "
-                     "inspect capabilities, delegate to submit after "
-                     "confirmation, continue to check a task. Existing-video editing is not "
-                     "supported. Completion is reported to the main Agent automatically."
+                   ? "GLM CogVideoX-3 video specialist. Call discover before choosing it. "
+                     "This tool creates 5 or 10 second video from text, one first-frame "
+                     "image_path, or exactly two ordered first/last frames. Local JPG/PNG inputs "
+                     "go through private OSS. Choose one supported size, 30/60 fps, "
+                     "quality=speed/quality, and optional with_audio. It does not accept a "
+                     "source video, arbitrary multi-image references, or video editing. "
+                     "Delegate creates a paid task; continue checks it; delete removes only "
+                     "a delivered local record. No verified cloud cancel API is wired. "
+                     "Do not claim the GLM Coding Plan Key includes video model entitlement."
                    : "GLM-Image specialist for paid text-to-image. Use action=discover to inspect "
                      "capabilities, delegate to submit after confirmation, continue to check a "
                      "task. Existing-image editing is not supported. Completion is reported to "
                      "the main Agent automatically.";
     }
     std::string parametersSchema() const override {
+        // 视频和图片共用工具类，但两套参数不同：视频时长只能是 5 或 10 秒。
+        // image_path 是首帧；last_frame_path 只有与首帧同时提供才构成首尾帧任务。
+        // quality、fps、size、with_audio 是供应商参数，提交前仍要做组合校验。
         return mVideo
-                   ? R"({"type":"object","properties":{"action":{"type":"string","enum":["discover","delegate","continue"]},"message":{"type":"string"},"context":{"type":"string"},"image_path":{"type":"string"},"last_frame_path":{"type":"string"},"duration":{"type":"integer","enum":[5,10]},"size":{"type":"string","enum":["1280x720","720x1280","1024x1024","1920x1080","1080x1920","2048x1080","3840x2160"]},"fps":{"type":"integer","enum":[30,60]},"quality":{"type":"string","enum":["speed","quality"]},"with_audio":{"type":"boolean"},"conversation_id":{"type":"string"},"parent_task_id":{"type":"string"},"poll_once":{"type":"boolean"}},"required":["action"]})"
+                   ? describeGlmVideoSchema(
+                         R"({"type":"object","properties":{"action":{"type":"string","enum":["discover","delegate","continue","delete"]},"message":{"type":"string"},"context":{"type":"string"},"image_path":{"type":"string"},"last_frame_path":{"type":"string"},"duration":{"type":"integer","enum":[5,10]},"size":{"type":"string","enum":["1280x720","720x1280","1024x1024","1920x1080","1080x1920","2048x1080","3840x2160"]},"fps":{"type":"integer","enum":[30,60]},"quality":{"type":"string","enum":["speed","quality"]},"with_audio":{"type":"boolean"},"conversation_id":{"type":"string"},"parent_task_id":{"type":"string"},"poll_once":{"type":"boolean"}},"required":["action"]})")
                    : R"({"type":"object","properties":{"action":{"type":"string","enum":["discover","delegate","continue"]},"message":{"type":"string"},"context":{"type":"string"},"size":{"type":"string"},"conversation_id":{"type":"string"},"parent_task_id":{"type":"string"},"poll_once":{"type":"boolean"}},"required":["action"]})";
     }
     std::optional<MaiSpecialistInfo> specialistInfo() const override {
         const bool configured = mKey && !mKey().empty();
         const auto ready = configured ? MaiSpecialistCapabilityStatus::ImplementedUnverified
                                       : MaiSpecialistCapabilityStatus::NotConfigured;
+        const auto mediaReady = !configured ? MaiSpecialistCapabilityStatus::NotConfigured
+                                : mUploadMedia
+                                    ? MaiSpecialistCapabilityStatus::ImplementedUnverified
+                                    : MaiSpecialistCapabilityStatus::UploadNotConfigured;
         MaiSpecialistInfo info;
         info.toolName = name();
         info.modelId = mVideo ? kVideoModel : kImageModel;
         info.configured = configured;
+        // text_to_video：视频只生成 5 或 10 秒；text_to_image：图片由文本生成。
+        // 两条能力都还需用当前账号做实盘权益验证，配置 Key 不代表已验证。
         info.capabilities.push_back(
             {mVideo ? "text_to_video" : "text_to_image", true, true, ready,
-             mVideo ? "Output duration is 5 or 10 seconds; provider entitlement must be checked "
-                      "with a live call"
+             mVideo ? "CogVideoX-3 generates exactly 5 or 10 seconds, with 30 or 60 fps, "
+                      "quality=speed/quality, optional with_audio, and only schema-listed "
+                      "sizes. Video entitlement still needs a live call"
                     : "Provider entitlement must be checked with a live call"});
         if (mVideo) {
+            // image_to_video：输入 PNG/JPEG，每张最多 5 MB。
             info.capabilities.push_back(
-                {"image_to_video", true, true, ready, "PNG or JPEG input, maximum 5 MB per image"});
+                {"image_to_video", true, true, mediaReady,
+                 "Exactly one JPG/PNG first-frame image_path via private OSS, maximum 5 MB; "
+                 "the prompt should describe motion of the depicted subject"});
+            // first_last_frame_video：image_url 仅接顺序确定的两张图，先首帧再尾帧。
             info.capabilities.push_back(
-                {"first_last_frame_video", true, true, ready,
-                 "image_url accepts exactly two ordered images: first frame, then last frame"});
+                {"first_last_frame_video", true, true, mediaReady,
+                 "Exactly two ordered JPG/PNG inputs: image_path first and last_frame_path "
+                 "second. This is strict frame control, not arbitrary multi-image reference"});
+            // multi_reference_video：视频 API 没开放任意多图参考；只有单首帧或严格两帧。
             info.capabilities.push_back(
                 {"multi_reference_video", false, false,
                  MaiSpecialistCapabilityStatus::NotImplemented,
                  "CogVideoX-3 video API accepts one first frame or exactly two first/last frames; "
                  "arbitrary multi-image reference is not exposed"});
+            // existing_video_edit：生成 API 没有源视频输入，因此不能编辑已有视频。
             info.capabilities.push_back({"existing_video_edit", false, false,
                                          MaiSpecialistCapabilityStatus::NotImplemented,
                                          "CogVideoX-3 generation API has no source-video input"});
+            // 当前没有经过供应商验证的取消接口，删除仅整理本地已交付记录。
+            info.capabilities.push_back({"cloud_task_cancel", false, false,
+                                         MaiSpecialistCapabilityStatus::NotImplemented,
+                                         "No verified provider cancellation API is wired"});
+            // 本地删除只适用于已交付的本会话记录，保留云端结果和下载的视频。
+            info.capabilities.push_back(
+                {"local_record_delete", false, false,
+                 MaiSpecialistCapabilityStatus::ImplementedUnverified,
+                 "delete requires a delivered task in this AI conversation; cloud output "
+                 "and downloaded video remain"});
         } else {
+            // existing_image_edit：GLM-Image 的这条异步生成 API 只接受文本。
             info.capabilities.push_back({"existing_image_edit", false, false,
                                          MaiSpecialistCapabilityStatus::NotImplemented,
                                          "GLM-Image async generation API is text-only"});
@@ -346,6 +389,8 @@ public:
     }
     MaiToolResult execute(const std::string& argumentsJson,
                           const MaiToolContext& context) override {
+        // 执行顺序：解析参数与输入图 → 检查型号规格 → 付费提交 → 保存任务 ID。
+        // continue 仅查询原任务；失败时保留上游错误，不把首查异常当成生成失败。
         const Json args = Json::parse(argumentsJson, nullptr, false);
         if (!args.is_object()) return invalid("arguments must be a JSON object");
         for (const char* field : {"action", "message", "context", "image_path", "last_frame_path",
@@ -372,6 +417,8 @@ public:
             for (const MaiSpecialistCapability& capability : info.capabilities)
                 capabilities.push_back(
                     {{"id", capability.id},
+                     {"model_support", capability.modelSupported},
+                     {"api_support", capability.apiSupported},
                      {"tool_status", maiSpecialistCapabilityStatusToString(capability.status)},
                      {"limitation", capability.limitation}});
             return MaiToolResult::success(Json{{"tool_kind", "model_backed"},
@@ -381,8 +428,28 @@ public:
                                                {"reply", "GLM generation capabilities listed"}}
                                               .dump());
         }
+        if (mVideo && action == "delete") {
+            // 不存在已核实的云端取消/删除接口：这里只删除已交付的本地任务索引。
+            const std::string id = value(args, "conversation_id");
+            MaiSpecialistTask task;
+            if (id.compare(0, 4, "spt_") != 0 || context.specialistTasks == nullptr ||
+                !context.specialistTasks->getSpecialistTask(id, context.sessionId, task) ||
+                task.specialistName != name())
+                return failure(MaiErrorCode::NotFound, "not_found",
+                               "GLM video task was not found in this AI conversation");
+            const MaiError removed =
+                context.specialistTasks->deleteCompletedSpecialistTask(id, context.sessionId);
+            if (removed) return failure(removed.code(), "delete_unavailable", removed.message());
+            return MaiToolResult::success(
+                Json{{"conversation_id", id},
+                     {"task_id", task.providerTaskId},
+                     {"status", "local_record_deleted"},
+                     {"provider_deleted", false},
+                     {"reply", "Local GLM task record deleted; cloud job and output remain."}}
+                    .dump());
+        }
         if (action != "delegate" && action != "continue")
-            return invalid("action must be discover, delegate, or continue");
+            return invalid("action must be discover, delegate, continue, or delete for video");
         const std::string key = mKey ? mKey() : std::string{};
         if (key.empty())
             return failure(MaiErrorCode::NotConfigured, "not_configured",
@@ -427,13 +494,42 @@ private:
                 return invalid("last_frame_path requires image_path");
             if (!imagePath.empty()) {
                 std::string first;
-                if (auto error = imageData(imagePath, context, first)) return *error;
+                const std::string path = context.resolvePath(imagePath);
+                std::uint64_t imageSize = 0;
+                if (path.empty() ||
+                    !MaiFileSystem::fileSize(MaiFilePath::fromUtf8(path), imageSize) ||
+                    imageSize == 0 || imageSize > 5'000'000)
+                    return invalid("image_path must contain 1 to 5000000 bytes");
+                if (!mUploadMedia)
+                    return failure(MaiErrorCode::NotConfigured, "upload_not_configured",
+                                   "Private OSS media upload is not configured");
+                const auto uploaded = mUploadMedia(path, context);
+                if (!uploaded)
+                    return failure(uploaded.error().code(), "upload_failed",
+                                   uploaded.error().message());
+                first = uploaded.value();
+                if (!httpsUrl(first))
+                    return failure(MaiErrorCode::Protocol, "upload_failed",
+                                   "OSS returned no HTTPS image URL");
                 inputReference = imagePath;
                 if (lastFramePath.empty()) {
                     body["image_url"] = std::move(first);
                 } else {
                     std::string last;
-                    if (auto error = imageData(lastFramePath, context, last)) return *error;
+                    const std::string lastPath = context.resolvePath(lastFramePath);
+                    std::uint64_t lastSize = 0;
+                    if (lastPath.empty() ||
+                        !MaiFileSystem::fileSize(MaiFilePath::fromUtf8(lastPath), lastSize) ||
+                        lastSize == 0 || lastSize > 5'000'000)
+                        return invalid("last_frame_path must contain 1 to 5000000 bytes");
+                    const auto uploadedLast = mUploadMedia(lastPath, context);
+                    if (!uploadedLast)
+                        return failure(uploadedLast.error().code(), "upload_failed",
+                                       uploadedLast.error().message());
+                    last = uploadedLast.value();
+                    if (!httpsUrl(last))
+                        return failure(MaiErrorCode::Protocol, "upload_failed",
+                                       "OSS returned no HTTPS image URL");
                     body["image_url"] = Json::array({std::move(first), std::move(last)});
                 }
             }
@@ -556,13 +652,15 @@ private:
     bool mVideo;
     MaiGlmApiKeyProvider mKey;
     std::string mCaBundle;
+    MaiCreativeMediaUploadProvider mUploadMedia;
 };
 
 }  // namespace
 
-std::unique_ptr<MaiTool> makeMaiGlmVideoTool(MaiGlmApiKeyProvider apiKey,
-                                             std::string caBundlePath) {
-    return std::make_unique<MaiGlmMediaTool>(true, std::move(apiKey), std::move(caBundlePath));
+std::unique_ptr<MaiTool> makeMaiGlmVideoTool(MaiGlmApiKeyProvider apiKey, std::string caBundlePath,
+                                             MaiCreativeMediaUploadProvider uploadMedia) {
+    return std::make_unique<MaiGlmMediaTool>(true, std::move(apiKey), std::move(caBundlePath),
+                                             std::move(uploadMedia));
 }
 
 std::unique_ptr<MaiTool> makeMaiGlmImageTool(MaiGlmApiKeyProvider apiKey,

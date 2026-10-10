@@ -30,6 +30,16 @@ struct AIAssistantView: View {
         self.onExit = onExit
     }
 
+    private var usesStandaloneUITestFixture: Bool {
+        #if targetEnvironment(simulator)
+        let arguments = ProcessInfo.processInfo.arguments
+        return arguments.contains("--ai-history-ui-test") ||
+            arguments.contains("--ai-stream-typing-ui-test")
+        #else
+        return false
+        #endif
+    }
+
     var body: some View {
         ZStack(alignment: .topTrailing) {
             VStack(spacing: 0) {
@@ -74,10 +84,19 @@ struct AIAssistantView: View {
                 }
                 AIComposer(
                     model: model,
+                    snapshot: AIComposerSnapshot(
+                        ready: model.ready,
+                        busy: model.busy,
+                        isSubmitting: model.isSubmitting,
+                        selected: model.selected,
+                        quotedMessage: model.quotedMessage,
+                        attachmentPanelPresented: isAttachmentPanelPresented
+                    ),
                     focusController: composerFocusController,
                     transcriptionPresentation: transcriptionPresentation,
                     isAttachmentPanelPresented: $isAttachmentPanelPresented
                 )
+                .equatable()
             }
             .background(Color(uiColor: .systemBackground))
             if showActions {
@@ -154,15 +173,12 @@ struct AIAssistantView: View {
             Button("清空消息", role: .destructive) { Task { await model.action("clear") } }
         }
         .onAppear {
-            if isActive &&
-                !ProcessInfo.processInfo.arguments.contains("--ai-history-ui-test") {
+            if isActive && !usesStandaloneUITestFixture {
                 model.appear()
             }
         }
         .onChange(of: isActive) { active in
-            guard !ProcessInfo.processInfo.arguments.contains("--ai-history-ui-test") else {
-                return
-            }
+            guard !usesStandaloneUITestFixture else { return }
             if active {
                 model.setPageActive(true)
             } else {
@@ -173,14 +189,12 @@ struct AIAssistantView: View {
             }
         }
         .onDisappear {
-            if !ProcessInfo.processInfo.arguments.contains("--ai-history-ui-test") {
+            if !usesStandaloneUITestFixture {
                 model.disappear()
             }
         }
         .onChange(of: scenePhase) { phase in
-            if ProcessInfo.processInfo.arguments.contains("--ai-history-ui-test") {
-                return
-            }
+            guard !usesStandaloneUITestFixture else { return }
             if phase == .active { model.appear() }
             else { model.disappear() }
         }
@@ -384,6 +398,7 @@ private struct AIAssistantMessageList: View {
                                                      model.quotedMessage = message
                                                      focusController.focus()
                                                  })
+                                        .equatable()
                                         .id(message.id)
                                 }
                             }
@@ -708,7 +723,7 @@ private struct AIActionPanel: View {
         }.buttonStyle(.plain)
     }
 }
-private struct AIMessageRow: View {
+private struct AIMessageRow: View, Equatable {
     let message: AIMessage
     let workspacePath: String
     let quote: () -> Void
@@ -716,6 +731,9 @@ private struct AIMessageRow: View {
     @State private var pdfPreviewError = false
     @State private var videoPreview: AIVideoPreviewItem?
     @State private var mediaSaveError: String?
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.message == rhs.message && lhs.workspacePath == rhs.workspacePath
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             if message.role == "user" {
@@ -962,14 +980,14 @@ private struct AIMessageRow: View {
         let saveRequestedAt = Date()
         let url = URL(fileURLWithPath: artifact.filePath)
         do {
-            try await PHPhotoLibrary.shared().performChanges {
-                if artifact.type == "image" {
-                    PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: url)?
-                        .creationDate = saveRequestedAt
-                } else {
-                    PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)?
-                        .creationDate = saveRequestedAt
-                }
+            guard await MaiPhotoLibraryMediaWriter.requestAddAccess() else {
+                mediaSaveError = "请允许添加作品到相册"
+                return
+            }
+            if artifact.type == "image" {
+                try await MaiPhotoLibraryMediaWriter.saveImage(at: url, createdAt: saveRequestedAt)
+            } else {
+                try await MaiPhotoLibraryMediaWriter.saveVideo(at: url, createdAt: saveRequestedAt)
             }
         } catch {
             mediaSaveError = error.localizedDescription
@@ -1403,6 +1421,13 @@ struct AIHistoryUITestRoot: View {
             .onAppear { AIAssistantModel.shared.installHistoryUITestFixture() }
     }
 }
+
+struct AIStreamTypingUITestRoot: View {
+    var body: some View {
+        AIAssistantView()
+            .onAppear { AIAssistantModel.shared.installStreamingTypingUITestFixture() }
+    }
+}
 #endif
 
 private struct AIImagePreviewOverlay: View {
@@ -1615,8 +1640,20 @@ private struct AIPickedVideoTransfer: Transferable, Sendable {
     }
 }
 
-private struct AIComposer: View {
-    @ObservedObject var model: AIAssistantModel
+private struct AIComposerSnapshot: Equatable {
+    let ready: Bool
+    let busy: Bool
+    let isSubmitting: Bool
+    let selected: String
+    let quotedMessage: AIMessage?
+    let attachmentPanelPresented: Bool
+}
+
+private struct AIComposer: View, Equatable {
+    // 流式消息每 100 毫秒可能更新一次；输入框只依赖这份轻量状态快照。
+    // 保留 model 用于用户动作，但不订阅它的每一次消息变更。
+    let model: AIAssistantModel
+    let snapshot: AIComposerSnapshot
     let focusController: AIComposerFocusController
     let transcriptionPresentation: VoiceTranscriptionPresentation
     @Binding var isAttachmentPanelPresented: Bool
@@ -1638,9 +1675,14 @@ private struct AIComposer: View {
     @State private var composerEditMenuState: ComposerEditMenuState?
     @State private var voiceBaseDraft = ""
     @State private var voiceStartTask: Task<Bool, Never>?
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.model === rhs.model && lhs.snapshot == rhs.snapshot &&
+            lhs.focusController === rhs.focusController &&
+            lhs.transcriptionPresentation === rhs.transcriptionPresentation
+    }
     var body: some View {
         VStack(spacing: 0) {
-            if let quoted = model.quotedMessage {
+            if let quoted = snapshot.quotedMessage {
                 HStack(spacing: 10) {
                     Image(systemName: "arrowshape.turn.up.left")
                         .foregroundStyle(RemoteIMStyle.blue)
@@ -1715,7 +1757,9 @@ private struct AIComposer: View {
                                     composerEditMenuState = nil
                                 }
                             },
-                            onTypingActivityChanged: { _ in },
+                            onTypingActivityChanged: { active in
+                                model.setComposerTyping(active)
+                            },
                             voiceTranscriptionEnabled: canStartVoiceTranscription,
                             onVoiceLongPressChanged: { translation, location in
                                 handleVoiceGestureChanged(
@@ -1752,8 +1796,8 @@ private struct AIComposer: View {
                     .background(Color.white, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(model.ready ? RemoteIMStyle.blue : RemoteIMStyle.border,
-                                    lineWidth: model.ready ? 1.5 : 1)
+                            .stroke(snapshot.ready ? RemoteIMStyle.blue : RemoteIMStyle.border,
+                                    lineWidth: snapshot.ready ? 1.5 : 1)
                     )
                     .overlay(alignment: .topLeading) {
                         if let state = composerEditMenuState {
@@ -1772,7 +1816,7 @@ private struct AIComposer: View {
 
                 Button {
                     composerEditMenuState = nil
-                    if model.busy {
+                    if snapshot.busy {
                         Task { await model.action("stop") }
                     } else if isAttachmentPanelPresented {
                         isAttachmentPanelPresented = false
@@ -1781,17 +1825,17 @@ private struct AIComposer: View {
                         isAttachmentPanelPresented = true
                     }
                 } label: {
-                    Image(systemName: model.busy ? "stop.fill" : "plus")
-                        .font(.system(size: model.busy ? 16 : 20, weight: .semibold))
-                        .foregroundStyle(model.busy ? Color.white : RemoteIMStyle.textPrimary)
+                    Image(systemName: snapshot.busy ? "stop.fill" : "plus")
+                        .font(.system(size: snapshot.busy ? 16 : 20, weight: .semibold))
+                        .foregroundStyle(snapshot.busy ? Color.white : RemoteIMStyle.textPrimary)
                         .frame(width: 44, height: 44)
-                        .background(model.busy ? Color.primary : Color.white, in: Circle())
-                        .overlay(Circle().stroke(RemoteIMStyle.border, lineWidth: model.busy ? 0 : 1))
+                        .background(snapshot.busy ? Color.primary : Color.white, in: Circle())
+                        .overlay(Circle().stroke(RemoteIMStyle.border, lineWidth: snapshot.busy ? 0 : 1))
                 }
                 .buttonStyle(.plain)
-                .disabled(!model.ready || model.isSubmitting)
+                .disabled(!snapshot.ready || snapshot.isSubmitting)
                 .accessibilityLabel(
-                    model.busy ? "停止" : (isAttachmentPanelPresented ? "收起更多功能" : "展开更多功能")
+                    snapshot.busy ? "停止" : (isAttachmentPanelPresented ? "收起更多功能" : "展开更多功能")
                 )
             }
             .padding(.horizontal, 16)
@@ -1872,7 +1916,7 @@ private struct AIComposer: View {
                 Task { await importSelectedMedia(items) }
             }
             .onAppear {
-                draftSession = model.selected
+                draftSession = snapshot.selected
                 draft = model.drafts[draftSession] ?? ""
                 transcriptionPresentation.onCancel = {
                     cancelVoiceTranscription(restoresDraft: true)
@@ -1904,10 +1948,10 @@ private struct AIComposer: View {
                 composerEditMenuState = nil
                 selectedMediaItems = []
             }
-            .onChange(of: model.selected) { selected in
+            .onChange(of: snapshot.selected) { selected in
                 cancelVoiceTranscription(restoresDraft: true)
                 model.drafts[draftSession] = draft
-                let sendingFirstMessage = model.isSubmitting && draftSession.isEmpty
+                let sendingFirstMessage = snapshot.isSubmitting && draftSession.isEmpty
                 draftSession = selected
                 if !sendingFirstMessage { draft = model.drafts[selected] ?? "" }
             }
@@ -2100,7 +2144,7 @@ private struct AIComposer: View {
 
     private var canStartVoiceTranscription: Bool {
         isPressingVoice || (
-            model.ready && !model.busy && !model.isSubmitting && draft.isEmpty
+            snapshot.ready && !snapshot.busy && !snapshot.isSubmitting && draft.isEmpty
         )
     }
 
@@ -2311,6 +2355,8 @@ private struct AITranscriptionButton: View {
 }
 
 private struct AIPermissionCard: View {
+    // 付费生成、普通工具授权和真人 H5 验证使用同一闸门，但展示不同的后果。
+    // 付费生成每次都确认；H5 链接也只允许本次生成，不提供整会话放行。
     let permission: AIPermission
     @ObservedObject var model: AIAssistantModel
     @State private var showsRawInput = false
@@ -2321,19 +2367,32 @@ private struct AIPermissionCard: View {
         return fields
     }
     private var isSendText: Bool { permission.tool == "maichat_send_text" }
-    private var isPaidGeneration: Bool {
-        ["wan_video", "wan_video_edit", "seedance_video", "seedream_image", "qwen_image",
-         "glm_video", "glm_image", "kling_video", "kling_image", "minimax_video", "minimax_image"]
-            .contains(permission.tool)
+    private var isRealValidationLink: Bool {
+        permission.tool == "ark_assets" && (fields["action"] as? String) == "begin_real_validation"
     }
+    private var isPaidGeneration: Bool {
+        ["wan_video", "wan_image", "seedance_video", "seedream_image",
+         "glm_video", "glm_image", "kling_bailian_video", "kling_bailian_image",
+         "minimax_video", "minimax_image"]
+            .contains(permission.tool) && !isVideoTaskManagement
+    }
+    private var isVideoTaskManagement: Bool {
+        let action = (fields["action"] as? String) ?? ""
+        return action == "delete" &&
+            ["wan_video", "seedance_video", "kling_bailian_video", "glm_video",
+             "minimax_video"].contains(permission.tool) ||
+            action == "cancel" &&
+            ["wan_video", "seedance_video", "kling_bailian_video"].contains(permission.tool)
+    }
+    private var isVideoTaskDelete: Bool { (fields["action"] as? String) == "delete" }
     private var isVideoGeneration: Bool {
-        ["wan_video", "wan_video_edit", "seedance_video", "glm_video", "kling_video",
+        ["wan_video", "seedance_video", "glm_video", "kling_bailian_video",
          "minimax_video"].contains(permission.tool)
     }
     private var isRevision: Bool {
         (fields["action"] as? String) == "revise" ||
         ["edit", "extend"].contains((fields["mode"] as? String) ?? "") ||
-        permission.tool == "wan_video_edit"
+        (fields["task_mode"] as? String) == "edit"
     }
     private var paidTitle: String {
         if isVideoGeneration { return isRevision ? "确认编辑视频" : "确认生成视频" }
@@ -2342,11 +2401,10 @@ private struct AIPermissionCard: View {
     private var paidActionTitle: String { isRevision ? "确认编辑" : "确认生成" }
     private var paidProvider: String {
         switch permission.tool {
-        case "wan_video", "wan_video_edit": return "万相"
-        case "qwen_image": return "通义千问"
+        case "wan_video", "wan_image": return "万相"
         case "seedance_video": return "Seedance"
         case "glm_video", "glm_image": return "GLM"
-        case "kling_video", "kling_image": return "可灵"
+        case "kling_bailian_video", "kling_bailian_image": return "可灵 · 百炼"
         case "minimax_video", "minimax_image": return "海螺 / MiniMax"
         default: return "Seedream"
         }
@@ -2374,6 +2432,14 @@ private struct AIPermissionCard: View {
         if permission.tool == "minimax_video", let model = fields["model"] as? String {
             details.append(model == "MiniMax-H3-Max" ? "H3 Max" : "H3")
         }
+        if permission.tool == "kling_bailian_video" || permission.tool == "kling_bailian_image" {
+            let selected = fields["model"] as? String ??
+                (permission.tool == "kling_bailian_video"
+                 ? "kling/kling-v3-turbo-video-generation"
+                 : "kling/kling-v3-image-generation")
+            details.append(selected.contains("omni") ? "可灵 V3 Omni" :
+                           selected.contains("turbo") ? "可灵 V3 Turbo" : "可灵 V3")
+        }
         if let duration = (fields["duration"] as? Int) ?? (production["duration"] as? Int) {
             details.append("\(duration) 秒")
         }
@@ -2389,11 +2455,12 @@ private struct AIPermissionCard: View {
         if (fields["authorized_portrait_asset_id"] as? String)?.isEmpty == false {
             details.append("已授权真人形象")
         }
+        let assetCount = (fields["reference_asset_ids"] as? [String])?.count ?? 0
+        if assetCount > 0 { details.append("已登记参考素材 \(assetCount) 张") }
         if let size = fields["size"] as? String { details.append(size) }
-        let imageCount = ((fields["reference_image_paths"] as? [String])?.count ??
+        let imageCount = ((fields["local_image_paths"] as? [String])?.count ??
                           (fields["image_paths"] as? [String])?.count ?? 0)
             + (content.filter { ($0["type"] as? String) == "image_url" }.count)
-            + (((fields["reference_image_path"] as? String)?.isEmpty == false) ? 1 : 0)
             + ((((fields["image_path"] as? String)?.isEmpty == false) ||
                 ((fields["first_frame"] as? String)?.isEmpty == false)) ? 1 : 0)
             + ((((fields["last_frame_path"] as? String)?.isEmpty == false) ||
@@ -2423,12 +2490,18 @@ private struct AIPermissionCard: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Label(isPaidGeneration ? paidTitle : (isSendText ? "确认发送消息" : "确认工具操作"),
-                  systemImage: isPaidGeneration ? "sparkles" : "hand.raised")
+            Label(isPaidGeneration ? paidTitle
+                  : isVideoTaskManagement ? (isVideoTaskDelete ? "删除视频任务记录" : "取消视频任务")
+                  : isRealValidationLink ? "创建真人验证链接"
+                  : (isSendText ? "确认发送消息" : "确认工具操作"),
+                  systemImage: isPaidGeneration ? "sparkles"
+                    : isRealValidationLink ? "person.crop.circle" : "hand.raised")
                 .font(.headline)
                 .foregroundStyle(Color.primary)
             if isPaidGeneration {
-                Text((fields["virtual_avatar_asset_id"] as? String)?.isEmpty == false
+                Text((fields["reference_asset_ids"] as? [String])?.isEmpty == false
+                     ? "将使用已登记的参考素材；平台仍会审核。确认后提交给\(paidProvider)，可能消耗模型额度。"
+                     : (fields["virtual_avatar_asset_id"] as? String)?.isEmpty == false
                      ? "将使用平台虚拟人像，不保留真实人物长相。确认后提交给\(paidProvider)，可能消耗模型额度。"
                      : (fields["authorized_portrait_asset_id"] as? String)?.isEmpty == false
                          ? "将使用已授权真人形象。确认后提交给\(paidProvider)，可能消耗模型额度。"
@@ -2458,6 +2531,19 @@ private struct AIPermissionCard: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
+            } else if isVideoTaskManagement {
+                Text(isVideoTaskDelete
+                     ? (permission.tool == "seedance_video"
+                        ? "将删除方舟中已结束的任务记录和本地任务索引；已保存的视频文件仍保留。"
+                        : "只删除本地已交付的任务记录；云端任务和已保存的视频仍保留。")
+                     : "仅排队中的任务可取消。若已开始生成，平台会拒绝，任务仍继续运行。")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                Text("任务：\((fields["conversation_id"] as? String) ?? "未指定")")
+                    .font(.caption).textSelection(.enabled)
+            } else if isRealValidationLink {
+                Text("将创建一次性 H5 链接，请由照片中的本人打开并完成验证。认证凭证有效期为 30 分钟；完成后才能登记真人素材。")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             } else if isSendText, let peer = fields["peer_id"] as? String,
                let text = fields["text"] as? String {
                 Label(peer, systemImage: "person.crop.circle")
@@ -2485,7 +2571,7 @@ private struct AIPermissionCard: View {
                 .background(Color(uiColor: .systemBackground),
                             in: RoundedRectangle(cornerRadius: 10))
             }
-            if isSendText || isPaidGeneration {
+            if isSendText || isPaidGeneration || isVideoTaskManagement {
                 DisclosureGroup(isPaidGeneration ? "查看完整请求" : "查看完整参数",
                                 isExpanded: $showsRawInput) {
                     ScrollView {
@@ -2500,10 +2586,15 @@ private struct AIPermissionCard: View {
                 .font(.caption)
             }
             HStack {
-                action(isPaidGeneration ? "取消" : "拒绝", "denied")
-                action(isPaidGeneration ? paidActionTitle : approveTitle, "approved")
+                action(isVideoTaskManagement ? "返回"
+                       : isPaidGeneration || isRealValidationLink ? "取消" : "拒绝", "denied")
+                action(isPaidGeneration ? paidActionTitle
+                       : isVideoTaskManagement ? (isVideoTaskDelete ? "确认删除" : "确认取消任务")
+                       : isRealValidationLink ? "生成验证链接" : approveTitle, "approved")
             }
-            if permission.allowForSession != false && permission.rememberOnApproval != true {
+            if !isRealValidationLink && !isVideoTaskManagement &&
+                permission.allowForSession != false &&
+                permission.rememberOnApproval != true {
                 action("本会话允许", "approved_for_session")
             }
         }
@@ -2569,13 +2660,11 @@ private struct AIQuestionCard: View {
 private struct AISettingsView: View {
     @ObservedObject var model: AIAssistantModel
     let close: () -> Void
-    @State private var settings = AIModelSettings()
     @State private var serviceURL = ""
     @State private var serviceToken = ""
     @State private var serviceConfigured = false
     @State private var message = ""
     @State private var saving = false
-    @State private var testing = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -2601,23 +2690,8 @@ private struct AISettingsView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("连接你的模型服务").font(.system(size: 22, weight: .bold))
-                        Text("选择主模型后使用 Responses 协议；模型密钥从云端获取，仅在运行期间使用。")
+                        Text("主模型可在聊天页切换；统一使用 Responses 协议。")
                             .font(.system(size: 13)).foregroundStyle(.secondary)
-                    }
-                    settingsField("选择主模型", systemImage: "sparkles") {
-                        Menu {
-                            Button("GLM-5.3") { settings.selectModel("glm-5.3") }
-                            Button("GLM-5.3-Flash") { settings.selectModel("glm-5.3-flash") }
-                            Button("DeepSeek V4.1 Flash") { settings.selectModel("deepseek-flash") }
-                        } label: {
-                            HStack {
-                                Text(selectedModelTitle)
-                                Spacer()
-                                Image(systemName: "chevron.up.chevron.down")
-                            }
-                            .foregroundStyle(Color.primary)
-                        }
-                        .accessibilityIdentifier("ai-primary-model-picker")
                     }
                     settingsField("云端服务地址", systemImage: "externaldrive") {
                         TextField("https://ichat.life/maichat", text: $serviceURL)
@@ -2630,11 +2704,6 @@ private struct AISettingsView: View {
                         SecureField(serviceConfigured ? "已配置，留空则保留" : "输入服务令牌",
                                     text: $serviceToken)
                     }
-                    Button(testing ? "正在测试连接" : "测试连接") {
-                        testing = true
-                        Task { await testConnection(); testing = false }
-                    }
-                    .disabled(testing || serviceURL.isEmpty)
                     if !message.isEmpty {
                         Text(message).font(.system(size: 12)).foregroundStyle(.secondary)
                     }
@@ -2652,7 +2721,7 @@ private struct AISettingsView: View {
                                 saving = false
                                 return
                             }
-                            if await model.save(settings) { close() }
+                            if await model.save(model.settings) { close() }
                             saving = false
                         }
                     } label: {
@@ -2675,21 +2744,10 @@ private struct AISettingsView: View {
         }
         .background(Color(red: 0.97, green: 0.98, blue: 1.0).ignoresSafeArea())
         .onAppear {
-            settings = model.settings
-            settings.selectModel(settings.model)
             serviceURL = UserDefaults.standard.string(forKey: "oss-media-signer-url") ?? ""
             serviceConfigured = AICloudCredentialSync.serviceEndpoint() != nil
         }
         .accessibilityIdentifier("ai-model-settings")
-    }
-
-    private var selectedModelTitle: String {
-        switch settings.model {
-        case "glm-5.3": return "GLM-5.3"
-        case "glm-5.3-flash": return "GLM-5.3-Flash"
-        case "deepseek-flash": return "DeepSeek V4.1 Flash"
-        default: return "GLM-5.3"
-        }
     }
 
     private func saveService() -> Bool {
@@ -2713,44 +2771,6 @@ private struct AISettingsView: View {
         } catch {
             message = error.localizedDescription
             return false
-        }
-    }
-
-    private func testConnection() async {
-        let address = serviceURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        let entered = serviceToken.trimmingCharacters(in: .whitespacesAndNewlines)
-        let token = entered.isEmpty
-            ? KeychainSecretStore(account: "oss-media-signer-token").readSecretKey() : entered
-        guard let endpoint = AICloudCredentialSync.credentialEndpoint(address: address,
-                                                                       token: token) else {
-            message = "请先填写云端服务地址和令牌"
-            return
-        }
-        do {
-            var request = URLRequest(url: endpoint.url)
-            request.httpMethod = "POST"
-            request.cachePolicy = .reloadIgnoringLocalCacheData
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("Bearer \(endpoint.token)", forHTTPHeaderField: "Authorization")
-            request.httpBody = try JSONSerialization.data(withJSONObject: ["action": "status"])
-            let session = URLSession(configuration: .ephemeral,
-                                     delegate: AICloudNoRedirectDelegate(), delegateQueue: nil)
-            defer { session.finishTasksAndInvalidate() }
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                message = "云端服务没有响应"
-                return
-            }
-            if http.statusCode == 401 { message = "服务令牌不匹配"; return }
-            guard http.statusCode == 200, data.count <= 16_384,
-                  let status = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let configured = status["configured"] as? [String] else {
-                message = "云端服务响应无效"
-                return
-            }
-            message = "已连接；可用模型：\(configured.joined(separator: "、"))"
-        } catch {
-            message = "连接失败：\(error.localizedDescription)"
         }
     }
 

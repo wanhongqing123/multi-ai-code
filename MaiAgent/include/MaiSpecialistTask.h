@@ -51,6 +51,11 @@ public:
     virtual bool getSpecialistTask(const std::string& id, const std::string& ownerSessionId,
                                    MaiSpecialistTask& out) const = 0;
 
+    // 仅删除当前会话已结束且已通知的任务记录，不删除生成文件和聊天消息。
+    // 未通知的任务还可能由后台线程交付；活跃任务还可能在云端计费，均不得静默丢弃。
+    virtual MaiError deleteCompletedSpecialistTask(const std::string& taskId,
+                                                   const std::string& ownerSessionId) = 0;
+
     virtual MaiError appendSpecialistText(const std::string& taskId,
                                           const std::string& ownerSessionId,
                                           const std::string& chunk, MaiMillis checkedAt) = 0;

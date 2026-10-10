@@ -349,6 +349,7 @@ public:
     }
 
     std::string description() const override {
+        // 多文件或多处修改时一次性应用补丁；比连续逐段替换更容易保证原子性和可审阅性。
         return "Apply a patch that changes several places, or several files, at once. Use it "
                "instead of repeated file_edit calls when a change spans multiple files, such as "
                "renaming something and updating every caller. Either the whole patch applies or "
@@ -368,6 +369,7 @@ public:
     }
 
     std::string parametersSchema() const override {
+        // patch 字段是一份完整补丁，必须包含 Begin Patch 到 End Patch 的全部内容。
         return R"({"type":"object","properties":{)"
                R"("patch":{"type":"string","description":"The whole patch, from *** Begin Patch to *** End Patch"}},)"
                R"("required":["patch"]})";

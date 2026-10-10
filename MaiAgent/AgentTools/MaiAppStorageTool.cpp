@@ -84,12 +84,16 @@ public:
         return "app_storage";
     }
     std::string description() const override {
+        // 清理前先扫描并取得预览 ID；只删除符合该预览且未变化的旧缓存，
+        // 不能把整个工作区或用户原文件当成临时文件清空。
         return "Inspect App temporary, cache and AI workspace storage. Scan returns sizes and a "
                "preview ID. Cleanup accepts that ID and removes only unchanged regular files "
                "older than 24 hours from App temporary/cache directories, never the workspace. "
                "Cleanup requires fresh approval each time.";
     }
     std::string parametersSchema() const override {
+        // action=scan 只读并返回预览 ID；action=cleanup 要带这次预览 ID，
+        // 执行层据此确认待删文件未变化。
         return R"({"type":"object","properties":{"action":{"type":"string","enum":["scan","cleanup"]},"preview_id":{"type":"string"}},"required":["action"],"additionalProperties":false})";
     }
     bool requiresApproval(const std::string& raw) const override {
@@ -116,11 +120,13 @@ public:
 
 private:
     MaiToolResult scan(const MaiToolContext& context) {
-        const std::string workspacePath = mPaths.workspace.empty() ? context.root : mPaths.workspace;
+        const std::string workspacePath =
+            mPaths.workspace.empty() ? context.root : mPaths.workspace;
         const MaiFilePath temporaryRoot =
             MaiFileSystem::resolve(MaiFilePath::fromUtf8(mPaths.temporary));
         const MaiFilePath cacheRoot = MaiFileSystem::resolve(MaiFilePath::fromUtf8(mPaths.cache));
-        const MaiFilePath workspaceRoot = MaiFileSystem::resolve(MaiFilePath::fromUtf8(workspacePath));
+        const MaiFilePath workspaceRoot =
+            MaiFileSystem::resolve(MaiFilePath::fromUtf8(workspacePath));
         if (temporaryRoot.isEmpty() || cacheRoot.isEmpty() || workspaceRoot.isEmpty() ||
             !MaiFileSystem::isDirectory(temporaryRoot) || !MaiFileSystem::isDirectory(cacheRoot) ||
             !MaiFileSystem::isDirectory(workspaceRoot) || temporaryRoot == cacheRoot ||

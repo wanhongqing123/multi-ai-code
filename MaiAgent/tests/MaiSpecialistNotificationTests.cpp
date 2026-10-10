@@ -1,3 +1,4 @@
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <memory>
@@ -25,8 +26,12 @@ int failures = 0;
 
 class StaticMediaTool final : public MaiTool {
 public:
-    StaticMediaTool(std::string result, bool success, std::string toolName)
-        : mResult(std::move(result)), mSuccess(success), mToolName(std::move(toolName)) {}
+    StaticMediaTool(std::string result, bool success, std::string toolName,
+                    std::shared_ptr<std::atomic<int>> calls)
+        : mResult(std::move(result)),
+          mSuccess(success),
+          mToolName(std::move(toolName)),
+          mCalls(std::move(calls)) {}
 
     std::string name() const override {
         return mToolName;
@@ -38,6 +43,7 @@ public:
         return R"({"type":"object"})";
     }
     MaiToolResult execute(const std::string&, const MaiToolContext&) override {
+        mCalls->fetch_add(1, std::memory_order_relaxed);
         return mSuccess ? MaiToolResult::success(mResult)
                         : MaiToolResult::failure(MaiErrorCode::Network, mResult);
     }
@@ -46,6 +52,7 @@ private:
     std::string mResult;
     bool mSuccess;
     std::string mToolName;
+    std::shared_ptr<std::atomic<int>> mCalls;
 };
 
 struct Scenario {
@@ -54,6 +61,7 @@ struct Scenario {
     MaiFakeModelClient* fakeModel = nullptr;
     std::string sessionId;
     std::string taskId;
+    std::shared_ptr<std::atomic<int>> toolCalls = std::make_shared<std::atomic<int>>(0);
 };
 
 Scenario startScenario(std::string result, bool withModel, bool success = false,
@@ -91,8 +99,8 @@ Scenario startScenario(std::string result, bool withModel, bool success = false,
         model = std::move(fake);
     }
     auto tools = std::make_unique<MaiToolRegistry>();
-    tools->add(
-        std::make_unique<StaticMediaTool>(std::move(result), success, std::move(specialistName)));
+    tools->add(std::make_unique<StaticMediaTool>(std::move(result), success,
+                                                 std::move(specialistName), scenario.toolCalls));
     scenario.agent =
         std::make_unique<MaiAgent>(std::move(store), std::move(model), std::move(tools));
     return scenario;
@@ -203,6 +211,20 @@ void testRepeatedRateLimitEventuallyNotifiesMainConversation() {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     CHECK(visible);
+}
+
+void testRepeatedDownloadTransportErrorKeepsPaidTaskRecoverable() {
+    auto scenario = startScenario(
+        R"({"code":"network_error","stage":"tls_verify","message":"Certificate verification failed"})",
+        false);
+    for (int attempt = 0; attempt < 2500 && scenario.toolCalls->load(std::memory_order_relaxed) < 3;
+         ++attempt)
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    CHECK(scenario.toolCalls->load(std::memory_order_relaxed) >= 3);
+    MaiSpecialistTask task;
+    CHECK(scenario.store->getSpecialistTask(scenario.taskId, scenario.sessionId, task));
+    CHECK(task.status == MaiSpecialistTaskStatus::Running);
+    CHECK(scenario.agent->listMessages(scenario.sessionId).empty());
 }
 
 void testCompletedWithoutOutputShowsFailure() {
@@ -402,6 +424,22 @@ void testLocalPollingInputErrorDoesNotClaimProviderFailure() {
     CHECK(trackingNotice);
 }
 
+void testProviderCancellationIsNotReportedAsGenerationFailure() {
+    auto scenario = startScenario(
+        R"({"status":"CANCELED","reply":"The cloud video task was canceled."})", false, true);
+    waitForStatus(scenario, MaiSpecialistTaskStatus::Canceled);
+    bool visible = false;
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        for (const MaiMessage& message : scenario.agent->listMessages(scenario.sessionId)) {
+            if (message.text() == "The video task was canceled.") visible = true;
+            CHECK(message.text().find("Video task failed.") == std::string::npos);
+        }
+        if (visible) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    CHECK(visible);
+}
+
 }  // namespace
 
 int main() {
@@ -410,6 +448,7 @@ int main() {
     testRateLimitRemainsRetryable();
     testBalanceErrorHandsTaskBackToMainWithoutExposingFailure();
     testRepeatedRateLimitEventuallyNotifiesMainConversation();
+    testRepeatedDownloadTransportErrorKeepsPaidTaskRecoverable();
     testCompletedWithoutOutputShowsFailure();
     testProviderFailedStatusNotifiesMainConversation();
     testFailedSpecialistAddsRecoveryInstructionToMainModel();
@@ -420,5 +459,6 @@ int main() {
     testSeedanceRealFaceUsesOriginalAssetRoute();
     testTechnicalFailureDoesNotGetModerationGuidance();
     testLocalPollingInputErrorDoesNotClaimProviderFailure();
+    testProviderCancellationIsNotReportedAsGenerationFailure();
     return failures == 0 ? 0 : 1;
 }

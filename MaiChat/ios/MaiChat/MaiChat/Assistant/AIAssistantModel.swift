@@ -60,14 +60,8 @@ final class AICloudCredentialStore: @unchecked Sendable {
 }
 
 enum AICloudCredentialSync {
-    static func clearLegacyStoredModelKeys() {
-        for account in ["ai-assistant-api-key", "ai-assistant-glm-api-key",
-                        "ai-assistant-deepseek-api-key", "seedance-ark-api-key",
-                        "glm-video-api-key", "wan-model-studio-api-key",
-                        "kling-creative-api-key", "minimax-creative-api-key"] {
-            try? KeychainSecretStore(account: account).saveSecretKey("")
-        }
-    }
+    private static let modelProviders = ["ark", "glm", "glm_video", "deepseek",
+                                         "wan", "minimax"]
 
     static func serviceEndpoint() -> (url: URL, token: String)? {
         let address = UserDefaults.standard.string(forKey: "oss-media-signer-url") ?? ""
@@ -76,6 +70,7 @@ enum AICloudCredentialSync {
     }
 
     static func credentialEndpoint(address: String, token: String) -> (url: URL, token: String)? {
+        // 只允许无用户信息、查询串和片段的 HTTPS 地址，服务令牌仍从 Keychain 读取。
         guard token.count >= 32, var parts = URLComponents(string: address),
               parts.scheme == "https", parts.host?.isEmpty == false,
               parts.user == nil, parts.password == nil,
@@ -92,6 +87,7 @@ enum AICloudCredentialSync {
     }
 
     static func syncIfConfigured() async throws -> Bool {
+        // 通过服务令牌请求固定供应商的密钥；响应通过大小和字段校验后再更新内存。
         guard let service = serviceEndpoint() else { return false }
         var request = URLRequest(url: service.url)
         request.httpMethod = "POST"
@@ -99,7 +95,7 @@ enum AICloudCredentialSync {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(service.token)", forHTTPHeaderField: "Authorization")
         request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "action": "fetch", "providers": ["ark", "glm", "glm_video", "deepseek", "wan", "kling", "minimax"]
+            "action": "fetch", "providers": ["ark", "glm", "glm_video", "deepseek", "wan", "minimax"]
         ])
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 15
@@ -114,10 +110,9 @@ enum AICloudCredentialSync {
               let keys = body["api_keys"] as? [String: String] else {
             throw AIBackendError(message: "云端密钥服务暂时不可用")
         }
-        let providers = ["ark", "glm", "glm_video", "deepseek", "wan", "kling", "minimax"]
         var validKeys: [String: String] = [:]
         var savedProviders: [String] = []
-        for name in providers {
+        for name in modelProviders {
             guard let key = keys[name], !key.isEmpty, key.utf8.count <= 4_096,
                   key.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) })
             else { continue }
@@ -310,7 +305,7 @@ actor AIAssistantBackend {
         if FileManager.default.fileExists(atPath: file.path) {
             settings = try JSONDecoder().decode(AIModelSettings.self, from: Data(contentsOf: file))
         }
-        AICloudCredentialSync.clearLegacyStoredModelKeys()
+        // 先恢复已选主模型，再请求服务器刷新内存中的密钥，最后初始化 C++ Agent。
         if !["glm-5.3", "glm-5.3-flash", "deepseek-flash"].contains(settings.model) {
             settings.model = "glm-5.3"
         }
@@ -337,7 +332,12 @@ actor AIAssistantBackend {
     }
 
     private func configure(_ config: AIModelSettings, key: String) throws {
+        // Swift 只负责应用目录、云端密钥和线协议选择；工具调用规则在共享 C++ 层。
         guard let root else { throw AIBackendError(message: "AI 助手尚未准备好") }
+        guard let caBundle = Bundle.main.url(forResource: "cacert", withExtension: "pem",
+                                             subdirectory: "MaiAgentCertificates") else {
+            throw AIBackendError(message: "HTTPS 根证书文件缺失")
+        }
         let workspace = root.appendingPathComponent("Workspace", isDirectory: true)
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
         let appRootPath = AIAssistantPathPolicy.appRoot(workspacePath: workspace.path)
@@ -345,6 +345,7 @@ actor AIAssistantBackend {
             "workspace": workspace.path, "baseUrl": config.baseUrl, "apiKey": key,
             "wire": config.effectiveWire,
             "model": config.model, "policy": config.policy, "appRoot": appRootPath,
+            "caBundle": caBundle.path,
             "temporaryDirectory": FileManager.default.temporaryDirectory.path,
             "cacheDirectory": try FileManager.default.url(for: .cachesDirectory,
                 in: .userDomainMask, appropriateFor: nil, create: true).path,
@@ -516,7 +517,10 @@ final class AIAssistantModel: ObservableObject {
     private var loadingOlderMessages = false
     private var visible = false
     private var pageActive = true
+    private var composerTyping = false
     var busy: Bool { sessions.first { $0.id == selected }?.busy == true }
+
+    func setComposerTyping(_ active: Bool) { composerTyping = active }
 
     #if targetEnvironment(simulator)
     func installHistoryUITestFixture() {
@@ -533,6 +537,37 @@ final class AIAssistantModel: ObservableObject {
                              active: false, parts: [part])
         }
         ready = true
+    }
+
+    func installStreamingTypingUITestFixture() {
+        let session = "stream-typing-ui-test"
+        sessions = [AISession(id: session, title: "流式输入测试", busy: true)]
+        selected = session
+        messages = (0..<30).map { index in
+            let part = AIPart(id: "stream-old-part-\(index)", kind: "text",
+                              text: "先前的消息 \(index)", tool: nil,
+                              input: nil, output: nil, error: nil, state: nil,
+                              path: nil, mimeType: nil)
+            return AIMessage(id: String(format: "stream-message-%02d", index),
+                             role: "assistant", created: Int64(index),
+                             completed: Int64(index + 1), active: false, parts: [part])
+        }
+        ready = true
+        historyLoaded = true
+        Task { @MainActor [weak self] in
+            for index in 0..<60 {
+                try? await Task.sleep(for: .milliseconds(100))
+                guard let self, self.selected == session else { return }
+                let part = AIPart(id: "stream-active-part", kind: "text",
+                                  text: String(repeating: "正在输出内容。", count: index + 1),
+                                  tool: nil, input: nil, output: nil, error: nil, state: nil,
+                                  path: nil, mimeType: nil)
+                let active = AIMessage(id: "stream-message-30", role: "assistant",
+                                       created: 30, completed: 0, active: true, parts: [part])
+                if self.messages.count == 30 { self.messages.append(active) }
+                else { self.messages[30] = active }
+            }
+        }
     }
     #endif
 
@@ -634,7 +669,7 @@ final class AIAssistantModel: ObservableObject {
             appearingTask = nil
         }
     }
-    func disappear() { visible = false; poll?.cancel(); poll = nil }
+    func disappear() { visible = false; composerTyping = false; poll?.cancel(); poll = nil }
     func setPageActive(_ active: Bool) {
         pageActive = active
         if active && poll == nil && ready { appear() }
@@ -645,8 +680,11 @@ final class AIAssistantModel: ObservableObject {
         poll = Task { [weak self] in
             while !Task.isCancelled {
                 let busy = self?.sessions.contains(where: \.busy) == true
+                // 用户正在输入时把流式界面刷新降到每 250 毫秒一次，优先留出键盘事件时间。
+                // 模型和工具继续后台工作；仅合并显示增量，不丢失任何输出。
+                let typing = self?.composerTyping == true
                 let interval: Duration = self?.pageActive == true
-                    ? .milliseconds(busy ? 100 : 500)
+                    ? .milliseconds(busy ? (typing ? 250 : 100) : 500)
                     : .milliseconds(busy ? 500 : 2_000)
                 try? await Task.sleep(for: interval)
                 guard !Task.isCancelled, let self else { return }
@@ -720,8 +758,8 @@ final class AIAssistantModel: ObservableObject {
     }
 
     private func mergeMessages(_ page: [AIMessage]) {
-        // A snapshot updates only its bounded newest page; keep older pages the
-        // user has already opened and replace matching rows by their stable ID.
+        // 快照只更新最近的有界消息页；用户已经展开的旧页必须保留。
+        // 新旧页有相同稳定 ID 时替换旧行，避免重复显示。
         guard !page.isEmpty else { return }
         var merged = messages
         var changed = false

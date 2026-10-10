@@ -176,6 +176,14 @@ bool isTerminalStatusCheckError(const nlohmann::json& error) {
     return status >= 400 && status < 500 && status != 408 && status != 429;
 }
 
+bool isRecoverableTransportError(const nlohmann::json& error) {
+    // 已提交任务的网络或下载故障不等于供应商生成失败。保留原任务 ID，之后只重查，
+    // 不重新发起付费请求。持久性故障也保持可恢复，供用户修复证书/网络后继续取片。
+    const std::string code = jsonText(error, "code");
+    return code == "network" || code == "network_error" || code == "timeout" ||
+           code == "http_error" || code == "media_download_failed";
+}
+
 }  // namespace
 
 struct MaiAgent::Runtime {
@@ -319,7 +327,12 @@ void MaiAgent::pollSpecialistTasks() {
     const MaiMillis now = MaiTime::getCurrentTime();
     for (const MaiSpecialistTask& task : mRuntime->store->listActiveSpecialistTasks(16)) {
         if (mRuntime->stopSpecialists.load(std::memory_order_relaxed)) return;
-        if (task.lastCheckedAt != 0 && now - task.lastCheckedAt < 10'000) continue;
+        const auto priorFailures = mRuntime->specialistStatusFailures.find(task.id);
+        const MaiMillis minimumInterval =
+            priorFailures != mRuntime->specialistStatusFailures.end() && priorFailures->second >= 3
+                ? 60'000
+                : 10'000;
+        if (task.lastCheckedAt != 0 && now - task.lastCheckedAt < minimumInterval) continue;
         MaiTool* tool = mRuntime->tools ? mRuntime->tools->find(task.specialistName) : nullptr;
         if (!tool) {
             mRuntime->store->finishSpecialistTask(
@@ -383,6 +396,9 @@ void MaiAgent::pollSpecialistTasks() {
                 mRuntime->store->finishSpecialistTask(
                     task.id, task.ownerSessionId, MaiSpecialistTaskStatus::Failed,
                     "Status check failed: " + reason, {}, checkedAt);
+            } else if (isRecoverableTransportError(error)) {
+                ++mRuntime->specialistStatusFailures[task.id];
+                mRuntime->store->updateSpecialistProgress(task.id, task.ownerSessionId, checkedAt);
             } else {
                 const int failures = ++mRuntime->specialistStatusFailures[task.id];
                 if (failures >= 3) {
@@ -426,6 +442,10 @@ void MaiAgent::pollSpecialistTasks() {
             mRuntime->store->finishSpecialistTask(task.id, task.ownerSessionId,
                                                   MaiSpecialistTaskStatus::Succeeded,
                                                   jsonText(reply, "reply"), path, checkedAt);
+        } else if (status == "cancelled" || status == "CANCELED") {
+            mRuntime->store->finishSpecialistTask(
+                task.id, task.ownerSessionId, MaiSpecialistTaskStatus::Canceled,
+                "The cloud video task was canceled.", {}, checkedAt);
         } else if (status == "failed" || status == "FAILED") {
             const std::string message = jsonText(reply, "reply");
             mRuntime->store->finishSpecialistTask(
@@ -450,7 +470,9 @@ void MaiAgent::pollSpecialistTasks() {
 }
 
 void MaiAgent::forwardSpecialistReply(const MaiSpecialistTask& task) {
-    if (!mRuntime->model && task.status != MaiSpecialistTaskStatus::Failed) return;
+    if (!mRuntime->model && task.status != MaiSpecialistTaskStatus::Failed &&
+        task.status != MaiSpecialistTaskStatus::Canceled)
+        return;
     auto turn = std::make_shared<ActiveTurn>();
     {
         std::lock_guard<std::mutex> lock(mRuntime->mutex);
@@ -488,12 +510,15 @@ void MaiAgent::forwardSpecialistReply(const MaiSpecialistTask& task) {
         else
             assistant.parts.clear();
     }
-    if (task.status == MaiSpecialistTaskStatus::Failed && assistant.parts.empty() &&
-        !mRuntime->model) {
+    if ((task.status == MaiSpecialistTaskStatus::Failed ||
+         task.status == MaiSpecialistTaskStatus::Canceled) &&
+        assistant.parts.empty() && !mRuntime->model) {
         MaiMessagePart notice;
         notice.id = MaiIdGenerator::newPartId();
         notice.created = MaiTime::getCurrentTime();
-        notice.body = MaiTextPart{specialistFailureNotice(task)};
+        notice.body = MaiTextPart{task.status == MaiSpecialistTaskStatus::Canceled
+                                      ? "The video task was canceled."
+                                      : specialistFailureNotice(task)};
         assistant.parts.push_back(std::move(notice));
     }
     mRuntime->store->putMessage(task.ownerSessionId, assistant);

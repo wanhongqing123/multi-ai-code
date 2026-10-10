@@ -68,6 +68,7 @@ public:
     }
 
     std::string description() const override {
+        // 精确替换旧文本的一段；匹配不唯一时应先核对上下文，避免改错位置。
         return "Replace an exact piece of text in a file. Prefer this over file_write when you are "
                "changing part of an existing file: it only sends the difference, so it is faster "
                "and cannot silently rewrite the parts you did not mean to touch. old_string must "
@@ -76,6 +77,8 @@ public:
     }
 
     std::string parametersSchema() const override {
+        // path 指目标文件；old_string 必须是文件中的精确原文，new_string 是替换内容。
+        // 执行层还会校验匹配次数，避免把一个含糊片段改到错误位置。
         return R"({"type":"object","properties":{)"
                R"("path":{"type":"string","description":"Absolute path or path relative to the working directory"},)"
                R"("old_string":{"type":"string","description":"The exact text to replace, copied from the file"},)"

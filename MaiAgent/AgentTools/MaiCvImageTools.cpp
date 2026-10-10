@@ -38,38 +38,53 @@ public:
     }
 
     std::string description() const override {
+        // 每个英文描述都会暴露给主模型；中文注释明确这些数值工具能做什么、
+        // 不能做什么，避免把几何指标误当成人物识别或画质结论。
         switch (mKind) {
             case MaiCvImageAnalysisKind::Quality:
+                // 亮度、对比度和清晰度是测量值，不能单凭一个分数判断图片好坏。
                 return "Measure image sharpness, brightness, contrast, shadow clipping and "
                        "highlight clipping using OpenCV. Scores are numerical measurements, "
                        "not an absolute good/bad judgment. Input is unchanged.";
             case MaiCvImageAnalysisKind::Compare:
-                return "Compare two same-size images with mean pixel difference, changed-pixel "
-                       "fraction, PSNR and a perceptual dHash distance. Does not align images "
-                       "or perform ICC/HDR color management. Inputs are unchanged.";
+                // 不同尺寸会在内存中缩放第二张；输出保留原尺寸和比例变化标记。
+                // 不做位移配准，也不做 HDR/ICC 色彩管理，原图不改动。
+                return "Compare two images with mean pixel difference, changed-pixel fraction, "
+                       "PSNR and perceptual dHash distance. Different dimensions are normalized "
+                       "by resizing the second image in memory. The result reports original "
+                       "dimensions and whether aspect ratio changed. It does not spatially "
+                       "register content or perform ICC/HDR color management. Inputs are "
+                       "unchanged.";
             case MaiCvImageAnalysisKind::Contours:
+                // 轮廓只表示几何边界，不识别物体或人物身份。
                 return "Find prominent external contours and bounding rectangles in an image. "
                        "These are geometric regions, not semantic objects or people.";
             case MaiCvImageAnalysisKind::Edges:
+                // 在工作区另存边缘图，供查看轮廓；不覆盖输入图。
                 return "Create a new grayscale Canny edge-map PNG in the Agent workspace. "
                        "Useful for checking outlines and boundaries; source is unchanged.";
             case MaiCvImageAnalysisKind::TemplateMatch:
+                // 只适合比例、旋转基本一致的局部模板匹配，不能做语义找图。
                 return "Locate an exact-scale template image within a larger image. Returns "
                        "pixel bounding boxes and similarity scores. It is not semantic search "
                        "and does not handle large scale or perspective changes.";
             case MaiCvImageAnalysisKind::RegisterTranslation:
+                // 同尺寸图估算平移量，不执行图像变形或自动保存。
                 return "Estimate horizontal and vertical translation between two same-size "
                        "images using phase correlation. Returns shift and confidence without "
                        "warping either image.";
             case MaiCvImageAnalysisKind::Lines:
+                // 检测直线和近水平倾角；只返回坐标与角度，不替用户旋转图像。
                 return "Detect straight line segments with OpenCV Hough transform and estimate "
                        "a near-horizontal skew angle when possible. Returns pixel coordinates; "
                        "does not rotate the source.";
             case MaiCvImageAnalysisKind::DocumentCorners:
+                // 寻找最明显的四边形文档边框，找不到时返回 found=false。
                 return "Find the four corners of the largest clear document-like quadrilateral. "
                        "Returns ordered pixel points for later perspective correction; a photo "
                        "without a clear border may return found=false.";
             case MaiCvImageAnalysisKind::ThresholdMask:
+                // 创建新的黑白遮罩，可选阈值算法和闭运算，不修改原图。
                 return "Create a new grayscale binary PNG mask using Otsu, adaptive, or fixed "
                        "thresholding, optional inversion and small-gap closing. Original image "
                        "and its color profile are unchanged.";
@@ -78,22 +93,33 @@ public:
     }
 
     std::string parametersSchema() const override {
+        // schema 只限制参数形状；路径可访问性、输出新文件和数值区间还要在 execute 校验。
+        // 比较：path/second_path 是两张图；changed_pixel_threshold 决定多大灰度差
+        // 才把一个像素计为“变化”，尺寸不同由工具内部缩放副本。
         if (mKind == MaiCvImageAnalysisKind::Compare)
             return R"({"type":"object","properties":{"path":{"type":"string"},"second_path":{"type":"string"},"changed_pixel_threshold":{"type":"integer","minimum":1,"maximum":255}},"required":["path","second_path"],"additionalProperties":false})";
+        // 质量：只需要一张现有图片；返回数值而非好坏标签。
         if (mKind == MaiCvImageAnalysisKind::Quality)
             return R"({"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false})";
+        // 轮廓：Canny 高低阈值和最小面积决定哪些区域入选，max_regions 限返回量。
         if (mKind == MaiCvImageAnalysisKind::Contours)
             return R"({"type":"object","properties":{"path":{"type":"string"},"edge_low":{"type":"integer","minimum":1,"maximum":254},"edge_high":{"type":"integer","minimum":2,"maximum":255},"minimum_area_fraction":{"type":"number","minimum":0,"maximum":1},"max_regions":{"type":"integer","minimum":1,"maximum":200}},"required":["path"],"additionalProperties":false})";
+        // 模板：template_path 是要找的小图，阈值和 max_matches 控制匹配置信与数量。
         if (mKind == MaiCvImageAnalysisKind::TemplateMatch)
             return R"({"type":"object","properties":{"path":{"type":"string"},"template_path":{"type":"string"},"match_threshold":{"type":"number","minimum":0,"maximum":1},"max_matches":{"type":"integer","minimum":1,"maximum":50}},"required":["path","template_path"],"additionalProperties":false})";
+        // 平移：两张图必须原本同尺寸，和支持缩放的 cv_image_compare 不同。
         if (mKind == MaiCvImageAnalysisKind::RegisterTranslation)
             return R"({"type":"object","properties":{"path":{"type":"string"},"second_path":{"type":"string"}},"required":["path","second_path"],"additionalProperties":false})";
+        // 直线：Hough 阈值、最短线比例和最大间隙决定线段，max_lines 限结果量。
         if (mKind == MaiCvImageAnalysisKind::Lines)
             return R"({"type":"object","properties":{"path":{"type":"string"},"edge_low":{"type":"integer","minimum":1,"maximum":254},"edge_high":{"type":"integer","minimum":2,"maximum":255},"hough_threshold":{"type":"integer","minimum":10,"maximum":300},"min_line_fraction":{"type":"number","minimum":0.01,"maximum":1},"max_gap_fraction":{"type":"number","minimum":0,"maximum":1},"max_lines":{"type":"integer","minimum":1,"maximum":200}},"required":["path"],"additionalProperties":false})";
+        // 文档角点：只需图片与边缘阈值，不做透视矫正。
         if (mKind == MaiCvImageAnalysisKind::DocumentCorners)
             return R"({"type":"object","properties":{"path":{"type":"string"},"edge_low":{"type":"integer","minimum":1,"maximum":254},"edge_high":{"type":"integer","minimum":2,"maximum":255}},"required":["path"],"additionalProperties":false})";
+        // 阈值遮罩：method 选算法，invert 反转前景，close_kernel 处理小空隙。
         if (mKind == MaiCvImageAnalysisKind::ThresholdMask)
             return R"({"type":"object","properties":{"path":{"type":"string"},"output_path":{"type":"string"},"method":{"type":"string","enum":["otsu","adaptive","fixed"]},"fixed_threshold":{"type":"integer","minimum":0,"maximum":255},"invert":{"type":"boolean"},"close_kernel":{"type":"integer","minimum":0,"maximum":31}},"required":["path"],"additionalProperties":false})";
+        // 普通边缘图：output_path 是工作区新 PNG，edge_low/high 是 Canny 阈值。
         return R"({"type":"object","properties":{"path":{"type":"string"},"output_path":{"type":"string"},"edge_low":{"type":"integer","minimum":1,"maximum":254},"edge_high":{"type":"integer","minimum":2,"maximum":255}},"required":["path"],"additionalProperties":false})";
     }
 
@@ -106,6 +132,7 @@ public:
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,
                                           "An accessible local image path is required");
         const std::string first = context.resolvePath(request["path"].get<std::string>());
+        // 所有输入路径先限制在 Agent 可访问范围，避免模型传入任意本地文件。
         if (first.empty() || !MaiFileSystem::exists(MaiFilePath::fromUtf8(first)) ||
             MaiFileSystem::isDirectory(MaiFilePath::fromUtf8(first)))
             return MaiToolResult::failure(
@@ -197,6 +224,7 @@ public:
             if (reserved) return MaiToolResult::failure(reserved.code(), reserved.message());
         }
         const MaiCvImageAnalysisResult result = mAnalyzer(first, second, options, context);
+        // 解码、尺寸和 OpenCV 错误必须作为工具失败返回；不能给主模型伪造空指标。
         if (context.isCanceled() || result.error == "canceled") {
             if (createsOutput)
                 (void)MaiFileSystem::removeFile(MaiFilePath::fromUtf8(options.outputPath));
@@ -223,10 +251,13 @@ public:
                     Json{{"second_width", result.secondWidth},
                          {"second_height", result.secondHeight},
                          {"identical", result.identical},
+                         {"aligned_identical", result.alignedIdentical},
+                         {"comparison_alignment", result.comparisonAlignment},
+                         {"aspect_ratio_changed", result.aspectRatioChanged},
                          {"mean_absolute_difference", result.meanAbsoluteDifference},
                          {"changed_pixel_fraction", result.changedPixelFraction},
                          {"dhash_hamming", result.dHashHamming},
-                         {"psnr_db", result.identical ? Json(nullptr) : Json(result.psnrDb)},
+                         {"psnr_db", result.alignedIdentical ? Json(nullptr) : Json(result.psnrDb)},
                          {"color_managed", false}});
                 break;
             case MaiCvImageAnalysisKind::Contours: {

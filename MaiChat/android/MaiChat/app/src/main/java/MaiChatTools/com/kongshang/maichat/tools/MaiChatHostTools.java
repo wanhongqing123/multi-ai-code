@@ -10,6 +10,8 @@ public final class MaiChatHostTools {
     private final MainActivity activity;
     private final MobilePhotoTools photos;
     private final MobilePermissionTools permissions;
+    private final MobileContactsTools contacts;
+    private final MobileTelephonyTools telephony;
     private final MobileMediaTools media;
     private final MaiChatIMTools im;
     private final MobileSshTools ssh;
@@ -18,6 +20,8 @@ public final class MaiChatHostTools {
         this.activity = activity;
         this.photos = new MobilePhotoTools(activity);
         this.permissions = new MobilePermissionTools(activity, photos);
+        this.contacts = new MobileContactsTools(activity);
+        this.telephony = new MobileTelephonyTools(activity);
         this.media = new MobileMediaTools(activity);
         this.im = new MaiChatIMTools(activity, session);
         this.ssh = new MobileSshTools(activity);
@@ -40,6 +44,10 @@ public final class MaiChatHostTools {
                     arguments.optString("output_path")));
         if (tool.equals("mobile_request_permission")) return permissions.request(arguments);
         if (tool.equals("mobile_get_location")) return permissions.getCurrentLocation();
+        if (tool.equals("mobile_list_contacts")) return contacts.list(arguments);
+        if (tool.equals("mobile_get_contact")) return contacts.get(arguments);
+        if (tool.equals("mobile_get_phone_number")) return telephony.getPhoneNumber();
+        if (tool.equals("mobile_read_sms")) return telephony.readSms(arguments);
         if (tool.equals("mobile_ssh_password") || tool.equals("mobile_ssh_trust_host"))
             return ssh.execute(tool, arguments);
         if (tool.equals("maichat_play_video") || tool.equals("maichat_video_command"))

@@ -156,6 +156,8 @@ public:
         return "curl";
     }
     std::string description() const override {
+        // 这是受限的进程内 curl，不是任意命令行：只放行已列明的 HTTP 参数，
+        // 上传文件必须来自工作区；输出和日志都有上限。
         return "Run the vendored curl command inside MaiChat without a subprocess. Supported "
                "arguments: one HTTP(S) URL, -X/--request, -H/--header, -d/--data (literal text), "
                "-T/--upload-file (workspace file), -I/--head and --compressed. Other CLI "
@@ -164,6 +166,8 @@ public:
                "text from HTML. Approval follows the Agent policy; full access does not prompt.";
     }
     std::string parametersSchema() const override {
+        // arguments 是受限 curl 参数列表；output_path 指向新下载文件，text_only
+        // 控制 HTML 文本化；max_size_mb 和 timeout_s 分别限制返回体及等待时间。
         return R"({"type":"object","properties":{"arguments":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":32},"output_path":{"type":"string"},"text_only":{"type":"boolean"},"max_size_mb":{"type":"integer","minimum":1,"maximum":1024},"timeout_s":{"type":"integer","minimum":1,"maximum":600}},"required":["arguments"],"additionalProperties":false})";
     }
     bool requiresApproval(const std::string&) const override {

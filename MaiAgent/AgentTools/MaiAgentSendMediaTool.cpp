@@ -84,12 +84,16 @@ public:
         return "agent_send_media";
     }
     std::string description() const override {
+        // 把工作区已有媒体作为当前 AI 会话的持久卡片交付；应在解释文字之后调用，
+        // 让用户无需往上翻就能在最新消息看到成品。该工具不负责生成媒体。
         return "Attach an existing image, video, or audio file from this Agent workspace to the "
                "current AI conversation as a persistent playable media card. This is the way to "
                "deliver a processed media result to the user in the AI chat. It never sends to an "
                "IM contact and does not accept peer_id.";
     }
     std::string parametersSchema() const override {
+        // file_path 指向当前工作区已有成品；type 必须与 image/video/audio 实际类型一致。
+        // caption 是可选说明，最长 1000 字符，不能把文件路径当作最终交付。
         return R"({"type":"object","properties":{"file_path":{"type":"string"},"type":{"type":"string","enum":["image","video","audio"]},"caption":{"type":"string","maxLength":1000}},"required":["file_path","type"],"additionalProperties":false})";
     }
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {

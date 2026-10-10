@@ -149,6 +149,7 @@ public:
         return "ssh_exec";
     }
     std::string description() const override {
+        // SSH 在同一 AI 会话可复用短期连接，但每条远程命令仍须单独受权限闸门约束。
         return "Connect to a remote SSH server and execute one command. A live SSH connection "
                "is reused within this AI conversation for up to ten idle minutes; each command "
                "still runs in a separate remote channel, so cd and shell variables do not "
@@ -157,6 +158,8 @@ public:
                "verified before login. Every remote command needs user approval.";
     }
     std::string parametersSchema() const override {
+        // host/username/command 必填；port 限合法 TCP 端口，timeout_seconds
+        // 限单条远程命令，不代表整个复用连接的存活时长。
         return R"({"type":"object","properties":{"host":{"type":"string"},"port":{"type":"integer","minimum":1,"maximum":65535},"username":{"type":"string"},"command":{"type":"string"},"timeout_seconds":{"type":"integer","minimum":1,"maximum":120}},"required":["host","username","command"],"additionalProperties":false})";
     }
     bool requiresApproval(const std::string&) const override {

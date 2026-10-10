@@ -114,6 +114,8 @@ public:
     }
 
     std::string description() const override {
+        // 一次调用把 Markdown 生成新的 A4 PDF；图片需先转成 data URL，
+        // 生成后按返回路径交付，不能假称只写了 Markdown 就已有 PDF。
         return "Generate an A4 PDF directly from Markdown content in one call. Use headings, "
                "lists, tables, and inline formatting. Images must be embedded as base64 data "
                "URLs; external resources are unsupported. The output must be a new .pdf file "
@@ -121,6 +123,7 @@ public:
     }
 
     std::string parametersSchema() const override {
+        // content 是完整 UTF-8 Markdown 正文；output_path 是尚不存在的 PDF 文件路径。
         return R"({"type":"object","properties":{)"
                R"("content":{"type":"string","description":"UTF-8 Markdown to render as the PDF body"},)"
                R"("output_path":{"type":"string","description":"Absolute or relative path for a new .pdf file"}},)"

@@ -2,6 +2,16 @@
 limit_req_zone $binary_remote_addr zone=maichat_keys:10m rate=30r/m;
 
 # Place this location in the TLS server block for the chosen domain.
+location = /maichat/portrait-auth-callback {
+    limit_except GET { deny all; }
+    limit_req zone=maichat_keys burst=10 nodelay;
+    access_log off;
+    proxy_pass http://127.0.0.1:9000/portrait-auth-callback;
+    proxy_set_header Host 127.0.0.1;
+    add_header Cache-Control "no-store" always;
+    add_header Referrer-Policy "no-referrer" always;
+}
+
 location ^~ /maichat/ {
     limit_except POST { deny all; }
     limit_req zone=maichat_keys burst=10 nodelay;

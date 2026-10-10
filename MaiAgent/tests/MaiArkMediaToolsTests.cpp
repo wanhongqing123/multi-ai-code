@@ -39,6 +39,13 @@ void testDynamicCredentialAndToolIdentity() {
               .at("model")
               .at("enum")
               .size() == 3);
+    const std::string deprecatedField = std::string("reference_image_") + "paths";
+    const nlohmann::json deprecatedInput = {{"action", "discover"},
+                                            {deprecatedField, nlohmann::json::array()}};
+    const MaiToolResult rejectedOldField = video->execute(deprecatedInput.dump(), context);
+    CHECK(rejectedOldField.hasError());
+    CHECK(rejectedOldField.error().message().find("unsupported Seedance parameter") !=
+          std::string::npos);
     CHECK(nlohmann::json::parse(image->parametersSchema()).at("required") ==
           nlohmann::json::array({"action"}));
     CHECK(video->description().find("not configured") != std::string::npos);
@@ -50,7 +57,7 @@ void testDynamicCredentialAndToolIdentity() {
     CHECK(!video->requiresPerCallApproval(
         R"({"action":"delegate","mode":"edit","video_path":"clip.mp4"})"));
     CHECK(!video->requiresPerCallApproval(
-        R"({"action":"delegate","mode":"reference","reference_image_paths":["first.jpg"]})"));
+        R"({"action":"delegate","mode":"reference","local_image_paths":["first.jpg"]})"));
     CHECK(video->requiresPerCallApproval(
         R"({"action":"delegate","mode":"reference","video_url":"https://example.com/source.mp4"})"));
     CHECK(image->requiresPerCallApproval(R"({"action":"revise","message":"adjust"})"));
@@ -64,6 +71,7 @@ void testDynamicCredentialAndToolIdentity() {
     CHECK(videoInfo.at("capabilities").is_array());
     CHECK(videoInfo.dump().find("platform_virtual_avatar") != std::string::npos);
     CHECK(videoInfo.dump().find("authorized_real_portrait") != std::string::npos);
+    CHECK(videoInfo.dump().find("real_portrait_h5_registration") != std::string::npos);
     CHECK(videoInfo.dump().find("multi_reference_video") != std::string::npos);
     CHECK(videoInfo.dump().find("local_portrait_asset_registration") != std::string::npos);
     CHECK(imageInfo.at("capabilities").is_array());
@@ -85,12 +93,31 @@ void testDynamicCredentialAndToolIdentity() {
     CHECK(videoInfo.at("models")[2].at("resolutions").dump().find("4k") != std::string::npos);
     CHECK(videoInfo.at("models").dump().find("doubao-seedance-2-5-260628") == std::string::npos);
     CHECK(videoInfo.at("capabilities")[0].at("tool_status") == "implemented_unverified");
-    CHECK(videoInfo.dump().find("1-9 reference images") != std::string::npos);
+    CHECK(videoInfo.dump().find("nine reference images") != std::string::npos);
+    // discover 中的每条能力都必须解释边界，避免主模型把空限制当作无限制。
+    for (const auto& capability : videoInfo.at("capabilities"))
+        CHECK(!capability.at("limitation").get<std::string>().empty());
+    CHECK(videoInfo.dump().find("multiple_reference_videos") != std::string::npos);
+    const auto videoSchema = nlohmann::json::parse(video->parametersSchema());
+    CHECK(videoSchema["properties"]["local_image_paths"]["maxItems"] == 9);
+    CHECK(videoSchema["properties"]["reference_asset_ids"]["description"].get<std::string>().find(
+              "Active Ark asset") != std::string::npos);
+    CHECK(videoSchema["properties"]["video_path"]["description"].get<std::string>().find(
+              "2-15 seconds") != std::string::npos);
     CHECK(video->description().find("Seedance 2.0 Mini (default)") != std::string::npos);
     CHECK(video->parametersSchema().find("doubao-seedance-2-5-260628") == std::string::npos);
-    CHECK(video->description().find("mode=create with reference_image_paths") != std::string::npos);
-    CHECK(video->description().find("cannot list authorized real-portrait assets") !=
-          std::string::npos);
+    CHECK(video->description().find("mode=create with local_image_paths") != std::string::npos);
+    CHECK(video->parametersSchema().find("reference_asset_ids") != std::string::npos);
+    const MaiToolResult invalidAsset = video->execute(
+        R"({"action":"delegate","message":"test","reference_asset_ids":["asset://bad"]})", context);
+    CHECK(invalidAsset.hasError());
+    CHECK(invalidAsset.error().message().find("reference_asset_ids") != std::string::npos);
+    const MaiToolResult validAsset = video->execute(
+        R"({"action":"delegate","message":"test","reference_asset_ids":["asset://asset-1234567890"]})",
+        context);
+    CHECK(validAsset.hasError());
+    CHECK(validAsset.error().message().find("confirm duration") != std::string::npos);
+    CHECK(video->description().find("group_type=LivenessFace") != std::string::npos);
     CHECK(videoInfo.dump().find(key) == std::string::npos);
     CHECK(imageInfo.dump().find(key) == std::string::npos);
     MaiToolRegistry registry;
@@ -102,7 +129,7 @@ void testDynamicCredentialAndToolIdentity() {
     CHECK(specialists[1].toolName == "seedream_image");
     CHECK(specialists[1].capabilities[2].id == "multi_image_edit");
     CHECK(specialists[1].capabilities[2].status ==
-          MaiSpecialistCapabilityStatus::ImplementedUnverified);
+          MaiSpecialistCapabilityStatus::UploadNotConfigured);
     key.clear();
     specialists = registry.specialists();
     CHECK(!specialists[0].configured);
@@ -120,9 +147,9 @@ void testInvalidInputsDoNotReachNetwork() {
     CHECK(missingPlan.error().message().find("confirm duration") != std::string::npos);
     nlohmann::json tooManyReferences = {{"action", "delegate"},
                                         {"message", "Create a video"},
-                                        {"reference_image_paths", nlohmann::json::array()}};
+                                        {"local_image_paths", nlohmann::json::array()}};
     for (int index = 0; index < 10; ++index)
-        tooManyReferences["reference_image_paths"].push_back("image.png");
+        tooManyReferences["local_image_paths"].push_back("image.png");
     const auto excess = video->execute(tooManyReferences.dump(), context);
     CHECK(excess.hasError());
     CHECK(excess.error().message().find("at most 9") != std::string::npos);
@@ -166,9 +193,9 @@ void testInvalidInputsDoNotReachNetwork() {
     nlohmann::json fastReferences = {{"action", "delegate"},
                                      {"model", "doubao-seedance-2-0-fast-260128"},
                                      {"message", "Create a video"},
-                                     {"reference_image_paths", nlohmann::json::array()}};
+                                     {"local_image_paths", nlohmann::json::array()}};
     for (int index = 0; index < 10; ++index)
-        fastReferences["reference_image_paths"].push_back("missing.png");
+        fastReferences["local_image_paths"].push_back("missing.png");
     const auto tooManyFastImages = video->execute(fastReferences.dump(), context);
     CHECK(tooManyFastImages.hasError());
     CHECK(tooManyFastImages.error().message().find("at most 9") != std::string::npos);
@@ -181,7 +208,7 @@ void testInvalidInputsDoNotReachNetwork() {
     CHECK(
         video
             ->execute(
-                R"({"action":"delegate","message":"Create a video","image_path":"first.png","reference_image_paths":["other.png"]})",
+                R"({"action":"delegate","message":"Create a video","image_path":"first.png","local_image_paths":["other.png"]})",
                 context)
             .hasError());
     CHECK(video
@@ -324,6 +351,15 @@ void testLocalVideoUploadHandoffWithoutArkSubmission() {
     if (result.hasError())
         CHECK(result.error().message().find("public HTTPS URL") != std::string::npos);
     CHECK(uploads == 1);
+    auto withPortrait = valid;
+    withPortrait["message"] = "Replace the person using reference image 1";
+    withPortrait["reference_asset_ids"] = {"asset-20261009130956-7x8lv"};
+    withPortrait["production"] = {{"duration", -1}, {"ratio", "adaptive"}, {"resolution", "720p"}};
+    const MaiToolResult editWithPortrait = video->execute(withPortrait.dump(), context);
+    CHECK(editWithPortrait.hasError());
+    if (editWithPortrait.hasError())
+        CHECK(editWithPortrait.error().message().find("public HTTPS URL") != std::string::npos);
+    CHECK(uploads == 2);
     MaiFileSystem::removeRecursively(root);
 }
 
@@ -513,24 +549,25 @@ void testVirtualAssetFlow() {
     MaiToolContext context;
     context.root = workspace.toUtf8();
     int calls = 0;
-    auto tool = makeMaiArkAssetTool(
-        [&](const std::string& raw, const MaiToolContext&) -> MaiResult<std::string> {
-            const auto request = nlohmann::json::parse(raw);
-            ++calls;
-            if (request.at("action") == "upload_image") {
-                const MaiFilePath submitted =
-                    MaiFilePath::fromUtf8(request.at("image_path").get<std::string>());
-                CHECK(submitted.baseName().toUtf8() == "portrait.jpg");
-                CHECK(MaiFileSystem::exists(submitted));
-                CHECK(request.at("group_id") == "group-1234567890");
-                return std::string{R"({"Id":"asset-1234567890","Status":"Processing"})"};
-            }
-            if (request.at("action") == "create_asset") {
-                CHECK(request.at("url") == "https://example.com/portrait.jpg");
-                return std::string{R"({"Id":"asset-1234567890","Status":"Processing"})"};
-            }
-            return std::string{R"({"Id":"asset-1234567890","Status":"Active"})"};
-        });
+    auto tool = makeMaiArkAssetTool([&](const std::string& raw,
+                                        const MaiToolContext&) -> MaiResult<std::string> {
+        const auto request = nlohmann::json::parse(raw);
+        ++calls;
+        if (request.at("action") == "upload_image") {
+            const MaiFilePath submitted =
+                MaiFilePath::fromUtf8(request.at("image_path").get<std::string>());
+            CHECK(submitted.baseName().toUtf8() == "portrait.jpg");
+            CHECK(MaiFileSystem::exists(submitted));
+            CHECK(request.at("group_id") == "group-1234567890");
+            return std::string{R"({"Id":"asset-1234567890","Status":"Processing"})"};
+        }
+        if (request.at("action") == "create_asset") {
+            CHECK(request.at("url") == "https://example.com/portrait.jpg");
+            return std::string{R"({"Id":"asset-1234567890","Status":"Processing"})"};
+        }
+        return std::string{
+            R"({"Id":"asset-1234567890","Status":"Active","URL":"https://asset.example.com/image.jpg?X-Tos-Signature=secret"})"};
+    });
     CHECK(tool->name() == "ark_assets");
     CHECK(!tool->requiresApproval(R"({"action":"get_asset","asset_id":"asset-1234567890"})"));
     CHECK(tool->requiresApproval(R"({"action":"upload_image"})"));
@@ -547,6 +584,7 @@ void testVirtualAssetFlow() {
         tool->execute(R"({"action":"get_asset","asset_id":"asset-1234567890"})", context);
     CHECK(!ready.hasError());
     CHECK(nlohmann::json::parse(ready.output()).at("asset_uri") == "asset://asset-1234567890");
+    CHECK(!nlohmann::json::parse(ready.output()).contains("URL"));
     CHECK(calls == 3);
     CHECK(
         tool->execute(
@@ -557,20 +595,72 @@ void testVirtualAssetFlow() {
     CHECK(!MaiFileSystem::removeFile(image));
 }
 
+void testRealPortraitValidationHandoff() {
+    MaiToolContext context;
+    int calls = 0;
+    auto tool = makeMaiArkAssetTool(
+        [&](const std::string& raw, const MaiToolContext&) -> MaiResult<std::string> {
+            const auto request = nlohmann::json::parse(raw);
+            ++calls;
+            if (request.at("action") == "begin_real_validation")
+                return std::string{
+                    R"({"BytedToken":"vvs-test","H5Link":"https://ark.example.com/verify"})"};
+            if (request.at("action") == "get_real_validation") {
+                CHECK(request.at("byted_token") == "vvs-test");
+                return std::string{R"({"GroupId":"group-real-123456"})"};
+            }
+            CHECK(request.at("group_type") == "LivenessFace");
+            return std::string{R"({"Items":[]})"};
+        });
+    CHECK(tool->requiresApproval(R"({"action":"begin_real_validation"})"));
+    CHECK(tool->requiresPerCallApproval(R"({"action":"begin_real_validation"})"));
+    CHECK(!tool->requiresApproval(R"({"action":"get_real_validation"})"));
+    const MaiToolResult begin = tool->execute(R"({"action":"begin_real_validation"})", context);
+    CHECK(!begin.hasError());
+    CHECK(nlohmann::json::parse(begin.output()).at("H5Link") == "https://ark.example.com/verify");
+    const MaiToolResult finish =
+        tool->execute(R"({"action":"get_real_validation","byted_token":"vvs-test"})", context);
+    CHECK(!finish.hasError());
+    CHECK(nlohmann::json::parse(finish.output()).at("GroupId") == "group-real-123456");
+    const MaiToolResult groups =
+        tool->execute(R"({"action":"list_groups","group_type":"LivenessFace"})", context);
+    CHECK(!groups.hasError());
+    CHECK(calls == 3);
+}
+
 void testLiveAssetServiceWhenExplicitlyConfigured() {
     const char* address = std::getenv("MAI_ARK_ASSET_SERVICE_TEST_URL");
     const char* token = std::getenv("MAI_ARK_ASSET_SERVICE_TEST_TOKEN");
+    const char* certificate = std::getenv("MAI_ARK_ASSET_SERVICE_TEST_CA");
     if (address == nullptr || *address == '\0' || token == nullptr || *token == '\0') return;
-    auto tool = makeMaiArkAssetTool(makeMaiArkAssetServiceProvider([address, token] {
-        return MaiResult<MaiArkAssetServiceSettings>(MaiArkAssetServiceSettings{address, token});
-    }));
+    auto tool = makeMaiArkAssetTool(makeMaiArkAssetServiceProvider(
+        [address, token] {
+            return MaiResult<MaiArkAssetServiceSettings>(
+                MaiArkAssetServiceSettings{address, token});
+        },
+        certificate == nullptr ? std::string{} : std::string(certificate)));
     MaiToolContext context;
     const MaiToolResult result = tool->execute(R"({"action":"list_groups"})", context);
+    if (result.hasError())
+        std::printf("LIVE Ark Assets list_groups failed: %s\n", result.error().message().c_str());
     CHECK(!result.hasError());
     if (!result.hasError()) {
         const auto groups = nlohmann::json::parse(result.output(), nullptr, false);
         CHECK(groups.is_object());
         CHECK(groups.value("Items", nlohmann::json{}).is_array());
+    }
+    if (std::getenv("MAI_ARK_ASSET_SERVICE_TEST_CHECK_WRITE_RETRY") != nullptr) {
+        const MaiToolResult write =
+            tool->execute(R"({"action":"create_group","name":"retry-check"})", context);
+        CHECK(write.hasError());
+        if (write.hasError()) {
+            const auto error = nlohmann::json::parse(write.error().message(), nullptr, false);
+            CHECK(error.is_object());
+            if (error.is_object()) {
+                CHECK(error.value("http_status", 0) == 503);
+                CHECK(error.value("attempts", 0) == 1);
+            }
+        }
     }
     const char* image = std::getenv("MAI_ARK_ASSET_SERVICE_TEST_IMAGE");
     const char* group = std::getenv("MAI_ARK_ASSET_SERVICE_TEST_GROUP");
@@ -591,6 +681,66 @@ void testLiveAssetServiceWhenExplicitlyConfigured() {
     }
 }
 
+void testLocalImagesStopBeforePaidSubmissionWhenOssFails() {
+    const MaiFilePath source = MaiFileSystem::temporaryDirectory().append(
+        MaiFilePath::fromUtf8(MaiIdGenerator::generate("oss_input_") + ".jpg"));
+    CHECK(!MaiFileSystem::writeFile(source, "synthetic image fixture"));
+    MaiToolContext context;
+    context.root = source.dirName().toUtf8();
+    int uploads = 0;
+    const MaiCreativeMediaUploadProvider rejected =
+        [&uploads](const std::string&, const MaiToolContext&) -> MaiResult<std::string> {
+        ++uploads;
+        return {MaiErrorCode::Network, "Synthetic OSS failure"};
+    };
+    auto video = makeMaiSeedanceVideoTool([] { return std::string("test-key"); }, {}, rejected);
+    const nlohmann::json request = {
+        {"action", "delegate"},
+        {"message", "Animate the reference"},
+        {"local_image_paths", nlohmann::json::array({source.baseName().toUtf8()})},
+        {"production", {{"duration", 5}, {"ratio", "16:9"}, {"resolution", "720p"}}}};
+    const MaiToolResult result = video->execute(request.dump(), context);
+    CHECK(result.hasError());
+    CHECK(result.error().message().find("upload_failed") != std::string::npos);
+    CHECK(uploads == 1);
+    (void)MaiFileSystem::removeFile(source);
+}
+
+void testPrivateOssUploaderAcceptsDocumentSourceWithoutBase64() {
+    const MaiFilePath source = MaiFileSystem::temporaryDirectory().append(
+        MaiFilePath::fromUtf8(MaiIdGenerator::generate("wan_document_") + ".pptx"));
+    CHECK(!MaiFileSystem::writeFile(source, "synthetic presentation fixture"));
+    MaiToolContext context;
+    context.root = source.dirName().toUtf8();
+    int configReads = 0;
+    auto uploader = makeMaiPrivateOssMediaUploader([&]() -> MaiResult<MaiArkAssetServiceSettings> {
+        ++configReads;
+        return {MaiErrorCode::NotConfigured, "Synthetic signer unavailable"};
+    });
+    const auto document = uploader(source.baseName().toUtf8(), context);
+    CHECK(!document);
+    CHECK(configReads == 1);
+    const auto unsupported = uploader("not-a-document.exe", context);
+    CHECK(!unsupported);
+    CHECK(unsupported.error().code() == MaiErrorCode::InvalidInput);
+    CHECK(configReads == 1);
+    (void)MaiFileSystem::removeFile(source);
+}
+
+void testSeedanceManagementRequiresOwnedConversation() {
+    auto tool = makeMaiSeedanceVideoTool([] { return std::string("test-key"); });
+    const auto schema = nlohmann::json::parse(tool->parametersSchema());
+    CHECK(schema["properties"]["action"]["enum"].dump().find("cancel") != std::string::npos);
+    CHECK(schema["properties"]["action"]["enum"].dump().find("delete") != std::string::npos);
+    CHECK(tool->requiresPerCallApproval(R"({"action":"cancel"})"));
+    CHECK(tool->requiresPerCallApproval(R"({"action":"delete"})"));
+    MaiToolContext context;
+    const MaiToolResult unknown =
+        tool->execute(R"({"action":"delete","conversation_id":"provider-task-1"})", context);
+    CHECK(unknown.hasError());
+    CHECK(unknown.error().message().find("not_found") != std::string::npos);
+}
+
 }  // namespace
 
 int main() {
@@ -599,7 +749,11 @@ int main() {
     testRevisionRejectsAnotherConversation();
     testLocalVideoUploadHandoffWithoutArkSubmission();
     testVirtualAssetFlow();
+    testRealPortraitValidationHandoff();
     testLiveAssetServiceWhenExplicitlyConfigured();
+    testLocalImagesStopBeforePaidSubmissionWhenOssFails();
+    testPrivateOssUploaderAcceptsDocumentSourceWithoutBase64();
+    testSeedanceManagementRequiresOwnedConversation();
     testLiveArkWhenExplicitlyConfigured();
     testLiveRevisionWhenExplicitlyConfigured();
     return failures == 0 ? 0 : 1;

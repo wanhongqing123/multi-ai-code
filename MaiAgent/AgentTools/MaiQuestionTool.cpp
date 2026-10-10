@@ -34,6 +34,7 @@ public:
     }
 
     std::string description() const override {
+        // 只有关键偏好或缺失条件会影响后续大量工作时才问；等待用户答复后在同一轮继续。
         return "Ask the user one question and wait for the answer, then keep going in the same "
                "turn. Use it only when getting this wrong would waste everything that follows, "
                "such as which of two designs to build. Do not use it for things you can decide "
@@ -42,6 +43,7 @@ public:
     }
 
     std::string parametersSchema() const override {
+        // question 用用户语言表述；options 只是建议选项，用户仍可自由作答。
         return R"({"type":"object","properties":{)"
                R"("question":{"type":"string","description":"The question, in the user's language"},)"
                R"("options":{"type":"array","items":{"type":"string"},)"

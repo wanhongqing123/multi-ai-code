@@ -4,7 +4,6 @@
 #include "MaiArkAssetTools.h"
 #include "MaiArkMediaTools.h"
 #include "MaiGlmMediaTools.h"
-#include "MaiKlingMediaTools.h"
 #include "MaiMemoryStore.h"
 #include "MaiMiniMaxMediaTools.h"
 #include "MaiModelStudioTools.h"
@@ -22,6 +21,7 @@
 #if defined(MAICHAT_EMBEDDED_FFMPEG)
 #include "MaiFfmpegTools.h"
 #include "MaiVideoGeometryTool.h"
+#include "MaiWatermarkRemovalTool.h"
 #include "mai_fftools_embed.h"
 #endif
 #include "MaiChatTools/DesktopPdfRenderer.h"
@@ -44,22 +44,46 @@
 
 namespace {
 
+// 桌面端与移动端一致：先从工具描述初筛，再以 discover 的真实接线状态选择候选模型。
+// 这里仅约束主模型如何读取能力，不给通用 Agent 核心添加任何单一供应商的硬路由。
 const char *const kDesktopSystemPrompt =
     R"(You are the AI assistant embedded in MaiChat.
 Video generation rule: before any paid video delegate, use discover to identify configured
-specialists with implemented capabilities for this request. If the user has not chosen a video
+specialists with implemented capabilities for this request. Read descriptions for initial routing,
+then call discover on each plausible video specialist before recommending one. Compare actual
+tool_status and input-combination limits; model_support or api_support alone does not prove the
+App can execute a path. Use the JSON schema for exact fields. Do not infer missing capabilities
+from model names, marketing pages, or another model's limits. If the user has not chosen a video
 model for this task, show suitable names and task-specific differences and ask the user to choose;
 confirm the sole suitable model too. Do not choose or switch video models silently. Reuse a choice
 already made for this task, but ask before any replacement model's paid call. When one specialist
 offers multiple billable variants, show their supported duration and resolution and confirm the
 variant too. A model choice is
 separate from paid-call approval. Classify an input rejection before changing anything. If the
-cause is ambiguous, inspect the actual image and prompt without claiming which one failed. If an
-Seedance is selected, first submit the original user images normally. Only if Ark rejects that
-attempt for a possible real face, check for existing Active assets or use ark_assets upload_image
-on each required original photo, wait for Active, then retry the same Seedance model with
-asset:// IDs and new paid approval. Do not silently drop a photo or assume every face will pass
-asset review. If Ark requires H5 authorization, follow its actual result. Do not default to
+cause is ambiguous, inspect the actual image and prompt without claiming which one failed.
+When replacing a person in a source video, preserve that video and the user's references and
+plan the selected video model's edit path. Do not remove watermarks, subtitles, or end cards as
+an unrequested preparation step. Only when the user explicitly requests watermark removal, use
+media_remove_watermark with a known rectangle; inspect at most one representative frame if needed.
+Do not loop through FFmpeg/OpenCV to find regions. After one result, return to the original task.
+For image and video specialist tools, local media paths are upload inputs: the tool sends
+short-lived private OSS HTTPS URLs to the provider. If OSS upload fails, stop before paid
+submission and do not embed local media bytes as Base64.
+For Kling video, use kling_bailian_video with the Beijing Wan API Key and Workspace. Kling model
+activation is required; confirm its Turbo, Standard, or Omni variant before paid submission.
+For Kling images use kling_bailian_image with the same credentials; for Wan images use wan_image.
+If Seedance is selected and reference photos visibly contain real people, explain two asset paths
+before a paid task and let the user choose once: ordinary private photos can be registered as
+AIGC virtual assets; public figures or verified real-person likenesses should use H5 real-portrait
+authorization. Do not infer that a person is public from a photo alone. For the chosen path, check
+matching Active assets or register each required photo with ark_assets upload_image, wait for
+Active, then submit the same Seedance model with all selected reference_asset_ids and paid
+approval. H5 authorization needs begin_real_validation, the person's completion of its link, and
+get_real_validation before uploading matching photos into that verified group. Never call an AIGC
+asset real-person authorization. Non-real-person images use local paths as input to the tool;
+the tool uploads them to private OSS and sends short-lived HTTPS URLs to Seedance, not Base64.
+Do not silently drop a photo or assume every face will pass asset review. If Ark requires H5
+authorization, follow its actual result. Do not default to
 flipping or oil-painting a real face to evade review. For other image issues, if an image edit is
 allowed and still serves the user's goal, preserve the original, make a light
 FFmpeg/OpenCV edit, preview it, and retry the selected model with new paid approval. If
@@ -99,8 +123,16 @@ unsupported resolution or silently change it. Explain any local output conversio
 If approval is rejected, do not submit or retry. Use model tools for semantic changes such as person,
 clothes, scene, or action. Prefer local FFmpeg/OpenCV for geometry, crop, color,
 stabilization, frame joining, or speed changes to preserve identity pixels. Reuse existing
-cloud task IDs for progress checks instead of submitting a paid duplicate. For multiple user
-images, inspect the chosen video specialist's input limits and never silently drop an image.
+cloud task IDs for progress checks instead of submitting a paid duplicate.
+When the user asks to cancel a video job, use that specialist's cancel action with its saved
+conversation_id. Ark and Model Studio cancel only queued/PENDING jobs; if already running,
+report the actual provider refusal and keep checking the existing job. For deletion, Ark can
+delete completed cloud task records, while Wan and Bailian Kling only remove delivered local
+task records; do not claim cloud deletion or remove the downloaded video in that case.
+GLM and MiniMax likewise only delete local records after delivery; no verified cloud cancel
+endpoint is wired for them, so do not claim their running cloud tasks were canceled.
+For multiple user images, inspect the chosen video specialist's input limits and never silently
+drop an image.
 If the limit is exceeded, combine images with seedream_image for semantic fusion or FFmpeg for
 a visible layout, then show the plan before a paid call. On task failure, inspect the provider
 stage and reason, repair technical inputs when possible, and seek a new per-call approval before
@@ -195,35 +227,42 @@ buildAgent(std::unique_ptr<MaiModelClient> model,
   }
   tools->add(makeMaiAgentSendMediaTool());
   const auto arkKey = [key = toUtf8(credentials.arkApiKey)] { return key; };
-  tools->add(makeMaiSeedanceVideoTool(arkKey));
   const auto assetSettings = [base = toUtf8(credentials.cloudServiceUrl),
                               token = toUtf8(credentials.cloudServiceToken)]()
       -> MaiResult<MaiArkAssetServiceSettings> {
     if (base.empty() || token.empty())
-      return {MaiErrorCode::NotConfigured, "Ark Assets service is not configured"};
+      return {MaiErrorCode::NotConfigured,
+              "Ark Assets service is not configured"};
     return MaiArkAssetServiceSettings{base, token};
   };
-  if (assetSettings())
-    tools->add(makeMaiArkAssetTool(makeMaiArkAssetServiceProvider(assetSettings)));
+  // 桌面端与手机端使用同一 C++ OSS 上传实现，付费模型不接收本地 Base64 素材。
+  const bool assetsConfigured = static_cast<bool>(assetSettings());
+  const MaiCreativeMediaUploadProvider uploadMedia =
+      assetsConfigured ? makeMaiPrivateOssMediaUploader(assetSettings)
+                       : MaiCreativeMediaUploadProvider{};
+  tools->add(makeMaiSeedanceVideoTool(arkKey, {}, uploadMedia));
+  if (assetsConfigured)
+    tools->add(
+        makeMaiArkAssetTool(makeMaiArkAssetServiceProvider(assetSettings)));
   else
     tools->add(makeMaiArkAssetTool());
-  tools->add(makeMaiSeedreamImageTool(arkKey));
+  tools->add(makeMaiSeedreamImageTool(arkKey, {}, uploadMedia));
   const auto glmKey = [key = toUtf8(credentials.glmApiKey)] { return key; };
-  tools->add(makeMaiGlmVideoTool(glmKey));
+  tools->add(makeMaiGlmVideoTool(glmKey, {}, uploadMedia));
   tools->add(makeMaiGlmImageTool(glmKey));
-  const auto klingKey = [key = toUtf8(credentials.klingApiKey)] { return key; };
-  tools->add(makeMaiKlingVideoTool(klingKey));
-  tools->add(makeMaiKlingImageTool(klingKey));
-  const auto miniMaxKey = [key = toUtf8(credentials.miniMaxApiKey)] { return key; };
-  tools->add(makeMaiMiniMaxVideoTool(miniMaxKey));
-  tools->add(makeMaiMiniMaxImageTool(miniMaxKey));
+  const auto miniMaxKey = [key = toUtf8(credentials.miniMaxApiKey)] {
+    return key;
+  };
+  tools->add(makeMaiMiniMaxVideoTool(miniMaxKey, {}, uploadMedia));
+  tools->add(makeMaiMiniMaxImageTool(miniMaxKey, {}, uploadMedia));
   const auto wanCredentials = [key = toUtf8(credentials.wanApiKey),
                                workspace = toUtf8(credentials.wanWorkspaceId)] {
     return MaiWanCredentials{key, workspace};
   };
-  tools->add(makeMaiWanVideoEditTool(wanCredentials));
-  tools->add(makeMaiWanVideoTool(wanCredentials));
-  tools->add(makeMaiQwenImageTool(wanCredentials));
+  tools->add(makeMaiWanVideoTool(wanCredentials, {}, uploadMedia));
+  tools->add(makeMaiBailianKlingVideoTool(wanCredentials, {}, uploadMedia));
+  tools->add(makeMaiWanImageTool(wanCredentials, {}, uploadMedia));
+  tools->add(makeMaiBailianKlingImageTool(wanCredentials, {}, uploadMedia));
 #if defined(MAICHAT_EMBEDDED_FFMPEG)
   MaiFfmpegEngine ffmpegEngine{
       mai_ffmpeg_execute,       mai_ffmpeg_set_cancel_check,
@@ -232,6 +271,7 @@ buildAgent(std::unique_ptr<MaiModelClient> model,
   tools->add(makeMaiViewImageTool(makeMaiFfmpegImagePreview(ffmpegEngine)));
   tools->add(makeMaiFfmpegTool(ffmpegEngine));
   tools->add(makeMaiFfprobeTool(ffmpegEngine));
+  tools->add(makeMaiWatermarkRemovalTool(ffmpegEngine));
   tools->add(makeMaiStretchLowerVideoTool(ffmpegEngine));
 #endif
 #if defined(MAICHAT_CV_VIDEO_ANALYSIS)
@@ -307,10 +347,9 @@ AgentController::AgentController(std::unique_ptr<MaiModelClient> model,
   // 而全局静态的初始化顺序不好讲。
   qRegisterMetaType<MaiEvent>("MaiEvent");
 
-  runtime_->agent =
-      buildAgent(std::move(model), openStore(databasePath, runtime_->openError),
-                 QString(), MaiApprovalPolicy::OnRequest, hostTools,
-                 AgentController::ModelConfig{});
+  runtime_->agent = buildAgent(
+      std::move(model), openStore(databasePath, runtime_->openError), QString(),
+      MaiApprovalPolicy::OnRequest, hostTools, AgentController::ModelConfig{});
 
   // **显式 QueuedConnection，不用 Auto。**
   //

@@ -540,6 +540,48 @@ void contract_specialist_reply(MaiSessionStore& store, const char* which) {
     CHECK(!store.lastWriteError().hasError());
 }
 
+void contract_specialist_delete(MaiSessionStore& store, const char* which) {
+    std::printf("   [%s] only delivered terminal specialist tasks can be deleted\n", which);
+    const std::string owner = MaiIdGenerator::newSessionId();
+    const std::string foreign = MaiIdGenerator::newSessionId();
+    store.putSession(makeSession(owner, "task owner", 1));
+    store.putSession(makeSession(foreign, "other owner", 1));
+    MaiSpecialistTask task;
+    task.id = MaiIdGenerator::generate("spt_");
+    task.ownerSessionId = owner;
+    task.specialistName = "wan_video";
+    task.providerTaskId = "provider-1";
+    task.intent = "Create a video";
+    task.created = 1000;
+    CHECK(!store.insertSpecialistTask(task));
+    CHECK(store.deleteCompletedSpecialistTask(task.id, foreign).hasError());
+    CHECK(store.deleteCompletedSpecialistTask(task.id, owner).hasError());
+    CHECK(!store.finishSpecialistTask(task.id, owner, MaiSpecialistTaskStatus::Canceled,
+                                      "Canceled by provider", {}, 1001));
+    CHECK(store.deleteCompletedSpecialistTask(task.id, owner).hasError());
+    const auto reservation =
+        store.reserveSpecialistNotification(task.id, owner, "notification", 1002);
+    CHECK(reservation.isOk());
+    if (!reservation.isOk()) return;
+    CHECK(!store.markSpecialistNotified(task.id, owner, reservation.value(), 1003));
+    MaiSpecialistTask child = task;
+    child.id = MaiIdGenerator::generate("spt_");
+    child.parentTaskId = task.id;
+    CHECK(!store.insertSpecialistTask(child));
+    CHECK(store.deleteCompletedSpecialistTask(task.id, owner).hasError());
+    CHECK(!store.finishSpecialistTask(child.id, owner, MaiSpecialistTaskStatus::Failed,
+                                      "Synthetic failure", {}, 1004));
+    const auto childNotice =
+        store.reserveSpecialistNotification(child.id, owner, "child-notification", 1005);
+    CHECK(childNotice.isOk());
+    if (!childNotice.isOk()) return;
+    CHECK(!store.markSpecialistNotified(child.id, owner, childNotice.value(), 1006));
+    CHECK(!store.deleteCompletedSpecialistTask(child.id, owner));
+    CHECK(!store.deleteCompletedSpecialistTask(task.id, owner));
+    MaiSpecialistTask loaded;
+    CHECK(!store.getSpecialistTask(task.id, owner, loaded));
+}
+
 void runContract(MaiSessionStore& store, const char* which) {
     contract_session_crud(store, which);
     contract_list_sessions_ordering(store, which);
@@ -553,6 +595,7 @@ void runContract(MaiSessionStore& store, const char* which) {
     contract_switch_model(store, which);
     contract_concurrent_writes(store, which);
     contract_specialist_reply(store, which);
+    contract_specialist_delete(store, which);
     const std::string owner = MaiIdGenerator::newSessionId();
     const std::string other = MaiIdGenerator::newSessionId();
     store.putSession(makeSession(owner, "specialist owner", 1));

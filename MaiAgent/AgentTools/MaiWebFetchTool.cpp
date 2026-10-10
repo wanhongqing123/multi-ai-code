@@ -186,12 +186,14 @@ public:
     }
 
     std::string description() const override {
+        // 读取网页文本以核对文档或问题；网页布局、脚本与图片不会作为浏览器页面返回。
         return "Fetch a web page over http or https and return it as plain text. Use it to read "
                "documentation or an issue page. Only the text is returned; layout, images and "
                "scripts are dropped.";
     }
 
     std::string parametersSchema() const override {
+        // url 必须为要读取的 HTTP(S) 页面；工具按文本返回，不提供浏览器交互。
         return R"({"type":"object","properties":{)"
                R"("url":{"type":"string","description":"The http or https URL to fetch"}},)"
                R"("required":["url"]})";

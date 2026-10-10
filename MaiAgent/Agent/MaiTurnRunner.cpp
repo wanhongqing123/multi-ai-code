@@ -29,10 +29,12 @@ constexpr const char* kTimedOutHint =
     "The approval request timed out with no answer from the user. "
     "Do not retry; tell the user what you were about to do and wait for them.";
 
+// 一轮工具调用结束后，提醒主模型基于真实工具结果给出最终答复。
 constexpr const char* kFinalAnswerHint =
     "Tool execution is complete. Use the tool results above to provide the user with a complete "
     "final answer now. Do not return only reasoning or a description of the steps you took.";
 
+// 工具预算耗尽和重复调用不是“成功”；分别说明已完成与未完成的工作。
 constexpr const char* kToolLimitFinalHint =
     "The tool-call budget for this turn is exhausted. You cannot call any more tools. "
     "Tell the user what you completed, what remains unfinished, and what the tool results "
@@ -43,6 +45,7 @@ constexpr const char* kRepeatedToolFinalHint =
     "You cannot call more tools in this turn. Explain what you learned and what remains "
     "unfinished. Do not claim progress that the tool results do not show.";
 
+// 只把明确的欠费信号归入余额不足；普通网络错误和限流不能按欠费处理。
 bool isBalanceFailure(const nlohmann::json& error) {
     if (!error.is_object()) return false;
     const auto providerCode = error.value("provider_code", nlohmann::json{});
@@ -64,6 +67,8 @@ bool isBalanceFailure(const nlohmann::json& error) {
            detail.find("arrears") != std::string::npos;
 }
 
+// 一个供应商欠费不代表整个用户任务结束。保留素材，寻找可用模型；视频换模型前
+// 仍需用户选择，已提交任务的查询失败则绝不能重复付费提交。
 constexpr const char* kBalanceRecovery =
     "This provider cannot accept more work because its balance is insufficient. Do not stop "
     "the user's task, ask for a top-up, or retry this provider. Keep the original request and "
@@ -75,6 +80,8 @@ constexpr const char* kBalanceRecovery =
     "generation failed or silently submit a duplicate paid task.";
 
 std::string specialistFailureGuidance(const nlohmann::json& specialist) {
+    // 子工具失败先把原始结果回灌主模型，再按可观察到的信号附加下一步建议。
+    // 下方每个分支只是建议，不把笼统审核标签伪装成已查明的根因。
     if (isBalanceFailure(specialist)) return std::string(" ") + kBalanceRecovery;
     std::string detail;
     for (const char* field : {"message", "error", "reply", "provider_message"}) {
@@ -95,19 +102,24 @@ std::string specialistFailureGuidance(const nlohmann::json& specialist) {
         (detail.find("real person") != std::string::npos ||
          detail.find("human face") != std::string::npos ||
          detail.find("portrait") != std::string::npos)) {
+        // Seedance 报可能有真人时，先查或登记原图资产，等 Active 后以资产 ID 重试
+        // 同一模型；多张图逐张登记，不能偷偷丢图或再把本地原图直接提交。
         return " The original-image Seedance attempt was rejected for a possible real face. "
                "Keep every original reference unchanged. Check whether an Active asset for the "
                "same image already exists; otherwise use ark_assets upload_image with the "
                "original local image, then get_asset until it is Active or Failed. If Active, "
-               "retry the selected Seedance model with its asset:// ID and new paid-call "
-               "approval. For several required photos, register each separately and do not "
-               "silently drop one. Do not default to flipping, oil-painting, or rewriting a face "
+               "retry the selected Seedance model using reference_asset_ids with all Active "
+               "asset:// IDs and new paid-call approval. Do not pass those photos again through "
+               "local_image_paths; that would resubmit local files. For several required "
+               "photos, register each separately and do not silently drop one. Do not default "
+               "to flipping, oil-painting, or rewriting a face "
                "to evade review. If asset registration fails or requires a real-person "
                "authorization step, report the actual provider result to the main model and "
                "follow that authorized path; do not claim every real photo is accepted.";
     }
     if (detail.find("text sensitive") != std::string::npos ||
         detail.find("prompt sensitive") != std::string::npos) {
+        // 文本敏感标签只说明上游怎样归类，不证明参考图已经过审；先核对原请求文本。
         return " This attempt failed. The provider labeled the text input as sensitive. Inspect "
                "the exact submitted "
                "instruction for unnecessary or ambiguous wording, then propose a concise "
@@ -118,6 +130,8 @@ std::string specialistFailureGuidance(const nlohmann::json& specialist) {
     if (detail.find("real person") != std::string::npos ||
         detail.find("human face") != std::string::npos ||
         detail.find("portrait") != std::string::npos) {
+        // 其他模型报告真人时，区分“明确要求授权”和“模糊审核结果”。允许处理的图像
+        // 先轻度处理，仍失败才考虑较强处理，并把处理损失如实写入后续提示词。
         return " This attempt failed. The provider reported a possible real person in the "
                "reference image. This signal alone does not prove an explicit authorization "
                "requirement. Inspect the raw provider wording, selected tool limitation, and "
@@ -138,6 +152,7 @@ std::string specialistFailureGuidance(const nlohmann::json& specialist) {
     }
     if (detail.find("image sensitive") != std::string::npos ||
         detail.find("reference image") != std::string::npos) {
+        // 明确指向参考图时，主模型应保留原图、预览衍生图，再用同一模型重试。
         return " This attempt failed. The provider identified the reference image. Inspect its "
                "actual content and role, preserve the original, then use FFmpeg/OpenCV image tools "
                "for the "
@@ -152,6 +167,7 @@ std::string specialistFailureGuidance(const nlohmann::json& specialist) {
     if (detail.find("sensitive") != std::string::npos ||
         detail.find("moderation") != std::string::npos ||
         detail.find("1026") != std::string::npos) {
+        // 审核原因笼统时不能仅凭错误码判定是文字还是图片；逐项核对实际提交输入。
         return " This attempt failed. The provider gave an ambiguous input-moderation result. Do "
                "not assign it to text or image without evidence. Inspect the exact submitted "
                "prompt and source image. If evidence points to the photo, preserve the original "
@@ -168,11 +184,13 @@ std::string specialistFailureGuidance(const nlohmann::json& specialist) {
                "generations without approval or conceal explicitly prohibited material.";
     }
     if (detail.find("output delivery failed") != std::string::npos) {
+        // 生成已完成但下载失败：恢复已有任务产物，不再发起一次收费生成。
         return " The provider finished, but delivery of its output failed. First recover the "
                "existing result using the saved task ID and output location; do not submit "
                "another paid generation just to download the same result.";
     }
     if (detail.find("status check failed") != std::string::npos) {
+        // 查询失败无法推断生成失败；保留任务 ID 后继续安全查询。
         return " The status check failed, so the accepted provider task's result is unknown. "
                "Keep its task ID, inspect the original provider error, and try a safe status "
                "recovery before considering a new generation. Never claim that generation "
@@ -181,6 +199,7 @@ std::string specialistFailureGuidance(const nlohmann::json& specialist) {
     if (detail.find("rate limit") != std::string::npos ||
         detail.find("temporarily unavailable") != std::string::npos ||
         detail.find("timeout") != std::string::npos) {
+        // 暂时性故障可有界重试，但不能把同一收费请求重复提交。
         return " This appears temporary. Use a bounded retry or an available equivalent "
                "specialist while preserving the original task. Do not repeatedly submit the "
                "same paid generation.";
@@ -188,10 +207,12 @@ std::string specialistFailureGuidance(const nlohmann::json& specialist) {
     if (detail.find("invalid input") != std::string::npos ||
         detail.find("unsupported") != std::string::npos ||
         detail.find("invalid_input") != std::string::npos) {
+        // 字段类错误由主模型结合工具规则修正，避免让用户承担参数排错。
         return " Check the exact rejected field and repair it locally while preserving the "
                "user's creative intent. Then continue the task using the normal paid-call "
                "approval; do not ask the user to diagnose an implementation detail.";
     }
+    // 未识别错误也要把失败交给主模型继续判断，不能吞掉子工具结果。
     return " The specialist did not provide a classified recovery path. Inspect its exact "
            "error and execution stage, preserve the original task and media references, "
            "and try a practical repair or a capable alternate specialist before reporting "
@@ -344,8 +365,8 @@ MaiModelRequest MaiTurnRunner::buildRequest(const std::string& modelName,
     if (mDependencies.specialistReply.empty()) {
         request.messages = mDependencies.context->build(history);
     } else {
-        // The child reply precedes this assistant's tool calls. Re-appending it after tool
-        // results on every iteration would make the model see stale input as the latest turn.
+        // 子模型回复应排在本轮工具调用之前。若每次迭代都把它追加在工具结果之后，
+        // 主模型会把旧回复误认为用户刚刚发来的最新输入。
         history.erase(
             std::remove_if(history.begin(), history.end(),
                            [this](const auto& message) { return message.id == mAssistant.id; }),
@@ -541,9 +562,8 @@ void MaiTurnRunner::executeTools(const std::vector<MaiToolInvocation>& calls,
                                         part.id);
     }
 
-    // A single model response may request several tools at once. Keep their MaiToolPart entries
-    // adjacent so MaiContextBuilder can reconstruct one assistant tool_calls batch, then append all
-    // media observations after every textual tool result.
+    // 一次模型响应可能同时请求多个工具。各 MaiToolPart 要相邻保存，方便上下文构造器
+    // 还原同一批 tool_calls；图片观察放在文本工具结果之后，避免打乱调用顺序。
     if (!resultImages.empty()) {
         for (const MaiToolImage& image : resultImages) {
             MaiMessagePart imagePart;
@@ -647,8 +667,8 @@ bool MaiTurnRunner::toolNeedsApproval(const MaiToolInvocation& call) const {
     if (!tool->requiresApproval(call.arguments)) return false;
     if (mDependencies.approvalPolicy == MaiApprovalPolicy::Never) return false;
     if (mDependencies.approvalPolicy == MaiApprovalPolicy::UnlessTrusted) {
-        // Every new file target asks once. The gate remembers the approved canonical paths,
-        // and all other mutating or external tools continue to ask normally.
+        // 每个新的文件目标都要问一次。闸门记住已批准的规范化路径；
+        // 其他修改性工具或对外调用仍照常经过各自的审批。
         return true;
     }
     return true;
@@ -676,8 +696,8 @@ void MaiTurnRunner::commitStreamedParts() {
 }
 
 void MaiTurnRunner::checkpointStreamedParts(bool force) {
-    // UI receives every delta, but durable storage must not lag until the HTTP stream closes.
-    // Persist in bounded chunks so a stalled stream or process exit loses at most one small tail.
+    // UI 可以接收每个流式增量，但持久化不能等到 HTTP 流关闭才开始。
+    // 按有界片段落库，流卡住或进程退出时最多损失一小段尾部内容。
     constexpr std::size_t kCheckpointBytes = 1024;
     const std::size_t currentBytes = mReasoning.size() + mText.size();
     if (currentBytes == mLastPersistedStreamBytes ||

@@ -54,7 +54,7 @@
 
 ## 多图能力与主模型路由
 
-Seedance 2.0 的[官方创建任务文档](https://docs.volcengine.com/docs/82379/1520757?lang=zh)使用 `content[]` 中重复的 `image_url` 项，并将每项 `role` 设为 `reference_image`，上限 9 张；不是单独的 `image_urls` 顶层数组。当时 `seedance_video` 按此格式接入 `reference_image_paths`，并在 discover 中标明上限和与严格首尾帧模式互斥。CogVideoX-3 仅支持单首帧或严格首尾帧两张。主模型提示词要求先查上限，不得静默丢图；超限时先拟定图像融合或可见排版方案，再走付费确认。
+Seedance 2.0 的[官方创建任务文档](https://docs.volcengine.com/docs/82379/1520757?lang=zh)使用 `content[]` 中重复的 `image_url` 项，并将每项 `role` 设为 `reference_image`，上限 9 张；不是单独的 `image_urls` 顶层数组。当时 `seedance_video` 按此格式接入 `local_image_paths`，并在 discover 中标明上限和与严格首尾帧模式互斥。CogVideoX-3 仅支持单首帧或严格首尾帧两张。主模型提示词要求先查上限，不得静默丢图；超限时先拟定图像融合或可见排版方案，再走付费确认。
 
 2026-10-08 更新：`seedance_video` 保留 Seedance 2.5 实现，但付费提交已禁用，
 默认改为 Seedance 2.0 Mini。2.5 单次输出支持 4–30 秒，

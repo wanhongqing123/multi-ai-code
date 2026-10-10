@@ -111,6 +111,7 @@ public:
     }
 
     std::string description() const override {
+        // 只有内置工具不能完成时才回退到 shell；工作目录、审批、超时和输出长度受控。
         return "Fallback for tasks built-in tools cannot perform. Run a shell command in the "
                "working directory and return combined stdout and stderr. Prefer file_create, "
                "file_create_directory, file_delete, file_read, file_write, file_edit, and "
@@ -119,6 +120,7 @@ public:
     }
 
     std::string parametersSchema() const override {
+        // command 是完整命令行；timeout_ms 为有界等待，执行前还要过 shell 审批。
         return R"({"type":"object","properties":{)"
                R"("command":{"type":"string","description":"The command line to run"},)"
                R"("timeout_ms":{"type":"integer","description":"Give up after this many milliseconds, default 120000, max 600000"}},)"
@@ -149,8 +151,8 @@ public:
         // 带控制字符时，真正执行的内容不由第一个词决定；保留独立前缀方便审计。
         if (program.empty() || hasShellControlCharacters(command))
             return "shell:<compound>:" + command;
-        // Shell syntax can write or delete arbitrary paths; unlike built-in file tools, it
-        // cannot reliably identify a target file. Never grant a whole program for one command.
+        // Shell 语法可写入或删除任意路径；不像内置文件工具那样能可靠识别目标文件。
+        // 因此一次命令获批不能扩大为整个程序永久获批。
         return "shell:command:" + command;
     }
 

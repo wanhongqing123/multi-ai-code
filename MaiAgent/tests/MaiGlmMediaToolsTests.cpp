@@ -28,10 +28,19 @@ void testDiscoveryAndApproval() {
     CHECK(video->name() == "glm_video");
     CHECK(image->name() == "glm_image");
     CHECK(nlohmann::json::parse(video->parametersSchema()).is_object());
+    const auto videoSchema = nlohmann::json::parse(video->parametersSchema());
+    CHECK(videoSchema["properties"]["duration"]["description"].get<std::string>().find("5 or 10") !=
+          std::string::npos);
+    CHECK(videoSchema["properties"]["last_frame_path"]["description"].get<std::string>().find(
+              "requires image_path") != std::string::npos);
     CHECK(nlohmann::json::parse(image->parametersSchema()).is_object());
     CHECK(!video->requiresPerCallApproval(R"({"action":"discover"})"));
     CHECK(!video->requiresPerCallApproval(R"({"action":"continue"})"));
     CHECK(video->requiresPerCallApproval(R"({"action":"delegate"})"));
+    CHECK(video->requiresPerCallApproval(R"({"action":"delete"})"));
+    CHECK(nlohmann::json::parse(video->parametersSchema())["properties"]["action"]["enum"]
+              .dump()
+              .find("delete") != std::string::npos);
     CHECK(image->requiresPerCallApproval(R"({"action":"delegate"})"));
     CHECK(video->requiresPerCallApproval("not json"));
     auto info = nlohmann::json::parse(video->execute(R"({"action":"discover"})", context).output());
@@ -39,6 +48,8 @@ void testDiscoveryAndApproval() {
     CHECK(!info.at("configured").get<bool>());
     CHECK(info.at("capabilities")[0].at("tool_status") == "not_configured");
     CHECK(info.dump().find("existing_video_edit") != std::string::npos);
+    CHECK(info.dump().find("cloud_task_cancel") != std::string::npos);
+    CHECK(info.at("capabilities")[0].contains("model_support"));
     key = "test-key";
     info = nlohmann::json::parse(video->execute(R"({"action":"discover"})", context).output());
     CHECK(info.at("configured").get<bool>());
@@ -133,6 +144,10 @@ void testCannotReadAnotherConversationTask() {
         nlohmann::json{{"action", "continue"}, {"conversation_id", task.id}}.dump(), context);
     CHECK(result.hasError());
     CHECK(result.error().code() == MaiErrorCode::NotFound);
+    const auto unauthorizedDelete = video->execute(
+        nlohmann::json{{"action", "delete"}, {"conversation_id", task.id}}.dump(), context);
+    CHECK(unauthorizedDelete.hasError());
+    CHECK(unauthorizedDelete.error().code() == MaiErrorCode::NotFound);
 }
 
 }  // namespace

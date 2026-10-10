@@ -11,6 +11,62 @@ import UIKit
 import UniformTypeIdentifiers
 import Vision
 
+enum MaiPhotoLibraryMediaWriter {
+    @MainActor
+    static func requestAddAccess() async -> Bool {
+        let current = PHPhotoLibrary.authorizationStatus(for: .addOnly)
+        let status = current == .notDetermined
+            ? await PHPhotoLibrary.requestAuthorization(for: .addOnly) : current
+        return status == .authorized || status == .limited
+    }
+
+    // Photos 在自己的串行队列执行变更块；此函数不能继承调用方的 MainActor 隔离。
+    nonisolated static func saveVideo(at fileURL: URL, createdAt: Date) async throws {
+        try await PHPhotoLibrary.shared().performChanges {
+            let request = PHAssetCreationRequest.forAsset()
+            let options = PHAssetResourceCreationOptions()
+            options.shouldMoveFile = false
+            request.addResource(with: .video, fileURL: fileURL, options: options)
+            request.creationDate = createdAt
+        }
+    }
+
+    nonisolated static func saveImage(at fileURL: URL, createdAt: Date) async throws {
+        try await PHPhotoLibrary.shared().performChanges {
+            let request = PHAssetCreationRequest.forAsset()
+            let options = PHAssetResourceCreationOptions()
+            options.shouldMoveFile = false
+            request.addResource(with: .photo, fileURL: fileURL, options: options)
+            request.creationDate = createdAt
+        }
+    }
+
+    nonisolated static func createAlbum(named name: String) async throws {
+        try await PHPhotoLibrary.shared().performChanges {
+            PHAssetCollectionChangeRequest.creationRequestForAssetCollection(withTitle: name)
+        }
+    }
+
+    nonisolated static func addPhotos(_ ids: [String], to albumID: String) async throws {
+        guard let album = PHAssetCollection.fetchAssetCollections(
+            withLocalIdentifiers: [albumID], options: nil).firstObject,
+            album.canPerform(.addContent) else {
+            throw NSError(domain: "MaiChat.Photos", code: -1,
+                          userInfo: [NSLocalizedDescriptionKey: "相簿不可编辑"])
+        }
+        let assets = ids.compactMap {
+            PHAsset.fetchAssets(withLocalIdentifiers: [$0], options: nil).firstObject
+        }
+        guard assets.count == ids.count else {
+            throw NSError(domain: "MaiChat.Photos", code: -2,
+                          userInfo: [NSLocalizedDescriptionKey: "照片已不可访问"])
+        }
+        try await PHPhotoLibrary.shared().performChanges {
+            PHAssetCollectionChangeRequest(for: album)?.addAssets(assets as NSArray)
+        }
+    }
+}
+
 @MainActor
 extension AIMobileHostToolProvider {
     private func photoAuthorization() async -> PHAuthorizationStatus {
@@ -233,8 +289,7 @@ extension AIMobileHostToolProvider {
 
     func saveImage(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
         let saveRequestedAt = Date()
-        let status = await photoAuthorization()
-        guard status == .authorized || status == .limited else {
+        guard await MaiPhotoLibraryMediaWriter.requestAddAccess() else {
             return .failure(code: "canceled", message: "photo library access was not granted")
         }
         let path = Self.string(arguments, key: "path")
@@ -252,10 +307,7 @@ extension AIMobileHostToolProvider {
                   CGImageSourceGetCount(image) > 0 else {
                 return .failure(code: "invalid_input", message: "image must be a JPEG, PNG, or HEIF file up to 50 MB")
             }
-            try await performPhotoChanges {
-                PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: source)?
-                    .creationDate = saveRequestedAt
-            }
+            try await MaiPhotoLibraryMediaWriter.saveImage(at: source, createdAt: saveRequestedAt)
             return Self.jsonSuccess(["saved": true, "source_path": path])
         } catch {
             return .failure(code: "internal", message: error.localizedDescription)
@@ -264,8 +316,7 @@ extension AIMobileHostToolProvider {
 
     func saveVideo(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
         let saveRequestedAt = Date()
-        let status = await photoAuthorization()
-        guard status == .authorized || status == .limited else {
+        guard await MaiPhotoLibraryMediaWriter.requestAddAccess() else {
             return .failure(code: "canceled", message: "photo library access was not granted")
         }
         let path = Self.string(arguments, key: "path")
@@ -284,10 +335,7 @@ extension AIMobileHostToolProvider {
             guard !tracks.isEmpty else {
                 return .failure(code: "invalid_input", message: "file has no video track")
             }
-            try await performPhotoChanges {
-                PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: source)?
-                    .creationDate = saveRequestedAt
-            }
+            try await MaiPhotoLibraryMediaWriter.saveVideo(at: source, createdAt: saveRequestedAt)
             return Self.jsonSuccess(["saved": true, "source_path": path, "bytes": bytes])
         } catch {
             return .failure(code: "internal", message: error.localizedDescription)
@@ -393,13 +441,11 @@ extension AIMobileHostToolProvider {
               ids.allSatisfy({ !$0.isEmpty }) else {
             return .failure(code: "invalid_input", message: "invalid album name or photo IDs")
         }
-        var assets: [PHAsset] = []
         for id in ids {
             guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject,
                   asset.mediaType == .image else {
                 return .failure(code: "not_found", message: "a photo is not accessible")
             }
-            assets.append(asset)
         }
 
         func findAlbum() -> PHAssetCollection? {
@@ -414,37 +460,20 @@ extension AIMobileHostToolProvider {
         do {
             var album = findAlbum()
             if album == nil {
-                try await performPhotoChanges {
-                    PHAssetCollectionChangeRequest.creationRequestForAssetCollection(withTitle: name)
-                }
+                try await MaiPhotoLibraryMediaWriter.createAlbum(named: name)
                 album = findAlbum()
             }
             guard let album, album.canPerform(.addContent) else {
                 return .failure(code: "internal", message: "album cannot be edited")
             }
-            try await performPhotoChanges {
-                PHAssetCollectionChangeRequest(for: album)?.addAssets(assets as NSArray)
-            }
+            try await MaiPhotoLibraryMediaWriter.addPhotos(ids, to: album.localIdentifier)
             return Self.jsonSuccess([
                 "album_id": album.localIdentifier, "album_name": name,
-                "added_count": assets.count, "copied_originals": false,
+                "added_count": ids.count, "copied_originals": false,
             ])
         } catch {
             return .failure(code: "internal", message: error.localizedDescription)
         }
     }
 
-    private func performPhotoChanges(_ changes: @escaping () -> Void) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            PHPhotoLibrary.shared().performChanges(changes) { success, error in
-                if success { continuation.resume() }
-                else {
-                    continuation.resume(throwing: error ?? NSError(
-                        domain: "MaiChat.Photos", code: -1,
-                        userInfo: [NSLocalizedDescriptionKey: "相簿操作失败"]
-                    ))
-                }
-            }
-        }
-    }
 }

@@ -1,5 +1,6 @@
 #include "MaiFfmpegTools.h"
 #include "MaiVideoGeometryTool.h"
+#include "MaiWatermarkRemovalTool.h"
 
 #include <atomic>
 #include <chrono>
@@ -403,6 +404,40 @@ int main(int argc, char **argv) {
                  nestedExpression.error().message().c_str());
     return 32;
   }
+  // 独立去水印工具依赖内嵌 FFmpeg 的 delogo，而不是系统上另一份 FFmpeg。
+  const MaiToolResult delogo =
+      runFilterGraph(*convert, context, {"testsrc2=s=64x64:d=0.1:r=1"},
+                     "[0:v]delogo=x=8:y=8:w=16:h=16:show=0[out]");
+  if (delogo.hasError()) {
+    std::fprintf(stderr, "embedded delogo failed: %s\n",
+                 delogo.error().message().c_str());
+    return 33;
+  }
+  const MaiFilePath watermarkRoot = MaiFileSystem::temporaryDirectory().append(
+      MaiFilePath::fromUtf8(MaiIdGenerator::generate("mai_delogo_test_")));
+  std::string sourceBytes;
+  if (MaiFileSystem::createDirectories(watermarkRoot) ||
+      MaiFileSystem::readFile(input, sourceBytes, 2'000'000) ||
+      MaiFileSystem::writeFile(
+          watermarkRoot.append(MaiFilePath::fromUtf8("source.mp4")),
+          sourceBytes))
+    return 34;
+  MaiToolContext watermarkContext;
+  watermarkContext.root = watermarkRoot.toUtf8();
+  MaiWatermarkRemovalOptions watermarkOptions;
+  watermarkOptions.inputPath = "source.mp4";
+  watermarkOptions.outputPath = "clean.mp4";
+  watermarkOptions.regions.push_back({8, 8, 16, 16, 0, 1});
+  const auto cleaned =
+      maiRemoveWatermark(watermarkOptions, engine, watermarkContext);
+  if (!cleaned || cleaned.value().outputBytes == 0 ||
+      !MaiFileSystem::exists(
+          MaiFilePath::fromUtf8(cleaned.value().outputPath))) {
+    std::fprintf(stderr, "embedded watermark tool failed: %s\n",
+                 cleaned ? "no output" : cleaned.error().message().c_str());
+    return 35;
+  }
+  MaiFileSystem::removeRecursively(watermarkRoot);
 
   const MaiFilePath unsupportedOutput =
       MaiFileSystem::temporaryDirectory().append(MaiFilePath::fromUtf8(

@@ -74,6 +74,9 @@ struct MaiCvImageAnalysisResult {
     double changedPixelFraction = 0;
     double psnrDb = 0;
     bool identical = false;
+    bool alignedIdentical = false;
+    bool aspectRatioChanged = false;
+    std::string comparisonAlignment = "none";
     int dHashHamming = 0;
     double translationX = 0;
     double translationY = 0;
@@ -96,14 +99,15 @@ struct MaiCvImageAnalysisResult {
     std::string error;
 };
 
-// Analyze one or two already-authorized local images with OpenCV. Input files are never modified.
-// Edges and ThresholdMask write one new grayscale PNG to options.outputPath, which the caller must
-// resolve below the Agent workspace and reserve exclusively. Other kinds are read-only.
-// TemplateMatch and RegisterTranslation use secondPath; the former requires the template no larger
-// than the source, while the latter requires identical dimensions. Cancellation is checked between
-// decode and analysis. JPEG/PNG/WebP decoding depends on the host OpenCV build; unsupported media
-// and images above 24 million decoded pixels return error. Scores are measurements, not semantic
-// labels, and OpenCV's 8-bit decode is not ICC/HDR color managed.
+// 用 OpenCV 分析一张或两张已获访问权限的本地图像，不修改任何输入文件。
+// Edges、ThresholdMask 会在 options.outputPath 创建新的灰度 PNG；调用方须把目标路径
+// 限制在 Agent 工作区内并独占预留。其他分析只读取输入。
+// Compare 遇到尺寸不同的图片时，仅在内存中将第二张缩放到第一张的尺寸；结果会区分
+// “原像素完全相同”和“缩放后相同”，不会自动校正画面位移。
+// TemplateMatch 要求模板不大于源图；RegisterTranslation 要求两张图尺寸一致。
+// 解码和分析之间会检查取消。JPEG/PNG/WebP 能否解码取决于宿主 OpenCV 构建；
+// 不支持的格式或超过 2400 万像素的图像返回错误。数值指标不是语义判断，
+// OpenCV 的 8-bit 解码也不做 ICC/HDR 色彩管理。
 MaiCvImageAnalysisResult analyzeMaiCvImage(const std::string& firstPath,
                                            const std::string& secondPath,
                                            const MaiCvImageAnalysisOptions& options,

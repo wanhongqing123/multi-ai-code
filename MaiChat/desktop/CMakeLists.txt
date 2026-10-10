@@ -568,11 +568,10 @@ if(WIN32)
     set(MAICHAT_RVM_MODEL
       "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/models/rvm_mobilenetv3_fp32.onnx")
     set(MAICHAT_ORT_RUNTIME
-      "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/onnxruntime/windows-x64/onnxruntime.dll")
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/build/vendor/onnxruntime-windows-x64/onnxruntime.dll")
     set(MAICHAT_ORT_PROVIDER
-      "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/onnxruntime/windows-x64/onnxruntime_providers_shared.dll")
-    if(EXISTS "${MAICHAT_RVM_MODEL}" AND EXISTS "${MAICHAT_ORT_RUNTIME}" AND
-       EXISTS "${MAICHAT_ORT_PROVIDER}")
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/build/vendor/onnxruntime-windows-x64/onnxruntime_providers_shared.dll")
+    if(EXISTS "${MAICHAT_RVM_MODEL}" AND EXISTS "${MAICHAT_ORT_RUNTIME}")
       set(MAICHAT_RVM_WINDOWS_ASSETS_AVAILABLE ON)
       add_custom_command(TARGET maichat POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory
@@ -591,10 +590,14 @@ if(WIN32)
           "$<TARGET_FILE_DIR:maichat>/MaiAgentModels/ONNXRUNTIME_ThirdPartyNotices.txt"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
           "${MAICHAT_ORT_RUNTIME}"
-          "$<TARGET_FILE_DIR:maichat>/onnxruntime.dll"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-          "${MAICHAT_ORT_PROVIDER}"
-          "$<TARGET_FILE_DIR:maichat>/onnxruntime_providers_shared.dll")
+          "$<TARGET_FILE_DIR:maichat>/onnxruntime.dll")
+      # 共享 provider 库仅在所选后端产生它时打包；DirectML 构建可内置后端。
+      if(EXISTS "${MAICHAT_ORT_PROVIDER}")
+        add_custom_command(TARGET maichat POST_BUILD
+          COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${MAICHAT_ORT_PROVIDER}"
+            "$<TARGET_FILE_DIR:maichat>/onnxruntime_providers_shared.dll")
+      endif()
     else()
       message(STATUS "Windows RVM assets are incomplete; cv_video_matting will be unavailable")
     endif()
@@ -606,7 +609,7 @@ if(APPLE)
     set(MAICHAT_RVM_MODEL
       "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/models/rvm_mobilenetv3_fp32.onnx")
     set(MAICHAT_ORT_RUNTIME
-      "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/onnxruntime/macos-arm64/libonnxruntime.1.26.0.dylib")
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/build/vendor/onnxruntime-macos/libonnxruntime.1.26.0.dylib")
     if(EXISTS "${MAICHAT_RVM_MODEL}" AND EXISTS "${MAICHAT_ORT_RUNTIME}")
       add_custom_command(TARGET maichat POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory

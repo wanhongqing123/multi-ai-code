@@ -132,9 +132,12 @@ public:
     // 给模型看的 JSON Schema 原文。
     virtual std::string parametersSchema() const = 0;
 
-    // Model-backed tools expose their verified, current capability metadata to hosts and the
-    // Agent. Ordinary tools return no value. Query on a worker thread; credential providers may
-    // cross a host boundary. This query must not perform network I/O.
+    // 带模型的工具返回当前能力快照，普通工具返回空值。该值包含本机接线状态和
+    // 账号配置状态，不表示供应商已经完成付费实盘验证。
+    // 主模型每轮直接收到的是 description()/parametersSchema()；只有调用工具的
+    // discover 后，才会通过工具结果读取这里的完整能力条目。
+    // 必须在工作线程查询：密钥提供器可能跨越 iOS/Android/桌面宿主边界；
+    // 本方法绝不能发网络请求，也不能在结果中包含密钥或用户媒体字节。
     virtual std::optional<MaiSpecialistInfo> specialistInfo() const;
 
     // 这一次调用需要用户点头吗。
@@ -197,7 +200,8 @@ public:
 
     // 给模型的工具清单。
     std::vector<MaiToolSpec> specs() const;
-    // Snapshot model-backed experts on a worker thread, as specialistInfo() may read host secrets.
+    // 在工作线程汇总带模型工具的能力快照。它可能读取宿主中的密钥配置状态，
+    // 但不得把密钥值放进返回结果；该清单目前不会自动拼入主模型请求。
     std::vector<MaiSpecialistInfo> specialists() const;
 
 private:

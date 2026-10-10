@@ -31,6 +31,8 @@ if(ANDROID)
 endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS" OR ANDROID)
   set(mai_openssl_source "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/openssl")
+  # iOS 的整个 CMake 构建目录由 build-mobile-agent.sh 固定在 build/vendor。
+  # OpenSSL 放在其中，与 FFmpeg/OpenCV 一起按平台复用，也能被打包脚本找到。
   set(mai_openssl_build "${CMAKE_CURRENT_BINARY_DIR}/vendor/openssl-cli-build")
   set(mai_openssl_script "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/scripts/build-openssl.sh")
   if(ANDROID)
@@ -334,13 +336,18 @@ if(MAICHAT_MOBILE_TESTS)
       maichat_mobile maiagent android log jnigraphics)
   endif()
   if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND CMAKE_OSX_SYSROOT MATCHES "[Ss]imulator")
+    # iOS 集成测试必须与 App 使用同一份源码构建的 XCFramework。
+    set(MAICHAT_ORT_XCFRAMEWORK
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/build/vendor/onnxruntime-ios-pods/onnxruntime-c/onnxruntime.xcframework")
+    set(MAICHAT_ORT_SIMULATOR_LIBRARY
+      "${MAICHAT_ORT_XCFRAMEWORK}/ios-arm64-simulator/onnxruntime.framework/onnxruntime")
     add_executable(MaiVideoMattingIosTests tests/MaiVideoMattingIosTests.cpp)
     target_include_directories(MaiVideoMattingIosTests PRIVATE
       ../../MaiAgent/include ../../MaiAgent/third_party/nlohmann
-      ../../MaiAgent/third_party/onnxruntime/include)
+      ../../MaiAgent/third_party/onnxruntime/include/onnxruntime/core/session)
     target_link_libraries(MaiVideoMattingIosTests PRIVATE
       maichat_mobile maiagent
-      "${CMAKE_CURRENT_SOURCE_DIR}/../ios/MaiChat/Pods/onnxruntime-c/onnxruntime.xcframework/ios-arm64_x86_64-simulator/onnxruntime.framework/onnxruntime"
+      "${MAICHAT_ORT_SIMULATOR_LIBRARY}"
       "-framework Accelerate" "-framework CoreML" "-framework Metal"
       "-framework MetalPerformanceShaders" "-framework Foundation")
     add_executable(MaiCvVideoAnalysisTests

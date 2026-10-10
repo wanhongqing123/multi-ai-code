@@ -25,6 +25,7 @@ namespace {
 using Json = nlohmann::json;
 
 bool isPaidGenerationAction(const std::string& raw) {
+    // cancel/delete 不新建付费任务，但会取消或删除已有任务，仍需逐次确认。
     const Json args = Json::parse(raw, nullptr, false);
     if (!args.is_object() || !args.value("action", Json{}).is_string()) return true;
     const std::string action = args["action"].get<std::string>();
@@ -54,6 +55,8 @@ constexpr char kImagesUrl[] = "https://ark.cn-beijing.volces.com/api/v3/images/g
 constexpr std::size_t kMaxResponseBytes = 2 * 1024 * 1024;
 
 struct MaiSeedanceModelSpec {
+    // 每行依次描述模型 ID、展示名、最大生成时长、参考图上限、输入视频时长上限、
+    // 是否支持 1080p/4k，以及是否使用 2.5 的 Omni 任务类型。
     const char* id;
     const char* label;
     int maximumDuration;
@@ -65,6 +68,7 @@ struct MaiSeedanceModelSpec {
 };
 
 constexpr MaiSeedanceModelSpec kSeedanceModels[] = {
+    // 2.5 的规格保留供代码维护，但工具 schema 和执行入口会因费用将它禁用。
     {kMiniVideoModel, "Seedance 2.0 Mini", 15, 9, 15, false, false, false},
     {kFastVideoModel, "Seedance 2.0 Fast", 15, 9, 15, false, false, false},
     {kStandardVideoModel, "Seedance 2.0", 15, 9, 15, true, true, false},
@@ -84,6 +88,8 @@ std::string stringValue(const Json& object, const char* key) {
 }
 
 MaiToolResult discoverSpecialist(const MaiSpecialistInfo& info, const std::string& reply) {
+    // 模型理论能力、API 开放情况、工具真正接线状态分开返回；
+    // limitation 原样保留具体限制，让主模型不会把“支持”理解成“任意输入都可用”。
     Json capabilities = Json::array();
     for (const MaiSpecialistCapability& capability : info.capabilities) {
         capabilities.push_back(
@@ -145,29 +151,7 @@ std::string imageMime(const std::string& path) {
     const std::string extension = lowerExtension(path);
     if (extension == "jpg" || extension == "jpeg") return "image/jpeg";
     if (extension == "png") return "image/png";
-    if (extension == "webp") return "image/webp";
-    if (extension == "heic") return "image/heic";
-    if (extension == "heif") return "image/heif";
-    if (extension == "bmp") return "image/bmp";
-    if (extension == "tif" || extension == "tiff") return "image/tiff";
-    if (extension == "gif") return "image/gif";
     return {};
-}
-
-std::string encodeBase64(const std::string& bytes) {
-    constexpr char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::string encoded;
-    encoded.reserve(((bytes.size() + 2) / 3) * 4);
-    for (std::size_t index = 0; index < bytes.size(); index += 3) {
-        const auto a = static_cast<unsigned char>(bytes[index]);
-        const auto b = index + 1 < bytes.size() ? static_cast<unsigned char>(bytes[index + 1]) : 0;
-        const auto c = index + 2 < bytes.size() ? static_cast<unsigned char>(bytes[index + 2]) : 0;
-        encoded.push_back(alphabet[a >> 2]);
-        encoded.push_back(alphabet[((a & 3) << 4) | (b >> 4)]);
-        encoded.push_back(index + 1 < bytes.size() ? alphabet[((b & 15) << 2) | (c >> 6)] : '=');
-        encoded.push_back(index + 2 < bytes.size() ? alphabet[c & 63] : '=');
-    }
-    return encoded;
 }
 
 struct ArkResponse {
@@ -197,7 +181,8 @@ int checkCanceled(void* user, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
 }
 
 ArkResponse requestJson(const std::string& url, const std::string& key, const std::string& caBundle,
-                        const Json* body, const MaiToolContext& context) {
+                        const Json* body, const MaiToolContext& context,
+                        bool deleteRequest = false) {
     maiAssertBlockingAllowed("ark_media_tool");
     CURL* curl = curl_easy_init();
     if (curl == nullptr)
@@ -225,6 +210,7 @@ ArkResponse requestJson(const std::string& url, const std::string& key, const st
         curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE,
                          static_cast<curl_off_t>(payload.size()));
     }
+    if (deleteRequest) curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE");
 #if LIBCURL_VERSION_NUM >= 0x075500
     curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "https");
 #else
@@ -256,6 +242,7 @@ ArkResponse requestJson(const std::string& url, const std::string& key, const st
 }
 
 std::optional<MaiToolResult> readImage(const std::string& candidate, const MaiToolContext& context,
+                                       const MaiCreativeMediaUploadProvider& uploadMedia,
                                        Json& image) {
     const std::string path = context.resolvePath(candidate);
     const std::string mime = imageMime(path);
@@ -265,13 +252,16 @@ std::optional<MaiToolResult> readImage(const std::string& candidate, const MaiTo
     if (!MaiFileSystem::fileSize(MaiFilePath::fromUtf8(path), size) || size == 0 ||
         size > 20'000'000)
         return invalid("image_path must contain 1 to 20000000 bytes");
-    std::string bytes;
-    bool truncated = false;
-    const MaiError error =
-        MaiFileSystem::readFile(MaiFilePath::fromUtf8(path), bytes, 20'000'001, &truncated);
-    if (error) return fail(MaiErrorCode::Internal, "io_error", error.message());
-    if (truncated || bytes.size() > 20'000'000) return invalid("image_path exceeds 20000000 bytes");
-    image = "data:" + mime + ";base64," + encodeBase64(bytes);
+    // 图片只作为上传源路径；方舟收到 OSS 短期 HTTPS 地址，不能退回 Base64 直传。
+    if (!uploadMedia)
+        return fail(MaiErrorCode::NotConfigured, "upload_not_configured",
+                    "Private OSS media upload is not configured");
+    const auto uploaded = uploadMedia(path, context);
+    if (!uploaded)
+        return fail(uploaded.error().code(), "upload_failed", uploaded.error().message());
+    if (!isHttpsUrl(uploaded.value()))
+        return fail(MaiErrorCode::Protocol, "upload_failed", "OSS returned no HTTPS media URL");
+    image = uploaded.value();
     return std::nullopt;
 }
 
@@ -288,10 +278,10 @@ std::optional<MaiToolResult> outputName(const std::string& requested, const std:
 }
 
 MaiToolResult downloadResult(const std::string& url, const std::string& relative, int maxSizeMb,
-                             const MaiToolContext& context, bool png) {
+                             const std::string& caBundle, const MaiToolContext& context, bool png) {
     if (!isHttpsUrl(url))
         return fail(MaiErrorCode::Protocol, "protocol", "Ark returned no HTTPS media URL");
-    auto downloader = makeMaiDownloadFileTool();
+    auto downloader = makeMaiDownloadFileTool(caBundle);
     const Json arguments = {
         {"url", url}, {"output_path", relative}, {"max_size_mb", maxSizeMb}, {"timeout_s", 180}};
     MaiToolResult result = downloader->execute(arguments.dump(), context);
@@ -315,10 +305,10 @@ MaiToolResult downloadResult(const std::string& url, const std::string& relative
 class MaiSeedanceVideoTool final : public MaiTool {
 public:
     MaiSeedanceVideoTool(MaiArkApiKeyProvider provider, std::string caBundle,
-                         MaiArkVideoUploadProvider uploadVideo)
+                         MaiCreativeMediaUploadProvider uploadMedia)
         : mKey(std::move(provider)),
           mCaBundle(std::move(caBundle)),
-          mUploadVideo(std::move(uploadVideo)) {}
+          mUploadMedia(std::move(uploadMedia)) {}
 
     std::string name() const override {
         return "seedance_video";
@@ -330,7 +320,7 @@ public:
         const Json args = Json::parse(raw, nullptr, false);
         if (args.is_object() && stringValue(args, "model") == kVideoModel) return false;
         if (args.is_object() && stringValue(args, "action") == "delegate") {
-            if (!mUploadVideo && !stringValue(args, "video_path").empty()) return false;
+            if (!mUploadMedia && !stringValue(args, "video_path").empty()) return false;
             const std::string mode = stringValue(args, "mode");
             if (mode == "reference" || mode == "edit" || mode == "extend") {
                 const int sourceCount =
@@ -343,62 +333,141 @@ public:
         return isPaidGenerationAction(raw);
     }
     std::optional<MaiSpecialistInfo> specialistInfo() const override {
+        // discover 按实际配置报告能力：Mini 为默认型号，Fast/标准版可选；2.5 因费用禁用。
+        // 本地视频编辑只有上传回调存在时才标记为已接线，实盘状态仍如实标为待验证。
         const bool configured = mKey && !mKey().empty();
         const auto unverified = configured ? MaiSpecialistCapabilityStatus::ImplementedUnverified
                                            : MaiSpecialistCapabilityStatus::NotConfigured;
         const auto localVideoStatus = !configured ? MaiSpecialistCapabilityStatus::NotConfigured
-                                      : mUploadVideo
+                                      : mUploadMedia
                                           ? MaiSpecialistCapabilityStatus::ImplementedUnverified
                                           : MaiSpecialistCapabilityStatus::UploadNotConfigured;
         return MaiSpecialistInfo{
             name(),
             kDefaultVideoModel,
             configured,
+            // 文字生成和三档 2.0 型号的时长/分辨率写进 discover；
+            // “已接线待验证”不等于当前账号已通过所有付费实测。
+            // text_to_video：默认 Mini 可生成 4–15 秒；Fast/标准版需显式选 model。
+            // 2.5 已禁用，每个型号的账号权益仍需实盘验证。
             {{"text_to_video", true, true, unverified,
               "Default Seedance 2.0 Mini supports 4-15 seconds. Fast and standard 2.0 are "
               "available with model. Seedance 2.5 is disabled. "
               "Each model entitlement needs live validation"},
+             // seedance_2_0_fast：4–15 秒、480p/720p，最多九张参考图。
              {"seedance_2_0_fast", true, true, unverified,
               "2.0 Fast supports 4-15 seconds, 480p/720p, and up to 9 reference images"},
+             // seedance_2_0_mini：4–15 秒、480p/720p，最多九张参考图。
              {"seedance_2_0_mini", true, true, unverified,
               "2.0 Mini supports 4-15 seconds, 480p/720p, and up to 9 reference images"},
+             // seedance_2_0_standard：4–15 秒、480p/720p/1080p/4k，最多九张图。
              {"seedance_2_0_standard", true, true, unverified,
               "2.0 supports 4-15 seconds, 480p/720p/1080p/4k, and up to 9 reference images"},
+             // first_frame_to_video：Mini 可接首帧；付费前确认输出规格。
              {"first_frame_to_video", true, true, unverified,
               "Seedance 2.0 Mini accepts a first frame; confirm the output settings before paying"},
-             {"video_edit_from_url", true, true, unverified, {}},
-             {"video_edit_from_seedance_task", true, true, unverified, {}},
-             {"video_extend_from_url", true, true, unverified, {}},
-             {"video_reference_from_url", true, true, unverified, {}},
+             // video_edit_from_url：用远端视频 URL 作为编辑源。
+             {"video_edit_from_url", true, true, unverified,
+              "mode=edit accepts exactly one accessible HTTPS video_url; image references may "
+              "be added, but strict first/last frames cannot be mixed in"},
+             // video_edit_from_seedance_task：用已完成的 Seedance 任务作为编辑源。
+             {"video_edit_from_seedance_task", true, true, unverified,
+              "mode=edit accepts one completed Seedance video_task_id from the same provider; "
+              "the referenced task must be queryable"},
+             // video_extend_from_url：对远端视频 URL 对应内容做延长。
+             {"video_extend_from_url", true, true, unverified,
+              "mode=extend accepts one accessible video_url, one local video_path uploaded to "
+              "private OSS, or one completed video_task_id"},
+             // video_reference_from_url：将远端视频 URL 作为参考视频而非严格首帧。
+             {"video_reference_from_url", true, true, unverified,
+              "mode=reference requires exactly one video source; video_path, video_url, and "
+              "video_task_id are mutually exclusive"},
+             // first_and_last_frame_to_video：必须同时给 image_path 和 last_frame_path。
              {"first_and_last_frame_to_video", true, true, unverified,
-              "Requires image_path and last_frame_path"},
+              "mode=create requires exactly one image_path followed by one last_frame_path; "
+              "strict frames cannot be combined with arbitrary reference images"},
+             // platform_virtual_avatar：使用 ark_assets 或体验中心已有的 Active AIGC ID；
+             // Ark 仍会审核上传内容，入库不等于自动过审。
              {"platform_virtual_avatar", true, true, unverified,
               "Use an Active AIGC asset ID from ark_assets or the Ark Experience Center; "
               "Ark validates uploaded content"},
+             // authorized_real_portrait：使用同一 Ark 账号已授权的真人素材 ID；
+             // 直接把手机本地真人脸照作为参考图提交，仍不属于这条授权路径。
              {"authorized_real_portrait", true, true, unverified,
               "Use an authorized real-person asset ID from the same Ark account; direct local "
               "face uploads remain unsupported"},
+             // real_portrait_h5_registration：先生成 H5 本人验证链接；本人完成后查 GroupId，
+             // 再使用该组中匹配且状态为 Active 的素材。
+             {"real_portrait_h5_registration", true, true, unverified,
+              "ark_assets can create an H5 verification link and query its GroupId after the "
+              "person finishes; use matching Active assets from that group"},
+             // local_portrait_asset_registration：配置了签发服务后，本地 JPEG/PNG 先直传
+             // 私有 OSS，再登记为 Ark AIGC 素材，等 Active 才可用。真人脸可能被拒，
+             // 或须另走 begin_real_validation 的 H5 本人认证。
              {"local_portrait_asset_registration", true, true, unverified,
               "ark_assets can upload a local JPEG/PNG directly to private OSS when its signer "
               "is configured, then register it as an Ark AIGC asset. Confirm Active before use. "
-              "Ark may reject a real face or require separate H5 authorization; that flow "
-              "is not implemented"},
+              "Ark may reject a real face or require separate H5 authorization; "
+              "begin_real_validation starts that H5 flow"},
+             // multi_reference_video：1–9 张图可来自本地图或 Active 资产 ID；
+             // 参考模式不能混严格首尾帧，视频参考最多一个。
              {"multi_reference_video", true, true, unverified,
-              "Seedance 2.0 accepts 1-9 reference images; reference mode cannot mix with strict "
-              "first/last-frame control. This tool accepts one reference video"},
+              "Up to nine reference images total through local_image_paths or Active "
+              "reference_asset_ids. Local non-person images are uploaded to private OSS; "
+              "registered assets use asset IDs. These references cannot mix with strict "
+              "first/last-frame control. At most one video source is wired"},
+             // video_edit_from_local_file：有上传回调时先传私有 OSS，交给 Ark 短期 HTTPS
+             // 读取地址；云端能否抓取尚待实测。没配置回调时如实标记上传未配置。
              {"video_edit_from_local_file", true, true, localVideoStatus,
-              mUploadVideo
+              mUploadMedia
                   ? "The host uploads a local video to private object storage and hands Ark a "
-                    "temporary HTTPS read URL. Live Ark fetch is unverified"
-                  : "Local video upload is not configured"}}};
+                    "temporary HTTPS read URL. Check the source is 2-15 seconds and 24-60 fps "
+                    "before paid submission; live Ark fetch remains unverified"
+                  : "Local video upload is not configured"},
+             // 多段视频参考只在供应商文档里出现，当前适配器没有对应输入数组。
+             {"multiple_reference_videos", false, false,
+              MaiSpecialistCapabilityStatus::NotImplemented,
+              "This tool accepts exactly one video source, not a list of videos"},
+             // 管理动作和生成动作的条件不同，运行中的任务不能当作可取消。
+             {"task_cancel_delete", false, true, unverified,
+              "cancel applies only to queued tasks; delete removes delivered succeeded, "
+              "failed, or expired Ark records. Running tasks cannot be canceled or deleted"}}};
     }
     std::string description() const override {
+        // 未配置分支：默认型号是 Seedance 2.0 Mini；没有方舟 API Key 时只能查询能力，
+        // 不能把“已注册工具”误当成“可以提交生成任务”。
         if (!specialistInfo()->configured)
             return "Seedance video specialist defaults to doubao-seedance-2-0-mini-260615. Ark "
                    "API Key "
                    "is not configured on this device. Use discover for capabilities, or ask the "
                    "user to configure the key before delegating.";
-        return "A model-backed Seedance video tool. model selects Seedance 2.0 Mini "
+        // 以下英文是给主模型的完整调用说明，中文按原描述的顺序对应：
+        // 1. model 可选 Mini（默认）、Fast、标准版 2.0；2.5 因费用已禁用。
+        //    每次付费前向用户确认型号，并展示该型号真实的时长和分辨率。
+        // 2. discover 查能力；delegate 新建；revise 带旧 conversation_id 和反馈修订，
+        //    修订只能沿用同一 AI 会话的原目标和源视频。
+        // 3. 已接文生、首帧、首尾帧、参考视频路径，但共享 C++ 路径仍需云端实盘验证。
+        //    create/reference 付费前必须确认 duration、ratio、resolution。
+        // 4. 标准版支持 4–15 秒及 480p/720p/1080p/4k；Fast/Mini 支持 4–15 秒及
+        //    480p/720p；-1 由平台自动决定时长。配置了上传通道时，video_path 会先
+        //    上传为临时 HTTPS 地址；付费前用 ffprobe 检查源视频 2–15 秒、24–60 FPS。
+        // 5. 普通虚拟素材先在 ark_assets 登记并等 Active，单张用
+        //    virtual_avatar_asset_id，多张用 reference_asset_ids。模型看到的是
+        //    asset://<ID> 形式的参考图；提示词用“参考图 1”等位置称呼人物。
+        // 6. 已授权真人素材用 authorized_portrait_asset_id；需要本人验证时，
+        //    begin_real_validation 产生 H5 链接，完成后 get_real_validation 取组 ID。
+        //    不能把 AIGC 入库当作真人授权，也不能承诺平台一定接受每张脸。
+        // 7. 没有源视频时 create 可用本地图；有源视频时 reference/edit 只接一个
+        //    视频源。编辑人物外观可同时传参考素材。local_image_paths 是本地图
+        //    上传入口，工具先上传 OSS 再给模型短期 HTTPS 地址；reference_asset_ids 是
+        //    已登记素材，总数最多九张；不得与严格首尾帧混用。
+        // 8. App 自动跟进完成结果；continue 仅用于手动诊断。成品用
+        //    agent_send_media 交付给用户。cancel 只能停止排队任务；delete 只能
+        //    删除已结束且已交付的云端记录；两者都不能停止运行中的任务。
+        return "Seedance video through Ark. Modes: create from text or strict first/last "
+               "frames or up to nine reference images; reference/edit/extend use exactly one "
+               "source video from video_path, video_url, or video_task_id. model selects "
+               "Seedance 2.0 Mini "
                "(default), 2.0 Fast, or standard 2.0. Seedance 2.5 is disabled because of "
                "its cost. Ask the user which tier to use before a paid call and "
                "show its actual duration and resolution. Use discover for capabilities, delegate "
@@ -417,62 +486,180 @@ public:
                "For a private virtual avatar, use ark_assets to submit an Ark-accessible HTTPS "
                "image and wait for Active, or select an existing asset in the Ark Experience "
                "Center. Pass its virtual_avatar_asset_id. The tool sends asset://<ID> as "
-               "reference image 1; refer to it as image 1 in the message. Ark decides whether "
+               "reference image 1; refer to it as image 1 in the message. For several Active "
+               "assets, pass all IDs in reference_asset_ids and do not resend local paths. "
+               "Ark decides whether "
                "the asset is acceptable. For a separately authorized real-person portrait, "
                "pass authorized_portrait_asset_id only after Ark marks it authorized in this "
-               "account. Submit original reference images first. If Ark rejects a photo for a "
-               "possible real face, use ark_assets to register the unchanged image and wait for "
+               "account. ark_assets begin_real_validation generates an H5 link when the user "
+               "chooses real-person verification; get_real_validation returns the group ID "
+               "after that person completes it. If the original references clearly depict real "
+               "people, check or "
+               "register suitable assets before a paid call. If Ark rejects an otherwise "
+               "uncertain original photo for a possible real face, use ark_assets to register "
+               "the unchanged image and wait for "
                "Active before retrying the same model with its asset ID. Registration can also "
                "fail or require a separate authorization path; follow the actual provider "
-               "result. Use ark_assets "
-               "to list AIGC assets; this tool cannot list authorized real-portrait assets. "
-               "For photos without a source video, use mode=create with "
-               "reference_image_paths; mode=reference requires one existing video source. "
-               "Use reference_image_paths for up to 9 face-free reference images, or combine "
-               "one authorized portrait asset with face-free images. Reference images cannot "
+               "result. Use ark_assets list_groups/list_assets with group_type=LivenessFace "
+               "for real-portrait assets owned by this Ark account; other accounts' authorized "
+               "assets may not be listed. "
+               "For non-real-person photos without a source video, use mode=create with "
+               "local_image_paths. The tool uploads each local image to private OSS and "
+               "passes a temporary HTTPS URL to Ark, never Base64. For real-person photos, "
+               "register all selected images as Active assets first and pass their IDs in "
+               "reference_asset_ids. mode=reference requires one existing video source. "
+               "To edit an uploaded video with a person's appearance, use mode=edit, exactly "
+               "one video source, and reference_asset_ids or local_image_paths. A local "
+               "video_path is uploaded to private OSS before Ark receives a reference_video URL. "
+               "Use local_image_paths for local files and reference_asset_ids for multiple "
+               "Active asset:// images, up to 9 total; Ark validates each asset. Reference images "
+               "cannot "
                "be mixed with strict first/last-frame control. The app checks tasks and hands "
                "completed results back automatically; "
-               "continue is for manual diagnostics only. Use agent_send_media to deliver a "
+               "continue is for manual diagnostics only. Cancel can stop only a queued task. "
+               "Delete removes a delivered succeeded, failed, or expired Ark task record; "
+               "neither operation can stop a running task. Downloaded media remains local. "
+               "Use agent_send_media to deliver a "
                "completed video.";
     }
     std::string parametersSchema() const override {
-        return R"({"type":"object","properties":{)"
-               R"("action":{"type":"string","enum":["discover","delegate","continue","revise"]},)"
-               R"("model":{"type":"string","enum":["doubao-seedance-2-0-mini-260615",)"
-               R"("doubao-seedance-2-0-fast-260128","doubao-seedance-2-0-260128"]},)"
-               R"("message":{"type":"string"},"context":{"type":"string"},)"
-               R"("conversation_id":{"type":"string"},"mode":{"type":"string",)"
-               R"("enum":["create","edit","extend","reference"]},)"
-               R"("image_path":{"type":"string"},"last_frame_path":{"type":"string"},)"
-               R"("virtual_avatar_asset_id":{"type":"string"},)"
-               R"("authorized_portrait_asset_id":{"type":"string"},)"
-               R"("reference_image_path":{"type":"string"},)"
-               R"("reference_image_paths":{"type":"array","items":{"type":"string"}},)"
-               R"("video_path":{"type":"string"},"video_url":{"type":"string"},)"
-               R"("video_task_id":{"type":"string"},"poll_once":{"type":"boolean"},)"
-               R"("production":{"type":"object",)"
-               R"("properties":{"duration":{"type":"integer"},"ratio":{"type":"string"},)"
-               R"("resolution":{"type":"string"},"generate_audio":{"type":"boolean"}},)"
-               R"("additionalProperties":false}},"required":["action"],)"
-               R"("additionalProperties":false})";
+        // JSON Schema 只定义字段形状；execute 还会核对模式组合、文件存在、数量、
+        // 付费规格与供应商能力。不能因为 schema 接受字段就假定某个组合可用。
+        const std::string raw =
+            R"({"type":"object","properties":{)"
+            // action 为能力查询、提交、跟进、云端取消、云端删除或修订；
+            // cancel/delete 要求当前会话的 conversation_id，不能传任意云端 ID。
+            R"("action":{"type":"string","enum":["discover","delegate","continue","cancel","delete","revise"]},)"
+            // model 是 2.0 Mini/Fast/标准版三选一；2.5 故意不列入可提交值。
+            R"("model":{"type":"string","enum":["doubao-seedance-2-0-mini-260615",)"
+            R"("doubao-seedance-2-0-fast-260128","doubao-seedance-2-0-260128"]},)"
+            // message 是视频要求；context 只带相关背景，修订时用 conversation_id。
+            R"("message":{"type":"string"},"context":{"type":"string"},)"
+            R"("conversation_id":{"type":"string"},"mode":{"type":"string",)"
+            // create 生成；edit 改已有视频；extend 续写；reference 参考已有视频。
+            R"("enum":["create","edit","extend","reference"]},)"
+            // image_path/last_frame_path 是严格首尾帧，不与任意参考图混用。
+            R"("image_path":{"type":"string"},"last_frame_path":{"type":"string"},)"
+            // 两种单人资产入口互斥；前者是虚拟素材，后者需要平台真人授权。
+            R"("virtual_avatar_asset_id":{"type":"string"},)"
+            R"("authorized_portrait_asset_id":{"type":"string"},)"
+            // local_image_paths 是 OSS 上传源；reference_asset_ids 传 Active
+            // 的资产 ID，可一次提交多张；不能把 asset:// 当本地 path 传入。
+            R"("local_image_paths":{"type":"array","items":{"type":"string"}},)"
+            R"("reference_asset_ids":{"type":"array","items":{"type":"string"},"maxItems":9},)"
+            // 一个视频源可来自本地文件、可访问外链或已完成 Seedance 任务，三选一。
+            R"("video_path":{"type":"string"},"video_url":{"type":"string"},)"
+            R"("video_task_id":{"type":"string"},"poll_once":{"type":"boolean"},)"
+            // production 里的时长、画幅、分辨率和音频开关是付费提交的明确规格。
+            R"("production":{"type":"object",)"
+            R"("properties":{"duration":{"type":"integer"},"ratio":{"type":"string"},)"
+            R"("resolution":{"type":"string"},"generate_audio":{"type":"boolean"}},)"
+            R"("additionalProperties":false}},"required":["action"],)"
+            R"("additionalProperties":false})";
+        Json schema = Json::parse(raw);
+        Json& fields = schema["properties"];
+        // 以下英文逐字段送给主模型，中文逐段解释同一规则，方便维护者核对。
+        // action：discover 只读；delegate 新建付费任务；continue 只查询；
+        // revise 基于同一会话完成任务再次付费；cancel/delete 还要看供应商任务状态。
+        fields["action"]["description"] =
+            "discover is read-only; delegate creates a paid task; continue polls; revise "
+            "creates a paid edit from a completed task; cancel/delete require a saved local "
+            "conversation_id and provider-supported state";
+        // model：默认 Mini；Mini/Fast 只支持 480p/720p，标准版另支持 1080p/4k；
+        // 三款 2.0 型号均为 4–15 秒。2.5 因费用禁用，不能写入可选枚举。
+        fields["model"]["description"] =
+            "2.0 Mini is default. Mini/Fast: 4-15 seconds, 480p/720p. Standard: 4-15 seconds, "
+            "480p/720p/1080p/4k. Seedance 2.5 is disabled";
+        // mode：create 不带源视频；reference/edit/extend 都必须从本地文件、
+        // 外链或旧 Seedance 任务中恰好选一个视频源。
+        fields["mode"]["description"] =
+            "create has no source video; reference/edit/extend require exactly one source in "
+            "video_path, video_url, or video_task_id";
+        // message 写视频目标，context 写必要背景，不能把素材字节或全量聊天历史塞进去。
+        fields["message"]["description"] = "Video creation or edit instruction for this task";
+        fields["context"]["description"] =
+            "Only relevant constraints and background; not media bytes or full chat history";
+        // image_path 是严格首帧，last_frame_path 是严格尾帧；尾帧必须配首帧，
+        // 这条控制路径和任意多图参考不能混用。
+        fields["image_path"]["description"] =
+            "Local strict first frame, uploaded to private OSS; create mode only";
+        fields["last_frame_path"]["description"] =
+            "Local strict last frame; requires image_path and cannot mix with reference images";
+        // local_image_paths 是待上传 OSS 的普通本地图；reference_asset_ids 是
+        // 已在方舟入库且状态 Active 的资产 ID，不能把 asset:// 当成本地文件名。
+        // 两组图片合计最多九张；真人素材应按用户选定的资产/授权路径引用。
+        fields["local_image_paths"]["description"] =
+            "Local non-portrait reference images for private OSS upload; combined with "
+            "reference_asset_ids, at most nine total. Use assets for registered portraits";
+        fields["local_image_paths"]["maxItems"] = 9;
+        fields["reference_asset_ids"]["description"] =
+            "Active Ark asset IDs (asset://ID or bare ID); combined with local_image_paths, "
+            "at most nine total. Never pass these IDs as local_image_paths";
+        // 两种单资产字段互斥：虚拟 AIGC 素材须 Active；真人肖像要先完成
+        // 对应本人 H5 验证并引用已授权素材，不能靠上传一张普通脸照替代授权。
+        fields["virtual_avatar_asset_id"]["description"] =
+            "One Active AIGC virtual asset ID after ark_assets registration; mutually "
+            "exclusive with authorized_portrait_asset_id";
+        fields["authorized_portrait_asset_id"]["description"] =
+            "One authorized real-portrait asset ID after the person's H5 validation; "
+            "mutually exclusive with virtual_avatar_asset_id";
+        // 视频源三选一：video_path 是本地 MP4/MOV 上传源，须先用 ffprobe
+        // 核对 2–15 秒及 24–60 fps；video_url 是 HTTPS 外链；
+        // video_task_id 必须是可读取且已完成的方舟任务。
+        fields["video_path"]["description"] =
+            "One local MP4/MOV upload source; check 2-15 seconds and 24-60 fps before paying";
+        fields["video_url"]["description"] = "One accessible HTTPS source video URL";
+        fields["video_task_id"]["description"] =
+            "One completed Seedance provider task ID used as source video";
+        // production 是本次付费任务的明确规格：输出时长、画幅、分辨率与声音。
+        // duration 可以用 -1 交由平台自动决定；具体分辨率仍要受所选型号限制。
+        fields["production"]["description"] =
+            "Confirm output duration, ratio, resolution, and audio before paid generation";
+        Json& output = fields["production"]["properties"];
+        output["duration"]["description"] =
+            "Output seconds 4-15 for Seedance 2.0, or -1 for provider automatic duration";
+        output["ratio"]["enum"] =
+            Json::array({"adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9"});
+        output["ratio"]["description"] =
+            "Confirmed output aspect ratio or adaptive according to the selected input";
+        output["resolution"]["enum"] = Json::array({"480p", "720p", "1080p", "4k"});
+        output["resolution"]["description"] =
+            "Mini/Fast allow 480p/720p; standard 2.0 additionally allows 1080p/4k";
+        output["generate_audio"]["description"] = "Whether the video generates audio";
+        // conversation_id 是当前会话保存的 spt_ ID，供继续、修订和任务管理；
+        // poll_once 仅查一次进度，正常情况下 App 后台会自动查询并交付。
+        fields["conversation_id"]["description"] =
+            "Saved spt_ task ID for continue, revise, cancel, or delete in this AI conversation";
+        fields["poll_once"]["description"] =
+            "Query status once; the App normally polls and delivers the result automatically";
+        return schema.dump();
     }
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const Json args = Json::parse(raw, nullptr, false);
         if (!args.is_object()) return invalid("arguments must be an object");
+        // Schema 已撤掉旧多图字段；执行层也拒绝未知参数，避免旧调用静默丢图后付费。
+        const Json schema = Json::parse(parametersSchema(), nullptr, false);
+        for (auto field = args.begin(); field != args.end(); ++field) {
+            if (!schema["properties"].contains(field.key()))
+                return invalid("unsupported Seedance parameter: " + field.key());
+        }
         for (const char* field :
              {"action", "model", "message", "context", "conversation_id", "mode", "image_path",
               "last_frame_path", "virtual_avatar_asset_id", "authorized_portrait_asset_id",
-              "reference_image_path", "video_path", "video_url", "video_task_id"}) {
+              "video_path", "video_url", "video_task_id"}) {
             if (args.contains(field) && !args[field].is_string())
                 return invalid(std::string(field) + " must be a string");
         }
-        if (args.contains("reference_image_paths") && !args["reference_image_paths"].is_array())
-            return invalid("reference_image_paths must be an array");
+        if (args.contains("local_image_paths") && !args["local_image_paths"].is_array())
+            return invalid("local_image_paths must be an array");
+        if (args.contains("reference_asset_ids") && !args["reference_asset_ids"].is_array())
+            return invalid("reference_asset_ids must be an array");
         const std::string action = stringValue(args, "action");
         const std::string message = stringValue(args, "message");
         if (message.empty() && (action == "delegate" || action == "revise"))
             return invalid("message is required to start or revise a task");
         if (action == "discover") {
+            // 发现能力只读：返回默认型号、可选型号、规格和账号实盘验证状态，绝不生成。
             const MaiToolResult base = discoverSpecialist(
                 *specialistInfo(),
                 "Choose Seedance 2.0 Mini (default), 2.0 Fast, or standard 2.0 with model "
@@ -500,9 +687,12 @@ public:
         if (key.empty())
             return fail(MaiErrorCode::NotConfigured, "not_configured",
                         "Configure an Ark API key in this platform's Agent settings");
+        // delegate 新建付费任务；continue 只查已提交任务，不能再次生成。
         if (action == "delegate") return delegate(args, key, context);
         if (action == "continue") return continueTask(args, key, context);
+        if (action == "cancel" || action == "delete") return manageTask(args, key, context);
         if (action == "revise") {
+            // 修订要先核对旧任务属于当前 AI 会话，再继承原目标和素材。
             if (context.specialistTasks == nullptr)
                 return fail(MaiErrorCode::NotConfigured, "not_configured",
                             "Specialist task history is unavailable");
@@ -547,10 +737,64 @@ public:
             revision["context"] = std::move(summary);
             return delegate(revision, key, context);
         }
-        return invalid("action must be discover, delegate, continue, or revise");
+        return invalid("action must be discover, delegate, continue, cancel, delete, or revise");
     }
 
 private:
+    MaiToolResult manageTask(const Json& args, const std::string& key,
+                             const MaiToolContext& context) const {
+        // 只接受当前会话持久化的任务；不能凭任意云端 task_id 删除其他任务。
+        const std::string conversationId = stringValue(args, "conversation_id");
+        MaiSpecialistTask task;
+        if (conversationId.compare(0, 4, "spt_") != 0 || context.specialistTasks == nullptr ||
+            !context.specialistTasks->getSpecialistTask(conversationId, context.sessionId, task) ||
+            task.specialistName != name() || !validTaskId(task.providerTaskId))
+            return fail(MaiErrorCode::NotFound, "not_found",
+                        "Seedance task was not found in this AI conversation");
+        const std::string action = stringValue(args, "action");
+        if (action == "cancel" && task.status != MaiSpecialistTaskStatus::Submitted &&
+            task.status != MaiSpecialistTaskStatus::Running)
+            return invalid("Only an active queued video task can be canceled");
+        if (action == "delete" &&
+            (task.status == MaiSpecialistTaskStatus::Submitted ||
+             task.status == MaiSpecialistTaskStatus::Running || task.notifiedAt == 0))
+            return invalid("Delete requires a completed and delivered task");
+        const std::string url = std::string(kVideoTasksUrl) + "/" + task.providerTaskId;
+        ArkResponse current = requestJson(url, key, mCaBundle, nullptr, context);
+        if (current.error) return *current.error;
+        const std::string status = stringValue(current.data, "status");
+        if (action == "cancel" && status != "queued")
+            return invalid("Ark can cancel only queued tasks; this task has started or ended");
+        if (action == "delete" && status != "succeeded" && status != "failed" &&
+            status != "expired")
+            return invalid("Ark can delete only succeeded, failed, or expired task records");
+        if (action == "delete" && status == "succeeded" &&
+            task.status != MaiSpecialistTaskStatus::Succeeded)
+            return invalid(
+                "Recover and deliver the completed video before deleting its cloud record");
+        // 同一个 DELETE 端点按供应商当前状态选择取消或删除；成功前不改本地记录。
+        ArkResponse changed = requestJson(url, key, mCaBundle, nullptr, context, true);
+        if (changed.error) return *changed.error;
+        Json result = {{"conversation_id", conversationId}, {"task_id", task.providerTaskId}};
+        if (action == "cancel") {
+            const MaiError saved = context.specialistTasks->finishSpecialistTask(
+                conversationId, context.sessionId, MaiSpecialistTaskStatus::Canceled,
+                "The queued Seedance video task was canceled by Ark.", {},
+                MaiTime::getCurrentTime());
+            result.update(Json{{"status", "cancelled"},
+                               {"reply", "The queued cloud video task was canceled."}});
+            if (saved) result["local_state_warning"] = saved.message();
+        } else {
+            const MaiError removed = context.specialistTasks->deleteCompletedSpecialistTask(
+                conversationId, context.sessionId);
+            result.update(Json{{"status", "deleted"},
+                               {"provider_deleted", true},
+                               {"reply", "Ark task record deleted; downloaded video remains."}});
+            if (removed) result["local_state_warning"] = removed.message();
+        }
+        return MaiToolResult::success(result.dump());
+    }
+
     MaiToolResult delegate(const Json& args, const std::string& key,
                            const MaiToolContext& context) const {
         const std::string modelId = stringValue(args, "model").empty()
@@ -578,11 +822,13 @@ private:
             avatarAssetInput.empty() ? authorizedAssetInput : avatarAssetInput;
         const std::string selectedAssetId =
             selectedAssetInput.empty() ? std::string{} : arkAssetId(selectedAssetInput);
-        const std::string referenceImagePath = stringValue(args, "reference_image_path");
-        const Json referenceImagePaths = args.value("reference_image_paths", Json::array());
+        const Json referenceImagePaths = args.value("local_image_paths", Json::array());
+        const Json referenceAssetIds = args.value("reference_asset_ids", Json::array());
         const std::string videoPath = stringValue(args, "video_path");
         const std::string videoUrl = stringValue(args, "video_url");
         const std::string videoTaskId = stringValue(args, "video_task_id");
+        // edit、extend、reference 只能选择本地文件、外链、已有任务三者中的一个。
+        // 多张人物参考图是附加输入，不算第二个视频源。
         const int sourceCount = static_cast<int>(!videoPath.empty()) +
                                 static_cast<int>(!videoUrl.empty()) +
                                 static_cast<int>(!videoTaskId.empty());
@@ -592,28 +838,35 @@ private:
             return invalid("last_frame_path requires create mode and image_path as first frame");
         if (!avatarAssetInput.empty() && !authorizedAssetInput.empty())
             return invalid("choose either a virtual avatar or an authorized portrait asset");
+        if (!selectedAssetInput.empty() && !referenceAssetIds.empty())
+            return invalid("use either a single portrait asset or reference_asset_ids");
         if (!selectedAssetInput.empty()) {
-            if (mode != "create" || !imagePath.empty() || !lastFramePath.empty())
-                return invalid("portrait asset requires create mode without first or last frame");
+            if (!imagePath.empty() || !lastFramePath.empty())
+                return invalid("portrait asset cannot be mixed with strict first or last frames");
             if (selectedAssetId.empty())
                 return invalid("portrait asset must be a valid platform asset ID");
         }
-        const std::size_t referenceCount = referenceImagePaths.size() +
-                                           static_cast<std::size_t>(!referenceImagePath.empty()) +
+        const std::size_t referenceCount = referenceImagePaths.size() + referenceAssetIds.size() +
                                            static_cast<std::size_t>(!selectedAssetId.empty());
+        // 所有参考图入口合计上限；单张便利字段也要计数，不能绕过九图限制。
         if (referenceCount > static_cast<std::size_t>(model->maximumReferenceImages))
             return invalid(std::string(model->label) + " accepts at most " +
                            std::to_string(model->maximumReferenceImages) + " reference images");
-        if (referenceCount != 0 &&
-            (mode != "create" || !imagePath.empty() || !lastFramePath.empty()))
-            return invalid("reference images require create mode without first/last frames");
+        if (referenceCount != 0 && (!imagePath.empty() || !lastFramePath.empty()))
+            return invalid("reference images cannot be mixed with strict first/last frames");
         for (const Json& candidate : referenceImagePaths) {
             if (!candidate.is_string() || candidate.get<std::string>().empty())
-                return invalid("reference_image_paths entries must be nonempty strings");
+                return invalid("local_image_paths entries must be nonempty strings");
+            if (candidate.get<std::string>().rfind("asset://", 0) == 0)
+                return invalid("pass asset:// references in reference_asset_ids");
+        }
+        for (const Json& candidate : referenceAssetIds) {
+            if (!candidate.is_string() || arkAssetId(candidate.get<std::string>()).empty())
+                return invalid("reference_asset_ids entries must be valid asset IDs");
         }
         std::string localVideoPath;
         if (!videoPath.empty()) {
-            if (!mUploadVideo)
+            if (!mUploadMedia)
                 return fail(MaiErrorCode::NotConfigured, "upload_not_configured",
                             "Local video upload is unavailable; use video_url or video_task_id");
             localVideoPath = context.resolvePath(videoPath);
@@ -632,6 +885,7 @@ private:
                 bytes == 0 || bytes > 200'000'000)
                 return invalid("video_path must contain 1 to 200000000 bytes");
         }
+        // create/reference 付费前要显式确认时长、画幅和分辨率，不能静默用默认值。
         const Json production = args.value("production", Json::object());
         if (!production.is_object()) return invalid("production must be an object");
         if ((mode == "create" || mode == "reference") &&
@@ -688,21 +942,22 @@ private:
                 "person's identity; do not use the asset ID as a character name. " +
                 instruction;
         if (instruction.size() > 8000) return invalid("video instruction is too long");
+        // 参考资产只能作为 image_url 的 asset:// 输入；本地路径只用于读取原始图像。
+        // 编辑任务会把这些参考图与源视频一起放进 content，不再把资产当成本地文件。
         Json content = Json::array({Json{{"type", "text"}, {"text", instruction}}});
         if (!selectedAssetId.empty())
             content.push_back(Json{{"type", "image_url"},
                                    {"image_url", {{"url", "asset://" + selectedAssetId}}},
                                    {"role", "reference_image"}});
-        if (!referenceImagePath.empty()) {
-            Json referenceImage;
-            if (auto error = readImage(referenceImagePath, context, referenceImage)) return *error;
-            content.push_back(Json{{"type", "image_url"},
-                                   {"image_url", {{"url", referenceImage}}},
-                                   {"role", "reference_image"}});
-        }
+        for (const Json& candidate : referenceAssetIds)
+            content.push_back(Json{
+                {"type", "image_url"},
+                {"image_url", {{"url", "asset://" + arkAssetId(candidate.get<std::string>())}}},
+                {"role", "reference_image"}});
         for (const Json& candidate : referenceImagePaths) {
             Json referenceImage;
-            if (auto error = readImage(candidate.get<std::string>(), context, referenceImage))
+            if (auto error =
+                    readImage(candidate.get<std::string>(), context, mUploadMedia, referenceImage))
                 return *error;
             content.push_back(Json{{"type", "image_url"},
                                    {"image_url", {{"url", referenceImage}}},
@@ -710,14 +965,15 @@ private:
         }
         if (!imagePath.empty()) {
             Json image;
-            if (auto error = readImage(imagePath, context, image)) return *error;
+            if (auto error = readImage(imagePath, context, mUploadMedia, image)) return *error;
             content.push_back(Json{{"type", "image_url"},
                                    {"image_url", {{"url", image}}},
                                    {"role", mode == "create" ? "first_frame" : "reference_image"}});
         }
         if (!lastFramePath.empty()) {
             Json lastFrame;
-            if (auto error = readImage(lastFramePath, context, lastFrame)) return *error;
+            if (auto error = readImage(lastFramePath, context, mUploadMedia, lastFrame))
+                return *error;
             content.push_back(Json{{"type", "image_url"},
                                    {"image_url", {{"url", lastFrame}}},
                                    {"role", "last_frame"}});
@@ -733,7 +989,8 @@ private:
             reference = stringValue(task.data.value("content", Json::object()), "video_url");
         }
         if (!localVideoPath.empty()) {
-            auto uploaded = mUploadVideo(localVideoPath, context);
+            // 用户上传的视频先直传 OSS，短期读取链接仅在本次 Seedance 请求中使用。
+            auto uploaded = mUploadMedia(localVideoPath, context);
             if (!uploaded)
                 return fail(uploaded.error().code(), "upload_failed", uploaded.error().message());
             reference = uploaded.value();
@@ -758,9 +1015,11 @@ private:
         }
         if (body.dump().size() > 64'000'000)
             return invalid("Seedance request exceeds the 64 MB body limit");
+        // 素材读取、上传与规格校验完成后才提交一次收费请求。
         ArkResponse result = requestJson(kVideoTasksUrl, key, mCaBundle, &body, context);
         if (result.error) return *result.error;
         const std::string taskId = stringValue(result.data, "id");
+        // 得到任务 ID 仅代表已受理；后台还要查状态、下载、验证后才能宣称完成。
         if (!validTaskId(taskId))
             return fail(MaiErrorCode::Protocol, "protocol", "Ark returned no valid task ID");
         Json output = {{"task_id", taskId},
@@ -781,7 +1040,9 @@ private:
                                   : !videoPath.empty()       ? videoPath
                                   : !videoUrl.empty()        ? videoUrl
                                   : !selectedAssetId.empty() ? selectedAssetId
-                                                             : imagePath;
+                                  : !referenceAssetIds.empty()
+                                      ? arkAssetId(referenceAssetIds.front().get<std::string>())
+                                      : imagePath;
             task.created = MaiTime::getCurrentTime();
             const MaiError stored = context.specialistTasks->insertSpecialistTask(task);
             if (stored) {
@@ -835,7 +1096,13 @@ private:
             }
         }
         const std::string boundModel = stringValue(task.data, "model");
-        if (status == "failed" || status == "cancelled" || status == "expired") {
+        if (status == "cancelled")
+            return MaiToolResult::success(Json{{"conversation_id", conversationId},
+                                               {"task_id", taskId},
+                                               {"status", status},
+                                               {"reply", "The cloud video task was canceled."}}
+                                              .dump());
+        if (status == "failed" || status == "expired") {
             const Json detail = task.data.value("error", Json::object());
             const std::string message = stringValue(detail, "message");
             return fail(MaiErrorCode::Network, "task_failed",
@@ -871,7 +1138,7 @@ private:
                      {"reply", "The video is complete and saved locally."}}
                     .dump());
         }
-        MaiToolResult result = downloadResult(url, relative, 500, context, false);
+        MaiToolResult result = downloadResult(url, relative, 500, mCaBundle, context, false);
         if (result.hasError()) return result;
         Json output = Json::parse(result.output());
         output.update(Json{{"task_id", taskId},
@@ -884,13 +1151,16 @@ private:
 
     MaiArkApiKeyProvider mKey;
     std::string mCaBundle;
-    MaiArkVideoUploadProvider mUploadVideo;
+    MaiCreativeMediaUploadProvider mUploadMedia;
 };
 
 class MaiSeedreamImageTool final : public MaiTool {
 public:
-    MaiSeedreamImageTool(MaiArkApiKeyProvider provider, std::string caBundle)
-        : mKey(std::move(provider)), mCaBundle(std::move(caBundle)) {}
+    MaiSeedreamImageTool(MaiArkApiKeyProvider provider, std::string caBundle,
+                         MaiCreativeMediaUploadProvider uploadMedia)
+        : mKey(std::move(provider)),
+          mCaBundle(std::move(caBundle)),
+          mUploadMedia(std::move(uploadMedia)) {}
 
     std::string name() const override {
         return "seedream_image";
@@ -902,49 +1172,79 @@ public:
         return isPaidGenerationAction(raw);
     }
     std::optional<MaiSpecialistInfo> specialistInfo() const override {
+        // configured 只表示取到了 API Key。unverified 表示工具已接线，但当前账号的
+        // 每项能力尚未全部完成付费实盘验证，不能把它展示成“已确认可用”。
         const bool configured = mKey && !mKey().empty();
         const auto unverified = configured ? MaiSpecialistCapabilityStatus::ImplementedUnverified
                                            : MaiSpecialistCapabilityStatus::NotConfigured;
+        const auto mediaStatus = !configured ? MaiSpecialistCapabilityStatus::NotConfigured
+                                 : mUploadMedia
+                                     ? MaiSpecialistCapabilityStatus::ImplementedUnverified
+                                     : MaiSpecialistCapabilityStatus::UploadNotConfigured;
         return MaiSpecialistInfo{
             name(),
             kImageModel,
             configured,
+            // text_to_image：仅凭文本描述生成一张新图片。
             {{"text_to_image", true, true, unverified, {}},
-             {"single_image_edit", true, true, unverified, {}},
-             {"multi_image_edit", true, true, unverified,
+             // single_image_edit：接一张已有图片并按提示词编辑，原图片不覆盖。
+             {"single_image_edit", true, true, mediaStatus,
+              "Local image is uploaded to private OSS before paid generation"},
+             // multi_image_edit：接 2–10 张可访问图片，融合后只输出一张新图片。
+             {"multi_image_edit", true, true, mediaStatus,
               "Accepts 2 to 10 accessible images and produces one image"},
-             {"interactive_region_edit", true, true, unverified,
+             // interactive_region_edit：支持描述区域编辑，但区域坐标必须写进指令；
+             // 这不是独立的区域坐标参数，工具不会自动猜需要改哪个区域。
+             {"interactive_region_edit", true, true, mediaStatus,
               "Region coordinates must be supplied in the instruction"},
+             // layer_split：模型相关能力虽存在，但当前工具未接分层文件和元数据输出。
              {"layer_split", true, true, MaiSpecialistCapabilityStatus::NotImplemented,
               "Layer output and metadata are not wired"},
+             // image_series_output：模型不提供连续图片序列，工具也没有此类输出入口。
              {"image_series_output", false, false, MaiSpecialistCapabilityStatus::NotImplemented,
               "This model does not provide sequential image series output"}}};
     }
     std::string description() const override {
+        // 未配置分支：仍允许主模型调用 discover 查看能力，但不能付费提交任务。
         if (!specialistInfo()->configured)
             return "Seedream image specialist bound to doubao-seedream-5-0-flash-260915. Ark API "
                    "Key is not configured on this device. Use discover for capabilities, or ask "
                    "the user to configure the key before delegating.";
+        // discover 查询能力；delegate 开新任务；revise 必须带已有 parent_task_id，
+        // 并把本次修改意见放进 message，不能凭空继承别的会话。
         return "A model-backed Seedream image specialist. Use discover for capabilities, delegate "
                "a new goal, or revise with parent_task_id set to a previous specialist_task_id "
-               "and new feedback. It can create from text, edit one image_path, or combine 2 to "
+               "and new feedback. "
+               // 不传图是文生图；image_path 是单图编辑；image_paths 为 2–10 图融合。
+               // 三条路径都生成新的 PNG，输入原图不改动。
+               "It can create from text, edit one image_path, or combine 2 to "
                "10 image_paths into one new PNG. "
+               // 主模型描述“要改什么、希望得到什么”；具体模型请求由工具负责构造。
+               // 成品须由 agent_send_media 交付给用户，不能只回复一个文件名。
                "Describe edits and desired output in the message, leaving creative details to "
                "Seedream; this specialist handles model "
                "request details. Use agent_send_media to deliver the result.";
     }
     std::string parametersSchema() const override {
+        // 顶层是对象；只允许下面列出的字段，不能把任意模型私有参数塞进来。
         return R"({"type":"object","properties":{)"
+               // action=discover 只读；delegate/revise 会实际生成图片并经过付费确认。
                R"("action":{"type":"string","enum":["discover","delegate","revise"]},)"
+               // message 是本次创作指令；context 是与本次任务相关的背景约束。
                R"("message":{"type":"string"},"context":{"type":"string"},)"
+               // image_path 单图；image_paths 数组多图，最少 2 张、最多 10 张。
                R"("image_path":{"type":"string"},"image_paths":{"type":"array",)"
                R"("items":{"type":"string"},"minItems":2,"maxItems":10},)"
+               // parent_task_id 只用于修订旧任务；output_path 是工作区的新产物路径。
                R"("parent_task_id":{"type":"string"},"output_path":{"type":"string"},)"
+               // 输出档位只接受 1K、1.5K、2K；action 必填，其余字段按动作校验。
                R"("size":{"type":"string",)"
                R"("enum":["1K","1.5K","2K"]}},"required":["action"],)"
                R"("additionalProperties":false})";
     }
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
+        // schema 是模型可见的参数外形，执行层仍要核对字段类型、可访问路径、
+        // 修订任务归属和输出新文件，全部通过后才允许调用付费接口。
         Json args = Json::parse(raw, nullptr, false);
         if (!args.is_object()) return invalid("arguments must be an object");
         for (const char* field : {"action", "message", "context", "image_path", "parent_task_id",
@@ -959,6 +1259,7 @@ public:
         if (message.empty() && (action == "delegate" || action == "revise"))
             return invalid("message is required to start or revise a task");
         if (action == "discover") {
+            // Seedream 发现能力不扣费：说明文生图、单图和多图融合，明确分层输出未接线。
             return discoverSpecialist(*specialistInfo(),
                                       "I can create a PNG from text, edit one accessible image, "
                                       "or combine multiple accessible reference images into one. "
@@ -1011,24 +1312,20 @@ public:
             if (!imagePaths.is_array() || imagePaths.size() < 2 || imagePaths.size() > 10)
                 return invalid("image_paths must contain 2 to 10 paths");
             Json images = Json::array();
-            std::size_t totalEncodedBytes = 0;
             for (const Json& candidate : imagePaths) {
                 if (!candidate.is_string() || candidate.get<std::string>().empty())
                     return invalid("each image_paths entry must be a nonempty path");
                 Json image;
-                if (auto error = readImage(candidate.get<std::string>(), context, image))
+                if (auto error =
+                        readImage(candidate.get<std::string>(), context, mUploadMedia, image))
                     return *error;
-                const std::size_t encodedBytes = image.get_ref<const std::string&>().size();
-                if (encodedBytes > 60'000'000 - totalEncodedBytes)
-                    return invalid("combined image inputs exceed 60 MB after encoding");
-                totalEncodedBytes += encodedBytes;
                 images.push_back(std::move(image));
             }
             body["image"] = std::move(images);
         }
         if (!imagePath.empty()) {
             Json image;
-            if (auto error = readImage(imagePath, context, image)) return *error;
+            if (auto error = readImage(imagePath, context, mUploadMedia, image)) return *error;
             body["image"] = std::move(image);
         }
         std::string relative;
@@ -1045,7 +1342,7 @@ public:
             response.data["data"].empty())
             return fail(MaiErrorCode::Protocol, "protocol", "Ark returned no image");
         const std::string url = stringValue(response.data["data"][0], "url");
-        MaiToolResult result = downloadResult(url, relative, 50, context, true);
+        MaiToolResult result = downloadResult(url, relative, 50, mCaBundle, context, true);
         if (result.hasError()) return result;
         Json output = Json::parse(result.output());
         output["model"] = kImageModel;
@@ -1078,18 +1375,21 @@ public:
 private:
     MaiArkApiKeyProvider mKey;
     std::string mCaBundle;
+    MaiCreativeMediaUploadProvider mUploadMedia;
 };
 
 }  // namespace
 
 std::unique_ptr<MaiTool> makeMaiSeedanceVideoTool(MaiArkApiKeyProvider apiKey,
                                                   std::string caBundlePath,
-                                                  MaiArkVideoUploadProvider uploadVideo) {
+                                                  MaiCreativeMediaUploadProvider uploadMedia) {
     return std::make_unique<MaiSeedanceVideoTool>(std::move(apiKey), std::move(caBundlePath),
-                                                  std::move(uploadVideo));
+                                                  std::move(uploadMedia));
 }
 
 std::unique_ptr<MaiTool> makeMaiSeedreamImageTool(MaiArkApiKeyProvider apiKey,
-                                                  std::string caBundlePath) {
-    return std::make_unique<MaiSeedreamImageTool>(std::move(apiKey), std::move(caBundlePath));
+                                                  std::string caBundlePath,
+                                                  MaiCreativeMediaUploadProvider uploadMedia) {
+    return std::make_unique<MaiSeedreamImageTool>(std::move(apiKey), std::move(caBundlePath),
+                                                  std::move(uploadMedia));
 }

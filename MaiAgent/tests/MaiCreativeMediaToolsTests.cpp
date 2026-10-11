@@ -270,9 +270,32 @@ int main() {
               ->execute(R"({"action":"delete","conversation_id":"spt_unknown"})", MaiToolContext{})
               .hasError());
     checkTool(*miniMaxImage, "minimax_image", "image-01", false);
+    const auto imageSchema = nlohmann::json::parse(miniMaxImage->parametersSchema());
+    CHECK(imageSchema["properties"]["model"]["enum"].dump().find("image-01-live") !=
+          std::string::npos);
+    CHECK(imageSchema["properties"].contains("image_url"));
+    CHECK(imageSchema["properties"]["ratio"]["enum"].dump().find("21:9") != std::string::npos);
     key = "secret-test-key";
     MaiToolContext context;
     context.root = MaiFileSystem::temporaryDirectory().toUtf8();
+    CHECK(
+        miniMaxImage
+            ->execute(
+                R"({"action":"delegate","model":"image-01-live","message":"Portrait","ratio":"21:9"})",
+                context)
+            .hasError());
+    CHECK(
+        miniMaxImage
+            ->execute(
+                R"({"action":"delegate","model":"image-01","message":"Portrait","width":513,"height":512})",
+                context)
+            .hasError());
+    CHECK(
+        miniMaxImage
+            ->execute(
+                R"({"action":"delegate","message":"Portrait","ratio":"1:1","image_path":"missing.jpg"})",
+                context)
+            .hasError());
     for (MaiTool* tool : {miniMaxVideo.get(), miniMaxImage.get()}) {
         const auto discovered =
             nlohmann::json::parse(tool->execute(R"({"action":"discover"})", context).output());

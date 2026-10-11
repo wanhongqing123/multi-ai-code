@@ -20,94 +20,41 @@ int failures = 0;
         }                                                                   \
     } while (0)
 
-void testDiscoveryAndApproval() {
+void testImageDiscoveryAndApproval() {
     std::string key;
-    auto video = makeMaiGlmVideoTool([&] { return key; });
     auto image = makeMaiGlmImageTool([&] { return key; });
     MaiToolContext context;
-    CHECK(video->name() == "glm_video");
     CHECK(image->name() == "glm_image");
-    CHECK(nlohmann::json::parse(video->parametersSchema()).is_object());
-    const auto videoSchema = nlohmann::json::parse(video->parametersSchema());
-    CHECK(videoSchema["properties"]["duration"]["description"].get<std::string>().find("5 or 10") !=
-          std::string::npos);
-    CHECK(videoSchema["properties"]["last_frame_path"]["description"].get<std::string>().find(
-              "requires image_path") != std::string::npos);
-    CHECK(nlohmann::json::parse(image->parametersSchema()).is_object());
-    CHECK(!video->requiresPerCallApproval(R"({"action":"discover"})"));
-    CHECK(!video->requiresPerCallApproval(R"({"action":"continue"})"));
-    CHECK(video->requiresPerCallApproval(R"({"action":"delegate"})"));
-    CHECK(video->requiresPerCallApproval(R"({"action":"delete"})"));
-    CHECK(nlohmann::json::parse(video->parametersSchema())["properties"]["action"]["enum"]
-              .dump()
-              .find("delete") != std::string::npos);
+    const auto schema = nlohmann::json::parse(image->parametersSchema());
+    CHECK(schema.is_object());
+    CHECK(!schema["properties"].contains("video_path"));
+    CHECK(!schema["properties"].contains("image_path"));
+    CHECK(schema["properties"]["action"]["enum"].dump().find("delete") == std::string::npos);
+    CHECK(!image->requiresPerCallApproval(R"({"action":"discover"})"));
+    CHECK(!image->requiresPerCallApproval(R"({"action":"continue"})"));
     CHECK(image->requiresPerCallApproval(R"({"action":"delegate"})"));
-    CHECK(video->requiresPerCallApproval("not json"));
-    auto info = nlohmann::json::parse(video->execute(R"({"action":"discover"})", context).output());
-    CHECK(info.at("bound_model") == "cogvideox-3");
+    auto info = nlohmann::json::parse(image->execute(R"({"action":"discover"})", context).output());
+    CHECK(info.at("bound_model") == "glm-image");
     CHECK(!info.at("configured").get<bool>());
     CHECK(info.at("capabilities")[0].at("tool_status") == "not_configured");
-    CHECK(info.dump().find("existing_video_edit") != std::string::npos);
-    CHECK(info.dump().find("cloud_task_cancel") != std::string::npos);
-    CHECK(info.at("capabilities")[0].contains("model_support"));
+    CHECK(info.dump().find("existing_image_edit") != std::string::npos);
+    CHECK(info.dump().find("cogvideox") == std::string::npos);
     key = "test-key";
-    info = nlohmann::json::parse(video->execute(R"({"action":"discover"})", context).output());
+    info = nlohmann::json::parse(image->execute(R"({"action":"discover"})", context).output());
     CHECK(info.at("configured").get<bool>());
     CHECK(info.at("capabilities")[0].at("tool_status") == "implemented_unverified");
     CHECK(info.dump().find(key) == std::string::npos);
-    info = nlohmann::json::parse(image->execute(R"({"action":"discover"})", context).output());
-    CHECK(info.at("bound_model") == "glm-image");
-    CHECK(info.dump().find("existing_image_edit") != std::string::npos);
 }
 
-void testRejectsInvalidInputsBeforeNetwork() {
-    auto video = makeMaiGlmVideoTool([] { return std::string("test-key"); });
+void testImageRejectsUnsupportedInputsBeforeNetwork() {
     auto image = makeMaiGlmImageTool([] { return std::string("test-key"); });
     MaiToolContext context;
     context.root = MaiFileSystem::temporaryDirectory().toUtf8();
-    CHECK(video->execute(R"({"action":"delegate","message":"A cat runs"})", context).hasError());
-    CHECK(video
-              ->execute(
-                  R"({"action":"delegate","message":"A cat runs","duration":7,"size":"1280x720"})",
-                  context)
-              .hasError());
-    CHECK(
-        video
-            ->execute(
-                R"({"action":"delegate","message":"A cat runs","duration":4294967301,"size":"1280x720"})",
-                context)
-            .hasError());
-    CHECK(video
-              ->execute(
-                  R"({"action":"delegate","message":"A cat runs","duration":5,"size":"640x480"})",
-                  context)
-              .hasError());
-    CHECK(
-        video
-            ->execute(
-                R"({"action":"delegate","message":"A cat runs","duration":5,"size":"1280x720","last_frame_path":"last.png"})",
-                context)
-            .hasError());
-    CHECK(
-        video
-            ->execute(
-                R"({"action":"delegate","message":"A cat runs","duration":5,"size":"1280x720","image_path":"missing.png"})",
-                context)
-            .hasError());
-    CHECK(
-        video
-            ->execute(
-                R"({"action":"delegate","message":"A cat runs","duration":5,"size":"1280x720","with_audio":"yes"})",
-                context)
-            .hasError());
-    CHECK(
-        video
-            ->execute(
-                R"({"action":"delegate","message":"Edit","duration":5,"size":"1280x720","video_path":"old.mp4"})",
-                context)
-            .hasError());
     CHECK(
         image->execute(R"({"action":"delegate","message":"Edit","image_path":"old.png"})", context)
+            .hasError());
+    CHECK(
+        image->execute(R"({"action":"delegate","message":"Edit","video_path":"old.mp4"})", context)
             .hasError());
     CHECK(
         image->execute(R"({"action":"delegate","message":"Draw a cat","size":"512x512"})", context)
@@ -121,7 +68,7 @@ void testRejectsInvalidInputsBeforeNetwork() {
     CHECK(image->execute("not json", context).hasError());
 }
 
-void testCannotReadAnotherConversationTask() {
+void testCannotReadAnotherConversationImageTask() {
     auto store = makeMaiMemoryStore();
     MaiSession owner;
     owner.id = MaiIdGenerator::newSessionId();
@@ -132,29 +79,25 @@ void testCannotReadAnotherConversationTask() {
     MaiSpecialistTask task;
     task.id = MaiIdGenerator::generate("spt_");
     task.ownerSessionId = owner.id;
-    task.specialistName = "glm_video";
+    task.specialistName = "glm_image";
     task.providerTaskId = "provider-task";
-    task.intent = "Create a video";
+    task.intent = "Create an image";
     CHECK(!store->insertSpecialistTask(task));
-    auto video = makeMaiGlmVideoTool([] { return std::string("test-key"); });
+    auto image = makeMaiGlmImageTool([] { return std::string("test-key"); });
     MaiToolContext context;
     context.sessionId = other.id;
     context.specialistTasks = store.get();
-    const auto result = video->execute(
+    const auto result = image->execute(
         nlohmann::json{{"action", "continue"}, {"conversation_id", task.id}}.dump(), context);
     CHECK(result.hasError());
     CHECK(result.error().code() == MaiErrorCode::NotFound);
-    const auto unauthorizedDelete = video->execute(
-        nlohmann::json{{"action", "delete"}, {"conversation_id", task.id}}.dump(), context);
-    CHECK(unauthorizedDelete.hasError());
-    CHECK(unauthorizedDelete.error().code() == MaiErrorCode::NotFound);
 }
 
 }  // namespace
 
 int main() {
-    testDiscoveryAndApproval();
-    testRejectsInvalidInputsBeforeNetwork();
-    testCannotReadAnotherConversationTask();
+    testImageDiscoveryAndApproval();
+    testImageRejectsUnsupportedInputsBeforeNetwork();
+    testCannotReadAnotherConversationImageTask();
     return failures == 0 ? 0 : 1;
 }

@@ -287,6 +287,55 @@ void testLocalMediaStopsBeforeWanSubmissionWhenOssFails() {
     (void)MaiFileSystem::removeFile(source);
 }
 
+void testWanAnimateModesAndWan3ExtensionGuard() {
+    const auto credentials = [] { return MaiWanCredentials{"test-key", "ws-test123"}; };
+    auto mix = makeMaiWanAnimateMixTool(credentials);
+    auto move = makeMaiWanAnimateMoveTool(credentials);
+    MaiToolContext context;
+    context.root = MaiFileSystem::temporaryDirectory().toUtf8();
+    for (const auto& entry : {std::pair<MaiTool*, const char*>{mix.get(), "wan2.2-animate-mix"},
+                              {move.get(), "wan2.2-animate-move"}}) {
+        const auto discovered = nlohmann::json::parse(
+            entry.first->execute(R"({"action":"discover"})", context).output());
+        CHECK(discovered.at("bound_model") == entry.second);
+        CHECK(entry.first->requiresPerCallApproval(R"({"action":"delegate"})"));
+        CHECK(!entry.first->requiresPerCallApproval(R"({"action":"continue"})"));
+        const auto schema = nlohmann::json::parse(entry.first->parametersSchema());
+        CHECK(schema["properties"].contains("image_path"));
+        CHECK(schema["properties"].contains("video_path"));
+        CHECK(schema["properties"].contains("source_duration_seconds"));
+        CHECK(schema["properties"]["service_mode"]["enum"].size() == 2);
+        const nlohmann::json request = {{"action", "delegate"},
+                                        {"image_url", "https://example.com/person.jpg"},
+                                        {"video_url", "https://example.com/dance.mp4"},
+                                        {"source_duration_seconds", 10}};
+        CHECK(entry.first->execute(request.dump(), context).hasError());
+        nlohmann::json invalidDuration = request;
+        invalidDuration["service_mode"] = "wan-std";
+        invalidDuration["source_duration_seconds"] = 31;
+        CHECK(entry.first->execute(invalidDuration.dump(), context).hasError());
+        nlohmann::json duplicateImage = invalidDuration;
+        duplicateImage["image_path"] = "person.jpg";
+        duplicateImage["source_duration_seconds"] = 10;
+        CHECK(entry.first->execute(duplicateImage.dump(), context).hasError());
+    }
+    auto wan3 = makeMaiWanVideoTool(credentials);
+    const nlohmann::json extension = {
+        {"action", "delegate"},         {"mode", "extend"}, {"message", "Continue video 1"},
+        {"video_path", "source.mp4"},   {"ratio", "9:16"},  {"duration", 5},
+        {"source_duration_seconds", 10}};
+    CHECK(wan3->execute(extension.dump(), context).hasError());
+    nlohmann::json unknownDuration = extension;
+    unknownDuration["ratio"] = "adaptive";
+    unknownDuration.erase("source_duration_seconds");
+    CHECK(wan3->execute(unknownDuration.dump(), context).hasError());
+    nlohmann::json excessiveDuration = extension;
+    excessiveDuration["ratio"] = "adaptive";
+    excessiveDuration["source_duration_seconds"] = 15;
+    excessiveDuration["duration"] = 20;
+    CHECK(wan3->execute(excessiveDuration.dump(), context).hasError());
+}
+
 void testBailianKlingUsesWanCredentialsAndRequiresOssForMedia() {
     MaiWanCredentials credentials;
     auto tool = makeMaiBailianKlingVideoTool([&] { return credentials; });
@@ -423,6 +472,7 @@ int main() {
     testLiveDiagnosticsWhenExplicitlyConfigured();
     testExistingPaidTasksCanBeRecoveredWithoutResubmission();
     testLocalMediaStopsBeforeWanSubmissionWhenOssFails();
+    testWanAnimateModesAndWan3ExtensionGuard();
     testBailianKlingUsesWanCredentialsAndRequiresOssForMedia();
     testWanAndKlingImageToolsValidateBeforePaidSubmission();
     testVideoTaskManagementNeverDiscardsActiveOrForeignTasks();

@@ -2,23 +2,7 @@
 
 核对日期：2026-10-07。本文只记录本仓库已接线的能力和已观察到的结果；模型宣传能力、API 能力与工具能力分开判断。测试素材与 Key 均不提交到仓库。
 
-## CogVideoX-3（`glm_video`）
-
-依据：[智谱视频生成异步接口](https://docs.bigmodel.cn/api-reference/模型-api/视频生成异步)、[CogVideoX-3 使用说明](https://docs.bigmodel.cn/cn/guide/models/video-generation/cogvideox-3)。
-
-| 官方字段 | 当前工具映射 | 核对结果 |
-|---|---|---|
-| `model` | 固定 `cogvideox-3` | 一致。 |
-| `image_url` | 读取工作区 PNG/JPEG 原始字节，组为 `data:image/...;base64,...`；首尾帧为顺序数组 | 格式符合文档；工具不缩图、不重新编码。图片进入工作区之前若已缩小，工具不能恢复。 |
-| `prompt` | `message`；仅当调用者传 `context` 时附加相关上下文 | 官方没有另一个图生视频专用提示词字段。图生视频应描述已有主体的动作，避免让模型重画人物。 |
-| `quality` | 映射 `speed` / `quality`；现默认 `quality` | 文档明确 `speed` 较快但质量较低。手机历史调用显式用了 `speed`，因此修改默认值不会覆盖旧调用；工具说明已要求人像保真优先选 `quality`。 |
-| `size` | 直接传官方尺寸枚举 | 手机历史调用使用 `720x1280`，属 720P 预览规格；本次对照使用 `1920x1080`。 |
-| `fps` | 30 或 60，默认 30 | 一致。 |
-| `with_audio` | 布尔值，默认 false | 官方字段，控制 AI 音效；不是工具自造参数。 |
-| `duration` | 5 或 10 秒 | 一致。 |
-| 多图 | 单首帧或严格首尾帧两张 | 官方未开放任意多图参考；discover 标为模型/API 限制。 |
-
-实测输入 `baby-halfbody3.jpg` 是 720×504、58,092 字节。最近几次手机 GLM 调用明确传了 `quality:"speed"`、`size:"720x1280"`、30 fps。用同一张图片、同一动作提示词、`quality:"quality"`、1920×1080、30 fps、5 秒、`with_audio:true` 分别调用 MaiAgent 工具和官方接口直连，两条任务均成功；产物均为 1920×1080 H.264、约 5.13 秒且含 AAC。抽看的首帧和中段画面质量接近，未观察到工具下载链路额外降质。生成有随机性，不能要求两条视频像素一致。
+2026-10-11：CogVideoX-3 工具已从当前注册与构建中移除。历史实测记录保留于 Git 历史。
 
 ## MiniMax H3（`minimax_video`）
 
@@ -54,7 +38,7 @@
 
 ## 多图能力与主模型路由
 
-Seedance 2.0 的[官方创建任务文档](https://docs.volcengine.com/docs/82379/1520757?lang=zh)使用 `content[]` 中重复的 `image_url` 项，并将每项 `role` 设为 `reference_image`，上限 9 张；不是单独的 `image_urls` 顶层数组。当时 `seedance_video` 按此格式接入 `local_image_paths`，并在 discover 中标明上限和与严格首尾帧模式互斥。CogVideoX-3 仅支持单首帧或严格首尾帧两张。主模型提示词要求先查上限，不得静默丢图；超限时先拟定图像融合或可见排版方案，再走付费确认。
+Seedance 2.0 的[官方创建任务文档](https://docs.volcengine.com/docs/82379/1520757?lang=zh)使用 `content[]` 中重复的 `image_url` 项，并将每项 `role` 设为 `reference_image`，上限 9 张；不是单独的 `image_urls` 顶层数组。当时 `seedance_video` 按此格式接入 `local_image_paths`，并在 discover 中标明上限和与严格首尾帧模式互斥。主模型提示词要求先查上限，不得静默丢图；超限时先拟定图像融合或可见排版方案，再走付费确认。
 
 2026-10-08 更新：`seedance_video` 保留 Seedance 2.5 实现，但付费提交已禁用，
 默认改为 Seedance 2.0 Mini。2.5 单次输出支持 4–30 秒，

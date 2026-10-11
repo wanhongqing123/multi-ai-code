@@ -39,8 +39,9 @@
 |---|---|---|---|
 | `seedance_video` | 2.0 Mini/Fast/标准版；文生、严格首尾帧、最多九张参考图、单段视频参考/编辑/延长；真人图需已登记资产或本人授权路径 | 4–15 秒；Mini/Fast 仅 480p/720p，标准版另有 1080p/4k；2.5 禁用 | 多段视频同时参考 |
 | `wan_video` | Wan3.0；文生、首尾帧、最多十张图加一段视频、单文档或单网页、视频编辑/延长 | 2–30 秒或智能时长；480P/720P/1080P；有视频时输入与输出总时长≤30 秒 | 多段参考视频、参考音频 |
+| `wan_animate_mix` | 单张人物图加单段动作视频；保留原视频场景并替换人物 | Wan 2.2 Animate Mix；源视频 2–30 秒；异步任务 | 多人物分别替换、无参考图的文生视频 |
+| `wan_animate_move` | 单张人物图加单段动作视频；人物执行视频动作，保留图片背景 | Wan 2.2 Animate Move；源视频 2–30 秒；异步任务 | 多人物动作迁移、无动作视频的图生视频 |
 | `kling_bailian_video` | Turbo 文生/首帧；标准版加首尾帧；Omni 加最多七张图、单段特征视频及源视频编辑 | 通常 3–15 秒；带特征视频时 3–10 秒；视频加图最多四张；Turbo 无 4k | 主体元素、多镜头、原声保留参数 |
-| `glm_video` | CogVideoX-3 文生、单首帧、严格首尾帧 | 5 或 10 秒；尺寸、30/60 fps 和有声开关按 Schema | 任意多图参考、源视频编辑 |
 | `minimax_video` | H3/H3 Max 文生、严格首尾帧；最多九图、三视频、三音频多模态参考 | H3 为 4–15 秒 768P/2K；H3 Max 为 5–15 秒 480P/768P；均无原生 1080P | 专用源视频编辑模式、已核实的云端取消 |
 
 各行还要以运行时 `discover.tool_status` 及当前账号权益为准；
@@ -357,21 +358,17 @@ iOS 工具层仍需单独验收。用户选择独立的阿里云 OSS 存储后�
 4. 加入有界的澄清、创意规划与质检重试；明确费用和停止条件。
 5. 其他模型服务复用同一特殊工具契约，逐步扩展到其他平台。
 
-### 智谱 GLM 图片与视频
+### 智谱 GLM 图片
 
-共享实现位于 `MaiAgent/AgentTools/MaiGlmMediaTools.cpp`，工具名 `glm_video` 和
-`glm_image`。移动端仅在主模型使用 `open.bigmodel.cn` 时从同一份 GLM 5.3
-密钥配置读取；桌面端复用相同供应商的模型配置密钥。密钥不进入工具参数、能力清单或
-持久化任务记录。两项工具的付费 `delegate` 都需逐次确认，提交后由既有协调器查询
-异步任务、下载产物并通知主模型，`continue` 仅供排障。
+共享实现位于 `MaiAgent/AgentTools/MaiGlmMediaTools.cpp`，只注册 `glm_image`。
+移动端和桌面端均复用 GLM 主模型的供应商密钥；密钥不进入工具参数、能力清单或
+持久化任务记录。付费 `delegate` 逐次确认，提交后查询异步任务、下载图片并通知主模型，
+`continue` 仅供排障。
 
-`glm_video` 绑定 `cogvideox-3`，支持文生视频、本地 PNG/JPEG 单图生视频和首尾帧
-生视频；已有视频编辑不在此接口能力内。`glm_image` 绑定 `glm-image`，只支持异步
-文生图；已有图片编辑不在此接口能力内。能力状态在云端与移动端实测前均为
-`implemented_unverified`。密钥来自 GLM 5.3 配置不代表 Coding Plan 套餐自动拥有
-开放平台的图像／视频模型权限，供应商若拒绝会返回结构化错误，不能宣称生成成功。
-接口参考[视频生成异步 API](https://docs.bigmodel.cn/api-reference/%E6%A8%A1%E5%9E%8B-api/%E8%A7%86%E9%A2%91%E7%94%9F%E6%88%90%E5%BC%82%E6%AD%A5)、
-[图片生成异步 API](https://docs.bigmodel.cn/api-reference/%E6%A8%A1%E5%9E%8B-api/%E5%9B%BE%E5%83%8F%E7%94%9F%E6%88%90%E5%BC%82%E6%AD%A5)及
+`glm_image` 绑定 `glm-image`，只支持异步文生图；已有图片编辑不在此接口能力内。
+`CogVideoX-3` 视频工具已移除。密钥来自 GLM 主模型配置不代表套餐自动拥有
+开放平台图像模型权限，供应商若拒绝会返回结构化错误。
+接口参考[图片生成异步 API](https://docs.bigmodel.cn/api-reference/%E6%A8%A1%E5%9E%8B-api/%E5%9B%BE%E5%83%8F%E7%94%9F%E6%88%90%E5%BC%82%E6%AD%A5)及
 [查询异步结果](https://docs.bigmodel.cn/api-reference/%E6%A8%A1%E5%9E%8B-api/%E6%9F%A5%E8%AF%A2%E5%BC%82%E6%AD%A5%E7%BB%93%E6%9E%9C)。
 
 ### 万相 3.0 视频生成
@@ -388,6 +385,25 @@ PAGES、NUMBERS、MD 直传私有 OSS 后再引用签名 HTTPS 链接；`link_ur
 对外参数，不能把 API 理论能力当作当前工具能力。上述文档路径已通过本地
 校验和签发器测试，未发起付费生成验证。
 [万相 3.0 API 参考](https://help.aliyun.com/zh/model-studio/wan3-video-generation-api-reference)。
+
+### 万相人物动画
+
+`wan_animate_mix` 与 `wan_animate_move` 都需要一张可读取的人物图和一段 2–30 秒的
+视频。本地文件先传私有 OSS，供应商只收到短期 HTTPS 地址。前者保留原视频的场景、
+运动和镜头并替换人物；后者以图片场景为主，让人物模仿视频中的动作。两个工具先做
+本地参数校验，再发付费异步任务；`continue` 取回结果，`cancel`/`delete` 管理任务。
+当前只完成代码和模型可见性检查，尚未付费实测生成画面。官方资料：
+[视频换人](https://docs.bailian.console.aliyun.com/zh/model-studio/wan-animate-mix-api)、
+[图生动作](https://docs.bailian.console.aliyun.com/zh/model-studio/wan-animate-move-api)。
+
+### MiniMax 图片生成
+
+`minimax_image` 的 `image-01` 支持文生图，也支持一张人物参考图引导**主体角色**，
+本地图片走 OSS，公开 HTTPS URL 可直接引用。`image-01-live` 也可选，但当前尚未
+实盘验证；21:9 与自定义宽高仅用于 `image-01`。图生图在该接口是人物主体参考，
+不是任意局部修图或严格保持原图像素。生成结果的供应商 URL 有时效，工具立即下载到
+工作区。官方资料：[文生图](https://platform.minimax.cn/docs/api-reference/image-generation-t2i)、
+[图生图](https://platform.minimax.cn/docs/api-reference/image-generation-i2i)。
 
 ### 万相 2.7 视频编辑（当前未注册）
 

@@ -10,8 +10,10 @@
 // worker-safe. An empty key leaves discovery available but disables paid submission.
 using MaiMiniMaxApiKeyProvider = std::function<std::string()>;
 
-// MiniMax video uses H3/H3 Max V2 generation. MiniMax image uses image-01 and completes
-// synchronously. Both are paid and honor cancellation.
+// 视频使用 H3/H3 Max V2 异步接口。图片使用 image-01 或 image-01-live 的同步接口；
+// 无参考图是文生图，一张人物参考图走 character 主体图生图，不提供任意局部重绘。
+// 本地图只作为私有 OSS 上传源，供应商收到 HTTPS URL；输出 URL 立刻下载到工作区。
+// 两类生成都可能扣费，必须通过工具逐次授权并响应取消；空 Key 只允许 discover。
 std::unique_ptr<MaiTool> makeMaiMiniMaxVideoTool(MaiMiniMaxApiKeyProvider apiKey,
                                                  std::string caBundlePath = {},
                                                  MaiCreativeMediaUploadProvider uploadMedia = {});

@@ -27,6 +27,11 @@ std::string value(const Json& data, const char* field) {
                : std::string{};
 }
 
+std::size_t utf8CodePointCount(const std::string& text) {
+    return static_cast<std::size_t>(std::count_if(
+        text.begin(), text.end(), [](unsigned char byte) { return (byte & 0xc0) != 0x80; }));
+}
+
 std::string describeMiniMaxVideoSchema(const std::string& raw) {
     Json schema = Json::parse(raw);
     Json& fields = schema["properties"];
@@ -105,6 +110,39 @@ std::string describeMiniMaxVideoSchema(const std::string& raw) {
         "Optional prior local task ID for revision lineage; inputs are not reused automatically";
     fields["poll_once"]["description"] =
         "Query status once; the App normally polls and delivers the result automatically";
+    return schema.dump();
+}
+
+std::string describeMiniMaxImageSchema(const std::string& raw) {
+    Json schema = Json::parse(raw);
+    Json& fields = schema["properties"];
+    // image-01 与 image-01-live 共用文生图/角色参考图生图接口；
+    // 图生图不是任意区域重绘，只能通过 character 人物主体参考新生成图片。
+    fields["model"]["description"] =
+        "image-01 or image-01-live; choose explicitly if the faster live variant is wanted";
+    fields["message"]["description"] = "Required image prompt, at most 1500 Unicode characters";
+    fields["context"]["description"] =
+        "Only task-relevant visual constraints, not the whole conversation";
+    // image_path 与 image_url 二选一。无图是文生图；有图仅支持单人角色参考。
+    // 本地 JPG/PNG 先传私有 OSS，不能向模型塞 Base64。
+    fields["image_path"]["description"] =
+        "One local JPG/PNG character reference under 10 MB, uploaded to private OSS; "
+        "exclusive with image_url; not a general image-edit input";
+    fields["image_url"]["description"] =
+        "One public HTTPS character-reference image; exclusive with image_path";
+    fields["ratio"]["description"] =
+        "Required output ratio unless width and height are given; 21:9 only on image-01";
+    fields["width"]["description"] =
+        "Optional width with height on image-01 only: 512-2048 and a multiple of 8; "
+        "do not combine with ratio";
+    fields["height"]["description"] =
+        "Optional height with width on image-01 only: 512-2048 and a multiple of 8; "
+        "do not combine with ratio";
+    fields["prompt_optimizer"]["description"] = "Provider prompt rewrite; defaults to false";
+    fields["aigc_watermark"]["description"] = "Add the provider AIGC watermark; defaults to false";
+    fields["seed"]["description"] = "Optional 64-bit random seed for reproducibility";
+    fields["action"]["description"] =
+        "discover reads capabilities; delegate generates one paid image and downloads it";
     return schema.dump();
 }
 
@@ -446,18 +484,19 @@ public:
                         "ratio before paid delegate. Continue checks the existing task; delete "
                         "removes only a delivered local record. No verified cloud cancel API "
                         "is wired. For exact 1080P, explain 2K generation then local downscale."
-                      : "MiniMax image-01 paid image specialist. Text-to-image and character "
-                        "reference image generation are wired. Use discover or delegate after "
-                        "confirmation; image generation completes in the delegate call.";
+                      : "MiniMax image-01 / image-01-live paid image specialist. Text-to-image "
+                        "and character-reference image-to-image are wired. A reference image "
+                        "preserves a character in a newly generated scene; this is not generic "
+                        "pixel-preserving editing. Use one local JPG/PNG uploaded to private OSS "
+                        "or one public HTTPS image URL. Prompt limit is 1500 characters. "
+                        "Choose an official ratio or supported custom dimensions before the "
+                        "paid delegate call; one result is downloaded immediately.";
     }
     std::string parametersSchema() const override {
         // content[] 是 V2 多模态输入；image_path 等扁平字段保留单图便利写法。
         // duration、resolution 位于顶层；content 条目用 type/role/path 描述媒体。
         // 参数形状通过后，仍需执行层检查媒体角色、数量和模型规格组合。
-        return mVideo
-                   ? describeMiniMaxVideoSchema(
-                         R"({"type":"object","properties":{"action":{"type":"string","enum":["discover","validate","delegate","continue","delete"]},"model":{"type":"string","enum":["MiniMax-H3","MiniMax-H3-Max"]},"message":{"type":"string"},"context":{"type":"string"},"image_path":{"type":"string"},"first_frame":{"type":"string"},"last_frame_path":{"type":"string"},"last_frame":{"type":"string"},"local_image_paths":{"type":"array","items":{"type":"string"}},"reference_video_path":{"type":"string"},"reference_video":{"type":"string"},"video_path":{"type":"string"},"reference_audio_path":{"type":"string"},"reference_audio":{"type":"string"},"content":{"type":"array","items":{"type":"object","properties":{"type":{"type":"string","enum":["text","image_url","video_url","audio_url"]},"text":{"type":"string"},"path":{"type":"string"},"role":{"type":"string"}},"required":["type"]}},"duration":{"type":"integer"},"resolution":{"type":"string"},"ratio":{"type":"string"},"prompt_expansion_mode":{"type":"string"},"conversation_id":{"type":"string"},"parent_task_id":{"type":"string"},"poll_once":{"type":"boolean"}},"required":["action"]})")
-                   : R"({"type":"object","properties":{"action":{"type":"string","enum":["discover","delegate"]},"message":{"type":"string"},"context":{"type":"string"},"image_path":{"type":"string"},"ratio":{"type":"string"}},"required":["action"]})";
+        return mVideo ? describeMiniMaxVideoSchema(R"({"type":"object","properties":{"action":{"type":"string","enum":["discover","validate","delegate","continue","delete"]},"model":{"type":"string","enum":["MiniMax-H3","MiniMax-H3-Max"]},"message":{"type":"string"},"context":{"type":"string"},"image_path":{"type":"string"},"first_frame":{"type":"string"},"last_frame_path":{"type":"string"},"last_frame":{"type":"string"},"local_image_paths":{"type":"array","items":{"type":"string"}},"reference_video_path":{"type":"string"},"reference_video":{"type":"string"},"video_path":{"type":"string"},"reference_audio_path":{"type":"string"},"reference_audio":{"type":"string"},"content":{"type":"array","items":{"type":"object","properties":{"type":{"type":"string","enum":["text","image_url","video_url","audio_url"]},"text":{"type":"string"},"path":{"type":"string"},"role":{"type":"string"}},"required":["type"]}},"duration":{"type":"integer"},"resolution":{"type":"string"},"ratio":{"type":"string"},"prompt_expansion_mode":{"type":"string"},"conversation_id":{"type":"string"},"parent_task_id":{"type":"string"},"poll_once":{"type":"boolean"}},"required":["action"]})") : describeMiniMaxImageSchema(R"({"type":"object","properties":{"action":{"type":"string","enum":["discover","delegate"]},"model":{"type":"string","enum":["image-01","image-01-live"]},"message":{"type":"string"},"context":{"type":"string"},"image_path":{"type":"string"},"image_url":{"type":"string"},"ratio":{"type":"string","enum":["1:1","16:9","4:3","3:2","2:3","3:4","9:16","21:9"]},"width":{"type":"integer"},"height":{"type":"integer"},"prompt_optimizer":{"type":"boolean"},"aigc_watermark":{"type":"boolean"},"seed":{"type":"integer"}},"required":["action"],"additionalProperties":false})");
     }
     std::optional<MaiSpecialistInfo> specialistInfo() const override {
         const bool configured = mKey && !mKey().empty();
@@ -524,14 +563,17 @@ public:
                  MaiSpecialistCapabilityStatus::ImplementedUnverified,
                  "delete requires a delivered task; cloud output and downloaded MP4 remain"});
         } else {
-            // text_to_image：image-01 文生图已在当前账号做过实盘冒烟测试。
+            // text_to_image：image-01 文生图已在当前账号做过实盘冒烟测试；
+            // image-01-live 是可选型号，尚未在本账号付费实测。
             info.capabilities.push_back(
                 {"text_to_image", true, true, ready,
-                 "image-01 text generation completed a live account smoke test"});
-            // character_reference_image：参考图必须含角色人物，仅支持小于 5 MB 的 PNG/JPEG。
+                 "image-01 text generation completed a live account smoke test; "
+                 "image-01-live remains unverified"});
+            // 图生图仅支持 character 主体参考，不承诺保留原图像素或局部编辑。
             info.capabilities.push_back(
-                {"character_reference_image", true, true, mediaReady,
-                 "Reference image must contain a character; PNG/JPEG under 5 MB"});
+                {"image_to_image_character_reference", true, true, mediaReady,
+                 "One character reference: local JPG/PNG under 10 MB via private OSS or "
+                 "one public HTTPS URL; not a general image-edit API"});
         }
         return info;
     }
@@ -561,7 +603,7 @@ public:
                 return maiCreativeInvalid("unsupported MiniMax parameter: " + field.key());
         }
         for (const char* field :
-             {"action", "model", "message", "context", "image_path", "first_frame",
+             {"action", "model", "message", "context", "image_path", "image_url", "first_frame",
               "last_frame_path", "last_frame", "reference_video_path", "reference_video",
               "video_path", "reference_audio_path", "reference_audio", "resolution", "ratio",
               "prompt_expansion_mode", "conversation_id", "parent_task_id"}) {
@@ -570,6 +612,14 @@ public:
         }
         if (args.contains("duration") && !args["duration"].is_number_integer())
             return maiCreativeInvalid("duration must be an integer");
+        for (const char* field : {"width", "height", "seed"}) {
+            if (args.contains(field) && !args[field].is_number_integer())
+                return maiCreativeInvalid(std::string(field) + " must be an integer");
+        }
+        for (const char* field : {"prompt_optimizer", "aigc_watermark"}) {
+            if (args.contains(field) && !args[field].is_boolean())
+                return maiCreativeInvalid(std::string(field) + " must be boolean");
+        }
         if (args.contains("poll_once") && !args["poll_once"].is_boolean())
             return maiCreativeInvalid("poll_once must be boolean");
         const std::string action = value(args, "action");
@@ -660,7 +710,7 @@ private:
                            const MaiToolContext& context) const {
         const std::string message = value(args, "message");
         const std::string extra = value(args, "context");
-        if (message.size() > 4000 || extra.size() > 4000)
+        if ((mVideo && message.size() > 4000) || extra.size() > 4000)
             return maiCreativeInvalid("message/context must be at most 4000 bytes");
         if (context.root.empty()) return maiCreativeInvalid("Agent workspace is required");
         std::string prompt = message;
@@ -734,30 +784,69 @@ private:
 
     MaiToolResult delegateImage(const Json& args, const std::string& key, const std::string& prompt,
                                 const MaiToolContext& context) const {
-        if (prompt.empty() || prompt.size() > 4000)
-            return maiCreativeInvalid("message is required for image generation");
+        if (prompt.empty() || utf8CodePointCount(prompt) > 1500)
+            return maiCreativeInvalid("Image prompt is required and limited to 1500 characters");
+        const std::string model = value(args, "model").empty() ? "image-01" : value(args, "model");
+        if (model != "image-01" && model != "image-01-live")
+            return maiCreativeInvalid("model must be image-01 or image-01-live");
+        // 官方未传比例时默认为 1:1；自定义宽高时不附加比例，以免覆盖宽高。
         const std::string ratio = value(args, "ratio");
-        if (ratio != "16:9" && ratio != "9:16" && ratio != "1:1")
-            return maiCreativeInvalid("Confirm ratio as 16:9, 9:16, or 1:1");
-        Json body = {{"model", "image-01"},
+        const bool dimensions = args.contains("width") || args.contains("height");
+        if (dimensions) {
+            if (model != "image-01" || !ratio.empty() || !args.contains("width") ||
+                !args.contains("height"))
+                return maiCreativeInvalid("Custom width and height require image-01 without ratio");
+            const std::int64_t width = args["width"].get<std::int64_t>();
+            const std::int64_t height = args["height"].get<std::int64_t>();
+            if (width < 512 || width > 2048 || height < 512 || height > 2048 || width % 8 != 0 ||
+                height % 8 != 0)
+                return maiCreativeInvalid("Image width and height must be 512-2048 multiples of 8");
+        } else if (!ratio.empty() && ratio != "1:1" && ratio != "16:9" && ratio != "4:3" &&
+                   ratio != "3:2" && ratio != "2:3" && ratio != "3:4" && ratio != "9:16" &&
+                   ratio != "21:9") {
+            return maiCreativeInvalid("Confirm an official image aspect ratio");
+        }
+        if (model == "image-01-live" && ratio == "21:9")
+            return maiCreativeInvalid("21:9 is available only on image-01");
+        Json body = {{"model", model},
                      {"prompt", prompt},
-                     {"aspect_ratio", ratio},
                      {"response_format", "url"},
-                     {"n", 1}};
+                     {"n", 1},
+                     {"prompt_optimizer", args.value("prompt_optimizer", false)},
+                     {"aigc_watermark", args.value("aigc_watermark", false)}};
+        if (dimensions) {
+            body["width"] = args["width"];
+            body["height"] = args["height"];
+        } else {
+            body["aspect_ratio"] = ratio.empty() ? "1:1" : ratio;
+        }
+        if (args.contains("seed")) body["seed"] = args["seed"];
         const std::string imagePath = value(args, "image_path");
+        std::string image = value(args, "image_url");
+        if (!imagePath.empty() && !image.empty())
+            return maiCreativeInvalid("Choose image_path or image_url, not both");
         if (!imagePath.empty()) {
-            // image-01 的 image_file 接受 URL；不再把本地图转成 data URL。
+            LocalReference local;
+            if (auto error = inspectReference({MediaKind::Image, "reference_image", imagePath},
+                                              context, local))
+                return *error;
+            if ((local.extension != ".jpg" && local.extension != ".jpeg" &&
+                 local.extension != ".png") ||
+                local.size >= 10'000'000)
+                return maiCreativeInvalid("Character image must be JPG/PNG under 10 MB");
             if (!mUploadMedia)
                 return maiCreativeFailure(MaiErrorCode::NotConfigured, "upload_not_configured",
                                           "Private OSS media upload is not configured");
-            const auto uploaded = mUploadMedia(imagePath, context);
+            const auto uploaded = mUploadMedia(local.path, context);
             if (!uploaded)
                 return maiCreativeFailure(uploaded.error().code(), "upload_failed",
                                           uploaded.error().message());
-            std::string image = uploaded.value();
+            image = uploaded.value();
+        }
+        if (!image.empty()) {
             if (!maiCreativeHttpsUrl(image))
-                return maiCreativeFailure(MaiErrorCode::Protocol, "upload_failed",
-                                          "OSS returned no HTTPS image URL");
+                return maiCreativeInvalid("Character image must have an accessible HTTPS URL");
+            // 官方图生图仅接受 character 主体参考，不能当通用图像编辑。
             body["subject_reference"] =
                 Json::array({Json{{"type", "character"}, {"image_file", std::move(image)}}});
         }
@@ -766,6 +855,15 @@ private:
             std::string(kApiBase) + "/v1/image_generation", key, mCaBundle, &payload, context);
         if (result.error) return *result.error;
         const Json response = Json::parse(result.body, nullptr, false);
+        if (!response.is_object())
+            return maiCreativeFailure(MaiErrorCode::Protocol, "protocol",
+                                      "MiniMax returned invalid image JSON");
+        const Json provider = response.value("base_resp", Json::object());
+        if (provider.is_object() && provider.value("status_code", 0) != 0)
+            return maiCreativeFailure(MaiErrorCode::Network, "provider_error",
+                                      value(provider, "status_msg").empty()
+                                          ? "MiniMax image generation failed"
+                                          : value(provider, "status_msg"));
         const Json data = response.value("data", Json::object());
         if (!data.is_object() || !data.contains("image_urls") || !data["image_urls"].is_array() ||
             data["image_urls"].empty() || !data["image_urls"][0].is_string())
@@ -776,7 +874,10 @@ private:
         if (media.hasError()) return media;
         Json output = Json::parse(media.output());
         output["status"] = "succeeded";
-        output["bound_model"] = "image-01";
+        output["bound_model"] = model;
+        output["mode"] = imagePath.empty() && value(args, "image_url").empty()
+                             ? "text_to_image"
+                             : "character_reference_image_to_image";
         output["reply"] = "MiniMax image is ready for review at the returned path.";
         return MaiToolResult::success(output.dump());
     }

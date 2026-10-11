@@ -26,13 +26,14 @@
 #include "MaiSqliteStore.h"
 #include "MaiSshTool.h"
 #include "MaiSystemResourcesTool.h"
+#include "MaiTemporalWatermark.h"
+#include "MaiTemporalWatermarkTool.h"
 #include "MaiTimeTool.h"
 #include "MaiTodoWriteTool.h"
 #include "MaiVideoGeometryTool.h"
 #include "MaiVideoMatting.h"
 #include "MaiVideoMattingTool.h"
 #include "MaiViewImageTool.h"
-#include "MaiWatermarkRemovalTool.h"
 #include "MaiZlibTool.h"
 #include "mai_fftools_embed.h"
 #include <cstddef>
@@ -82,9 +83,11 @@ constexpr auto kMarkdownBaseInstructions =
     "path. "
     "Do not remove watermarks, subtitles, or end cards as an unrequested "
     "preparation step. If the user explicitly requests watermark removal, use "
-    "media_remove_watermark with a known rectangle; inspect at most one "
-    "representative frame if needed. Do not loop through FFmpeg/OpenCV to "
-    "hunt for regions. After one result, return to the original task. "
+    "the dedicated media_remove_watermark tool, if available, once with all measured regions, "
+    "time windows, and clean reference timestamps. Inspect enough source frames "
+    "to confirm moving positions and foreground overlap. Do not loop through "
+    "FFmpeg/OpenCV repair calls. If that tool is unavailable, state the "
+    "capability gap. After one result, review it and return to the original task. "
     // 图片与视频专业模型的本地素材统一走私有 OSS；上传故障不能回退为 Base64。
     "For image and video specialist tools, local media paths are upload "
     "inputs: "
@@ -463,7 +466,6 @@ struct MaiMobileAgent {
     tools->add(makeMaiViewImageTool(makeMaiFfmpegImagePreview(ffmpegEngine)));
     tools->add(makeMaiFfmpegTool(ffmpegEngine));
     tools->add(makeMaiFfprobeTool(ffmpegEngine));
-    tools->add(makeMaiWatermarkRemovalTool(ffmpegEngine));
     tools->add(makeMaiStretchLowerVideoTool(ffmpegEngine));
     tools->add(makeMaiCvSceneDetectTool(analyzeMaiCvVideo));
     tools->add(makeMaiCvMotionDetectTool(analyzeMaiCvVideo));
@@ -568,6 +570,7 @@ struct MaiMobileAgent {
     tools->add(makeMaiBailianKlingImageTool(wanCredentials, config.caBundlePath,
                                             uploadMedia));
     const std::string rvmModel = request.value("rvmModelPath", "");
+    const std::string lamaModel = request.value("lamaModelPath", "");
     const std::string ortRuntime = request.value("ortRuntimePath", "");
     if (!rvmModel.empty() &&
         MaiFileSystem::exists(MaiFilePath::fromUtf8(rvmModel))) {
@@ -577,6 +580,15 @@ struct MaiMobileAgent {
         tools->add(makeMaiVideoMattingTool(maiMatteVideo, rvmModel, ortRuntime,
                                            ortApiBase));
       }
+    }
+    // 去水印仅暴露新的本地模型 + 临近干净帧工具，不再注册旧 delogo 实现。
+    if (!lamaModel.empty() &&
+        MaiFileSystem::exists(MaiFilePath::fromUtf8(lamaModel)) &&
+        (ortApiBase != nullptr ||
+         (!ortRuntime.empty() &&
+          MaiFileSystem::exists(MaiFilePath::fromUtf8(ortRuntime))))) {
+      tools->add(makeMaiTemporalWatermarkTool(
+          maiRepairVideoWatermarks, lamaModel, ortRuntime, ortApiBase));
     }
     tools->add(makeMaiPdfTool(
         [dispatcher = hostTools](const std::string &html,

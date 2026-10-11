@@ -45,6 +45,14 @@ if [[ -n "${TARGET_BUILD_DIR:-}" && -n "${UNLOCALIZED_RESOURCES_FOLDER_PATH:-}" 
   mkdir -p "$model_bundle"
   cp "$repo_dir/MaiAgent/models/rvm_mobilenetv3_fp32.onnx" "$model_bundle/"
   cp "$repo_dir/MaiAgent/models/RVM_LICENSE" "$model_bundle/"
+  # LaMa 用于水印与人物轮廓重叠时的局部修补；模型从发布源手动下载并校验。
+  # 缺文件就让构建明确失败，不能静默交付一个没有去水印工具的 iOS 包。
+  if [[ ! -f "$repo_dir/MaiAgent/models/lama_fp32.onnx" ]]; then
+    echo "Missing LaMa model. Run MaiAgent/scripts/fetch-lama-model.sh first." >&2
+    exit 1
+  fi
+  cp "$repo_dir/MaiAgent/models/lama_fp32.onnx" "$model_bundle/"
+  cp "$repo_dir/MaiAgent/models/LaMa_LICENSE" "$model_bundle/"
   # iOS 的 OpenSSL libcurl 需要随 App 打包的受信任 CA，不能关闭证书校验。
   cert_bundle="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/MaiAgentCertificates"
   mkdir -p "$cert_bundle"

@@ -203,9 +203,11 @@ endforeach()
 add_library(maiagent_cv_video_analysis STATIC
   ../../MaiAgent/AgentTools/MaiCvImageAnalysis.cpp
   ../../MaiAgent/AgentTools/MaiCvVideoAnalysis.cpp
-  ../../MaiAgent/AgentTools/MaiVideoMatting.cpp)
+  ../../MaiAgent/AgentTools/MaiVideoMatting.cpp
+  ../../MaiAgent/AgentTools/MaiTemporalWatermark.cpp)
 target_include_directories(maiagent_cv_video_analysis PRIVATE
   ../../MaiAgent/include "${ffmpeg_build}/install/include"
+  ../../MaiAgent/third_party/onnxruntime/include/onnxruntime/core/session
   "${CMAKE_BINARY_DIR}"
   "${CMAKE_CURRENT_BINARY_DIR}"
   "${CMAKE_CURRENT_BINARY_DIR}/opencv"

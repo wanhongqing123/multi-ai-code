@@ -95,5 +95,8 @@ resources/asr/**/licenses/*
 !resources/asr/README.md
 !resources/asr/**/.gitkeep
 
+# Optional local LaMa inference weight; fetch with MaiAgent/scripts/fetch-lama-model.sh.
+MaiAgent/models/lama_fp32.onnx
+
 # Playwright MCP 浏览器工具的临时产物（页面快照/控制台日志）
 .playwright-mcp/

@@ -756,9 +756,11 @@ if(MAICHAT_ENABLE_OPENCV AND
   add_library(maiagent_cv_video_analysis STATIC
     ../../MaiAgent/AgentTools/MaiCvImageAnalysis.cpp
     ../../MaiAgent/AgentTools/MaiCvVideoAnalysis.cpp
-    ../../MaiAgent/AgentTools/MaiVideoMatting.cpp)
+    ../../MaiAgent/AgentTools/MaiVideoMatting.cpp
+    ../../MaiAgent/AgentTools/MaiTemporalWatermark.cpp)
   target_include_directories(maiagent_cv_video_analysis PRIVATE
-    ../../MaiAgent/include)
+    ../../MaiAgent/include
+    ../../MaiAgent/third_party/onnxruntime/include/onnxruntime/core/session)
   target_link_libraries(maiagent_cv_video_analysis PRIVATE maichat_opencv)
   if(APPLE)
     target_include_directories(maiagent_cv_video_analysis PRIVATE
@@ -818,6 +820,21 @@ if(MAICHAT_ENABLE_OPENCV AND
     add_test(NAME MaiVideoMattingTests COMMAND MaiVideoMattingTests
       ${CMAKE_CURRENT_SOURCE_DIR}/../Media/tests/fixtures/ffplay-av-subtitles.mkv
       ${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/models/rvm_mobilenetv3_fp32.onnx)
+  endif()
+  if(APPLE)
+    # 实盘媒体样本由命令行显式提供，绝不写进仓库测试夹具或常规 ctest。
+    add_executable(MaiTemporalWatermarkLive
+      tests/MaiTemporalWatermarkLive.cpp
+      ../../MaiAgent/AgentTools/MaiTemporalWatermark.cpp)
+    target_include_directories(MaiTemporalWatermarkLive PRIVATE
+      ../../MaiAgent/include
+      ../../MaiAgent/third_party/onnxruntime/include/onnxruntime/core/session
+      ../../MaiAgent/third_party/opencv/modules/core/include
+      ../../MaiAgent/third_party/opencv/modules/imgproc/include
+      "${CMAKE_CURRENT_BINARY_DIR}"
+      "${CMAKE_CURRENT_BINARY_DIR}/maiagent/Graphics/ffmpeg-runtime/install/include")
+    target_link_libraries(MaiTemporalWatermarkLive PRIVATE
+      maiagent opencv_imgproc opencv_core maiagent_embedded_fftools Qt5::Gui)
   endif()
 endif()
 

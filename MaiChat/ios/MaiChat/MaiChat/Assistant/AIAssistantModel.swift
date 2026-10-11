@@ -351,6 +351,9 @@ actor AIAssistantBackend {
                 in: .userDomainMask, appropriateFor: nil, create: true).path,
             "rvmModelPath": Bundle.main.url(
                 forResource: "rvm_mobilenetv3_fp32", withExtension: "onnx",
+                subdirectory: "MaiAgentModels")?.path ?? "",
+            "lamaModelPath": Bundle.main.url(
+                forResource: "lama_fp32", withExtension: "onnx",
                 subdirectory: "MaiAgentModels")?.path ?? ""])
     }
 

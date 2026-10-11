@@ -287,7 +287,7 @@ add_library(maiagent STATIC
   AgentTools/MaiRvmMatting.cpp
   AgentTools/MaiRvmComposite.cpp
   AgentTools/MaiVideoMattingTool.cpp
-  AgentTools/MaiWatermarkRemovalTool.cpp
+  AgentTools/MaiTemporalWatermarkTool.cpp
   AgentTools/MaiTodoWriteTool.cpp
   AgentTools/MaiQuestionTool.cpp
   AgentTools/MaiSubAgentTools.cpp
@@ -451,7 +451,7 @@ if(MAIAGENT_BUILD_TESTS)
       MaiRvmMattingTests   # ONNX 递推状态和模型输入输出边界
       MaiRvmCompositeTests # 前景原色、透明背景和边缘混合
       MaiVideoMattingToolTests # 标准工具注册参数、路径和新文件契约
-      MaiWatermarkRemovalToolTests # 去水印一次探测一次处理、路径与区域边界
+      MaiTemporalWatermarkToolTests # 去水印区域、时间窗、工作区与模型配置边界
       MaiQuestionTests      # 问答闸门 + question 工具：等不到答案时绝不能编一个
       MaiSubAgentTests      # 子 Agent：深度上限、数量上限、不能戳别人的会话
       MaiShellToolTests     # shell：审批粒度、超时、取消、输出上限

@@ -98,6 +98,7 @@ public final class RemoteDesktopController {
     private String sessionId = "";
     private String roomId = "";
     private String localUserId = "";
+    private int sdkAppId;
     private String userSig = "";
     private String error = "";
     private String notice = "";
@@ -167,11 +168,12 @@ public final class RemoteDesktopController {
         }
     }
 
-    public void requestView(String peerId, String localUserId, String userSig) {
+    public void requestView(String peerId, String localUserId, int sdkAppId, String userSig) {
         if (isActive() || peerId == null || peerId.trim().isEmpty()) return;
         reset(false);
         this.peerUserId = peerId.trim();
         this.localUserId = localUserId.trim();
+        this.sdkAppId = sdkAppId;
         this.userSig = userSig;
         sessionId = UUID.randomUUID().toString().replace("-", "").toLowerCase(Locale.ROOT);
         roomId = "mc-" + this.localUserId + "-"
@@ -335,7 +337,7 @@ public final class RemoteDesktopController {
 
     private void enterRoom() {
         TRTCCloudDef.TRTCParams params = new TRTCCloudDef.TRTCParams();
-        params.sdkAppId = RemoteIMSessionController.SDK_APP_ID;
+        params.sdkAppId = sdkAppId;
         params.userId = localUserId;
         params.userSig = userSig;
         params.strRoomId = roomId;

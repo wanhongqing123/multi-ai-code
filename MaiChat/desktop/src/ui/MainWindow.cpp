@@ -1548,9 +1548,8 @@ QJsonObject cloudModelKeys(const QString &address, const QString &token) {
                     QStringLiteral("application/json"));
   request.setRawHeader("Authorization", QByteArray("Bearer ") + token.toUtf8());
   const QJsonArray providers = {
-      QStringLiteral("ark"),       QStringLiteral("glm"),
-      QStringLiteral("glm_video"), QStringLiteral("deepseek"),
-      QStringLiteral("wan"),       QStringLiteral("minimax")};
+      QStringLiteral("ark"), QStringLiteral("glm"), QStringLiteral("deepseek"),
+      QStringLiteral("wan"), QStringLiteral("minimax")};
   QNetworkReply *reply = manager.post(
       request,
       QJsonDocument(
@@ -1626,9 +1625,7 @@ AgentController::ModelConfig loadAgentModelConfig() {
   config.apiKey =
       keys.value(deepseek ? QStringLiteral("deepseek") : QStringLiteral("glm"))
           .toString();
-  config.glmApiKey = keys.value(QStringLiteral("glm_video")).toString();
-  if (config.glmApiKey.isEmpty())
-    config.glmApiKey = keys.value(QStringLiteral("glm")).toString();
+  config.glmApiKey = keys.value(QStringLiteral("glm")).toString();
   config.arkApiKey = keys.value(QStringLiteral("ark")).toString();
   config.miniMaxApiKey = keys.value(QStringLiteral("minimax")).toString();
   config.wanApiKey = keys.value(QStringLiteral("wan")).toString();
@@ -2074,9 +2071,8 @@ void MainWindow::buildUi() {
   conversationLayout->setContentsMargins(20, 18, 0, 16);
   conversationLayout->setSpacing(14);
 
-  // 会话栏头部：搜索框 + 添加联系人，与微信同一形态。
-  // 搜索原先横贯窗口顶部，但它搜的结果最终都落在这一列里，放在这列的头部
-  // 更符合「在哪找、结果在哪」的直觉，也省掉一整条顶栏的高度。
+  // 会话栏不再展示手动搜索，联系人和消息检索统一由 AI 助手完成。
+  // 暂保留内部搜索对象供迁移期兼容旧回调，但不展示也不绑定快捷键。
   auto *conversationHeader = new QHBoxLayout();
   conversationHeader->setContentsMargins(0, 0, 16, 0);
   conversationHeader->setSpacing(8);
@@ -2087,6 +2083,7 @@ void MainWindow::buildUi() {
   navSearchInput_->addAction(
       makeLineIcon(LineIconKind::Search, QColor(QStringLiteral("#98a2b3"))),
       QLineEdit::LeadingPosition);
+  navSearchInput_->hide();
   addContactButton_ = new QPushButton(conversationPane);
   addContactButton_->setObjectName(QStringLiteral("addConversationButton"));
   addContactButton_->setIcon(
@@ -2094,7 +2091,7 @@ void MainWindow::buildUi() {
   addContactButton_->setIconSize(QSize(kNavIconPixels, kNavIconPixels));
   addContactButton_->setToolTip(QStringLiteral("添加联系人"));
   addContactButton_->setCursor(Qt::PointingHandCursor);
-  conversationHeader->addWidget(navSearchInput_, 1);
+  conversationHeader->addStretch(1);
   conversationHeader->addWidget(addContactButton_, 0);
 
   conversationList_ = new QListWidget(conversationPane);
@@ -2444,16 +2441,7 @@ void MainWindow::buildUi() {
   contactsDirectoryLayout->setContentsMargins(24, 24, 0, 18);
   contactsDirectoryLayout->setSpacing(16);
 
-  // 通讯录栏头部：和会话栏一样是一个搜索框，只是搜的对象不同。
-  // 搜索框跟着页面走而不是共用一个：点通讯录就搜联系人、点消息就搜消息，
-  // 一个框只做一件事，不必再在框里塞「现在搜的是什么」的模式开关。
-  // 通讯录只保留搜索和右上角的添加好友入口。已有分组继续兼容显示；
-  // 群发迁入 AI 助手的逐次审批工具。
-  auto *contactsHeader = new QVBoxLayout();
-  // Keep the search field inset without moving the list scrollbar away from the
-  // divider.
-  contactsHeader->setContentsMargins(0, 0, 8, 0);
-  contactsHeader->setSpacing(8);
+  // 通讯录列表不再展示搜索框，联系人检索由 AI 助手完成。
   contactsSearchInput_ = new QLineEdit(contactsDirectoryPane);
   contactsSearchInput_->setObjectName(QStringLiteral("contactsSearchBox"));
   contactsSearchInput_->setPlaceholderText(
@@ -2462,7 +2450,7 @@ void MainWindow::buildUi() {
   contactsSearchInput_->addAction(
       makeLineIcon(LineIconKind::Search, QColor(QStringLiteral("#98a2b3"))),
       QLineEdit::LeadingPosition);
-  contactsHeader->addWidget(contactsSearchInput_);
+  contactsSearchInput_->hide();
 
   contactsList_ = new QListWidget(contactsDirectoryPane);
   contactsList_->setObjectName(QStringLiteral("contactsList"));
@@ -2473,7 +2461,6 @@ void MainWindow::buildUi() {
   // 高度画，表头和联系人会叠在一起。
   contactsList_->setUniformItemSizes(false);
   contactsList_->setItemDelegate(new ContactListDelegate(contactsList_));
-  contactsDirectoryLayout->addLayout(contactsHeader);
   contactsDirectoryLayout->addWidget(contactsList_, 1);
 
   auto *contactHintPane = new QWidget(contactsPage_);
@@ -3066,9 +3053,6 @@ void MainWindow::bindSignals() {
   // 不像消息搜索那样要扫遍每个会话的全部消息，挂在按键上也不会发涩。
   connect(contactsSearchInput_, &QLineEdit::textChanged, this,
           [this] { applyContactFilter(); });
-  auto *globalSearchShortcut = new QShortcut(QKeySequence::Find, this);
-  connect(globalSearchShortcut, &QShortcut::activated, this,
-          &MainWindow::focusPageSearch);
   auto *globalSearchEscape =
       new QShortcut(QKeySequence(Qt::Key_Escape), navSearchInput_);
   globalSearchEscape->setContext(Qt::WidgetWithChildrenShortcut);
@@ -3858,16 +3842,6 @@ void MainWindow::editAgentModelSettings() {
                               UiZoom::s(24));
   content->setSpacing(UiZoom::s(12));
 
-  auto *title = new QLabel(QStringLiteral("配置 AI 助手模型"), &dialog);
-  title->setObjectName(QStringLiteral("agentModelTitle"));
-  content->addWidget(title);
-  auto *subtitle = new QLabel(
-      QStringLiteral("主模型可在聊天页切换；统一使用 Responses 协议。"),
-      &dialog);
-  subtitle->setObjectName(QStringLiteral("agentModelSubtitle"));
-  subtitle->setWordWrap(true);
-  content->addWidget(subtitle);
-
   content->addWidget(new QLabel(QStringLiteral("云端服务地址"), &dialog));
   auto *serviceUrl = new QLineEdit(&dialog);
   serviceUrl->setObjectName(QStringLiteral("agentCloudServiceUrl"));
@@ -3883,7 +3857,7 @@ void MainWindow::editAgentModelSettings() {
   serviceToken->setObjectName(QStringLiteral("agentCloudServiceToken"));
   serviceToken->setEchoMode(QLineEdit::Password);
   serviceToken->setPlaceholderText(
-      QStringLiteral("留空则保留已配置的服务令牌"));
+      QStringLiteral("留空保留原令牌"));
   content->addWidget(serviceToken);
 
   auto *error = new QLabel(&dialog);

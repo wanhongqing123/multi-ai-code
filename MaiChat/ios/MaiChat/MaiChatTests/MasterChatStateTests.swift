@@ -1517,49 +1517,8 @@ final class MasterChatStateTests: XCTestCase {
         )
     }
 
-    func testDefaultCredentialMatchesDesktopPreset() {
+    func testPublicSdkAppIdIsNotAnEmbeddedCredential() {
         XCTAssertEqual(RemoteIMCredentialDefaults.sdkAppID, 1_600_148_979)
-        XCTAssertEqual(
-            RemoteIMCredentialDefaults.userSigSecretKey,
-            "aa18d554f5e4a235640745e98145e187977f87770b812b2b4f10ef032bd73861"
-        )
-    }
-
-    func testDefaultCredentialFillsMissingCredentialPartsAsAPair() {
-        XCTAssertEqual(
-            RemoteIMCredentialDefaults.resolvedCredential(sdkAppID: nil, secretKey: ""),
-            RemoteIMCredential(
-                sdkAppID: RemoteIMCredentialDefaults.sdkAppID,
-                userSigSecretKey: RemoteIMCredentialDefaults.userSigSecretKey
-            )
-        )
-        XCTAssertEqual(
-            RemoteIMCredentialDefaults.resolvedCredential(sdkAppID: 123, secretKey: ""),
-            RemoteIMCredential(
-                sdkAppID: RemoteIMCredentialDefaults.sdkAppID,
-                userSigSecretKey: RemoteIMCredentialDefaults.userSigSecretKey
-            )
-        )
-    }
-
-    func testDefaultCredentialIgnoresCachedOrCustomCredential() {
-        XCTAssertEqual(
-            RemoteIMCredentialDefaults.resolvedCredential(
-                sdkAppID: 1_400_704_311,
-                secretKey: "8b897045d1ee4f067a745b1b6a3fb834d1bd4c5951de43282c21b945f98ec982"
-            ),
-            RemoteIMCredential(
-                sdkAppID: RemoteIMCredentialDefaults.sdkAppID,
-                userSigSecretKey: RemoteIMCredentialDefaults.userSigSecretKey
-            )
-        )
-        XCTAssertEqual(
-            RemoteIMCredentialDefaults.resolvedCredential(sdkAppID: 123, secretKey: "custom-secret"),
-            RemoteIMCredential(
-                sdkAppID: RemoteIMCredentialDefaults.sdkAppID,
-                userSigSecretKey: RemoteIMCredentialDefaults.userSigSecretKey
-            )
-        )
     }
 
     func testRejectsBlankContactAndBlankOutgoingMessage() {
@@ -1574,14 +1533,14 @@ final class MasterChatStateTests: XCTestCase {
             RemoteIMLoginCredentialPolicy.isComplete(
                 sdkAppIDText: "1600148979",
                 userID: "",
-                secretKey: RemoteIMCredentialDefaults.userSigSecretKey
+                secretKey: ""
             )
         )
         XCTAssertTrue(
             RemoteIMLoginCredentialPolicy.isComplete(
                 sdkAppIDText: "",
                 userID: "ios-owner",
-                secretKey: RemoteIMCredentialDefaults.userSigSecretKey
+                secretKey: ""
             )
         )
         XCTAssertTrue(
@@ -1595,7 +1554,7 @@ final class MasterChatStateTests: XCTestCase {
             RemoteIMLoginCredentialPolicy.isComplete(
                 sdkAppIDText: "1600148979",
                 userID: "ios-owner",
-                secretKey: RemoteIMCredentialDefaults.userSigSecretKey
+                secretKey: ""
             )
         )
     }
@@ -1605,14 +1564,14 @@ final class MasterChatStateTests: XCTestCase {
             RemoteIMLoginCredentialPolicy.validationError(
                 sdkAppIDText: "",
                 userID: "ios-owner",
-                secretKey: RemoteIMCredentialDefaults.userSigSecretKey
+                secretKey: ""
             )
         )
         XCTAssertEqual(
             RemoteIMLoginCredentialPolicy.validationError(
                 sdkAppIDText: "1600148979",
                 userID: "",
-                secretKey: RemoteIMCredentialDefaults.userSigSecretKey
+                secretKey: ""
             ),
             "请填写账号 ID"
         )
@@ -1627,7 +1586,7 @@ final class MasterChatStateTests: XCTestCase {
             RemoteIMLoginCredentialPolicy.validationError(
                 sdkAppIDText: "1600148979",
                 userID: "ios-owner",
-                secretKey: RemoteIMCredentialDefaults.userSigSecretKey
+                secretKey: ""
             )
         )
     }

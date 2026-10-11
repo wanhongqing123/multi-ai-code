@@ -49,4 +49,18 @@ public class PdfPreviewDialogTest {
         part.put("tool", "generate_pdf").put("output", "Created older.pdf (1234 bytes).");
         assertEquals("older.pdf", AIAssistantPanel.pdfPathFromToolOutput(part));
     }
+
+    @Test public void diagnosticToolResultOnlyExposesAWorkspaceTextFile() throws Exception {
+        JSONObject part = new JSONObject().put("tool", "mobile_export_diagnostics")
+            .put("state", "completed")
+            .put("output", "{\"path\":\"maichat-diagnostics-test.txt\",\"mime_type\":\"text/plain\",\"bytes\":1234}");
+        assertEquals("maichat-diagnostics-test.txt",
+            AIAssistantPanel.diagnosticPathFromToolOutput(part));
+        part.put("output", "{\"path\":\"../maichat-diagnostics-test.txt\",\"mime_type\":\"text/plain\",\"bytes\":1234}");
+        assertNull(AIAssistantPanel.diagnosticPathFromToolOutput(part));
+        part.put("output", "{\"path\":\"maichat-diagnostics-test.txt\",\"mime_type\":\"text/plain\",\"bytes\":0}");
+        assertNull(AIAssistantPanel.diagnosticPathFromToolOutput(part));
+        part.put("state", "error");
+        assertNull(AIAssistantPanel.diagnosticPathFromToolOutput(part));
+    }
 }

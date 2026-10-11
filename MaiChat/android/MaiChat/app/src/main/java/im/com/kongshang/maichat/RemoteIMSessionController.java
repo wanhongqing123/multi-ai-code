@@ -13,9 +13,6 @@ import java.util.List;
 import java.util.Map;
 
 public final class RemoteIMSessionController {
-    public static final int SDK_APP_ID = 1_600_148_979;
-    public static final String USER_SIG_SECRET_KEY =
-        "aa18d554f5e4a235640745e98145e187977f87770b812b2b4f10ef032bd73861";
     static final String FALLBACK_OWNER_USER_ID = "android-user";
     static final String DEFAULT_CONTACT_USER_ID = "mac-office";
 
@@ -35,7 +32,16 @@ public final class RemoteIMSessionController {
         void onFinished(int total, List<String> failedUserIds);
     }
 
+    public interface AccountCompletion {
+        void onFinished(String error);
+    }
+
+    public interface CodeCompletion {
+        void onFinished(String challengeId, String error);
+    }
+
     private final LocalSettingsStore settingsStore;
+    private final MaiChatAuthClient authClient;
     private final LocalChatHistoryStore legacyHistoryStore;
     private final AndroidChatHistoryStore historyStore;
     private final TencentIMClient client;
@@ -50,6 +56,7 @@ public final class RemoteIMSessionController {
     private final boolean productionMode;
 
     private volatile RemoteIMSettings settings;
+    private volatile MaiChatAuthClient.Credential imCredential;
     private volatile ChatState chatState;
     private volatile boolean destroyed;
     private int accountGeneration;
@@ -79,6 +86,7 @@ public final class RemoteIMSessionController {
         LocalChatHistoryStore historyStore
     ) {
         this.settingsStore = settingsStore;
+        this.authClient = null;
         this.legacyHistoryStore = historyStore;
         this.historyStore = null;
         this.client = null;
@@ -96,6 +104,7 @@ public final class RemoteIMSessionController {
         this.settingsStore = new LocalSettingsStore(
             new java.io.File(applicationContext.getFilesDir(), "remote-im-settings/settings.properties")
         );
+        this.authClient = new MaiChatAuthClient(applicationContext);
         this.legacyHistoryStore = null;
         this.historyStore = new AndroidChatHistoryStore(applicationContext);
         this.listener = listener;
@@ -112,11 +121,23 @@ public final class RemoteIMSessionController {
         restoringAccount = true;
         int generation = ++accountGeneration;
         enqueueIO(() -> {
-            RemoteIMSettings restoredSettings = loadSettings();
-            ChatState restored = readProductionChatState(restoredSettings);
+            // 旧版只存 IM UserID 的设置不能代表已验证手机号；以服务端会话为准。
+            RemoteIMSettings restoredSettings = RemoteIMSettings.empty();
+            if (authClient.hasSession()) {
+                RemoteIMSettings cached = loadSettings();
+                try {
+                    restoredSettings = new RemoteIMSettings(authClient.credential().userId);
+                    if (!restoredSettings.equals(cached)) settingsStore.save(restoredSettings);
+                } catch (Exception ignored) {
+                    // 断网可显示已验证会话的本地记录，但 IM 连接仍须先领取服务端凭证。
+                    if (authClient.hasSession()) restoredSettings = cached;
+                }
+            }
+            RemoteIMSettings accountToRestore = restoredSettings;
+            ChatState restored = readProductionChatState(accountToRestore);
             runOnMain(() -> {
                 if (generation != accountGeneration) return;
-                settings = restoredSettings; chatState = restored; restoringAccount = false;
+                settings = accountToRestore; chatState = restored; restoringAccount = false;
                 notifyStateChanged();
                 if (!requiresLogin()) connect();
             });
@@ -152,6 +173,7 @@ public final class RemoteIMSessionController {
         resetActivities();
         int generation = ++accountGeneration;
         settings = next;
+        imCredential = null;
         chatState = new ChatState(next.requiresLogin() ? FALLBACK_OWNER_USER_ID : next.loginUserId());
         unreadByUserId.clear(); presenceByUserId.clear(); hasEarlierByUserId.clear();
         oldestLoadedCreatedAtByUserId.clear(); oldestLoadedMessageIdByUserId.clear();
@@ -255,21 +277,79 @@ public final class RemoteIMSessionController {
         return connectionDetail;
     }
 
+    public void retryConnection() {
+        if (productionMode && !requiresLogin()
+            && connectionState != TencentIMClient.ConnectionState.CONNECTING)
+            connect();
+    }
+
     public boolean requiresLogin() {
         return settings.requiresLogin();
     }
 
     public String currentUserSig() {
-        if (requiresLogin()) return "";
-        return TencentUserSigGenerator.generate(
-            SDK_APP_ID,
-            settings.loginUserId(),
-            USER_SIG_SECRET_KEY
-        );
+        MaiChatAuthClient.Credential credential = imCredential;
+        return credential != null && credential.expiresAt > System.currentTimeMillis() / 1000L + 60
+            ? credential.userSig : "";
+    }
+
+    public int currentSdkAppId() {
+        MaiChatAuthClient.Credential credential = imCredential;
+        return credential == null ? 0 : credential.sdkAppId;
+    }
+
+    public void requestAccountCode(
+        String phone, boolean ageConfirmed, CodeCompletion completion
+    ) {
+        ioExecutor.execute(() -> {
+            String error = null;
+            String challengeId = null;
+            try { challengeId = authClient.requestCode(phone, ageConfirmed).id; }
+            catch (Exception failure) { error = failure.getMessage(); }
+            String result = error;
+            String issuedId = challengeId;
+            runOnMain(() -> completion.onFinished(issuedId, result));
+        });
+    }
+
+    public void loginWithAccountCode(
+        String phone, String challengeId, String code, boolean ageConfirmed,
+        AccountCompletion completion
+    ) {
+        loginWithAccount(() -> authClient.verifyCode(phone, challengeId, code, ageConfirmed),
+            completion);
+    }
+
+    public void loginWithAccountPassword(
+        String phone, String password, boolean ageConfirmed, AccountCompletion completion
+    ) {
+        loginWithAccount(() -> authClient.loginWithPassword(phone, password, ageConfirmed),
+            completion);
+    }
+
+    private interface AccountLogin { String perform() throws Exception; }
+
+    private void loginWithAccount(AccountLogin login, AccountCompletion completion) {
+        ioExecutor.execute(() -> {
+            String error = null;
+            String userId = null;
+            try {
+                userId = login.perform();
+            } catch (Exception failure) {
+                error = failure.getMessage();
+            }
+            String result = error;
+            String signedUserId = userId;
+            runOnMain(() -> {
+                if (destroyed) return;
+                if (result == null) switchAccount(new RemoteIMSettings(signedUserId));
+                completion.onFinished(result);
+            });
+        });
     }
 
     public void login(String loginUserId) throws IOException {
-        if (productionMode) { switchAccount(new RemoteIMSettings(loginUserId)); return; }
+        if (productionMode) throw new IOException("请使用手机号登录");
         saveChatState();
         settings = new RemoteIMSettings(loginUserId);
         settingsStore.save(settings);
@@ -288,7 +368,12 @@ public final class RemoteIMSessionController {
     }
 
     public void logout() throws IOException {
-        if (productionMode) { switchAccount(RemoteIMSettings.empty()); return; }
+        if (productionMode) {
+            String token = authClient.discardLocalSession();
+            ioExecutor.execute(() -> MaiChatAuthClient.revokeServerSession(token));
+            switchAccount(RemoteIMSettings.empty());
+            return;
+        }
         saveChatState();
         settings = RemoteIMSettings.empty();
         settingsStore.save(settings);
@@ -1005,13 +1090,48 @@ public final class RemoteIMSessionController {
     }
 
     private void connect() {
-        try {
-            client.connect(SDK_APP_ID, settings.loginUserId(), currentUserSig());
-        } catch (RuntimeException error) {
-            connectionState = TencentIMClient.ConnectionState.FAILED;
-            connectionDetail = error.getMessage() == null ? "登录失败" : error.getMessage();
-            reportError(connectionDetail);
-        }
+        if (requiresLogin() || !productionMode) return;
+        String expectedUser = settings.loginUserId();
+        int generation = accountGeneration;
+        connectionState = TencentIMClient.ConnectionState.CONNECTING;
+        connectionDetail = "连接中";
+        notifyStateChanged();
+        ioExecutor.execute(() -> {
+            MaiChatAuthClient.Credential credential = null;
+            String error = null;
+            try {
+                credential = authClient.credential();
+                if (!expectedUser.equals(credential.userId))
+                    throw new IOException("当前手机号账号与本机 IM 账号不一致");
+            } catch (Exception failure) {
+                error = failure.getMessage();
+            }
+            MaiChatAuthClient.Credential signed = credential;
+            String failureText = error;
+            runOnMain(() -> {
+                if (destroyed || generation != accountGeneration) return;
+                if (failureText != null) {
+                    if (!authClient.hasSession() || failureText.contains("不一致")) {
+                        switchAccount(RemoteIMSettings.empty());
+                    }
+                    connectionState = TencentIMClient.ConnectionState.FAILED;
+                    connectionDetail = failureText;
+                    reportError(failureText);
+                    notifyStateChanged();
+                    return;
+                }
+                imCredential = signed;
+                try {
+                    client.connect(signed.sdkAppId, expectedUser, signed.userSig);
+                } catch (RuntimeException failure) {
+                    connectionState = TencentIMClient.ConnectionState.FAILED;
+                    connectionDetail = failure.getMessage() == null
+                        ? "登录失败" : failure.getMessage();
+                    reportError(connectionDetail);
+                    notifyStateChanged();
+                }
+            });
+        });
     }
 
     private void refreshContactMetadata() {
@@ -1291,6 +1411,12 @@ public final class RemoteIMSessionController {
                 }
                 connectionState = state;
                 connectionDetail = detail;
+                if (state == TencentIMClient.ConnectionState.FAILED
+                    && "登录凭证已过期，请重新登录".equals(detail)
+                    && authClient.hasSession()) {
+                    retryConnection();
+                    return;
+                }
                 if (state == TencentIMClient.ConnectionState.CONNECTED) {
                     AvatarImageLoader.beginConnection();
                     for (RemoteIMContact contact : chatState.contacts())

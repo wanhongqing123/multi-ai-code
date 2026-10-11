@@ -203,15 +203,14 @@ private final class MaiChatBootstrap: ObservableObject {
                 _ = RemoteIMBackgroundWork.audioQueue
                 try RemoteIMMediaStorage.prepareDirectories()
                 let settings = LocalSettingsStore()
-                let secrets = KeychainSecretStore()
-                return (settings, secrets, settings.load(), secrets.readSecretKey())
+                // 旧版曾在本机保存 IM 签名密钥；新登录只保留服务端会话刷新令牌。
+                try? KeychainSecretStore().saveSecretKey("")
+                return (settings, settings.load())
             }
             guard !Task.isCancelled else { return }
             let state = RemoteIMAppState(
                 settingsStore: loaded.0,
-                secretStore: loaded.1,
-                loadedSettings: loaded.2,
-                loadedSecretKey: loaded.3
+                loadedSettings: loaded.1
             )
             AIMobileHostToolProvider.shared.appState = state
             appState = state

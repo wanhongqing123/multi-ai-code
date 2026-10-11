@@ -13,6 +13,7 @@ acceptance. The existing `MaiVideoPlayback` is a video-only starting point.
 | Audio/video/external clocks and synchronization | | | | | | |
 | Audio output, mute, and volume | | | | | | |
 | Pause/resume, frame step, relative/absolute/chapter seek | | | | | | |
+| Speed selection with synchronized audio and video | | | | | | |
 | Loop count, end/autoexit, duration/start position | | | | | | |
 | Video/audio filter graphs and filter cycling | | | | | | |
 | Subtitle decoding, timing, blending, and track changes | | | | | | |
@@ -28,6 +29,11 @@ surface and a native audio device without starting a child process or linking
 SDL. `MaiChat/Media/ffplay.c` must remain byte-identical to FFmpeg's original;
 the compatibility layer maps its platform calls to MaiChat. Agent commands
 must exercise the same playback session as MaiChat's own controls.
+
+Speed switching reopens the same source in the same popup at its current source-media
+position. The compatibility entry point applies `setpts` to video and pitch-preserving
+`atempo` to audio without creating a new file; changing speed causes a brief pause.
+The Agent `maichat_video_command` and native popup controls call the same path.
 
 ## iOS picture quality: 2026-10-03 device evidence
 

@@ -78,12 +78,18 @@ public:
     explicit DesktopVideoCommandTool(QWidget* window) : window_(window) {}
     std::string name() const override { return "maichat_video_command"; }
     std::string description() const override {
-        return "Control the currently open FFplay video popup. Supported actions include "
-               "play, pause, step, relative or chapter seek, percent seek, stream/filter cycling, mute, volume, "
-               "fullscreen, and close.";
+        // set_speed 在当前弹窗内重启同一 FFplay 源文件并回到原片位置；
+        // atempo 保持音调，音画同步，不生成转码文件，但切速有短暂中断。
+        return "Control the currently open FFplay video popup. set_speed accepts speed "
+               "0.25, 0.5, 1, 1.5, or 2; it keeps audio in sync and preserves pitch through "
+               "FFmpeg atempo. Changing speed briefly restarts the same popup at its source "
+               "position without creating a new media file. seek_seconds jumps to an absolute "
+               "source-media time; seek_percent and the existing play, pause, step, relative "
+               "or chapter seek, stream/filter cycling, mute, volume, fullscreen, and close "
+               "actions remain available.";
     }
     std::string parametersSchema() const override {
-        return R"({"type":"object","properties":{"action":{"type":"string","enum":["play","pause","toggle_pause","step","seek_forward","seek_backward","seek_minute_forward","seek_minute_backward","next_chapter","previous_chapter","seek_percent","next_audio","next_video","next_subtitle","next_program","next_filter","mute","volume_up","volume_down","fullscreen","close"]},"percent":{"type":"number","minimum":0,"maximum":100}},"required":["action"],"additionalProperties":false})";
+        return R"({"type":"object","properties":{"action":{"type":"string","enum":["play","pause","toggle_pause","step","seek_forward","seek_backward","seek_minute_forward","seek_minute_backward","next_chapter","previous_chapter","seek_percent","seek_seconds","set_speed","next_audio","next_video","next_subtitle","next_program","next_filter","mute","volume_up","volume_down","fullscreen","close"]},"percent":{"type":"number","minimum":0,"maximum":100},"seconds":{"type":"number","minimum":0},"speed":{"type":"number","enum":[0.25,0.5,1,1.5,2]}},"required":["action"],"additionalProperties":false})";
     }
     MaiToolResult execute(const std::string& argumentsJson,
                           const MaiToolContext&) override {
@@ -102,6 +108,12 @@ public:
                 const auto value = arguments.value(QStringLiteral("percent"));
                 if (value.isDouble() && value.toDouble() >= 0 && value.toDouble() <= 100)
                     accepted = dialog->seekPercent(value.toDouble() / 100.0);
+            } else if (action == QStringLiteral("seek_seconds")) {
+                const auto value = arguments.value(QStringLiteral("seconds"));
+                if (value.isDouble()) accepted = dialog->seekSeconds(value.toDouble());
+            } else if (action == QStringLiteral("set_speed")) {
+                const auto value = arguments.value(QStringLiteral("speed"));
+                if (value.isDouble()) accepted = dialog->setSpeed(value.toDouble());
             } else if (action == QStringLiteral("close")) {
                 dialog->close();
                 accepted = true;

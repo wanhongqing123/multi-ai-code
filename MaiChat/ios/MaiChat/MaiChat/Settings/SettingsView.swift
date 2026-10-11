@@ -165,6 +165,7 @@ private struct AvatarPhotoPicker: UIViewControllerRepresentable {
 
 private struct AccountSettingsView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
+    @State private var showsPhoneLogin = false
 
     var body: some View {
         Form {
@@ -173,20 +174,14 @@ private struct AccountSettingsView: View {
                     Text(displayUserID)
                         .foregroundStyle(appState.masterUserID.isEmpty ? .secondary : .primary)
                 }
-            }
-
-            Section("IM 配置") {
-                LabeledContent("通信配置") {
-                    Text("内置")
-                        .foregroundStyle(.secondary)
+                Button("切换手机号") {
+                    showsPhoneLogin = true
                 }
-                LabeledContent("连接凭证") {
-                    Text("使用内置凭证")
-                        .foregroundStyle(.secondary)
+                if appState.hasUnifiedAccount {
+                    NavigationLink("设置或修改登录密码") {
+                        AccountPasswordView()
+                    }
                 }
-                Text("基础 IM 配置由应用内置，设置页不再修改。")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
             }
 
             Section("连接") {
@@ -215,17 +210,10 @@ private struct AccountSettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section("排障") {
-                ShareLink(
-                    item: DiagnosticLogExport(),
-                    preview: SharePreview("MaiChat 排障日志")
-                ) {
-                    Label("导出排障日志", systemImage: "square.and.arrow.up")
-                }
-                Text("日志保留 7 天，记录状态、错误码、耗时、尺寸、事件计数和脱敏会话标识；不包含聊天正文、远程键盘内容或连接凭证。")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
+        }
+        .sheet(isPresented: $showsPhoneLogin) {
+            PhoneAccountLoginView()
+                .environmentObject(appState)
         }
     }
 
@@ -244,6 +232,48 @@ private struct AccountSettingsView: View {
             return .red
         case .disconnected:
             return .secondary
+        }
+    }
+}
+
+private struct AccountPasswordView: View {
+    @EnvironmentObject private var appState: RemoteIMAppState
+    @State private var password = ""
+    @State private var confirmation = ""
+    @State private var isSaving = false
+    @State private var message: String?
+
+    var body: some View {
+        Form {
+            Section {
+                SecureField("新密码", text: $password)
+                    .textContentType(.newPassword)
+                SecureField("再次输入新密码", text: $confirmation)
+                    .textContentType(.newPassword)
+            } footer: {
+                Text("至少 15 个字符；修改密码前须在最近 10 分钟内登录。")
+            }
+            if let message {
+                Text(message).foregroundStyle(.secondary)
+            }
+            Button(isSaving ? "保存中…" : "保存密码") {
+                Task { await save() }
+            }
+            .disabled(isSaving || password.count < 15 || password != confirmation)
+        }
+        .navigationTitle("登录密码")
+    }
+
+    private func save() async {
+        isSaving = true
+        defer { isSaving = false }
+        do {
+            try await appState.setAccountPassword(password)
+            password = ""
+            confirmation = ""
+            message = "密码已保存"
+        } catch {
+            message = error.localizedDescription
         }
     }
 }

@@ -114,7 +114,6 @@ public final class AIAssistantController {
                    error = "", apiKey = "", wire = "responses";
     private volatile String deepseekApiKey = "";
     private volatile String glmApiKey = "";
-    private volatile String glmVideoApiKey = "";
     private volatile String arkApiKey = "";
     private volatile String wanApiKey = "";
     private volatile String wanWorkspaceId = "";
@@ -210,8 +209,7 @@ public final class AIAssistantController {
         if (tool.equals("glm_api_key")) {
             try {
                 return new JSONObject().put("ok", true)
-                    .put("output", new JSONObject().put("key",
-                        glmVideoApiKey.isEmpty() ? glmApiKey : glmVideoApiKey))
+                    .put("output", new JSONObject().put("key", glmApiKey))
                     .toString().getBytes(StandardCharsets.UTF_8);
             } catch (Exception failure) {
                 return hostToolFailure("GLM key is unavailable", "not_configured");
@@ -656,7 +654,7 @@ public final class AIAssistantController {
         connection.setRequestProperty("Content-Type", "application/json");
         byte[] body = new JSONObject().put("action", "fetch")
             .put("providers", new JSONArray()
-                .put("ark").put("glm").put("glm_video").put("deepseek")
+                .put("ark").put("glm").put("deepseek")
                 .put("wan").put("minimax"))
             .toString().getBytes(StandardCharsets.UTF_8);
         try {
@@ -682,9 +680,9 @@ public final class AIAssistantController {
     private void applyCloudCredentials(JSONObject response) throws Exception {
         JSONObject keys = response.optJSONObject("api_keys");
         if (keys == null) throw new IOException("云端密钥响应无效");
-        arkApiKey = glmApiKey = glmVideoApiKey = deepseekApiKey = "";
+        arkApiKey = glmApiKey = deepseekApiKey = "";
         wanApiKey = miniMaxApiKey = "";
-        for (String provider : new String[] {"ark", "glm", "glm_video", "deepseek",
+        for (String provider : new String[] {"ark", "glm", "deepseek",
                 "wan", "minimax"}) {
             String value = keys.optString(provider, "");
             if (value.isEmpty() || value.length() > 4096 ||
@@ -692,7 +690,6 @@ public final class AIAssistantController {
             switch (provider) {
             case "ark": arkApiKey = value; break;
             case "glm": glmApiKey = value; break;
-            case "glm_video": glmVideoApiKey = value; break;
             case "deepseek": deepseekApiKey = value; break;
             case "wan": wanApiKey = value; break;
             case "minimax": miniMaxApiKey = value; break;
@@ -903,6 +900,14 @@ public final class AIAssistantController {
             || candidate.exists())
             throw new IllegalArgumentException("PDF 必须是当前 App 目录内的新文件");
         return candidate;
+    }
+    public File workspaceDiagnosticOutputForHost() throws Exception {
+        if (root == null) throw new IllegalStateException("AI 工作区尚未准备好");
+        File workspace = new File(root, "Workspace");
+        if (!workspace.isDirectory() && !workspace.mkdirs())
+            throw new IOException("无法创建 AI 工作区");
+        return new File(workspace, "maichat-diagnostics-"
+            + UUID.randomUUID().toString().toLowerCase(java.util.Locale.ROOT) + ".txt");
     }
     private ImportedFile importStream(InputStream input, String sourceMime, String sourceName)
         throws Exception {

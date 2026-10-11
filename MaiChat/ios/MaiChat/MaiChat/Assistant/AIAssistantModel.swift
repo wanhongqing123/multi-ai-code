@@ -60,7 +60,7 @@ final class AICloudCredentialStore: @unchecked Sendable {
 }
 
 enum AICloudCredentialSync {
-    private static let modelProviders = ["ark", "glm", "glm_video", "deepseek",
+    private static let modelProviders = ["ark", "glm", "deepseek",
                                          "wan", "minimax"]
 
     static func serviceEndpoint() -> (url: URL, token: String)? {
@@ -95,7 +95,7 @@ enum AICloudCredentialSync {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(service.token)", forHTTPHeaderField: "Authorization")
         request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "action": "fetch", "providers": ["ark", "glm", "glm_video", "deepseek", "wan", "minimax"]
+            "action": "fetch", "providers": ["ark", "glm", "deepseek", "wan", "minimax"]
         ])
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 15

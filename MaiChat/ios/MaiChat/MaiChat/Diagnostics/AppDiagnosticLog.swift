@@ -1,18 +1,7 @@
-import CoreTransferable
 import Foundation
 import MaiChatCore
 import OSLog
 import UIKit
-import UniformTypeIdentifiers
-
-struct DiagnosticLogExport: Transferable, Sendable {
-    static var transferRepresentation: some TransferRepresentation {
-        FileRepresentation(exportedContentType: .plainText) { _ in
-            let url = try await AppDiagnosticLog.shared.makeExportSnapshot()
-            return SentTransferredFile(url)
-        }
-    }
-}
 
 @MainActor
 final class AppDiagnosticLog: DiagnosticLogSink {

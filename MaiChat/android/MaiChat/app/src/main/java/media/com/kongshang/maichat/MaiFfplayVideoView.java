@@ -1,5 +1,6 @@
 package com.kongshang.maichat;
 
+import android.app.AlertDialog;
 import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -21,7 +22,8 @@ public final class MaiFfplayVideoView extends FrameLayout {
     private static volatile WeakReference<MaiFfplayVideoView> active = new WeakReference<>(null);
 
     static { System.loadLibrary("maichat_agent"); }
-    private static native long nativeCreate(long viewId, String path);
+    private static native long nativeCreate(long viewId, String path, double speed,
+                                            long startPositionUs);
     private static native boolean nativeCommand(long handle, String command);
     private static native boolean nativeSeekPercent(long handle, double fraction);
     private static native long[] nativePlaybackStatus(long handle);
@@ -30,6 +32,7 @@ public final class MaiFfplayVideoView extends FrameLayout {
     private final MaiGraphicsTextureView surface;
     private final TextView errorLabel;
     private final Button playButton;
+    private final Button speedButton;
     private final SeekBar seekBar;
     private final TextView timeLabel;
     private boolean seeking;
@@ -37,19 +40,25 @@ public final class MaiFfplayVideoView extends FrameLayout {
         @Override public void run() {
             if (playbackHandle == 0) return;
             long[] status = nativePlaybackStatus(playbackHandle);
-            if (status != null && status.length == 4 && status[1] > 0) {
+            if (status != null && status.length >= 4 && status[1] > 0) {
                 long position = Math.max(0, Math.min(status[0], status[1]));
                 if (!seeking) seekBar.setProgress((int) (position * 1000 / status[1]));
                 timeLabel.setText(timestamp(position) + " / " + timestamp(status[1]));
                 playing = status[3] == 0;
                 playButton.setText(playing ? "Ⅱ" : "▶");
                 playButton.setContentDescription(playing ? "暂停视频" : "播放视频");
+                if (status.length >= 5) {
+                    speed = status[4] / 100.0;
+                    speedButton.setText(formatSpeed(speed));
+                }
             }
             MAIN.postDelayed(this, 500);
         }
     };
     private String videoPath;
+    private long graphicsViewId;
     private long playbackHandle;
+    private double speed = 1.0;
     private boolean playing = true;
     private volatile boolean presented;
 
@@ -114,6 +123,20 @@ public final class MaiFfplayVideoView extends FrameLayout {
         timeline.addView(seekBar, new LinearLayout.LayoutParams(
             LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
         controls.addView(timeline, new LinearLayout.LayoutParams(0, dp(64), 1));
+        speedButton = new Button(context);
+        speedButton.setText("1×");
+        speedButton.setTextSize(14);
+        speedButton.setTextColor(Color.WHITE);
+        speedButton.setBackgroundColor(Color.TRANSPARENT);
+        speedButton.setContentDescription("播放倍速");
+        speedButton.setOnClickListener(view -> {
+            final double[] rates = {0.25, 0.5, 1.0, 1.5, 2.0};
+            final String[] choices = {"0.25×", "0.5×", "1×", "1.5×", "2×"};
+            new AlertDialog.Builder(getContext()).setTitle("播放倍速")
+                .setItems(choices, (dialog, selected) -> setSpeed(rates[selected]))
+                .show();
+        });
+        controls.addView(speedButton, new LinearLayout.LayoutParams(dp(64), dp(58)));
         addView(controls, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT,
             Gravity.BOTTOM));
     }
@@ -121,6 +144,10 @@ public final class MaiFfplayVideoView extends FrameLayout {
     private static String timestamp(long microseconds) {
         long seconds = Math.max(0, microseconds / 1_000_000);
         return String.format(Locale.US, "%d:%02d", seconds / 60, seconds % 60);
+    }
+
+    private static String formatSpeed(double rate) {
+        return rate == 1.0 ? "1×" : String.format(Locale.US, "%s×", rate);
     }
 
     private int dp(int value) {
@@ -145,9 +172,10 @@ public final class MaiFfplayVideoView extends FrameLayout {
 
     private void start(long viewId) {
         if (playbackHandle != 0 || videoPath == null || videoPath.isEmpty()) return;
+        graphicsViewId = viewId;
         MaiFfplayVideoView previous = active.get();
         if (previous != null && previous != this) previous.stop();
-        playbackHandle = nativeCreate(viewId, videoPath);
+        playbackHandle = nativeCreate(viewId, videoPath, speed, 0);
         if (playbackHandle == 0) {
             errorLabel.setText("无法打开视频");
             return;
@@ -183,6 +211,38 @@ public final class MaiFfplayVideoView extends FrameLayout {
 
     public boolean seekPercent(double fraction) {
         return playbackHandle != 0 && nativeSeekPercent(playbackHandle, fraction);
+    }
+
+    public boolean seekSeconds(double seconds) {
+        if (!Double.isFinite(seconds) || seconds < 0 || playbackHandle == 0) return false;
+        long[] status = nativePlaybackStatus(playbackHandle);
+        if (status == null || status.length < 2 || status[1] <= 0 ||
+            seconds * 1_000_000 > status[1]) return false;
+        return seekPercent(seconds * 1_000_000 / status[1]);
+    }
+
+    public boolean setSpeed(double requested) {
+        if (requested != 0.25 && requested != 0.5 && requested != 1.0 &&
+            requested != 1.5 && requested != 2.0) return false;
+        if (playbackHandle == 0 || graphicsViewId == 0) return false;
+        if (requested == speed) return true;
+        long[] status = nativePlaybackStatus(playbackHandle);
+        long position = status == null ? 0 : Math.max(0, status[0]);
+        boolean wasPlaying = playing;
+        long previous = playbackHandle;
+        playbackHandle = 0;
+        nativeDestroy(previous);
+        speed = requested;
+        speedButton.setText(formatSpeed(speed));
+        playbackHandle = nativeCreate(graphicsViewId, videoPath, speed, position);
+        if (playbackHandle == 0) {
+            errorLabel.setText("倍速切换失败");
+            errorLabel.setVisibility(VISIBLE);
+            return false;
+        }
+        playing = true;
+        if (!wasPlaying) MAIN.postDelayed(() -> command("pause"), 150);
+        return true;
     }
 
     public void stop() {

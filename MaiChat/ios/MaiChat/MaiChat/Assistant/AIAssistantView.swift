@@ -814,6 +814,18 @@ private struct AIMessageRow: View, Equatable {
                                 }
                             }
                         }
+                        if let url = diagnosticArtifactURL(for: tool) {
+                            ShareLink(item: url) {
+                                Label("分享排障日志 · \(url.lastPathComponent)",
+                                      systemImage: "doc.text")
+                                    .font(.system(size: 14, weight: .medium))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(12)
+                                    .background(Color.blue.opacity(0.07),
+                                                in: RoundedRectangle(cornerRadius: 10))
+                            }
+                            .accessibilityIdentifier("agentDiagnosticShareButton")
+                        }
                     }
                 }
                 ForEach(message.parts) { part in
@@ -1035,6 +1047,20 @@ private struct AIMessageRow: View, Equatable {
             }
         }
         return nil
+    }
+    private func diagnosticArtifactURL(for part: AIPart) -> URL? {
+        guard part.tool == "mobile_export_diagnostics", part.state == "completed",
+              let output = part.output, let data = output.data(using: .utf8),
+              let artifact = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              artifact["mime_type"] as? String == "text/plain",
+              let name = artifact["path"] as? String,
+              name == (name as NSString).lastPathComponent,
+              name.hasPrefix("maichat-diagnostics-"),
+              name.lowercased().hasSuffix(".txt"),
+              let path = AIAssistantPathPolicy.resolve(name, workspacePath: workspacePath),
+              let size = (try? path.resourceValues(forKeys: [.fileSizeKey]))?.fileSize,
+              size > 0, size <= 20 * 1024 * 1024 else { return nil }
+        return path
     }
     private func validatedPDFURL(path: String) -> URL? {
         guard let candidate = AIAssistantPathPolicy.resolve(path, workspacePath: workspacePath),
@@ -1456,6 +1482,12 @@ private struct AIImagePreviewOverlay: View {
                 Color.black.opacity(isExpanded ? 1 : 0)
                     .ignoresSafeArea()
                     .onTapGesture(perform: shrinkAndClose)
+                if isExpanded {
+                    ImagePreviewBackdrop(
+                        filePath: preview.filePath,
+                        viewportSize: geometry.size
+                    )
+                }
                 RemoteIMAsyncImage(filePath: preview.filePath,
                                    maximumPointSize: ImagePreviewZoomModifier.maximumDecodePointSize(
                                     for: geometry.size)) { image in
@@ -2371,22 +2403,26 @@ private struct AIPermissionCard: View {
         permission.tool == "ark_assets" && (fields["action"] as? String) == "begin_real_validation"
     }
     private var isPaidGeneration: Bool {
-        ["wan_video", "wan_image", "seedance_video", "seedream_image",
-         "glm_video", "glm_image", "kling_bailian_video", "kling_bailian_image",
+        ["wan_video", "wan_animate_mix", "wan_animate_move", "wan_image",
+         "seedance_video", "seedream_image",
+         "glm_image", "kling_bailian_video", "kling_bailian_image",
          "minimax_video", "minimax_image"]
             .contains(permission.tool) && !isVideoTaskManagement
     }
     private var isVideoTaskManagement: Bool {
         let action = (fields["action"] as? String) ?? ""
         return action == "delete" &&
-            ["wan_video", "seedance_video", "kling_bailian_video", "glm_video",
+            ["wan_video", "wan_animate_mix", "wan_animate_move", "seedance_video",
+             "kling_bailian_video",
              "minimax_video"].contains(permission.tool) ||
             action == "cancel" &&
-            ["wan_video", "seedance_video", "kling_bailian_video"].contains(permission.tool)
+            ["wan_video", "wan_animate_mix", "wan_animate_move", "seedance_video",
+             "kling_bailian_video"].contains(permission.tool)
     }
     private var isVideoTaskDelete: Bool { (fields["action"] as? String) == "delete" }
     private var isVideoGeneration: Bool {
-        ["wan_video", "seedance_video", "glm_video", "kling_bailian_video",
+        ["wan_video", "wan_animate_mix", "wan_animate_move", "seedance_video",
+         "kling_bailian_video",
          "minimax_video"].contains(permission.tool)
     }
     private var isRevision: Bool {
@@ -2395,15 +2431,17 @@ private struct AIPermissionCard: View {
         (fields["task_mode"] as? String) == "edit"
     }
     private var paidTitle: String {
+        if permission.tool == "wan_animate_mix" { return "确认视频换人" }
+        if permission.tool == "wan_animate_move" { return "确认图生动作" }
         if isVideoGeneration { return isRevision ? "确认编辑视频" : "确认生成视频" }
         return isRevision ? "确认编辑图片" : "确认生成图片"
     }
     private var paidActionTitle: String { isRevision ? "确认编辑" : "确认生成" }
     private var paidProvider: String {
         switch permission.tool {
-        case "wan_video", "wan_image": return "万相"
+        case "wan_video", "wan_animate_mix", "wan_animate_move", "wan_image": return "万相"
         case "seedance_video": return "Seedance"
-        case "glm_video", "glm_image": return "GLM"
+        case "glm_image": return "GLM"
         case "kling_bailian_video", "kling_bailian_image": return "可灵 · 百炼"
         case "minimax_video", "minimax_image": return "海螺 / MiniMax"
         default: return "Seedream"
@@ -2432,6 +2470,10 @@ private struct AIPermissionCard: View {
         if permission.tool == "minimax_video", let model = fields["model"] as? String {
             details.append(model == "MiniMax-H3-Max" ? "H3 Max" : "H3")
         }
+        if permission.tool == "minimax_image" {
+            details.append((fields["model"] as? String) == "image-01-live"
+                           ? "Image-01 Live" : "Image-01")
+        }
         if permission.tool == "kling_bailian_video" || permission.tool == "kling_bailian_image" {
             let selected = fields["model"] as? String ??
                 (permission.tool == "kling_bailian_video"
@@ -2439,6 +2481,13 @@ private struct AIPermissionCard: View {
                  : "kling/kling-v3-image-generation")
             details.append(selected.contains("omni") ? "可灵 V3 Omni" :
                            selected.contains("turbo") ? "可灵 V3 Turbo" : "可灵 V3")
+        }
+        if ["wan_animate_mix", "wan_animate_move"].contains(permission.tool) {
+            let mode = fields["service_mode"] as? String
+            details.append(mode == "wan-pro" ? "专业模式" : "标准模式")
+            if let seconds = fields["source_duration_seconds"] as? NSNumber {
+                details.append("源视频约 \(seconds.doubleValue.formatted()) 秒")
+            }
         }
         if let duration = (fields["duration"] as? Int) ?? (production["duration"] as? Int) {
             details.append("\(duration) 秒")
@@ -2462,6 +2511,7 @@ private struct AIPermissionCard: View {
                           (fields["image_paths"] as? [String])?.count ?? 0)
             + (content.filter { ($0["type"] as? String) == "image_url" }.count)
             + ((((fields["image_path"] as? String)?.isEmpty == false) ||
+                ((fields["image_url"] as? String)?.isEmpty == false) ||
                 ((fields["first_frame"] as? String)?.isEmpty == false)) ? 1 : 0)
             + ((((fields["last_frame_path"] as? String)?.isEmpty == false) ||
                 ((fields["last_frame"] as? String)?.isEmpty == false)) ? 1 : 0)
@@ -2469,6 +2519,7 @@ private struct AIPermissionCard: View {
         let videoCount = content.filter { ($0["type"] as? String) == "video_url" }.count
             + ((((fields["reference_video_path"] as? String)?.isEmpty == false) ||
                 ((fields["reference_video"] as? String)?.isEmpty == false) ||
+                ((fields["video_url"] as? String)?.isEmpty == false) ||
                 ((fields["video_path"] as? String)?.isEmpty == false)) ? 1 : 0)
         if videoCount > 0 { details.append("参考视频 \(videoCount) 个") }
         let audioCount = content.filter { ($0["type"] as? String) == "audio_url" }.count
@@ -2688,11 +2739,6 @@ private struct AISettingsView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("连接你的模型服务").font(.system(size: 22, weight: .bold))
-                        Text("主模型可在聊天页切换；统一使用 Responses 协议。")
-                            .font(.system(size: 13)).foregroundStyle(.secondary)
-                    }
                     settingsField("云端服务地址", systemImage: "externaldrive") {
                         TextField("https://ichat.life/maichat", text: $serviceURL)
                             .keyboardType(.URL)
@@ -2701,7 +2747,7 @@ private struct AISettingsView: View {
                             .accessibilityIdentifier("ai-cloud-service-url")
                     }
                     settingsField("服务令牌", systemImage: "key.horizontal") {
-                        SecureField(serviceConfigured ? "已配置，留空则保留" : "输入服务令牌",
+                        SecureField(serviceConfigured ? "已保存（留空保留）" : "服务令牌",
                                     text: $serviceToken)
                     }
                     if !message.isEmpty {
@@ -2727,7 +2773,7 @@ private struct AISettingsView: View {
                     } label: {
                         HStack(spacing: 8) {
                             if saving { ProgressView().tint(.white) }
-                            Text(saving ? "保存中" : "保存配置")
+                            Text(saving ? "保存中" : "保存")
                                 .font(.system(size: 15, weight: .bold))
                         }
                         .foregroundStyle(Color.white)

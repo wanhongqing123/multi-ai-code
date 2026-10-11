@@ -204,6 +204,14 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
     add("maichat_get_unread_summary", "Summarize unread MaiChat messages by contact.",
         // 不收参数，按联系人汇总未读消息。
         R"({"type":"object","properties":{}})");
+    // 用户明确要求排障时才导出；只返回工作区 TXT 路径，日志正文不回灌给模型，
+    // 也不自动发给联系人。AI 会话据此显示可分享的文件卡片。
+    add("mobile_export_diagnostics",
+        "Export this device's privacy-filtered MaiChat diagnostic log as a new TXT file in "
+        "the Agent workspace. Call only when the user asks for logs or troubleshooting. "
+        "Return only the file path and size, never the log contents. A shareable file card "
+        "appears in the current AI conversation; this tool does not send it to anyone.",
+        R"({"type":"object","properties":{},"additionalProperties":false})");
     // 发消息会影响其他人，文本、媒体、回复和群发均需要用户确认；群发每次都要确认完整名单。
     add("maichat_send_text",
         "Send text to a MaiChat contact through the host. Requires user approval.",
@@ -288,10 +296,14 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
         // path 是当前 Agent 可访问的现有视频，播放器不会自动保存到相册。
         R"({"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false})");
     add("maichat_video_command",
-        "Control the currently open FFplay video: play, pause, step, relative, chapter, or percent seek, "
-        "stream and filter cycling, mute, volume, fullscreen, or close.",
-        // action 是播放、暂停、跳转、切流、音量、全屏或关闭；seek_percent 另带 percent。
-        R"({"type":"object","properties":{"action":{"type":"string","enum":["play","pause","toggle_pause","step","seek_forward","seek_backward","seek_minute_forward","seek_minute_backward","next_chapter","previous_chapter","seek_percent","next_audio","next_video","next_subtitle","next_program","next_filter","mute","volume_up","volume_down","fullscreen","close"]},"percent":{"type":"number","minimum":0,"maximum":100}},"required":["action"],"additionalProperties":false})");
+        "Control the currently open FFplay video. set_speed accepts 0.25, 0.5, 1, 1.5, or 2 "
+        "and preserves audio pitch and sync with FFmpeg atempo. It briefly restarts the same "
+        "popup at the source position without creating a new file. seek_seconds jumps to an "
+        "absolute source-media time; existing play, pause, step, relative/chapter/percent seek, "
+        "stream/filter cycling, mute, volume, fullscreen, and close remain available.",
+        // set_speed 带 speed 倍数；seek_seconds 带源片绝对秒数；seek_percent 带百分比。
+        // 改速仍在现有弹窗中播放同一文件；atempo 保持音调和音画同步，不另存转码文件。
+        R"({"type":"object","properties":{"action":{"type":"string","enum":["play","pause","toggle_pause","step","seek_forward","seek_backward","seek_minute_forward","seek_minute_backward","next_chapter","previous_chapter","seek_percent","seek_seconds","set_speed","next_audio","next_video","next_subtitle","next_program","next_filter","mute","volume_up","volume_down","fullscreen","close"]},"percent":{"type":"number","minimum":0,"maximum":100},"seconds":{"type":"number","minimum":0},"speed":{"type":"number","enum":[0.25,0.5,1,1.5,2]}},"required":["action"],"additionalProperties":false})");
 }
 
 void registerMobilePhotoTools(MaiToolRegistry& tools,

@@ -1,6 +1,7 @@
 #include "ui/MaiFfplayVideoDialog.h"
 
 #include <QCloseEvent>
+#include <QComboBox>
 #include <QApplication>
 #include <QClipboard>
 #include <QCoreApplication>
@@ -20,6 +21,7 @@
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QSaveFile>
+#include <QSignalBlocker>
 #include <QShowEvent>
 #include <QSlider>
 #include <QThread>
@@ -29,6 +31,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 
 #include "MaiGraphicsPresenter.h"
 
@@ -100,6 +103,13 @@ MaiFfplayVideoDialog::MaiFfplayVideoDialog(const QString& path, QWidget* parent)
     controls->addWidget(pauseButton_);
     controls->addWidget(seekSlider_, 1);
     controls->addWidget(timeLabel_);
+    speedSelector_ = new QComboBox(this);
+    speedSelector_->setObjectName(QStringLiteral("ffplaySpeedSelector"));
+    speedSelector_->setToolTip(QStringLiteral("播放倍速"));
+    for (double rate : {0.25, 0.5, 1.0, 1.5, 2.0})
+        speedSelector_->addItem(QStringLiteral("%1×").arg(rate), rate);
+    speedSelector_->setCurrentIndex(2);
+    controls->addWidget(speedSelector_);
     layout->addLayout(controls);
     progressTimer_ = new QTimer(this);
     progressTimer_->setInterval(250);
@@ -126,6 +136,10 @@ MaiFfplayVideoDialog::MaiFfplayVideoDialog(const QString& path, QWidget* parent)
     connect(seekSlider_, &QSlider::sliderReleased, this, [this] {
         seekPercent(seekSlider_->value() / 1000.0);
     });
+    connect(speedSelector_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this](int index) {
+                if (index >= 0) setSpeed(speedSelector_->itemData(index).toDouble());
+            });
     auto* actions = new QHBoxLayout();
     actions->addStretch(1);
     auto* forward = new QPushButton(QStringLiteral("↗"), this);
@@ -323,10 +337,12 @@ bool MaiFfplayVideoDialog::startPlayback() {
     progressTimer_->start();
     playbackFinished_ = false;
     sActiveDialog = this;
-    playbackThread_ = std::thread([this, sourcePath] {
+    const double speed = playbackSpeed_;
+    const int64_t startPositionUs = startPositionUs_;
+    playbackThread_ = std::thread([this, sourcePath, speed, startPositionUs] {
         char name[] = "ffplay";
         char* arguments[] = {name, const_cast<char*>(sourcePath.constData())};
-        const int result = maiFfplayRun(&host_, 2, arguments);
+        const int result = maiFfplayRunAtSpeed(&host_, 2, arguments, speed, startPositionUs);
         playbackFinished_ = true;
         QMetaObject::invokeMethod(this, [this, result] {
             if (result != 0) {
@@ -365,6 +381,44 @@ bool MaiFfplayVideoDialog::sendCommand(const QString& command) {
 
 bool MaiFfplayVideoDialog::seekPercent(double fraction) {
     return maiFfplaySeekPercent(fraction) == 1;
+}
+
+bool MaiFfplayVideoDialog::seekSeconds(double seconds) {
+    MaiFfplayPlaybackStatus status{};
+    if (!std::isfinite(seconds) || seconds < 0 || !maiFfplayGetPlaybackStatus(&status) ||
+        status.duration_us <= 0 || seconds * 1'000'000 > status.duration_us)
+        return false;
+    return seekPercent(seconds * 1'000'000 / status.duration_us);
+}
+
+bool MaiFfplayVideoDialog::setSpeed(double speed) {
+    if (speed != 0.25 && speed != 0.5 && speed != 1.0 && speed != 1.5 && speed != 2.0)
+        return false;
+    if (!started_) return false;
+    if (speed == playbackSpeed_) return true;
+    MaiFfplayPlaybackStatus status{};
+    if (!maiFfplayGetPlaybackStatus(&status)) return false;
+    const bool wasPlaying = playing_;
+    const int64_t sourcePositionUs = std::max<int64_t>(0, status.position_us);
+    stopPlayback();
+    playbackSpeed_ = speed;
+    startPositionUs_ = sourcePositionUs;
+    playing_ = true;
+    if (!startPlayback()) return false;
+    if (speedSelector_) {
+        const QSignalBlocker blocked(speedSelector_);
+        for (int index = 0; index < speedSelector_->count(); ++index) {
+            if (speedSelector_->itemData(index).toDouble() == speed) {
+                speedSelector_->setCurrentIndex(index);
+                break;
+            }
+        }
+    }
+    if (!wasPlaying)
+        QTimer::singleShot(150, this, [this] {
+            if (started_ && playing_) sendCommand(QStringLiteral("pause"));
+        });
+    return true;
 }
 
 void MaiFfplayVideoDialog::showEvent(QShowEvent* event) {

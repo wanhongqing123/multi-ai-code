@@ -21,7 +21,6 @@
 #if defined(MAICHAT_EMBEDDED_FFMPEG)
 #include "MaiFfmpegTools.h"
 #include "MaiVideoGeometryTool.h"
-#include "MaiWatermarkRemovalTool.h"
 #include "mai_fftools_embed.h"
 #endif
 #include "MaiChatTools/DesktopPdfRenderer.h"
@@ -63,15 +62,24 @@ separate from paid-call approval. Classify an input rejection before changing an
 cause is ambiguous, inspect the actual image and prompt without claiming which one failed.
 When replacing a person in a source video, preserve that video and the user's references and
 plan the selected video model's edit path. Do not remove watermarks, subtitles, or end cards as
-an unrequested preparation step. Only when the user explicitly requests watermark removal, use
-media_remove_watermark with a known rectangle; inspect at most one representative frame if needed.
-Do not loop through FFmpeg/OpenCV to find regions. After one result, return to the original task.
+an unrequested preparation step. The dedicated local watermark repair specialist is currently
+available in the iOS Agent only. If the user explicitly requests watermark removal here, explain
+that limitation. Do not loop through FFmpeg/OpenCV as a fallback. Return to the original task.
 For image and video specialist tools, local media paths are upload inputs: the tool sends
 short-lived private OSS HTTPS URLs to the provider. If OSS upload fails, stop before paid
 submission and do not embed local media bytes as Base64.
-For Kling video, use kling_bailian_video with the Beijing Wan API Key and Workspace. Kling model
-activation is required; confirm its Turbo, Standard, or Omni variant before paid submission.
+For Kling video, use kling_bailian_video with the Beijing Wan API Key and Workspace. Confirm its
+Turbo, Standard, or Omni variant before paid submission.
 For Kling images use kling_bailian_image with the same credentials; for Wan images use wan_image.
+For MiniMax images use minimax_image: text alone is text-to-image; one image_path or image_url
+is character-reference image-to-image, not arbitrary pixel-preserving editing.
+For Wan person replacement in an existing video use wan_animate_mix, which keeps the source
+video scene. For motion transferred onto a photo use wan_animate_move, which keeps the photo
+background. Both require one person image and one measured 2-30 second action video. Use ffprobe
+to measure the video and confirm wan-std versus wan-pro before a paid call. These are not general
+prompt-based editors. For Wan3 video extension use wan_video mode=extend with one source video,
+an explicit extension direction, ratio=adaptive, and measured source_duration_seconds; input
+plus requested output must not exceed 30 seconds.
 If Seedance is selected and reference photos visibly contain real people, explain two asset paths
 before a paid task and let the user choose once: ordinary private photos can be registered as
 AIGC virtual assets; public figures or verified real-person likenesses should use H5 real-portrait
@@ -248,7 +256,6 @@ buildAgent(std::unique_ptr<MaiModelClient> model,
     tools->add(makeMaiArkAssetTool());
   tools->add(makeMaiSeedreamImageTool(arkKey, {}, uploadMedia));
   const auto glmKey = [key = toUtf8(credentials.glmApiKey)] { return key; };
-  tools->add(makeMaiGlmVideoTool(glmKey, {}, uploadMedia));
   tools->add(makeMaiGlmImageTool(glmKey));
   const auto miniMaxKey = [key = toUtf8(credentials.miniMaxApiKey)] {
     return key;
@@ -260,6 +267,8 @@ buildAgent(std::unique_ptr<MaiModelClient> model,
     return MaiWanCredentials{key, workspace};
   };
   tools->add(makeMaiWanVideoTool(wanCredentials, {}, uploadMedia));
+  tools->add(makeMaiWanAnimateMixTool(wanCredentials, {}, uploadMedia));
+  tools->add(makeMaiWanAnimateMoveTool(wanCredentials, {}, uploadMedia));
   tools->add(makeMaiBailianKlingVideoTool(wanCredentials, {}, uploadMedia));
   tools->add(makeMaiWanImageTool(wanCredentials, {}, uploadMedia));
   tools->add(makeMaiBailianKlingImageTool(wanCredentials, {}, uploadMedia));
@@ -271,7 +280,6 @@ buildAgent(std::unique_ptr<MaiModelClient> model,
   tools->add(makeMaiViewImageTool(makeMaiFfmpegImagePreview(ffmpegEngine)));
   tools->add(makeMaiFfmpegTool(ffmpegEngine));
   tools->add(makeMaiFfprobeTool(ffmpegEngine));
-  tools->add(makeMaiWatermarkRemovalTool(ffmpegEngine));
   tools->add(makeMaiStretchLowerVideoTool(ffmpegEngine));
 #endif
 #if defined(MAICHAT_CV_VIDEO_ANALYSIS)

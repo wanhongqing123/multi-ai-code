@@ -149,13 +149,10 @@ private struct ContactList: View {
     @Binding var activeContact: RemoteIMContact?
     @Binding var movingContact: RemoteIMContact?
     @Binding var groupActionName: String?
-    @State private var searchText = ""
     @State private var collapsedGroups = Set<String>()
 
     var body: some View {
         VStack(spacing: 0) {
-            ContactSearchField(text: $searchText, placeholder: "搜索联系人")
-
             List {
                 if appState.chatState.contacts.isEmpty && appState.chatState.contactGroups.isEmpty {
                     EmptyContacts()
@@ -182,21 +179,17 @@ private struct ContactList: View {
         .background(RemoteIMStyle.panelBackground)
     }
 
-    private var normalizedSearch: String {
-        searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    }
-
     private var contactListItems: [RemoteIMContactListItem] {
         RemoteIMContactGroupDisplayPolicy.items(
             groups: appState.chatState.contactGroups,
             contacts: appState.chatState.contacts,
             collapsedGroupNames: collapsedGroups,
-            query: searchText
+            query: ""
         )
     }
 
     private func groupHeader(name: String, memberCount: Int) -> some View {
-        let isExpanded = !normalizedSearch.isEmpty || !collapsedGroups.contains(name)
+        let isExpanded = !collapsedGroups.contains(name)
         return Button {
             if collapsedGroups.contains(name) {
                 collapsedGroups.remove(name)
@@ -492,65 +485,6 @@ struct DeleteContactGroupDialog: View {
                 RemoteIMStyle.pageBackground,
                 in: RoundedRectangle(cornerRadius: 12, style: .continuous)
             )
-    }
-}
-
-private struct ContactSearchField: View {
-    @Binding var text: String
-    let placeholder: String
-    var horizontalPadding: CGFloat = 16
-    var verticalPadding: CGFloat = 10
-    var usesSoftFill = false
-    @FocusState private var isFocused: Bool
-
-    var body: some View {
-        HStack(spacing: 9) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(
-                    isFocused || usesSoftFill ? RemoteIMStyle.blue : RemoteIMStyle.textSecondary
-                )
-
-            TextField(placeholder, text: $text)
-                .font(.system(size: 15))
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .focused($isFocused)
-                .submitLabel(.search)
-                .onSubmit { isFocused = false }
-
-            if !text.isEmpty {
-                Button {
-                    text = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 16))
-                        .foregroundStyle(RemoteIMStyle.textSecondary.opacity(0.72))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("清空搜索")
-            }
-        }
-        .padding(.horizontal, 13)
-        .frame(height: 44)
-        .background(
-            usesSoftFill ? RemoteIMStyle.blueSoft.opacity(0.58) : RemoteIMStyle.pageBackground,
-            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(
-                    usesSoftFill
-                        ? Color.clear
-                        : (isFocused ? RemoteIMStyle.blue : RemoteIMStyle.border),
-                    lineWidth: usesSoftFill ? 0 : (isFocused ? 1.5 : 1)
-                )
-        )
-        .padding(.horizontal, horizontalPadding)
-        .padding(.vertical, verticalPadding)
-        .background(RemoteIMStyle.panelBackground)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("remote-im-contact-search-field")
     }
 }
 

@@ -582,16 +582,20 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         return value;
     }
     private boolean isPaidGeneration(String tool) {
-        return tool.equals("wan_video") || tool.equals("wan_image")
+        return tool.equals("wan_video") || tool.equals("wan_animate_mix")
+            || tool.equals("wan_animate_move") || tool.equals("wan_image")
             || tool.equals("seedance_video") || tool.equals("seedream_image")
-            || tool.equals("glm_video") || tool.equals("glm_image")
+            || tool.equals("glm_image")
             || tool.equals("kling_bailian_video") || tool.equals("kling_bailian_image")
             || tool.equals("minimax_video") || tool.equals("minimax_image");
     }
     private String paidApprovalTitle(String tool, JSONObject input) {
-        boolean video = tool.equals("wan_video")
-            || tool.equals("seedance_video") || tool.equals("glm_video")
+        boolean video = tool.equals("wan_video") || tool.equals("wan_animate_mix")
+            || tool.equals("wan_animate_move")
+            || tool.equals("seedance_video")
             || tool.equals("kling_bailian_video") || tool.equals("minimax_video");
+        if (tool.equals("wan_animate_mix")) return "确认视频换人";
+        if (tool.equals("wan_animate_move")) return "确认图生动作";
         return "确认" + (isPaidRevision(tool, input) ? "编辑" : "生成")
             + (video ? "视频" : "图片");
     }
@@ -602,8 +606,9 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             || input.optString("task_mode").equals("edit");
     }
     private String paidProvider(String tool) {
-        if (tool.equals("wan_video") || tool.equals("wan_image")) return "万相";
-        if (tool.equals("glm_video") || tool.equals("glm_image")) return "GLM";
+        if (tool.equals("wan_video") || tool.equals("wan_animate_mix")
+            || tool.equals("wan_animate_move") || tool.equals("wan_image")) return "万相";
+        if (tool.equals("glm_image")) return "GLM";
         if (tool.equals("kling_bailian_video") || tool.equals("kling_bailian_image")) return "可灵 · 百炼";
         if (tool.equals("minimax_video") || tool.equals("minimax_image")) return "海螺 / MiniMax";
         return tool.equals("seedance_video") ? "Seedance" : "Seedream";
@@ -623,11 +628,17 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         }
         if (model.equals("MiniMax-H3") || model.equals("MiniMax-H3-Max"))
             values.add(model.equals("MiniMax-H3-Max") ? "H3 Max" : "H3");
+        if (tool.equals("minimax_image"))
+            values.add(model.equals("image-01-live") ? "Image-01 Live" : "Image-01");
         if (tool.equals("kling_bailian_video") || tool.equals("kling_bailian_image"))
             values.add(model.contains("omni") ? "可灵 V3 Omni"
                 : model.contains("turbo") ||
                     (model.isEmpty() && tool.equals("kling_bailian_video"))
                     ? "可灵 V3 Turbo" : "可灵 V3");
+        if (tool.equals("wan_animate_mix") || tool.equals("wan_animate_move")) {
+            values.add(input.optString("service_mode").equals("wan-pro") ? "专业模式" : "标准模式");
+            values.add("源视频约 " + input.optDouble("source_duration_seconds") + " 秒");
+        }
         int duration = input.optInt("duration", production.optInt("duration", 0));
         if (duration > 0) values.add(duration + " 秒");
         String resolution = input.optString("resolution", production.optString("resolution"));
@@ -646,13 +657,15 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         if (images == null) images = input.optJSONArray("image_paths");
         int imageCount = images == null ? 0 : images.length();
         if (!input.optString("image_path").isEmpty()
+            || !input.optString("image_url").isEmpty()
             || !input.optString("first_frame").isEmpty()) imageCount++;
         if (!input.optString("last_frame_path").isEmpty()
             || !input.optString("last_frame").isEmpty()) imageCount++;
         JSONArray content = input.optJSONArray("content");
         int videoCount = !input.optString("video_path").isEmpty()
             || !input.optString("reference_video_path").isEmpty()
-            || !input.optString("reference_video").isEmpty() ? 1 : 0;
+            || !input.optString("reference_video").isEmpty()
+            || !input.optString("video_url").isEmpty() ? 1 : 0;
         int audioCount = !input.optString("reference_audio_path").isEmpty()
             || !input.optString("reference_audio").isEmpty() ? 1 : 0;
         if (content != null) {
@@ -715,9 +728,10 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 try { input = new JSONObject(permission.optString("input", "{}")); }
                 catch (Exception ignored) { input = new JSONObject(); }
                 boolean providerCanCancel = tool.equals("wan_video") ||
+                    tool.equals("wan_animate_mix") || tool.equals("wan_animate_move") ||
                     tool.equals("seedance_video") || tool.equals("kling_bailian_video");
                 boolean taskManagement = ((providerCanCancel ||
-                    tool.equals("glm_video") || tool.equals("minimax_video")) &&
+                    tool.equals("minimax_video")) &&
                     input.optString("action").equals("delete")) ||
                     (providerCanCancel && input.optString("action").equals("cancel"));
                 boolean taskDelete = input.optString("action").equals("delete");
@@ -875,10 +889,8 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         if (state == null || !state.ready) return;
         LinearLayout form = column();
         form.setPadding(dp(18), dp(8), dp(18), dp(8));
-        form.addView(text("主模型可在聊天页切换；统一使用 Responses。",
-            12, MaiChatTheme.SECONDARY), matchWrap());
         EditText cloudUrl = field("云端服务地址", controller.cloudServiceUrl());
-        EditText cloudToken = field("服务令牌（留空保留原令牌）", "");
+        EditText cloudToken = field("服务令牌（留空保留）", "");
         cloudToken.setInputType(android.text.InputType.TYPE_CLASS_TEXT |
             android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
         form.addView(cloudUrl, matchWrap());
@@ -979,6 +991,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         final Map<String, ImageView> imageParts = new HashMap<>();
         final Map<String, Button> videoParts = new HashMap<>();
         final Map<String, Button> pdfCards = new HashMap<>();
+        final Map<String, Button> diagnosticCards = new HashMap<>();
         final Map<String, LinearLayout> mediaCards = new HashMap<>();
         TextView status;
         MessageRow() {
@@ -996,6 +1009,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                     imageParts.clear();
                     videoParts.clear();
                     pdfCards.clear();
+                    diagnosticCards.clear();
                     mediaCards.clear();
                     status = null;
                     TextView empty = text("有什么可以帮你？\n\n可以聊天、分析图片和文件，也可以语音转文字。", 16,
@@ -1021,6 +1035,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 imageParts.clear();
                 videoParts.clear();
                 pdfCards.clear();
+                diagnosticCards.clear();
                 mediaCards.clear();
                 status = null;
                 if (outgoing) {
@@ -1096,6 +1111,21 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                                 LayoutParams cardLayout = matchWrap();
                                 cardLayout.bottomMargin = dp(12);
                                 addView(preview, cardLayout);
+                                Button diagnostic = button("分享排障日志", "分享导出的 TXT 日志", clicked -> {
+                                    Object stored = clicked.getTag();
+                                    if (!(stored instanceof String)) return;
+                                    File report = controller.workspaceFile((String) stored);
+                                    if (report != null && report.isFile()) shareDiagnosticFile(report);
+                                });
+                                diagnostic.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+                                diagnostic.setPadding(dp(12), 0, dp(12), 0);
+                                diagnostic.setBackground(MaiChatTheme.bordered(
+                                    MaiChatTheme.BLUE_SOFT, MaiChatTheme.BORDER, 10, activity));
+                                diagnostic.setVisibility(GONE);
+                                diagnosticCards.put(id, diagnostic);
+                                LayoutParams diagnosticLayout = matchWrap();
+                                diagnosticLayout.bottomMargin = dp(12);
+                                addView(diagnostic, diagnosticLayout);
                                 LinearLayout media = column();
                                 media.setVisibility(GONE);
                                 mediaCards.put(id, media);
@@ -1183,6 +1213,18 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                                 pdfCard.setText("PDF  " + new File(path).getName() + "  ·  预览");
                             }
                         }
+                        Button diagnosticCard = diagnosticCards.get(id);
+                        if (diagnosticCard != null) {
+                            String path = diagnosticPathFromToolOutput(part);
+                            File report = path == null ? null : controller.workspaceFile(path);
+                            boolean available = report != null && report.isFile()
+                                && report.length() > 0 && report.length() <= 20L * 1024 * 1024;
+                            diagnosticCard.setVisibility(available ? VISIBLE : GONE);
+                            if (available) {
+                                diagnosticCard.setTag(path);
+                                diagnosticCard.setText("排障日志  " + report.getName() + "  ·  分享");
+                            }
+                        }
                         LinearLayout mediaCard = mediaCards.get(id);
                         if (mediaCard != null) {
                             JSONObject artifact = mediaFromToolOutput(part);
@@ -1238,6 +1280,32 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             if (path.toLowerCase(Locale.ROOT).endsWith(".pdf")) return path;
         }
         return null;
+    }
+    static String diagnosticPathFromToolOutput(JSONObject part) {
+        if (!part.optString("tool").equals("mobile_export_diagnostics")
+            || !part.optString("state").equals("completed")) return null;
+        try {
+            JSONObject artifact = new JSONObject(part.optString("output"));
+            String path = artifact.optString("path");
+            if (artifact.optString("mime_type").equals("text/plain")
+                && path.equals(new File(path).getName())
+                && path.startsWith("maichat-diagnostics-")
+                && path.toLowerCase(Locale.ROOT).endsWith(".txt")
+                && artifact.optLong("bytes") > 0
+                && artifact.optLong("bytes") <= 20L * 1024 * 1024) return path;
+        } catch (org.json.JSONException ignored) { }
+        return null;
+    }
+    private void shareDiagnosticFile(File file) {
+        Uri uri = FileProvider.getUriForFile(activity,
+            activity.getPackageName() + ".files", file);
+        Intent share = new Intent(Intent.ACTION_SEND);
+        share.setType("text/plain");
+        share.putExtra(Intent.EXTRA_STREAM, uri);
+        share.setClipData(ClipData.newUri(activity.getContentResolver(),
+            "MaiChat diagnostic log", uri));
+        share.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        activity.startActivity(Intent.createChooser(share, "分享 MaiChat 排障日志"));
     }
     static JSONObject mediaFromToolOutput(JSONObject part) {
         if (!part.optString("tool").equals("agent_send_media")

@@ -1,4 +1,5 @@
 #include <QElapsedTimer>
+#include <QComboBox>
 #include <QFileInfo>
 #include <QPointer>
 #include <QPushButton>
@@ -65,6 +66,8 @@ void MaiFfplayVideoDialogTest::opensControlsAndClosesVideoPopup() {
     MaiTool* commandTool = registry.find("maichat_video_command");
     QVERIFY(openTool != nullptr);
     QVERIFY(commandTool != nullptr);
+    QVERIFY(QString::fromStdString(commandTool->parametersSchema()).contains(
+        QStringLiteral("set_speed")));
     MaiToolContext context;
     const QFileInfo fixture(fixturePath);
     context.root = fixture.dir().absolutePath().toStdString();
@@ -80,6 +83,15 @@ void MaiFfplayVideoDialogTest::opensControlsAndClosesVideoPopup() {
     auto* timeLabel = dialog->findChild<QLabel*>(QStringLiteral("ffplayTimeLabel"));
     QVERIFY(slider != nullptr);
     QVERIFY(timeLabel != nullptr);
+    auto* speedSelector = dialog->findChild<QComboBox*>(QStringLiteral("ffplaySpeedSelector"));
+    QVERIFY(speedSelector != nullptr);
+    QCOMPARE(speedSelector->count(), 5);
+    QVERIFY(!commandTool->execute(R"({"action":"set_speed","speed":0.5})", context)
+                 .hasError());
+    MaiFfplayPlaybackStatus speedStatus{};
+    QTRY_VERIFY_WITH_TIMEOUT(maiFfplayGetPlaybackStatus(&speedStatus) &&
+                                 speedStatus.speed_percent == 50,
+                             3000);
     QTRY_VERIFY_WITH_TIMEOUT(slider->value() > 0 &&
                              timeLabel->text().contains(QStringLiteral(" / 0:02")), 6000);
     QTRY_VERIFY_WITH_TIMEOUT(dialog->presentedFrames() >= 3, 4000);

@@ -38,6 +38,8 @@ public final class MaiChatHostTools {
     }
 
     public Object execute(String tool, JSONObject arguments) throws Exception {
+        if (tool.equals("mobile_export_diagnostics"))
+            return activity.exportDiagnosticsForAgent();
         if (tool.equals("generate_pdf"))
             return AgentPdfRenderer.render(arguments.optString("html"),
                 AIAssistantController.shared(activity).workspacePdfOutputForHost(

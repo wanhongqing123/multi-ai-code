@@ -11,6 +11,7 @@
 #include "MaiFfplayEntry.h"
 
 class QPushButton;
+class QComboBox;
 class QSlider;
 class QLabel;
 class QTimer;
@@ -26,6 +27,9 @@ public:
     static QPointer<MaiFfplayVideoDialog> activeDialog();
     bool sendCommand(const QString& command);
     bool seekPercent(double fraction);
+    bool seekSeconds(double seconds);
+    bool setSpeed(double speed);
+    double speed() const { return playbackSpeed_; }
     bool isStarted() const { return started_; }
     bool isPlaying() const { return playing_; }
     uint64_t presentedFrames() const;
@@ -55,6 +59,7 @@ private:
     QString path_;
     QWidget* surface_ = nullptr;
     QPushButton* pauseButton_ = nullptr;
+    QComboBox* speedSelector_ = nullptr;
     QSlider* seekSlider_ = nullptr;
     QLabel* timeLabel_ = nullptr;
     QTimer* progressTimer_ = nullptr;
@@ -65,6 +70,8 @@ private:
     uint64_t viewId_ = 0;
     bool started_ = false;
     bool playing_ = true;
+    double playbackSpeed_ = 1.0;
+    int64_t startPositionUs_ = 0;
     std::atomic<bool> playbackFinished_{false};
     std::function<void()> forwardAction_;
 };

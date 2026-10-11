@@ -94,14 +94,30 @@ constexpr auto kMarkdownBaseInstructions =
     "the tool sends short-lived private OSS HTTPS URLs to the provider. If OSS "
     "upload fails, stop before paid submission and report the upload stage. Do "
     "not retry by embedding local image or video bytes as Base64. "
-    // 可灵只走百炼入口，复用万相的北京地域 Key；仍要确认具体型号。
+    // 可灵权限已开通，只走百炼入口并复用万相北京地域 Key；仍要确认具体型号。
     "For Kling video, use kling_bailian_video with the Beijing Wan API Key and "
-    "Workspace. Kling model activation is required. Confirm its Turbo, "
+    "Workspace. Confirm its Turbo, "
     "Standard, "
     "or Omni variant before paid submission. "
     "For Kling images use kling_bailian_image with the same Beijing "
     "credentials; "
     "for Wan images use wan_image. "
+    // MiniMax image-01 的图生图是人物主体参考，不是任意局部修图。
+    "For MiniMax images use minimax_image: no reference is text-to-image; one "
+    "image_path or image_url is character-reference image-to-image. Do not describe "
+    "that path as pixel-preserving editing or use it for arbitrary object replacement. "
+    // 万相两个专用模型的目标不同：换人保留原视频场景，图生动作保留人物图背景。
+    // 两者都只吃一张人物图和一段实测 2–30 秒的动作视频，不接受自由提示词。
+    "For Wan person replacement in an existing video use wan_animate_mix: it keeps "
+    "the source video scene. For motion transferred onto a photo use "
+    "wan_animate_move: it keeps the photo background. Measure the source video "
+    "duration with ffprobe, and confirm wan-std versus wan-pro before a paid call. "
+    "Do not treat these two tools as general prompt-based video editing. "
+    // Wan3 视频延长用 reference_video 和明确延长意图；比例必须 adaptive，
+    // 付费前先测源片时长并核对输入与输出合计不超过 30 秒。
+    "For Wan3 extension use wan_video mode=extend with one source video, an explicit "
+    "extension direction in the message, ratio=adaptive, and measured "
+    "source_duration_seconds. Input plus requested output must be at most 30 seconds. "
     // 真人参考图分为普通资产登记和 H5 真人认证两条路径，必须使用真正返回的资产
     // ID。
     "Before paid Seedance generation with a recognizable real person, "
@@ -180,6 +196,12 @@ constexpr auto kMarkdownBaseInstructions =
     "and ask before switching. Do not claim the account has no authorized "
     "portrait assets unless a tool actually checked; ask for an asset ID. "
     "Avoid lengthy technical error narration. "
+    // 排障日志只在用户要求时导出到工作区，工具返回文件卡片；不把日志正文
+    // 粘进会话，也不代替用户发送给联系人。
+    "When the user asks to export troubleshooting logs, call "
+    "mobile_export_diagnostics once and tell them to use the resulting "
+    "shareable file card. Do not paste the log contents into the chat or "
+    "send the file to a contact automatically. "
     // 消息用真正的 Markdown 换行；图像附件直接看，缺 OS 权限先申请再重试。
     "Write user-facing responses in valid GitHub-Flavored Markdown. Preserve "
     "real line breaks. "
@@ -533,7 +555,6 @@ struct MaiMobileAgent {
                  ? response["key"].get<std::string>()
                  : std::string{};
     };
-    tools->add(makeMaiGlmVideoTool(glmKey, config.caBundlePath, uploadMedia));
     tools->add(makeMaiGlmImageTool(glmKey, config.caBundlePath));
     const auto miniMaxKey = [dispatcher = hostTools]() -> std::string {
       const MaiToolResult result =
@@ -563,6 +584,10 @@ struct MaiMobileAgent {
     };
     tools->add(
         makeMaiWanVideoTool(wanCredentials, config.caBundlePath, uploadMedia));
+    tools->add(makeMaiWanAnimateMixTool(wanCredentials, config.caBundlePath,
+                                        uploadMedia));
+    tools->add(makeMaiWanAnimateMoveTool(wanCredentials, config.caBundlePath,
+                                         uploadMedia));
     tools->add(makeMaiBailianKlingVideoTool(wanCredentials, config.caBundlePath,
                                             uploadMedia));
     tools->add(

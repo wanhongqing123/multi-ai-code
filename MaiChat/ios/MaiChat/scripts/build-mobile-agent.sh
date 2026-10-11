@@ -13,6 +13,12 @@ cmake -S "$repo_dir/MaiChat/MobileAgentAdapter" -B "$agent_build" -G Ninja \
   -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO
 cmake --build "$agent_build" --target maichat_mobile --parallel 6
 cmake --build "$agent_build" --target maichat_ffplay_hosted --parallel 6
+hosted_source="$agent_build/libmaichat_ffplay_hosted.dylib"
+# OTHER_LDFLAGS 使用 DERIVED_FILE_DIR 下的链接路径；只更新 App Frameworks
+# 会让链接器读到上次构建的旧 dylib，新增 FFplay C 接口时出现假性未定义符号。
+hosted_link_dir="$DERIVED_FILE_DIR/MobileAgentAdapter-${PLATFORM_NAME}-graphics"
+mkdir -p "$hosted_link_dir"
+cp "$hosted_source" "$hosted_link_dir/libmaichat_ffplay_hosted.dylib"
 archive_list=()
 while IFS= read -r archive; do archive_list+=("$archive"); done < <(
   find "$agent_build" -name '*.a' -type f \
@@ -25,7 +31,6 @@ for codec in libdav1d.a libx264.a libmp3lame.a; do
 done
 xcrun libtool -static -o "$DERIVED_FILE_DIR/libMaiMobileAgent.a" "${archive_list[@]}"
 if [[ -n "${TARGET_BUILD_DIR:-}" && -n "${FRAMEWORKS_FOLDER_PATH:-}" ]]; then
-  hosted_source="$agent_build/libmaichat_ffplay_hosted.dylib"
   hosted_target="$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH/libmaichat_ffplay_hosted.dylib"
   mkdir -p "$(dirname "$hosted_target")"
   cp "$hosted_source" "$hosted_target"

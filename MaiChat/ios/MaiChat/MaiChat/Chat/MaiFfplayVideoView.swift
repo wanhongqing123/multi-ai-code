@@ -17,7 +17,7 @@ enum MaiFfplayMobilePlayer {
         return active.playbackUnavailableReason
     }
 
-    static func command(_ action: String, percent: Double?) -> Bool {
+    static func command(_ action: String, percent: Double?, speed: Double?, seconds: Double?) -> Bool {
         guard let active else { return false }
         if action == "close" {
             active.close()
@@ -26,6 +26,14 @@ enum MaiFfplayMobilePlayer {
         if action == "seek_percent" {
             guard let percent, (0...100).contains(percent) else { return false }
             return active.seekPercent(percent / 100)
+        }
+        if action == "seek_seconds" {
+            guard let seconds else { return false }
+            return active.seekSeconds(seconds)
+        }
+        if action == "set_speed" {
+            guard let speed else { return false }
+            return active.setSpeed(speed)
         }
         return active.sendCommand(action)
     }
@@ -47,6 +55,7 @@ private final class MaiFfplayMetalView: UIView {
     var onError: ((String) -> Void)?
     private var viewID: UInt64 = 0
     private var session: OpaquePointer?
+    private var playbackSpeed = 1.0
     private var lastSize: CGSize = .zero
 
     override func didMoveToWindow() {
@@ -104,7 +113,9 @@ private final class MaiFfplayMetalView: UIView {
             onError?("Metal 视频视图无法创建")
             return
         }
-        session = videoPath.withCString { path in maiFfplayIosStart(viewID, path) }
+        session = videoPath.withCString { path in
+            maiFfplayIosStartAtSpeed(viewID, path, playbackSpeed, 0)
+        }
         if session == nil {
             maiGraphicsPresenterDetach(viewID)
             viewID = 0
@@ -120,6 +131,20 @@ private final class MaiFfplayMetalView: UIView {
     func seekPercent(_ fraction: Double) -> Bool {
         guard let session else { return false }
         return maiFfplayIosSeekPercent(session, fraction) == 1
+    }
+
+    func setSpeed(_ speed: Double) -> Bool {
+        guard [0.25, 0.5, 1.0, 1.5, 2.0].contains(speed), let previous = session,
+              viewID != 0 else { return false }
+        if speed == playbackSpeed { return true }
+        let position = max(0, playbackStatus()?.position_us ?? 0)
+        session = nil
+        maiFfplayIosStop(previous)
+        playbackSpeed = speed
+        session = videoPath.withCString { path in
+            maiFfplayIosStartAtSpeed(viewID, path, speed, position)
+        }
+        return session != nil
     }
 
     func checkPlayback() {
@@ -168,6 +193,7 @@ final class MaiFfplayVideoController: UIViewController {
     private let saveStatusLabel = UILabel()
     private var playbackTimer: Timer?
     private var playing = true
+    private var playbackSpeed = 1.0
     private var saving = false
 
     init(path: String, close: @escaping () -> Void) {
@@ -301,7 +327,10 @@ final class MaiFfplayVideoController: UIViewController {
         MaiFfplayMobilePlayer.active = self
         if playbackTimer == nil {
             playbackTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) {
-                [weak self] _ in self?.refreshPlayback()
+                [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.refreshPlayback()
+                }
             }
         }
         refreshPlayback()
@@ -316,6 +345,7 @@ final class MaiFfplayVideoController: UIViewController {
         }
         timeLabel.text = "\(Self.timestamp(position)) / \(Self.timestamp(status.duration_us))"
         playing = status.paused == 0
+        playbackSpeed = Double(status.speed_percent) / 100.0
         refreshPlayButton()
     }
 
@@ -354,6 +384,21 @@ final class MaiFfplayVideoController: UIViewController {
 
     func seekPercent(_ fraction: Double) -> Bool {
         metalView.seekPercent(fraction)
+    }
+
+    func seekSeconds(_ seconds: Double) -> Bool {
+        guard seconds.isFinite, seconds >= 0,
+              let status = metalView.playbackStatus(), status.duration_us > 0,
+              seconds * 1_000_000 <= Double(status.duration_us) else { return false }
+        return seekPercent(seconds * 1_000_000 / Double(status.duration_us))
+    }
+
+    func setSpeed(_ speed: Double) -> Bool {
+        guard metalView.setSpeed(speed) else { return false }
+        playbackSpeed = speed
+        playing = true
+        refreshPlayButton()
+        return true
     }
 
     func close() { onClose() }
@@ -436,10 +481,30 @@ final class MaiFfplayVideoController: UIViewController {
     @objc private func moreTapped() {
         let menu = UIAlertController(title: URL(fileURLWithPath: path).lastPathComponent,
                                      message: nil, preferredStyle: .actionSheet)
+        menu.addAction(UIAlertAction(title: "播放倍速 \(playbackSpeed)×", style: .default) {
+            [weak self] _ in self?.showSpeedChoices()
+        })
         menu.addAction(UIAlertAction(title: "复制文件路径", style: .default) { [weak self] _ in
             UIPasteboard.general.string = self?.path
             self?.showStatus("已复制文件路径")
         })
+        menu.addAction(UIAlertAction(title: "取消", style: .cancel))
+        menu.popoverPresentationController?.sourceView = view
+        menu.popoverPresentationController?.sourceRect = CGRect(
+            x: view.bounds.midX, y: view.bounds.maxY - 50, width: 1, height: 1)
+        present(menu, animated: true)
+    }
+
+    private func showSpeedChoices() {
+        let menu = UIAlertController(title: "播放倍速", message: nil, preferredStyle: .actionSheet)
+        for rate in [0.25, 0.5, 1.0, 1.5, 2.0] {
+            menu.addAction(UIAlertAction(title: "\(rate)×", style: .default) { [weak self] _ in
+                guard self?.setSpeed(rate) == true else {
+                    self?.showStatus("倍速切换失败")
+                    return
+                }
+            })
+        }
         menu.addAction(UIAlertAction(title: "取消", style: .cancel))
         menu.popoverPresentationController?.sourceView = view
         menu.popoverPresentationController?.sourceRect = CGRect(

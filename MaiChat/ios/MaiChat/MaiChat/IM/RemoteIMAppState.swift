@@ -56,7 +56,6 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
 
     @Published var sdkAppIDText = ""
     @Published var masterUserID = ""
-    @Published var secretKey = ""
     @Published var newContactUserID = ""
     @Published var newContactRelation: RemoteIMContactRelation = .friend
     @Published var errorMessage: String?
@@ -66,6 +65,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     @Published private(set) var locallyQueuedMessageID: UUID?
     @Published var chatState: MasterChatState
     @Published var hasCompletedInitialLogin = false
+    @Published private(set) var hasUnifiedAccount = false
     @Published var presenceStatusByUserID: [String: RemoteIMPresenceStatus] = [:]
     @Published private(set) var unreadCountByUserID: [String: Int] = [:] {
         didSet {
@@ -86,7 +86,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     lazy var remoteDiagnostics = RemoteDiagnosticsCoordinator(appState: self)
 
     private let settingsStore: LocalSettingsStore
-    private let secretStore: KeychainSecretStore
+    private let accountAuth = MaiChatAuthClient.shared
     private let historyPersistence: LocalChatHistoryPersistence
     private let client: RemoteIMClient
     private let shouldConnectOnLaunch: Bool
@@ -120,37 +120,32 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
 
     init(
         settingsStore: LocalSettingsStore = LocalSettingsStore(),
-        secretStore: KeychainSecretStore = KeychainSecretStore(),
         historyStore: LocalChatHistoryStore = LocalChatHistoryStore(),
         client: RemoteIMClient = TencentIMClient(),
-        loadedSettings: StoredRemoteIMSettings,
-        loadedSecretKey: String
+        loadedSettings: StoredRemoteIMSettings
     ) {
         self.settingsStore = settingsStore
-        self.secretStore = secretStore
         self.client = client
         self.remoteDesktop = RemoteDesktopSession(client: client)
 
         var settings = loadedSettings
-        var loadedSecretKey = loadedSecretKey
-        Self.applyCredentialDefaults(settings: &settings, secretKey: &loadedSecretKey)
-        let debugRequestedAutoConnect = Self.applyDebugLaunchOverrides(
-            settings: &settings,
-            secretKey: &loadedSecretKey
-        )
+        let debugRequestedAutoConnect = Self.applyDebugLaunchOverrides(settings: &settings)
+        let hasAccountSession = !KeychainSecretStore(
+            account: "maichat-account-refresh-token"
+        ).readSecretKey().isEmpty
         let hasRestorableAccount = RemoteIMLoginCredentialPolicy.shouldRestoreSavedSession(
             userID: settings.masterUserID
-        )
-        self.shouldConnectOnLaunch = debugRequestedAutoConnect ||
+        ) && hasAccountSession
+        self.shouldConnectOnLaunch = hasAccountSession && (debugRequestedAutoConnect ||
             RemoteIMLoginCredentialPolicy.shouldAutoConnectSavedSession(
                 userID: settings.masterUserID,
                 reconnectOnLaunch: settings.reconnectOnLaunch
-            )
+            ))
         self.reconnectOnLaunch = settings.reconnectOnLaunch
         self.hasCompletedInitialLogin = hasRestorableAccount
+        self.hasUnifiedAccount = hasAccountSession
         self.sdkAppIDText = settings.sdkAppID.map(String.init) ?? ""
         self.masterUserID = settings.masterUserID
-        self.secretKey = loadedSecretKey
         self.chatHistorySDKAppID = settings.sdkAppID
 
         let loadedState = MasterChatState(
@@ -333,21 +328,9 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         presenceStatusByUserID[contact.userID] ?? .unknown
     }
 
-    static func hasCompleteLoginCredential(
-        sdkAppIDText: String,
-        userID: String,
-        secretKey: String
-    ) -> Bool {
-        RemoteIMLoginCredentialPolicy.isComplete(userID: userID)
-    }
-
     @discardableResult
     func saveSettings() async -> Bool {
         do {
-            applyFixedCredential()
-            let store = secretStore
-            let value = secretKey
-            try await RemoteIMBackgroundWork.file { try store.saveSecretKey(value) }
             guard await rebuildChatStateForCurrentAccount() else { return false }
             settingsStore.save(currentStoredSettings())
             errorMessage = nil
@@ -367,15 +350,58 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         }
     }
 
-    func submitInitialLogin() async {
-        if let validationError = RemoteIMLoginCredentialPolicy.validationError(userID: masterUserID) {
-            errorMessage = validationError
+    func requestAccountCode(
+        phone: String, purpose: String = "login", ageConfirmed: Bool
+    ) async throws -> MaiChatAuthChallenge {
+        try await accountAuth.requestCode(
+            phone: phone, purpose: purpose, ageConfirmed: ageConfirmed
+        )
+    }
+
+    func loginWithAccountCode(
+        phone: String, challengeId: String, code: String, ageConfirmed: Bool
+    ) async throws {
+        let session = try await accountAuth.verifyCode(
+            phone: phone, challengeId: challengeId, code: code,
+            ageConfirmed: ageConfirmed
+        )
+        try await finishAccountLogin(session)
+    }
+
+    func loginWithAccountPassword(
+        phone: String, password: String, ageConfirmed: Bool
+    ) async throws {
+        let session = try await accountAuth.loginWithPassword(
+            phone: phone, password: password, ageConfirmed: ageConfirmed
+        )
+        try await finishAccountLogin(session)
+    }
+
+    func setAccountPassword(_ password: String) async throws {
+        try await accountAuth.setPassword(password)
+    }
+
+    private func finishAccountLogin(_ session: MaiChatAuthSession) async throws {
+        let credential = try await accountAuth.credentialIfAvailable(
+            expectedUserID: session.user.imUserId
+        )
+        guard let credential, credential.sdkAppId > 0 else {
+            throw MaiChatAuthError.invalidServerResponse
+        }
+        let previousUserID = masterUserID
+        let wasConnected = connectionState == .connected
+        if wasConnected && previousUserID != session.user.imUserId {
+            await disconnect()
+        }
+        masterUserID = session.user.imUserId
+        sdkAppIDText = String(credential.sdkAppId)
+        hasUnifiedAccount = true
+        // 手机号验证已完成；IM 暂时连不上时仍进入账号页，保留重连入口。
+        hasCompletedInitialLogin = true
+        if wasConnected && previousUserID == session.user.imUserId {
             return
         }
         await requestConnection()
-        if connectionState == .connected {
-            hasCompletedInitialLogin = true
-        }
     }
 
     /// Records the user's connection intent before the network attempt starts. A failed first
@@ -383,6 +409,10 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     /// account with neither a login screen nor an automatic retry.
     func requestConnection() async {
         guard connectionState != .connecting else { return }
+        guard hasUnifiedAccount else {
+            errorMessage = "请使用手机号登录"
+            return
+        }
         if let validationError = RemoteIMLoginCredentialPolicy.validationError(userID: masterUserID) {
             errorMessage = validationError
             return
@@ -418,7 +448,6 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             return
         }
         let cleanMasterUserID = masterUserID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let cleanSecretKey = secretKey.trimmingCharacters(in: .whitespacesAndNewlines)
         let startedAt = ProcessInfo.processInfo.systemUptime
 
         do {
@@ -429,14 +458,17 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 userID: cleanMasterUserID
             )
             let identity = remoteDiagnosticsIdentity
-            let userSig = try await RemoteIMBackgroundWork.parse {
-                try TencentUserSigGenerator.generate(sdkAppID: sdkAppID, userID: cleanMasterUserID, secretKey: cleanSecretKey)
+            guard let credential = try await accountAuth.credentialIfAvailable(
+                expectedUserID: cleanMasterUserID
+            ) else { throw MaiChatAuthError.sessionExpired }
+            guard credential.sdkAppId == sdkAppID else {
+                throw MaiChatAuthError.invalidServerResponse
             }
             guard remoteDiagnosticsIdentity == identity else { return }
             try await client.connect(
                 sdkAppID: sdkAppID,
                 userID: cleanMasterUserID,
-                userSig: userSig
+                userSig: credential.userSig
             )
             connectionState = .connected
             profileFetchGeneration += 1
@@ -464,6 +496,13 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             errorMessage = nil
         } catch {
             connectionState = .failed
+            if case MaiChatAuthError.sessionExpired = error {
+                hasUnifiedAccount = false
+                hasCompletedInitialLogin = false
+            } else if case MaiChatAuthError.identityMismatch = error {
+                hasUnifiedAccount = false
+                hasCompletedInitialLogin = false
+            }
             let errorValue = error as NSError
             logIM(
                 level: .error,
@@ -1614,16 +1653,18 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         let localUserID = masterUserID.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
             let identity = remoteDiagnosticsIdentity
-            let key = secretKey.trimmingCharacters(in: .whitespacesAndNewlines)
-            let userSig = try await RemoteIMBackgroundWork.parse {
-                try TencentUserSigGenerator.generate(sdkAppID: sdkAppID, userID: localUserID, secretKey: key)
+            guard let credential = try await accountAuth.credentialIfAvailable(
+                expectedUserID: localUserID
+            ) else { throw MaiChatAuthError.sessionExpired }
+            guard credential.sdkAppId == sdkAppID else {
+                throw MaiChatAuthError.invalidServerResponse
             }
             guard remoteDiagnosticsIdentity == identity else { return }
             await remoteDesktop.requestView(
                 peerUserID: contact.userID,
                 sdkAppID: sdkAppID,
                 localUserID: localUserID,
-                userSig: userSig
+                userSig: credential.userSig
             )
             errorMessage = nil
         } catch {
@@ -2521,31 +2562,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         return contacts
     }
 
-    private func applyFixedCredential() {
-        let credential = RemoteIMCredentialDefaults.resolvedCredential(
-            sdkAppID: Int(sdkAppIDText.trimmingCharacters(in: .whitespacesAndNewlines)),
-            secretKey: secretKey
-        )
-        sdkAppIDText = String(credential.sdkAppID)
-        secretKey = credential.userSigSecretKey
-    }
-
-    private static func applyCredentialDefaults(
-        settings: inout StoredRemoteIMSettings,
-        secretKey: inout String
-    ) {
-        let credential = RemoteIMCredentialDefaults.resolvedCredential(
-            sdkAppID: settings.sdkAppID,
-            secretKey: secretKey
-        )
-        settings.sdkAppID = credential.sdkAppID
-        secretKey = credential.userSigSecretKey
-    }
-
-    private static func applyDebugLaunchOverrides(
-        settings: inout StoredRemoteIMSettings,
-        secretKey: inout String
-    ) -> Bool {
+    private static func applyDebugLaunchOverrides(settings: inout StoredRemoteIMSettings) -> Bool {
         #if DEBUG
         let environment = ProcessInfo.processInfo.environment
         if let rawSDKAppID = environment["MAICHAT_SDK_APP_ID"],
@@ -2558,11 +2575,6 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             environment["MAICHAT_MASTER_USER_ID"]
         ) {
             settings.masterUserID = masterUserID
-        }
-        if let injectedSecretKey = cleanEnvironmentValue(
-            environment["MAICHAT_SECRET_KEY"]
-        ) {
-            secretKey = injectedSecretKey
         }
         if let rawSlaveUserIDs = environment["MAICHAT_SLAVE_USER_IDS"] {
             settings.slaveUserIDs = rawSlaveUserIDs

@@ -13,6 +13,8 @@ namespace {
 struct PlaybackSession {
     uint64_t viewId = 0;
     std::string path;
+    double speed = 1.0;
+    int64_t startPositionUs = 0;
     MaiFfplayHost host{};
     std::thread worker;
     std::atomic<bool> finished{false};
@@ -37,13 +39,16 @@ bool presentRgba(void* user, const uint8_t* pixels,
 
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_kongshang_maichat_MaiFfplayVideoView_nativeCreate(
-    JNIEnv* env, jclass, jlong viewId, jstring path) {
+    JNIEnv* env, jclass, jlong viewId, jstring path, jdouble speed,
+    jlong startPositionUs) {
     if (viewId <= 0 || !path) return 0;
     const char* value = env->GetStringUTFChars(path, nullptr);
     if (!value) return 0;
     auto* session = new PlaybackSession;
     session->viewId = static_cast<uint64_t>(viewId);
     session->path = value;
+    session->speed = speed;
+    session->startPositionUs = startPositionUs;
     env->ReleaseStringUTFChars(path, value);
     if (session->path.empty()) {
         delete session;
@@ -58,7 +63,9 @@ Java_com_kongshang_maichat_MaiFfplayVideoView_nativeCreate(
             char name[] = "ffplay";
             std::string input = session->path;
             char* arguments[] = {name, &input[0]};
-            session->result = maiFfplayRun(&session->host, 2, arguments);
+            session->result = maiFfplayRunAtSpeed(&session->host, 2, arguments,
+                                                   session->speed,
+                                                   session->startPositionUs);
             session->finished = true;
         });
     } catch (...) {
@@ -92,9 +99,9 @@ Java_com_kongshang_maichat_MaiFfplayVideoView_nativePlaybackStatus(
     MaiFfplayPlaybackStatus status{};
     if (!maiFfplayGetPlaybackStatus(&status)) return nullptr;
     const jlong values[] = {status.position_us, status.duration_us,
-                            status.running, status.paused};
-    jlongArray result = env->NewLongArray(4);
-    if (result) env->SetLongArrayRegion(result, 0, 4, values);
+                            status.running, status.paused, status.speed_percent};
+    jlongArray result = env->NewLongArray(5);
+    if (result) env->SetLongArrayRegion(result, 0, 5, values);
     return result;
 }
 

@@ -770,71 +770,21 @@ private struct ConversationListView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
     @Binding var activeContact: RemoteIMContact?
     @Binding var searchTargetMessageID: UUID?
-    @State private var searchText = ""
     @State private var pendingClearHistoryContact: RemoteIMContact?
-    @State private var messageSearchHits: [LocalChatHistorySearchHit] = []
-    @State private var isSearchingMessages = false
 
     var body: some View {
         ZStack {
             VStack(spacing: 0) {
-                ConversationSearchField(text: $searchText)
-
                 List {
-                    if normalizedSearch.isEmpty {
-                        if filteredContacts.isEmpty {
-                            EmptyConversationListView()
-                                .padding(.top, 96)
-                                .listRowInsets(EdgeInsets())
-                                .listRowSeparator(.hidden)
-                                .listRowBackground(RemoteIMStyle.panelBackground)
-                        } else {
-                            ForEach(filteredContacts) { contact in
-                                conversationButton(contact)
-                            }
-                        }
-                    } else {
-                        if !filteredContacts.isEmpty {
-                            Section("联系人") {
-                                ForEach(filteredContacts) { contact in
-                                    conversationButton(contact)
-                                }
-                            }
-                        }
-
-                        if isSearchingMessages {
-                            HStack(spacing: 10) {
-                                ProgressView()
-                                Text("正在搜索全部消息…")
-                                    .foregroundStyle(RemoteIMStyle.textSecondary)
-                            }
+                    if sortedContacts.isEmpty {
+                        EmptyConversationListView()
+                            .padding(.top, 96)
+                            .listRowInsets(EdgeInsets())
                             .listRowSeparator(.hidden)
                             .listRowBackground(RemoteIMStyle.panelBackground)
-                        } else if !visibleMessageSearchHits.isEmpty {
-                            Section("消息") {
-                                ForEach(visibleMessageSearchHits) { hit in
-                                    if let contact = contact(for: hit.peerUserID) {
-                                        Button {
-                                            guard let openedContact = appState.openMessageSearchHit(hit)
-                                            else { return }
-                                            searchTargetMessageID = hit.message.id
-                                            activeContact = openedContact
-                                        } label: {
-                                            MessageSearchResultRow(contact: contact, hit: hit)
-                                        }
-                                        .buttonStyle(.plain)
-                                        .listRowInsets(EdgeInsets())
-                                        .listRowSeparator(.hidden)
-                                        .listRowBackground(RemoteIMStyle.panelBackground)
-                                    }
-                                }
-                            }
-                        } else if filteredContacts.isEmpty {
-                            EmptyMessageSearchView(query: searchText)
-                                .padding(.top, 72)
-                                .listRowInsets(EdgeInsets())
-                                .listRowSeparator(.hidden)
-                                .listRowBackground(RemoteIMStyle.panelBackground)
+                    } else {
+                        ForEach(sortedContacts) { contact in
+                            conversationButton(contact)
                         }
                     }
                 }
@@ -863,29 +813,6 @@ private struct ConversationListView: View {
             }
         }
         .animation(.easeOut(duration: 0.18), value: pendingClearHistoryContact?.userID)
-        .task(id: normalizedSearch) {
-            let query = normalizedSearch
-            guard !query.isEmpty else {
-                messageSearchHits = []
-                isSearchingMessages = false
-                return
-            }
-            isSearchingMessages = true
-            defer {
-                // A cancelled task must not clear the spinner owned by the replacement query.
-                if normalizedSearch == query {
-                    isSearchingMessages = false
-                }
-            }
-            do {
-                try await Task.sleep(nanoseconds: 250_000_000)
-            } catch {
-                return
-            }
-            let hits = await appState.searchMessages(query)
-            guard !Task.isCancelled, normalizedSearch == query else { return }
-            messageSearchHits = hits
-        }
     }
 
     @ViewBuilder
@@ -917,28 +844,8 @@ private struct ConversationListView: View {
         }
     }
 
-    private var normalizedSearch: String {
-        searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    }
-
-    private var visibleMessageSearchHits: [LocalChatHistorySearchHit] {
-        messageSearchHits.filter { contact(for: $0.peerUserID) != nil }
-    }
-
-    private func contact(for userID: String) -> RemoteIMContact? {
-        appState.chatState.contacts.first(where: { $0.userID == userID })
-    }
-
-    private var filteredContacts: [RemoteIMContact] {
-        let query = normalizedSearch
+    private var sortedContacts: [RemoteIMContact] {
         return appState.chatState.contacts
-            .filter { contact in
-                guard !query.isEmpty else { return true }
-                let latestText = appState.chatState.latestMessage(with: contact.userID)?.text ?? ""
-                return contact.userID.lowercased().contains(query) ||
-                    contact.displayName.lowercased().contains(query) ||
-                    latestText.lowercased().contains(query)
-            }
             .sorted { left, right in
                 let leftDate = appState.chatState.latestMessage(with: left.userID)?.createdAt ?? .distantPast
                 let rightDate = appState.chatState.latestMessage(with: right.userID)?.createdAt ?? .distantPast
@@ -1008,116 +915,6 @@ private struct ClearHistoryDialog: View {
                 RemoteIMStyle.pageBackground,
                 in: RoundedRectangle(cornerRadius: 12, style: .continuous)
             )
-    }
-}
-
-private struct ConversationSearchField: View {
-    @Binding var text: String
-    @FocusState private var isFocused: Bool
-
-    var body: some View {
-        HStack(spacing: 9) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(isFocused ? RemoteIMStyle.blue : RemoteIMStyle.textSecondary)
-            TextField("搜索联系人或全部消息", text: $text)
-                .font(.system(size: 15))
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .focused($isFocused)
-                .submitLabel(.search)
-                .onSubmit { isFocused = false }
-                .accessibilityIdentifier("remote-im-message-search-field")
-            if !text.isEmpty {
-                Button {
-                    text = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 16))
-                        .foregroundStyle(RemoteIMStyle.textSecondary.opacity(0.7))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("清空搜索")
-            }
-        }
-        .padding(.horizontal, 13)
-        .frame(height: 44)
-        .background(
-            RemoteIMStyle.pageBackground,
-            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(isFocused ? RemoteIMStyle.blue : RemoteIMStyle.border, lineWidth: isFocused ? 1.5 : 1)
-        )
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(RemoteIMStyle.panelBackground)
-        .accessibilityElement(children: .contain)
-    }
-}
-
-private struct MessageSearchResultRow: View {
-    let contact: RemoteIMContact
-    let hit: LocalChatHistorySearchHit
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            RemoteIMContactAvatar(
-                contact: contact,
-                isSelected: false,
-                presenceStatus: .unknown,
-                size: 38
-            )
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 8) {
-                    Text(contact.displayName)
-                        .font(ChatTypography.conversationTitle)
-                        .foregroundStyle(RemoteIMStyle.textPrimary)
-                        .lineLimit(1)
-                    Spacer(minLength: 8)
-                    Text(RemoteIMTimestampTextPolicy.displayText(for: hit.message.createdAt))
-                        .font(ChatTypography.conversationTime)
-                        .foregroundStyle(RemoteIMStyle.textSecondary)
-                }
-                Text(previewText)
-                    .font(ChatTypography.conversationPreview)
-                    .foregroundStyle(RemoteIMStyle.textSecondary)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 11)
-        .contentShape(Rectangle())
-    }
-
-    private var previewText: String {
-        let compact = hit.message.text
-            .replacingOccurrences(of: "\n", with: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return hit.message.direction == .outgoing ? "我：\(compact)" : compact
-    }
-}
-
-private struct EmptyMessageSearchView: View {
-    let query: String
-
-    var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 28))
-                .foregroundStyle(Color(red: 0.56, green: 0.59, blue: 0.64))
-            Text("没有找到相关消息")
-                .font(.system(size: 16, weight: .bold))
-                .foregroundStyle(RemoteIMStyle.textPrimary)
-            Text("没有包含“\(query.trimmingCharacters(in: .whitespacesAndNewlines))”的联系人或消息。")
-                .font(.system(size: 13))
-                .foregroundStyle(RemoteIMStyle.textSecondary)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, 24)
     }
 }
 
@@ -3520,6 +3317,29 @@ struct ImagePreviewZoomModifier: ViewModifier {
     }
 }
 
+/// 保留完整图片比例，同时用同一张图片的柔化延展填满屏幕两侧。
+struct ImagePreviewBackdrop: View {
+    let filePath: String
+    let viewportSize: CGSize
+
+    var body: some View {
+        RemoteIMAsyncImage(filePath: filePath,
+                           maximumPointSize: viewportSize) { image in
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: viewportSize.width, height: viewportSize.height)
+                .blur(radius: 28)
+                .overlay(Color.black.opacity(0.16))
+                .clipped()
+        } placeholder: { _ in
+            Color.black
+        }
+        .frame(width: viewportSize.width, height: viewportSize.height)
+        .allowsHitTesting(false)
+    }
+}
+
 private struct FullScreenImagePreviewView: View {
     let presentation: PresentedRemoteIMImage
     let isExpanded: Bool
@@ -3546,6 +3366,13 @@ private struct FullScreenImagePreviewView: View {
                     .opacity(isExpanded ? 1 : 0)
                     .ignoresSafeArea()
                     .onTapGesture(perform: close)
+
+                if isExpanded {
+                    ImagePreviewBackdrop(
+                        filePath: presentation.item.localFilePath,
+                        viewportSize: geometry.size
+                    )
+                }
 
                 previewImage(frame: imageFrame, fittedSize: fittedSize,
                              viewportSize: geometry.size)

@@ -706,30 +706,9 @@ public enum RemoteIMVideoPreviewPolicy {
     }
 }
 
-public struct RemoteIMCredential: Equatable {
-    public let sdkAppID: Int
-    public let userSigSecretKey: String
-
-    public init(sdkAppID: Int, userSigSecretKey: String) {
-        self.sdkAppID = sdkAppID
-        self.userSigSecretKey = userSigSecretKey
-    }
-}
-
 public enum RemoteIMCredentialDefaults {
+    // SDK App ID 是公开标识；UserSig 签名密钥仅保存在服务端。
     public static let sdkAppID = 1_600_148_979
-    public static let userSigSecretKey = "aa18d554f5e4a235640745e98145e187977f87770b812b2b4f10ef032bd73861"
-
-    public static func resolvedCredential(sdkAppID _: Int?, secretKey _: String) -> RemoteIMCredential {
-        defaultCredential
-    }
-
-    private static var defaultCredential: RemoteIMCredential {
-        RemoteIMCredential(
-            sdkAppID: Self.sdkAppID,
-            userSigSecretKey: Self.userSigSecretKey
-        )
-    }
 }
 
 public enum RemoteIMLoginCredentialPolicy {

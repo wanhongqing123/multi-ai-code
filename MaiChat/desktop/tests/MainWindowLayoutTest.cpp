@@ -123,9 +123,6 @@ private slots:
     void leftNavigationRailIsResizableAndWider();
     void navigationIconsSitNearTopEdge();
     void removesRedundantChromeLabels();
-    void globalSearchFindsMatchesAcrossConversationsAndJumps();
-    void clickingFilteredConversationJumpsToItsSearchHit();
-    void globalSearchReportsNoResultWithLoadedScopeHint();
     void conversationListsUseDelegateItemsForSmoothScrolling();
     void selectedConversationRowReachesTheListEdge();
     void selectedConversationRowReachesTheListEdgeWithScrollBar();
@@ -133,9 +130,6 @@ private slots:
     void contactDirectoryStaysFlatUntilAGroupExists();
     void contactDirectoryShowsGroupsWithUngroupedLast();
     void clickingGroupHeaderCollapsesItsMembers();
-    void contactSearchLooksInsideCollapsedGroups();
-    void contactSearchHidesGroupsWithoutAnyHit();
-    void groupHeaderCountStaysTheGroupSizeWhileSearching();
     void rendersMarkdownMessageContent();
     void notificationClickPreservesWindowState_data();
     void notificationClickPreservesWindowState();
@@ -145,10 +139,9 @@ private slots:
     void restoresSubmittedApprovalStateFromDatabase();
     void authoritativeApprovalResolutionOverridesLateSentDecision();
     void copiesOriginalMarkdownFromMessageContextMenu();
-    void addContactButtonSitsBesideTheSearchBox();
+    void addContactButtonRemainsVisibleWithoutSearch();
     void navigationTextIsLeftAlignedAndContactsDoNotShowMessagePreview();
     void sectionTitleFollowsSelectedNavigation();
-    void contactSearchFiltersDirectoryFuzzily();
     void visibleContactsNavigationSwitchesMiddlePane();
     void navigationSelectionFollowsContentStackCurrentPage();
     void contactsDirectoryUsesSingleLineRows();
@@ -548,16 +541,12 @@ void MainWindowLayoutTest::listScrollBarsAreNarrowAndStillScrollableAcrossZoomLe
                  qPrintable(QStringLiteral("缩放 %1：联系人列表滚动条宽 %2px，期望约 %3px")
                                 .arg(zoom).arg(contactsBar->width()).arg(expected)));
         auto* contactsPane = window.findChild<QWidget*>(QStringLiteral("contactsDirectoryPane"));
-        auto* contactsSearch = window.findChild<QLineEdit*>(QStringLiteral("contactsSearchBox"));
         QVERIFY(contactsPane != nullptr);
-        QVERIFY(contactsSearch != nullptr);
         const int barRight = contactsBar->mapTo(contactsPane, QPoint(contactsBar->width(), 0)).x();
-        const int searchRight = contactsSearch->mapTo(contactsPane, QPoint(contactsSearch->width(), 0)).x();
         const int trailingGap = contactsPane->width() - barRight;
         QVERIFY2(trailingGap <= 1,
                  qPrintable(QStringLiteral("缩放 %1：联系人滚动条到分割线仍有 %2px 空隙")
                                 .arg(zoom).arg(trailingGap)));
-        QVERIFY(contactsPane->width() - searchRight >= 8);
         contactsBar->setValue(contactsBar->minimum());
         QCoreApplication::processEvents();
         QVERIFY2(dragScrollBarHandle(contactsBar, 120),
@@ -2028,12 +2017,10 @@ void MainWindowLayoutTest::agentSettingsDialogUsesMaiChatVisualStyle() {
     QTimer::singleShot(100, [&] {
         auto* dialog = window.findChild<QDialog*>(QStringLiteral("agentModelDialog"));
         if (dialog == nullptr) return;
-        auto* title = dialog->findChild<QLabel*>(QStringLiteral("agentModelTitle"));
-        auto* subtitle = dialog->findChild<QLabel*>(QStringLiteral("agentModelSubtitle"));
         auto* cancel = dialog->findChild<QPushButton*>(QStringLiteral("agentModelCancel"));
         auto* save = dialog->findChild<QPushButton*>(QStringLiteral("agentModelSave"));
-        verified = title != nullptr && subtitle != nullptr && cancel != nullptr &&
-                   save != nullptr && dialog->minimumWidth() > 400;
+        verified = dialog->windowTitle() == QStringLiteral("配置 AI 助手模型") &&
+                   cancel != nullptr && save != nullptr && dialog->minimumWidth() > 400;
         dialog->reject();
     });
     button->click();
@@ -2505,7 +2492,7 @@ void MainWindowLayoutTest::copiesOriginalMarkdownFromMessageContextMenu() {
     QCOMPARE(QApplication::clipboard()->text(), markdown);
 }
 
-void MainWindowLayoutTest::addContactButtonSitsBesideTheSearchBox() {
+void MainWindowLayoutTest::addContactButtonRemainsVisibleWithoutSearch() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
     app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
@@ -2515,16 +2502,20 @@ void MainWindowLayoutTest::addContactButtonSitsBesideTheSearchBox() {
     const QList<QPushButton*> addButtons = window.findChildren<QPushButton*>(QStringLiteral("addConversationButton"));
 
     QVERIFY(navRail != nullptr);
-    // 全窗口只能有一个「添加联系人」：之前它在导航栏，现在移到搜索框旁边，
-    // 两处都留着就会出现两个入口。
+    // 去掉手动搜索后，添加联系人入口仍应保留在会话栏。
     QCOMPARE(addButtons.size(), 1);
     QVERIFY2(addButtons.first()->parentWidget() != navRail,
              "加号已从导航栏移出，不该还挂在导航栏上");
 
-    // 和搜索框同一个父级、同一行：这是「放到搜索旁边」的可验证含义。
+    auto* conversations = window.findChild<QListWidget*>(QStringLiteral("conversationList"));
     auto* search = window.findChild<QLineEdit*>(QStringLiteral("globalSearchBox"));
+    auto* contactsSearch = window.findChild<QLineEdit*>(QStringLiteral("contactsSearchBox"));
+    QVERIFY(conversations != nullptr);
     QVERIFY(search != nullptr);
-    QCOMPARE(addButtons.first()->parentWidget(), search->parentWidget());
+    QVERIFY(contactsSearch != nullptr);
+    QCOMPARE(addButtons.first()->parentWidget(), conversations->parentWidget());
+    QVERIFY(search->isHidden());
+    QVERIFY(contactsSearch->isHidden());
 }
 
 void MainWindowLayoutTest::navigationTextIsLeftAlignedAndContactsDoNotShowMessagePreview() {
@@ -2573,19 +2564,17 @@ void MainWindowLayoutTest::sectionTitleFollowsSelectedNavigation() {
     auto* conversationList = window.findChild<QListWidget*>(QStringLiteral("conversationList"));
     auto* contactsList = window.findChild<QListWidget*>(QStringLiteral("contactsList"));
 
-    // 两页的标题文字都已被各自的搜索框取代，所以这里要求它们不存在。
+    // 导航图标已经取代旧标题；手动搜索入口也不再显示。
     QVERIFY2(messagesTitle == nullptr, "消息页的标题应当已被搜索行取代");
     QVERIFY2(contactsTitle == nullptr, "通讯录页的标题应当已被搜索框取代");
     for (QLabel* label : labels) {
         QVERIFY2(label->text() != QStringLiteral("通讯录"), "不该再有「通讯录」这行标题文字");
     }
     auto* search = window.findChild<QLineEdit*>(QStringLiteral("globalSearchBox"));
-    QVERIFY2(search != nullptr && search->parentWidget() == conversationList->parentWidget(),
-             "搜索框应当就在会话列表这一列的头部");
+    QVERIFY2(search != nullptr && search->isHidden(), "会话搜索入口应隐藏");
     auto* contactsSearch = window.findChild<QLineEdit*>(QStringLiteral("contactsSearchBox"));
-    QVERIFY2(contactsSearch != nullptr
-                 && contactsSearch->parentWidget() == contactsList->parentWidget(),
-             "通讯录搜索框应当就在联系人列表这一列的头部");
+    QVERIFY2(contactsSearch != nullptr && contactsSearch->isHidden(),
+             "通讯录搜索入口应隐藏");
     QVERIFY(contactsNavButton != nullptr);
     QVERIFY(contentStack != nullptr);
     QVERIFY(contactsPage != nullptr);
@@ -2602,63 +2591,6 @@ void MainWindowLayoutTest::sectionTitleFollowsSelectedNavigation() {
 
 // 通讯录页的搜索框必须搜联系人（而不是搜消息），且要和消息搜索一样容错：
 // 严格 contains 的话，备注名记岔一个字就什么都搜不出来。
-void MainWindowLayoutTest::contactSearchFiltersDirectoryFuzzily() {
-    auto client = std::make_unique<FakeRemoteIMClient>();
-    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
-    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone 手机"));
-    app.addContact(QStringLiteral("mac-agent"), QStringLiteral("Mac 构建机"));
-    app.addContact(QStringLiteral("desk-01"), QStringLiteral("台式机"));
-
-    MainWindow window(app);
-    auto* contactsSearch = window.findChild<QLineEdit*>(QStringLiteral("contactsSearchBox"));
-    auto* contactsList = window.findChild<QListWidget*>(QStringLiteral("contactsList"));
-    QVERIFY(contactsSearch != nullptr);
-    QVERIFY(contactsList != nullptr);
-    QCOMPARE(contactsList->count(), 3);
-
-    auto visibleNames = [contactsList] {
-        QStringList names;
-        for (int row = 0; row < contactsList->count(); ++row) {
-            if (contactsList->item(row)->isHidden()) continue;
-            names << contactsList->item(row)->data(Qt::UserRole + 1).toString();
-        }
-        names.sort();
-        return names;
-    };
-
-    QCOMPARE(visibleNames().size(), 3);
-
-    // 原样子串。
-    contactsSearch->setText(QStringLiteral("Mac"));
-    QCOMPARE(visibleNames(), QStringList{QStringLiteral("Mac 构建机")});
-
-    // 子序列：「构机」在「Mac 构建机」里按顺序出现但中间隔了字。
-    // 这一条正是严格匹配会漏掉的，也是这个测试真正要守住的行为。
-    contactsSearch->setText(QStringLiteral("构机"));
-    QCOMPARE(visibleNames(), QStringList{QStringLiteral("Mac 构建机")});
-
-    // 备注名里没有「desk」，只有 userId 有——ID 也要能搜。
-    contactsSearch->setText(QStringLiteral("desk"));
-    QCOMPARE(visibleNames(), QStringList{QStringLiteral("台式机")});
-
-    // 谁都不像的词应当一条都不剩，而不是「搜不到就全给你」。
-    contactsSearch->setText(QStringLiteral("zzzz"));
-    QVERIFY(visibleNames().isEmpty());
-
-    // 清空恢复全部。
-    contactsSearch->clear();
-    QCOMPARE(visibleNames().size(), 3);
-
-    // 通讯录页按 Ctrl+F 应当聚焦到这个框，而不是消息页那个看不见的框。
-    auto* contactsNavButton = window.findChild<QPushButton*>(QStringLiteral("contactsNavButton"));
-    QVERIFY(contactsNavButton != nullptr);
-    window.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&window));
-    contactsNavButton->click();
-    QTest::keyClick(&window, Qt::Key_F, Qt::ControlModifier);
-    QTRY_VERIFY(contactsSearch->hasFocus());
-}
-
 void MainWindowLayoutTest::visibleContactsNavigationSwitchesMiddlePane() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
@@ -3297,155 +3229,14 @@ void MainWindowLayoutTest::ctrlShortcutsZoomWholeUi() {
 }
 
 
-// 搜索入口在顶栏，搜的是所有会话——所以这条必须跨两个会话验，
-// 只在当前会话里能搜到的话，把它放在顶栏就是误导。
-void MainWindowLayoutTest::globalSearchFindsMatchesAcrossConversationsAndJumps() {
-    auto client = std::make_unique<FakeRemoteIMClient>();
-    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
-    app.addContact(QStringLiteral("peer-a"), QStringLiteral("Alice"));
-    app.addContact(QStringLiteral("peer-b"), QStringLiteral("Bob"));
-
-    MainWindow window(app);
-    auto* editor = window.findChild<QTextEdit*>(QStringLiteral("messageEditor"));
-    auto* sendButton = window.findChild<QPushButton*>(QStringLiteral("sendButton"));
-    QVERIFY(editor != nullptr);
-    QVERIFY(sendButton != nullptr);
-
-    app.selectPeer(QStringLiteral("peer-a"));
-    editor->setPlainText(QStringLiteral("构建失败了，看下 CMake"));
-    sendButton->click();
-    app.selectPeer(QStringLiteral("peer-b"));
-    editor->setPlainText(QStringLiteral("cmake 已经修好"));
-    sendButton->click();
-    editor->setPlainText(QStringLiteral("与关键词无关的一条"));
-    sendButton->click();
-
-    auto* search = window.findChild<QLineEdit*>(QStringLiteral("globalSearchBox"));
-    auto* results = window.findChild<QListWidget*>(QStringLiteral("globalSearchResults"));
-    QVERIFY(search != nullptr);
-    QVERIFY(results != nullptr);
-    QVERIFY(results->isHidden());
-
-    // 搜索是防抖的：输入后要等停顿才真正执行，所以这里必须等，不能同步断言。
-    // 防抖本身是为了不让每次按键都去扫所有会话，卡顿就是那样来的。
-    search->setText(QStringLiteral("cmake"));
-    QTRY_VERIFY(!results->isHidden());
-    QTRY_COMPARE(results->count(), 2);
-
-    // 左边的会话列表不能被清空：这两个会话都含命中，虽然它们的名字和
-    // 最后一条预览都不含关键词。否则右边列着结果、左边一片空白，自相矛盾。
-    auto* conversationList = window.findChild<QListWidget*>(QStringLiteral("conversationList"));
-    QVERIFY(conversationList != nullptr);
-    int visibleConversations = 0;
-    for (int i = 0; i < conversationList->count(); ++i) {
-        if (!conversationList->item(i)->isHidden()) ++visibleConversations;
-    }
-    QCOMPARE(visibleConversations, 2);
-
-    // 结果里要能看出各自属于哪个会话，否则跨会话的结果混在一起没法用。
-    QStringList shown;
-    for (int i = 0; i < results->count(); ++i) shown << results->item(i)->text();
-    QVERIFY(shown.filter(QStringLiteral("Alice")).size() == 1);
-    QVERIFY(shown.filter(QStringLiteral("Bob")).size() == 1);
-
-    // 点 Alice 那条：应当切回 peer-a 并高亮那一行。当前选中的是 peer-b，
-    // 所以这条同时验证了「跨会话跳转」。
-    QCOMPARE(app.chatState().selectedPeerId(), QStringLiteral("peer-b"));
-    QListWidgetItem* target = nullptr;
-    for (int i = 0; i < results->count(); ++i) {
-        if (results->item(i)->text().contains(QStringLiteral("Alice"))) target = results->item(i);
-    }
-    QVERIFY(target != nullptr);
-    emit results->itemClicked(target);
-
-    QCOMPARE(app.chatState().selectedPeerId(), QStringLiteral("peer-a"));
-    QVERIFY(results->isHidden());
-    // 跳转要等下一轮事件循环（切会话会整屏重建气泡），所以这里用 QTRY。
-    QTRY_COMPARE(highlightedRowCount(window), 1);
-}
-
-// 搜不到时必须说清范围：没点过「加载更早」的历史不在内存里，也就搜不到。
-// 只显示「无结果」会让人以为这句话从没说过。
-// 搜索把左列过滤成「有命中的会话」之后，点其中一个必须直接落到命中那条消息。
-// 此前只有右侧结果面板会跳，左列点进去只是打开会话——筛出来了还得自己找。
-void MainWindowLayoutTest::clickingFilteredConversationJumpsToItsSearchHit() {
-    auto client = std::make_unique<FakeRemoteIMClient>();
-    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
-    app.addContact(QStringLiteral("peer-a"), QStringLiteral("Peer A"));
-    app.addContact(QStringLiteral("peer-b"), QStringLiteral("Peer B"));
-    // peer-b 里夹一条不相关的，确保跳的是命中那条而不是最后一条。
-    app.chatState().receiveText(QStringLiteral("peer-b"), QStringLiteral("水管漏了要修"));
-    app.chatState().receiveText(QStringLiteral("peer-b"), QStringLiteral("构建失败在链接那步"));
-    app.chatState().receiveText(QStringLiteral("peer-b"), QStringLiteral("今天天气不错"));
-    app.selectPeer(QStringLiteral("peer-a"));
-
-    MainWindow window(app);
-    window.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&window));
-
-    auto* search = window.findChild<QLineEdit*>(QStringLiteral("globalSearchBox"));
-    auto* conversationList = window.findChild<QListWidget*>(QStringLiteral("conversationList"));
-    QVERIFY(search != nullptr);
-    QVERIFY(conversationList != nullptr);
-    QCOMPARE(highlightedRowCount(window), 0);
-
-    search->setText(QStringLiteral("构建失败"));
-    // 搜索有 150ms 防抖，过滤要等它跑完。
-    QTRY_VERIFY(conversationList->count() > 0);
-
-    int targetRow = -1;
-    for (int row = 0; row < conversationList->count(); ++row) {
-        QListWidgetItem* item = conversationList->item(row);
-        if (item->isHidden()) continue;
-        if (item->data(Qt::UserRole).toString() == QStringLiteral("peer-b")) targetRow = row;
-    }
-    QVERIFY2(targetRow >= 0, "有命中的会话必须留在过滤后的左列里");
-
-    conversationList->setCurrentRow(targetRow);
-    QCOMPARE(app.chatState().selectedPeerId(), QStringLiteral("peer-b"));
-    // 定位延后到事件循环下一轮，所以用 QTRY。
-    QTRY_COMPARE(highlightedRowCount(window), 1);
-}
-
-void MainWindowLayoutTest::globalSearchReportsNoResultWithLoadedScopeHint() {
-    auto client = std::make_unique<FakeRemoteIMClient>();
-    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
-    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
-
-    MainWindow window(app);
-    auto* editor = window.findChild<QTextEdit*>(QStringLiteral("messageEditor"));
-    auto* sendButton = window.findChild<QPushButton*>(QStringLiteral("sendButton"));
-    QVERIFY(editor != nullptr);
-    QVERIFY(sendButton != nullptr);
-    editor->setPlainText(QStringLiteral("只有这一条"));
-    sendButton->click();
-
-    auto* search = window.findChild<QLineEdit*>(QStringLiteral("globalSearchBox"));
-    auto* results = window.findChild<QListWidget*>(QStringLiteral("globalSearchResults"));
-    QVERIFY(search != nullptr);
-    QVERIFY(results != nullptr);
-
-    search->setText(QStringLiteral("不存在的关键词"));
-    QTRY_COMPARE(results->count(), 1);
-    const QString hint = results->item(0)->text();
-    QVERIFY(hint.contains(QStringLiteral("无结果")));
-    QVERIFY(hint.contains(QStringLiteral("已加载")));
-    // 提示项不能被点开——它不对应任何消息。
-    QVERIFY(!results->item(0)->flags().testFlag(Qt::ItemIsSelectable));
-
-    // 清空输入立即收起面板，不走防抖——没人愿意清空后还要等 150ms 才恢复。
-    search->clear();
-    QVERIFY(results->isHidden());
-}
-
 namespace {
 
 // 通讯录列表的一行：要么是分组表头，要么是联系人。
 struct DirectoryRow {
     bool isHeader = false;
-    QString text;    // 表头是分组名，联系人是显示名
-    QString group;   // 所属/所指分组，空串 = 未分组
-    int count = 0;   // 仅表头有意义
+    QString text;
+    QString group;
+    int count = 0;
     bool hidden = false;
 };
 
@@ -3464,12 +3255,12 @@ QList<DirectoryRow> readDirectory(QListWidget* list) {
     return rows;
 }
 
-// 只保留没被过滤掉的行，写断言时不必跟着隐藏行数数。
 QStringList visibleLabels(QListWidget* list) {
     QStringList labels;
     for (const DirectoryRow& row : readDirectory(list)) {
         if (row.hidden) continue;
-        labels.append(row.isHeader ? QStringLiteral("[%1 %2]").arg(row.text).arg(row.count) : row.text);
+        labels.append(row.isHeader ? QStringLiteral("[%1 %2]").arg(row.text).arg(row.count)
+                                   : row.text);
     }
     return labels;
 }
@@ -3480,14 +3271,12 @@ QListWidget* openContactsPage(MainWindow& window) {
     return window.findChild<QListWidget*>(QStringLiteral("contactsList"));
 }
 
-// 找到某个分组表头当前所在的行。列表每次刷新都会重建，不能缓存这个下标。
 int headerRowOf(QListWidget* list, const QString& groupName) {
     for (int index = 0; index < list->count(); ++index) {
         QListWidgetItem* item = list->item(index);
-        if (item->data(Qt::UserRole + 8).toBool()
-            && item->data(Qt::UserRole + 9).toString() == groupName) {
+        if (item->data(Qt::UserRole + 8).toBool() &&
+            item->data(Qt::UserRole + 9).toString() == groupName)
             return index;
-        }
     }
     return -1;
 }
@@ -3558,83 +3347,6 @@ void MainWindowLayoutTest::clickingGroupHeaderCollapsesItsMembers() {
 
     emit list->itemClicked(list->item(headerRowOf(list, QStringLiteral("同事"))));
     QCOMPARE(visibleLabels(list), QStringList({"[同事 1]", "Alice", "Bob"}));
-}
-
-void MainWindowLayoutTest::contactSearchLooksInsideCollapsedGroups() {
-    auto client = std::make_unique<FakeRemoteIMClient>();
-    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
-    app.addContact(QStringLiteral("alice"), QStringLiteral("Alice"));
-    app.addContact(QStringLiteral("bob"), QStringLiteral("Bob"));
-    QVERIFY(app.createContactGroup(QStringLiteral("同事")));
-    app.setContactGroup(QStringLiteral("alice"), QStringLiteral("同事"));
-
-    MainWindow window(app);
-    QListWidget* list = openContactsPage(window);
-    QVERIFY(list != nullptr);
-    emit list->itemClicked(list->item(headerRowOf(list, QStringLiteral("同事"))));
-    QCOMPARE(visibleLabels(list), QStringList({"[同事 1]", "Bob"}));
-
-    auto* search = window.findChild<QLineEdit*>(QStringLiteral("contactsSearchBox"));
-    QVERIFY(search != nullptr);
-    search->setText(QStringLiteral("Alice"));
-
-    // 命中的人藏在收起的分组里不显示，看上去就是「搜不到」。搜索必须无视折叠。
-    QCOMPARE(visibleLabels(list), QStringList({"[同事 1]", "Alice"}));
-
-    // 清空搜索后回到收起状态，折叠不会因为搜过一次就丢了。
-    search->clear();
-    QCOMPARE(visibleLabels(list), QStringList({"[同事 1]", "Bob"}));
-}
-
-void MainWindowLayoutTest::contactSearchHidesGroupsWithoutAnyHit() {
-    auto client = std::make_unique<FakeRemoteIMClient>();
-    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
-    app.addContact(QStringLiteral("alice"), QStringLiteral("Alice"));
-    app.addContact(QStringLiteral("bob"), QStringLiteral("Bob"));
-    QVERIFY(app.createContactGroup(QStringLiteral("同事")));
-    QVERIFY(app.createContactGroup(QStringLiteral("家人")));
-    app.setContactGroup(QStringLiteral("alice"), QStringLiteral("同事"));
-
-    MainWindow window(app);
-    QListWidget* list = openContactsPage(window);
-    QVERIFY(list != nullptr);
-
-    auto* search = window.findChild<QLineEdit*>(QStringLiteral("contactsSearchBox"));
-    QVERIFY(search != nullptr);
-    search->setText(QStringLiteral("Alice"));
-
-    // 一个命中都没有的分组，表头也要藏掉，否则结果里全是空标题。
-    QCOMPARE(visibleLabels(list), QStringList({"[同事 1]", "Alice"}));
-
-    // Bob 没有分组：搜到他时，两个分组的表头都该消失，
-    // 不能因为他排在分组后面就把上一个分组的标题留下来。
-    search->setText(QStringLiteral("Bob"));
-    QCOMPARE(visibleLabels(list), QStringList({"Bob"}));
-}
-
-void MainWindowLayoutTest::groupHeaderCountStaysTheGroupSizeWhileSearching() {
-    auto client = std::make_unique<FakeRemoteIMClient>();
-    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
-    app.addContact(QStringLiteral("alice"), QStringLiteral("Alice"));
-    app.addContact(QStringLiteral("amy"), QStringLiteral("Amy"));
-    app.addContact(QStringLiteral("bob"), QStringLiteral("Bob"));
-    QVERIFY(app.createContactGroup(QStringLiteral("同事")));
-    app.setContactGroup(QStringLiteral("alice"), QStringLiteral("同事"));
-    app.setContactGroup(QStringLiteral("amy"), QStringLiteral("同事"));
-
-    MainWindow window(app);
-    QListWidget* list = openContactsPage(window);
-    QVERIFY(list != nullptr);
-    QCOMPARE(visibleLabels(list), QStringList({"[同事 2]", "Alice", "Amy", "Bob"}));
-
-    auto* search = window.findChild<QLineEdit*>(QStringLiteral("contactsSearchBox"));
-    QVERIFY(search != nullptr);
-    search->setText(QStringLiteral("Alice"));
-
-    // 只有 Alice 命中，但标题上的数字仍然是 2。
-    // 那个数字说的是「这个分组有几个人」，不是「搜到了几个」——
-    // 跟着搜索变的话，一边搜一边看，分组的人数就成了会跳的数字。
-    QCOMPARE(visibleLabels(list), QStringList({"[同事 2]", "Alice"}));
 }
 
 void MainWindowLayoutTest::videoCoverRetainsPhysicalPixels() {

@@ -28,9 +28,16 @@ final class MobileMediaTools {
         String action = arguments.optString("action", "").trim();
         if (action.isEmpty()) throw new IllegalArgumentException("缺少播放命令 action");
         double percent = arguments.optDouble("percent", -1);
+        double speed = arguments.optDouble("speed", -1);
+        double seconds = arguments.optDouble("seconds", -1);
         if (action.equals("seek_percent") && (percent < 0 || percent > 100))
             throw new IllegalArgumentException("percent 需要在 0 到 100 之间");
-        if (!onUi(() -> activity.commandAgentVideo(action, percent)))
+        if (action.equals("seek_seconds") && (!Double.isFinite(seconds) || seconds < 0))
+            throw new IllegalArgumentException("seconds 必须是非负的源视频秒数");
+        if (action.equals("set_speed") && speed != 0.25 && speed != 0.5 &&
+            speed != 1.0 && speed != 1.5 && speed != 2.0)
+            throw new IllegalArgumentException("speed 只支持 0.25、0.5、1、1.5、2");
+        if (!onUi(() -> activity.commandAgentVideo(action, percent, speed, seconds)))
             throw new IllegalStateException("播放命令不可用或没有打开的视频");
         return new JSONObject().put("accepted", true);
     }

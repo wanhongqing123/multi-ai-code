@@ -37,6 +37,7 @@ final class AIMobileHostToolProvider {
         }
 
         switch name {
+        case "mobile_export_diagnostics": return await exportDiagnostics()
         case "mobile_request_permission": return await requestSystemPermission(arguments)
         case "mobile_get_location": return await getCurrentLocation()
         case "mobile_list_contacts": return await listSystemContacts(arguments)
@@ -79,9 +80,7 @@ final class AIMobileHostToolProvider {
         case "ark_api_key":
             return Self.jsonSuccess(["key": AICloudCredentialStore.shared.key("ark")])
         case "glm_api_key":
-            let video = AICloudCredentialStore.shared.key("glm_video")
-            let main = AICloudCredentialStore.shared.key("glm")
-            return Self.jsonSuccess(["key": video.isEmpty ? main : video])
+            return Self.jsonSuccess(["key": AICloudCredentialStore.shared.key("glm")])
         case "minimax_api_key":
             return Self.jsonSuccess(["key": AICloudCredentialStore.shared.key("minimax")])
         case "wan_credentials":
@@ -108,7 +107,10 @@ final class AIMobileHostToolProvider {
         case "maichat_video_command":
             let action = Self.string(arguments, key: "action")
             let percent = arguments["percent"] as? Double
-            guard MaiFfplayMobilePlayer.command(action, percent: percent) else {
+            let speed = arguments["speed"] as? Double
+            let seconds = arguments["seconds"] as? Double
+            guard MaiFfplayMobilePlayer.command(action, percent: percent,
+                                                speed: speed, seconds: seconds) else {
                 let reason = MaiFfplayMobilePlayer.unavailableReason
                 AppDiagnosticLog.shared.record(level: .warning, category: "ffplay",
                     event: "video-command-unavailable", fields: [
@@ -153,6 +155,40 @@ final class AIMobileHostToolProvider {
 
     static func string(_ arguments: [String: Any], key: String) -> String {
         (arguments[key] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private func exportDiagnostics() async -> AIMaiChatHostToolExecution {
+        let workspacePath = AIAssistantModel.shared.workspacePath
+        guard !workspacePath.isEmpty else {
+            return .failure(code: "not_configured", message: "Agent workspace is unavailable")
+        }
+        let fileName = "maichat-diagnostics-\(UUID().uuidString.lowercased()).txt"
+        guard let destination = AIAssistantPathPolicy.resolve(
+            fileName, workspacePath: workspacePath
+        ), !FileManager.default.fileExists(atPath: destination.path) else {
+            return .failure(code: "internal", message: "Could not create a new diagnostic file")
+        }
+        do {
+            // 复用原有脱敏快照，再复制到 Agent 工作区；模型只收到路径和大小。
+            let source = try await AppDiagnosticLog.shared.makeExportSnapshot()
+            let workspace = URL(fileURLWithPath: workspacePath, isDirectory: true)
+            try FileManager.default.createDirectory(
+                at: workspace, withIntermediateDirectories: true
+            )
+            try FileManager.default.copyItem(at: source, to: destination)
+            let attributes = try FileManager.default.attributesOfItem(atPath: destination.path)
+            let bytes = (attributes[.size] as? NSNumber)?.intValue ?? 0
+            guard bytes > 0, bytes <= 20 * 1024 * 1024 else {
+                try? FileManager.default.removeItem(at: destination)
+                return .failure(code: "internal", message: "Diagnostic export is empty or too large")
+            }
+            return Self.jsonSuccess([
+                "path": fileName, "mime_type": "text/plain", "bytes": bytes
+            ])
+        } catch {
+            try? FileManager.default.removeItem(at: destination)
+            return .failure(code: "internal", message: error.localizedDescription)
+        }
     }
 
     private func gpuInfo() -> AIMaiChatHostToolExecution {

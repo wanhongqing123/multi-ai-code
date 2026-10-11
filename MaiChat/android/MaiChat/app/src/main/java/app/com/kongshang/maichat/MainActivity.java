@@ -46,6 +46,7 @@ import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.webkit.WebView;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
@@ -170,13 +171,16 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private boolean loginSubmitting;
     private String loginError = "";
     private String loginUserDraft = "";
-    private String contactSearchQuery = "";
-    private String conversationSearchQuery = "";
-    private List<RemoteIMMessageSearchHit> messageSearchResults = Collections.emptyList();
-    private boolean messageSearchLoading;
-    private int messageSearchGeneration;
+    private String loginCodeDraft = "";
+    private String loginPasswordDraft = "";
+    private String loginChallengeId = "";
+    private boolean loginUsesPassword;
+    private boolean loginAcceptedTerms;
+    private boolean loginConfirmedAge;
+    private static final String TERMS_URL = "https://ichat.life/legal/terms.html";
+    private static final String PRIVACY_URL = "https://ichat.life/legal/privacy.html";
+    private static final String CHILDREN_URL = "https://ichat.life/legal/children.html";
     private LinearLayout currentConversationRows;
-    private final ExecutorService messageSearchExecutor = Executors.newSingleThreadExecutor();
     private String pendingNotificationPeerUserId = "";
     private volatile boolean activityInForeground;
     private final Set<String> collapsedContactGroups = new HashSet<>();
@@ -253,7 +257,6 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         if (diagnostics != null) diagnostics.close();
         stopAudioPlayback();
         cancelVoiceRecording();
-        messageSearchExecutor.shutdownNow();
         mediaExecutor.shutdown();
         if (voiceRecorder != null) voiceRecorder.close();
         if (voicePlayback != null) voicePlayback.close();
@@ -313,7 +316,15 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                     loginError = session.connectionDetail();
                 }
             }
-            if (!session.isRestoringAccount() && !session.requiresLogin() && !loginSubmitting) showInitialLogin = false;
+            if (!session.isRestoringAccount() && session.requiresLogin()) {
+                if (!showInitialLogin) {
+                    loginAcceptedTerms = false;
+                    loginConfirmedAge = false;
+                }
+                showInitialLogin = true;
+            } else if (!session.isRestoringAccount() && !loginSubmitting) {
+                showInitialLogin = false;
+            }
             renderPreservingInput();
         });
     }
@@ -692,33 +703,69 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         FrameLayout.LayoutParams formParams = new FrameLayout.LayoutParams(
             formWidth,
             ViewGroup.LayoutParams.WRAP_CONTENT,
-            Gravity.CENTER
+            Gravity.TOP | Gravity.CENTER_HORIZONTAL
         );
+        formParams.topMargin = Math.max(dp(80),
+            Math.round(getResources().getDisplayMetrics().heightPixels * 0.18f));
         page.addView(form, formParams);
 
         ImageView icon = new ImageView(this);
         icon.setImageResource(getApplicationInfo().icon);
         icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        form.addView(icon, new LinearLayout.LayoutParams(dp(64), dp(64)));
+        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(92), dp(92));
+        iconParams.setMargins(0, 0, 0, dp(70));
+        form.addView(icon, iconParams);
 
-        TextView title = MaiChatTheme.label(this, "欢迎使用 MaiChat", 20, MaiChatTheme.TEXT);
-        title.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams titleParams = wrapWrap();
-        titleParams.setMargins(0, dp(12), 0, dp(28));
-        form.addView(title, titleParams);
-
+        LinearLayout phoneRow = new LinearLayout(this);
+        phoneRow.setGravity(Gravity.CENTER_VERTICAL);
+        phoneRow.setPadding(dp(18), 0, dp(18), 0);
+        phoneRow.setBackground(MaiChatTheme.rounded(Color.rgb(247, 248, 250), 30, this));
+        TextView prefix = MaiChatTheme.label(this, "+86", 18, MaiChatTheme.SECONDARY);
+        phoneRow.addView(prefix, wrapWrap());
+        View divider = new View(this);
+        divider.setBackgroundColor(MaiChatTheme.BORDER);
+        LinearLayout.LayoutParams dividerParams = new LinearLayout.LayoutParams(dp(1), dp(24));
+        dividerParams.setMargins(dp(15), 0, dp(15), 0);
+        phoneRow.addView(divider, dividerParams);
         EditText account = new EditText(this);
         account.setSingleLine(true);
-        account.setTextSize(15);
-        account.setHint("请输入登录账号");
+        account.setTextSize(17);
+        account.setHint("输入手机号");
+        account.setInputType(android.text.InputType.TYPE_CLASS_PHONE);
         account.setTextColor(MaiChatTheme.TEXT);
         account.setHintTextColor(Color.rgb(100, 116, 139));
-        account.setPadding(dp(14), 0, dp(14), 0);
-        account.setBackground(MaiChatTheme.bordered(Color.WHITE, MaiChatTheme.BORDER, 10, this));
-        account.setImeOptions(EditorInfo.IME_ACTION_GO);
+        account.setPadding(0, 0, 0, 0);
+        account.setBackgroundColor(Color.TRANSPARENT);
+        account.setImeOptions(EditorInfo.IME_ACTION_DONE);
         account.setText(loginUserDraft);
         account.setSelection(account.length());
-        form.addView(account, match(dp(46)));
+        phoneRow.addView(account, new LinearLayout.LayoutParams(0, dp(58), 1));
+        form.addView(phoneRow, match(dp(58)));
+
+        EditText challengeInput = null;
+        if (!loginChallengeId.isEmpty() || loginUsesPassword) {
+            challengeInput = new EditText(this);
+            challengeInput.setSingleLine(true);
+            challengeInput.setTextSize(16);
+            challengeInput.setHint(loginUsesPassword ? "输入登录密码" : "输入验证码");
+            challengeInput.setInputType(loginUsesPassword
+                ? android.text.InputType.TYPE_CLASS_TEXT
+                    | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+                : android.text.InputType.TYPE_CLASS_NUMBER);
+            challengeInput.setPadding(dp(18), 0, dp(18), 0);
+            challengeInput.setBackground(MaiChatTheme.rounded(
+                Color.rgb(247, 248, 250), 30, this));
+            challengeInput.setText(loginUsesPassword ? loginPasswordDraft : loginCodeDraft);
+            LinearLayout.LayoutParams inputParams = match(dp(58));
+            inputParams.setMargins(0, dp(16), 0, 0);
+            form.addView(challengeInput, inputParams);
+        }
+
+        TextView hint = MaiChatTheme.text(this, "目前仅支持中国大陆地区号码", 13,
+            MaiChatTheme.SECONDARY);
+        LinearLayout.LayoutParams hintParams = matchWrap();
+        hintParams.setMargins(dp(12), dp(14), 0, 0);
+        form.addView(hint, hintParams);
 
         TextView errorText = MaiChatTheme.label(this, loginError, 13, MaiChatTheme.RED);
         errorText.setGravity(Gravity.CENTER);
@@ -728,34 +775,90 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         form.addView(errorText, errorParams);
 
         Button login = new Button(this);
-        login.setText(loginSubmitting ? "登录中..." : "登录");
-        login.setTextSize(15);
+        login.setText(loginSubmitting ? "请稍候..." :
+            loginChallengeId.isEmpty() && !loginUsesPassword ? "获取验证码" : "登录");
+        login.setTextSize(18);
         login.setAllCaps(false);
         login.setGravity(Gravity.CENTER);
         login.setPadding(dp(12), 0, dp(12), 0);
-        LinearLayout.LayoutParams loginParams = match(dp(46));
-        loginParams.setMargins(0, dp(16), 0, 0);
+        LinearLayout.LayoutParams loginParams = match(dp(56));
+        loginParams.setMargins(0, dp(22), 0, 0);
         form.addView(login, loginParams);
 
+        CheckBox minimumAge = new CheckBox(this);
+        minimumAge.setText("我已年满 14 周岁");
+        minimumAge.setTextSize(12);
+        minimumAge.setTextColor(MaiChatTheme.SECONDARY);
+        minimumAge.setButtonTintList(android.content.res.ColorStateList.valueOf(
+            Color.rgb(42, 211, 142)));
+        minimumAge.setChecked(loginConfirmedAge);
+        LinearLayout.LayoutParams minimumAgeParams = matchWrap();
+        minimumAgeParams.setMargins(0, dp(16), 0, 0);
+        form.addView(minimumAge, minimumAgeParams);
+
+        CheckBox agreement = new CheckBox(this);
+        agreement.setText("已阅读并同意");
+        agreement.setTextSize(12);
+        agreement.setTextColor(MaiChatTheme.SECONDARY);
+        agreement.setButtonTintList(android.content.res.ColorStateList.valueOf(
+            Color.rgb(42, 211, 142)));
+        agreement.setChecked(loginAcceptedTerms);
+        LinearLayout legalRow = new LinearLayout(this);
+        legalRow.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams agreementParams = matchWrap();
+        agreementParams.setMargins(0, dp(4), 0, 0);
+        form.addView(legalRow, agreementParams);
+        legalRow.addView(agreement, wrapWrap());
+        TextView termsLink = MaiChatTheme.text(this, "《用户协议》", 12,
+            Color.rgb(42, 211, 142));
+        termsLink.setContentDescription("查看用户协议");
+        termsLink.setOnClickListener(view -> openLoginDocument(TERMS_URL));
+        legalRow.addView(termsLink, wrapWrap());
+        TextView privacyLink = MaiChatTheme.text(this, "《隐私政策》", 12,
+            Color.rgb(42, 211, 142));
+        privacyLink.setContentDescription("查看隐私政策");
+        privacyLink.setOnClickListener(view -> openLoginDocument(PRIVACY_URL));
+        legalRow.addView(privacyLink, wrapWrap());
+        TextView childrenLink = MaiChatTheme.text(this, "《儿童隐私保护声明》", 12,
+            Color.rgb(42, 211, 142));
+        childrenLink.setContentDescription("查看儿童隐私保护声明");
+        childrenLink.setOnClickListener(view -> openLoginDocument(CHILDREN_URL));
+        LinearLayout.LayoutParams childrenParams = matchWrap();
+        childrenParams.setMargins(dp(28), dp(2), 0, 0);
+        form.addView(childrenLink, childrenParams);
+
+        Button alternate = new Button(this);
+        alternate.setAllCaps(false);
+        alternate.setText(loginUsesPassword ? "验证码登录" :
+            loginChallengeId.isEmpty() ? "密码登录" : "重新获取");
+        alternate.setTextColor(Color.rgb(42, 211, 142));
+        alternate.setBackgroundColor(Color.TRANSPARENT);
+        LinearLayout.LayoutParams alternateParams = match(dp(42));
+        alternateParams.setMargins(0, dp(14), 0, 0);
+        form.addView(alternate, alternateParams);
+
         Runnable updateLoginAppearance = () -> {
-            boolean enabled = !loginSubmitting && !loginUserDraft.trim().isEmpty();
+            boolean enabled = !loginSubmitting && loginUserDraft.replaceAll("\\D", "").length() == 11
+                && loginAcceptedTerms && loginConfirmedAge
+                && (!loginUsesPassword || !loginPasswordDraft.isEmpty())
+                && (loginUsesPassword || loginChallengeId.isEmpty() || loginCodeDraft.length() == 6);
             login.setEnabled(enabled);
-            login.setTextColor(enabled ? Color.WHITE : Color.rgb(170, 180, 195));
+            login.setTextColor(Color.WHITE);
             login.setBackground(MaiChatTheme.rounded(
-                enabled ? Color.rgb(47, 129, 247) : Color.rgb(238, 241, 245),
-                10,
+                enabled ? Color.rgb(42, 211, 142) : Color.rgb(162, 233, 207),
+                30,
                 this
             ));
         };
         updateLoginAppearance.run();
-        account.setOnFocusChangeListener((view, focused) -> account.setBackground(
-            MaiChatTheme.bordered(
-                Color.WHITE,
-                focused ? Color.rgb(47, 129, 247) : MaiChatTheme.BORDER,
-                10,
-                this
-            )
-        ));
+        minimumAge.setOnCheckedChangeListener((button, checked) -> {
+            loginConfirmedAge = checked;
+            updateLoginAppearance.run();
+        });
+        agreement.setOnCheckedChangeListener((button, checked) -> {
+            loginAcceptedTerms = checked;
+            updateLoginAppearance.run();
+        });
         account.addTextChangedListener(new SimpleTextWatcher() {
             @Override
             public void afterTextChanged(Editable editable) {
@@ -764,26 +867,62 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                 updateLoginAppearance.run();
             }
         });
+        if (challengeInput != null) {
+            challengeInput.addTextChangedListener(new SimpleTextWatcher() {
+                @Override public void afterTextChanged(Editable editable) {
+                    if (loginUsesPassword) loginPasswordDraft = editable.toString();
+                    else loginCodeDraft = editable.toString();
+                    updateLoginAppearance.run();
+                }
+            });
+        }
         View.OnClickListener submit = view -> {
-            String userId = account.getText().toString().trim();
-            if (userId.isEmpty() || loginSubmitting) return;
+            String phone = account.getText().toString().trim();
+            if (phone.replaceAll("\\D", "").length() != 11 || loginSubmitting
+                || !loginAcceptedTerms || !loginConfirmedAge) return;
             loginSubmitting = true;
             loginError = "";
-            login.setText("登录中...");
+            login.setText("请稍候...");
             updateLoginAppearance.run();
-            try {
-                session.login(userId);
-                activeTab = RemoteIMTab.MESSAGES;
-            } catch (IOException failure) {
-                loginSubmitting = false;
-                loginError = "登录设置保存失败";
-                login.setText("登录");
-                updateLoginAppearance.run();
+            if (loginUsesPassword) {
+                session.loginWithAccountPassword(phone, loginPasswordDraft,
+                    loginConfirmedAge, error -> {
+                    loginSubmitting = false;
+                    loginError = error == null ? "" : error;
+                    if (error == null) showInitialLogin = false;
+                    render();
+                });
+            } else if (loginChallengeId.isEmpty()) {
+                session.requestAccountCode(phone, loginConfirmedAge, (challengeId, error) -> {
+                    loginSubmitting = false;
+                    loginError = error == null ? "" : error;
+                    if (error == null) loginChallengeId = challengeId;
+                    render();
+                });
+            } else {
+                session.loginWithAccountCode(phone, loginChallengeId, loginCodeDraft,
+                    loginConfirmedAge, error -> {
+                    loginSubmitting = false;
+                    loginError = error == null ? "" : error;
+                    if (error == null) showInitialLogin = false;
+                    render();
+                });
             }
         };
         login.setOnClickListener(submit);
+        alternate.setOnClickListener(view -> {
+            if (loginSubmitting) return;
+            if (!loginUsesPassword && !loginChallengeId.isEmpty()) {
+                loginChallengeId = "";
+            } else {
+                loginUsesPassword = !loginUsesPassword;
+                loginChallengeId = "";
+            }
+            loginError = "";
+            render();
+        });
         account.setOnEditorActionListener((view, actionId, event) -> {
-            if (actionId == EditorInfo.IME_ACTION_GO) {
+            if (actionId == EditorInfo.IME_ACTION_DONE) {
                 submit.onClick(view);
                 return true;
             }
@@ -791,6 +930,14 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         });
         page.requestFocus();
         content.addView(page, matchMatch());
+    }
+
+    private void openLoginDocument(String url) {
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+        } catch (android.content.ActivityNotFoundException error) {
+            toast("无法打开协议页面");
+        }
     }
 
     private View bottomTabBar() {
@@ -890,18 +1037,6 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
 
     private void renderConversationList() {
         content.addView(connectionHeader(), match(dp(42)));
-        EditText search = new EditText(this);
-        search.setSingleLine(true);
-        search.setHint("搜索联系人或全部消息");
-        search.setTextSize(14);
-        search.setPadding(dp(14), 0, dp(14), 0);
-        search.setBackground(MaiChatTheme.bordered(Color.WHITE, MaiChatTheme.BORDER, 10, this));
-        search.setText(conversationSearchQuery);
-        search.setSelection(search.length());
-        LinearLayout.LayoutParams searchParams = match(dp(42));
-        searchParams.setMargins(dp(16), dp(10), dp(16), dp(8));
-        content.addView(search, searchParams);
-
         ScrollView scroll = new ScrollView(this);
         LinearLayout rows = new LinearLayout(this);
         rows.setOrientation(LinearLayout.VERTICAL);
@@ -913,45 +1048,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             0,
             1
         ));
-        renderConversationRows(
-            rows,
-            conversationSearchQuery,
-            messageSearchResults,
-            messageSearchLoading
-        );
-        search.addTextChangedListener(new SimpleTextWatcher() {
-            @Override
-            public void afterTextChanged(Editable editable) {
-                String query = editable == null ? "" : editable.toString();
-                conversationSearchQuery = query;
-                int generation = ++messageSearchGeneration;
-                messageSearchResults = Collections.emptyList();
-                messageSearchLoading = !query.trim().isEmpty();
-                renderConversationRows(rows, query, messageSearchResults, messageSearchLoading);
-                if (!messageSearchLoading) return;
-
-                search.postDelayed(() -> messageSearchExecutor.execute(() -> {
-                    List<RemoteIMMessageSearchHit> hits = session.searchMessages(query, 100);
-                    runOnUiThread(() -> {
-                        if (destroyed
-                            || generation != messageSearchGeneration
-                            || !query.equals(conversationSearchQuery)) return;
-                        messageSearchResults = hits;
-                        messageSearchLoading = false;
-                        if (currentConversationRows != null
-                            && activeTab == RemoteIMTab.MESSAGES
-                            && activeChatUserId == null) {
-                            renderConversationRows(
-                                currentConversationRows,
-                                conversationSearchQuery,
-                                messageSearchResults,
-                                false
-                            );
-                        }
-                    });
-                }), 250);
-            }
-        });
+        renderConversationRows(rows, "", Collections.emptyList(), false);
     }
 
     private void renderConversationRows(
@@ -1260,7 +1357,13 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         remote.setOnClickListener(view -> {
             RemoteDesktopController controller = session.remoteDesktop();
             if (!controller.isActive()) {
-                controller.requestView(contact.userId(), session.settings().loginUserId(), session.currentUserSig());
+                if (session.currentSdkAppId() <= 0 || session.currentUserSig().isEmpty()) {
+                    session.retryConnection();
+                    toast("IM 凭证正在更新，请稍后重试");
+                    return;
+                }
+                controller.requestView(contact.userId(), session.settings().loginUserId(),
+                    session.currentSdkAppId(), session.currentUserSig());
             }
             activeChatUserId = null;
             activeTab = RemoteIMTab.REMOTE;
@@ -1847,10 +1950,10 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             1
         ));
 
-        renderContactRows(rows, contactSearchQuery);
+        renderContactRows(rows);
     }
 
-    private void renderContactRows(LinearLayout rows, String queryValue) {
+    private void renderContactRows(LinearLayout rows) {
         rows.removeAllViews();
         List<RemoteIMContact> contacts = session.chatState().contacts();
         List<String> groups = session.chatState().contactGroups();
@@ -1859,13 +1962,12 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             return;
         }
 
-        boolean searching = queryValue != null && !queryValue.trim().isEmpty();
         for (ContactGroupDisplayPolicy.Row row : ContactGroupDisplayPolicy.rows(
-            groups, contacts, collapsedContactGroups, queryValue
+            groups, contacts, collapsedContactGroups, ""
         )) {
             if (row.kind() == ContactGroupDisplayPolicy.Kind.GROUP_HEADER) {
                 rows.addView(contactGroupHeader(
-                    rows, row.groupName(), row.memberCount(), searching
+                    rows, row.groupName(), row.memberCount()
                 ), match(dp(42)));
             } else {
                 addContactRow(rows, row.contact(), row.isIndented());
@@ -1899,26 +2001,9 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private View contactToolbar(LinearLayout rows) {
         LinearLayout toolbar = new LinearLayout(this);
         toolbar.setOrientation(LinearLayout.HORIZONTAL);
-        toolbar.setGravity(Gravity.CENTER_VERTICAL);
+        toolbar.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
         toolbar.setPadding(dp(12), dp(4), dp(12), dp(4));
         toolbar.setBackgroundColor(Color.WHITE);
-        EditText search = new EditText(this);
-        search.setSingleLine(true);
-        search.setHint("搜索联系人");
-        search.setText(contactSearchQuery);
-        search.setSelection(search.length());
-        search.setTextSize(14);
-        search.setPadding(dp(12), 0, dp(12), 0);
-        search.setBackground(MaiChatTheme.bordered(MaiChatTheme.PAGE, MaiChatTheme.BORDER, 9, this));
-        LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(0, dp(42), 1);
-        toolbar.addView(search, searchParams);
-        search.addTextChangedListener(new SimpleTextWatcher() {
-            @Override
-            public void afterTextChanged(Editable editable) {
-                contactSearchQuery = editable.toString();
-                renderContactRows(rows, contactSearchQuery);
-            }
-        });
         TextView plus = iconButton("＋", 24, MaiChatTheme.BLUE_DARK);
         plus.setContentDescription("添加好友");
         plus.setOnClickListener(view -> showAddContactDialog());
@@ -1928,10 +2013,10 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         return toolbar;
     }
 
-    private View contactGroupHeader(LinearLayout rows, String group, int count, boolean searching) {
+    private View contactGroupHeader(LinearLayout rows, String group, int count) {
         TextView header = MaiChatTheme.label(
             this,
-            ((searching || !collapsedContactGroups.contains(group)) ? "⌄ " : "› ")
+            (!collapsedContactGroups.contains(group) ? "⌄ " : "› ")
                 + group + "  " + count,
             14,
             MaiChatTheme.TEXT
@@ -1941,7 +2026,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         header.setOnClickListener(view -> {
             if (collapsedContactGroups.contains(group)) collapsedContactGroups.remove(group);
             else collapsedContactGroups.add(group);
-            renderContactRows(rows, contactSearchQuery);
+            renderContactRows(rows);
         });
         header.setOnLongClickListener(view -> {
             showContactGroupActions(group);
@@ -2134,29 +2219,9 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         page.addView(settingsSection("账号", new String[][]{
             {"登录账号", session.settings().loginUserId()}
         }), matchWrap());
-        page.addView(settingsSection("IM 配置", new String[][]{
-            {"通信配置", "内置"},
-            {"连接凭证", "使用内置凭证"}
-        }), sectionParams());
         page.addView(settingsSection("连接", new String[][]{
             {"状态", connectionText()}
         }), sectionParams());
-
-        LinearLayout diagnostics = settingsSection("排障", new String[][]{});
-        TextView export = MaiChatTheme.label(this, "⇧  导出排障信息", 15, MaiChatTheme.BLUE_DARK);
-        export.setPadding(dp(12), 0, dp(12), 0);
-        export.setBackground(MaiChatTheme.bordered(Color.WHITE, MaiChatTheme.BORDER, 9, this));
-        export.setOnClickListener(view -> exportDiagnostics());
-        diagnostics.addView(export, match(dp(46)));
-        TextView note = MaiChatTheme.text(
-            this,
-            "导出内容只包含版本、连接状态与脱敏运行信息，不包含聊天正文、远程键盘内容或连接凭证。",
-            12,
-            MaiChatTheme.SECONDARY
-        );
-        note.setPadding(dp(2), dp(8), dp(2), 0);
-        diagnostics.addView(note, matchWrap());
-        page.addView(diagnostics, sectionParams());
 
         Button logout = secondaryButton("退出登录");
         logout.setTextColor(MaiChatTheme.RED);
@@ -2170,6 +2235,9 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             () -> {
                 try {
                     session.logout();
+                    loginAcceptedTerms = false;
+                    loginConfirmedAge = false;
+                    showInitialLogin = true;
                     activeTab = RemoteIMTab.MESSAGES;
                     activeChatUserId = null;
                     render();
@@ -3107,7 +3175,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         return true;
     }
 
-    public boolean commandAgentVideo(String action, double percent) {
+    public boolean commandAgentVideo(String action, double percent, double speed,
+                                     double seconds) {
         if (action.equals("close")) {
             if (videoDialog == null) return false;
             videoDialog.dismiss();
@@ -3115,8 +3184,10 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         }
         MaiFfplayVideoView video = MaiFfplayVideoView.activeView();
         if (video == null) return false;
-        return action.equals("seek_percent")
-            ? video.seekPercent(percent / 100.0) : video.command(action);
+        if (action.equals("seek_percent")) return video.seekPercent(percent / 100.0);
+        if (action.equals("seek_seconds")) return video.seekSeconds(seconds);
+        if (action.equals("set_speed")) return video.setSpeed(speed);
+        return video.command(action);
     }
 
     private View fileMessageContent(RemoteIMFileAttachment attachment) {
@@ -3143,6 +3214,16 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
         FrameLayout frame = new FrameLayout(this);
         frame.setBackgroundColor(Color.BLACK);
+        // 同一入口供 IM 与 AI 助手共用：背景铺满屏幕，前景仍完整显示原图。
+        MaiGraphicsImageView backdrop = new MaiGraphicsImageView(this);
+        backdrop.showImage(path, true, () -> { });
+        backdrop.setAlpha(0.48f);
+        if (Build.VERSION.SDK_INT >= 31) {
+            backdrop.setRenderEffect(android.graphics.RenderEffect.createBlurEffect(
+                dp(24), dp(24), android.graphics.Shader.TileMode.CLAMP));
+        }
+        frame.addView(backdrop, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         MaiGraphicsImageView image = new MaiGraphicsImageView(this);
         // 全屏预览直接绑定自己的 TextureView，与气泡使用不同的渲染目标。
         image.showImage(
@@ -3199,10 +3280,23 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                     return true;
             }
         });
-        frame.addView(image, new FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT
-        ));
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeFile(path, bounds);
+        FrameLayout.LayoutParams imageParams;
+        if (bounds.outWidth > 0 && bounds.outHeight > 0) {
+            android.util.DisplayMetrics display = getResources().getDisplayMetrics();
+            float fit = Math.min((float) display.widthPixels / bounds.outWidth,
+                (float) display.heightPixels / bounds.outHeight);
+            imageParams = new FrameLayout.LayoutParams(
+                Math.max(1, Math.round(bounds.outWidth * fit)),
+                Math.max(1, Math.round(bounds.outHeight * fit)), Gravity.CENTER);
+        } else {
+            imageParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT);
+        }
+        frame.addView(image, imageParams);
         TextView close = iconButton("×", 26, Color.WHITE);
         close.setBackground(MaiChatTheme.rounded(Color.argb(160, 0, 0, 0), 20, this));
         close.setOnClickListener(view -> dialog.dismiss());
@@ -3798,21 +3892,33 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         toast("已复制");
     }
 
-    private void exportDiagnostics() {
-        File report = new File(new File(getCacheDir(), "diagnostics"), "MaiChat-Android-diagnostics.txt");
+    public JSONObject exportDiagnosticsForAgent() throws Exception {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
+            throw new IllegalStateException("排障日志不能在 UI 线程导出");
+        if (diagnostics == null || destroyed)
+            throw new IllegalStateException("排障日志暂不可用");
+        File report = AIAssistantController.shared(this).workspaceDiagnosticOutputForHost();
         String header = "MaiChat Android\nversion=" + BuildConfig.VERSION_NAME
             + "\naccount=" + maskedAccount(session.settings().loginUserId())
             + "\nconnection=" + connectionText()
             + "\ncontacts=" + session.chatState().contacts().size()
             + "\nmessages_in_memory=" + session.chatState().messages().size() + "\n";
-        diagnostics.export(report, header, file -> {
-            if (destroyed) return;
-            Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".files", file);
-            Intent share = new Intent(Intent.ACTION_SEND);
-            share.setType("text/plain"); share.putExtra(Intent.EXTRA_STREAM, uri);
-            share.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            startActivity(Intent.createChooser(share, "导出 MaiChat 排障信息"));
-        }, () -> toast("排障信息导出失败"));
+        CountDownLatch finished = new CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicBoolean failed =
+            new java.util.concurrent.atomic.AtomicBoolean();
+        diagnostics.export(report, header, file -> finished.countDown(), () -> {
+            failed.set(true);
+            finished.countDown();
+        });
+        if (!finished.await(30, TimeUnit.SECONDS) || failed.get()
+            || !report.isFile() || report.length() < header.getBytes(StandardCharsets.UTF_8).length
+            || report.length() > 20L * 1024 * 1024) {
+            report.delete();
+            throw new IOException("排障日志导出失败");
+        }
+        // 工具结果不包含日志正文，只提供 AI 会话卡片所需的工作区文件名。
+        return new JSONObject().put("path", report.getName())
+            .put("mime_type", "text/plain").put("bytes", report.length());
     }
 
     private String maskedAccount(String value) {

@@ -4,6 +4,7 @@
 #include <math.h>
 #include <signal.h>
 #include <stdarg.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -29,6 +30,7 @@ static volatile LONG sPlaybackActive;
 static volatile LONG64 sPositionUs;
 static volatile LONG64 sDurationUs;
 static volatile LONG sPaused;
+static volatile LONG sPlaybackSpeedPercent = 100;
 #define MAI_STATUS_STORE64(field, value) InterlockedExchange64(&(field), (value))
 #define MAI_STATUS_LOAD64(field) InterlockedCompareExchange64(&(field), 0, 0)
 #define MAI_STATUS_STORE(field, value) InterlockedExchange(&(field), (value))
@@ -39,6 +41,7 @@ static atomic_int sPlaybackActive;
 static atomic_int_fast64_t sPositionUs;
 static atomic_int_fast64_t sDurationUs;
 static atomic_int sPaused;
+static atomic_int sPlaybackSpeedPercent = 100;
 #define MAI_STATUS_STORE64(field, value) atomic_store(&(field), (value))
 #define MAI_STATUS_LOAD64(field) atomic_load(&(field))
 #define MAI_STATUS_STORE(field, value) atomic_store(&(field), (value))
@@ -99,7 +102,9 @@ static int maiFfplayPeepEventsWithStatus(VideoState* state,
         const double start = state->ic->start_time == AV_NOPTS_VALUE ? 0.0 :
                              state->ic->start_time / (double)AV_TIME_BASE;
         if (length > 0 && isfinite(clock)) {
-            const double relative = fmax(0.0, clock - start);
+            // FFplay 的滤镜时钟按墙钟运行；外部播放器进度仍使用源文件时间轴。
+            const double speed = MAI_STATUS_LOAD(sPlaybackSpeedPercent) / 100.0;
+            const double relative = fmax(0.0, clock * speed - start);
             MAI_STATUS_STORE64(sPositionUs,
                 relative >= length / (double)AV_TIME_BASE ? length :
                 (int64_t)(relative * AV_TIME_BASE));
@@ -117,6 +122,7 @@ int maiFfplayGetPlaybackStatus(MaiFfplayPlaybackStatus* status)
     status->position_us = MAI_STATUS_LOAD64(sPositionUs);
     status->duration_us = MAI_STATUS_LOAD64(sDurationUs);
     status->paused = MAI_STATUS_LOAD(sPaused);
+    status->speed_percent = MAI_STATUS_LOAD(sPlaybackSpeedPercent);
     return status->running;
 }
 
@@ -220,6 +226,51 @@ int maiFfplayRun(const MaiFfplayHost* host, int argc, char** argv)
 #else
     atomic_flag_clear(&sRunning);
 #endif
+    return result;
+}
+
+int maiFfplayRunAtSpeed(const MaiFfplayHost* host, int argc, char** argv,
+                       double speed, int64_t start_position_us)
+{
+    const char* rate = NULL;
+    int percent = 100;
+    if (fabs(speed - 0.25) < 0.0001) { rate = "0.25"; percent = 25; }
+    else if (fabs(speed - 0.5) < 0.0001) { rate = "0.5"; percent = 50; }
+    else if (fabs(speed - 1.0) < 0.0001) { rate = "1"; percent = 100; }
+    else if (fabs(speed - 1.5) < 0.0001) { rate = "1.5"; percent = 150; }
+    else if (fabs(speed - 2.0) < 0.0001) { rate = "2"; percent = 200; }
+    if (!rate || !host || !argv || argc < 2 || argc > 9 || start_position_us < 0 ||
+        MAI_STATUS_LOAD(sPlaybackActive)) return -1;
+    char seek[48];
+    char video_filter[64];
+    char audio_filter[160];
+    char* options[16];
+    int count = 0;
+    for (int index = 0; index < argc - 1; ++index) options[count++] = argv[index];
+    if (start_position_us > 0) {
+        snprintf(seek, sizeof(seek), "%lld.%06lld",
+                 (long long)(start_position_us / 1000000),
+                 (long long)(start_position_us % 1000000));
+        options[count++] = "-ss";
+        options[count++] = seek;
+    }
+    if (percent != 100) {
+        snprintf(video_filter, sizeof(video_filter), "setpts=PTS/%s", rate);
+        if (percent == 25)
+            snprintf(audio_filter, sizeof(audio_filter),
+                     "atempo=0.5,atempo=0.5,asetpts=N/SR/TB+STARTPTS/%s", rate);
+        else
+            snprintf(audio_filter, sizeof(audio_filter),
+                     "atempo=%s,asetpts=N/SR/TB+STARTPTS/%s", rate, rate);
+        options[count++] = "-vf";
+        options[count++] = video_filter;
+        options[count++] = "-af";
+        options[count++] = audio_filter;
+    }
+    options[count++] = argv[argc - 1];
+    MAI_STATUS_STORE(sPlaybackSpeedPercent, percent);
+    const int result = maiFfplayRun(host, count, options);
+    MAI_STATUS_STORE(sPlaybackSpeedPercent, 100);
     return result;
 }
 

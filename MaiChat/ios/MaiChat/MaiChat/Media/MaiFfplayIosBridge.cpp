@@ -12,6 +12,8 @@
 struct MaiFfplayIosSession {
     uint64_t viewId = 0;
     std::string path;
+    double speed = 1.0;
+    int64_t startPositionUs = 0;
     MaiFfplayHost host{};
     std::thread worker;
     std::atomic<bool> finished{false};
@@ -54,11 +56,15 @@ bool presentRgba(void* user, const uint8_t* pixels,
 
 }  // namespace
 
-extern "C" MaiFfplayIosSession* maiFfplayIosStart(uint64_t viewId, const char* path) {
+extern "C" MaiFfplayIosSession* maiFfplayIosStartAtSpeed(uint64_t viewId, const char* path,
+                                                             double speed,
+                                                             int64_t startPositionUs) {
     if (!viewId || !path || !*path) return nullptr;
     auto* session = new MaiFfplayIosSession;
     session->viewId = viewId;
     session->path = path;
+    session->speed = speed;
+    session->startPositionUs = startPositionUs;
     session->host.user_data = session;
     session->host.graphics_view_id = viewId;
     session->host.present_video = presentVideo;
@@ -76,15 +82,21 @@ extern "C" MaiFfplayIosSession* maiFfplayIosStart(uint64_t viewId, const char* p
             if (session->host.present_native_frames) {
                 char* arguments[] = {name, nativeRenderer, hardwareDecode,
                                      videoToolbox, &input[0]};
-                session->result = maiFfplayRun(&session->host, 5, arguments);
+                session->result = maiFfplayRunAtSpeed(&session->host, 5, arguments,
+                                                       session->speed,
+                                                       session->startPositionUs);
                 if (session->result != 0 && session->presentedFrames == 0) {
                     session->host.present_native_frames = 0;
                     char* fallback[] = {name, &input[0]};
-                    session->result = maiFfplayRun(&session->host, 2, fallback);
+                    session->result = maiFfplayRunAtSpeed(&session->host, 2, fallback,
+                                                           session->speed,
+                                                           session->startPositionUs);
                 }
             } else {
                 char* arguments[] = {name, &input[0]};
-                session->result = maiFfplayRun(&session->host, 2, arguments);
+                session->result = maiFfplayRunAtSpeed(&session->host, 2, arguments,
+                                                       session->speed,
+                                                       session->startPositionUs);
             }
             session->finished = true;
         });
@@ -93,6 +105,10 @@ extern "C" MaiFfplayIosSession* maiFfplayIosStart(uint64_t viewId, const char* p
         return nullptr;
     }
     return session;
+}
+
+extern "C" MaiFfplayIosSession* maiFfplayIosStart(uint64_t viewId, const char* path) {
+    return maiFfplayIosStartAtSpeed(viewId, path, 1.0, 0);
 }
 
 extern "C" int maiFfplayIosCommand(MaiFfplayIosSession* session,

@@ -47,6 +47,7 @@ final class AICloudCredentialStore: @unchecked Sendable {
     private var values: [String: String] = [:]
     private var arkExpiresAt = Date.distantPast
     private var bailianExpiresAt = Date.distantPast
+    private var bailianWorkspaceId = ""
 
     func replace(_ next: [String: String]) {
         lock.lock()
@@ -72,9 +73,10 @@ final class AICloudCredentialStore: @unchecked Sendable {
         lock.unlock()
     }
 
-    func setTemporaryBailian(_ key: String, expiresAt: Date) {
+    func setTemporaryBailian(_ key: String, workspaceId: String, expiresAt: Date) {
         lock.lock()
         values["wan"] = key
+        bailianWorkspaceId = workspaceId
         bailianExpiresAt = expiresAt
         lock.unlock()
     }
@@ -82,6 +84,7 @@ final class AICloudCredentialStore: @unchecked Sendable {
     func clearTemporaryBailian() {
         lock.lock()
         values.removeValue(forKey: "wan")
+        bailianWorkspaceId = ""
         bailianExpiresAt = .distantPast
         lock.unlock()
     }
@@ -90,6 +93,12 @@ final class AICloudCredentialStore: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return Date().addingTimeInterval(90) >= bailianExpiresAt
+    }
+
+    func workspaceId() -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return Date() < bailianExpiresAt ? bailianWorkspaceId : ""
     }
 
     func arkNeedsRefresh() -> Bool {
@@ -144,10 +153,9 @@ enum AICloudCredentialSync {
                 throw AIBackendError(message: "百炼临时凭据无效")
             }
             guard !Task.isCancelled else { return }
-            UserDefaults.standard.set(issued.wanWorkspaceId,
-                                      forKey: "wan-model-studio-workspace-id")
-            AICloudCredentialStore.shared.setTemporaryBailian(issued.apiKey,
-                                                                expiresAt: expiry)
+            AICloudCredentialStore.shared.setTemporaryBailian(
+                issued.apiKey, workspaceId: issued.wanWorkspaceId, expiresAt: expiry
+            )
         }
         bailianRefreshTask = task
         defer { bailianRefreshTask = nil }
@@ -177,6 +185,8 @@ enum AICloudCredentialSync {
     }
 
     static func removeLegacyPlaintextCache() {
+        // Workspace ID 由服务器管理；旧版留在 UserDefaults 的副本一并清除。
+        UserDefaults.standard.removeObject(forKey: "wan-model-studio-workspace-id")
         guard let support = try? FileManager.default.url(
             for: .applicationSupportDirectory, in: .userDomainMask,
             appropriateFor: nil, create: false
@@ -243,11 +253,6 @@ enum AICloudCredentialSync {
             savedProviders.append(name)
         }
         AICloudCredentialStore.shared.replace(validKeys)
-        if let workspace = body["wan_workspace_id"] as? String,
-           (workspace.hasPrefix("ws-") || workspace.hasPrefix("llm-")),
-           workspace.count <= 128 {
-            UserDefaults.standard.set(workspace, forKey: "wan-model-studio-workspace-id")
-        }
         UserDefaults.standard.set(Date(), forKey: "cloud-credentials-last-sync")
         UserDefaults.standard.set(savedProviders.sorted(), forKey: "cloud-credentials-synced-providers")
         return true

@@ -86,7 +86,7 @@ final class AIMobileHostToolProvider {
         case "wan_credentials":
             return Self.jsonSuccess([
                 "key": AICloudCredentialStore.shared.key("wan"),
-                "workspace_id": UserDefaults.standard.string(forKey: "wan-model-studio-workspace-id") ?? ""
+                "workspace_id": AICloudCredentialStore.shared.workspaceId()
             ])
         default: break
         }

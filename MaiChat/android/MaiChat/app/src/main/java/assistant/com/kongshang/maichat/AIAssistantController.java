@@ -96,6 +96,7 @@ public final class AIAssistantController {
             shared.wanApiKey = "";
             shared.wanExpiresAt = 0;
             shared.nextWanRefreshAt = 0;
+            shared.wanWorkspaceId = "";
         });
     }
     private static native long nativeCreate();
@@ -241,7 +242,9 @@ public final class AIAssistantController {
                 return new JSONObject().put("ok", true)
                     .put("output", new JSONObject().put("key",
                         System.currentTimeMillis() / 1000L < wanExpiresAt ? wanApiKey : "")
-                        .put("workspace_id", wanWorkspaceId))
+                        .put("workspace_id",
+                            System.currentTimeMillis() / 1000L < wanExpiresAt
+                                ? wanWorkspaceId : ""))
                     .toString().getBytes(StandardCharsets.UTF_8);
             } catch (Exception failure) {
                 return hostToolFailure("Wan credentials are unavailable", "not_configured");
@@ -328,7 +331,19 @@ public final class AIAssistantController {
                 baseUrl = saved.optString("baseUrl", baseUrl);
                 model = saved.optString("model", model);
                 policy = saved.optString("policy", policy);
-                wanWorkspaceId = saved.optString("wanWorkspaceId", "");
+                // Workspace ID 已由服务端管理；升级时清除旧 settings.json 中的副本。
+                if (saved.has("wanWorkspaceId")) {
+                    saved.remove("wanWorkspaceId");
+                    android.util.AtomicFile clean = new android.util.AtomicFile(settings);
+                    FileOutputStream out = clean.startWrite();
+                    try {
+                        out.write(saved.toString().getBytes(StandardCharsets.UTF_8));
+                        clean.finishWrite(out);
+                    } catch (Exception failure) {
+                        clean.failWrite(out);
+                        Log.w("MaiChatAgent", "Legacy workspace ID cleanup failed", failure);
+                    }
+                }
             }
             if (!model.equals("glm-5.3") && !model.equals("glm-5.3-flash") &&
                 !model.equals("deepseek-flash")) model = "glm-5.3";
@@ -581,7 +596,7 @@ public final class AIAssistantController {
                 configure(effectiveUrl, selectedName, approval, key, "responses");
                 byte[] config = new JSONObject().put("baseUrl", effectiveUrl)
                     .put("model", selectedName).put("policy", approval)
-                    .put("wire", "responses").put("wanWorkspaceId", wanWorkspaceId)
+                    .put("wire", "responses")
                     .toString().getBytes(StandardCharsets.UTF_8);
                 android.util.AtomicFile file =
                     new android.util.AtomicFile(new File(root, "settings.json"));
@@ -617,7 +632,6 @@ public final class AIAssistantController {
         if (selectedWire.equals("responses")) return GLM_RESPONSES_URL;
         return url.equals(GLM_RESPONSES_URL) ? chatUrl : url;
     }
-    String wanWorkspaceId() { return wanWorkspaceId; }
     String cloudServiceUrl() { return cloudServiceUrl; }
     void saveCloudService(String address, String newToken, Consumer<Boolean> completion) {
         worker.post(() -> {
@@ -721,8 +735,6 @@ public final class AIAssistantController {
             }
         }
         apiKey = model.equals("deepseek-flash") ? deepseekApiKey : glmApiKey;
-        String workspace = response.optString("wan_workspace_id", "");
-        if (workspace.matches("(?:ws|llm)-[A-Za-z0-9_-]{1,120}")) wanWorkspaceId = workspace;
     }
 
     private void refreshSeedanceCredential(boolean force) {
@@ -746,7 +758,10 @@ public final class AIAssistantController {
         long now = System.currentTimeMillis() / 1000L;
         if (wanExpiresAt > now + 90 || (!force && now < nextWanRefreshAt)) return;
         nextWanRefreshAt = now + 30;
-        if (wanExpiresAt <= now) wanApiKey = "";
+        if (wanExpiresAt <= now) {
+            wanApiKey = "";
+            wanWorkspaceId = "";
+        }
         try {
             MaiChatAuthClient.BailianCredential issued = accountAuth.bailianCredential();
             if (issued == null) return;

@@ -43,8 +43,9 @@
 
 namespace {
 
-// 桌面端与移动端一致：先从工具描述初筛，再以 discover 的真实接线状态选择候选模型。
-// 这里仅约束主模型如何读取能力，不给通用 Agent 核心添加任何单一供应商的硬路由。
+// 桌面端与移动端一致：先从工具描述初筛，再以 discover
+// 的真实接线状态选择候选模型。 这里仅约束主模型如何读取能力，不给通用 Agent
+// 核心添加任何单一供应商的硬路由。
 const char *const kDesktopSystemPrompt =
     R"(You are the AI assistant embedded in MaiChat.
 Video generation rule: before any paid video delegate, use discover to identify configured
@@ -73,11 +74,16 @@ Turbo, Standard, or Omni variant before paid submission.
 For Kling images use kling_bailian_image with the same credentials; for Wan images use wan_image.
 For MiniMax images use minimax_image: text alone is text-to-image; one image_path or image_url
 is character-reference image-to-image, not arbitrary pixel-preserving editing.
-For Wan person replacement in an existing video use wan_animate_mix, which keeps the source
-video scene. For motion transferred onto a photo use wan_animate_move, which keeps the photo
-background. Both require one person image and one measured 2-30 second action video. Use ffprobe
-to measure the video and confirm wan-std versus wan-pro before a paid call. These are not general
-prompt-based editors. For Wan3 video extension use wan_video mode=extend with one source video,
+For Wan person replacement use wan_video mode=edit, set video_path to the source video and
+local_image_paths to an array containing one person image. In message, ask to replace Video 1's
+person with Image 1 while preserving the scene. For motion guided by a source video, use wan_video
+mode=reference with the same media fields and ask Image 1's person to follow Video 1's motion and
+expressions while keeping Image 1's background. These
+are prompt-guided approximations, not guaranteed frame-accurate replacement or motion transfer.
+Measure source_duration_seconds: Wan3 accepts at most 15 seconds of reference video, with input
+plus output at most 30 seconds. Use ratio=adaptive to preserve framing unless the user requests
+another ratio. Do not silently trim longer footage. For Wan3 video extension use
+wan_video mode=extend with one source video,
 an explicit extension direction, ratio=adaptive, and measured source_duration_seconds; input
 plus requested output must not exceed 30 seconds.
 If Seedance is selected and reference photos visibly contain real people, explain two asset paths
@@ -267,8 +273,6 @@ buildAgent(std::unique_ptr<MaiModelClient> model,
     return MaiWanCredentials{key, workspace};
   };
   tools->add(makeMaiWanVideoTool(wanCredentials, {}, uploadMedia));
-  tools->add(makeMaiWanAnimateMixTool(wanCredentials, {}, uploadMedia));
-  tools->add(makeMaiWanAnimateMoveTool(wanCredentials, {}, uploadMedia));
   tools->add(makeMaiBailianKlingVideoTool(wanCredentials, {}, uploadMedia));
   tools->add(makeMaiWanImageTool(wanCredentials, {}, uploadMedia));
   tools->add(makeMaiBailianKlingImageTool(wanCredentials, {}, uploadMedia));

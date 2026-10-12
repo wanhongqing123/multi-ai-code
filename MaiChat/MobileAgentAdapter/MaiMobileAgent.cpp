@@ -83,11 +83,14 @@ constexpr auto kMarkdownBaseInstructions =
     "path. "
     "Do not remove watermarks, subtitles, or end cards as an unrequested "
     "preparation step. If the user explicitly requests watermark removal, use "
-    "the dedicated media_remove_watermark tool, if available, once with all measured regions, "
-    "time windows, and clean reference timestamps. Inspect enough source frames "
+    "the dedicated media_remove_watermark tool, if available, once with all "
+    "measured regions, "
+    "time windows, and clean reference timestamps. Inspect enough source "
+    "frames "
     "to confirm moving positions and foreground overlap. Do not loop through "
     "FFmpeg/OpenCV repair calls. If that tool is unavailable, state the "
-    "capability gap. After one result, review it and return to the original task. "
+    "capability gap. After one result, review it and return to the original "
+    "task. "
     // 图片与视频专业模型的本地素材统一走私有 OSS；上传故障不能回退为 Base64。
     "For image and video specialist tools, local media paths are upload "
     "inputs: "
@@ -104,20 +107,40 @@ constexpr auto kMarkdownBaseInstructions =
     "for Wan images use wan_image. "
     // MiniMax image-01 的图生图是人物主体参考，不是任意局部修图。
     "For MiniMax images use minimax_image: no reference is text-to-image; one "
-    "image_path or image_url is character-reference image-to-image. Do not describe "
-    "that path as pixel-preserving editing or use it for arbitrary object replacement. "
-    // 万相两个专用模型的目标不同：换人保留原视频场景，图生动作保留人物图背景。
-    // 两者都只吃一张人物图和一段实测 2–30 秒的动作视频，不接受自由提示词。
-    "For Wan person replacement in an existing video use wan_animate_mix: it keeps "
-    "the source video scene. For motion transferred onto a photo use "
-    "wan_animate_move: it keeps the photo background. Measure the source video "
-    "duration with ffprobe, and confirm wan-std versus wan-pro before a paid call. "
-    "Do not treat these two tools as general prompt-based video editing. "
+    "image_path or image_url is character-reference image-to-image. Do not "
+    "describe "
+    "that path as pixel-preserving editing or use it for arbitrary object "
+    "replacement. "
+    // 旧专用入口已停止新任务。Wan3 使用一张人物参考图和一段视频，
+    // 通过提示词分别引导换人或动作模仿，但不能保证逐帧还原或严格保留背景。
+    // 本地源视频先测时长，超过 Wan3 的 15 秒上限不能静默截短或付费提交。
+    "For Wan person replacement use wan_video mode=edit, set video_path to the "
+    "source "
+    "video and local_image_paths to an array containing one person image. In "
+    "message, "
+    "ask to replace Video 1's person with Image 1 while preserving the scene. "
+    "For "
+    "motion guided by a source video use wan_video mode=reference with the "
+    "same media "
+    "fields; ask Image 1's person to follow Video 1's motion and expressions "
+    "while "
+    "keeping Image 1's background. These "
+    "are prompt-guided approximations, not guaranteed "
+    "frame-accurate replacement or motion transfer. Measure "
+    "source_duration_seconds "
+    "with ffprobe: Wan3 accepts at most 15 seconds of reference video, and "
+    "input plus output must be at most 30 seconds. Use ratio=adaptive to "
+    "preserve framing unless the user requests another ratio. Do not silently "
+    "trim longer source footage. Use only wan_video for new Wan person "
+    "replacement or "
+    "motion-guided generation. "
     // Wan3 视频延长用 reference_video 和明确延长意图；比例必须 adaptive，
     // 付费前先测源片时长并核对输入与输出合计不超过 30 秒。
-    "For Wan3 extension use wan_video mode=extend with one source video, an explicit "
+    "For Wan3 extension use wan_video mode=extend with one source video, an "
+    "explicit "
     "extension direction in the message, ratio=adaptive, and measured "
-    "source_duration_seconds. Input plus requested output must be at most 30 seconds. "
+    "source_duration_seconds. Input plus requested output must be at most 30 "
+    "seconds. "
     // 真人参考图分为普通资产登记和 H5 真人认证两条路径，必须使用真正返回的资产
     // ID。
     "Before paid Seedance generation with a recognizable real person, "
@@ -584,10 +607,6 @@ struct MaiMobileAgent {
     };
     tools->add(
         makeMaiWanVideoTool(wanCredentials, config.caBundlePath, uploadMedia));
-    tools->add(makeMaiWanAnimateMixTool(wanCredentials, config.caBundlePath,
-                                        uploadMedia));
-    tools->add(makeMaiWanAnimateMoveTool(wanCredentials, config.caBundlePath,
-                                         uploadMedia));
     tools->add(makeMaiBailianKlingVideoTool(wanCredentials, config.caBundlePath,
                                             uploadMedia));
     tools->add(

@@ -110,11 +110,13 @@ struct PhoneAccountLoginView: View {
                             }
                             .frame(maxWidth: .infinity)
                             .frame(height: 56)
+                            .background(accent.opacity(canSubmit ? 1 : 0.48), in: Capsule())
+                            .contentShape(Capsule())
                         }
                         .buttonStyle(.plain)
                         .foregroundStyle(.white)
-                        .background(accent.opacity(canSubmit ? 1 : 0.48), in: Capsule())
                         .disabled(!canSubmit)
+                        .accessibilityIdentifier("account-submit")
                         Button { confirmedMinimumAge.toggle() } label: {
                             HStack(spacing: 8) {
                                 Image(systemName: confirmedMinimumAge ? "checkmark.circle.fill" : "circle")

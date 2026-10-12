@@ -124,8 +124,6 @@ QString toolActionText(const QString &tool, const QString &argument,
 
 bool isPaidGenerationTool(const QString &tool) {
   return tool == QStringLiteral("wan_video") ||
-         tool == QStringLiteral("wan_animate_mix") ||
-         tool == QStringLiteral("wan_animate_move") ||
          tool == QStringLiteral("wan_image") ||
          tool == QStringLiteral("seedance_video") ||
          tool == QStringLiteral("seedream_image") ||
@@ -139,8 +137,6 @@ bool isPaidGenerationTool(const QString &tool) {
 QString videoTaskManagementAction(const QString &tool,
                                   const QString &arguments) {
   if (tool != QStringLiteral("wan_video") &&
-      tool != QStringLiteral("wan_animate_mix") &&
-      tool != QStringLiteral("wan_animate_move") &&
       tool != QStringLiteral("seedance_video") &&
       tool != QStringLiteral("kling_bailian_video") &&
       tool != QStringLiteral("minimax_video"))
@@ -149,8 +145,6 @@ QString videoTaskManagementAction(const QString &tool,
       QJsonDocument::fromJson(arguments.toUtf8()).object();
   const QString action = input.value(QStringLiteral("action")).toString();
   const bool providerCanCancel = tool == QStringLiteral("wan_video") ||
-                                 tool == QStringLiteral("wan_animate_mix") ||
-                                 tool == QStringLiteral("wan_animate_move") ||
                                  tool == QStringLiteral("seedance_video") ||
                                  tool == QStringLiteral("kling_bailian_video");
   return action == QStringLiteral("delete") ||
@@ -163,8 +157,6 @@ QString paidGenerationTitle(const QString &tool, const QString &arguments) {
   const QJsonObject input =
       QJsonDocument::fromJson(arguments.toUtf8()).object();
   const bool video = tool == QStringLiteral("wan_video") ||
-                     tool == QStringLiteral("wan_animate_mix") ||
-                     tool == QStringLiteral("wan_animate_move") ||
                      tool == QStringLiteral("seedance_video") ||
                      tool == QStringLiteral("kling_bailian_video") ||
                      tool == QStringLiteral("minimax_video");
@@ -177,10 +169,6 @@ QString paidGenerationTitle(const QString &tool, const QString &arguments) {
                         input.value(QStringLiteral("task_mode")).toString() ==
                             QStringLiteral("edit") ||
                         false;
-  if (tool == QStringLiteral("wan_animate_mix"))
-    return QStringLiteral("确认视频换人");
-  if (tool == QStringLiteral("wan_animate_move"))
-    return QStringLiteral("确认图生动作");
   return QStringLiteral("确认%1%2")
       .arg(revision ? QStringLiteral("编辑") : QStringLiteral("生成"),
            video ? QStringLiteral("视频") : QStringLiteral("图片"));
@@ -191,8 +179,6 @@ QString paidGenerationDetail(const QString &tool, const QString &arguments) {
       QJsonDocument::fromJson(arguments.toUtf8()).object();
   QString provider = QStringLiteral("Seedream");
   if (tool == QStringLiteral("wan_video") ||
-      tool == QStringLiteral("wan_animate_mix") ||
-      tool == QStringLiteral("wan_animate_move") ||
       tool == QStringLiteral("wan_image"))
     provider = QStringLiteral("万相");
   else if (tool == QStringLiteral("seedance_video"))
@@ -245,17 +231,6 @@ QString paidGenerationDetail(const QString &tool, const QString &arguments) {
                  tool == QStringLiteral("kling_bailian_video"))
             ? QStringLiteral("可灵 V3 Turbo")
             : QStringLiteral("可灵 V3"));
-  if (tool == QStringLiteral("wan_animate_mix") ||
-      tool == QStringLiteral("wan_animate_move")) {
-    const QString serviceMode =
-        input.value(QStringLiteral("service_mode")).toString();
-    specifications.push_back(serviceMode == QStringLiteral("wan-pro")
-                                 ? QStringLiteral("专业模式")
-                                 : QStringLiteral("标准模式"));
-    specifications.push_back(
-        QStringLiteral("源视频约 %1 秒")
-            .arg(input.value(QStringLiteral("source_duration_seconds")).toDouble()));
-  }
   const QJsonObject production =
       input.value(QStringLiteral("production")).toObject();
   const int duration =

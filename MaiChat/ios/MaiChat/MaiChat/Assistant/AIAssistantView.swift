@@ -2403,7 +2403,7 @@ private struct AIPermissionCard: View {
         permission.tool == "ark_assets" && (fields["action"] as? String) == "begin_real_validation"
     }
     private var isPaidGeneration: Bool {
-        ["wan_video", "wan_animate_mix", "wan_animate_move", "wan_image",
+        ["wan_video", "wan_image",
          "seedance_video", "seedream_image",
          "glm_image", "kling_bailian_video", "kling_bailian_image",
          "minimax_video", "minimax_image"]
@@ -2412,16 +2412,16 @@ private struct AIPermissionCard: View {
     private var isVideoTaskManagement: Bool {
         let action = (fields["action"] as? String) ?? ""
         return action == "delete" &&
-            ["wan_video", "wan_animate_mix", "wan_animate_move", "seedance_video",
+            ["wan_video", "seedance_video",
              "kling_bailian_video",
              "minimax_video"].contains(permission.tool) ||
             action == "cancel" &&
-            ["wan_video", "wan_animate_mix", "wan_animate_move", "seedance_video",
+            ["wan_video", "seedance_video",
              "kling_bailian_video"].contains(permission.tool)
     }
     private var isVideoTaskDelete: Bool { (fields["action"] as? String) == "delete" }
     private var isVideoGeneration: Bool {
-        ["wan_video", "wan_animate_mix", "wan_animate_move", "seedance_video",
+        ["wan_video", "seedance_video",
          "kling_bailian_video",
          "minimax_video"].contains(permission.tool)
     }
@@ -2431,15 +2431,13 @@ private struct AIPermissionCard: View {
         (fields["task_mode"] as? String) == "edit"
     }
     private var paidTitle: String {
-        if permission.tool == "wan_animate_mix" { return "确认视频换人" }
-        if permission.tool == "wan_animate_move" { return "确认图生动作" }
         if isVideoGeneration { return isRevision ? "确认编辑视频" : "确认生成视频" }
         return isRevision ? "确认编辑图片" : "确认生成图片"
     }
     private var paidActionTitle: String { isRevision ? "确认编辑" : "确认生成" }
     private var paidProvider: String {
         switch permission.tool {
-        case "wan_video", "wan_animate_mix", "wan_animate_move", "wan_image": return "万相"
+        case "wan_video", "wan_image": return "万相"
         case "seedance_video": return "Seedance"
         case "glm_image": return "GLM"
         case "kling_bailian_video", "kling_bailian_image": return "可灵 · 百炼"
@@ -2481,13 +2479,6 @@ private struct AIPermissionCard: View {
                  : "kling/kling-v3-image-generation")
             details.append(selected.contains("omni") ? "可灵 V3 Omni" :
                            selected.contains("turbo") ? "可灵 V3 Turbo" : "可灵 V3")
-        }
-        if ["wan_animate_mix", "wan_animate_move"].contains(permission.tool) {
-            let mode = fields["service_mode"] as? String
-            details.append(mode == "wan-pro" ? "专业模式" : "标准模式")
-            if let seconds = fields["source_duration_seconds"] as? NSNumber {
-                details.append("源视频约 \(seconds.doubleValue.formatted()) 秒")
-            }
         }
         if let duration = (fields["duration"] as? Int) ?? (production["duration"] as? Int) {
             details.append("\(duration) 秒")

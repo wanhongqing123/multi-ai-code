@@ -589,7 +589,7 @@ void contract_specialist_status_recovery(MaiSessionStore& store, const char* whi
     MaiSpecialistTask task;
     task.id = MaiIdGenerator::generate("spt_");
     task.ownerSessionId = owner;
-    task.specialistName = "wan_animate_mix";
+    task.specialistName = "wan_video";
     task.providerTaskId = "provider-accepted";
     task.intent = "Replace one person";
     task.created = 1000;

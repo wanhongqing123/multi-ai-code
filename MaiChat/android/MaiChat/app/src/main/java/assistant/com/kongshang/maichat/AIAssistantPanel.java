@@ -582,20 +582,16 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         return value;
     }
     private boolean isPaidGeneration(String tool) {
-        return tool.equals("wan_video") || tool.equals("wan_animate_mix")
-            || tool.equals("wan_animate_move") || tool.equals("wan_image")
+        return tool.equals("wan_video") || tool.equals("wan_image")
             || tool.equals("seedance_video") || tool.equals("seedream_image")
             || tool.equals("glm_image")
             || tool.equals("kling_bailian_video") || tool.equals("kling_bailian_image")
             || tool.equals("minimax_video") || tool.equals("minimax_image");
     }
     private String paidApprovalTitle(String tool, JSONObject input) {
-        boolean video = tool.equals("wan_video") || tool.equals("wan_animate_mix")
-            || tool.equals("wan_animate_move")
+        boolean video = tool.equals("wan_video")
             || tool.equals("seedance_video")
             || tool.equals("kling_bailian_video") || tool.equals("minimax_video");
-        if (tool.equals("wan_animate_mix")) return "确认视频换人";
-        if (tool.equals("wan_animate_move")) return "确认图生动作";
         return "确认" + (isPaidRevision(tool, input) ? "编辑" : "生成")
             + (video ? "视频" : "图片");
     }
@@ -606,8 +602,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             || input.optString("task_mode").equals("edit");
     }
     private String paidProvider(String tool) {
-        if (tool.equals("wan_video") || tool.equals("wan_animate_mix")
-            || tool.equals("wan_animate_move") || tool.equals("wan_image")) return "万相";
+        if (tool.equals("wan_video") || tool.equals("wan_image")) return "万相";
         if (tool.equals("glm_image")) return "GLM";
         if (tool.equals("kling_bailian_video") || tool.equals("kling_bailian_image")) return "可灵 · 百炼";
         if (tool.equals("minimax_video") || tool.equals("minimax_image")) return "海螺 / MiniMax";
@@ -635,10 +630,6 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 : model.contains("turbo") ||
                     (model.isEmpty() && tool.equals("kling_bailian_video"))
                     ? "可灵 V3 Turbo" : "可灵 V3");
-        if (tool.equals("wan_animate_mix") || tool.equals("wan_animate_move")) {
-            values.add(input.optString("service_mode").equals("wan-pro") ? "专业模式" : "标准模式");
-            values.add("源视频约 " + input.optDouble("source_duration_seconds") + " 秒");
-        }
         int duration = input.optInt("duration", production.optInt("duration", 0));
         if (duration > 0) values.add(duration + " 秒");
         String resolution = input.optString("resolution", production.optString("resolution"));
@@ -728,7 +719,6 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 try { input = new JSONObject(permission.optString("input", "{}")); }
                 catch (Exception ignored) { input = new JSONObject(); }
                 boolean providerCanCancel = tool.equals("wan_video") ||
-                    tool.equals("wan_animate_mix") || tool.equals("wan_animate_move") ||
                     tool.equals("seedance_video") || tool.equals("kling_bailian_video");
                 boolean taskManagement = ((providerCanCancel ||
                     tool.equals("minimax_video")) &&

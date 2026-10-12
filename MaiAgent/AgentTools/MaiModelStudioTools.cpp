@@ -34,8 +34,6 @@ bool isPaidGenerationAction(const std::string& raw) {
 }
 
 constexpr char kWanVideoModel[] = "wan3.0-video";
-constexpr char kWanAnimateMixModel[] = "wan2.2-animate-mix";
-constexpr char kWanAnimateMoveModel[] = "wan2.2-animate-move";
 constexpr char kBailianKlingTurboModel[] = "kling/kling-v3-turbo-video-generation";
 constexpr char kBailianKlingStandardModel[] = "kling/kling-v3-video-generation";
 constexpr char kBailianKlingOmniModel[] = "kling/kling-v3-omni-video-generation";
@@ -612,12 +610,20 @@ public:
              // reference_video_edit：上传一个本地 MP4/MOV，作为 Video 1 编辑或续写。
              {"reference_video_edit", true, true, mediaStatus,
               "mode=edit or extend accepts one local MP4/MOV video_path, uploaded to private "
-              "OSS, or the previous completed output through revise. The sum of input and "
-              "output video durations must not exceed 30 seconds"},
+              "OSS, or the previous completed output through revise. For prompt-guided person "
+              "replacement, use mode=edit with one person image and one source video. The "
+              "source video must be at most 15 seconds; input plus output must not exceed "
+              "30 seconds. Exact identity preservation is not guaranteed"},
              // reference_images：最多十张本地参考图，超出需先处理中间输入。
              {"reference_images", true, true, mediaStatus,
               "mode=reference accepts up to ten local_image_paths through private OSS, "
               "optionally with one reference video; not with strict first/last frames"},
+             // 人物动作模仿是 Wan3 图像+视频参考与提示词组合，不等同于专用动作迁移。
+             {"guided_motion_transfer", true, true, mediaStatus,
+              "mode=reference with one person image and one video can ask the image person "
+              "to follow Video 1's motion and expressions while keeping Image 1's background. "
+              "This is prompt-guided generation, not guaranteed frame-accurate motion "
+              "transfer or background preservation"},
              // reference_file：单个文档可用 HTTPS 外链；本地文件须先直传私有 OSS。
              {"reference_file", true, true, status,
               "One public HTTPS file_url, or one local file_path if private OSS upload is "
@@ -653,7 +659,8 @@ public:
         // 输入视频与输出时长总计不能超过 30 秒；支持 480P/720P/1080P 与声音开关。
         // discover 查能力，diagnose 只读校验访问权限。delegate 可用文本或首尾帧
         // 创建，也能在 edit/extend 模式传一个 video_path；reference 可把一个
-        // 本地视频与最多十张图结合。供应商支持的多视频/参考音频目前没接入工具。
+        // 本地视频与最多十张图结合。换人/动作模仿通过一图一视频加明确提示词引导，
+        // 不承诺像专用模型那样逐帧保留身份、动作或背景。
         // file_path 走私有 OSS，file_url 是公开文档外链；link_url 是公开网页。
         // App 自动查询并报告结果，continue 只用于手动排障；revise 在同一会话
         // 对完成任务追加反馈。cancel 只取消 PENDING，delete 只移除已交付本地记录。
@@ -663,9 +670,16 @@ public:
                "duration=-1, 480P/720P/1080P, adaptive or explicit ratio, optional audio. "
                "Modes: create=text or one strict first frame or first+last frame; "
                "reference=up to ten local images and optionally one video; edit=one source "
-               "video; extend=one source video with ratio=adaptive and measured "
-               "source_duration_seconds. A source video plus output may total at most "
-               "30 seconds. One document file_path/file_url or one public link_url can guide "
+               "video, optionally with person reference images; extend=one source video with "
+               "ratio=adaptive. For person replacement in Video 1, use mode=edit with one "
+               "image of the desired person and explicitly request replacing the person while "
+               "preserving the scene. For motion guided by Video 1, use mode=reference with "
+               "one person image and request that Image 1 follows Video 1's motion and "
+               "expressions while keeping Image 1's background. These "
+               "are prompt-guided approximations, not frame-accurate dedicated effects. "
+               "Measure source_duration_seconds for every local video: at most 15 seconds, "
+               "and source plus output at most 30 seconds. One document file_path/file_url "
+               "or one public link_url can guide "
                "create/reference; it requires prompt_extend=true and cannot mix with strict "
                "frames. All local image, video, and document inputs go through private OSS. "
                "The provider supports more videos and reference audio, but this tool does not. "
@@ -712,21 +726,23 @@ public:
         fields["context"]["description"] =
             "Only relevant background and constraints; not the complete conversation";
         // mode：create 是文生或严格首尾帧；reference 是最多十图加可选单视频；
-        // edit/extend 必须有且仅有一段源视频，不接受文档和网页。
+        // edit 可用一段源视频加人物参考图，extend 则延长一段源视频。
         fields["mode"]["description"] =
             "create=text or strict first/last frames; reference=up to ten images plus at most "
-            "one video; edit/extend=exactly one source video; extend requires ratio=adaptive "
-            "and measured source_duration_seconds";
+            "one video, including prompt-guided motion from Video 1 onto Image 1; edit=one "
+            "source video, optionally with a person image for prompt-guided replacement; "
+            "extend=one source video with ratio=adaptive";
         // duration：输出可以明确选 2–30 秒，也可以用 -1 智能时长；
         // 一旦有视频输入，输入与输出相加不能超过 30 秒。
         fields["duration"]["description"] =
             "Output seconds 2-30, or -1 for smart duration; with a source video, input plus "
             "output duration must total at most 30 seconds";
-        // extend 必须先测得源视频时长，才能在发起付费任务前检查 15 秒输入上限
-        // 及输入、输出合计 30 秒上限；不能靠模型猜测源片时长。
+        // 任意模式只要使用本地视频，都必须先测时长，才能在上传及付费前核对
+        // 15 秒输入上限和 30 秒输入输出合计上限；不能靠模型猜测源片时长。
         fields["source_duration_seconds"]["description"] =
-            "Measured source-video length in seconds for extend mode (use ffprobe); source "
-            "must be 1-15 seconds, and source plus requested output must be at most 30";
+            "Measured local source-video length in seconds for edit/reference/extend (use "
+            "ffprobe); source must be 1-15 seconds, and source plus requested output must "
+            "be at most 30";
         // resolution/ratio：输出只有 480P、720P、1080P 和列出的比例；
         // 编辑原视频希望保持构图时应考虑 adaptive，而不是擅自裁成固定画幅。
         fields["resolution"]["description"] = "Output 480P, 720P, or 1080P at 30 fps";
@@ -746,7 +762,8 @@ public:
             "At most ten local reference images uploaded to private OSS; cannot mix with "
             "strict first/last frames";
         fields["video_path"]["description"] =
-            "At most one local MP4/MOV uploaded to private OSS as source/reference video";
+            "At most one local MP4/MOV, 1-15 seconds, uploaded to private OSS; first measure "
+            "source_duration_seconds. For person replacement combine with one person image";
         // file_path/file_url/link_url：本地文档经私有 OSS；file_url 为公网文档；
         // link_url 为公网网页。文档与网页二选一，并需要 prompt_extend=true。
         // 本地文档上限 100 MB，还要服从供应商页数限制。
@@ -849,6 +866,10 @@ public:
             revision["mode"] = "edit";
             revision["source_url"] = sourceUrl;
             revision["parent_task_id"] = previous.id;
+            const Json usage = completed.body.value("usage", Json::object());
+            if (usage.is_object() && usage.contains("output_video_duration") &&
+                usage["output_video_duration"].is_number())
+                revision["source_duration_seconds"] = usage["output_video_duration"];
             std::string prior = previous.contextSummary;
             if (!prior.empty()) prior += "\n";
             prior += "Previous goal: " + previous.intent;
@@ -925,10 +946,10 @@ private:
         const int duration = args.value("duration", mode == "edit" ? -1 : 5);
         if (duration != -1 && (duration < 2 || duration > 30))
             return invalid("duration must be -1 or 2 to 30 seconds");
-        if (mode == "extend") {
+        if (!videoPath.empty() || !sourceUrl.empty()) {
             if (!args.contains("source_duration_seconds") ||
                 !args["source_duration_seconds"].is_number())
-                return invalid("Measure source_duration_seconds with ffprobe before extension");
+                return invalid("Measure source_duration_seconds before uploading a source video");
             const double sourceDuration = args["source_duration_seconds"].get<double>();
             if (sourceDuration < 1 || sourceDuration > 15 ||
                 (duration != -1 && sourceDuration + duration > 30))
@@ -1107,331 +1128,6 @@ private:
         return MaiToolResult::success(result.dump());
     }
 
-    MaiWanCredentialsProvider mCredentials;
-    std::string mCaBundle;
-    MaiCreativeMediaUploadProvider mUploadMedia;
-};
-
-class MaiWanAnimateTool final : public MaiTool {
-public:
-    MaiWanAnimateTool(bool replacePerson, MaiWanCredentialsProvider credentials,
-                      std::string caBundle, MaiCreativeMediaUploadProvider uploadMedia)
-        : mReplacePerson(replacePerson),
-          mCredentials(std::move(credentials)),
-          mCaBundle(std::move(caBundle)),
-          mUploadMedia(std::move(uploadMedia)) {}
-
-    std::string name() const override {
-        return mReplacePerson ? "wan_animate_mix" : "wan_animate_move";
-    }
-    bool requiresApproval(const std::string& raw) const override {
-        return isPaidGenerationAction(raw);
-    }
-    bool requiresPerCallApproval(const std::string& raw) const override {
-        return isPaidGenerationAction(raw);
-    }
-
-    std::optional<MaiSpecialistInfo> specialistInfo() const override {
-        const MaiWanCredentials credentials = mCredentials ? mCredentials() : MaiWanCredentials{};
-        const bool configured = hasCredentials(credentials);
-        const auto status = !configured    ? MaiSpecialistCapabilityStatus::NotConfigured
-                            : mUploadMedia ? MaiSpecialistCapabilityStatus::ImplementedUnverified
-                                           : MaiSpecialistCapabilityStatus::UploadNotConfigured;
-        const char* capability =
-            mReplacePerson ? "replace_person_in_video" : "transfer_motion_to_image";
-        const char* limitation = mReplacePerson
-                                     ? "Replace the main person in one 2-30 second video with "
-                                       "the person in one image; preserve the video's scene"
-                                     : "Animate one image person using the action and expression "
-                                       "from one 2-30 second video; keep the image background";
-        return MaiSpecialistInfo{
-            name(),
-            model(),
-            configured,
-            {{capability, true, true, status, limitation},
-             {"standard_mode", true, true, status,
-              "wan-std is faster and cheaper; output is 720P MP4 at 15 fps"},
-             {"professional_mode", true, true, status,
-              "wan-pro is smoother and costs more; output is 720P MP4 at 25 fps"},
-             {"cloud_task_cancel", false, true, status,
-              "Only a PENDING task can be canceled through the cloud API"},
-             {"local_record_delete", false, false,
-              MaiSpecialistCapabilityStatus::ImplementedUnverified,
-              "Delete removes only an already delivered local task record"}}};
-    }
-
-    std::string description() const override {
-        // 两个模型共用人物图+动作视频输入，但目标不同：mix 替换原视频主角并保留
-        // 原视频场景；move 把动作迁移到图片人物并保留图片背景。不能把二者视作
-        // Wan3 的自由提示词编辑。图像和视频本地路径只用作 OSS 上传源。
-        return mReplacePerson
-                   ? "Wan2.2 video person replacement. One person image plus one reference "
-                     "video replaces the video's main person while preserving its original "
-                     "scene, light, and color. Use wan_animate_move instead if the image "
-                     "background should remain. Input image: JPEG/PNG under 5 MB; reference "
-                     "video: MP4/MOV, 2-30 seconds, under 200 MB. Image sides must be "
-                     "200-4096 pixels and video sides 200-2048; both need a 1:3 to 3:1 "
-                     "aspect ratio. Local files are uploaded "
-                     "to private OSS; public HTTPS URLs are also accepted. Choose paid "
-                     "wan-std or wan-pro explicitly. Delegate submits one paid async task; "
-                     "continue checks it, and the App delivers the result."
-                   : "Wan2.2 image-to-motion. One person image plus one reference video "
-                     "transfers the video's actions and expressions to the image person "
-                     "while keeping the image background. Use wan_animate_mix instead to "
-                     "replace a person inside the original video scene. Input image: JPEG/PNG "
-                     "under 5 MB; reference video: MP4/MOV, 2-30 seconds, under 200 MB. "
-                     "Image sides must be 200-4096 pixels and video sides 200-2048; both "
-                     "need a 1:3 to 3:1 aspect ratio. Local files are uploaded to private "
-                     "OSS; public HTTPS URLs are also "
-                     "accepted. Choose paid wan-std or wan-pro explicitly. Delegate submits "
-                     "one paid async task; continue checks it, and the App delivers the result.";
-    }
-
-    std::string parametersSchema() const override {
-        const std::string raw =
-            R"({"type":"object","properties":{)"
-            R"("action":{"type":"string","enum":["discover","diagnose","delegate","continue","cancel","delete"]},)"
-            R"("image_path":{"type":"string"},"image_url":{"type":"string"},)"
-            R"("video_path":{"type":"string"},"video_url":{"type":"string"},)"
-            R"("source_duration_seconds":{"type":"number"},)"
-            R"("service_mode":{"type":"string","enum":["wan-std","wan-pro"]},)"
-            R"("watermark":{"type":"boolean"},"conversation_id":{"type":"string"},)"
-            R"("poll_once":{"type":"boolean"}},)"
-            R"("required":["action"],"additionalProperties":false})";
-        Json schema = Json::parse(raw);
-        Json& fields = schema["properties"];
-        // action：discover/diagnose 只读，delegate 发起一次付费任务；continue
-        // 查询旧任务，cancel 仅取消排队中任务，delete 仅删已交付本地索引。
-        fields["action"]["description"] =
-            "discover/diagnose are read-only; delegate is paid; continue checks one task; "
-            "cancel only PENDING; delete only an already delivered local record";
-        // 图片、视频各传一种来源。本地路径先经私有 OSS 换成临时 HTTPS URL；
-        // 已有公网 HTTPS URL 可直接传，不能同时给路径和 URL。
-        fields["image_path"]["description"] =
-            "One local JPEG/PNG person image, uploaded to private OSS; exclusive with image_url";
-        fields["image_url"]["description"] =
-            "One accessible HTTPS person image; exclusive with image_path";
-        fields["video_path"]["description"] =
-            "One local MP4/MOV action video, uploaded to private OSS; exclusive with video_url";
-        fields["video_url"]["description"] =
-            "One accessible HTTPS action video; exclusive with video_path";
-        // 源片长度决定输出时长与费用。主模型须先用 ffprobe 等真实工具测量，
-        // 不能猜测；此数值用于付费前约束检查，不传给百炼 API。
-        fields["source_duration_seconds"]["description"] =
-            "Measured source-video duration from ffprobe, 2-30 seconds; never guess it";
-        // service_mode：标准版更快更便宜；专业版更平滑但更贵，必须由客户确认。
-        fields["service_mode"]["description"] =
-            "Required paid tier: wan-std for faster/lower-cost 15 fps, or wan-pro for "
-            "smoother/higher-cost 25 fps; confirm with the user";
-        fields["watermark"]["description"] = "Add provider AI watermark; defaults to false";
-        fields["conversation_id"]["description"] =
-            "Saved spt_ task ID for continue, cancel, or delete in this AI conversation";
-        fields["poll_once"]["description"] =
-            "Query status once; the App normally polls and delivers the result automatically";
-        return schema.dump();
-    }
-
-    MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
-        const Json args = Json::parse(raw, nullptr, false);
-        if (!args.is_object()) return invalid("arguments must be an object");
-        if (auto error = rejectUnknownFields(args, parametersSchema())) return *error;
-        for (const char* field : {"action", "image_path", "image_url", "video_path", "video_url",
-                                  "service_mode", "conversation_id"}) {
-            if (args.contains(field) && !args[field].is_string())
-                return invalid(std::string(field) + " must be a string");
-        }
-        for (const char* field : {"watermark", "poll_once"}) {
-            if (args.contains(field) && !args[field].is_boolean())
-                return invalid(std::string(field) + " must be boolean");
-        }
-        const std::string action = value(args, "action");
-        const MaiWanCredentials credentials = mCredentials ? mCredentials() : MaiWanCredentials{};
-        if (action == "discover") {
-            const MaiSpecialistInfo info = *specialistInfo();
-            Json capabilities = Json::array();
-            for (const auto& capability : info.capabilities)
-                capabilities.push_back(
-                    Json{{"id", capability.id},
-                         {"model_support", capability.modelSupported},
-                         {"api_support", capability.apiSupported},
-                         {"tool_status", maiSpecialistCapabilityStatusToString(capability.status)},
-                         {"limitation", capability.limitation}});
-            Json missing = Json::array();
-            if (credentials.apiKey.empty()) missing.push_back("api_key");
-            if (!validWorkspaceId(credentials.workspaceId)) missing.push_back("workspace_id");
-            return MaiToolResult::success(
-                Json{{"tool_kind", "model_backed"},
-                     {"bound_model", model()},
-                     {"configured", info.configured},
-                     {"missing_configuration", missing},
-                     {"capabilities", capabilities},
-                     {"reply", "One image and one video can create a Wan2.2 animation task."}}
-                    .dump());
-        }
-        if (action == "delete")
-            return manageVideoTask(args, name().c_str(), credentials, mCaBundle, context);
-        if (!hasCredentials(credentials))
-            return failure(MaiErrorCode::NotConfigured, "not_configured",
-                           "Configure a Model Studio API key and Workspace ID");
-        if (action == "diagnose") return diagnoseModel(credentials, model(), mCaBundle, context);
-        if (action == "delegate") return delegate(args, credentials, context);
-        if (action == "continue") return continueTask(args, credentials, context);
-        if (action == "cancel")
-            return manageVideoTask(args, name().c_str(), credentials, mCaBundle, context);
-        return invalid("action must be discover, diagnose, delegate, continue, cancel, or delete");
-    }
-
-private:
-    const char* model() const {
-        return mReplacePerson ? kWanAnimateMixModel : kWanAnimateMoveModel;
-    }
-
-    MaiToolResult delegate(const Json& args, const MaiWanCredentials& credentials,
-                           const MaiToolContext& context) const {
-        const std::string imagePath = value(args, "image_path");
-        const std::string imageUrl = value(args, "image_url");
-        const std::string videoPath = value(args, "video_path");
-        const std::string videoUrl = value(args, "video_url");
-        const std::string serviceMode = value(args, "service_mode");
-        if (imagePath.empty() == imageUrl.empty() || videoPath.empty() == videoUrl.empty())
-            return invalid("Provide exactly one image source and one video source");
-        if (serviceMode != "wan-std" && serviceMode != "wan-pro")
-            return invalid("Confirm service_mode as wan-std or wan-pro before paid submission");
-        if (!args.contains("source_duration_seconds") ||
-            !args["source_duration_seconds"].is_number())
-            return invalid("Measure source_duration_seconds before paid submission");
-        const double sourceDuration = args["source_duration_seconds"].get<double>();
-        if (sourceDuration < 2 || sourceDuration > 30)
-            return invalid("Source video duration must be 2-30 seconds");
-        std::string uploadedImage = imageUrl;
-        std::string uploadedVideo = videoUrl;
-        if (!imagePath.empty()) {
-            if (auto error = uploadOssMedia(imagePath, context, mUploadMedia, 5'000'000, false,
-                                            uploadedImage))
-                return *error;
-        }
-        if (!videoPath.empty()) {
-            if (auto error = uploadOssMedia(videoPath, context, mUploadMedia, 200'000'000, true,
-                                            uploadedVideo))
-                return *error;
-        }
-        if (!httpsHost(uploadedImage, "") || !httpsHost(uploadedVideo, ""))
-            return invalid("Image and video URLs must be accessible HTTPS links");
-        // 官方接口是 image2video/video-synthesis，不是 Wan3 的 video-generation 路径。
-        // 只有 model 区分换人与动作迁移；不向这两个模型发送自由文本 prompt。
-        const Json body = {{"model", model()},
-                           {"input",
-                            {{"image_url", uploadedImage},
-                             {"video_url", uploadedVideo},
-                             {"watermark", args.value("watermark", false)}}},
-                           {"parameters", {{"check_image", true}, {"mode", serviceMode}}}};
-        HttpResponse response =
-            requestJson(modelStudioBase(credentials) + "/services/aigc/image2video/video-synthesis",
-                        credentials.apiKey, mCaBundle, &body, true, false, context);
-        if (response.error) {
-            if (response.transferFailed)
-                return failure(MaiErrorCode::Network, "submission_unknown",
-                               "Wan animation request may have been accepted. Do not resubmit "
-                               "automatically; check provider task records first.");
-            return *response.error;
-        }
-        const Json output = response.body.value("output", Json::object());
-        const std::string taskId = value(output, "task_id");
-        if (!validId(taskId))
-            return failure(MaiErrorCode::Protocol, "submission_unknown",
-                           "Wan animation returned no task ID; do not resubmit automatically");
-        Json result = {{"task_id", taskId},
-                       {"conversation_id", taskId},
-                       {"status", value(output, "task_status")},
-                       {"bound_model", model()},
-                       {"service_mode", serviceMode},
-                       {"reply", "Wan animation task submitted. The App will report its result."}};
-        if (context.specialistTasks != nullptr && !context.sessionId.empty()) {
-            MaiSpecialistTask task;
-            task.id = MaiIdGenerator::generate("spt_");
-            task.ownerSessionId = context.sessionId;
-            task.specialistName = name();
-            task.providerTaskId = taskId;
-            task.intent = mReplacePerson ? "replace_person" : "transfer_motion";
-            task.inputReference = videoPath.empty() ? "external_video" : videoPath;
-            task.created = MaiTime::getCurrentTime();
-            const MaiError stored = context.specialistTasks->insertSpecialistTask(task);
-            if (stored)
-                result["context_persistence_warning"] = stored.message();
-            else {
-                result["conversation_id"] = task.id;
-                result["specialist_task_id"] = task.id;
-            }
-        }
-        return MaiToolResult::success(result.dump());
-    }
-
-    MaiToolResult continueTask(const Json& args, const MaiWanCredentials& credentials,
-                               const MaiToolContext& context) const {
-        const std::string conversationId = value(args, "conversation_id");
-        if (!validId(conversationId)) return invalid("A valid conversation_id is required");
-        std::string taskId = conversationId;
-        if (conversationId.compare(0, 4, "spt_") == 0) {
-            MaiSpecialistTask task;
-            if (context.specialistTasks == nullptr ||
-                !context.specialistTasks->getSpecialistTask(conversationId, context.sessionId,
-                                                            task) ||
-                task.specialistName != name())
-                return failure(MaiErrorCode::NotFound, "not_found",
-                               "Wan animation task was not found in this AI conversation");
-            taskId = task.providerTaskId;
-        }
-        if (!validId(taskId)) return invalid("Invalid provider task ID");
-        HttpResponse response =
-            requestJson(modelStudioBase(credentials) + "/tasks/" + taskId, credentials.apiKey,
-                        mCaBundle, nullptr, false, false, context);
-        if (response.error) return *response.error;
-        const Json output = response.body.value("output", Json::object());
-        const std::string status = value(output, "task_status");
-        if (status == "FAILED")
-            return failure(MaiErrorCode::Network, "task_failed",
-                           value(output, "message").empty() ? "Wan animation task failed"
-                                                            : value(output, "message"));
-        if (status == "UNKNOWN")
-            return failure(MaiErrorCode::NotFound, "task_status_unknown",
-                           "Wan animation task status is unknown; keep the accepted task ID");
-        if (status == "PENDING" || status == "RUNNING" || status == "CANCELED")
-            return MaiToolResult::success(Json{{"conversation_id", conversationId},
-                                               {"task_id", taskId},
-                                               {"status", status},
-                                               {"reply", "Wan animation task is not completed."}}
-                                              .dump());
-        if (status != "SUCCEEDED")
-            return failure(MaiErrorCode::Protocol, "protocol", "Unknown animation task status");
-        const std::string relative = name() + "-" + taskId + ".mp4";
-        if (context.root.empty() || maiResolvePathWithinRoot(context.root, relative).empty())
-            return invalid("An Agent workspace is required to save the video");
-        const std::string path = maiResolvePathWithinRoot(context.root, relative);
-        std::uint64_t size = 0;
-        if (MaiFileSystem::fileSize(MaiFilePath::fromUtf8(path), size) && size > 0)
-            return MaiToolResult::success(Json{{"conversation_id", conversationId},
-                                               {"task_id", taskId},
-                                               {"status", status},
-                                               {"path", path},
-                                               {"bytes", size},
-                                               {"mime_type", "video/mp4"},
-                                               {"reply", "Wan animation video saved locally."}}
-                                              .dump());
-        const std::string url = wanAnimateResultUrl(output);
-        if (url.empty())
-            return failure(MaiErrorCode::Protocol, "media_download_failed",
-                           "Wan animation task has no HTTPS video result");
-        MaiToolResult downloaded = downloadMedia(url, relative, mCaBundle, context, false);
-        if (downloaded.hasError()) return downloaded;
-        Json result = Json::parse(downloaded.output());
-        result.update(Json{{"conversation_id", conversationId},
-                           {"task_id", taskId},
-                           {"status", status},
-                           {"reply", "Wan animation video saved locally."}});
-        return MaiToolResult::success(result.dump());
-    }
-
-    bool mReplacePerson;
     MaiWanCredentialsProvider mCredentials;
     std::string mCaBundle;
     MaiCreativeMediaUploadProvider mUploadMedia;
@@ -2401,20 +2097,6 @@ std::unique_ptr<MaiTool> makeMaiWanVideoTool(MaiWanCredentialsProvider credentia
                                              MaiCreativeMediaUploadProvider uploadMedia) {
     return std::make_unique<MaiWanVideoTool>(std::move(credentials), std::move(caBundlePath),
                                              std::move(uploadMedia));
-}
-
-std::unique_ptr<MaiTool> makeMaiWanAnimateMixTool(MaiWanCredentialsProvider credentials,
-                                                  std::string caBundlePath,
-                                                  MaiCreativeMediaUploadProvider uploadMedia) {
-    return std::make_unique<MaiWanAnimateTool>(true, std::move(credentials),
-                                               std::move(caBundlePath), std::move(uploadMedia));
-}
-
-std::unique_ptr<MaiTool> makeMaiWanAnimateMoveTool(MaiWanCredentialsProvider credentials,
-                                                   std::string caBundlePath,
-                                                   MaiCreativeMediaUploadProvider uploadMedia) {
-    return std::make_unique<MaiWanAnimateTool>(false, std::move(credentials),
-                                               std::move(caBundlePath), std::move(uploadMedia));
 }
 
 std::unique_ptr<MaiTool> makeMaiBailianKlingVideoTool(MaiWanCredentialsProvider credentials,

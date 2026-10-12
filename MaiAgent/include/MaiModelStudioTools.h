@@ -16,23 +16,12 @@ struct MaiWanCredentials {
 };
 using MaiWanCredentialsProvider = std::function<MaiWanCredentials()>;
 
-// Wan3.0 根据文本、首尾帧或参考素材生成视频；本地素材同样经私有 OSS 上传。任务异步提交；
-// the completed MP4 is downloaded to the Agent workspace by continue().
+// Wan3.0 根据文本、首尾帧或参考素材生成视频；一张人物图加一段参考视频可用提示词
+// 引导人物替换或动作模仿，不能保证逐帧一致。本地素材经私有 OSS 上传；参考视频
+// 最长 15 秒，输入与输出总时长不超过 30 秒。任务异步提交，continue 下载 MP4。
 std::unique_ptr<MaiTool> makeMaiWanVideoTool(MaiWanCredentialsProvider credentials,
                                              std::string caBundlePath = {},
                                              MaiCreativeMediaUploadProvider uploadMedia = {});
-
-// 两个 Wan2.2 模型均需一张人物图及一段 2–30 秒动作视频，图片≤5 MB，
-// 视频≤200 MB；本地文件只作为私有 OSS 上传源，模型收到的是临时 HTTPS URL。
-// mix 将原视频主角替换为图片人物并保留原视频场景；move 把视频动作迁移到
-// 图片人物并保留图片背景。调用前必须确认 std/pro 档位与实测源片时长。
-// delegate 是异步付费提交，continue 查询并下载 MP4；云端结果链接仅短期有效。
-std::unique_ptr<MaiTool> makeMaiWanAnimateMixTool(MaiWanCredentialsProvider credentials,
-                                                  std::string caBundlePath = {},
-                                                  MaiCreativeMediaUploadProvider uploadMedia = {});
-std::unique_ptr<MaiTool> makeMaiWanAnimateMoveTool(MaiWanCredentialsProvider credentials,
-                                                   std::string caBundlePath = {},
-                                                   MaiCreativeMediaUploadProvider uploadMedia = {});
 
 // 百炼可灵视频与万相共用北京地域 Key/Workspace，但需单独开通可灵模型权限。
 // 本地 JPEG/PNG 和 MP4/MOV 经宿主私有 OSS 直传，再提交异步任务；无上传通道时

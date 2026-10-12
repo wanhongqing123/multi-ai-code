@@ -226,6 +226,7 @@ struct MaiChatApp: App {
 
     init() {
         AppDiagnosticLog.shared.install()
+        AICloudCredentialSync.removeLegacyPlaintextCache()
         Task.detached(priority: .utility) {
             _ = try? await AICloudCredentialSync.syncIfConfigured()
         }

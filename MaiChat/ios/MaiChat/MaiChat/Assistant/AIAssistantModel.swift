@@ -63,6 +63,16 @@ enum AICloudCredentialSync {
     private static let modelProviders = ["ark", "glm", "deepseek",
                                          "wan", "minimax"]
 
+    static func removeLegacyPlaintextCache() {
+        guard let support = try? FileManager.default.url(
+            for: .applicationSupportDirectory, in: .userDomainMask,
+            appropriateFor: nil, create: false
+        ) else { return }
+        try? FileManager.default.removeItem(
+            at: support.appendingPathComponent("AIAssistant/model-keys.ini")
+        )
+    }
+
     static func serviceEndpoint() -> (url: URL, token: String)? {
         let address = UserDefaults.standard.string(forKey: "oss-media-signer-url") ?? ""
         let token = KeychainSecretStore(account: "oss-media-signer-token").readSecretKey()
@@ -301,11 +311,12 @@ actor AIAssistantBackend {
         #endif
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         root = directory
+        AICloudCredentialSync.removeLegacyPlaintextCache()
         let file = directory.appendingPathComponent("settings.json")
         if FileManager.default.fileExists(atPath: file.path) {
             settings = try JSONDecoder().decode(AIModelSettings.self, from: Data(contentsOf: file))
         }
-        // 先恢复已选主模型，再请求服务器刷新内存中的密钥，最后初始化 C++ Agent。
+        // 先恢复已选主模型，再从服务器刷新仅驻内存的密钥，最后初始化 C++ Agent。
         if !["glm-5.3", "glm-5.3-flash", "deepseek-flash"].contains(settings.model) {
             settings.model = "glm-5.3"
         }

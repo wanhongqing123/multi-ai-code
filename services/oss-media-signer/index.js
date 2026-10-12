@@ -147,13 +147,14 @@ function createHandler(options = {}) {
       }
       if (body?.action !== 'ark_seedance')
         return jsonResponse(400, { error: 'Invalid temporary credential request' });
-      const models = (env.MAICHAT_SEEDANCE_MODEL_IDS || '').split(',').map(v => v.trim())
+      const models = (env.MAICHAT_ARK_MODEL_IDS ||
+        env.MAICHAT_SEEDANCE_MODEL_IDS || '').split(',').map(v => v.trim())
         .filter(Boolean);
       if (!models.length || models.length > 10 ||
-          !models.every(v => /^doubao-seedance-[a-z0-9-]{1,70}$/.test(v)) ||
+          !models.every(v => /^doubao-(?:seedance|seedream)-[a-z0-9-]{1,70}$/.test(v)) ||
           new Set(models).size !== models.length ||
           !env.VOLC_ACCESS_KEY_ID || !env.VOLC_SECRET_ACCESS_KEY)
-        return jsonResponse(503, { error: 'Seedance temporary credentials are not configured' });
+        return jsonResponse(503, { error: 'Ark media temporary credentials are not configured' });
       const issued = await callArk('GetApiKey', {
         DurationSeconds: 300, ResourceType: 'presetendpoint', ResourceIds: models,
         ProjectName: env.VOLC_ARK_PROJECT_NAME || 'default'

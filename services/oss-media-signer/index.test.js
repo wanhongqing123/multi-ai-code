@@ -293,13 +293,14 @@ test('synchronizes only requested model keys and never returns AccessKeys', asyn
     headers: { Authorization: 'Bearer wrong' } })).statusCode, 401);
 });
 
-test('issues a five-minute Seedance key only to the account service', async () => {
+test('issues a five-minute Seedance and Seedream key only to the account service', async () => {
   const now = new Date('2026-10-08T00:00:00Z');
   const internalToken = 'fedcba9876543210fedcba9876543210';
-  const models = ['doubao-seedance-2-0-mini-260615'];
+  const models = ['doubao-seedance-2-0-mini-260615',
+    'doubao-seedream-5-0-flash-260915'];
   const configured = { ...env,
     MAICHAT_AUTH_SERVICE_TOKEN: internalToken,
-    MAICHAT_SEEDANCE_MODEL_IDS: models[0],
+    MAICHAT_ARK_MODEL_IDS: models.join(','),
     VOLC_ACCESS_KEY_ID: 'test-volc-id',
     VOLC_SECRET_ACCESS_KEY: 'test-volc-secret'
   };
@@ -324,4 +325,8 @@ test('issues a five-minute Seedance key only to the account service', async () =
     expires_at: Math.floor(now.getTime() / 1000) + 300 });
   assert.equal(calls, 1);
   assert.ok(!result.body.includes(configured.VOLC_SECRET_ACCESS_KEY));
+  const unrelated = createHandler({ env: { ...configured,
+    MAICHAT_ARK_MODEL_IDS: 'doubao-seed-2-0-pro-260215' },
+    callArk: async () => { throw new Error('must not issue'); } });
+  assert.equal((await unrelated(issue(internalToken))).statusCode, 503);
 });

@@ -17,7 +17,7 @@ Node 服务只监听 `127.0.0.1:9100`。验证码、密码哈希、登录会话�
 | `POST /v1/auth/logout` | Bearer 会话；撤销当前会话 |
 | `GET /v1/auth/me` | Bearer 会话；查询当前账号与脱敏手机号 |
 | `GET /v1/im/credential` | Bearer 会话；只为当前账号签发 Tencent UserSig |
-| `GET /v1/model/seedance-credential` | Bearer 会话且手机号在模型白名单；返回 5 分钟、限定 Seedance 的临时方舟 Key |
+| `GET /v1/model/seedance-credential` | Bearer 会话且手机号在模型白名单；返回 5 分钟、限定 Seedance 与 Seedream 的临时方舟 Key；路径保留旧名称兼容 App |
 | `GET /v1/model/bailian-credential` | Bearer 会话且手机号在模型白名单；返回 5 分钟百炼临时 Key 和万相 Workspace ID，供万相与百炼可灵共用 |
 
 接口经 Nginx 对外使用 `/api/v1/...`；服务内部路由仍为 `/v1/...`。

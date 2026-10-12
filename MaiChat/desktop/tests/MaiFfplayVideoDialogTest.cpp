@@ -11,11 +11,16 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdint>
 #include <cstring>
 
 #include "MaiChatTools/DesktopMediaTools.h"
 #include "MaiTool.h"
 #include "ui/MaiFfplayVideoDialog.h"
+
+#if defined(__APPLE__)
+extern "C" uint64_t maiFfplayAppleNonSilentBufferCount(void);
+#endif
 
 namespace {
 
@@ -34,6 +39,7 @@ private slots:
     void exposesSaveAndForwardActions();
     void opensControlsAndClosesVideoPopup_data();
     void opensControlsAndClosesVideoPopup();
+    void slowedPlaybackExtendsAudibleOutput();
 };
 
 void MaiFfplayVideoDialogTest::exposesSaveAndForwardActions() {
@@ -127,6 +133,51 @@ void MaiFfplayVideoDialogTest::opensControlsAndClosesVideoPopup() {
     QTRY_VERIFY(dialog.isNull());
     QVERIFY(MaiFfplayVideoDialog::activeDialog().isNull());
     maiFfplaySetDiagnosticSink(nullptr, nullptr);
+}
+
+void MaiFfplayVideoDialogTest::slowedPlaybackExtendsAudibleOutput() {
+#if defined(__APPLE__)
+    QWidget host;
+    MaiToolRegistry registry;
+    registerDesktopMediaTools(registry, &host);
+    MaiTool* openTool = registry.find("maichat_play_video");
+    QVERIFY(openTool != nullptr);
+    const QFileInfo fixture(QStringLiteral(MAICHAT_FFPLAY_VIDEO_FIXTURE));
+    MaiToolContext context;
+    context.root = fixture.dir().absolutePath().toStdString();
+    const MaiToolResult opened = openTool->execute(
+        QStringLiteral("{\"path\":\"%1\"}").arg(fixture.fileName()).toStdString(),
+        context);
+    QVERIFY2(!opened.hasError(), opened.error().message().c_str());
+    QPointer<MaiFfplayVideoDialog> dialog = MaiFfplayVideoDialog::activeDialog();
+    QVERIFY(!dialog.isNull());
+    QVERIFY(dialog->setSpeed(0.5));
+    const uint64_t before = maiFfplayAppleNonSilentBufferCount();
+    QTRY_VERIFY_WITH_TIMEOUT(maiFfplayAppleNonSilentBufferCount() > before, 3000);
+    // 两秒源音轨按 0.5 倍速应持续约四秒；若只改画面，音频此时已结束。
+    QTest::qWait(2200);
+    const uint64_t midway = maiFfplayAppleNonSilentBufferCount();
+    QTRY_VERIFY_WITH_TIMEOUT(maiFfplayAppleNonSilentBufferCount() > midway, 700);
+    dialog->close();
+    QTRY_VERIFY(dialog.isNull());
+
+    const MaiToolResult reopened = openTool->execute(
+        QStringLiteral("{\"path\":\"%1\"}").arg(fixture.fileName()).toStdString(),
+        context);
+    QVERIFY2(!reopened.hasError(), reopened.error().message().c_str());
+    dialog = MaiFfplayVideoDialog::activeDialog();
+    QVERIFY(!dialog.isNull());
+    QVERIFY(dialog->setSpeed(2.0));
+    const uint64_t fastStart = maiFfplayAppleNonSilentBufferCount();
+    QTRY_VERIFY_WITH_TIMEOUT(maiFfplayAppleNonSilentBufferCount() > fastStart, 3000);
+    // 两秒源音轨按 2 倍速应在约一秒后结束，不应继续按原速输出声音。
+    QTest::qWait(1500);
+    const uint64_t fastEnd = maiFfplayAppleNonSilentBufferCount();
+    QTest::qWait(300);
+    QCOMPARE(maiFfplayAppleNonSilentBufferCount(), fastEnd);
+    dialog->close();
+    QTRY_VERIFY(dialog.isNull());
+#endif
 }
 
 QTEST_MAIN(MaiFfplayVideoDialogTest)

@@ -32,7 +32,10 @@ must exercise the same playback session as MaiChat's own controls.
 
 Speed switching reopens the same source in the same popup at its current source-media
 position. The compatibility entry point applies `setpts` to video and pitch-preserving
-`atempo` to audio without creating a new file; changing speed causes a brief pause.
+`atempo` to audio without creating a new file. It splits non-1× rates into smaller
+tempo stages to reduce artifacts; audio timestamps retain the tempo filter's
+sample timing while their start offset follows the video clock. Changing speed causes
+a brief pause.
 The Agent `maichat_video_command` and native popup controls call the same path.
 
 ## iOS picture quality: 2026-10-03 device evidence

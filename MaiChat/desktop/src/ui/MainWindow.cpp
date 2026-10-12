@@ -901,7 +901,7 @@ enum class LineIconKind {
   ScreenConnecting, // 连接中：显示器内三点
   ScreenDisconnect, // 已连接，点击断开：显示器内叉
   Send,
-  Assistant, // AI 助手：四角星（闪光），线上普遍用来表示"生成式 AI"
+  Assistant, // 创作中心：带播放符号的场记板，强调图片和视频创作。
 };
 
 int lineIconKindValue(LineIconKind kind) { return static_cast<int>(kind); }
@@ -1072,26 +1072,21 @@ QIcon makeLineIcon(LineIconKind kind, const QColor &color) {
     }
     break;
   case LineIconKind::Assistant: {
-    // 四角星（闪光）。纸飞机在这里是错的——它说的是"发送"，
-    // 而导航栏这一格是"创作中心"，两个语义差得远。
-    //
-    // 一大一小两颗，是这个图形语言里表示"生成"的常见写法；
-    // 只画一颗会读成普通的星标/收藏。
-    const auto sparkle = [&painter](qreal cx, qreal cy, qreal r) {
-      QPainterPath path;
-      const qreal waist = r * 0.34; // 腰身越细，星芒越尖
-      path.moveTo(cx, cy - r);
-      path.quadTo(cx + waist, cy - waist, cx + r, cy);
-      path.quadTo(cx + waist, cy + waist, cx, cy + r);
-      path.quadTo(cx - waist, cy + waist, cx - r, cy);
-      path.quadTo(cx - waist, cy - waist, cx, cy - r);
-      painter.drawPath(path);
-    };
-    sparkle(20, 22, 13);
-    QPen thin = painter.pen();
-    thin.setWidthF(3);
-    painter.setPen(thin);
-    sparkle(35, 36, 7);
+    // 图标资源缺失时仍绘制同一场记板轮廓，避免退回旧的星光符号。
+    painter.drawRoundedRect(QRectF(8, 17, 32, 24), 4, 4);
+    QPainterPath clapper;
+    clapper.moveTo(8, 17);
+    clapper.lineTo(7, 13);
+    clapper.quadTo(6, 9, 10, 8);
+    clapper.lineTo(35, 3);
+    clapper.quadTo(39, 2, 40, 6);
+    clapper.lineTo(41, 10);
+    clapper.closeSubpath();
+    painter.drawPath(clapper);
+    painter.drawLine(QPointF(16, 7), QPointF(22, 15));
+    painter.drawLine(QPointF(28, 5), QPointF(34, 13));
+    painter.drawPolygon(QPolygonF({QPointF(20, 24), QPointF(29, 30),
+                                   QPointF(20, 36)}));
     break;
   }
   case LineIconKind::Send:
@@ -1115,7 +1110,7 @@ QString navIconResource(LineIconKind kind) {
   case LineIconKind::Messages:
     return QStringLiteral(":/maichat/icons/message-circle.svg");
   case LineIconKind::Assistant:
-    return QStringLiteral(":/maichat/icons/sparkles.svg");
+    return QStringLiteral(":/maichat/icons/creative-studio.svg");
   case LineIconKind::Contacts:
     return QStringLiteral(":/maichat/icons/users.svg");
   case LineIconKind::Screen:

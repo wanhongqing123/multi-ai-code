@@ -72,6 +72,10 @@ final class LocalSettingsStore: @unchecked Sendable {
     private var cached: StoredRemoteIMSettings?
     private var revision = 0
 
+    private func accountKey(_ userID: String) -> String {
+        "maichat_settings_account_" + userID
+    }
+
     init(defaults: UserDefaults = .standard) { self.defaults = defaults }
 
     func load() -> StoredRemoteIMSettings {
@@ -95,7 +99,42 @@ final class LocalSettingsStore: @unchecked Sendable {
             autoreleasepool {
                 guard let data = try? JSONEncoder().encode(settings) else { return }
                 defaults.set(data, forKey: key)
+                if !settings.masterUserID.isEmpty {
+                    defaults.set(data, forKey: accountKey(settings.masterUserID))
+                }
             }
         }
+    }
+
+    func saveAccountSnapshot(_ settings: StoredRemoteIMSettings) -> Bool {
+        guard !settings.masterUserID.isEmpty,
+              let data = try? JSONEncoder().encode(settings) else { return false }
+        // 切换手机号前同步保存，避免紧接着写入空登录态时丢掉旧账号联系人。
+        Self.writes.sync {
+            defaults.set(data, forKey: accountKey(settings.masterUserID))
+        }
+        return true
+    }
+
+    func saveImmediately(_ settings: StoredRemoteIMSettings) -> Bool {
+        guard let data = try? JSONEncoder().encode(settings) else { return false }
+        lock.lock(); cached = settings; revision &+= 1; let version = revision; lock.unlock()
+        return Self.writes.sync { [self] in
+            lock.lock(); let current = revision; lock.unlock()
+            guard current == version else { return false }
+            defaults.set(data, forKey: key)
+            if !settings.masterUserID.isEmpty {
+                defaults.set(data, forKey: accountKey(settings.masterUserID))
+            }
+            return true
+        }
+    }
+
+    func loadAccountSnapshot(_ userID: String) -> StoredRemoteIMSettings? {
+        guard !userID.isEmpty,
+              let data = defaults.data(forKey: accountKey(userID)),
+              let settings = try? JSONDecoder().decode(StoredRemoteIMSettings.self, from: data),
+              settings.masterUserID == userID else { return nil }
+        return settings
     }
 }

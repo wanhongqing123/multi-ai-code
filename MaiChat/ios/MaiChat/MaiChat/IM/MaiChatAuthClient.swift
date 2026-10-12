@@ -78,6 +78,7 @@ actor MaiChatAuthClient {
     private var accessToken: String?
     private var accessExpiresAt = Date.distantPast
     private var refreshTask: Task<MaiChatAuthSession, Error>?
+    private var sessionVersion: UInt64 = 0
 
     func requestCode(
         phone: String, purpose: String = "login", ageConfirmed: Bool
@@ -101,6 +102,7 @@ actor MaiChatAuthClient {
                 "age_confirmed_14_plus": ageConfirmed
             ]
         )
+        sessionVersion &+= 1
         try adopt(session)
         return session
     }
@@ -115,6 +117,7 @@ actor MaiChatAuthClient {
                 "age_confirmed_14_plus": ageConfirmed
             ]
         )
+        sessionVersion &+= 1
         try adopt(session)
         return session
     }
@@ -171,6 +174,25 @@ actor MaiChatAuthClient {
         }
     }
 
+    /// 先撤销本机登录，保证 App 在切换过程中被系统结束时不会恢复旧账号。
+    func discardLocalSession() -> String? {
+        let token = accessToken
+        sessionVersion &+= 1
+        refreshTask?.cancel()
+        refreshTask = nil
+        accessToken = nil
+        accessExpiresAt = .distantPast
+        try? refreshStore.saveSecretKey("")
+        return token
+    }
+
+    func revokeServerSession(_ token: String) async {
+        guard !token.isEmpty else { return }
+        let _: [String: Bool]? = try? await request(
+            "auth/logout", method: "POST", body: [:], bearer: token
+        )
+    }
+
     private func adopt(_ session: MaiChatAuthSession) throws {
         try refreshStore.saveSecretKey(session.refreshToken)
         accessToken = session.accessToken
@@ -179,9 +201,15 @@ actor MaiChatAuthClient {
 
     private func currentAccessToken() async throws -> String {
         if let accessToken, Date() < accessExpiresAt { return accessToken }
-        if let refreshTask { return try await refreshTask.value.accessToken }
+        if let refreshTask {
+            let version = sessionVersion
+            let session = try await refreshTask.value
+            guard sessionVersion == version else { throw MaiChatAuthError.sessionExpired }
+            return session.accessToken
+        }
         let refreshToken = refreshStore.readSecretKey()
         guard !refreshToken.isEmpty else { throw MaiChatAuthError.sessionExpired }
+        let version = sessionVersion
         // 多个 IM 操作同时需要凭据时只能刷新一次；旧令牌被重复使用会撤销会话。
         let task = Task<MaiChatAuthSession, Error> {
             try await self.request("auth/refresh", method: "POST",
@@ -191,9 +219,11 @@ actor MaiChatAuthClient {
         defer { refreshTask = nil }
         do {
             let session = try await task.value
+            guard sessionVersion == version else { throw MaiChatAuthError.sessionExpired }
             try adopt(session)
             return session.accessToken
         } catch MaiChatAuthError.requestFailed("Invalid session") {
+            guard sessionVersion == version else { throw MaiChatAuthError.sessionExpired }
             accessToken = nil
             try? refreshStore.saveSecretKey("")
             throw MaiChatAuthError.sessionExpired

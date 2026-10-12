@@ -546,6 +546,13 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         if (aiAssistant != null) aiAssistant.setForeground(showingAssistant);
         String owner = session.requiresLogin() ? "" : session.settings().loginUserId();
         if (!owner.equals(displayedOwner)) {
+            if (aiAssistant != null) {
+                aiAssistant.setForeground(false);
+                aiAssistant = null;
+            }
+            AIAssistantController.configureAccount(owner);
+            if (maiChatHostTools != null)
+                AIAssistantController.shared(this).setHostToolHandler(maiChatHostTools::execute);
             rememberDraft();
             if (!displayedOwner.isEmpty()) {
                 hideKeyboard(); activeChatUserId = null; renderedChatUserId = null;
@@ -2219,33 +2226,30 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         page.addView(settingsSection("账号", new String[][]{
             {"登录账号", session.settings().loginUserId()}
         }), matchWrap());
-        page.addView(settingsSection("连接", new String[][]{
-            {"状态", connectionText()}
-        }), sectionParams());
-
-        Button logout = secondaryButton("退出登录");
+        Button logout = secondaryButton("切换手机号");
         logout.setTextColor(MaiChatTheme.RED);
         LinearLayout.LayoutParams logoutParams = match(dp(48));
         logoutParams.setMargins(0, dp(22), 0, 0);
         page.addView(logout, logoutParams);
-        logout.setOnClickListener(view -> confirm(
-            "退出登录？",
-            "本地聊天记录会保留，下次使用同一账号登录可继续查看。",
-            "退出",
-            () -> {
-                try {
-                    session.logout();
-                    loginAcceptedTerms = false;
-                    loginConfirmedAge = false;
-                    showInitialLogin = true;
-                    activeTab = RemoteIMTab.MESSAGES;
-                    activeChatUserId = null;
-                    render();
-                } catch (IOException error) {
-                    toast("退出登录失败");
-                }
+        logout.setOnClickListener(view -> {
+            try {
+                // 先清除旧账号的本机会话，再展示空白手机号登录页。
+                session.logout();
+                loginAcceptedTerms = false;
+                loginConfirmedAge = false;
+                loginUserDraft = "";
+                loginCodeDraft = "";
+                loginPasswordDraft = "";
+                loginChallengeId = "";
+                loginUsesPassword = false;
+                showInitialLogin = true;
+                activeTab = RemoteIMTab.MESSAGES;
+                activeChatUserId = null;
+                render();
+            } catch (IOException error) {
+                toast("切换手机号失败");
             }
-        ));
+        });
     }
 
     private LinearLayout settingsSection(String title, String[][] rows) {

@@ -1,6 +1,7 @@
 import Foundation
 import Darwin
 import CoreImage
+import CryptoKit
 import ImageIO
 import MaiChatCore
 import Photos
@@ -30,6 +31,49 @@ struct AIModelSettings: Codable, Sendable, Equatable {
         else if selected.hasPrefix("glm-") { baseUrl = Self.glmResponsesUrl }
     }
 
+}
+
+enum AIAssistantWorkspaceLocator {
+    private static func baseDirectory() throws -> URL {
+        let support = try FileManager.default.url(
+            for: .applicationSupportDirectory, in: .userDomainMask,
+            appropriateFor: nil, create: true
+        )
+        let base = support.appendingPathComponent("AIAssistant", isDirectory: true)
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        return base
+    }
+
+    static func claimLegacyWorkspace(for userID: String) throws {
+        guard !userID.isEmpty else { return }
+        let base = try baseDirectory()
+        let marker = base.appendingPathComponent("legacy-owner-user-id.txt")
+        guard !FileManager.default.fileExists(atPath: marker.path),
+              FileManager.default.fileExists(
+                atPath: base.appendingPathComponent("sessions.sqlite").path
+              ) else { return }
+        // 旧版本的 AI 数据库没有账号目录；切换前把它归属给当前账号，不移动付费任务文件。
+        try Data(userID.utf8).write(to: marker, options: .atomic)
+    }
+
+    static func directory(for userID: String) throws -> URL {
+        let base = try baseDirectory()
+        if userID.isEmpty {
+            let guest = base.appendingPathComponent("Guest", isDirectory: true)
+            try FileManager.default.createDirectory(at: guest, withIntermediateDirectories: true)
+            return guest
+        }
+        let marker = base.appendingPathComponent("legacy-owner-user-id.txt")
+        if let owner = try? String(contentsOf: marker, encoding: .utf8), owner == userID {
+            return base
+        }
+        let digest = SHA256.hash(data: Data(userID.utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        let account = base.appendingPathComponent("Accounts", isDirectory: true)
+            .appendingPathComponent(digest, isDirectory: true)
+        try FileManager.default.createDirectory(at: account, withIntermediateDirectories: true)
+        return account
+    }
 }
 
 final class AICloudNoRedirectDelegate: NSObject, URLSessionTaskDelegate {
@@ -402,15 +446,14 @@ actor AIAssistantBackend {
         return decoded
     }
 
-    func open() async throws -> AIAssistantOpenResult {
+    func open(accountUserID: String) async throws -> AIAssistantOpenResult {
         if initialized {
             return AIAssistantOpenResult(
                 settings: settings,
                 workspacePath: root!.appendingPathComponent("Workspace", isDirectory: true).path
             )
         }
-        var directory = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
-                                                     appropriateFor: nil, create: true).appendingPathComponent("AIAssistant")
+        var directory = try AIAssistantWorkspaceLocator.directory(for: accountUserID)
         #if targetEnvironment(simulator)
         let uiTest = ProcessInfo.processInfo.arguments.contains("--ai-ui-test")
         if uiTest { directory = FileManager.default.temporaryDirectory.appendingPathComponent("AIAssistantUITest-" + ProcessInfo.processInfo.environment["MAICHAT_AI_TEST_ID", default: "manual"]) }
@@ -518,8 +561,9 @@ actor AIAssistantBackend {
         ])
     }
 
-    func suggestReplies(messages: [[String: String]]) async throws -> AIReplySuggestions {
-        _ = try await open()
+    func suggestReplies(messages: [[String: String]], accountUserID: String) async throws
+        -> AIReplySuggestions {
+        _ = try await open(accountUserID: accountUserID)
         let response = try call("suggest_replies", values: ["messages": messages])
         guard let natural = response.natural?.trimmingCharacters(in: .whitespacesAndNewlines),
               let casual = response.casual?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -608,7 +652,15 @@ actor AIAssistantBackend {
 
 @MainActor
 final class AIAssistantModel: ObservableObject {
-    static let shared = AIAssistantModel()
+    static var shared = AIAssistantModel()
+
+    static func resetForAccountSwitch() {
+        shared.disappear()
+        shared.initialPreparation?.cancel()
+        shared.appearingTask?.cancel()
+        shared.transientErrorTask?.cancel()
+        shared = AIAssistantModel()
+    }
     @Published var sessions: [AISession] = []
     @Published var messages: [AIMessage] = []
     @Published var permissions: [AIPermission] = []
@@ -693,7 +745,8 @@ final class AIAssistantModel: ObservableObject {
     #endif
 
     func suggestReplies(messages: [[String: String]]) async throws -> AIReplySuggestions {
-        try await backend.suggestReplies(messages: messages)
+        let owner = AIMobileHostToolProvider.shared.appState?.masterUserID ?? ""
+        return try await backend.suggestReplies(messages: messages, accountUserID: owner)
     }
 
     func showTransientError(_ message: String, duration: Duration = .seconds(3)) {
@@ -719,7 +772,8 @@ final class AIAssistantModel: ObservableObject {
         }
         let task = Task { @MainActor in
             do {
-                let opened = try await backend.open()
+                let owner = AIMobileHostToolProvider.shared.appState?.masterUserID ?? ""
+                let opened = try await backend.open(accountUserID: owner)
                 settings = opened.settings
                 workspacePath = opened.workspacePath
                 ready = true

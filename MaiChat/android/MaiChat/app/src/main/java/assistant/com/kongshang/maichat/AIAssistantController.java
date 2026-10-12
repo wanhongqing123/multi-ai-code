@@ -82,10 +82,30 @@ public final class AIAssistantController {
         }
     }
     private static AIAssistantController shared;
+    private static String currentAccountUserId = "";
+    private static Context applicationContext;
     public static synchronized AIAssistantController shared(Context context) {
+        applicationContext = context.getApplicationContext();
         if (shared == null)
             shared = new AIAssistantController(context, null);
         return shared;
+    }
+    public static synchronized void configureAccount(String userId) {
+        String next = userId == null ? "" : userId.trim();
+        if (next.equals(currentAccountUserId)) return;
+        String legacyOwner = currentAccountUserId.isEmpty() ? next : currentAccountUserId;
+        if (applicationContext != null && !legacyOwner.isEmpty()) {
+            try { claimLegacyWorkspace(applicationContext, legacyOwner); }
+            catch (IOException failure) {
+                // 标记失败时新账号使用独立目录，不得误认领旧账号的 AI 数据库。
+                Log.w("MaiChatAgent", "Legacy AI workspace ownership was not saved", failure);
+            }
+        }
+        if (shared != null) {
+            shared.close();
+            shared = null;
+        }
+        currentAccountUserId = next;
     }
     public static synchronized void invalidateSharedTemporaryModelCredentials() {
         if (shared == null) return;
@@ -112,6 +132,7 @@ public final class AIAssistantController {
     private final Handler worker;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final String testEndpoint;
+    private final String accountUserId;
     private final MaiChatAuthClient accountAuth;
     private volatile Listener listener;
     private volatile HostToolHandler hostToolHandler;
@@ -158,6 +179,7 @@ public final class AIAssistantController {
         if (testEndpoint != null && !BuildConfig.DEBUG)
             throw new IllegalArgumentException("Test endpoint in release build");
         this.testEndpoint = testEndpoint;
+        accountUserId = testEndpoint == null ? currentAccountUserId : "";
         thread.start();
         worker = new Handler(thread.getLooper());
         worker.post(this::initialize);
@@ -314,8 +336,8 @@ public final class AIAssistantController {
             handle = nativeCreate();
             if (!nativeSetHostToolHandler(handle, this))
                 throw new IllegalStateException("无法注册 MaiChat 宿主工具");
-            root = new File(context.getNoBackupFilesDir(),
-                testEndpoint == null ? "AIAssistant" : "AIAssistantTest-" + UUID.randomUUID());
+            root = testEndpoint == null ? accountRoot()
+                : new File(context.getNoBackupFilesDir(), "AIAssistantTest-" + UUID.randomUUID());
             if (!root.mkdirs() && !root.isDirectory())
                 throw new IllegalStateException("无法创建 AI 工作区");
             try {
@@ -388,6 +410,30 @@ public final class AIAssistantController {
     private static String safeMessage(Throwable error) {
         String detail = error.getMessage();
         return detail == null || detail.trim().isEmpty() ? "AI 助手操作失败" : detail;
+    }
+    private static void claimLegacyWorkspace(Context context, String userId) throws IOException {
+        File base = new File(context.getNoBackupFilesDir(), "AIAssistant");
+        File marker = new File(base, "legacy-owner-user-id.txt");
+        if (!marker.isFile() && new File(base, "sessions.sqlite").isFile())
+            Files.write(marker.toPath(), userId.getBytes(StandardCharsets.UTF_8));
+    }
+    private File accountRoot() throws Exception {
+        File base = new File(context.getNoBackupFilesDir(), "AIAssistant");
+        if (!base.mkdirs() && !base.isDirectory())
+            throw new IOException("无法创建 AI 工作区");
+        if (accountUserId.isEmpty()) return new File(base, "Guest");
+        File marker = new File(base, "legacy-owner-user-id.txt");
+        String legacyOwner = marker.isFile()
+            ? new String(Files.readAllBytes(marker.toPath()), StandardCharsets.UTF_8).trim() : "";
+        if (accountUserId.equals(legacyOwner)) return base;
+        byte[] digest = MessageDigest.getInstance("SHA-256")
+            .digest(accountUserId.getBytes(StandardCharsets.UTF_8));
+        StringBuilder folder = new StringBuilder(digest.length * 2);
+        for (byte value : digest) {
+            folder.append(Character.forDigit((value >>> 4) & 15, 16));
+            folder.append(Character.forDigit(value & 15, 16));
+        }
+        return new File(new File(base, "Accounts"), folder.toString());
     }
     private JSONObject call(JSONObject request) throws Exception {
         if (Looper.myLooper() == Looper.getMainLooper())

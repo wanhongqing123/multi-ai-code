@@ -190,7 +190,13 @@ struct RootView: View {
             schedulePendingNotificationRoute(sceneIsActive: scenePhase == .active)
         }
         .onChange(of: appState.shouldShowInitialLogin) { needsLogin in
-            guard !needsLogin else { return }
+            if needsLogin {
+                activeChatContact = nil
+                selectedTab = .messages
+                previousMainTab = .messages
+                hasOpenedAssistant = false
+                return
+            }
             Task {
                 await offerNotificationPermissionIfNeeded()
             }

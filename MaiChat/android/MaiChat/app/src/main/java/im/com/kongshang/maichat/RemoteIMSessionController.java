@@ -138,6 +138,7 @@ public final class RemoteIMSessionController {
             runOnMain(() -> {
                 if (generation != accountGeneration) return;
                 settings = accountToRestore; chatState = restored; restoringAccount = false;
+                AIAssistantController.configureAccount(accountToRestore.loginUserId());
                 notifyStateChanged();
                 if (!requiresLogin()) connect();
             });
@@ -170,7 +171,7 @@ public final class RemoteIMSessionController {
     }
 
     private void switchAccount(RemoteIMSettings next) {
-        if (productionMode) AIAssistantController.invalidateSharedTemporaryModelCredentials();
+        if (productionMode) AIAssistantController.configureAccount(next.loginUserId());
         resetActivities();
         int generation = ++accountGeneration;
         settings = next;

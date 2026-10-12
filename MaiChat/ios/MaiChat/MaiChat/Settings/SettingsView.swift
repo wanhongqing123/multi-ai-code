@@ -165,7 +165,7 @@ private struct AvatarPhotoPicker: UIViewControllerRepresentable {
 
 private struct AccountSettingsView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
-    @State private var showsPhoneLogin = false
+    @State private var isSwitchingPhone = false
 
     var body: some View {
         Form {
@@ -175,8 +175,14 @@ private struct AccountSettingsView: View {
                         .foregroundStyle(appState.masterUserID.isEmpty ? .secondary : .primary)
                 }
                 Button("切换手机号") {
-                    showsPhoneLogin = true
+                    guard !isSwitchingPhone else { return }
+                    isSwitchingPhone = true
+                    Task { @MainActor in
+                        _ = await appState.switchPhoneAccount()
+                        isSwitchingPhone = false
+                    }
                 }
+                .disabled(isSwitchingPhone)
                 if appState.hasUnifiedAccount {
                     NavigationLink("设置或修改登录密码") {
                         AccountPasswordView()
@@ -184,36 +190,6 @@ private struct AccountSettingsView: View {
                 }
             }
 
-            Section("连接") {
-                HStack {
-                    Text("状态")
-                    Spacer()
-                    Text(appState.connectionState.rawValue)
-                        .foregroundStyle(statusColor)
-                }
-                if appState.connectionState != .connected {
-                    Button {
-                        Task { await appState.requestConnection() }
-                    } label: {
-                        Label(
-                            appState.connectionState == .failed ? "重新连接" : "连接 IM",
-                            systemImage: "arrow.clockwise"
-                        )
-                    }
-                    .disabled(
-                        appState.connectionState == .connecting ||
-                            appState.masterUserID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    )
-                }
-                Text("登录后会自动连接 IM；连接失败时可在这里重新连接。")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-
-        }
-        .sheet(isPresented: $showsPhoneLogin) {
-            PhoneAccountLoginView()
-                .environmentObject(appState)
         }
     }
 
@@ -222,18 +198,6 @@ private struct AccountSettingsView: View {
         return userID.isEmpty ? "未登录" : userID
     }
 
-    private var statusColor: Color {
-        switch appState.connectionState {
-        case .connected:
-            return .green
-        case .connecting:
-            return .orange
-        case .failed:
-            return .red
-        case .disconnected:
-            return .secondary
-        }
-    }
 }
 
 private struct AccountPasswordView: View {

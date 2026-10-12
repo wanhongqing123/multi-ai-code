@@ -147,6 +147,10 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         self.sdkAppIDText = settings.sdkAppID.map(String.init) ?? ""
         self.masterUserID = settings.masterUserID
         self.chatHistorySDKAppID = settings.sdkAppID
+        if hasAccountSession {
+            // 升级时只把旧 AI 数据库归属给当前已验证的手机号账号。
+            try? AIAssistantWorkspaceLocator.claimLegacyWorkspace(for: settings.masterUserID)
+        }
 
         let loadedState = MasterChatState(
             ownerUserID: settings.masterUserID,
@@ -381,6 +385,40 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         try await accountAuth.setPassword(password)
     }
 
+    @discardableResult
+    func switchPhoneAccount() async -> Bool {
+        // 先落盘旧账号消息，再撤销本机登录。这样进程中途结束也不会自动回到旧账号。
+        guard await flushHistoryPersistence() else {
+            showTransientError("保存当前账号消息失败，请稍后重试")
+            return false
+        }
+        guard settingsStore.saveAccountSnapshot(currentStoredSettings()) else {
+            showTransientError("保存当前账号设置失败，请稍后重试")
+            return false
+        }
+        do {
+            try AIAssistantWorkspaceLocator.claimLegacyWorkspace(for: masterUserID)
+        } catch {
+            showTransientError("保存 AI 助手账号归属失败，请稍后重试")
+            return false
+        }
+        let oldToken = await accountAuth.discardLocalSession()
+        AICloudCredentialSync.invalidateTemporaryModelCredentials()
+        AIAssistantModel.resetForAccountSwitch()
+        await disconnect()
+        masterUserID = ""
+        sdkAppIDText = ""
+        hasUnifiedAccount = false
+        hasCompletedInitialLogin = false
+        resetAccountPresentation(userID: "", saved: nil)
+        _ = settingsStore.saveImmediately(currentStoredSettings())
+        errorMessage = nil
+        if let oldToken {
+            Task { await accountAuth.revokeServerSession(oldToken) }
+        }
+        return true
+    }
+
     private func finishAccountLogin(_ session: MaiChatAuthSession) async throws {
         let credential = try await accountAuth.credentialIfAvailable(
             expectedUserID: session.user.imUserId
@@ -396,15 +434,56 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         if wasConnected && previousUserID != session.user.imUserId {
             await disconnect()
         }
+        if previousUserID != session.user.imUserId {
+            // 只恢复新手机号自己的联系人和未读数，不能沿用前一个 IM 账号的界面状态。
+            if !previousUserID.isEmpty {
+                _ = settingsStore.saveAccountSnapshot(currentStoredSettings())
+            }
+            let saved = settingsStore.loadAccountSnapshot(session.user.imUserId)
+            resetAccountPresentation(userID: session.user.imUserId, saved: saved)
+        }
         masterUserID = session.user.imUserId
         sdkAppIDText = String(credential.sdkAppId)
         hasUnifiedAccount = true
         // 手机号验证已完成；IM 暂时连不上时仍进入账号页，保留重连入口。
         hasCompletedInitialLogin = true
+        guard settingsStore.saveImmediately(currentStoredSettings()) else {
+            throw NSError(domain: "MaiChatSettings", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "保存登录账号失败，请重试"
+            ])
+        }
         if wasConnected && previousUserID == session.user.imUserId {
             return
         }
         await requestConnection()
+    }
+
+    private func resetAccountPresentation(userID: String, saved: StoredRemoteIMSettings?) {
+        accountRebuildRequestGeneration &+= 1
+        historyAccountGeneration &+= 1
+        profileFetchGeneration += 1
+        profileRefreshUserIDsInFlight.removeAll()
+        profileFetchedForConnection.removeAll()
+        chatHistorySDKAppID = nil
+        conversationHistoryStateByUserID = [:]
+        conversationHistoryLoadGenerationByUserID = [:]
+        pendingIncomingRemoteIDs = []
+        downloadingVideoKeys = []
+        presenceStatusByUserID = [:]
+        let contacts = saved.map(Self.contacts(from:)) ?? []
+        chatState = MasterChatState(
+            ownerUserID: userID, contacts: contacts,
+            contactGroups: saved?.contactGroups ?? [], messages: []
+        )
+        unreadCountByUserID = (saved?.unreadCountByUserID ?? [:]).filter { userID, count in
+            count > 0 && contacts.contains(where: { $0.userID == userID })
+        }
+        userProfileByUserID = Dictionary(uniqueKeysWithValues: contacts.map { contact in
+            (contact.userID, RemoteIMUserProfile(
+                userID: contact.userID, displayName: contact.displayName,
+                avatarURL: contact.avatarURL
+            ))
+        })
     }
 
     /// Records the user's connection intent before the network attempt starts. A failed first

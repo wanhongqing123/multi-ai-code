@@ -706,11 +706,6 @@ public enum RemoteIMVideoPreviewPolicy {
     }
 }
 
-public enum RemoteIMCredentialDefaults {
-    // SDK App ID 是公开标识；UserSig 签名密钥仅保存在服务端。
-    public static let sdkAppID = 1_600_148_979
-}
-
 public enum RemoteIMLoginCredentialPolicy {
     public static func validationError(userID: String) -> String? {
         guard !userID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -719,23 +714,7 @@ public enum RemoteIMLoginCredentialPolicy {
         return nil
     }
 
-    public static func validationError(
-        sdkAppIDText _: String,
-        userID: String,
-        secretKey _: String
-    ) -> String? {
-        validationError(userID: userID)
-    }
-
     public static func isComplete(userID: String) -> Bool {
-        validationError(userID: userID) == nil
-    }
-
-    public static func isComplete(
-        sdkAppIDText _: String,
-        userID: String,
-        secretKey _: String
-    ) -> Bool {
         validationError(userID: userID) == nil
     }
 

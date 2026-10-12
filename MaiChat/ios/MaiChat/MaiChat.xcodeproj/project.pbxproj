@@ -14,7 +14,6 @@
 		0B2637847F5454F182126805 /* ComposerDraftState.swift in Sources */ = {isa = PBXBuildFile; fileRef = C846ED66C1F881705954E761 /* ComposerDraftState.swift */; };
 		0C3D673C246BAE33893EFDCD /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0075BCCB2188B8EB8E6F11FA /* RootView.swift */; };
 		10E63571389FF61C9869CE9E /* AIAssistantModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24AF3608C85D5AE5D045283D /* AIAssistantModel.swift */; };
-		173C5B3233CE4341E0C602F0 /* TencentUserSigGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23834CDDC0CDC66B7B3D6A96 /* TencentUserSigGenerator.swift */; };
 		17D2334D14B8A1F571A7D69B /* AppDiagnosticLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A47E3BD08877657A12C0C35 /* AppDiagnosticLog.swift */; };
 		194E338FF3D0DE993B165814 /* AIAssistantUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89FDF5DC4F6DB91F2A1B3FD5 /* AIAssistantUITests.swift */; };
 		194EF7AD3FFBA215E15BC6C2 /* remote-diagnostics-failure-receipts.json in Resources */ = {isa = PBXBuildFile; fileRef = 1F8D037EEC9C74A8F43E4083 /* remote-diagnostics-failure-receipts.json */; };
@@ -39,7 +38,6 @@
 		6497E7B3D6E8EA40BDF3D625 /* MarkdownInlineStyling.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F61CFA51E87A9791A0ECB26 /* MarkdownInlineStyling.swift */; };
 		6602E48DB6C9BA2E18F73866 /* MessageBubbleLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C5A4C74E12DC407146E1EBF /* MessageBubbleLayout.swift */; };
 		678592B693D2A02D2B12A4BC /* remote-diagnostics-report.json in Resources */ = {isa = PBXBuildFile; fileRef = 8C57A0E06309C4F110DA1CBF /* remote-diagnostics-report.json */; };
-		79C230615F6A6FDCFA794F93 /* UserSigGeneratorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB7A934C4BF81309E2DC1AD1 /* UserSigGeneratorTests.swift */; };
 		7CA7F5C3C26143C75F69AC61 /* DiagnosticLogFileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A066546C97129E56C379365 /* DiagnosticLogFileStore.swift */; };
 		80014E0AD21DD45ABC9E3E35 /* MaiChatIMTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = C12D574F08359081230E0D3A /* MaiChatIMTools.swift */; };
 		85FCBAC4610F6234A4215930 /* KeychainSecretStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2FE19F9A1D05D98FE499F66B /* KeychainSecretStore.swift */; };
@@ -133,7 +131,6 @@
 		131DCE635A48A9FA78E58E2E /* LocalChatHistoryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalChatHistoryStore.swift; sourceTree = "<group>"; };
 		1CC6C51BB5E0632F7B04529C /* Pods-MaiChat.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-MaiChat.release.xcconfig"; path = "Target Support Files/Pods-MaiChat/Pods-MaiChat.release.xcconfig"; sourceTree = "<group>"; };
 		1F8D037EEC9C74A8F43E4083 /* remote-diagnostics-failure-receipts.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "remote-diagnostics-failure-receipts.json"; sourceTree = "<group>"; };
-		23834CDDC0CDC66B7B3D6A96 /* TencentUserSigGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TencentUserSigGenerator.swift; sourceTree = "<group>"; };
 		24AF3608C85D5AE5D045283D /* AIAssistantModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAssistantModel.swift; sourceTree = "<group>"; };
 		29776A2C7E5D525FFA6CED8D /* AIMobileHostToolProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIMobileHostToolProvider.swift; sourceTree = "<group>"; };
 		2ABED4C39BFBF823F387BE75 /* RemoteDiagnosticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDiagnosticsTests.swift; sourceTree = "<group>"; };
@@ -191,7 +188,6 @@
 		E941704372DD54AD2FF0AED5 /* Pods_MaiChat.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_MaiChat.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		EC4C6DC9135AD53A7FEDD3DA /* MaiChatAuthClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MaiChatAuthClient.swift; sourceTree = "<group>"; };
 		F91FF912AF9143D67795C97B /* DiagnosticLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticLog.swift; sourceTree = "<group>"; };
-		FB7A934C4BF81309E2DC1AD1 /* UserSigGeneratorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserSigGeneratorTests.swift; sourceTree = "<group>"; };
 		FBCF1B230D1ACE9CD4748EE4 /* RemoteDesktopSignal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDesktopSignal.swift; sourceTree = "<group>"; };
 		FBE546568A0B3FFA1551D803 /* SpeechRecognizing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechRecognizing.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -369,7 +365,6 @@
 			isa = PBXGroup;
 			children = (
 				DE31D307132E0C37078DFFAB /* MasterChatState.swift */,
-				23834CDDC0CDC66B7B3D6A96 /* TencentUserSigGenerator.swift */,
 			);
 			path = IM;
 			sourceTree = "<group>";
@@ -419,7 +414,6 @@
 				BF3AA66C952DF0D15005D6BE /* RemoteDesktopSignalTests.swift */,
 				2ABED4C39BFBF823F387BE75 /* RemoteDiagnosticsTests.swift */,
 				642E16B2EF5CA26E0EC53657 /* RemoteInputPacketTests.swift */,
-				FB7A934C4BF81309E2DC1AD1 /* UserSigGeneratorTests.swift */,
 			);
 			path = MaiChatTests;
 			sourceTree = "<group>";
@@ -717,7 +711,6 @@
 				C46604FD176732DD945AB319 /* RemoteDesktopSignal.swift in Sources */,
 				DF3DC5AB29D30556D9094095 /* RemoteDiagnostics.swift in Sources */,
 				30346792F4FE7D73D6F24B87 /* RemoteInputPacket.swift in Sources */,
-				173C5B3233CE4341E0C602F0 /* TencentUserSigGenerator.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -738,7 +731,6 @@
 				1B0DC102E851A3005DC43D69 /* RemoteDiagnosticsTests.swift in Sources */,
 				9BBB482670AD1810394FABB9 /* RemoteDiagnosticsView.swift in Sources */,
 				BE9564FF3CB798F45146F479 /* RemoteInputPacketTests.swift in Sources */,
-				79C230615F6A6FDCFA794F93 /* UserSigGeneratorTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

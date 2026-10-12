@@ -1517,10 +1517,6 @@ final class MasterChatStateTests: XCTestCase {
         )
     }
 
-    func testPublicSdkAppIdIsNotAnEmbeddedCredential() {
-        XCTAssertEqual(RemoteIMCredentialDefaults.sdkAppID, 1_600_148_979)
-    }
-
     func testRejectsBlankContactAndBlankOutgoingMessage() {
         var state = MasterChatState(ownerUserID: "ios-master")
 
@@ -1528,66 +1524,16 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertThrowsError(try state.queueOutgoingText("   "))
     }
 
-    func testInitialLoginRequiresOnlyUserIDBecauseCredentialIsFixed() {
-        XCTAssertFalse(
-            RemoteIMLoginCredentialPolicy.isComplete(
-                sdkAppIDText: "1600148979",
-                userID: "",
-                secretKey: ""
-            )
-        )
-        XCTAssertTrue(
-            RemoteIMLoginCredentialPolicy.isComplete(
-                sdkAppIDText: "",
-                userID: "ios-owner",
-                secretKey: ""
-            )
-        )
-        XCTAssertTrue(
-            RemoteIMLoginCredentialPolicy.isComplete(
-                sdkAppIDText: "1600148979",
-                userID: "ios-owner",
-                secretKey: ""
-            )
-        )
-        XCTAssertTrue(
-            RemoteIMLoginCredentialPolicy.isComplete(
-                sdkAppIDText: "1600148979",
-                userID: "ios-owner",
-                secretKey: ""
-            )
-        )
+    func testInitialLoginRequiresOnlyUserID() {
+        XCTAssertFalse(RemoteIMLoginCredentialPolicy.isComplete(userID: ""))
+        XCTAssertTrue(RemoteIMLoginCredentialPolicy.isComplete(userID: "ios-owner"))
     }
 
     func testInitialLoginValidationExplainsWhyLoginCannotStart() {
-        XCTAssertNil(
-            RemoteIMLoginCredentialPolicy.validationError(
-                sdkAppIDText: "",
-                userID: "ios-owner",
-                secretKey: ""
-            )
-        )
+        XCTAssertNil(RemoteIMLoginCredentialPolicy.validationError(userID: "ios-owner"))
         XCTAssertEqual(
-            RemoteIMLoginCredentialPolicy.validationError(
-                sdkAppIDText: "1600148979",
-                userID: "",
-                secretKey: ""
-            ),
+            RemoteIMLoginCredentialPolicy.validationError(userID: ""),
             "请填写账号 ID"
-        )
-        XCTAssertNil(
-            RemoteIMLoginCredentialPolicy.validationError(
-                sdkAppIDText: "1600148979",
-                userID: "ios-owner",
-                secretKey: ""
-            )
-        )
-        XCTAssertNil(
-            RemoteIMLoginCredentialPolicy.validationError(
-                sdkAppIDText: "1600148979",
-                userID: "ios-owner",
-                secretKey: ""
-            )
         )
     }
 

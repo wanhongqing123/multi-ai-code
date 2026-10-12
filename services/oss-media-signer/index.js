@@ -94,18 +94,47 @@ function createHandler(options = {}) {
     if (method === 'GET' && route === '/portrait-auth-callback')
       return portraitCallbackResponse();
     if (method !== 'POST' || (!route.endsWith('/sign-upload') &&
-        !route.endsWith('/ark-assets') && route !== '/credentials'))
+        !route.endsWith('/ark-assets') && route !== '/credentials' &&
+        route !== '/temporary-credentials'))
       return jsonResponse(404, { error: 'Not found' });
 
-    const token = env.MAICHAT_MEDIA_SERVICE_TOKEN || env.MAICHAT_OSS_SIGNER_TOKEN || '';
+    // 登录服务专用令牌绝不发给 App；其他旧接口仍使用原签名服务令牌。
+    const token = route === '/temporary-credentials'
+      ? env.MAICHAT_AUTH_SERVICE_TOKEN || ''
+      : env.MAICHAT_MEDIA_SERVICE_TOKEN || env.MAICHAT_OSS_SIGNER_TOKEN || '';
     if (token.length < 32) return jsonResponse(503, { error: 'Service token is not configured' });
     if (!hasBearerToken(event.headers, token))
       return jsonResponse(401, { error: 'Unauthorized' });
 
     const body = requestBody(event);
+    if (route === '/temporary-credentials') {
+      if (body?.action !== 'ark_seedance')
+        return jsonResponse(400, { error: 'Invalid temporary credential request' });
+      const models = (env.MAICHAT_SEEDANCE_MODEL_IDS || '').split(',').map(v => v.trim())
+        .filter(Boolean);
+      if (!models.length || models.length > 10 ||
+          !models.every(v => /^doubao-seedance-[a-z0-9-]{1,70}$/.test(v)) ||
+          new Set(models).size !== models.length ||
+          !env.VOLC_ACCESS_KEY_ID || !env.VOLC_SECRET_ACCESS_KEY)
+        return jsonResponse(503, { error: 'Seedance temporary credentials are not configured' });
+      const issued = await callArk('GetApiKey', {
+        DurationSeconds: 300, ResourceType: 'presetendpoint', ResourceIds: models,
+        ProjectName: env.VOLC_ARK_PROJECT_NAME || 'default'
+      }, { accessKeyId: env.VOLC_ACCESS_KEY_ID,
+           secretKey: env.VOLC_SECRET_ACCESS_KEY });
+      const result = issued?.Result || {};
+      const nowSeconds = Math.floor(currentTime().getTime() / 1000);
+      if (typeof result.ApiKey !== 'string' || result.ApiKey.length < 16 ||
+          !Number.isSafeInteger(result.ExpiredTime) ||
+          result.ExpiredTime <= nowSeconds || result.ExpiredTime > nowSeconds + 360)
+        return jsonResponse(502, { error: 'Ark returned an invalid temporary credential' });
+      return jsonResponse(200, { api_key: result.ApiKey,
+        expires_at: result.ExpiredTime });
+    }
     if (route === '/credentials') {
       const keys = {
-        ark: env.MAICHAT_ARK_API_KEY || '',
+        // 旧客户端请求 ark 时返回空值，不再下发可长期使用的主 Key。
+        ark: '',
         glm: env.MAICHAT_GLM_API_KEY || '',
         glm_video: env.MAICHAT_GLM_API_KEY || '',
         deepseek: env.MAICHAT_DEEPSEEK_API_KEY || '',

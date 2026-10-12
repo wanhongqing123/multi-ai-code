@@ -4,6 +4,7 @@ const http = require('node:http');
 const { openStore } = require('./store');
 const { createAuthService, normalizePhone } = require('./service');
 const { createAliyunSmsSender } = require('./sms');
+const { createArkCredentialIssuer } = require('./ark-credential');
 
 const MAX_BODY_BYTES = 4096;
 
@@ -54,6 +55,8 @@ function createServer(service) {
 function start(env = process.env) {
   const allowedPhones = (env.MAICHAT_AUTH_ALLOWED_PHONES || '').split(',')
     .map(normalizePhone).filter(Boolean);
+  const modelAllowedPhones = (env.MAICHAT_MODEL_ALLOWED_PHONES || '').split(',')
+    .map(normalizePhone).filter(Boolean);
   if (!allowedPhones.length && env.MAICHAT_AUTH_OPEN_REGISTRATION !== '1')
     throw new Error('Configure a test phone allowlist before starting auth');
   if (!env.MAICHAT_AUTH_DB_PATH || !env.MAICHAT_AUTH_HMAC_KEY ||
@@ -64,7 +67,9 @@ function start(env = process.env) {
   const service = createAuthService({
     db, sms, secret: env.MAICHAT_AUTH_HMAC_KEY,
     imSecret: env.MAICHAT_IM_SECRET_KEY,
-    sdkAppId: Number(env.MAICHAT_IM_SDK_APP_ID), allowedPhones
+    issueArkCredential: createArkCredentialIssuer(env),
+    sdkAppId: Number(env.MAICHAT_IM_SDK_APP_ID), allowedPhones,
+    modelAllowedPhones
   });
   const port = Number(env.MAICHAT_AUTH_PORT || 9100);
   if (!Number.isInteger(port) || port < 1 || port > 65535)

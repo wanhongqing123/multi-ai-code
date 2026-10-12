@@ -25,6 +25,11 @@ struct MaiChatIMCredential: Decodable, Sendable {
     let expiresAt: Int
 }
 
+struct MaiChatSeedanceCredential: Decodable, Sendable {
+    let apiKey: String
+    let expiresAt: Int
+}
+
 private struct MaiChatAuthServerError: Decodable {
     let error: String
 }
@@ -132,6 +137,19 @@ actor MaiChatAuthClient {
         }
         guard credential.userId == expectedUserID else { throw MaiChatAuthError.identityMismatch }
         return credential
+    }
+
+    func seedanceCredentialIfAvailable() async throws -> MaiChatSeedanceCredential? {
+        guard accessToken != nil || !refreshStore.readSecretKey().isEmpty else { return nil }
+        let token = try await currentAccessToken()
+        do {
+            return try await request("model/seedance-credential", method: "GET", bearer: token)
+        } catch MaiChatAuthError.requestFailed("Authentication required") {
+            accessToken = nil
+            let renewed = try await currentAccessToken()
+            return try await request("model/seedance-credential", method: "GET",
+                                     bearer: renewed)
+        }
     }
 
     private func adopt(_ session: MaiChatAuthSession) throws {

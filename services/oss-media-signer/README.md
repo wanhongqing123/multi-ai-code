@@ -40,7 +40,9 @@
    | `MAICHAT_MEDIA_SERVICE_TOKEN` | 至少 32 字符的客户端 Bearer 令牌；兼容旧名 `MAICHAT_OSS_SIGNER_TOKEN` |
    | `VOLC_ACCESS_KEY_ID`、`VOLC_SECRET_ACCESS_KEY` | 火山 Assets API 签名凭据 |
    | `VOLC_ARK_PROJECT_NAME` | 方舟项目名，默认 `default`，须与生成任务使用的项目一致 |
-   | `MAICHAT_ARK_API_KEY`、`MAICHAT_GLM_API_KEY`、`MAICHAT_DEEPSEEK_API_KEY` | 可选，方舟、GLM、DeepSeek 模型 API Key |
+   | `MAICHAT_AUTH_SERVICE_TOKEN` | 与账号服务一致、仅供两进程回环调用的独立令牌，不写入 App |
+   | `MAICHAT_SEEDANCE_MODEL_IDS` | 允许签发临时 Key 的 Seedance Model ID 白名单，逗号分隔 |
+   | `MAICHAT_GLM_API_KEY`、`MAICHAT_DEEPSEEK_API_KEY` | 可选，GLM、DeepSeek 模型 API Key |
    | `MAICHAT_WAN_API_KEY`、`MAICHAT_WAN_WORKSPACE_ID` | 可选，百炼 API Key 和 Workspace ID |
    | `MAICHAT_KLING_API_KEY`、`MAICHAT_MINIMAX_API_KEY` | 可选，可灵、海螺 API Key |
    | `MAICHAT_OSS_BUCKET`、`MAICHAT_OSS_REGION` | 可选，OSS Bucket 与地域 |
@@ -58,7 +60,8 @@
 `POST /credentials` 只接受服务 Bearer 令牌。`{"action":"status"}` 返回已配置的
 模型名和 Assets／OSS 状态，不返回密钥。`{"action":"fetch","providers":
 ["ark","glm","glm_video","deepseek","wan","kling","minimax"]}` 只返回请求中指定且
-服务端已配置的模型 API Key。`glm` 给 GLM 主模型，`glm_video` 给 CogVideoX-3；
+服务端已配置的模型 API Key；`ark` 始终为空，不再下发长期方舟 Key。
+`glm` 给 GLM 主模型，`glm_video` 是旧客户端兼容字段；
 两个下发项都读取同一个 `MAICHAT_GLM_API_KEY`，不需要第二把 GLM Key。
 火山和阿里云 AccessKey、预留的 IAM API Key 不在返回范围。
 响应禁止缓存，Nginx 入口关闭访问日志并限制速率。
@@ -66,7 +69,17 @@
 iOS、Android、Desktop 取回模型 Key 后仅在当前 App 进程内使用，不再保存本机副本；
 旧的本机模型 Key 会在升级后清理。App 重启后需要重新连接此服务，离线时不能用
 云端模型。连接服务所需的地址和令牌仍由 App 保存，未来账号登录后再替换这层认证。
-完整模型 Key 目前仍会到达设备；若要求 Key 完全不下发，需要另行设计服务端模型代理。
+GLM、DeepSeek、Wan、MiniMax 等旧同步入口仍可能把长期 Key 发到设备，不能视作
+账号鉴权完成；正式开放多账号前需分别迁移成短期凭据或账号隔离的 Key。
+
+## Seedance 短期 Key
+
+`POST /temporary-credentials` 只接受账号服务持有的独立服务令牌，本机回环调用；
+Nginx 明确拒绝公网同路径。素材服务以火山 AK/SK 调用 `GetApiKey`，只允许环境变量
+`MAICHAT_SEEDANCE_MODEL_IDS` 中的预置模型，固定有效期 300 秒。账号服务再用手机号
+登录会话和单独的模型白名单审核后发给 App。App 直连方舟生成、查询或取消任务，
+AK/SK 和长期 Ark Key 都不下发。临时 Key 一旦泄漏，在到期前仍可使用；过期后
+App 必须重新领取。旧版 App 的共享服务令牌在生产切换时必须轮换。
 
 ## Ark Assets 素材接口
 

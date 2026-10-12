@@ -87,6 +87,14 @@ public final class AIAssistantController {
             shared = new AIAssistantController(context, null);
         return shared;
     }
+    public static synchronized void invalidateSharedArkCredential() {
+        if (shared == null) return;
+        shared.worker.post(() -> {
+            shared.arkApiKey = "";
+            shared.arkExpiresAt = 0;
+            shared.nextArkRefreshAt = 0;
+        });
+    }
     private static native long nativeCreate();
     private static native void nativeDestroy(long handle);
     private static native byte[] nativeRequest(long handle, byte[] request);
@@ -100,6 +108,7 @@ public final class AIAssistantController {
     private final Handler worker;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final String testEndpoint;
+    private final MaiChatAuthClient accountAuth;
     private volatile Listener listener;
     private volatile HostToolHandler hostToolHandler;
     static final String GLM_CHAT_URL = "https://open.bigmodel.cn/api/coding/paas/v4";
@@ -115,6 +124,8 @@ public final class AIAssistantController {
     private volatile String deepseekApiKey = "";
     private volatile String glmApiKey = "";
     private volatile String arkApiKey = "";
+    private volatile long arkExpiresAt;
+    private long nextArkRefreshAt;
     private volatile String wanApiKey = "";
     private volatile String wanWorkspaceId = "";
     private volatile String miniMaxApiKey = "";
@@ -126,14 +137,17 @@ public final class AIAssistantController {
         public void run() {
             if (closed || listener == null)
                 return;
-            if (ready)
+            if (ready) {
+                refreshSeedanceCredential(false);
                 refresh(false);
+            }
             worker.postDelayed(this, data.optBoolean("busy") ? 100 : 500);
         }
     };
 
     AIAssistantController(Context context, String testEndpoint) {
         this.context = context.getApplicationContext();
+        accountAuth = MaiChatAuthClient.shared(this.context);
         if (testEndpoint != null && !BuildConfig.DEBUG)
             throw new IllegalArgumentException("Test endpoint in release build");
         this.testEndpoint = testEndpoint;
@@ -178,7 +192,8 @@ public final class AIAssistantController {
         if (tool.equals("ark_api_key")) {
             try {
                 return new JSONObject().put("ok", true)
-                    .put("output", new JSONObject().put("key", arkApiKey))
+                    .put("output", new JSONObject().put("key",
+                        System.currentTimeMillis() / 1000L < arkExpiresAt ? arkApiKey : ""))
                     .toString().getBytes(StandardCharsets.UTF_8);
             } catch (Exception failure) {
                 return hostToolFailure("Ark key is unavailable", "not_configured");
@@ -325,6 +340,7 @@ public final class AIAssistantController {
                     Log.w("MaiChatAgent", "Cloud credential synchronization is unavailable");
                 }
             }
+            refreshSeedanceCredential(true);
             apiKey = model.equals("deepseek-flash") ? deepseekApiKey : glmApiKey;
             if (testEndpoint != null) {
                 baseUrl = testEndpoint;
@@ -490,6 +506,7 @@ public final class AIAssistantController {
         worker.post(() -> {
             boolean success = false;
             try {
+                refreshSeedanceCredential(true);
                 String target = intendedSession;
                 if (target.isEmpty()) {
                     target = call(op("create")).getString("id");
@@ -654,7 +671,7 @@ public final class AIAssistantController {
         connection.setRequestProperty("Content-Type", "application/json");
         byte[] body = new JSONObject().put("action", "fetch")
             .put("providers", new JSONArray()
-                .put("ark").put("glm").put("deepseek")
+                .put("glm").put("deepseek")
                 .put("wan").put("minimax"))
             .toString().getBytes(StandardCharsets.UTF_8);
         try {
@@ -680,15 +697,14 @@ public final class AIAssistantController {
     private void applyCloudCredentials(JSONObject response) throws Exception {
         JSONObject keys = response.optJSONObject("api_keys");
         if (keys == null) throw new IOException("云端密钥响应无效");
-        arkApiKey = glmApiKey = deepseekApiKey = "";
+        glmApiKey = deepseekApiKey = "";
         wanApiKey = miniMaxApiKey = "";
-        for (String provider : new String[] {"ark", "glm", "deepseek",
+        for (String provider : new String[] {"glm", "deepseek",
                 "wan", "minimax"}) {
             String value = keys.optString(provider, "");
             if (value.isEmpty() || value.length() > 4096 ||
                 value.indexOf('\r') >= 0 || value.indexOf('\n') >= 0) continue;
             switch (provider) {
-            case "ark": arkApiKey = value; break;
             case "glm": glmApiKey = value; break;
             case "deepseek": deepseekApiKey = value; break;
             case "wan": wanApiKey = value; break;
@@ -699,6 +715,22 @@ public final class AIAssistantController {
         apiKey = model.equals("deepseek-flash") ? deepseekApiKey : glmApiKey;
         String workspace = response.optString("wan_workspace_id", "");
         if (workspace.matches("(?:ws|llm)-[A-Za-z0-9_-]{1,120}")) wanWorkspaceId = workspace;
+    }
+
+    private void refreshSeedanceCredential(boolean force) {
+        if (testEndpoint != null) return;
+        long now = System.currentTimeMillis() / 1000L;
+        if (arkExpiresAt > now + 90 || (!force && now < nextArkRefreshAt)) return;
+        nextArkRefreshAt = now + 30;
+        if (arkExpiresAt <= now) arkApiKey = "";
+        try {
+            MaiChatAuthClient.ModelCredential issued = accountAuth.seedanceCredential();
+            if (issued == null) return;
+            arkApiKey = issued.apiKey;
+            arkExpiresAt = issued.expiresAt;
+        } catch (Exception failure) {
+            Log.w("MaiChatAgent", "Seedance temporary credential renewal failed");
+        }
     }
     void importFile(Uri uri, Consumer<ImportedFile> completion) {
         worker.post(() -> {

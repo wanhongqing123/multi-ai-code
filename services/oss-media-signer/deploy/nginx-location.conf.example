@@ -12,6 +12,9 @@ location = /maichat/portrait-auth-callback {
     add_header Referrer-Policy "no-referrer" always;
 }
 
+# 临时模型凭据只能由本机账号服务调用，不接受公网请求。
+location = /maichat/temporary-credentials { return 404; }
+
 location ^~ /maichat/ {
     limit_except POST { deny all; }
     limit_req zone=maichat_keys burst=10 nodelay;

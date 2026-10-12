@@ -104,7 +104,7 @@ public final class RemoteIMSessionController {
         this.settingsStore = new LocalSettingsStore(
             new java.io.File(applicationContext.getFilesDir(), "remote-im-settings/settings.properties")
         );
-        this.authClient = new MaiChatAuthClient(applicationContext);
+        this.authClient = MaiChatAuthClient.shared(applicationContext);
         this.legacyHistoryStore = null;
         this.historyStore = new AndroidChatHistoryStore(applicationContext);
         this.listener = listener;
@@ -170,6 +170,7 @@ public final class RemoteIMSessionController {
     }
 
     private void switchAccount(RemoteIMSettings next) {
+        if (productionMode) AIAssistantController.invalidateSharedArkCredential();
         resetActivities();
         int generation = ++accountGeneration;
         settings = next;

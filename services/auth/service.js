@@ -26,7 +26,7 @@ function digest(value) {
 }
 
 function createAuthService(options) {
-  const { db, sms, secret, imSecret, sdkAppId } = options;
+  const { db, sms, secret, imSecret, sdkAppId, issueArkCredential } = options;
   if (!db || !sms || typeof sms.send !== 'function' ||
       typeof secret !== 'string' || secret.length < 32 ||
       typeof imSecret !== 'string' || imSecret.length < 32 ||
@@ -34,6 +34,9 @@ function createAuthService(options) {
     throw new Error('Auth service configuration is incomplete');
   const now = options.now || Date.now;
   const allowedPhones = new Set(options.allowedPhones || []);
+  const modelAllowedPhones = new Set(options.modelAllowedPhones || []);
+  const arkCredentials = new Map();
+  const arkIssuanceInFlight = new Map();
   const sendable = phone => allowedPhones.size === 0 || allowedPhones.has(phone);
   const keyedHash = text => createHmac('sha256', secret).update(text).digest('hex');
   const phoneHash = phone => keyedHash(`phone:${phone}`);
@@ -288,6 +291,34 @@ function createAuthService(options) {
       return json(200, { sdk_app_id: sdkAppId, user_id: session.im_user_id,
         user_sig: createUserSig(sdkAppId, session.im_user_id, imSecret, issuedAt),
         expires_at: issuedAt + 7 * 24 * 60 * 60 });
+    }
+    if (method === 'GET' && path === '/v1/model/seedance-credential') {
+      if (!session) return json(401, { error: 'Authentication required' });
+      if (!modelAllowedPhones.has(session.phone_e164))
+        return json(403, { error: 'Model access is not enabled for this account' });
+      if (typeof issueArkCredential !== 'function')
+        return json(503, { error: 'Temporary model credentials are unavailable' });
+      const cached = arkCredentials.get(session.user_id);
+      if (cached && cached.expires_at > Math.floor(now() / 1000) + 90)
+        return json(200, cached);
+      try {
+        let pending = arkIssuanceInFlight.get(session.user_id);
+        if (!pending) {
+          pending = issueArkCredential();
+          arkIssuanceInFlight.set(session.user_id, pending);
+        }
+        const issued = await pending;
+        if (typeof issued?.api_key !== 'string' || issued.api_key.length < 16 ||
+            !Number.isSafeInteger(issued.expires_at) ||
+            issued.expires_at <= Math.floor(now() / 1000))
+          throw new Error('Invalid temporary credential');
+        arkCredentials.set(session.user_id, issued);
+        return json(200, issued);
+      } catch {
+        return json(503, { error: 'Temporary model credentials are unavailable' });
+      } finally {
+        arkIssuanceInFlight.delete(session.user_id);
+      }
     }
     return json(404, { error: 'Not found' });
   }

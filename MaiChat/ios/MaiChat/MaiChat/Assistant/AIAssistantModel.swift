@@ -45,23 +45,78 @@ final class AICloudCredentialStore: @unchecked Sendable {
     static let shared = AICloudCredentialStore()
     private let lock = NSLock()
     private var values: [String: String] = [:]
+    private var arkExpiresAt = Date.distantPast
 
     func replace(_ next: [String: String]) {
         lock.lock()
+        let ark = values["ark"]
         values = next
+        if let ark, Date() < arkExpiresAt { values["ark"] = ark }
         lock.unlock()
+    }
+
+    func setTemporaryArk(_ key: String, expiresAt: Date) {
+        lock.lock()
+        values["ark"] = key
+        arkExpiresAt = expiresAt
+        lock.unlock()
+    }
+
+    func clearTemporaryArk() {
+        lock.lock()
+        values.removeValue(forKey: "ark")
+        arkExpiresAt = .distantPast
+        lock.unlock()
+    }
+
+    func arkNeedsRefresh() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return Date().addingTimeInterval(90) >= arkExpiresAt
     }
 
     func key(_ provider: String) -> String {
         lock.lock()
         defer { lock.unlock() }
+        if provider == "ark", Date() >= arkExpiresAt { return "" }
         return values[provider] ?? ""
     }
 }
 
 enum AICloudCredentialSync {
-    private static let modelProviders = ["ark", "glm", "deepseek",
+    private static let modelProviders = ["glm", "deepseek",
                                          "wan", "minimax"]
+    @MainActor private static var arkRefreshTask: Task<Void, Error>?
+    @MainActor private static var arkRetryAfter = Date.distantPast
+
+    @MainActor static func invalidateSeedanceCredential() {
+        arkRefreshTask?.cancel()
+        arkRefreshTask = nil
+        arkRetryAfter = .distantPast
+        AICloudCredentialStore.shared.clearTemporaryArk()
+    }
+
+    @MainActor static func refreshSeedanceIfNeeded(force: Bool = false) async throws {
+        guard AICloudCredentialStore.shared.arkNeedsRefresh() else { return }
+        if let arkRefreshTask { try await arkRefreshTask.value; return }
+        guard force || Date() >= arkRetryAfter else { return }
+        arkRetryAfter = Date().addingTimeInterval(30)
+        let task = Task {
+            guard let issued = try await MaiChatAuthClient.shared.seedanceCredentialIfAvailable()
+            else { return }
+            let expiry = Date(timeIntervalSince1970: TimeInterval(issued.expiresAt))
+            guard issued.apiKey.count >= 16,
+                  expiry > Date().addingTimeInterval(30),
+                  expiry <= Date().addingTimeInterval(360) else {
+                throw AIBackendError(message: "Seedance 临时凭据无效")
+            }
+            guard !Task.isCancelled else { return }
+            AICloudCredentialStore.shared.setTemporaryArk(issued.apiKey, expiresAt: expiry)
+        }
+        arkRefreshTask = task
+        defer { arkRefreshTask = nil }
+        try await task.value
+    }
 
     static func removeLegacyPlaintextCache() {
         guard let support = try? FileManager.default.url(
@@ -105,7 +160,7 @@ enum AICloudCredentialSync {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(service.token)", forHTTPHeaderField: "Authorization")
         request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "action": "fetch", "providers": ["ark", "glm", "deepseek", "wan", "minimax"]
+            "action": "fetch", "providers": ["glm", "deepseek", "wan", "minimax"]
         ])
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 15
@@ -322,6 +377,7 @@ actor AIAssistantBackend {
         }
         settings.selectModel(settings.model)
         _ = try? await AICloudCredentialSync.syncIfConfigured()
+        try? await AICloudCredentialSync.refreshSeedanceIfNeeded(force: true)
         var key = storedKey(for: settings.model)
         #if targetEnvironment(simulator)
         if uiTest {
@@ -707,6 +763,7 @@ final class AIAssistantModel: ObservableObject {
         }
     }
     private func refresh(force: Bool) async {
+        try? await AICloudCredentialSync.refreshSeedanceIfNeeded()
         let target = selected
         do {
             let result = try await backend.snapshot(session: target, limit: 30, force: force)
@@ -840,6 +897,7 @@ final class AIAssistantModel: ObservableObject {
         expectedSession: String? = nil
     ) async -> Bool {
         guard configured else { showSettings = true; return false }
+        try? await AICloudCredentialSync.refreshSeedanceIfNeeded(force: true)
         let draftSession = selected
         let quoteMessageId = quotedMessage?.id ?? ""
         guard expectedSession == nil || expectedSession == draftSession else { return false }

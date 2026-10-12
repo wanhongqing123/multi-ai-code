@@ -24,6 +24,17 @@ import javax.crypto.spec.GCMParameterSpec;
 
 /** 手机号账号协议。刷新令牌只以 Android Keystore 加密形式落盘，UserSig 由后台签发。 */
 public final class MaiChatAuthClient {
+    private static volatile MaiChatAuthClient shared;
+
+    public static MaiChatAuthClient shared(Context context) {
+        MaiChatAuthClient current = shared;
+        if (current != null) return current;
+        synchronized (MaiChatAuthClient.class) {
+            if (shared == null) shared = new MaiChatAuthClient(context);
+            return shared;
+        }
+    }
+
     public static final class Challenge {
         public final String id;
         public final int resendAfter;
@@ -44,6 +55,16 @@ public final class MaiChatAuthClient {
             this.sdkAppId = sdkAppId;
             this.userId = userId;
             this.userSig = userSig;
+            this.expiresAt = expiresAt;
+        }
+    }
+
+    public static final class ModelCredential {
+        public final String apiKey;
+        public final long expiresAt;
+
+        ModelCredential(String apiKey, long expiresAt) {
+            this.apiKey = apiKey;
             this.expiresAt = expiresAt;
         }
     }
@@ -103,6 +124,25 @@ public final class MaiChatAuthClient {
             response.getString("user_sig"), response.getLong("expires_at"));
         if (result.sdkAppId <= 0 || result.userId.isEmpty() || result.userSig.isEmpty())
             throw new IOException("登录服务返回的 IM 凭证无效");
+        return result;
+    }
+
+    public synchronized ModelCredential seedanceCredential() throws Exception {
+        if (!hasSession()) return null;
+        JSONObject response;
+        try {
+            response = request("model/seedance-credential", "GET", null, currentAccessToken());
+        } catch (IOException failure) {
+            if (!String.valueOf(failure.getMessage()).startsWith("登录已过期")) throw failure;
+            accessToken = "";
+            response = request("model/seedance-credential", "GET", null, currentAccessToken());
+        }
+        ModelCredential result = new ModelCredential(
+            response.getString("api_key"), response.getLong("expires_at"));
+        long now = System.currentTimeMillis() / 1000L;
+        if (result.apiKey.length() < 16 || result.expiresAt <= now + 30 ||
+            result.expiresAt > now + 360)
+            throw new IOException("Seedance 临时凭据无效");
         return result;
     }
 

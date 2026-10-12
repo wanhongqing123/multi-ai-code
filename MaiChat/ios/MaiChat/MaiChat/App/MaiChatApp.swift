@@ -229,6 +229,7 @@ struct MaiChatApp: App {
         AICloudCredentialSync.removeLegacyPlaintextCache()
         Task.detached(priority: .utility) {
             _ = try? await AICloudCredentialSync.syncIfConfigured()
+            try? await AICloudCredentialSync.refreshSeedanceIfNeeded()
         }
         RemoteIMSystemNotificationCenter.shared.install()
     }

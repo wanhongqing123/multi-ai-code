@@ -8,7 +8,7 @@ const { openStore } = require('./store');
 const { createAuthService } = require('./service');
 const { bindLegacy } = require('./bind-legacy');
 
-function fixture(allowedPhones = ['+8613900000001']) {
+function fixture(allowedPhones = ['+8613900000001'], extra = {}) {
   const db = openStore(':memory:');
   let current = 1_780_000_000_000;
   const messages = [];
@@ -19,7 +19,9 @@ function fixture(allowedPhones = ['+8613900000001']) {
     imSecret: 'test-only-tencent-im-key-keep-on-server-123456',
     sdkAppId: 123456789,
     allowedPhones,
-    now: () => current
+    modelAllowedPhones: allowedPhones,
+    now: () => current,
+    ...extra
   });
   const rawCall = (method, path, body = {}, token = '') => service.handle({
     method, path, body, ip: '192.0.2.1',
@@ -54,6 +56,47 @@ test('phone verification never sends SMS or logs in without the age confirmation
   })).statusCode, 403);
   assert.equal(setup.db.prepare('SELECT COUNT(*) AS count FROM users').get().count, 0);
   setup.db.close();
+});
+
+test('only an allowed signed-in account receives short-lived Seedance credentials', async () => {
+  let issued = 0;
+  const setup = fixture(undefined, { issueArkCredential: async () => ({
+    api_key: `temporary-key-for-test-${++issued}`,
+    expires_at: 1_780_000_000 + issued * 300
+  }) });
+  const path = '/v1/model/seedance-credential';
+  assert.equal((await setup.call('GET', path)).statusCode, 401);
+  const challenge = await setup.call('POST', '/v1/auth/sms/challenge',
+    { phone: '13900000001' });
+  const login = await setup.call('POST', '/v1/auth/sms/verify', {
+    phone: '13900000001', challenge_id: challenge.body.challenge_id,
+    code: setup.messages[0].code
+  });
+  const [first, concurrent] = await Promise.all([
+    setup.call('GET', path, {}, login.body.access_token),
+    setup.call('GET', path, {}, login.body.access_token)
+  ]);
+  assert.equal(first.statusCode, 200);
+  assert.equal(concurrent.body.api_key, first.body.api_key);
+  assert.equal(first.body.expires_at, 1_780_000_300);
+  assert.equal((await setup.call('GET', path, {}, login.body.access_token)).body.api_key,
+    first.body.api_key);
+  assert.equal(issued, 1);
+  setup.advance(220_000);
+  assert.equal((await setup.call('GET', path, {}, login.body.access_token)).statusCode, 200);
+  assert.equal(issued, 2);
+  setup.db.close();
+
+  const denied = fixture(undefined, { modelAllowedPhones: ['+8613900000002'],
+    issueArkCredential: async () => { throw new Error('must not issue'); } });
+  const request = await denied.call('POST', '/v1/auth/sms/challenge',
+    { phone: '13900000001' });
+  const account = await denied.call('POST', '/v1/auth/sms/verify', {
+    phone: '13900000001', challenge_id: request.body.challenge_id,
+    code: denied.messages[0].code
+  });
+  assert.equal((await denied.call('GET', path, {}, account.body.access_token)).statusCode, 403);
+  denied.db.close();
 });
 
 test('one SMS login creates a stable account and a server-signed IM identity', async () => {

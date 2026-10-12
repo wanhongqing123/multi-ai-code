@@ -220,17 +220,18 @@ test('synchronizes only requested model keys and never returns AccessKeys', asyn
   const credentials = body => ({ ...request(body), rawPath: '/credentials' });
   const status = await handle(credentials({ action: 'status' }));
   assert.deepEqual(JSON.parse(status.body).configured,
-    ['ark', 'glm', 'deepseek', 'wan', 'kling', 'minimax']);
+    ['glm', 'deepseek', 'wan', 'kling', 'minimax']);
   const fetched = await handle(credentials({ action: 'fetch',
     providers: ['ark', 'glm', 'glm_video', 'wan', 'kling'] }));
   assert.deepEqual(JSON.parse(fetched.body), {
-    api_keys: { ark: 'ark-project-key', glm: 'glm-key', glm_video: 'glm-key',
+    api_keys: { glm: 'glm-key', glm_video: 'glm-key',
       wan: 'wan-key', kling: 'kling-key' },
     wan_workspace_id: 'ws-example'
   });
   assert.equal(fetched.headers['Cache-Control'], 'no-store');
   assert.equal(fetched.headers.Pragma, 'no-cache');
   assert.ok(!fetched.body.includes('volc-sk'));
+  assert.ok(!fetched.body.includes('ark-project-key'));
   assert.ok(!fetched.body.includes('deepseek-key'));
   assert.equal((await handle(credentials({ action: 'fetch',
     providers: ['volc_access'] }))).statusCode, 400);
@@ -238,4 +239,37 @@ test('synchronizes only requested model keys and never returns AccessKeys', asyn
     providers: ['ark', 'ark'] }))).statusCode, 400);
   assert.equal((await handle({ ...credentials({ action: 'fetch', providers: ['ark'] }),
     headers: { Authorization: 'Bearer wrong' } })).statusCode, 401);
+});
+
+test('issues a five-minute Seedance key only to the account service', async () => {
+  const now = new Date('2026-10-08T00:00:00Z');
+  const internalToken = 'fedcba9876543210fedcba9876543210';
+  const models = ['doubao-seedance-2-0-mini-260615'];
+  const configured = { ...env,
+    MAICHAT_AUTH_SERVICE_TOKEN: internalToken,
+    MAICHAT_SEEDANCE_MODEL_IDS: models[0],
+    VOLC_ACCESS_KEY_ID: 'test-volc-id',
+    VOLC_SECRET_ACCESS_KEY: 'test-volc-secret'
+  };
+  let calls = 0;
+  const handle = createHandler({ env: configured, currentTime: () => now,
+    callArk: async (action, payload, credentials) => {
+      ++calls;
+      assert.equal(action, 'GetApiKey');
+      assert.deepEqual(payload, { DurationSeconds: 300, ResourceType: 'presetendpoint',
+        ResourceIds: models, ProjectName: 'default' });
+      assert.equal(credentials.accessKeyId, configured.VOLC_ACCESS_KEY_ID);
+      return { Result: { ApiKey: 'temporary-ark-model-key',
+        ExpiredTime: Math.floor(now.getTime() / 1000) + 300 } };
+    } });
+  const issue = token => ({ ...request({ action: 'ark_seedance' }, token),
+    rawPath: '/temporary-credentials' });
+  assert.equal((await handle(issue(env.MAICHAT_OSS_SIGNER_TOKEN))).statusCode, 401);
+  assert.equal(calls, 0);
+  const result = await handle(issue(internalToken));
+  assert.equal(result.statusCode, 200);
+  assert.deepEqual(JSON.parse(result.body), { api_key: 'temporary-ark-model-key',
+    expires_at: Math.floor(now.getTime() / 1000) + 300 });
+  assert.equal(calls, 1);
+  assert.ok(!result.body.includes(configured.VOLC_SECRET_ACCESS_KEY));
 });

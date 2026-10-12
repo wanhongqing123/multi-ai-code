@@ -87,12 +87,15 @@ public final class AIAssistantController {
             shared = new AIAssistantController(context, null);
         return shared;
     }
-    public static synchronized void invalidateSharedArkCredential() {
+    public static synchronized void invalidateSharedTemporaryModelCredentials() {
         if (shared == null) return;
         shared.worker.post(() -> {
             shared.arkApiKey = "";
             shared.arkExpiresAt = 0;
             shared.nextArkRefreshAt = 0;
+            shared.wanApiKey = "";
+            shared.wanExpiresAt = 0;
+            shared.nextWanRefreshAt = 0;
         });
     }
     private static native long nativeCreate();
@@ -127,6 +130,8 @@ public final class AIAssistantController {
     private volatile long arkExpiresAt;
     private long nextArkRefreshAt;
     private volatile String wanApiKey = "";
+    private volatile long wanExpiresAt;
+    private long nextWanRefreshAt;
     private volatile String wanWorkspaceId = "";
     private volatile String miniMaxApiKey = "";
     private volatile String cloudServiceUrl = "";
@@ -139,6 +144,7 @@ public final class AIAssistantController {
                 return;
             if (ready) {
                 refreshSeedanceCredential(false);
+                refreshBailianCredential(false);
                 refresh(false);
             }
             worker.postDelayed(this, data.optBoolean("busy") ? 100 : 500);
@@ -233,7 +239,8 @@ public final class AIAssistantController {
         if (tool.equals("wan_credentials")) {
             try {
                 return new JSONObject().put("ok", true)
-                    .put("output", new JSONObject().put("key", wanApiKey)
+                    .put("output", new JSONObject().put("key",
+                        System.currentTimeMillis() / 1000L < wanExpiresAt ? wanApiKey : "")
                         .put("workspace_id", wanWorkspaceId))
                     .toString().getBytes(StandardCharsets.UTF_8);
             } catch (Exception failure) {
@@ -341,6 +348,7 @@ public final class AIAssistantController {
                 }
             }
             refreshSeedanceCredential(true);
+            refreshBailianCredential(true);
             apiKey = model.equals("deepseek-flash") ? deepseekApiKey : glmApiKey;
             if (testEndpoint != null) {
                 baseUrl = testEndpoint;
@@ -507,6 +515,7 @@ public final class AIAssistantController {
             boolean success = false;
             try {
                 refreshSeedanceCredential(true);
+                refreshBailianCredential(true);
                 String target = intendedSession;
                 if (target.isEmpty()) {
                     target = call(op("create")).getString("id");
@@ -672,7 +681,7 @@ public final class AIAssistantController {
         byte[] body = new JSONObject().put("action", "fetch")
             .put("providers", new JSONArray()
                 .put("glm").put("deepseek")
-                .put("wan").put("minimax"))
+                .put("minimax"))
             .toString().getBytes(StandardCharsets.UTF_8);
         try {
             try (java.io.OutputStream output = connection.getOutputStream()) { output.write(body); }
@@ -698,16 +707,15 @@ public final class AIAssistantController {
         JSONObject keys = response.optJSONObject("api_keys");
         if (keys == null) throw new IOException("云端密钥响应无效");
         glmApiKey = deepseekApiKey = "";
-        wanApiKey = miniMaxApiKey = "";
+        miniMaxApiKey = "";
         for (String provider : new String[] {"glm", "deepseek",
-                "wan", "minimax"}) {
+                "minimax"}) {
             String value = keys.optString(provider, "");
             if (value.isEmpty() || value.length() > 4096 ||
                 value.indexOf('\r') >= 0 || value.indexOf('\n') >= 0) continue;
             switch (provider) {
             case "glm": glmApiKey = value; break;
             case "deepseek": deepseekApiKey = value; break;
-            case "wan": wanApiKey = value; break;
             case "minimax": miniMaxApiKey = value; break;
             default: break;
             }
@@ -730,6 +738,23 @@ public final class AIAssistantController {
             arkExpiresAt = issued.expiresAt;
         } catch (Exception failure) {
             Log.w("MaiChatAgent", "Seedance temporary credential renewal failed");
+        }
+    }
+    private void refreshBailianCredential(boolean force) {
+        // 手机号会话续领百炼短期 Key；万相和百炼可灵共用，过期后不继续暴露旧值。
+        if (testEndpoint != null) return;
+        long now = System.currentTimeMillis() / 1000L;
+        if (wanExpiresAt > now + 90 || (!force && now < nextWanRefreshAt)) return;
+        nextWanRefreshAt = now + 30;
+        if (wanExpiresAt <= now) wanApiKey = "";
+        try {
+            MaiChatAuthClient.BailianCredential issued = accountAuth.bailianCredential();
+            if (issued == null) return;
+            wanWorkspaceId = issued.workspaceId;
+            wanApiKey = issued.apiKey;
+            wanExpiresAt = issued.expiresAt;
+        } catch (Exception failure) {
+            Log.w("MaiChatAgent", "Bailian temporary credential renewal failed");
         }
     }
     void importFile(Uri uri, Consumer<ImportedFile> completion) {

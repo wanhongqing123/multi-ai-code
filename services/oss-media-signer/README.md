@@ -44,7 +44,7 @@
    | `MAICHAT_SEEDANCE_MODEL_IDS` | 允许签发临时 Key 的 Seedance Model ID 白名单，逗号分隔 |
    | `MAICHAT_GLM_API_KEY`、`MAICHAT_DEEPSEEK_API_KEY` | 可选，GLM、DeepSeek 模型 API Key |
    | `MAICHAT_WAN_API_KEY`、`MAICHAT_WAN_WORKSPACE_ID` | 可选，百炼 API Key 和 Workspace ID |
-   | `MAICHAT_KLING_API_KEY`、`MAICHAT_MINIMAX_API_KEY` | 可选，可灵、海螺 API Key |
+   | `MAICHAT_MINIMAX_API_KEY` | 可选，海螺 API Key；百炼可灵复用万相 Key |
    | `MAICHAT_OSS_BUCKET`、`MAICHAT_OSS_REGION` | 可选，OSS Bucket 与地域 |
    | `ALIBABA_CLOUD_ACCESS_KEY_ID`、`ALIBABA_CLOUD_ACCESS_KEY_SECRET` | 可选，专用 OSS RAM 身份 |
 
@@ -69,7 +69,7 @@
 iOS、Android、Desktop 取回模型 Key 后仅在当前 App 进程内使用，不再保存本机副本；
 旧的本机模型 Key 会在升级后清理。App 重启后需要重新连接此服务，离线时不能用
 云端模型。连接服务所需的地址和令牌仍由 App 保存，未来账号登录后再替换这层认证。
-GLM、DeepSeek、Wan、MiniMax 等旧同步入口仍可能把长期 Key 发到设备，不能视作
+GLM、DeepSeek、MiniMax 等旧同步入口仍可能把长期 Key 发到设备，不能视作
 账号鉴权完成；正式开放多账号前需分别迁移成短期凭据或账号隔离的 Key。
 
 ## Seedance 短期 Key
@@ -80,6 +80,16 @@ Nginx 明确拒绝公网同路径。素材服务以火山 AK/SK 调用 `GetApiKe
 登录会话和单独的模型白名单审核后发给 App。App 直连方舟生成、查询或取消任务，
 AK/SK 和长期 Ark Key 都不下发。临时 Key 一旦泄漏，在到期前仍可使用；过期后
 App 必须重新领取。旧版 App 的共享服务令牌在生产切换时必须轮换。
+
+## 百炼短期 Key
+
+同一内网 `POST /temporary-credentials` 接受 `action=bailian_video`，使用服务器上的
+`MAICHAT_WAN_API_KEY` 调用北京地域百炼 `POST /api/v1/tokens`，固定有效期 300 秒。
+账号服务按登录会话和模型白名单下发临时 `st-` Key 与 Workspace ID；App 仅在内存
+持有，万相和百炼可灵共用。旧 `/credentials` 不再下发万相或可灵长期 Key。
+临时 Key 继承主 Key 的全部权限，且到期前无法主动撤销；应把主 Key 限制到专用
+业务空间和模型，控制费用配额。服务端上线与移动端升级需协调，旧包在切换后将
+无法通过旧接口获取万相或可灵 Key。
 
 ## Ark Assets 素材接口
 

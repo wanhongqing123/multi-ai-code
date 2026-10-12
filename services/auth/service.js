@@ -26,7 +26,8 @@ function digest(value) {
 }
 
 function createAuthService(options) {
-  const { db, sms, secret, imSecret, sdkAppId, issueArkCredential } = options;
+  const { db, sms, secret, imSecret, sdkAppId, issueArkCredential,
+    issueBailianCredential } = options;
   if (!db || !sms || typeof sms.send !== 'function' ||
       typeof secret !== 'string' || secret.length < 32 ||
       typeof imSecret !== 'string' || imSecret.length < 32 ||
@@ -37,6 +38,8 @@ function createAuthService(options) {
   const modelAllowedPhones = new Set(options.modelAllowedPhones || []);
   const arkCredentials = new Map();
   const arkIssuanceInFlight = new Map();
+  const bailianCredentials = new Map();
+  const bailianIssuanceInFlight = new Map();
   const sendable = phone => allowedPhones.size === 0 || allowedPhones.has(phone);
   const keyedHash = text => createHmac('sha256', secret).update(text).digest('hex');
   const phoneHash = phone => keyedHash(`phone:${phone}`);
@@ -318,6 +321,36 @@ function createAuthService(options) {
         return json(503, { error: 'Temporary model credentials are unavailable' });
       } finally {
         arkIssuanceInFlight.delete(session.user_id);
+      }
+    }
+    if (method === 'GET' && path === '/v1/model/bailian-credential') {
+      if (!session) return json(401, { error: 'Authentication required' });
+      if (!modelAllowedPhones.has(session.phone_e164))
+        return json(403, { error: 'Model access is not enabled for this account' });
+      if (typeof issueBailianCredential !== 'function')
+        return json(503, { error: 'Temporary model credentials are unavailable' });
+      const cached = bailianCredentials.get(session.user_id);
+      if (cached && cached.expires_at > Math.floor(now() / 1000) + 90)
+        return json(200, cached);
+      try {
+        let pending = bailianIssuanceInFlight.get(session.user_id);
+        if (!pending) {
+          pending = issueBailianCredential();
+          bailianIssuanceInFlight.set(session.user_id, pending);
+        }
+        const issued = await pending;
+        if (typeof issued?.api_key !== 'string' ||
+            !/^st-[A-Za-z0-9._~+/-]{8,4093}={0,2}$/.test(issued.api_key) ||
+            !Number.isSafeInteger(issued.expires_at) ||
+            issued.expires_at <= Math.floor(now() / 1000) ||
+            !/^(?:ws|llm)-[A-Za-z0-9_-]{1,120}$/.test(issued.wan_workspace_id))
+          throw new Error('Invalid temporary credential');
+        bailianCredentials.set(session.user_id, issued);
+        return json(200, issued);
+      } catch {
+        return json(503, { error: 'Temporary model credentials are unavailable' });
+      } finally {
+        bailianIssuanceInFlight.delete(session.user_id);
       }
     }
     return json(404, { error: 'Not found' });

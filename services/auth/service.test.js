@@ -99,6 +99,44 @@ test('only an allowed signed-in account receives short-lived Seedance credential
   denied.db.close();
 });
 
+test('only a signed-in model account receives cached short-lived Bailian credentials', async () => {
+  let issued = 0;
+  const setup = fixture(undefined, { issueBailianCredential: async () => ({
+    api_key: `st-temporary-key-${++issued}`, expires_at: 1_780_000_000 + issued * 300,
+    wan_workspace_id: 'ws-test'
+  }) });
+  const path = '/v1/model/bailian-credential';
+  assert.equal((await setup.call('GET', path)).statusCode, 401);
+  const challenge = await setup.call('POST', '/v1/auth/sms/challenge',
+    { phone: '13900000001' });
+  const login = await setup.call('POST', '/v1/auth/sms/verify', {
+    phone: '13900000001', challenge_id: challenge.body.challenge_id,
+    code: setup.messages[0].code
+  });
+  const [first, concurrent] = await Promise.all([
+    setup.call('GET', path, {}, login.body.access_token),
+    setup.call('GET', path, {}, login.body.access_token)
+  ]);
+  assert.equal(first.statusCode, 200);
+  assert.equal(first.body.api_key, concurrent.body.api_key);
+  assert.equal(first.body.wan_workspace_id, 'ws-test');
+  assert.equal(issued, 1);
+  setup.advance(220_000);
+  assert.equal((await setup.call('GET', path, {}, login.body.access_token)).statusCode, 200);
+  assert.equal(issued, 2);
+  setup.db.close();
+  const denied = fixture(undefined, { modelAllowedPhones: [],
+    issueBailianCredential: async () => { throw new Error('must not issue'); } });
+  const deniedChallenge = await denied.call('POST', '/v1/auth/sms/challenge',
+    { phone: '13900000001' });
+  const account = await denied.call('POST', '/v1/auth/sms/verify', {
+    phone: '13900000001', challenge_id: deniedChallenge.body.challenge_id,
+    code: denied.messages[0].code
+  });
+  assert.equal((await denied.call('GET', path, {}, account.body.access_token)).statusCode, 403);
+  denied.db.close();
+});
+
 test('one SMS login creates a stable account and a server-signed IM identity', async () => {
   const setup = fixture();
   const sent = await setup.call('POST', '/v1/auth/sms/challenge',

@@ -5,6 +5,7 @@ const { openStore } = require('./store');
 const { createAuthService, normalizePhone } = require('./service');
 const { createAliyunSmsSender } = require('./sms');
 const { createArkCredentialIssuer } = require('./ark-credential');
+const { createBailianCredentialIssuer } = require('./bailian-credential');
 
 const MAX_BODY_BYTES = 4096;
 
@@ -68,6 +69,7 @@ function start(env = process.env) {
     db, sms, secret: env.MAICHAT_AUTH_HMAC_KEY,
     imSecret: env.MAICHAT_IM_SECRET_KEY,
     issueArkCredential: createArkCredentialIssuer(env),
+    issueBailianCredential: createBailianCredentialIssuer(env),
     sdkAppId: Number(env.MAICHAT_IM_SDK_APP_ID), allowedPhones,
     modelAllowedPhones
   });

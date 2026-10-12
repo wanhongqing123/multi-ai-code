@@ -230,6 +230,7 @@ struct MaiChatApp: App {
         Task.detached(priority: .utility) {
             _ = try? await AICloudCredentialSync.syncIfConfigured()
             try? await AICloudCredentialSync.refreshSeedanceIfNeeded()
+            try? await AICloudCredentialSync.refreshBailianIfNeeded()
         }
         RemoteIMSystemNotificationCenter.shared.install()
     }

@@ -30,6 +30,12 @@ struct MaiChatSeedanceCredential: Decodable, Sendable {
     let expiresAt: Int
 }
 
+struct MaiChatBailianCredential: Decodable, Sendable {
+    let apiKey: String
+    let expiresAt: Int
+    let wanWorkspaceId: String
+}
+
 private struct MaiChatAuthServerError: Decodable {
     let error: String
 }
@@ -148,6 +154,19 @@ actor MaiChatAuthClient {
             accessToken = nil
             let renewed = try await currentAccessToken()
             return try await request("model/seedance-credential", method: "GET",
+                                     bearer: renewed)
+        }
+    }
+
+    func bailianCredentialIfAvailable() async throws -> MaiChatBailianCredential? {
+        guard accessToken != nil || !refreshStore.readSecretKey().isEmpty else { return nil }
+        let token = try await currentAccessToken()
+        do {
+            return try await request("model/bailian-credential", method: "GET", bearer: token)
+        } catch MaiChatAuthError.requestFailed("Authentication required") {
+            accessToken = nil
+            let renewed = try await currentAccessToken()
+            return try await request("model/bailian-credential", method: "GET",
                                      bearer: renewed)
         }
     }

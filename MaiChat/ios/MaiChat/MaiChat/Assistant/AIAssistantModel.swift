@@ -46,12 +46,15 @@ final class AICloudCredentialStore: @unchecked Sendable {
     private let lock = NSLock()
     private var values: [String: String] = [:]
     private var arkExpiresAt = Date.distantPast
+    private var bailianExpiresAt = Date.distantPast
 
     func replace(_ next: [String: String]) {
         lock.lock()
         let ark = values["ark"]
+        let bailian = values["wan"]
         values = next
         if let ark, Date() < arkExpiresAt { values["ark"] = ark }
+        if let bailian, Date() < bailianExpiresAt { values["wan"] = bailian }
         lock.unlock()
     }
 
@@ -69,6 +72,26 @@ final class AICloudCredentialStore: @unchecked Sendable {
         lock.unlock()
     }
 
+    func setTemporaryBailian(_ key: String, expiresAt: Date) {
+        lock.lock()
+        values["wan"] = key
+        bailianExpiresAt = expiresAt
+        lock.unlock()
+    }
+
+    func clearTemporaryBailian() {
+        lock.lock()
+        values.removeValue(forKey: "wan")
+        bailianExpiresAt = .distantPast
+        lock.unlock()
+    }
+
+    func bailianNeedsRefresh() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return Date().addingTimeInterval(90) >= bailianExpiresAt
+    }
+
     func arkNeedsRefresh() -> Bool {
         lock.lock()
         defer { lock.unlock() }
@@ -79,21 +102,56 @@ final class AICloudCredentialStore: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         if provider == "ark", Date() >= arkExpiresAt { return "" }
+        if provider == "wan", Date() >= bailianExpiresAt { return "" }
         return values[provider] ?? ""
     }
 }
 
 enum AICloudCredentialSync {
-    private static let modelProviders = ["glm", "deepseek",
-                                         "wan", "minimax"]
+    private static let modelProviders = ["glm", "deepseek", "minimax"]
     @MainActor private static var arkRefreshTask: Task<Void, Error>?
     @MainActor private static var arkRetryAfter = Date.distantPast
+    @MainActor private static var bailianRefreshTask: Task<Void, Error>?
+    @MainActor private static var bailianRetryAfter = Date.distantPast
 
-    @MainActor static func invalidateSeedanceCredential() {
+    @MainActor static func invalidateTemporaryModelCredentials() {
         arkRefreshTask?.cancel()
         arkRefreshTask = nil
         arkRetryAfter = .distantPast
         AICloudCredentialStore.shared.clearTemporaryArk()
+        bailianRefreshTask?.cancel()
+        bailianRefreshTask = nil
+        bailianRetryAfter = .distantPast
+        AICloudCredentialStore.shared.clearTemporaryBailian()
+    }
+
+    @MainActor static func refreshBailianIfNeeded(force: Bool = false) async throws {
+        // 后台恢复或进程重启后，先凭手机号会话续领；短期 Key 只写进内存。
+        guard AICloudCredentialStore.shared.bailianNeedsRefresh() else { return }
+        if let bailianRefreshTask { try await bailianRefreshTask.value; return }
+        guard force || Date() >= bailianRetryAfter else { return }
+        bailianRetryAfter = Date().addingTimeInterval(30)
+        let task = Task {
+            guard let issued = try await MaiChatAuthClient.shared.bailianCredentialIfAvailable()
+            else { return }
+            let expiry = Date(timeIntervalSince1970: TimeInterval(issued.expiresAt))
+            guard issued.apiKey.hasPrefix("st-"), issued.apiKey.count >= 11,
+                  expiry > Date().addingTimeInterval(30),
+                  expiry <= Date().addingTimeInterval(360),
+                  issued.wanWorkspaceId.range(
+                    of: "^(ws|llm)-[A-Za-z0-9_-]{1,120}$", options: .regularExpression
+                  ) != nil else {
+                throw AIBackendError(message: "百炼临时凭据无效")
+            }
+            guard !Task.isCancelled else { return }
+            UserDefaults.standard.set(issued.wanWorkspaceId,
+                                      forKey: "wan-model-studio-workspace-id")
+            AICloudCredentialStore.shared.setTemporaryBailian(issued.apiKey,
+                                                                expiresAt: expiry)
+        }
+        bailianRefreshTask = task
+        defer { bailianRefreshTask = nil }
+        try await task.value
     }
 
     @MainActor static func refreshSeedanceIfNeeded(force: Bool = false) async throws {
@@ -152,7 +210,7 @@ enum AICloudCredentialSync {
     }
 
     static func syncIfConfigured() async throws -> Bool {
-        // 通过服务令牌请求固定供应商的密钥；响应通过大小和字段校验后再更新内存。
+        // 旧共享令牌只同步尚未迁移的供应商；百炼和方舟改由手机号会话签发短期 Key。
         guard let service = serviceEndpoint() else { return false }
         var request = URLRequest(url: service.url)
         request.httpMethod = "POST"
@@ -160,7 +218,7 @@ enum AICloudCredentialSync {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(service.token)", forHTTPHeaderField: "Authorization")
         request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "action": "fetch", "providers": ["glm", "deepseek", "wan", "minimax"]
+            "action": "fetch", "providers": ["glm", "deepseek", "minimax"]
         ])
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 15
@@ -378,6 +436,7 @@ actor AIAssistantBackend {
         settings.selectModel(settings.model)
         _ = try? await AICloudCredentialSync.syncIfConfigured()
         try? await AICloudCredentialSync.refreshSeedanceIfNeeded(force: true)
+        try? await AICloudCredentialSync.refreshBailianIfNeeded(force: true)
         var key = storedKey(for: settings.model)
         #if targetEnvironment(simulator)
         if uiTest {
@@ -764,6 +823,7 @@ final class AIAssistantModel: ObservableObject {
     }
     private func refresh(force: Bool) async {
         try? await AICloudCredentialSync.refreshSeedanceIfNeeded()
+        try? await AICloudCredentialSync.refreshBailianIfNeeded()
         let target = selected
         do {
             let result = try await backend.snapshot(session: target, limit: 30, force: force)
@@ -898,6 +958,7 @@ final class AIAssistantModel: ObservableObject {
     ) async -> Bool {
         guard configured else { showSettings = true; return false }
         try? await AICloudCredentialSync.refreshSeedanceIfNeeded(force: true)
+        try? await AICloudCredentialSync.refreshBailianIfNeeded(force: true)
         let draftSession = selected
         let quoteMessageId = quotedMessage?.id ?? ""
         guard expectedSession == nil || expectedSession == draftSession else { return false }

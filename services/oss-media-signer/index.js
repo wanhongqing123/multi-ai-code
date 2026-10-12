@@ -79,6 +79,7 @@ function createHandler(options = {}) {
   const newID = options.newID || randomUUID;
   const currentTime = options.currentTime || (() => new Date());
   const callArk = options.callArk || require('./ark-sign').callArk;
+  const fetcher = options.fetcher || fetch;
   let client;
 
   return async function handle(eventInput) {
@@ -108,6 +109,42 @@ function createHandler(options = {}) {
 
     const body = requestBody(event);
     if (route === '/temporary-credentials') {
+      if (body?.action === 'bailian_video') {
+        const permanentKey = env.MAICHAT_WAN_API_KEY || '';
+        const workspace = env.MAICHAT_WAN_WORKSPACE_ID || '';
+        if (!permanentKey || !/^(?:ws|llm)-[A-Za-z0-9_-]{1,120}$/.test(workspace))
+          return jsonResponse(503, { error: 'Bailian temporary credentials are not configured' });
+        // 百炼临时 Key 继承主 Key 的权限，主 Key 始终只留在服务端。
+        let response;
+        try {
+          response = await fetcher(
+            'https://dashscope.aliyuncs.com/api/v1/tokens?expire_in_seconds=300', {
+              method: 'POST', redirect: 'error',
+              headers: { Authorization: `Bearer ${permanentKey}` },
+              signal: AbortSignal.timeout(8000)
+            });
+        } catch {
+          return jsonResponse(502, { error: 'Bailian credential issuer is unavailable' });
+        }
+        if (!response.ok)
+          return jsonResponse(502, { error: 'Bailian credential issuer rejected the request' });
+        let issued;
+        try {
+          const raw = await response.text();
+          if (Buffer.byteLength(raw) > 2048) throw new Error('Oversized response');
+          issued = JSON.parse(raw);
+        } catch {
+          return jsonResponse(502, { error: 'Bailian credential response is invalid' });
+        }
+        const nowSeconds = Math.floor(currentTime().getTime() / 1000);
+        if (typeof issued.token !== 'string' ||
+            !/^st-[A-Za-z0-9._~+/-]{8,4093}={0,2}$/.test(issued.token) ||
+            !Number.isSafeInteger(issued.expires_at) ||
+            issued.expires_at <= nowSeconds || issued.expires_at > nowSeconds + 360)
+          return jsonResponse(502, { error: 'Bailian returned an invalid temporary credential' });
+        return jsonResponse(200, { api_key: issued.token, expires_at: issued.expires_at,
+          wan_workspace_id: workspace });
+      }
       if (body?.action !== 'ark_seedance')
         return jsonResponse(400, { error: 'Invalid temporary credential request' });
       const models = (env.MAICHAT_SEEDANCE_MODEL_IDS || '').split(',').map(v => v.trim())
@@ -138,18 +175,28 @@ function createHandler(options = {}) {
         glm: env.MAICHAT_GLM_API_KEY || '',
         glm_video: env.MAICHAT_GLM_API_KEY || '',
         deepseek: env.MAICHAT_DEEPSEEK_API_KEY || '',
-        wan: env.MAICHAT_WAN_API_KEY || '',
-        kling: env.MAICHAT_KLING_API_KEY || '',
+        // 百炼万相和可灵只经账号服务领取短期 Key；旧共享令牌不能取回长期 Key。
+        wan: '',
+        kling: '',
         minimax: env.MAICHAT_MINIMAX_API_KEY || ''
       };
-      if (body?.action === 'status')
+      if (body?.action === 'status') {
+        const configured = Object.keys(keys).filter((name) =>
+          name !== 'glm_video' && !!keys[name]);
+        if (env.MAICHAT_WAN_API_KEY &&
+            /^(?:ws|llm)-[A-Za-z0-9_-]{1,120}$/.test(env.MAICHAT_WAN_WORKSPACE_ID || '')) {
+          const miniMaxIndex = configured.indexOf('minimax');
+          configured.splice(miniMaxIndex < 0 ? configured.length : miniMaxIndex,
+            0, 'wan', 'kling');
+        }
         return jsonResponse(200, {
-          configured: Object.keys(keys).filter((name) => name !== 'glm_video' && !!keys[name]),
+          configured,
           assets_configured: !!(env.VOLC_ACCESS_KEY_ID && env.VOLC_SECRET_ACCESS_KEY),
           storage_configured: !!(env.MAICHAT_OSS_BUCKET &&
             /^oss-[a-z0-9-]+$/.test(env.MAICHAT_OSS_REGION || '') &&
             env.ALIBABA_CLOUD_ACCESS_KEY_ID && env.ALIBABA_CLOUD_ACCESS_KEY_SECRET)
         });
+      }
       if (body?.action !== 'fetch' || !Array.isArray(body.providers) ||
           body.providers.length < 1 || body.providers.length > Object.keys(keys).length ||
           new Set(body.providers).size !== body.providers.length ||

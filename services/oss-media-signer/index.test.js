@@ -61,6 +61,59 @@ test('rejects unauthorized and oversized requests before signing', async () => {
   assert.equal(created, false);
 });
 
+test('mints a bounded Bailian key only for the account service', async () => {
+  const now = new Date('2026-10-08T00:00:00Z');
+  const internalToken = 'fedcba9876543210fedcba9876543210';
+  const configured = { ...env, MAICHAT_AUTH_SERVICE_TOKEN: internalToken,
+    MAICHAT_WAN_API_KEY: 'permanent-bailian-key', MAICHAT_WAN_WORKSPACE_ID: 'ws-test' };
+  let calls = 0;
+  const handle = createHandler({ env: configured, currentTime: () => now,
+    fetcher: async (url, options) => {
+      ++calls;
+      assert.equal(url, 'https://dashscope.aliyuncs.com/api/v1/tokens?expire_in_seconds=300');
+      assert.equal(options.method, 'POST');
+      assert.equal(options.headers.Authorization, 'Bearer permanent-bailian-key');
+      return { ok: true, async text() { return JSON.stringify({
+        token: 'st-temporary-bailian-key',
+        expires_at: Math.floor(now.getTime() / 1000) + 300
+      }); } };
+    } });
+  const issue = token => ({ ...request({ action: 'bailian_video' }, token),
+    rawPath: '/temporary-credentials' });
+  assert.equal((await handle(issue(env.MAICHAT_OSS_SIGNER_TOKEN))).statusCode, 401);
+  assert.equal(calls, 0);
+  const result = await handle(issue(internalToken));
+  assert.equal(result.statusCode, 200);
+  assert.deepEqual(JSON.parse(result.body), {
+    api_key: 'st-temporary-bailian-key',
+    expires_at: Math.floor(now.getTime() / 1000) + 300,
+    wan_workspace_id: 'ws-test'
+  });
+  assert.ok(!result.body.includes('permanent-bailian-key'));
+  const legacy = await handle({ ...request({ action: 'fetch',
+    providers: ['wan', 'kling'] }), rawPath: '/credentials' });
+  assert.deepEqual(JSON.parse(legacy.body).api_keys, {});
+  assert.equal(calls, 1);
+});
+
+test('does not forward an expired or malformed Bailian response', async () => {
+  const now = new Date('2026-10-08T00:00:00Z');
+  const configured = { ...env,
+    MAICHAT_AUTH_SERVICE_TOKEN: 'fedcba9876543210fedcba9876543210',
+    MAICHAT_WAN_API_KEY: 'permanent-bailian-key', MAICHAT_WAN_WORKSPACE_ID: 'ws-test' };
+  const body = { action: 'bailian_video' };
+  const requestFor = () => ({ ...request(body, configured.MAICHAT_AUTH_SERVICE_TOKEN),
+    rawPath: '/temporary-credentials' });
+  for (const issued of [
+    { token: 'st-temporary-bailian-key', expires_at: Math.floor(now.getTime() / 1000) - 1 },
+    { token: 'permanent-bailian-key', expires_at: Math.floor(now.getTime() / 1000) + 300 }
+  ]) {
+    const handle = createHandler({ env: configured, currentTime: () => now,
+      fetcher: async () => ({ ok: true, async text() { return JSON.stringify(issued); } }) });
+    assert.equal((await handle(requestFor())).statusCode, 502);
+  }
+});
+
 test('signs direct JPEG uploads for private Ark input storage', async () => {
   const calls = [];
   const handle = createHandler({ env, newID: () => 'image-id',
@@ -224,8 +277,7 @@ test('synchronizes only requested model keys and never returns AccessKeys', asyn
   const fetched = await handle(credentials({ action: 'fetch',
     providers: ['ark', 'glm', 'glm_video', 'wan', 'kling'] }));
   assert.deepEqual(JSON.parse(fetched.body), {
-    api_keys: { glm: 'glm-key', glm_video: 'glm-key',
-      wan: 'wan-key', kling: 'kling-key' },
+    api_keys: { glm: 'glm-key', glm_video: 'glm-key' },
     wan_workspace_id: 'ws-example'
   });
   assert.equal(fetched.headers['Cache-Control'], 'no-store');

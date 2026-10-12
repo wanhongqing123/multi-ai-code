@@ -170,7 +170,7 @@ public final class RemoteIMSessionController {
     }
 
     private void switchAccount(RemoteIMSettings next) {
-        if (productionMode) AIAssistantController.invalidateSharedArkCredential();
+        if (productionMode) AIAssistantController.invalidateSharedTemporaryModelCredentials();
         resetActivities();
         int generation = ++accountGeneration;
         settings = next;

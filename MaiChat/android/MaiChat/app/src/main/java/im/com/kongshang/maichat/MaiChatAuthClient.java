@@ -69,6 +69,18 @@ public final class MaiChatAuthClient {
         }
     }
 
+    public static final class BailianCredential {
+        public final String apiKey;
+        public final long expiresAt;
+        public final String workspaceId;
+
+        BailianCredential(String apiKey, long expiresAt, String workspaceId) {
+            this.apiKey = apiKey;
+            this.expiresAt = expiresAt;
+            this.workspaceId = workspaceId;
+        }
+    }
+
     private static final String BASE_URL = "https://ichat.life/api/v1/";
     private static final String KEY_ALIAS = "MaiChat.PhoneAuth.Refresh";
     private static final String STORED_REFRESH = "refresh";
@@ -143,6 +155,27 @@ public final class MaiChatAuthClient {
         if (result.apiKey.length() < 16 || result.expiresAt <= now + 30 ||
             result.expiresAt > now + 360)
             throw new IOException("Seedance 临时凭据无效");
+        return result;
+    }
+
+    public synchronized BailianCredential bailianCredential() throws Exception {
+        if (!hasSession()) return null;
+        JSONObject response;
+        try {
+            response = request("model/bailian-credential", "GET", null, currentAccessToken());
+        } catch (IOException failure) {
+            if (!String.valueOf(failure.getMessage()).startsWith("登录已过期")) throw failure;
+            accessToken = "";
+            response = request("model/bailian-credential", "GET", null, currentAccessToken());
+        }
+        BailianCredential result = new BailianCredential(
+            response.getString("api_key"), response.getLong("expires_at"),
+            response.getString("wan_workspace_id"));
+        long now = System.currentTimeMillis() / 1000L;
+        if (!result.apiKey.matches("st-[A-Za-z0-9._~+/-]{8,4093}={0,2}") ||
+            result.expiresAt <= now + 30 || result.expiresAt > now + 360 ||
+            !result.workspaceId.matches("(?:ws|llm)-[A-Za-z0-9_-]{1,120}"))
+            throw new IOException("百炼临时凭据无效");
         return result;
     }
 

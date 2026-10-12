@@ -723,6 +723,58 @@ void test_old_status_failure_recovers_and_delivers_original_task() {
     MaiFileSystem::removeFile(path);
 }
 
+void test_automatic_video_reply_skips_an_existing_media_delivery() {
+    const MaiFilePath path = MaiFileSystem::temporaryDirectory().append(
+        MaiFilePath::fromUtf8("mai-delivered-" + MaiIdGenerator::generate("tmp_") + ".mp4"));
+    CHECK(!MaiFileSystem::writeFile(path, "previously delivered video bytes"));
+    auto store = makeMaiMemoryStore();
+    MaiSessionStore* observer = store.get();
+    MaiSession session;
+    session.id = MaiIdGenerator::newSessionId();
+    session.directory = MaiFileSystem::temporaryDirectory().toUtf8();
+    session.created = MaiTime::getCurrentTime();
+    store->putSession(session);
+    MaiSpecialistTask task;
+    task.id = MaiIdGenerator::generate("spt_");
+    task.ownerSessionId = session.id;
+    task.specialistName = "fake_video";
+    task.providerTaskId = "3941909b-ed9d-4beb-9030-70e9576ca0ba";
+    task.created = session.created;
+    CHECK(!store->insertSpecialistTask(task));
+    MaiMessage manual;
+    manual.id = MaiIdGenerator::newMessageId();
+    manual.role = MaiRole::Assistant;
+    manual.created = session.created + 1;
+    manual.completed = session.created + 2;
+    MaiMessagePart media;
+    media.id = MaiIdGenerator::newPartId();
+    media.created = manual.created;
+    MaiToolPart sent;
+    sent.tool = "agent_send_media";
+    sent.input = "{\"file_path\":\"wan3-" + task.providerTaskId + ".mp4\"}";
+    sent.state = MaiToolState::Completed;
+    media.body = std::move(sent);
+    manual.parts.push_back(std::move(media));
+    store->putMessage(session.id, manual);
+    auto tools = std::make_unique<MaiToolRegistry>();
+    tools->add(std::make_unique<FinishedVideoTool>(path.toUtf8()));
+    auto model = std::make_unique<MaiFakeModelClient>();
+    MaiFakeModelClient* observedModel = model.get();
+    MaiAgent agent(std::move(store), std::move(model), std::move(tools));
+    MaiSpecialistTask loaded;
+    for (int attempt = 0; attempt < 200; ++attempt) {
+        if (observer->getSpecialistTask(task.id, session.id, loaded) && loaded.notifiedAt != 0)
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    CHECK(loaded.status == MaiSpecialistTaskStatus::Succeeded);
+    CHECK(loaded.notifiedAt != 0);
+    CHECK(loaded.notificationMessageId.empty());
+    CHECK(observedModel->requestCount() == 0);
+    CHECK(observer->listMessages(session.id).size() == 1);
+    MaiFileSystem::removeFile(path);
+}
+
 }  // namespace
 
 int main() {
@@ -743,6 +795,7 @@ int main() {
     test_completed_video_is_forwarded_without_a_user_poll();
     test_status_check_error_keeps_accepted_task_active();
     test_old_status_failure_recovers_and_delivers_original_task();
+    test_automatic_video_reply_skips_an_existing_media_delivery();
     if (failures == 0) std::printf("loop tests passed\n");
     return failures == 0 ? 0 : 1;
 }

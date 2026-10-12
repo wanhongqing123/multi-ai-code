@@ -502,6 +502,29 @@ public:
         return {};
     }
 
+    MaiError markSpecialistResultAlreadyDelivered(const std::string& taskId,
+                                                  const std::string& ownerSessionId,
+                                                  MaiMillis notifiedAt) override {
+        if (notifiedAt == 0)
+            return MaiError::make(MaiErrorCode::InvalidInput, "invalid specialist delivery time");
+        std::lock_guard<std::mutex> lock(mMutex);
+        sqlite3_stmt* statement = prepareLocked(
+            "UPDATE specialist_tasks SET notified_at = ?3 WHERE id = ?1 AND owner_session_id = ?2 "
+            "AND status = 3 AND provider_task_id != '' AND notified_at = 0");
+        if (!statement) return mLastWriteError;
+        Reset guard(statement);
+        bindText(statement, 1, taskId);
+        bindText(statement, 2, ownerSessionId);
+        sqlite3_bind_int64(statement, 3, notifiedAt);
+        if (sqlite3_step(statement) != SQLITE_DONE)
+            return MaiError::make(MaiErrorCode::Internal,
+                                  "specialist delivery deduplication failed");
+        if (sqlite3_changes(mDatabase) != 1)
+            return MaiError::make(MaiErrorCode::InvalidInput,
+                                  "specialist result cannot be deduplicated");
+        return {};
+    }
+
     void putMessage(const std::string& sessionId, const MaiMessage& message) override {
         std::lock_guard<std::mutex> lock(mMutex);
         if (!exec("BEGIN IMMEDIATE")) return;

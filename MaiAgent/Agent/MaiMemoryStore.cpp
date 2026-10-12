@@ -262,6 +262,22 @@ public:
         return {};
     }
 
+    MaiError markSpecialistResultAlreadyDelivered(const std::string& taskId,
+                                                  const std::string& ownerSessionId,
+                                                  MaiMillis notifiedAt) override {
+        if (notifiedAt == 0)
+            return MaiError::make(MaiErrorCode::InvalidInput, "invalid specialist delivery time");
+        std::lock_guard<std::mutex> lock(mMutex);
+        const auto it = mSpecialistTasks.find(taskId);
+        if (it == mSpecialistTasks.end() || it->second.ownerSessionId != ownerSessionId ||
+            it->second.status != MaiSpecialistTaskStatus::Succeeded ||
+            it->second.providerTaskId.empty() || it->second.notifiedAt != 0)
+            return MaiError::make(MaiErrorCode::InvalidInput,
+                                  "specialist result cannot be deduplicated");
+        it->second.notifiedAt = notifiedAt;
+        return {};
+    }
+
     bool mutateSession(const std::string& id,
                        const std::function<void(MaiSession&)>& mutator) override {
         // 读-改-写整个在锁内完成。调用方自己做这三步的话，

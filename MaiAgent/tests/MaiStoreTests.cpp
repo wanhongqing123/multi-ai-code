@@ -618,6 +618,34 @@ void contract_specialist_status_recovery(MaiSessionStore& store, const char* whi
     CHECK(loaded.status == MaiSpecialistTaskStatus::Failed);
 }
 
+void contract_specialist_media_delivery_dedup(MaiSessionStore& store, const char* which) {
+    std::printf("   [%s] mark an already delivered media result without a fake message\n", which);
+    const std::string owner = MaiIdGenerator::newSessionId();
+    const std::string stranger = MaiIdGenerator::newSessionId();
+    store.putSession(makeSession(owner, "media owner", 1));
+    store.putSession(makeSession(stranger, "different owner", 1));
+    MaiSpecialistTask task;
+    task.id = MaiIdGenerator::generate("spt_");
+    task.ownerSessionId = owner;
+    task.specialistName = "wan_video";
+    task.providerTaskId = "provider-original";
+    task.intent = "Create one video";
+    task.created = 1000;
+    CHECK(!store.insertSpecialistTask(task));
+    CHECK(store.markSpecialistResultAlreadyDelivered(task.id, owner, 1001).hasError());
+    CHECK(!store.finishSpecialistTask(task.id, owner, MaiSpecialistTaskStatus::Succeeded, "Ready",
+                                      "video.mp4", 1002));
+    CHECK(store.markSpecialistResultAlreadyDelivered(task.id, stranger, 1003).hasError());
+    CHECK(!store.markSpecialistResultAlreadyDelivered(task.id, owner, 1003));
+    CHECK(store.markSpecialistResultAlreadyDelivered(task.id, owner, 1004).hasError());
+    MaiSpecialistTask loaded;
+    CHECK(store.getSpecialistTask(task.id, owner, loaded));
+    CHECK(loaded.notifiedAt == 1003);
+    CHECK(loaded.notificationMessageId.empty());
+    for (const MaiSpecialistTask& pending : store.listUnnotifiedSpecialistTasks(100))
+        CHECK(pending.id != task.id);
+}
+
 void runContract(MaiSessionStore& store, const char* which) {
     contract_session_crud(store, which);
     contract_list_sessions_ordering(store, which);
@@ -633,6 +661,7 @@ void runContract(MaiSessionStore& store, const char* which) {
     contract_specialist_reply(store, which);
     contract_specialist_delete(store, which);
     contract_specialist_status_recovery(store, which);
+    contract_specialist_media_delivery_dedup(store, which);
     const std::string owner = MaiIdGenerator::newSessionId();
     const std::string other = MaiIdGenerator::newSessionId();
     store.putSession(makeSession(owner, "specialist owner", 1));

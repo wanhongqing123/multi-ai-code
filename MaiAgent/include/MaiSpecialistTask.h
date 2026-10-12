@@ -84,4 +84,9 @@ public:
     virtual MaiError markSpecialistNotified(const std::string& taskId,
                                             const std::string& ownerSessionId,
                                             const std::string& messageId, MaiMillis notifiedAt) = 0;
+    // 已经有同一云任务的成功媒体投递时，允许跳过自动回执。只更新已完成任务的
+    // 投递标记，不创建虚假的聊天消息；普通用户主动要求再次发送不受此限制。
+    virtual MaiError markSpecialistResultAlreadyDelivered(const std::string& taskId,
+                                                          const std::string& ownerSessionId,
+                                                          MaiMillis notifiedAt) = 0;
 };

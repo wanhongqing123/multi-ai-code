@@ -141,6 +141,29 @@ std::string specialistFailureNotice(const MaiSpecialistTask& task) {
     return std::string(prefix) + reason;
 }
 
+bool hasDeliveredMediaForProviderTask(const MaiSessionStore& store, const MaiSpecialistTask& task) {
+    if (task.providerTaskId.empty() || task.outputPath.empty()) return false;
+    std::string beforeId;
+    constexpr std::size_t kPageSize = 100;
+    for (;;) {
+        const auto page = store.listMessagesPage(task.ownerSessionId, beforeId, kPageSize);
+        if (page.empty()) return false;
+        for (const MaiMessage& message : page) {
+            for (const MaiMessagePart& part : message.parts) {
+                const auto* tool = std::get_if<MaiToolPart>(&part.body);
+                if (tool == nullptr || tool->tool != "agent_send_media" ||
+                    tool->state != MaiToolState::Completed)
+                    continue;
+                if (tool->input.find(task.providerTaskId) != std::string::npos ||
+                    tool->output.find(task.providerTaskId) != std::string::npos)
+                    return true;
+            }
+        }
+        if (page.size() < kPageSize || page.back().id == beforeId) return false;
+        beforeId = page.back().id;
+    }
+}
+
 }  // namespace
 
 struct MaiAgent::Runtime {
@@ -394,6 +417,13 @@ void MaiAgent::pollSpecialistTasks() {
 }
 
 void MaiAgent::forwardSpecialistReply(const MaiSpecialistTask& task) {
+    // 用户已经手动投递过同一云 task_id 时，恢复旧任务不能再次生成媒体卡片。
+    if (task.status == MaiSpecialistTaskStatus::Succeeded &&
+        hasDeliveredMediaForProviderTask(*mRuntime->store, task)) {
+        mRuntime->store->markSpecialistResultAlreadyDelivered(task.id, task.ownerSessionId,
+                                                              MaiTime::getCurrentTime());
+        return;
+    }
     if (!mRuntime->model && task.status != MaiSpecialistTaskStatus::Failed &&
         task.status != MaiSpecialistTaskStatus::Canceled)
         return;

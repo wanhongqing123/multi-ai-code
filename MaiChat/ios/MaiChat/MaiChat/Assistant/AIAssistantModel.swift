@@ -184,18 +184,6 @@ enum AICloudCredentialSync {
         try await task.value
     }
 
-    static func removeLegacyPlaintextCache() {
-        // Workspace ID 由服务器管理；旧版留在 UserDefaults 的副本一并清除。
-        UserDefaults.standard.removeObject(forKey: "wan-model-studio-workspace-id")
-        guard let support = try? FileManager.default.url(
-            for: .applicationSupportDirectory, in: .userDomainMask,
-            appropriateFor: nil, create: false
-        ) else { return }
-        try? FileManager.default.removeItem(
-            at: support.appendingPathComponent("AIAssistant/model-keys.ini")
-        )
-    }
-
     static func serviceEndpoint() -> (url: URL, token: String)? {
         let address = UserDefaults.standard.string(forKey: "oss-media-signer-url") ?? ""
         let token = KeychainSecretStore(account: "oss-media-signer-token").readSecretKey()
@@ -429,7 +417,6 @@ actor AIAssistantBackend {
         #endif
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         root = directory
-        AICloudCredentialSync.removeLegacyPlaintextCache()
         let file = directory.appendingPathComponent("settings.json")
         if FileManager.default.fileExists(atPath: file.path) {
             settings = try JSONDecoder().decode(AIModelSettings.self, from: Data(contentsOf: file))
@@ -722,7 +709,6 @@ final class AIAssistantModel: ObservableObject {
 
     func prepareFirstPage() async {
         importPendingCloudService()
-        removePendingArkApiKey()
         if historyLoaded {
             logAIHistoryEvent("prepare skip selected=\(selected) count=\(messages.count)")
             return
@@ -776,15 +762,6 @@ final class AIAssistantModel: ObservableObject {
             UserDefaults.standard.set(url, forKey: "oss-media-signer-url")
         } catch {
             showTransientError("云端服务配置导入失败")
-        }
-    }
-
-    private func removePendingArkApiKey() {
-        guard let documents = FileManager.default.urls(for: .documentDirectory,
-                                                       in: .userDomainMask).first else { return }
-        let source = documents.appendingPathComponent("ark-api-key-update.txt", isDirectory: false)
-        if FileManager.default.fileExists(atPath: source.path) {
-            try? FileManager.default.removeItem(at: source)
         }
     }
 

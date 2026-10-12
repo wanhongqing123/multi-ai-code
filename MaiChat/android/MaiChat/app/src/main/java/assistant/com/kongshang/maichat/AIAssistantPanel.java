@@ -1042,6 +1042,12 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 structure.append(part.optString("id"))
                     .append(expanded.contains(part.optString("id")));
             }
+            JSONArray inlineMedia = value.optJSONArray("inline_media");
+            if (inlineMedia != null)
+                for (int i = 0; i < inlineMedia.length(); i++) {
+                    JSONObject item = inlineMedia.optJSONObject(i);
+                    if (item != null) structure.append(item.optString("path"));
+                }
             boolean outgoing = value.optString("role").equals("user");
             if (!key.equals(structure.toString())) {
                 key = structure.toString();
@@ -1164,6 +1170,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                             .setPrimaryClip(ClipData.newPlainText("AI 回复", text));
                     });
                 }
+                addInlineMediaCards(inlineMedia);
             }
             if (outgoing) {
                 StringBuilder body = new StringBuilder();
@@ -1259,6 +1266,46 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                     }
                 }
             updateTime();
+        }
+        private void addInlineMediaCards(JSONArray items) {
+            if (items == null) return;
+            for (int i = 0; i < items.length(); i++) {
+                JSONObject item = items.optJSONObject(i);
+                if (item == null) continue;
+                String path = item.optString("path");
+                String kind = item.optString("kind");
+                if (path.isEmpty()) continue;
+                File file = new File(path);
+                if (kind.equals("audio")) {
+                    LinearLayout audio = column();
+                    audio.setTag(path);
+                    showAgentMediaCard(audio, file, "audio", "");
+                    LayoutParams layout = matchWrap();
+                    layout.bottomMargin = dp(8);
+                    addView(audio, layout);
+                } else if (kind.equals("video")) {
+                    Button video = button("▶  " + file.getName(),
+                        "播放视频 " + file.getName(), view -> {
+                            File available = controller.workspaceFile(path);
+                            if (available != null && available.isFile()
+                                && activity instanceof MainActivity)
+                                ((MainActivity) activity).openAgentVideo(available.getAbsolutePath());
+                            else
+                                Toast.makeText(activity, "文件已被移动或删除", Toast.LENGTH_SHORT).show();
+                        });
+                    video.setAllCaps(false);
+                    video.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+                    video.setPadding(dp(14), 0, dp(14), 0);
+                    video.setBackground(MaiChatTheme.bordered(
+                        MaiChatTheme.BLUE_SOFT, MaiChatTheme.BORDER, 12, activity));
+                    video.setOnLongClickListener(view -> {
+                        showAgentMediaMenu(view, file, "video"); return true;
+                    });
+                    LayoutParams layout = new LayoutParams(LayoutParams.MATCH_PARENT, dp(56));
+                    layout.bottomMargin = dp(8);
+                    addView(video, layout);
+                }
+            }
         }
         void updateTime() {
             if (status == null || message == null)

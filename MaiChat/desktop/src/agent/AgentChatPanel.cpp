@@ -28,8 +28,10 @@
 #include <QPixmap>
 #include <QPolygonF>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QSaveFile>
 #include <QScreen>
+#include <QSet>
 #include <QSettings>
 #include <QSplitter>
 #include <QStandardPaths>
@@ -77,6 +79,79 @@ std::string toUtf8(const QString &text) {
 
 QString fromUtf8(const std::string &text) {
   return QString::fromUtf8(text.data(), static_cast<int>(text.size()));
+}
+
+struct LocalMediaMention {
+  QString path;
+  bool video = false;
+};
+
+QVector<LocalMediaMention> localMediaMentions(const QString &text,
+                                              const QString &workspace) {
+  if (text.size() > 100000 || workspace.isEmpty())
+    return {};
+  static const QRegularExpression code(
+      QStringLiteral(R"rx(`([^`\r\n]+)`)rx"),
+      QRegularExpression::CaseInsensitiveOption);
+  static const QRegularExpression bare(
+      QStringLiteral(
+          R"rx([^\s`()<>\[\]{}"'“”‘’,，。;；:：|]+?\.(?:mp4|mov|wav|mp3|m4a|aac)(?![A-Za-z0-9_.]))rx"),
+      QRegularExpression::CaseInsensitiveOption);
+  QVector<LocalMediaMention> mentions;
+  QSet<QString> seen;
+  bool fenced = false;
+  const auto add = [&](const QString &raw) {
+    const QString name = raw.trimmed();
+    const QString path =
+        fromUtf8(maiResolvePathWithinRoot(toUtf8(workspace), toUtf8(name)));
+    const QFileInfo file(path);
+    if (path.isEmpty() || !file.isFile() || file.size() <= 0 ||
+        seen.contains(path))
+      return;
+    const QString suffix = file.suffix().toLower();
+    const bool video =
+        suffix == QStringLiteral("mp4") || suffix == QStringLiteral("mov");
+    const bool audio =
+        suffix == QStringLiteral("wav") || suffix == QStringLiteral("mp3") ||
+        suffix == QStringLiteral("m4a") || suffix == QStringLiteral("aac");
+    if (!video && !audio)
+      return;
+    seen.insert(path);
+    mentions.push_back({path, video});
+  };
+  for (const QString &line :
+       text.split(QLatin1Char('\n'), Qt::KeepEmptyParts)) {
+    if (line.trimmed().startsWith(QStringLiteral("```"))) {
+      fenced = !fenced;
+      continue;
+    }
+    if (fenced || line.startsWith(QStringLiteral("    ")))
+      continue;
+    QVector<QPair<int, int>> codeRanges;
+    auto quoted = code.globalMatch(line);
+    while (quoted.hasNext()) {
+      const auto match = quoted.next();
+      codeRanges.push_back({match.capturedStart(), match.capturedEnd()});
+      add(match.captured(1));
+      if (mentions.size() > 4)
+        return {};
+    }
+    auto unquoted = bare.globalMatch(line);
+    while (unquoted.hasNext()) {
+      const auto match = unquoted.next();
+      const bool insideCode = std::any_of(
+          codeRanges.cbegin(), codeRanges.cend(), [&](const auto &range) {
+            return match.capturedStart() < range.second &&
+                   match.capturedEnd() > range.first;
+          });
+      if (insideCode)
+        continue;
+      add(match.captured());
+      if (mentions.size() > 4)
+        return {};
+    }
+  }
+  return mentions;
 }
 
 QString toolPrimaryArgument(const QString &tool, const QString &arguments) {
@@ -1233,6 +1308,19 @@ AgentChatPanel::AgentChatPanel(AgentController &controller, QWidget *parent)
             setRunning(false);
             emit sessionListChanged();
             flushAnswers();
+            MaiSession current;
+            if (runtime_->controller->agent().getSession(
+                    toUtf8(runtime_->sessionId), current)) {
+              const auto messages = runtime_->controller->agent().listMessages(
+                  toUtf8(runtime_->sessionId));
+              for (auto it = messages.rbegin(); it != messages.rend(); ++it) {
+                if (it->role == MaiRole::Assistant && it->completed != 0) {
+                  appendTextMediaCards(fromUtf8(it->id), fromUtf8(it->text()),
+                                       fromUtf8(current.directory));
+                  break;
+                }
+              }
+            }
             refreshContextSize();
             scrollToBottom();
           });
@@ -1436,8 +1524,11 @@ void AgentChatPanel::reloadFromStore() {
         runtime_->view->addItem(fromUtf8(message.id),
                                 MarkdownView::Style::Bubble, userText);
       appendUserImages(images);
+      appendTextMediaCards(fromUtf8(message.id), userText,
+                           fromUtf8(selectedSession.directory));
       continue;
     }
+    QStringList textFragments;
     for (const MaiMessagePart &part : message.parts) {
       const QString partId = fromUtf8(part.id);
       if (const auto *text = std::get_if<MaiTextPart>(&part.body)) {
@@ -1447,6 +1538,7 @@ void AgentChatPanel::reloadFromStore() {
                                        runtime_->sessionId, partId)
                                  : QString();
         const QString content = live.isEmpty() ? stored : live;
+        textFragments.push_back(content);
         if (message.completed == 0 && !content.isEmpty())
           activeAssistantHasVisibleActivity = true;
         runtime_->answers.insert(partId, content);
@@ -1476,6 +1568,10 @@ void AgentChatPanel::reloadFromStore() {
                            fromUtf8(selectedSession.directory));
       }
     }
+    if (message.completed != 0)
+      appendTextMediaCards(fromUtf8(message.id),
+                           textFragments.join(QLatin1Char('\n')),
+                           fromUtf8(selectedSession.directory));
   }
   setRunning(sessionBusy);
   // A permission event is delivered only once. After a session switch, rebuild
@@ -1869,6 +1965,60 @@ bool AgentChatPanel::appendAgentMediaCard(const QString &partId,
   runtime_->view->addWidget(id, card);
   scrollToBottom();
   return true;
+}
+
+void AgentChatPanel::appendTextMediaCards(const QString &messageId,
+                                          const QString &text,
+                                          const QString &workspace) {
+  // 以整条消息为单位决定：少量实际文件显示气泡，五个及以上仍是原文字清单。
+  const QVector<LocalMediaMention> mentions =
+      localMediaMentions(text, workspace);
+  for (int index = 0; index < mentions.size(); ++index) {
+    const QString id =
+        messageId + QStringLiteral("-text-media-") + QString::number(index);
+    if (runtime_->view->contains(id))
+      continue;
+    const LocalMediaMention mention = mentions.at(index);
+    auto *button = new QPushButton(QStringLiteral("%1  %2").arg(
+        mention.video ? QStringLiteral("▶") : QStringLiteral("♫"),
+        QFileInfo(mention.path).fileName()));
+    button->setObjectName(QStringLiteral("agentTextMediaBubble"));
+    button->setCursor(Qt::PointingHandCursor);
+    button->setMaximumWidth(320);
+    button->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
+    button->setStyleSheet(UiZoom::scaleQss(QStringLiteral(
+        "QPushButton{background:#f3f8ff;border:1px solid #c9ddf7;"
+        "border-radius:10px;color:#175a9e;padding:11px 15px;"
+        "text-align:left;font-size:13px;}"
+        "QPushButton:hover{background:#e9f3ff;border-color:#87b9ef;}")));
+    if (mention.video) {
+      connect(button, &QPushButton::clicked, this, [this, path = mention.path] {
+        if (QFileInfo(path).isFile() && openVideo_)
+          openVideo_(path);
+        else
+          appendNotice(QStringLiteral("文件已被移动或删除。"), true);
+      });
+    } else {
+      auto *audio = new QMediaPlayer(button);
+      audio->setMedia(QUrl::fromLocalFile(mention.path));
+      connect(button, &QPushButton::clicked, audio, [audio] {
+        if (audio->state() == QMediaPlayer::PlayingState)
+          audio->pause();
+        else
+          audio->play();
+      });
+      connect(audio, &QMediaPlayer::stateChanged, button,
+              [button, name = QFileInfo(mention.path).fileName()](
+                  QMediaPlayer::State state) {
+                button->setText(QStringLiteral("%1  %2").arg(
+                    state == QMediaPlayer::PlayingState ? QStringLiteral("❚❚")
+                                                        : QStringLiteral("♫"),
+                    name));
+              });
+    }
+    runtime_->view->addWidget(id, button);
+    scrollToBottom();
+  }
 }
 
 void AgentChatPanel::noteOtherSession(const QString &sessionId,

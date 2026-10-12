@@ -1353,6 +1353,34 @@ final class AIAssistantPathPolicyTests: XCTestCase {
         XCTAssertNil(AIAssistantPathPolicy.resolve("escape/private.txt",
             workspacePath: workspace.path, appRootPath: app.path))
     }
+
+    func testMediaMentionsStayWithinOneMessageAndLongListsRemainText() throws {
+        let app = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ai-mentions-\(UUID().uuidString)", isDirectory: true)
+        let workspace = app.appendingPathComponent("Workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: app) }
+        for name in ["clip.mp4", "voice.wav", "with space.mov",
+                     "third.mp4", "fourth.mp4", "fifth.mp4"] {
+            try Data([1, 2, 3]).write(to: workspace.appendingPathComponent(name))
+        }
+        let small = AIAssistantMediaMentionPolicy.cards(
+            in: "视频 `clip.mp4`，音频 voice.wav，还有 `with space.mov`。missing.mp4",
+            workspacePath: workspace.path, appRootPath: app.path
+        )
+        XCTAssertEqual(small.map(\.fileName), ["clip.mp4", "with space.mov", "voice.wav"])
+        let listing = "clip.mp4 voice.wav third.mp4 fourth.mp4 fifth.mp4"
+        XCTAssertTrue(AIAssistantMediaMentionPolicy.cards(
+            in: listing, workspacePath: workspace.path, appRootPath: app.path
+        ).isEmpty)
+        XCTAssertTrue(AIAssistantMediaMentionPolicy.cards(
+            in: "```\nclip.mp4\n```", workspacePath: workspace.path, appRootPath: app.path
+        ).isEmpty)
+        XCTAssertTrue(AIAssistantMediaMentionPolicy.cards(
+            in: "`const file = \"clip.mp4\"`", workspacePath: workspace.path,
+            appRootPath: app.path
+        ).isEmpty)
+    }
 }
 
 final class AIAssistantTextDecoderTests: XCTestCase {

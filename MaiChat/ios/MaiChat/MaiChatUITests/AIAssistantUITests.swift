@@ -79,6 +79,35 @@ final class AIAssistantUITests: XCTestCase {
         XCTAssertTrue(bubble.waitForExistence(timeout: 3))
     }
 
+    func testMentionedVideoFileOpensFromMessageBubble() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--text-media-ui-test"]
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        let bubble = app.buttons["agent-text-video-bubble"]
+        XCTAssertTrue(bubble.waitForExistence(timeout: 15))
+        XCTAssertTrue(bubble.label.contains("ffplay-sample.mp4"))
+        bubble.tap()
+        XCTAssertTrue(app.buttons["ffplay-close"].waitForExistence(timeout: 15))
+        app.buttons["ffplay-close"].tap()
+    }
+
+    func testImagePreviewUsesTheWholeScreen() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--ai-image-fullscreen-ui-test"]
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        let preview = app.images["agent-image-preview"]
+        XCTAssertTrue(preview.waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["关闭图片预览"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.statusBars.firstMatch.exists,
+                       "Full-screen image preview must hide the system status bar")
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "ios-image-fullscreen"
+        capture.lifetime = .keepAlways
+        add(capture)
+    }
+
     func testFfplayVideoPopupCanPauseSeekAndClose() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--ai-ui-test", "--ffplay-ui-test"]

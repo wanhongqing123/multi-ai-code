@@ -245,6 +245,7 @@ private slots:
     void modelChipOffersTheTextAndVisionModels();
     void newAgentOutputDoesNotInterruptReadingHistory();
     void switchingSessionsShowsLatestMessage();
+    void inlineMediaBubblesRespectMessageBoundary();
     void completedPdfToolShowsPreviewCardAfterRestore();
 };
 
@@ -381,6 +382,64 @@ void AgentPanelSessionTest::switchingSessionsShowsLatestMessage() {
     harness.panel->openSession(harness.other);
     harness.panel->openSession(harness.mine);
     QTRY_VERIFY(view->isAtBottom());
+}
+
+void AgentPanelSessionTest::inlineMediaBubblesRespectMessageBoundary() {
+    class ListingModel final : public MaiModelClient {
+    public:
+        MaiError stream(const MaiModelRequest& request, const MaiStreamSink& sink,
+                        const std::atomic<bool>&) override {
+            std::string prompt;
+            for (auto it = request.messages.rbegin(); it != request.messages.rend(); ++it)
+                if (it->role == MaiModelRole::User) { prompt = it->content; break; }
+            const char* reply = prompt == "first" ? "clip.mp4 voice.wav"
+                : prompt == "second" ? "third.mp4 fourth.mp4 fifth.mp4"
+                                     : "clip.mp4 voice.wav third.mp4 fourth.mp4 fifth.mp4";
+            if (sink.onText) sink.onText(reply);
+            return {};
+        }
+        MaiWireApi wireApi() const override { return MaiWireApi::ChatCompletions; }
+    };
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    for (const QString& name : {QStringLiteral("clip.mp4"), QStringLiteral("voice.wav"),
+                                QStringLiteral("third.mp4"), QStringLiteral("fourth.mp4"),
+                                QStringLiteral("fifth.mp4")}) {
+        QFile file(directory.filePath(name));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QVERIFY(file.write("test", 4) == 4);
+    }
+    AgentController controller(std::make_unique<ListingModel>(), QString());
+    AgentChatPanel panel(controller);
+    panel.resize(700, 500);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    QString openedVideo;
+    panel.setOpenVideoCallback([&openedVideo](const QString& path) { openedVideo = path; });
+    const QString session = controller.createSession(directory.path());
+    panel.openSession(session);
+    QVERIFY(controller.sendPrompt(session, QStringLiteral("first")));
+    controller.agent().waitIdle();
+    QTRY_COMPARE(panel.findChildren<QPushButton*>(
+        QStringLiteral("agentTextMediaBubble")).size(), 2);
+    for (QPushButton* bubble : panel.findChildren<QPushButton*>(
+             QStringLiteral("agentTextMediaBubble"))) {
+        if (bubble->text().contains(QStringLiteral("clip.mp4")))
+            QTest::mouseClick(bubble, Qt::LeftButton);
+    }
+    QCOMPARE(openedVideo, directory.filePath(QStringLiteral("clip.mp4")));
+    QVERIFY(controller.sendPrompt(session, QStringLiteral("second")));
+    controller.agent().waitIdle();
+    QTRY_COMPARE(panel.findChildren<QPushButton*>(
+        QStringLiteral("agentTextMediaBubble")).size(), 5);
+
+    const QString listing = controller.createSession(directory.path());
+    panel.openSession(listing);
+    QVERIFY(controller.sendPrompt(listing, QStringLiteral("listing")));
+    controller.agent().waitIdle();
+    QTRY_VERIFY(panel.findChildren<QPushButton*>(
+        QStringLiteral("agentTextMediaBubble")).isEmpty());
 }
 
 void AgentPanelSessionTest::answerFromAnotherSessionDoesNotLeakIn() {

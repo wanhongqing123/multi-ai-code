@@ -34,7 +34,8 @@ struct AIAssistantView: View {
         #if targetEnvironment(simulator)
         let arguments = ProcessInfo.processInfo.arguments
         return arguments.contains("--ai-history-ui-test") ||
-            arguments.contains("--ai-stream-typing-ui-test")
+            arguments.contains("--ai-stream-typing-ui-test") ||
+            arguments.contains("--ai-image-fullscreen-ui-test")
         #else
         return false
         #endif
@@ -164,10 +165,13 @@ struct AIAssistantView: View {
                     model.previewImage = nil
                 }
                 .id(preview.id)
+                // 和 IM 图片预览一致，覆盖屏幕边缘并隐藏系统状态栏。
+                .ignoresSafeArea()
                 .zIndex(30)
             }
         }
         .coordinateSpace(name: AIImagePreviewLayout.coordinateSpaceName)
+        .statusBarHidden(model.previewImage != nil)
         .simultaneousGesture(sessionDrawerOpenGesture)
         .confirmationDialog("清空当前对话的所有消息？", isPresented: $confirmClear, titleVisibility: .visible) {
             Button("清空消息", role: .destructive) { Task { await model.action("clear") } }
@@ -731,11 +735,13 @@ private struct AIMessageRow: View, Equatable {
     @State private var pdfPreviewError = false
     @State private var videoPreview: AIVideoPreviewItem?
     @State private var mediaSaveError: String?
+    @State private var fileOpenError = false
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.message == rhs.message && lhs.workspacePath == rhs.workspacePath
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        let inlineMedia = textMediaMentions
+        return VStack(alignment: .leading, spacing: 14) {
             if message.role == "user" {
                 HStack {
                     Spacer(minLength: 30)
@@ -763,6 +769,9 @@ private struct AIMessageRow: View, Equatable {
                             AIWorkspaceVideoCard(filePath: path) {
                                 videoPreview = AIVideoPreviewItem(path: path)
                             }
+                        }
+                        ForEach(inlineMedia) { mention in
+                            fileMentionCard(mention)
                         }
                         Button(action: quote) {
                             Label("引用", systemImage: "arrowshape.turn.up.left")
@@ -840,6 +849,9 @@ private struct AIMessageRow: View, Equatable {
                         }
                     }
                 }
+                ForEach(inlineMedia) { mention in
+                    fileMentionCard(mention)
+                }
                 ForEach(mediaArtifacts) { artifact in
                     VStack(alignment: .leading, spacing: 8) {
                         if artifact.type == "image" {
@@ -914,6 +926,11 @@ private struct AIMessageRow: View, Equatable {
             } message: {
                 Text(mediaSaveError ?? "请检查相册权限与媒体文件。")
             }
+            .alert("无法打开文件", isPresented: $fileOpenError) {
+                Button("知道了", role: .cancel) {}
+            } message: {
+                Text("文件已被移动或删除。")
+            }
     }
     private func specialistFailureText(_ text: String) -> String? {
         if text.hasPrefix("Video task failed. ") {
@@ -948,6 +965,52 @@ private struct AIMessageRow: View, Equatable {
     }
     private var mediaArtifacts: [AIAgentMediaArtifact] {
         message.parts.compactMap(mediaArtifact)
+    }
+    private var textMediaMentions: [AIAssistantMediaMention] {
+        guard message.role != "assistant" || (!message.active && message.completed > 0) else {
+            return []
+        }
+        let alreadyShown = Set(mediaArtifacts.map(\.filePath) + videoPaths)
+        return AIAssistantMediaMentionPolicy.cards(in: message.text,
+                                                   workspacePath: workspacePath)
+            .filter { !alreadyShown.contains($0.url.path) }
+    }
+    @ViewBuilder private func fileMentionCard(_ mention: AIAssistantMediaMention) -> some View {
+        switch mention.kind {
+        case .video:
+            Button {
+                if FileManager.default.fileExists(atPath: mention.url.path) {
+                    videoPreview = AIVideoPreviewItem(path: mention.url.path)
+                } else {
+                    fileOpenError = true
+                }
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "play.rectangle.fill")
+                        .font(.system(size: 24))
+                        .foregroundStyle(.blue)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(mention.fileName).lineLimit(1).truncationMode(.middle)
+                        Text("视频 · 点击播放")
+                            .font(AssistantMessageFont.metadata)
+                            .foregroundStyle(RemoteIMStyle.textSecondary)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .font(ChatTypography.body)
+                .foregroundStyle(RemoteIMStyle.textPrimary)
+                .padding(12)
+                .frame(width: 260)
+                .background(Color(uiColor: .secondarySystemBackground),
+                            in: RoundedRectangle(cornerRadius: 12))
+                .contentShape(RoundedRectangle(cornerRadius: 12))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("播放视频 \(mention.fileName)")
+            .accessibilityIdentifier("agent-text-video-bubble")
+        case .audio:
+            AIWorkspaceAudioCard(filePath: mention.url.path)
+        }
     }
     private func mediaArtifact(for part: AIPart) -> AIAgentMediaArtifact? {
         guard part.kind == "tool", part.tool == "agent_send_media",
@@ -1382,6 +1445,41 @@ private struct AIWorkspaceAudioCard: View {
 }
 
 #if targetEnvironment(simulator)
+struct AIImageFullscreenUITestRoot: View {
+    var body: some View {
+        AIAssistantView()
+            .onAppear {
+                let image = UIGraphicsImageRenderer(size: CGSize(width: 300, height: 500))
+                    .image { context in
+                        UIColor.systemBlue.setFill()
+                        context.fill(CGRect(x: 0, y: 0, width: 300, height: 500))
+                    }
+                let file = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("image-fullscreen-ui-test.png")
+                guard let data = image.pngData(),
+                      (try? data.write(to: file)) != nil else { return }
+                AIAssistantModel.shared.previewImage = AIImagePreview(
+                    filePath: file.path, imageSize: image.size)
+            }
+    }
+}
+
+struct AITextMediaUITestRoot: View {
+    var body: some View {
+        if let video = Bundle.main.url(forResource: "ffplay-sample", withExtension: "mp4") {
+            let part = AIPart(id: "mention", kind: "text",
+                              text: "视频文件：`ffplay-sample.mp4`", tool: nil,
+                              input: nil, output: nil, error: nil, state: nil,
+                              path: nil, mimeType: nil)
+            let message = AIMessage(id: "text-media", role: "assistant", created: 0,
+                                    completed: 1, active: false, parts: [part])
+            AIMessageRow(message: message,
+                         workspacePath: video.deletingLastPathComponent().path, quote: {})
+                .padding(20)
+        }
+    }
+}
+
 struct AIVideoBubbleUITestRoot: View {
     var body: some View {
         if let video = Bundle.main.url(forResource: "ffplay-sample", withExtension: "mp4") {

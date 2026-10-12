@@ -1333,6 +1333,8 @@ private struct ChatDetailView: View {
                     isExpanded: isImagePreviewExpanded,
                     close: closeImagePreview
                 )
+                // 预览覆盖状态栏和底部安全区；否则图片仍被聊天页的安全区裁住。
+                .ignoresSafeArea()
                 .zIndex(20)
             }
 
@@ -1398,6 +1400,8 @@ private struct ChatDetailView: View {
         .coordinateSpace(name: RemoteIMImagePreviewLayout.coordinateSpaceName)
         .background(RemoteIMStyle.pageBackground.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
+        // 图片关闭后立即恢复聊天页原有的系统状态栏。
+        .statusBarHidden(imagePreviewPresentation != nil)
         .animation(.easeOut(duration: 0.18), value: messageActionTarget?.id)
         .animation(.easeOut(duration: 0.18), value: forwardingMessage?.id)
         .onAppear {

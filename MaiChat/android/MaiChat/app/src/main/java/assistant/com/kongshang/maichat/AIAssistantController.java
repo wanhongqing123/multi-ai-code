@@ -25,6 +25,11 @@ import java.nio.file.AtomicMoveNotSupportedException;
 import java.security.KeyStore;
 import java.security.MessageDigest;
 import java.security.cert.X509Certificate;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.function.Consumer;
@@ -164,6 +169,7 @@ public final class AIAssistantController {
     private volatile String miniMaxApiKey = "";
     private volatile String cloudServiceUrl = "";
     private JSONObject data = new JSONObject();
+    private final Map<String, JSONArray> mediaMentionCache = new HashMap<>();
     private boolean ready, closed;
     private final Runnable poll = new Runnable() {
         @Override
@@ -527,6 +533,7 @@ public final class AIAssistantController {
             JSONObject result = call(op("snapshot").put("force", force));
             if (result.optBoolean("changed")) {
                 hideReasoningText(result);
+                attachMediaMentions(result);
                 data = result;
                 if (!result.optString("error").isEmpty())
                     error = result.optString("error");
@@ -549,6 +556,57 @@ public final class AIAssistantController {
                 if (part != null && part.optString("kind").equals("reasoning"))
                     part.remove("text");
             }
+        }
+    }
+    private void attachMediaMentions(JSONObject snapshot) throws org.json.JSONException {
+        JSONArray messages = snapshot.optJSONArray("messages");
+        if (messages == null) return;
+        if (mediaMentionCache.size() > 500) mediaMentionCache.clear();
+        for (int i = 0; i < messages.length(); i++) {
+            JSONObject message = messages.optJSONObject(i);
+            if (message == null || message.optBoolean("active")
+                || (message.optString("role").equals("assistant")
+                    && message.optLong("completed") == 0)) continue;
+            String key = selected + ":" + message.optString("id") + ":"
+                + message.optLong("completed");
+            JSONArray cards = mediaMentionCache.get(key);
+            if (cards == null) {
+                StringBuilder text = new StringBuilder();
+                JSONArray parts = message.optJSONArray("parts");
+                Set<String> alreadyShown = new HashSet<>();
+                if (parts != null)
+                    for (int j = 0; j < parts.length(); j++) {
+                        JSONObject part = parts.optJSONObject(j);
+                        if (part == null) continue;
+                        if (part.optString("kind").equals("text"))
+                            text.append(part.optString("text")).append('\n');
+                        if (part.optString("kind").equals("video")
+                            || part.optString("kind").equals("audio")) {
+                            File existing = workspaceFile(part.optString("path"));
+                            if (existing != null) alreadyShown.add(existing.getPath());
+                        }
+                        if (part.optString("tool").equals("agent_send_media")
+                            && part.optString("state").equals("completed")) {
+                            try {
+                                JSONObject artifact = new JSONObject(part.optString("output"));
+                                File existing = workspaceFile(artifact.optString("path"));
+                                if (existing != null) alreadyShown.add(existing.getPath());
+                            } catch (org.json.JSONException ignored) { }
+                        }
+                    }
+                List<AIAssistantMediaMentions.Mention> found =
+                    AIAssistantMediaMentions.cards(text.toString(), this::workspaceFile);
+                cards = new JSONArray();
+                for (AIAssistantMediaMentions.Mention mention : found) {
+                    if (alreadyShown.contains(mention.file.getPath())) continue;
+                    cards.put(new JSONObject()
+                        .put("path", mention.file.getAbsolutePath())
+                        .put("kind", mention.kind == AIAssistantMediaMentions.Kind.VIDEO
+                            ? "video" : "audio"));
+                }
+                mediaMentionCache.put(key, cards);
+            }
+            message.put("inline_media", cards);
         }
     }
     private void emit() {

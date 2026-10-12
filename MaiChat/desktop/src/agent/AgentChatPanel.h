@@ -123,6 +123,8 @@ private:
                           const QString& workspace);
     bool appendAgentMediaCard(const QString& partId, const QString& output,
                               const QString& workspace);
+    void appendTextMediaCards(const QString& messageId, const QString& text,
+                              const QString& workspace);
     void showApproval(const QString& permissionId);
 
     // 模型中途问了一句。

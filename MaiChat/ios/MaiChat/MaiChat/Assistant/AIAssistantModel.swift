@@ -317,6 +317,17 @@ struct AIMessage: Codable, Identifiable, Sendable, Equatable {
     let completed: Int64
     let active: Bool
     let parts: [AIPart]
+    // 思考正文仍由核心持久化；界面快照只保留片段身份。流式思考每个增量因此
+    // 不会改变可见消息，也不会触发整行 Markdown 重排或打断键盘输入。
+    func withoutReasoningText() -> AIMessage {
+        guard parts.contains(where: { $0.kind == "reasoning" }) else { return self }
+        return AIMessage(id: id, role: role, created: created, completed: completed,
+                         active: active, parts: parts.map { original in
+            var part = original
+            if part.kind == "reasoning" { part.text = nil }
+            return part
+        })
+    }
     var text: String { parts.filter { $0.kind == "text" }.compactMap(\.text).joined(separator: "\n") }
     var quotePreview: String {
         var media: [String] = []
@@ -438,7 +449,7 @@ actor AIAssistantBackend {
         let data = try JSONSerialization.data(withJSONObject: request)
         guard let text = String(data: data, encoding: .utf8),
               let response = text.withCString({ maiMobileAgentRequest(UnsafeMutableRawPointer(bitPattern: address), $0) }) else {
-            throw AIBackendError(message: "AI 助手初始化失败")
+            throw AIBackendError(message: "创作中心初始化失败")
         }
         defer { maiMobileAgentFree(response) }
         let decoded = try JSONDecoder().decode(AIResponse.self, from: Data(String(cString: response).utf8))
@@ -494,7 +505,7 @@ actor AIAssistantBackend {
 
     private func configure(_ config: AIModelSettings, key: String) throws {
         // Swift 只负责应用目录、云端密钥和线协议选择；工具调用规则在共享 C++ 层。
-        guard let root else { throw AIBackendError(message: "AI 助手尚未准备好") }
+        guard let root else { throw AIBackendError(message: "创作中心尚未准备好") }
         guard let caBundle = Bundle.main.url(forResource: "cacert", withExtension: "pem",
                                              subdirectory: "MaiAgentCertificates") else {
             throw AIBackendError(message: "HTTPS 根证书文件缺失")
@@ -579,7 +590,7 @@ actor AIAssistantBackend {
     }
 
     func importDocument(_ source: URL) throws -> AIImportedFile {
-        guard let root else { throw AIBackendError(message: "AI 助手尚未准备好") }
+        guard let root else { throw AIBackendError(message: "创作中心尚未准备好") }
         let scoped = source.startAccessingSecurityScopedResource()
         defer { if scoped { source.stopAccessingSecurityScopedResource() } }
         let values = try source.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey])
@@ -622,7 +633,7 @@ actor AIAssistantBackend {
     }
 
     func importVideo(_ source: URL) throws -> AIImportedFile {
-        guard let root else { throw AIBackendError(message: "AI 助手尚未准备好") }
+        guard let root else { throw AIBackendError(message: "创作中心尚未准备好") }
         let scoped = source.startAccessingSecurityScopedResource()
         defer { if scoped { source.stopAccessingSecurityScopedResource() } }
         let values = try source.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey])
@@ -903,7 +914,7 @@ final class AIAssistantModel: ObservableObject {
     private func showNewestMessage(for session: String) async throws -> String? {
         let latest = try await backend.messagesPage(session: session, beforeId: "", limit: 1)
         guard selected == session else { return nil }
-        messages = Array(latest.reversed())
+        messages = Array(latest.reversed()).map { $0.withoutReasoningText() }
         historyLoaded = true
         logAIHistoryEvent("first-page session=\(session) count=\(latest.count) newest=\(latest.first?.id ?? "none") role=\(latest.first?.role ?? "none") parts=\(latest.first?.parts.count ?? 0)")
         return latest.first?.id
@@ -930,7 +941,8 @@ final class AIAssistantModel: ObservableObject {
         guard !page.isEmpty else { return }
         var merged = messages
         var changed = false
-        for message in page {
+        for rawMessage in page {
+            let message = rawMessage.withoutReasoningText()
             var lower = 0
             var upper = merged.count
             while lower < upper {
@@ -974,10 +986,12 @@ final class AIAssistantModel: ObservableObject {
         pendingInitialPage = nil
         do {
             if let newestID = try await showNewestMessage(for: id) {
+                scrollRequest += 1
                 await completeInitialPage(for: id, newestID: newestID)
             } else {
                 await refresh(force: true)
             }
+            if selected == id { scrollRequest += 1 }
         } catch { self.error = error.localizedDescription }
     }
     func create() async {

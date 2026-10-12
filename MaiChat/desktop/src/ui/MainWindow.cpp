@@ -1073,7 +1073,7 @@ QIcon makeLineIcon(LineIconKind kind, const QColor &color) {
     break;
   case LineIconKind::Assistant: {
     // 四角星（闪光）。纸飞机在这里是错的——它说的是"发送"，
-    // 而导航栏这一格是"AI 助手"，两个语义差得远。
+    // 而导航栏这一格是"创作中心"，两个语义差得远。
     //
     // 一大一小两颗，是这个图形语言里表示"生成"的常见写法；
     // 只画一颗会读成普通的星标/收藏。
@@ -2547,7 +2547,7 @@ void MainWindow::buildUi() {
       QStringLiteral("登录签名"), signatureValue,
       QStringLiteral("启动时自动生成，不需要用户手动填写。")));
   auto *agentSettingsRow = createSettingsRow(
-      QStringLiteral("AI 助手模型"), settingsAgentModelValue_,
+      QStringLiteral("创作中心模型"), settingsAgentModelValue_,
       QStringLiteral("选择主模型并连接云端服务；模型密钥仅在运行期间使用。"));
   auto *agentSettingsButton =
       new QPushButton(QStringLiteral("配置"), agentSettingsRow);
@@ -3824,7 +3824,7 @@ void MainWindow::editAgentModelSettings() {
     if (busy) {
       AppMessageDialog::show(
           this, AppMessageDialog::Kind::Warning,
-          QStringLiteral("AI 助手正在执行"),
+          QStringLiteral("创作中心正在执行"),
           QStringLiteral("请等待当前任务结束或先中断任务，再修改模型配置。"));
       return;
     }
@@ -3834,7 +3834,7 @@ void MainWindow::editAgentModelSettings() {
   const AgentController::ModelConfig current = loadAgentModelConfig();
   QDialog dialog(this);
   dialog.setObjectName(QStringLiteral("agentModelDialog"));
-  dialog.setWindowTitle(QStringLiteral("配置 AI 助手模型"));
+  dialog.setWindowTitle(QStringLiteral("配置创作中心模型"));
   dialog.setModal(true);
   dialog.setMinimumWidth(UiZoom::s(500));
   auto *content = new QVBoxLayout(&dialog);
@@ -3856,8 +3856,7 @@ void MainWindow::editAgentModelSettings() {
   auto *serviceToken = new QLineEdit(&dialog);
   serviceToken->setObjectName(QStringLiteral("agentCloudServiceToken"));
   serviceToken->setEchoMode(QLineEdit::Password);
-  serviceToken->setPlaceholderText(
-      QStringLiteral("留空保留原令牌"));
+  serviceToken->setPlaceholderText(QStringLiteral("留空保留原令牌"));
   content->addWidget(serviceToken);
 
   auto *error = new QLabel(&dialog);

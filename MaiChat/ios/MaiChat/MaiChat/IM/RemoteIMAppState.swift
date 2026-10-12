@@ -399,7 +399,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         do {
             try AIAssistantWorkspaceLocator.claimLegacyWorkspace(for: masterUserID)
         } catch {
-            showTransientError("保存 AI 助手账号归属失败，请稍后重试")
+            showTransientError("保存创作中心账号归属失败，请稍后重试")
             return false
         }
         let oldToken = await accountAuth.discardLocalSession()

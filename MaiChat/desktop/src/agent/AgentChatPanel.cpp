@@ -6,7 +6,6 @@
 #include <QDebug>
 #include <QDesktopServices>
 #include <QDir>
-#include <QElapsedTimer>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -530,93 +529,17 @@ class AgentChatPanel::ThinkingLine final : public QFrame {
 public:
   explicit ThinkingLine(QWidget *parent = nullptr) : QFrame(parent) {
     setObjectName(QStringLiteral("agentThinkingCard"));
-    setCursor(Qt::PointingHandCursor);
     setStyleSheet(QStringLiteral(
         "QFrame#agentThinkingCard{background:transparent;border:none;}"));
     auto *column = new QVBoxLayout(this);
     column->setContentsMargins(0, UiZoom::s(2), 0, UiZoom::s(2));
-    column->setSpacing(UiZoom::s(4));
-
-    caption_ = makeLabel(QStringLiteral("正在思考"), 12, kInkFaint);
+    caption_ = makeLabel(QStringLiteral("正在思考…"), 12, kInkFaint);
     caption_->setWordWrap(false);
     column->addWidget(caption_);
-
-    body_ = makeLabel(QString(), 12, kInkFaint);
-    body_->setObjectName(QStringLiteral("agentThinkingBody"));
-    body_->hide();
-    column->addWidget(body_);
-
-    elapsed_.start();
-    ticker_ = new QTimer(this);
-    QObject::connect(ticker_, &QTimer::timeout, this,
-                     [this] { refreshCaption(); });
-    ticker_->start(450);
-    refreshCaption();
-  }
-
-  void append(const QString &delta) {
-    text_ += delta;
-    // 默认收起时不让 QLabel 每个增量都重排一遍完整推理文本。
-    // 推理可以有几万字，这条旧路径是明显的 O(n²) 主线程开销。
-    if (expanded_) {
-      body_->setText(text_);
-      body_->setVisible(!text_.isEmpty());
-    }
-  }
-
-  // 这一轮结束：停下动画，塌成"思考了 N 秒"。
-  void settle() {
-    if (!ticker_->isActive())
-      return;
-    ticker_->stop();
-    seconds_ = static_cast<int>((elapsed_.elapsed() + 500) / 1000);
-    refreshCaption();
-  }
-
-  // 历史恢复的思考条：时长没有落库，无从知晓——显示「思考过程」而不是
-  // 编一个「思考了 0 秒」（刚建好就 settle，计时器走的永远是 0）。
-  void settleRestored() {
-    ticker_->stop();
-    restored_ = true;
-    refreshCaption();
-  }
-
-protected:
-  void mousePressEvent(QMouseEvent *) override {
-    expanded_ = !expanded_;
-    if (expanded_)
-      body_->setText(text_);
-    body_->setVisible(expanded_ && !text_.isEmpty());
-    refreshCaption();
   }
 
 private:
-  void refreshCaption() {
-    if (ticker_->isActive()) {
-      // 收着也要动：那段时间一个正文字都不会来，完全没反应和卡死分不开。
-      dots_ = (dots_ + 1) % 4;
-      caption_->setText(QStringLiteral("正在思考") +
-                        QString(dots_, QChar('.')));
-      return;
-    }
-    const QString caret =
-        expanded_ ? QStringLiteral(" ⌄") : QStringLiteral(" ›");
-    if (restored_) {
-      caption_->setText(QStringLiteral("思考过程") + caret);
-      return;
-    }
-    caption_->setText(QStringLiteral("已处理 %1 秒").arg(seconds_) + caret);
-  }
-
   QLabel *caption_ = nullptr;
-  QLabel *body_ = nullptr;
-  QTimer *ticker_ = nullptr;
-  QElapsedTimer elapsed_;
-  QString text_;
-  bool expanded_ = false;
-  bool restored_ = false;
-  int dots_ = 0;
-  int seconds_ = 0;
 };
 
 // ── 工具卡 ──────────────────────────────────────────────────────
@@ -950,7 +873,6 @@ struct AgentChatPanel::Runtime {
 
   // partId -> 思考条 / 工具卡。这两样要能点，画不出来，所以还是部件，
   // 由 MarkdownView 负责摆位置和跟着滚。
-  QHash<QString, ThinkingLine *> thinking;
   QHash<QString, QTextDocumentFragment> composerDrafts;
   ThinkingLine *pendingThinking = nullptr;
   QString pendingThinkingItemId;
@@ -999,7 +921,7 @@ AgentChatPanel::AgentChatPanel(AgentController &controller, QWidget *parent)
   headRow->setContentsMargins(UiZoom::s(20), UiZoom::s(10), UiZoom::s(20),
                               UiZoom::s(10));
   headRow->setSpacing(UiZoom::s(12));
-  runtime_->title = makeLabel(QStringLiteral("AI 助手"), 14, kInk, true);
+  runtime_->title = makeLabel(QStringLiteral("创作中心"), 14, kInk, true);
   runtime_->title->setWordWrap(false);
   headRow->addWidget(runtime_->title, 1);
 
@@ -1228,7 +1150,7 @@ AgentChatPanel::AgentChatPanel(AgentController &controller, QWidget *parent)
                                                  session))
       initial = fromUtf8(session.directory);
     const QString selected = QFileDialog::getExistingDirectory(
-        this, QStringLiteral("选择 AI 助手工作目录"), initial,
+        this, QStringLiteral("选择创作中心工作目录"), initial,
         QFileDialog::ShowDirsOnly);
     if (!selected.isEmpty())
       openSessionInDirectory(selected);
@@ -1276,13 +1198,6 @@ AgentChatPanel::AgentChatPanel(AgentController &controller, QWidget *parent)
             clearPendingThinking();
             appendAnswerDelta(partId, delta);
           });
-  connect(&controller, &AgentController::reasoningDelta, this,
-          [this](const QString &sessionId, const QString &,
-                 const QString &partId, const QString &delta) {
-            if (!isCurrentSession(sessionId))
-              return;
-            thinkingLineFor(partId)->append(delta);
-          });
   connect(&controller, &AgentController::toolPartChanged, this,
           [this](const QString &sessionId, const QString &messageId,
                  const QString &partId) {
@@ -1317,8 +1232,6 @@ AgentChatPanel::AgentChatPanel(AgentController &controller, QWidget *parent)
             clearPendingThinking();
             setRunning(false);
             emit sessionListChanged();
-            for (ThinkingLine *line : runtime_->thinking)
-              line->settle();
             flushAnswers();
             refreshContextSize();
             scrollToBottom();
@@ -1331,8 +1244,6 @@ AgentChatPanel::AgentChatPanel(AgentController &controller, QWidget *parent)
             }
             clearPendingThinking();
             setRunning(false);
-            for (ThinkingLine *line : runtime_->thinking)
-              line->settle();
             flushAnswers();
             appendNotice(message, true);
           });
@@ -1340,8 +1251,8 @@ AgentChatPanel::AgentChatPanel(AgentController &controller, QWidget *parent)
           [this](const QString &sessionId, const QString &title) {
             if (!isCurrentSession(sessionId))
               return;
-            runtime_->title->setText(title.isEmpty() ? QStringLiteral("AI 助手")
-                                                     : title);
+            runtime_->title->setText(
+                title.isEmpty() ? QStringLiteral("创作中心") : title);
             emit sessionListChanged();
           });
 }
@@ -1443,7 +1354,7 @@ void AgentChatPanel::openSession(const QString &sessionId) {
                                                session)) {
     // 用 isUntitled() 而不是 title.isEmpty()：核心给新会话填的是一个占位标题
     // （"New session"），不是空串。判空的话那串占位符会直接显示在头部。
-    runtime_->title->setText(session.isUntitled() ? QStringLiteral("AI 助手")
+    runtime_->title->setText(session.isUntitled() ? QStringLiteral("创作中心")
                                                   : fromUtf8(session.title));
     const QString directory =
         QDir::toNativeSeparators(fromUtf8(session.directory));
@@ -1489,7 +1400,6 @@ void AgentChatPanel::reloadFromStore() {
   runtime_->pendingThinkingItemId.clear();
   runtime_->answers.clear();
   runtime_->dirtyAnswers.clear();
-  runtime_->thinking.clear();
   runtime_->toolCards.clear();
   runtime_->subAgentCards.clear();
   runtime_->pendingQuestionId.clear();
@@ -1541,23 +1451,9 @@ void AgentChatPanel::reloadFromStore() {
           activeAssistantHasVisibleActivity = true;
         runtime_->answers.insert(partId, content);
         runtime_->view->addItem(partId, MarkdownView::Style::Document, content);
-      } else if (const auto *reasoning =
-                     std::get_if<MaiReasoningPart>(&part.body)) {
-        // 空文本的思考片段没有可展开的内容，画出来就是个点不开的空壳。
-        const QString stored = fromUtf8(reasoning->text);
-        const QString live = message.completed == 0
-                                 ? runtime_->controller->livePartText(
-                                       runtime_->sessionId, partId)
-                                 : QString();
-        const QString content = live.isEmpty() ? stored : live;
-        if (content.isEmpty())
-          continue;
-        if (message.completed == 0)
-          activeAssistantHasVisibleActivity = true;
-        ThinkingLine *line = thinkingLineFor(partId);
-        line->append(content);
-        if (!sessionBusy || message.completed != 0)
-          line->settleRestored(); // 已结束的历史没有耗时记录，别编秒数
+      } else if (std::get_if<MaiReasoningPart>(&part.body)) {
+        // 历史思考正文不进入界面；仍在执行的会话统一显示短状态。
+        continue;
       } else if (const auto *tool = std::get_if<MaiToolPart>(&part.body)) {
         if (message.completed == 0 && (tool->state == MaiToolState::Pending ||
                                        tool->state == MaiToolState::Running))
@@ -1602,7 +1498,13 @@ void AgentChatPanel::reloadFromStore() {
       runtime_->pendingQuestionId.isEmpty())
     startPendingThinking();
   refreshContextSize();
-  scrollToBottom();
+  // 切换会话时必须跳到该会话最新消息，不沿用上一会话的旧滚动位置。
+  runtime_->view->scrollToBottom();
+  const QString selected = runtime_->sessionId;
+  QTimer::singleShot(0, this, [this, selected] {
+    if (runtime_->sessionId == selected)
+      runtime_->view->scrollToBottom();
+  });
 }
 
 // 流式期间往某条回答后面追加。第一段到的时候先把条目建出来，
@@ -1654,27 +1556,6 @@ void AgentChatPanel::appendNotice(const QString &text, bool isError) {
       QStringLiteral("notice-%1").arg(++runtime_->noticeSerial),
       isError ? MarkdownView::Style::Error : MarkdownView::Style::Notice, text);
   scrollToBottom();
-}
-
-AgentChatPanel::ThinkingLine *
-AgentChatPanel::thinkingLineFor(const QString &partId) {
-  auto found = runtime_->thinking.constFind(partId);
-  if (found != runtime_->thinking.constEnd())
-    return found.value();
-
-  if (runtime_->pendingThinking != nullptr) {
-    ThinkingLine *line = runtime_->pendingThinking;
-    runtime_->pendingThinking = nullptr;
-    runtime_->pendingThinkingItemId.clear();
-    runtime_->thinking.insert(partId, line);
-    return line;
-  }
-
-  auto *line = new ThinkingLine;
-  runtime_->view->addWidget(partId, line);
-  runtime_->thinking.insert(partId, line);
-  scrollToBottom();
-  return line;
 }
 
 void AgentChatPanel::startPendingThinking() {
@@ -2269,7 +2150,7 @@ void AgentChatPanel::onClear() {
                  true);
     return;
   }
-  runtime_->title->setText(QStringLiteral("AI 助手"));
+  runtime_->title->setText(QStringLiteral("创作中心"));
   reloadFromStore();
 }
 

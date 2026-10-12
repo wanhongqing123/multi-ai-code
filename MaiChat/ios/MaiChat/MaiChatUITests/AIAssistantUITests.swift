@@ -48,18 +48,18 @@ final class AIAssistantUITests: XCTestCase {
                                  "Closing the keyboard must keep the latest message visible")
     }
 
-    func testToolCallsAndReasoningCollapseWithoutMovingFinalAnswer() throws {
+    func testToolCallsDoNotExposeReasoningContent() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--ai-ui-test", "--transcript-ui-test"]
         app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
         app.launch()
-        let reasoning = app.buttons.matching(
-            NSPredicate(format: "label CONTAINS %@", "思考过程"))
         let tools = app.buttons.matching(
             NSPredicate(format: "label CONTAINS %@", "工具调用 8 次"))
-        XCTAssertTrue(reasoning.firstMatch.waitForExistence(timeout: 15))
-        XCTAssertEqual(reasoning.count, 1)
+        XCTAssertFalse(app.buttons.matching(
+            NSPredicate(format: "label CONTAINS %@", "思考过程")).firstMatch.exists)
+        XCTAssertTrue(tools.firstMatch.waitForExistence(timeout: 15))
         XCTAssertEqual(tools.count, 1)
+        XCTAssertFalse(app.staticTexts["检查视频"].exists)
         let answer = app.staticTexts["处理完成，结果已经准备好。"]
         XCTAssertTrue(answer.waitForExistence(timeout: 5))
         XCTAssertGreaterThan(answer.frame.minY, tools.firstMatch.frame.maxY)

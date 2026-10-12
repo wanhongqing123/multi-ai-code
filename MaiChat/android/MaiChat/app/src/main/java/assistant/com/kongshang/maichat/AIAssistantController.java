@@ -50,6 +50,7 @@ public final class AIAssistantController {
         final JSONObject data;
         final String selected, baseUrl, model, policy, error;
         final boolean ready;
+        final int messageHash, messageLength;
         State(JSONObject data, String selected, String baseUrl, String model, String policy, String error,
             boolean ready) {
             this.data = data;
@@ -59,6 +60,11 @@ public final class AIAssistantController {
             this.policy = policy;
             this.error = error;
             this.ready = ready;
+            // 在工作线程计算可见消息指纹，UI 只在正文或工具状态变化时重绑列表。
+            JSONArray messages = data.optJSONArray("messages");
+            String encoded = messages == null ? "" : messages.toString();
+            this.messageHash = encoded.hashCode();
+            this.messageLength = encoded.length();
         }
         boolean busy() {
             JSONArray sessions = data.optJSONArray("sessions");
@@ -409,7 +415,7 @@ public final class AIAssistantController {
     }
     private static String safeMessage(Throwable error) {
         String detail = error.getMessage();
-        return detail == null || detail.trim().isEmpty() ? "AI 助手操作失败" : detail;
+        return detail == null || detail.trim().isEmpty() ? "创作中心操作失败" : detail;
     }
     private static void claimLegacyWorkspace(Context context, String userId) throws IOException {
         File base = new File(context.getNoBackupFilesDir(), "AIAssistant");
@@ -520,6 +526,7 @@ public final class AIAssistantController {
         try {
             JSONObject result = call(op("snapshot").put("force", force));
             if (result.optBoolean("changed")) {
+                hideReasoningText(result);
                 data = result;
                 if (!result.optString("error").isEmpty())
                     error = result.optString("error");
@@ -528,6 +535,20 @@ public final class AIAssistantController {
         } catch (Exception e) {
             error = safeMessage(e);
             emit();
+        }
+    }
+    private static void hideReasoningText(JSONObject snapshot) {
+        JSONArray messages = snapshot.optJSONArray("messages");
+        if (messages == null) return;
+        for (int i = 0; i < messages.length(); i++) {
+            JSONObject message = messages.optJSONObject(i);
+            JSONArray parts = message == null ? null : message.optJSONArray("parts");
+            if (parts == null) continue;
+            for (int j = 0; j < parts.length(); j++) {
+                JSONObject part = parts.optJSONObject(j);
+                if (part != null && part.optString("kind").equals("reasoning"))
+                    part.remove("text");
+            }
         }
     }
     private void emit() {

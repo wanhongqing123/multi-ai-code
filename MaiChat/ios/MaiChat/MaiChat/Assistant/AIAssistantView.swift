@@ -470,7 +470,7 @@ private struct AIAssistantMessageList: View {
                 .onChange(of: model.scrollRequest) { _ in
                     followsLatest = true
                     bottomCorrectionRequest += 1
-                    logAIHistoryEvent("sent session=\(model.selected) following latest")
+                    logAIHistoryEvent("follow-latest session=\(model.selected)")
                 }
                 .onChange(of: model.selected) { _ in
                     prependAnchorID = nil
@@ -556,7 +556,7 @@ private struct AIHeader: View {
             Spacer()
             AIHeaderButton(systemImage: "ellipsis", label: "更多", action: openActions)
         }
-        .overlay { Text("AI 助手").font(.system(size: 18, weight: .bold)).allowsHitTesting(false) }
+        .overlay { Text("创作中心").font(.system(size: 18, weight: .bold)).allowsHitTesting(false) }
         .padding(.horizontal, 16).frame(height: 54)
         .background(Color(uiColor: .systemBackground))
     }
@@ -773,12 +773,6 @@ private struct AIMessageRow: View, Equatable {
                     }
                 }
             } else {
-                if !reasoningText.isEmpty {
-                    AIReasoningDisclosure(text: reasoningText,
-                                          active: message.active,
-                                          answerStarted: hasVisibleAnswerText,
-                                          durationSeconds: reasoningDurationSeconds)
-                }
                 if !toolParts.isEmpty {
                     AIExpandableBlock(title: toolDisclosureTitle) {
                         VStack(alignment: .leading, spacing: 10) {
@@ -879,8 +873,7 @@ private struct AIMessageRow: View, Equatable {
                         }
                     }
                 }
-                if message.active && reasoningText.isEmpty && toolParts.isEmpty &&
-                    mediaArtifacts.isEmpty &&
+                if message.active && toolParts.isEmpty && mediaArtifacts.isEmpty &&
                     !hasVisibleAnswerText {
                     AIThinkingIndicator()
                 }
@@ -922,9 +915,6 @@ private struct AIMessageRow: View, Equatable {
                 Text(mediaSaveError ?? "请检查相册权限与媒体文件。")
             }
     }
-    private var reasoningParts: [AIPart] {
-        message.parts.filter { $0.kind == "reasoning" }
-    }
     private func specialistFailureText(_ text: String) -> String? {
         if text.hasPrefix("Video task failed. ") {
             return "视频任务失败：" + String(text.dropFirst("Video task failed. ".count))
@@ -947,18 +937,6 @@ private struct AIMessageRow: View, Equatable {
             return "图片产物获取失败：" + String(text.dropFirst("Image output unavailable. ".count))
         }
         return nil
-    }
-    private var reasoningText: String {
-        var seen = Set<String>()
-        return reasoningParts.compactMap { part -> String? in
-            guard let text = part.text?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !text.isEmpty, seen.insert(text).inserted else { return nil }
-            return text
-        }.joined(separator: "\n\n")
-    }
-    private var reasoningDurationSeconds: Int64? {
-        guard message.completed > message.created else { return nil }
-        return (message.completed - message.created) / 1000
     }
     private var hasVisibleAnswerText: Bool {
         message.parts.contains { part in
@@ -1224,7 +1202,7 @@ private struct AIWorkspaceImage: View {
                                 decodedSize = CGSize(width: pixels.width, height: pixels.height)
                             }
                         }
-                        .accessibilityLabel("AI 助手图片附件")
+                        .accessibilityLabel("创作中心图片附件")
                 } placeholder: { failed in
                     if failed {
                         Label("图片无法显示", systemImage: "photo")
@@ -1553,63 +1531,13 @@ private struct AIImagePreviewOverlay: View {
 
 private struct AIThinkingIndicator: View {
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 0.35)) { context in
-            let highlighted = Int(context.date.timeIntervalSince1970 * 3) % 3
-            HStack(spacing: 5) {
-                ForEach(0..<3, id: \.self) { index in
-                    Circle()
-                        .fill(Color.secondary.opacity(index == highlighted ? 0.8 : 0.25))
-                        .frame(width: 6, height: 6)
-                }
-            }
-            .frame(height: 24)
-            .accessibilityLabel("正在思考")
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text("正在思考…").font(AssistantMessageFont.detail)
         }
-    }
-}
-
-private struct AIReasoningDisclosure: View {
-    let text: String
-    let active: Bool
-    let answerStarted: Bool
-    let durationSeconds: Int64?
-    @State private var manualExpanded: Bool?
-
-    private var expanded: Bool { manualExpanded ?? (active && !answerStarted) }
-    private var title: String {
-        if active && !answerStarted { return "正在思考" }
-        if let durationSeconds { return "已思考（用时 \(durationSeconds) 秒）" }
-        return "已思考"
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Button {
-                withAnimation(.easeOut(duration: 0.16)) { manualExpanded = !expanded }
-            } label: {
-                HStack(spacing: 8) {
-                    Text(title)
-                    Image(systemName: "chevron.right")
-                        .rotationEffect(.degrees(expanded ? 90 : 0))
-                }
-                .font(AssistantMessageFont.detail)
-                .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            if expanded {
-                Text(text)
-                    .font(AssistantMessageFont.detail)
-                    .lineSpacing(5)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                    .padding(.leading, 16)
-                    .overlay(alignment: .leading) {
-                        Rectangle().fill(Color.secondary.opacity(0.25)).frame(width: 2)
-                    }
-            }
-        }
-        .onChange(of: answerStarted) { if $0 { manualExpanded = nil } }
-        .onChange(of: active) { if !$0 { manualExpanded = nil } }
+        .foregroundStyle(.secondary)
+        .frame(height: 24)
+        .accessibilityLabel("正在思考")
     }
 }
 
@@ -1812,7 +1740,7 @@ private struct AIComposer: View, Equatable {
                             },
                             registerTextView: { focusController.textView = $0 },
                             accessibilityIdentifier: "ai-composer",
-                            accessibilityLabel: "AI 助手输入框，可按住转文字"
+                            accessibilityLabel: "创作中心输入框，可按住转文字"
                         )
                         if draft.isEmpty {
                             Text(composerPrompt)

@@ -467,7 +467,7 @@ private struct CompactTabBar: View {
                 selectedTab = .messages
             }
             TabButton(
-                title: "AI 助手",
+                title: "创作中心",
                 imageName: "NavAssistant",
                 accent: RemoteIMStyle.navAssistant,
                 selected: selectedTab == .assistant

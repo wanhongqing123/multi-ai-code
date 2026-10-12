@@ -230,8 +230,8 @@ private slots:
     void pendingQuestionIsRestoredOnlyInItsSession();
     void composerDraftsStayInTheirSessions();
     void waitingIndicatorSurvivesSwitchingAwayAndBack();
-    void partialReasoningSurvivesSwitchBeforeCheckpoint();
-    void thinkingLineExpandsLiveAndAfterRestore();
+    void reasoningStatusSurvivesSwitchBeforeCheckpoint();
+    void thinkingContentNeverRendersLiveOrAfterRestore();
     void waitingIndicatorAppearsBeforeFirstModelChunk();
     void waitingIndicatorClearsWhenModelHasNoReasoning();
     void unconfiguredModelOpensConfigurationInsteadOfFailingTurn();
@@ -244,6 +244,7 @@ private slots:
     void pastedImageUsesTheSharedComposerAndReachesTheModel();
     void modelChipOffersTheTextAndVisionModels();
     void newAgentOutputDoesNotInterruptReadingHistory();
+    void switchingSessionsShowsLatestMessage();
     void completedPdfToolShowsPreviewCardAfterRestore();
 };
 
@@ -363,6 +364,25 @@ void AgentPanelSessionTest::newAgentOutputDoesNotInterruptReadingHistory() {
     QCOMPARE(bar->value(), position);
 }
 
+void AgentPanelSessionTest::switchingSessionsShowsLatestMessage() {
+    Harness harness;
+    QVERIFY(QTest::qWaitForWindowExposed(harness.panel.get()));
+    QVERIFY(harness.controller->sendPrompt(
+        harness.mine, QStringLiteral("历史消息\n").repeated(250)));
+    harness.controller->agent().waitIdle();
+    harness.panel->openSession(harness.mine);
+    auto* view = harness.view();
+    QVERIFY(view != nullptr);
+    auto* bar = view->verticalScrollBar();
+    QTRY_VERIFY(bar->maximum() > 0);
+    bar->setValue(0);
+    QVERIFY(!view->isAtBottom());
+
+    harness.panel->openSession(harness.other);
+    harness.panel->openSession(harness.mine);
+    QTRY_VERIFY(view->isAtBottom());
+}
+
 void AgentPanelSessionTest::answerFromAnotherSessionDoesNotLeakIn() {
     Harness harness;
     QVERIFY(QTest::qWaitForWindowExposed(harness.panel.get()));
@@ -422,12 +442,12 @@ void AgentPanelSessionTest::anotherSessionTitleDoesNotRenameTheHeader() {
 
     QLabel* title = nullptr;
     for (QLabel* label : harness.panel->findChildren<QLabel*>()) {
-        if (label->text() == QStringLiteral("AI 助手")) title = label;
+        if (label->text() == QStringLiteral("创作中心")) title = label;
     }
     QVERIFY(title != nullptr);
 
     harness.publishFromOther(MaiEventType::SessionUpdated, QStringLiteral("子任务的名字"));
-    QCOMPARE(title->text(), QStringLiteral("AI 助手"));
+    QCOMPARE(title->text(), QStringLiteral("创作中心"));
 }
 
 void AgentPanelSessionTest::approvalFromAnotherSessionIsStillShown() {
@@ -650,7 +670,7 @@ void AgentPanelSessionTest::waitingIndicatorSurvivesSwitchingAwayAndBack() {
     controller.agent().waitIdle();
 }
 
-void AgentPanelSessionTest::partialReasoningSurvivesSwitchBeforeCheckpoint() {
+void AgentPanelSessionTest::reasoningStatusSurvivesSwitchBeforeCheckpoint() {
     auto model = std::make_unique<PartialReasoningModel>();
     PartialReasoningModel* controlled = model.get();
     AgentController controller(std::move(model), QString());
@@ -676,11 +696,10 @@ void AgentPanelSessionTest::partialReasoningSurvivesSwitchBeforeCheckpoint() {
         if (item->isVisible()) card = item;
     }
     QVERIFY(card != nullptr);
-    QTest::mouseClick(card, Qt::LeftButton);
-    auto* body = card->findChild<QLabel*>(QStringLiteral("agentThinkingBody"));
-    QVERIFY(body != nullptr);
-    QVERIFY2(body->text().contains(QStringLiteral("partial reasoning")),
-             "Switching sessions lost reasoning already shown before the next disk checkpoint");
+    auto* status = card->findChild<QLabel*>();
+    QVERIFY(status != nullptr);
+    QCOMPARE(status->text(), QStringLiteral("正在思考…"));
+    QVERIFY(card->findChild<QLabel*>(QStringLiteral("agentThinkingBody")) == nullptr);
     controlled->release.store(true);
     controller.agent().waitIdle();
 }
@@ -716,9 +735,8 @@ void AgentPanelSessionTest::waitingIndicatorAppearsBeforeFirstModelChunk() {
     QVERIFY(waiting->isVisible());
 
     delayed->release();
-    QTRY_COMPARE(panel.findChildren<QWidget*>(QStringLiteral("agentThinkingCard")).size(), 1);
-    QTRY_VERIFY(panel.findChild<QLabel*>(QStringLiteral("agentThinkingBody")) != nullptr);
     controller.agent().waitIdle();
+    QTRY_VERIFY(panel.findChildren<QWidget*>(QStringLiteral("agentThinkingCard")).isEmpty());
 }
 
 void AgentPanelSessionTest::waitingIndicatorClearsWhenModelHasNoReasoning() {
@@ -746,12 +764,8 @@ void AgentPanelSessionTest::waitingIndicatorClearsWhenModelHasNoReasoning() {
     QVERIFY(panel.findChild<MarkdownView*>()->itemCount() >= 2);
 }
 
-// 思考条要能点开，而且**展开后高度必须真的长出来**：
-// 之前出现过点击后正文露一条缝、卡片高度不动的情况（高度联动失效），
-// 视觉上就是「点不开」或「文字被裁」。恢复路径（重开会话）同样要过一遍——
-// 两条路建条目的方式不一样，坏一条不坏另一条是可能的。
-void AgentPanelSessionTest::thinkingLineExpandsLiveAndAfterRestore() {
-    // 会说话的假模型：一轮里给出一段够长的思考 + 一句正文。
+// 思考流可很长；执行时只有短状态，完成后不保留思考正文。
+void AgentPanelSessionTest::thinkingContentNeverRendersLiveOrAfterRestore() {
     class ReasoningModel final : public MaiModelClient {
     public:
         MaiError stream(const MaiModelRequest& request, const MaiStreamSink& sink,
@@ -759,9 +773,8 @@ void AgentPanelSessionTest::thinkingLineExpandsLiveAndAfterRestore() {
             (void)request;
             (void)cancel;
             if (sink.onReasoning) {
-                for (int i = 0; i < 20; ++i) {
-                    sink.onReasoning("想一想，这段思考要足够长，展开后的高度变化才量得出来。");
-                }
+                for (int i = 0; i < 20; ++i)
+                    sink.onReasoning("想一想，这段思考内容不应进入界面布局。");
             }
             if (sink.onText) sink.onText("回答完了。");
             return {};
@@ -776,59 +789,28 @@ void AgentPanelSessionTest::thinkingLineExpandsLiveAndAfterRestore() {
     QVERIFY(QTest::qWaitForWindowExposed(&panel));
     const QString mine = controller.createSession(QDir::currentPath());
     panel.openSession(mine);
-
     auto* editor = panel.findChild<QTextEdit*>();
+    auto* send = panel.findChild<QPushButton*>(QStringLiteral("agentSendButton"));
     QVERIFY(editor != nullptr);
-    editor->setPlainText(QStringLiteral("问点什么"));
-    auto* send =
-        panel.findChild<QPushButton*>(QStringLiteral("agentSendButton"));
     QVERIFY(send != nullptr);
+    editor->setPlainText(QStringLiteral("问点什么"));
     QTest::mouseClick(send, Qt::LeftButton);
 
-    // 等这一轮结束：思考条出现并塌成「已处理 N 秒」。
-    QWidget* card = nullptr;
-    QTRY_VERIFY((card = panel.findChild<QWidget*>(QStringLiteral("agentThinkingCard"))) != nullptr);
-    QTRY_VERIFY(!card->findChildren<QLabel*>().isEmpty());
+    controller.agent().waitIdle();
+    QTRY_VERIFY(panel.findChildren<QWidget*>(QStringLiteral("agentThinkingCard")).isEmpty());
+    auto* view = panel.findChild<MarkdownView*>();
+    QVERIFY(view != nullptr);
+    view->selectAll();
+    QVERIFY(view->selectedText().contains(QStringLiteral("回答完了")));
+    QVERIFY(!view->selectedText().contains(QStringLiteral("想一想")));
 
-    auto bodyOf = [](QWidget* cardWidget) -> QLabel* {
-        return cardWidget->findChild<QLabel*>(QStringLiteral("agentThinkingBody"));
-    };
-
-    QLabel* body = bodyOf(card);
-    QVERIFY2(body != nullptr, "思考正文标签必须已经在条里");
-    QTRY_VERIFY(!body->isVisible());
-    QVERIFY2(body->text().isEmpty(), "收起状态不应反复排版完整思考正文");
-
-    // ── 实时路径：点击展开，高度必须长出来 ──
-    const int collapsedHeight = card->height();
-    QTest::mouseClick(card, Qt::LeftButton, Qt::NoModifier, card->rect().center());
-    QTRY_VERIFY2(body->isVisible(), "点击后思考正文必须显示出来");
-    QVERIFY(body->text().contains(QStringLiteral("想一想")));
-    QTRY_VERIFY2(card->height() > collapsedHeight + 20,
-                 qPrintable(QStringLiteral("展开后卡片高度必须增长：收起 %1 → 展开 %2")
-                                .arg(collapsedHeight)
-                                .arg(card->height())));
-
-    // ── 恢复路径：切走再切回，重建的条目同样要能点开、能长高 ──
     const QString other = controller.createSession(QDir::currentPath());
     panel.openSession(other);
     panel.openSession(mine);
-    // 旧条目走 deleteLater：必须等它真正销毁，否则 findChild 会撞上上一轮的
-    // （还挂在树上的）死部件——那份是展开状态，断言会被它骗过。
-    QWidget* restored = nullptr;
-    QTRY_COMPARE(panel.findChildren<QWidget*>(QStringLiteral("agentThinkingCard")).size(), 1);
-    restored = panel.findChild<QWidget*>(QStringLiteral("agentThinkingCard"));
-    QVERIFY(restored != nullptr);
-    QLabel* restoredBody = bodyOf(restored);
-    QVERIFY2(restoredBody != nullptr, "恢复后思考正文必须在");
-    QVERIFY(!restoredBody->isVisible());
-    const int restoredCollapsed = restored->height();
-    QTest::mouseClick(restored, Qt::LeftButton, Qt::NoModifier, restored->rect().center());
-    QTRY_VERIFY2(restoredBody->isVisible(), "恢复后点击必须能展开");
-    QTRY_VERIFY2(restored->height() > restoredCollapsed + 20,
-                 qPrintable(QStringLiteral("恢复后展开高度必须增长：%1 → %2")
-                                .arg(restoredCollapsed)
-                                .arg(restored->height())));
+    QTRY_VERIFY(panel.findChildren<QWidget*>(QStringLiteral("agentThinkingCard")).isEmpty());
+    view->selectAll();
+    QVERIFY(view->selectedText().contains(QStringLiteral("回答完了")));
+    QVERIFY(!view->selectedText().contains(QStringLiteral("想一想")));
 }
 
 void AgentPanelSessionTest::pastedImageUsesTheSharedComposerAndReachesTheModel() {
@@ -874,9 +856,10 @@ void AgentPanelSessionTest::pastedImageUsesTheSharedComposerAndReachesTheModel()
     QVERIFY(!request.messages.empty());
     QCOMPARE(request.messages.back().images.size(), std::size_t(1));
     QCOMPARE(QString::fromStdString(request.messages.back().images.front().path), imagePath);
-    QVERIFY(panel.findChild<MarkdownView*>()->itemCount() >= 3);
+    // 思考正文不再占用消息条目；附件与回复仍须可见。
+    QVERIFY(panel.findChild<MarkdownView*>()->itemCount() >= 2);
     panel.openSession(sessionId);
-    QVERIFY(panel.findChild<MarkdownView*>()->itemCount() >= 3);
+    QVERIFY(panel.findChild<MarkdownView*>()->itemCount() >= 2);
 }
 
 void AgentPanelSessionTest::unconfiguredModelOpensConfigurationInsteadOfFailingTurn() {

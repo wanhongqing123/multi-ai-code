@@ -2019,7 +2019,7 @@ void MainWindowLayoutTest::agentSettingsDialogUsesMaiChatVisualStyle() {
         if (dialog == nullptr) return;
         auto* cancel = dialog->findChild<QPushButton*>(QStringLiteral("agentModelCancel"));
         auto* save = dialog->findChild<QPushButton*>(QStringLiteral("agentModelSave"));
-        verified = dialog->windowTitle() == QStringLiteral("配置 AI 助手模型") &&
+        verified = dialog->windowTitle() == QStringLiteral("配置创作中心模型") &&
                    cancel != nullptr && save != nullptr && dialog->minimumWidth() > 400;
         dialog->reject();
     });

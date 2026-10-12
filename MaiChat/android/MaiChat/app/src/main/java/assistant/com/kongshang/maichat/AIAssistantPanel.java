@@ -52,6 +52,8 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     private final MessageAdapter adapter = new MessageAdapter();
     private AIAssistantController.State state;
     private String selected = "", pendingSignature = "";
+    private String renderedMessagesSession = "", pendingLatestSession = "";
+    private int renderedMessageHash, renderedMessageLength, renderedVisibleLimit = -1;
     private final Map<String, String> drafts = new HashMap<>();
     private final Map<String, List<AIAssistantController.ImportedFile>> attachments = new HashMap<>();
     private final Set<String> expanded = new HashSet<>();
@@ -98,7 +100,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         MarkdownRenderer.initialize(activity);
         LinearLayout header = row();
         header.addView(button("☰", "对话列表", v -> sessions()), new LayoutParams(dp(48), dp(48)));
-        TextView title = text("AI 助手", 18, MaiChatTheme.TEXT);
+        TextView title = text("创作中心", 18, MaiChatTheme.TEXT);
         title.setTypeface(MaiChatTypography.semibold());
         header.addView(title, new LayoutParams(0, dp(48), 1));
         header.addView(button("＋", "新对话", v -> {
@@ -121,9 +123,10 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         list.setOnScrollListener(new AbsListView.OnScrollListener() {
             @Override
             public void onScrollStateChanged(AbsListView view, int scrollState) {
-                if (scrollState != SCROLL_STATE_IDLE)
+                if (scrollState != SCROLL_STATE_IDLE) {
                     following = false;
-                else if (atBottom())
+                    pendingLatestSession = "";
+                } else if (atBottom())
                     following = true;
             }
             @Override
@@ -147,7 +150,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         box.setBackground(MaiChatTheme.bordered(Color.WHITE, MaiChatTheme.BORDER, 18, activity));
         composer = new EditText(activity);
         composer.setTag("ai-composer");
-        composer.setContentDescription("AI 消息输入框");
+        composer.setContentDescription("创作中心消息输入框");
         composer.setHint("随心输入");
         composer.setTextSize(14);
         composer.setMinLines(1);
@@ -233,6 +236,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             visibleLimit = 50;
             expanded.clear();
             following = true;
+            pendingLatestSession = selected;
         }
         state = next;
         error.setText(next.error);
@@ -249,15 +253,33 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     private void updateMessages() {
         if (state == null)
             return;
+        if (renderedMessagesSession.equals(selected) && renderedVisibleLimit == visibleLimit
+            && renderedMessageHash == state.messageHash
+            && renderedMessageLength == state.messageLength)
+            return;
         JSONArray array = state.data.optJSONArray("messages");
         int count = array == null ? 0 : array.length();
         List<JSONObject> next = new ArrayList<>();
         for (int i = Math.max(0, count - visibleLimit); i < count; i++) next.add(array.optJSONObject(i));
         messages = next;
+        renderedMessagesSession = selected;
+        renderedVisibleLimit = visibleLimit;
+        renderedMessageHash = state.messageHash;
+        renderedMessageLength = state.messageLength;
         older.setVisibility(count > visibleLimit ? VISIBLE : GONE);
         adapter.notifyDataSetChanged();
         if (following)
             locateLatest();
+        if (!next.isEmpty() && selected.equals(pendingLatestSession)) {
+            String target = selected;
+            pendingLatestSession = "";
+            list.post(() -> {
+                if (!target.equals(selected)) return;
+                following = true;
+                list.setSelection(list.getCount() - 1);
+                locateLatest();
+            });
+        }
     }
     private boolean atBottom() {
         if (list.getCount() == 0)
@@ -1014,9 +1036,12 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             if (array == null)
                 array = new JSONArray();
             StringBuilder structure = new StringBuilder(value.optString("id"));
-            for (int i = 0; i < array.length(); i++)
-                structure.append(array.optJSONObject(i).optString("id"))
-                    .append(expanded.contains(array.optJSONObject(i).optString("id")));
+            for (int i = 0; i < array.length(); i++) {
+                JSONObject part = array.optJSONObject(i);
+                if (part == null || part.optString("kind").equals("reasoning")) continue;
+                structure.append(part.optString("id"))
+                    .append(expanded.contains(part.optString("id")));
+            }
             boolean outgoing = value.optString("role").equals("user");
             if (!key.equals(structure.toString())) {
                 key = structure.toString();
@@ -1059,71 +1084,71 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                     addView(bubble, lp);
                     parts.put("user", body);
                 } else {
-                    for (int phase = 0; phase < 2; phase++)
-                        for (int i = 0; i < array.length(); i++) {
-                            JSONObject part = array.optJSONObject(i);
-                            String id = part.optString("id"), kind = part.optString("kind");
-                            if ((phase == 0) != kind.equals("reasoning"))
-                                continue;
-                            TextView view = kind.equals("text") ? MaiChatTypography.body(activity)
-                                                                : text("", 12, MaiChatTheme.SECONDARY);
-                            parts.put(id, view);
-                            LayoutParams lp = matchWrap();
-                            lp.bottomMargin = dp(12);
-                            addView(view, lp);
-                            if (!kind.equals("text"))
-                                view.setOnClickListener(v -> {
-                                    if (!expanded.add(id))
-                                        expanded.remove(id);
-                                    adapter.notifyDataSetChanged();
-                                });
-                            if (expanded.contains(id)) {
-                                TextView detail = text("", 12, MaiChatTheme.SECONDARY);
-                                detail.setTextIsSelectable(true);
-                                detail.setTypeface(android.graphics.Typeface.MONOSPACE);
-                                parts.put(id + ":detail", detail);
-                                addView(detail, lp);
-                            }
-                            if (kind.equals("tool")) {
-                                Button preview = button("预览 PDF", "预览生成的 PDF", clicked -> {
-                                    Object stored = clicked.getTag();
-                                    if (!(stored instanceof String)) return;
-                                    File pdf = controller.workspaceFile((String) stored);
-                                    PdfPreviewDialog.show(activity, pdf,
-                                        controller.workspaceDirectoryForPreview());
-                                });
-                                preview.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
-                                preview.setPadding(dp(12), 0, dp(12), 0);
-                                preview.setBackground(MaiChatTheme.bordered(
-                                    MaiChatTheme.BLUE_SOFT, MaiChatTheme.BORDER, 10, activity));
-                                preview.setVisibility(GONE);
-                                pdfCards.put(id, preview);
-                                LayoutParams cardLayout = matchWrap();
-                                cardLayout.bottomMargin = dp(12);
-                                addView(preview, cardLayout);
-                                Button diagnostic = button("分享排障日志", "分享导出的 TXT 日志", clicked -> {
-                                    Object stored = clicked.getTag();
-                                    if (!(stored instanceof String)) return;
-                                    File report = controller.workspaceFile((String) stored);
-                                    if (report != null && report.isFile()) shareDiagnosticFile(report);
-                                });
-                                diagnostic.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
-                                diagnostic.setPadding(dp(12), 0, dp(12), 0);
-                                diagnostic.setBackground(MaiChatTheme.bordered(
-                                    MaiChatTheme.BLUE_SOFT, MaiChatTheme.BORDER, 10, activity));
-                                diagnostic.setVisibility(GONE);
-                                diagnosticCards.put(id, diagnostic);
-                                LayoutParams diagnosticLayout = matchWrap();
-                                diagnosticLayout.bottomMargin = dp(12);
-                                addView(diagnostic, diagnosticLayout);
-                                LinearLayout media = column();
-                                media.setVisibility(GONE);
-                                mediaCards.put(id, media);
-                                LayoutParams mediaLayout = matchWrap();
-                                mediaLayout.bottomMargin = dp(12);
-                                addView(media, mediaLayout);
-                            }
+                    for (int i = 0; i < array.length(); i++) {
+                        JSONObject part = array.optJSONObject(i);
+                        String id = part.optString("id"), kind = part.optString("kind");
+                        // 思考正文不创建视图；本行底部的状态文字已足够提示进度。
+                        if (kind.equals("reasoning"))
+                            continue;
+                        TextView view = kind.equals("text") ? MaiChatTypography.body(activity)
+                                                            : text("", 12, MaiChatTheme.SECONDARY);
+                        parts.put(id, view);
+                        LayoutParams lp = matchWrap();
+                        lp.bottomMargin = dp(12);
+                        addView(view, lp);
+                        if (!kind.equals("text"))
+                            view.setOnClickListener(v -> {
+                                if (!expanded.add(id))
+                                    expanded.remove(id);
+                                adapter.notifyDataSetChanged();
+                            });
+                        if (expanded.contains(id)) {
+                            TextView detail = text("", 12, MaiChatTheme.SECONDARY);
+                            detail.setTextIsSelectable(true);
+                            detail.setTypeface(android.graphics.Typeface.MONOSPACE);
+                            parts.put(id + ":detail", detail);
+                            addView(detail, lp);
                         }
+                        if (kind.equals("tool")) {
+                            Button preview = button("预览 PDF", "预览生成的 PDF", clicked -> {
+                                Object stored = clicked.getTag();
+                                if (!(stored instanceof String)) return;
+                                File pdf = controller.workspaceFile((String) stored);
+                                PdfPreviewDialog.show(activity, pdf,
+                                    controller.workspaceDirectoryForPreview());
+                            });
+                            preview.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+                            preview.setPadding(dp(12), 0, dp(12), 0);
+                            preview.setBackground(MaiChatTheme.bordered(
+                                MaiChatTheme.BLUE_SOFT, MaiChatTheme.BORDER, 10, activity));
+                            preview.setVisibility(GONE);
+                            pdfCards.put(id, preview);
+                            LayoutParams cardLayout = matchWrap();
+                            cardLayout.bottomMargin = dp(12);
+                            addView(preview, cardLayout);
+                            Button diagnostic = button("分享排障日志", "分享导出的 TXT 日志", clicked -> {
+                                Object stored = clicked.getTag();
+                                if (!(stored instanceof String)) return;
+                                File report = controller.workspaceFile((String) stored);
+                                if (report != null && report.isFile()) shareDiagnosticFile(report);
+                            });
+                            diagnostic.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+                            diagnostic.setPadding(dp(12), 0, dp(12), 0);
+                            diagnostic.setBackground(MaiChatTheme.bordered(
+                                MaiChatTheme.BLUE_SOFT, MaiChatTheme.BORDER, 10, activity));
+                            diagnostic.setVisibility(GONE);
+                            diagnosticCards.put(id, diagnostic);
+                            LayoutParams diagnosticLayout = matchWrap();
+                            diagnosticLayout.bottomMargin = dp(12);
+                            addView(diagnostic, diagnosticLayout);
+                            LinearLayout media = column();
+                            media.setVisibility(GONE);
+                            mediaCards.put(id, media);
+                            LayoutParams mediaLayout = matchWrap();
+                            mediaLayout.bottomMargin = dp(12);
+                            addView(media, mediaLayout);
+                        }
+                    }
                     status = text("", 11, MaiChatTheme.SECONDARY);
                     addView(status, matchWrap());
                     status.setOnClickListener(v -> {
@@ -1186,14 +1211,12 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                             MarkdownRenderer.bindStreaming(view, source);
                         }
                     } else {
-                        view.setText(kind.equals("reasoning")
-                                ? "思考过程  ›"
-                                : toolStatus(part.optString("state")) + " " + part.optString("tool") + "  ›");
+                        view.setText(toolStatus(part.optString("state")) + " "
+                            + part.optString("tool") + "  ›");
                         TextView detail = parts.get(id + ":detail");
                         if (detail != null)
-                            detail.setText(kind.equals("reasoning") ? part.optString("text")
-                                                                    : part.optString("input") + "\n"
-                                        + part.optString("output") + "\n" + part.optString("error"));
+                            detail.setText(part.optString("input") + "\n"
+                                + part.optString("output") + "\n" + part.optString("error"));
                         Button pdfCard = pdfCards.get(id);
                         if (pdfCard != null) {
                             String path = pdfPathFromToolOutput(part);

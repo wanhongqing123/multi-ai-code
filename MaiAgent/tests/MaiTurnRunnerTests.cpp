@@ -12,6 +12,8 @@
 #include <utility>
 #include <vector>
 
+#include <json.hpp>
+
 #include "MaiAgent.h"
 #include "MaiFilePath.h"
 #include "MaiFileSystem.h"
@@ -88,14 +90,38 @@ public:
         return "{}";
     }
     MaiToolResult execute(const std::string& arguments, const MaiToolContext& context) override {
-        (void)arguments;
         (void)context;
+        const auto args = nlohmann::json::parse(arguments, nullptr, false);
+        if (!args.is_object() || args.contains("message"))
+            return MaiToolResult::failure(
+                MaiErrorCode::InvalidInput,
+                R"({"code":"invalid_input","message":"unsupported media parameter: message"})");
         return MaiToolResult::success("{\"status\":\"SUCCEEDED\",\"path\":\"" + mPath +
                                       "\",\"reply\":\"Video ready\"}");
     }
 
 private:
     std::string mPath;
+};
+
+class UnavailableStatusTool final : public MaiTool {
+public:
+    std::atomic<int> calls{0};
+    std::string name() const override {
+        return "unavailable_status_video";
+    }
+    std::string description() const override {
+        return "Synthetic status failure";
+    }
+    std::string parametersSchema() const override {
+        return "{}";
+    }
+    MaiToolResult execute(const std::string&, const MaiToolContext&) override {
+        ++calls;
+        return MaiToolResult::failure(
+            MaiErrorCode::InvalidInput,
+            R"({"code":"invalid_input","message":"Status query input is invalid"})");
+    }
 };
 
 // 把事件流录下来，方便断言顺序和内容。
@@ -616,6 +642,87 @@ void test_completed_video_is_forwarded_without_a_user_poll() {
     MaiFileSystem::removeFile(path);
 }
 
+void test_status_check_error_keeps_accepted_task_active() {
+    auto store = makeMaiMemoryStore();
+    MaiSessionStore* observer = store.get();
+    MaiSession session;
+    session.id = MaiIdGenerator::newSessionId();
+    session.directory = MaiFileSystem::temporaryDirectory().toUtf8();
+    session.created = MaiTime::getCurrentTime();
+    store->putSession(session);
+    MaiSpecialistTask task;
+    task.id = MaiIdGenerator::generate("spt_");
+    task.ownerSessionId = session.id;
+    task.specialistName = "unavailable_status_video";
+    task.providerTaskId = "provider-already-accepted";
+    task.created = session.created;
+    CHECK(!store->insertSpecialistTask(task));
+    auto tools = std::make_unique<MaiToolRegistry>();
+    auto checker = std::make_unique<UnavailableStatusTool>();
+    UnavailableStatusTool* observedChecker = checker.get();
+    tools->add(std::move(checker));
+    MaiAgent agent(std::move(store), std::make_unique<MaiFakeModelClient>(), std::move(tools));
+    MaiSpecialistTask loaded;
+    for (int attempt = 0; attempt < 200; ++attempt) {
+        if (observedChecker->calls.load() > 0 &&
+            observer->getSpecialistTask(task.id, session.id, loaded) && loaded.lastCheckedAt != 0)
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    CHECK(observedChecker->calls.load() > 0);
+    CHECK(loaded.status == MaiSpecialistTaskStatus::Running);
+    CHECK(loaded.providerTaskId == task.providerTaskId);
+    CHECK(observer->listUnnotifiedSpecialistTasks(10).empty());
+}
+
+void test_old_status_failure_recovers_and_delivers_original_task() {
+    const MaiFilePath path = MaiFileSystem::temporaryDirectory().append(
+        MaiFilePath::fromUtf8("mai-recovered-" + MaiIdGenerator::generate("tmp_") + ".mp4"));
+    CHECK(!MaiFileSystem::writeFile(path, "fake recovered video bytes"));
+    auto store = makeMaiMemoryStore();
+    MaiSessionStore* observer = store.get();
+    MaiSession session;
+    session.id = MaiIdGenerator::newSessionId();
+    session.directory = MaiFileSystem::temporaryDirectory().toUtf8();
+    session.created = MaiTime::getCurrentTime();
+    store->putSession(session);
+    MaiSpecialistTask task;
+    task.id = MaiIdGenerator::generate("spt_");
+    task.ownerSessionId = session.id;
+    task.specialistName = "fake_video";
+    task.providerTaskId = "provider-already-accepted";
+    task.created = session.created;
+    CHECK(!store->insertSpecialistTask(task));
+    CHECK(!store->finishSpecialistTask(task.id, session.id, MaiSpecialistTaskStatus::Failed,
+                                       "Status check failed: unsupported media parameter: message",
+                                       {}, session.created + 1));
+    const auto oldNotice = store->reserveSpecialistNotification(
+        task.id, session.id, "old-status-notice", session.created + 2);
+    CHECK(oldNotice.isOk());
+    if (oldNotice.isOk())
+        CHECK(!store->markSpecialistNotified(task.id, session.id, oldNotice.value(),
+                                             session.created + 3));
+    auto tools = std::make_unique<MaiToolRegistry>();
+    tools->add(std::make_unique<FinishedVideoTool>(path.toUtf8()));
+    auto model = std::make_unique<MaiFakeModelClient>();
+    MaiFakeModelClient::Turn answer;
+    answer.textChunks = {"Recovered the original task."};
+    model->setRepeatingTurn(answer);
+    MaiAgent agent(std::move(store), std::move(model), std::move(tools));
+    MaiSpecialistTask loaded;
+    for (int attempt = 0; attempt < 200; ++attempt) {
+        if (observer->getSpecialistTask(task.id, session.id, loaded) && loaded.notifiedAt != 0 &&
+            loaded.status == MaiSpecialistTaskStatus::Succeeded)
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    CHECK(loaded.status == MaiSpecialistTaskStatus::Succeeded);
+    CHECK(loaded.outputPath == path.toUtf8());
+    CHECK(loaded.notificationMessageId != "old-status-notice");
+    agent.waitIdle();
+    MaiFileSystem::removeFile(path);
+}
+
 }  // namespace
 
 int main() {
@@ -634,6 +741,8 @@ int main() {
     test_streamed_text_is_checkpointed_before_network_finishes();
     test_specialist_text_reply_reaches_parent_without_a_file();
     test_completed_video_is_forwarded_without_a_user_poll();
+    test_status_check_error_keeps_accepted_task_active();
+    test_old_status_failure_recovers_and_delivers_original_task();
     if (failures == 0) std::printf("loop tests passed\n");
     return failures == 0 ? 0 : 1;
 }

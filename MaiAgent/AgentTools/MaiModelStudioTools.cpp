@@ -1388,10 +1388,13 @@ private:
         if (response.error) return *response.error;
         const Json output = response.body.value("output", Json::object());
         const std::string status = value(output, "task_status");
-        if (status == "FAILED" || status == "UNKNOWN")
+        if (status == "FAILED")
             return failure(MaiErrorCode::Network, "task_failed",
                            value(output, "message").empty() ? "Wan animation task failed"
                                                             : value(output, "message"));
+        if (status == "UNKNOWN")
+            return failure(MaiErrorCode::NotFound, "task_status_unknown",
+                           "Wan animation task status is unknown; keep the accepted task ID");
         if (status == "PENDING" || status == "RUNNING" || status == "CANCELED")
             return MaiToolResult::success(Json{{"conversation_id", conversationId},
                                                {"task_id", taskId},

@@ -582,6 +582,42 @@ void contract_specialist_delete(MaiSessionStore& store, const char* which) {
     CHECK(!store.getSpecialistTask(task.id, owner, loaded));
 }
 
+void contract_specialist_status_recovery(MaiSessionStore& store, const char* which) {
+    std::printf("   [%s] recover only unverified cloud status checks\n", which);
+    const std::string owner = MaiIdGenerator::newSessionId();
+    store.putSession(makeSession(owner, "recovery owner", 1));
+    MaiSpecialistTask task;
+    task.id = MaiIdGenerator::generate("spt_");
+    task.ownerSessionId = owner;
+    task.specialistName = "wan_animate_mix";
+    task.providerTaskId = "provider-accepted";
+    task.intent = "Replace one person";
+    task.created = 1000;
+    CHECK(!store.insertSpecialistTask(task));
+    CHECK(!store.finishSpecialistTask(task.id, owner, MaiSpecialistTaskStatus::Failed,
+                                      "Status check failed: unsupported media parameter: message",
+                                      {}, 1001));
+    const auto notice = store.reserveSpecialistNotification(task.id, owner, "old-notice", 1002);
+    CHECK(notice.isOk());
+    if (notice.isOk()) CHECK(!store.markSpecialistNotified(task.id, owner, notice.value(), 1003));
+    MaiSpecialistTask providerFailure = task;
+    providerFailure.id = MaiIdGenerator::generate("spt_");
+    CHECK(!store.insertSpecialistTask(providerFailure));
+    CHECK(!store.finishSpecialistTask(providerFailure.id, owner, MaiSpecialistTaskStatus::Failed,
+                                      "Provider reported generation failure", {}, 1004));
+    CHECK(!store.recoverStatusCheckFailures());
+    MaiSpecialistTask loaded;
+    CHECK(store.getSpecialistTask(task.id, owner, loaded));
+    CHECK(loaded.status == MaiSpecialistTaskStatus::Running);
+    CHECK(loaded.providerTaskId == task.providerTaskId);
+    CHECK(loaded.errorText.empty());
+    CHECK(loaded.finalText.empty());
+    CHECK(loaded.notificationMessageId.empty());
+    CHECK(loaded.notifiedAt == 0);
+    CHECK(store.getSpecialistTask(providerFailure.id, owner, loaded));
+    CHECK(loaded.status == MaiSpecialistTaskStatus::Failed);
+}
+
 void runContract(MaiSessionStore& store, const char* which) {
     contract_session_crud(store, which);
     contract_list_sessions_ordering(store, which);
@@ -596,6 +632,7 @@ void runContract(MaiSessionStore& store, const char* which) {
     contract_concurrent_writes(store, which);
     contract_specialist_reply(store, which);
     contract_specialist_delete(store, which);
+    contract_specialist_status_recovery(store, which);
     const std::string owner = MaiIdGenerator::newSessionId();
     const std::string other = MaiIdGenerator::newSessionId();
     store.putSession(makeSession(owner, "specialist owner", 1));

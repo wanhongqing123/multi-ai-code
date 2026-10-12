@@ -355,6 +355,24 @@ public:
         return {};
     }
 
+    MaiError recoverStatusCheckFailures() override {
+        std::lock_guard<std::mutex> lock(mMutex);
+        sqlite3_stmt* statement = prepareLocked(
+            "UPDATE specialist_tasks SET status = 1, final_text = '', error_text = '', "
+            "output_path = '', last_checked_at = 0, notification_message_id = '', "
+            "notification_attempt_at = 0, notified_at = 0 "
+            "WHERE status = 4 AND provider_task_id != '' "
+            "AND instr(error_text, 'Status check failed:') = 1");
+        if (!statement) return mLastWriteError;
+        Reset guard(statement);
+        if (sqlite3_step(statement) != SQLITE_DONE) {
+            noteError("specialist status recovery failed: " +
+                      std::string(sqlite3_errmsg(mDatabase)));
+            return mLastWriteError;
+        }
+        return {};
+    }
+
     MaiError finishSpecialistTask(const std::string& taskId, const std::string& ownerSessionId,
                                   MaiSpecialistTaskStatus status, const std::string& finalText,
                                   const std::string& outputPath, MaiMillis finishedAt) override {

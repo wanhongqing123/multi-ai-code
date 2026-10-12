@@ -149,6 +149,24 @@ public:
         return {};
     }
 
+    MaiError recoverStatusCheckFailures() override {
+        std::lock_guard<std::mutex> lock(mMutex);
+        for (auto& [_, task] : mSpecialistTasks) {
+            if (task.status != MaiSpecialistTaskStatus::Failed || task.providerTaskId.empty() ||
+                task.errorText.rfind("Status check failed:", 0) != 0)
+                continue;
+            task.status = MaiSpecialistTaskStatus::Running;
+            task.finalText.clear();
+            task.errorText.clear();
+            task.outputPath.clear();
+            task.lastCheckedAt = 0;
+            task.notificationMessageId.clear();
+            task.notificationAttemptAt = 0;
+            task.notifiedAt = 0;
+        }
+        return {};
+    }
+
     MaiError finishSpecialistTask(const std::string& taskId, const std::string& ownerSessionId,
                                   MaiSpecialistTaskStatus status, const std::string& finalText,
                                   const std::string& outputPath, MaiMillis finishedAt) override {

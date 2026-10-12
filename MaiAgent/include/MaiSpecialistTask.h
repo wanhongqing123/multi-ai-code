@@ -62,6 +62,10 @@ public:
     virtual MaiError updateSpecialistProgress(const std::string& taskId,
                                               const std::string& ownerSessionId,
                                               MaiMillis checkedAt) = 0;
+    // 旧版本可能把一次状态查询错误误写成 Failed。只恢复带有云端任务 ID、且错误
+    // 明确以 "Status check failed:" 开头的记录；清除旧通知状态后继续只读轮询。
+    // 不触发新的付费提交，也不恢复供应商明确报告失败的任务。
+    virtual MaiError recoverStatusCheckFailures() = 0;
     // A text-only specialist may succeed without a path. Media generation tools must verify
     // their output exists before calling this with Succeeded.
     virtual MaiError finishSpecialistTask(const std::string& taskId,

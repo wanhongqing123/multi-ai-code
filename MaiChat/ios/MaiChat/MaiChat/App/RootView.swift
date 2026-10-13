@@ -34,7 +34,7 @@ struct RootView: View {
     private var videoDockHeight: CGFloat {
         guard appState.agentVideoPresentation != nil, !isVideoExpanded else { return 0 }
         // 键盘弹出时给下半部输入区留空间，播放实例仍保持运行。
-        return keyboardVisible ? 240 : min(max(UIScreen.main.bounds.height * 0.45, 300), 460)
+        return keyboardVisible ? 240 : min(max(UIScreen.main.bounds.height * 0.55, 320), 560)
     }
 
     var body: some View {

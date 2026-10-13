@@ -34,13 +34,28 @@ function createAuthService(options) {
       !Number.isSafeInteger(sdkAppId) || sdkAppId <= 0)
     throw new Error('Auth service configuration is incomplete');
   const now = options.now || Date.now;
-  const allowedPhones = new Set(options.allowedPhones || []);
   const modelAllowedPhones = new Set(options.modelAllowedPhones || []);
   const arkCredentials = new Map();
   const arkIssuanceInFlight = new Map();
   const bailianCredentials = new Map();
   const bailianIssuanceInFlight = new Map();
-  const sendable = phone => allowedPhones.size === 0 || allowedPhones.has(phone);
+  // 环境变量里的旧白名单只导入一次。之后每次发码都查数据库，管理员增删立即生效。
+  // 导入标记与号码放在同一事务，避免服务重启时把已移除的号码重新加回来。
+  db.transaction(() => {
+    const imported = db.prepare(`SELECT value FROM auth_settings
+      WHERE key='sms_allowlist_imported_v1'`).get();
+    if (imported) return;
+    const insert = db.prepare(`INSERT OR IGNORE INTO sms_allowed_phones(phone_e164,created_at)
+      VALUES(?,?)`);
+    for (const input of options.allowedPhones || []) {
+      const phone = normalizePhone(input);
+      if (phone) insert.run(phone, now());
+    }
+    db.prepare(`INSERT INTO auth_settings(key,value)
+      VALUES('sms_allowlist_imported_v1','1')`).run();
+  })();
+  const allowedPhone = db.prepare('SELECT 1 FROM sms_allowed_phones WHERE phone_e164=?');
+  const sendable = phone => options.openRegistration === true || !!allowedPhone.get(phone);
   const keyedHash = text => createHmac('sha256', secret).update(text).digest('hex');
   const phoneHash = phone => keyedHash(`phone:${phone}`);
   const ipHash = ip => keyedHash(`ip:${ip || 'unknown'}`);

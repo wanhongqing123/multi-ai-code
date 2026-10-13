@@ -58,8 +58,6 @@ function start(env = process.env) {
     .map(normalizePhone).filter(Boolean);
   const modelAllowedPhones = (env.MAICHAT_MODEL_ALLOWED_PHONES || '').split(',')
     .map(normalizePhone).filter(Boolean);
-  if (!allowedPhones.length && env.MAICHAT_AUTH_OPEN_REGISTRATION !== '1')
-    throw new Error('Configure a test phone allowlist before starting auth');
   if (!env.MAICHAT_AUTH_DB_PATH || !env.MAICHAT_AUTH_HMAC_KEY ||
       !env.MAICHAT_IM_SECRET_KEY || !env.MAICHAT_IM_SDK_APP_ID)
     throw new Error('Auth database or server signing secrets are missing');
@@ -71,6 +69,7 @@ function start(env = process.env) {
     issueArkCredential: createArkCredentialIssuer(env),
     issueBailianCredential: createBailianCredentialIssuer(env),
     sdkAppId: Number(env.MAICHAT_IM_SDK_APP_ID), allowedPhones,
+    openRegistration: env.MAICHAT_AUTH_OPEN_REGISTRATION === '1',
     modelAllowedPhones
   });
   const port = Number(env.MAICHAT_AUTH_PORT || 9100);

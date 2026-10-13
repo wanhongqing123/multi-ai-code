@@ -7,6 +7,7 @@ const test = require('node:test');
 const { openStore } = require('./store');
 const { createAuthService } = require('./service');
 const { bindLegacy } = require('./bind-legacy');
+const { manageSmsAllowlist } = require('./manage-sms-allowlist');
 
 function fixture(allowedPhones = ['+8613900000001'], extra = {}) {
   const db = openStore(':memory:');
@@ -39,6 +40,41 @@ function fixture(allowedPhones = ['+8613900000001'], extra = {}) {
   );
   return { db, messages, call, rawCall, advance(milliseconds) { current += milliseconds; } };
 }
+
+test('SMS allowlist changes take effect without recreating the auth service', async () => {
+  const setup = fixture();
+  const path = '/v1/auth/sms/challenge';
+  const otherPhone = '13900000002';
+  assert.equal((await setup.call('POST', path, { phone: otherPhone })).statusCode, 200);
+  assert.equal(setup.messages.length, 0);
+  assert.deepEqual(manageSmsAllowlist(setup.db, 'add', otherPhone),
+    { allowed: true, changed: true });
+  assert.equal((await setup.call('POST', path, { phone: otherPhone })).statusCode, 200);
+  assert.equal(setup.messages.length, 1);
+  setup.advance(61_000);
+  assert.deepEqual(manageSmsAllowlist(setup.db, 'remove', otherPhone),
+    { allowed: false, changed: true });
+  assert.equal((await setup.call('POST', path, { phone: otherPhone })).statusCode, 200);
+  assert.equal(setup.messages.length, 1);
+  setup.db.close();
+});
+
+test('the old environment allowlist is imported only once', () => {
+  const setup = fixture();
+  assert.equal(manageSmsAllowlist(setup.db, 'check', '13900000001').allowed, true);
+  manageSmsAllowlist(setup.db, 'remove', '13900000001');
+  // 同一个数据库再次初始化时，已删除的号码不能被旧环境变量复活。
+  createAuthService({
+    db: setup.db,
+    sms: { async send() {} },
+    secret: 'test-only-auth-hmac-key-keep-on-server-123456',
+    imSecret: 'test-only-tencent-im-key-keep-on-server-123456',
+    sdkAppId: 123456789,
+    allowedPhones: ['+8613900000001']
+  });
+  assert.equal(manageSmsAllowlist(setup.db, 'check', '13900000001').allowed, false);
+  setup.db.close();
+});
 
 test('phone verification never sends SMS or logs in without the age confirmation', async () => {
   const setup = fixture();

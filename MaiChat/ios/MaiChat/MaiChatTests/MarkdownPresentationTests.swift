@@ -360,6 +360,12 @@ final class MarkdownPresentationTests: XCTestCase {
         XCTAssertEqual(VoiceTranscriptionHitTest.target(
             translation: CGSize(width: -90, height: 0), location: nil,
             cancelFrame: nil, editFrame: nil), .cancel)
+        XCTAssertEqual(VoiceTranscriptionHitTest.target(
+            translation: CGSize(width: -90, height: 0), location: nil,
+            cancelFrame: nil, editFrame: nil, cancelDragDistance: 120), .send)
+        XCTAssertEqual(VoiceTranscriptionHitTest.target(
+            translation: CGSize(width: -130, height: 0), location: nil,
+            cancelFrame: nil, editFrame: nil, cancelDragDistance: 120), .cancel)
     }
 
     @MainActor

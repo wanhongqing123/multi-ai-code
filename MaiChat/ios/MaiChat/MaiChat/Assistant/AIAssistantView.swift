@@ -2412,7 +2412,8 @@ private struct AIComposer: View, Equatable {
             translation: translation,
             location: location,
             cancelFrame: transcriptionPresentation.actionFrames[.cancel],
-            editFrame: transcriptionPresentation.actionFrames[.edit]
+            editFrame: transcriptionPresentation.actionFrames[.edit],
+            cancelDragDistance: 120
         )
     }
 

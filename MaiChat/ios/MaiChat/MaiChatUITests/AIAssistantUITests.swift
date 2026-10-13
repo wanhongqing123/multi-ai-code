@@ -298,6 +298,28 @@ final class AIAssistantUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [double], timeout: 10), .completed)
     }
 
+    func testVoiceTranscriptionStaysVisibleBelowDockedVideo() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--voice-docked-ui-test"]
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        let transcript = app.staticTexts["voice-transcript"]
+        let cancel = app.buttons["voice-cancel"]
+        let edit = app.buttons["voice-edit"]
+        XCTAssertTrue(transcript.waitForExistence(timeout: 15))
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5))
+        XCTAssertTrue(edit.waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(transcript.frame.minY, app.frame.height * 0.5)
+        XCTAssertLessThan(transcript.frame.maxY, app.frame.height * 0.85)
+        XCTAssertGreaterThan(cancel.frame.minY, transcript.frame.maxY)
+        XCTAssertLessThan(cancel.frame.maxY, app.frame.maxY)
+        XCTAssertLessThan(edit.frame.maxY, app.frame.maxY)
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "voice-transcription-below-video"
+        capture.lifetime = .keepAlways
+        add(capture)
+    }
+
     func testFfplaySaveKeepsPlayerAlive() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--ai-ui-test", "--ffplay-ui-test"]

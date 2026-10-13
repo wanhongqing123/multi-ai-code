@@ -513,14 +513,15 @@ enum VoiceTranscriptionTarget: Hashable {
 
 enum VoiceTranscriptionHitTest {
     static func target(translation: CGSize, location: CGPoint?,
-                       cancelFrame: CGRect?, editFrame: CGRect?) -> VoiceTranscriptionTarget {
+                       cancelFrame: CGRect?, editFrame: CGRect?,
+                       cancelDragDistance: CGFloat = 70) -> VoiceTranscriptionTarget {
         if let location {
             if let frame = cancelFrame, !frame.isEmpty,
                frame.insetBy(dx: -16, dy: -16).contains(location) { return .cancel }
             if let frame = editFrame, !frame.isEmpty,
                frame.insetBy(dx: -16, dy: -16).contains(location) { return .edit }
         }
-        if translation.width < -70 { return .cancel }
+        if translation.width < -cancelDragDistance { return .cancel }
         if translation.width > 70, translation.height < -35 { return .edit }
         return .send
     }

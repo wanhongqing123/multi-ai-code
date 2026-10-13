@@ -263,6 +263,8 @@ struct MaiChatApp: App {
                         MaiFfplaySeekUITestRoot(startSeconds: 6)
                     } else if ProcessInfo.processInfo.arguments.contains("--ffplay-agent-dock-ui-test") {
                         MaiFfplayAgentDockUITestRoot()
+                    } else if ProcessInfo.processInfo.arguments.contains("--voice-docked-ui-test") {
+                        VoiceTranscriptionDockUITestRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--im-landscape-ui-test") {
                         ChatLandscapeUITestRoot()
                     } else {

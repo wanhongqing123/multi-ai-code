@@ -1703,63 +1703,91 @@ private struct VoiceTranscriptionHighlight: View {
     let onEdit: () -> Void
 
     var body: some View {
-        ZStack {
-            Color.black.opacity(0.68)
-                .ignoresSafeArea()
+        GeometryReader { geometry in
+            let compact = geometry.size.height < 560
+            ZStack {
+                Color.black.opacity(0.68)
+                    .ignoresSafeArea()
 
-            VStack(spacing: 0) {
-                Spacer(minLength: 120)
+                VStack(spacing: 0) {
+                    if compact {
+                        // 视频占据上半屏时，语音弹层只剩下半屏高度；文字固定在最上方。
+                        // 只显示实时转写末尾，完整结果仍由识别器在松手后提交。
+                        Text("语音转文字")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.85))
+                            .padding(.top, 16)
+                        Text(transcript.isEmpty ? "正在听，请说话…" : String(transcript.suffix(180)))
+                            .font(.system(size: 19, weight: .medium))
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity,
+                                   alignment: .topLeading)
+                            .lineLimit(3)
+                            .truncationMode(.head)
+                            .padding(16)
+                            .background(
+                                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                    .fill(RemoteIMStyle.blue.opacity(0.94))
+                            )
+                            .frame(height: min(geometry.size.height * 0.34, 144))
+                            .padding(.horizontal, 18)
+                            .padding(.top, 10)
+                            .accessibilityIdentifier("voice-transcript")
+                        Text(statusText)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.top, 10)
+                        Spacer(minLength: 8)
+                    } else {
+                        Spacer(minLength: 120)
+                        if transcript.isEmpty {
+                            listeningIndicator(size: 104)
+                        } else {
+                            Text(transcript)
+                                .font(.system(size: 24, weight: .medium))
+                                .foregroundStyle(.white)
+                                .multilineTextAlignment(.leading)
+                                .lineLimit(8)
+                                .minimumScaleFactor(0.78)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 24)
+                                .padding(.vertical, 22)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                                        .fill(RemoteIMStyle.blue.opacity(0.94))
+                                )
+                                .padding(.horizontal, 30)
+                                .transition(.opacity)
+                                .accessibilityIdentifier("voice-transcript")
+                            listeningIndicator(size: 58)
+                                .padding(.top, 18)
+                        }
+                        Text(statusText)
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.top, 16)
+                        Spacer()
+                    }
 
-                if transcript.isEmpty {
-                    listeningIndicator(size: 104)
-                } else {
-                    Text(transcript)
-                        .font(.system(size: 24, weight: .medium))
-                        .foregroundStyle(.white)
-                        .multilineTextAlignment(.leading)
-                        .lineLimit(8)
-                        .minimumScaleFactor(0.78)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 22)
-                        .background(
-                            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                                .fill(RemoteIMStyle.blue.opacity(0.94))
+                    HStack(spacing: compact ? 92 : 72) {
+                        targetBadge(
+                            title: "取消",
+                            systemImage: "xmark",
+                            selected: target == .cancel,
+                            selectedColor: .red
                         )
-                        .padding(.horizontal, 30)
-                        .transition(.opacity)
-
-                    listeningIndicator(size: 58)
-                        .padding(.top, 18)
+                        targetBadge(
+                            title: "编辑",
+                            systemImage: "pencil",
+                            selected: target == .edit || target == .finishingEdit,
+                            selectedColor: RemoteIMStyle.blue
+                        )
+                    }
+                    .padding(.bottom, compact ? 18 : 76)
                 }
-
-                Text(statusText)
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .padding(.top, 16)
-
-                Spacer()
-
-                HStack(spacing: 72) {
-                    targetBadge(
-                        title: "取消",
-                        systemImage: "xmark",
-                        selected: target == .cancel,
-                        selectedColor: .red
-                    )
-                    targetBadge(
-                        title: "编辑",
-                        systemImage: "pencil",
-                        selected: target == .edit || target == .finishingEdit,
-                        selectedColor: RemoteIMStyle.blue
-                    )
-                }
-                .padding(.bottom, 76)
             }
         }
-
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(statusText)
+        .accessibilityElement(children: .contain)
     }
 
     private func listeningIndicator(size: CGFloat) -> some View {
@@ -1812,6 +1840,7 @@ private struct VoiceTranscriptionHighlight: View {
         .scaleEffect(selected ? 1.12 : 1)
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier(systemImage == "xmark" ? "voice-cancel" : "voice-edit")
         .disabled(target == .finishingSend || target == .finishingEdit)
     }
 
@@ -1839,6 +1868,31 @@ private struct VoiceTranscriptionHighlight: View {
         }
     }
 }
+
+#if targetEnvironment(simulator)
+struct VoiceTranscriptionDockUITestRoot: View {
+    @StateObject private var presentation = VoiceTranscriptionPresentation()
+
+    var body: some View {
+        GeometryReader { geometry in
+            VStack(spacing: 0) {
+                Color.black
+                    .frame(height: geometry.size.height * 0.56)
+                    .accessibilityIdentifier("voice-test-video")
+                VoiceTranscriptionHighlightHost(presentation: presentation)
+                    .frame(height: geometry.size.height * 0.44)
+                    .clipped()
+            }
+        }
+        .task {
+            presentation.target = .send
+            presentation.updateLiveText(
+                String(repeating: "正在识别你说的话，文字应始终显示在视频下方。", count: 8),
+                sessionID: 1)
+        }
+    }
+}
+#endif
 
 private struct ChatDetailHeader: View {
     let contact: RemoteIMContact

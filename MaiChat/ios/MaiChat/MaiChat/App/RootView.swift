@@ -28,31 +28,24 @@ struct RootView: View {
     @State private var isShowingNotificationPermissionPrompt = false
     @State private var isVideoExpanded = false
     @State private var keyboardVisible = false
-    @State private var viewportSize: CGSize = .zero
     @AppStorage("maichat.notification-preprompt-dismissed")
     private var notificationPermissionPromptDismissed = false
 
-    private var videoDockHeight: CGFloat {
-        guard appState.agentVideoPresentation != nil, !isVideoExpanded,
-              !usesLandscapeVideoLayout else { return 0 }
-        // 键盘弹出时给下半部输入区留空间，播放实例仍保持运行。
-        return keyboardVisible ? 240 : min(max(UIScreen.main.bounds.height * 0.55, 320), 560)
-    }
-
-    private var usesLandscapeVideoLayout: Bool {
-        viewportSize.width > viewportSize.height && viewportSize.width >= 600
-    }
-
-    private var videoDockWidth: CGFloat {
-        guard appState.agentVideoPresentation != nil, !isVideoExpanded,
-              usesLandscapeVideoLayout else { return 0 }
-        // 横屏把视频放左侧，让聊天和创作中心始终有足够宽度输入指令。
-        let fraction: CGFloat = keyboardVisible ? 0.42 : 0.52
-        return min(viewportSize.width * fraction, viewportSize.width - 340)
-    }
-
     var body: some View {
-        ZStack {
+        GeometryReader { viewport in
+            content(viewportSize: viewport.size)
+        }
+    }
+
+    private func content(viewportSize: CGSize) -> some View {
+        let landscape = viewportSize.width > viewportSize.height && viewportSize.width >= 600
+        let hasDock = appState.agentVideoPresentation != nil && !isVideoExpanded
+        // 外层窗口尺寸直接决定分屏，不把子视图测量值写回状态，避免旋转时反复重排。
+        let dockHeight: CGFloat = hasDock && !landscape
+            ? (keyboardVisible ? 240 : min(max(viewportSize.height * 0.62, 320), 560)) : 0
+        let dockWidth: CGFloat = hasDock && landscape
+            ? min(viewportSize.width * (keyboardVisible ? 0.42 : 0.52), viewportSize.width - 340) : 0
+        return ZStack {
             VStack(spacing: 0) {
                 if appState.shouldShowInitialLogin {
                     InitialLoginView()
@@ -195,24 +188,21 @@ struct RootView: View {
         .animation(.easeOut(duration: 0.18), value: contactGroupActionName)
         .animation(.easeOut(duration: 0.18), value: renamingContactGroup)
         .animation(.easeOut(duration: 0.18), value: deletingContactGroup)
-        .padding(.top, videoDockHeight)
-        .padding(.leading, videoDockWidth)
+        .padding(.top, dockHeight)
+        .padding(.leading, dockWidth)
         .background(Color(red: 0.966, green: 0.976, blue: 0.988).ignoresSafeArea())
         // 竖屏上下分区，横屏左右分区；聊天或创作中心始终保留可触摸的输入区。
         // 全屏切换只改变同一个播放器的尺寸，不重新打开文件或重置播放位置。
         .overlay {
             GeometryReader { geometry in
-                Color.clear
-                    .onAppear { viewportSize = geometry.size }
-                    .onChange(of: geometry.size) { viewportSize = $0 }
                 if let presentation = appState.agentVideoPresentation {
                     MaiFfplayVideoScreen(path: presentation.path) {
                         appState.agentVideoPresentation = nil
                     }
                     .frame(width: isVideoExpanded ? geometry.size.width :
-                           (usesLandscapeVideoLayout ? videoDockWidth : geometry.size.width),
+                           (landscape ? dockWidth : geometry.size.width),
                            height: isVideoExpanded ? geometry.size.height :
-                           (usesLandscapeVideoLayout ? geometry.size.height : videoDockHeight))
+                           (landscape ? geometry.size.height : dockHeight))
                     .overlay(alignment: .topTrailing) {
                         Button {
                             isVideoExpanded.toggle()
@@ -229,10 +219,10 @@ struct RootView: View {
                         .padding(.top, isVideoExpanded ? max(geometry.safeAreaInsets.top, 58) + 12 : 12)
                         .padding(.trailing, 12)
                     }
-                    .position(x: isVideoExpanded || !usesLandscapeVideoLayout ?
-                              geometry.size.width / 2 : videoDockWidth / 2,
-                              y: isVideoExpanded || usesLandscapeVideoLayout ?
-                              geometry.size.height / 2 : videoDockHeight / 2)
+                    .position(x: isVideoExpanded || !landscape ?
+                              geometry.size.width / 2 : dockWidth / 2,
+                              y: isVideoExpanded || landscape ?
+                              geometry.size.height / 2 : dockHeight / 2)
                     .zIndex(100)
                 }
             }

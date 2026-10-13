@@ -21,7 +21,6 @@ struct AIAssistantView: View {
     @State private var confirmClear = false
     @State private var sessionDrawerOffset: CGFloat = 0
     @State private var sessionDrawerWidth: CGFloat = 320
-    @State private var viewportSize: CGSize = .zero
     @State private var showsWideSidebar = true
     @State private var isAttachmentPanelPresented = false
     @State private var composerFocusController = AIComposerFocusController()
@@ -44,16 +43,20 @@ struct AIAssistantView: View {
         #endif
     }
 
-    private var usesWideLayout: Bool {
-        viewportSize.width >= 700 && viewportSize.width > viewportSize.height
+    var body: some View {
+        GeometryReader { viewport in
+            content(viewportSize: viewport.size)
+        }
     }
 
-    var body: some View {
-        ZStack(alignment: .topTrailing) {
+    private func content(viewportSize: CGSize) -> some View {
+        let wideLayout = viewportSize.width >= 700 && viewportSize.width > viewportSize.height
+        return ZStack(alignment: .topTrailing) {
             HStack(spacing: 0) {
-                if usesWideLayout && showsWideSidebar {
+                if wideLayout && showsWideSidebar {
                     // 横屏固定展示会话列表；竖屏仍使用抽屉，避免遮住阅读区域。
-                    sessionList.frame(width: min(280, viewportSize.width * 0.3))
+                    sessionList(wideLayout: true)
+                        .frame(width: min(280, viewportSize.width * 0.3))
                     Divider()
                 }
                 VStack(spacing: 0) {
@@ -69,7 +72,7 @@ struct AIAssistantView: View {
                             composerFocusController.dismiss()
                             isAttachmentPanelPresented = false
                             showActions = false
-                            openSessionDrawer()
+                            openSessionDrawer(wideLayout: wideLayout)
                         },
                         openActions: {
                             composerFocusController.dismiss()
@@ -149,7 +152,7 @@ struct AIAssistantView: View {
                 .padding(.top, 54).padding(.trailing, 14)
                 .transition(.scale(scale: 0.96, anchor: .topTrailing).combined(with: .opacity))
             }
-            if !usesWideLayout {
+            if !wideLayout {
                 GeometryReader { geometry in
                     let width = min(360, geometry.size.width * 0.86)
                     let offset = sessionDrawerX(width: width)
@@ -159,7 +162,7 @@ struct AIAssistantView: View {
                             .ignoresSafeArea()
                             .contentShape(Rectangle())
                             .onTapGesture { closeSessionDrawer() }
-                        sessionList
+                        sessionList(wideLayout: false)
                             .frame(width: width)
                             .offset(x: offset)
                             .shadow(color: Color.black.opacity(0.18 * progress), radius: 22, x: 8)
@@ -190,17 +193,10 @@ struct AIAssistantView: View {
                 .zIndex(30)
             }
         }
-        .background {
-            GeometryReader { geometry in
-                Color.clear
-                    .onAppear { viewportSize = geometry.size }
-                    .onChange(of: geometry.size) { viewportSize = $0 }
-            }
-        }
         .coordinateSpace(name: AIImagePreviewLayout.coordinateSpaceName)
         .statusBarHidden(model.previewImage != nil)
-        .simultaneousGesture(sessionDrawerOpenGesture)
-        .onChange(of: usesWideLayout) { wide in
+        .simultaneousGesture(sessionDrawerOpenGesture(wideLayout: wideLayout))
+        .onChange(of: wideLayout) { wide in
             if wide { showSessions = false }
         }
         .confirmationDialog("清空当前对话的所有消息？", isPresented: $confirmClear, titleVisibility: .visible) {
@@ -238,10 +234,10 @@ struct AIAssistantView: View {
         .interactiveSpring(response: 0.28, dampingFraction: 0.9)
     }
 
-    private var sessionDrawerOpenGesture: some Gesture {
+    private func sessionDrawerOpenGesture(wideLayout: Bool) -> some Gesture {
         DragGesture(minimumDistance: 12, coordinateSpace: .global)
             .onChanged { value in
-                guard !usesWideLayout, !showSessions,
+                guard !wideLayout, !showSessions,
                       value.startLocation.x <= 32,
                       value.translation.width > 0,
                       abs(value.translation.width) > abs(value.translation.height)
@@ -287,8 +283,8 @@ struct AIAssistantView: View {
         return -width + max(0, min(width, sessionDrawerOffset))
     }
 
-    private func openSessionDrawer() {
-        if usesWideLayout {
+    private func openSessionDrawer(wideLayout: Bool) {
+        if wideLayout {
             showsWideSidebar.toggle()
             return
         }
@@ -305,13 +301,13 @@ struct AIAssistantView: View {
         }
     }
 
-    private var sessionList: some View {
+    private func sessionList(wideLayout: Bool) -> some View {
         VStack(spacing: 0) {
             HStack {
                 Text("对话").font(.system(size: 20, weight: .bold))
                 Spacer()
-                Button(usesWideLayout ? "收起" : "完成") {
-                    if usesWideLayout { showsWideSidebar = false }
+                Button(wideLayout ? "收起" : "完成") {
+                    if wideLayout { showsWideSidebar = false }
                     else { closeSessionDrawer() }
                 }
                     .font(.system(size: 14, weight: .semibold)).buttonStyle(.plain)

@@ -87,6 +87,8 @@ final class AIAssistantUITests: XCTestCase {
         let bubble = app.buttons["agent-text-video-bubble"]
         XCTAssertTrue(bubble.waitForExistence(timeout: 15))
         XCTAssertTrue(bubble.label.contains("ffplay-sample.mp4"))
+        XCTAssertGreaterThan(bubble.frame.height, 140,
+                             "正文中的视频也应显示缩略图卡片，而不是一行文件名")
         bubble.tap()
         XCTAssertTrue(app.buttons["ffplay-close"].waitForExistence(timeout: 15))
         app.buttons["ffplay-close"].tap()

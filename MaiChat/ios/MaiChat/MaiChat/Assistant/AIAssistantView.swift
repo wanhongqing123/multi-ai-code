@@ -735,7 +735,6 @@ private struct AIMessageRow: View, Equatable {
     @State private var pdfPreviewError = false
     @State private var videoPreview: AIVideoPreviewItem?
     @State private var mediaSaveError: String?
-    @State private var fileOpenError = false
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.message == rhs.message && lhs.workspacePath == rhs.workspacePath
     }
@@ -926,11 +925,6 @@ private struct AIMessageRow: View, Equatable {
             } message: {
                 Text(mediaSaveError ?? "请检查相册权限与媒体文件。")
             }
-            .alert("无法打开文件", isPresented: $fileOpenError) {
-                Button("知道了", role: .cancel) {}
-            } message: {
-                Text("文件已被移动或删除。")
-            }
     }
     private func specialistFailureText(_ text: String) -> String? {
         if text.hasPrefix("Video task failed. ") {
@@ -987,36 +981,11 @@ private struct AIMessageRow: View, Equatable {
     @ViewBuilder private func fileMentionCard(_ mention: AIAssistantMediaMention) -> some View {
         switch mention.kind {
         case .video:
-            Button {
-                if FileManager.default.fileExists(atPath: mention.url.path) {
-                    openVideo(mention.url.path)
-                } else {
-                    fileOpenError = true
-                }
-            } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: "play.rectangle.fill")
-                        .font(.system(size: 24))
-                        .foregroundStyle(.blue)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(mention.fileName).lineLimit(1).truncationMode(.middle)
-                        Text("视频 · 点击播放")
-                            .font(AssistantMessageFont.metadata)
-                            .foregroundStyle(RemoteIMStyle.textSecondary)
-                    }
-                    Spacer(minLength: 0)
-                }
-                .font(ChatTypography.body)
-                .foregroundStyle(RemoteIMStyle.textPrimary)
-                .padding(12)
-                .frame(width: 260)
-                .background(Color(uiColor: .secondarySystemBackground),
-                            in: RoundedRectangle(cornerRadius: 12))
-                .contentShape(RoundedRectangle(cornerRadius: 12))
+            // 正文提到的本地视频和附件使用同一张缩略图卡片，避免只显示文件名。
+            AIWorkspaceVideoCard(filePath: mention.url.path,
+                                 identifier: "agent-text-video-bubble") {
+                openVideo(mention.url.path)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("播放视频 \(mention.fileName)")
-            .accessibilityIdentifier("agent-text-video-bubble")
         case .audio:
             AIWorkspaceAudioCard(filePath: mention.url.path)
         }
@@ -1307,6 +1276,7 @@ private struct AIWorkspaceImage: View {
 
 private struct AIWorkspaceVideoCard: View {
     let filePath: String
+    let identifier: String
     let open: () -> Void
     @Environment(\.displayScale) private var displayScale
     @State private var cover: UIImage?
@@ -1314,6 +1284,13 @@ private struct AIWorkspaceVideoCard: View {
     @State private var durationSeconds = 0
 
     private var exists: Bool { FileManager.default.fileExists(atPath: filePath) }
+
+    init(filePath: String, identifier: String = "agent-video-bubble",
+         open: @escaping () -> Void) {
+        self.filePath = filePath
+        self.identifier = identifier
+        self.open = open
+    }
 
     var body: some View {
         Button(action: open) {
@@ -1355,8 +1332,9 @@ private struct AIWorkspaceVideoCard: View {
         }
         .buttonStyle(.plain)
         .disabled(!exists)
-        .accessibilityLabel(exists ? "播放视频" : "视频文件已丢失")
-        .accessibilityIdentifier("agent-video-bubble")
+        .accessibilityLabel(exists ? "播放视频 \(URL(fileURLWithPath: filePath).lastPathComponent)" :
+                            "视频文件已丢失")
+        .accessibilityIdentifier(identifier)
         .task(id: filePath) {
             guard exists else { return }
             let asset = AVURLAsset(url: URL(fileURLWithPath: filePath))

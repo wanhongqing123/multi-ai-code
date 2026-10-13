@@ -298,7 +298,7 @@ final class AIAssistantUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [double], timeout: 10), .completed)
     }
 
-    func testVoiceTranscriptionStaysVisibleBelowDockedVideo() throws {
+    func testVoiceTranscriptionFloatsAboveDockedVideo() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--ai-ui-test", "--voice-docked-ui-test"]
         app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
@@ -309,11 +309,19 @@ final class AIAssistantUITests: XCTestCase {
         XCTAssertTrue(transcript.waitForExistence(timeout: 15))
         XCTAssertTrue(cancel.waitForExistence(timeout: 5))
         XCTAssertTrue(edit.waitForExistence(timeout: 5))
-        XCTAssertGreaterThan(transcript.frame.minY, app.frame.height * 0.5)
-        XCTAssertLessThan(transcript.frame.maxY, app.frame.height * 0.85)
+        XCTAssertLessThan(transcript.frame.minY, app.frame.height * 0.4)
+        XCTAssertLessThan(transcript.frame.maxY, app.frame.height * 0.65)
         XCTAssertGreaterThan(cancel.frame.minY, transcript.frame.maxY)
-        XCTAssertLessThan(cancel.frame.maxY, app.frame.maxY)
-        XCTAssertLessThan(edit.frame.maxY, app.frame.maxY)
+        XCTAssertLessThan(cancel.frame.maxY, app.frame.height * 0.75)
+        XCTAssertLessThan(edit.frame.maxY, app.frame.height * 0.75)
+        let input = app.buttons["voice-test-input"]
+        XCTAssertTrue(input.exists)
+        input.tap()
+        XCTAssertTrue(app.buttons["输入已触达"].exists,
+                      "Topmost voice overlay must leave the bottom input touchable")
+        cancel.tap()
+        XCTAssertTrue(app.staticTexts["已取消"].exists)
+        XCTAssertFalse(transcript.exists)
         let capture = XCTAttachment(screenshot: app.screenshot())
         capture.name = "voice-transcription-below-video"
         capture.lifetime = .keepAlways

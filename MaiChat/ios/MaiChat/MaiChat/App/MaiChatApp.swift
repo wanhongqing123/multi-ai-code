@@ -223,6 +223,7 @@ private final class MaiChatBootstrap: ObservableObject {
 @main
 struct MaiChatApp: App {
     @StateObject private var bootstrap = MaiChatBootstrap()
+    @StateObject private var voiceOverlay = VoiceTranscriptionOverlayState.shared
 
     init() {
         AppDiagnosticLog.shared.install()
@@ -283,6 +284,13 @@ struct MaiChatApp: App {
                 #else
                 appContent
                 #endif
+            }
+            .overlay {
+                // IM 和创作中心共用的语音悬浮层放在窗口最外侧，始终盖过视频播放器。
+                if let presentation = voiceOverlay.activePresentation {
+                    VoiceTranscriptionHighlightHost(presentation: presentation)
+                        .ignoresSafeArea()
+                }
             }
             .task {
                 #if targetEnvironment(simulator)

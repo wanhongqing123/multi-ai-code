@@ -181,8 +181,6 @@ struct AIAssistantView: View {
                     .transition(.move(edge: .trailing).combined(with: .opacity))
                     .zIndex(5)
             }
-            VoiceTranscriptionHighlightHost(presentation: transcriptionPresentation)
-                .zIndex(20)
             if let preview = model.previewImage {
                 AIImagePreviewOverlay(preview: preview) {
                     model.previewImage = nil

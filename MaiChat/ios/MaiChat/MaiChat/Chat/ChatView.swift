@@ -1377,7 +1377,6 @@ private struct ChatDetailView: View {
             // calculation. As a ZStack sibling, its minimum height enlarged the
             // underlying list and invalidated its lazy geometry on dismissal.
             .overlay {
-                VoiceTranscriptionHighlightHost(presentation: transcriptionPresentation)
             }
 
             if let imagePreviewPresentation {
@@ -1624,6 +1623,20 @@ struct VoiceActionFramesKey: PreferenceKey {
 }
 
 @MainActor
+final class VoiceTranscriptionOverlayState: ObservableObject {
+    static let shared = VoiceTranscriptionOverlayState()
+    @Published private(set) var activePresentation: VoiceTranscriptionPresentation?
+
+    func show(_ presentation: VoiceTranscriptionPresentation) {
+        if activePresentation !== presentation { activePresentation = presentation }
+    }
+
+    func hide(_ presentation: VoiceTranscriptionPresentation) {
+        if activePresentation === presentation { activePresentation = nil }
+    }
+}
+
+@MainActor
 final class VoiceTranscriptionPresentation: ObservableObject {
     private struct PresentationState: Equatable {
         var target: VoiceTranscriptionTarget?
@@ -1632,7 +1645,12 @@ final class VoiceTranscriptionPresentation: ObservableObject {
     @Published private var state = PresentationState()
     var target: VoiceTranscriptionTarget? {
         get { state.target }
-        set { if state.target != newValue { state.target = newValue } }
+        set {
+            guard state.target != newValue else { return }
+            state.target = newValue
+            if newValue == nil { VoiceTranscriptionOverlayState.shared.hide(self) }
+            else { VoiceTranscriptionOverlayState.shared.show(self) }
+        }
     }
     var liveText: String { state.liveText }
     private var firstLoggedSessionID: UInt64?
@@ -1643,6 +1661,7 @@ final class VoiceTranscriptionPresentation: ObservableObject {
     private(set) var diagnosticFields: [String: String] = [:]
 
     func prepareForNewSession(account: String, peer: String) {
+        VoiceTranscriptionOverlayState.shared.hide(self)
         diagnosticFields = ["account": account,
                             "peer": DiagnosticLogPrivacy.stableTag(peer, prefix: "u"),
                             "asr_session": UUID().uuidString.lowercased()]
@@ -1668,6 +1687,7 @@ final class VoiceTranscriptionPresentation: ObservableObject {
     }
 
     func reset() {
+        VoiceTranscriptionOverlayState.shared.hide(self)
         state = PresentationState()
         firstLoggedSessionID = nil
     }
@@ -1704,72 +1724,41 @@ private struct VoiceTranscriptionHighlight: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let compact = geometry.size.height < 560
+            let topInset = max(geometry.safeAreaInsets.top + 24,
+                               min(geometry.size.height * 0.16, 150))
+            let cardHeight = min(geometry.size.height * 0.15, 112)
             ZStack {
-                Color.black.opacity(0.68)
+                Color.black.opacity(0.45)
                     .ignoresSafeArea()
+                    .allowsHitTesting(false)
 
                 VStack(spacing: 0) {
-                    if compact {
-                        // 视频占据上半屏时，语音弹层只剩下半屏高度；文字固定在最上方。
-                        // 只显示实时转写末尾，完整结果仍由识别器在松手后提交。
-                        Text("语音转文字")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.85))
-                            .padding(.top, 16)
-                        Text(transcript.isEmpty ? "正在听，请说话…" : String(transcript.suffix(180)))
-                            .font(.system(size: 19, weight: .medium))
-                            .foregroundStyle(.white)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity,
-                                   alignment: .topLeading)
-                            .lineLimit(3)
-                            .truncationMode(.head)
-                            .padding(16)
-                            .background(
-                                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                    .fill(RemoteIMStyle.blue.opacity(0.94))
-                            )
-                            .frame(height: min(geometry.size.height * 0.34, 144))
-                            .padding(.horizontal, 18)
-                            .padding(.top, 10)
-                            .accessibilityIdentifier("voice-transcript")
-                        Text(statusText)
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .padding(.top, 10)
-                        Spacer(minLength: 8)
-                    } else {
-                        Spacer(minLength: 120)
-                        if transcript.isEmpty {
-                            listeningIndicator(size: 104)
-                        } else {
-                            Text(transcript)
-                                .font(.system(size: 24, weight: .medium))
-                                .foregroundStyle(.white)
-                                .multilineTextAlignment(.leading)
-                                .lineLimit(8)
-                                .minimumScaleFactor(0.78)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 24)
-                                .padding(.vertical, 22)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 24, style: .continuous)
-                                        .fill(RemoteIMStyle.blue.opacity(0.94))
-                                )
-                                .padding(.horizontal, 30)
-                                .transition(.opacity)
-                                .accessibilityIdentifier("voice-transcript")
-                            listeningIndicator(size: 58)
-                                .padding(.top, 18)
-                        }
-                        Text(statusText)
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .padding(.top, 16)
-                        Spacer()
-                    }
+                    // 顶层悬浮框不再受视频下方会话区域的高度限制；
+                    // 转写文字和操作按钮放在上半部，远离底部的长按输入区。
+                    Text("语音转文字")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.white)
+                    Text(transcript.isEmpty ? "正在听，请说话…" : String(transcript.suffix(180)))
+                        .font(.system(size: 19, weight: .medium))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity,
+                               alignment: .topLeading)
+                        .lineLimit(3)
+                        .truncationMode(.head)
+                        .padding(16)
+                        .background(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .fill(RemoteIMStyle.blue)
+                        )
+                        .frame(height: cardHeight)
+                        .padding(.top, 12)
+                        .accessibilityIdentifier("voice-transcript")
+                    Text(statusText)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.top, 12)
 
-                    HStack(spacing: compact ? 92 : 72) {
+                    HStack(spacing: 92) {
                         targetBadge(
                             title: "取消",
                             systemImage: "xmark",
@@ -1783,31 +1772,15 @@ private struct VoiceTranscriptionHighlight: View {
                             selectedColor: RemoteIMStyle.blue
                         )
                     }
-                    .padding(.bottom, compact ? 18 : 76)
+                    .padding(.top, 18)
                 }
+                .frame(width: min(geometry.size.width - 32, 520))
+                .fixedSize(horizontal: false, vertical: true)
+                .position(x: geometry.size.width / 2,
+                          y: topInset + (158 + cardHeight) / 2)
             }
         }
         .accessibilityElement(children: .contain)
-    }
-
-    private func listeningIndicator(size: CGFloat) -> some View {
-        ZStack {
-            Circle()
-                .fill(indicatorColor.opacity(0.2))
-                .frame(width: size * 1.34, height: size * 1.34)
-            Circle()
-                .fill(indicatorColor)
-                .frame(width: size, height: size)
-            if target == .cancel {
-                Image(systemName: "xmark")
-                    .font(.system(size: size * 0.3, weight: .bold))
-                    .foregroundStyle(.white)
-            } else if target == .edit || target == .finishingEdit {
-                Image(systemName: "pencil")
-                    .font(.system(size: size * 0.28, weight: .bold))
-                    .foregroundStyle(.white)
-            }
-        }
     }
 
     private func targetBadge(
@@ -1819,8 +1792,8 @@ private struct VoiceTranscriptionHighlight: View {
         Button(action: systemImage == "xmark" ? onCancel : onEdit) {
         VStack(spacing: 8) {
             Image(systemName: systemImage)
-                .font(.system(size: 22, weight: .semibold))
-                .frame(width: 64, height: 64)
+                .font(.system(size: 20, weight: .semibold))
+                .frame(width: 52, height: 52)
                 .background(
                     Circle().fill(selected ? selectedColor : Color.white.opacity(0.14))
                 )
@@ -1828,7 +1801,7 @@ private struct VoiceTranscriptionHighlight: View {
                     Circle().stroke(Color.white.opacity(selected ? 0.9 : 0.3), lineWidth: 1.5)
                 )
             Text(title)
-                .font(.system(size: 15, weight: .semibold))
+                .font(.system(size: 13, weight: .semibold))
         }
         .foregroundStyle(.white)
         .background {
@@ -1859,19 +1832,13 @@ private struct VoiceTranscriptionHighlight: View {
         }
     }
 
-    private var indicatorColor: Color {
-        switch target {
-        case .cancel:
-            return .red
-        default:
-            return RemoteIMStyle.blue
-        }
-    }
 }
 
 #if targetEnvironment(simulator)
 struct VoiceTranscriptionDockUITestRoot: View {
     @StateObject private var presentation = VoiceTranscriptionPresentation()
+    @State private var inputTapped = false
+    @State private var actionTapped = ""
 
     var body: some View {
         GeometryReader { geometry in
@@ -1879,12 +1846,29 @@ struct VoiceTranscriptionDockUITestRoot: View {
                 Color.black
                     .frame(height: geometry.size.height * 0.56)
                     .accessibilityIdentifier("voice-test-video")
-                VoiceTranscriptionHighlightHost(presentation: presentation)
-                    .frame(height: geometry.size.height * 0.44)
-                    .clipped()
+                VStack {
+                    Spacer()
+                    Text(actionTapped).accessibilityIdentifier("voice-test-action")
+                    Button(inputTapped ? "输入已触达" : "底部输入") {
+                        inputTapped = true
+                    }
+                    .accessibilityIdentifier("voice-test-input")
+                    .padding(.bottom, 24)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: geometry.size.height * 0.44)
+                .background(Color.white)
             }
         }
         .task {
+            presentation.onCancel = {
+                actionTapped = "已取消"
+                presentation.reset()
+            }
+            presentation.onEdit = {
+                actionTapped = "已编辑"
+                presentation.reset()
+            }
             presentation.target = .send
             presentation.updateLiveText(
                 String(repeating: "正在识别你说的话，文字应始终显示在视频下方。", count: 8),

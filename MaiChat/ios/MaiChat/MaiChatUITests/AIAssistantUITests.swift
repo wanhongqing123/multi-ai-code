@@ -48,6 +48,28 @@ final class AIAssistantUITests: XCTestCase {
                                  "Closing the keyboard must keep the latest message visible")
     }
 
+    func testSwitchingConversationsOpensAtLatestMessage() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--ai-session-switch-ui-test"]
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        for title in ["B", "C"] {
+            app.buttons["对话列表"].tap()
+            let session = app.buttons["ai-conversation-switch-\(title)"]
+            XCTAssertTrue(session.waitForExistence(timeout: 5))
+            session.tap()
+            let latest = app.staticTexts.matching(
+                NSPredicate(format: "label CONTAINS %@", "\(title) 历史消息 79")).firstMatch
+            XCTAssertTrue(latest.waitForExistence(timeout: 10))
+            let hittable = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "hittable == true"), object: latest)
+            XCTAssertEqual(XCTWaiter.wait(for: [hittable], timeout: 5), .completed)
+            let timeline = app.scrollViews.element(boundBy: 0)
+            XCTAssertGreaterThanOrEqual(latest.frame.minY, timeline.frame.minY - 2)
+            XCTAssertLessThanOrEqual(latest.frame.maxY, timeline.frame.maxY + 2)
+        }
+    }
+
     func testToolCallsDoNotExposeReasoningContent() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--ai-ui-test", "--transcript-ui-test"]

@@ -702,6 +702,9 @@ final class AIAssistantModel: ObservableObject {
     private var visible = false
     private var pageActive = true
     private var composerTyping = false
+    #if targetEnvironment(simulator)
+    private var sessionSwitchUITest = false
+    #endif
     var busy: Bool { sessions.first { $0.id == selected }?.busy == true }
 
     func setComposerTyping(_ active: Bool) { composerTyping = active }
@@ -751,6 +754,29 @@ final class AIAssistantModel: ObservableObject {
                 if self.messages.count == 30 { self.messages.append(active) }
                 else { self.messages[30] = active }
             }
+        }
+    }
+
+    func installSessionSwitchUITestFixture() {
+        sessionSwitchUITest = true
+        sessions = ["A", "B", "C"].map {
+            AISession(id: "switch-\($0)", title: "对话 \($0)", busy: false)
+        }
+        selected = "switch-A"
+        messages = sessionSwitchUITestMessages("A")
+        ready = true
+        historyLoaded = true
+    }
+
+    private func sessionSwitchUITestMessages(_ title: String) -> [AIMessage] {
+        (0..<80).map { index in
+            let part = AIPart(id: "switch-part-\(title)-\(index)", kind: "text",
+                              text: "\(title) 历史消息 \(index)\n第二行内容", tool: nil,
+                              input: nil, output: nil, error: nil, state: nil,
+                              path: nil, mimeType: nil)
+            return AIMessage(id: "switch-\(title)-message-\(index)", role: "assistant",
+                             created: Int64(index), completed: Int64(index + 1),
+                             active: false, parts: [part])
         }
     }
     #endif
@@ -979,6 +1005,24 @@ final class AIAssistantModel: ObservableObject {
     }
 
     func select(_ id: String) async {
+        #if targetEnvironment(simulator)
+        if sessionSwitchUITest {
+            // 模拟真实切换：先显示最新一条，再补齐历史，验证两次布局后仍停在末尾。
+            selected = id
+            messages = []
+            historyLoaded = false
+            let title = String(id.suffix(1))
+            let page = sessionSwitchUITestMessages(title)
+            guard let latest = page.last else { return }
+            messages = [latest]
+            historyLoaded = true
+            scrollRequest += 1
+            await Task.yield()
+            messages = page
+            scrollRequest += 1
+            return
+        }
+        #endif
         selected = id; messages = []; permissions = []; questions = []; error = ""
         quotedMessage = nil
         historyLoaded = false

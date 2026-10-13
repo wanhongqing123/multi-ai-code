@@ -34,6 +34,7 @@ struct AIAssistantView: View {
         #if targetEnvironment(simulator)
         let arguments = ProcessInfo.processInfo.arguments
         return arguments.contains("--ai-history-ui-test") ||
+            arguments.contains("--ai-session-switch-ui-test") ||
             arguments.contains("--ai-stream-typing-ui-test") ||
             arguments.contains("--ai-image-fullscreen-ui-test")
         #else
@@ -473,12 +474,19 @@ private struct AIAssistantMessageList: View {
                 }
                 .onChange(of: model.scrollRequest) { _ in
                     followsLatest = true
+                    // 会话切换先拿最新一条、再补前面的历史；这里显式定位最新消息，
+                    // 之后的布局修正继续跟随底部，不能继承上一个会话的阅读位置。
+                    if let latestID = model.messages.last?.id {
+                        position(at: latestID, proxy: proxy, anchor: .bottom)
+                    }
                     bottomCorrectionRequest += 1
                     logAIHistoryEvent("follow-latest session=\(model.selected)")
                 }
                 .onChange(of: model.selected) { _ in
                     prependAnchorID = nil
                     followsLatest = true
+                    keyboardFollowIntent = nil
+                    keyboardTransitionOpening = nil
                     viewportLog.reset()
                 }
                 .onChange(of: isActive) { active in
@@ -1284,6 +1292,7 @@ private struct AIWorkspaceVideoCard: View {
     @State private var durationSeconds = 0
 
     private var exists: Bool { FileManager.default.fileExists(atPath: filePath) }
+    private var fileName: String { URL(fileURLWithPath: filePath).lastPathComponent }
 
     init(filePath: String, identifier: String = "agent-video-bubble",
          open: @escaping () -> Void) {
@@ -1310,6 +1319,18 @@ private struct AIWorkspaceVideoCard: View {
                     .foregroundStyle(.white)
                     .frame(width: 52, height: 52)
                     .background(.black.opacity(0.5), in: Circle())
+                // 文件名压在缩略图角落，保留画面主体，也能辨认当前是哪一段视频。
+                Text(fileName)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 4)
+                    .background(.black.opacity(0.58), in: RoundedRectangle(cornerRadius: 6))
+                    .frame(maxWidth: previewSize.width - 16, alignment: .leading)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .padding(8)
                 Text(
                     String(
                         format: "%d:%02d", durationSeconds / 60,
@@ -1332,7 +1353,7 @@ private struct AIWorkspaceVideoCard: View {
         }
         .buttonStyle(.plain)
         .disabled(!exists)
-        .accessibilityLabel(exists ? "播放视频 \(URL(fileURLWithPath: filePath).lastPathComponent)" :
+        .accessibilityLabel(exists ? "播放视频 \(fileName)" :
                             "视频文件已丢失")
         .accessibilityIdentifier(identifier)
         .task(id: filePath) {
@@ -1508,6 +1529,13 @@ struct AIHistoryUITestRoot: View {
     var body: some View {
         AIAssistantView()
             .onAppear { AIAssistantModel.shared.installHistoryUITestFixture() }
+    }
+}
+
+struct AISessionSwitchUITestRoot: View {
+    var body: some View {
+        AIAssistantView()
+            .onAppear { AIAssistantModel.shared.installSessionSwitchUITestFixture() }
     }
 }
 

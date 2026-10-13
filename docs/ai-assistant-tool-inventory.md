@@ -125,8 +125,8 @@
 
 | 工具 | 用途 |
 |---|---|
-| maichat_play_video | 打开本地视频播放浮窗。 |
-| maichat_video_command | 控制当前播放器的播放、暂停、逐帧、跳转、音量、全屏等。 |
+| maichat_play_video | 在可放大、缩小的悬浮播放器打开本地视频，播放时仍能继续使用创作中心。 |
+| maichat_video_command | 控制当前播放器的播放、暂停、逐帧、按秒跳转、倍速、音量等；例如 `{"action":"seek_seconds","seconds":8}`。 |
 
 ## 桌面端／CLI 额外工具：10 个
 

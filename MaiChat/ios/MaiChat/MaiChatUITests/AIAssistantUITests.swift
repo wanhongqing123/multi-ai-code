@@ -117,6 +117,13 @@ final class AIAssistantUITests: XCTestCase {
         XCTAssertTrue(pause.waitForExistence(timeout: 20))
         XCTAssertTrue(app.buttons["ffplay-share"].exists)
         XCTAssertTrue(app.buttons["ffplay-save"].exists)
+        let speed = app.buttons["ffplay-speed"]
+        XCTAssertTrue(speed.exists)
+        speed.tap()
+        XCTAssertTrue(app.buttons["ffplay-speed-0.5"].isHittable)
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+        app.buttons["ffplay-speed-0.5"].tap()
+        XCTAssertTrue(speed.label.contains("0.5"))
         pause.tap()
         XCTAssertTrue(app.buttons["ffplay-close"].isHittable)
         app.sliders["ffplay-seek"].adjust(toNormalizedSliderPosition: 0.5)

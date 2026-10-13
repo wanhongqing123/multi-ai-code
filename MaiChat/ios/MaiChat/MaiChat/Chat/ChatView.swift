@@ -1949,7 +1949,6 @@ private struct MessageListView: View {
     let loadEarlierMessages: () async -> Void
     @EnvironmentObject private var appState: RemoteIMAppState
     @StateObject private var voicePlayer = VoiceMessagePlayer()
-    @State private var videoPreviewItem: RemoteIMVideoPreviewItem?
     @State private var filePreviewItem: RemoteIMFilePreviewItem?
     @State private var isLoadingEarlierMessages = false
     @State private var isVisible = false
@@ -2028,7 +2027,10 @@ private struct MessageListView: View {
                                     presentImagePreview(nextItem, imageSize, sourceFrame)
                                 },
                                 previewVideo: {
-                                    videoPreviewItem = RemoteIMVideoPreviewPolicy.previewItem(for: message)
+                                    if let item = RemoteIMVideoPreviewPolicy.previewItem(for: message) {
+                                        appState.agentVideoPresentation = MaiFfplayPresentation(
+                                            path: item.localFilePath)
+                                    }
                                 },
                                 previewFile: {
                                     filePreviewItem = RemoteIMFilePreviewItem(message: message)
@@ -2178,11 +2180,6 @@ private struct MessageListView: View {
                 bottomCorrectionRequest += 1
             }
 
-        }
-        .fullScreenCover(item: $videoPreviewItem) { item in
-            FullScreenVideoPreviewView(item: item) {
-                videoPreviewItem = nil
-            }
         }
         .fullScreenCover(item: $filePreviewItem) { item in
             FullScreenFilePreviewView(item: item) {
@@ -3509,18 +3506,6 @@ private struct FullScreenImagePreviewView: View {
             containerSize.height / imageSize.height
         )
         return CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
-    }
-}
-
-private struct FullScreenVideoPreviewView: View {
-    let item: RemoteIMVideoPreviewItem
-    let close: () -> Void
-
-    var body: some View {
-        MaiFfplayVideoScreen(path: item.localFilePath, close: close)
-            .ignoresSafeArea()
-            .statusBarHidden()
-            .accessibilityIdentifier("remote-im-video-preview")
     }
 }
 

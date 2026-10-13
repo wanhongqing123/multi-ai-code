@@ -190,6 +190,8 @@ final class MaiFfplayVideoController: UIViewController {
     private let timeLabel = UILabel()
     private let errorLabel = UILabel()
     private let saveButton = UIButton(type: .system)
+    private let speedButton = UIButton(type: .system)
+    private let speedChoices = UIStackView()
     private let saveStatusLabel = UILabel()
     private var playbackTimer: Timer?
     private var playing = true
@@ -261,13 +263,48 @@ final class MaiFfplayVideoController: UIViewController {
         saveButton.translatesAutoresizingMaskIntoConstraints = false
         saveButton.widthAnchor.constraint(equalToConstant: 50).isActive = true
         saveButton.heightAnchor.constraint(equalToConstant: 50).isActive = true
-        let moreButton = actionButton("ellipsis", label: "更多操作",
-                                      identifier: "ffplay-more", action: #selector(moreTapped))
-        let actions = UIStackView(arrangedSubviews: [shareButton, saveButton, moreButton])
+        speedButton.setTitle("1×", for: .normal)
+        speedButton.setTitleColor(.white, for: .normal)
+        speedButton.titleLabel?.font = .systemFont(ofSize: 16, weight: .semibold)
+        speedButton.accessibilityLabel = "播放倍速 1.0×"
+        speedButton.accessibilityIdentifier = "ffplay-speed"
+        speedButton.backgroundColor = UIColor.white.withAlphaComponent(0.18)
+        speedButton.layer.cornerRadius = 25
+        speedButton.addTarget(self, action: #selector(toggleSpeedChoices), for: .touchUpInside)
+        speedButton.translatesAutoresizingMaskIntoConstraints = false
+        speedButton.widthAnchor.constraint(equalToConstant: 56).isActive = true
+        speedButton.heightAnchor.constraint(equalToConstant: 50).isActive = true
+
+        let copyButton = actionButton("doc.on.doc", label: "复制文件路径",
+                                      identifier: "ffplay-copy-path", action: #selector(copyPathTapped))
+        let actions = UIStackView(arrangedSubviews: [shareButton, saveButton, speedButton, copyButton])
         actions.axis = .horizontal
         actions.spacing = 12
         actions.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(actions)
+
+        // 倍速直接在播放画面内选择，避免两层系统弹窗遮住视频。
+        speedChoices.axis = .horizontal
+        speedChoices.alignment = .fill
+        speedChoices.distribution = .fillEqually
+        speedChoices.spacing = 4
+        speedChoices.backgroundColor = UIColor.black.withAlphaComponent(0.82)
+        speedChoices.layer.cornerRadius = 18
+        speedChoices.layoutMargins = UIEdgeInsets(top: 6, left: 6, bottom: 6, right: 6)
+        speedChoices.isLayoutMarginsRelativeArrangement = true
+        speedChoices.isHidden = true
+        speedChoices.translatesAutoresizingMaskIntoConstraints = false
+        for rate in [0.25, 0.5, 1.0, 1.5, 2.0] {
+            let choice = UIButton(type: .system)
+            choice.setTitle("\(rate)×", for: .normal)
+            choice.setTitleColor(.white, for: .normal)
+            choice.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
+            choice.accessibilityIdentifier = "ffplay-speed-\(rate)"
+            choice.tag = Int(rate * 100)
+            choice.addTarget(self, action: #selector(speedChoiceTapped(_:)), for: .touchUpInside)
+            speedChoices.addArrangedSubview(choice)
+        }
+        view.addSubview(speedChoices)
 
         saveStatusLabel.textColor = .white
         saveStatusLabel.font = .systemFont(ofSize: 14, weight: .medium)
@@ -305,6 +342,10 @@ final class MaiFfplayVideoController: UIViewController {
             actions.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -18),
             actions.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor,
                                            constant: -4),
+            speedChoices.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            speedChoices.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -18),
+            speedChoices.heightAnchor.constraint(equalToConstant: 48),
+            speedChoices.bottomAnchor.constraint(equalTo: controls.topAnchor, constant: -10),
             saveStatusLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             saveStatusLabel.bottomAnchor.constraint(equalTo: controls.topAnchor, constant: -18),
             saveStatusLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 160),
@@ -346,6 +387,8 @@ final class MaiFfplayVideoController: UIViewController {
         timeLabel.text = "\(Self.timestamp(position)) / \(Self.timestamp(status.duration_us))"
         playing = status.paused == 0
         playbackSpeed = Double(status.speed_percent) / 100.0
+        speedButton.setTitle("\(playbackSpeed)×", for: .normal)
+        speedButton.accessibilityLabel = "播放倍速 \(playbackSpeed)×"
         refreshPlayButton()
     }
 
@@ -396,6 +439,8 @@ final class MaiFfplayVideoController: UIViewController {
     func setSpeed(_ speed: Double) -> Bool {
         guard metalView.setSpeed(speed) else { return false }
         playbackSpeed = speed
+        speedButton.setTitle("\(speed)×", for: .normal)
+        speedButton.accessibilityLabel = "播放倍速 \(speed)×"
         playing = true
         refreshPlayButton()
         return true
@@ -478,38 +523,18 @@ final class MaiFfplayVideoController: UIViewController {
         }
     }
 
-    @objc private func moreTapped() {
-        let menu = UIAlertController(title: URL(fileURLWithPath: path).lastPathComponent,
-                                     message: nil, preferredStyle: .actionSheet)
-        menu.addAction(UIAlertAction(title: "播放倍速 \(playbackSpeed)×", style: .default) {
-            [weak self] _ in self?.showSpeedChoices()
-        })
-        menu.addAction(UIAlertAction(title: "复制文件路径", style: .default) { [weak self] _ in
-            UIPasteboard.general.string = self?.path
-            self?.showStatus("已复制文件路径")
-        })
-        menu.addAction(UIAlertAction(title: "取消", style: .cancel))
-        menu.popoverPresentationController?.sourceView = view
-        menu.popoverPresentationController?.sourceRect = CGRect(
-            x: view.bounds.midX, y: view.bounds.maxY - 50, width: 1, height: 1)
-        present(menu, animated: true)
+    @objc private func toggleSpeedChoices() {
+        speedChoices.isHidden.toggle()
     }
 
-    private func showSpeedChoices() {
-        let menu = UIAlertController(title: "播放倍速", message: nil, preferredStyle: .actionSheet)
-        for rate in [0.25, 0.5, 1.0, 1.5, 2.0] {
-            menu.addAction(UIAlertAction(title: "\(rate)×", style: .default) { [weak self] _ in
-                guard self?.setSpeed(rate) == true else {
-                    self?.showStatus("倍速切换失败")
-                    return
-                }
-            })
-        }
-        menu.addAction(UIAlertAction(title: "取消", style: .cancel))
-        menu.popoverPresentationController?.sourceView = view
-        menu.popoverPresentationController?.sourceRect = CGRect(
-            x: view.bounds.midX, y: view.bounds.maxY - 50, width: 1, height: 1)
-        present(menu, animated: true)
+    @objc private func speedChoiceTapped(_ sender: UIButton) {
+        speedChoices.isHidden = true
+        if !setSpeed(Double(sender.tag) / 100) { showStatus("倍速切换失败") }
+    }
+
+    @objc private func copyPathTapped() {
+        UIPasteboard.general.string = path
+        showStatus("已复制文件路径")
     }
 }
 

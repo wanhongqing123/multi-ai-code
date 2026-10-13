@@ -767,7 +767,7 @@ private struct AIMessageRow: View, Equatable {
                         }
                         ForEach(videoPaths, id: \.self) { path in
                             AIWorkspaceVideoCard(filePath: path) {
-                                videoPreview = AIVideoPreviewItem(path: path)
+                                openVideo(path)
                             }
                         }
                         ForEach(inlineMedia) { mention in
@@ -858,7 +858,7 @@ private struct AIMessageRow: View, Equatable {
                             AIWorkspaceImage(filePath: artifact.filePath)
                         } else if artifact.type == "video" {
                             AIWorkspaceVideoCard(filePath: artifact.filePath) {
-                                videoPreview = AIVideoPreviewItem(path: artifact.filePath)
+                                openVideo(artifact.filePath)
                             }
                         } else {
                             AIWorkspaceAudioCard(filePath: artifact.filePath)
@@ -975,12 +975,21 @@ private struct AIMessageRow: View, Equatable {
                                                    workspacePath: workspacePath)
             .filter { !alreadyShown.contains($0.url.path) }
     }
+    private func openVideo(_ path: String) {
+        // 视频悬浮播放时保留创作中心输入区，AI 才能接收“跳到第几秒”等后续指令。
+        if let appState = AIMobileHostToolProvider.shared.appState {
+            appState.agentVideoPresentation = MaiFfplayPresentation(path: path)
+        } else {
+            videoPreview = AIVideoPreviewItem(path: path)
+        }
+    }
+
     @ViewBuilder private func fileMentionCard(_ mention: AIAssistantMediaMention) -> some View {
         switch mention.kind {
         case .video:
             Button {
                 if FileManager.default.fileExists(atPath: mention.url.path) {
-                    videoPreview = AIVideoPreviewItem(path: mention.url.path)
+                    openVideo(mention.url.path)
                 } else {
                     fileOpenError = true
                 }

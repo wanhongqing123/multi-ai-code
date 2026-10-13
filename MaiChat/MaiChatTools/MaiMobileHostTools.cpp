@@ -290,19 +290,24 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
         // id 来自 mobile_list_contacts，不接受随意构造的联系人字段组合。
         R"({"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":false})");
     // 会话内视频预览和 IM 视频消息走同一个播放器；控制指令只操作当前打开的实例。
+    // 创作中心打开视频时播放器先缩成悬浮窗，用户仍可输入自然语言让 AI 控制当前视频。
     add("maichat_play_video",
-        "Open a video from the Agent workspace in MaiChat's FFplay/Graphics popup. "
+        "Open a video from the Agent workspace in MaiChat's FFplay/Graphics player. "
+        "The player remains above the chat so the user can ask for playback changes while it runs. "
         "IM video messages use the same player.",
         // path 是当前 Agent 可访问的现有视频，播放器不会自动保存到相册。
         R"({"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false})");
     add("maichat_video_command",
         "Control the currently open FFplay video. set_speed accepts 0.25, 0.5, 1, 1.5, or 2 "
         "and preserves audio pitch and sync with FFmpeg atempo. It briefly restarts the same "
-        "popup at the source position without creating a new file. seek_seconds jumps to an "
+        "player at the source position without creating a new file. If the user asks to jump to "
+        "a specific time such as 8 seconds, call seek_seconds with seconds=8 on the currently "
+        "open video; do not reopen it. seek_seconds jumps to an "
         "absolute source-media time; existing play, pause, step, relative/chapter/percent seek, "
         "stream/filter cycling, mute, volume, fullscreen, and close remain available.",
+        // 用户说“跳到第 8 秒”就对当前播放实例调用 seek_seconds(seconds=8)，无需重新打开。
         // set_speed 带 speed 倍数；seek_seconds 带源片绝对秒数；seek_percent 带百分比。
-        // 改速仍在现有弹窗中播放同一文件；atempo 保持音调和音画同步，不另存转码文件。
+        // 改速仍在现有播放器中播放同一文件；atempo 保持音调和音画同步，不另存转码文件。
         R"({"type":"object","properties":{"action":{"type":"string","enum":["play","pause","toggle_pause","step","seek_forward","seek_backward","seek_minute_forward","seek_minute_backward","next_chapter","previous_chapter","seek_percent","seek_seconds","set_speed","next_audio","next_video","next_subtitle","next_program","next_filter","mute","volume_up","volume_down","fullscreen","close"]},"percent":{"type":"number","minimum":0,"maximum":100},"seconds":{"type":"number","minimum":0},"speed":{"type":"number","enum":[0.25,0.5,1,1.5,2]}},"required":["action"],"additionalProperties":false})");
 }
 

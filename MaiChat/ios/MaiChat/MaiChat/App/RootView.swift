@@ -26,6 +26,7 @@ struct RootView: View {
     @State private var contactGroupRenameDraft = ""
     @State private var deletingContactGroup: String?
     @State private var isShowingNotificationPermissionPrompt = false
+    @State private var isVideoExpanded = false
     @AppStorage("maichat.notification-preprompt-dismissed")
     private var notificationPermissionPromptDismissed = false
 
@@ -174,12 +175,48 @@ struct RootView: View {
         .animation(.easeOut(duration: 0.18), value: renamingContactGroup)
         .animation(.easeOut(duration: 0.18), value: deletingContactGroup)
         .background(Color(red: 0.966, green: 0.976, blue: 0.988).ignoresSafeArea())
-        .fullScreenCover(item: $appState.agentVideoPresentation) { presentation in
-            MaiFfplayVideoScreen(path: presentation.path) {
-                appState.agentVideoPresentation = nil
+        // 视频和创作中心共用一个窗口：缩小时保留输入区，AI 才能继续控制正在播放的实例。
+        // 放大只改变同一个播放器的尺寸，不重新打开文件或重置播放位置。
+        .overlay {
+            GeometryReader { geometry in
+                if let presentation = appState.agentVideoPresentation {
+                    let width = min(geometry.size.width - 24, 340)
+                    let height: CGFloat = 260
+                    MaiFfplayVideoScreen(path: presentation.path) {
+                        appState.agentVideoPresentation = nil
+                    }
+                    .frame(width: isVideoExpanded ? geometry.size.width : width,
+                           height: isVideoExpanded ? geometry.size.height : height)
+                    .overlay(alignment: .topTrailing) {
+                        Button {
+                            isVideoExpanded.toggle()
+                        } label: {
+                            Image(systemName: isVideoExpanded ? "arrow.down.right.and.arrow.up.left" :
+                                  "arrow.up.left.and.arrow.down.right")
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 44, height: 44)
+                                .background(.black.opacity(0.55), in: Circle())
+                        }
+                        .accessibilityLabel(isVideoExpanded ? "缩小视频，返回对话" : "放大视频")
+                        .accessibilityIdentifier("ffplay-expand")
+                        .padding(.top, isVideoExpanded ? max(geometry.safeAreaInsets.top, 58) + 12 : 12)
+                        .padding(.trailing, 12)
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: isVideoExpanded ? 0 : 18))
+                    .shadow(color: .black.opacity(isVideoExpanded ? 0 : 0.3), radius: 16)
+                    .position(x: isVideoExpanded ? geometry.size.width / 2 :
+                              geometry.size.width - width / 2 - 12,
+                              y: isVideoExpanded ? geometry.size.height / 2 :
+                              max(geometry.safeAreaInsets.top, 58) + height / 2 + 8)
+                    .zIndex(100)
+                }
             }
             .ignoresSafeArea()
-            .statusBarHidden()
+        }
+        .statusBarHidden(isVideoExpanded && appState.agentVideoPresentation != nil)
+        .onChange(of: appState.agentVideoPresentation?.id) { _ in
+            isVideoExpanded = false
         }
         .task {
             if !appState.shouldShowInitialLogin {

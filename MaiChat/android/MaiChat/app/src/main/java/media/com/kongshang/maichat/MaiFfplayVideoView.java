@@ -26,6 +26,7 @@ public final class MaiFfplayVideoView extends FrameLayout {
                                             long startPositionUs);
     private static native boolean nativeCommand(long handle, String command);
     private static native boolean nativeSeekPercent(long handle, double fraction);
+    private static native boolean nativeSeekAbsoluteUs(long handle, long positionUs);
     private static native long[] nativePlaybackStatus(long handle);
     private static native void nativeDestroy(long handle);
 
@@ -56,6 +57,7 @@ public final class MaiFfplayVideoView extends FrameLayout {
         }
     };
     private String videoPath;
+    private long startPositionUs;
     private long graphicsViewId;
     private long playbackHandle;
     private double speed = 1.0;
@@ -158,7 +160,12 @@ public final class MaiFfplayVideoView extends FrameLayout {
     public boolean hasPresentedFrame() { return presented; }
 
     public void setVideoPath(String path) {
+        setVideoPath(path, 0);
+    }
+
+    public void setVideoPath(String path, long startPositionUs) {
         videoPath = path;
+        this.startPositionUs = Math.max(0, startPositionUs);
         if (surface.isAvailable()) startReadySurface();
     }
 
@@ -175,7 +182,7 @@ public final class MaiFfplayVideoView extends FrameLayout {
         graphicsViewId = viewId;
         MaiFfplayVideoView previous = active.get();
         if (previous != null && previous != this) previous.stop();
-        playbackHandle = nativeCreate(viewId, videoPath, speed, 0);
+        playbackHandle = nativeCreate(viewId, videoPath, speed, startPositionUs);
         if (playbackHandle == 0) {
             errorLabel.setText("无法打开视频");
             return;
@@ -214,11 +221,12 @@ public final class MaiFfplayVideoView extends FrameLayout {
     }
 
     public boolean seekSeconds(double seconds) {
-        if (!Double.isFinite(seconds) || seconds < 0 || playbackHandle == 0) return false;
+        if (!Double.isFinite(seconds) || seconds < 0 ||
+            seconds > Long.MAX_VALUE / 1_000_000.0 || playbackHandle == 0) return false;
         long[] status = nativePlaybackStatus(playbackHandle);
         if (status == null || status.length < 2 || status[1] <= 0 ||
             seconds * 1_000_000 > status[1]) return false;
-        return seekPercent(seconds * 1_000_000 / status[1]);
+        return nativeSeekAbsoluteUs(playbackHandle, Math.round(seconds * 1_000_000));
     }
 
     public boolean setSpeed(double requested) {

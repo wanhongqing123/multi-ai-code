@@ -3010,6 +3010,10 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     }
 
     private void openVideoPlayer(String path) {
+        openVideoPlayer(path, 0);
+    }
+
+    private void openVideoPlayer(String path, long startPositionUs) {
         if (videoDialog != null) videoDialog.dismiss();
         Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
         LinearLayout rootView = new LinearLayout(this);
@@ -3020,7 +3024,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
         MaiFfplayVideoView video = new MaiFfplayVideoView(this);
-        video.setVideoPath(path);
+        video.setVideoPath(path, startPositionUs);
         FrameLayout.LayoutParams videoParams = new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT,
@@ -3174,8 +3178,12 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     }
 
     public boolean openAgentVideo(String path) {
+        return openAgentVideo(path, 0);
+    }
+
+    public boolean openAgentVideo(String path, long startPositionUs) {
         if (destroyed || path == null || !new File(path).isFile()) return false;
-        openVideoPlayer(path);
+        openVideoPlayer(path, startPositionUs);
         return true;
     }
 

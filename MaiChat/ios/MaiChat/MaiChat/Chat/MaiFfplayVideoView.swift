@@ -6,6 +6,12 @@ import UIKit
 struct MaiFfplayPresentation: Identifiable {
     let id = UUID()
     let path: String
+    let startSeconds: Double
+
+    init(path: String, startSeconds: Double = 0) {
+        self.path = path
+        self.startSeconds = startSeconds
+    }
 }
 
 @MainActor
@@ -52,6 +58,7 @@ private final class MaiFfplayMetalView: UIView {
     override class var layerClass: AnyClass { CAMetalLayer.self }
 
     var videoPath = ""
+    var startPositionUs: Int64 = 0
     var onError: ((String) -> Void)?
     private var viewID: UInt64 = 0
     private var session: OpaquePointer?
@@ -114,7 +121,7 @@ private final class MaiFfplayMetalView: UIView {
             return
         }
         session = videoPath.withCString { path in
-            maiFfplayIosStartAtSpeed(viewID, path, playbackSpeed, 0)
+            maiFfplayIosStartAtSpeed(viewID, path, playbackSpeed, startPositionUs)
         }
         if session == nil {
             maiGraphicsPresenterDetach(viewID)
@@ -131,6 +138,11 @@ private final class MaiFfplayMetalView: UIView {
     func seekPercent(_ fraction: Double) -> Bool {
         guard let session else { return false }
         return maiFfplayIosSeekPercent(session, fraction) == 1
+    }
+
+    func seekAbsoluteUs(_ position: Int64) -> Bool {
+        guard let session else { return false }
+        return maiFfplayIosSeekAbsoluteUs(session, position) == 1
     }
 
     func setSpeed(_ speed: Double) -> Bool {
@@ -183,6 +195,7 @@ private final class MaiFfplayMetalView: UIView {
 @MainActor
 final class MaiFfplayVideoController: UIViewController {
     private let path: String
+    private let startSeconds: Double
     private let onClose: () -> Void
     private let metalView = MaiFfplayMetalView()
     private let pauseButton = UIButton(type: .system)
@@ -198,8 +211,9 @@ final class MaiFfplayVideoController: UIViewController {
     private var playbackSpeed = 1.0
     private var saving = false
 
-    init(path: String, close: @escaping () -> Void) {
+    init(path: String, startSeconds: Double = 0, close: @escaping () -> Void) {
         self.path = path
+        self.startSeconds = startSeconds
         onClose = close
         super.init(nibName: nil, bundle: nil)
     }
@@ -210,6 +224,7 @@ final class MaiFfplayVideoController: UIViewController {
         super.viewDidLoad()
         view.backgroundColor = .black
         metalView.videoPath = path
+        metalView.startPositionUs = Int64((startSeconds * 1_000_000).rounded())
         metalView.onError = { [weak self] message in
             self?.errorLabel.text = message
             self?.errorLabel.isHidden = false
@@ -239,6 +254,7 @@ final class MaiFfplayVideoController: UIViewController {
         seekSlider.accessibilityIdentifier = "ffplay-seek"
         seekSlider.addTarget(self, action: #selector(seekReleased), for: .touchUpOutside)
         timeLabel.text = "0:00 / 0:00"
+        timeLabel.accessibilityIdentifier = "ffplay-time"
         timeLabel.textColor = .white
         timeLabel.font = .monospacedDigitSystemFont(ofSize: 15, weight: .medium)
         let timeline = UIStackView(arrangedSubviews: [timeLabel, seekSlider])
@@ -433,7 +449,7 @@ final class MaiFfplayVideoController: UIViewController {
         guard seconds.isFinite, seconds >= 0,
               let status = metalView.playbackStatus(), status.duration_us > 0,
               seconds * 1_000_000 <= Double(status.duration_us) else { return false }
-        return seekPercent(seconds * 1_000_000 / Double(status.duration_us))
+        return metalView.seekAbsoluteUs(Int64((seconds * 1_000_000).rounded()))
     }
 
     func setSpeed(_ speed: Double) -> Bool {
@@ -540,10 +556,17 @@ final class MaiFfplayVideoController: UIViewController {
 
 struct MaiFfplayVideoScreen: UIViewControllerRepresentable {
     let path: String
+    let startSeconds: Double
     let close: () -> Void
 
+    init(path: String, startSeconds: Double = 0, close: @escaping () -> Void) {
+        self.path = path
+        self.startSeconds = startSeconds
+        self.close = close
+    }
+
     func makeUIViewController(context _: Context) -> MaiFfplayVideoController {
-        MaiFfplayVideoController(path: path, close: close)
+        MaiFfplayVideoController(path: path, startSeconds: startSeconds, close: close)
     }
 
     func updateUIViewController(_ controller: MaiFfplayVideoController, context _: Context) {
@@ -570,6 +593,43 @@ struct MaiFfplayUITestRoot: View {
                 }
             }
             .task { showingVideo = true }
+    }
+}
+
+struct MaiFfplaySeekUITestRoot: View {
+    let startSeconds: Double
+    @StateObject private var appState = RemoteIMAppState(loadedSettings: .empty)
+    @State private var showingVideo = false
+    @State private var commandResult = "尚未定位"
+
+    var body: some View {
+        Color.black
+            .fullScreenCover(isPresented: $showingVideo) {
+                if let file = Bundle.main.url(forResource: "ffplay-seek-sample", withExtension: "mp4") {
+                    MaiFfplayVideoScreen(path: file.path, startSeconds: startSeconds) {
+                        showingVideo = false
+                    }
+                    .ignoresSafeArea()
+                    .statusBarHidden()
+                    .overlay(alignment: .topTrailing) {
+                        Button(commandResult) {
+                            Task { @MainActor in
+                                let result = await AIMobileHostToolProvider.shared.execute(
+                                    name: "maichat_video_command",
+                                    argumentsJSON: #"{"action":"seek_seconds","seconds":6}"#)
+                                commandResult = result.errorCode == nil ? "定位已受理" : "定位失败"
+                            }
+                        }
+                        .accessibilityIdentifier("agent-seek-six-seconds")
+                        .padding(.top, 72)
+                        .padding(.trailing, 16)
+                    }
+                }
+            }
+            .task {
+                AIMobileHostToolProvider.shared.appState = appState
+                showingVideo = true
+            }
     }
 }
 #endif

@@ -196,7 +196,8 @@ struct RootView: View {
         .overlay {
             GeometryReader { geometry in
                 if let presentation = appState.agentVideoPresentation {
-                    MaiFfplayVideoScreen(path: presentation.path) {
+                    MaiFfplayVideoScreen(path: presentation.path,
+                                         startSeconds: presentation.startSeconds) {
                         appState.agentVideoPresentation = nil
                     }
                     .frame(width: isVideoExpanded ? geometry.size.width :

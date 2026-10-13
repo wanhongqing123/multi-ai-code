@@ -121,6 +121,11 @@ extern "C" int maiFfplayIosSeekPercent(MaiFfplayIosSession* session,
     return session ? maiFfplaySeekPercent(fraction) : 0;
 }
 
+extern "C" int maiFfplayIosSeekAbsoluteUs(MaiFfplayIosSession* session,
+                                             int64_t positionUs) {
+    return session ? maiFfplaySeekAbsoluteUs(positionUs) : 0;
+}
+
 extern "C" int maiFfplayIosHasFinished(const MaiFfplayIosSession* session) {
     return session && session->finished ? 1 : 0;
 }

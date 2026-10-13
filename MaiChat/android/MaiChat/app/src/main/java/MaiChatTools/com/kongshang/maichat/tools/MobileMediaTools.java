@@ -18,12 +18,17 @@ final class MobileMediaTools {
     JSONObject execute(String tool, JSONObject arguments) throws Exception {
         if (tool.equals("maichat_play_video")) {
             String path = arguments.optString("path", "").trim();
+            double startSeconds = arguments.optDouble("start_seconds", 0);
+            if (!Double.isFinite(startSeconds) || startSeconds < 0 ||
+                startSeconds > Long.MAX_VALUE / 1_000_000.0)
+                throw new IllegalArgumentException("start_seconds 必须是非负的原片秒数");
             File file = AIAssistantController.shared(activity).workspaceFile(path);
             if (file == null || !file.isFile())
                 throw new IllegalArgumentException("视频必须是 Agent 工作目录中的现有文件");
-            if (!onUi(() -> activity.openAgentVideo(file.getCanonicalPath())))
+            long startPositionUs = Math.round(startSeconds * 1_000_000);
+            if (!onUi(() -> activity.openAgentVideo(file.getCanonicalPath(), startPositionUs)))
                 throw new IllegalStateException("MaiChat 无法打开视频弹窗");
-            return new JSONObject().put("opened", true);
+            return new JSONObject().put("opened", true).put("start_seconds", startSeconds);
         }
         String action = arguments.optString("action", "").trim();
         if (action.isEmpty()) throw new IllegalArgumentException("缺少播放命令 action");

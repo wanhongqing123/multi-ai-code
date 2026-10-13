@@ -92,6 +92,12 @@ Java_com_kongshang_maichat_MaiFfplayVideoView_nativeSeekPercent(
     return handle && maiFfplaySeekPercent(fraction) == 1 ? JNI_TRUE : JNI_FALSE;
 }
 
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_kongshang_maichat_MaiFfplayVideoView_nativeSeekAbsoluteUs(
+    JNIEnv*, jclass, jlong handle, jlong positionUs) {
+    return handle && maiFfplaySeekAbsoluteUs(positionUs) == 1 ? JNI_TRUE : JNI_FALSE;
+}
+
 extern "C" JNIEXPORT jlongArray JNICALL
 Java_com_kongshang_maichat_MaiFfplayVideoView_nativePlaybackStatus(
     JNIEnv* env, jclass, jlong handle) {

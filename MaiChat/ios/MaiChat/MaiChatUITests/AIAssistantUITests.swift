@@ -212,6 +212,40 @@ final class AIAssistantUITests: XCTestCase {
         XCTAssertFalse(app.buttons["ffplay-close"].waitForExistence(timeout: 3))
     }
 
+    func testAgentCanSeekPlayingVideoToAnAbsoluteSecond() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--ffplay-seek-ui-test"]
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        let playbackTime = app.staticTexts["ffplay-time"]
+        XCTAssertTrue(playbackTime.waitForExistence(timeout: 20))
+        let ready = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label CONTAINS %@", " / 0:20"),
+            object: playbackTime)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 15), .completed)
+        app.buttons["agent-seek-six-seconds"].tap()
+        XCTAssertTrue(app.buttons["定位已受理"].waitForExistence(timeout: 5))
+        let sought = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label MATCHES %@", "0:0[6-8] / 0:20"),
+            object: playbackTime)
+        XCTAssertEqual(XCTWaiter.wait(for: [sought], timeout: 5), .completed,
+                       "Agent seek must change the actual playback clock")
+    }
+
+    func testAgentCanOpenVideoFromAnAbsoluteSecond() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--ffplay-start-ui-test"]
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        let playbackTime = app.staticTexts["ffplay-time"]
+        XCTAssertTrue(playbackTime.waitForExistence(timeout: 20))
+        let startedAtSix = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label MATCHES %@", "0:0[6-8] / 0:20"),
+            object: playbackTime)
+        XCTAssertEqual(XCTWaiter.wait(for: [startedAtSix], timeout: 15), .completed,
+                       "start_seconds must set the initial playback position")
+    }
+
     func testFfplaySaveKeepsPlayerAlive() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--ai-ui-test", "--ffplay-ui-test"]

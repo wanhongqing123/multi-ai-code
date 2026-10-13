@@ -76,8 +76,9 @@ int main(int argc, char** argv) {
             char loopOption[] = "-loop";
             char infinite[] = "0";
             char* options[] = {name, loopOption, infinite, argv[3]};
+            const int64_t initialPositionUs = attempt == 0 ? 0 : 500'000;
             std::thread playback([&] {
-                result = maiFfplayRun(&host, 4, options);
+                result = maiFfplayRunAtSpeed(&host, 4, options, 1.0, initialPositionUs);
                 finished = true;
             });
             const auto waitUntil = [&](auto predicate, double seconds) {
@@ -96,7 +97,8 @@ int main(int argc, char** argv) {
             MaiFfplayPlaybackStatus status{};
             const bool clockAdvanced = audibleAudioQueued && waitUntil([&] {
                 return maiFfplayGetPlaybackStatus(&status) &&
-                       status.duration_us > 1'000'000 && status.position_us > 0;
+                       status.duration_us > 1'000'000 &&
+                       status.position_us >= (attempt == 0 ? 1 : 450'000);
             }, 2);
             const bool pausedCommand = started && maiFfplaySendCommand("pause") == 1;
             [[NSRunLoop currentRunLoop]
@@ -108,10 +110,18 @@ int main(int argc, char** argv) {
             const bool resumedCommand = paused && maiFfplaySendCommand("pause") == 1;
             const bool resumed = resumedCommand &&
                 waitUntil([&] { return rendered.load() > pausedFrames + 1; }, 2);
-            const bool seekAccepted = resumed && maiFfplaySeekPercent(0.5) == 1 &&
+            const bool reachedLater = resumed && waitUntil([&] {
+                return maiFfplayGetPlaybackStatus(&status) && status.position_us > 800'000;
+            }, 2);
+            const bool seekAccepted = reachedLater &&
+                maiFfplaySeekAbsoluteUs(100'000) == 1 &&
                 maiFfplaySendCommand("not_a_command") == -1;
             const bool seekHandled = seekAccepted &&
-                waitUntil([&] { return sawFiniteSeek.load(); }, 2) && !sawInvalidSeek;
+                waitUntil([&] {
+                    return sawFiniteSeek.load() &&
+                        maiFfplayGetPlaybackStatus(&status) &&
+                        status.position_us >= 50'000 && status.position_us < 500'000;
+                }, 2) && !sawInvalidSeek;
             if (!finished) maiFfplayRequestQuit();
             playback.join();
             maiFfplaySetDiagnosticSink(nullptr, nullptr);

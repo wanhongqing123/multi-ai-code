@@ -97,13 +97,19 @@ final class AIMobileHostToolProvider {
         switch name {
         case "maichat_play_video":
             let path = Self.string(arguments, key: "path")
+            let startSeconds = arguments["start_seconds"] as? Double ?? 0
+            guard startSeconds.isFinite, startSeconds >= 0,
+                  startSeconds <= Double(Int64.max) / 1_000_000 else {
+                return .failure(code: "invalid_input", message: "start_seconds must be a nonnegative source-media time")
+            }
             guard let source = AIAssistantPathPolicy.resolve(
                 path, workspacePath: AIAssistantModel.shared.workspacePath
             ), FileManager.default.fileExists(atPath: source.path) else {
                 return .failure(code: "not_found", message: "video must be an accessible local file")
             }
-            appState.agentVideoPresentation = MaiFfplayPresentation(path: source.path)
-            return Self.jsonSuccess(["opened": true])
+            appState.agentVideoPresentation = MaiFfplayPresentation(
+                path: source.path, startSeconds: startSeconds)
+            return Self.jsonSuccess(["opened": true, "start_seconds": startSeconds])
         case "maichat_video_command":
             let action = Self.string(arguments, key: "action")
             let percent = arguments["percent"] as? Double

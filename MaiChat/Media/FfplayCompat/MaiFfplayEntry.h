@@ -26,6 +26,9 @@ MAI_FFPLAY_EXPORT void maiFfplayRequestQuit(void);
 // Maps an Agent/MaiChat command onto ffplay's existing control handling.
 // Returns 1 if queued, 0 if playback is not active, -1 for an unknown command.
 MAI_FFPLAY_EXPORT int maiFfplaySendCommand(const char* command);
+// Requests an absolute source-media timestamp. The FFplay playback thread
+// applies it directly, without synthesizing a mouse event from window width.
+MAI_FFPLAY_EXPORT int maiFfplaySeekAbsoluteUs(int64_t position_us);
 MAI_FFPLAY_EXPORT int maiFfplaySeekPercent(double fraction);
 typedef struct MaiFfplayPlaybackStatus {
     int64_t position_us;

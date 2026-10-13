@@ -25,6 +25,7 @@
 		238DB9206D1690F905FB6A47 /* Pods_MaiChat.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E941704372DD54AD2FF0AED5 /* Pods_MaiChat.framework */; };
 		290398666A29A06E27AB57E3 /* MaiChatAuthClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC4C6DC9135AD53A7FEDD3DA /* MaiChatAuthClient.swift */; };
 		2A55E61AA07338C31386DE07 /* ffplay-sample.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = 8C7043E7ADEC49D3648291AF /* ffplay-sample.mp4 */; };
+		CEEE01E212AB430DA101F002 /* ffplay-seek-sample.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = CEEE01E212AB430DA101F001 /* ffplay-seek-sample.mp4 */; };
 		2FA099751A7A133A032E55F8 /* ComposerDraftState.swift in Sources */ = {isa = PBXBuildFile; fileRef = C846ED66C1F881705954E761 /* ComposerDraftState.swift */; };
 		30346792F4FE7D73D6F24B87 /* RemoteInputPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFC47464E3C7D9F6FBA8DD16 /* RemoteInputPacket.swift */; };
 		3C6DF0BD9610ACAE564EF27D /* MaiChatCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 771AB137E6961E2B9187CFEB /* MaiChatCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
@@ -159,6 +160,7 @@
 		8C56C06620B6A4AB7289B13D /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		8C57A0E06309C4F110DA1CBF /* remote-diagnostics-report.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "remote-diagnostics-report.json"; sourceTree = "<group>"; };
 		8C7043E7ADEC49D3648291AF /* ffplay-sample.mp4 */ = {isa = PBXFileReference; path = "ffplay-sample.mp4"; sourceTree = "<group>"; };
+		CEEE01E212AB430DA101F001 /* ffplay-seek-sample.mp4 */ = {isa = PBXFileReference; path = "ffplay-seek-sample.mp4"; sourceTree = "<group>"; };
 		8F61CFA51E87A9791A0ECB26 /* MarkdownInlineStyling.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownInlineStyling.swift; sourceTree = "<group>"; };
 		91C089D3C5D222B69986D04F /* RemoteDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDiagnostics.swift; sourceTree = "<group>"; };
 		9289D6B36E7E744EA1D6D196 /* PhoneAccountLoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneAccountLoginView.swift; sourceTree = "<group>"; };
@@ -482,6 +484,7 @@
 			isa = PBXGroup;
 			children = (
 				8C7043E7ADEC49D3648291AF /* ffplay-sample.mp4 */,
+				CEEE01E212AB430DA101F001 /* ffplay-seek-sample.mp4 */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -614,6 +617,7 @@
 			files = (
 				DEBCE768E14C523F47FC7CC5 /* Assets.xcassets in Resources */,
 				2A55E61AA07338C31386DE07 /* ffplay-sample.mp4 in Resources */,
+				CEEE01E212AB430DA101F002 /* ffplay-seek-sample.mp4 in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -294,10 +294,12 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
     add("maichat_play_video",
         "Open a video from the Agent workspace in MaiChat's FFplay/Graphics player. "
         "The player occupies the upper part of the screen while chat stays usable below, so "
-        "the user can ask for playback changes while it runs. "
+        "the user can ask for playback changes while it runs. Set start_seconds to begin at a "
+        "specific source-media time, instead of opening then immediately seeking. "
         "IM video messages use the same player.",
-        // path 是当前 Agent 可访问的现有视频，播放器不会自动保存到相册。
-        R"({"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false})");
+        // path 是当前 Agent 可访问的现有视频；start_seconds 是可选的原片绝对起播秒数。
+        // 直接从指定位置打开比“先打开、立刻再调用 seek”更稳定。
+        R"({"type":"object","properties":{"path":{"type":"string"},"start_seconds":{"type":"number","minimum":0}},"required":["path"],"additionalProperties":false})");
     add("maichat_video_command",
         "Control the currently open FFplay video. set_speed accepts 0.25, 0.5, 1, 1.5, or 2 "
         "and preserves audio pitch and sync with FFmpeg atempo. It briefly restarts the same "

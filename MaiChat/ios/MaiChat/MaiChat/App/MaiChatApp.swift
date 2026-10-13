@@ -257,6 +257,10 @@ struct MaiChatApp: App {
                         AIStreamTypingUITestRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--ffplay-ui-test") {
                         MaiFfplayUITestRoot()
+                    } else if ProcessInfo.processInfo.arguments.contains("--ffplay-seek-ui-test") {
+                        MaiFfplaySeekUITestRoot(startSeconds: 0)
+                    } else if ProcessInfo.processInfo.arguments.contains("--ffplay-start-ui-test") {
+                        MaiFfplaySeekUITestRoot(startSeconds: 6)
                     } else if ProcessInfo.processInfo.arguments.contains("--im-landscape-ui-test") {
                         ChatLandscapeUITestRoot()
                     } else {

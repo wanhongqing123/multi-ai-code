@@ -29,10 +29,12 @@ static volatile LONG sRunning;
 static volatile LONG sPlaybackActive;
 static volatile LONG64 sPositionUs;
 static volatile LONG64 sDurationUs;
+static volatile LONG64 sPendingSeekUs = -1;
 static volatile LONG sPaused;
 static volatile LONG sPlaybackSpeedPercent = 100;
 #define MAI_STATUS_STORE64(field, value) InterlockedExchange64(&(field), (value))
 #define MAI_STATUS_LOAD64(field) InterlockedCompareExchange64(&(field), 0, 0)
+#define MAI_STATUS_EXCHANGE64(field, value) InterlockedExchange64(&(field), (value))
 #define MAI_STATUS_STORE(field, value) InterlockedExchange(&(field), (value))
 #define MAI_STATUS_LOAD(field) InterlockedCompareExchange(&(field), 0, 0)
 #else
@@ -40,10 +42,12 @@ static atomic_flag sRunning = ATOMIC_FLAG_INIT;
 static atomic_int sPlaybackActive;
 static atomic_int_fast64_t sPositionUs;
 static atomic_int_fast64_t sDurationUs;
+static atomic_int_fast64_t sPendingSeekUs = -1;
 static atomic_int sPaused;
 static atomic_int sPlaybackSpeedPercent = 100;
 #define MAI_STATUS_STORE64(field, value) atomic_store(&(field), (value))
 #define MAI_STATUS_LOAD64(field) atomic_load(&(field))
+#define MAI_STATUS_EXCHANGE64(field, value) atomic_exchange(&(field), (value))
 #define MAI_STATUS_STORE(field, value) atomic_store(&(field), (value))
 #define MAI_STATUS_LOAD(field) atomic_load(&(field))
 #endif
@@ -98,6 +102,20 @@ static int maiFfplayPeepEventsWithStatus(VideoState* state,
 {
     if (state && state->ic) {
         const int64_t length = state->ic->duration;
+        // 在 FFplay 事件线程执行绝对时间跳转，避免用模拟鼠标点击推算播放位置。
+        // 上一次跳转仍在解码时保留新请求，等解码器空闲后再处理。
+        if (!state->seek_req) {
+            const int64_t requested = MAI_STATUS_EXCHANGE64(sPendingSeekUs, -1);
+            if (requested >= 0) {
+                const int64_t start_us = state->ic->start_time == AV_NOPTS_VALUE
+                    ? 0 : state->ic->start_time;
+                av_log(NULL, AV_LOG_INFO, "Seek to %.1f%% at %.3fs\n",
+                       length > 0 ? requested * 100.0 / length : 0.0,
+                       requested / (double)AV_TIME_BASE);
+                stream_seek(state, requested + start_us, 0, 0);
+                state->force_refresh = 1;
+            }
+        }
         const double clock = get_master_clock(state);
         const double start = state->ic->start_time == AV_NOPTS_VALUE ? 0.0 :
                              state->ic->start_time / (double)AV_TIME_BASE;
@@ -205,6 +223,7 @@ int maiFfplayRun(const MaiFfplayHost* host, int argc, char** argv)
     resetFfplayOptions();
     MAI_STATUS_STORE64(sPositionUs, 0);
     MAI_STATUS_STORE64(sDurationUs, 0);
+    MAI_STATUS_STORE64(sPendingSeekUs, -1);
     MAI_STATUS_STORE(sPaused, 0);
     MAI_STATUS_STORE(sPlaybackActive, 1);
     maiFfplayBindHost(host);
@@ -221,6 +240,7 @@ int maiFfplayRun(const MaiFfplayHost* host, int argc, char** argv)
     }
     maiFfplayBindHost(NULL);
     MAI_STATUS_STORE(sPlaybackActive, 0);
+    MAI_STATUS_STORE64(sPendingSeekUs, -1);
 #if defined(_WIN32)
     InterlockedExchange(&sRunning, 0);
 #else
@@ -327,14 +347,20 @@ int maiFfplaySendCommand(const char* command)
     return -1;
 }
 
+int maiFfplaySeekAbsoluteUs(int64_t position_us)
+{
+    if (position_us < 0) return -1;
+    if (!MAI_STATUS_LOAD(sPlaybackActive)) return 0;
+    const int64_t length = MAI_STATUS_LOAD64(sDurationUs);
+    if (length > 0 && position_us > length) return -1;
+    MAI_STATUS_STORE64(sPendingSeekUs, position_us);
+    return 1;
+}
+
 int maiFfplaySeekPercent(double fraction)
 {
     if (!(fraction >= 0.0 && fraction <= 1.0)) return -1;
-    const int width = maiFfplayWindowWidth();
-    if (width < 1) return 0;
-    SDL_Event event = {0};
-    event.type = SDL_MOUSEBUTTONDOWN;
-    event.button.button = SDL_BUTTON_RIGHT;
-    event.button.x = (int)(fraction * width);
-    return SDL_PushEvent(&event) > 0 ? 1 : 0;
+    const int64_t length = MAI_STATUS_LOAD64(sDurationUs);
+    if (length <= 0) return 0;
+    return maiFfplaySeekAbsoluteUs((int64_t)(fraction * length));
 }

@@ -70,6 +70,27 @@ final class AIAssistantUITests: XCTestCase {
         }
     }
 
+    func testLandscapeAssistantKeepsSessionSidebarBesideLatestMessage() throws {
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--ai-history-ui-test"]
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let sidebar = app.descendants(matching: .any)
+            .matching(identifier: "ai-session-drawer").firstMatch
+        XCTAssertTrue(sidebar.waitForExistence(timeout: 15))
+        let latest = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "历史消息 79")).firstMatch
+        XCTAssertTrue(latest.waitForExistence(timeout: 15))
+        XCTAssertLessThan(sidebar.frame.maxX, latest.frame.minX)
+        XCTAssertTrue(latest.isHittable)
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "ai-landscape-layout"
+        capture.lifetime = .keepAlways
+        add(capture)
+    }
+
     func testToolCallsDoNotExposeReasoningContent() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--ai-ui-test", "--transcript-ui-test"]

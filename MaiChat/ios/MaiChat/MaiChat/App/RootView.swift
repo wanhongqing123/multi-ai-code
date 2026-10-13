@@ -28,13 +28,27 @@ struct RootView: View {
     @State private var isShowingNotificationPermissionPrompt = false
     @State private var isVideoExpanded = false
     @State private var keyboardVisible = false
+    @State private var viewportSize: CGSize = .zero
     @AppStorage("maichat.notification-preprompt-dismissed")
     private var notificationPermissionPromptDismissed = false
 
     private var videoDockHeight: CGFloat {
-        guard appState.agentVideoPresentation != nil, !isVideoExpanded else { return 0 }
+        guard appState.agentVideoPresentation != nil, !isVideoExpanded,
+              !usesLandscapeVideoLayout else { return 0 }
         // 键盘弹出时给下半部输入区留空间，播放实例仍保持运行。
         return keyboardVisible ? 240 : min(max(UIScreen.main.bounds.height * 0.55, 320), 560)
+    }
+
+    private var usesLandscapeVideoLayout: Bool {
+        viewportSize.width > viewportSize.height && viewportSize.width >= 600
+    }
+
+    private var videoDockWidth: CGFloat {
+        guard appState.agentVideoPresentation != nil, !isVideoExpanded,
+              usesLandscapeVideoLayout else { return 0 }
+        // 横屏把视频放左侧，让聊天和创作中心始终有足够宽度输入指令。
+        let fraction: CGFloat = keyboardVisible ? 0.42 : 0.52
+        return min(viewportSize.width * fraction, viewportSize.width - 340)
     }
 
     var body: some View {
@@ -182,17 +196,23 @@ struct RootView: View {
         .animation(.easeOut(duration: 0.18), value: renamingContactGroup)
         .animation(.easeOut(duration: 0.18), value: deletingContactGroup)
         .padding(.top, videoDockHeight)
+        .padding(.leading, videoDockWidth)
         .background(Color(red: 0.966, green: 0.976, blue: 0.988).ignoresSafeArea())
-        // 视频占上半屏，聊天或创作中心留在下半屏；两块区域都能直接触摸。
+        // 竖屏上下分区，横屏左右分区；聊天或创作中心始终保留可触摸的输入区。
         // 全屏切换只改变同一个播放器的尺寸，不重新打开文件或重置播放位置。
         .overlay {
             GeometryReader { geometry in
+                Color.clear
+                    .onAppear { viewportSize = geometry.size }
+                    .onChange(of: geometry.size) { viewportSize = $0 }
                 if let presentation = appState.agentVideoPresentation {
                     MaiFfplayVideoScreen(path: presentation.path) {
                         appState.agentVideoPresentation = nil
                     }
-                    .frame(width: geometry.size.width,
-                           height: isVideoExpanded ? geometry.size.height : videoDockHeight)
+                    .frame(width: isVideoExpanded ? geometry.size.width :
+                           (usesLandscapeVideoLayout ? videoDockWidth : geometry.size.width),
+                           height: isVideoExpanded ? geometry.size.height :
+                           (usesLandscapeVideoLayout ? geometry.size.height : videoDockHeight))
                     .overlay(alignment: .topTrailing) {
                         Button {
                             isVideoExpanded.toggle()
@@ -204,14 +224,15 @@ struct RootView: View {
                                 .frame(width: 44, height: 44)
                                 .background(.black.opacity(0.55), in: Circle())
                         }
-                        .accessibilityLabel(isVideoExpanded ? "返回上下分屏" : "放大视频")
+                        .accessibilityLabel(isVideoExpanded ? "返回分屏" : "放大视频")
                         .accessibilityIdentifier("ffplay-expand")
                         .padding(.top, isVideoExpanded ? max(geometry.safeAreaInsets.top, 58) + 12 : 12)
                         .padding(.trailing, 12)
                     }
-                    .position(x: geometry.size.width / 2,
-                              y: isVideoExpanded ? geometry.size.height / 2 :
-                              videoDockHeight / 2)
+                    .position(x: isVideoExpanded || !usesLandscapeVideoLayout ?
+                              geometry.size.width / 2 : videoDockWidth / 2,
+                              y: isVideoExpanded || usesLandscapeVideoLayout ?
+                              geometry.size.height / 2 : videoDockHeight / 2)
                     .zIndex(100)
                 }
             }

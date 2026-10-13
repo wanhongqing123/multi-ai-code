@@ -21,6 +21,8 @@ struct AIAssistantView: View {
     @State private var confirmClear = false
     @State private var sessionDrawerOffset: CGFloat = 0
     @State private var sessionDrawerWidth: CGFloat = 320
+    @State private var viewportSize: CGSize = .zero
+    @State private var showsWideSidebar = true
     @State private var isAttachmentPanelPresented = false
     @State private var composerFocusController = AIComposerFocusController()
     @State private var transcriptionPresentation = VoiceTranscriptionPresentation()
@@ -42,65 +44,80 @@ struct AIAssistantView: View {
         #endif
     }
 
+    private var usesWideLayout: Bool {
+        viewportSize.width >= 700 && viewportSize.width > viewportSize.height
+    }
+
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            VStack(spacing: 0) {
-                AIHeader(
-                    exit: onExit == nil ? nil : {
-                        composerFocusController.dismiss()
-                        isAttachmentPanelPresented = false
-                        showActions = false
-                        showSessions = false
-                        onExit?()
-                    },
-                    openSessions: {
-                        composerFocusController.dismiss()
-                        isAttachmentPanelPresented = false
-                        showActions = false
-                        openSessionDrawer()
-                    },
-                    openActions: {
-                        composerFocusController.dismiss()
-                        isAttachmentPanelPresented = false
-                        showActions.toggle()
-                    }
-                )
-                Divider().overlay(Color.black.opacity(0.06))
-                if !model.ready {
-                    Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    AIAssistantMessageList(
-                        model: model,
-                        focusController: composerFocusController,
-                        isAttachmentPanelPresented: $isAttachmentPanelPresented,
-                        isActive: isActive
+            HStack(spacing: 0) {
+                if usesWideLayout && showsWideSidebar {
+                    // 横屏固定展示会话列表；竖屏仍使用抽屉，避免遮住阅读区域。
+                    sessionList.frame(width: min(280, viewportSize.width * 0.3))
+                    Divider()
+                }
+                VStack(spacing: 0) {
+                    AIHeader(
+                        exit: onExit == nil ? nil : {
+                            composerFocusController.dismiss()
+                            isAttachmentPanelPresented = false
+                            showActions = false
+                            showSessions = false
+                            onExit?()
+                        },
+                        openSessions: {
+                            composerFocusController.dismiss()
+                            isAttachmentPanelPresented = false
+                            showActions = false
+                            openSessionDrawer()
+                        },
+                        openActions: {
+                            composerFocusController.dismiss()
+                            isAttachmentPanelPresented = false
+                            showActions.toggle()
+                        }
                     )
+                    Divider().overlay(Color.black.opacity(0.06))
+                    if !model.ready {
+                        Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        AIAssistantMessageList(
+                            model: model,
+                            focusController: composerFocusController,
+                            isAttachmentPanelPresented: $isAttachmentPanelPresented,
+                            isActive: isActive
+                        )
+                        .frame(maxWidth: 900)
+                        .frame(maxWidth: .infinity)
+                    }
+                    if !model.error.isEmpty {
+                        HStack(alignment: .top) {
+                            Image(systemName: "exclamationmark.circle")
+                            Text(model.error).font(.caption).textSelection(.enabled)
+                            Spacer(minLength: 0)
+                            Button { model.error = "" } label: { Image(systemName: "xmark") }
+                        }.foregroundStyle(.red).padding(12).background(Color.red.opacity(0.05))
+                    }
+                    AIComposer(
+                        model: model,
+                        snapshot: AIComposerSnapshot(
+                            ready: model.ready,
+                            busy: model.busy,
+                            isSubmitting: model.isSubmitting,
+                            selected: model.selected,
+                            quotedMessage: model.quotedMessage,
+                            attachmentPanelPresented: isAttachmentPanelPresented
+                        ),
+                        focusController: composerFocusController,
+                        transcriptionPresentation: transcriptionPresentation,
+                        isAttachmentPanelPresented: $isAttachmentPanelPresented
+                    )
+                    .equatable()
+                    .frame(maxWidth: 900)
+                    .frame(maxWidth: .infinity)
                 }
-                if !model.error.isEmpty {
-                    HStack(alignment: .top) {
-                        Image(systemName: "exclamationmark.circle")
-                        Text(model.error).font(.caption).textSelection(.enabled)
-                        Spacer(minLength: 0)
-                        Button { model.error = "" } label: { Image(systemName: "xmark") }
-                    }.foregroundStyle(.red).padding(12).background(Color.red.opacity(0.05))
-                }
-                AIComposer(
-                    model: model,
-                    snapshot: AIComposerSnapshot(
-                        ready: model.ready,
-                        busy: model.busy,
-                        isSubmitting: model.isSubmitting,
-                        selected: model.selected,
-                        quotedMessage: model.quotedMessage,
-                        attachmentPanelPresented: isAttachmentPanelPresented
-                    ),
-                    focusController: composerFocusController,
-                    transcriptionPresentation: transcriptionPresentation,
-                    isAttachmentPanelPresented: $isAttachmentPanelPresented
-                )
-                .equatable()
+                .background(Color(uiColor: .systemBackground))
             }
-            .background(Color(uiColor: .systemBackground))
             if showActions {
                 Color.black.opacity(0.001).ignoresSafeArea().contentShape(Rectangle())
                     .onTapGesture { showActions = false }
@@ -132,28 +149,30 @@ struct AIAssistantView: View {
                 .padding(.top, 54).padding(.trailing, 14)
                 .transition(.scale(scale: 0.96, anchor: .topTrailing).combined(with: .opacity))
             }
-            GeometryReader { geometry in
-                let width = min(360, geometry.size.width * 0.86)
-                let offset = sessionDrawerX(width: width)
-                let progress = max(0, min(1, 1 + offset / width))
-                ZStack(alignment: .leading) {
-                    Color.black.opacity(0.16 * progress)
-                        .ignoresSafeArea()
-                        .contentShape(Rectangle())
-                        .onTapGesture { closeSessionDrawer() }
-                    sessionList
-                        .frame(width: width)
-                        .offset(x: offset)
-                        .shadow(color: Color.black.opacity(0.18 * progress), radius: 22, x: 8)
-                        .accessibilityHidden(!showSessions)
+            if !usesWideLayout {
+                GeometryReader { geometry in
+                    let width = min(360, geometry.size.width * 0.86)
+                    let offset = sessionDrawerX(width: width)
+                    let progress = max(0, min(1, 1 + offset / width))
+                    ZStack(alignment: .leading) {
+                        Color.black.opacity(0.16 * progress)
+                            .ignoresSafeArea()
+                            .contentShape(Rectangle())
+                            .onTapGesture { closeSessionDrawer() }
+                        sessionList
+                            .frame(width: width)
+                            .offset(x: offset)
+                            .shadow(color: Color.black.opacity(0.18 * progress), radius: 22, x: 8)
+                            .accessibilityHidden(!showSessions)
+                    }
+                    .onAppear { sessionDrawerWidth = width }
+                    .onChange(of: geometry.size.width) { _ in sessionDrawerWidth = width }
+                    .simultaneousGesture(sessionDrawerCloseGesture(width: width))
                 }
-                .onAppear { sessionDrawerWidth = width }
-                .onChange(of: geometry.size.width) { _ in sessionDrawerWidth = width }
-                .simultaneousGesture(sessionDrawerCloseGesture(width: width))
+                .allowsHitTesting(showSessions)
+                .accessibilityHidden(!showSessions)
+                .zIndex(3)
             }
-            .allowsHitTesting(showSessions)
-            .accessibilityHidden(!showSessions)
-            .zIndex(3)
             if model.showSettings {
                 AISettingsView(model: model) { model.showSettings = false }
                     .transition(.move(edge: .trailing).combined(with: .opacity))
@@ -171,9 +190,19 @@ struct AIAssistantView: View {
                 .zIndex(30)
             }
         }
+        .background {
+            GeometryReader { geometry in
+                Color.clear
+                    .onAppear { viewportSize = geometry.size }
+                    .onChange(of: geometry.size) { viewportSize = $0 }
+            }
+        }
         .coordinateSpace(name: AIImagePreviewLayout.coordinateSpaceName)
         .statusBarHidden(model.previewImage != nil)
         .simultaneousGesture(sessionDrawerOpenGesture)
+        .onChange(of: usesWideLayout) { wide in
+            if wide { showSessions = false }
+        }
         .confirmationDialog("清空当前对话的所有消息？", isPresented: $confirmClear, titleVisibility: .visible) {
             Button("清空消息", role: .destructive) { Task { await model.action("clear") } }
         }
@@ -212,7 +241,7 @@ struct AIAssistantView: View {
     private var sessionDrawerOpenGesture: some Gesture {
         DragGesture(minimumDistance: 12, coordinateSpace: .global)
             .onChanged { value in
-                guard !showSessions,
+                guard !usesWideLayout, !showSessions,
                       value.startLocation.x <= 32,
                       value.translation.width > 0,
                       abs(value.translation.width) > abs(value.translation.height)
@@ -259,6 +288,10 @@ struct AIAssistantView: View {
     }
 
     private func openSessionDrawer() {
+        if usesWideLayout {
+            showsWideSidebar.toggle()
+            return
+        }
         withAnimation(drawerAnimation) {
             showSessions = true
             sessionDrawerOffset = 0
@@ -277,7 +310,10 @@ struct AIAssistantView: View {
             HStack {
                 Text("对话").font(.system(size: 20, weight: .bold))
                 Spacer()
-                Button("完成") { closeSessionDrawer() }
+                Button(usesWideLayout ? "收起" : "完成") {
+                    if usesWideLayout { showsWideSidebar = false }
+                    else { closeSessionDrawer() }
+                }
                     .font(.system(size: 14, weight: .semibold)).buttonStyle(.plain)
             }.padding(.horizontal, 20).padding(.vertical, 18)
             Divider().overlay(Color.black.opacity(0.06))

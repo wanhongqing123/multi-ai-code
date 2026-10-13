@@ -709,6 +709,10 @@ final class AIAssistantModel: ObservableObject {
     #endif
     var busy: Bool { sessions.first { $0.id == selected }?.busy == true }
 
+    #if DEBUG
+    func installVideoToolTestWorkspace(_ path: String) { workspacePath = path }
+    #endif
+
     func setComposerTyping(_ active: Bool) { composerTyping = active }
 
     #if targetEnvironment(simulator)

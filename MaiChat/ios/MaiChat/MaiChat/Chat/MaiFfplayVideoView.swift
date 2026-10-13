@@ -29,13 +29,21 @@ enum MaiFfplayMobilePlayer {
             active.close()
             return true
         }
+        // 语音输入会暂时切换全局 AVAudioSession。Agent 指令到达时先恢复视频输出，
+        // 否则 seek 成功了，后续画面在播，扬声器却仍停留在录音模式。
+        let restartsPlayback = action == "replay" || action == "set_speed" ||
+            (action == "seek_seconds" && seconds == 0)
+        if !restartsPlayback && !active.restoreAudioForAgentCommand() { return false }
         if action == "seek_percent" {
             guard let percent, (0...100).contains(percent) else { return false }
             return active.seekPercent(percent / 100)
         }
         if action == "seek_seconds" {
             guard let seconds else { return false }
-            return active.seekSeconds(seconds)
+            return seconds == 0 ? active.replay() : active.seekSeconds(seconds)
+        }
+        if action == "replay" {
+            return active.replay()
         }
         if action == "set_speed" {
             guard let speed else { return false }
@@ -64,6 +72,9 @@ private final class MaiFfplayMetalView: UIView {
     private var session: OpaquePointer?
     private var playbackSpeed = 1.0
     private var lastSize: CGSize = .zero
+    private var audioStartUptime = 0.0
+    private var audioStartBufferCount: UInt64 = 0
+    private var didLogAudioOutput = false
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
@@ -99,14 +110,7 @@ private final class MaiFfplayMetalView: UIView {
     private func attach() {
         guard viewID == 0, window != nil, bounds.width > 0, bounds.height > 0,
               !videoPath.isEmpty, maiGraphicsPresenterEnsureStarted() else { return }
-        do {
-            let audioSession = AVAudioSession.sharedInstance()
-            try audioSession.setCategory(.playback, mode: .moviePlayback)
-            try audioSession.setActive(true)
-        } catch {
-            onError?("无法启动视频声音：\(error.localizedDescription)")
-            return
-        }
+        guard activatePlaybackAudioSession() else { return }
         lastSize = CGSize(width: max(1, bounds.width * contentScaleFactor),
                           height: max(1, bounds.height * contentScaleFactor))
         #if DEBUG
@@ -120,6 +124,7 @@ private final class MaiFfplayMetalView: UIView {
             onError?("Metal 视频视图无法创建")
             return
         }
+        resetAudioObservation()
         session = videoPath.withCString { path in
             maiFfplayIosStartAtSpeed(viewID, path, playbackSpeed, startPositionUs)
         }
@@ -128,6 +133,35 @@ private final class MaiFfplayMetalView: UIView {
             viewID = 0
             onError?("FFplay 无法启动")
         }
+    }
+
+    private func activatePlaybackAudioSession() -> Bool {
+        do {
+            let audioSession = AVAudioSession.sharedInstance()
+            try audioSession.setCategory(.playback, mode: .moviePlayback)
+            try audioSession.setActive(true)
+            AppDiagnosticLog.shared.record(level: .info, category: "ffplay",
+                event: "audio-session-active", fields: [
+                    "category": audioSession.category.rawValue,
+                    "route": audioSession.currentRoute.outputs.map { $0.portType.rawValue }
+                        .joined(separator: ","),
+                    "volume": String(format: "%.2f", audioSession.outputVolume)
+                ])
+            return true
+        } catch {
+            onError?("无法启动视频声音：\(error.localizedDescription)")
+            return false
+        }
+    }
+
+    func restorePlaybackAudioSession() -> Bool {
+        activatePlaybackAudioSession()
+    }
+
+    private func resetAudioObservation() {
+        audioStartUptime = ProcessInfo.processInfo.systemUptime
+        audioStartBufferCount = maiFfplayAppleNonSilentBufferCount()
+        didLogAudioOutput = false
     }
 
     func sendCommand(_ action: String) -> Bool {
@@ -145,6 +179,21 @@ private final class MaiFfplayMetalView: UIView {
         return maiFfplayIosSeekAbsoluteUs(session, position) == 1
     }
 
+    func replayFromBeginning() -> Bool {
+        guard viewID != 0 else { return false }
+        if let previous = session {
+            session = nil
+            maiFfplayIosStop(previous)
+        }
+        guard activatePlaybackAudioSession() else { return false }
+        startPositionUs = 0
+        resetAudioObservation()
+        session = videoPath.withCString { path in
+            maiFfplayIosStartAtSpeed(viewID, path, playbackSpeed, 0)
+        }
+        return session != nil
+    }
+
     func setSpeed(_ speed: Double) -> Bool {
         guard [0.25, 0.5, 1.0, 1.5, 2.0].contains(speed), let previous = session,
               viewID != 0 else { return false }
@@ -152,7 +201,9 @@ private final class MaiFfplayMetalView: UIView {
         let position = max(0, playbackStatus()?.position_us ?? 0)
         session = nil
         maiFfplayIosStop(previous)
+        guard activatePlaybackAudioSession() else { return false }
         playbackSpeed = speed
+        resetAudioObservation()
         session = videoPath.withCString { path in
             maiFfplayIosStartAtSpeed(viewID, path, speed, position)
         }
@@ -168,7 +219,22 @@ private final class MaiFfplayMetalView: UIView {
     func playbackStatus() -> MaiFfplayPlaybackStatus? {
         guard session != nil else { return nil }
         var status = MaiFfplayPlaybackStatus()
-        return maiFfplayGetPlaybackStatus(&status) == 1 ? status : nil
+        guard maiFfplayGetPlaybackStatus(&status) == 1 else { return nil }
+        if !didLogAudioOutput &&
+            ProcessInfo.processInfo.systemUptime - audioStartUptime >= 3 {
+            didLogAudioOutput = true
+            let audioSession = AVAudioSession.sharedInstance()
+            AppDiagnosticLog.shared.record(level: .info, category: "ffplay",
+                event: "audio-output-observed", fields: [
+                    "non_silent_buffers": String(
+                        maiFfplayAppleNonSilentBufferCount() - audioStartBufferCount),
+                    "category": audioSession.category.rawValue,
+                    "route": audioSession.currentRoute.outputs.map { $0.portType.rawValue }
+                        .joined(separator: ","),
+                    "volume": String(format: "%.2f", audioSession.outputVolume)
+                ])
+        }
+        return status
     }
 
     var unavailableReason: String {
@@ -452,6 +518,18 @@ final class MaiFfplayVideoController: UIViewController {
         return metalView.seekAbsoluteUs(Int64((seconds * 1_000_000).rounded()))
     }
 
+    func replay() -> Bool {
+        guard metalView.replayFromBeginning() else { return false }
+        playing = true
+        seekSlider.value = 0
+        refreshPlayButton()
+        return true
+    }
+
+    func restoreAudioForAgentCommand() -> Bool {
+        metalView.restorePlaybackAudioSession()
+    }
+
     func setSpeed(_ speed: Double) -> Bool {
         guard metalView.setSpeed(speed) else { return false }
         playbackSpeed = speed
@@ -566,7 +644,14 @@ struct MaiFfplayVideoScreen: UIViewControllerRepresentable {
     }
 
     func makeUIViewController(context _: Context) -> MaiFfplayVideoController {
-        MaiFfplayVideoController(path: path, startSeconds: startSeconds, close: close)
+        let controller = MaiFfplayVideoController(
+            path: path, startSeconds: startSeconds, close: close)
+        // 嵌入式播放器不一定触发全屏控制器的 viewDidAppear；创建时先绑定 Agent 工具。
+        if let previous = MaiFfplayMobilePlayer.active, previous !== controller {
+            previous.stop()
+        }
+        MaiFfplayMobilePlayer.active = controller
+        return controller
     }
 
     func updateUIViewController(_ controller: MaiFfplayVideoController, context _: Context) {
@@ -630,6 +715,106 @@ struct MaiFfplaySeekUITestRoot: View {
                 AIMobileHostToolProvider.shared.appState = appState
                 showingVideo = true
             }
+    }
+}
+#endif
+
+#if DEBUG
+struct MaiFfplayAgentDockUITestRoot: View {
+    @StateObject private var appState = RemoteIMAppState(loadedSettings: .empty)
+    @State private var commandResult = "准备打开视频"
+
+    var body: some View {
+        GeometryReader { geometry in
+            VStack(spacing: 16) {
+                if let presentation = appState.agentVideoPresentation {
+                    MaiFfplayVideoScreen(path: presentation.path,
+                                         startSeconds: presentation.startSeconds) {
+                        appState.agentVideoPresentation = nil
+                    }
+                    .frame(height: geometry.size.height * 0.57)
+                }
+                HStack {
+                    Button("Agent 重播") {
+                        Task { await command(#"{"action":"replay"}"#) }
+                    }
+                    .accessibilityIdentifier("agent-replay")
+                    Button("Agent 从开头播放") {
+                        Task { await command(#"{"action":"seek_seconds","seconds":0}"#) }
+                    }
+                    .accessibilityIdentifier("agent-start-over")
+                }
+                HStack {
+                    Button("Agent 0.5×") {
+                        Task { await command(#"{"action":"set_speed","speed":0.5}"#) }
+                    }
+                    .accessibilityIdentifier("agent-speed-half")
+                    Button("Agent 2×") {
+                        Task { await command(#"{"action":"set_speed","speed":2}"#) }
+                    }
+                    .accessibilityIdentifier("agent-speed-double")
+                }
+                Text(commandResult).accessibilityIdentifier("agent-command-result")
+                Spacer()
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .background(.black)
+        .foregroundStyle(.white)
+        .task { await openVideoThroughAgentTool() }
+    }
+
+    private func command(_ arguments: String) async {
+        let result = await AIMobileHostToolProvider.shared.execute(
+            name: "maichat_video_command", argumentsJSON: arguments)
+        commandResult = result.errorCode == nil ? "Agent 指令已执行" :
+            "Agent 指令失败：\(result.errorCode ?? "unknown")"
+    }
+
+    private func openVideoThroughAgentTool() async {
+        AppDiagnosticLog.shared.install()
+        AIMobileHostToolProvider.shared.appState = appState
+        if ProcessInfo.processInfo.arguments.contains("--ffplay-agent-real-video-test") {
+            let support = FileManager.default.urls(for: .applicationSupportDirectory,
+                                                   in: .userDomainMask)[0]
+            let workspace = support.appendingPathComponent("AIAssistant/Workspace",
+                                                           isDirectory: true)
+            let video = workspace.appendingPathComponent("out5-nowm.mp4")
+            guard FileManager.default.fileExists(atPath: video.path) else {
+                commandResult = "实际测试视频不存在"
+                return
+            }
+            AIAssistantModel.shared.installVideoToolTestWorkspace(workspace.path)
+            let result = await AIMobileHostToolProvider.shared.execute(
+                name: "maichat_play_video", argumentsJSON: #"{"path":"out5-nowm.mp4"}"#)
+            commandResult = result.errorCode == nil ? "Agent 已打开实际视频" :
+                "Agent 打开失败：\(result.errorCode ?? "unknown")"
+            return
+        }
+        guard let sample = Bundle.main.url(forResource: "ffplay-seek-sample",
+                                            withExtension: "mp4") else {
+            commandResult = "测试视频不存在"
+            return
+        }
+        let workspace = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ffplay-agent-dock-test", isDirectory: true)
+        let destination = workspace.appendingPathComponent(sample.lastPathComponent)
+        do {
+            try FileManager.default.createDirectory(at: workspace,
+                                                    withIntermediateDirectories: true)
+            if !FileManager.default.fileExists(atPath: destination.path) {
+                try FileManager.default.copyItem(at: sample, to: destination)
+            }
+        } catch {
+            commandResult = "无法准备测试视频：\(error.localizedDescription)"
+            return
+        }
+        AIAssistantModel.shared.installVideoToolTestWorkspace(workspace.path)
+        let result = await AIMobileHostToolProvider.shared.execute(
+            name: "maichat_play_video",
+            argumentsJSON: #"{"path":"ffplay-seek-sample.mp4"}"#)
+        commandResult = result.errorCode == nil ? "Agent 已打开视频" :
+            "Agent 打开失败：\(result.errorCode ?? "unknown")"
     }
 }
 #endif

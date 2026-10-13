@@ -261,11 +261,20 @@ struct MaiChatApp: App {
                         MaiFfplaySeekUITestRoot(startSeconds: 0)
                     } else if ProcessInfo.processInfo.arguments.contains("--ffplay-start-ui-test") {
                         MaiFfplaySeekUITestRoot(startSeconds: 6)
+                    } else if ProcessInfo.processInfo.arguments.contains("--ffplay-agent-dock-ui-test") {
+                        MaiFfplayAgentDockUITestRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--im-landscape-ui-test") {
                         ChatLandscapeUITestRoot()
                     } else {
                         AIAssistantView()
                     }
+                } else {
+                    appContent
+                }
+                #elseif DEBUG
+                if ProcessInfo.processInfo.arguments.contains("--ffplay-agent-dock-ui-test") ||
+                    ProcessInfo.processInfo.arguments.contains("--ffplay-agent-real-video-test") {
+                    MaiFfplayAgentDockUITestRoot()
                 } else {
                     appContent
                 }
@@ -276,6 +285,12 @@ struct MaiChatApp: App {
             .task {
                 #if targetEnvironment(simulator)
                 if ProcessInfo.processInfo.arguments.contains("--ai-ui-test") { return }
+                #endif
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("--ffplay-agent-dock-ui-test") ||
+                    ProcessInfo.processInfo.arguments.contains("--ffplay-agent-real-video-test") {
+                    return
+                }
                 #endif
                 await bootstrap.load()
             }

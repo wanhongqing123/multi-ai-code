@@ -269,8 +269,15 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     "-framework CoreMedia" "-framework CoreVideo" "-framework VideoToolbox")
 endif()
 if(ANDROID OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
+  # SoundTouch 源码随仓库构建；仅用于 FFplay 的 PCM 变速不变调输出。
+  set(INTEGER_SAMPLES ON CACHE BOOL "Use SoundTouch 16-bit PCM samples" FORCE)
+  set(SOUNDSTRETCH OFF CACHE BOOL "Do not build SoundTouch CLI" FORCE)
+  add_subdirectory(../../MaiAgent/third_party/soundtouch
+    ${CMAKE_CURRENT_BINARY_DIR}/soundtouch EXCLUDE_FROM_ALL)
+  set_target_properties(SoundTouch PROPERTIES POSITION_INDEPENDENT_CODE ON)
   add_library(maichat_ffplay_hosted SHARED
     ../Media/FfplayCompat/MaiFfplayEntry.c
+    ../Media/FfplayCompat/MaiFfplayAudioTempo.cpp
     ../Media/FfplayCompat/MaiFfplayThreading.cpp
     ../Media/FfplayCompat/MaiFfplayRenderer.cpp
     ../Media/FfplayCompat/MaiFfplayAudioMix.cpp
@@ -301,12 +308,14 @@ if(ANDROID OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
   target_include_directories(maichat_ffplay_hosted PRIVATE
     ../Media ../Media/FfplayCompat
     ${ffmpeg_source}/fftools ${ffmpeg_build} ${ffmpeg_build}/install/include)
+  target_compile_definitions(maichat_ffplay_hosted PRIVATE SOUNDTOUCH_INTEGER_SAMPLES=1)
   set_source_files_properties(
     ../Media/FfplayCompat/MaiFfplayEntry.c
     ${ffmpeg_source}/fftools/cmdutils.c
     ${ffmpeg_source}/fftools/opt_common.c
     PROPERTIES INCLUDE_DIRECTORIES ${ffmpeg_source})
   target_link_libraries(maichat_ffplay_hosted PRIVATE
+    SoundTouch
     maichat_ffmpeg_avdevice maichat_ffmpeg_avfilter maichat_ffmpeg_avformat
     maichat_ffmpeg_avcodec maichat_ffmpeg_swresample maichat_ffmpeg_swscale
     maichat_ffmpeg_avutil

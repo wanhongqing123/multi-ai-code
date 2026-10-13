@@ -870,8 +870,22 @@ add_executable(desktop_pdf_renderer_test tests/DesktopPdfRendererTest.cpp)
 target_link_libraries(desktop_pdf_renderer_test PRIVATE maichat_agent Qt5::Widgets Qt5::Test)
 
 set(ffplay_ffmpeg_source ${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/ffmpeg)
+# FFplay 的倍速音频从本仓库 SoundTouch 源码编译，不依赖 TRTC 内部二进制库。
+set(INTEGER_SAMPLES ON CACHE BOOL "Use SoundTouch 16-bit PCM samples" FORCE)
+set(SOUNDSTRETCH OFF CACHE BOOL "Do not build SoundTouch CLI" FORCE)
+add_subdirectory(../../MaiAgent/third_party/soundtouch
+  ${CMAKE_CURRENT_BINARY_DIR}/vendor/soundtouch EXCLUDE_FROM_ALL)
+set_target_properties(SoundTouch PROPERTIES POSITION_INDEPENDENT_CODE ON)
+add_executable(MaiFfplayAudioTempoTests
+  ../Media/tests/MaiFfplayAudioTempoTests.cpp
+  ../Media/FfplayCompat/MaiFfplayAudioTempo.cpp)
+target_include_directories(MaiFfplayAudioTempoTests PRIVATE ../Media/FfplayCompat)
+target_compile_definitions(MaiFfplayAudioTempoTests PRIVATE SOUNDTOUCH_INTEGER_SAMPLES=1)
+target_link_libraries(MaiFfplayAudioTempoTests PRIVATE SoundTouch)
+add_test(NAME MaiFfplayAudioTempoTests COMMAND MaiFfplayAudioTempoTests)
 set(maichat_ffplay_common_sources
   ../Media/FfplayCompat/MaiFfplayEntry.c
+  ../Media/FfplayCompat/MaiFfplayAudioTempo.cpp
   ../Media/FfplayCompat/MaiFfplayThreading.cpp
   ../Media/FfplayCompat/MaiFfplayRenderer.cpp
   ../Media/FfplayCompat/MaiFfplayAudioMix.cpp
@@ -891,12 +905,14 @@ if(APPLE AND TARGET maiagent_obs_metal)
     ../Media ../Media/FfplayCompat
     ${ffplay_ffmpeg_source}/fftools
     ${ffplay_ffmpeg_build} ${ffplay_ffmpeg_build}/install/include)
+  target_compile_definitions(maichat_ffplay_hosted PRIVATE SOUNDTOUCH_INTEGER_SAMPLES=1)
   set_source_files_properties(
     ../Media/FfplayCompat/MaiFfplayEntry.c
     ${ffplay_ffmpeg_source}/fftools/cmdutils.c
     ${ffplay_ffmpeg_source}/fftools/opt_common.c
     PROPERTIES INCLUDE_DIRECTORIES ${ffplay_ffmpeg_source})
   target_link_libraries(maichat_ffplay_hosted PRIVATE
+    SoundTouch
     ${ffplay_ffmpeg_build}/libavdevice/libavdevice.a
     ${ffplay_ffmpeg_build}/libavfilter/libavfilter.a
     ${ffplay_ffmpeg_build}/libavformat/libavformat.a
@@ -965,7 +981,7 @@ if(WIN32 AND MAICHAT_ENABLE_FFMPEG)
     C_STANDARD 11 C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden
     VISIBILITY_INLINES_HIDDEN YES)
   target_compile_definitions(maichat_ffplay_hosted PRIVATE
-    NOMINMAX WIN32_LEAN_AND_MEAN MAI_FFPLAY_HOSTED)
+    NOMINMAX WIN32_LEAN_AND_MEAN MAI_FFPLAY_HOSTED SOUNDTOUCH_INTEGER_SAMPLES=1)
   target_include_directories(maichat_ffplay_hosted PRIVATE
     ../Media ../Media/FfplayCompat
     ${ffplay_ffmpeg_source}/fftools
@@ -976,6 +992,7 @@ if(WIN32 AND MAICHAT_ENABLE_FFMPEG)
     ${ffplay_ffmpeg_source}/fftools/opt_common.c
     PROPERTIES INCLUDE_DIRECTORIES ${ffplay_ffmpeg_source})
   target_link_libraries(maichat_ffplay_hosted PRIVATE
+    SoundTouch
     maichat_ffmpeg_avdevice maichat_ffmpeg_avfilter maichat_ffmpeg_avformat
     maichat_ffmpeg_avcodec maichat_ffmpeg_swresample maichat_ffmpeg_swscale
     maichat_ffmpeg_avutil ${MAICHAT_MEDIA_CODEC_ARCHIVES}

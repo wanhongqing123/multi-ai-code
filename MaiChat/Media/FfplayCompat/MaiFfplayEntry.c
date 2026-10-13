@@ -19,6 +19,7 @@
 #endif
 
 #include "SDL.h"
+#include "MaiFfplayAudioTempo.h"
 #include "MaiFfplayCompatInternal.h"
 #if defined(_WIN32)
 #include "cmdutils.h"
@@ -56,6 +57,7 @@ static MAI_FFPLAY_THREAD_LOCAL int sExitReady;
 static MAI_FFPLAY_THREAD_LOCAL int sDidCleanUp;
 static void (*sDiagnosticSink)(void* user_data, int level, const char* line);
 static void* sDiagnosticUserData;
+static int sObservedAudioSerial = -1;
 
 struct VideoState;
 static int maiFfplayPeepEventsWithStatus(struct VideoState* state,
@@ -102,6 +104,12 @@ static int maiFfplayPeepEventsWithStatus(VideoState* state,
 {
     if (state && state->ic) {
         const int64_t length = state->ic->duration;
+        if (state->audio_stream >= 0) {
+            if (sObservedAudioSerial >= 0 &&
+                sObservedAudioSerial != state->audioq.serial)
+                maiFfplayAudioTempoNotifySeek();
+            sObservedAudioSerial = state->audioq.serial;
+        }
         // 在 FFplay 事件线程执行绝对时间跳转，避免用模拟鼠标点击推算播放位置。
         // 上一次跳转仍在解码时保留新请求，等解码器空闲后再处理。
         if (!state->seek_req) {
@@ -224,6 +232,7 @@ int maiFfplayRun(const MaiFfplayHost* host, int argc, char** argv)
     MAI_STATUS_STORE64(sPositionUs, 0);
     MAI_STATUS_STORE64(sDurationUs, 0);
     MAI_STATUS_STORE64(sPendingSeekUs, -1);
+    sObservedAudioSerial = -1;
     MAI_STATUS_STORE(sPaused, 0);
     MAI_STATUS_STORE(sPlaybackActive, 1);
     maiFfplayBindHost(host);
@@ -253,35 +262,28 @@ int maiFfplayRunAtSpeed(const MaiFfplayHost* host, int argc, char** argv,
                        double speed, int64_t start_position_us)
 {
     const char* rate = NULL;
-    const char* audio_tempo = NULL;
     int percent = 100;
     if (fabs(speed - 0.25) < 0.0001) {
         rate = "0.25";
-        audio_tempo = "atempo=0.7071067812,atempo=0.7071067812,"
-                      "atempo=0.7071067812,atempo=0.7071067812";
         percent = 25;
     }
     else if (fabs(speed - 0.5) < 0.0001) {
         rate = "0.5";
-        audio_tempo = "atempo=0.7071067812,atempo=0.7071067812";
         percent = 50;
     }
     else if (fabs(speed - 1.0) < 0.0001) { rate = "1"; percent = 100; }
     else if (fabs(speed - 1.5) < 0.0001) {
         rate = "1.5";
-        audio_tempo = "atempo=1.2247448714,atempo=1.2247448714";
         percent = 150;
     }
     else if (fabs(speed - 2.0) < 0.0001) {
         rate = "2";
-        audio_tempo = "atempo=1.4142135624,atempo=1.4142135624";
         percent = 200;
     }
     if (!rate || !host || !argv || argc < 2 || argc > 9 || start_position_us < 0 ||
         MAI_STATUS_LOAD(sPlaybackActive)) return -1;
     char seek[48];
     char video_filter[64];
-    char audio_filter[192];
     char* options[16];
     int count = 0;
     for (int index = 0; index < argc - 1; ++index) options[count++] = argv[index];
@@ -294,15 +296,12 @@ int maiFfplayRunAtSpeed(const MaiFfplayHost* host, int argc, char** argv,
     }
     if (percent != 100) {
         snprintf(video_filter, sizeof(video_filter), "setpts=PTS/%s", rate);
-        // atempo 通过增减输出采样数改变声音时长，同时尽量保持音高。
-        // 保留它生成的 PTS，只把非零起点映射到视频缩放后的时间轴；
-        // 重新用 N 生成整段音频 PTS 会抹掉源音轨的时间信息。
-        snprintf(audio_filter, sizeof(audio_filter),
-                 "%s,asetpts=PTS-STARTPTS+STARTPTS/%s", audio_tempo, rate);
         options[count++] = "-vf";
         options[count++] = video_filter;
-        options[count++] = "-af";
-        options[count++] = audio_filter;
+        // 视频时间轴按倍速缩放；音频由输出设备上的 SoundTouch.setTempo
+        // 处理 PCM，并以视频为同步主时钟，避免重新编码或改变音高。
+        options[count++] = "-sync";
+        options[count++] = "video";
     }
     options[count++] = argv[argc - 1];
     MAI_STATUS_STORE(sPlaybackSpeedPercent, percent);

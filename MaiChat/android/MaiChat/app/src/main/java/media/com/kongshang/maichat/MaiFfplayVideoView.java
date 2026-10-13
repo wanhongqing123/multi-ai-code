@@ -229,6 +229,21 @@ public final class MaiFfplayVideoView extends FrameLayout {
         return nativeSeekAbsoluteUs(playbackHandle, Math.round(seconds * 1_000_000));
     }
 
+    public boolean replay() {
+        if (graphicsViewId == 0 || videoPath == null || videoPath.isEmpty()) return false;
+        long previous = playbackHandle;
+        playbackHandle = 0;
+        if (previous != 0) nativeDestroy(previous);
+        startPositionUs = 0;
+        playbackHandle = nativeCreate(graphicsViewId, videoPath, speed, 0);
+        if (playbackHandle == 0) return false;
+        playing = true;
+        playButton.setText("Ⅱ");
+        playButton.setContentDescription("暂停视频");
+        seekBar.setProgress(0);
+        return true;
+    }
+
     public boolean setSpeed(double requested) {
         if (requested != 0.25 && requested != 0.5 && requested != 1.0 &&
             requested != 1.5 && requested != 2.0) return false;

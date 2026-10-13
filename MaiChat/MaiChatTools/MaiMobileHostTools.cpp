@@ -302,16 +302,19 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
         R"({"type":"object","properties":{"path":{"type":"string"},"start_seconds":{"type":"number","minimum":0}},"required":["path"],"additionalProperties":false})");
     add("maichat_video_command",
         "Control the currently open FFplay video. set_speed accepts 0.25, 0.5, 1, 1.5, or 2 "
-        "and preserves audio pitch and sync with FFmpeg atempo. It briefly restarts the same "
+        "and changes audio tempo without changing pitch using SoundTouch. It briefly restarts the same "
         "player at the source position without creating a new file. If the user asks to jump to "
         "a specific time such as 8 seconds, call seek_seconds with seconds=8 on the currently "
-        "open video; do not reopen it. seek_seconds jumps to an "
+        "open video; do not reopen it. For 'replay', 'restart', or 'play from the beginning', "
+        "use replay, which restarts the current video at 0 seconds with audio. "
+        "seek_seconds jumps to an "
         "absolute source-media time; existing play, pause, step, relative/chapter/percent seek, "
         "stream/filter cycling, mute, volume, fullscreen, and close remain available.",
         // 用户说“跳到第 8 秒”就对当前播放实例调用 seek_seconds(seconds=8)，无需重新打开。
+        // replay 在当前播放器中从 0 秒重新播放；seek_seconds(0) 也按重播处理。
         // set_speed 带 speed 倍数；seek_seconds 带源片绝对秒数；seek_percent 带百分比。
-        // 改速仍在现有播放器中播放同一文件；atempo 保持音调和音画同步，不另存转码文件。
-        R"({"type":"object","properties":{"action":{"type":"string","enum":["play","pause","toggle_pause","step","seek_forward","seek_backward","seek_minute_forward","seek_minute_backward","next_chapter","previous_chapter","seek_percent","seek_seconds","set_speed","next_audio","next_video","next_subtitle","next_program","next_filter","mute","volume_up","volume_down","fullscreen","close"]},"percent":{"type":"number","minimum":0,"maximum":100},"seconds":{"type":"number","minimum":0},"speed":{"type":"number","enum":[0.25,0.5,1,1.5,2]}},"required":["action"],"additionalProperties":false})");
+        // 改速仍在现有播放器中播放同一文件；SoundTouch.setTempo 保持音调，不另存转码文件。
+        R"({"type":"object","properties":{"action":{"type":"string","enum":["play","pause","toggle_pause","replay","step","seek_forward","seek_backward","seek_minute_forward","seek_minute_backward","next_chapter","previous_chapter","seek_percent","seek_seconds","set_speed","next_audio","next_video","next_subtitle","next_program","next_filter","mute","volume_up","volume_down","fullscreen","close"]},"percent":{"type":"number","minimum":0,"maximum":100},"seconds":{"type":"number","minimum":0},"speed":{"type":"number","enum":[0.25,0.5,1,1.5,2]}},"required":["action"],"additionalProperties":false})");
 }
 
 void registerMobilePhotoTools(MaiToolRegistry& tools,

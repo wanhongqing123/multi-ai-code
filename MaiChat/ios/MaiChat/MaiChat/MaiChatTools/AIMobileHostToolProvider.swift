@@ -109,6 +109,8 @@ final class AIMobileHostToolProvider {
             }
             appState.agentVideoPresentation = MaiFfplayPresentation(
                 path: source.path, startSeconds: startSeconds)
+            AppDiagnosticLog.shared.record(level: .info, category: "ffplay",
+                event: "video-open", fields: ["start_seconds": String(startSeconds)])
             return Self.jsonSuccess(["opened": true, "start_seconds": startSeconds])
         case "maichat_video_command":
             let action = Self.string(arguments, key: "action")
@@ -124,6 +126,8 @@ final class AIMobileHostToolProvider {
                     ])
                 return .failure(code: "unavailable", message: reason)
             }
+            AppDiagnosticLog.shared.record(level: .info, category: "ffplay",
+                event: "video-command-accepted", fields: ["action": action])
             return Self.jsonSuccess(["accepted": true])
         case "maichat_list_contacts":
             return Self.listContacts(appState: appState, arguments: arguments)

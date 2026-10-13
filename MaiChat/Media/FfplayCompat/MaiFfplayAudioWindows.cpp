@@ -13,6 +13,8 @@
 #include <vector>
 
 #include "MaiFfplayCompatInternal.h"
+#include "MaiFfplayAudioTempo.h"
+#include "MaiFfplayEntry.h"
 
 namespace {
 
@@ -20,6 +22,7 @@ struct AudioDevice {
     HWAVEOUT output = nullptr;
     HANDLE bufferDone = nullptr;
     SDL_AudioSpec spec{};
+    std::unique_ptr<MaiFfplayAudioTempo> tempo;
     std::vector<Uint8> buffers[3];
     WAVEHDR headers[3]{};
     std::thread worker;
@@ -48,9 +51,13 @@ void playAudio(AudioDevice* device) {
             WaitForSingleObject(device->bufferDone, 100);
             continue;
         }
-        device->spec.callback(device->spec.userdata,
-                              device->buffers[next].data(),
-                              static_cast<int>(device->spec.size));
+        if (device->tempo)
+            device->tempo->fill(device->buffers[next].data(),
+                                static_cast<int>(device->spec.size));
+        else
+            device->spec.callback(device->spec.userdata,
+                                  device->buffers[next].data(),
+                                  static_cast<int>(device->spec.size));
         header.dwBufferLength = device->spec.size;
         const MMRESULT written = waveOutWrite(device->output, &header, sizeof(header));
         if (written != MMSYSERR_NOERROR) {
@@ -76,6 +83,10 @@ extern "C" SDL_AudioDeviceID SDL_OpenAudioDevice(const char*, int capture,
     device->spec.silence = 0;
     device->spec.size = static_cast<Uint32>(wanted->samples) *
                         wanted->channels * sizeof(Sint16);
+    MaiFfplayPlaybackStatus playback{};
+    if (maiFfplayGetPlaybackStatus(&playback) && playback.speed_percent != 100)
+        device->tempo = std::make_unique<MaiFfplayAudioTempo>(device->spec,
+                                                               playback.speed_percent);
     device->bufferDone = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (!device->bufferDone) {
         maiFfplaySetError("Windows audio completion event could not be created");

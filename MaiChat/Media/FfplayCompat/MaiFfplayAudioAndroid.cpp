@@ -13,12 +13,15 @@
 #include <vector>
 
 #include "MaiFfplayCompatInternal.h"
+#include "MaiFfplayAudioTempo.h"
+#include "MaiFfplayEntry.h"
 
 namespace {
 
 struct AudioDevice {
     AAudioStream* stream = nullptr;
     SDL_AudioSpec spec{};
+    std::unique_ptr<MaiFfplayAudioTempo> tempo;
     std::thread worker;
     std::mutex mutex;
     std::condition_variable condition;
@@ -40,8 +43,11 @@ void playAudio(AudioDevice* device) {
             device->condition.wait(lock, [device] { return device->closing || !device->paused; });
             if (device->closing) break;
         }
-        device->spec.callback(device->spec.userdata, buffer.data(),
-                              static_cast<int>(buffer.size()));
+        if (device->tempo)
+            device->tempo->fill(buffer.data(), static_cast<int>(buffer.size()));
+        else
+            device->spec.callback(device->spec.userdata, buffer.data(),
+                                  static_cast<int>(buffer.size()));
         int32_t remaining = static_cast<int32_t>(device->spec.samples);
         const int32_t bytesPerFrame = device->spec.channels * sizeof(Sint16);
         Uint8* next = buffer.data();
@@ -93,6 +99,10 @@ extern "C" SDL_AudioDeviceID SDL_OpenAudioDevice(const char*, int capture,
     device->spec.silence = 0;
     device->spec.size = static_cast<Uint32>(device->spec.samples) *
                         device->spec.channels * sizeof(Sint16);
+    MaiFfplayPlaybackStatus playback{};
+    if (maiFfplayGetPlaybackStatus(&playback) && playback.speed_percent != 100)
+        device->tempo = std::make_unique<MaiFfplayAudioTempo>(device->spec,
+                                                               playback.speed_percent);
     if (obtained) *obtained = device->spec;
     const SDL_AudioDeviceID id = sNextId.fetch_add(1);
     std::lock_guard<std::mutex> lock(sDevicesMutex);

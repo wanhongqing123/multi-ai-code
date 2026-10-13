@@ -31,11 +31,12 @@ the compatibility layer maps its platform calls to MaiChat. Agent commands
 must exercise the same playback session as MaiChat's own controls.
 
 Speed switching reopens the same source in the same popup at its current source-media
-position. The compatibility entry point applies `setpts` to video and pitch-preserving
-`atempo` to audio without creating a new file. It splits non-1× rates into smaller
-tempo stages to reduce artifacts; audio timestamps retain the tempo filter's
-sample timing while their start offset follows the video clock. Changing speed causes
-a brief pause.
+position. The compatibility entry point applies `setpts` to video. The native audio
+backends feed FFplay's decoded 16-bit PCM through SoundTouch `setTempo`, which changes
+duration without changing pitch. At non-1× rates FFplay uses the video clock for sync;
+the shared audio device outputs stretched PCM directly, without creating a new file.
+Changing speed causes a brief pause. SoundTouch 2.3.3 source and its LGPL-2.1 license
+are kept under `MaiAgent/third_party/soundtouch`.
 The Agent `maichat_video_command` and native popup controls call the same path.
 
 ## iOS picture quality: 2026-10-03 device evidence

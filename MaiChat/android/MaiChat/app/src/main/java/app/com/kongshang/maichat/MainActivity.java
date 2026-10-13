@@ -3197,7 +3197,9 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         MaiFfplayVideoView video = MaiFfplayVideoView.activeView();
         if (video == null) return false;
         if (action.equals("seek_percent")) return video.seekPercent(percent / 100.0);
-        if (action.equals("seek_seconds")) return video.seekSeconds(seconds);
+        if (action.equals("seek_seconds"))
+            return seconds == 0 ? video.replay() : video.seekSeconds(seconds);
+        if (action.equals("replay")) return video.replay();
         if (action.equals("set_speed")) return video.setSpeed(speed);
         return video.command(action);
     }

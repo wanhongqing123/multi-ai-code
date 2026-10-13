@@ -11,6 +11,8 @@
 #include <unordered_map>
 
 #include "MaiFfplayCompatInternal.h"
+#include "MaiFfplayAudioTempo.h"
+#include "MaiFfplayEntry.h"
 
 namespace {
 
@@ -18,6 +20,7 @@ struct AudioDevice {
     AudioQueueRef queue = nullptr;
     SDL_AudioSpec spec{};
     AudioQueueBufferRef buffers[3]{};
+    std::unique_ptr<MaiFfplayAudioTempo> tempo;
     std::atomic<bool> closing{false};
     bool started = false;
 };
@@ -31,9 +34,13 @@ void fillBuffer(AudioDevice* device, AudioQueueBufferRef buffer) {
     if (device->closing) return;
     buffer->mAudioDataByteSize = device->spec.size;
     std::memset(buffer->mAudioData, device->spec.silence, device->spec.size);
-    device->spec.callback(device->spec.userdata,
-                          static_cast<Uint8*>(buffer->mAudioData),
-                          static_cast<int>(device->spec.size));
+    if (device->tempo)
+        device->tempo->fill(static_cast<Uint8*>(buffer->mAudioData),
+                            static_cast<int>(device->spec.size));
+    else
+        device->spec.callback(device->spec.userdata,
+                              static_cast<Uint8*>(buffer->mAudioData),
+                              static_cast<int>(device->spec.size));
     if (!device->closing &&
         AudioQueueEnqueueBuffer(device->queue, buffer, 0, nullptr) == noErr) {
         const auto* samples = static_cast<const Sint16*>(buffer->mAudioData);
@@ -71,6 +78,10 @@ extern "C" SDL_AudioDeviceID SDL_OpenAudioDevice(const char*, int capture,
     device->spec = *wanted;
     device->spec.silence = 0;
     device->spec.size = static_cast<Uint32>(wanted->samples) * wanted->channels * sizeof(Sint16);
+    MaiFfplayPlaybackStatus playback{};
+    if (maiFfplayGetPlaybackStatus(&playback) && playback.speed_percent != 100)
+        device->tempo = std::make_unique<MaiFfplayAudioTempo>(device->spec,
+                                                               playback.speed_percent);
 
     AudioStreamBasicDescription format{};
     format.mSampleRate = wanted->freq;

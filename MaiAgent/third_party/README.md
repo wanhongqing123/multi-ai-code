@@ -16,6 +16,7 @@
 | `openssl/` | https://www.openssl.org/source/ | 3.5.9 LTS（源码基线，剔除示例私钥、测试与演示目录；原包 SHA-256 `603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a`） |
 | `libssh2/` | https://github.com/libssh2/libssh2 | 1.11.2 开发快照，固定提交 `740c2d33ad58720db1039031d2b6e13a3df9aab8` |
 | `ffmpeg/` | https://ffmpeg.org/ | 9.0.2（完整源码） |
+| `soundtouch/` | https://www.surina.net/soundtouch/ | 2.3.3（完整源码基线，LGPL-2.1-or-later，播放器变速不变调） |
 | `opencv/` | https://github.com/opencv/opencv | 4.14.0（完整源码） |
 | `simde/` | https://github.com/simd-everywhere/simde | 0.8.2（OBS 使用的头文件与许可文件） |
 | `md4c/` | https://github.com/mity/md4c | release-0.5.2（MIT，供 PDF 与桌面 Markdown 共用） |
@@ -26,6 +27,9 @@ OpenCV 4.14.0 来自官方 tag 源码包
 源码原样解包到 `opencv/`，构建时无需联网。上游许可见
 [`opencv/LICENSE`](opencv/LICENSE)。桌面图像模型单独放在
 [`MaiChat/shared/agent/models/`](../../MaiChat/shared/agent/models/)。
+
+SoundTouch 的来源、发布包 SHA-256 和本地构建调整见
+[`soundtouch/MAICHAT_SOURCE.md`](soundtouch/MAICHAT_SOURCE.md)。
 
 zlib 使用上游 CMake 目标生成静态库，编译时启用 `Z_PREFIX`，避免与 Qt 和
 FFmpeg 已链接的 zlib 符号冲突。OpenSSL 在上游源码上修改了 `apps` 的进程退出、

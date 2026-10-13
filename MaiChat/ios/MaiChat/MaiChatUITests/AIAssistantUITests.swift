@@ -246,6 +246,58 @@ final class AIAssistantUITests: XCTestCase {
                        "start_seconds must set the initial playback position")
     }
 
+    func testAgentOpenedDockedVideoCanReplayAndStartOver() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--ffplay-agent-dock-ui-test"]
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        let result = app.staticTexts["agent-command-result"]
+        XCTAssertTrue(result.waitForExistence(timeout: 20))
+        let opened = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", "Agent 已打开视频"), object: result)
+        XCTAssertEqual(XCTWaiter.wait(for: [opened], timeout: 15), .completed)
+        let playbackTime = app.staticTexts["ffplay-time"]
+        let advanced = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label MATCHES %@", "0:0[2-5] / 0:20"),
+            object: playbackTime)
+        XCTAssertEqual(XCTWaiter.wait(for: [advanced], timeout: 15), .completed)
+        app.buttons["agent-replay"].tap()
+        let replayed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label MATCHES %@", "0:0[0-1] / 0:20"),
+            object: playbackTime)
+        XCTAssertEqual(XCTWaiter.wait(for: [replayed], timeout: 5), .completed)
+        let advancedAgain = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label MATCHES %@", "0:0[2-5] / 0:20"),
+            object: playbackTime)
+        XCTAssertEqual(XCTWaiter.wait(for: [advancedAgain], timeout: 10), .completed)
+        app.buttons["agent-start-over"].tap()
+        let startedOver = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label MATCHES %@", "0:0[0-1] / 0:20"),
+            object: playbackTime)
+        XCTAssertEqual(XCTWaiter.wait(for: [startedOver], timeout: 5), .completed)
+    }
+
+    func testAgentOpenedDockedVideoCanChangeSoundTouchTempo() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--ffplay-agent-dock-ui-test"]
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        let opened = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", "Agent 已打开视频"),
+            object: app.staticTexts["agent-command-result"])
+        XCTAssertEqual(XCTWaiter.wait(for: [opened], timeout: 20), .completed)
+        let speed = app.buttons["ffplay-speed"]
+        XCTAssertTrue(speed.waitForExistence(timeout: 15))
+        app.buttons["agent-speed-half"].tap()
+        let half = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label CONTAINS %@", "0.5"), object: speed)
+        XCTAssertEqual(XCTWaiter.wait(for: [half], timeout: 10), .completed)
+        app.buttons["agent-speed-double"].tap()
+        let double = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label CONTAINS %@", "2.0"), object: speed)
+        XCTAssertEqual(XCTWaiter.wait(for: [double], timeout: 10), .completed)
+    }
+
     func testFfplaySaveKeepsPlayerAlive() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--ai-ui-test", "--ffplay-ui-test"]

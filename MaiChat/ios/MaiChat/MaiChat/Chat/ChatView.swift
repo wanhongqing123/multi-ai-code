@@ -460,24 +460,43 @@ struct ChatView: View {
     let bottomBar: AnyView
     @State private var searchTargetMessageID: UUID?
     @State private var preparedContactID: String?
+    @StateObject private var landscapeArrival = ChatNavigationArrival()
     @EnvironmentObject private var appState: RemoteIMAppState
 
     var body: some View {
-        ChatNavigationHost(
-            root: AnyView(VStack(spacing: 0) {
-                HeaderView()
-                ConversationListView(
-                    activeContact: $activeContact,
-                    searchTargetMessageID: $searchTargetMessageID
+        GeometryReader { viewport in
+            if viewport.size.width >= 700 && viewport.size.width > viewport.size.height {
+                // 横屏把消息主界面固定在左边，选中的聊天在右边，避免来回推入/返回。
+                HStack(spacing: 0) {
+                    conversationRoot
+                        .frame(width: min(max(viewport.size.width * 0.32, 280), 360))
+                    Divider()
+                    if let detail {
+                        detail
+                            .environmentObject(landscapeArrival)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .onAppear { landscapeArrival.complete() }
+                    } else {
+                        VStack(spacing: 10) {
+                            Image(systemName: "bubble.left.and.bubble.right")
+                                .font(.system(size: 32))
+                            Text(activeContact == nil ? "选择一个对话" : "正在加载消息")
+                                .font(.subheadline)
+                        }
+                        .foregroundStyle(RemoteIMStyle.textSecondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .accessibilityIdentifier("im-landscape-placeholder")
+                    }
+                }
+            } else {
+                ChatNavigationHost(
+                    root: AnyView(conversationRoot),
+                    detail: detail,
+                    selectionID: canPresentContact ? activeContact?.userID : nil,
+                    onPop: { activeContact = nil }
                 )
-                // The bar belongs to the previous page, so UIKit reveals it
-                // together with the conversation list during interactive pop.
-                bottomBar
-            }.background(RemoteIMStyle.pageBackground).environmentObject(appState)),
-            detail: detail,
-            selectionID: canPresentContact ? activeContact?.userID : nil,
-            onPop: { activeContact = nil }
-        )
+            }
+        }
         .background(RemoteIMStyle.pageBackground.ignoresSafeArea())
         .task(id: activeContact?.userID) {
             guard let contact = activeContact else {
@@ -490,6 +509,20 @@ struct ChatView: View {
             guard !Task.isCancelled, activeContact?.userID == contact.userID else { return }
             preparedContactID = contact.userID
         }
+    }
+
+    private var conversationRoot: some View {
+        VStack(spacing: 0) {
+            HeaderView()
+            ConversationListView(
+                activeContact: $activeContact,
+                searchTargetMessageID: $searchTargetMessageID
+            )
+            // 竖屏返回时页签随会话列表一同出现；横屏则留在左栏底部。
+            bottomBar
+        }
+        .background(RemoteIMStyle.pageBackground)
+        .environmentObject(appState)
     }
 
     private var canPresentContact: Bool {
@@ -508,6 +541,25 @@ struct ChatView: View {
         ).environmentObject(appState))
     }
 }
+
+#if targetEnvironment(simulator)
+struct ChatLandscapeUITestRoot: View {
+    @State private var activeContact: RemoteIMContact?
+    @StateObject private var appState = RemoteIMAppState(
+        loadedSettings: StoredRemoteIMSettings(
+            sdkAppID: nil, masterUserID: "im-layout-test",
+            contacts: [RemoteIMContact(userID: "im-test-peer", displayName: "横屏测试联系人")],
+            reconnectOnLaunch: false
+        )
+    )
+
+    var body: some View {
+        ChatView(activeContact: $activeContact, showRemoteDesktop: {},
+                 bottomBar: AnyView(Text("消息页签").frame(height: 48)))
+            .environmentObject(appState)
+    }
+}
+#endif
 
 struct RemoteIMContactAvatar: View {
     let contact: RemoteIMContact
@@ -831,6 +883,7 @@ private struct ConversationListView: View {
             )
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("im-conversation-\(contact.userID)")
         .listRowInsets(EdgeInsets())
         .listRowSeparator(.hidden)
         .listRowBackground(RemoteIMStyle.panelBackground)

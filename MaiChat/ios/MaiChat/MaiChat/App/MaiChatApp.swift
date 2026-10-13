@@ -257,6 +257,8 @@ struct MaiChatApp: App {
                         AIStreamTypingUITestRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--ffplay-ui-test") {
                         MaiFfplayUITestRoot()
+                    } else if ProcessInfo.processInfo.arguments.contains("--im-landscape-ui-test") {
+                        ChatLandscapeUITestRoot()
                     } else {
                         AIAssistantView()
                     }

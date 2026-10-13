@@ -91,6 +91,38 @@ final class AIAssistantUITests: XCTestCase {
         add(capture)
     }
 
+    func testLandscapeIMKeepsConversationListBesideChat() throws {
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--im-landscape-ui-test"]
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let conversation = app.buttons["im-conversation-im-test-peer"]
+        let placeholder = app.descendants(matching: .any)
+            .matching(identifier: "im-landscape-placeholder").firstMatch
+        XCTAssertTrue(conversation.waitForExistence(timeout: 15))
+        XCTAssertTrue(placeholder.waitForExistence(timeout: 15))
+        conversation.tap()
+        let menu = app.buttons["chatMoreMenu"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 15))
+        XCTAssertTrue(conversation.isHittable)
+        XCTAssertLessThan(conversation.frame.maxX, menu.frame.minX)
+    }
+
+    func testPortraitIMStillNavigatesIntoChat() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--im-landscape-ui-test"]
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        let conversation = app.buttons["im-conversation-im-test-peer"]
+        XCTAssertTrue(conversation.waitForExistence(timeout: 15))
+        conversation.tap()
+        XCTAssertTrue(app.buttons["chatMoreMenu"].waitForExistence(timeout: 15))
+        XCTAssertFalse(conversation.isHittable)
+    }
+
     func testToolCallsDoNotExposeReasoningContent() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--ai-ui-test", "--transcript-ui-test"]

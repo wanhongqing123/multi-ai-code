@@ -290,10 +290,11 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
         // id 来自 mobile_list_contacts，不接受随意构造的联系人字段组合。
         R"({"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":false})");
     // 会话内视频预览和 IM 视频消息走同一个播放器；控制指令只操作当前打开的实例。
-    // 创作中心打开视频时播放器先缩成悬浮窗，用户仍可输入自然语言让 AI 控制当前视频。
+    // 创作中心打开视频时播放器固定在上半屏，下半屏继续输入自然语言控制当前视频。
     add("maichat_play_video",
         "Open a video from the Agent workspace in MaiChat's FFplay/Graphics player. "
-        "The player remains above the chat so the user can ask for playback changes while it runs. "
+        "The player occupies the upper part of the screen while chat stays usable below, so "
+        "the user can ask for playback changes while it runs. "
         "IM video messages use the same player.",
         // path 是当前 Agent 可访问的现有视频，播放器不会自动保存到相册。
         R"({"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false})");

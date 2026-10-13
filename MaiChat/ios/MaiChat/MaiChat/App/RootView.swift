@@ -27,8 +27,15 @@ struct RootView: View {
     @State private var deletingContactGroup: String?
     @State private var isShowingNotificationPermissionPrompt = false
     @State private var isVideoExpanded = false
+    @State private var keyboardVisible = false
     @AppStorage("maichat.notification-preprompt-dismissed")
     private var notificationPermissionPromptDismissed = false
+
+    private var videoDockHeight: CGFloat {
+        guard appState.agentVideoPresentation != nil, !isVideoExpanded else { return 0 }
+        // 键盘弹出时给下半部输入区留空间，播放实例仍保持运行。
+        return keyboardVisible ? 240 : min(max(UIScreen.main.bounds.height * 0.45, 300), 460)
+    }
 
     var body: some View {
         ZStack {
@@ -174,19 +181,18 @@ struct RootView: View {
         .animation(.easeOut(duration: 0.18), value: contactGroupActionName)
         .animation(.easeOut(duration: 0.18), value: renamingContactGroup)
         .animation(.easeOut(duration: 0.18), value: deletingContactGroup)
+        .padding(.top, videoDockHeight)
         .background(Color(red: 0.966, green: 0.976, blue: 0.988).ignoresSafeArea())
-        // 视频和创作中心共用一个窗口：缩小时保留输入区，AI 才能继续控制正在播放的实例。
-        // 放大只改变同一个播放器的尺寸，不重新打开文件或重置播放位置。
+        // 视频占上半屏，聊天或创作中心留在下半屏；两块区域都能直接触摸。
+        // 全屏切换只改变同一个播放器的尺寸，不重新打开文件或重置播放位置。
         .overlay {
             GeometryReader { geometry in
                 if let presentation = appState.agentVideoPresentation {
-                    let width = min(geometry.size.width - 24, 340)
-                    let height: CGFloat = 260
                     MaiFfplayVideoScreen(path: presentation.path) {
                         appState.agentVideoPresentation = nil
                     }
-                    .frame(width: isVideoExpanded ? geometry.size.width : width,
-                           height: isVideoExpanded ? geometry.size.height : height)
+                    .frame(width: geometry.size.width,
+                           height: isVideoExpanded ? geometry.size.height : videoDockHeight)
                     .overlay(alignment: .topTrailing) {
                         Button {
                             isVideoExpanded.toggle()
@@ -198,25 +204,28 @@ struct RootView: View {
                                 .frame(width: 44, height: 44)
                                 .background(.black.opacity(0.55), in: Circle())
                         }
-                        .accessibilityLabel(isVideoExpanded ? "缩小视频，返回对话" : "放大视频")
+                        .accessibilityLabel(isVideoExpanded ? "返回上下分屏" : "放大视频")
                         .accessibilityIdentifier("ffplay-expand")
                         .padding(.top, isVideoExpanded ? max(geometry.safeAreaInsets.top, 58) + 12 : 12)
                         .padding(.trailing, 12)
                     }
-                    .clipShape(RoundedRectangle(cornerRadius: isVideoExpanded ? 0 : 18))
-                    .shadow(color: .black.opacity(isVideoExpanded ? 0 : 0.3), radius: 16)
-                    .position(x: isVideoExpanded ? geometry.size.width / 2 :
-                              geometry.size.width - width / 2 - 12,
+                    .position(x: geometry.size.width / 2,
                               y: isVideoExpanded ? geometry.size.height / 2 :
-                              max(geometry.safeAreaInsets.top, 58) + height / 2 + 8)
+                              videoDockHeight / 2)
                     .zIndex(100)
                 }
             }
-            .ignoresSafeArea()
+            .ignoresSafeArea(edges: isVideoExpanded ? .all : [])
         }
         .statusBarHidden(isVideoExpanded && appState.agentVideoPresentation != nil)
         .onChange(of: appState.agentVideoPresentation?.id) { _ in
             isVideoExpanded = false
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+            keyboardVisible = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            keyboardVisible = false
         }
         .task {
             if !appState.shouldShowInitialLogin {

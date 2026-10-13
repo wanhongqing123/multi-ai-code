@@ -976,7 +976,7 @@ private struct AIMessageRow: View, Equatable {
             .filter { !alreadyShown.contains($0.url.path) }
     }
     private func openVideo(_ path: String) {
-        // 视频悬浮播放时保留创作中心输入区，AI 才能接收“跳到第几秒”等后续指令。
+        // 视频在上半屏播放时保留创作中心输入区，AI 才能接收“跳到第几秒”等后续指令。
         if let appState = AIMobileHostToolProvider.shared.appState {
             appState.agentVideoPresentation = MaiFfplayPresentation(path: path)
         } else {

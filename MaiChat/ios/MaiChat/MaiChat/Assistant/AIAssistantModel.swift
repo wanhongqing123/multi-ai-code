@@ -664,6 +664,8 @@ actor AIAssistantBackend {
 @MainActor
 final class AIAssistantModel: ObservableObject {
     static var shared = AIAssistantModel()
+    private static let recentMessageCount = 8
+    private static let olderPageCount = 20
 
     static func resetForAccountSwitch() {
         shared.disappear()
@@ -899,7 +901,9 @@ final class AIAssistantModel: ObservableObject {
         try? await AICloudCredentialSync.refreshBailianIfNeeded()
         let target = selected
         do {
-            let result = try await backend.snapshot(session: target, limit: 30, force: force)
+            // 轮询只同步最近几条；旧消息由用户上滑时单独分页读取，避免又把首屏扩成 30 条。
+            let result = try await backend.snapshot(session: target,
+                                                    limit: Self.recentMessageCount, force: force)
             guard target == selected, result.changed == true else { return }
             if let value = result.sessions, value != sessions { sessions = value }
             if let value = result.messages {
@@ -949,10 +953,11 @@ final class AIAssistantModel: ObservableObject {
     private func completeInitialPage(for session: String, newestID: String) async {
         do {
             let earlier = try await backend.messagesPage(session: session,
-                                                         beforeId: newestID, limit: 29)
+                                                         beforeId: newestID,
+                                                         limit: Self.recentMessageCount - 1)
             guard selected == session else { return }
             mergeMessages(earlier)
-            hasOlderMessages = earlier.count == 29
+            hasOlderMessages = earlier.count == Self.recentMessageCount - 1
             logAIHistoryEvent("older-page session=\(session) added=\(earlier.count) first=\(messages.first?.id ?? "none") last=\(messages.last?.id ?? "none")")
             await refresh(force: true)
         } catch {
@@ -997,10 +1002,11 @@ final class AIAssistantModel: ObservableObject {
         let session = selected
         do {
             let page = try await backend.messagesPage(session: session,
-                                                      beforeId: oldest, limit: 30)
+                                                      beforeId: oldest,
+                                                      limit: Self.olderPageCount)
             guard selected == session else { return }
             mergeMessages(page)
-            hasOlderMessages = page.count == 30
+            hasOlderMessages = page.count == Self.olderPageCount
         } catch { self.error = error.localizedDescription }
     }
 

@@ -395,7 +395,15 @@ private struct AIAssistantMessageList: View {
                             welcome
                         }
                         if !model.messages.isEmpty {
-                            VStack(alignment: .leading, spacing: 24) {
+                            if model.hasOlderMessages {
+                                Button("查看更早消息", action: requestOlderMessages)
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity)
+                                    .buttonStyle(.plain)
+                            }
+                            // 只创建视口附近的历史消息视图；已取回的旧页也不必全部同时渲染。
+                            LazyVStack(alignment: .leading, spacing: 24) {
                                 ForEach(model.messages) { message in
                                     AIMessageRow(message: message,
                                                  workspacePath: model.workspacePath,
@@ -435,15 +443,7 @@ private struct AIAssistantMessageList: View {
                                 followsLatest = false
                             },
                             onUserReachedTop: {
-                                guard prependAnchorID == nil,
-                                      let anchor = model.messages.first?.id else { return }
-                                prependAnchorID = anchor
-                                Task {
-                                    await model.loadOlderMessages()
-                                    if model.messages.first?.id == anchor {
-                                        prependAnchorID = nil
-                                    }
-                                }
+                                requestOlderMessages()
                             },
                             onViewportMeasured: { content, viewport, offset, remaining, nearBottom in
                                 viewportLog.record(session: model.selected, content: content,
@@ -524,6 +524,16 @@ private struct AIAssistantMessageList: View {
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
         withTransaction(transaction) { proxy.scrollTo(id, anchor: anchor) }
+    }
+
+    private func requestOlderMessages() {
+        guard prependAnchorID == nil, model.hasOlderMessages,
+              let anchor = model.messages.first?.id else { return }
+        prependAnchorID = anchor
+        Task {
+            await model.loadOlderMessages()
+            if model.messages.first?.id == anchor { prependAnchorID = nil }
+        }
     }
 
     private func captureKeyboardFollowIntent(opening: Bool) {

@@ -191,6 +191,13 @@ public:
                  {"duration_s", result.durationSeconds},
                  {"audio_streams_copied", result.audioStreamsCopied},
                  {"onnx_calls", result.modelCalls},
+                 {"localized_text_regions", result.localizedTextRegions},
+                 {"inference_backend", result.inferenceBackend},
+                 {"timing_ms", Json{{"model_initialization", result.modelInitializationMs},
+                                    {"reference_scan", result.referenceScanMs},
+                                    {"model_inference", result.modelInferenceMs},
+                                    {"repair_and_encode", result.repairAndEncodeMs},
+                                    {"total", result.totalMs}}},
                  {"foreground_frames_preserved", result.foregroundFrames},
                  {"note", "Hidden pixels were estimated; review the new video."}}
                 .dump());

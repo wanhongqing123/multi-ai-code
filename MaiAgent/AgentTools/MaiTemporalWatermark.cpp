@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -33,6 +34,11 @@ namespace {
 constexpr int kModelSize = 512;
 constexpr int kInpaintStride = 30;
 constexpr double kMaximumDurationSeconds = 30.0;
+using MaiWatermarkClock = std::chrono::steady_clock;
+
+double elapsedMilliseconds(MaiWatermarkClock::time_point start) {
+    return std::chrono::duration<double, std::milli>(MaiWatermarkClock::now() - start).count();
+}
 
 std::string ffmpegError(int code) {
     char message[AV_ERROR_MAX_STRING_SIZE]{};
@@ -66,10 +72,12 @@ public:
                 throw std::runtime_error("ONNX Runtime API version is unsupported");
             check(mApi->CreateEnv(ORT_LOGGING_LEVEL_WARNING, "MaiWatermarkRepair", &mEnvironment),
                   "create ONNX environment");
-            check(mApi->CreateSessionOptions(&mOptions), "create ONNX session options");
             const MaiFilePath model = MaiFilePath::fromUtf8(config.modelPath);
             if (!MaiFileSystem::exists(model) || MaiFileSystem::isDirectory(model))
                 throw std::runtime_error("LaMa ONNX model is missing");
+            // 真机对照表明，这份 LaMa 的 CoreML/XNNPACK 均慢于默认 CPU，
+            // 故继续使用已验证的 CPU 会话；图优化保持 ONNX Runtime 默认值。
+            check(mApi->CreateSessionOptions(&mOptions), "create ONNX session options");
             check(mApi->CreateSession(mEnvironment, model.value().c_str(), mOptions, &mSession),
                   "load LaMa ONNX model");
             check(mApi->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &mMemory),
@@ -99,7 +107,12 @@ public:
     MaiLamaSession(const MaiLamaSession&) = delete;
     MaiLamaSession& operator=(const MaiLamaSession&) = delete;
 
+    double inferenceMilliseconds() const {
+        return mInferenceMilliseconds;
+    }
+
     cv::Mat infer(const cv::Mat& image, const cv::Mat& missingMask) const {
+        const auto started = MaiWatermarkClock::now();
         if (image.type() != CV_8UC3 || missingMask.type() != CV_8UC1 || image.cols != kModelSize ||
             image.rows != kModelSize || missingMask.size() != image.size())
             throw std::runtime_error("LaMa expects 512 by 512 RGB and grayscale mask");
@@ -152,6 +165,7 @@ public:
             mApi->ReleaseValue(output);
             mApi->ReleaseValue(values[1]);
             mApi->ReleaseValue(values[0]);
+            mInferenceMilliseconds += elapsedMilliseconds(started);
             return result;
         } catch (...) {
             if (output != nullptr) mApi->ReleaseValue(output);
@@ -175,6 +189,7 @@ private:
     OrtSessionOptions* mOptions = nullptr;
     OrtSession* mSession = nullptr;
     OrtMemoryInfo* mMemory = nullptr;
+    mutable double mInferenceMilliseconds = 0;
 };
 
 struct VideoMetadata {
@@ -308,7 +323,10 @@ struct RegionState {
     double beforeDistance = std::numeric_limits<double>::infinity();
     double afterDistance = std::numeric_limits<double>::infinity();
     std::vector<InpaintKeyframe> keyframes;
+    bool localizedTextMask = false;
 };
+
+void localizeLowerTextMask(RegionState& state, const cv::Mat& image);
 
 cv::Rect modelCropFor(const cv::Rect& rectangle, int width, int height) {
     const int x =
@@ -319,10 +337,13 @@ cv::Rect modelCropFor(const cv::Rect& rectangle, int width, int height) {
 }
 
 cv::Rect expandedFor(const cv::Rect& rectangle, int width, int height) {
-    const int x0 = std::max(0, rectangle.x - 50);
-    const int y0 = std::max(0, rectangle.y - 35);
-    const int x1 = std::min(width, rectangle.x + rectangle.width + 50);
-    const int y1 = std::min(height, rectangle.y + rectangle.height + 35);
+    // 参考帧可能有人物经过水印附近。过宽的补画边带会把参考帧里的手
+    // 搬到当前帧，形成悬空残影；只留足够的融合边带。
+    constexpr int kReferencePadding = 16;
+    const int x0 = std::max(0, rectangle.x - kReferencePadding);
+    const int y0 = std::max(0, rectangle.y - kReferencePadding);
+    const int x1 = std::min(width, rectangle.x + rectangle.width + kReferencePadding);
+    const int y1 = std::min(height, rectangle.y + rectangle.height + kReferencePadding);
     return {x0, y0, x1 - x0, y1 - y0};
 }
 
@@ -376,7 +397,7 @@ std::vector<RegionState> prepareRegions(const MaiTemporalWatermarkOptions& optio
         // 有已核实的无遮挡帧时借背景；没有时在同一流程内用本地模型补画。
         const bool hasCleanReference = region.beforeSeconds >= 0;
         state.expanded = hasCleanReference ? expandedFor(rectangle, width, height) : rectangle;
-        state.blendAlpha = featherMask(state.expanded, width, height, hasCleanReference ? 22 : 4);
+        state.blendAlpha = featherMask(state.expanded, width, height, hasCleanReference ? 14 : 4);
         state.modelMask = cv::Mat::zeros(kModelSize, kModelSize, CV_8UC1);
         const cv::Rect local(region.x - state.modelCrop.x, region.y - state.modelCrop.y,
                              region.width, region.height);
@@ -433,6 +454,7 @@ int buildReferenceCache(const std::string& inputPath, const MaiTemporalWatermark
                 }
                 if (!isActive(state.region, frameIndex, seconds)) continue;
                 if (!state.keyframes.empty() && frameIndex % kInpaintStride != 0) continue;
+                if (state.keyframes.empty()) localizeLowerTextMask(state, image);
                 const cv::Mat source = image(state.modelCrop).clone();
                 state.keyframes.push_back({frameIndex, model.infer(source, state.modelMask)});
                 ++modelCalls;
@@ -474,6 +496,48 @@ void blendRegion(cv::Mat& target, const cv::Rect& rectangle, const cv::Mat& fill
             }
         }
     }
+}
+
+void localizeLowerTextMask(RegionState& state, const cv::Mat& image) {
+    if (state.localizedTextMask || state.region.beforeSeconds >= 0 || state.region.width < 31 ||
+        state.region.height < 31 || state.region.y + state.region.height < image.rows * 9 / 10)
+        return;
+    const cv::Rect rectangle(state.region.x, state.region.y, state.region.width,
+                             state.region.height);
+    cv::Mat backdrop;
+    cv::medianBlur(image(rectangle), backdrop, 31);
+    cv::Mat text = cv::Mat::zeros(rectangle.size(), CV_8UC1);
+    for (int row = 0; row < rectangle.height; ++row) {
+        const auto* source = image.ptr<cv::Vec3b>(rectangle.y + row) + rectangle.x;
+        const auto* smooth = backdrop.ptr<cv::Vec3b>(row);
+        auto* target = text.ptr<std::uint8_t>(row);
+        for (int column = 0; column < rectangle.width; ++column) {
+            const cv::Vec3b& pixel = source[column];
+            const int darkest = std::min({pixel[0], pixel[1], pixel[2]});
+            const int brightest = std::max({pixel[0], pixel[1], pixel[2]});
+            const int contrast = std::max({std::abs(pixel[0] - smooth[column][0]),
+                                           std::abs(pixel[1] - smooth[column][1]),
+                                           std::abs(pixel[2] - smooth[column][2])});
+            if ((darkest >= 170 && brightest - darkest <= 55) || contrast >= 22)
+                target[column] = 255;
+        }
+    }
+    const int marked = cv::countNonZero(text);
+    if (marked < rectangle.area() / 1000 || marked > rectangle.area() * 2 / 5) return;
+
+    // 水面等动态背景不能用整块矩形替换。局部中值背景同时找出亮色字样、
+    // 彩色标识和暗色描边，再扩张覆盖抗锯齿；若覆盖过大则保持原路径。
+    cv::dilate(text, text, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(27, 27)));
+    const cv::Rect local(rectangle.x - state.modelCrop.x, rectangle.y - state.modelCrop.y,
+                         rectangle.width, rectangle.height);
+    state.modelMask.setTo(0);
+    text.copyTo(state.modelMask(local));
+    cv::Mat soft;
+    cv::GaussianBlur(text, soft, cv::Size(), 4.5);
+    const cv::Mat edgeFeather = state.blendAlpha.clone();
+    soft.convertTo(state.blendAlpha, CV_32FC1, 1.0 / 255.0);
+    cv::multiply(state.blendAlpha, edgeFeather, state.blendAlpha);
+    state.localizedTextMask = true;
 }
 
 cv::Mat fixedPrediction(const RegionState& state, int frameIndex) {
@@ -959,17 +1023,29 @@ MaiTemporalWatermarkResult maiRepairVideoWatermarks(const std::string& inputPath
         result.error = "temporary output must remain in the Agent workspace";
         return result;
     }
+    const auto started = MaiWatermarkClock::now();
     try {
+        const auto initializationStarted = MaiWatermarkClock::now();
         MaiLamaSession model(options);
+        result.modelInitializationMs = elapsedMilliseconds(initializationStarted);
+        result.inferenceBackend = "cpu";
         VideoMetadata metadata;
         std::vector<RegionState> states;
+        const auto scanStarted = MaiWatermarkClock::now();
         result.modelCalls =
             buildReferenceCache(inputPath, options, context, model, metadata, states);
+        result.referenceScanMs = elapsedMilliseconds(scanStarted);
+        result.localizedTextRegions = static_cast<int>(
+            std::count_if(states.begin(), states.end(),
+                          [](const RegionState& state) { return state.localizedTextMask; }));
+        const auto repairStarted = MaiWatermarkClock::now();
         {
             MaiWatermarkVideoPipeline pipeline(inputPath, temporary, states, model, context,
                                                result);
             pipeline.run();
         }
+        result.repairAndEncodeMs = elapsedMilliseconds(repairStarted);
+        result.modelInferenceMs = model.inferenceMilliseconds();
         const MaiError published = MaiFileSystem::publishNewFile(MaiFilePath::fromUtf8(temporary),
                                                                  MaiFilePath::fromUtf8(outputPath));
         if (published) throw std::runtime_error(published.message());
@@ -980,5 +1056,6 @@ MaiTemporalWatermarkResult maiRepairVideoWatermarks(const std::string& inputPath
         if (MaiFileSystem::exists(MaiFilePath::fromUtf8(temporary)))
             (void)MaiFileSystem::removeFile(MaiFilePath::fromUtf8(temporary));
     }
+    result.totalMs = elapsedMilliseconds(started);
     return result;
 }

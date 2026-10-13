@@ -19,7 +19,16 @@ MaiTemporalWatermarkResult fakeProcessor(const std::string&, const std::string& 
                                          const MaiToolContext&) {
     ++sCalls;
     sOptions = options;
-    return {output, {}, 90, 1, 3, 2, 3.0};
+    MaiTemporalWatermarkResult result;
+    result.outputPath = output;
+    result.frames = 90;
+    result.audioStreamsCopied = 1;
+    result.modelCalls = 3;
+    result.foregroundFrames = 2;
+    result.durationSeconds = 3.0;
+    result.inferenceBackend = "cpu";
+    result.modelInferenceMs = 120.0;
+    return result;
 }
 
 }  // namespace
@@ -47,6 +56,7 @@ int main() {
     assert(sOptions.regions[1].startFrame == 60 && sOptions.regions[1].endFrame == 120);
     assert(sOptions.regions[1].foregroundEdge == MaiWatermarkForegroundEdge::Right);
     assert(nlohmann::json::parse(processed.output()).value("onnx_calls", 0) == 3);
+    assert(nlohmann::json::parse(processed.output())["timing_ms"]["model_inference"] == 120.0);
 
     // 只给精确帧窗口时，before_s 是参考帧时间，不要求额外填写 start_s。
     const std::string frameOnly =

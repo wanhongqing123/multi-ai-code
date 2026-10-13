@@ -45,7 +45,17 @@ struct MaiTemporalWatermarkResult {
     int audioStreamsCopied = 0;
     int modelCalls = 0;
     int foregroundFrames = 0;
+    // 只在靠近画面底部、能可靠分出亮色字样的无参考帧区域启用局部遮罩。
+    int localizedTextRegions = 0;
     double durationSeconds = 0;
+    // 耗时均为毫秒；阶段时间是包含关系，modelInferenceMs 包含在扫描或出片阶段中。
+    double modelInitializationMs = 0;
+    double referenceScanMs = 0;
+    double modelInferenceMs = 0;
+    double repairAndEncodeMs = 0;
+    double totalMs = 0;
+    // 本次会话实际请求的后端名；当前正式 LaMa 路径为 "cpu"。
+    std::string inferenceBackend;
 };
 
 // 宿主在 Agent 工作线程调用共享 C++ 视频处理器；输入只读，输出必须是新文件。

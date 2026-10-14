@@ -1158,8 +1158,99 @@ private enum RemoteIMImagePreviewLayout {
 private struct PresentedRemoteIMImage: Identifiable {
     let item: RemoteIMImagePreviewItem
     let imageSize: CGSize
+    let sourceFrame: CGRect
+    let thumbnailImage: UIImage?
 
     var id: UUID { item.id }
+}
+
+// 系统 fullScreenCover 自带从底部进入的转场；这里以不带系统动画的透明全屏
+// UIKit 页面承载 SwiftUI 图片，保留会话作为背景，再由图片自身完成放大/缩回。
+private struct RemoteIMImagePresentationHost: UIViewControllerRepresentable {
+    @Binding var presentation: PresentedRemoteIMImage?
+    let close: () -> Void
+
+    func makeUIViewController(context: Context) -> RemoteIMImagePresentationController {
+        RemoteIMImagePresentationController()
+    }
+
+    func updateUIViewController(_ controller: RemoteIMImagePresentationController,
+                                context: Context) {
+        controller.presentation = presentation
+        controller.close = close
+        controller.scheduleUpdate()
+    }
+
+    static func dismantleUIViewController(_ controller: RemoteIMImagePresentationController,
+                                          coordinator: ()) {
+        controller.dismissPreview()
+    }
+}
+
+private final class RemoteIMImagePresentationController: UIViewController {
+    var presentation: PresentedRemoteIMImage?
+    var close: (() -> Void)?
+    private var previewController: RemoteIMImageHostingController?
+    private var presentedID: UUID?
+    private var updateScheduled = false
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .clear
+        view.isUserInteractionEnabled = false
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        scheduleUpdate()
+    }
+
+    func scheduleUpdate() {
+        guard !updateScheduled else { return }
+        updateScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.updateScheduled = false
+            self.updatePresentation()
+        }
+    }
+
+    private func updatePresentation() {
+        guard isViewLoaded, view.window != nil else { return }
+        if let presentation {
+            guard presentedID != presentation.id else { return }
+            if let previewController {
+                dismissPreview()
+                return
+            }
+            let preview = RemoteIMImageHostingController(rootView:
+                FullScreenImagePreviewView(presentation: presentation,
+                                           close: { [weak self] in self?.close?() }))
+            preview.modalPresentationStyle = .overFullScreen
+            preview.modalPresentationCapturesStatusBarAppearance = true
+            preview.view.backgroundColor = .clear
+            preview.view.isOpaque = false
+            previewController = preview
+            presentedID = presentation.id
+            present(preview, animated: false)
+        } else {
+            dismissPreview()
+        }
+    }
+
+    func dismissPreview() {
+        guard let previewController else { return }
+        self.previewController = nil
+        presentedID = nil
+        previewController.dismiss(animated: false) { [weak self] in
+            self?.scheduleUpdate()
+        }
+    }
+}
+
+private final class RemoteIMImageHostingController: UIHostingController<FullScreenImagePreviewView> {
+    override var prefersStatusBarHidden: Bool { true }
+    override var prefersHomeIndicatorAutoHidden: Bool { true }
 }
 
 private struct PresentedMessageActions: Identifiable {
@@ -1439,13 +1530,9 @@ private struct ChatDetailView: View {
         .coordinateSpace(name: RemoteIMImagePreviewLayout.coordinateSpaceName)
         .background(RemoteIMStyle.pageBackground.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
-        // 会话页在 UIKit 导航控制器内；窗口内的 ZStack 无法越过它的上下边界。
-        // 用真正的全屏模态承载图片，覆盖状态栏、底部安全区和原聊天界面。
-        .fullScreenCover(item: $imagePreviewPresentation) { presentation in
-            FullScreenImagePreviewView(presentation: presentation,
-                                       close: closeImagePreview)
-                .ignoresSafeArea()
-                .statusBarHidden()
+        .background {
+            RemoteIMImagePresentationHost(presentation: $imagePreviewPresentation,
+                                          close: closeImagePreview)
         }
         .animation(.easeOut(duration: 0.18), value: messageActionTarget?.id)
         .animation(.easeOut(duration: 0.18), value: forwardingMessage?.id)
@@ -1571,11 +1658,14 @@ private struct ChatDetailView: View {
     private func presentImagePreview(
         item: RemoteIMImagePreviewItem,
         imageSize: CGSize,
-        sourceFrame _: CGRect
+        sourceFrame: CGRect,
+        thumbnailImage: UIImage?
     ) {
         imagePreviewPresentation = PresentedRemoteIMImage(
             item: item,
-            imageSize: imageSize
+            imageSize: imageSize,
+            sourceFrame: sourceFrame,
+            thumbnailImage: thumbnailImage
         )
     }
 
@@ -1594,8 +1684,8 @@ struct VoiceActionFramesKey: PreferenceKey {
 }
 
 // IM 会话和创作中心使用不同的 UIHostingController；统一换算到 UIWindow 坐标，
-// 才能让窗口顶层的语音按钮准确参照底部输入框，而不是各自的局部坐标。
-struct VoiceComposerFrameReader: UIViewRepresentable {
+// 供窗口顶层的语音按钮和图片放大动画使用，避免把某个页面的局部坐标误当屏幕坐标。
+struct WindowFrameReader: UIViewRepresentable {
     let onFrame: (CGRect) -> Void
 
     func makeUIView(context: Context) -> FrameView {
@@ -1869,6 +1959,7 @@ private struct VoiceTranscriptionHighlight: View {
 #if targetEnvironment(simulator)
 struct RemoteIMImageFullscreenUITestRoot: View {
     @State private var preview: PresentedRemoteIMImage?
+    @State private var sourceWindowFrame: CGRect = .zero
 
     var body: some View {
         ChatNavigationHost(
@@ -1877,12 +1968,13 @@ struct RemoteIMImageFullscreenUITestRoot: View {
                 ZStack {
                     Color.white
                     Button("打开 IM 图片") { openPreview() }
+                        .background {
+                            WindowFrameReader { sourceWindowFrame = $0 }
+                        }
                 }
-                .fullScreenCover(item: $preview) { presentation in
-                    FullScreenImagePreviewView(presentation: presentation,
-                                               close: { preview = nil })
-                        .ignoresSafeArea()
-                        .statusBarHidden()
+                .background {
+                    RemoteIMImagePresentationHost(presentation: $preview,
+                                                  close: closePreview)
                 }
             ),
             selectionID: "im-image-fullscreen-test",
@@ -1902,8 +1994,14 @@ struct RemoteIMImageFullscreenUITestRoot: View {
               (try? data.write(to: file)) != nil else { return }
         preview = PresentedRemoteIMImage(
             item: RemoteIMImagePreviewItem(id: UUID(), localFilePath: file.path),
-            imageSize: image.size
+            imageSize: image.size,
+            sourceFrame: sourceWindowFrame,
+            thumbnailImage: image
         )
+    }
+
+    private func closePreview() {
+        preview = nil
     }
 }
 
@@ -1926,7 +2024,7 @@ struct VoiceTranscriptionDockUITestRoot: View {
                     }
                     .accessibilityIdentifier("voice-test-input")
                     .background {
-                        VoiceComposerFrameReader { presentation.updateComposerFrame($0) }
+                        WindowFrameReader { presentation.updateComposerFrame($0) }
                     }
                     .padding(.bottom, 24)
                 }
@@ -2108,7 +2206,7 @@ private struct MessageListView: View {
     let selectingMessageID: UUID?
     let finishSelectingText: () -> Void
     let dismissAttachmentPanel: () -> Void
-    let presentImagePreview: (RemoteIMImagePreviewItem, CGSize, CGRect) -> Void
+    let presentImagePreview: (RemoteIMImagePreviewItem, CGSize, CGRect, UIImage?) -> Void
     let showMessageActions: (RemoteIMMessage, CGRect) -> Void
     let replyToMessage: (RemoteIMMessage) -> Void
     let openQuote: (RemoteIMQuote) -> Void
@@ -2186,11 +2284,12 @@ private struct MessageListView: View {
                                 playVoice: {
                                     voicePlayer.toggle(message: message)
                                 },
-                                previewImage: { imageSize, sourceFrame in
+                                previewImage: { imageSize, sourceFrame, thumbnailImage in
                                     guard let nextItem = RemoteIMImagePreviewPolicy.previewItem(
                                         for: message
                                     ) else { return }
-                                    presentImagePreview(nextItem, imageSize, sourceFrame)
+                                    presentImagePreview(nextItem, imageSize, sourceFrame,
+                                                        thumbnailImage)
                                 },
                                 previewVideo: {
                                     if let item = RemoteIMVideoPreviewPolicy.previewItem(for: message) {
@@ -2606,7 +2705,7 @@ private struct MessageBubbleView: View {
     let isVideoDownloading: Bool
     let isVoicePlaying: Bool
     let playVoice: () -> Void
-    let previewImage: (CGSize, CGRect) -> Void
+    let previewImage: (CGSize, CGRect, UIImage?) -> Void
     let previewVideo: () -> Void
     let previewFile: () -> Void
     let isSelectingText: Bool
@@ -3510,8 +3609,13 @@ struct ImagePreviewBackdrop: View {
 private struct FullScreenImagePreviewView: View {
     let presentation: PresentedRemoteIMImage
     let close: () -> Void
+    @State private var isExpanded = false
     @State private var isSaving = false
     @State private var saveResultText: String?
+
+    private var previewAnimation: Animation {
+        .interactiveSpring(response: 0.38, dampingFraction: 0.86, blendDuration: 0.08)
+    }
 
     var body: some View {
         GeometryReader { geometry in
@@ -3525,17 +3629,25 @@ private struct FullScreenImagePreviewView: View {
                 width: fittedSize.width,
                 height: fittedSize.height
             )
+            let sourceFrame = presentation.sourceFrame.offsetBy(
+                dx: -geometry.frame(in: .global).minX,
+                dy: -geometry.frame(in: .global).minY
+            )
+            let imageFrame = isExpanded || sourceFrame.isEmpty
+                ? destinationFrame : sourceFrame
             ZStack(alignment: .bottomTrailing) {
                 Color.black
+                    .opacity(isExpanded ? 1 : 0)
                     .ignoresSafeArea()
-                    .onTapGesture(perform: close)
+                    .onTapGesture(perform: shrinkAndClose)
 
                 ImagePreviewBackdrop(
                     filePath: presentation.item.localFilePath,
                     viewportSize: geometry.size
                 )
+                .opacity(isExpanded ? 1 : 0)
 
-                previewImage(frame: destinationFrame, fittedSize: fittedSize,
+                previewImage(frame: imageFrame, fittedSize: fittedSize,
                              viewportSize: geometry.size)
 
                 VStack(alignment: .trailing, spacing: 14) {
@@ -3565,10 +3677,27 @@ private struct FullScreenImagePreviewView: View {
                 }
                 .padding(.trailing, 22)
                 .padding(.bottom, 48)
+                .opacity(isExpanded ? 1 : 0)
+                .allowsHitTesting(isExpanded)
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
         }
-        .accessibilityAction(.escape, close)
+        .ignoresSafeArea()
+        .onAppear {
+            DispatchQueue.main.async {
+                withAnimation(previewAnimation) { isExpanded = true }
+            }
+        }
+        .accessibilityAction(.escape, shrinkAndClose)
+    }
+
+    private func shrinkAndClose() {
+        guard isExpanded else { return }
+        withAnimation(previewAnimation) { isExpanded = false }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) {
+            guard !isExpanded else { return }
+            close()
+        }
     }
 
     private func imagePreviewActionIcon(_ systemName: String) -> some View {
@@ -3584,26 +3713,33 @@ private struct FullScreenImagePreviewView: View {
 
     private func previewImage(frame: CGRect, fittedSize: CGSize,
                               viewportSize: CGSize) -> some View {
-        RemoteIMAsyncImage(filePath: presentation.item.localFilePath,
-                           maximumPointSize: ImagePreviewZoomModifier.maximumDecodePointSize(
-                            for: viewportSize)) { image in
-            Image(uiImage: image).resizable().scaledToFit()
-        } placeholder: { failed in
-            if failed {
-                Label("图片无法显示", systemImage: "photo")
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ProgressView().tint(.white)
+        ZStack {
+            if let thumbnailImage = presentation.thumbnailImage {
+                Image(uiImage: thumbnailImage).resizable().scaledToFit()
+            }
+            RemoteIMAsyncImage(filePath: presentation.item.localFilePath,
+                               maximumPointSize: ImagePreviewZoomModifier.maximumDecodePointSize(
+                                for: viewportSize)) { image in
+                Image(uiImage: image).resizable().scaledToFit()
+            } placeholder: { failed in
+                if failed {
+                    Label("图片无法显示", systemImage: "photo")
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if presentation.thumbnailImage == nil {
+                    ProgressView().tint(.white)
+                }
             }
         }
             .frame(width: frame.width, height: frame.height)
-            .modifier(ImagePreviewZoomModifier(enabled: true,
+            .clipShape(RoundedRectangle(cornerRadius: isExpanded ? 0 : 8,
+                                        style: .continuous))
+            .modifier(ImagePreviewZoomModifier(enabled: isExpanded,
                                                imageSize: fittedSize,
                                                viewportSize: viewportSize))
             .position(x: frame.midX, y: frame.midY)
             .contentShape(Rectangle())
-            .onTapGesture(perform: close)
+            .onTapGesture(perform: shrinkAndClose)
             .accessibilityLabel("图片预览")
             .accessibilityIdentifier("remote-im-image-preview")
     }
@@ -4046,9 +4182,11 @@ private struct VideoBubbleContent: View {
 
 private struct ImageBubbleContent: View {
     let attachment: RemoteIMImageAttachment
-    let previewImage: (CGSize, CGRect) -> Void
+    let previewImage: (CGSize, CGRect, UIImage?) -> Void
     @EnvironmentObject private var appState: RemoteIMAppState
     @State private var decodedSize: CGSize?
+    @State private var sourceWindowFrame: CGRect = .zero
+    @State private var thumbnailImage: UIImage?
 
     private var imageSize: CGSize {
         decodedSize ?? CGSize(width: max(1, attachment.width ?? 220),
@@ -4068,6 +4206,7 @@ private struct ImageBubbleContent: View {
                         if let pixels = image.cgImage {
                             decodedSize = CGSize(width: pixels.width, height: pixels.height)
                         }
+                        thumbnailImage = image
                     }
             } placeholder: { failed in
                 if failed {
@@ -4079,32 +4218,31 @@ private struct ImageBubbleContent: View {
                 }
             }
             .frame(width: thumbnailSize.width, height: thumbnailSize.height)
+            .background {
+                WindowFrameReader { frame in
+                    if sourceWindowFrame != frame { sourceWindowFrame = frame }
+                }
+            }
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
-                GeometryReader { geometry in
-                    Button {
-                        previewImage(
-                            imageSize,
-                            geometry.frame(in: .named(
-                                RemoteIMImagePreviewLayout.coordinateSpaceName))
-                        )
-                    } label: {
-                        ZStack(alignment: .bottomTrailing) {
-                            Color.clear.contentShape(Rectangle())
-                            Image(systemName: "arrow.up.left.and.arrow.down.right")
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundStyle(.white)
-                                .frame(width: 25, height: 25)
-                                .background(.black.opacity(0.52), in: Circle())
-                                .padding(7)
-                                .allowsHitTesting(false)
-                                .accessibilityHidden(true)
-                        }
+                Button {
+                    previewImage(imageSize, sourceWindowFrame, thumbnailImage)
+                } label: {
+                    ZStack(alignment: .bottomTrailing) {
+                        Color.clear.contentShape(Rectangle())
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 25, height: 25)
+                            .background(.black.opacity(0.52), in: Circle())
+                            .padding(7)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("查看原图")
-                    .accessibilityIdentifier("remote-im-message-image")
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("查看原图")
+                .accessibilityIdentifier("remote-im-message-image")
             }
     }
 }
@@ -5558,7 +5696,7 @@ private struct ComposerView: View {
             attachmentButton
         }
         .background {
-            VoiceComposerFrameReader { transcriptionPresentation.updateComposerFrame($0) }
+            WindowFrameReader { transcriptionPresentation.updateComposerFrame($0) }
         }
     }
 

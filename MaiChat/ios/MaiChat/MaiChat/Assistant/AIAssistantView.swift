@@ -1952,7 +1952,7 @@ private struct AIComposer: View, Equatable {
                 )
             }
             .background {
-                VoiceComposerFrameReader { transcriptionPresentation.updateComposerFrame($0) }
+                WindowFrameReader { transcriptionPresentation.updateComposerFrame($0) }
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)

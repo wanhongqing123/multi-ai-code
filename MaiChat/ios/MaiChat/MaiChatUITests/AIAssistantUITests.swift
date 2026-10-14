@@ -314,6 +314,12 @@ final class AIAssistantUITests: XCTestCase {
         XCTAssertGreaterThan(cancel.frame.minY, transcript.frame.maxY)
         XCTAssertLessThan(cancel.frame.maxY, app.frame.height * 0.75)
         XCTAssertLessThan(edit.frame.maxY, app.frame.height * 0.75)
+        XCTAssertLessThan(edit.frame.midX - cancel.frame.midX, 110,
+                          "Cancel and edit should form one compact control group")
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "voice-transcription-compact-actions"
+        capture.lifetime = .keepAlways
+        add(capture)
         let input = app.buttons["voice-test-input"]
         XCTAssertTrue(input.exists)
         input.tap()
@@ -322,10 +328,6 @@ final class AIAssistantUITests: XCTestCase {
         cancel.tap()
         XCTAssertTrue(app.staticTexts["已取消"].exists)
         XCTAssertFalse(transcript.exists)
-        let capture = XCTAttachment(screenshot: app.screenshot())
-        capture.name = "voice-transcription-below-video"
-        capture.lifetime = .keepAlways
-        add(capture)
     }
 
     func testFfplaySaveKeepsPlayerAlive() throws {

@@ -1758,7 +1758,7 @@ private struct VoiceTranscriptionHighlight: View {
                         .foregroundStyle(.white)
                         .padding(.top, 12)
 
-                    HStack(spacing: 92) {
+                    HStack(spacing: 32) {
                         targetBadge(
                             title: "取消",
                             systemImage: "xmark",

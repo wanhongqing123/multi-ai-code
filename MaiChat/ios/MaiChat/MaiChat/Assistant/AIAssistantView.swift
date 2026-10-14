@@ -1951,6 +1951,9 @@ private struct AIComposer: View, Equatable {
                     snapshot.busy ? "停止" : (isAttachmentPanelPresented ? "收起更多功能" : "展开更多功能")
                 )
             }
+            .background {
+                VoiceComposerFrameReader { transcriptionPresentation.updateComposerFrame($0) }
+            }
             .padding(.horizontal, 16)
             .padding(.top, 12)
             .padding(.bottom, 10)

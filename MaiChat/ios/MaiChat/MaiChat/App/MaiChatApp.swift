@@ -244,6 +244,8 @@ struct MaiChatApp: App {
                         AIPermissionUITestRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--ai-image-fullscreen-ui-test") {
                         AIImageFullscreenUITestRoot()
+                    } else if ProcessInfo.processInfo.arguments.contains("--im-image-fullscreen-ui-test") {
+                        RemoteIMImageFullscreenUITestRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--text-media-ui-test") {
                         AITextMediaUITestRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--video-bubble-ui-test") {

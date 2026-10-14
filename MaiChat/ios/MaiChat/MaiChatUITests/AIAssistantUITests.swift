@@ -185,6 +185,34 @@ final class AIAssistantUITests: XCTestCase {
         add(capture)
     }
 
+    func testIMImagePreviewCoversTheBottomOfTheWindow() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--im-image-fullscreen-ui-test"]
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        let open = app.buttons["打开 IM 图片"]
+        XCTAssertTrue(open.waitForExistence(timeout: 15))
+        open.tap()
+        let preview = app.images["remote-im-image-preview"]
+        XCTAssertTrue(preview.waitForExistence(timeout: 15))
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "im-image-modal-covers-window"
+        capture.lifetime = .keepAlways
+        add(capture)
+        // 会话页底部之外也应属于图片预览，点击此处能关闭预览。
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.93)).tap()
+        let closed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: preview)
+        XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 5), .completed)
+        open.tap()
+        XCTAssertTrue(preview.waitForExistence(timeout: 5))
+        // 顶部状态栏原本所在的位置也必须由图片预览接管。
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.03)).tap()
+        let closedFromTop = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: preview)
+        XCTAssertEqual(XCTWaiter.wait(for: [closedFromTop], timeout: 5), .completed)
+    }
+
     func testFfplayVideoPopupCanPauseSeekAndClose() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--ai-ui-test", "--ffplay-ui-test"]
@@ -312,16 +340,22 @@ final class AIAssistantUITests: XCTestCase {
         XCTAssertLessThan(transcript.frame.minY, app.frame.height * 0.4)
         XCTAssertLessThan(transcript.frame.maxY, app.frame.height * 0.65)
         XCTAssertGreaterThan(cancel.frame.minY, transcript.frame.maxY)
-        XCTAssertLessThan(cancel.frame.maxY, app.frame.height * 0.75)
-        XCTAssertLessThan(edit.frame.maxY, app.frame.height * 0.75)
-        XCTAssertLessThan(edit.frame.midX - cancel.frame.midX, 110,
-                          "Cancel and edit should form one compact control group")
-        let capture = XCTAttachment(screenshot: app.screenshot())
-        capture.name = "voice-transcription-compact-actions"
-        capture.lifetime = .keepAlways
-        add(capture)
+        XCTAssertGreaterThan(edit.frame.minY, transcript.frame.maxY)
+        XCTAssertLessThan(app.staticTexts["松手发送"].frame.maxY, transcript.frame.minY)
         let input = app.buttons["voice-test-input"]
         XCTAssertTrue(input.exists)
+        let cancelGap = input.frame.minY - cancel.frame.maxY
+        let editGap = input.frame.minY - edit.frame.maxY
+        XCTAssertGreaterThan(cancelGap, 60,
+                             "Cancel must stay clear of the press-to-talk input")
+        XCTAssertLessThan(cancelGap, 150,
+                          "Cancel must remain reachable from the press-to-talk input")
+        XCTAssertGreaterThan(editGap, 60)
+        XCTAssertLessThan(editGap, 150)
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "voice-transcription-actions-above-composer"
+        capture.lifetime = .keepAlways
+        add(capture)
         input.tap()
         XCTAssertTrue(app.buttons["输入已触达"].exists,
                       "Topmost voice overlay must leave the bottom input touchable")

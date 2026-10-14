@@ -1158,7 +1158,6 @@ private enum RemoteIMImagePreviewLayout {
 private struct PresentedRemoteIMImage: Identifiable {
     let item: RemoteIMImagePreviewItem
     let imageSize: CGSize
-    let sourceFrame: CGRect
 
     var id: UUID { item.id }
 }
@@ -1314,7 +1313,6 @@ private struct ChatDetailView: View {
     @State private var isAttachmentPanelPresented = false
     @State private var transcriptionPresentation = VoiceTranscriptionPresentation()
     @State private var imagePreviewPresentation: PresentedRemoteIMImage?
-    @State private var isImagePreviewExpanded = false
     @State private var quoteTargetMessageID: UUID?
     @State private var messageActionTarget: PresentedMessageActions?
     @State private var selectingMessageID: UUID?
@@ -1379,17 +1377,6 @@ private struct ChatDetailView: View {
             .overlay {
             }
 
-            if let imagePreviewPresentation {
-                FullScreenImagePreviewView(
-                    presentation: imagePreviewPresentation,
-                    isExpanded: isImagePreviewExpanded,
-                    close: closeImagePreview
-                )
-                // 预览覆盖状态栏和底部安全区；否则图片仍被聊天页的安全区裁住。
-                .ignoresSafeArea()
-                .zIndex(20)
-            }
-
             if let messageActionTarget {
                 MessageActionDialog(
                     sourceFrame: messageActionTarget.sourceFrame,
@@ -1452,8 +1439,14 @@ private struct ChatDetailView: View {
         .coordinateSpace(name: RemoteIMImagePreviewLayout.coordinateSpaceName)
         .background(RemoteIMStyle.pageBackground.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
-        // 图片关闭后立即恢复聊天页原有的系统状态栏。
-        .statusBarHidden(imagePreviewPresentation != nil)
+        // 会话页在 UIKit 导航控制器内；窗口内的 ZStack 无法越过它的上下边界。
+        // 用真正的全屏模态承载图片，覆盖状态栏、底部安全区和原聊天界面。
+        .fullScreenCover(item: $imagePreviewPresentation) { presentation in
+            FullScreenImagePreviewView(presentation: presentation,
+                                       close: closeImagePreview)
+                .ignoresSafeArea()
+                .statusBarHidden()
+        }
         .animation(.easeOut(duration: 0.18), value: messageActionTarget?.id)
         .animation(.easeOut(duration: 0.18), value: forwardingMessage?.id)
         .onAppear {
@@ -1575,41 +1568,19 @@ private struct ChatDetailView: View {
         }
     }
 
-    private var imagePreviewAnimation: Animation {
-        .interactiveSpring(response: 0.38, dampingFraction: 0.86, blendDuration: 0.08)
-    }
-
     private func presentImagePreview(
         item: RemoteIMImagePreviewItem,
         imageSize: CGSize,
-        sourceFrame: CGRect
+        sourceFrame _: CGRect
     ) {
-        guard sourceFrame.width > 0, sourceFrame.height > 0 else { return }
         imagePreviewPresentation = PresentedRemoteIMImage(
             item: item,
-            imageSize: imageSize,
-            sourceFrame: sourceFrame
+            imageSize: imageSize
         )
-        isImagePreviewExpanded = false
-        DispatchQueue.main.async {
-            guard imagePreviewPresentation?.id == item.id else { return }
-            withAnimation(imagePreviewAnimation) {
-                isImagePreviewExpanded = true
-            }
-        }
     }
 
     private func closeImagePreview() {
-        guard let closingID = imagePreviewPresentation?.id else { return }
-        withAnimation(imagePreviewAnimation) {
-            isImagePreviewExpanded = false
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) {
-            guard !isImagePreviewExpanded,
-                  imagePreviewPresentation?.id == closingID
-            else { return }
-            imagePreviewPresentation = nil
-        }
+        imagePreviewPresentation = nil
     }
 
 
@@ -1619,6 +1590,50 @@ struct VoiceActionFramesKey: PreferenceKey {
     static let defaultValue: [VoiceTranscriptionTarget: CGRect] = [:]
     static func reduce(value: inout [VoiceTranscriptionTarget: CGRect], nextValue: () -> [VoiceTranscriptionTarget: CGRect]) {
         value.merge(nextValue()) { _, new in new }
+    }
+}
+
+// IM 会话和创作中心使用不同的 UIHostingController；统一换算到 UIWindow 坐标，
+// 才能让窗口顶层的语音按钮准确参照底部输入框，而不是各自的局部坐标。
+struct VoiceComposerFrameReader: UIViewRepresentable {
+    let onFrame: (CGRect) -> Void
+
+    func makeUIView(context: Context) -> FrameView {
+        let view = FrameView()
+        view.isUserInteractionEnabled = false
+        view.onFrame = onFrame
+        return view
+    }
+
+    func updateUIView(_ view: FrameView, context: Context) {
+        view.onFrame = onFrame
+        view.reportFrame()
+    }
+
+    final class FrameView: UIView {
+        var onFrame: ((CGRect) -> Void)?
+        private var lastFrame: CGRect = .null
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            reportFrame()
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            reportFrame()
+        }
+
+        func reportFrame() {
+            guard window != nil, bounds.width > 0, bounds.height > 0 else { return }
+            let frame = convert(bounds, to: nil)
+            guard frame != lastFrame else { return }
+            lastFrame = frame
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.window != nil else { return }
+                self.onFrame?(frame)
+            }
+        }
     }
 }
 
@@ -1643,6 +1658,7 @@ final class VoiceTranscriptionPresentation: ObservableObject {
         var liveText = ""
     }
     @Published private var state = PresentationState()
+    @Published private(set) var composerFrame: CGRect = .zero
     var target: VoiceTranscriptionTarget? {
         get { state.target }
         set {
@@ -1659,6 +1675,11 @@ final class VoiceTranscriptionPresentation: ObservableObject {
     var onEdit: (() -> Void)?
     var actionFrames: [VoiceTranscriptionTarget: CGRect] = [:]
     private(set) var diagnosticFields: [String: String] = [:]
+
+    func updateComposerFrame(_ frame: CGRect) {
+        guard composerFrame != frame else { return }
+        composerFrame = frame
+    }
 
     func prepareForNewSession(account: String, peer: String) {
         VoiceTranscriptionOverlayState.shared.hide(self)
@@ -1702,6 +1723,7 @@ struct VoiceTranscriptionHighlightHost: View {
                 VoiceTranscriptionHighlight(
                     target: target,
                     transcript: presentation.liveText,
+                    composerFrame: presentation.composerFrame,
                     onCancel: { presentation.onCancel?() },
                     onEdit: { presentation.onEdit?() }
                 )
@@ -1719,6 +1741,7 @@ struct VoiceTranscriptionHighlightHost: View {
 private struct VoiceTranscriptionHighlight: View {
     let target: VoiceTranscriptionTarget
     let transcript: String
+    let composerFrame: CGRect
     let onCancel: () -> Void
     let onEdit: () -> Void
 
@@ -1727,17 +1750,30 @@ private struct VoiceTranscriptionHighlight: View {
             let topInset = max(geometry.safeAreaInsets.top + 24,
                                min(geometry.size.height * 0.16, 150))
             let cardHeight = min(geometry.size.height * 0.15, 112)
-            ZStack {
+            let composerTop = composerFrame.isEmpty
+                ? geometry.size.height - 80
+                : composerFrame.minY - geometry.frame(in: .global).minY
+            // 按钮参考实际输入框定位：比输入框高 96pt，同时与转写框保留触控间隔。
+            let actionBottom = min(
+                max(composerTop - 96, topInset + cardHeight + 128),
+                geometry.size.height - 48
+            )
+            ZStack(alignment: .top) {
                 Color.black.opacity(0.45)
                     .ignoresSafeArea()
                     .allowsHitTesting(false)
 
                 VStack(spacing: 0) {
                     // 顶层悬浮框不再受视频下方会话区域的高度限制；
-                    // 转写文字和操作按钮放在上半部，远离底部的长按输入区。
-                    Text("语音转文字")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.white)
+                    // 状态放在转写框上方，避免夹在转写框与取消/编辑按钮之间。
+                    HStack {
+                        Text("语音转文字")
+                            .font(.system(size: 16, weight: .semibold))
+                        Spacer()
+                        Text(statusText)
+                            .font(.system(size: 14, weight: .medium))
+                    }
+                    .foregroundStyle(.white)
                     Text(transcript.isEmpty ? "正在听，请说话…" : String(transcript.suffix(180)))
                         .font(.system(size: 19, weight: .medium))
                         .foregroundStyle(.white)
@@ -1753,31 +1789,27 @@ private struct VoiceTranscriptionHighlight: View {
                         .frame(height: cardHeight)
                         .padding(.top, 12)
                         .accessibilityIdentifier("voice-transcript")
-                    Text(statusText)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .padding(.top, 12)
-
-                    HStack(spacing: 32) {
-                        targetBadge(
-                            title: "取消",
-                            systemImage: "xmark",
-                            selected: target == .cancel,
-                            selectedColor: .red
-                        )
-                        targetBadge(
-                            title: "编辑",
-                            systemImage: "pencil",
-                            selected: target == .edit || target == .finishingEdit,
-                            selectedColor: RemoteIMStyle.blue
-                        )
-                    }
-                    .padding(.top, 18)
                 }
                 .frame(width: min(geometry.size.width - 32, 520))
                 .fixedSize(horizontal: false, vertical: true)
-                .position(x: geometry.size.width / 2,
-                          y: topInset + (158 + cardHeight) / 2)
+                .padding(.top, topInset)
+
+                HStack(spacing: 92) {
+                    targetBadge(
+                        title: "取消",
+                        systemImage: "xmark",
+                        selected: target == .cancel,
+                        selectedColor: .red
+                    )
+                    targetBadge(
+                        title: "编辑",
+                        systemImage: "pencil",
+                        selected: target == .edit || target == .finishingEdit,
+                        selectedColor: RemoteIMStyle.blue
+                    )
+                }
+                .frame(height: 80)
+                .position(x: geometry.size.width / 2, y: actionBottom - 40)
             }
         }
         .accessibilityElement(children: .contain)
@@ -1795,7 +1827,7 @@ private struct VoiceTranscriptionHighlight: View {
                 .font(.system(size: 20, weight: .semibold))
                 .frame(width: 52, height: 52)
                 .background(
-                    Circle().fill(selected ? selectedColor : Color.white.opacity(0.14))
+                    Circle().fill(selected ? selectedColor : Color.black.opacity(0.65))
                 )
                 .overlay(
                     Circle().stroke(Color.white.opacity(selected ? 0.9 : 0.3), lineWidth: 1.5)
@@ -1835,6 +1867,46 @@ private struct VoiceTranscriptionHighlight: View {
 }
 
 #if targetEnvironment(simulator)
+struct RemoteIMImageFullscreenUITestRoot: View {
+    @State private var preview: PresentedRemoteIMImage?
+
+    var body: some View {
+        ChatNavigationHost(
+            root: AnyView(Color.white),
+            detail: AnyView(
+                ZStack {
+                    Color.white
+                    Button("打开 IM 图片") { openPreview() }
+                }
+                .fullScreenCover(item: $preview) { presentation in
+                    FullScreenImagePreviewView(presentation: presentation,
+                                               close: { preview = nil })
+                        .ignoresSafeArea()
+                        .statusBarHidden()
+                }
+            ),
+            selectionID: "im-image-fullscreen-test",
+            onPop: {}
+        )
+    }
+
+    private func openPreview() {
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 300, height: 500))
+            .image { context in
+                UIColor.systemBlue.setFill()
+                context.fill(CGRect(x: 0, y: 0, width: 300, height: 500))
+            }
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("im-image-fullscreen-ui-test.png")
+        guard let data = image.pngData(),
+              (try? data.write(to: file)) != nil else { return }
+        preview = PresentedRemoteIMImage(
+            item: RemoteIMImagePreviewItem(id: UUID(), localFilePath: file.path),
+            imageSize: image.size
+        )
+    }
+}
+
 struct VoiceTranscriptionDockUITestRoot: View {
     @StateObject private var presentation = VoiceTranscriptionPresentation()
     @State private var inputTapped = false
@@ -1853,6 +1925,9 @@ struct VoiceTranscriptionDockUITestRoot: View {
                         inputTapped = true
                     }
                     .accessibilityIdentifier("voice-test-input")
+                    .background {
+                        VoiceComposerFrameReader { presentation.updateComposerFrame($0) }
+                    }
                     .padding(.bottom, 24)
                 }
                 .frame(maxWidth: .infinity)
@@ -3434,7 +3509,6 @@ struct ImagePreviewBackdrop: View {
 
 private struct FullScreenImagePreviewView: View {
     let presentation: PresentedRemoteIMImage
-    let isExpanded: Bool
     let close: () -> Void
     @State private var isSaving = false
     @State private var saveResultText: String?
@@ -3451,22 +3525,17 @@ private struct FullScreenImagePreviewView: View {
                 width: fittedSize.width,
                 height: fittedSize.height
             )
-            let imageFrame = isExpanded ? destinationFrame : presentation.sourceFrame
-
             ZStack(alignment: .bottomTrailing) {
                 Color.black
-                    .opacity(isExpanded ? 1 : 0)
                     .ignoresSafeArea()
                     .onTapGesture(perform: close)
 
-                if isExpanded {
-                    ImagePreviewBackdrop(
-                        filePath: presentation.item.localFilePath,
-                        viewportSize: geometry.size
-                    )
-                }
+                ImagePreviewBackdrop(
+                    filePath: presentation.item.localFilePath,
+                    viewportSize: geometry.size
+                )
 
-                previewImage(frame: imageFrame, fittedSize: fittedSize,
+                previewImage(frame: destinationFrame, fittedSize: fittedSize,
                              viewportSize: geometry.size)
 
                 VStack(alignment: .trailing, spacing: 14) {
@@ -3495,9 +3564,7 @@ private struct FullScreenImagePreviewView: View {
                     }
                 }
                 .padding(.trailing, 22)
-                .padding(.bottom, 24)
-                .opacity(isExpanded ? 1 : 0)
-                .allowsHitTesting(isExpanded)
+                .padding(.bottom, 48)
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
         }
@@ -3531,7 +3598,7 @@ private struct FullScreenImagePreviewView: View {
             }
         }
             .frame(width: frame.width, height: frame.height)
-            .modifier(ImagePreviewZoomModifier(enabled: isExpanded,
+            .modifier(ImagePreviewZoomModifier(enabled: true,
                                                imageSize: fittedSize,
                                                viewportSize: viewportSize))
             .position(x: frame.midX, y: frame.midY)
@@ -5489,6 +5556,9 @@ private struct ComposerView: View {
                 textComposer
             }
             attachmentButton
+        }
+        .background {
+            VoiceComposerFrameReader { transcriptionPresentation.updateComposerFrame($0) }
         }
     }
 

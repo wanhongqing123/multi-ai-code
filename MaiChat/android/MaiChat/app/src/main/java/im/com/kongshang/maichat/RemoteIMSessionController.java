@@ -1,4 +1,5 @@
-// 文件作用：Android IM 身份、消息同步与本地历史；RemoteIMSessionController 负责流程编排、异步回调和状态转换，本文件给出其实现。
+// 文件作用：Android IM 身份、消息同步与本地历史。
+// RemoteIMSessionController 负责流程编排、异步回调和状态转换，本文件给出其实现。
 // 主要入口：enqueueIO、switchAccount、persistContact、updateHumanTyping。
 package com.kongshang.maichat;
 
@@ -17,6 +18,7 @@ import java.util.Map;
 public final class RemoteIMSessionController {
     static final String FALLBACK_OWNER_USER_ID = "android-user";
     static final String DEFAULT_CONTACT_USER_ID = "mac-office";
+    private static final long SESSION_CHECK_INTERVAL_MS = 30_000L;
 
     public interface Listener {
         void onStateChanged();
@@ -40,6 +42,10 @@ public final class RemoteIMSessionController {
 
     public interface CodeCompletion {
         void onFinished(String challengeId, String error);
+    }
+
+    public interface SocialLoginCompletion {
+        void onFinished(MaiChatAuthClient.SocialLoginResult result, String error);
     }
 
     private final LocalSettingsStore settingsStore;
@@ -82,6 +88,26 @@ public final class RemoteIMSessionController {
     private Runnable typingIdle;
     private String typingPeer = "", typingId = "";
     private long typingSequence, typingLastSent;
+    private boolean appForeground;
+    private final Runnable sessionValidation = new Runnable() {
+        @Override public void run() {
+            if (destroyed || !appForeground || requiresLogin() || restoringAccount) return;
+            int generation = accountGeneration;
+            ioExecutor.execute(() -> {
+                try {
+                    authClient.validateSession();
+                } catch (Exception failure) {
+                    if (authClient.hasSession()) return;
+                    runOnMain(() -> {
+                        if (generation != accountGeneration || requiresLogin()) return;
+                        switchAccount(RemoteIMSettings.empty());
+                        reportError("登录已过期，请重新用手机号登录");
+                    });
+                }
+            });
+            mainHandler.postDelayed(this, SESSION_CHECK_INTERVAL_MS);
+        }
+    };
 
 
     public RemoteIMSessionController(
@@ -113,6 +139,10 @@ public final class RemoteIMSessionController {
         this.listener = listener;
         this.mainHandler = new Handler(Looper.getMainLooper());
         this.productionMode = true;
+        this.authClient.setSessionTerminationListener(message -> runOnMain(() -> {
+            if (!requiresLogin()) switchAccount(RemoteIMSettings.empty());
+            reportError(message);
+        }));
         this.client = new TencentIMClient(applicationContext, new ClientListener());
         this.remoteDesktop = new RemoteDesktopController(
             applicationContext,
@@ -144,6 +174,7 @@ public final class RemoteIMSessionController {
                 AIAssistantController.configureAccount(accountToRestore.loginUserId());
                 notifyStateChanged();
                 if (!requiresLogin()) connect();
+                scheduleSessionValidation();
             });
         });
     }
@@ -185,6 +216,7 @@ public final class RemoteIMSessionController {
         loadingPeers.clear(); pageRequests.clear(); peerEpochs.clear(); pendingVideoMedia.clear(); mediaRevision++;
         visibleConversationUserId = "";
         restoringAccount = !next.requiresLogin();
+        scheduleSessionValidation();
         if (next.requiresLogin()) {
             if (remoteDesktop != null) remoteDesktop.stop();
             client.disconnect(new EmptyOperationCompletion());
@@ -199,6 +231,7 @@ public final class RemoteIMSessionController {
                 if (generation != accountGeneration) return;
                 chatState = restored; restoringAccount = false;
                 connect(); notifyStateChanged();
+                scheduleSessionValidation();
             });
         });
         notifyStateChanged();
@@ -288,6 +321,19 @@ public final class RemoteIMSessionController {
             connect();
     }
 
+    public void setAppForeground(boolean foreground) {
+        if (!productionMode || destroyed) return;
+        appForeground = foreground;
+        scheduleSessionValidation();
+    }
+
+    private void scheduleSessionValidation() {
+        if (!productionMode) return;
+        mainHandler.removeCallbacks(sessionValidation);
+        if (appForeground && !destroyed && !restoringAccount && !requiresLogin())
+            mainHandler.post(sessionValidation);
+    }
+
     public boolean requiresLogin() {
         return settings.requiresLogin();
     }
@@ -317,6 +363,20 @@ public final class RemoteIMSessionController {
         });
     }
 
+    public void requestSocialBindCode(
+        String phone, boolean ageConfirmed, CodeCompletion completion
+    ) {
+        ioExecutor.execute(() -> {
+            String error = null;
+            String challengeId = null;
+            try { challengeId = authClient.requestSocialBindCode(phone, ageConfirmed).id; }
+            catch (Exception failure) { error = failure.getMessage(); }
+            String result = error;
+            String issuedId = challengeId;
+            runOnMain(() -> completion.onFinished(issuedId, result));
+        });
+    }
+
     public void loginWithAccountCode(
         String phone, String challengeId, String code, boolean ageConfirmed,
         AccountCompletion completion
@@ -330,6 +390,37 @@ public final class RemoteIMSessionController {
     ) {
         loginWithAccount(() -> authClient.loginWithPassword(phone, password, ageConfirmed),
             completion);
+    }
+
+    public void loginWithSocialCredential(
+        String provider, String credential, boolean ageConfirmed,
+        SocialLoginCompletion completion
+    ) {
+        ioExecutor.execute(() -> {
+            String error = null;
+            MaiChatAuthClient.SocialLoginResult loginResult = null;
+            try {
+                loginResult = authClient.loginWithSocialCredential(provider, credential, ageConfirmed);
+            } catch (Exception failure) {
+                error = failure.getMessage();
+            }
+            String resultError = error;
+            MaiChatAuthClient.SocialLoginResult result = loginResult;
+            runOnMain(() -> {
+                if (destroyed) return;
+                if (resultError == null && result.isSignedIn())
+                    switchAccount(new RemoteIMSettings(result.userId));
+                completion.onFinished(result, resultError);
+            });
+        });
+    }
+
+    public void bindSocialPhone(
+        String bindingToken, String phone, String challengeId, String code,
+        boolean ageConfirmed, AccountCompletion completion
+    ) {
+        loginWithAccount(() -> authClient.bindSocialPhone(
+            bindingToken, phone, challengeId, code, ageConfirmed), completion);
     }
 
     private interface AccountLogin { String perform() throws Exception; }
@@ -1105,6 +1196,9 @@ public final class RemoteIMSessionController {
 
     public void destroy() {
         if (!productionMode) return;
+        authClient.setSessionTerminationListener(null);
+        appForeground = false;
+        mainHandler.removeCallbacks(sessionValidation);
         resetActivities();
         if (pendingStateNotification != null) {
             mainHandler.removeCallbacks(pendingStateNotification);

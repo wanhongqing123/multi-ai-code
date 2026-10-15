@@ -32,6 +32,9 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Build;
 import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
 import android.provider.MediaStore;
 import android.text.Editable;
 import android.text.TextUtils;
@@ -97,6 +100,12 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 public final class MainActivity extends Activity implements RemoteIMSessionController.Listener {
+    public interface SocialCredentialCallback {
+        void onCredential(String provider, String credential);
+        void onCancelled(String provider);
+        void onFailure(String provider, String message);
+    }
+
     public static final class GalleryItem {
         public final String path;
         public final boolean video;
@@ -190,6 +199,56 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private boolean loginUsesPassword;
     private boolean loginAcceptedTerms;
     private boolean loginConfirmedAge;
+    private boolean socialAuthInFlight;
+    private boolean socialBindingVisible;
+    private boolean socialSubmitting;
+    private String socialProvider = "";
+    private String socialBindingToken = "";
+    private String socialPhoneDraft = "";
+    private String socialCodeDraft = "";
+    private String socialChallengeId = "";
+    private String socialBindingError = "";
+    private long socialBindingExpiresAt;
+    private TextView socialBindingCountdown;
+    private final Handler socialUiHandler = new Handler(Looper.getMainLooper());
+    private final Runnable socialBindingTick = new Runnable() {
+        @Override public void run() {
+            if (destroyed || !socialBindingVisible) return;
+            long seconds = Math.max(0,
+                (socialBindingExpiresAt - SystemClock.elapsedRealtime() + 999) / 1000);
+            if (seconds == 0) {
+                socialBindingError = "授权已过期，请返回重新授权";
+                render();
+                return;
+            }
+            if (socialBindingCountdown != null)
+                socialBindingCountdown.setText(String.format(Locale.ROOT,
+                    "授权剩余 %02d:%02d", seconds / 60, seconds % 60));
+            socialUiHandler.postDelayed(this, 1000);
+        }
+    };
+    private static final String EXTRA_LOCAL_SOCIAL_PROVIDER = "maichat.local.social_provider";
+    private static final String EXTRA_LOCAL_SOCIAL_CREDENTIAL = "maichat.local.social_credential";
+    private final SocialCredentialCallback socialCredentialCallback = new SocialCredentialCallback() {
+        @Override public void onCredential(String provider, String credential) {
+            runOnUiThread(() -> beginSocialLogin(provider, credential));
+        }
+
+        @Override public void onCancelled(String provider) {
+            runOnUiThread(() -> {
+                loginError = "已取消" + socialProviderName(provider) + "授权";
+                render();
+            });
+        }
+
+        @Override public void onFailure(String provider, String message) {
+            runOnUiThread(() -> {
+                loginError = message == null || message.isEmpty()
+                    ? socialProviderName(provider) + "授权失败，请重试" : message;
+                render();
+            });
+        }
+    };
     private static final String TERMS_URL = "https://ichat.life/legal/terms.html";
     private static final String PRIVACY_URL = "https://ichat.life/legal/privacy.html";
     private static final String CHILDREN_URL = "https://ichat.life/legal/children.html";
@@ -226,6 +285,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         showInitialLogin = session.requiresLogin();
         render();
         handleNotificationIntent(getIntent());
+        handleLocalSocialIntent(getIntent());
         if (!session.requiresLogin()) requestNotificationPermissionIfNeeded();
     }
 
@@ -233,6 +293,14 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     protected void onResume() {
         super.onResume();
         activityInForeground = true;
+        if (session != null) session.setAppForeground(true);
+        if (socialBindingVisible && socialBindingExpired()) {
+            socialBindingError = "授权已过期，请返回重新授权";
+            render();
+        } else if (socialBindingVisible) {
+            socialUiHandler.removeCallbacks(socialBindingTick);
+            socialUiHandler.post(socialBindingTick);
+        }
         if (aiAssistant != null && aiAssistant.isAttachedToWindow()) aiAssistant.setForeground(true);
         if (diagnostics != null) diagnostics.foreground(true);
         if (pendingStateRefresh) { pendingStateRefresh = false; onStateChanged(); }
@@ -241,6 +309,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     @Override
     protected void onPause() {
         activityInForeground = false;
+        socialUiHandler.removeCallbacks(socialBindingTick);
+        if (session != null) session.setAppForeground(false);
         if (aiAssistant != null) aiAssistant.setForeground(false);
         allowKeyboardLocation = false;
         if (diagnostics != null) diagnostics.foreground(false);
@@ -258,11 +328,13 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         super.onNewIntent(intent);
         setIntent(intent);
         handleNotificationIntent(intent);
+        handleLocalSocialIntent(intent);
     }
 
     @Override
     protected void onDestroy() {
         destroyed = true;
+        socialUiHandler.removeCallbacks(socialBindingTick);
         pendingGalleryAction = null;
         if (videoDialog != null) videoDialog.dismiss();
         if (imageDialog != null) imageDialog.dismiss();
@@ -282,6 +354,11 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
 
     @Override
     public void onBackPressed() {
+        if (socialBindingVisible) {
+            clearSocialBinding();
+            render();
+            return;
+        }
         if (activeChatUserId != null) {
             if (swipeBack != null) swipeBack.goBack();
             return;
@@ -347,11 +424,17 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     @Override
     public void onError(String message) {
         if (destroyed) return;
-        runOnUiThread(() -> Toast.makeText(
-            this,
-            message == null || message.trim().isEmpty() ? "操作失败" : message,
-            Toast.LENGTH_LONG
-        ).show());
+        runOnUiThread(() -> {
+            if (session.requiresLogin() && message != null
+                && (message.contains("设备替换") || message.equals("请更新 App 后重新登录"))) {
+                loginError = message;
+                showInitialLogin = true;
+                activeTab = RemoteIMTab.MESSAGES;
+            }
+            Toast.makeText(this,
+                message == null || message.trim().isEmpty() ? "操作失败" : message,
+                Toast.LENGTH_LONG).show();
+        });
     }
 
     @Override
@@ -689,7 +772,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             return;
         }
         if (showInitialLogin || session.requiresLogin()) {
-            renderLogin();
+            if (socialBindingVisible) renderSocialBinding();
+            else renderLogin();
             return;
         }
 
@@ -984,6 +1068,306 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         });
         page.requestFocus();
         content.addView(page, matchMatch());
+    }
+
+    public SocialCredentialCallback socialCredentialCallback() {
+        return socialCredentialCallback;
+    }
+
+    private void handleLocalSocialIntent(Intent intent) {
+        if (intent == null || !BuildConfig.DEBUG || !BuildConfig.USE_LOCAL_UI_AUTH
+            || !(Build.FINGERPRINT.contains("sdk_gphone")
+                || Build.FINGERPRINT.contains("generic"))) return;
+        String provider = intent.getStringExtra(EXTRA_LOCAL_SOCIAL_PROVIDER);
+        String credential = intent.getStringExtra(EXTRA_LOCAL_SOCIAL_CREDENTIAL);
+        intent.removeExtra(EXTRA_LOCAL_SOCIAL_PROVIDER);
+        intent.removeExtra(EXTRA_LOCAL_SOCIAL_CREDENTIAL);
+        if (provider != null && credential != null)
+            socialCredentialCallback.onCredential(provider, credential);
+    }
+
+    private static String socialProviderName(String provider) {
+        return "wechat".equals(provider) ? "微信" : "qq".equals(provider) ? "QQ" : "社交账号";
+    }
+
+    private void beginSocialLogin(String provider, String credential) {
+        if (destroyed || loginSubmitting || socialBindingVisible || !session.requiresLogin()) return;
+        if (!"wechat".equals(provider) && !"qq".equals(provider)) {
+            loginError = "授权来源无效，请重试";
+            render();
+            return;
+        }
+        if (credential == null || credential.isEmpty()) {
+            loginError = socialProviderName(provider) + "授权失败，请重试";
+            render();
+            return;
+        }
+        if (!loginAcceptedTerms || !loginConfirmedAge) {
+            loginError = "请先确认年龄并同意协议";
+            render();
+            return;
+        }
+        loginSubmitting = true;
+        socialAuthInFlight = true;
+        loginError = "";
+        render();
+        session.loginWithSocialCredential(provider, credential, loginConfirmedAge,
+            (result, error) -> {
+                if (destroyed) return;
+                loginSubmitting = false;
+                socialAuthInFlight = false;
+                if (error != null) {
+                    loginError = error;
+                    render();
+                    return;
+                }
+                if (result != null && result.needsPhoneBinding()) {
+                    socialProvider = provider;
+                    socialBindingToken = result.bindingToken;
+                    socialBindingExpiresAt = SystemClock.elapsedRealtime()
+                        + result.expiresIn * 1000L;
+                    socialPhoneDraft = loginUserDraft;
+                    socialCodeDraft = "";
+                    socialChallengeId = "";
+                    socialBindingError = "";
+                    socialBindingVisible = true;
+                    render();
+                } else if (result != null && result.isSignedIn()) {
+                    clearSocialBinding();
+                    showInitialLogin = false;
+                    render();
+                } else {
+                    loginError = "登录服务返回的账号数据无效";
+                    render();
+                }
+            });
+    }
+
+    private boolean socialBindingExpired() {
+        return socialBindingExpiresAt <= SystemClock.elapsedRealtime();
+    }
+
+    private void clearSocialBinding() {
+        socialUiHandler.removeCallbacks(socialBindingTick);
+        socialBindingCountdown = null;
+        socialBindingVisible = false;
+        socialSubmitting = false;
+        socialProvider = "";
+        socialBindingToken = "";
+        socialPhoneDraft = "";
+        socialCodeDraft = "";
+        socialChallengeId = "";
+        socialBindingError = "";
+        socialBindingExpiresAt = 0;
+    }
+
+    private void renderSocialBinding() {
+        socialUiHandler.removeCallbacks(socialBindingTick);
+        socialBindingCountdown = null;
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setBackgroundColor(Color.WHITE);
+        LinearLayout outer = new LinearLayout(this);
+        outer.setGravity(Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(0, dp(8), 0, dp(32));
+        int width = Math.min(dp(420), getResources().getDisplayMetrics().widthPixels - dp(56));
+        outer.addView(form, new LinearLayout.LayoutParams(width, -2));
+        scroll.addView(outer, new ScrollView.LayoutParams(-1, -2));
+        content.addView(scroll, matchMatch());
+
+        LinearLayout back = new LinearLayout(this);
+        back.setGravity(Gravity.CENTER_VERTICAL);
+        back.setContentDescription("返回手机号登录");
+        TextView backArrow = MaiChatTheme.label(this, "‹", 30, MaiChatTheme.TEXT);
+        backArrow.setGravity(Gravity.CENTER);
+        back.addView(backArrow, new LinearLayout.LayoutParams(dp(30), dp(44)));
+        TextView backLabel = MaiChatTheme.text(this, "返回", 15, MaiChatTheme.SECONDARY);
+        back.addView(backLabel, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        form.addView(back, new LinearLayout.LayoutParams(dp(88), dp(44)));
+        back.setOnClickListener(view -> {
+            clearSocialBinding();
+            render();
+        });
+        TextView title = MaiChatTheme.label(this, "验证手机号", 24, MaiChatTheme.TEXT);
+        LinearLayout.LayoutParams titleParams = match(dp(48));
+        titleParams.setMargins(0, dp(8), 0, 0);
+        form.addView(title, titleParams);
+        TextView explanation = MaiChatTheme.text(this,
+            "首次使用" + socialProviderName(socialProvider) + "登录，需要验证手机号并绑定账号。",
+            14, MaiChatTheme.SECONDARY);
+        explanation.setLineSpacing(dp(4), 1);
+        form.addView(explanation, matchWrap());
+
+        if (socialBindingExpired()) {
+            TextView expired = MaiChatTheme.label(this,
+                "授权已过期，请返回登录页重新授权。", 15, MaiChatTheme.RED);
+            LinearLayout.LayoutParams expiredParams = matchWrap();
+            expiredParams.setMargins(0, dp(24), 0, 0);
+            form.addView(expired, expiredParams);
+            return;
+        }
+
+        socialBindingCountdown = MaiChatTheme.text(this, "", 13, MaiChatTheme.SECONDARY);
+        LinearLayout.LayoutParams countdownParams = match(dp(28));
+        countdownParams.setMargins(0, dp(10), 0, 0);
+        form.addView(socialBindingCountdown, countdownParams);
+        socialUiHandler.post(socialBindingTick);
+
+        EditText phone = new EditText(this);
+        phone.setSingleLine(true);
+        phone.setTextSize(17);
+        phone.setHint("输入手机号");
+        phone.setInputType(android.text.InputType.TYPE_CLASS_PHONE);
+        phone.setPadding(dp(16), 0, dp(16), 0);
+        phone.setBackground(MaiChatTheme.rounded(Color.rgb(247, 248, 250), 30, this));
+        phone.setText(socialPhoneDraft);
+        phone.setSelection(phone.length());
+        LinearLayout.LayoutParams phoneParams = match(dp(56));
+        phoneParams.setMargins(0, dp(14), 0, 0);
+        form.addView(phone, phoneParams);
+
+        EditText code = null;
+        if (!socialChallengeId.isEmpty()) {
+            code = new EditText(this);
+            code.setSingleLine(true);
+            code.setTextSize(17);
+            code.setHint("输入六位验证码");
+            code.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+            code.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(6)});
+            code.setPadding(dp(16), 0, dp(16), 0);
+            code.setBackground(MaiChatTheme.rounded(Color.rgb(247, 248, 250), 30, this));
+            code.setText(socialCodeDraft);
+            LinearLayout.LayoutParams codeParams = match(dp(56));
+            codeParams.setMargins(0, dp(14), 0, 0);
+            form.addView(code, codeParams);
+        }
+
+        TextView errorText = MaiChatTheme.label(this, socialBindingError, 14, MaiChatTheme.RED);
+        errorText.setVisibility(socialBindingError.isEmpty() ? View.GONE : View.VISIBLE);
+        LinearLayout.LayoutParams errorParams = matchWrap();
+        errorParams.setMargins(0, dp(14), 0, 0);
+        form.addView(errorText, errorParams);
+        Button submit = new Button(this);
+        submit.setText(socialSubmitting ? "请稍候..." :
+            socialChallengeId.isEmpty() ? "获取验证码" : "绑定并登录");
+        submit.setTextSize(18);
+        submit.setTextColor(Color.WHITE);
+        submit.setAllCaps(false);
+        submit.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams submitParams = match(dp(54));
+        submitParams.setMargins(0, dp(24), 0, 0);
+        form.addView(submit, submitParams);
+        Runnable updateSubmit = () -> {
+            String number = socialPhoneDraft.replaceAll("\\D", "");
+            boolean valid = number.length() == 11 && !socialSubmitting
+                && (socialChallengeId.isEmpty() || socialCodeDraft.matches("[0-9]{6}"));
+            submit.setEnabled(valid);
+            submit.setBackground(MaiChatTheme.rounded(
+                valid ? Color.rgb(42, 211, 142) : Color.rgb(162, 233, 207), 30, this));
+        };
+        EditText codeInput = code;
+        Button[] resendButton = new Button[1];
+        phone.addTextChangedListener(new SimpleTextWatcher() {
+            @Override public void afterTextChanged(Editable value) {
+                String updated = value.toString();
+                if (!updated.equals(socialPhoneDraft)) {
+                    socialPhoneDraft = updated;
+                    if (!socialChallengeId.isEmpty()) {
+                        socialChallengeId = "";
+                        socialCodeDraft = "";
+                        submit.setText("获取验证码");
+                        if (codeInput != null) codeInput.setVisibility(View.GONE);
+                        if (resendButton[0] != null) resendButton[0].setVisibility(View.GONE);
+                    }
+                }
+                updateSubmit.run();
+            }
+        });
+        if (code != null) {
+            code.addTextChangedListener(new SimpleTextWatcher() {
+                @Override public void afterTextChanged(Editable value) {
+                    socialCodeDraft = value.toString();
+                    updateSubmit.run();
+                }
+            });
+        }
+        updateSubmit.run();
+        submit.setOnClickListener(view -> submitSocialBinding());
+        if (!socialChallengeId.isEmpty()) {
+            Button resend = new Button(this);
+            resend.setText("重新获取验证码");
+            resend.setTextSize(15);
+            resend.setTextColor(Color.rgb(42, 211, 142));
+            resend.setAllCaps(false);
+            resend.setBackgroundColor(Color.TRANSPARENT);
+            resendButton[0] = resend;
+            LinearLayout.LayoutParams resendParams = match(dp(44));
+            resendParams.setMargins(0, dp(8), 0, 0);
+            form.addView(resend, resendParams);
+            resend.setOnClickListener(view -> {
+                if (socialSubmitting) return;
+                socialChallengeId = "";
+                socialCodeDraft = "";
+                socialBindingError = "";
+                render();
+            });
+        }
+        TextView notice = MaiChatTheme.text(this,
+            "验证码用于绑定" + socialProviderName(socialProvider)
+                + "身份；已有手机号沿用原账号。", 13, MaiChatTheme.SECONDARY);
+        notice.setLineSpacing(dp(4), 1);
+        LinearLayout.LayoutParams noticeParams = matchWrap();
+        noticeParams.setMargins(0, dp(22), 0, 0);
+        form.addView(notice, noticeParams);
+    }
+
+    private void submitSocialBinding() {
+        if (socialSubmitting || !socialBindingVisible) return;
+        if (socialBindingExpired()) {
+            socialBindingError = "授权已过期，请返回重新授权";
+            render();
+            return;
+        }
+        String phone = socialPhoneDraft.trim();
+        if (phone.replaceAll("\\D", "").length() != 11) return;
+        String token = socialBindingToken;
+        socialSubmitting = true;
+        socialBindingError = "";
+        hideKeyboard();
+        render();
+        if (socialChallengeId.isEmpty()) {
+            session.requestSocialBindCode(phone, loginConfirmedAge, (challengeId, error) -> {
+                if (destroyed || !socialBindingVisible || !token.equals(socialBindingToken)) return;
+                socialSubmitting = false;
+                socialBindingError = error == null ? "" : error;
+                if (error == null) socialChallengeId = challengeId;
+                render();
+            });
+        } else {
+            String challengeId = socialChallengeId;
+            String code = socialCodeDraft;
+            if (!code.matches("[0-9]{6}")) {
+                socialSubmitting = false;
+                render();
+                return;
+            }
+            session.bindSocialPhone(token, phone, challengeId, code, loginConfirmedAge,
+                error -> {
+                    if (destroyed || !socialBindingVisible || !token.equals(socialBindingToken))
+                        return;
+                    socialSubmitting = false;
+                    if (error != null) {
+                        socialBindingError = error;
+                        render();
+                        return;
+                    }
+                    clearSocialBinding();
+                    showInitialLogin = false;
+                    render();
+                });
+        }
     }
 
     private void openLoginDocument(String url) {
@@ -2314,9 +2698,25 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         scroll.addView(page, matchWrap());
         content.addView(scroll, matchMatch());
 
-        page.addView(settingsSection("账号", new String[][]{
-            {"登录账号", session.settings().loginUserId()}
-        }), matchWrap());
+        String accountId = session.settings().loginUserId();
+        String accountLabel = compactAccountId(accountId);
+        LinearLayout accountSection = settingsSection("账号", new String[][]{
+            {"登录账号", accountLabel + "  复制"}
+        });
+        page.addView(accountSection, matchWrap());
+        View accountCard = accountSection.getChildAt(1);
+        accountCard.setContentDescription("登录账号 " + accountLabel + "，点击复制完整账号 ID");
+        accountCard.setOnClickListener(view -> {
+            ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            clipboard.setPrimaryClip(ClipData.newPlainText("MaiChat account ID", accountId));
+            toast("完整账号 ID 已复制");
+        });
+        Button scanDesktopLogin = secondaryButton("扫码登录桌面端");
+        LinearLayout.LayoutParams scanParams = match(dp(48));
+        scanParams.setMargins(0, dp(18), 0, 0);
+        page.addView(scanDesktopLogin, scanParams);
+        scanDesktopLogin.setOnClickListener(view ->
+            startActivity(new Intent(this, DesktopLoginApprovalActivity.class)));
         Button logout = secondaryButton("切换手机号");
         logout.setTextColor(MaiChatTheme.RED);
         LinearLayout.LayoutParams logoutParams = match(dp(48));
@@ -2360,11 +2760,18 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                     new LinearLayout.LayoutParams(0, dp(46), 1));
             TextView value = MaiChatTheme.text(this, row[1], 14, MaiChatTheme.SECONDARY);
             value.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+            value.setSingleLine(true);
+            value.setEllipsize(TextUtils.TruncateAt.END);
             line.addView(value, new LinearLayout.LayoutParams(0, dp(46), 1));
             card.addView(line, match(dp(46)));
         }
         if (rows.length > 0) section.addView(card, matchWrap());
         return section;
+    }
+
+    private static String compactAccountId(String accountId) {
+        if (accountId == null || accountId.length() <= 12) return accountId == null ? "" : accountId;
+        return accountId.substring(0, 4) + "…" + accountId.substring(accountId.length() - 4);
     }
 
     // 作用：根据远控会话状态展示画面、授权和操作入口。

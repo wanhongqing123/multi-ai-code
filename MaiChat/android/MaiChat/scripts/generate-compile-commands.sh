@@ -14,4 +14,5 @@ fi
 
 ln -sfn .cxx/mobile-agent-adapter/tools/debug/arm64-v8a/compile_commands.json \
     "${project_dir}/app/compile_commands.json"
+python3 "${project_dir}/../../scripts/generate-compile-commands.py" --platform android
 printf 'clangd compilation database: %s\n' "${project_dir}/app/compile_commands.json"

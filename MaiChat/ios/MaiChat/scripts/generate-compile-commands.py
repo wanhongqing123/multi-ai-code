@@ -7,6 +7,7 @@
 import argparse
 import json
 from pathlib import Path
+import subprocess
 
 
 def find_cpp_compilations(build_log: Path) -> list[dict[str, str]]:
@@ -64,6 +65,8 @@ def main() -> None:
             entry["directory"] = str(project)
     destination.write_text(json.dumps(entries, ensure_ascii=False, indent=2) + "\n")
     print(f"{destination}: {len(entries)} C++ 编译命令")
+    subprocess.run(["python3", str(project.parents[1] / "scripts/generate-compile-commands.py"),
+                    "--platform", "ios"], check=True)
 
 
 if __name__ == "__main__":

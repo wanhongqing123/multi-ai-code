@@ -205,7 +205,7 @@ public final class MaiFfplayVideoView extends FrameLayout {
     }
 
     private void startReadySurface() {
-        // setViewReadyListener calls back immediately when the native surface exists.
+        // 原生画面表面已存在时，setViewReadyListener 会立即回调。
         surface.setViewReadyListener(new MaiGraphicsTextureView.ViewReadyListener() {
             @Override public void onReady(long viewId) { start(viewId); }
             @Override public void onLost() { stop(); }

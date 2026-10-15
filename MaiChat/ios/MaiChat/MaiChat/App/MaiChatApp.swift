@@ -16,9 +16,9 @@ final class IOSBackgroundActivityKeeper {
     private init() {
     }
 
-    /// Requests the finite background execution window that iOS grants regular apps.
-    /// This deliberately does not play silent audio or claim location/VoIP modes: those are
-    /// not legitimate generic IM keep-alive mechanisms and would still be terminated by iOS.
+    /// 请求 iOS 授予普通 App 的有限后台执行窗口。
+    /// 不播放静音音频，也不虚报定位或 VoIP 模式；这些都不是通用 IM 的合法保活方式，
+    /// 进程仍会被 iOS 结束。
     func beginIfNeeded() {
         guard taskIdentifier == .invalid else { return }
         taskIdentifier = UIApplication.shared.beginBackgroundTask(
@@ -161,10 +161,9 @@ final class RemoteIMSystemNotificationCenter: NSObject, ObservableObject, UNUser
             return
         }
         completionHandler()
-        // The async UNUserNotificationCenterDelegate witness is executed on a cooperative queue
-        // on physical devices. Calling UIKit from its generated async thunk caused the crash before
-        // our MainActor method even began. Use the completion-handler witness and an explicit GCD
-        // main-queue hop, then assert the actor only after the real thread boundary is crossed.
+        // 真机上的异步 UNUserNotificationCenterDelegate 入口运行在协作队列。
+        // 从自动生成的异步桥接中调用 UIKit，曾在进入 MainActor 方法前就崩溃。
+        // 改由带完成回调的入口显式切到 GCD 主队列，越过真实线程边界后再断言 actor 隔离。
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated {
                 self?.queueNotificationConversation(peerUserID)

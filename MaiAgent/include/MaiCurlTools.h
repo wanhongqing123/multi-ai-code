@@ -6,6 +6,6 @@
 
 #include "MaiTool.h"
 
-// Register one model-facing curl command backed by the embedded upstream CLI. Specialized
-// libcurl API helpers remain available for internal provider use but are not registered tools.
+// 注册一个面向模型的 curl 命令，由内嵌上游 CLI 执行。
+// 专用 libcurl API 辅助入口仍供供应商内部调用，但不注册为模型工具。
 void registerMaiCurlTools(MaiToolRegistry& registry, std::string caBundlePath = {});

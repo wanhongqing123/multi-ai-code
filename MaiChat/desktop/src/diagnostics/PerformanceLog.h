@@ -9,7 +9,7 @@
 #include <QString>
 
 namespace RemoteDiagnostics {
-// UI-thread-only numeric aggregates. No keystrokes, filenames or message bodies.
+// 只在 UI 线程维护数值聚合，不记录按键、文件名或消息正文。
 class PerformanceLog {
 public:
     static PerformanceLog& shared();

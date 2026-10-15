@@ -5,7 +5,7 @@ import Foundation
 import MaiChatCore
 import SQLite3
 
-/// A single background audio thread also keeps a run loop for AVFoundation/SDK callbacks.
+/// 单条后台音频线程还维护运行循环，以接收 AVFoundation 和 SDK 回调。
 final class RemoteIMAudioWorkQueue: @unchecked Sendable {
     private final class State: @unchecked Sendable {
         let lock = NSLock()
@@ -44,7 +44,7 @@ final class RemoteIMAudioWorkQueue: @unchecked Sendable {
     func assertCurrent() { precondition(Thread.current.threadDictionary["MaiChat.AudioWorker"] as? Bool == true) }
 }
 
-/// Bounded work queues: CPU parsing and file I/O do not share the main executor.
+/// 有界工作队列隔离 CPU 解析和文件 I/O，不占用主执行器。
 enum RemoteIMBackgroundWork {
     static let audioQueue = RemoteIMAudioWorkQueue()
     private static let fileQueue = DispatchQueue(label: "MaiChat.FileWork", qos: .userInitiated)

@@ -495,9 +495,8 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         })
     }
 
-    /// Records the user's connection intent before the network attempt starts. A failed first
-    /// login must remain retryable after a process restart instead of becoming a saved-but-offline
-    /// account with neither a login screen nor an automatic retry.
+    /// 网络连接开始前先记录用户的连接意图。首次登录失败后，即使进程重启也必须可重试；
+    /// 不能变成既不显示登录页、又不会自动重连的离线账号。
     func requestConnection() async {
         guard connectionState != .connecting else { return }
         guard hasUnifiedAccount else {

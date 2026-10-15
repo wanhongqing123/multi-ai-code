@@ -171,8 +171,8 @@ struct MaiModelConfig {
     // 0 = 不限。流式对话可能跑很久（模型想很长时间，或者输出很长），设了上限就会在半截把人掐掉。
     // 真要停用 cancel，那个干净得多。
     long totalTimeoutSeconds = 0;
-    // No model content/reasoning/tool-call progress for this long aborts the stream.
-    // SSE comments and transport keepalives do not count as model progress. 0 disables it.
+    // 在此时长内没有正文、推理或工具调用进展就中止流式请求。
+    // SSE 注释和传输保活不算模型进展；设为 0 可关闭这项限制。
     long inactivityTimeoutSeconds = 120;
     // 只在还没有向调用方交付任何正文/思考/工具调用时重试，避免流式内容重复。
     int maxRetries = 2;
@@ -180,10 +180,9 @@ struct MaiModelConfig {
     // 空时使用平台默认根证书；Android 宿主可传系统信任库导出的 PEM 文件。
     // 只更换信任根来源，不能关闭证书或主机名校验。
     std::string caBundlePath;
-    // Optional host image preparation for requests carrying large images. The host receives
-    // an already-authorized absolute source path and the Agent workspace, and returns a
-    // persistent JPEG preview path no larger than 2 MB. It must not change the source.
-    // The callback can run on any model worker thread; errors fail the current image request.
+    // 大图请求可选用宿主图片预处理。宿主收到已授权的源图绝对路径和 Agent 工作区，
+    // 返回不超过 2 MB、可持续读取的 JPEG 预览路径，不得修改源图。
+    // 回调可能在任一模型工作线程执行；错误只终止当前图片请求。
     MaiModelImagePreparer prepareImage;
 };
 

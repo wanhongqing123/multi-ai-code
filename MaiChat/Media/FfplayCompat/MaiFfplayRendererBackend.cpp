@@ -13,9 +13,8 @@ extern "C" {
 #include <libavutil/pixfmt.h>
 }
 
-// FFplay's alternate renderer receives the AVFrame before the SDL texture
-// conversion. The hosted implementation sends that frame to Graphics; it does
-// not create a Vulkan device.
+// ffplay 的替代渲染器在 SDL 纹理转换前收到 AVFrame。
+// 宿主实现把该帧交给 Graphics，不创建 Vulkan 设备。
 struct VkRenderer {
     MaiFfplayHost host{};
     AVBufferRef* hardwareDevice = nullptr;

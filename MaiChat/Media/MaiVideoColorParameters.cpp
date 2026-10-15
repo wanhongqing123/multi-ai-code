@@ -2,9 +2,8 @@
 // 调用边界：由 MaiChat 媒体或 Agent 宿主调用；平台资源在停止或失败时须正确释放。
 #include "MaiVideoColorParameters.h"
 
-// These coefficients and the limited/full-range normalization follow OBS's
-// libobs/media-io/video-matrices.c. The shader uses the same color_vec0/1/2 and
-// color_range_min/max parameters as format_conversion.effect.
+// 色彩系数及有限／全范围归一化遵循 OBS 的 libobs/media-io/video-matrices.c。
+// 着色器使用与 format_conversion.effect 相同的 color_vec0/1/2 和 color_range_min/max 参数。
 MaiVideoColorParameters maiVideoColorParameters(MaiVideoColorSpace space,
                                                 MaiVideoColorRange range) {
     float kb = 0.0722f;

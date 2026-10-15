@@ -405,7 +405,7 @@ public final class TencentIMClient {
                     synchronized (TencentIMClient.this) {
                         if (requestKey.equals(profileRequestKey)) profileRequestKey = "";
                     }
-                    // Profile refresh is best effort and must not interrupt messaging.
+                    // 资料刷新尽力而为，失败不能中断消息收发。
                 }
             }
         );
@@ -559,8 +559,8 @@ public final class TencentIMClient {
         RemoteIMOrigin origin = metadata.origin();
         IncomingElementParts parts = incomingElementParts(sdkMessage);
 
-        // Walk the whole element chain before choosing a branch. A text-first multi-element
-        // message still carries an attachment; returning on getTextElem() silently dropped it.
+        // 先遍历完整消息元素链再决定分支。文字排在前面的多元素消息仍可能有附件；
+        // 只看 getTextElem() 就返回会静默丢失该附件。
         if (parts.image != null) {
             downloadImage(
                 sdkMessage, parts.image, fromUserId, recipientUserId, createdAt, origin,
@@ -840,8 +840,8 @@ public final class TencentIMClient {
         elem.downloadVideo(videoPart.getAbsolutePath(), new V2TIMDownloadCallback() {
             @Override public void onProgress(V2TIMElem.V2ProgressInfo progressInfo) { }
             @Override public void onSuccess() {
-                // Complete an accepted download even after its UI/client was disposed.
-                // Each attempt owns its partial file; publish it atomically.
+                // 下载已经受理后，即使界面或客户端对象释放，也要完成这次尝试。
+                // 每次尝试独占自己的临时文件，验证后原子交付。
                 MEDIA_COMPLETION.execute(() -> {
                     try {
                         java.nio.file.Files.move(videoPart.toPath(), videoTarget.toPath(),

@@ -8,11 +8,10 @@
 
 #include "MaiTool.h"
 
-// Runs the audited read-only subset of the embedded OpenSSL command line. Calls are serialized
-// because upstream apps use process-global BIOs and option state. Arguments omit "openssl".
-// Input files must resolve inside the tool context and cannot exceed the per-command limit.
-// The result contains the actual command exit code and bounded stdout/stderr. Unsupported
-// subcommands and options fail before calling upstream code.
+// 执行已审计的内嵌 OpenSSL 命令行只读子集。上游程序使用进程全局 BIO 和选项状态，
+// 因此调用必须串行；参数不包含前置的 "openssl"。
+// 输入文件须在工具上下文内解析且不超过单命令上限。
+// 结果包含真实退出码与有界标准输出／错误输出；不支持的子命令和选项在进入上游前拒绝。
 struct MaiOpenSslCommandResult {
     int exitCode = 0;
     std::string standardOutput;

@@ -71,7 +71,7 @@ class RemoteDiagnosticsUiTest : public QObject {
                 QVERIFY(dialog->findChild<QLabel*>("diagnosticsSummary")->text().contains(recipient));
                 const auto screenshot = qEnvironmentVariable("MAICHAT_DIAGNOSTICS_UI_SCREENSHOT");
                 if (confirm && !screenshot.isEmpty()) QVERIFY(dialog->grab().save(screenshot + "-confirm.png"));
-                // Even an external chat switch while confirming cannot change B.
+                // 确认期间即使外部切换聊天，也不能改变已锁定的 B 收件人。
                 if (!onlyPeer) app.selectPeer("other");
                 if (switchAccount) app.connectToService(124, "another-test-signature");
                 QTest::mouseClick(confirm ? submit : cancel, Qt::LeftButton);
@@ -109,8 +109,8 @@ class RemoteDiagnosticsUiTest : public QObject {
         RemoteIMMessage message; message.fromUserId = "machine"; message.toUserId = "phone";
         message.createdAtMillis = 1; message.hasFile = true; message.file.localPath = path;
         message.file.fileName = RemoteDiagnostics::attachmentFileName(controller->requestId());
-        // Same signal used after the production downloader completes, NOT the
-        // unused incomingFile signal. Real network I/O is covered separately.
+        // 这里用正式下载器完成后发出的同一信号，不用从未消费的 incomingFile 信号。
+        // 真实网络 I/O 另有测试覆盖。
         emit fake->liveMessagesReceived({message});
         QTRY_VERIFY_WITH_TIMEOUT(!controller->isRunning(), 1500);
         QCOMPARE(fake->lastFilePeerId(), recipient);

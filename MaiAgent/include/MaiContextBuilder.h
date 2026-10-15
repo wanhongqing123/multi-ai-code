@@ -23,12 +23,11 @@ public:
         // 默认不回灌历史思考草稿，避免 Chat 与 Responses 的上下文出现差异。
         // 显式启用时才把草稿交给模型。
         bool includeReasoning = false;
-        // Keep the latest tool images from the active user turn. Older pixels remain on disk and
-        // in the conversation store, but repeatedly embedding all of them makes every subsequent
-        // model request grow until its streaming deadline is exhausted.
+        // 只保留当前用户轮次里最新的工具图片。旧像素仍在磁盘和会话存储中，
+        // 但每轮都重新嵌入全部图片会让模型请求不断膨胀，最终耗尽流式期限。
         std::size_t maxRecentToolImages = 8;
-        // Keep only recent user image references in model text. The active user's attachments
-        // are always included, so a newly sent image is never hidden by an older gallery.
+        // 模型文本中只保留最近的用户图片引用；当前用户新发送的附件始终保留，
+        // 不能被旧图集挤掉。
         std::size_t maxRecentUserImageReferences = 12;
         // 模型只看近期上下文；完整历史仍在会话库。大型 ffprobe/工具结果仅给有界摘录，
         // 避免每轮重发兆字节级文本，让服务端在开始流式回答前就超时。

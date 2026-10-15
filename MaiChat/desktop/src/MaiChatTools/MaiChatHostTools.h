@@ -5,9 +5,7 @@
 class MaiToolRegistry;
 class RemoteIMApplication;
 
-// Register tools that are owned by the MaiChat host. MaiAgent remains unaware
-// of Qt, contacts, conversations, and message delivery; another application
-// embedding MaiAgent can register a completely different tool set through the
-// same registry extension point.
+// 注册由 MaiChat 宿主持有的工具。MaiAgent 不认识 Qt、联系人、会话或消息交付；
+// 其他嵌入 MaiAgent 的应用可通过同一注册扩展点提供完全不同的工具组。
 void registerMaiChatHostTools(MaiToolRegistry &registry,
                               RemoteIMApplication &app);

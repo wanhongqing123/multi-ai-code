@@ -409,8 +409,8 @@ std::size_t writeCallback(char* ptr, std::size_t size, std::size_t nmemb, void* 
 int progressCallback(void* userdata, curl_off_t, curl_off_t uploadTotal, curl_off_t uploadNow) {
     auto& context = *static_cast<StreamCtx*>(userdata);
     if (context.cancel->load(std::memory_order_relaxed)) return 1;
-    // A large multimodal POST can spend time uploading before the model can respond.
-    // Count actual upload progress as activity, then enforce the response idle deadline.
+    // 大型多模态 POST 在模型响应前可能长时间上传；实际上传进度算作活动，
+    // 上传后再执行响应空闲期限。
     if (uploadTotal > 0 && uploadNow > context.uploadedBytes) {
         context.uploadedBytes = uploadNow;
         context.lastModelProgress = std::chrono::steady_clock::now();
@@ -497,8 +497,7 @@ public:
             curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
             curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
             curl_easy_setopt(curl, CURLOPT_WRITEDATA, &context);
-            // The progress callback also runs while the connection is silent. Write callbacks
-            // cannot enforce cancellation or an idle deadline until another byte arrives.
+            // 连接静默期间进度回调仍会运行；写回调要等新字节到达才能检查取消或空闲期限。
             curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
             curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progressCallback);
             curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &context);

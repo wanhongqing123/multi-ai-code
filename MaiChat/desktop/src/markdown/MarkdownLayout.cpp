@@ -164,8 +164,7 @@ private:
 
     QFont bodyFont() const {
         QFont font;
-        // Use the bundled Windows typography on both platforms, even when a
-        // parent widget or native platform theme changes the application font.
+        // 两个平台都使用打包的 Windows 字体排版；父控件或系统主题修改应用字体时也保持一致。
         if (!theme_.bodyFamily.isEmpty()) {
             font.setFamilies({theme_.bodyFamily, QStringLiteral("Noto Sans SC")});
             font.setFamily(theme_.bodyFamily);

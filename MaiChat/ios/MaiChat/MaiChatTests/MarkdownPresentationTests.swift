@@ -169,7 +169,7 @@ final class MarkdownPresentationTests: XCTestCase {
         navigation.update(root: root, detail: AnyView(Text("Updated Chat A")), selectionID: "a",
                           onPop: { popCount += 1 }, animated: false)
         XCTAssertTrue(navigation.topViewController === chat, "Message updates retain the hosting controller")
-        // UIKit reports the same top page after cancellation. It must not clear selection.
+        // UIKit 取消转场后仍报告同一个顶层页面，不能因此清空选中会话。
         navigation.navigationController(navigation, didShow: chat, animated: true)
         XCTAssertEqual(popCount, 0)
         XCTAssertTrue(navigation.arrival === arrival, "Cancelled pop must not issue a new entry/scroll intent")
@@ -388,20 +388,20 @@ final class MarkdownPresentationTests: XCTestCase {
         coordinator.restoreInitialScrollableHistory = true
         coordinator.install(from: marker)
         defer { coordinator.uninstall() }
-        // Keyboard opens, then closes; no new messages arrive.
+        // 键盘先打开再关闭，其间没有新消息到达。
         scroll.frame.size.height = 400
         try await Task.sleep(for: .milliseconds(30))
         XCTAssertEqual(scroll.contentOffset.y, 2600, accuracy: 1)
         scroll.frame.size.height = 700
         try await Task.sleep(for: .milliseconds(30))
         XCTAssertEqual(scroll.contentOffset.y, 2300, accuracy: 1)
-        // Composer expands/collapses through several intermediate layout sizes.
+        // 输入栏伸缩会经过多个中间布局尺寸。
         for height in [650.0, 550.0, 450.0, 700.0] {
             scroll.frame.size.height = height
             try await Task.sleep(for: .milliseconds(30))
             XCTAssertEqual(scroll.contentOffset.y, 3000 - height, accuracy: 1)
         }
-        // Explicitly reading earlier history must not jump to latest on resize.
+        // 用户明确在读旧历史时，尺寸变化不能把列表跳到最新。
         scroll.trackingForTest = true
         scroll.contentOffset.y = 900
         scroll.trackingForTest = false
@@ -711,7 +711,7 @@ final class MarkdownPresentationTests: XCTestCase {
                 }
                 .onAppear { probe.proxy = proxy }
                 .onChange(of: model.items.last?.id) { _ in
-                    // Match MessageListView's single post-layout outgoing position.
+                    // 与 MessageListView 布局结束后的唯一出站位置保持一致。
                     DispatchQueue.main.async {
                         proxy.scrollTo("bottom", anchor: .bottom)
                     }
@@ -932,8 +932,8 @@ final class MarkdownPresentationTests: XCTestCase {
         let history = try XCTUnwrap(probe.frames[100])
         XCTAssertGreaterThan(history.maxY, 0)
         XCTAssertLessThan(history.minY, navigation.view.bounds.height)
-        // Re-showing the same controller (UIKit cancellation) and a late message
-        // must not issue a second arrival intent or move the history being read.
+        // UIKit 取消返回后重新显示同一控制器，以及晚到的消息，
+        // 都不能再次触发到达定位或移动正在阅读的历史。
         navigation.navigationController(navigation, didShow: try XCTUnwrap(navigation.topViewController), animated: true)
         model.items.append(HistoryItem(id: 350))
         navigation.update(root: root, detail: detail, selectionID: "a", onPop: {})
@@ -1021,8 +1021,8 @@ final class MarkdownPresentationTests: XCTestCase {
 
     @MainActor
     func testSingleHistoryPageDoesNotMountEveryOffscreenRow() async throws {
-        // The reported conversation had 56 loaded messages. Virtualization must
-        // help the first history page too, not only conversations with 350+ rows.
+        // 报告中的会话已加载 56 条消息；首个历史页同样要保持合理负载，
+        // 不能只针对超过 350 行的会话优化。
         let model = HistoryModel(0..<56), probe = HistoryProbe()
         let window = historyWindow(model, probe)
         defer { window.isHidden = true; window.rootViewController = nil }
@@ -1036,8 +1036,8 @@ final class MarkdownPresentationTests: XCTestCase {
     func testHistoryRenderingIsBoundedAndLatestRowRemainsReachable() async throws {
         for count in [350, 1000] {
             let probe = HistoryProbe(), model = HistoryModel(0..<count)
-            // This test drives ScrollViewReader to both old and new rows directly, as search
-            // does. Search disables automatic latest following in the product UI.
+            // 测试像实际搜索一样，直接驱动 ScrollViewReader 定位到旧行与新行。
+            // 产品界面进入搜索后会关闭自动跟随最新消息。
             let window = historyWindow(model, probe, followsLatest: false)
             defer { window.isHidden = true; window.rootViewController = nil }
             try await Task.sleep(for: .milliseconds(250))
@@ -1051,9 +1051,8 @@ final class MarkdownPresentationTests: XCTestCase {
             XCTAssertGreaterThan(lastFrame.maxY, 0)
             XCTAssertLessThanOrEqual(lastFrame.maxY, 641, "Latest row must be visible without user dragging")
             XCTAssertLessThan(probe.mounted.count, 180)
-            // A lazy stack can retain estimated contentSize beyond the actual
-            // last row. Visibility is verified from that row's frame above;
-            // this obsolete near-bottom estimate no longer drives app scrolling.
+            // 懒排版栈曾在真实末行之外保留估计 contentSize。
+            // 可见性由上面的真实行矩形判断；旧的“接近底部”估计不再驱动 App 滚动。
             print("history after bottom loaded=\(count) mounted=\(probe.mounted.count)")
             probe.proxy?.scrollTo(count / 2, anchor: .center)
             try await Task.sleep(for: .milliseconds(250))
@@ -1150,7 +1149,7 @@ final class MarkdownPresentationTests: XCTestCase {
         ]
         for (source, expected) in cases {
             XCTAssertEqual(MarkdownConversationPreview.plainText(source), expected, source)
-            // Repeated list refreshes return the same cached presentation.
+            // 重复刷新列表应复用同一份缓存呈现结果。
             XCTAssertEqual(MarkdownConversationPreview.plainText(source), expected, source)
         }
     }

@@ -11,36 +11,32 @@ void* maiMobileAgentCreate(void);
 void maiMobileAgentDestroy(void* handle);
 char* maiMobileAgentRequest(void* handle, const char* request);
 void maiMobileAgentFree(char* response);
-// Register the address returned by OrtGetApiBase from a statically linked iOS ONNX Runtime
-// framework before configure. Android and desktop use a bundled dynamic library path instead.
-// The pointer is borrowed for the lifetime of the host process; call only on the Agent worker.
+// iOS 静态链接 ONNX Runtime 时，必须在 configure 前登记 OrtGetApiBase 返回的地址。
+// Android 和桌面端改用打包的动态库路径。指针借用到宿主进程结束，只能在 Agent 工作线程设置。
 int maiMobileAgentSetOrtApiBase(void* handle, const void* apiBase);
 
-// Direct host entry for video matting, sharing the same parameter schema and processor as the
-// cv_video_matting Agent tool. Paths are UTF-8; output_path in argumentsJson remains relative to
-// workspace. Returns an owned {ok,output|error} JSON string; release with maiMobileAgentFree.
+// 视频抠像的宿主直接入口与 cv_video_matting 工具共用参数 Schema 和处理器。
+// 路径使用 UTF-8；argumentsJson 中的 output_path 仍相对于 workspace。
+// 返回由调用方持有的 {ok,output|error} JSON 字符串，必须用 maiMobileAgentFree 释放。
 char* maiMobileMatteVideo(const char* argumentsJson, const char* workspace,
                           const char* modelPath, const char* runtimePath,
                           const void* apiBase);
 
-// MaiChat-specific tools are implemented by the embedding application. MaiAgent invokes handler
-// on an agent worker thread after its normal approval gate. The handler may be called concurrently
-// by different sessions and must marshal platform state access to the correct host thread.
-//
-// toolName and argumentsJson are borrowed UTF-8 strings valid only during the callback. The
-// handler returns an owned, null-terminated UTF-8 JSON response:
+// MaiChat 专属工具由嵌入它的 App 实现。MaiAgent 通过常规审批闸门后在工作线程调用 handler。
+// 不同会话可能并发回调；宿主访问平台状态时须切到对应线程。
+// toolName 与 argumentsJson 为仅在回调期间有效的借用 UTF-8 字符串。
+// handler 返回宿主持有的、以 NUL 结束的 UTF-8 JSON：
 //   {"ok":true,"output":"text returned to the model"}
 //   {"ok":false,"error":"actionable failure"}
-// responseFree must release that response with the host's allocator. contextRelease is called once
-// after all agent work has stopped, when the handler is replaced or the bridge is destroyed.
+// responseFree 必须用宿主分配器释放响应。处理器被替换或桥接销毁且全部 Agent 工作结束后，
+// contextRelease 只调用一次。
 typedef const char* (*MaiMobileHostToolHandler)(void* context, const char* toolName,
                                                 const char* argumentsJson);
 typedef void (*MaiMobileHostToolResponseFree)(void* context, const char* response);
 typedef void (*MaiMobileHostToolContextRelease)(void* context);
 
-// Returns 1 on success. Returns 0 for an invalid handle/handler set or while a tool callback is in
-// flight. Passing a null handler clears the current registration; the three callback pointers must
-// otherwise all be non-null.
+// 成功返回 1；句柄或回调组合无效，以及工具回调正在执行时返回 0。
+// 传空 handler 会清除注册；否则三个回调指针都必须非空。
 int maiMobileAgentSetHostToolHandler(void* handle, void* context,
                                     MaiMobileHostToolHandler handler,
                                     MaiMobileHostToolResponseFree responseFree,

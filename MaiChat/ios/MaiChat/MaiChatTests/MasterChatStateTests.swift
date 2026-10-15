@@ -40,7 +40,7 @@ final class MasterChatStateTests: XCTestCase {
         try state.upsertFriend(userID: "peer-b")
         state.selectPeer(userID: "peer-a")
         let originalRecipient = try XCTUnwrap(state.selectedPeerID)
-        // Selection changes while attachment encoding or file copying is in progress.
+        // 附件编码或文件复制仍在进行时切换会话。
         state.selectPeer(userID: "peer-b")
         let voice = try state.queueOutgoingVoice(filePath: "/tmp/voice.m4a", durationSeconds: 1, to: originalRecipient)
         let image = try state.queueOutgoingImage(filePath: "/tmp/image.jpg", to: originalRecipient)
@@ -1577,8 +1577,8 @@ final class MasterChatStateTests: XCTestCase {
             )
         )
 
-        // A first login can fail after the account has already been persisted. The user's tap,
-        // not the network result, must keep the next cold launch retryable.
+        // 首次登录可能在账号已落盘后才失败。用户的点击意图，而非网络结果，
+        // 必须让下次冷启动仍可重试。
         let intentAfterFailedLogin = RemoteIMConnectionIntentPolicy.afterUserRequestedConnection()
         XCTAssertTrue(
             RemoteIMLoginCredentialPolicy.shouldAutoConnectSavedSession(

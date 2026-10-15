@@ -325,7 +325,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         send.setEnabled(state != null && state.ready && !submitting
             && (busy || !composer.getText().toString().trim().isEmpty()
                 || !currentAttachments().isEmpty()));
-        // Keep the native editor focused while submit runs; disabling it collapses the IME.
+        // 提交期间保持原生编辑器焦点；禁用控件会让输入法意外收起。
     }
     private void send() {
         if (state == null || submitting)

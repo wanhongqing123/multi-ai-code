@@ -62,7 +62,7 @@ void RemoteDiagnosticsController::start(const QString& peerId, const QString& re
     beganAt_ = QDateTime::currentMSecsSinceEpoch(); originalLocal_ = localEvidence();
     running_ = true; sending_ = false; elapsed_.start(); timer_.start();
     status_ = QStringLiteral("正在请求远端现场，最长等待 60 秒…"); emit changed();
-    // Defer the first side effect so immediate cancellation sends nothing.
+    // 推迟第一次副作用，使用户立即取消时不会发出任何消息。
     QTimer::singleShot(0, this, [this, generation] {
         if (!running_ || generation != generation_ || !contextValid()) return;
         QPointer<RemoteDiagnosticsController> self(this);
@@ -134,8 +134,8 @@ QJsonObject RemoteDiagnosticsController::localEvidence() const {
     int loaded = 0;
     app_->chatState().forEachMessageWith(peer_, [&](const RemoteIMMessage& message) {
         ++loaded;
-        // Keep observed local rows despite remote clock skew; report their
-        // original timestamps rather than treating them as a causality proof.
+        // 即使远端时钟有偏差也保留本地已观察到的行；报告原始时间戳，
+        // 不把时间顺序当作因果证明。
         messages.append(QJsonObject{{"id", safeId(message.id)}, {"createdAt", double(message.createdAtMillis)},
             {"direction", message.direction == RemoteIMMessageDirection::Incoming ? "incoming" : "outgoing"},
             {"status", int(message.status)}, {"kind", message.hasFile ? "file" : message.hasImage ? "image" : "message"}});

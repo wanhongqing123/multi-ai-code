@@ -564,7 +564,7 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
                 to: peer
             )
         } catch {
-            // send(_:to:) already records the safe error type and numeric code.
+            // send(_:to:) 已记录可公开的错误类型和数字代码。
         }
     }
 
@@ -649,8 +649,7 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
     private func flushPointerIfReady() {
         guard pointerFlushTask == nil, !pendingPointerPath.isEmpty else { return }
         let elapsed = ProcessInfo.processInfo.systemUptime - lastPointerSentAt
-        // Leave headroom under TRTC's shared 30 custom-message/s budget for
-        // reliable keyboard and click events while the pointer is moving.
+        // 指针移动时仍须为可靠的键盘和点击事件留出 TRTC 共用的每秒 30 条自定义消息配额。
         let delay = max(0, (1.0 / 15.0) - elapsed)
         if delay == 0 {
             flushPendingPointer()
@@ -983,7 +982,7 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
                     to: peer
                 )
             } catch {
-                // send(_:to:) records a safe failure entry.
+                // send(_:to:) 会记录不包含敏感内容的失败条目。
             }
         }
     }
@@ -1069,7 +1068,7 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
                         to: peer
                     )
                 } catch {
-                    // send(_:to:) records a safe failure entry.
+                    // send(_:to:) 会记录不包含敏感内容的失败条目。
                 }
             }
         }

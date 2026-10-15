@@ -7,7 +7,7 @@
 
 #include "MaiTool.h"
 
-// Execute a bounded, non-interactive subset of the vendored curl CLI in the Agent worker thread.
-// The tool validates all file paths and options before it calls the upstream argc/argv entry.
-// Approval follows the Agent policy. The full-access policy does not prompt for this tool.
+// 在 Agent 工作线程执行仓库内 curl CLI 的有界、非交互式子集。
+// 调用上游 argc/argv 入口前先校验全部文件路径和选项。
+// 审批遵循 Agent 策略；完全访问策略下此工具不额外弹窗。
 std::unique_ptr<MaiTool> makeMaiCurlCliTool(std::string caBundlePath = {});

@@ -9,6 +9,6 @@
 class MarkdownRenderer final {
 public:
     static QString renderToHtml(const QString& markdown);
-    // Semantic HTML for plain previews: no decorative code labels or padding.
+// 纯文本预览使用语义化 HTML，不添加装饰性代码标签或内边距。
     static QString renderPreviewHtml(const QString& markdown);
 };

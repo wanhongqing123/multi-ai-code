@@ -921,8 +921,8 @@ void test_invalid_utf8_history_is_replaced_before_serialization() {
     MaiModelMessage toolResult;
     toolResult.role = MaiModelRole::ToolResult;
     toolResult.toolCallId = "call_legacy";
-    // GBK bytes for the beginning of a Windows shell error. Old databases may contain this
-    // exact shape because redirected cmd.exe output was stored without conversion to UTF-8.
+    // 这是 Windows Shell 错误开头的 GBK 字节。旧数据库可能保存这种原始形式，
+    // 因为重定向的 cmd.exe 输出当时没有转成 UTF-8。
     toolResult.content.assign("\xCF\xB5\xCD\xB3\xD5\xD2", 6);
     request.messages.push_back(toolResult);
 

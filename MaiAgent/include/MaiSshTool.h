@@ -10,9 +10,8 @@
 #include "MaiError.h"
 #include "MaiTool.h"
 
-// A single non-interactive SSH command. The password is transient host input and is never part
-// of the model tool schema or persisted tool arguments. The caller owns host-key trust policy:
-// validation receives the standard SHA256:base64 fingerprint before authentication starts.
+// 一次非交互式 SSH 命令。密码是宿主临时输入，不进入模型工具 Schema 或持久化参数。
+// 主机密钥是否可信由调用方决定；认证前验证回调会收到标准 SHA256:base64 指纹。
 struct MaiSshExecRequest {
     std::string host;
     int port = 22;
@@ -37,18 +36,16 @@ using MaiSshPasswordProvider = std::function<MaiResult<std::string>(
 using MaiSshHostKeyVerifier = std::function<MaiResult<bool>(const std::string& host, int port,
                                                             const std::string& fingerprint)>;
 
-// Shared C++ transport for iOS, Android, Mac, PC, and CLI. It uses libssh2 over a direct TCP
-// connection supplied by libcurl, bounds stdout/stderr independently to 48 KiB, and checks
-// cancellation during network waits. A timeout returns the partial output with timedOut=true;
-// connection, authentication, and host-key errors return MaiError. Safe for concurrent calls.
+// iOS、Android、Mac、PC 和 CLI 共用的 C++ 传输入口，通过 libcurl 建立直连 TCP，
+// 再交给 libssh2 执行命令。标准输出与错误输出各限 48 KiB；网络等待期间检查取消。
+// 超时返回已收到的部分输出并设置 timedOut；连接、认证、主机密钥错误返回 MaiError。
+// 不同调用可以并发执行。
 MaiResult<MaiSshExecResult> maiExecuteSsh(const MaiSshExecRequest& request,
                                           const MaiSshHostKeyVerifier& verifyHostKey,
                                           const std::atomic<bool>* cancel = nullptr);
 
-// Model tool wrapper. Both callbacks must be backed by a secure host UI or credential store.
-// Missing callbacks fail closed. The tool reuses a live authenticated connection within the
-// same Agent conversation for commands submitted less than ten minutes apart; commands use
-// separate SSH channels and do not share shell state. The connection is not persisted across
-// process restarts. Every remote command requires per-call approval.
+// 模型工具封装要求宿主通过安全界面或凭据库提供密码和主机密钥验证回调；缺任一回调即拒绝。
+// 同一 Agent 对话中十分钟内的命令可复用已认证连接，但各命令使用独立 SSH 通道，
+// 不共享 Shell 状态。连接不跨进程重启持久化；每条远程命令仍须单独审批。
 std::unique_ptr<MaiTool> makeMaiSshTool(MaiSshPasswordProvider passwordProvider,
                                         MaiSshHostKeyVerifier verifyHostKey);

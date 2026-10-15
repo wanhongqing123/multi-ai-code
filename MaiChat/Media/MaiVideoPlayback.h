@@ -19,15 +19,13 @@ typedef enum MaiVideoPlaybackEvent {
     MAI_VIDEO_ERROR
 } MaiVideoPlaybackEvent;
 
-// READY, ENDED and ERROR run on the media thread. PLAYING and PAUSED run on
-// the command-calling thread. The application must dispatch UI changes to its
-// UI thread and must not destroy the playback object inside a callback.
+// READY、ENDED 和 ERROR 在媒体线程回调；PLAYING 和 PAUSED 在调用控制命令的线程回调。
+// App 更新界面时须自行切回 UI 线程，且不得在回调内部销毁播放器对象。
 typedef void (*MaiVideoPlaybackCallback)(MaiVideoPlayback* playback, MaiVideoPlaybackEvent event,
                                          void* user_data);
 
-// Opens a local file asynchronously and sends decoded video frames to an
-// existing MaiGraphicsPresenter view. This first stage has no audio output;
-// callers must not present it as a complete audio/video player.
+// 异步打开本地文件，并把解码视频帧交给已存在的 MaiGraphicsPresenter 视图。
+// 这个底层播放入口不输出音频；调用方不能把它当成完整音视频播放器呈现。
 MaiVideoPlayback* maiVideoPlaybackCreate(uint64_t view_id, const char* file_path,
                                          MaiVideoPlaybackCallback callback, void* user_data);
 void maiVideoPlaybackDestroy(MaiVideoPlayback* playback);

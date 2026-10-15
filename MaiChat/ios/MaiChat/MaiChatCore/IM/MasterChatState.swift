@@ -726,15 +726,14 @@ public enum RemoteIMLoginCredentialPolicy {
         validationError(userID: userID) == nil
     }
 
-    /// A saved account means the user already passed the initial-login gate. If iOS terminates
-    /// the process while it is in the background, the next launch should restore the main UI and
-    /// reconnect instead of presenting the login form again.
+    /// 已保存的账号代表用户通过了首次登录。iOS 若在后台结束进程，
+    /// 下次启动应恢复主界面并重连，而非再次显示登录表单。
     public static func shouldRestoreSavedSession(userID: String) -> Bool {
         isComplete(userID: userID)
     }
 
-    /// Old settings did not persist connection intent. Preserve their historical always-connected
-    /// behavior once during migration; newly persisted `false` must remain authoritative.
+    /// 旧设置没有保存连接意图，迁移时仅保留一次旧版默认常连行为。
+    /// 新版本明确保存的 `false` 必须优先，不能被迁移逻辑重新打开连接。
     public static func migratedReconnectOnLaunch(
         storedValue: Bool?,
         userID: String
@@ -1262,9 +1261,8 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
         case createdAt
     }
 
-    /// Keep old JSON history readable. Swift's synthesized `Codable` decoder does not apply
-    /// a stored property's default when a non-optional key is absent, so adding captionAbove
-    /// without this decoder would make every pre-feature history entry fail to decode.
+    /// 保持旧 JSON 历史可读。Swift 自动生成的 Codable 解码器不会在非可选键缺失时
+    /// 套用属性默认值；如果直接新增 captionAbove，旧版每条历史都会解码失败。
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
@@ -1380,8 +1378,7 @@ public enum RemoteIMMessageQuotePolicy {
 }
 
 public enum RemoteIMNewMessageNotificationPolicy {
-    /// Keeps the app icon readable when persisted unread history is large. This is a MaiChat
-    /// product choice, not an iOS system limit.
+    /// 未读历史很大时仍保持 App 图标角标可读；这是 MaiChat 的产品取值，并非 iOS 上限。
     public static func systemBadgeCount(totalUnreadCount: Int) -> Int {
         min(99, max(0, totalUnreadCount))
     }
@@ -1759,9 +1756,8 @@ public struct MasterChatState: Equatable {
         existingMessage(remoteID: remoteID)
     }
 
-    /// Inserts a bounded history page or conversation summary into the in-memory working set.
-    /// Existing messages always win because live delivery updates may be newer than an
-    /// asynchronous SQLite read that started before them.
+    /// 将有界历史页或会话摘要合并到内存工作集。
+    /// 已有消息优先，因为实时投递更新可能比先前启动的异步 SQLite 查询更新。
     public mutating func mergeMessages(_ incomingMessages: [RemoteIMMessage]) {
         let normalizedIncoming = Self.normalizedMessages(
             incomingMessages,
@@ -1870,8 +1866,8 @@ public struct MasterChatState: Equatable {
         return message
     }
 
-    /// Forwarding creates a new ordinary outbound message. Correlation data belongs to the
-    /// original conversation, so remoteID / quote / approval fields are deliberately dropped.
+    /// 转发会创建新的普通出站消息。关联数据属于原会话，
+    /// 因此有意去掉 remoteID、引用和审批字段，避免跨会话误关联。
     @discardableResult
     public mutating func queueForwardedMessage(
         _ source: RemoteIMMessage,

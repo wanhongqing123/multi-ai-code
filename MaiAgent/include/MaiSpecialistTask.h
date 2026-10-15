@@ -9,10 +9,9 @@
 #include "MaiError.h"
 #include "MaiTime.h"
 
-// One task session in a specialist revision chain. Identity, original intent, provider task ID,
-// and parentTaskId are immutable; execution status and bounded result snapshots may change.
-// Credentials, uploaded bytes, and full parent conversation histories must not be stored here.
-// Values are persisted as integers in SQLite; append new values, never reorder existing ones.
+// 修订链中的一次专用模型任务。身份、原始意图、供应商任务 ID 与 parentTaskId 创建后不变；
+// 执行状态和有界结果快照可以更新。此处不得存凭据、上传字节或父会话完整历史。
+// 状态枚举以整数写入 SQLite；新增取值只能追加，不得重排已有值。
 enum class MaiSpecialistTaskStatus {
     Submitted,
     Running,
@@ -43,9 +42,8 @@ struct MaiSpecialistTask {
     MaiMillis notifiedAt = 0;
 };
 
-// Narrow store interface exposed to model-backed tools. Insertion is atomic and rejects missing
-// owners, cross-session parents, and duplicate IDs. A lookup must match both task ID and owner
-// session. Streaming text stays in the task row; only one final reply reaches the parent.
+// 模型媒体工具只能使用这个窄存储接口。插入是原子操作，拒绝无所属会话、跨会话父任务和重复 ID。
+// 查询必须同时匹配任务 ID 与所属会话；流式文本留在任务行，最终回复只向父会话交付一次。
 class MaiSpecialistTaskStore {
 public:
     virtual ~MaiSpecialistTaskStore() = default;
@@ -68,8 +66,7 @@ public:
     // 明确以 "Status check failed:" 开头的记录；清除旧通知状态后继续只读轮询。
     // 不触发新的付费提交，也不恢复供应商明确报告失败的任务。
     virtual MaiError recoverStatusCheckFailures() = 0;
-    // A text-only specialist may succeed without a path. Media generation tools must verify
-    // their output exists before calling this with Succeeded.
+    // 纯文本专用任务成功时可以没有路径；媒体生成工具标记 Succeeded 前必须确认产物存在。
     virtual MaiError finishSpecialistTask(const std::string& taskId,
                                           const std::string& ownerSessionId,
                                           MaiSpecialistTaskStatus status,
@@ -78,8 +75,8 @@ public:
     virtual std::vector<MaiSpecialistTask> listActiveSpecialistTasks(std::size_t limit) const = 0;
     virtual std::vector<MaiSpecialistTask> listUnnotifiedSpecialistTasks(
         std::size_t limit) const = 0;
-    // Reserve one stable assistant ID before notifying. Retry returns the same ID; mark done
-    // only after the parent completes its answer. Both operations reject a different owner.
+    // 通知前先预留稳定的 assistant 消息 ID；重试仍返回同一个 ID。
+    // 父会话真正完成答复后才能标记通知完成；两个操作都拒绝其他会话冒领。
     virtual MaiResult<std::string> reserveSpecialistNotification(
         const std::string& taskId, const std::string& ownerSessionId,
         const std::string& proposedMessageId, MaiMillis attemptedAt) = 0;

@@ -2,10 +2,8 @@
 // 对外契约：下方声明公开参数和返回值；实现位于同名源文件。
 #pragma once
 
-// OBS's gs_* interface is the Graphics API exported by MaiAgent. Link the
-// maiagent_graphics target and create a backend with gs_create before using
-// device resources. All gs_* resource calls require gs_enter_context on the
-// calling thread and must be balanced with gs_leave_context. Resource handles
-// become invalid after gs_destroy. A platform backend must be available and
-// passed to gs_create; the header alone does not provide one.
+// MaiAgent 对外导出 OBS 的 gs_* 图形接口。使用设备资源前须链接 maiagent_graphics，
+// 并通过 gs_create 创建平台后端。每次 gs_* 资源调用都要求当前线程先调用
+// gs_enter_context，再以 gs_leave_context 配对退出。
+// gs_destroy 后全部资源句柄失效；平台后端必须由宿主提供，仅包含此头文件不会自动创建。
 #include "graphics.h"

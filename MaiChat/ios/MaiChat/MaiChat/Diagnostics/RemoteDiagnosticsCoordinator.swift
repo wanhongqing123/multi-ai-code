@@ -5,8 +5,7 @@ import Foundation
 import Combine
 import MaiChatCore
 
-/// Account-scoped message operations used by the coordinator. The application
-/// implements these with its normal persisted send/receipt path.
+/// 协调器使用的账号范围消息操作，由 App 通过正常的持久化发送和回执路径实现。
 @MainActor
 protocol RemoteDiagnosticsContextProvider: AnyObject {
     var chatState: MasterChatState { get }
@@ -53,8 +52,8 @@ final class RemoteDiagnosticsCoordinator: ObservableObject {
         self.deliveryTimeout = deliveryTimeout
     }
 
-    // SDK continuations may ignore Task cancellation. Do not use a task group
-    // that would wait forever for the losing send; release the UI exactly once.
+    // SDK 的续体可能不理会 Task 取消；不能用等待落败发送分支的任务组，
+    // 否则界面会一直卡住。界面释放只执行一次。
     private func deliver(_ operation: @escaping @MainActor () async -> Bool) async -> Bool? {
         let race = DiagnosticDeliveryRace()
         return await withTaskCancellationHandler {
@@ -123,8 +122,7 @@ final class RemoteDiagnosticsCoordinator: ObservableObject {
                         return
                     }
                     for message in appState.chatState.messages(with: peer.userID) {
-                        // The fresh nonce and authenticated sender identify the
-                        // response. A remote wall clock can legitimately differ.
+                        // 新随机数与已认证发送者共同标识回执；远端墙上时钟与本机不同是正常情况。
                         guard message.direction == .incoming, message.fromUserID == peer.userID else { continue }
                         if let reason = RemoteDiagnosticsProtocol.failureReceipt(message.text, requestID: requestID) {
                             missing = reason
@@ -174,8 +172,7 @@ final class RemoteDiagnosticsCoordinator: ObservableObject {
                 }
                 let sanitizedRemote = remote
                 let missingReason = remote == nil ? missing : nil
-                // Keep the original conversation snapshot, but include the
-                // request/download observations made during this collection.
+                // 保留原会话快照，同时纳入本次收集期间新产生的请求和下载观察记录。
                 let local = RemoteDiagnosticsLocalEvidence(
                     appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown",
                     ownerUserID: appState.chatState.ownerUserID, peerUserID: peer.userID, collectedAt: began,

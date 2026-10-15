@@ -59,7 +59,7 @@ public struct RemoteDiagnosticsLogEntry: Codable, Sendable {
     }
 }
 
-/// Summarizes retained evidence, never infers a missing stage's duration as zero.
+/// 汇总已保留证据；某阶段缺失时不能把它的耗时推断为零。
 public struct SpeechDiagnosticSession: Codable, Sendable {
     public let id: String
     public let events: [String]
@@ -215,8 +215,8 @@ public enum RemoteDiagnosticsProtocol {
         return id
     }
 
-    /// Entries must already be account-scoped by the context provider. Require
-    /// this peer and nonce too; unrelated failed attachments cannot end a wait.
+    /// 上下文提供者必须先按账号过滤条目，还要核对当前对端和随机数；
+    /// 其他附件的失败不能结束本次等待。
     public static func reportDownloadFailed(_ logs: [RemoteDiagnosticsLogEntry], requestID: UUID, peerUserID: String) -> Bool {
         logs.contains {
             $0.event == "media-download-finished" && $0.fields["kind"] == "file" &&
@@ -226,8 +226,8 @@ public enum RemoteDiagnosticsProtocol {
         }
     }
 
-    /// Recognize only our host's nonce-bound failure receipts (including the
-    /// older unsupported-command reply). Never copy free-form remote text.
+    /// 只识别本宿主绑定随机数的失败回执，包括旧版“不支持指令”回复；
+    /// 不复制远端任意自由文本。
     public static func failureReceipt(_ text: String, requestID: UUID) -> String? {
         let id = requestID.uuidString.lowercased()
         if text == "远程排障请求过于频繁，请稍后重试（\(id)）。" {
@@ -245,8 +245,7 @@ public enum RemoteDiagnosticsProtocol {
         return nil
     }
 
-    /// Only expected, bounded metadata survives decoding; unknown fields and
-    /// free-form text cannot enter the final report through a remote attachment.
+    /// 解码后只保留预期且有界的元数据；未知字段和自由文本不能通过远端附件进入最终报告。
     public static func sanitizedReport(_ data: Data, requestID: UUID) throws -> Data {
         guard data.count <= maximumBytes else { throw RemoteDiagnosticsError.oversizedReport }
         guard let raw = try JSONSerialization.jsonObject(with: data) as? [String: Any],

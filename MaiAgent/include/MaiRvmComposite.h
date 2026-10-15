@@ -5,12 +5,11 @@
 #include <cstddef>
 #include <cstdint>
 
-// Composites one RGB8 frame using RVM's planar FP32 foreground and alpha outputs. Source,
-// background, and destination are interleaved RGB8 and may share neither storage nor lifetime
-// assumptions beyond this call. Fully opaque source pixels are copied unchanged. Only soft edge
-// pixels use the model's foreground estimate to remove original-background spill. Fully clear
-// pixels come from the replacement background. The caller must supply 3*pixelCount bytes for each
-// RGB8 buffer, 3*pixelCount floats for foreground, and pixelCount floats for alpha.
+// 用 RVM 输出的平面 FP32 前景与 alpha 合成一帧 RGB8 图像。
+// 源图、背景和目标均为交错 RGB8；本次调用之外不能假定它们共享存储或生命周期。
+// 完全不透明的源像素原样复制；仅软边缘使用模型前景消除原背景污染，
+// 完全透明的像素来自替换背景。调用方须为每个 RGB8 缓冲提供 3*pixelCount 字节，
+// 前景提供 3*pixelCount 个浮点数，alpha 提供 pixelCount 个浮点数。
 void maiRvmCompositeRgb8(const std::uint8_t* source, const float* foreground, const float* alpha,
                          const std::uint8_t* background, std::uint8_t* destination,
                          std::size_t pixelCount);

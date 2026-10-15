@@ -45,7 +45,7 @@ public:
         MaiSubAgentHost* subAgents = nullptr;
         std::string defaultModel;
         std::string baseInstructions;
-        // One transient child reply. It is not stored as a user message or shown in the UI.
+        // 一条临时子 Agent 回复，不保存为用户消息，也不直接显示在界面上。
         std::string specialistReply;
         // 模型可以连着调工具，一轮对话因此会有多次请求。
         // 重复结果会提前停止；这里限制仍不断产生新调用的极端情况。

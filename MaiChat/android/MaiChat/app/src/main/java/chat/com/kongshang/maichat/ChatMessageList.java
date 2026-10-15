@@ -79,8 +79,7 @@ final class ChatMessageList extends ListView {
         return -1;
     }
     @Override protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
-        // Let ListView consume dataset synchronization first. Applying an intent
-        // before this point can be overwritten by its saved selection/row ID.
+        // 先让 ListView 完成数据集同步；过早执行定位意图会被它保存的选中项或行 ID 覆盖。
         super.onLayout(changed, left, top, right, bottom);
         if (position == Position.NONE && pinsKeyboard() && keyboardAnchor != null) {
             position = Position.MESSAGE_BOTTOM; targetId = keyboardAnchor;
@@ -114,7 +113,7 @@ final class ChatMessageList extends ListView {
                 layoutChildren();
             }
         }
-        // Both layout passes occur before drawing; there is no delayed second scroll.
+        // 两次布局都在绘制前完成，不产生可见的第二次延迟滚动。
     }
     void update(List<RemoteIMMessage> values, RemoteIMActivitySignal nextActivity, int revision) {
         String anchor = firstVisibleMessageId();
@@ -125,8 +124,8 @@ final class ChatMessageList extends ListView {
             && activity.taskStartedAtMs == nextActivity.taskStartedAtMs;
         boolean changed = !messages.equals(values) || !sameActivity || bindingRevision != revision;
         if (changed) {
-            // Reserve the next reply slot while idle. Showing a typing row then
-            // trades padding for a row instead of shifting history or scrolling.
+            // 空闲时预留下一条回复的位置。显示“正在输入”行时用该行替换占位，
+            // 不推移历史消息，也不额外滚动。
             if (bottomPadding < 0) bottomPadding = getPaddingBottom();
             int reserve = nextActivity == null ? Math.round(48 * getResources().getDisplayMetrics().density) : 0;
             setPadding(getPaddingLeft(), getPaddingTop(), getPaddingRight(), bottomPadding + reserve);

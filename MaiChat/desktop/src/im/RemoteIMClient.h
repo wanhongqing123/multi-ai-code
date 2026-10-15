@@ -87,8 +87,8 @@ public:
         Q_UNUSED(action);
         if (completion) completion(false, QStringLiteral("当前 IM 客户端不支持审批按钮"), {});
     }
-    // Protocol/control frames are machine-originated even when sent through the
-    // same Tencent text API. Regular chat UI continues to call sendText().
+    // 协议与控制帧即使复用腾讯文本接口，来源仍是机器。
+    // 普通聊天界面继续调用 sendText()，不能把控制帧当成人类消息。
     virtual void sendMachineText(const QString& peerId, const QString& text, RemoteIMSendCompletion completion) {
         sendText(peerId, text, std::move(completion));
     }

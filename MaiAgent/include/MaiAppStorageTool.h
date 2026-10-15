@@ -8,10 +8,10 @@
 
 #include "MaiTool.h"
 
-// Paths must be host-provided app-owned directories. `workspace` is reported but never cleaned.
-// The tool scans only regular files without following directory symlinks. Cleanup requires a
-// recent preview ID, rechecks each file's size and modification time, and asks for fresh approval
-// on every call. A manager instance retains one preview per Agent and never deletes directories.
+// 路径必须由宿主提供，且属于 App 自有目录；`workspace` 只报告，不参与清理。
+// 只扫描普通文件，不跟随目录符号链接。清理须有近期预览 ID，
+// 并重新校验每个文件的大小和修改时间；每次调用都须重新审批。
+// 一个管理实例为每个 Agent 只保留一份预览，绝不删除目录。
 struct MaiAppStoragePaths {
     std::string temporary;
     std::string cache;

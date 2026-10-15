@@ -228,7 +228,7 @@ void TimSdkRemoteIMClientTest::activityUsesOnlineCustomTransportWithoutHistory()
     QVERIFY(wire.value(QStringLiteral("message_is_online_msg")).toBool());
     QVERIFY(wire.value(QStringLiteral("message_is_excluded_from_unread_count")).toBool());
     QCOMPARE(firstElement(fake->lastJsonMessage).value(QStringLiteral("elem_type")).toInt(), 3);
-    // Independent wire fixture matches iOS/JS, not a self-roundtrip through our encoder.
+    // 使用与 iOS/JS 一致的独立线格式样本，不靠本端编码器自编码再自解码。
     QJsonObject element{{QStringLiteral("elem_type"), 3},
         {QStringLiteral("custom_elem_data"), QStringLiteral(
             "{\"namespace\":\"multi-ai-code-activity\",\"version\":2,\"activityId\":\"machine:1\","
@@ -251,8 +251,7 @@ void TimSdkRemoteIMClientTest::activityUsesOnlineCustomTransportWithoutHistory()
     QCOMPARE(activityCount, 1);
     QCOMPARE(messages.size(), 0);
 
-    // v1 and incomplete v2 frames belong to the retired activity protocol.
-    // Receivers must not manufacture timestamps for either shape.
+    // v1 和不完整 v2 帧属于已退役活动协议；接收方不能替它们编造时间戳。
     element[QStringLiteral("custom_elem_data")] = QStringLiteral(
         "{\"namespace\":\"multi-ai-code-activity\",\"version\":1,\"activityId\":\"machine:old\","
         "\"sequence\":1,\"kind\":\"machine-thinking\",\"active\":true,"
@@ -309,8 +308,7 @@ void TimSdkRemoteIMClientTest::connectsThroughSdkAndSendsTextAndImage() {
     QCOMPARE(metadata.value(QStringLiteral("version")).toInt(), 2);
     QCOMPARE(metadata.value(QStringLiteral("origin")).toString(), QStringLiteral("human"));
 
-    // Remote-desktop/control frames use the same text transport but must not
-    // be mistaken for human chat input by an AICLI receiver.
+    // 远程桌面和控制帧复用文本传输，但 AICLI 接收方不能把它们误作用户聊天输入。
     client.sendMachineText(QStringLiteral("phone-user"), QStringLiteral("protocol-frame"), {});
     metadata = messageMetadata(fake->lastJsonMessage);
     QCOMPARE(metadata.value(QStringLiteral("origin")).toString(), QStringLiteral("machine"));

@@ -8,8 +8,8 @@
 
 #include "MaiTool.h"
 
-// The host supplies its currently selected GLM credential when a tool runs. The key never enters
-// tool metadata, persisted tasks, or model-visible output. The callback must be worker-safe.
+// 工具执行时由宿主提供当前选定的 GLM 凭据。
+// 密钥不得进入工具元数据、持久化任务或模型可见输出；回调须能在工作线程安全调用。
 using MaiGlmApiKeyProvider = std::function<std::string()>;
 
 // 仅提供 glm-image 异步文生图：delegate 提交并记录任务 ID，continue 查询后下载到

@@ -270,7 +270,7 @@ MaiAgent::MaiAgent(std::unique_ptr<MaiSessionStore> store, std::unique_ptr<MaiMo
     // 设晚了会有一轮拿到空的。
     mRuntime->owner = this;
     mRuntime->store = std::move(store);
-    // Restore orphaned tool states in storage without loading every session's history.
+    // 直接在存储层恢复孤立工具状态，不把每个会话的完整历史都读入内存。
     mRuntime->store->recoverInterruptedTools(kInterruptedToolError, MaiTime::getCurrentTime());
     // 旧版误把查询错误写成生成失败；启动时恢复原云任务的只读轮询，不重新提交付费任务。
     mRuntime->store->recoverStatusCheckFailures();
@@ -289,10 +289,9 @@ MaiAgent::MaiAgent(std::unique_ptr<MaiSessionStore> store, std::unique_ptr<MaiMo
             try {
                 pollSpecialistTasks();
             } catch (const std::exception&) {
-                // Provider replies are untrusted; retry on the next check instead of
-                // allowing a malformed response to terminate the host process.
+                // 供应商回执不可信；格式异常时留到下次查询重试，不能让宿主进程退出。
             } catch (...) {
-                // A third-party tool can also throw a non-standard exception.
+                // 第三方工具也可能抛出非标准异常，仍须隔离在本次查询内。
             }
             std::unique_lock<std::mutex> lock(mRuntime->specialistMutex);
             mRuntime->specialistWake.wait_for(lock, std::chrono::seconds(15));

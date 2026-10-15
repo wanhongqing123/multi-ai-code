@@ -15,11 +15,11 @@ struct MaiLocalIpAddress {
     std::string address;
 };
 
-// Enumerates active, non-loopback interface addresses with OS APIs; no network request.
+// 通过操作系统接口列举活动且非回环的网卡地址，不发网络请求。
 std::vector<MaiLocalIpAddress> maiLocalIpAddresses();
 
-// Queries a fixed HTTPS echo endpoint for the address observed outside this device. The returned
-// address may belong to a VPN, mobile carrier NAT or configured proxy. Requires connectivity.
+// 请求固定的 HTTPS 回显端点，取得外部看到的地址。
+// 返回值可能属于 VPN、移动运营商 NAT 或已配置代理；需要网络连接。
 MaiResult<std::string> maiPublicIpAddress(const std::string& caBundlePath = {});
 
 std::unique_ptr<MaiTool> makeMaiNetworkIpTool(std::string caBundlePath = {});

@@ -490,8 +490,7 @@ QIcon makeComposerActionIcon(bool stop, const QColor &color) {
     painter.setBrush(color);
     painter.drawRoundedRect(QRectF(14, 14, 20, 20), 3, 3);
   } else {
-    // Match the IM composer and mobile clients: a simple upward arrow reads as
-    // "send" at 18px more clearly than the previous detailed paper plane.
+    // 与 IM 输入栏和移动端保持一致；18px 简单上箭头比复杂纸飞机更容易识别为发送。
     painter.drawLine(QPointF(24, 38), QPointF(24, 10));
     painter.drawLine(QPointF(13, 21), QPointF(24, 10));
     painter.drawLine(QPointF(35, 21), QPointF(24, 10));
@@ -1046,8 +1045,7 @@ AgentChatPanel::AgentChatPanel(AgentController &controller, QWidget *parent)
   // ---- 输入区：与普通 IM 共用同一个 ComposerTextEdit 形状 ----
   auto *composerHost = new QWidget(this);
   composerHost->setObjectName(QStringLiteral("agentComposerPanel"));
-  // Keep one text line visible even when the user drags the splitter all the
-  // way down: the editor also reserves a bottom row for the send button.
+  // 用户把分隔条拖到最低时仍保留一行可见文字；编辑器底部还要给发送按钮留一行。
   composerHost->setMinimumHeight(UiZoom::s(112));
   composerHost->setStyleSheet(
       QStringLiteral("QWidget#agentComposerPanel{background:#ffffff;}"));
@@ -1577,9 +1575,8 @@ void AgentChatPanel::reloadFromStore() {
                            fromUtf8(selectedSession.directory));
   }
   setRunning(sessionBusy);
-  // A permission event is delivered only once. After a session switch, rebuild
-  // the actionable approval state from the gate instead of rendering its stored
-  // Pending part as "queued".
+  // 权限事件只交付一次。切换会话后从审批闸门恢复可操作状态，
+  // 不能把存储中的 Pending 片段直接绘成“排队中”。
   for (const MaiPermissionRequest &pending :
        runtime_->controller->agent().listPendingPermissions()) {
     showApproval(fromUtf8(pending.id));

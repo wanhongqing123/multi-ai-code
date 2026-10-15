@@ -503,7 +503,7 @@ final class LocalChatHistoryStoreTests: XCTestCase {
         XCTAssertEqual(hits.map(\.peerUserID), ["peer-b", "peer-a"])
         XCTAssertEqual(hits.map(\.message.id), [newerMatch.id, olderMatch.id])
 
-        // `%` and `_` are literal message characters, not LIKE wildcards.
+        // `%` 和 `_` 是消息中的普通字符，不是 LIKE 通配符。
         let literalHit = try await persistence.searchMessages(
             sdkAppID: 1_600_148_979,
             ownerUserID: "ios-master",

@@ -126,10 +126,10 @@ sdk_target_dir="$staged_app/Contents/MacOS/vendor/tencent-im/macos"
 mkdir -p "$sdk_target_dir"
 ditto "$sdk_source" "$sdk_target_dir/ImSDKForMac_Plus.framework"
 
-# Standard drag-to-install layout: users can drag the app onto Applications.
+# 使用标准拖拽安装布局，用户可把 App 拖进“应用程序”。
 ln -s /Applications "$staging/Applications"
 
-# Ad-hoc signing keeps embedded frameworks loadable without requiring a Developer ID.
+# 临时签名保证内嵌 Framework 可加载，不要求 Developer ID。
 if command -v codesign >/dev/null 2>&1; then
   codesign --force --deep --sign - "$staged_app"
   codesign --verify --deep --strict "$staged_app"
@@ -191,8 +191,7 @@ if [[ ! -f "$dmgbuild_script" ]]; then
   exit 1
 fi
 
-# Write Finder metadata directly so the install layout does not depend on the
-# packaging machine allowing Finder to persist .DS_Store files.
+# 直接写入 Finder 元数据，避免安装布局依赖打包机器是否允许 Finder 保存 .DS_Store。
 env \
   volumePath="$mount_dir" \
   iconSize=96 \

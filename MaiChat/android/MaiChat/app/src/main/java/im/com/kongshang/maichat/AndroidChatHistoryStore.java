@@ -431,9 +431,8 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
     }
 
     /**
-     * Searches the complete persisted history for one account. `instr` deliberately treats `%`
-     * and `_` as literal text instead of LIKE wildcards. SQLite lower() folds ASCII only; Chinese
-     * text is unaffected and remains searchable as entered.
+     * 搜索当前账号完整的持久化历史。`instr` 有意把 `%` 和 `_` 当作普通文字，
+     * 而非 LIKE 通配符。SQLite lower() 只折叠 ASCII 大小写；中文仍按原文匹配。
      */
     public List<RemoteIMMessageSearchHit> searchMessages(
         String ownerId,
@@ -683,7 +682,7 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
                     cursor.getString(33)
                 ));
             } catch (IllegalArgumentException ignored) {
-                // A malformed persisted quote must not make the containing message unreadable.
+                // 落库引用即使格式损坏，也不能让整条消息无法读取。
             }
         }
         return message;

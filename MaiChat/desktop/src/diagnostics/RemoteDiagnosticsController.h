@@ -14,8 +14,8 @@
 
 class RemoteIMApplication;
 
-// Owns one explicitly confirmed A -> B -> A -> C collection. The application
-// send facade persists messages and binds destinations independently of the UI.
+// 管理一次经明确确认的 A → B → A → C 诊断收集。
+// 应用发送门面独立于界面持久化消息并绑定收件目标。
 class RemoteDiagnosticsController final : public QObject {
     Q_OBJECT
 public:
@@ -26,7 +26,7 @@ public:
     bool isSending() const { return sending_; }
     QString status() const { return status_; }
     QString requestId() const { return requestId_; }
-    // Injectable deadlines for deterministic tests; defaults match iOS.
+    // 截止时间可注入以便确定性测试；默认值与 iOS 保持一致。
     void setTimeouts(int responseMs, int sendMs);
 signals:
     void changed();

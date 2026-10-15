@@ -30,9 +30,8 @@ enum RemoteIMClipboard {
     }
 }
 
-/// Sender identity occupies a header row, not a column beside every line of text.
-/// Content keeps its intrinsic width for short messages, but can use the entire
-/// proposed width for long text, code and tables. No screen-global width lookup.
+/// 发送者身份占消息头的一行，不在正文每一行旁边预留头像列。
+/// 短消息保留自身宽度；长文本、代码与表格可使用父容器提供的全部宽度，不读取全屏固定宽度。
 struct MessageBubbleLayout<Avatar: View, Metadata: View, Content: View>: View {
     let isOutgoing: Bool
     let showsHeader: Bool
@@ -87,9 +86,9 @@ struct MessageHistoryStack<Item: Identifiable, Row: View>: View {
     }
 }
 
-/// Establish the initial offset during layout, before any frame is presented.
-/// Restrict this to initialOffset: size changes must not pull history readers
-/// back to the bottom. Older systems retain the explicit positioning fallback.
+/// 首帧绘制前，在布局阶段确定初始滚动位置。
+/// 只设置 initialOffset；后续尺寸变化不得把正在读历史的用户拉回底部。
+/// 旧系统保留显式定位兜底。
 struct MessageInitialScrollAnchor: ViewModifier {
     static var requiresDeferredPositioning: Bool {
         if #available(iOS 18.0, *) { return false }
@@ -109,8 +108,8 @@ struct MessageInitialScrollAnchor: ViewModifier {
 }
 
 
-/// Scroll intent is not published per pixel. UIKit gesture callbacks can cancel
-/// queued positioning immediately without causing a SwiftUI layout update.
+/// 滚动意图不按每像素发布；UIKit 手势回调可立即取消排队中的定位，
+/// 同时避免为每次偏移变化触发 SwiftUI 重排。
 @MainActor
 final class MessageScrollIntent: ObservableObject {
     @Published private(set) var userBrowsedHistory = false
@@ -157,7 +156,7 @@ final class MessageScrollIntent: ObservableObject {
 
 }
 
-/// Saves the bottom proximity before keyboard layout changes the viewport.
+/// 在键盘改变可视高度前记录用户是否靠近消息底部，供动画结束后恢复定位意图。
 final class MessageScrollViewportState {
     private struct Resize {
         let fromHeight: Int
@@ -200,7 +199,7 @@ final class MessageScrollViewportState {
     }
 }
 
-/// Reads the scroll view's actual position without publishing per-pixel SwiftUI state.
+/// 直接读取 UIScrollView 的真实偏移，不按每像素发布 SwiftUI 状态。
 @MainActor
 struct MessageScrollPositionReader: UIViewRepresentable {
     final class MarkerView: UIView {
@@ -576,8 +575,8 @@ enum RemoteIMScreenshotRecencyPolicy {
 }
 
 
-/// Keep both pages alive during UIKit's native interactive pop. The selection
-/// changes only after a completed pop; a cancelled gesture keeps the chat intact.
+/// UIKit 原生交互式返回期间保留前后两个页面实例。
+/// 只有返回转场完成后才更新会话选中状态；取消手势时原聊天保持完整。
 struct ChatNavigationHost: UIViewControllerRepresentable {
     let root: AnyView
     let detail: AnyView?
@@ -812,7 +811,7 @@ final class ChatNavigationController: UINavigationController,
 }
 
 
-/// Public UIKit transition APIs: no private gesture targets or selectors.
+/// 使用 UIKit 公开转场接口实现返回动画，不依赖私有手势目标或选择器。
 @MainActor
 final class ChatBackAnimator: NSObject, UIViewControllerAnimatedTransitioning {
     private let onCompletion: () -> Void
@@ -845,8 +844,8 @@ final class ChatBackAnimator: NSObject, UIViewControllerAnimatedTransitioning {
 }
 
 #if targetEnvironment(simulator)
-/// Test-only UIKit geometry surface: accessibility on SwiftUI containers can
-/// resolve to a child Text instead of the message row's allocated rectangle.
+/// 仅供测试读取 UIKit 实际行矩形；SwiftUI 容器的无障碍节点可能落到子 Text，
+/// 无法代表整条消息分配到的区域。
 struct MessageGeometryProbe: UIViewRepresentable {
     let identifier: String
     func makeUIView(context: Context) -> UIView {

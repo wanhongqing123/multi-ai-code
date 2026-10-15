@@ -14,8 +14,8 @@
 using MaiCreativeMediaUploadProvider =
     std::function<MaiResult<std::string>(const std::string&, const MaiToolContext&)>;
 
-// Internal transport helpers for model-backed media tools. Hosts must call these only on a worker
-// thread. The bearer key stays inside the HTTP request and is never placed in returned text.
+// 模型媒体工具内部使用的传输辅助入口，只能在宿主工作线程调用。
+// Bearer 密钥只进入 HTTP 请求，不得写入返回文本。
 struct MaiCreativeHttpResult {
     std::string body;
     std::optional<MaiToolResult> error;
@@ -27,20 +27,20 @@ bool maiCreativeValidId(const std::string& id);
 // 上传回调应返回没有用户信息、带有效主机名的 HTTPS 地址；检查失败时不得提交付费任务。
 bool maiCreativeHttpsUrl(const std::string& url);
 
-// A null body sends GET; a non-null body sends JSON POST. Responses are bounded to 2 MB.
+// body 为空时发送 GET，否则发送 JSON POST；响应上限为 2 MB。
 MaiCreativeHttpResult maiCreativeRequestJson(const std::string& url, const std::string& key,
                                              const std::string& caBundle, const std::string* body,
                                              const MaiToolContext& context);
 
-// Upload an in-memory file as multipart/form-data. The caller validates the workspace path and
-// file size before reading it. This helper does not persist or expose the bearer key.
+// 以 multipart/form-data 上传内存文件；调用方须在读取前校验工作区路径与文件大小。
+// 此入口不持久化或暴露 Bearer 密钥。
 MaiCreativeHttpResult maiCreativeUploadFile(const std::string& url, const std::string& key,
                                             const std::string& caBundle,
                                             const std::string& filename, const std::string& bytes,
                                             const std::string& purpose,
                                             const MaiToolContext& context);
 
-// Download to a new workspace path, validate its media signature, and publish atomically.
+// 下载到新的工作区路径，校验媒体文件特征后原子交付。
 MaiToolResult maiCreativeDownloadMedia(const std::string& url, bool video,
                                        const std::string& provider, const MaiToolContext& context,
                                        const std::string& caBundle);

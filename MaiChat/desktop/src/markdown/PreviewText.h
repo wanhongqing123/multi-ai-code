@@ -23,9 +23,8 @@ inline uint scalarBefore(const QString& text, int offset) {
     return scalarAt(text, start);
 }
 
-// Older Qt builds split modern emoji sequences into several graphemes. Merge
-// these extra boundaries conservatively; do not replace Qt's general Unicode
-// segmentation or infer boundaries from how a particular font draws the text.
+// 旧版 Qt 会把现代 Emoji 序列切成多个字素，这里保守地合并多余边界。
+// 不替代 Qt 的通用 Unicode 分段，也不根据某款字体的绘制外观猜边界。
 inline bool continuesEmojiOrMark(const QString& text, int boundary) {
     if (boundary <= 0 || boundary >= text.size()) return false;
     const uint before = scalarBefore(text, boundary);

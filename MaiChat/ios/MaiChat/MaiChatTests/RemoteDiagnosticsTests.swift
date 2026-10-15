@@ -100,9 +100,8 @@ final class RemoteDiagnosticsTests: XCTestCase {
             controller.view.layoutIfNeeded()
             controller.endAppearanceTransition()
             try await Task.sleep(for: .milliseconds(200))
-            // This logic-test host does not provide a composited screen. UI
-            // rendering is verified separately in a scene-backed preview app;
-            // here require the real appearance callback before testing consent.
+            // 逻辑测试宿主没有合成后的屏幕；界面绘制由带真实 Scene 的预览 App 单独验证。
+            // 这里先等实际出现回调，再检查用户同意流程。
             XCTAssertTrue(appeared)
             XCTAssertFalse(coordinator.isRunning)
             XCTAssertTrue(context.requests.isEmpty)
@@ -235,8 +234,7 @@ final class RemoteDiagnosticsTests: XCTestCase {
         try await withContext { context in
             var requestID: UUID?
             context.onRequest = { context, id in requestID = id; context.downloadFailed(id: id) }
-            // Completion helper fails after three seconds; a missing early-exit
-            // branch therefore cannot pass by merely reaching the deadline.
+            // 完成辅助器在三秒后报错；缺少提前退出分支不能只靠等到截止时间蒙混过关。
             let coordinator = RemoteDiagnosticsCoordinator(appState: context, timeout: .seconds(60), pollInterval: .milliseconds(5))
             coordinator.start(peer: context.chatState.contacts[0], recipient: context.chatState.contacts[1])
             defer { coordinator.cancel() }
@@ -343,8 +341,8 @@ final class RemoteDiagnosticsTests: XCTestCase {
             coordinator.start(peer: context.chatState.contacts[0], recipient: context.chatState.contacts[1])
             try await waitForCompletion(coordinator)
             let report = try XCTUnwrap(context.sentReports.first?.1)
-            // JSON blocks are parsed back from the actual attachment passed to
-            // sendFile; compare values AND types, not loose substring presence.
+            // 从实际传给 sendFile 的附件反解析 JSON 块，同时比较值和类型，
+            // 不以宽松的子串存在性代替验证。
             let blocks = report.components(separatedBy: "```json\n").dropFirst()
             let objects = blocks.compactMap { block -> NSDictionary? in
                 guard let data = block.components(separatedBy: "```").first?.data(using: .utf8) else { return nil }

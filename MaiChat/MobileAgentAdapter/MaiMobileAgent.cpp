@@ -177,7 +177,7 @@ constexpr auto kMarkdownBaseInstructions =
     "again; "
     "that would resubmit local files. "
     // 视频编辑需要把源视频先直传 OSS，再把临时 URL 和人物素材 ID 一起交给
-    // Seedance。
+    // Seedance；人物素材继续使用已登记的资产 ID，不重新上传本地文件。
     "If the task edits a user-uploaded video, "
     "use video_path as the source; the tool uploads it to private OSS and "
     "passes "

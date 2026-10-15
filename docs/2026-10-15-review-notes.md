@@ -21,7 +21,7 @@
 
 ## 中文注释与命名
 
-按用户澄清的口径，注释比例是约数，不要求逐行配对。已核对 672 个被 Git 跟踪的自有源码与脚本：每个文件开头都有中文文件作用说明；其中补齐了此前漏掉的 MaiChat 媒体层和桌面测试文件。上游 `MaiChat/Media/ffplay.c`、第三方 Framework、`vendor`、`third_party` 和 `MaiAgent/Graphics` 保持原样。长函数按入口、关键阶段和失败边界补注释；静态扫描找出 406 个超过 50 行的候选代码块，排除类、lambda 等误判后，没有发现缺少注释的候选函数。该扫描是审阅辅助，不代替逐个核对语义。命名复核将 SQLite 内部的 `exec`、`runWith`、`step` 以及移动端创作中心的 `call`、`op`、`emit`、`add`、`key` 等私有短名改成表达职责的名称；标准生命周期方法如 `start`、`stop` 仍保留。旧代码的逐函数命名复核尚未全部完成。
+按用户澄清的口径，注释比例是约数，不要求逐行配对。已核对 677 个被 Git 跟踪的自有源码与脚本：每个文件开头都有中文文件作用说明；其中补齐了此前漏掉的 MaiChat 媒体层和桌面测试文件。上游 `MaiChat/Media/ffplay.c`、第三方 Framework、`vendor`、`third_party` 和 `MaiAgent/Graphics` 保持原样。长函数按入口、关键阶段和失败边界补注释；静态扫描近 400 个超过 50 行的候选代码块，排除类、lambda 等误判后，没有发现缺少中文说明的候选函数。把 iOS 自有源码、MaiAgent 公开接口及主要桌面／Android 代码中的英文契约说明翻成中文；代码样例和协议字面量保持原样。该扫描是审阅辅助，不代替逐个核对语义。命名复核将 SQLite 内部的 `exec`、`runWith`、`step` 以及移动端创作中心的 `call`、`op`、`emit`、`add`、`key` 等私有短名改成表达职责的名称；标准生命周期方法如 `start`、`stop` 仍保留。旧代码的逐函数命名复核尚未全部完成。
 
 ## clangd
 
@@ -31,8 +31,9 @@ clangd 的标准文件名是 `compile_commands.json`。可重建入口为：
 - `MaiChat/desktop/scripts/generate-compile-commands.sh`
 - `MaiChat/android/MaiChat/scripts/generate-compile-commands.sh`
 - `MaiChat/ios/MaiChat/scripts/generate-compile-commands.py`
+- `MaiChat/scripts/generate-compile-commands.py`：汇集 `Media` 与 `MaiChatTools` 的真实平台编译命令，在 `MaiChat/` 根目录生成数据库，供这两个共用源码目录的 clangd 自动发现。
 
-本机当前数据库分别覆盖 MaiAgent 452 条、桌面端 1226 条、Android 原生 1433 条、移动 Agent 适配层 1109 条、iOS 工程 2 条编译命令。Android JNI 中两处旧标准库可能返回 `const char*` 的 `std::string::data()` 写入已改为非空字符串首元素访问，并通过 arm64 原生构建。
+本机当前数据库分别覆盖 MaiAgent 452 条、桌面端 1226 条、Android 原生 1433 条、移动 Agent 适配层 1109 条、iOS 工程 2 条编译命令；新生成的 `MaiChat/compile_commands.json` 收录 18 条共用源码命令。clangd 已从 `MaiChat/Media`、`MaiChat/MaiChatTools` 的源文件路径自动加载根目录数据库；桌面、Android JNI、iOS 桥接和移动 Agent 源文件也都加载了各自最近的数据库。Windows 专属文件与未启用的测试目标没有本机真实编译命令，不能用猜出的选项冒充。Android JNI 中两处旧标准库可能返回 `const char*` 的 `std::string::data()` 写入已改为非空字符串首元素访问，并通过 arm64 原生构建。
 
 ## 已运行的检查与剩余限制
 

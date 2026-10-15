@@ -43,7 +43,7 @@ public final class RemoteIMApprovalDisplayPolicy {
                 && states.get(token) != State.SENT) {
                 states.put(token, State.SENDING);
             }
-            // FAILED is deliberately ignored: the original request becomes actionable again.
+        // 有意忽略 FAILED：原审批请求此时应重新变为可操作状态。
         }
         return states;
     }

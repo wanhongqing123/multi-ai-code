@@ -55,9 +55,9 @@ struct MaiPermissionRequest {
     // 兼容单键工具；多文件操作还会在 approvalKeys 中列出每个目标文件。
     // 键由工具给出，闸门只管原样存和查。
     std::string approvalKey;
-    // One operation can change several files. Store each approved path independently.
+    // 一次操作可能修改多个文件，每个获批路径必须单独保存。
     std::vector<std::string> approvalKeys;
-    // A confirmed file mutation remains allowed for the same file in this session.
+    // 对已确认文件的修改权限，只在当前会话内继续对同一文件生效。
     bool rememberOnApproval = false;
     // false 表示这次动作只能批准一次。界面不能展示「本会话都允许」，
     // 闸门也会把错误传入的 ApprovedForSession 收窄成 Approved。

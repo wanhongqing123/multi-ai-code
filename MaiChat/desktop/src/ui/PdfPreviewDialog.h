@@ -9,7 +9,7 @@
 
 class QWidget;
 
-// Verify the local artifact before opening it in the in-app PDF viewer.
+// 在应用内 PDF 预览器打开前，先验证本地产物可用。
 bool isPreviewablePdfFile(const QString &path, QString *error = nullptr);
 void showPdfPreview(QWidget *parent, const QString &path,
                     const QString &displayName = {});

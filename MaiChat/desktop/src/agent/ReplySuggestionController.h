@@ -17,9 +17,8 @@ struct ReplySuggestionTurn {
   QString text;
 };
 
-// Generates disposable reply suggestions for a normal MaiChat conversation. It
-// does not create a MaiAgent session, persist model history, register tools, or
-// send any IM message.
+// 为普通 MaiChat 对话生成一次性回复建议。
+// 不创建 MaiAgent 会话、不持久化模型历史、不注册工具，也不发送 IM 消息。
 class ReplySuggestionController final : public QObject {
   Q_OBJECT
 

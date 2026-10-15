@@ -56,16 +56,16 @@ struct MaiImagePart {
     std::string mimeType;
 };
 
-// A local video attached to a user message. The host stores the file and keeps
-// the relative path stable; the context builder gives that path to the model.
+// 用户消息附带的本地视频。宿主保存文件并保持相对路径稳定；
+// 上下文构造器再把该路径交给模型。
 struct MaiVideoPart {
     std::string path;
     std::string mimeType;
 };
 
-// A reference to an earlier message in the same session. The source ID is validated before
-// insertion. Preview is display-only; the context builder resolves the original message by ID
-// and supplies its actual media paths, so a preview never becomes an authority for file access.
+// 同一会话中对旧消息的引用，插入前须验证源消息 ID。
+// 预览仅用于显示；上下文构造器按 ID 查原消息并提供真实媒体路径，
+// 因而预览文本不会成为文件访问授权依据。
 struct MaiQuotePart {
     std::string messageId;
     std::string preview;

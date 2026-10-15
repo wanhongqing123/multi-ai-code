@@ -56,7 +56,7 @@ public:
 #else
         const int decodeError = 0;
         QImageReader reader(path_);
-        // Explicit Qt image requests use decoder-stage downsampling.
+// 明确由 Qt 发起的图片请求在解码阶段降采样，避免先解出整张大图。
         QSize scaled = reader.size();
         if (scaled.isValid() && !scaled.isEmpty()) {
             scaled.scale(target_, Qt::KeepAspectRatio);

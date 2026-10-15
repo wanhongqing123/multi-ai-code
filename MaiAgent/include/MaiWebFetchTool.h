@@ -14,5 +14,5 @@
 // 可选的根证书 PEM 路径与模型客户端一致；空时使用平台默认值。
 std::unique_ptr<MaiTool> makeMaiWebFetchTool(std::string caBundlePath = {});
 
-// Convert already-fetched HTML to the same readable text as curl_fetch, without network I/O.
+// 将已获取的 HTML 转成与 curl_fetch 一致的可读文本，不发网络请求。
 std::string maiHtmlToText(std::string html);

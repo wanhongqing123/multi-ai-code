@@ -8,9 +8,9 @@
 #include "MaiTool.h"
 #include "MaiVideoMatting.h"
 
-// The host installs this standard Agent tool only after ONNX Runtime and the RVM model are bundled.
-// The processor uses shared MaiAgent FFmpeg/OpenCV code and runs synchronously on the tool worker.
-// The model/runtime paths are trusted host configuration, never Agent-controlled JSON arguments.
+// 宿主打包 ONNX Runtime 与 RVM 模型后才注册此标准 Agent 工具。
+// 处理器复用 MaiAgent 的 FFmpeg/OpenCV 代码，在工具线程同步执行。
+// 模型与运行库路径来自可信宿主配置，绝不能由 Agent 的 JSON 参数控制。
 using MaiVideoMattingProcessor = MaiVideoMattingResult (*)(const std::string& inputPath,
                                                            const std::string& outputPath,
                                                            const MaiVideoMattingOptions& options,

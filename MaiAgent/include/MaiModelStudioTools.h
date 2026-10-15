@@ -9,9 +9,9 @@
 #include "MaiCreativeMediaSupport.h"
 #include "MaiTool.h"
 
-// Credentials are read at call time so a host can update or revoke them without recreating the
-// Agent. The workspace ID is the Model Studio workspace, not a local file path. Both values must
-// belong to the same Beijing region. This callback runs on a tool worker, never on a UI thread.
+// 每次调用时读取凭据，宿主可在不重建 Agent 的情况下更新或撤销。
+// Workspace ID 指百炼业务空间，不是本地文件路径；它与凭据必须属于同一北京地域。
+// 回调在工具线程运行，不能占用 UI 线程。
 struct MaiWanCredentials {
     std::string apiKey;
     std::string workspaceId;

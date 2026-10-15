@@ -7,9 +7,8 @@
 
 #include "MaiTool.h"
 
-// The optional host callback creates a bounded model preview and returns its
-// absolute path. It must keep that file readable for subsequent model turns;
-// failure is returned to the model instead of sending an unbounded original.
+// 可选宿主回调生成有界的模型预览并返回绝对路径。
+// 文件在后续模型轮次中必须保持可读；失败应回报模型，不能改发无上限的原图。
 using MaiImagePreviewCallback =
     std::function<MaiResult<std::string>(const std::string& source, const MaiToolContext& context)>;
 

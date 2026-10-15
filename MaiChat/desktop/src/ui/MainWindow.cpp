@@ -183,13 +183,12 @@ constexpr int GroupCountRole = Qt::UserRole + 11;
 constexpr int MaxGlobalSearchResults = 60;
 // 导航栏与会话栏头部的图标统一用这个尺寸：混用会让一列图标看起来大小不一。
 constexpr int kNavIconPixels = 20;
-// Desktop / iOS / Android share Tabler's 24px optical grid.
+// 桌面端、iOS 和 Android 共用 Tabler 的 24px 视觉网格。
 constexpr int kNavRailIconPixels = 24;
 constexpr int MessageRowGap = 10;
 constexpr int RemoteDesktopStopSendTimeoutMs = 800;
 
-// Keep dividers on the existing rows so pagination and message indexes stay
-// stable.
+// 分隔线保留在现有行内，避免改变分页边界和消息索引。
 void setMessageRowDivider(QWidget *row, bool visible) {
   if (row->property("showMessageDivider").isValid() &&
       row->property("showMessageDivider").toBool() == visible)
@@ -656,8 +655,7 @@ public:
     }
 
     const int textLeft = avatarRect.right() + UiZoom::s(14);
-    // Size the time column to the actual text so short "HH:mm" stamps free up
-    // room for the name and long dates never clip.
+  // 时间列按真实文字宽度测量；短的 HH:mm 为名称让位，长日期也不会被裁切。
     QFont timeFont = option.font;
     timeFont.setPixelSize(UiZoom::s(12));
     const int timeWidth =
@@ -1202,7 +1200,7 @@ void applyNavButtonIcon(QPushButton *button, bool selected) {
   button->setIcon(makeNavIcon(kind, navIconColor(kind, selected), selected));
 }
 
-// Feishu-style borderless icon button for the chat header.
+// 聊天标题栏使用飞书式无边框图标按钮。
 QPushButton *makeHeaderIconButton(LineIconKind kind, const QString &tooltip,
                                   QWidget *parent) {
   auto *button = new QPushButton(parent);
@@ -1352,8 +1350,8 @@ QString deliveryStatusIndicator(RemoteIMMessageStatus status) {
 }
 
 QString conversationMarkdownPreview(const QString &source) {
-  // UI-thread only, outside the item delegate's paint path. Bound both parse
-  // input and cache cost so long AICLI replies do not slow every list refresh.
+// 仅在 UI 线程、条目委托的绘制路径之外解析；限制输入和缓存开销，
+// 避免很长的 Agent 回复拖慢每次列表刷新。
   static QCache<QString, QString> cache(2 * 1024 * 1024);
   QString input = source.left(8192);
   if (!input.isEmpty() && QChar(input.back()).isHighSurrogate())
@@ -1394,9 +1392,9 @@ QString relativeMessageTimeText(qint64 createdAtMillis) {
   return messageTime.toString(QStringLiteral("M 月 d 日 HH:mm"));
 }
 
-// Compact timestamp for the conversation list (WeChat/Feishu style): today
-// shows the clock, yesterday/older collapse to a date so the narrow time column
-// never clips (e.g. "昨天 14:30" would otherwise render as "天 14:30").
+// 会话列表使用紧凑时间戳：今天显示时分，昨天及更早显示日期，
+// 让窄时间列仍有空间容纳联系人名称。
+// 时间文本不能被裁成残字，例如“昨天 14:30”不能只剩“天 14:30”。
 QString conversationListTimeText(qint64 createdAtMillis) {
   if (createdAtMillis <= 0)
     return QString();
@@ -1578,9 +1576,8 @@ QJsonObject cloudModelKeys(const QString &address, const QString &token) {
   return cached;
 }
 
-// Only the selected model and cloud-service connection persist locally. The
-// Responses endpoint is fixed per provider, while model credentials live only
-// in this process after retrieval.
+// 本地只保存已选模型和云服务连接信息。Responses 地址由供应商确定；
+// 模型凭据领取后仅驻留当前进程内存。
 AgentController::ModelConfig loadAgentModelConfig() {
   AgentController::ModelConfig config;
 
@@ -1938,9 +1935,8 @@ void MainWindow::buildUi() {
   setCentralWidget(root);
 
 #ifdef Q_OS_WIN
-  // Give the native caption a roomier visual band without replacing it with a
-  // custom title bar. A custom frame would regress resizing, edge snapping and
-  // the Windows 11 snap layout menu.
+// 扩大系统原生标题栏的视觉高度，不替换为自绘标题栏。
+// 自绘会破坏窗口缩放、贴边吸附和 Windows 11 贴靠布局菜单。
   auto *windowTopInset = new QWidget(root);
   windowTopInset->setObjectName(QStringLiteral("windowTopInset"));
   windowTopInset->setFixedHeight(UiZoom::s(16));
@@ -1984,8 +1980,8 @@ void MainWindow::buildUi() {
   auto *contentSplitter = new QSplitter(Qt::Horizontal, messagesPage_);
   contentSplitter->setObjectName(QStringLiteral("contentSplitter"));
   contentSplitter->setChildrenCollapsible(false);
-  // Qt expands the grab area for a 1px handle over neighbouring widgets:
-  // retain a usable drag target without a wide visible gutter.
+// Qt 会把 1px 分隔手柄的拖动命中区域扩展到相邻控件；
+// 因此无需画出很宽的间隔，也能保留可用的拖动目标。
   contentSplitter->setHandleWidth(1);
 
   navRail_ = new QWidget(rootNavigationSplitter);
@@ -4218,10 +4214,8 @@ void MainWindow::refreshMessages() {
       }
     }
   }
-  // Friend/profile callbacks can arrive after history messages. Rebuild only
-  // when a rendered sender's display name or avatar URL changed, so existing
-  // bubbles adopt the real profile image without turning routine message
-  // updates into a full-list refresh.
+// 好友资料回调可能晚于历史消息。仅在已绘制发送者的名称或头像 URL 变化时重建，
+// 让旧气泡采用真实头像，同时避免常规消息更新触发整页重绘。
   if (!needFullRebuild) {
     const QList<QLabel *> avatars = messageContainer_->findChildren<QLabel *>();
     for (const QLabel *avatar : avatars) {
@@ -6002,9 +5996,8 @@ int MainWindow::messageBubbleMaximumWidth() const {
                           ? messageScroll_->viewport()->width()
                           : 0;
   if (viewportWidth <= 80) {
-    // Viewport not laid out yet; estimate. Corrected by
-    // updateMessageBubbleWidths() once the window is shown/resized, so the real
-    // viewport width is authoritative.
+    // 视口尚未完成布局时只能使用暂时宽度；窗口显示或尺寸变化后，
+    // updateMessageBubbleWidths() 会以实际视口宽度重新计算气泡。
     viewportWidth = qMax(360, width() / 2);
   }
   const QMargins margins =
@@ -6755,8 +6748,7 @@ void MainWindow::setupRemoteDesktop() {
       config, remoteSettings, std::move(trtcEngine),
       [this](const QString &peerId, const QString &text,
              RemoteDesktopController::SignalSendCompletion completion) {
-        // Remote-desktop protocol frames are generated by the program, not
-        // human chat input; receivers must never auto-reply to them via IM.
+// 远程桌面协议帧由程序生成，不是用户聊天输入；接收方不得通过 IM 自动回复。
         app_.client().sendMachineText(
             peerId, text,
             [completion = std::move(completion)](

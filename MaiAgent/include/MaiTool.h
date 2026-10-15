@@ -34,17 +34,17 @@ struct MaiToolContext {
     // 文件类工具要明确拒绝而不是退回到当前目录——那会让模型读到进程的工作目录。
     std::string root;
 
-    // Empty means root remains the boundary. Mobile hosts can provide the App container root;
-    // desktop hosts can opt out of a tool-level path boundary.
+    // 留空表示仍以 root 为访问边界。移动宿主可以传 App 容器根目录；
+    // 桌面宿主可以不额外设置工具层路径边界。
     std::string fileAccessRoot;
     bool allowOutsideWorkingDirectory = false;
 
-    // Optional platform decoder for legacy text encodings. The result must be UTF-8. Mobile
-    // hosts use their native charset libraries when the core detects non-UTF-8 file bytes.
+    // 旧文本编码的可选平台解码器，结果必须是 UTF-8。
+    // 核心检测到非 UTF-8 文件字节时，移动宿主使用系统字符集库完成解码。
     std::function<MaiResult<std::string>(const std::string&, const std::string&)> decodeText;
 
-    // Relative paths still start from root; the access policy above controls absolute targets
-    // and paths that leave root. An empty result means the path is not permitted.
+    // 相对路径仍以 root 为起点；上面的访问策略约束绝对目标和离开 root 的路径。
+    // 返回空串表示禁止访问，调用方不能自行回退到未校验的原路径。
     std::string resolvePath(const std::string& candidate) const;
 
     // 这一次工具调用对应的消息和片段。question 工具要把它们带进提问里，
@@ -56,8 +56,8 @@ struct MaiToolContext {
     // 那组工具据此明说「这儿起不了」，而不是失败得莫名其妙。
     MaiSubAgentHost* subAgents = nullptr;
 
-    // Specialist revision records for this Agent. May be null in direct tool tests or hosts that
-    // have not wired persistence; tools must not claim to remember previous edits in that case.
+    // 当前 Agent 的专用模型修订记录。直接工具测试或未接持久化的宿主中可能为空；
+    // 此时工具不能声称自己记得此前的编辑。
     MaiSpecialistTaskStore* specialistTasks = nullptr;
 
     // 中途问用户的闸门。**可能为空**：宿主没接问答时就是空的，
@@ -174,8 +174,8 @@ public:
     // 返回值只当键用，不给人看；它会被原样存进会话白名单。
     virtual std::string approvalKey(const std::string& argumentsJson) const;
 
-    // File-mutating tools return one canonical key per target file. A grant for A must not
-    // silently authorize B; a multi-file patch records each approved target separately.
+    // 修改文件的工具对每个目标文件返回一个规范化权限键。
+    // 对文件 A 的授权不能静默放行文件 B；多文件补丁须分别记录每个获批目标。
     virtual std::vector<std::string> approvalKeys(const std::string& argumentsJson,
                                                   const MaiToolContext& context) const;
 

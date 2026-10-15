@@ -899,8 +899,8 @@ void MainWindowLayoutTest::quotedReplyRendersQuoteBlockAboveBody() {
     QCOMPARE(bubble->layout()->indexOf(block), 0);
     auto* text = block->findChild<QLabel*>(QStringLiteral("messageQuoteText"));
     QVERIFY(text != nullptr);
-    // Status updates can replace the pending row via deleteLater. Resolve the
-    // current label on each retry rather than retaining a deleted widget.
+    // 状态更新可能经 deleteLater 替换待处理行；每次重试重新找当前标签，
+    // 不持有已删除的控件指针。
     const auto currentQuoteText = [&window] {
         const auto* label = window.findChild<QLabel*>(QStringLiteral("messageQuoteText"));
         return label ? label->text() : QString();
@@ -1317,7 +1317,7 @@ void MainWindowLayoutTest::conversationPreviewUsesPlainMarkdown() {
     RemoteIMMessage stored;
     QVERIFY(app.chatState().latestMessageWith(QStringLiteral("phone-user"), &stored));
     QCOMPARE(stored.text, source);
-    // Exercise the cached path through a real list refresh, not only the helper.
+    // 通过真实列表刷新走缓存路径，不只调用辅助函数。
     emit app.stateChanged();
     QCOMPARE(list->item(0)->data(Qt::UserRole + 2).toString(), expected);
 }
@@ -1355,8 +1355,8 @@ void MainWindowLayoutTest::compactSplittersKeepDragTargets() {
     QVERIFY(gap > 0);
     auto* handle = splitter->handle(1);
     QVERIFY(handle != nullptr);
-    // Qt expands a 1px splitter's mouse area over its neighbours. A thin line
-    // must not become a one-pixel-only drag target.
+    // Qt 会把 1px 分隔条的鼠标区域扩展到相邻控件；
+    // 可见细线不能因此变成只有一像素宽的拖动目标。
     const int grabSize = horizontal ? handle->width() : handle->height();
     QVERIFY(grabSize > gap);
     const int before = splitter->sizes().at(0);
@@ -1791,7 +1791,7 @@ void MainWindowLayoutTest::composerResizeKeepsLatestMessageVisible() {
                             .arg(scroll->viewport()->height()).arg(bar->value()).arg(bar->maximum())));
 }
 
-// The editor widget is shared, so switching peers must swap its rich draft and quote together.
+// 编辑器控件被会话共用，切换联系人时必须同时切换富文本草稿和引用。
 void MainWindowLayoutTest::composerDraftAndQuoteStayWithTheirContact() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     auto* fakeClient = client.get();
@@ -3381,7 +3381,7 @@ void MainWindowLayoutTest::videoCoverRetainsPhysicalPixels() {
     auto* button = window.findChild<QPushButton*>("messageVideoButton");
     QVERIFY(button);
     const auto physical = (QSizeF(button->iconSize()) * button->devicePixelRatioF()).toSize();
-    // Wait for the red decoded cover, not merely the high-DPI placeholder.
+    // 等待真正解码的红色封面，不能把高 DPI 占位图当作成功结果。
     QTRY_VERIFY(button->icon().pixmap(physical).toImage().pixelColor(5, 5).red() > 200);
     const auto rendered = button->icon().pixmap(physical);
     QVERIFY(rendered.width() >= physical.width());
@@ -3425,7 +3425,7 @@ void MainWindowLayoutTest::renamedHeaderButtonsKeepTheirCompactAppearance() {
         auto* button = window.findChild<QPushButton*>(QString::fromLatin1(name));
         QVERIFY(button);
         QCOMPARE(button->size(), QSize(UiZoom::s(28), UiZoom::s(28)));
-        // The corners must reveal the white header, not a native gray button frame.
+        // 圆角处应露出白色标题栏，而不是原生灰色按钮底框。
         const auto image = button->grab().toImage();
         const auto corner = image.pixelColor(0, 0);
         QCOMPARE(corner.alpha(), 0);

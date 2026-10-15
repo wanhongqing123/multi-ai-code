@@ -8,8 +8,8 @@
 
 #include "MaiCreativeMediaSupport.h"
 
-// The host supplies its MiniMax API key on demand from secure storage. The callback must be
-// worker-safe. An empty key leaves discovery available but disables paid submission.
+// 宿主按需从安全存储提供 MiniMax API Key，回调须能在工作线程安全调用。
+// 密钥为空时仍可查询能力，但不得提交付费任务。
 using MaiMiniMaxApiKeyProvider = std::function<std::string()>;
 
 // 视频使用 H3/H3 Max V2 异步接口。图片使用 image-01 或 image-01-live 的同步接口；

@@ -169,11 +169,11 @@ public:
         // 等用户授权的超时。0 = 无限等，理由见 MaiPermissionGate::Options。
         MaiMillis permissionTimeoutMs = 0;
         MaiApprovalPolicy approvalPolicy = MaiApprovalPolicy::OnRequest;
-        // Relative paths remain based on each session's directory. Empty keeps that directory
-        // as the file boundary; mobile hosts may widen it to their application container.
+        // 相对路径仍以各会话目录为基准。留空时该目录就是文件访问边界；
+        // 移动宿主可以扩大到自身 App 容器。
         std::string fileAccessRoot;
-        // Desktop hosts can leave path access to the operating system. Approval policy still
-        // governs mutations independently of this setting.
+        // 桌面宿主可以把路径访问交给操作系统权限控制。
+        // 无论该设置如何，修改操作仍单独经过审批策略。
         bool allowOutsideWorkingDirectory = false;
         std::function<MaiResult<std::string>(const std::string&, const std::string&)> decodeText;
         // 模型的基础指令。和 Codex 的 base_instructions 一样独立于消息历史，空表示不注入。

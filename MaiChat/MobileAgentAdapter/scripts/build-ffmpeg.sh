@@ -15,8 +15,8 @@ ranlib_tool="$8"
 mkdir -p "$build_dir"
 cd "$build_dir"
 
-# FFmpeg configure preserves existing Makefile/src links in a reused build
-# directory. Replace links left by an older vendored source checkout.
+# FFmpeg configure 会保留复用构建目录中的 Makefile/src 链接；
+# 先替换旧仓库源码留下的链接，避免连到过期目录。
 if [[ -L src ]] && [[ "$(cd src && pwd -P)" != "$(cd "$source_dir" && pwd -P)" ]]; then
   rm -f src Makefile
 fi
@@ -63,8 +63,8 @@ case "$platform" in
 esac
 
 if [[ "$platform" == iOS ]]; then
-  # Xcode exports the iPhone SDKROOT to child tools. FFmpeg's bin2c runs on the
-  # build Mac, so that SDKROOT would incorrectly produce a simulator executable.
+  # Xcode 会把 iPhone SDKROOT 传给子工具；FFmpeg 的 bin2c 实际在构建用 Mac 上运行，
+  # 若沿用该 SDKROOT，就会错误地生成模拟器可执行文件。
   unset SDKROOT IPHONEOS_DEPLOYMENT_TARGET
   rm -f ffbuild/bin2c_host.o ffbuild/bin2c
 fi

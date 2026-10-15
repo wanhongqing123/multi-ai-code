@@ -72,7 +72,7 @@ final class TencentRealtimeSpeechStream {
     private void pump() {
         if (finished || !ready || endSent) return;
         try {
-            // Keep AAC sample time at the realtime rate even after a slow TLS handshake.
+            // TLS 握手即使较慢，AAC 样本仍按实时节奏发送，不能瞬间倾倒积压音频。
             long budget = ((System.nanoTime() - readyAt) / 1_000_000 + 200) * 16;
             byte[] packet = reader.readUntilSample(budget);
             if (socket.queueSize() > 128 * 1024 || packet.length > 0 && !socket.send(ByteString.of(packet))) { finish(null); return; }

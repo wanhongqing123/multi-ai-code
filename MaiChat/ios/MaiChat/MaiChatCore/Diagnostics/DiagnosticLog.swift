@@ -4,8 +4,8 @@
 import CryptoKit
 import Foundation
 
-/// Bounded, text-free statistics for interaction work. Durations are supplied by
-/// the caller so queue wait and actual processing time remain separate metrics.
+/// 交互工作的有界统计信息，不包含原文；耗时由调用方提供，
+/// 让排队等待和实际处理时间保持为两个独立指标。
 public struct DiagnosticTimingAccumulator: Sendable {
     private var count = 0
     private var slowCount = 0

@@ -4,6 +4,6 @@
 
 class MaiToolRegistry;
 
-// Register desktop image-analysis tools backed by the shared OpenCV C API.
-// Models are loaded from Qt resources once per Agent instance.
+// 注册复用 OpenCV C API 的桌面图片分析工具。
+// 每个 Agent 实例只从 Qt 资源加载一次模型。
 void registerDesktopVisionTools(MaiToolRegistry& registry);

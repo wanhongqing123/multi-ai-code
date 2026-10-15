@@ -8,12 +8,10 @@
 #include "MaiTool.h"
 #include "MaiViewImageTool.h"
 
-// The host owns the embedded FFmpeg engines and links their archives. Each
-// callback runs in the caller's process, on the Agent tool worker thread.
-// It must return an exit status instead of terminating the application.
-// Optional log/error callbacks are called during the serialized tool invocation.
-// A log sink must stop referencing its opaque pointer after setLogSink(nullptr,
-// nullptr) returns. Its lines may arrive from FFmpeg worker threads.
+// 宿主持有并链接内嵌 FFmpeg 引擎。每个回调都在调用方进程的 Agent 工具线程运行；
+// 必须返回退出状态，不得直接终止 App。可选日志和错误回调在串行工具调用期间触发。
+// setLogSink(nullptr, nullptr) 返回后，日志接收方不得继续引用 opaque 指针；
+// 日志行可能来自 FFmpeg 自己的工作线程。
 struct MaiFfmpegEngine {
     int (*runFfmpeg)(int argc, char** argv) = nullptr;
     void (*setFfmpegCancelCheck)(int (*check)(void*), void* opaque) = nullptr;
@@ -23,14 +21,12 @@ struct MaiFfmpegEngine {
     int (*describeError)(int code, char* buffer, std::size_t size) = nullptr;
 };
 
-// Do not register a factory if its matching engine callback is null. The two
-// tools serialize calls because FFmpeg's original command code owns process
-// globals. Cancellation is delivered to the active engine in-process.
+// 对应引擎回调为空时不得注册工具。FFmpeg 原始命令代码使用进程全局状态，
+// 所以 ffmpeg 与 ffprobe 工具必须串行调用；取消信号在进程内送达活动引擎。
 std::unique_ptr<MaiTool> makeMaiFfmpegTool(MaiFfmpegEngine engine);
 std::unique_ptr<MaiTool> makeMaiFfprobeTool(MaiFfmpegEngine engine);
 
-// Produce a JPEG model observation at most 1280 pixels on either side, without
-// changing the source image. The preview remains in the Agent workspace for
-// later turns. Engine calls are serialized with the normal FFmpeg tool.
+// 生成边长均不超过 1280 像素的 JPEG 模型观察图，不修改原图片。
+// 预览文件留在 Agent 工作区供后续轮次使用；引擎调用与普通 FFmpeg 工具串行。
 MaiImagePreviewCallback makeMaiFfmpegImagePreview(MaiFfmpegEngine engine);
 MaiModelImagePreparer makeMaiFfmpegModelImagePreparer(MaiFfmpegEngine engine);

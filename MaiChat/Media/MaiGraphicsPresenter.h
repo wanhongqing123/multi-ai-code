@@ -9,27 +9,20 @@
 extern "C" {
 #endif
 
-// The presenter owns one Graphics thread and one image-decoding thread for the
-// process. Configure it once before attaching views. backend is a module path
-// on desktop/Android and "builtin:metal" on iOS. effect_directory contains the
-// bundled default.effect and its relative includes. Reconfiguration requires
-// maiGraphicsPresenterStop after all views have been detached.
-//
-// The callback runs on the Graphics thread. The application must dispatch UI
-// updates to its UI thread. A failed render leaves the previous frame visible.
+// 整个进程共用一个图形线程和一个图片解码线程；必须先启动呈现器，再挂载视图。
+// 桌面端和 Android 的 backend 是模块路径，iOS 使用 "builtin:metal"。
+// effect_directory 包含打包的 default.effect 及其相对引用文件。
+// 重新配置前必须先卸载全部视图，再调用 maiGraphicsPresenterStop。
+// 回调在图形线程执行；宿主更新界面时必须自行切回 UI 线程。绘制失败保留上一帧。
 typedef void (*MaiGraphicsPresentCallback)(uint64_t view_id, bool success, void* user_data);
 typedef void (*MaiGraphicsNativeViewCallback)(void* native_view);
 bool maiGraphicsPresenterStart(const char* backend, const char* effect_directory,
                                MaiGraphicsPresentCallback callback, void* user_data);
 
-// native_view is a CAMetalLayer installed by the UI thread on Apple, an
-// ANativeWindow on Android, and an HWND on Windows. retain_view runs before
-// the request is
-// queued; release_view runs after the final Graphics task releases the handle.
-// Pass both callbacks when the platform handle is reference counted, or both
-// NULL when the application keeps it alive until detach completes. Attach and
-// rendering are asynchronous; a nonzero ID only
-// means the request was accepted. The callback reports the result of rendering.
+// native_view 在 Apple 平台是 UI 线程安装的 CAMetalLayer，Android 是 ANativeWindow，
+// Windows 是 HWND。入队前调用 retain_view，最后一个图形任务结束后调用 release_view。
+// 平台句柄需要引用计数时必须同时传两个回调；宿主保证句柄活到 detach 完成时可同时传 NULL。
+// 挂载和绘制均为异步操作；非零 ID 只代表请求已受理，最终结果以回调为准。
 uint64_t maiGraphicsPresenterAttach(void* native_view, uint32_t width, uint32_t height,
                                     MaiGraphicsNativeViewCallback retain_view,
                                     MaiGraphicsNativeViewCallback release_view);
@@ -60,11 +53,10 @@ typedef enum MaiVideoTransfer {
     MAI_VIDEO_TRANSFER_PQ
 } MaiVideoTransfer;
 
-// Planes are borrowed until this call returns; the presenter copies them before
-// dispatching to its Graphics thread. RGBA/BGRA use plane 0, NV12/P010 use
-// planes 0-1, and I420/I010 use planes 0-2. P010 stores 10-bit samples in the
-// high bits of 16-bit words; I010 stores them in the low bits. A negative line
-// size is accepted. Color metadata is used only for YUV frames.
+// 输入平面只借用到调用返回；呈现器先复制，再跨线程交给图形任务。
+// RGBA/BGRA 使用第 0 平面，NV12/P010 使用 0–1，I420/I010 使用 0–2。
+// P010 的 10 位样本位于 16 位字的高位，I010 位于低位；允许负行跨度。
+// 色彩元数据只对 YUV 帧生效。
 typedef struct MaiVideoFrame {
     const uint8_t* data[3];
     int32_t linesize[3];
@@ -76,9 +68,8 @@ typedef struct MaiVideoFrame {
     MaiVideoTransfer color_transfer;
 } MaiVideoFrame;
 
-// Straight-alpha RGBA subtitle canvas in decoded video coordinates. The
-// presenter copies the canvas before returning; pass NULL when no subtitle is
-// visible. Width and height must match the video frame.
+// 字幕画布是与解码视频同坐标系的非预乘 RGBA；返回前会复制画布。
+// 没有可见字幕时传 NULL；宽高必须与视频帧一致。
 typedef struct MaiVideoSubtitle {
     const uint8_t* rgba;
     uint32_t width;
@@ -92,17 +83,15 @@ bool maiGraphicsPresenterShowVideoFrameWithSubtitle(uint64_t view_id,
                                                     const MaiVideoFrame* frame,
                                                     const MaiVideoSubtitle* subtitle,
                                                     bool fill_view);
-// Copies one decoded RGBA8 video frame into the Graphics queue. The caller may
-// reuse pixels after this call. stride must be at least width * 4. Frame
-// scheduling and audio synchronization belong to the media session; submitting
-// a newer frame supersedes any older frame still waiting in the queue.
+// 把一帧解码后的 RGBA8 复制进图形队列；调用返回后可复用输入像素。
+// stride 至少为 width * 4。帧调度与音画同步由媒体会话负责；新帧会覆盖尚未绘制的旧帧。
 bool maiGraphicsPresenterShowFrame(uint64_t view_id, const uint8_t* pixels, uint32_t width,
                                    uint32_t height, uint32_t stride, bool fill_view);
 void maiGraphicsPresenterResize(uint64_t view_id, uint32_t width, uint32_t height);
 void maiGraphicsPresenterDetach(uint64_t view_id);
 
-// Stop must run while the application's UI loop can still process view work.
-// It waits for both workers and invalidates all view IDs.
+// 必须在应用 UI 事件循环仍可处理视图任务时停止呈现器。
+// 停止会等待图形和解码线程退出，并使所有视图 ID 失效。
 void maiGraphicsPresenterStop(void);
 
 #ifdef __cplusplus

@@ -1361,10 +1361,8 @@ private final class RemoteKeyboardInputTextView: UITextView, UITextViewDelegate 
             fields: ["still_requested": wantsKeyboard ? "true" : "false"]
         )
         if wantsKeyboard {
-            // The system keyboard can be dismissed without tapping our toolbar
-            // button. Treat that as the source of truth instead of immediately
-            // becoming first responder again, otherwise SwiftUI keeps the old
-            // keyboard inset and exposes a large blank area below the desktop.
+            // 系统键盘可能不经工具栏按钮就被收起；以系统回调为准，不能立即重新抢焦点。
+            // 否则 SwiftUI 会保留旧键盘边距，在远程桌面下方露出大块空白。
             wantsKeyboard = false
             onDismiss?()
         }
@@ -1390,9 +1388,8 @@ private final class RemoteKeyboardInputTextView: UITextView, UITextViewDelegate 
             return true
         }
         if replacement == "\n" || replacement == "\r\n" {
-            // Drafts are sent only through the explicit button. Remote Return
-            // remains a separate command in the control menu, so typing cannot
-            // accidentally execute a command on the controlled computer.
+            // 草稿只能通过明确的发送按钮提交。远端回车仍是控制菜单里的独立指令，
+            // 避免输入文字时误执行受控电脑上的命令。
             return false
         }
         if replacement == "\t" {
@@ -1533,9 +1530,8 @@ private final class RemoteKeyboardInputTextView: UITextView, UITextViewDelegate 
         requestKeyboardFocus()
     }
 
-    /// Objective-C notification selectors do not preserve Swift actor isolation. UIKit normally
-    /// posts this notification on the main thread, but treating that as a guarantee caused a
-    /// physical-device crash when focus restoration arrived on a cooperative Task executor.
+    /// Objective-C 通知选择器不会继承 Swift actor 隔离。
+    /// UIKit 通常在主线程发布该通知，但不能以此作保证；真机上焦点恢复曾在协作任务线程到达并崩溃。
     @objc nonisolated private func applicationDidBecomeActive() {
         if Thread.isMainThread {
             MainActor.assumeIsolated {

@@ -14,9 +14,9 @@ typedef struct MaiImageEncodeResult {
     int error_code;
 } MaiImageEncodeResult;
 
-// Encodes an RGBA8 image as a PNG. The profile, when present, is copied into
-// PNG iCCP; color primaries and transfer use FFmpeg's integer enum values.
-// The caller releases bytes using maiImageEncodeFree.
+// 把 RGBA8 图像编码为 PNG；有 ICC 配置时复制进 PNG iCCP 数据块。
+// 色彩原色与传递函数使用 FFmpeg 对应整数枚举值。
+// 返回字节由调用方使用 maiImageEncodeFree 释放。
 MaiImageEncodeResult maiImageEncodePngRgba(const unsigned char *rgba, int width, int height,
                                            int stride, const unsigned char *icc_profile,
                                            size_t icc_size, int color_primaries,

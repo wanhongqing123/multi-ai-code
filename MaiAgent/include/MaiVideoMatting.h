@@ -35,12 +35,11 @@ struct MaiVideoMattingResult {
     double durationSeconds = 0;
 };
 
-// Stream-decodes a local video, passes consecutive RGB frames through one RVM recurrent session,
-// composites a new background, encodes H.264, and packet-copies the original audio without
-// decoding it. Input and background files are read-only. The new output is removed if processing
-// fails or the Agent turn is cancelled. This call blocks its dedicated Agent tool worker; it must
-// not run on the MaiChat UI/graphics thread. The host must bundle ONNX Runtime 1.26 and the same
-// RVM model on each platform and supply their local paths in options.
+// 流式解码本地视频，让连续 RGB 帧通过同一个 RVM 循环会话，
+// 合成新背景、编码 H.264，并在不解码的情况下复制原音频包。
+// 输入视频和背景只读；处理失败或 Agent 轮次取消时删除新产物。
+// 本调用会阻塞专用 Agent 工具线程，不得放在 MaiChat UI／图形线程执行。
+// 宿主须在各平台打包 ONNX Runtime 1.26 和同一 RVM 模型，并在 options 中提供本地路径。
 MaiVideoMattingResult maiMatteVideo(const std::string& inputPath, const std::string& outputPath,
                                     const MaiVideoMattingOptions& options,
                                     const MaiToolContext& context);

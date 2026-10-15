@@ -6,10 +6,10 @@
 extern "C" {
 #endif
 
-// FFmpeg-backed, in-memory RGBA image filter. Pixels are row-major RGBA8; each output row has
-// width * 4 bytes. The JSON selects one validated image operation, never an arbitrary filter graph.
-// On success rgba is owned by the caller and error is null. On failure rgba is null and error is
-// an owned UTF-8 string. Release either pointer with maiImageFilterFree.
+// 基于 FFmpeg 的内存 RGBA 图片滤镜。像素按行排列为 RGBA8，每个输出行占 width * 4 字节。
+// JSON 只能选择经过校验的图片操作，不能传入任意滤镜图。
+// 成功时 rgba 由调用方持有且 error 为空；失败时 rgba 为空，error 是宿主持有的 UTF-8 字符串。
+// 两种返回指针都须用 maiImageFilterFree 释放。
 typedef struct MaiImageFilterResult {
     unsigned char* rgba;
     int width;

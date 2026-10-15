@@ -7,7 +7,7 @@
 
 #include "MaiTool.h"
 
-// Stream a bounded workspace file as the raw body of an HTTP(S) PUT or POST request. The file
-// remains unchanged. Each call needs user approval because it sends local bytes to a remote host.
-// Multipart forms and provider credentials are intentionally outside this tool's contract.
+// 将有界工作区文件作为 HTTP(S) PUT 或 POST 的原始正文流式上传，不修改原文件。
+// 每次调用都会把本地字节发往远端，必须取得用户审批。
+// multipart 表单和供应商凭据不属于此工具的职责。
 std::unique_ptr<MaiTool> makeMaiUploadFileTool(std::string caBundlePath = {});

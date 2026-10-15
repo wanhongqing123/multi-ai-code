@@ -181,7 +181,7 @@ void MarkdownRendererTest::previewHtmlPreservesCodeSemanticsWithoutFontHeuristic
 void MarkdownRendererTest::previewRejectsOldQtBoundariesInsideEmoji() {
     for (const QString& sequence : {QString::fromUtf8("👨‍👩‍👧‍👦"), QString::fromUtf8("👩🏽‍💻"),
                                     QString::fromUtf8("❤️"), QString::fromUtf8("1️⃣"), QString::fromUtf8("🇨🇳")}) {
-        // Simulate every boundary an older Qt could return, even on newer Qt.
+// 即使用较新的 Qt，也模拟旧版 Qt 可能返回的全部分段边界。
         for (int offset = 1; offset < sequence.size(); ++offset) {
             QVERIFY2(PreviewText::continuesEmojiOrMark(sequence, offset),
                      qPrintable(QStringLiteral("unsafe UTF16 offset=%1").arg(offset)));

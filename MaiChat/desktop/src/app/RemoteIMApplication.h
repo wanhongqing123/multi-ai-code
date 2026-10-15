@@ -57,13 +57,13 @@ public:
     void sendText(const QString& text,
                   const RemoteIMQuote& quote = RemoteIMQuote(),
                   bool hasQuote = false);
-    // Send to an explicit peer without changing the active conversation. Returns false when the
-    // destination or text is invalid; successful return means the message was queued for delivery.
+    // 向指定联系人发送而不切换当前会话。目标或文本无效时返回 false；
+    // 返回成功只表示消息已排队，尚不代表送达。
     bool sendTextTo(const QString& peerId, const QString& text,
                     const RemoteIMQuote& quote = RemoteIMQuote(), bool hasQuote = false);
     void setHumanTypingActive(bool active);
-    // Explicit, persisted destinations for the user-confirmed diagnostics flow.
-    // Never change selectedPeerId to send a background report.
+    // 用户确认的远程诊断流程使用明确且持久化的目标地址。
+    // 发送后台报告时绝不能修改 selectedPeerId。
     void sendDiagnosticTextTo(const QString& peerId, const QString& text, std::function<void(bool)> completion);
     void sendDiagnosticReportTo(const QString& peerId, const QString& path, std::function<void(bool)> completion);
     // 群发：给每个收件人各发一条独立消息，进各自的会话——不是一条"群消息"。

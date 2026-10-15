@@ -45,7 +45,7 @@ struct IncomingRemoteIMImage: Equatable {
 }
 
 struct IncomingRemoteIMFile: Equatable {
-    /// SDK account captured before the asynchronous download, not on delivery.
+    /// SDK 账号在异步下载开始前固定，不到交付时才读取当前账号。
     let accountTag: String
     let fromUserID: String
     let fileURL: URL
@@ -184,7 +184,7 @@ extension RemoteIMClient {
         throw RemoteIMClientError.sdkNotIntegrated
     }
 
-    // Messages initiated from the MaiChat UI are human-originated by default.
+    // MaiChat 界面主动发起的消息默认标记为用户来源。
     func sendText(to userID: String, text: String) async throws -> RemoteIMSendReceipt {
         try await sendText(to: userID, text: text, origin: .human, quote: nil)
     }

@@ -8,11 +8,10 @@
 #include "MaiCvVideoAnalysis.h"
 #include "MaiTool.h"
 
-// The host supplies one in-process OpenCV/FFmpeg video analyzer. Factories
-// return null when it is unavailable, so unsupported builds never advertise
-// tools they cannot execute. The callback runs on the Agent tool worker and
-// must observe MaiToolContext cancellation during long decodes. Its input path
-// is already resolved and verified by the tool; it must not modify that file.
+// 宿主提供一个进程内 OpenCV/FFmpeg 视频分析器；不可用时工厂返回空，
+// 使不支持的构建不会向模型宣称有无法执行的工具。
+// 回调在 Agent 工具线程运行，长时间解码期间须检查 MaiToolContext 的取消状态。
+// 输入路径已由工具解析并验证，分析器不得修改源文件。
 using MaiCvVideoAnalyzer = MaiCvVideoAnalysisResult (*)(const std::string& path,
                                                         const MaiCvVideoAnalysisOptions& options,
                                                         const MaiToolContext& context);

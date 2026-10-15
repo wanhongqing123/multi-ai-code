@@ -31,15 +31,12 @@ struct MaiCvVideoAnalysisResult {
     std::string error;
 };
 
-// Stream-decode one local video and analyze sampled frames with OpenCV.
-// The caller must resolve and validate the input path before calling. No file
-// is created or modified. This call may take as long as decoding the source;
-// run it on a worker thread. A canceled call returns an error and no segments.
-// All returned times are seconds relative to the beginning of the media.
-// sampleIntervalSeconds must be 0.1..5, threshold strictly between 0 and 1,
-// pixelThreshold 1..255, and minimumSegmentSeconds 0..30. Invalid input and
-// media decode failures return a nonempty error. An empty segment list is valid
-// for motion analysis when no qualifying motion occurs.
+// 流式解码一个本地视频，以 OpenCV 分析采样帧。调用前由宿主解析并校验路径；
+// 本函数不创建或修改文件，耗时可能接近完整解码，必须放在工作线程执行。
+// 取消时返回错误且不返回片段；时间均以媒体起点为零，单位为秒。
+// sampleIntervalSeconds 范围 0.1–5，threshold 严格位于 0–1，
+// pixelThreshold 范围 1–255，minimumSegmentSeconds 范围 0–30。
+// 无效输入或解码失败返回非空 error；运动分析没有符合阈值的动作时，空片段列表仍是成功。
 MaiCvVideoAnalysisResult analyzeMaiCvVideo(const std::string& path,
                                            const MaiCvVideoAnalysisOptions& options,
                                            const MaiToolContext& context);

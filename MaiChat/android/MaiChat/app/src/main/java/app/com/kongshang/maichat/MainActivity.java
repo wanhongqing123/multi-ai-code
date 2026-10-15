@@ -1333,7 +1333,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         if (!stickToLatestMessage && prepareTarget != null) {
             for (int index = 0; index < values.size(); index++) if (values.get(index).id().equals(prepareTarget)) { visible = index; break; }
         }
-        // Prepare the viewport and a small prefetch window, not the whole accumulated history.
+        // 只准备当前视口及少量预取消息，不把累计历史一次性交给列表。
         java.util.Set<String> needed = new java.util.LinkedHashSet<>();
         for (int index = Math.max(0, visible - 20); index < Math.min(values.size(), visible + 24); index++) needed.add(values.get(index).text());
         for (int index = Math.max(0, values.size() - 20); index < values.size(); index++) needed.add(values.get(index).text());
@@ -1690,9 +1690,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         RemoteIMApprovalRequest request,
         RemoteIMApprovalAction action
     ) {
-        // Give immediate feedback without calling render(): Android's current render() rebuilds
-        // the whole activity tree. The controller's debounced state notification will perform the
-        // one authoritative rebuild after PENDING/SENT/FAILED is persisted.
+        // 立即反馈，但不调用会重建整棵 Activity 视图树的 render()。
+        // 控制器会在 PENDING/SENT/FAILED 状态落库后合并通知，只执行一次正式重绘。
         actionsView.removeAllViews();
         TextView sending = MaiChatTheme.label(
             this,
@@ -1918,7 +1917,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                     .put("speaker", message.direction() == RemoteIMMessage.Direction.OUTGOING ? "me" : "friend")
                     .put("text", text));
             } catch (JSONException ignored) {
-                // Both keys and values are local strings, so this branch is defensive only.
+                // 键和值都是本地字符串，此分支仅作防御性处理。
             }
         }
         if (context.length() == 0) {

@@ -160,6 +160,8 @@ std::string filterDescription(const Json& input, int width, int height, std::str
 
 }  // namespace
 
+// 将经过参数白名单校验的操作应用到 RGBA 输入；先限制尺寸和跨度，再装配 FFmpeg 滤镜图。
+// 任一分配、滤镜执行或输出转换失败都返回错误对象，调用方按接口约定释放结果。
 extern "C" MaiImageFilterResult maiImageFilterRgba(const unsigned char* pixels, int width,
                                                    int height, int stride,
                                                    const char* operationJson) {

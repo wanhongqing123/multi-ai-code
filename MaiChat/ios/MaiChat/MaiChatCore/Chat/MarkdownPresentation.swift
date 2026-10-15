@@ -82,7 +82,7 @@ public enum MarkdownConversationPreview {
     }
 }
 
-/// Presentation metadata only. Original message text is never rewritten.
+/// 仅保存呈现元数据，不改写原始消息正文。
 public struct MarkdownQuotePresentation: Equatable, Sendable {
     public enum Kind: String, CaseIterable, Sendable {
         case note = "NOTE", tip = "TIP", important = "IMPORTANT", warning = "WARNING", caution = "CAUTION"

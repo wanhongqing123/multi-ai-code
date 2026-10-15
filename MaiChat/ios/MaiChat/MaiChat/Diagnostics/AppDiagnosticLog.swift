@@ -253,8 +253,8 @@ final class AppDiagnosticLog: DiagnosticLogSink {
         let now = ProcessInfo.processInfo.systemUptime
         if let previous = lastHeartbeatUptime {
             let lateMilliseconds = max(0, now - previous - 0.25) * 1_000
-            // This measures a late run-loop tick, not a stack trace or proof of
-            // CPU work. Do not count background suspension as a foreground stall.
+            // 这里只测量主循环某次唤醒延迟，不提供调用栈，也不能证明 CPU 正忙。
+            // App 在后台被系统挂起的时间不能计作前台卡顿。
             if lateMilliseconds >= 150, now - lastDelayLogUptime >= 2 {
                 lastDelayLogUptime = now
                 record(level: .warning, category: "interaction-performance",
@@ -307,9 +307,8 @@ final class AppDiagnosticLog: DiagnosticLogSink {
                 }
             }
             if !didWrite {
-                // The bounded retry prevents a permanent storage failure from
-                // blocking all later diagnostics while still retaining the
-                // batch across transient file-protection or disk errors.
+                // 有界重试避免永久存储故障阻塞后续全部诊断；
+                // 对短暂的文件保护或磁盘错误则保留整批记录，等待下次写入。
                 continue
             }
         }

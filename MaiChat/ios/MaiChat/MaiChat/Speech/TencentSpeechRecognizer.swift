@@ -7,7 +7,7 @@ import Foundation
 import MaiChatCore
 @preconcurrency import QCloudRealTime
 
-/// The SDK instance is created, controlled and released on the shared audio queue.
+/// SDK 实例在共用音频队列上创建、控制和释放。
 private final class SpeechEngineHandle: @unchecked Sendable {
     private final class Storage: @unchecked Sendable {
         var engine: QCloudRealTimeRecognizer?

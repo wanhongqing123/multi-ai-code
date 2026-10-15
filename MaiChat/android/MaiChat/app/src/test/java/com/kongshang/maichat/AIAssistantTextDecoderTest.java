@@ -19,7 +19,7 @@ public class AIAssistantTextDecoderTest {
             AIAssistantTextDecoder.decode(legacy, "UTF-8");
             fail("Invalid UTF-8 must be rejected, not silently replaced");
         } catch (CharacterCodingException expected) {
-            // The caller can retry with the correct source encoding.
+        // 调用方可指定正确的源编码后重试。
         }
     }
 }

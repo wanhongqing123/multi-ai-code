@@ -5,8 +5,7 @@ extern "C" {
 #include <libavutil/error.h>
 }
 
-// ffplay.c keeps its Vulkan-specific option surface unchanged. MaiChat's
-// video output uses the Graphics backend selected by each platform instead.
+// ffplay.c 的 Vulkan 选项接口保持原样；MaiChat 视频输出实际使用各平台选定的 Graphics 后端。
 extern "C" VkRenderer* vk_get_renderer(void) { return nullptr; }
 extern "C" int vk_renderer_create(VkRenderer*, SDL_Window*, AVDictionary*) {
     return AVERROR(ENOSYS);

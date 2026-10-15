@@ -4936,7 +4936,7 @@ struct MarkdownLikeText: View {
         .fixedSize(horizontal: false, vertical: true)
         // 普通态长按统一交给 MessageActionDialog。这里启用系统选择会优先弹出
         // Copy / Share…，绕过 MaiChat 的自绘菜单；需要选字时由“选择”动作切换到
-        // MenuSuppressingTextView。
+        // 不触发系统菜单的文本视图 MenuSuppressingTextView。
     }
 }
 

@@ -137,10 +137,9 @@ extern "C" void SDL_PauseAudioDevice(SDL_AudioDeviceID id, int pause) {
     }
     if (!device->started) {
         device->started = true;
-        // ffplay opens the audio device from its demux thread. Calling its
-        // decode callback here would wait for packets that this same thread
-        // has not queued yet. Prime CoreAudio with silence; the real callback
-        // runs only after the demux thread resumes.
+        // ffplay 在解复用线程打开音频设备。若此时调用解码回调，
+        // 会等待同一线程尚未入队的音频包。先用静音启动 CoreAudio，
+        // 待解复用线程恢复后再运行真实回调。
         for (AudioQueueBufferRef buffer : device->buffers) {
             buffer->mAudioDataByteSize = device->spec.size;
             std::memset(buffer->mAudioData, device->spec.silence,

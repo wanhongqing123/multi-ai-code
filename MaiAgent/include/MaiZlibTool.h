@@ -9,15 +9,13 @@
 #include "MaiError.h"
 #include "MaiTool.h"
 
-// Compresses or decompresses in-memory bytes using a selected zlib stream format. "auto" is
-// accepted only for decompression and recognizes gzip and zlib headers. Inputs and outputs are
-// bounded by the caller; exceeding maxOutputBytes returns InvalidInput and no partial result.
-// Safe to call concurrently. No file access, global state, or model state is involved.
+// 按指定 zlib 流格式压缩或解压内存字节。"auto" 只可用于解压，识别 gzip 与 zlib 头。
+// 输入输出由调用方设限；超过 maxOutputBytes 返回 InvalidInput，不返回部分结果。
+// 可并发调用，不访问文件、全局状态或模型状态。
 MaiResult<std::string> maiTransformZlibBytes(const std::string& input, bool compress,
                                              const std::string& format, std::size_t maxOutputBytes);
 
-// Both tools read an existing workspace file and create a new file without overwriting it.
-// They use the same byte transform above. Paths are resolved through MaiToolContext, so they
-// cannot escape the host's configured file boundary. File mutations require user approval.
+// 两个工具读取现有工作区文件，再创建不覆盖旧文件的新文件，共用上面的字节变换。
+// 路径经 MaiToolContext 解析，不能越过宿主配置的文件边界；文件修改须经用户审批。
 std::unique_ptr<MaiTool> makeMaiZlibCompressTool();
 std::unique_ptr<MaiTool> makeMaiZlibDecompressTool();

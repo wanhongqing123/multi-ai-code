@@ -64,7 +64,7 @@ const QStringList& eventStringFields()
         QStringLiteral("turnId"),
         QStringLiteral("direction"),
         QStringLiteral("status")};
-    // Kept in sync with the actual host producer, not an IM prose summary.
+// 与宿主实际生成的载荷保持一致，不以 IM 中的文字摘要替代协议定义。
     static const QStringList all = fields + QStringList{
         "event", "kind", "sourceKind", "cli", "sessionId", "taskId", "replyId", "partId",
         "eventTaskId", "eventReplyId", "sourceCommit", "onDiskBinarySha256", "terminalKind",

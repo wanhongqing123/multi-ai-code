@@ -183,7 +183,7 @@ struct RemoteIMMessage {
     QString text;
     RemoteIMMessageDirection direction = RemoteIMMessageDirection::Incoming;
     RemoteIMMessageStatus status = RemoteIMMessageStatus::Received;
-    // Versioned Tencent cloud metadata. Unknown means missing/invalid/foreign metadata.
+// 带版本的腾讯云消息元数据；Unknown 表示元数据缺失、无效或来自其他协议。
     RemoteIMMessageOrigin origin = RemoteIMMessageOrigin::Unknown;
     RemoteIMApprovalRequest approvalRequest;
     RemoteIMApprovalDecision approvalDecision;

@@ -1,10 +1,9 @@
-// 文件作用：声明声明 ffplay 所需的 SDL 兼容类型、事件、音频和渲染接口所需的接口和数据结构。
+// 文件作用：提供未修改的 ffplay.c 所需的 SDL 类型及事件、音频和渲染兼容声明。
 // 调用边界：平台实现与上层调用方通过本文件约定参数、所有权和释放方式。
 #pragma once
 
-// Compatibility declarations for FFmpeg's unmodified ffplay.c. This is not
-// SDL: implementations below route events to MaiChat commands, video to
-// Graphics, and audio to native platform devices.
+// 这不是完整 SDL 实现：兼容层把事件送到 MaiChat 命令，视频送到 Graphics，
+// 音频送到平台原生设备，供未修改的 FFmpeg ffplay.c 调用。
 
 #include <stddef.h>
 #include <stdint.h>

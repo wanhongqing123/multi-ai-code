@@ -7,5 +7,5 @@
 
 #include "MaiSystemResourcesTool.h"
 
-// Returns GPU counters exposed by the current desktop platform. Missing metrics remain absent.
+// 返回当前桌面平台公开的 GPU 计数器；不可取得的指标保持缺席。
 std::optional<MaiGpuResources> maiDesktopGpuResources();

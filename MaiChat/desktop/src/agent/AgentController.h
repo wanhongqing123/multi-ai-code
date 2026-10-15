@@ -59,8 +59,7 @@ public:
     //   http://127.0.0.1:11434/v1                     Ollama
     QString baseUrl;
     QString apiKey;
-    // Media specialists use the GLM credential even when DeepSeek is the main
-    // model.
+// 即使主模型选 DeepSeek，媒体专用模型仍使用 GLM 凭据。
     QString glmApiKey;
     QString arkApiKey;
     QString miniMaxApiKey;
@@ -135,9 +134,8 @@ public:
   bool isChildOf(const QString &sessionId,
                  const QString &parentSessionId) const;
 
-  // The store checkpoints an active stream in batches. Keep received deltas
-  // available while switching views so the latest uncheckpointed text remains
-  // visible in its own session.
+// 存储层按批次为活动流做检查点。切换视图时保留已收到的增量，
+// 使尚未落盘的最新文字仍显示在所属会话中。
   QString livePartText(const QString &sessionId, const QString &partId) const;
 
   QString lastError() const;

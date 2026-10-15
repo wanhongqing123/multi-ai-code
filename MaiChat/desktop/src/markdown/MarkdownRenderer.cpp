@@ -70,8 +70,8 @@ QRegularExpression calloutMarker(const char* name) {
 QString renderBody(const QString& markdown) {
     QString html = parseHtml(markdown);
 
-    // Style the standalone trailing source note, never a mention inside prose,
-    // inline code, a fenced block or a quotation. Keep original text unchanged.
+    // 只为末尾独立来源注记加样式；正文、行内代码、代码块或引用里的相同文字不匹配。
+    // 原始内容保持不变。
     const QString normalized = QString(markdown).replace(QStringLiteral("\r\n"), QStringLiteral("\n"))
         .replace(QLatin1Char('\r'), QLatin1Char('\n')).trimmed();
     static const QRegularExpression sourceLine(QStringLiteral("(?:^|\\n)[ \t]{0,3}此消息来自 imcli[ \t]*$"));
@@ -142,8 +142,7 @@ QString renderBody(const QString& markdown) {
         codeOffset = match.capturedStart() + replacement.size();
     }
 
-    // Recognize only a standalone first-line GFM callout marker. Escaped code,
-    // unknown markers, and markers appearing within ordinary prose stay literal.
+    // 只识别首行独立的 GFM 提示块标记；转义代码、未知标记和正文中的标记保持字面含义。
     for (const auto& callout : callouts) {
         html.replace(calloutMarker(callout.name), quoteOpening(QString::fromLatin1(callout.accent),
             QString::fromLatin1(callout.background), callout.title) + QStringLiteral("<p>"));
@@ -160,22 +159,21 @@ QString renderBody(const QString& markdown) {
 
 QString MarkdownRenderer::renderPreviewHtml(const QString& markdown) {
     QString html = parseHtml(markdown);
-    // Plain previews do not need emphasis tags, but keep code/link tags until
-    // after callout recognition so their literal labels remain protected.
+    // 纯文本预览不需要强调标签，但提示块识别结束前保留代码和链接标签，
+    // 防止它们的字面标记被误认成提示块。
     static const QRegularExpression emphasis(QStringLiteral("</?(?:strong|em|del)>"));
     html.remove(emphasis);
-    // Recognize callouts before Qt discards inline-code semantics into font
-    // properties. <p><code>[!TIP]</code> can never match the plain marker.
+    // Qt 把行内代码语义压成字体属性之前先识别提示块；
+    // <p><code>[!TIP]</code> 绝不能匹配普通文字标记。
     for (const auto& callout : callouts) {
-        // Preserve the existing preview policy: a leading plain callout token
-        // may also precede same-line text. Rich message rendering stays strict.
+        // 沿用预览规则：行首普通提示标记后可接同一行文字；富文本消息仍严格要求独立标记。
         const QRegularExpression marker(QStringLiteral("<blockquote>\\s*<p>\\[!%1\\](?:[ \\t]*(?:\\n|<br\\s*/?>\\n?|(?=</p>))|[ \\t]+)")
             .arg(QString::fromLatin1(callout.name)), QRegularExpression::CaseInsensitiveOption);
         html.replace(marker, QStringLiteral("<blockquote><p>") + callout.title + QStringLiteral("："));
     }
     html.replace(QStringLiteral("<input type=\"checkbox\" class=\"task-list-item-checkbox\" disabled checked>"), QStringLiteral("☑ "));
     html.replace(QStringLiteral("<input type=\"checkbox\" class=\"task-list-item-checkbox\" disabled>"), QStringLiteral("☐ "));
-    // Preview extraction never needs image resources, only their escaped alt text.
+    // 提取预览只需要图片转义后的替代文字，不加载图片资源。
     static const QRegularExpression image(QStringLiteral("<img\\b[^>]*\\balt=\"([^\"]*)\"[^>]*>"));
     html.replace(image, QStringLiteral("\\1"));
     return html;

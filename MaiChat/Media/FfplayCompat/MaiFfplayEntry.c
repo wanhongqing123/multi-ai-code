@@ -89,8 +89,8 @@ static MAI_FFPLAY_NORETURN void maiFfplayExit(int status)
 #define exit maiFfplayExit
 #define signal maiFfplaySignal
 #define SDL_Quit maiFfplayQuit
-// ffplay.c has one SDL_PeepEvents call, inside its event loop. Sample its
-// existing master clock there without changing the upstream playback logic.
+// ffplay.c 只在事件循环中调用一次 SDL_PeepEvents；
+// 在此处采样现有主时钟，不修改上游播放逻辑。
 #define SDL_PeepEvents(events, count, action, min_type, max_type) \
     maiFfplayPeepEventsWithStatus(is, events, count, action, min_type, max_type)
 #include "../ffplay.c"

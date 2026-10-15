@@ -10,10 +10,9 @@
 extern "C" {
 #endif
 
-// One hosted ffplay session is active per process, matching ffplay.c's global
-// playback state. MaiChat creates the native popup and Graphics view first,
-// then binds its view ID before starting the playback thread. Window callbacks
-// must dispatch to the platform UI thread; the adapter never owns a window.
+// ffplay.c 使用进程全局播放状态，因此一个进程同时只有一个宿主播放会话。
+// MaiChat 先创建原生弹窗与图形视图，再绑定视图 ID，最后启动播放线程。
+// 窗口回调须切到平台 UI 线程；适配层本身不持有窗口。
 typedef struct MaiFfplayHost {
     void* user_data;
     uint64_t graphics_view_id;

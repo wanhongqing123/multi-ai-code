@@ -4,16 +4,14 @@
 import SwiftUI
 
 enum MarkdownInlineStyling {
-    // These colors belong to the fixed pale message surfaces, not the system
-    // appearance. If dark message surfaces are added, parameterize the palette
-    // and include it in MarkdownRenderCache's key (or use dynamic colors).
+    // 这些颜色用于固定的浅色消息底板，不跟随系统外观变化。
+    // 若加入深色消息底板，须把配色参数纳入 MarkdownRenderCache 的键，或改用动态颜色。
     static let codeForeground = Color(red: 0.42, green: 0.23, blue: 0.59)
     static let codeFont = Font.system(size: 13, design: .monospaced)
 
     static func apply(to source: AttributedString) -> AttributedString {
         var styled = source
-        // Attribute writes can change run boundaries. Snapshot the character
-        // ranges before changing any attributes; never iterate a live run view.
+        // 写入富文本属性会改变片段边界；修改前先保存字符范围，不能遍历正在变化的片段视图。
         let codeRanges = styled.runs
             .filter { $0.inlinePresentationIntent?.contains(.code) == true }
             .map(\.range)

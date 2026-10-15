@@ -320,9 +320,8 @@ private:
     QWidget* messageContainer_ = nullptr;
     QVBoxLayout* messageLayout_ = nullptr;
     QWidget* activityBubble_ = nullptr;
-    // One-shot connection used to jump to the latest message once the message
-    // list layout has settled (bubble heights depend on width / word wrap, so
-    // the scrollbar range is only correct after a later layout pass).
+    // 一次性连接：消息列表排版稳定后再跳到最新。
+    // 气泡高度取决于宽度和换行，滚动条范围要到后续布局轮次才准确。
     QMetaObject::Connection messageScrollToBottomConn_;
     // 增量渲染状态：只有切换会话/空态变化才全量重建；平时新消息 append、
     // 翻页 prepend、状态变化原位替换，避免大历史下整屏重建气泡。

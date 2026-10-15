@@ -10,9 +10,9 @@
 
 #include "MaiTool.h"
 
-// GPU counters are supplied by a platform host. On iOS, Metal reports memory allocated by this
-// App and a recommended working-set budget, but does not expose a public GPU utilization meter or
-// dedicated VRAM amount on unified-memory devices. Missing fields must remain absent in results.
+// GPU 指标由平台宿主提供。iOS Metal 可报告本 App 已分配的内存与建议工作集预算，
+// 但统一内存设备没有公开的 GPU 利用率或专用显存容量接口。
+// 不可取得的字段在结果中必须缺席，不能填猜测值。
 struct MaiGpuResources {
     std::string name;
     bool unifiedMemory = false;
@@ -30,9 +30,9 @@ struct MaiSystemResources {
     double processCpuSystemSeconds = 0;
 };
 
-// Synchronous OS snapshot. Caller must run it off the UI thread. Returns unavailable counters as
-// zero/empty, never a guessed value. CPU utilization requires two observations and is calculated
-// by the tool wrapper from process CPU time over monotonic wall time.
+// 同步读取操作系统快照，调用方必须避开 UI 线程。
+// 不可用的计数器返回零或空，不编造数值。
+// CPU 利用率需要两次观测，由工具封装按进程 CPU 时间与单调墙上时间计算。
 MaiSystemResources maiReadSystemResources();
 
 std::unique_ptr<MaiTool> makeMaiSystemResourcesTool(

@@ -14,22 +14,20 @@ extern "C" {
 #define MAI_FFPLAY_EXPORT __attribute__((visibility("default")))
 #endif
 
-// Blocks on the caller's playback thread until the hosted ffplay session
-// closes. The source file included by the implementation is byte-identical to
-// upstream ffplay.c. Process exit and signal handling are intercepted here.
+// 在调用方的播放线程阻塞，直到宿主 ffplay 会话关闭。
+// 实现包含的 ffplay.c 与上游字节一致；进程退出和信号处理在此层拦截。
 MAI_FFPLAY_EXPORT int maiFfplayRun(const MaiFfplayHost* host, int argc, char** argv);
-// Reopens the same hosted FFplay engine with a different playback rate. The caller first stops
-// and joins the prior session, then passes its source-media position as start_position_us.
-// Video PTS and pitch-preserving audio tempo are retimed together; no output file is created.
-// Supported speed values are 0.25, 0.5, 1, 1.5, and 2. The upstream ffplay.c remains untouched.
+// 以新倍速重新打开同一宿主播放器。调用方先停止并等待旧会话退出，
+// 再把原媒体位置作为 start_position_us 传入。视频 PTS 和不变调音频一起重定时，
+// 不创建输出文件。支持 0.25、0.5、1、1.5、2 倍速；上游 ffplay.c 保持原样。
 MAI_FFPLAY_EXPORT int maiFfplayRunAtSpeed(const MaiFfplayHost* host, int argc, char** argv,
                                          double speed, int64_t start_position_us);
 MAI_FFPLAY_EXPORT void maiFfplayRequestQuit(void);
-// Maps an Agent/MaiChat command onto ffplay's existing control handling.
-// Returns 1 if queued, 0 if playback is not active, -1 for an unknown command.
+// 将 Agent/MaiChat 指令映射到 ffplay 现有控制逻辑。
+// 入队返回 1，播放器未运行返回 0，未知指令返回 -1。
 MAI_FFPLAY_EXPORT int maiFfplaySendCommand(const char* command);
-// Requests an absolute source-media timestamp. The FFplay playback thread
-// applies it directly, without synthesizing a mouse event from window width.
+// 请求源媒体的绝对时间戳，由 ffplay 播放线程直接执行，
+// 不根据窗口宽度伪造鼠标点击事件。
 MAI_FFPLAY_EXPORT int maiFfplaySeekAbsoluteUs(int64_t position_us);
 MAI_FFPLAY_EXPORT int maiFfplaySeekPercent(double fraction);
 typedef struct MaiFfplayPlaybackStatus {
@@ -39,10 +37,10 @@ typedef struct MaiFfplayPlaybackStatus {
     int paused;
     int speed_percent;
 } MaiFfplayPlaybackStatus;
-// A thread-safe snapshot sampled on ffplay's playback/event thread.
+// 在 ffplay 播放／事件线程采样的线程安全状态快照。
 MAI_FFPLAY_EXPORT int maiFfplayGetPlaybackStatus(MaiFfplayPlaybackStatus* status);
-// Receives FFplay diagnostics from playback worker threads. The caller owns
-// user_data and must clear the sink after maiFfplayRun returns.
+// 接收播放工作线程的诊断信息。user_data 由调用方持有；
+// maiFfplayRun 返回后必须清除诊断接收回调。
 MAI_FFPLAY_EXPORT void maiFfplaySetDiagnosticSink(
     void (*sink)(void* user_data, int level, const char* line), void* user_data);
 

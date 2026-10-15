@@ -22,8 +22,8 @@ enum AIComposerSubmissionPolicy {
     }
 }
 
-/// UITextView owns live editing; surrounding SwiftUI controls observe only
-/// presentation changes. External replacements still invalidate the editor.
+/// UITextView 持有实时编辑状态；周围 SwiftUI 控件只观察呈现变化。
+/// 外部替换草稿时仍须使编辑器的旧状态失效。
 @MainActor
 final class RemoteIMDraftState: @preconcurrency ObservableObject {
     let objectWillChange = ObservableObjectPublisher()

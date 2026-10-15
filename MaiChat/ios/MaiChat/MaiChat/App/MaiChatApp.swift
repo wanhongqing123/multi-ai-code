@@ -261,6 +261,8 @@ struct MaiChatApp: App {
                         AIHistoryUITestRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--ai-session-switch-ui-test") {
                         AISessionSwitchUITestRoot()
+                    } else if ProcessInfo.processInfo.arguments.contains("--ai-media-draft-ui-test") {
+                        AIMediaDraftUITestRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--ai-stream-typing-ui-test") {
                         AIStreamTypingUITestRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--voice-conversation-preview") {

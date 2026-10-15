@@ -262,6 +262,66 @@ final class AIAssistantUITests: XCTestCase {
         }
     }
 
+    func testMediaDraftStaysTogetherAcrossConversationSwitches() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--ai-media-draft-ui-test"]
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+
+        let image = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "预览图片")
+        ).firstMatch
+        let video = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "预览视频")
+        ).firstMatch
+        let send = app.buttons["ai-send-draft"]
+        XCTAssertTrue(image.waitForExistence(timeout: 10))
+        XCTAssertTrue(video.exists)
+        XCTAssertTrue(send.isEnabled, "只有媒体、未写说明时也能发送")
+        XCTAssertFalse(app.buttons["关闭设置"].exists, "导入媒体不应自动发消息")
+
+        let composer = app.textViews["ai-composer"]
+        composer.tap()
+        composer.typeText("请分析这张图片和视频")
+        XCTAssertTrue(send.exists)
+        XCTAssertTrue(image.exists)
+        XCTAssertTrue(video.exists)
+        let draft = XCTAttachment(screenshot: app.screenshot())
+        draft.name = "media-draft-with-optional-description"
+        draft.lifetime = .keepAlways
+        add(draft)
+
+        app.buttons["对话列表"].tap()
+        app.buttons["ai-conversation-switch-B"].tap()
+        XCTAssertFalse(image.exists, "其他会话不应显示原附件")
+        XCTAssertFalse(send.exists, "空草稿不应显示发送按钮")
+        app.buttons["对话列表"].tap()
+        app.buttons["ai-conversation-empty-draft"].tap()
+        XCTAssertTrue(app.buttons["预览图片 empty-draft-image.png"].waitForExistence(timeout: 5))
+        XCTAssertFalse(video.exists, "空会话草稿与已有会话隔离")
+        composer.tap()
+        composer.typeText("空白草稿说明")
+        XCTAssertTrue(composer.value as? String == "空白草稿说明")
+        app.buttons["对话列表"].tap()
+        app.buttons["ai-conversation-switch-A"].tap()
+        XCTAssertTrue(image.waitForExistence(timeout: 5))
+        XCTAssertTrue(video.exists)
+        XCTAssertTrue(composer.value as? String == "请分析这张图片和视频")
+
+        image.tap()
+        XCTAssertTrue(app.buttons["关闭图片预览"].waitForExistence(timeout: 5))
+        app.buttons["关闭图片预览"].tap()
+        XCTAssertTrue(image.waitForExistence(timeout: 5))
+        app.buttons["ai-remove-attachment-draft-image.png"].tap()
+        XCTAssertFalse(image.exists)
+        XCTAssertTrue(video.exists, "移除图片后视频仍在草稿中")
+        video.tap()
+        XCTAssertTrue(app.buttons["关闭视频"].waitForExistence(timeout: 10))
+        app.buttons["关闭视频"].tap()
+        XCTAssertTrue(video.waitForExistence(timeout: 5))
+        XCTAssertTrue(video.isHittable)
+    }
+
     func testLandscapeAssistantKeepsSessionSidebarBesideLatestMessage() throws {
         defer { XCUIDevice.shared.orientation = .portrait }
         let app = XCUIApplication()

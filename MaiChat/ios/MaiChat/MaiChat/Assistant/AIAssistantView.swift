@@ -41,6 +41,7 @@ struct AIAssistantView: View {
         let arguments = ProcessInfo.processInfo.arguments
         return arguments.contains("--ai-history-ui-test") ||
             arguments.contains("--ai-session-switch-ui-test") ||
+            arguments.contains("--ai-media-draft-ui-test") ||
             arguments.contains("--ai-stream-typing-ui-test") ||
             arguments.contains("--voice-conversation-preview") ||
             arguments.contains("--ai-image-fullscreen-ui-test") ||
@@ -123,9 +124,12 @@ struct AIAssistantView: View {
                             ready: model.ready,
                             busy: model.busy,
                             isSubmitting: model.isSubmitting,
+                            isCreatingConversation: model.isCreatingConversation,
                             selected: model.selected,
                             quotedMessage: model.quotedMessage,
-                            attachmentPanelPresented: isAttachmentPanelPresented
+                            attachmentPanelPresented: isAttachmentPanelPresented,
+                            attachments: model.attachments(for: model.selected),
+                            workspacePath: model.workspacePath
                         ),
                         focusController: composerFocusController,
                         transcriptionPresentation: transcriptionPresentation,
@@ -360,6 +364,30 @@ struct AIAssistantView: View {
             Divider().overlay(Color.black.opacity(0.06))
             ScrollView {
                 LazyVStack(spacing: 8) {
+                if model.hasEmptyDraft {
+                    Button {
+                        closeSessionDrawer()
+                        Task { await model.selectConversation("") }
+                    } label: {
+                        HStack {
+                            Label("未发送草稿", systemImage: "square.and.pencil")
+                                .font(ChatTypography.conversationTitle)
+                            Spacer(minLength: 12)
+                            if model.selected.isEmpty {
+                                Image(systemName: "checkmark").foregroundStyle(Color.blue)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.primary)
+                    .accessibilityIdentifier("ai-conversation-empty-draft")
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(model.selected.isEmpty ? Color.blue.opacity(0.08) : Color.clear,
+                                in: RoundedRectangle(cornerRadius: 12))
+                }
                 ForEach(model.sessions) { session in
                     HStack(spacing: 8) {
                         Button {
@@ -380,11 +408,13 @@ struct AIAssistantView: View {
                         .buttonStyle(.plain)
                         .foregroundStyle(Color.primary)
                         .accessibilityIdentifier("ai-conversation-\(session.id)")
-                        if !session.busy {
+                        if !session.busy && !model.isSubmitting && !model.isCreatingConversation {
                             Button {
                                 Task {
+                                    guard !model.isSubmitting, !model.isCreatingConversation else { return }
                                     await model.selectConversation(session.id)
-                                    guard model.selected == session.id else { return }
+                                    guard model.selected == session.id,
+                                          !model.isSubmitting, !model.isCreatingConversation else { return }
                                     await model.action("delete")
                                 }
                             } label: {
@@ -409,7 +439,9 @@ struct AIAssistantView: View {
                         Text("新对话").font(.system(size: 14, weight: .semibold))
                     }.foregroundStyle(Color.white).padding(.horizontal, 16).frame(height: 42)
                         .background(Color.primary, in: Capsule())
-                }.buttonStyle(.plain)
+                }
+                .buttonStyle(.plain)
+                .disabled(model.isSubmitting || model.isCreatingConversation)
                 Spacer()
             }.padding(16).overlay(alignment: .top) { Divider().overlay(Color.black.opacity(0.06)) }
         }
@@ -1816,6 +1848,13 @@ struct AISessionSwitchUITestRoot: View {
     }
 }
 
+struct AIMediaDraftUITestRoot: View {
+    var body: some View {
+        AIAssistantView()
+            .onAppear { AIAssistantModel.shared.installMediaDraftUITestFixture() }
+    }
+}
+
 struct AIStreamTypingUITestRoot: View {
     var body: some View {
         AIAssistantView()
@@ -2036,13 +2075,110 @@ private struct AIPickedVideoTransfer: Transferable, Sendable {
     }
 }
 
+private struct AIDraftAttachmentTile: View {
+    let file: AIImportedFile
+    let position: Int
+    let workspacePath: String
+    let open: () -> Void
+    let remove: () -> Void
+    let canRemove: Bool
+    @State private var videoCover: UIImage?
+
+    private var filePath: String {
+        AIAssistantPathPolicy.resolve(file.relativePath, workspacePath: workspacePath)?.path ?? ""
+    }
+
+    private var fileName: String {
+        URL(fileURLWithPath: file.relativePath).lastPathComponent
+    }
+
+    // 以缩略图或视频首帧识别待发媒体，移除按钮覆盖在卡片角落但保留独立命中区域。
+    var body: some View {
+        VStack(spacing: 3) {
+            ZStack(alignment: .topTrailing) {
+                Button(action: open) {
+                    ZStack {
+                        if file.isImage {
+                            RemoteIMAsyncImage(
+                                filePath: filePath,
+                                maximumPointSize: CGSize(width: 96, height: 80)
+                            ) { image in
+                                Image(uiImage: image).resizable().scaledToFill()
+                            } placeholder: { failed in
+                                Image(systemName: failed ? "photo.badge.exclamationmark" : "photo")
+                                    .foregroundStyle(RemoteIMStyle.textSecondary)
+                            }
+                        } else if let videoCover {
+                            Image(uiImage: videoCover).resizable().scaledToFill()
+                        } else {
+                            LinearGradient(
+                                colors: [Color(red: 0.10, green: 0.17, blue: 0.27),
+                                         Color(red: 0.18, green: 0.32, blue: 0.47)],
+                                startPoint: .topLeading, endPoint: .bottomTrailing
+                            )
+                        }
+                        if !file.isImage {
+                            Image(systemName: "play.fill")
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundStyle(.white)
+                                .frame(width: 34, height: 34)
+                                .background(.black.opacity(0.55), in: Circle())
+                        }
+                    }
+                    .frame(width: 96, height: 80)
+                    .clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("预览\(file.isImage ? "图片" : "视频") \(fileName)")
+                Button(action: remove) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.7), radius: 3)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!canRemove)
+                .accessibilityLabel("移除附件 \(fileName)")
+                .accessibilityIdentifier("ai-remove-attachment-\(file.relativePath)")
+            }
+            Text("\(file.isImage ? "图片" : "视频") \(position)")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(RemoteIMStyle.textSecondary)
+                .lineLimit(1)
+                .frame(width: 96)
+            Text(fileName)
+                .font(.system(size: 10))
+                .foregroundStyle(RemoteIMStyle.textSecondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(width: 96)
+        }
+        .frame(width: 96)
+        .task(id: filePath) {
+            guard file.mimeType.hasPrefix("video/"), !filePath.isEmpty else { return }
+            let generator = AVAssetImageGenerator(asset: AVURLAsset(url: URL(fileURLWithPath: filePath)))
+            generator.appliesPreferredTrackTransform = true
+            generator.maximumSize = CGSize(width: 240, height: 200)
+            if let frame = try? await generator.image(at: .zero), !Task.isCancelled {
+                videoCover = UIImage(cgImage: frame.image)
+            }
+        }
+    }
+}
+
 private struct AIComposerSnapshot: Equatable {
     let ready: Bool
     let busy: Bool
     let isSubmitting: Bool
+    let isCreatingConversation: Bool
     let selected: String
     let quotedMessage: AIMessage?
     let attachmentPanelPresented: Bool
+    let attachments: [AIImportedFile]
+    let workspacePath: String
 }
 
 private struct AIComposer: View, Equatable {
@@ -2063,7 +2199,13 @@ private struct AIComposer: View, Equatable {
     @State private var isPhotoPickerPresented = false
     @State private var isCameraPresented = false
     @State private var selectedMediaItems: [PhotosPickerItem] = []
+    @State private var libraryTarget: AIAttachmentImportTarget?
+    @State private var cameraTarget: AIAttachmentImportTarget?
+    @State private var fileTarget: AIAttachmentImportTarget?
+    @State private var importingTargets: [AIAttachmentImportTarget: Int] = [:]
+    @State private var draftVideoPreview: AIVideoPreviewItem?
     @State private var draftSession = ""
+    @State private var draftImportTarget: AIAttachmentImportTarget?
     @State private var isVoiceMode = false
     @State private var isPressingVoice = false
     @State private var composerFocusRequestGeneration = 0
@@ -2076,6 +2218,7 @@ private struct AIComposer: View, Equatable {
             lhs.focusController === rhs.focusController &&
             lhs.transcriptionPresentation === rhs.transcriptionPresentation
     }
+    // 输入栏上方只显示当前会话的待发媒体；横向托盘不挤压消息区和键盘上方输入区域。
     var body: some View {
         VStack(spacing: 0) {
             if let quoted = snapshot.quotedMessage {
@@ -2101,6 +2244,49 @@ private struct AIComposer: View, Equatable {
                 .padding(.vertical, 9)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color(uiColor: .secondarySystemBackground))
+            }
+            if !snapshot.attachments.isEmpty || isImportingCurrentSession {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("待发送附件")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(RemoteIMStyle.textSecondary)
+                        if !snapshot.attachments.isEmpty {
+                            Text("\(snapshot.attachments.count)")
+                                .font(.caption)
+                                .foregroundStyle(RemoteIMStyle.textSecondary)
+                        }
+                        Spacer()
+                        if isImportingCurrentSession {
+                            ProgressView("正在导入…").font(.caption)
+                        }
+                    }
+                    if !snapshot.attachments.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(alignment: .top, spacing: 10) {
+                                ForEach(Array(snapshot.attachments.enumerated()),
+                                        id: \.element.relativePath) { entry in
+                                    let file = entry.element
+                                    AIDraftAttachmentTile(
+                                        file: file,
+                                        position: snapshot.attachments.prefix(entry.offset + 1)
+                                            .filter { $0.isImage == file.isImage }.count,
+                                        workspacePath: snapshot.workspacePath,
+                                        open: { previewAttachment(file) },
+                                        remove: {
+                                            model.removeAttachment(file, from: snapshot.selected)
+                                        },
+                                        canRemove: !snapshot.isSubmitting
+                                    )
+                                }
+                            }
+                            .padding(.vertical, 2)
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 10)
+                .accessibilityIdentifier("ai-pending-attachments")
             }
             HStack(alignment: .bottom, spacing: 8) {
                 Button {
@@ -2233,6 +2419,20 @@ private struct AIComposer: View, Equatable {
                 .accessibilityLabel(
                     snapshot.busy ? "停止" : (isAttachmentPanelPresented ? "收起更多功能" : "展开更多功能")
                 )
+
+                if !isVoiceMode, hasDraftContent {
+                    Button { submitDraft() } label: {
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 17, weight: .bold))
+                            .foregroundStyle(Color.white)
+                            .frame(width: 44, height: 44)
+                            .background(RemoteIMStyle.blue, in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canSubmitDraft)
+                    .accessibilityLabel("发送给 AI")
+                    .accessibilityIdentifier("ai-send-draft")
+                }
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
@@ -2255,6 +2455,7 @@ private struct AIComposer: View, Equatable {
                     },
                     openFile: {
                         isAttachmentPanelPresented = false
+                        fileTarget = model.importTarget()
                         importing = true
                     },
                     openVoiceInput: {},
@@ -2270,7 +2471,7 @@ private struct AIComposer: View, Equatable {
             .photosPicker(
                 isPresented: $isPhotoPickerPresented,
                 selection: $selectedMediaItems,
-                maxSelectionCount: 10,
+                maxSelectionCount: max(1, 10 - snapshot.attachments.count),
                 selectionBehavior: .ordered,
                 matching: .any(of: [.images, .videos]),
                 photoLibrary: .shared()
@@ -2279,40 +2480,33 @@ private struct AIComposer: View, Equatable {
                 RemoteIMCameraPicker(
                     onCapture: { image in
                         isCameraPresented = false
-                        Task { await importCapturedImage(image) }
+                        guard let target = cameraTarget else { return }
+                        Task { await importCapturedImage(image, to: target) }
                     },
                     onCancel: { isCameraPresented = false }
                 )
                 .ignoresSafeArea()
+            }
+            .fullScreenCover(item: $draftVideoPreview) { item in
+                MaiFfplayVideoScreen(path: item.path) { draftVideoPreview = nil }
             }
             .fileImporter(
                 isPresented: $importing,
                 allowedContentTypes: [.plainText, .sourceCode, .json, .image, .movie]
             ) { result in
                 if case let .success(url) = result {
-                    let target = model.selected
-                    Task {
-                        let type = UTType(filenameExtension: url.pathExtension)
-                        if type?.conforms(to: .movie) == true {
-                            if let file = await model.importVideoFile(url) {
-                                await sendImportedMedia([], videos: [file], to: target)
-                            }
-                        } else if let file = await model.importFile(url) {
-                            if file.isImage {
-                                await sendImportedMedia([file], to: target)
-                            } else {
-                                appendImportedDocument(file, to: target)
-                            }
-                        }
-                    }
+                    guard let target = fileTarget else { return }
+                    Task { await importSelectedFile(url, to: target) }
                 }
             }
             .onChange(of: selectedMediaItems) { items in
                 guard !items.isEmpty else { return }
-                Task { await importSelectedMedia(items) }
+                guard let target = libraryTarget else { return }
+                Task { await importSelectedMedia(items, to: target) }
             }
             .onAppear {
                 draftSession = snapshot.selected
+                draftImportTarget = draftSession.isEmpty ? model.importTarget() : nil
                 draft = model.drafts[draftSession] ?? ""
                 transcriptionPresentation.onCancel = {
                     cancelVoiceTranscription(restoresDraft: true)
@@ -2332,7 +2526,7 @@ private struct AIComposer: View, Equatable {
                 }
             }
             .onDisappear {
-                model.drafts[draftSession] = draft
+                if let session = draftStorageSession { model.drafts[session] = draft }
                 voiceStartTask?.cancel()
                 voiceStartTask = nil
                 speechRecognizer.onLiveTextUpdate = nil
@@ -2346,22 +2540,47 @@ private struct AIComposer: View, Equatable {
             }
             .onChange(of: snapshot.selected) { selected in
                 cancelVoiceTranscription(restoresDraft: true)
-                model.drafts[draftSession] = draft
-                let sendingFirstMessage = snapshot.isSubmitting && draftSession.isEmpty
+                let previousSession = draftSession
+                let storageSession = draftStorageSession
+                if let storageSession {
+                    model.drafts[storageSession] = draft
+                    if storageSession != previousSession {
+                        model.drafts.removeValue(forKey: previousSession)
+                    }
+                }
                 draftSession = selected
-                if !sendingFirstMessage { draft = model.drafts[selected] ?? "" }
+                draftImportTarget = selected.isEmpty ? model.importTarget() : nil
+                if storageSession != selected { draft = model.drafts[selected] ?? "" }
+                if !snapshot.attachments.isEmpty { isVoiceMode = false }
+            }
+            .onChange(of: draft) { value in
+                if let session = draftStorageSession { model.drafts[session] = value }
+            }
+            .onChange(of: snapshot.attachments) { files in
+                if !files.isEmpty { isVoiceMode = false }
             }
     }
 
     private func openPhotoPicker() async {
+        guard snapshot.attachments.count < 10 else {
+            model.showTransientError("每条消息最多添加 10 项图片或视频")
+            return
+        }
+        let target = model.importTarget()
         guard await requestPhotoLibraryPermission() else {
             model.showTransientError("没有相册权限，请在系统设置中允许访问照片")
             return
         }
+        libraryTarget = target
         isPhotoPickerPresented = true
     }
 
     private func openCamera() async {
+        guard snapshot.attachments.count < 10 else {
+            model.showTransientError("每条消息最多添加 10 项图片或视频")
+            return
+        }
+        let target = model.importTarget()
         guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
             model.showTransientError("当前设备不支持拍照")
             return
@@ -2370,6 +2589,7 @@ private struct AIComposer: View, Equatable {
             model.showTransientError("没有相机权限，请在系统设置中允许 MaiChat 使用相机")
             return
         }
+        cameraTarget = target
         isCameraPresented = true
     }
 
@@ -2410,11 +2630,12 @@ private struct AIComposer: View, Equatable {
 
     /// 按用户选择顺序导入照片或视频，并把可引用附件交给当前会话。
     /// 异步读取期间若会话改变，文件保留在原目标会话，避免误发到新会话。
-    private func importSelectedMedia(_ items: [PhotosPickerItem]) async {
-        let targetSession = model.selected
+    private func importSelectedMedia(_ items: [PhotosPickerItem],
+                                     to target: AIAttachmentImportTarget) async {
+        beginImport(to: target)
+        defer { finishImport(to: target) }
         defer { selectedMediaItems = [] }
-        var images: [AIImportedFile] = []
-        var videos: [AIImportedFile] = []
+        var imported: [AIImportedFile] = []
         var failedCount = 0
         for item in items {
             do {
@@ -2427,7 +2648,7 @@ private struct AIComposer: View, Equatable {
                         failedCount += 1
                         continue
                     }
-                    videos.append(file)
+                    imported.append(file)
                     continue
                 }
                 guard let data = try await item.loadTransferable(type: Data.self),
@@ -2446,25 +2667,25 @@ private struct AIComposer: View, Equatable {
                     failedCount += 1
                     continue
                 }
-                images.append(file)
+                imported.append(file)
             } catch {
                 failedCount += 1
             }
         }
-        if !images.isEmpty || !videos.isEmpty {
-            await sendImportedMedia(images, videos: videos, to: targetSession)
-        }
-        if failedCount > 0 {
+        let acceptedCount = model.addAttachments(imported, to: target)
+        if failedCount > 0, acceptedCount == imported.count {
             model.showTransientError(
-                !images.isEmpty || !videos.isEmpty
-                    ? "已导入\(images.count + videos.count)项，另有\(failedCount)项读取失败"
+                acceptedCount > 0
+                    ? "已导入\(acceptedCount)项，另有\(failedCount)项读取失败"
                     : "所选照片或视频读取失败"
             )
         }
     }
 
-    private func importCapturedImage(_ image: UIImage) async {
-        let targetSession = model.selected
+    private func importCapturedImage(_ image: UIImage,
+                                     to target: AIAttachmentImportTarget) async {
+        beginImport(to: target)
+        defer { finishImport(to: target) }
         guard let data = image.jpegData(compressionQuality: 0.9) else {
             model.showTransientError("拍摄图片处理失败")
             return
@@ -2473,31 +2694,63 @@ private struct AIComposer: View, Equatable {
             let temporaryURL = try await Self.writeTemporaryImage(data, pathExtension: "jpg")
             defer { Task { await Self.removeTemporaryFile(temporaryURL) } }
             if let file = await model.importFile(temporaryURL) {
-                await sendImportedMedia([file], to: targetSession)
+                model.addAttachments([file], to: target)
             }
         } catch {
             model.showTransientError("拍摄图片导入失败")
         }
     }
 
-    private func sendImportedMedia(_ images: [AIImportedFile],
-                                   videos: [AIImportedFile] = [],
-                                   to targetSession: String) async {
-        guard !images.isEmpty || !videos.isEmpty else { return }
-        let existingDraft = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        if await model.sendMessage(existingDraft, images: images, videos: videos,
-                            expectedSession: targetSession) {
-            if draft.trimmingCharacters(in: .whitespacesAndNewlines) == existingDraft { draft = "" }
-            return
+    private func importSelectedFile(_ url: URL, to target: AIAttachmentImportTarget) async {
+        beginImport(to: target)
+        defer { finishImport(to: target) }
+        let type = UTType(filenameExtension: url.pathExtension)
+        if type?.conforms(to: .movie) == true {
+            if let file = await model.importVideoFile(url) {
+                model.addAttachments([file], to: target)
+            }
+        } else if let file = await model.importFile(url) {
+            if file.isImage { model.addAttachments([file], to: target) }
+            else { appendImportedDocument(file, to: target) }
         }
-
-        // 导入已完成但发送条件在异步读取期间改变时，保留媒体供下次发送。
-        for file in images + videos { model.addAttachment(file, to: targetSession) }
-        model.showTransientError("媒体已保留，请输入消息后重试")
     }
 
-    private func appendImportedDocument(_ file: AIImportedFile, to targetSession: String) {
-        model.addAttachment(file, to: targetSession)
+    private func beginImport(to target: AIAttachmentImportTarget) {
+        importingTargets[target, default: 0] += 1
+    }
+
+    private func finishImport(to target: AIAttachmentImportTarget) {
+        let remaining = (importingTargets[target] ?? 1) - 1
+        if remaining > 0 { importingTargets[target] = remaining }
+        else { importingTargets.removeValue(forKey: target) }
+    }
+
+    private var isImportingCurrentSession: Bool {
+        importingTargets.contains { target, count in
+            count > 0 && model.attachmentSession(for: target) == snapshot.selected
+        }
+    }
+
+    private func previewAttachment(_ file: AIImportedFile) {
+        guard let url = AIAssistantPathPolicy.resolve(
+            file.relativePath, workspacePath: snapshot.workspacePath
+        ), FileManager.default.fileExists(atPath: url.path) else {
+            model.showTransientError("附件文件已丢失，请移除后重新选择")
+            return
+        }
+        if file.isImage { model.previewImage = AIImagePreview(filePath: url.path) }
+        else if file.mimeType.hasPrefix("video/") {
+            draftVideoPreview = AIVideoPreviewItem(path: url.path)
+        }
+    }
+
+    private func appendImportedDocument(_ file: AIImportedFile,
+                                        to target: AIAttachmentImportTarget) {
+        guard let targetSession = model.attachmentSession(for: target) else {
+            model.discardImportedFile(file)
+            model.showTransientError("原会话已关闭，请重新选择文件")
+            return
+        }
         let reference = "请查看工作区文件：\(file.relativePath)"
         if targetSession == model.selected {
             draft += (draft.isEmpty ? "" : "\n") + reference
@@ -2537,7 +2790,26 @@ private struct AIComposer: View, Equatable {
     }
 
     private var composerPrompt: String {
-        return "可按住转文字"
+        snapshot.attachments.isEmpty ? "可按住转文字" : "添加说明（可选）"
+    }
+
+    private var draftStorageSession: String? {
+        if draftSession.isEmpty {
+            guard let draftImportTarget else { return "" }
+            return model.attachmentSession(for: draftImportTarget)
+        }
+        return model.isDeletedDraftSession(draftSession) ? nil : draftSession
+    }
+
+    private var hasDraftContent: Bool {
+        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+            !snapshot.attachments.isEmpty
+    }
+
+    private var canSubmitDraft: Bool {
+        snapshot.ready && !snapshot.busy && !snapshot.isSubmitting &&
+            !snapshot.isCreatingConversation &&
+            !isImportingCurrentSession && hasDraftContent
     }
 
     private var canStartVoiceTranscription: Bool {
@@ -2547,11 +2819,20 @@ private struct AIComposer: View, Equatable {
     }
 
     private func submitDraft(_ submittedText: String? = nil) {
-        guard model.ready, !model.busy, !model.isSubmitting else { return }
+        guard canSubmitDraft else { return }
         let sent = submittedText ?? draft
-        guard !sent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let sourceSession = draftSession
+        let sourceTarget = draftImportTarget
         Task {
-            if await model.sendMessage(sent), draft == sent { draft = "" }
+            guard await model.sendMessage(sent, expectedSession: sourceSession) else { return }
+            let destination: String? = sourceSession.isEmpty
+                ? sourceTarget.flatMap { model.attachmentSession(for: $0) }
+                : sourceSession
+            if let destination, draftSession == destination, draft == sent { draft = "" }
+            if model.drafts[sourceSession] == sent { model.drafts.removeValue(forKey: sourceSession) }
+            if let destination, model.drafts[destination] == sent {
+                model.drafts.removeValue(forKey: destination)
+            }
         }
     }
 

@@ -368,6 +368,10 @@ struct AIImportedFile: Sendable, Equatable {
     let mimeType: String
     let isImage: Bool
 }
+struct AIAttachmentImportTarget: Sendable, Hashable {
+    let sessionID: String
+    let emptyDraftToken: UUID?
+}
 struct AIImagePreview: Identifiable, Equatable {
     let id: UUID
     let filePath: String
@@ -706,13 +710,18 @@ final class AIAssistantModel: ObservableObject {
     @Published private(set) var hasOlderMessages = false
     @Published private(set) var visibleMessageLimit = AIAssistantModel.recentMessageCount
     @Published var isSubmitting = false
+    @Published private(set) var isCreatingConversation = false
     @Published var showSettings = false
     @Published var scrollRequest = 0
     @Published private(set) var workspacePath = ""
     @Published var previewImage: AIImagePreview?
     @Published var quotedMessage: AIMessage?
     var drafts: [String: String] = [:]
-    private var pendingAttachments: [String: [AIImportedFile]] = [:]
+    @Published private(set) var pendingAttachments: [String: [AIImportedFile]] = [:]
+    private(set) var firstMessageSessionID = ""
+    private var emptyDraftToken = UUID()
+    private var createdEmptyDraftSessions: [UUID: String] = [:]
+    private var deletedDraftSessions: Set<String> = []
     private let backend = AIAssistantBackend()
     private var poll: Task<Void, Never>?
     private var transientErrorTask: Task<Void, Never>?
@@ -729,6 +738,10 @@ final class AIAssistantModel: ObservableObject {
     private var sessionSwitchUITest = false
     #endif
     var busy: Bool { sessions.first { $0.id == selected }?.busy == true }
+    var hasEmptyDraft: Bool {
+        !attachments(for: "").isEmpty ||
+            !(drafts[""] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
     var visibleMessages: [AIMessage] { Array(messages.suffix(visibleMessageLimit)) }
     var hasOlderVisibleMessages: Bool {
         messages.count > visibleMessageLimit || hasOlderMessages
@@ -797,6 +810,47 @@ final class AIAssistantModel: ObservableObject {
         messages = sessionSwitchUITestMessages("A")
         ready = true
         historyLoaded = true
+    }
+
+    func installMediaDraftUITestFixture() {
+        installSessionSwitchUITestFixture()
+        let workspace = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ai-media-draft-ui-test", isDirectory: true)
+        guard let video = Bundle.main.url(forResource: "ffplay-sample", withExtension: "mp4"),
+              (try? FileManager.default.createDirectory(
+                at: workspace, withIntermediateDirectories: true
+              )) != nil else { return }
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 220, height: 160))
+            .image { context in
+                UIColor.systemBlue.setFill()
+                context.fill(CGRect(x: 0, y: 0, width: 220, height: 160))
+                UIColor.white.setFill()
+                context.fill(CGRect(x: 45, y: 45, width: 130, height: 70))
+            }
+        let imageFile = workspace.appendingPathComponent("draft-image.png")
+        let emptyDraftImageFile = workspace.appendingPathComponent("empty-draft-image.png")
+        let videoFile = workspace.appendingPathComponent("draft-video.mp4")
+        guard let imageData = image.pngData(),
+              (try? imageData.write(to: imageFile, options: .atomic)) != nil,
+              (try? imageData.write(to: emptyDraftImageFile, options: .atomic)) != nil else {
+            return
+        }
+        if !FileManager.default.fileExists(atPath: videoFile.path) {
+            try? FileManager.default.copyItem(at: video, to: videoFile)
+        }
+        workspacePath = workspace.path
+        pendingAttachments[selected] = [
+            AIImportedFile(relativePath: imageFile.lastPathComponent,
+                           mimeType: "image/png", isImage: true),
+            AIImportedFile(relativePath: videoFile.lastPathComponent,
+                           mimeType: "video/mp4", isImage: false)
+        ]
+        pendingAttachments[""] = [
+            AIImportedFile(relativePath: emptyDraftImageFile.lastPathComponent,
+                           mimeType: "image/png", isImage: true)
+        ]
+        // 模拟过去的首发目标仍存在，检验手动回到空草稿再选 A 不会误迁移文字。
+        firstMessageSessionID = "switch-A"
     }
 
     private func sessionSwitchUITestMessages(_ title: String) -> [AIMessage] {
@@ -1089,6 +1143,18 @@ final class AIAssistantModel: ObservableObject {
     /// 打开指定会话：先读取目标最近一页，再在无动画事务中替换可见消息。
     /// 读取期间保留原会话；并发切换通过代次丢弃过时结果，失败时不清空旧画面。
     func selectConversation(_ id: String) async {
+        if id.isEmpty {
+            selectionGeneration &+= 1
+            selected = ""
+            messages = []
+            permissions = []
+            questions = []
+            quotedMessage = nil
+            historyLoaded = true
+            hasOlderMessages = false
+            scrollRequest += 1
+            return
+        }
         #if targetEnvironment(simulator)
         if sessionSwitchUITest {
             // 测试入口也遵循正式逻辑：先准备完整页面，再一次性替换当前会话。
@@ -1102,7 +1168,6 @@ final class AIAssistantModel: ObservableObject {
             return
         }
         #endif
-        guard !id.isEmpty else { return }
         if id == selected {
             scrollRequest += 1
             return
@@ -1138,64 +1203,82 @@ final class AIAssistantModel: ObservableObject {
         }
     }
     func create() async {
+        guard !isSubmitting, !isCreatingConversation else { return }
+        isCreatingConversation = true
+        defer { isCreatingConversation = false }
         do {
             let result = try await backend.request("create")
             await selectConversation(result.id ?? "")
         } catch { self.error = error.localizedDescription }
     }
+
+    private func migrateEmptyDraft(to session: String) {
+        firstMessageSessionID = session
+        createdEmptyDraftSessions[emptyDraftToken] = session
+        emptyDraftToken = UUID()
+        let files = pendingAttachments.removeValue(forKey: "") ?? []
+        pendingAttachments[session, default: []].append(contentsOf: files)
+        if let textDraft = drafts.removeValue(forKey: "") {
+            drafts[session] = textDraft
+        }
+    }
     /// 提交文本及附件，并在核心落库后合并新快照、请求界面定位最新消息。
     /// 输入不合法或任务忙碌时不改动草稿；新建会话也必须保持一个可见的加载状态。
-    func sendMessage(
-        _ text: String,
-        images: [AIImportedFile] = [],
-        videos: [AIImportedFile] = [],
-        expectedSession: String? = nil
-    ) async -> Bool {
+    func sendMessage(_ text: String, expectedSession: String? = nil) async -> Bool {
         guard configured else { showSettings = true; return false }
-        try? await AICloudCredentialSync.refreshSeedanceIfNeeded(force: true)
-        try? await AICloudCredentialSync.refreshBailianIfNeeded(force: true)
         let draftSession = selected
         let quoteMessageId = quotedMessage?.id ?? ""
         guard expectedSession == nil || expectedSession == draftSession else { return false }
-        let attachments = pendingAttachments[draftSession, default: []] + images + videos
-        guard !isSubmitting, !busy,
+        let attachments = pendingAttachments[draftSession, default: []]
+        guard !isSubmitting, !isCreatingConversation, !busy,
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty else {
             return false
         }
         isSubmitting = true
         defer { isSubmitting = false }
+        try? await AICloudCredentialSync.refreshSeedanceIfNeeded(force: true)
+        try? await AICloudCredentialSync.refreshBailianIfNeeded(force: true)
         if attachments.contains(where: \.isImage),
            settings.model.trimmingCharacters(in: .whitespacesAndNewlines)
                .caseInsensitiveCompare("glm-5.3") == .orderedSame {
             showTransientError("glm-5.3 仅支持文本，请先切换到 glm-5.3-flash")
             return false
         }
-        if selected.isEmpty {
+        var targetSession = draftSession
+        if targetSession.isEmpty {
             do {
                 let created = try await backend.request("create")
-                selected = created.id ?? ""
-                messages = []
-                permissions = []
-                questions = []
-                // 新建空会话时显示欢迎态；不让首次发送期间出现无内容白屏。
-                historyLoaded = true
-                hasOlderMessages = false
+                targetSession = created.id ?? ""
+                guard !targetSession.isEmpty else { return false }
+                migrateEmptyDraft(to: targetSession)
+                if selected == draftSession {
+                    selected = targetSession
+                    messages = []
+                    permissions = []
+                    questions = []
+                    // 新建空会话时显示欢迎态；不让首次发送期间出现无内容白屏。
+                    historyLoaded = true
+                    hasOlderMessages = false
+                }
             } catch {
                 self.error = error.localizedDescription
                 return false
             }
         }
-        guard !selected.isEmpty else { return false }
         do {
             _ = try await backend.send(
-                session: selected,
+                session: targetSession,
                 text: text,
                 images: attachments.filter(\.isImage),
                 videos: attachments.filter { $0.mimeType.hasPrefix("video/") },
                 quoteMessageId: quoteMessageId
             )
-            pendingAttachments.removeValue(forKey: draftSession)
-            if quotedMessage?.id == quoteMessageId { quotedMessage = nil }
+            let sentNames = Set(attachments.map(\.relativePath))
+            pendingAttachments[targetSession]?.removeAll { sentNames.contains($0.relativePath) }
+            if pendingAttachments[targetSession]?.isEmpty == true {
+                pendingAttachments.removeValue(forKey: targetSession)
+            }
+            if selected == targetSession, quotedMessage?.id == quoteMessageId { quotedMessage = nil }
             lastBackendError = ""
             error = ""
             await refresh(force: true)
@@ -1209,13 +1292,24 @@ final class AIAssistantModel: ObservableObject {
     }
 
     func action(_ op: String, values: [String: String] = [:]) async {
+        if (op == "delete" || op == "clear") && (isSubmitting || isCreatingConversation) {
+            return
+        }
         let target = selected
         do {
             var values = values; values["session"] = target
             _ = try await backend.request(op, values: values)
+            if op == "delete" {
+                deletedDraftSessions.insert(target)
+                discardImportedFiles(pendingAttachments.removeValue(forKey: target) ?? [])
+                drafts.removeValue(forKey: target)
+                createdEmptyDraftSessions = createdEmptyDraftSessions.filter { $0.value != target }
+            }
             if op == "delete", selected == target {
                 selected = ""; messages = []; historyLoaded = true
                 quotedMessage = nil
+                firstMessageSessionID = ""
+                emptyDraftToken = UUID()
             }
             if op == "clear", selected == target {
                 messages = []; historyLoaded = true
@@ -1234,8 +1328,70 @@ final class AIAssistantModel: ObservableObject {
             return true
         } catch { self.error = error.localizedDescription; return false }
     }
-    func addAttachment(_ file: AIImportedFile, to session: String) {
-        pendingAttachments[session, default: []].append(file)
+    func attachments(for session: String) -> [AIImportedFile] {
+        pendingAttachments[session] ?? []
+    }
+
+    func importTarget() -> AIAttachmentImportTarget {
+        AIAttachmentImportTarget(
+            sessionID: selected,
+            emptyDraftToken: selected.isEmpty ? emptyDraftToken : nil
+        )
+    }
+
+    func isDeletedDraftSession(_ session: String) -> Bool {
+        deletedDraftSessions.contains(session)
+    }
+
+    func attachmentSession(for target: AIAttachmentImportTarget) -> String? {
+        if !target.sessionID.isEmpty {
+            return deletedDraftSessions.contains(target.sessionID) ? nil : target.sessionID
+        }
+        guard let token = target.emptyDraftToken else { return nil }
+        if let created = createdEmptyDraftSessions[token] { return created }
+        return token == emptyDraftToken ? "" : nil
+    }
+
+    @discardableResult
+    func addAttachments(_ files: [AIImportedFile], to target: AIAttachmentImportTarget) -> Int {
+        guard !files.isEmpty else { return 0 }
+        guard let session = attachmentSession(for: target) else {
+            discardImportedFiles(files)
+            showTransientError("原会话已关闭，请重新选择媒体")
+            return 0
+        }
+        let remaining = max(0, 10 - pendingAttachments[session, default: []].count)
+        pendingAttachments[session, default: []].append(contentsOf: files.prefix(remaining))
+        let extra = Array(files.dropFirst(remaining))
+        if !extra.isEmpty {
+            discardImportedFiles(extra)
+            showTransientError("每条消息最多添加 10 项图片或视频，超出的媒体未加入草稿")
+        }
+        return min(files.count, remaining)
+    }
+
+    func discardImportedFile(_ file: AIImportedFile) {
+        discardImportedFiles([file])
+    }
+
+    private func discardImportedFiles(_ files: [AIImportedFile]) {
+        let urls = files.compactMap {
+            AIAssistantPathPolicy.resolve($0.relativePath, workspacePath: workspacePath)
+        }
+        Task.detached(priority: .utility) {
+            for url in urls { try? FileManager.default.removeItem(at: url) }
+        }
+    }
+
+    func removeAttachment(_ file: AIImportedFile, from session: String) {
+        let removed = pendingAttachments[session]?.filter {
+            $0.relativePath == file.relativePath
+        } ?? []
+        pendingAttachments[session]?.removeAll { $0.relativePath == file.relativePath }
+        if pendingAttachments[session]?.isEmpty == true {
+            pendingAttachments.removeValue(forKey: session)
+        }
+        discardImportedFiles(removed)
     }
     func importFile(_ url: URL) async -> AIImportedFile? {
         do { return try await backend.importDocument(url) }

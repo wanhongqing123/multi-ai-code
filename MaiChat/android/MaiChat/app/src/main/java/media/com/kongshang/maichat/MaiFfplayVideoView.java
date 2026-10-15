@@ -1,3 +1,6 @@
+// 文件作用：Android 媒体播放、预览和编辑；MaiFfplayVideoView 负责界面呈现、交互与状态更新，本文件给出其实现。
+// 类型关系：MaiFfplayVideoView extends FrameLayout；审阅时可据此追踪父类、接口或回调契约。
+// 主要入口：nativeCommand、nativeSeekPercent、nativeSeekAbsoluteUs、nativePlaybackStatus。
 package com.kongshang.maichat;
 
 import android.app.AlertDialog;
@@ -8,6 +11,7 @@ import android.content.res.ColorStateList;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
@@ -18,6 +22,9 @@ import java.util.Locale;
 
 /** Native Graphics surface controlled by the shared in-process ffplay engine. */
 public final class MaiFfplayVideoView extends FrameLayout {
+    public interface OnVideoSwipeListener {
+        void onVideoSwipe(int direction);
+    }
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static volatile WeakReference<MaiFfplayVideoView> active = new WeakReference<>(null);
 
@@ -63,12 +70,31 @@ public final class MaiFfplayVideoView extends FrameLayout {
     private double speed = 1.0;
     private boolean playing = true;
     private volatile boolean presented;
+    private OnVideoSwipeListener swipeListener;
+    private float touchStartX, touchStartY;
 
+    // 作用：创建 FFplay 播放控件并连接按钮、进度条和原生句柄。
     public MaiFfplayVideoView(Context context) {
         super(context);
         setBackgroundColor(Color.BLACK);
         surface = new MaiGraphicsTextureView(context);
         surface.setAlpha(0.01f);
+        surface.setOnTouchListener((view, event) -> {
+            if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                touchStartX = event.getX();
+                touchStartY = event.getY();
+                return true;
+            }
+            if (event.getActionMasked() == MotionEvent.ACTION_UP) {
+                float dx = event.getX() - touchStartX;
+                float dy = event.getY() - touchStartY;
+                if (Math.abs(dx) >= dp(72) && Math.abs(dx) > Math.abs(dy) * 1.4f) {
+                    if (swipeListener != null) swipeListener.onVideoSwipe(dx < 0 ? 1 : -1);
+                }
+                return true;
+            }
+            return true;
+        });
         errorLabel = new TextView(context);
         errorLabel.setText("正在打开视频…");
         errorLabel.setTextColor(Color.WHITE);
@@ -158,14 +184,23 @@ public final class MaiFfplayVideoView extends FrameLayout {
 
     public static MaiFfplayVideoView activeView() { return active.get(); }
     public boolean hasPresentedFrame() { return presented; }
+    public String currentVideoPath() { return videoPath; }
+    public void setOnVideoSwipeListener(OnVideoSwipeListener listener) {
+        swipeListener = listener;
+    }
 
     public void setVideoPath(String path) {
         setVideoPath(path, 0);
     }
 
     public void setVideoPath(String path, long startPositionUs) {
+        if (playbackHandle != 0 && !java.util.Objects.equals(videoPath, path)) stop();
         videoPath = path;
         this.startPositionUs = Math.max(0, startPositionUs);
+        presented = false;
+        surface.setAlpha(0.01f);
+        errorLabel.setText("正在打开视频…");
+        errorLabel.setVisibility(VISIBLE);
         if (surface.isAvailable()) startReadySurface();
     }
 
@@ -189,6 +224,11 @@ public final class MaiFfplayVideoView extends FrameLayout {
         }
         active = new WeakReference<>(this);
         presented = false;
+        playing = true;
+        playButton.setText("Ⅱ");
+        playButton.setContentDescription("暂停视频");
+        seekBar.setProgress(0);
+        timeLabel.setText("0:00 / 0:00");
         MAIN.removeCallbacks(refreshProgress);
         MAIN.post(refreshProgress);
         MAIN.postDelayed(() -> {

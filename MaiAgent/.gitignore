@@ -16,6 +16,7 @@ CMakeUserPresets.json
 *.pdb
 *.ilk
 compile_commands.json
+.cache/
 
 # 本地运行产生的
 *.db

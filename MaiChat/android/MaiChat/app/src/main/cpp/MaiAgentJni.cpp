@@ -1,3 +1,5 @@
+// 文件作用：Android JNI 桥接层；MaiAgentJni 负责 Java 与原生引擎之间的参数和生命周期转换，本文件给出其实现。
+// 直接依赖：MaiMobileAgent.h、MaiImageFilter.h；实现与这些接口协作。
 #include "MaiMobileAgent.h"
 #include "MaiImageFilter.h"
 #include <android/bitmap.h>
@@ -134,8 +136,10 @@ Java_com_kongshang_maichat_AIAssistantController_nativeRequest(
     return nullptr;
   jsize size = env->GetArrayLength(data);
   std::string request(static_cast<size_t>(size), '\0');
-  env->GetByteArrayRegion(data, 0, size,
-                          reinterpret_cast<jbyte *>(request.data()));
+  // 非空字符串的首元素可写；旧标准库的 data() 仍可能返回 const char*。
+  if (size > 0)
+    env->GetByteArrayRegion(data, 0, size,
+                            reinterpret_cast<jbyte *>(&request[0]));
   if (env->ExceptionCheck())
     return nullptr;
   char *response =
@@ -160,8 +164,9 @@ Java_com_kongshang_maichat_AIAssistantController_nativeMatteVideo(
     return nullptr;
   const auto read = [env](jbyteArray value) {
     std::string output(static_cast<std::size_t>(env->GetArrayLength(value)), '\0');
-    env->GetByteArrayRegion(value, 0, static_cast<jsize>(output.size()),
-                            reinterpret_cast<jbyte *>(output.data()));
+    if (!output.empty())
+      env->GetByteArrayRegion(value, 0, static_cast<jsize>(output.size()),
+                              reinterpret_cast<jbyte *>(&output[0]));
     return output;
   };
   const std::string args = read(arguments);

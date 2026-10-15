@@ -1,3 +1,6 @@
+// 文件作用：维护 IM 登录、会话、消息和连接状态，向界面发布可显示的数据。
+// 阅读边界：网络请求由客户端执行，历史消息由本地存储保存。
+// 连接账号、IM SDK 和本地历史，统一维护联系人、未读和消息状态。
 import Foundation
 import MaiChatCore
 import UIKit
@@ -61,7 +64,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     @Published var errorMessage: String?
     @Published var agentVideoPresentation: MaiFfplayPresentation?
     @Published var connectionState: ConnectionState = .disconnected
-    // Emitted only when this device queues a user send, never on history or delivery updates.
+    // 仅本机用户主动发送入队时发布；历史回灌和投递状态变化不触发此标识。
     @Published private(set) var locallyQueuedMessageID: UUID?
     @Published var chatState: MasterChatState
     @Published var hasCompletedInitialLogin = false
@@ -95,6 +98,10 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     private var didHandleLaunchAutoConnect = false
     private var visibleConversationUserID: String?
     private var conversationHistoryStateByUserID: [String: ConversationHistoryState] = [:]
+    // 内存中的完整历史供搜索和引用使用；界面只接收已开放的最近消息页。
+    private var visibleMessageLimitByUserID: [String: Int] = [:]
+    // 搜索与引用可定位旧消息，但只给界面一个有界的目标窗口。
+    private var focusedMessageIDByUserID: [String: UUID] = [:]
     private var conversationHistoryLoadGenerationByUserID: [String: UInt64] = [:]
     private var historyAccountGeneration: UInt64 = 0
     private var accountRebuildRequestGeneration: UInt64 = 0
@@ -466,6 +473,8 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         profileFetchedForConnection.removeAll()
         chatHistorySDKAppID = nil
         conversationHistoryStateByUserID = [:]
+        visibleMessageLimitByUserID = [:]
+        focusedMessageIDByUserID = [:]
         conversationHistoryLoadGenerationByUserID = [:]
         pendingIncomingRemoteIDs = []
         downloadingVideoKeys = []
@@ -505,6 +514,8 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         await connect()
     }
 
+    /// 建立当前手机号账号对应的 IM 连接并恢复会话状态。
+    /// 鉴权、SDK 登录、联系人和历史同步分阶段进行；失败保留本地可读历史。
     func connect() async {
         guard connectionAttemptGate.begin() else {
             logIM(level: .info, event: "connect-blocked", fields: ["reason": "attempt-in-flight"])
@@ -609,8 +620,8 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
 
     func disconnect() async {
         let startedAt = ProcessInfo.processInfo.systemUptime
-        // Persist the user's intent before any asynchronous shutdown work. If iOS terminates the
-        // process in this window, the next launch must stay disconnected instead of undoing the tap.
+        // 在异步断开前先保存用户意图；即使 iOS 此刻终止进程，
+        // 下次启动也应保持断开，而不是撤销用户刚点击的操作。
         persistReconnectOnLaunchIntent(
             RemoteIMConnectionIntentPolicy.afterUserDisconnected()
         )
@@ -683,6 +694,8 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         }
     }
 
+    /// 接收 SDK 推送的消息并合并进当前账号状态。
+    /// 先保存可恢复消息，再通知界面刷新，避免前台切换时出现短暂空页。
     private func receive(_ event: IncomingRemoteIMActivity) {
         guard shouldAcceptIncomingSender(event.fromUserID, kind: "activity") else { return }
         guard chatState.contacts.contains(where: { $0.userID == event.fromUserID }) else { return }
@@ -847,6 +860,8 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         do {
             try await client.clearHistory(userID: cleanUserID)
             chatState.removeMessages(with: cleanUserID)
+            visibleMessageLimitByUserID[cleanUserID] = nil
+            focusedMessageIDByUserID[cleanUserID] = nil
             invalidateConversationHistoryLoad(for: cleanUserID)
             unreadCountByUserID[cleanUserID] = nil
             conversationHistoryStateByUserID[cleanUserID] = ConversationHistoryState(
@@ -873,7 +888,13 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         }
     }
 
-    func selectContact(_ contact: RemoteIMContact) {
+    func selectContact(_ contact: RemoteIMContact,
+                       preservingMessageFocus: Bool = false) {
+        // 普通进入恢复最近一页；搜索结果进入详情时保留已经设置的目标窗口。
+        if !preservingMessageFocus {
+            focusedMessageIDByUserID[contact.userID] = nil
+            visibleMessageLimitByUserID[contact.userID] = messagePageSize
+        }
         if chatState.selectedPeerID != contact.userID {
             replyPreparationTask?.cancel()
             replyPreparationTask = nil
@@ -930,7 +951,35 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     }
 
     func visibleMessages(with userID: String) -> [RemoteIMMessage] {
-        chatState.messages(with: userID)
+        let messages = chatState.messages(with: userID)
+        if let focusedID = focusedMessageIDByUserID[userID],
+           let index = messages.firstIndex(where: { $0.id == focusedID }) {
+            // 命中项及其前面至多九条已经在内存中的消息组成一个连续窗口。
+            // 缺失的中间历史不占高度，也不会把数千条后续消息一起排版。
+            return Array(messages[max(0, index - 9)...index])
+        }
+        let limit = visibleMessageLimitByUserID[userID] ?? messagePageSize
+        return Array(messages.suffix(limit))
+    }
+
+    /// 搜索或引用定位旧消息时建立有界窗口，不展开目标之后的全部历史。
+    private func revealMessage(_ id: UUID, with userID: String) {
+        let messages = chatState.messages(with: userID)
+        guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
+        let recentLimit = visibleMessageLimitByUserID[userID] ?? messagePageSize
+        focusedMessageIDByUserID[userID] = index >= messages.count - recentLimit ? nil : id
+        objectWillChange.send()
+    }
+
+    func hasNewerMessages(with userID: String) -> Bool {
+        focusedMessageIDByUserID[userID] != nil
+    }
+
+    func showLatestMessages(with userID: String) {
+        guard focusedMessageIDByUserID[userID] != nil else { return }
+        focusedMessageIDByUserID[userID] = nil
+        visibleMessageLimitByUserID[userID] = messagePageSize
+        objectWillChange.send()
     }
 
     func beginReply(to message: RemoteIMMessage) {
@@ -955,7 +1004,10 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         let remoteID = quote.messageID.trimmingCharacters(in: .whitespacesAndNewlines)
         let peer = peerUserID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !remoteID.isEmpty, !peer.isEmpty else { return nil }
-        if let cached = chatState.message(remoteID: remoteID) { return cached.id }
+        if let cached = chatState.message(remoteID: remoteID) {
+            revealMessage(cached.id, with: peer)
+            return cached.id
+        }
         _ = await flushHistoryPersistence()
         do {
             guard let stored = try await historyPersistence.message(
@@ -965,6 +1017,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 peerUserID: peer
             ) else { return nil }
             chatState.mergeMessages([stored])
+            revealMessage(stored.id, with: peer)
             return stored.id
         } catch {
             recordHistoryLoadFailure(error, operation: "quoted-message")
@@ -981,7 +1034,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         let accountGeneration = historyAccountGeneration
         guard !cleanQuery.isEmpty, !account.ownerUserID.isEmpty else { return [] }
 
-        // Search must include messages accepted moments ago but not yet drained to SQLite.
+        // 搜索也要包含刚接收、尚未批量落入 SQLite 的消息。
         _ = await flushHistoryPersistence()
         guard historyAccountGeneration == accountGeneration,
               chatState.ownerUserID == account.ownerUserID,
@@ -1080,10 +1133,11 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     func openMessageSearchHit(_ hit: LocalChatHistorySearchHit) -> RemoteIMContact? {
         guard let contact = chatState.contacts.first(where: { $0.userID == hit.peerUserID })
         else { return nil }
-        // Search covers the full database, so an old hit may not be in the current 20-message
-        // window. Merge the authoritative stored row before opening, making the scroll target real.
+        // 搜索覆盖整库；旧命中项可能不在当前 20 条可见页中。
+        // 打开前先合并数据库中的权威消息行，让滚动目标确实存在。
         chatState.mergeMessages([hit.message])
         selectContact(contact)
+        revealMessage(hit.message.id, with: hit.peerUserID)
         return contact
     }
 
@@ -1093,9 +1147,15 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     }
 
     func hasEarlierMessages(with userID: String) -> Bool {
-        conversationHistoryStateByUserID[userID]?.hasEarlierMessages ?? false
+        if focusedMessageIDByUserID[userID] != nil { return false }
+        let cachedCount = chatState.messages(with: userID).count
+        let visibleLimit = visibleMessageLimitByUserID[userID] ?? messagePageSize
+        return cachedCount > visibleLimit ||
+            (conversationHistoryStateByUserID[userID]?.hasEarlierMessages ?? false)
     }
 
+    /// 为指定联系人读取首批已持久化和远端消息。
+    /// 首屏完成前保留原会话内容，读取成功后按稳定标识合并。
     func loadInitialMessages(with userID: String) async {
         let cleanUserID = userID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanUserID.isEmpty else { return }
@@ -1163,9 +1223,20 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         }
     }
 
+    /// 按游标加载当前会话更早的一页消息。
+    /// 未取回的页不占用可滚动高度，加载完成后维持用户原有阅读锚点。
     func loadEarlierMessages(with userID: String) async {
         let cleanUserID = userID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanUserID.isEmpty else { return }
+        let cachedCount = chatState.messages(with: cleanUserID).count
+        let visibleLimit = visibleMessageLimitByUserID[cleanUserID] ?? messagePageSize
+        if cachedCount > visibleLimit {
+            // 先开放已在内存中的上一页；无需再次请求数据库或预留空白高度。
+            visibleMessageLimitByUserID[cleanUserID] = min(cachedCount,
+                visibleLimit + messagePageSize)
+            objectWillChange.send()
+            return
+        }
         let account = LocalChatHistoryAccount(
             sdkAppID: chatHistorySDKAppID,
             ownerUserID: chatState.ownerUserID
@@ -1209,6 +1280,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 "message_count": String(page.messages.count), "operation": "page-await"
             ])
             chatState.mergeMessages(page.messages)
+            visibleMessageLimitByUserID[cleanUserID] = visibleLimit + page.messages.count
             state.isLoading = false
             state.hasEarlierMessages = page.hasEarlierMessages
             if let oldestMessage = page.messages.first {
@@ -1291,7 +1363,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             direction: .outgoing, status: .pending, createdAt: Date())
         var messageID: UUID?
         do {
-            // Lock the target explicitly; never consult the chat selected later.
+            // 明确锁定目标会话，不再读取随后可能切换的聊天选中项。
             let queued = try chatState.queueForwardedMessage(source, to: recipient.userID)
             messageID = queued.id
             enqueueHistoryUpsert(queued)
@@ -1428,6 +1500,8 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         return !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// 按媒体类型把转发内容交付给目标联系人。
+    /// 发送失败应保留来源与目标信息供重试，不把未确认发送当作成功。
     private func deliverForwardedMessage(
         _ message: RemoteIMMessage,
         to targetUserID: String
@@ -1888,8 +1962,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         guard !remoteDiagnosticsAccountTag.isEmpty, event.accountTag == remoteDiagnosticsAccountTag else { return }
         guard shouldAcceptIncomingSender(event.fromUserID, kind: "file") else { return }
         guard await shouldAcceptIncomingMessage(remoteID: event.remoteID) else { return }
-        // The history lookup suspends. An account change during that await must
-        // not let the old account's completed download enter the new store.
+        // 历史查询会挂起；等待期间若账号切换，旧账号下载结果不能进入新账号存储。
         guard event.accountTag == remoteDiagnosticsAccountTag else { return }
         let previousCount = chatState.messages.count
         let message = chatState.receiveFile(
@@ -1928,6 +2001,9 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         }
     }
 
+    /// 接收视频消息并与同一远端消息标识的旧记录合并。
+    /// 先校验发送者和去重状态，再更新附件、保存历史和触发媒体视图刷新；
+    /// 下载或封面尚未完成时保留消息行，避免整个聊天页重新布局。
     private func receive(_ event: IncomingRemoteIMVideo) async {
         mediaFileRevision &+= 1
         guard shouldAcceptIncomingSender(event.fromUserID, kind: "video") else { return }
@@ -1984,8 +2060,8 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         if wasInserted {
             settingsStore.save(currentStoredSettings())
         }
-        // The attachment paths are stable from the metadata stage onward. A later download
-        // makes the file appear at the same path, so explicitly refresh the bubble/player.
+        // 附件从元数据阶段就使用稳定路径；后续下载只让同一路径出现真实文件，
+        // 因此需明确刷新气泡和播放器，而不是重建消息。
         objectWillChange.send()
     }
 
@@ -2131,9 +2207,8 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         }
         reconnectOnLaunch = value
         var settings = settingsStore.load()
-        // Account switching is not exposed by the current UI, but keep this partial write safe for
-        // a future switch: a process kill between this write and the full account rebuild must not
-        // leave account B paired with account A's contacts and unread counters.
+        // 账号切换过程中的部分写入也要可恢复：
+        // 若完整重建前进程退出，不能让 B 账号继续使用 A 账号的联系人和未读数。
         if settings.masterUserID.trimmingCharacters(in: .whitespacesAndNewlines) != cleanMasterUserID {
             settings.friendUserIDs = []
             settings.slaveUserIDs = []
@@ -2147,6 +2222,8 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         settingsStore.save(settings)
     }
 
+    /// 账号切换后重建联系人、消息和未读状态。
+    /// 隔离不同手机号的数据，完成状态恢复后再开放对应的会话入口。
     private func rebuildChatStateForCurrentAccount() async -> Bool {
         stopAllActivity()
         accountRebuildRequestGeneration &+= 1
@@ -2208,6 +2285,8 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         historyAccountGeneration &+= 1
         chatHistorySDKAppID = nextSDKAppID
         conversationHistoryStateByUserID = [:]
+        visibleMessageLimitByUserID = [:]
+        focusedMessageIDByUserID = [:]
         conversationHistoryLoadGenerationByUserID = [:]
         pendingIncomingRemoteIDs = []
         let nextState = MasterChatState(
@@ -2336,6 +2415,8 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         return pendingHistoryMutations.isEmpty
     }
 
+    /// 批量提交等待写盘的 IM 历史变更。
+    /// 按到达顺序落库，失败时保留队列以免丢失尚未持久化的消息。
     private func drainPendingHistoryMutations() async {
         while !pendingHistoryMutations.isEmpty {
             let mutations = pendingHistoryMutations
@@ -2427,6 +2508,8 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         )
     }
 
+    /// 刷新当前联系人在线状态并发布必要的界面变化。
+    /// 接口部分失败时不清空已有联系人或消息列表。
     private func refreshPresenceForCurrentContacts() async {
         guard connectionState == .connected else { return }
         let contactUserIDs = chatState.contacts.map(\.userID)
@@ -2499,6 +2582,8 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         )
     }
 
+    /// 批量更新联系人资料、头像与显示名称。
+    /// 网络结果只覆盖有变化的字段，避免因资料刷新重建整个会话页。
     private func refreshProfiles(userIDs: [String]) async {
         guard connectionState == .connected else { return }
         let generation = profileFetchGeneration

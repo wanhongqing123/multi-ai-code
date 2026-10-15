@@ -1,3 +1,5 @@
+// 文件作用：验证“保存 Agent 向用户询问的问题及回答状态”的正确行为和边界条件。
+// 验证入口：test_ask_blocks_until_someone_answers、test_interrupting_gives_no_answer、test_timeout_gives_no_answer；检查可观察结果而非实现细节。
 // 问答闸门和 question 工具的测试。
 //
 // 重点是**没等到答案的那几种情况**。编一个答案回给模型，它会基于一个用户
@@ -153,8 +155,7 @@ void test_without_a_gate_the_tool_says_so_instead_of_hanging() {
     auto tool = makeMaiQuestionTool();
     MaiToolContext context;
     context.sessionId = "ses_q";
-    const MaiToolResult result =
-        tool->execute(args({{"question", "which one?"}}), context);
+    const MaiToolResult result = tool->execute(args({{"question", "which one?"}}), context);
     CHECK(result.hasError());
     CHECK(result.error().code() == MaiErrorCode::NotSupported);
     // 要告诉模型下一步能怎么办，而不是只说不行。

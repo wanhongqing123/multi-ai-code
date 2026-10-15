@@ -1,3 +1,6 @@
+// 文件作用：调用账号服务完成手机号登录、令牌刷新及移动端凭证获取。
+// 阅读边界：本文件不保存长期模型密钥；安全存储由账号状态和系统存储层负责。
+// 封装手机号验证、账号登录、刷新令牌及服务端 IM 凭据请求。
 import Foundation
 
 struct MaiChatAuthChallenge: Decodable, Sendable {
@@ -73,7 +76,13 @@ enum MaiChatAuthError: LocalizedError {
 actor MaiChatAuthClient {
     static let shared = MaiChatAuthClient()
 
+    // UI 测试显式注入本机账号后才连接模拟服务；普通模拟器运行仍使用正式账号服务。
+    #if DEBUG && targetEnvironment(simulator)
+    private let baseURL = URL(string: ProcessInfo.processInfo.environment["MAICHAT_LOCAL_UI_PHONE"] != nil
+        ? "http://127.0.0.1:18190/v1/" : "https://ichat.life/api/v1/")!
+    #else
     private let baseURL = URL(string: "https://ichat.life/api/v1/")!
+    #endif
     private let refreshStore = KeychainSecretStore(account: "maichat-account-refresh-token")
     private var accessToken: String?
     private var accessExpiresAt = Date.distantPast

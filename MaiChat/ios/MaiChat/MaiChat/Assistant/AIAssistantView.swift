@@ -1,3 +1,7 @@
+// 文件作用：展示创作中心的会话抽屉、消息时间线、附件预览、输入栏和语音交互。
+// 消息列表只渲染模型已经加载的页面；切 Session 后定位到新会话真实的最新消息。
+// 用户上滑阅读旧页时保留当前位置；新消息、键盘或播放器分屏只在需要跟随底部时校正。
+// 会话读写与 Agent 任务由 AIAssistantModel 管理；本文件负责视图生命周期和操作反馈。
 import AVFoundation
 import CoreTransferable
 import MaiChatCore
@@ -25,6 +29,7 @@ struct AIAssistantView: View {
     @State private var isAttachmentPanelPresented = false
     @State private var composerFocusController = AIComposerFocusController()
     @State private var transcriptionPresentation = VoiceTranscriptionPresentation()
+    @State private var galleryDirection = 0
 
     init(isActive: Bool = true, onExit: (() -> Void)? = nil) {
         self.isActive = isActive
@@ -37,7 +42,9 @@ struct AIAssistantView: View {
         return arguments.contains("--ai-history-ui-test") ||
             arguments.contains("--ai-session-switch-ui-test") ||
             arguments.contains("--ai-stream-typing-ui-test") ||
-            arguments.contains("--ai-image-fullscreen-ui-test")
+            arguments.contains("--voice-conversation-preview") ||
+            arguments.contains("--ai-image-fullscreen-ui-test") ||
+            arguments.contains("--ai-image-mixed-ui-test")
         #else
         return false
         #endif
@@ -49,6 +56,8 @@ struct AIAssistantView: View {
         }
     }
 
+    /// 根据横竖屏尺寸装配标题、消息列表、输入栏和弹层。
+    /// 视频分屏只改变可用视口；会话数据仍由原页面持有，弹层不参与消息区测量。
     private func content(viewportSize: CGSize) -> some View {
         let wideLayout = viewportSize.width >= 700 && viewportSize.width > viewportSize.height
         return ZStack(alignment: .topTrailing) {
@@ -60,6 +69,8 @@ struct AIAssistantView: View {
                     Divider()
                 }
                 VStack(spacing: 0) {
+                    // 标题和输入栏保持稳定；消息区只接收剩余的可用高度。
+                    // 播放器停靠或键盘弹出时不重建整页，也不清空已绘制的消息。
                     AIHeader(
                         exit: onExit == nil ? nil : {
                             composerFocusController.dismiss()
@@ -81,8 +92,11 @@ struct AIAssistantView: View {
                         }
                     )
                     Divider().overlay(Color.black.opacity(0.06))
+                    // 首次准备期间显示明确进度；已有会话的刷新继续展示旧消息，
+                    // 待读取完成后才在相同容器内更新可见页。
                     if !model.ready {
-                        Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
+                        ProgressView("正在打开创作中心")
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
                         AIAssistantMessageList(
                             model: model,
@@ -101,6 +115,8 @@ struct AIAssistantView: View {
                             Button { model.error = "" } label: { Image(systemName: "xmark") }
                         }.foregroundStyle(.red).padding(12).background(Color.red.opacity(0.05))
                     }
+                    // 输入栏使用独立草稿和焦点状态；转写悬浮层由窗口顶层呈现，
+                    // 不把转写卡片高度写回消息滚动视口。
                     AIComposer(
                         model: model,
                         snapshot: AIComposerSnapshot(
@@ -122,6 +138,8 @@ struct AIAssistantView: View {
                 .background(Color(uiColor: .systemBackground))
             }
             if showActions {
+                // 右上角操作面板只处理模型、操作权限与会话清理；
+                // 关闭时保留当前会话、消息和输入草稿。
                 Color.black.opacity(0.001).ignoresSafeArea().contentShape(Rectangle())
                     .onTapGesture { showActions = false }
                 AIActionPanel(
@@ -143,16 +161,14 @@ struct AIAssistantView: View {
                         next.policy = policy
                         Task { _ = await model.save(next) }
                     },
-                    configureModel: {
-                        showActions = false
-                        model.showSettings = true
-                    },
                     clear: { showActions = false; confirmClear = true }
                 )
                 .padding(.top, 54).padding(.trailing, 14)
                 .transition(.scale(scale: 0.96, anchor: .topTrailing).combined(with: .opacity))
             }
             if !wideLayout {
+                // 竖屏抽屉常驻于视图树，通过位移和命中状态开合；
+                // 不销毁下方消息页，侧滑过程中才能持续看到原会话内容。
                 GeometryReader { geometry in
                     let width = min(360, geometry.size.width * 0.86)
                     let offset = sessionDrawerX(width: width)
@@ -182,10 +198,15 @@ struct AIAssistantView: View {
                     .zIndex(5)
             }
             if let preview = model.previewImage {
-                AIImagePreviewOverlay(preview: preview) {
+                // 图片预览盖住整屏，媒体序列标识保持稳定；
+                // 关闭预览后原消息行和滚动位置仍属于同一个会话页面。
+                AIImagePreviewOverlay(preview: preview,
+                                      navigate: navigateImagePreview) {
                     model.previewImage = nil
                 }
                 .id(preview.id)
+                .transition(.opacity.combined(with:
+                    .offset(x: CGFloat(galleryDirection * 48))))
                 // 和 IM 图片预览一致，覆盖屏幕边缘并隐藏系统状态栏。
                 .ignoresSafeArea()
                 .zIndex(30)
@@ -201,6 +222,7 @@ struct AIAssistantView: View {
             Button("清空消息", role: .destructive) { Task { await model.action("clear") } }
         }
         .onAppear {
+            logAIHistoryEvent("page-appeared session=\(model.selected) active=\(isActive)")
             if isActive && !usesStandaloneUITestFixture {
                 model.appear()
             }
@@ -217,6 +239,7 @@ struct AIAssistantView: View {
             }
         }
         .onDisappear {
+            logAIHistoryEvent("page-disappeared session=\(model.selected) active=\(isActive)")
             if !usesStandaloneUITestFixture {
                 model.disappear()
             }
@@ -226,6 +249,26 @@ struct AIAssistantView: View {
             if phase == .active { model.appear() }
             else { model.disappear() }
         }
+    }
+
+    private func navigateImagePreview(_ direction: Int) -> Bool {
+        guard let current = model.previewImage,
+              let next = current.sequence?.adjacent(direction) else { return false }
+        galleryDirection = direction
+        if next.current.kind == .video {
+            guard let appState = AIMobileHostToolProvider.shared.appState else { return false }
+            model.previewImage = nil
+            appState.agentVideoPresentation = MaiFfplayPresentation(
+                sequence: next, entryDirection: direction)
+        } else {
+            withAnimation(.easeOut(duration: 0.22)) {
+                model.previewImage = AIImagePreview(
+                    filePath: next.current.path,
+                    imageSize: MaiConversationMedia.imageSize(at: next.current.path),
+                    sequence: next)
+            }
+        }
+        return true
     }
 
     private var drawerAnimation: Animation {
@@ -282,6 +325,7 @@ struct AIAssistantView: View {
     }
 
     private func openSessionDrawer(wideLayout: Bool) {
+        logAIHistoryEvent("drawer-open-request session=\(model.selected) wide=\(wideLayout)")
         if wideLayout {
             showsWideSidebar.toggle()
             return
@@ -293,12 +337,15 @@ struct AIAssistantView: View {
     }
 
     private func closeSessionDrawer() {
+        logAIHistoryEvent("drawer-close-request session=\(model.selected)")
         withAnimation(drawerAnimation) {
             showSessions = false
             sessionDrawerOffset = 0
         }
     }
 
+    /// 显示已存在的会话入口，并把点击操作交给模型先读取目标页再切换。
+    /// 横屏固定侧栏、竖屏抽屉共用同一列表，删除操作必须确认目标已选中。
     private func sessionList(wideLayout: Bool) -> some View {
         VStack(spacing: 0) {
             HStack {
@@ -317,7 +364,7 @@ struct AIAssistantView: View {
                     HStack(spacing: 8) {
                         Button {
                             closeSessionDrawer()
-                            Task { await model.select(session.id) }
+                            Task { await model.selectConversation(session.id) }
                         } label: {
                             HStack {
                             Text(session.displayTitle).font(ChatTypography.conversationTitle).lineLimit(2)
@@ -335,7 +382,11 @@ struct AIAssistantView: View {
                         .accessibilityIdentifier("ai-conversation-\(session.id)")
                         if !session.busy {
                             Button {
-                                Task { await model.select(session.id); await model.action("delete") }
+                                Task {
+                                    await model.selectConversation(session.id)
+                                    guard model.selected == session.id else { return }
+                                    await model.action("delete")
+                                }
                             } label: {
                                 Image(systemName: "trash").foregroundStyle(Color.secondary)
                                     .frame(width: 44, height: 44)
@@ -402,8 +453,8 @@ private final class AIMessageViewportLog {
     }
 }
 
-// Owns AI message positioning. Data refresh supplies stable message IDs;
-// keyboard resizing and streamed parts never replace the current scroll intent.
+// 管理创作中心消息视口：数据刷新只提供稳定消息 ID，
+// 键盘尺寸变化和流式片段都不替换用户当前的阅读位置意图。
 private struct AIAssistantMessageList: View {
     @ObservedObject var model: AIAssistantModel
     let focusController: AIComposerFocusController
@@ -425,16 +476,16 @@ private struct AIAssistantMessageList: View {
                             welcome
                         }
                         if !model.messages.isEmpty {
-                            if model.hasOlderMessages {
+                            if model.hasOlderVisibleMessages {
                                 Button("查看更早消息", action: requestOlderMessages)
                                     .font(.system(size: 13, weight: .medium))
                                     .foregroundStyle(.secondary)
                                     .frame(maxWidth: .infinity)
                                     .buttonStyle(.plain)
                             }
-                            // 只创建视口附近的历史消息视图；已取回的旧页也不必全部同时渲染。
-                            LazyVStack(alignment: .leading, spacing: 24) {
-                                ForEach(model.messages) { message in
+                            // 只把已开放的一页交给视图，由真实行高决定可滚动范围。
+                            VStack(alignment: .leading, spacing: 24) {
+                                ForEach(model.visibleMessages) { message in
                                     AIMessageRow(message: message,
                                                  workspacePath: model.workspacePath,
                                                  quote: {
@@ -463,7 +514,7 @@ private struct AIAssistantMessageList: View {
                     .background(alignment: .bottom) {
                         MessageScrollPositionReader(
                             restoreInitialScrollableHistory: isActive && followsLatest &&
-                                !model.messages.isEmpty,
+                                !model.visibleMessages.isEmpty,
                             allowsBottomFollowing: isActive && followsLatest,
                             bottomCorrectionRequest: bottomCorrectionRequest,
                             userScrollAwayThreshold: 60,
@@ -488,18 +539,31 @@ private struct AIAssistantMessageList: View {
                         .frame(height: 1)
                     }
                 }
+                .modifier(MessageInitialScrollAnchor())
                 .contentShape(Rectangle())
                 .onTapGesture {
                     focusController.dismiss()
                     isAttachmentPanelPresented = false
                 }
                 .onAppear {
-                    logAIHistoryEvent("message-list appear session=\(model.selected) count=\(model.messages.count) first=\(model.messages.first?.id ?? "none") last=\(model.messages.last?.id ?? "none")")
+                    logAIHistoryEvent("message-list appear session=\(model.selected) count=\(model.visibleMessages.count) first=\(model.visibleMessages.first?.id ?? "none") last=\(model.visibleMessages.last?.id ?? "none")")
                 }
-                .onChange(of: model.messages.first?.id) { _ in
+                .onChange(of: model.visibleMessages.first?.id) { _ in
                     if let anchor = prependAnchorID {
                         prependAnchorID = nil
                         position(at: anchor, proxy: proxy, anchor: .top)
+                    }
+                }
+                .onChange(of: model.messages.last?.id) { latestID in
+                    guard isActive, followsLatest, prependAnchorID == nil,
+                          let latestID else { return }
+                    // 新的用户或助手消息在当前页完成布局后再定位；
+                    // 不能沿用发消息前的像素偏移，否则小视口可能停在空白区域。
+                    DispatchQueue.main.async {
+                        guard isActive, followsLatest,
+                              model.messages.last?.id == latestID else { return }
+                        position(at: latestID, proxy: proxy, anchor: .bottom)
+                        bottomCorrectionRequest += 1
                     }
                 }
                 .onChange(of: model.scrollRequest) { _ in
@@ -518,6 +582,32 @@ private struct AIAssistantMessageList: View {
                     keyboardFollowIntent = nil
                     keyboardTransitionOpening = nil
                     viewportLog.reset()
+                }
+                .onChange(of: geometry.size.height) { height in
+                    // 上方播放器进入分屏会缩小消息视口。保留用户主动上滑的阅读位置；
+                    // 原本跟随最新消息时，在新的可见高度完成布局后重新校正底部。
+                    AppDiagnosticLog.shared.record(
+                        level: .info,
+                        category: "assistant-viewport",
+                        event: "resized",
+                        fields: [
+                            "height": String(format: "%.1f", height),
+                            "message_count": String(model.messages.count),
+                            "visible_count": String(model.visibleMessages.count),
+                            "history_loaded": String(model.historyLoaded),
+                            "follows_latest": String(followsLatest)
+                        ]
+                    )
+                    guard isActive, followsLatest,
+                          let latestID = model.messages.last?.id else { return }
+                    // 视口收缩或恢复后定位真实消息行；不能只按旧的像素偏移
+                    // 推算底部，否则播放器与键盘改变高度时可能落进空白。
+                    DispatchQueue.main.async {
+                        guard isActive, followsLatest,
+                              model.messages.last?.id == latestID else { return }
+                        position(at: latestID, proxy: proxy, anchor: .bottom)
+                        bottomCorrectionRequest += 1
+                    }
                 }
                 .onChange(of: isActive) { active in
                     guard active else { return }
@@ -550,19 +640,19 @@ private struct AIAssistantMessageList: View {
     }
 
     private func position(at id: String, proxy: ScrollViewProxy, anchor: UnitPoint) {
-        logAIHistoryEvent("scroll-request session=\(model.selected) target=\(id) first=\(model.messages.first?.id ?? "none") last=\(model.messages.last?.id ?? "none")")
+        logAIHistoryEvent("scroll-request session=\(model.selected) target=\(id) first=\(model.visibleMessages.first?.id ?? "none") last=\(model.visibleMessages.last?.id ?? "none")")
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
         withTransaction(transaction) { proxy.scrollTo(id, anchor: anchor) }
     }
 
     private func requestOlderMessages() {
-        guard prependAnchorID == nil, model.hasOlderMessages,
-              let anchor = model.messages.first?.id else { return }
+        guard prependAnchorID == nil, model.hasOlderVisibleMessages,
+              let anchor = model.visibleMessages.first?.id else { return }
         prependAnchorID = anchor
         Task {
             await model.loadOlderMessages()
-            if model.messages.first?.id == anchor { prependAnchorID = nil }
+            if model.visibleMessages.first?.id == anchor { prependAnchorID = nil }
         }
     }
 
@@ -635,7 +725,6 @@ private struct AIActionPanel: View {
     let canClear: Bool
     let selectModel: (String) -> Void
     let selectPolicy: (String) -> Void
-    let configureModel: () -> Void
     let clear: () -> Void
     @State private var expandedSection: Section?
 
@@ -673,8 +762,6 @@ private struct AIActionPanel: View {
                     policyOption("完全访问", value: "never")
                 }
             }
-            Divider().padding(.leading, 42)
-            action("模型配置", "slider.horizontal.3", Color.primary, configureModel)
             Divider().padding(.leading, 42)
             action("清空当前对话", "trash", canClear ? Color.red : Color.secondary, clear)
                 .disabled(!canClear)
@@ -810,7 +897,9 @@ private struct AIMessageRow: View, Equatable {
                                             in: RoundedRectangle(cornerRadius: 18))
                         }
                         ForEach(Array(imagePaths.enumerated()), id: \.offset) { _, path in
-                            AIWorkspaceImage(filePath: path)
+                            AIWorkspaceImage(filePath: path) { size, sourceFrame in
+                                openImage(path, imageSize: size, sourceFrame: sourceFrame)
+                            }
                         }
                         ForEach(videoPaths, id: \.self) { path in
                             AIWorkspaceVideoCard(filePath: path) {
@@ -902,7 +991,10 @@ private struct AIMessageRow: View, Equatable {
                 ForEach(mediaArtifacts) { artifact in
                     VStack(alignment: .leading, spacing: 8) {
                         if artifact.type == "image" {
-                            AIWorkspaceImage(filePath: artifact.filePath)
+                            AIWorkspaceImage(filePath: artifact.filePath) { size, sourceFrame in
+                                openImage(artifact.filePath, imageSize: size,
+                                          sourceFrame: sourceFrame)
+                            }
                         } else if artifact.type == "video" {
                             AIWorkspaceVideoCard(filePath: artifact.filePath) {
                                 openVideo(artifact.filePath)
@@ -1017,10 +1109,79 @@ private struct AIMessageRow: View, Equatable {
                                                    workspacePath: workspacePath)
             .filter { !alreadyShown.contains($0.url.path) }
     }
+    private var displayedMediaItems: [MaiMediaItem] {
+        let mentions = textMediaMentions.filter { $0.kind == .video }.map {
+            MaiMediaItem(kind: .video, path: $0.url.path)
+        }
+        if message.role == "user" {
+            return imagePaths.map { MaiMediaItem(kind: .image, path: $0) }
+                + videoPaths.map { MaiMediaItem(kind: .video, path: $0) }
+                + mentions
+        }
+        return mentions + mediaArtifacts.compactMap { artifact in
+            let kind: MaiMediaKind
+            if artifact.type == "image" { kind = .image }
+            else if artifact.type == "video" { kind = .video }
+            else { return nil }
+            return MaiMediaItem(kind: kind, path: artifact.filePath)
+        }
+    }
+    private func fullMediaItems(model: AIAssistantModel,
+                                session: String) async -> [MaiMediaItem] {
+        let history = await model.messagesForMediaPlaylist(in: session)
+        var items: [MaiMediaItem] = []
+        for (index, entry) in history.enumerated() {
+            items += Self(message: entry, workspacePath: workspacePath,
+                          quote: {}).displayedMediaItems
+            if index.isMultiple(of: 40) { await Task.yield() }
+        }
+        return items
+    }
+
+    private func openImage(_ path: String, imageSize: CGSize, sourceFrame: CGRect) {
+        let model = AIAssistantModel.shared
+        let session = model.selected
+        let items = model.messages.flatMap {
+            Self(message: $0, workspacePath: workspacePath, quote: {}).displayedMediaItems
+        }
+        let sequence = MaiMediaSequence(
+            selected: MaiMediaItem(kind: .image, path: path), items: items)
+        let initial = AIImagePreview(filePath: path, imageSize: imageSize,
+                                     sourceFrame: sourceFrame, sequence: sequence)
+        model.previewImage = initial
+        Task {
+            let allItems = await fullMediaItems(model: model, session: session)
+            guard !allItems.isEmpty, model.selected == session,
+                  let current = model.previewImage,
+                  current.sequence?.groupID == sequence.groupID else { return }
+            model.previewImage = AIImagePreview(
+                filePath: current.filePath, imageSize: current.imageSize,
+                sourceFrame: current.sourceFrame,
+                sequence: current.sequence?.updatingItems(allItems), id: current.id)
+        }
+    }
+
     private func openVideo(_ path: String) {
         // 视频在上半屏播放时保留创作中心输入区，AI 才能接收“跳到第几秒”等后续指令。
         if let appState = AIMobileHostToolProvider.shared.appState {
-            appState.agentVideoPresentation = MaiFfplayPresentation(path: path)
+            let model = AIAssistantModel.shared
+            let session = model.selected
+            let items = model.messages.flatMap {
+                Self(message: $0, workspacePath: workspacePath, quote: {}).displayedMediaItems
+            }
+            let sequence = MaiMediaSequence(
+                selected: MaiMediaItem(kind: .video, path: path), items: items)
+            let initial = MaiFfplayPresentation(sequence: sequence)
+            appState.agentVideoPresentation = initial
+            Task {
+                let allItems = await fullMediaItems(model: model, session: session)
+                guard !allItems.isEmpty, model.selected == session,
+                      appState.agentVideoPresentation?.groupID == initial.groupID else { return }
+                guard model.selected == session,
+                      let current = appState.agentVideoPresentation,
+                      current.groupID == initial.groupID else { return }
+                appState.agentVideoPresentation = current.updatingMediaItems(allItems)
+            }
         } else {
             videoPreview = AIVideoPreviewItem(path: path)
         }
@@ -1265,6 +1426,7 @@ private struct AIPDFArtifactButton: View {
 
 private struct AIWorkspaceImage: View {
     let filePath: String
+    let openPreview: (CGSize, CGRect) -> Void
     @State private var decodedSize: CGSize?
 
     private var previewSize: CGSize {
@@ -1278,10 +1440,7 @@ private struct AIWorkspaceImage: View {
                 let sourceFrame = geometry.frame(in: .named(
                     AIImagePreviewLayout.coordinateSpaceName))
                 guard sourceFrame.width > 0, sourceFrame.height > 0 else { return }
-                AIAssistantModel.shared.previewImage = AIImagePreview(
-                    filePath: filePath,
-                    imageSize: decodedSize ?? previewSize,
-                    sourceFrame: sourceFrame)
+                openPreview(decodedSize ?? previewSize, sourceFrame)
             } label: {
                 RemoteIMAsyncImage(filePath: filePath,
                                    maximumPointSize: previewSize) { image in
@@ -1512,6 +1671,60 @@ struct AIImageFullscreenUITestRoot: View {
     }
 }
 
+struct AIImageMixedUITestRoot: View {
+    @StateObject private var appState = RemoteIMAppState(loadedSettings: .empty)
+
+    var body: some View {
+        ZStack {
+            AIAssistantView()
+            if let video = appState.agentVideoPresentation {
+                MaiFfplayVideoScreen(path: video.path, navigate: { direction in
+                    guard let next = video.sequence.adjacent(direction) else { return false }
+                    if next.current.kind == .image {
+                        appState.agentVideoPresentation = nil
+                        AIAssistantModel.shared.previewImage = AIImagePreview(
+                            filePath: next.current.path,
+                            imageSize: CGSize(width: 300, height: 500), sequence: next)
+                    } else {
+                        appState.agentVideoPresentation = MaiFfplayPresentation(
+                            sequence: next, entryDirection: direction)
+                    }
+                    return true
+                }) {
+                    appState.agentVideoPresentation = nil
+                }
+                .id(video.id)
+                .ignoresSafeArea()
+                .overlay(alignment: .top) {
+                    Text("\(video.index + 1)/\(video.sequence.items.count) · " +
+                         URL(fileURLWithPath: video.path).lastPathComponent)
+                        .foregroundStyle(.white).padding(.top, 70)
+                }
+            }
+        }
+        .task {
+            AIMobileHostToolProvider.shared.appState = appState
+            guard let video = Bundle.main.url(forResource: "ffplay-seek-sample",
+                                                  withExtension: "mp4") else { return }
+            let image = UIGraphicsImageRenderer(size: CGSize(width: 300, height: 500))
+                .image { context in
+                    UIColor.systemBlue.setFill()
+                    context.fill(CGRect(x: 0, y: 0, width: 300, height: 500))
+                }
+            let file = FileManager.default.temporaryDirectory
+                .appendingPathComponent("ai-image-mixed-ui-test.png")
+            guard let data = image.pngData(),
+                  (try? data.write(to: file)) != nil else { return }
+            let first = MaiMediaItem(kind: .image, path: file.path)
+            let sequence = MaiMediaSequence(selected: first, items: [
+                first, MaiMediaItem(kind: .video, path: video.path)
+            ])
+            AIAssistantModel.shared.previewImage = AIImagePreview(
+                filePath: file.path, imageSize: image.size, sequence: sequence)
+        }
+    }
+}
+
 struct AITextMediaUITestRoot: View {
     var body: some View {
         if let video = Bundle.main.url(forResource: "ffplay-sample", withExtension: "mp4") {
@@ -1589,8 +1802,11 @@ struct AIStreamTypingUITestRoot: View {
 
 private struct AIImagePreviewOverlay: View {
     let preview: AIImagePreview
+    let navigate: (Int) -> Bool
     let close: () -> Void
     @State private var isExpanded = false
+    @State private var isZoomed = false
+    @State private var navigationStatus = ""
 
     private var previewAnimation: Animation {
         .interactiveSpring(response: 0.38, dampingFraction: 0.86, blendDuration: 0.08)
@@ -1636,11 +1852,38 @@ private struct AIImagePreviewOverlay: View {
                 .frame(width: imageFrame.width, height: imageFrame.height)
                 .modifier(ImagePreviewZoomModifier(enabled: isExpanded,
                                                    imageSize: fittedSize,
-                                                   viewportSize: geometry.size))
+                                                   viewportSize: geometry.size,
+                                                   onScaleChanged: { isZoomed = $0 > 1.01 }))
                 .position(x: imageFrame.midX, y: imageFrame.midY)
                 .contentShape(Rectangle())
                 .onTapGesture(perform: shrinkAndClose)
                 .accessibilityIdentifier("agent-image-preview")
+
+                if let sequence = preview.sequence, sequence.items.count > 1 {
+                    Text("\(sequence.index + 1)/\(sequence.items.count) · " +
+                         URL(fileURLWithPath: preview.filePath).lastPathComponent)
+                        .font(.system(size: 12, weight: .medium))
+                        .lineLimit(1)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 10).padding(.vertical, 7)
+                        .background(.black.opacity(0.58), in: Capsule())
+                        .frame(maxWidth: .infinity, maxHeight: .infinity,
+                               alignment: .top)
+                        .padding(.top, 20).padding(.horizontal, 70)
+                        .allowsHitTesting(false)
+                }
+
+                if !navigationStatus.isEmpty {
+                    Text(navigationStatus)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.white)
+                        .padding(10)
+                        .background(.black.opacity(0.65), in: Capsule())
+                        .frame(maxWidth: .infinity, maxHeight: .infinity,
+                               alignment: .bottom)
+                        .padding(.bottom, 85)
+                        .allowsHitTesting(false)
+                }
 
                 Button(action: shrinkAndClose) {
                     Image(systemName: "xmark")
@@ -1655,13 +1898,29 @@ private struct AIImagePreviewOverlay: View {
                 .allowsHitTesting(isExpanded)
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
+            .simultaneousGesture(DragGesture(minimumDistance: 50).onEnded { value in
+                guard isExpanded, !isZoomed,
+                      abs(value.translation.width) > abs(value.translation.height) * 1.4
+                else { return }
+                let direction = value.translation.width < 0 ? 1 : -1
+                if !navigate(direction) {
+                    navigationStatus = direction > 0 ? "已经是最后一项" : "已经是第一项"
+                }
+            })
         }
         .onAppear {
-            DispatchQueue.main.async {
-                withAnimation(previewAnimation) { isExpanded = true }
+            if preview.sourceFrame == nil { isExpanded = true }
+            else {
+                DispatchQueue.main.async {
+                    withAnimation(previewAnimation) { isExpanded = true }
+                }
             }
         }
         .accessibilityAction(.escape, shrinkAndClose)
+        .onChange(of: preview.id) { _ in
+            isZoomed = false
+            navigationStatus = ""
+        }
     }
 
     private func shrinkAndClose() {
@@ -1951,9 +2210,6 @@ private struct AIComposer: View, Equatable {
                     snapshot.busy ? "停止" : (isAttachmentPanelPresented ? "收起更多功能" : "展开更多功能")
                 )
             }
-            .background {
-                WindowFrameReader { transcriptionPresentation.updateComposerFrame($0) }
-            }
             .padding(.horizontal, 16)
             .padding(.top, 12)
             .padding(.bottom, 10)
@@ -2128,6 +2384,8 @@ private struct AIComposer: View, Equatable {
         }
     }
 
+    /// 按用户选择顺序导入照片或视频，并把可引用附件交给当前会话。
+    /// 异步读取期间若会话改变，文件保留在原目标会话，避免误发到新会话。
     private func importSelectedMedia(_ items: [PhotosPickerItem]) async {
         let targetSession = model.selected
         defer { selectedMediaItems = [] }
@@ -2203,7 +2461,7 @@ private struct AIComposer: View, Equatable {
                                    to targetSession: String) async {
         guard !images.isEmpty || !videos.isEmpty else { return }
         let existingDraft = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        if await model.send(existingDraft, images: images, videos: videos,
+        if await model.sendMessage(existingDraft, images: images, videos: videos,
                             expectedSession: targetSession) {
             if draft.trimmingCharacters(in: .whitespacesAndNewlines) == existingDraft { draft = "" }
             return
@@ -2269,7 +2527,7 @@ private struct AIComposer: View, Equatable {
         let sent = submittedText ?? draft
         guard !sent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         Task {
-            if await model.send(sent), draft == sent { draft = "" }
+            if await model.sendMessage(sent), draft == sent { draft = "" }
         }
     }
 
@@ -2286,7 +2544,7 @@ private struct AIComposer: View, Equatable {
 
     private func handleVoiceGestureChanged(translation: CGSize, location: CGPoint?) {
         guard canStartVoiceTranscription else { return }
-        if !isPressingVoice { beginVoiceTranscription() }
+        if !isPressingVoice { beginVoiceTranscription(at: location) }
         guard isPressingVoice else { return }
         let target = transcriptionTarget(for: translation, location: location)
         if transcriptionPresentation.target != target {
@@ -2294,7 +2552,7 @@ private struct AIComposer: View, Equatable {
         }
     }
 
-    private func beginVoiceTranscription() {
+    private func beginVoiceTranscription(at gestureOrigin: CGPoint?) {
         guard !isPressingVoice else { return }
         guard draft.isEmpty else { return }
         guard speechRecognizer.isAvailable else {
@@ -2306,7 +2564,8 @@ private struct AIComposer: View, Equatable {
         voiceBaseDraft = draft
         transcriptionPresentation.prepareForNewSession(
             account: "ai-assistant",
-            peer: model.selected
+            peer: model.selected,
+            gestureOrigin: gestureOrigin
         )
         transcriptionPresentation.target = .send
         AppDiagnosticLog.shared.record(
@@ -2333,6 +2592,8 @@ private struct AIComposer: View, Equatable {
         }
     }
 
+    /// 收起语音悬浮层并按“发送／编辑／取消”处理转写结果。
+    /// 悬浮层先结束显示，文本成功后才交给模型；识别失败保留当前消息列表。
     private func finishVoiceGesture(
         translation: CGSize,
         location: CGPoint?,
@@ -2376,6 +2637,10 @@ private struct AIComposer: View, Equatable {
         do {
             let text = try await speechRecognizer.stop()
                 .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty {
+                transcriptionPresentation.showFinalTranscript(text)
+                try? await Task.sleep(for: .milliseconds(240))
+            }
             transcriptionPresentation.reset()
             guard !text.isEmpty else {
                 model.showTransientError("没有识别到文字")
@@ -2385,7 +2650,7 @@ private struct AIComposer: View, Equatable {
                 draft = voiceText(base: voiceBaseDraft, transcript: text)
                 focusController.focus()
             } else {
-                _ = await model.send(text)
+                _ = await model.sendMessage(text)
             }
         } catch is CancellationError {
             transcriptionPresentation.reset()

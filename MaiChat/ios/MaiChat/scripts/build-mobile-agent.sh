@@ -1,4 +1,6 @@
 #!/bin/bash
+# 文件作用：按 iOS 设备或模拟器配置构建移动端 Agent C++ 库。
+# 阅读边界：此文件负责构建或测试流程，不在应用运行时解释为业务逻辑。
 set -euo pipefail
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 repo_dir="$(cd "$PROJECT_DIR/../../.." && pwd)"
@@ -7,6 +9,7 @@ repo_dir="$(cd "$PROJECT_DIR/../../.." && pwd)"
 agent_arch="${ARCHS// /-}"
 agent_build="$repo_dir/MaiAgent/build/vendor/mobile-agent-$PLATFORM_NAME-$agent_arch"
 cmake -S "$repo_dir/MaiChat/MobileAgentAdapter" -B "$agent_build" -G Ninja \
+  -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
   -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT="$SDKROOT" \
   -DCMAKE_OSX_ARCHITECTURES="${ARCHS// /;}" -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0 \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \

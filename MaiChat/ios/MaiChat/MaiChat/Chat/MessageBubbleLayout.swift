@@ -1,3 +1,7 @@
+// 文件作用：集中实现 IM 与创作中心共用的消息气泡尺寸、消息列表位置观察和 UIKit 导航。
+// 消息列表只允许停在已排版内容的范围内；输入、分页和分屏改变可视高度时重新校正偏移。
+// ChatNavigationController 保留已打开联系人的页面实例，避免返回会话时重建草稿和滚动状态。
+// 本文件不读写消息数据库；可见消息与分页边界由上层状态对象提供。
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
@@ -75,9 +79,9 @@ struct MessageHistoryStack<Item: Identifiable, Row: View>: View {
         self.items = items; self.row = row
     }
     var body: some View {
-        // Keep every message in one identity/layout domain. Appending must not
-        // move a row from an eager tail into a separately estimated lazy prefix.
-        LazyVStack(alignment: .leading, spacing: 14) {
+        // 上层只传入当前已加载的一页；直接排版这一页，滚动高度才与实际消息一致。
+        // 旧页读取完成后才追加到此容器，未加载历史不预留可滑入的空白区域。
+        VStack(alignment: .leading, spacing: 14) {
             ForEach(items) { item in row(item) }
         }
     }
@@ -278,6 +282,7 @@ struct MessageScrollPositionReader: UIViewRepresentable {
         private var previousViewportSize: CGSize?
         private var previousContentSize: CGSize?
         private var previousMarkerBottom: CGFloat?
+        private var needsBoundaryCorrectionAfterLayoutChange = false
         private var markerUpdateScheduled = false
         private var correctingViewport = false
         private var followsLatest = false
@@ -334,23 +339,23 @@ struct MessageScrollPositionReader: UIViewRepresentable {
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
                     self.markerUpdateScheduled = false
-                    self.updatePosition()
+                    self.updateMessageScrollPosition()
                 }
             }
             followsLatest = allowsBottomFollowing && restoreInitialScrollableHistory
             next.panGestureRecognizer.addTarget(self, action: #selector(panChanged(_:)))
             observations = [
                 next.observe(\.contentOffset, options: [.new]) { [weak self] _, _ in
-                    MainActor.assumeIsolated { self?.updatePosition() }
+                    MainActor.assumeIsolated { self?.updateMessageScrollPosition() }
                 },
                 next.observe(\.contentSize, options: [.new]) { [weak self] _, _ in
-                    MainActor.assumeIsolated { self?.updatePosition() }
+                    MainActor.assumeIsolated { self?.updateMessageScrollPosition() }
                 },
                 next.observe(\.bounds, options: [.new]) { [weak self] _, _ in
-                    MainActor.assumeIsolated { self?.updatePosition() }
+                    MainActor.assumeIsolated { self?.updateMessageScrollPosition() }
                 }
             ]
-            updatePosition()
+            updateMessageScrollPosition()
         }
 
         func uninstall() {
@@ -365,6 +370,7 @@ struct MessageScrollPositionReader: UIViewRepresentable {
             previousViewportSize = nil
             previousContentSize = nil
             previousMarkerBottom = nil
+            needsBoundaryCorrectionAfterLayoutChange = false
             correctingViewport = false
             followsLatest = false
             notifiedUserScroll = false
@@ -406,8 +412,7 @@ struct MessageScrollPositionReader: UIViewRepresentable {
                  (remainingDistance() ?? 0) > userScrollAwayThreshold)
             if !notifiedUserScroll && leftBottom {
                 notifiedUserScroll = true
-                // The callback only invalidates non-published scroll intent;
-                // cancelling synchronously prevents an already queued jump.
+                // 回调只使非发布的滚动意图失效；同步取消可阻止排队中的跳转。
                 onUserScroll?()
             }
             followsLatest = false
@@ -450,21 +455,57 @@ struct MessageScrollPositionReader: UIViewRepresentable {
                 scroll.setContentOffset(CGPoint(x: scroll.contentOffset.x, y: target),
                                         animated: false)
                 self.correctingViewport = false
-                self.updatePosition()
+                self.updateMessageScrollPosition()
                 self.onViewportResizeNeedsBottom?()
             }
         }
 
-        private func updatePosition() {
+        /// 读取当前可视区和真实内容边界，修正尺寸变化后的越界偏移。
+        /// 手指拖动时不抢控制权；松手后的惯性滚动、键盘和播放器分屏都必须守住边界。
+        private func updateMessageScrollPosition() {
             guard let scroll, scroll.bounds.height > 0, !correctingViewport else { return }
             let firstMeasurement = previousViewportSize == nil
-            let viewportSize = CGSize(width: scroll.bounds.width.rounded(), height: scroll.bounds.height.rounded())
+            let viewportSize = CGSize(width: scroll.bounds.width.rounded(),
+                                      height: scroll.bounds.height.rounded())
             let viewportChanged = previousViewportSize.map { $0 != viewportSize } ?? false
             previousViewportSize = viewportSize
             let contentSize = CGSize(width: scroll.contentSize.width.rounded(),
                                      height: scroll.contentSize.height.rounded())
             let contentChanged = previousContentSize.map { $0 != contentSize } ?? false
             previousContentSize = contentSize
+            if firstMeasurement || viewportChanged || contentChanged {
+                needsBoundaryCorrectionAfterLayoutChange = true
+            }
+            // 播放器进入分屏、键盘出现或流式消息收缩时，SwiftUI 可能先保留旧偏移，
+            // 再缩小 contentSize。此时偏移已经落在真实内容之外，视口会整块显示空白。
+            // 普通拖动或回弹不会改变内容尺寸，不应触发强制夹取；由 UIScrollView
+            // 自己完成边界回弹。尺寸变化期间的修正延后到手势及惯性滚动结束。
+            if needsBoundaryCorrectionAfterLayoutChange &&
+                !scroll.isTracking && !scroll.isDragging && !scroll.isDecelerating &&
+                scroll.contentSize.height > 0 {
+                needsBoundaryCorrectionAfterLayoutChange = false
+                let top = -scroll.adjustedContentInset.top
+                let bottom = max(top, scroll.contentSize.height +
+                    scroll.adjustedContentInset.bottom - scroll.bounds.height)
+                let clamped = min(max(scroll.contentOffset.y, top), bottom)
+                if clamped.isFinite && abs(scroll.contentOffset.y - clamped) > 1 {
+                    AppDiagnosticLog.shared.record(
+                        level: .warning,
+                        category: "message-viewport",
+                        event: "scroll-offset-clamped",
+                        fields: [
+                            "old": String(format: "%.1f", scroll.contentOffset.y),
+                            "new": String(format: "%.1f", clamped),
+                            "content": String(format: "%.1f", scroll.contentSize.height),
+                            "viewport": String(format: "%.1f", scroll.bounds.height)
+                        ]
+                    )
+                    correctingViewport = true
+                    scroll.setContentOffset(CGPoint(x: scroll.contentOffset.x, y: clamped),
+                                            animated: false)
+                    correctingViewport = false
+                }
+            }
             let scrollable = scroll.contentSize.height + scroll.adjustedContentInset.top +
                 scroll.adjustedContentInset.bottom > scroll.bounds.height + 1
             let bottom = contentMarker.flatMap { marker in
@@ -476,8 +517,7 @@ struct MessageScrollPositionReader: UIViewRepresentable {
                 (firstMeasurement && restoreInitialScrollableHistory)
             if needsBottom, scrollable, followsLatest, allowsBottomFollowing,
                !scroll.isTracking, !scroll.isDragging, !scroll.isDecelerating {
-                // React to measured layout, coalescing KVO changes into one
-                // geometry-based correction after layout settles.
+                // 根据实际排版后的几何位置响应变化，将连续 KVO 事件合并为一次校正。
                 scheduleBottomCorrection()
             }
             let remaining = min(bottom, scroll.contentSize.height) +
@@ -486,8 +526,8 @@ struct MessageScrollPositionReader: UIViewRepresentable {
             let nearBottom = remaining <= 60
             onViewportMeasured?(scroll.contentSize.height, scroll.bounds.height,
                                 scroll.contentOffset.y, remaining, nearBottom)
-            // Layout can temporarily change contentSize before bounds. Only a real
-            // user scroll relinquishes the latest-message intent during that transition.
+            // 排版可能先改变内容尺寸、再改变视口；过渡期间只有用户主动滚动
+            // 才能取消跟随最新消息的意图。
             if scroll.isTracking || scroll.isDragging ||
                (userScrollAwayThreshold > 0 && scroll.isDecelerating &&
                 draggedTowardOlderEnough && !notifiedUserScroll) {
@@ -559,7 +599,7 @@ struct ChatNavigationHost: UIViewControllerRepresentable {
 @MainActor
 final class ChatNavigationArrival: ObservableObject {
     @Published private(set) var hasArrived = false
-    // Not published: this only filters keyboard events during interactive back.
+    // 不发布为界面状态：只过滤交互式返回期间的键盘事件。
     var isReturning = false
     weak var scrollIntent: MessageScrollIntent?
     weak var composerView: UIView?
@@ -571,9 +611,18 @@ final class ChatNavigationArrival: ObservableObject {
 @MainActor
 final class ChatNavigationController: UINavigationController,
     UINavigationControllerDelegate, UIGestureRecognizerDelegate {
+    private struct CachedChat {
+        let controller: UIHostingController<AnyView>
+        let arrival: ChatNavigationArrival
+        var lastVisited: UInt64
+    }
+
     private let listController = UIHostingController(rootView: AnyView(EmptyView()))
     private var chatController: UIHostingController<AnyView>?
     private var displayedID: String?
+    private var cachedChats: [String: CachedChat] = [:]
+    private var visitSequence: UInt64 = 0
+    private let cachedChatLimit = 24
     private(set) var arrival = ChatNavigationArrival()
     private var requestedID: String?
     private var requestedDetail: AnyView?
@@ -603,30 +652,54 @@ final class ChatNavigationController: UINavigationController,
         if viewControllers.isEmpty {
             setViewControllers([listController], animated: false)
         }
-        reconcile(animated: animated)
+        synchronizeNavigationStack(animated: animated)
     }
 
-    private func reconcile(animated: Bool) {
-        // Do not replace/remove the outgoing page while a finger owns the
-        // transition. didShow reconciles any input received during the gesture.
+    /// 把请求的联系人映射到稳定的聊天页控制器，并与 UIKit 导航栈同步。
+    /// 同一联系人重复进入时复用页面；手势转场期间延后处理，避免半途替换视图。
+    /// 缓存超过上限时按最久未访问回收，不触碰当前显示的页面。
+    private func synchronizeNavigationStack(animated: Bool) {
+        // 手指控制返回转场时不替换或移除当前页；didShow 再合并手势期间的新输入。
         guard transitionCoordinator == nil else { return }
         guard let requestedID, let requestedDetail else {
             if viewControllers.count > 1 { popToRootViewController(animated: animated) }
             return
         }
+        visitSequence &+= 1
         if let chatController, displayedID == requestedID,
            viewControllers.contains(where: { $0 === chatController }) {
             chatController.rootView = AnyView(requestedDetail.environmentObject(arrival))
+            cachedChats[requestedID]?.lastVisited = visitSequence
         } else {
-            arrival = ChatNavigationArrival()
-            let next = UIHostingController(rootView: AnyView(requestedDetail.environmentObject(arrival)))
-            next.view.backgroundColor = .systemBackground
+            // 已打开过的联系人保留 UIHostingController 和其 SwiftUI 状态。
+            // 返回该聊天时复用原页，输入草稿、滚动位置和已绘制消息不会重新初始化。
+            let next: UIHostingController<AnyView>
+            if var cached = cachedChats[requestedID] {
+                cached.lastVisited = visitSequence
+                cachedChats[requestedID] = cached
+                arrival = cached.arrival
+                next = cached.controller
+                next.rootView = AnyView(requestedDetail.environmentObject(arrival))
+            } else {
+                arrival = ChatNavigationArrival()
+                next = UIHostingController(rootView: AnyView(requestedDetail.environmentObject(arrival)))
+                next.view.backgroundColor = .systemBackground
+                cachedChats[requestedID] = CachedChat(
+                    controller: next, arrival: arrival, lastVisited: visitSequence)
+            }
             chatController = next
             displayedID = requestedID
             if viewControllers.count == 1 {
                 pushViewController(next, animated: animated)
             } else {
                 setViewControllers([listController, next], animated: false)
+            }
+            // 只回收长时间未访问的旧页，不因打开新联系人就销毁上一页。
+            if cachedChats.count > cachedChatLimit {
+                let evictable = cachedChats
+                    .filter { $0.key != requestedID && $0.value.controller !== next }
+                    .min { $0.value.lastVisited < $1.value.lastVisited }
+                if let evictable { cachedChats.removeValue(forKey: evictable.key) }
             }
         }
     }
@@ -671,8 +744,7 @@ final class ChatNavigationController: UINavigationController,
         guard viewControllers.count > 1, transitionCoordinator == nil else { return }
         arrival.isReturning = true
         arrival.scrollIntent?.cancelPendingPositioning()
-        // Start keyboard dismissal and the interactive pop in the same event.
-        // Never wait for keyboardDidHide before moving the page.
+        // 同一事件里开始收键盘和交互式返回，不等待 keyboardDidHide 才移动页面。
         chatController?.view.endEditing(true)
         startBackTransition()
     }
@@ -720,22 +792,22 @@ final class ChatNavigationController: UINavigationController,
         popInteraction = nil
         arrival.isReturning = false
         if viewController === chatController {
-            // SwiftUI onAppear can run before the push has laid out the final
-            // viewport. Signal only a fresh entry, never a cancelled back swipe.
+            // SwiftUI 的 onAppear 可能早于 push 完成最终排版；
+            // 只通知全新进入，不把取消的返回手势算作一次进入。
             arrival.complete()
         }
         if viewController === listController, let poppedID = displayedID {
             displayedID = nil
             chatController = nil
             if requestedID == poppedID {
-                // A completed interactive pop, not an external selection change.
+                // 这是已完成的交互式返回，不是外部选中状态变化。
                 requestedID = nil
                 requestedDetail = nil
                 onPop?()
             }
         }
-        // Defer until UIKit has detached its completed transition coordinator.
-        DispatchQueue.main.async { [weak self] in self?.reconcile(animated: true) }
+        // 等 UIKit 移除已完成的转场协调器后再更新导航状态。
+        DispatchQueue.main.async { [weak self] in self?.synchronizeNavigationStack(animated: true) }
     }
 }
 

@@ -1,3 +1,5 @@
+// 文件作用：使用 SQLite 持久化 Agent 会话和消息。
+// 直接依赖：MaiFilePath.h、MaiFileSystem.h；本文件在这些接口之间完成调用与结果转换。
 #include <sqlite3.h>
 
 #include <algorithm>
@@ -82,6 +84,7 @@ std::string textColumn(sqlite3_stmt* statement, int index) {
                        static_cast<std::size_t>(sqlite3_column_bytes(statement, index)));
 }
 
+// SQLite 接口要求有效 UTF-8；逐段保留合法字节，并把非法序列替换掉，避免一条坏消息破坏整次写入。
 std::string sanitizeUtf8(const std::string& value) {
     constexpr char kReplacement[] = "\xEF\xBF\xBD";
     std::string out;
@@ -189,20 +192,21 @@ public:
 
     bool removeSession(const std::string& id) override {
         std::lock_guard<std::mutex> lock(mMutex);
-        if (!exec("BEGIN IMMEDIATE")) return false;
+        if (!executeTransactionStatement("BEGIN IMMEDIATE")) return false;
 
         // 显式逐级删，不靠 ON DELETE CASCADE：外键约束要连接上开了 PRAGMA foreign_keys 才生效，
         // 而那个 pragma 是每连接的，将来谁新开一个连接忘了设，删除就会只删一半、留下孤儿行。
-        runWith(
+        executeStatementWithTextArgument(
             "DELETE FROM parts WHERE message_id IN "
             "(SELECT id FROM messages WHERE session_id = ?1)",
             id);
-        runWith("DELETE FROM messages WHERE session_id = ?1", id);
-        runWith("DELETE FROM specialist_tasks WHERE owner_session_id = ?1", id);
-        runWith("DELETE FROM sessions WHERE id = ?1", id);
+        executeStatementWithTextArgument("DELETE FROM messages WHERE session_id = ?1", id);
+        executeStatementWithTextArgument("DELETE FROM specialist_tasks WHERE owner_session_id = ?1",
+                                         id);
+        executeStatementWithTextArgument("DELETE FROM sessions WHERE id = ?1", id);
         const int removed = sqlite3_changes(mDatabase);
 
-        exec("COMMIT");
+        executeTransactionStatement("COMMIT");
         return removed > 0;
     }
 
@@ -218,15 +222,16 @@ public:
         sqlite3_reset(check);
         if (!exists) return false;
 
-        if (!exec("BEGIN IMMEDIATE")) return false;
+        if (!executeTransactionStatement("BEGIN IMMEDIATE")) return false;
         // 和 removeSession 一样显式逐级删，理由见那边的注释。
-        runWith(
+        executeStatementWithTextArgument(
             "DELETE FROM parts WHERE message_id IN "
             "(SELECT id FROM messages WHERE session_id = ?1)",
             sessionId);
-        runWith("DELETE FROM messages WHERE session_id = ?1", sessionId);
-        runWith("DELETE FROM specialist_tasks WHERE owner_session_id = ?1", sessionId);
-        exec("COMMIT");
+        executeStatementWithTextArgument("DELETE FROM messages WHERE session_id = ?1", sessionId);
+        executeStatementWithTextArgument("DELETE FROM specialist_tasks WHERE owner_session_id = ?1",
+                                         sessionId);
+        executeTransactionStatement("COMMIT");
         return true;
     }
 
@@ -527,7 +532,7 @@ public:
 
     void putMessage(const std::string& sessionId, const MaiMessage& message) override {
         std::lock_guard<std::mutex> lock(mMutex);
-        if (!exec("BEGIN IMMEDIATE")) return;
+        if (!executeTransactionStatement("BEGIN IMMEDIATE")) return;
 
         sqlite3_stmt* upsert = prepareLocked(
             "INSERT INTO messages(id, session_id, role, created, completed) "
@@ -541,16 +546,16 @@ public:
             sqlite3_bind_int(upsert, 3, roleToColumn(message.role));
             sqlite3_bind_int64(upsert, 4, message.created);
             sqlite3_bind_int64(upsert, 5, message.completed);
-            step(upsert);
+            executePreparedStatement(upsert);
         }
 
         // part 整体重写而不是逐条 diff：一条消息的 part 个数是个位数，
         // 而 diff 要处理"改了/删了/顺序变了"三种情况，不值得。
         // putMessage 也用于流式内容的分块检查点；不是每个 delta 都写一次。
-        runWith("DELETE FROM parts WHERE message_id = ?1", message.id);
+        executeStatementWithTextArgument("DELETE FROM parts WHERE message_id = ?1", message.id);
         for (const auto& part : message.parts) writePartLocked(message.id, part);
 
-        exec("COMMIT");
+        executeTransactionStatement("COMMIT");
     }
 
     std::vector<MaiMessage> listMessages(const std::string& sessionId) const override {
@@ -613,13 +618,13 @@ public:
 
     void recoverInterruptedTools(const std::string& error, std::int64_t completedAt) override {
         std::lock_guard<std::mutex> lock(mMutex);
-        if (!exec("BEGIN IMMEDIATE")) return;
+        if (!executeTransactionStatement("BEGIN IMMEDIATE")) return;
 
         sqlite3_stmt* messages = prepareLocked(
             "UPDATE messages SET completed = ?1 WHERE completed = 0 AND id IN "
             "(SELECT message_id FROM parts WHERE kind = 2 AND state IN (0, 1))");
         if (!messages) {
-            exec("ROLLBACK");
+            executeTransactionStatement("ROLLBACK");
             return;
         }
         bool updatedMessages = false;
@@ -631,7 +636,7 @@ public:
         if (!updatedMessages) {
             noteError("interrupted message recovery failed: " +
                       std::string(sqlite3_errmsg(mDatabase)));
-            exec("ROLLBACK");
+            executeTransactionStatement("ROLLBACK");
             return;
         }
 
@@ -639,7 +644,7 @@ public:
             "UPDATE parts SET state = 3, error = ?1, output = ?1 "
             "WHERE kind = 2 AND state IN (0, 1)");
         if (!parts) {
-            exec("ROLLBACK");
+            executeTransactionStatement("ROLLBACK");
             return;
         }
         bool updatedParts = false;
@@ -651,10 +656,10 @@ public:
         if (!updatedParts) {
             noteError("interrupted tool recovery failed: " +
                       std::string(sqlite3_errmsg(mDatabase)));
-            exec("ROLLBACK");
+            executeTransactionStatement("ROLLBACK");
             return;
         }
-        exec("COMMIT");
+        executeTransactionStatement("COMMIT");
     }
 
     MaiError lastWriteError() const override {
@@ -665,7 +670,7 @@ public:
     bool mutateSession(const std::string& id,
                        const std::function<void(MaiSession&)>& mutator) override {
         std::lock_guard<std::mutex> lock(mMutex);
-        if (!exec("BEGIN IMMEDIATE")) return false;
+        if (!executeTransactionStatement("BEGIN IMMEDIATE")) return false;
 
         MaiSession session;
         bool found = false;
@@ -681,13 +686,13 @@ public:
             }
         }
         if (!found) {
-            exec("ROLLBACK");
+            executeTransactionStatement("ROLLBACK");
             return false;
         }
 
         mutator(session);
         writeSessionLocked(session);
-        exec("COMMIT");
+        executeTransactionStatement("COMMIT");
         return true;
     }
 
@@ -758,9 +763,11 @@ private:
         sqlite3_bind_int(statement, 9, session.depth);
         sqlite3_bind_int64(statement, 6, session.created);
         sqlite3_bind_int64(statement, 7, session.updated);
-        step(statement);
+        executePreparedStatement(statement);
     }
 
+    // 在持有存储锁期间写入一条消息片段及其持久化字段。
+    // 调用方负责事务边界；此处保持消息与片段的关联一致。
     void writePartLocked(const std::string& messageId, const MaiMessagePart& part) {
         sqlite3_stmt* statement = prepareLocked(
             "INSERT INTO parts(id, message_id, kind, created, text, tool, call_id, input, "
@@ -813,7 +820,7 @@ private:
         bindText(statement, 9, output);
         bindText(statement, 10, error);
         sqlite3_bind_int(statement, 11, state);
-        step(statement);
+        executePreparedStatement(statement);
     }
 
     std::vector<MaiMessagePart> readPartsLocked(const std::string& messageId) const {
@@ -869,21 +876,25 @@ private:
         return statement;
     }
 
-    void step(sqlite3_stmt* statement) {
+    // 推进一条已绑定参数的写入语句，并记录 SQLite 返回的首个错误。
+    void executePreparedStatement(sqlite3_stmt* statement) {
         const int code = sqlite3_step(statement);
         if (code != SQLITE_DONE && code != SQLITE_ROW)
             noteError("write failed: " + std::string(sqlite3_errmsg(mDatabase)));
     }
 
-    void runWith(const char* sql, const std::string& argument) {
+    // 为单文本参数语句准备、绑定并执行，再用作用域守卫重置缓存句柄。
+    void executeStatementWithTextArgument(const char* sql, const std::string& argument) {
         sqlite3_stmt* statement = prepareLocked(sql);
         if (!statement) return;
         Reset guard(statement);
         bindText(statement, 1, argument);
-        step(statement);
+        executePreparedStatement(statement);
     }
 
-    bool exec(const char* sql) {
+    // 执行 BEGIN、COMMIT 或 ROLLBACK 等事务控制语句。
+    // SQLite 失败时保留首个写入错误，调用方决定是否继续该批次。
+    bool executeTransactionStatement(const char* sql) {
         char* message = nullptr;
         if (sqlite3_exec(mDatabase, sql, nullptr, nullptr, &message) == SQLITE_OK) return true;
         noteError(std::string("exec failed: ") + (message ? message : sql));
@@ -987,6 +998,7 @@ int readUserVersion(sqlite3* database) {
 
 }  // namespace
 
+// 建库与迁移必须在返回存储对象前完成；任一步失败都返回错误，不能交给调用方半初始化的数据库。
 MaiResult<std::unique_ptr<MaiSessionStore>> makeMaiSqliteStore(
     const std::string& databasePathUtf8) {
     if (databasePathUtf8.empty())

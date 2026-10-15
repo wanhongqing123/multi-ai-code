@@ -1,3 +1,5 @@
+// 文件作用：实现 POSIX 平台的子进程管理。
+// 直接依赖：MaiProcess.h、MaiBlockingCheck.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiProcess.h"
 
 #if defined(__APPLE__)
@@ -6,8 +8,8 @@
 
 // iOS / tvOS / watchOS 上 app 不允许 exec 别的可执行文件，也没有 shell。
 // 这是沙箱的硬规矩，不是权限没配对，所以这些平台整个实现换成一句「不支持」。
-#if (defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE) || \
-    (defined(TARGET_OS_TV) && TARGET_OS_TV) || (defined(TARGET_OS_WATCH) && TARGET_OS_WATCH)
+#if (defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE) || (defined(TARGET_OS_TV) && TARGET_OS_TV) || \
+    (defined(TARGET_OS_WATCH) && TARGET_OS_WATCH)
 #define MAI_PROCESS_EXECUTION_SUPPORTED 0
 #else
 #define MAI_PROCESS_EXECUTION_SUPPORTED 1
@@ -60,6 +62,8 @@ bool maiIsProcessExecutionSupported() {
     return true;
 }
 
+// 启动子进程并收集标准输出、错误输出与退出状态。
+// 超时、取消或启动失败时清理句柄，向调用方返回明确错误。
 MaiError maiRunProcess(const MaiProcessOptions& options, MaiProcessResult& result) {
     maiAssertBlockingAllowed("maiRunProcess");
     result = MaiProcessResult{};
@@ -87,7 +91,8 @@ MaiError maiRunProcess(const MaiProcessOptions& options, MaiProcessResult& resul
 
     int pipeFds[2] = {-1, -1};
     if (::pipe(pipeFds) != 0) {
-        return MaiError(MaiErrorCode::Internal, std::string("pipe failed: ") + std::strerror(errno));
+        return MaiError(MaiErrorCode::Internal,
+                        std::string("pipe failed: ") + std::strerror(errno));
     }
     // exec 成功时这个管道会被自动关掉；失败时子进程往里写 errno，父进程据此知道
     // 「启动失败」而不是「命令跑了但没输出」。没有这条通道的话两者分不开。
@@ -95,7 +100,8 @@ MaiError maiRunProcess(const MaiProcessOptions& options, MaiProcessResult& resul
     if (::pipe(errorFds) != 0) {
         ::close(pipeFds[0]);
         ::close(pipeFds[1]);
-        return MaiError(MaiErrorCode::Internal, std::string("pipe failed: ") + std::strerror(errno));
+        return MaiError(MaiErrorCode::Internal,
+                        std::string("pipe failed: ") + std::strerror(errno));
     }
     ::fcntl(errorFds[1], F_SETFD, FD_CLOEXEC);
 
@@ -110,7 +116,8 @@ MaiError maiRunProcess(const MaiProcessOptions& options, MaiProcessResult& resul
         ::close(pipeFds[1]);
         ::close(errorFds[0]);
         ::close(errorFds[1]);
-        return MaiError(MaiErrorCode::Internal, std::string("fork failed: ") + std::strerror(errno));
+        return MaiError(MaiErrorCode::Internal,
+                        std::string("fork failed: ") + std::strerror(errno));
     }
 
     if (pid == 0) {
@@ -118,8 +125,7 @@ MaiError maiRunProcess(const MaiProcessOptions& options, MaiProcessResult& resul
         // 别的线程持有的锁在这个进程里永远不会被释放，碰 malloc 之类就可能死锁。
         // 下面用到的 chdir / dup2 / close / open / setpgid / execvp / write / _exit 都是安全的。
         ::setpgid(0, 0);
-        if (!options.workingDirectory.empty() &&
-            ::chdir(options.workingDirectory.c_str()) != 0) {
+        if (!options.workingDirectory.empty() && ::chdir(options.workingDirectory.c_str()) != 0) {
             const int failure = errno;
             ssize_t ignored = ::write(errorFds[1], &failure, sizeof(failure));
             (void)ignored;

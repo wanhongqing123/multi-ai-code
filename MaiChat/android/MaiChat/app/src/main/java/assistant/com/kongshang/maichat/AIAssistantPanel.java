@@ -1,3 +1,6 @@
+// 文件作用：Android 创作中心的会话、消息和 Agent 交互；AIAssistantPanel 负责面板呈现、输入处理和状态反馈，本文件给出其实现。
+// 类型关系：AIAssistantPanel extends LinearLayout implements AIAssistantController.Listener；审阅时可据此追踪父类、接口或回调契约。
+// 主要入口：onScrollStateChanged、onTextChanged、onAttachedToWindow、onDetachedFromWindow。
 package com.kongshang.maichat;
 
 import android.Manifest;
@@ -118,6 +121,8 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             visibleLimit += 50;
             updateMessages();
         });
+        // 首次快照尚未返回时不能显示历史入口；只在确认有更早消息后再露出。
+        older.setVisibility(GONE);
         list.addHeaderView(older, null, false);
         list.setAdapter(adapter);
         list.setOnScrollListener(new AbsListView.OnScrollListener() {
@@ -495,9 +500,8 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     }
     private void modelMenu() {
         if (state == null) return;
-        String[] choices = {"glm-5.3", "glm-5.3-flash", "deepseek-flash", "模型与权限设置"};
+        String[] choices = {"glm-5.3", "glm-5.3-flash", "deepseek-flash"};
         new AlertDialog.Builder(activity).setTitle("选择模型").setItems(choices, (dialog, which) -> {
-            if (which == choices.length - 1) { settings(); return; }
             if (state.busy()) {
                 Toast.makeText(activity, "请先停止当前任务再切换模型", Toast.LENGTH_LONG).show();
                 return;
@@ -630,6 +634,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         if (tool.equals("minimax_video") || tool.equals("minimax_image")) return "海螺 / MiniMax";
         return tool.equals("seedance_video") ? "Seedance" : "Seedream";
     }
+    // 作用：依据工具名称和输入整理付费媒体任务的规格提示。
     private String paidSpecs(String tool, JSONObject input) {
         JSONObject production = input.optJSONObject("production");
         if (production == null) production = new JSONObject();
@@ -721,6 +726,8 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         } while (changed);
         return visible;
     }
+    // 作用：同步创作中心待处理卡片、权限提示和问题反馈。
+    // 页面状态变化和用户操作在这里衔接；退出或失败时维持已显示内容。
     private void updatePending() {
         JSONArray permissions = state.data.optJSONArray("permissions"),
                   questions = state.data.optJSONArray("questions");
@@ -879,17 +886,13 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     }
     private void menu() {
         new AlertDialog.Builder(activity)
-            .setItems(new String[] {"模型与权限", "清空当前对话", "删除当前对话"},
+            .setItems(new String[] {"清空当前对话", "删除当前对话"},
                 (d, which) -> {
-                    if (which == 0) {
-                        settings();
-                        return;
-                    }
                     if (state == null || state.busy() || selected.isEmpty())
                         return;
-                    String op = which == 1 ? "clear" : "delete";
+                    String op = which == 0 ? "clear" : "delete";
                     new AlertDialog.Builder(activity)
-                        .setMessage(which == 1 ? "清空当前对话的所有消息？" : "删除当前对话？")
+                        .setMessage(which == 0 ? "清空当前对话的所有消息？" : "删除当前对话？")
                         .setNegativeButton("取消", null)
                         .setPositiveButton(
                             "确定", (dialog, w) -> controller.action(op, new JSONObject(), null))
@@ -897,6 +900,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 })
             .show();
     }
+    // 作用：展示创作中心的模型或权限设置入口。
     private void settings() {
         if (state == null || !state.ready) return;
         LinearLayout form = column();
@@ -1180,9 +1184,15 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                     if (part.optString("kind").equals("image")) {
                         ImageView image = imageParts.get(part.optString("id"));
                         File file = controller.workspaceFile(part.optString("path"));
-                        if (image != null && file != null)
+                        if (image != null && file != null) {
                             MessageImageLoader.load(file.getPath(), dp(220), dp(150), image,
                                 () -> image.setContentDescription("图片无法显示"));
+                            image.setOnClickListener(view -> {
+                                if (activity instanceof MainActivity)
+                                    ((MainActivity) activity).openAgentMedia(
+                                        file.getAbsolutePath(), false, mediaPlaylist());
+                            });
+                        }
                     }
                     if (part.optString("kind").equals("video")) {
                         Button card = videoParts.get(part.optString("id"));
@@ -1192,8 +1202,8 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                             card.setText(playable ? "▶  " + file.getName() : "视频文件已丢失");
                             card.setEnabled(playable && activity instanceof MainActivity);
                             card.setOnClickListener(view -> {
-                                if (playable) ((MainActivity) activity).openAgentVideo(
-                                    file.getAbsolutePath());
+                                if (playable) ((MainActivity) activity).openAgentMedia(
+                                    file.getAbsolutePath(), true, mediaPlaylist());
                             });
                         }
                     }
@@ -1289,7 +1299,8 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                             File available = controller.workspaceFile(path);
                             if (available != null && available.isFile()
                                 && activity instanceof MainActivity)
-                                ((MainActivity) activity).openAgentVideo(available.getAbsolutePath());
+                                ((MainActivity) activity).openAgentMedia(
+                                    available.getAbsolutePath(), true, mediaPlaylist());
                             else
                                 Toast.makeText(activity, "文件已被移动或删除", Toast.LENGTH_SHORT).show();
                         });
@@ -1380,6 +1391,62 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         } catch (org.json.JSONException ignored) { }
         return null;
     }
+    private List<MainActivity.GalleryItem> mediaPlaylist() {
+        List<MainActivity.GalleryItem> result = new ArrayList<>();
+        if (state == null) return result;
+        Set<String> seen = new HashSet<>();
+        JSONArray all = state.data.optJSONArray("messages");
+        if (all == null) return result;
+        // 与会话里的气泡顺序一致：用户附件、正文媒体、Agent 交付的媒体。
+        for (int i = 0; i < all.length(); i++) {
+            JSONObject message = all.optJSONObject(i);
+            if (message == null) continue;
+            JSONArray parts = message.optJSONArray("parts");
+            boolean outgoing = message.optString("role").equals("user");
+            if (outgoing && parts != null) {
+                for (int j = 0; j < parts.length(); j++) {
+                    JSONObject part = parts.optJSONObject(j);
+                    if (part != null && (part.optString("kind").equals("image")
+                        || part.optString("kind").equals("video")))
+                        addPlayableMedia(result, seen, part.optString("path"),
+                            part.optString("kind").equals("video"));
+                }
+            }
+            JSONArray inline = message.optJSONArray("inline_media");
+            if (inline != null) {
+                for (int j = 0; j < inline.length(); j++) {
+                    JSONObject item = inline.optJSONObject(j);
+                    if (item != null && (item.optString("kind").equals("image")
+                        || item.optString("kind").equals("video")))
+                        addPlayableMedia(result, seen, item.optString("path"),
+                            item.optString("kind").equals("video"));
+                }
+            }
+            if (!outgoing && parts != null) {
+                for (int j = 0; j < parts.length(); j++) {
+                    JSONObject part = parts.optJSONObject(j);
+                    if (part == null) continue;
+                    JSONObject artifact = mediaFromToolOutput(part);
+                    if (artifact != null && (artifact.optString("type").equals("image")
+                        || artifact.optString("type").equals("video")))
+                        addPlayableMedia(result, seen, artifact.optString("path"),
+                            artifact.optString("type").equals("video"));
+                }
+            }
+        }
+        return result;
+    }
+
+    private void addPlayableMedia(List<MainActivity.GalleryItem> result, Set<String> seen,
+                                  String path, boolean video) {
+        File file = controller.workspaceFile(path);
+        if (file != null && file.isFile()
+            && seen.add(video + "\0" + file.getAbsolutePath()))
+            result.add(new MainActivity.GalleryItem(file.getAbsolutePath(), video));
+    }
+
+    // 根据文件类型在当前消息位置展示可点击的媒体卡片和实际缩略图。
+    // 预览资源就绪后更新该卡片，不用文件名文本代替视频或图片内容。
     private void showAgentMediaCard(LinearLayout container, File file, String type,
                                     String caption) {
         container.removeAllViews();
@@ -1421,12 +1488,14 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 }, "agent-video-metadata").start();
                 preview.setOnClickListener(view -> {
                     if (activity instanceof MainActivity)
-                        ((MainActivity) activity).openAgentVideo(file.getAbsolutePath());
+                        ((MainActivity) activity).openAgentMedia(
+                            file.getAbsolutePath(), true, mediaPlaylist());
                 });
             } else {
                 preview.setOnClickListener(view -> {
                     if (activity instanceof MainActivity)
-                        ((MainActivity) activity).showFullScreenImage(file.getAbsolutePath());
+                        ((MainActivity) activity).openAgentMedia(
+                            file.getAbsolutePath(), false, mediaPlaylist());
                 });
             }
             container.addView(preview, new LayoutParams(dp(220), dp(240)));

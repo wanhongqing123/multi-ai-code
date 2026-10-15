@@ -1,3 +1,7 @@
+// 文件作用：创建 iOS App 场景，初始化日志、通知、账号状态与全局共享服务。
+// 窗口最外层承载 IM 和创作中心共用的语音转写悬浮窗；悬浮窗只负责覆盖显示。
+// 启动、后台和返回前台的状态流在此接线，具体业务页面由 RootView 组织。
+// 模拟器专用入口用于不触发付费服务的真实界面验收，不进入真机发布路径。
 import MaiChatCore
 import SwiftUI
 import UserNotifications
@@ -244,6 +248,8 @@ struct MaiChatApp: App {
                         AIPermissionUITestRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--ai-image-fullscreen-ui-test") {
                         AIImageFullscreenUITestRoot()
+                    } else if ProcessInfo.processInfo.arguments.contains("--ai-image-mixed-ui-test") {
+                        AIImageMixedUITestRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--im-image-fullscreen-ui-test") {
                         RemoteIMImageFullscreenUITestRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--text-media-ui-test") {
@@ -258,8 +264,14 @@ struct MaiChatApp: App {
                         AISessionSwitchUITestRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--ai-stream-typing-ui-test") {
                         AIStreamTypingUITestRoot()
+                    } else if ProcessInfo.processInfo.arguments.contains("--voice-conversation-preview") {
+                        VoiceTranscriptionConversationPreviewRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--ffplay-ui-test") {
                         MaiFfplayUITestRoot()
+                    } else if ProcessInfo.processInfo.arguments.contains("--ffplay-swipe-ui-test") {
+                        MaiFfplaySwipeUITestRoot()
+                    } else if ProcessInfo.processInfo.arguments.contains("--mixed-gallery-ui-test") {
+                        MaiMixedGalleryUITestRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--ffplay-seek-ui-test") {
                         MaiFfplaySeekUITestRoot(startSeconds: 0)
                     } else if ProcessInfo.processInfo.arguments.contains("--ffplay-start-ui-test") {
@@ -268,7 +280,9 @@ struct MaiChatApp: App {
                         MaiFfplayAgentDockUITestRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--voice-docked-ui-test") {
                         VoiceTranscriptionDockUITestRoot()
-                    } else if ProcessInfo.processInfo.arguments.contains("--im-landscape-ui-test") {
+                    } else if ProcessInfo.processInfo.arguments.contains("--im-landscape-ui-test") ||
+                                ProcessInfo.processInfo.arguments.contains("--im-large-history-ui-test") ||
+                                ProcessInfo.processInfo.arguments.contains("--im-search-focus-ui-test") {
                         ChatLandscapeUITestRoot()
                     } else {
                         AIAssistantView()
@@ -305,6 +319,24 @@ struct MaiChatApp: App {
                 }
                 #endif
                 await bootstrap.load()
+                #if DEBUG && targetEnvironment(simulator)
+                // 仅本机正常 App 的交互验收使用；测试账号由本地模拟短信服务创建，
+                // 不进入真机和发布包，也不触发任何付费模型请求。
+                let environment = ProcessInfo.processInfo.environment
+                if let phone = environment["MAICHAT_LOCAL_UI_PHONE"],
+                   let password = environment["MAICHAT_LOCAL_UI_PASSWORD"],
+                   let appState = bootstrap.appState {
+                    do {
+                        try await appState.loginWithAccountPassword(
+                            phone: phone, password: password, ageConfirmed: true)
+                    } catch {
+                        AppDiagnosticLog.shared.record(
+                            level: .error, category: "local-ui",
+                            event: "local-account-login-failed",
+                            fields: ["error": error.localizedDescription])
+                    }
+                }
+                #endif
             }
         }
     }

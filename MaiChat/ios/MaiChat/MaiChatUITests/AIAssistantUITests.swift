@@ -1,6 +1,173 @@
+// 文件作用：驱动真实 iOS 界面，验证创作中心和 IM 的关键操作及画面状态。
+// 驱动真实 iOS 页面检查会话切换、媒体预览、语音层和滚动边界。
+// 使用本机测试账号与无付费素材，并保留关键页面截图供人工验收。
 import XCTest
 
 final class AIAssistantUITests: XCTestCase {
+    func testNormalAppKeepsConversationPageVisibleAcrossNavigation() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let phone = environment["MAICHAT_LOCAL_UI_PHONE"],
+              let password = environment["MAICHAT_LOCAL_UI_PASSWORD"] else {
+            throw XCTSkip("需要本机测试账号，不能使用真实用户或付费模型")
+        }
+        let app = XCUIApplication()
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = phone
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] = password
+        app.launch()
+
+        let creationCenter = app.buttons["创作中心"]
+        XCTAssertTrue(creationCenter.waitForExistence(timeout: 30))
+        creationCenter.tap()
+        XCTAssertTrue(app.staticTexts["创作中心"].waitForExistence(timeout: 20))
+        let opened = XCTAttachment(screenshot: app.screenshot())
+        opened.name = "normal-app-creation-center-opened"
+        opened.lifetime = .keepAlways
+        add(opened)
+
+        let conversations = app.buttons["对话列表"]
+        XCTAssertTrue(conversations.waitForExistence(timeout: 10))
+        let temporaryIMError = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "IM 操作失败")).firstMatch
+        if temporaryIMError.exists {
+            temporaryIMError.tap()
+        }
+        conversations.tap()
+        let drawerScrollView = app.scrollViews["ai-session-drawer"]
+        let drawerVisible = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "hittable == true"), object: drawerScrollView)
+        XCTAssertEqual(XCTWaiter.wait(for: [drawerVisible], timeout: 10), .completed)
+        let drawer = XCTAttachment(screenshot: app.screenshot())
+        drawer.name = "normal-app-conversation-drawer"
+        drawer.lifetime = .keepAlways
+        add(drawer)
+
+        let existingConversation = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "ai-conversation-"))
+            .element(boundBy: 1)
+        XCTAssertTrue(existingConversation.waitForExistence(timeout: 5))
+        existingConversation.tap()
+        let composer = app.descendants(matching: .any)
+            .matching(identifier: "ai-composer").firstMatch
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        let switched = XCTAttachment(screenshot: app.screenshot())
+        switched.name = "normal-app-after-conversation-switch"
+        switched.lifetime = .keepAlways
+        add(switched)
+    }
+
+    func testVoiceOverlayInVideoAndConversationPreview() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--voice-conversation-preview"]
+        app.launchEnvironment["MAICHAT_VOICE_DESIGN_VIDEO"] =
+            "/tmp/maichat-voice-design-video.mov"
+        app.launch()
+        let transcript = app.staticTexts["voice-transcript"]
+        XCTAssertTrue(transcript.waitForExistence(timeout: 15))
+        RunLoop.current.run(until: Date().addingTimeInterval(2))
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "voice-overlay-real-conversation-preview"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    func testCreationCenterGallerySwipesImageAndVideo() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--ai-image-mixed-ui-test"]
+        app.launch()
+        let image = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "1/2 ·")).firstMatch
+        XCTAssertTrue(image.waitForExistence(timeout: 15))
+        let left = app.coordinate(withNormalizedOffset: CGVector(dx: 0.78, dy: 0.48))
+        let right = app.coordinate(withNormalizedOffset: CGVector(dx: 0.22, dy: 0.48))
+        left.press(forDuration: 0.05, thenDragTo: right)
+        let video = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "2/2 ·")).firstMatch
+        XCTAssertTrue(video.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["ffplay-pause"].waitForExistence(timeout: 8))
+        right.press(forDuration: 0.05, thenDragTo: left)
+        XCTAssertTrue(image.waitForExistence(timeout: 8))
+    }
+
+    func testVideoGallerySwipesIntoImageAndBack() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--mixed-gallery-ui-test"]
+        app.launch()
+        let first = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "1/3 ·")).firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 15))
+        let left = app.coordinate(withNormalizedOffset: CGVector(dx: 0.78, dy: 0.48))
+        let right = app.coordinate(withNormalizedOffset: CGVector(dx: 0.22, dy: 0.48))
+        left.press(forDuration: 0.05, thenDragTo: right)
+        let image = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "2/3 ·")).firstMatch
+        XCTAssertTrue(image.waitForExistence(timeout: 8))
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "video-to-image-gallery"
+        capture.lifetime = .keepAlways
+        add(capture)
+        left.press(forDuration: 0.05, thenDragTo: right)
+        let third = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "3/3 ·")).firstMatch
+        XCTAssertTrue(third.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["ffplay-pause"].exists)
+        right.press(forDuration: 0.05, thenDragTo: left)
+        XCTAssertTrue(image.waitForExistence(timeout: 8))
+    }
+
+    func testIMGallerySwipesAcrossImagesAndVideo() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--im-image-fullscreen-ui-test"]
+        app.launch()
+        let bubble = app.buttons["remote-im-message-image"]
+        XCTAssertTrue(bubble.waitForExistence(timeout: 15))
+        for _ in 0..<3 where !bubble.isHittable { app.swipeUp() }
+        bubble.tap()
+        XCTAssertTrue(app.images["remote-im-image-preview"].waitForExistence(timeout: 10))
+        let left = app.coordinate(withNormalizedOffset: CGVector(dx: 0.78, dy: 0.48))
+        let right = app.coordinate(withNormalizedOffset: CGVector(dx: 0.22, dy: 0.48))
+        left.press(forDuration: 0.05, thenDragTo: right)
+        let second = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "2/3 ·")).firstMatch
+        XCTAssertTrue(second.waitForExistence(timeout: 8))
+        left.press(forDuration: 0.05, thenDragTo: right)
+        let third = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "3/3 ·")).firstMatch
+        XCTAssertTrue(third.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["ffplay-pause"].waitForExistence(timeout: 8))
+        right.press(forDuration: 0.05, thenDragTo: left)
+        XCTAssertTrue(second.waitForExistence(timeout: 8))
+    }
+
+    func testVideoPlayerSwipesBetweenConversationFiles() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--ffplay-swipe-ui-test"]
+        app.launch()
+        let current = app.staticTexts["ffplay-current-video"]
+        XCTAssertTrue(current.waitForExistence(timeout: 15))
+        XCTAssertEqual(current.label, "ffplay-sample.mp4")
+        let left = app.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.45))
+        let right = app.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.45))
+        left.press(forDuration: 0.05, thenDragTo: right)
+        let next = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", "ffplay-seek-sample.mp4"),
+            object: current)
+        XCTAssertEqual(XCTWaiter.wait(for: [next], timeout: 8), .completed)
+        XCTAssertTrue(app.buttons["ffplay-pause"].exists)
+        let secondFrame = XCTAttachment(screenshot: app.screenshot())
+        secondFrame.name = "video-after-left-swipe"
+        secondFrame.lifetime = .keepAlways
+        add(secondFrame)
+        right.press(forDuration: 0.05, thenDragTo: left)
+        let previous = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", "ffplay-sample.mp4"),
+            object: current)
+        XCTAssertEqual(XCTWaiter.wait(for: [previous], timeout: 8), .completed)
+        let firstFrame = XCTAttachment(screenshot: app.screenshot())
+        firstFrame.name = "video-after-right-swipe"
+        firstFrame.lifetime = .keepAlways
+        add(firstFrame)
+    }
+
     func testTypingWhileAssistantStreamsRemainsResponsive() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--ai-ui-test", "--ai-stream-typing-ui-test"]
@@ -46,6 +213,31 @@ final class AIAssistantUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(latest.frame.minY, timeline.frame.minY - 2)
         XCTAssertLessThanOrEqual(latest.frame.maxY, timeline.frame.maxY + 2,
                                  "Closing the keyboard must keep the latest message visible")
+    }
+
+    func testFastHistoryFlingsStopAtRenderedMessages() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--ai-history-ui-test"]
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        let timeline = app.scrollViews.element(boundBy: 0)
+        XCTAssertTrue(timeline.waitForExistence(timeout: 15))
+        let first = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "历史消息 0")).firstMatch
+        let latest = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "历史消息 79")).firstMatch
+        for _ in 0..<16 where !first.isHittable { timeline.swipeDown() }
+        XCTAssertTrue(first.isHittable, "快速上滑到已加载首页应停在真实消息")
+        let top = XCTAttachment(screenshot: app.screenshot())
+        top.name = "history-fast-fling-top"
+        top.lifetime = .keepAlways
+        add(top)
+        for _ in 0..<16 where !latest.isHittable { timeline.swipeUp() }
+        XCTAssertTrue(latest.isHittable, "快速下滑到底部应停在最新消息")
+        let bottom = XCTAttachment(screenshot: app.screenshot())
+        bottom.name = "history-fast-fling-bottom"
+        bottom.lifetime = .keepAlways
+        add(bottom)
     }
 
     func testSwitchingConversationsOpensAtLatestMessage() throws {
@@ -123,6 +315,69 @@ final class AIAssistantUITests: XCTestCase {
         XCTAssertFalse(conversation.isHittable)
     }
 
+    func testLargeIMConversationShowsOnlyRenderedRecentPage() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--im-large-history-ui-test"]
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        let conversation = app.buttons["im-conversation-im-test-peer"]
+        XCTAssertTrue(conversation.waitForExistence(timeout: 15))
+        conversation.tap()
+
+        let latest = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "IM 历史消息 2543")).firstMatch
+        XCTAssertTrue(latest.waitForExistence(timeout: 15))
+        XCTAssertTrue(latest.isHittable)
+        let renderedRows = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "IM 历史消息"))
+        XCTAssertLessThanOrEqual(renderedRows.count, 20,
+                                 "未翻页的 IM 时间线只能排版最近一页")
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "im-2544-stored-20-rendered-latest-visible"
+        capture.lifetime = .keepAlways
+        add(capture)
+
+        let timeline = app.scrollViews.element(boundBy: 0)
+        let earlier = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "IM 历史消息 2504")).firstMatch
+        for _ in 0..<8 where !earlier.exists { timeline.swipeDown() }
+        XCTAssertTrue(earlier.waitForExistence(timeout: 5),
+                      "到达已加载页顶部后应开放上一页")
+        let paged = XCTAttachment(screenshot: app.screenshot())
+        paged.name = "im-older-page-loaded-without-empty-viewport"
+        paged.lifetime = .keepAlways
+        add(paged)
+    }
+
+    func testSearchHitKeepsIMHistoryWindowBoundedAndReturnsToLatest() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--im-search-focus-ui-test"]
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+
+        let target = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "IM 历史消息 100")).firstMatch
+        XCTAssertTrue(target.waitForExistence(timeout: 15))
+        let renderedRows = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "IM 历史消息"))
+        XCTAssertLessThanOrEqual(renderedRows.count, 10,
+                                 "搜索旧消息不能把之后的数千条历史同时交给列表")
+        let focused = XCTAttachment(screenshot: app.screenshot())
+        focused.name = "im-search-hit-bounded-window"
+        focused.lifetime = .keepAlways
+        add(focused)
+
+        let latestButton = app.buttons["回到最新消息"]
+        XCTAssertTrue(latestButton.waitForExistence(timeout: 5))
+        latestButton.tap()
+        let latest = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "IM 历史消息 2543")).firstMatch
+        XCTAssertTrue(latest.waitForExistence(timeout: 10))
+        XCTAssertTrue(latest.isHittable)
+    }
+
     func testToolCallsDoNotExposeReasoningContent() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--ai-ui-test", "--transcript-ui-test"]
@@ -190,8 +445,16 @@ final class AIAssistantUITests: XCTestCase {
         app.launchArguments = ["--ai-ui-test", "--im-image-fullscreen-ui-test"]
         app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
         app.launch()
-        let open = app.buttons["打开 IM 图片"]
+        let open = app.buttons["remote-im-message-image"]
         XCTAssertTrue(open.waitForExistence(timeout: 15))
+        for _ in 0..<3 where !open.isHittable { app.swipeUp() }
+        XCTAssertTrue(open.isHittable)
+        XCTAssertGreaterThan(open.frame.minY, app.frame.height * 0.1,
+                             "The source bubble must be scrolled away from the top")
+        let sourceCapture = XCTAttachment(screenshot: app.screenshot())
+        sourceCapture.name = "im-image-source-after-scroll"
+        sourceCapture.lifetime = .keepAlways
+        add(sourceCapture)
         open.tap()
         let preview = app.images["remote-im-image-preview"]
         XCTAssertTrue(preview.waitForExistence(timeout: 15))
@@ -204,6 +467,8 @@ final class AIAssistantUITests: XCTestCase {
         let closed = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "exists == false"), object: preview)
         XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 5), .completed)
+        XCTAssertEqual(app.staticTexts["im-source-frame-state"].label, "有效",
+                       "The real IM image bubble must supply its current window frame")
         open.tap()
         XCTAssertTrue(preview.waitForExistence(timeout: 5))
         // 顶部状态栏原本所在的位置也必须由图片预览接管。
@@ -337,21 +602,20 @@ final class AIAssistantUITests: XCTestCase {
         XCTAssertTrue(transcript.waitForExistence(timeout: 15))
         XCTAssertTrue(cancel.waitForExistence(timeout: 5))
         XCTAssertTrue(edit.waitForExistence(timeout: 5))
-        XCTAssertLessThan(transcript.frame.minY, app.frame.height * 0.4)
-        XCTAssertLessThan(transcript.frame.maxY, app.frame.height * 0.65)
         XCTAssertGreaterThan(cancel.frame.minY, transcript.frame.maxY)
         XCTAssertGreaterThan(edit.frame.minY, transcript.frame.maxY)
-        XCTAssertLessThan(app.staticTexts["松手发送"].frame.maxY, transcript.frame.minY)
         let input = app.buttons["voice-test-input"]
         XCTAssertTrue(input.exists)
-        let cancelGap = input.frame.minY - cancel.frame.maxY
-        let editGap = input.frame.minY - edit.frame.maxY
-        XCTAssertGreaterThan(cancelGap, 60,
-                             "Cancel must stay clear of the press-to-talk input")
-        XCTAssertLessThan(cancelGap, 150,
-                          "Cancel must remain reachable from the press-to-talk input")
+        // 转写内容居中，操作目标独立靠近长按点；以实际控件坐标验收两块的间距。
+        XCTAssertLessThan(abs(transcript.frame.midY - app.frame.midY), 100)
+        let cancelGap = cancel.frame.minY - transcript.frame.maxY
+        let editGap = edit.frame.minY - transcript.frame.maxY
+        XCTAssertGreaterThan(cancelGap, 60)
         XCTAssertGreaterThan(editGap, 60)
-        XCTAssertLessThan(editGap, 150)
+        let inputToActions = input.frame.minY - max(cancel.frame.maxY, edit.frame.maxY)
+        XCTAssertGreaterThan(inputToActions, 40)
+        XCTAssertLessThan(inputToActions, 220,
+                          "取消和编辑与输入框要留出空间，仍可向上拖到")
         let capture = XCTAttachment(screenshot: app.screenshot())
         capture.name = "voice-transcription-actions-above-composer"
         capture.lifetime = .keepAlways
@@ -362,6 +626,33 @@ final class AIAssistantUITests: XCTestCase {
         cancel.tap()
         XCTAssertTrue(app.staticTexts["已取消"].exists)
         XCTAssertFalse(transcript.exists)
+    }
+
+    func testVoiceOverlayDismissKeepsConversationVisibleWithDockedVideo() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--voice-conversation-preview"]
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        if let videoPath = ProcessInfo.processInfo.environment["MAICHAT_VOICE_DESIGN_VIDEO"] {
+            app.launchEnvironment["MAICHAT_VOICE_DESIGN_VIDEO"] = videoPath
+        }
+        app.launch()
+
+        let transcript = app.staticTexts["voice-transcript"]
+        XCTAssertTrue(transcript.waitForExistence(timeout: 15))
+        let before = XCTAttachment(screenshot: app.screenshot())
+        before.name = "voice-above-playing-video-and-conversation"
+        before.lifetime = .keepAlways
+        add(before)
+
+        app.buttons["voice-cancel"].tap()
+        XCTAssertFalse(transcript.exists)
+        let latest = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "历史消息 79")).firstMatch
+        XCTAssertTrue(latest.waitForExistence(timeout: 5))
+        let after = XCTAttachment(screenshot: app.screenshot())
+        after.name = "conversation-visible-after-voice-overlay-dismiss"
+        after.lifetime = .keepAlways
+        add(after)
     }
 
     func testFfplaySaveKeepsPlayerAlive() throws {
@@ -490,7 +781,7 @@ final class AIAssistantUITests: XCTestCase {
         XCTAssertEqual(waitUntilNotHittable(app.buttons["新对话"]), .completed)
     }
 
-    func testPermissionUsesCompactMenuAndMoreOpensCustomModelSettings() throws {
+    func testPermissionUsesCompactMenuWithoutModelSettingsEntry() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--ai-ui-test"]
         app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
@@ -508,21 +799,9 @@ final class AIAssistantUITests: XCTestCase {
         XCTAssertLessThan(policyMenu.frame.width, app.frame.width * 0.75)
         app.buttons["完全访问"].tap()
 
-        XCTAssertTrue(app.buttons["模型配置"].waitForExistence(timeout: 3))
-        app.buttons["模型配置"].tap()
-
-        let settings = app.descendants(matching: .any)
-            .matching(identifier: "ai-model-settings").firstMatch
-        XCTAssertTrue(settings.waitForExistence(timeout: 3))
-        XCTAssertFalse(app.buttons["ai-primary-model-picker"].exists)
-        XCTAssertFalse(app.textFields["ai-model-base-url"].exists)
-        XCTAssertFalse(app.segmentedControls["ai-model-wire"].exists)
-        XCTAssertTrue(app.textFields["ai-cloud-service-url"].exists)
-        XCTAssertFalse(app.buttons["测试连接"].exists)
-        XCTAssertFalse(app.staticTexts["DeepSeek API Key"].exists)
-        XCTAssertTrue(app.buttons["关闭模型配置"].isHittable)
-        let save = app.buttons["保存配置"]
-        XCTAssertTrue(save.exists)
+        XCTAssertTrue(app.buttons["模型"].exists)
+        XCTAssertTrue(app.buttons["清空当前对话"].exists)
+        XCTAssertFalse(app.buttons["模型配置"].exists)
     }
 
     private func waitUntilNotHittable(_ element: XCUIElement) -> XCTWaiter.Result {

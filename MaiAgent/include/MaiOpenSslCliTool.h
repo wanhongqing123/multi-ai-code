@@ -1,3 +1,5 @@
+// 文件作用：将 OpenSSL 命令行能力封装为受控工具。
+// 对外类型：MaiOpenSslCommandResult；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 
 #include <memory>
@@ -18,7 +20,7 @@ struct MaiOpenSslCommandResult {
     bool truncated = false;
 };
 
-MaiResult<MaiOpenSslCommandResult> maiRunOpenSslCommand(
-    const std::vector<std::string>& arguments, const MaiToolContext& context);
+MaiResult<MaiOpenSslCommandResult> maiRunOpenSslCommand(const std::vector<std::string>& arguments,
+                                                        const MaiToolContext& context);
 
 std::unique_ptr<MaiTool> makeMaiOpenSslCliTool();

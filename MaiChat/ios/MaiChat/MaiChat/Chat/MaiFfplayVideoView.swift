@@ -1,16 +1,224 @@
+// 文件作用：实现 iOS 视频播放器界面及 FFplay 控制桥接，供用户和 Agent 共用播放状态。
+// 阅读边界：视频解码在底层 FFplay；本文件负责播放控制、进度、音频会话和手势反馈。
+// 持有播放器视图、进度、声音和分屏控件，并接收 Agent 播放命令。
 import AVFoundation
 import QuartzCore
 import SwiftUI
 import UIKit
 
-struct MaiFfplayPresentation: Identifiable {
-    let id = UUID()
-    let path: String
-    let startSeconds: Double
+enum MaiMediaKind: Equatable {
+    case image
+    case video
+}
 
-    init(path: String, startSeconds: Double = 0) {
-        self.path = path
+struct MaiMediaItem: Equatable {
+    let kind: MaiMediaKind
+    let path: String
+}
+
+struct MaiMediaSequence: Equatable {
+    let items: [MaiMediaItem]
+    let index: Int
+    let groupID: UUID
+
+    var current: MaiMediaItem { items[index] }
+
+    init(selected: MaiMediaItem, items: [MaiMediaItem], groupID: UUID = UUID()) {
+        self.groupID = groupID
+        var seen = Set<String>()
+        var available = items.filter { item in
+            FileManager.default.fileExists(atPath: item.path) &&
+                seen.insert("\(item.kind):\(item.path)").inserted
+        }
+        if !available.contains(selected) { available.insert(selected, at: 0) }
+        self.items = available
+        index = available.firstIndex(of: selected) ?? 0
+    }
+
+    func adjacent(_ direction: Int) -> MaiMediaSequence? {
+        var next = index + direction
+        while items.indices.contains(next) {
+            let candidate = items[next]
+            if FileManager.default.fileExists(atPath: candidate.path) {
+                return MaiMediaSequence(selected: candidate, items: items, groupID: groupID)
+            }
+            next += direction
+        }
+        return nil
+    }
+
+    func updatingItems(_ next: [MaiMediaItem]) -> MaiMediaSequence {
+        MaiMediaSequence(selected: current, items: next, groupID: groupID)
+    }
+}
+
+struct MaiFfplayPresentation: Identifiable {
+    let id: UUID
+    let startSeconds: Double
+    let sequence: MaiMediaSequence
+    let entryDirection: Int
+
+    var groupID: UUID { sequence.groupID }
+    var path: String { sequence.current.path }
+    var playlist: [String] { sequence.items.map(\.path) }
+    var index: Int { sequence.index }
+
+    init(path: String, startSeconds: Double = 0, playlist: [String] = [],
+         id: UUID = UUID(),
+         groupID: UUID = UUID(), entryDirection: Int = 0) {
+        self.id = id
         self.startSeconds = startSeconds
+        self.entryDirection = entryDirection
+        sequence = MaiMediaSequence(selected: MaiMediaItem(kind: .video, path: path),
+                                    items: playlist.map { MaiMediaItem(kind: .video, path: $0) },
+                                    groupID: groupID)
+    }
+
+    init(sequence: MaiMediaSequence, startSeconds: Double = 0, id: UUID = UUID(),
+         entryDirection: Int = 0) {
+        self.id = id
+        self.startSeconds = startSeconds
+        self.sequence = sequence
+        self.entryDirection = entryDirection
+    }
+
+    func updatingPlaylist(_ paths: [String]) -> MaiFfplayPresentation {
+        // 保持播放器视图身份不变，后台补齐历史视频时不能重播当前文件。
+        updatingMediaItems(paths.map { MaiMediaItem(kind: .video, path: $0) })
+    }
+
+    func updatingMediaItems(_ items: [MaiMediaItem]) -> MaiFfplayPresentation {
+        MaiFfplayPresentation(sequence: sequence.updatingItems(items),
+                              startSeconds: startSeconds, id: id,
+                              entryDirection: entryDirection)
+    }
+
+    func adjacent(_ direction: Int) -> MaiFfplayPresentation? {
+        guard let next = sequence.adjacent(direction), next.current.kind == .video else { return nil }
+        return MaiFfplayPresentation(sequence: next, entryDirection: direction)
+    }
+}
+
+struct MaiGalleryImageScreen: View {
+    let sequence: MaiMediaSequence
+    let entryDirection: Int
+    let navigate: (Int) -> Bool
+    let close: () -> Void
+    @State private var isZoomed = false
+    @State private var status = ""
+    @State private var arrived = false
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Color.black.ignoresSafeArea()
+                ImagePreviewBackdrop(filePath: sequence.current.path,
+                                     viewportSize: geometry.size)
+                    .offset(x: arrived ? 0 : CGFloat(entryDirection * 48))
+                    .opacity(arrived ? 1 : 0.48)
+                RemoteIMAsyncImage(filePath: sequence.current.path,
+                    maximumPointSize: ImagePreviewZoomModifier.maximumDecodePointSize(
+                        for: geometry.size)) { image in
+                    let fitted = fittedSize(image.size, inside: geometry.size)
+                    Image(uiImage: image).resizable().scaledToFit()
+                        .frame(width: fitted.width, height: fitted.height)
+                        .modifier(ImagePreviewZoomModifier(enabled: true,
+                            imageSize: fitted, viewportSize: geometry.size,
+                            onScaleChanged: { isZoomed = $0 > 1.01 }))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .contentShape(Rectangle())
+                        .onTapGesture(perform: close)
+                        .simultaneousGesture(DragGesture(minimumDistance: 50).onEnded { value in
+                            guard !isZoomed,
+                                  abs(value.translation.width) > abs(value.translation.height) * 1.4
+                            else { return }
+                            let direction = value.translation.width < 0 ? 1 : -1
+                            if !navigate(direction) {
+                                status = direction > 0 ? "已经是最后一项" : "已经是第一项"
+                            }
+                        })
+                } placeholder: { failed in
+                    if failed { Text("图片无法显示").foregroundStyle(.white) }
+                    else { ProgressView().tint(.white) }
+                }
+                .id(sequence.current.path)
+                .offset(x: arrived ? 0 : CGFloat(entryDirection * 48))
+                .opacity(arrived ? 1 : 0.48)
+
+                VStack {
+                    HStack(alignment: .top) {
+                        Button(action: close) {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 20, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 50, height: 50)
+                                .background(.black.opacity(0.58), in: Circle())
+                        }
+                        .accessibilityLabel("关闭图片预览")
+                        Spacer(minLength: 12)
+                        Text("\(sequence.index + 1)/\(sequence.items.count) · " +
+                             URL(fileURLWithPath: sequence.current.path).lastPathComponent)
+                            .font(.system(size: 12, weight: .medium))
+                            .lineLimit(1)
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 10).padding(.vertical, 7)
+                            .background(.black.opacity(0.58), in: Capsule())
+                        Spacer(minLength: 62)
+                    }
+                    Spacer()
+                    if !status.isEmpty {
+                        Text(status).font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.white)
+                            .padding(10).background(.black.opacity(0.65), in: Capsule())
+                    }
+                    HStack(spacing: 14) {
+                        ShareLink(item: URL(fileURLWithPath: sequence.current.path)) {
+                            Image(systemName: "square.and.arrow.up")
+                                .frame(width: 48, height: 48)
+                        }
+                        Button {
+                            Task {
+                                do {
+                                    guard await MaiPhotoLibraryMediaWriter.requestAddAccess() else {
+                                        status = "请允许保存到相册"
+                                        return
+                                    }
+                                    try await MaiPhotoLibraryMediaWriter.saveImage(
+                                        at: URL(fileURLWithPath: sequence.current.path),
+                                        createdAt: Date())
+                                    status = "已保存到相册"
+                                } catch { status = error.localizedDescription }
+                            }
+                        } label: {
+                            Image(systemName: "square.and.arrow.down")
+                                .frame(width: 48, height: 48)
+                        }
+                        .accessibilityLabel("保存图片")
+                    }
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .buttonStyle(.plain)
+                    .background(.black.opacity(0.58), in: Capsule())
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+                .padding(.horizontal, 20).padding(.vertical, 54)
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+        }
+        .ignoresSafeArea()
+        .onAppear {
+            withAnimation(.easeOut(duration: 0.22)) { arrived = true }
+        }
+        .onChange(of: sequence.current.path) { _ in
+            isZoomed = false
+            status = ""
+        }
+    }
+
+    private func fittedSize(_ source: CGSize, inside viewport: CGSize) -> CGSize {
+        guard source.width > 0, source.height > 0 else { return viewport }
+        let factor = min(viewport.width / source.width, viewport.height / source.height)
+        return CGSize(width: source.width * factor, height: source.height * factor)
     }
 }
 
@@ -262,7 +470,10 @@ private final class MaiFfplayMetalView: UIView {
 final class MaiFfplayVideoController: UIViewController {
     private let path: String
     private let startSeconds: Double
+    private let entryDirection: Int
     private let onClose: () -> Void
+    private var onNavigate: ((Int) -> Bool)?
+    private var onPlaybackReady: (() -> Void)?
     private let metalView = MaiFfplayMetalView()
     private let pauseButton = UIButton(type: .system)
     private let seekSlider = UISlider()
@@ -276,16 +487,28 @@ final class MaiFfplayVideoController: UIViewController {
     private var playing = true
     private var playbackSpeed = 1.0
     private var saving = false
+    private var didAnimateEntry = false
+    private var didReportPlaybackReady = false
 
-    init(path: String, startSeconds: Double = 0, close: @escaping () -> Void) {
+    init(path: String, startSeconds: Double = 0,
+         entryDirection: Int = 0, navigate: ((Int) -> Bool)? = nil,
+         onPlaybackReady: (() -> Void)? = nil,
+         close: @escaping () -> Void) {
         self.path = path
         self.startSeconds = startSeconds
+        self.entryDirection = entryDirection
+        onNavigate = navigate
+        self.onPlaybackReady = onPlaybackReady
         onClose = close
         super.init(nibName: nil, bundle: nil)
     }
 
     required init?(coder: NSCoder) { nil }
 
+    func setNavigation(_ navigate: ((Int) -> Bool)?) { onNavigate = navigate }
+
+    /// 初始化播放器承载视图、播放控件与进度观察。
+    /// 视图仅创建一次；重播和跳转复用同一播放实例，避免重建导致音频状态丢失。
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
@@ -297,6 +520,15 @@ final class MaiFfplayVideoController: UIViewController {
         }
         metalView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(metalView)
+        if onNavigate != nil {
+            for direction in [UISwipeGestureRecognizer.Direction.left,
+                              UISwipeGestureRecognizer.Direction.right] {
+                let gesture = UISwipeGestureRecognizer(target: self,
+                                                       action: #selector(videoSwiped(_:)))
+                gesture.direction = direction
+                metalView.addGestureRecognizer(gesture)
+            }
+        }
 
         errorLabel.textColor = .white
         errorLabel.textAlignment = .center
@@ -444,6 +676,16 @@ final class MaiFfplayVideoController: UIViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        if !didAnimateEntry && entryDirection != 0 {
+            didAnimateEntry = true
+            view.transform = CGAffineTransform(translationX: CGFloat(entryDirection * 48), y: 0)
+            view.alpha = 0.48
+            UIView.animate(withDuration: 0.22, delay: 0,
+                           options: [.curveEaseOut, .allowUserInteraction]) {
+                self.view.transform = .identity
+                self.view.alpha = 1
+            }
+        }
         if let previous = MaiFfplayMobilePlayer.active, previous !== self {
             previous.stop()
         }
@@ -459,9 +701,20 @@ final class MaiFfplayVideoController: UIViewController {
         refreshPlayback()
     }
 
+    @objc private func videoSwiped(_ gesture: UISwipeGestureRecognizer) {
+        let direction = gesture.direction == .left ? 1 : -1
+        if onNavigate?(direction) == false {
+            showStatus(direction > 0 ? "已经是最后一个视频" : "已经是第一个视频")
+        }
+    }
+
     private func refreshPlayback() {
         metalView.checkPlayback()
         guard let status = metalView.playbackStatus(), status.duration_us > 0 else { return }
+        if !didReportPlaybackReady && status.position_us > 100_000 {
+            didReportPlaybackReady = true
+            onPlaybackReady?()
+        }
         let position = min(max(status.position_us, 0), status.duration_us)
         if !seekSlider.isTracking {
             seekSlider.value = Float(Double(position) / Double(status.duration_us))
@@ -635,17 +888,28 @@ final class MaiFfplayVideoController: UIViewController {
 struct MaiFfplayVideoScreen: UIViewControllerRepresentable {
     let path: String
     let startSeconds: Double
+    let entryDirection: Int
+    let navigate: ((Int) -> Bool)?
+    let onPlaybackReady: (() -> Void)?
     let close: () -> Void
 
-    init(path: String, startSeconds: Double = 0, close: @escaping () -> Void) {
+    init(path: String, startSeconds: Double = 0,
+         entryDirection: Int = 0, navigate: ((Int) -> Bool)? = nil,
+         onPlaybackReady: (() -> Void)? = nil,
+         close: @escaping () -> Void) {
         self.path = path
         self.startSeconds = startSeconds
+        self.entryDirection = entryDirection
+        self.navigate = navigate
+        self.onPlaybackReady = onPlaybackReady
         self.close = close
     }
 
     func makeUIViewController(context _: Context) -> MaiFfplayVideoController {
         let controller = MaiFfplayVideoController(
-            path: path, startSeconds: startSeconds, close: close)
+            path: path, startSeconds: startSeconds,
+            entryDirection: entryDirection, navigate: navigate,
+            onPlaybackReady: onPlaybackReady, close: close)
         // 嵌入式播放器不一定触发全屏控制器的 viewDidAppear；创建时先绑定 Agent 工具。
         if let previous = MaiFfplayMobilePlayer.active, previous !== controller {
             previous.stop()
@@ -655,7 +919,7 @@ struct MaiFfplayVideoScreen: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ controller: MaiFfplayVideoController, context _: Context) {
-        _ = controller
+        controller.setNavigation(navigate)
     }
 
     static func dismantleUIViewController(_ controller: MaiFfplayVideoController,
@@ -678,6 +942,107 @@ struct MaiFfplayUITestRoot: View {
                 }
             }
             .task { showingVideo = true }
+    }
+}
+
+struct MaiFfplaySwipeUITestRoot: View {
+    @State private var showingVideo = false
+    @State private var index = 0
+
+    var body: some View {
+        Color.black
+            .fullScreenCover(isPresented: $showingVideo) {
+                if let first = Bundle.main.url(forResource: "ffplay-sample",
+                                               withExtension: "mp4"),
+                   let second = Bundle.main.url(forResource: "ffplay-seek-sample",
+                                                withExtension: "mp4") {
+                    let paths = [first.path, second.path]
+                    MaiFfplayVideoScreen(path: paths[index], navigate: { direction in
+                        guard paths.indices.contains(index + direction) else { return false }
+                        index += direction
+                        return true
+                    }) {
+                        showingVideo = false
+                    }
+                    .id(index)
+                    .ignoresSafeArea()
+                    .statusBarHidden()
+                    .overlay(alignment: .top) {
+                        Text(URL(fileURLWithPath: paths[index]).lastPathComponent)
+                            .accessibilityIdentifier("ffplay-current-video")
+                            .foregroundStyle(.white)
+                            .padding(.top, 70)
+                    }
+                }
+            }
+            .task { showingVideo = true }
+    }
+}
+
+struct MaiMixedGalleryUITestRoot: View {
+    @State private var video: MaiFfplayPresentation?
+    @State private var image: MaiMediaSequence?
+    @State private var direction = 0
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            if let video {
+                MaiFfplayVideoScreen(path: video.path, navigate: navigate) {
+                    self.video = nil
+                }
+                .id(video.id)
+                .ignoresSafeArea()
+                .overlay(alignment: .top) {
+                    Text("\(video.index + 1)/\(video.sequence.items.count) · " +
+                         URL(fileURLWithPath: video.path).lastPathComponent)
+                        .foregroundStyle(.white).padding(.top, 70)
+                }
+            }
+            if let image {
+                MaiGalleryImageScreen(sequence: image, entryDirection: direction,
+                                      navigate: navigate) {
+                    self.image = nil
+                }
+                .id(image.current.path)
+            }
+        }
+        .statusBarHidden()
+        .task {
+            guard let first = Bundle.main.url(forResource: "ffplay-seek-sample",
+                                                  withExtension: "mp4"),
+                  let last = Bundle.main.url(forResource: "ffplay-sample",
+                                                 withExtension: "mp4") else { return }
+            let sample = UIGraphicsImageRenderer(size: CGSize(width: 300, height: 500))
+                .image { context in
+                    UIColor.systemOrange.setFill()
+                    context.fill(CGRect(x: 0, y: 0, width: 300, height: 500))
+                }
+            let imageURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("mixed-gallery-sample.png")
+            guard let data = sample.pngData(),
+                  (try? data.write(to: imageURL)) != nil else { return }
+            let selected = MaiMediaItem(kind: .video, path: first.path)
+            let sequence = MaiMediaSequence(selected: selected, items: [
+                selected,
+                MaiMediaItem(kind: .image, path: imageURL.path),
+                MaiMediaItem(kind: .video, path: last.path)
+            ])
+            video = MaiFfplayPresentation(sequence: sequence)
+        }
+    }
+
+    private func navigate(_ direction: Int) -> Bool {
+        guard let next = (video?.sequence ?? image)?.adjacent(direction) else { return false }
+        self.direction = direction
+        if next.current.kind == .video {
+            image = nil
+            video = MaiFfplayPresentation(sequence: next, entryDirection: direction)
+        } else {
+            video = nil
+            image = next
+        }
+        return true
     }
 }
 

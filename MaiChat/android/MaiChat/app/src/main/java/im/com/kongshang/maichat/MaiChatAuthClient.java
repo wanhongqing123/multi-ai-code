@@ -1,7 +1,10 @@
+// 文件作用：Android IM 身份、消息同步与本地历史；MaiChatAuthClient 负责外部接口请求与结果转换，本文件给出其实现。
+// 主要入口：shared、hasSession、requestCode、credential。
 package com.kongshang.maichat;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.os.Build;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.util.Base64;
@@ -81,7 +84,10 @@ public final class MaiChatAuthClient {
         }
     }
 
-    private static final String BASE_URL = "https://ichat.life/api/v1/";
+    // 只有显式开启的 Debug 模拟器连接本机假账号服务；普通调试和发布包使用正式地址。
+    private static final String BASE_URL = BuildConfig.DEBUG && BuildConfig.USE_LOCAL_UI_AUTH &&
+        (Build.FINGERPRINT.contains("sdk_gphone") || Build.FINGERPRINT.contains("generic"))
+        ? "http://10.0.2.2:18190/v1/" : "https://ichat.life/api/v1/";
     private static final String KEY_ALIAS = "MaiChat.PhoneAuth.Refresh";
     private static final String STORED_REFRESH = "refresh";
     private final SharedPreferences preferences;

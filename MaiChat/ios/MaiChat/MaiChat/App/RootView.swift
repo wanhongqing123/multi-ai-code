@@ -1,3 +1,7 @@
+// 文件作用：组织登录后的主导航，并协调 IM、创作中心、联系人、远程桌面和设置页。
+// 创作中心首次打开后保留页面实例；切离再返回时继续使用原会话与滚动状态。
+// Agent 打开视频时，这里把播放器放在上方或横屏侧边，并把剩余空间交给原页面。
+// 登录、消息和模型业务状态分别来自 RemoteIMAppState 与 AIAssistantModel。
 import MaiChatCore
 import SwiftUI
 import UIKit
@@ -27,6 +31,8 @@ struct RootView: View {
     @State private var deletingContactGroup: String?
     @State private var isShowingNotificationPermissionPrompt = false
     @State private var isVideoExpanded = false
+    @State private var galleryImage: MaiMediaSequence?
+    @State private var galleryDirection = 0
     @State private var keyboardVisible = false
     @AppStorage("maichat.notification-preprompt-dismissed")
     private var notificationPermissionPromptDismissed = false
@@ -37,6 +43,9 @@ struct RootView: View {
         }
     }
 
+    /// 按窗口尺寸组装主界面，并在同一页面实例上为 Agent 视频留出分屏空间。
+    /// 登录页、主标签、创作中心和顶层弹层各有独立层级；播放器只覆盖自己的分区。
+    /// 键盘与横竖屏变化只改变提议尺寸，不清理任何消息或重建创作中心状态。
     private func content(viewportSize: CGSize) -> some View {
         let landscape = viewportSize.width > viewportSize.height && viewportSize.width >= 600
         let hasDock = appState.agentVideoPresentation != nil && !isVideoExpanded
@@ -87,9 +96,8 @@ struct RootView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                    // Messages owns its bar inside the navigation root. An
-                    // outer conditional bar appears too late during back swipes
-                    // and resizes both pages as soon as selection is cleared.
+                    // 消息页的底栏位于其导航根内；若改由外层条件插入，
+                    // 返回手势期间出现时机会滞后，并在清除选中项时改变两页尺寸。
                     if selectedTab != .messages && selectedTab != .assistant &&
                        activeChatContact == nil {
                         RootTabBar(
@@ -101,6 +109,8 @@ struct RootView: View {
                 }
             }
 
+            // 创作中心第一次打开后继续留在视图树中；切换主标签只控制可见性。
+            // 保留同一页面实例可避免回来时重新加载历史或遗失当前输入。
             if !appState.shouldShowInitialLogin &&
                 (selectedTab == .assistant || hasOpenedAssistant) {
                 AIAssistantView(
@@ -176,6 +186,25 @@ struct RootView: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.96)))
                 .zIndex(70)
             }
+
+            if let galleryImage {
+                MaiGalleryImageScreen(sequence: galleryImage,
+                                      entryDirection: galleryDirection,
+                                      navigate: { direction in
+                    guard let next = galleryImage.adjacent(direction) else { return false }
+                    galleryDirection = direction
+                    if next.current.kind == .video {
+                        self.galleryImage = nil
+                        appState.agentVideoPresentation = MaiFfplayPresentation(
+                            sequence: next, entryDirection: direction)
+                    } else {
+                        self.galleryImage = next
+                    }
+                    return true
+                }, close: { self.galleryImage = nil })
+                    .id(galleryImage.current.path)
+                    .zIndex(1000)
+            }
         }
         .onChange(of: selectedTab) { tab in
             if tab != .assistant { assistantOpenGeneration += 1 }
@@ -188,6 +217,7 @@ struct RootView: View {
         .animation(.easeOut(duration: 0.18), value: contactGroupActionName)
         .animation(.easeOut(duration: 0.18), value: renamingContactGroup)
         .animation(.easeOut(duration: 0.18), value: deletingContactGroup)
+        // 内容区先得到扣除播放器后的尺寸，再把播放器单独叠在窗口上方。
         .padding(.top, dockHeight)
         .padding(.leading, dockWidth)
         .background(Color(red: 0.966, green: 0.976, blue: 0.988).ignoresSafeArea())
@@ -197,9 +227,25 @@ struct RootView: View {
             GeometryReader { geometry in
                 if let presentation = appState.agentVideoPresentation {
                     MaiFfplayVideoScreen(path: presentation.path,
-                                         startSeconds: presentation.startSeconds) {
+                                         startSeconds: presentation.startSeconds,
+                                         entryDirection: presentation.entryDirection,
+                                         navigate: { direction in
+                        guard let next = presentation.sequence.adjacent(direction) else {
+                            return false
+                        }
+                        if next.current.kind == .video {
+                            appState.agentVideoPresentation = MaiFfplayPresentation(
+                                sequence: next, entryDirection: direction)
+                        } else {
+                            appState.agentVideoPresentation = nil
+                            galleryDirection = direction
+                            galleryImage = next
+                        }
+                        return true
+                    }) {
                         appState.agentVideoPresentation = nil
                     }
+                    .id(presentation.id)
                     .frame(width: isVideoExpanded ? geometry.size.width :
                            (landscape ? dockWidth : geometry.size.width),
                            height: isVideoExpanded ? geometry.size.height :
@@ -220,6 +266,21 @@ struct RootView: View {
                         .padding(.top, isVideoExpanded ? max(geometry.safeAreaInsets.top, 58) + 12 : 12)
                         .padding(.trailing, 12)
                     }
+                    .overlay(alignment: .top) {
+                        if presentation.playlist.count > 1 {
+                            Text("\(presentation.index + 1)/\(presentation.playlist.count) · " +
+                                 URL(fileURLWithPath: presentation.path).lastPathComponent)
+                                .font(.system(size: 12, weight: .medium))
+                                .lineLimit(1)
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(.black.opacity(0.55), in: Capsule())
+                                .padding(.horizontal, 76)
+                                .padding(.top, 22)
+                                .allowsHitTesting(false)
+                        }
+                    }
                     .position(x: isVideoExpanded || !landscape ?
                               geometry.size.width / 2 : dockWidth / 2,
                               y: isVideoExpanded || landscape ?
@@ -229,8 +290,9 @@ struct RootView: View {
             }
             .ignoresSafeArea(edges: isVideoExpanded ? .all : [])
         }
-        .statusBarHidden(isVideoExpanded && appState.agentVideoPresentation != nil)
-        .onChange(of: appState.agentVideoPresentation?.id) { _ in
+        .statusBarHidden(galleryImage != nil ||
+                         (isVideoExpanded && appState.agentVideoPresentation != nil))
+        .onChange(of: appState.agentVideoPresentation?.groupID) { _ in
             isVideoExpanded = false
         }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
@@ -376,8 +438,8 @@ struct RootView: View {
 
     private func schedulePendingNotificationRoute(sceneIsActive: Bool) {
         guard sceneIsActive else { return }
-        // Notification taps arrive while the scene is commonly still inactive. Dispatching to the
-        // next real main-queue turn avoids routing during UIKit's state-restoration transaction.
+        // 通知点击到达时场景可能仍处于 inactive；推迟到主队列下一轮，
+        // 避免在 UIKit 状态恢复事务中直接跳转会话。
         DispatchQueue.main.async {
             MainActor.assumeIsolated {
                 guard let peerUserID = systemNotificationCenter.consumePendingPeerUserID()

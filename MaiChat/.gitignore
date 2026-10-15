@@ -1,0 +1,2 @@
+# clangd 本机构建数据库包含 SDK 和 DerivedData 的绝对路径，由脚本生成。
+**/compile_commands.json

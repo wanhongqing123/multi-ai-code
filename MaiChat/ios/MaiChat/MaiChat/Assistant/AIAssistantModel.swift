@@ -1,3 +1,7 @@
+// 文件作用：连接 SwiftUI 创作中心与共享 C++ MaiAgent，维护会话、消息、任务及工作区状态。
+// 会话切换先读取目标最近一页，成功后一次性替换可见状态；失败时保留原会话和消息。
+// 轮询只合并已持久化的新消息，旧页按需从数据库取回，避免刷新时清空当前画面。
+// 云端密钥仅驻留内存；消息持久化和工具调用由 MaiMobileAgent 适配器及核心库完成。
 import Foundation
 import Darwin
 import CoreImage
@@ -369,12 +373,15 @@ struct AIImagePreview: Identifiable, Equatable {
     let filePath: String
     let imageSize: CGSize
     let sourceFrame: CGRect?
+    let sequence: MaiMediaSequence?
 
-    init(filePath: String, imageSize: CGSize = .zero, sourceFrame: CGRect? = nil) {
-        id = UUID()
+    init(filePath: String, imageSize: CGSize = .zero, sourceFrame: CGRect? = nil,
+         sequence: MaiMediaSequence? = nil, id: UUID = UUID()) {
+        self.id = id
         self.filePath = filePath
         self.imageSize = imageSize
         self.sourceFrame = sourceFrame
+        self.sequence = sequence
     }
 }
 struct AIAssistantOpenResult: Sendable {
@@ -457,6 +464,9 @@ actor AIAssistantBackend {
         return decoded
     }
 
+    /// 准备当前账号的工作区、模型凭证和 C++ Agent，返回界面可使用的设置与路径。
+    /// 已初始化时复用同一后端，避免页面反复进入时重建数据库连接和任务状态。
+    /// 任一必需目录或配置失败时抛错，由页面保留原画面并显示可恢复的错误。
     func open(accountUserID: String) async throws -> AIAssistantOpenResult {
         if initialized {
             return AIAssistantOpenResult(
@@ -685,6 +695,7 @@ final class AIAssistantModel: ObservableObject {
     @Published var ready = false
     @Published var historyLoaded = false
     @Published private(set) var hasOlderMessages = false
+    @Published private(set) var visibleMessageLimit = AIAssistantModel.recentMessageCount
     @Published var isSubmitting = false
     @Published var showSettings = false
     @Published var scrollRequest = 0
@@ -701,6 +712,7 @@ final class AIAssistantModel: ObservableObject {
     private var appearingTask: Task<Void, Never>?
     private var pendingInitialPage: (session: String, newestID: String)?
     private var loadingOlderMessages = false
+    private var selectionGeneration = 0
     private var visible = false
     private var pageActive = true
     private var composerTyping = false
@@ -708,6 +720,10 @@ final class AIAssistantModel: ObservableObject {
     private var sessionSwitchUITest = false
     #endif
     var busy: Bool { sessions.first { $0.id == selected }?.busy == true }
+    var visibleMessages: [AIMessage] { Array(messages.suffix(visibleMessageLimit)) }
+    var hasOlderVisibleMessages: Bool {
+        messages.count > visibleMessageLimit || hasOlderMessages
+    }
 
     #if DEBUG
     func installVideoToolTestWorkspace(_ path: String) { workspacePath = path }
@@ -975,6 +991,8 @@ final class AIAssistantModel: ObservableObject {
         // 新旧页有相同稳定 ID 时替换旧行，避免重复显示。
         guard !page.isEmpty else { return }
         var merged = messages
+        let previousNewestID = messages.last?.id
+        var newlyAppendedCount = 0
         var changed = false
         for rawMessage in page {
             let message = rawMessage.withoutReasoningText()
@@ -993,14 +1011,28 @@ final class AIAssistantModel: ObservableObject {
             } else {
                 merged.insert(message, at: lower)
                 changed = true
+                if let previousNewestID, message.id > previousNewestID {
+                    newlyAppendedCount += 1
+                }
             }
         }
-        if changed { messages = merged }
+        if changed {
+            // 已展开旧页时保持其起点；新消息进入末尾不能把正在阅读的旧行挤出可见窗。
+            if visibleMessageLimit > Self.recentMessageCount {
+                visibleMessageLimit += newlyAppendedCount
+            }
+            messages = merged
+        }
     }
 
     func loadOlderMessages() async {
-        guard !loadingOlderMessages, hasOlderMessages,
+        guard !loadingOlderMessages, hasOlderVisibleMessages,
               let oldest = messages.first?.id, !selected.isEmpty else { return }
+        if messages.count > visibleMessageLimit {
+            visibleMessageLimit = min(messages.count,
+                                      visibleMessageLimit + Self.olderPageCount)
+            return
+        }
         loadingOlderMessages = true
         defer { loadingOlderMessages = false }
         let session = selected
@@ -1010,51 +1042,91 @@ final class AIAssistantModel: ObservableObject {
                                                       limit: Self.olderPageCount)
             guard selected == session else { return }
             mergeMessages(page)
+            visibleMessageLimit += page.count
             hasOlderMessages = page.count == Self.olderPageCount
         } catch { self.error = error.localizedDescription }
     }
 
-    func select(_ id: String) async {
+    func messagesForMediaPlaylist(in session: String) async -> [AIMessage] {
+        guard !session.isEmpty, selected == session else { return [] }
+        var collected: [AIMessage] = []
+        var before = ""
+        do {
+            while !Task.isCancelled {
+                // 只读本地会话存储，不把旧消息装进界面；预览仍可遍历全部历史媒体。
+                let page = try await backend.messagesPage(session: session,
+                                                          beforeId: before, limit: 100)
+                guard selected == session else { return [] }
+                collected.append(contentsOf: page)
+                guard page.count == 100, let oldest = page.last?.id, oldest != before else { break }
+                before = oldest
+            }
+        } catch {
+            return messages
+        }
+        return collected.sorted { $0.id < $1.id }
+    }
+
+    /// 打开指定会话：先读取目标最近一页，再在无动画事务中替换可见消息。
+    /// 读取期间保留原会话；并发切换通过代次丢弃过时结果，失败时不清空旧画面。
+    func selectConversation(_ id: String) async {
         #if targetEnvironment(simulator)
         if sessionSwitchUITest {
-            // 模拟真实切换：先显示最新一条，再补齐历史，验证两次布局后仍停在末尾。
+            // 测试入口也遵循正式逻辑：先准备完整页面，再一次性替换当前会话。
             selected = id
-            messages = []
-            historyLoaded = false
             let title = String(id.suffix(1))
             let page = sessionSwitchUITestMessages(title)
-            guard let latest = page.last else { return }
-            messages = [latest]
-            historyLoaded = true
-            scrollRequest += 1
-            await Task.yield()
             messages = page
+            visibleMessageLimit = Self.recentMessageCount
+            historyLoaded = true
             scrollRequest += 1
             return
         }
         #endif
-        selected = id; messages = []; permissions = []; questions = []; error = ""
-        quotedMessage = nil
-        historyLoaded = false
-        hasOlderMessages = false
-        pendingInitialPage = nil
+        guard !id.isEmpty else { return }
+        if id == selected {
+            scrollRequest += 1
+            return
+        }
+        selectionGeneration &+= 1
+        let generation = selectionGeneration
         do {
-            if let newestID = try await showNewestMessage(for: id) {
+            // 先在后台读取新会话最近一页；读取完成前保留当前消息，避免切换时闪白。
+            // 一次性替换消息列表，避免“先一条、再整页”造成两次滚动和空白帧。
+            let page = try await backend.messagesPage(session: id, beforeId: "",
+                                                     limit: Self.recentMessageCount)
+            guard generation == selectionGeneration else { return }
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                selected = id
+                messages = Array(page.reversed()).map { $0.withoutReasoningText() }
+                visibleMessageLimit = Self.recentMessageCount
+                permissions = []
+                questions = []
+                error = ""
+                quotedMessage = nil
+                historyLoaded = true
+                hasOlderMessages = page.count == Self.recentMessageCount
+                pendingInitialPage = nil
                 scrollRequest += 1
-                await completeInitialPage(for: id, newestID: newestID)
-            } else {
-                await refresh(force: true)
             }
-            if selected == id { scrollRequest += 1 }
-        } catch { self.error = error.localizedDescription }
+            await refresh(force: true)
+        } catch {
+            guard generation == selectionGeneration else { return }
+            // 查询失败时继续显示原会话，用户可重试；不能把可见历史清空。
+            showTransientError(error.localizedDescription, duration: .seconds(8))
+        }
     }
     func create() async {
         do {
             let result = try await backend.request("create")
-            await select(result.id ?? "")
+            await selectConversation(result.id ?? "")
         } catch { self.error = error.localizedDescription }
     }
-    func send(
+    /// 提交文本及附件，并在核心落库后合并新快照、请求界面定位最新消息。
+    /// 输入不合法或任务忙碌时不改动草稿；新建会话也必须保持一个可见的加载状态。
+    func sendMessage(
         _ text: String,
         images: [AIImportedFile] = [],
         videos: [AIImportedFile] = [],
@@ -1086,7 +1158,8 @@ final class AIAssistantModel: ObservableObject {
                 messages = []
                 permissions = []
                 questions = []
-                historyLoaded = false
+                // 新建空会话时显示欢迎态；不让首次发送期间出现无内容白屏。
+                historyLoaded = true
                 hasOlderMessages = false
             } catch {
                 self.error = error.localizedDescription
@@ -1107,7 +1180,9 @@ final class AIAssistantModel: ObservableObject {
             lastBackendError = ""
             error = ""
             await refresh(force: true)
-            historyLoaded = !messages.isEmpty
+            // 发送成功后即使快照暂未返回新消息，也保留可显示的已加载状态。
+            // 把空快照解释为“历史未加载”会隐藏欢迎态，形成整块白屏。
+            historyLoaded = true
             scrollRequest += 1
             startPolling()
             return true

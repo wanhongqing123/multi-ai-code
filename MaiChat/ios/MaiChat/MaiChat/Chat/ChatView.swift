@@ -1,3 +1,7 @@
+// 文件作用：展示 IM 会话列表和聊天页，处理消息气泡、输入草稿、媒体预览与语音转文字。
+// 会话入口由 ChatNavigationHost 管理；详情页持有消息列表与输入栏的可见状态。
+// 语音悬浮窗只覆盖屏幕，不改变聊天页的可用高度；转写成功后才向 IM 状态层发送文本。
+// 消息加载与网络同步由 RemoteIMAppState 执行，本文件只消费已加载消息并维护视口位置。
 import AVFoundation
 import AVKit
 import CoreTransferable
@@ -26,9 +30,8 @@ private struct RemoteIMImageRequest: Hashable, Sendable {
               maximumPixelSize > 0
         else { return nil }
         let fileURL = URL(fileURLWithPath: filePath).standardizedFileURL
-        // Cover downloads publish the same final path first as metadata and then again after
-        // the .part file is promoted. Including the lightweight fingerprint restarts the task
-        // without allowing an older asynchronous result to overwrite the newer file.
+        // 封面下载先以元数据公布目标路径，临时文件转正后仍用同一路径再次通知。
+        // 文件轻量指纹能触发重新读取，同时阻止旧异步结果覆盖新文件。
         let values = try? fileURL.resourceValues(
             forKeys: [.fileSizeKey, .contentModificationDateKey]
         )
@@ -89,7 +92,7 @@ private actor RemoteIMImagePipeline {
     static let shared = RemoteIMImagePipeline()
 
     private let cache = NSCache<NSString, RemoteIMDecodedImageBox>()
-    // A screenful of photos should not fan out into enough user-initiated work to starve UI.
+    // 一屏图片不能同时启动过多用户级工作，避免占满队列让界面失去响应。
     private let decodeLimiter = RemoteIMImageDecodeLimiter(limit: 2)
     private var requestsInFlight: [RemoteIMImageRequest: Task<RemoteIMImageDecodeOutcome, Never>] = [:]
     private var reportedFailures = Set<RemoteIMImageRequest>()
@@ -100,6 +103,8 @@ private actor RemoteIMImagePipeline {
         cache.totalCostLimit = 32 * 1_024 * 1_024
     }
 
+    /// 按目标尺寸查找或解码图片；重复请求合并为同一任务以避免滚动时重复解码。
+    /// 成功结果进入内存缓存，失败仅影响当前图片气泡，不阻断消息列表布局。
     func image(for request: RemoteIMImageRequest) async -> RemoteIMDecodedImageBox? {
         let cacheKey = Self.cacheKey(for: request)
         if let cached = cache.object(forKey: cacheKey) {
@@ -503,8 +508,8 @@ struct ChatView: View {
                 preparedContactID = nil
                 return
             }
-            // Read the local first page before constructing/pushing its view.
-            // Otherwise one summary row flashes before the initial history page replaces it.
+            // 先读取本地首屏历史，再创建并推入聊天页；
+            // 否则会先闪过摘要行，再被首屏消息替换。
             await appState.loadInitialMessages(with: contact.userID)
             guard !Task.isCancelled, activeContact?.userID == contact.userID else { return }
             preparedContactID = contact.userID
@@ -545,6 +550,7 @@ struct ChatView: View {
 #if targetEnvironment(simulator)
 struct ChatLandscapeUITestRoot: View {
     @State private var activeContact: RemoteIMContact?
+    @State private var installedLargeHistory = false
     @StateObject private var appState = RemoteIMAppState(
         loadedSettings: StoredRemoteIMSettings(
             sdkAppID: nil, masterUserID: "im-layout-test",
@@ -557,6 +563,32 @@ struct ChatLandscapeUITestRoot: View {
         ChatView(activeContact: $activeContact, showRemoteDesktop: {},
                  bottomBar: AnyView(Text("消息页签").frame(height: 48)))
             .environmentObject(appState)
+            .onAppear {
+                let searchFocus = ProcessInfo.processInfo.arguments.contains("--im-search-focus-ui-test")
+                guard ProcessInfo.processInfo.arguments.contains("--im-large-history-ui-test") ||
+                        searchFocus,
+                      !installedLargeHistory else { return }
+                installedLargeHistory = true
+                let contact = RemoteIMContact(userID: "im-test-peer", displayName: "横屏测试联系人")
+                let messages = (0..<2544).map { index in
+                    RemoteIMMessage(
+                        fromUserID: contact.userID,
+                        toUserID: "im-layout-test",
+                        text: "IM 历史消息 \(index)\n第二行内容",
+                        direction: .incoming,
+                        status: .sent,
+                        createdAt: Date(timeIntervalSince1970: TimeInterval(index))
+                    )
+                }
+                appState.chatState = MasterChatState(
+                    ownerUserID: "im-layout-test", contacts: [contact], messages: messages)
+                if searchFocus {
+                    let hit = LocalChatHistorySearchHit(peerUserID: contact.userID,
+                                                        message: messages[100])
+                    _ = appState.openMessageSearchHit(hit)
+                    activeContact = contact
+                }
+            }
     }
 }
 #endif
@@ -1155,13 +1187,67 @@ private enum RemoteIMImagePreviewLayout {
     static let coordinateSpaceName = "remote-im-image-preview-space"
 }
 
+enum MaiConversationMedia {
+    static func items(in messages: [RemoteIMMessage]) -> [MaiMediaItem] {
+        var result: [MaiMediaItem] = []
+        for message in messages {
+            if let image = message.imageAttachment,
+               FileManager.default.fileExists(atPath: image.localFilePath) {
+                result.append(MaiMediaItem(kind: .image, path: image.localFilePath))
+            }
+            if let video = RemoteIMVideoPreviewPolicy.previewItem(for: message) {
+                result.append(MaiMediaItem(kind: .video, path: video.localFilePath))
+            }
+        }
+        return result
+    }
+
+    static func imageSize(at path: String) -> CGSize {
+        let url = URL(fileURLWithPath: path)
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
+                as? [String: Any],
+              let width = properties[kCGImagePropertyPixelWidth as String] as? NSNumber,
+              let height = properties[kCGImagePropertyPixelHeight as String] as? NSNumber
+        else { return .zero }
+        return CGSize(width: width.doubleValue, height: height.doubleValue)
+    }
+}
+
 private struct PresentedRemoteIMImage: Identifiable {
     let item: RemoteIMImagePreviewItem
     let imageSize: CGSize
-    let sourceFrame: CGRect
+    let sourceSnapshot: WindowFrameSnapshot?
     let thumbnailImage: UIImage?
+    var sequence: MaiMediaSequence? = nil
 
     var id: UUID { item.id }
+}
+
+@MainActor
+private final class RemoteIMImageTransition: ObservableObject {
+    @Published private(set) var sourceFrame: CGRect = .zero
+    @Published private(set) var isReady = false
+    @Published var isExpanded = false
+
+    func start(from frame: CGRect) {
+        sourceFrame = frame
+        isReady = true
+        // 先绘制气泡位置的一帧，再放大；否则首帧和终点会在同一次布局中合并。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { [weak self] in
+            guard let self, self.isReady else { return }
+            withAnimation(.interactiveSpring(response: 0.38, dampingFraction: 0.86,
+                                             blendDuration: 0.08)) {
+                self.isExpanded = true
+            }
+        }
+    }
+
+    func presentExpanded() {
+        sourceFrame = .zero
+        isReady = true
+        isExpanded = true
+    }
 }
 
 // 系统 fullScreenCover 自带从底部进入的转场；这里以不带系统动画的透明全屏
@@ -1169,6 +1255,7 @@ private struct PresentedRemoteIMImage: Identifiable {
 private struct RemoteIMImagePresentationHost: UIViewControllerRepresentable {
     @Binding var presentation: PresentedRemoteIMImage?
     let close: () -> Void
+    let navigate: (Int) -> Bool
 
     func makeUIViewController(context: Context) -> RemoteIMImagePresentationController {
         RemoteIMImagePresentationController()
@@ -1178,6 +1265,7 @@ private struct RemoteIMImagePresentationHost: UIViewControllerRepresentable {
                                 context: Context) {
         controller.presentation = presentation
         controller.close = close
+        controller.navigate = navigate
         controller.scheduleUpdate()
     }
 
@@ -1190,9 +1278,17 @@ private struct RemoteIMImagePresentationHost: UIViewControllerRepresentable {
 private final class RemoteIMImagePresentationController: UIViewController {
     var presentation: PresentedRemoteIMImage?
     var close: (() -> Void)?
+    var navigate: ((Int) -> Bool)?
     private var previewController: RemoteIMImageHostingController?
     private var presentedID: UUID?
     private var updateScheduled = false
+    private var pendingDirection = 0
+
+    private func requestNavigation(_ direction: Int) -> Bool {
+        let accepted = navigate?(direction) ?? false
+        if accepted { pendingDirection = direction }
+        return accepted
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -1215,24 +1311,59 @@ private final class RemoteIMImagePresentationController: UIViewController {
         }
     }
 
+    /// 在窗口层呈现或切换全屏图片预览，并保留旧画面直到新画面准备好。
+    /// UIKit 容器持有过渡快照；SwiftUI 只更新预览内容，不直接改写其子视图树。
     private func updatePresentation() {
         guard isViewLoaded, view.window != nil else { return }
         if let presentation {
             guard presentedID != presentation.id else { return }
             if let previewController {
-                dismissPreview()
+                // 快照放在 UIKit 呈现容器中，而非 UIHostingController.view 内部。
+                // SwiftUI 自己管理后者的子视图，外插快照会破坏层级。
+                let container = previewController.view.superview
+                let previousFrame = previewController.view.snapshotView(afterScreenUpdates: false)
+                if let container, let previousFrame {
+                    previousFrame.frame = previewController.view.convert(
+                        previewController.view.bounds, to: container)
+                    container.addSubview(previousFrame)
+                }
+                let transition = RemoteIMImageTransition()
+                transition.presentExpanded()
+                previewController.rootView = FullScreenImagePreviewView(
+                    presentation: presentation, transition: transition,
+                    close: { [weak self] in self?.close?() },
+                    navigate: { [weak self] direction in
+                        self?.requestNavigation(direction) ?? false
+                    })
+                presentedID = presentation.id
+                let offset = CGFloat(pendingDirection * 48)
+                pendingDirection = 0
+                UIView.animate(withDuration: 0.22, delay: 0,
+                               options: [.curveEaseOut, .allowUserInteraction]) {
+                    previousFrame?.transform = CGAffineTransform(translationX: -offset, y: 0)
+                    previousFrame?.alpha = 0
+                } completion: { _ in previousFrame?.removeFromSuperview() }
                 return
             }
+            let transition = RemoteIMImageTransition()
             let preview = RemoteIMImageHostingController(rootView:
                 FullScreenImagePreviewView(presentation: presentation,
-                                           close: { [weak self] in self?.close?() }))
+                                           transition: transition,
+                                           close: { [weak self] in self?.close?() },
+                                           navigate: { [weak self] direction in
+                                               self?.requestNavigation(direction) ?? false
+                                           }))
             preview.modalPresentationStyle = .overFullScreen
             preview.modalPresentationCapturesStatusBarAppearance = true
             preview.view.backgroundColor = .clear
             preview.view.isOpaque = false
             previewController = preview
             presentedID = presentation.id
-            present(preview, animated: false)
+            present(preview, animated: false) { [weak self, weak preview] in
+                guard self?.presentedID == presentation.id, let preview else { return }
+                let sourceFrame = presentation.sourceSnapshot?.frame(in: preview.view) ?? .zero
+                transition.start(from: sourceFrame)
+            }
         } else {
             dismissPreview()
         }
@@ -1413,6 +1544,12 @@ private struct ChatDetailView: View {
     @State private var screenshotTask: Task<Void, Never>?
     @State private var screenshotDismissTask: Task<Void, Never>?
 
+    private var visibleSearchTargetMessageID: UUID? {
+        guard let target = quoteTargetMessageID ?? searchTargetMessageID else { return nil }
+        return appState.visibleMessages(with: contact.userID).contains(where: { $0.id == target })
+            ? target : nil
+    }
+
     var body: some View {
         ZStack {
             VStack(spacing: 0) {
@@ -1426,8 +1563,9 @@ private struct ChatDetailView: View {
                     peerUserID: contact.userID,
                     messages: appState.visibleMessages(with: contact.userID),
                     peerRelation: contact.relation,
-                    searchTargetMessageID: quoteTargetMessageID ?? searchTargetMessageID,
+                    searchTargetMessageID: visibleSearchTargetMessageID,
                     hasEarlierMessages: appState.hasEarlierMessages(with: contact.userID),
+                    hasNewerMessages: appState.hasNewerMessages(with: contact.userID),
                     selectingMessageID: selectingMessageID,
                     finishSelectingText: { selectingMessageID = nil },
                     dismissAttachmentPanel: { isAttachmentPanelPresented = false },
@@ -1452,6 +1590,10 @@ private struct ChatDetailView: View {
                     },
                     loadEarlierMessages: {
                         await appState.loadEarlierMessages(with: contact.userID)
+                    },
+                    returnToLatestMessages: {
+                        quoteTargetMessageID = nil
+                        appState.showLatestMessages(with: contact.userID)
                     }
                 )
                 .id(contact.userID)
@@ -1462,9 +1604,8 @@ private struct ChatDetailView: View {
                     transcriptionPresentation: transcriptionPresentation
                 )
             }
-            // A transient voice panel must not participate in the chat's size
-            // calculation. As a ZStack sibling, its minimum height enlarged the
-            // underlying list and invalidated its lazy geometry on dismissal.
+            // 临时语音层不能参与聊天页的尺寸计算；作为同层 ZStack 子视图时，
+            // 它的最小高度曾撑大消息列表，并在收起后破坏原有滚动位置。
             .overlay {
             }
 
@@ -1532,12 +1673,13 @@ private struct ChatDetailView: View {
         .toolbar(.hidden, for: .navigationBar)
         .background {
             RemoteIMImagePresentationHost(presentation: $imagePreviewPresentation,
-                                          close: closeImagePreview)
+                                          close: closeImagePreview,
+                                          navigate: navigateImagePreview)
         }
         .animation(.easeOut(duration: 0.18), value: messageActionTarget?.id)
         .animation(.easeOut(duration: 0.18), value: forwardingMessage?.id)
         .onAppear {
-            appState.selectContact(contact)
+            appState.selectContact(contact, preservingMessageFocus: true)
             appState.setConversationVisible(userID: contact.userID, visible: true)
             AppDiagnosticLog.shared.record(
                 level: .info,
@@ -1552,8 +1694,8 @@ private struct ChatDetailView: View {
         }
         .onDisappear {
             appState.setConversationVisible(userID: contact.userID, visible: false)
-            // The previous chat can disappear after the next one has appeared. Clearing the
-            // shared draft here would erase the next contact's restored quote.
+            // 上一聊天页可能在下一页出现后才离场；这里不能清除共享草稿，
+            // 否则会抹掉新联系人刚恢复的引用回复。
             messageActionTarget = nil
             selectingMessageID = nil
             forwardingMessage = nil
@@ -1658,15 +1800,39 @@ private struct ChatDetailView: View {
     private func presentImagePreview(
         item: RemoteIMImagePreviewItem,
         imageSize: CGSize,
-        sourceFrame: CGRect,
+        sourceSnapshot: WindowFrameSnapshot?,
         thumbnailImage: UIImage?
     ) {
+        let selected = MaiMediaItem(kind: .image, path: item.localFilePath)
+        let sequence = MaiMediaSequence(
+            selected: selected,
+            items: MaiConversationMedia.items(in: appState.visibleMessages(with: contact.userID)))
         imagePreviewPresentation = PresentedRemoteIMImage(
             item: item,
             imageSize: imageSize,
-            sourceFrame: sourceFrame,
-            thumbnailImage: thumbnailImage
+            sourceSnapshot: sourceSnapshot,
+            thumbnailImage: thumbnailImage,
+            sequence: sequence
         )
+    }
+
+    private func navigateImagePreview(_ direction: Int) -> Bool {
+        guard let current = imagePreviewPresentation,
+              let next = current.sequence?.adjacent(direction) else { return false }
+        if next.current.kind == .video {
+            imagePreviewPresentation = nil
+            appState.agentVideoPresentation = MaiFfplayPresentation(
+                sequence: next, entryDirection: direction)
+        } else {
+            imagePreviewPresentation = PresentedRemoteIMImage(
+                item: RemoteIMImagePreviewItem(id: UUID(),
+                                               localFilePath: next.current.path),
+                imageSize: MaiConversationMedia.imageSize(at: next.current.path),
+                sourceSnapshot: nil,
+                thumbnailImage: nil,
+                sequence: next)
+        }
+        return true
     }
 
     private func closeImagePreview() {
@@ -1683,46 +1849,57 @@ struct VoiceActionFramesKey: PreferenceKey {
     }
 }
 
-// IM 会话和创作中心使用不同的 UIHostingController；统一换算到 UIWindow 坐标，
-// 供窗口顶层的语音按钮和图片放大动画使用，避免把某个页面的局部坐标误当屏幕坐标。
-struct WindowFrameReader: UIViewRepresentable {
-    let onFrame: (CGRect) -> Void
+private final class WindowFrameSnapshot {
+    weak var window: UIWindow?
+    let frame: CGRect
 
-    func makeUIView(context: Context) -> FrameView {
-        let view = FrameView()
-        view.isUserInteractionEnabled = false
-        view.onFrame = onFrame
-        return view
+    init(window: UIWindow, frame: CGRect) {
+        self.window = window
+        self.frame = frame
     }
 
-    func updateUIView(_ view: FrameView, context: Context) {
-        view.onFrame = onFrame
-        view.reportFrame()
+    func frame(in targetView: UIView) -> CGRect? {
+        guard let window, let targetWindow = targetView.window else { return nil }
+        if targetWindow === window { return targetView.convert(frame, from: window) }
+        let screenFrame = window.convert(frame, to: nil)
+        let targetWindowFrame = targetWindow.convert(screenFrame, from: nil)
+        return targetView.convert(targetWindowFrame, from: targetWindow)
+    }
+}
+
+// 直接用被点击的 UIButton 取坐标。SwiftUI 背景 UIView 在真实图片气泡里可能尚未
+// 挂到 UIWindow，导致起点为空；按钮触发时自身一定已在窗口中，且位置是滚动后的现值。
+private struct WindowFrameActionButton: UIViewRepresentable {
+    let action: (WindowFrameSnapshot?) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(action: action) }
+
+    func makeUIView(context: Context) -> UIButton {
+        let button = UIButton(type: .custom)
+        button.backgroundColor = .clear
+        button.accessibilityLabel = "查看原图"
+        button.accessibilityIdentifier = "remote-im-message-image"
+        button.addTarget(context.coordinator, action: #selector(Coordinator.activate(_:)),
+                         for: .touchUpInside)
+        return button
     }
 
-    final class FrameView: UIView {
-        var onFrame: ((CGRect) -> Void)?
-        private var lastFrame: CGRect = .null
+    func updateUIView(_ button: UIButton, context: Context) {
+        context.coordinator.action = action
+    }
 
-        override func didMoveToWindow() {
-            super.didMoveToWindow()
-            reportFrame()
+    final class Coordinator: NSObject {
+        var action: (WindowFrameSnapshot?) -> Void
+
+        init(action: @escaping (WindowFrameSnapshot?) -> Void) {
+            self.action = action
         }
 
-        override func layoutSubviews() {
-            super.layoutSubviews()
-            reportFrame()
-        }
-
-        func reportFrame() {
-            guard window != nil, bounds.width > 0, bounds.height > 0 else { return }
-            let frame = convert(bounds, to: nil)
-            guard frame != lastFrame else { return }
-            lastFrame = frame
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.window != nil else { return }
-                self.onFrame?(frame)
+        @objc func activate(_ button: UIButton) {
+            let snapshot = button.window.map {
+                WindowFrameSnapshot(window: $0, frame: button.convert(button.bounds, to: $0))
             }
+            action(snapshot)
         }
     }
 }
@@ -1733,11 +1910,15 @@ final class VoiceTranscriptionOverlayState: ObservableObject {
     @Published private(set) var activePresentation: VoiceTranscriptionPresentation?
 
     func show(_ presentation: VoiceTranscriptionPresentation) {
-        if activePresentation !== presentation { activePresentation = presentation }
+        guard activePresentation !== presentation else { return }
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+            activePresentation = presentation
+        }
     }
 
     func hide(_ presentation: VoiceTranscriptionPresentation) {
-        if activePresentation === presentation { activePresentation = nil }
+        guard activePresentation === presentation else { return }
+        withAnimation(.easeOut(duration: 0.16)) { activePresentation = nil }
     }
 }
 
@@ -1748,7 +1929,7 @@ final class VoiceTranscriptionPresentation: ObservableObject {
         var liveText = ""
     }
     @Published private var state = PresentationState()
-    @Published private(set) var composerFrame: CGRect = .zero
+    private(set) var gestureOrigin: CGPoint?
     var target: VoiceTranscriptionTarget? {
         get { state.target }
         set {
@@ -1766,13 +1947,11 @@ final class VoiceTranscriptionPresentation: ObservableObject {
     var actionFrames: [VoiceTranscriptionTarget: CGRect] = [:]
     private(set) var diagnosticFields: [String: String] = [:]
 
-    func updateComposerFrame(_ frame: CGRect) {
-        guard composerFrame != frame else { return }
-        composerFrame = frame
-    }
-
-    func prepareForNewSession(account: String, peer: String) {
+    /// 在按下输入框时记录手指起点；悬浮层只读取一次，不回写底层页面布局。
+    func prepareForNewSession(account: String, peer: String, gestureOrigin: CGPoint? = nil) {
         VoiceTranscriptionOverlayState.shared.hide(self)
+        self.gestureOrigin = gestureOrigin
+        actionFrames = [:]
         diagnosticFields = ["account": account,
                             "peer": DiagnosticLogPrivacy.stableTag(peer, prefix: "u"),
                             "asr_session": UUID().uuidString.lowercased()]
@@ -1797,9 +1976,16 @@ final class VoiceTranscriptionPresentation: ObservableObject {
         state.liveText = text
     }
 
+    /// 识别结束后显示最终结果；发送前保留短暂可读时间，避免最后一段文字闪退。
+    func showFinalTranscript(_ text: String) {
+        if state.liveText != text { state.liveText = text }
+    }
+
     func reset() {
         VoiceTranscriptionOverlayState.shared.hide(self)
         state = PresentationState()
+        gestureOrigin = nil
+        actionFrames = [:]
         firstLoggedSessionID = nil
     }
 }
@@ -1813,17 +1999,15 @@ struct VoiceTranscriptionHighlightHost: View {
                 VoiceTranscriptionHighlight(
                     target: target,
                     transcript: presentation.liveText,
-                    composerFrame: presentation.composerFrame,
+                    gestureOrigin: presentation.gestureOrigin,
                     onCancel: { presentation.onCancel?() },
                     onEdit: { presentation.onEdit?() }
                 )
-                .transition(.opacity)
+                .transition(.asymmetric(
+                    insertion: .opacity.combined(with: .scale(scale: 0.94)),
+                    removal: .opacity))
                 .onPreferenceChange(VoiceActionFramesKey.self) { presentation.actionFrames = $0 }
             }
-        }
-        .transaction { transaction in
-            transaction.animation = nil
-            transaction.disablesAnimations = true
         }
     }
 }
@@ -1831,88 +2015,83 @@ struct VoiceTranscriptionHighlightHost: View {
 private struct VoiceTranscriptionHighlight: View {
     let target: VoiceTranscriptionTarget
     let transcript: String
-    let composerFrame: CGRect
+    let gestureOrigin: CGPoint?
     let onCancel: () -> Void
     let onEdit: () -> Void
 
     var body: some View {
         GeometryReader { geometry in
-            let topInset = max(geometry.safeAreaInsets.top + 24,
-                               min(geometry.size.height * 0.16, 150))
-            let cardHeight = min(geometry.size.height * 0.15, 112)
-            let composerTop = composerFrame.isEmpty
-                ? geometry.size.height - 80
-                : composerFrame.minY - geometry.frame(in: .global).minY
-            // 按钮参考实际输入框定位：比输入框高 96pt，同时与转写框保留触控间隔。
-            let actionBottom = min(
-                max(composerTop - 96, topInset + cardHeight + 128),
-                geometry.size.height - 48
+            let cardWidth = min(geometry.size.width - 32, 520)
+            let fingerY = gestureOrigin.map {
+                $0.y - geometry.frame(in: .global).minY
+            } ?? geometry.size.height - 80
+            // 操作目标与转写卡片各自定位：从输入框轻微上滑即可命中目标；
+            // 卡片保持屏幕居中，自己的高度交给文字真实排版决定。
+            let actionCenterY = min(
+                max(fingerY - 160, geometry.safeAreaInsets.top + 26),
+                geometry.size.height - geometry.safeAreaInsets.bottom - 26
             )
             ZStack(alignment: .top) {
-                Color.black.opacity(0.45)
+                // 悬浮层只压暗背景，不参与 IM 或创作中心消息列表的尺寸计算。
+                Color.black.opacity(0.25)
                     .ignoresSafeArea()
                     .allowsHitTesting(false)
 
-                VStack(spacing: 0) {
-                    // 顶层悬浮框不再受视频下方会话区域的高度限制；
-                    // 状态放在转写框上方，避免夹在转写框与取消/编辑按钮之间。
-                    HStack {
-                        Text("语音转文字")
-                            .font(.system(size: 16, weight: .semibold))
-                        Spacer()
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 7) {
+                        Image(systemName: "mic.fill")
                         Text(statusText)
-                            .font(.system(size: 14, weight: .medium))
                     }
-                    .foregroundStyle(.white)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.84))
                     Text(transcript.isEmpty ? "正在听，请说话…" : String(transcript.suffix(180)))
-                        .font(.system(size: 19, weight: .medium))
+                        .font(.system(size: 24, weight: .medium))
                         .foregroundStyle(.white)
                         .frame(maxWidth: .infinity, maxHeight: .infinity,
                                alignment: .topLeading)
-                        .lineLimit(3)
+                        .lineLimit(8)
                         .truncationMode(.head)
-                        .padding(16)
-                        .background(
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .fill(RemoteIMStyle.blue)
-                        )
-                        .frame(height: cardHeight)
-                        .padding(.top, 12)
                         .accessibilityIdentifier("voice-transcript")
                 }
-                .frame(width: min(geometry.size.width - 32, 520))
+                .padding(16)
+                .frame(width: cardWidth, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, topInset)
+                .background(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(RemoteIMStyle.blue)
+                )
+                .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
+                .animation(.easeInOut(duration: 0.2), value: transcript)
 
                 HStack(spacing: 92) {
-                    targetBadge(
+                    voiceActionButton(
                         title: "取消",
                         systemImage: "xmark",
                         selected: target == .cancel,
                         selectedColor: .red
                     )
-                    targetBadge(
+                    voiceActionButton(
                         title: "编辑",
                         systemImage: "pencil",
                         selected: target == .edit || target == .finishingEdit,
                         selectedColor: RemoteIMStyle.blue
                     )
                 }
-                .frame(height: 80)
-                .position(x: geometry.size.width / 2, y: actionBottom - 40)
+                .frame(width: cardWidth, height: 52)
+                .position(x: geometry.size.width / 2, y: actionCenterY)
             }
         }
         .accessibilityElement(children: .contain)
     }
 
-    private func targetBadge(
+    /// 显示可点击且可通过拖动命中的语音操作目标。
+    private func voiceActionButton(
         title: String,
         systemImage: String,
         selected: Bool,
         selectedColor: Color
     ) -> some View {
         Button(action: systemImage == "xmark" ? onCancel : onEdit) {
-        VStack(spacing: 8) {
             Image(systemName: systemImage)
                 .font(.system(size: 20, weight: .semibold))
                 .frame(width: 52, height: 52)
@@ -1922,20 +2101,18 @@ private struct VoiceTranscriptionHighlight: View {
                 .overlay(
                     Circle().stroke(Color.white.opacity(selected ? 0.9 : 0.3), lineWidth: 1.5)
                 )
-            Text(title)
-                .font(.system(size: 13, weight: .semibold))
-        }
-        .foregroundStyle(.white)
-        .background {
-            GeometryReader { geometry in
-                Color.clear.preference(key: VoiceActionFramesKey.self,
-                    value: [systemImage == "xmark" ? .cancel : .edit: geometry.frame(in: .global)])
+            .foregroundStyle(.white)
+            .background {
+                GeometryReader { geometry in
+                    Color.clear.preference(key: VoiceActionFramesKey.self,
+                        value: [systemImage == "xmark" ? .cancel : .edit: geometry.frame(in: .global)])
+                }
             }
-        }
-        .scaleEffect(selected ? 1.12 : 1)
+            .scaleEffect(selected ? 1.12 : 1)
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier(systemImage == "xmark" ? "voice-cancel" : "voice-edit")
+        .accessibilityLabel(title)
         .disabled(target == .finishingSend || target == .finishingEdit)
     }
 
@@ -1957,32 +2134,141 @@ private struct VoiceTranscriptionHighlight: View {
 }
 
 #if targetEnvironment(simulator)
-struct RemoteIMImageFullscreenUITestRoot: View {
-    @State private var preview: PresentedRemoteIMImage?
-    @State private var sourceWindowFrame: CGRect = .zero
+// 设计审查专用：用真实播放器和创作中心消息列表呈现语音悬浮层，不调用收费服务。
+struct VoiceTranscriptionConversationPreviewRoot: View {
+    @StateObject private var presentation = VoiceTranscriptionPresentation()
 
     var body: some View {
+        GeometryReader { viewport in
+            let dockHeight = min(max(viewport.size.height * 0.62, 320), 560)
+            ZStack { AIAssistantView() }
+                .padding(.top, dockHeight)
+                .overlay {
+                    GeometryReader { geometry in
+                        let previewVideo = ProcessInfo.processInfo.environment["MAICHAT_VOICE_DESIGN_VIDEO"]
+                            .flatMap { FileManager.default.fileExists(atPath: $0) ? $0 : nil }
+                            ?? Bundle.main.url(forResource: "ffplay-sample", withExtension: "mp4")?.path
+                        if let previewVideo {
+                            MaiFfplayVideoScreen(path: previewVideo) {}
+                                .frame(width: geometry.size.width, height: dockHeight)
+                                .position(x: geometry.size.width / 2, y: dockHeight / 2)
+                        }
+                    }
+                }
+        }
+        .task {
+            AIAssistantModel.shared.installHistoryUITestFixture()
+            presentation.prepareForNewSession(account: "preview", peer: "preview")
+            presentation.onCancel = { presentation.reset() }
+            presentation.onEdit = { presentation.reset() }
+            presentation.target = .send
+            presentation.updateLiveText("我想从第十秒开始播放这个视频，再看一下人物动作。",
+                                        sessionID: 1)
+        }
+        .onDisappear { presentation.reset() }
+    }
+}
+
+struct RemoteIMImageFullscreenUITestRoot: View {
+    @StateObject private var appState = RemoteIMAppState(loadedSettings: .empty)
+    @State private var preview: PresentedRemoteIMImage?
+    @State private var video: MaiFfplayPresentation?
+    @State private var imagePath = ""
+    @State private var secondImagePath = ""
+    @State private var sourceFrameState = "尚未打开"
+
+    var body: some View {
+        ZStack {
         ChatNavigationHost(
             root: AnyView(Color.white),
             detail: AnyView(
-                ZStack {
-                    Color.white
-                    Button("打开 IM 图片") { openPreview() }
-                        .background {
-                            WindowFrameReader { sourceWindowFrame = $0 }
+                VStack(spacing: 0) {
+                    ScrollView {
+                        VStack {
+                            Color.clear.frame(height: 900)
+                            if !imagePath.isEmpty {
+                                ImageBubbleContent(
+                                    attachment: RemoteIMImageAttachment(localFilePath: imagePath,
+                                                                         width: 300, height: 500),
+                                    previewImage: { imageSize, sourceSnapshot, thumbnailImage in
+                                        sourceFrameState = sourceSnapshot?.frame.isEmpty == false
+                                            ? "有效" : "无效"
+                                        preview = PresentedRemoteIMImage(
+                                            item: RemoteIMImagePreviewItem(id: UUID(),
+                                                                           localFilePath: imagePath),
+                                            imageSize: imageSize,
+                                            sourceSnapshot: sourceSnapshot,
+                                            thumbnailImage: thumbnailImage,
+                                            sequence: testSequence()
+                                        )
+                                    }
+                                )
+                            }
+                            Color.clear.frame(height: 1000)
                         }
+                        .frame(maxWidth: .infinity)
+                    }
+                    Text(sourceFrameState)
+                        .accessibilityIdentifier("im-source-frame-state")
                 }
+                .environmentObject(appState)
+                .background(Color.white)
                 .background {
                     RemoteIMImagePresentationHost(presentation: $preview,
-                                                  close: closePreview)
+                                                  close: closePreview,
+                                                  navigate: navigate)
                 }
             ),
             selectionID: "im-image-fullscreen-test",
             onPop: {}
         )
+        if let video {
+            MaiFfplayVideoScreen(path: video.path, navigate: navigate) {
+                self.video = nil
+            }
+            .id(video.id)
+            .ignoresSafeArea()
+            .overlay(alignment: .top) {
+                Text("\(video.index + 1)/\(video.sequence.items.count) · " +
+                     URL(fileURLWithPath: video.path).lastPathComponent)
+                    .foregroundStyle(.white).padding(.top, 70)
+            }
+        }
+        }
+        .task { prepareImage() }
     }
 
-    private func openPreview() {
+    private func testSequence() -> MaiMediaSequence? {
+        guard !imagePath.isEmpty, !secondImagePath.isEmpty,
+              let videoPath = Bundle.main.url(forResource: "ffplay-seek-sample",
+                                                  withExtension: "mp4")?.path else { return nil }
+        let first = MaiMediaItem(kind: .image, path: imagePath)
+        return MaiMediaSequence(selected: first, items: [
+            first,
+            MaiMediaItem(kind: .image, path: secondImagePath),
+            MaiMediaItem(kind: .video, path: videoPath)
+        ])
+    }
+
+    private func navigate(_ direction: Int) -> Bool {
+        let sequence = preview?.sequence ?? video?.sequence
+        guard let next = sequence?.adjacent(direction) else { return false }
+        if next.current.kind == .video {
+            preview = nil
+            video = MaiFfplayPresentation(sequence: next, entryDirection: direction)
+        } else {
+            video = nil
+            preview = PresentedRemoteIMImage(
+                item: RemoteIMImagePreviewItem(id: UUID(),
+                                               localFilePath: next.current.path),
+                imageSize: CGSize(width: 300, height: 500),
+                sourceSnapshot: nil, thumbnailImage: nil, sequence: next)
+        }
+        return true
+    }
+
+    private func prepareImage() {
+        guard imagePath.isEmpty else { return }
         let image = UIGraphicsImageRenderer(size: CGSize(width: 300, height: 500))
             .image { context in
                 UIColor.systemBlue.setFill()
@@ -1992,12 +2278,17 @@ struct RemoteIMImageFullscreenUITestRoot: View {
             .appendingPathComponent("im-image-fullscreen-ui-test.png")
         guard let data = image.pngData(),
               (try? data.write(to: file)) != nil else { return }
-        preview = PresentedRemoteIMImage(
-            item: RemoteIMImagePreviewItem(id: UUID(), localFilePath: file.path),
-            imageSize: image.size,
-            sourceFrame: sourceWindowFrame,
-            thumbnailImage: image
-        )
+        imagePath = file.path
+        let second = UIGraphicsImageRenderer(size: CGSize(width: 300, height: 500))
+            .image { context in
+                UIColor.systemOrange.setFill()
+                context.fill(CGRect(x: 0, y: 0, width: 300, height: 500))
+            }
+        let secondFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("im-image-fullscreen-ui-test-second.png")
+        guard let secondData = second.pngData(),
+              (try? secondData.write(to: secondFile)) != nil else { return }
+        secondImagePath = secondFile.path
     }
 
     private func closePreview() {
@@ -2023,9 +2314,6 @@ struct VoiceTranscriptionDockUITestRoot: View {
                         inputTapped = true
                     }
                     .accessibilityIdentifier("voice-test-input")
-                    .background {
-                        WindowFrameReader { presentation.updateComposerFrame($0) }
-                    }
                     .padding(.bottom, 24)
                 }
                 .frame(maxWidth: .infinity)
@@ -2203,18 +2491,21 @@ private struct MessageListView: View {
     @StateObject private var scrollIntent = MessageScrollIntent()
     let searchTargetMessageID: UUID?
     let hasEarlierMessages: Bool
+    let hasNewerMessages: Bool
     let selectingMessageID: UUID?
     let finishSelectingText: () -> Void
     let dismissAttachmentPanel: () -> Void
-    let presentImagePreview: (RemoteIMImagePreviewItem, CGSize, CGRect, UIImage?) -> Void
+    let presentImagePreview: (RemoteIMImagePreviewItem, CGSize, WindowFrameSnapshot?, UIImage?) -> Void
     let showMessageActions: (RemoteIMMessage, CGRect) -> Void
     let replyToMessage: (RemoteIMMessage) -> Void
     let openQuote: (RemoteIMQuote) -> Void
     let loadEarlierMessages: () async -> Void
+    let returnToLatestMessages: () -> Void
     @EnvironmentObject private var appState: RemoteIMAppState
     @StateObject private var voicePlayer = VoiceMessagePlayer()
     @State private var filePreviewItem: RemoteIMFilePreviewItem?
     @State private var isLoadingEarlierMessages = false
+    @State private var earlierPageAnchorID: UUID?
     @State private var isVisible = false
     @State private var keyboardIsVisible = false
     @State private var viewportState = MessageScrollViewportState()
@@ -2253,8 +2544,7 @@ private struct MessageListView: View {
             + (activity.map { [.activity($0)] } ?? [])
         ScrollViewReader { proxy in
             ScrollView {
-                // One lazy list preserves message identity across local sends and
-                // history changes without mounting all Markdown rows.
+                // 当前可见页一次排版，稳定标识保留发送与翻页期间的消息行。
                 VStack(alignment: .leading, spacing: 14) {
                     if hasEarlierMessages {
                         Button {
@@ -2284,17 +2574,22 @@ private struct MessageListView: View {
                                 playVoice: {
                                     voicePlayer.toggle(message: message)
                                 },
-                                previewImage: { imageSize, sourceFrame, thumbnailImage in
+                                previewImage: { imageSize, sourceSnapshot, thumbnailImage in
                                     guard let nextItem = RemoteIMImagePreviewPolicy.previewItem(
                                         for: message
                                     ) else { return }
-                                    presentImagePreview(nextItem, imageSize, sourceFrame,
+                                    presentImagePreview(nextItem, imageSize, sourceSnapshot,
                                                         thumbnailImage)
                                 },
                                 previewVideo: {
                                     if let item = RemoteIMVideoPreviewPolicy.previewItem(for: message) {
+                                        let selected = MaiMediaItem(kind: .video,
+                                                                    path: item.localFilePath)
+                                        let sequence = MaiMediaSequence(
+                                            selected: selected,
+                                            items: MaiConversationMedia.items(in: messages))
                                         appState.agentVideoPresentation = MaiFfplayPresentation(
-                                            path: item.localFilePath)
+                                            sequence: sequence)
                                     }
                                 },
                                 previewFile: {
@@ -2318,7 +2613,7 @@ private struct MessageListView: View {
                                             lineWidth: 2
                                         )
                                 }
-                                // One view per message keeps the existing scroll anchor stable.
+                                // 每条消息保留稳定视图标识，翻页时才能定位原阅读锚点。
                                 .padding(.top, message.id == messages.first?.id ? 0 : 14)
                                 .overlay(alignment: .top) {
                                     if message.id != messages.first?.id {
@@ -2356,6 +2651,9 @@ private struct MessageListView: View {
                             userScrollAwayThreshold: 60,
                             minimumOlderDragDistance: 24,
                             onUserScroll: { scrollIntent.userDidScroll() },
+                            onUserReachedTop: {
+                                Task { await loadEarlierMessagesIfNeeded() }
+                            },
                             onViewportMeasured: { _, visible, _, _, nearBottom in
                                 viewportState.record(visible: visible, nearBottom: nearBottom)
                             }
@@ -2380,9 +2678,25 @@ private struct MessageListView: View {
             .modifier(MessageInitialScrollAnchor())
             .scrollDismissesKeyboard(.interactively)
             .background(RemoteIMStyle.panelBackground)
+            .overlay(alignment: .bottomTrailing) {
+                if hasNewerMessages {
+                    Button(action: returnToLatestMessages) {
+                        Image(systemName: "arrow.down")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(RemoteIMStyle.blue)
+                            .frame(width: 44, height: 44)
+                            .background(Color.white, in: Circle())
+                            .overlay(Circle().stroke(RemoteIMStyle.border, lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("回到最新消息")
+                    .padding(.trailing, 16)
+                    .padding(.bottom, 16)
+                }
+            }
             .overlay {
                 if messages.isEmpty && activity == nil {
-                    // Center in the visible message area, outside the timeline.
+                    // 空态放在可视消息区中央，不占用时间线的滚动高度。
                     EmptyMessagesView()
                         .allowsHitTesting(false)
                 }
@@ -2421,14 +2735,61 @@ private struct MessageListView: View {
                 keyboardIsVisible = false
             }
             .onChange(of: appState.locallyQueuedMessageID) { id in
-                // onChange can hold the previous body's messages value. Validate
-                // against the current model, not that stale array snapshot.
+                // onChange 闭包可能捕获上一轮视图的消息数组；
+                // 这里必须向当前状态模型核对，不能相信旧数组快照。
                 guard isVisible, !navigationArrival.isReturning, let id,
                       appState.chatState.message(id: id)?.toUserID == peerUserID else { return }
                 scrollIntent.followLatest()
                 bottomCorrectionRequest += 1
+                if let latestID = timeline.last?.id {
+                    DispatchQueue.main.async {
+                        guard isVisible, !scrollIntent.userBrowsedHistory else { return }
+                        var transaction = Transaction(animation: nil)
+                        transaction.disablesAnimations = true
+                        withTransaction(transaction) {
+                            proxy.scrollTo(latestID, anchor: .bottom)
+                        }
+                    }
+                }
             }
-            .onChange(of: messages.count) { _ in recordHistoryLayout() }
+            .onChange(of: messages.count) { _ in
+                recordHistoryLayout()
+                guard isVisible, !scrollIntent.userBrowsedHistory,
+                      searchTargetMessageID == nil, let latestID = timeline.last?.id else { return }
+                // 新消息完成排版后再把实际底部锚点放入可视区。
+                // 仅凭旧 contentOffset 推算底部，可能在语音发送后的尺寸更新中落到空白处。
+                DispatchQueue.main.async {
+                    guard isVisible, !scrollIntent.userBrowsedHistory,
+                          searchTargetMessageID == nil else { return }
+                    var transaction = Transaction(animation: nil)
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        proxy.scrollTo(latestID, anchor: .bottom)
+                    }
+                    bottomCorrectionRequest += 1
+                }
+            }
+            .onChange(of: messages.first?.id) { _ in
+                guard let anchorID = earlierPageAnchorID else { return }
+                earlierPageAnchorID = nil
+                var transaction = Transaction(animation: nil)
+                transaction.disablesAnimations = true
+                withTransaction(transaction) {
+                    proxy.scrollTo(anchorID, anchor: .top)
+                }
+            }
+            .onChange(of: hasNewerMessages) { showingOlderWindow in
+                guard !showingOlderWindow, isVisible,
+                      let latestID = messages.last?.id else { return }
+                scrollIntent.followLatest()
+                DispatchQueue.main.async {
+                    var transaction = Transaction(animation: nil)
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        proxy.scrollTo(latestID, anchor: .bottom)
+                    }
+                }
+            }
             .onChange(of: searchTargetMessageID) { targetID in
                 _ = scrollToSearchTarget(proxy: proxy, targetID: targetID)
             }
@@ -2437,6 +2798,15 @@ private struct MessageListView: View {
                 if !scrollToSearchTarget(proxy: proxy, targetID: searchTargetMessageID) {
                     scrollIntent.followLatest()
                     bottomCorrectionRequest += 1
+                    if let latestID = timeline.last?.id {
+                        DispatchQueue.main.async {
+                            var transaction = Transaction(animation: nil)
+                            transaction.disablesAnimations = true
+                            withTransaction(transaction) {
+                                proxy.scrollTo(latestID, anchor: .bottom)
+                            }
+                        }
+                    }
                 }
             }
             .onChange(of: peerUserID) { _ in
@@ -2462,7 +2832,7 @@ private struct MessageListView: View {
         AppDiagnosticLog.shared.record(level: .info, category: "remote-im-ui", event: "history-layout", fields: [
             "account": appState.remoteDiagnosticsAccountTag,
             "peer": DiagnosticLogPrivacy.stableTag(peer, prefix: "u"),
-            "layout": "normal-origin-lazy-stack", "loaded_messages": String(messages.count)
+            "layout": "paged-measured-stack", "loaded_messages": String(messages.count)
         ])
     }
 
@@ -2494,9 +2864,15 @@ private struct MessageListView: View {
     private func loadEarlierMessagesIfNeeded() async {
         guard hasEarlierMessages, !isLoadingEarlierMessages else { return }
         isLoadingEarlierMessages = true
-        defer { isLoadingEarlierMessages = false }
-        // Older rows append at the far end of the reversed timeline, so there
-        // is no explicit positioning command after pagination.
+        let anchorID = messages.first?.id
+        earlierPageAnchorID = anchorID
+        defer {
+            isLoadingEarlierMessages = false
+            if appState.visibleMessages(with: peerUserID).first?.id == anchorID {
+                earlierPageAnchorID = nil
+            }
+        }
+        // 旧页取回后以原首条为锚点，不让新增行改变用户正在阅读的位置。
         await loadEarlierMessages()
     }
 
@@ -2705,7 +3081,7 @@ private struct MessageBubbleView: View {
     let isVideoDownloading: Bool
     let isVoicePlaying: Bool
     let playVoice: () -> Void
-    let previewImage: (CGSize, CGRect, UIImage?) -> Void
+    let previewImage: (CGSize, WindowFrameSnapshot?, UIImage?) -> Void
     let previewVideo: () -> Void
     let previewFile: () -> Void
     let isSelectingText: Bool
@@ -3521,6 +3897,7 @@ struct ImagePreviewZoomModifier: ViewModifier {
     let enabled: Bool
     let imageSize: CGSize
     let viewportSize: CGSize
+    var onScaleChanged: ((CGFloat) -> Void)? = nil
     @State private var settledScale: CGFloat = 1
     @State private var settledOffset: CGSize = .zero
     @GestureState private var pinchScale: CGFloat = 1
@@ -3559,6 +3936,7 @@ struct ImagePreviewZoomModifier: ViewModifier {
                         guard enabled else { return }
                         settledScale = min(4, max(1, settledScale * value))
                         settledOffset = bounded(settledOffset, at: settledScale)
+                        onScaleChanged?(settledScale)
                     }
             )
             .simultaneousGesture(
@@ -3578,6 +3956,7 @@ struct ImagePreviewZoomModifier: ViewModifier {
                 if !expanded {
                     settledScale = 1
                     settledOffset = .zero
+                    onScaleChanged?(1)
                 }
             }
     }
@@ -3608,10 +3987,13 @@ struct ImagePreviewBackdrop: View {
 
 private struct FullScreenImagePreviewView: View {
     let presentation: PresentedRemoteIMImage
+    @ObservedObject var transition: RemoteIMImageTransition
     let close: () -> Void
-    @State private var isExpanded = false
+    let navigate: (Int) -> Bool
     @State private var isSaving = false
     @State private var saveResultText: String?
+    @State private var isZoomed = false
+    @State private var navigationStatus = ""
 
     private var previewAnimation: Animation {
         .interactiveSpring(response: 0.38, dampingFraction: 0.86, blendDuration: 0.08)
@@ -3619,83 +4001,113 @@ private struct FullScreenImagePreviewView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let fittedSize = aspectFitSize(
+            let measuredSize = aspectFitSize(
                 imageSize: presentation.imageSize,
                 containerSize: geometry.size
             )
+            let fittedSize = measuredSize.width > 0 && measuredSize.height > 0
+                ? measuredSize : geometry.size
             let destinationFrame = CGRect(
                 x: (geometry.size.width - fittedSize.width) / 2,
                 y: (geometry.size.height - fittedSize.height) / 2,
                 width: fittedSize.width,
                 height: fittedSize.height
             )
-            let sourceFrame = presentation.sourceFrame.offsetBy(
-                dx: -geometry.frame(in: .global).minX,
-                dy: -geometry.frame(in: .global).minY
-            )
-            let imageFrame = isExpanded || sourceFrame.isEmpty
-                ? destinationFrame : sourceFrame
+            let imageFrame = transition.isExpanded || transition.sourceFrame.isEmpty
+                ? destinationFrame : transition.sourceFrame
             ZStack(alignment: .bottomTrailing) {
-                Color.black
-                    .opacity(isExpanded ? 1 : 0)
-                    .ignoresSafeArea()
-                    .onTapGesture(perform: shrinkAndClose)
+                Color.clear
+                if transition.isReady {
+                    Color.black
+                        .opacity(transition.isExpanded ? 1 : 0)
+                        .ignoresSafeArea()
+                        .onTapGesture(perform: shrinkAndClose)
 
-                ImagePreviewBackdrop(
-                    filePath: presentation.item.localFilePath,
-                    viewportSize: geometry.size
-                )
-                .opacity(isExpanded ? 1 : 0)
+                    ImagePreviewBackdrop(
+                        filePath: presentation.item.localFilePath,
+                        viewportSize: geometry.size
+                    )
+                    .opacity(transition.isExpanded ? 1 : 0)
 
-                previewImage(frame: imageFrame, fittedSize: fittedSize,
-                             viewportSize: geometry.size)
+                    previewImage(frame: imageFrame, fittedSize: fittedSize,
+                                 viewportSize: geometry.size)
 
-                VStack(alignment: .trailing, spacing: 14) {
-                    if let saveResultText {
-                        Text(saveResultText)
-                            .font(.system(size: 13, weight: .semibold))
+                    if let sequence = presentation.sequence, sequence.items.count > 1 {
+                        Text("\(sequence.index + 1)/\(sequence.items.count) · " +
+                             URL(fileURLWithPath: presentation.item.localFilePath).lastPathComponent)
+                            .font(.system(size: 12, weight: .medium))
+                            .lineLimit(1)
                             .foregroundStyle(.white)
-                            .padding(.horizontal, 12)
-                            .frame(height: 34)
-                            .background(.black.opacity(0.62), in: Capsule())
-                            .transition(.opacity.combined(with: .move(edge: .bottom)))
+                            .padding(.horizontal, 10).padding(.vertical, 7)
+                            .background(.black.opacity(0.58), in: Capsule())
+                            .frame(maxWidth: .infinity, maxHeight: .infinity,
+                                   alignment: .top)
+                            .padding(.top, 60).padding(.horizontal, 70)
+                            .allowsHitTesting(false)
                     }
 
-                    HStack(spacing: 14) {
-                        ShareLink(item: URL(fileURLWithPath: presentation.item.localFilePath)) {
-                            imagePreviewActionIcon("arrowshape.turn.up.right.fill")
+                    VStack(alignment: .trailing, spacing: 14) {
+                        if !navigationStatus.isEmpty {
+                            Text(navigationStatus)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(.white)
+                                .padding(10)
+                                .background(.black.opacity(0.65), in: Capsule())
                         }
-                        .accessibilityLabel("分享图片")
+                        if let saveResultText {
+                            Text(saveResultText)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 12)
+                                .frame(height: 34)
+                                .background(.black.opacity(0.62), in: Capsule())
+                                .transition(.opacity.combined(with: .move(edge: .bottom)))
+                        }
 
-                        Button(action: saveImageToPhotoLibrary) {
-                            imagePreviewActionIcon(isSaving ? "hourglass" : "arrow.down.to.line")
+                        HStack(spacing: 14) {
+                            ShareLink(item: URL(fileURLWithPath: presentation.item.localFilePath)) {
+                                imagePreviewActionIcon("arrowshape.turn.up.right.fill")
+                            }
+                            .accessibilityLabel("分享图片")
+
+                            Button(action: saveImageToPhotoLibrary) {
+                                imagePreviewActionIcon(isSaving ? "hourglass" : "arrow.down.to.line")
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(isSaving)
+                            .accessibilityLabel(isSaving ? "正在保存图片" : "保存图片")
                         }
-                        .buttonStyle(.plain)
-                        .disabled(isSaving)
-                        .accessibilityLabel(isSaving ? "正在保存图片" : "保存图片")
                     }
+                    .padding(.trailing, 22)
+                    .padding(.bottom, 48)
+                    .opacity(transition.isExpanded ? 1 : 0)
+                    .allowsHitTesting(transition.isExpanded)
                 }
-                .padding(.trailing, 22)
-                .padding(.bottom, 48)
-                .opacity(isExpanded ? 1 : 0)
-                .allowsHitTesting(isExpanded)
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
+            .simultaneousGesture(DragGesture(minimumDistance: 50).onEnded { value in
+                guard transition.isExpanded, !isZoomed,
+                      abs(value.translation.width) > abs(value.translation.height) * 1.4
+                else { return }
+                let direction = value.translation.width < 0 ? 1 : -1
+                if !navigate(direction) {
+                    navigationStatus = direction > 0 ? "已经是最后一项" : "已经是第一项"
+                }
+            })
         }
         .ignoresSafeArea()
-        .onAppear {
-            DispatchQueue.main.async {
-                withAnimation(previewAnimation) { isExpanded = true }
-            }
-        }
         .accessibilityAction(.escape, shrinkAndClose)
+        .onChange(of: presentation.id) { _ in
+            isZoomed = false
+            navigationStatus = ""
+        }
     }
 
     private func shrinkAndClose() {
-        guard isExpanded else { return }
-        withAnimation(previewAnimation) { isExpanded = false }
+        guard transition.isExpanded else { return }
+        withAnimation(previewAnimation) { transition.isExpanded = false }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) {
-            guard !isExpanded else { return }
+            guard !transition.isExpanded else { return }
             close()
         }
     }
@@ -3732,11 +4144,12 @@ private struct FullScreenImagePreviewView: View {
             }
         }
             .frame(width: frame.width, height: frame.height)
-            .clipShape(RoundedRectangle(cornerRadius: isExpanded ? 0 : 8,
+            .clipShape(RoundedRectangle(cornerRadius: transition.isExpanded ? 0 : 8,
                                         style: .continuous))
-            .modifier(ImagePreviewZoomModifier(enabled: isExpanded,
+            .modifier(ImagePreviewZoomModifier(enabled: transition.isExpanded,
                                                imageSize: fittedSize,
-                                               viewportSize: viewportSize))
+                                               viewportSize: viewportSize,
+                                               onScaleChanged: { isZoomed = $0 > 1.01 }))
             .position(x: frame.midX, y: frame.midY)
             .contentShape(Rectangle())
             .onTapGesture(perform: shrinkAndClose)
@@ -4182,10 +4595,9 @@ private struct VideoBubbleContent: View {
 
 private struct ImageBubbleContent: View {
     let attachment: RemoteIMImageAttachment
-    let previewImage: (CGSize, CGRect, UIImage?) -> Void
+    let previewImage: (CGSize, WindowFrameSnapshot?, UIImage?) -> Void
     @EnvironmentObject private var appState: RemoteIMAppState
     @State private var decodedSize: CGSize?
-    @State private var sourceWindowFrame: CGRect = .zero
     @State private var thumbnailImage: UIImage?
 
     private var imageSize: CGSize {
@@ -4218,31 +4630,22 @@ private struct ImageBubbleContent: View {
                 }
             }
             .frame(width: thumbnailSize.width, height: thumbnailSize.height)
-            .background {
-                WindowFrameReader { frame in
-                    if sourceWindowFrame != frame { sourceWindowFrame = frame }
-                }
-            }
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
-                Button {
-                    previewImage(imageSize, sourceWindowFrame, thumbnailImage)
-                } label: {
-                    ZStack(alignment: .bottomTrailing) {
-                        Color.clear.contentShape(Rectangle())
-                        Image(systemName: "arrow.up.left.and.arrow.down.right")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 25, height: 25)
-                            .background(.black.opacity(0.52), in: Circle())
-                            .padding(7)
-                            .allowsHitTesting(false)
-                            .accessibilityHidden(true)
+                ZStack(alignment: .bottomTrailing) {
+                    WindowFrameActionButton { sourceSnapshot in
+                        previewImage(imageSize, sourceSnapshot, thumbnailImage)
                     }
+                    .frame(width: thumbnailSize.width, height: thumbnailSize.height)
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 25, height: 25)
+                        .background(.black.opacity(0.52), in: Circle())
+                        .padding(7)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("查看原图")
-                .accessibilityIdentifier("remote-im-message-image")
             }
     }
 }
@@ -4572,7 +4975,7 @@ private struct MarkdownTable: Sendable {
     init(headers: [String], rows: [[String]]) {
         self.headers = headers
         self.rows = rows
-        // Share column widths across rows; don't rescan the table for every cell.
+        // 表格各行共用列宽，避免每个单元格都重新扫描整张表。
         let count = max(headers.count, rows.map(\.count).max() ?? 0)
         self.columnWidths = (0..<count).map { column in
             let values = [headers[safe: column] ?? ""] + rows.map { $0[safe: column] ?? "" }
@@ -4859,6 +5262,8 @@ private struct MarkdownTableView: View {
     }
 }
 
+/// 把一条 IM 文本拆为 Markdown、代码块和来源提示等可单独排版的段落。
+/// 扫描时先规范换行；遇到特殊段落先提交已累计正文，避免代码边界吞掉普通文字。
 private func parseMarkdownBlocks(_ source: String) -> [MarkdownBlock] {
     let displayText = cleanRemoteIMMessageDisplayText(source)
     let lines = displayText
@@ -4879,6 +5284,7 @@ private func parseMarkdownBlocks(_ source: String) -> [MarkdownBlock] {
         }
     }
 
+    // 按原始行顺序扫描；每个分支必须消费至少一行，防止畸形输入造成死循环。
     while index < lines.count {
         let line = lines[index]
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -5695,9 +6101,6 @@ private struct ComposerView: View {
             }
             attachmentButton
         }
-        .background {
-            WindowFrameReader { transcriptionPresentation.updateComposerFrame($0) }
-        }
     }
 
     private var voiceModeButton: some View {
@@ -6065,7 +6468,8 @@ private struct ComposerView: View {
             if showsTranscriptionHighlight {
                 transcriptionPresentation.prepareForNewSession(
                     account: appState.remoteDiagnosticsAccountTag,
-                    peer: appState.chatState.selectedPeerID ?? ""
+                    peer: appState.chatState.selectedPeerID ?? "",
+                    gestureOrigin: location
                 )
                 transcriptionPresentation.target = .send
                 AppDiagnosticLog.shared.record(
@@ -6099,6 +6503,8 @@ private struct ComposerView: View {
         }
     }
 
+    /// 处理语音手势松开：区分直接发语音、转写取消、编辑和发送四条路径。
+    /// 转写完成后先收起顶层悬浮层，再把文本交给 IM 状态层；失败时保留聊天内容。
     private func handleVoicePressEnded(
         translation: CGSize,
         sendsVoiceDirectly: Bool,
@@ -6108,6 +6514,7 @@ private struct ComposerView: View {
         guard isPressingVoice else { return }
         isPressingVoice = false
 
+        // 直接语音与转写是两条独立链路；直接语音取消不能触发文本发送。
         if sendsVoiceDirectly {
             transcriptionPresentation.target = nil
             let shouldCancel = translation.height < -70
@@ -6125,6 +6532,7 @@ private struct ComposerView: View {
         let releasedAt = ProcessInfo.processInfo.systemUptime
         let releaseTarget = explicitTarget ?? transcriptionTarget(for: translation, location: location)
         isCancellingVoice = false
+        // 取消立即结束识别并收起浮层；编辑和发送都要等待最终转写回调。
         if releaseTarget == .cancel {
             AppDiagnosticLog.shared.record(
                 level: .info,
@@ -6156,6 +6564,11 @@ private struct ComposerView: View {
         do {
             let text = try await realtimeSpeechRecognizer.stop()
                 .trimmingCharacters(in: .whitespacesAndNewlines)
+            // 保留最终文字一小段时间让用户看清，再撤掉独立悬浮层；消息列表不参与该动画。
+            if !text.isEmpty {
+                transcriptionPresentation.showFinalTranscript(text)
+                try? await Task.sleep(for: .milliseconds(240))
+            }
             transcriptionPresentation.reset()
             guard !text.isEmpty else {
                 AppDiagnosticLog.shared.record(level: .info, category: "asr",
@@ -6164,6 +6577,7 @@ private struct ComposerView: View {
                 return
             }
             if shouldEdit {
+                // 编辑只把文字放进输入框，不产生网络消息或清除既有会话。
                 draft.text = text
                 composerFocusRequestGeneration &+= 1
             } else {
@@ -6472,6 +6886,8 @@ final class ComposerTextEditingController {
         return ComposerEditMenuState(actions: actions, disabledActions: disabledActions)
     }
 
+    /// 执行输入框编辑菜单操作，并让系统原生粘贴控件处理授权语义。
+    /// 每项只修改当前 UITextView，操作完成后由输入框回调同步草稿状态。
     func perform(_ action: ComposerEditAction) {
         guard let textView else { return }
         switch action {
@@ -6683,9 +7099,11 @@ struct ComposerTextView: UIViewRepresentable {
         Coordinator(parent: self)
     }
 
+    /// 创建 IM 和创作中心共用的可增长输入框，安装输入、选区和长按转写手势。
+    /// 控件首次创建时固定 TextKit 1 与输入行为，后续更新只同步数据和尺寸。
     func makeUIView(context: Context) -> GrowingComposerUITextView {
-        // The composer is plain text. Use TextKit 1 explicitly to avoid the
-        // TextKit 2 viewport/caret layout work measured during continuous input.
+        // 输入框只承载纯文本；显式使用 TextKit 1，避免连续输入时 TextKit 2
+        // 的视口和光标重排开销。
         let textView = GrowingComposerUITextView(usingTextLayoutManager: false)
         AppDiagnosticLog.shared.record(
             level: .info,
@@ -6719,8 +7137,8 @@ struct ComposerTextView: UIViewRepresentable {
         textView.textContainer.lineFragmentPadding = 0
         textView.textContainer.widthTracksTextView = true
         textView.textContainer.heightTracksTextView = false
-        // Keep TextKit's document container unbounded. The outer SwiftUI view
-        // caps the visible height at five lines; the text view handles overflow.
+        // TextKit 文档容器不设高度上限；外层 SwiftUI 只限制可见五行，
+        // 超出的文本由输入视图自身滚动。
         textView.isScrollEnabled = true
         textView.bounces = false
         textView.alwaysBounceVertical = false
@@ -6952,7 +7370,7 @@ struct ComposerTextView: UIViewRepresentable {
                 textView.markedTextRange == nil,
                 RemoteIMDraftSubmitPolicy.shouldSubmit(replacementText: replacementText)
             else {
-                // Earliest app-side edit callback, not the physical keypress.
+                // 这是应用侧最早收到的编辑回调，并非物理按键时刻。
                 pendingTextChangeUptime = ProcessInfo.processInfo.systemUptime
                 return true
             }

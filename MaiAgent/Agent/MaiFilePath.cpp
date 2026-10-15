@@ -1,3 +1,5 @@
+// 文件作用：表示跨平台文件路径并保持平台原生路径语义。
+// 主要实现：isSeparator、isAbsolute、append；对应公开接口中的状态和错误处理。
 #include "MaiFilePath.h"
 
 // 纯词法的那一半：不碰磁盘，不调系统调用，在任何平台上给同样的输入得同样的结果。
@@ -46,8 +48,7 @@ bool MaiFilePath::isAbsolute() const {
 #if defined(_WIN32)
     // "C:" 单独出现是**相对**路径（当前盘的当前目录），"C:\" 才是绝对。
     // 这个区别在 Windows 上很容易漏，漏了会让 "C:x" 被当成绝对路径。
-    if (prefix == 2 && mValue[1] == L':')
-        return mValue.size() > 2 && isSeparator(mValue[2]);
+    if (prefix == 2 && mValue[1] == L':') return mValue.size() > 2 && isSeparator(mValue[2]);
     if (prefix == 2) return true;  // \\server\share
 #endif
     (void)prefix;

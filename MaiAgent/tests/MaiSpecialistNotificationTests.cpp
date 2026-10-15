@@ -1,3 +1,5 @@
+// 文件作用：验证“MaiSpecialistNotification”的正确行为和边界条件。
+// 验证入口：真实失败要通知主会话；查询异常和缺失产物要保留已付费任务供后续重试。
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -134,20 +136,12 @@ void testFailureVisibleEvenWhenMainModelFails() {
     CHECK(visible);
 }
 
-void testAuthorizationFailureIsTerminalWithoutMainModel() {
+// 403 只说明本次状态查询受阻，不能据此宣布已经受理的云任务失败。
+void testAuthorizationFailureKeepsSubmittedTaskRecoverable() {
     auto scenario = startScenario(
         R"({"code":"provider_error","http_status":403,"message":"Access denied"})", false);
-    waitForStatus(scenario, MaiSpecialistTaskStatus::Failed);
-    bool visible = false;
-    for (int attempt = 0; attempt < 100; ++attempt) {
-        for (const MaiMessage& message : scenario.agent->listMessages(scenario.sessionId)) {
-            if (message.text().find("Video task status unavailable. Access denied") == 0)
-                visible = true;
-        }
-        if (visible) break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
-    CHECK(visible);
+    waitForStatus(scenario, MaiSpecialistTaskStatus::Running);
+    CHECK(scenario.agent->listMessages(scenario.sessionId).empty());
 }
 
 void testRateLimitRemainsRetryable() {
@@ -160,57 +154,31 @@ void testRateLimitRemainsRetryable() {
     CHECK(scenario.agent->listMessages(scenario.sessionId).empty());
 }
 
-void testBalanceErrorHandsTaskBackToMainWithoutExposingFailure() {
+// 账号余额错误可能属于查询接口，已付费任务尚无最终状态时不触发模型另一次付费提交。
+void testBalanceErrorPreservesPaidTaskAndDoesNotNotifyMain() {
     auto scenario = startScenario(
         R"({"code":"provider_error","provider_code":1102,"http_status":429,"message":"Account balance not enough"})",
         true, false, true);
-    waitForStatus(scenario, MaiSpecialistTaskStatus::Failed);
+    waitForStatus(scenario, MaiSpecialistTaskStatus::Running);
     MaiSpecialistTask task;
     CHECK(scenario.store->getSpecialistTask(scenario.taskId, scenario.sessionId, task));
-    CHECK(task.errorText.find("submitted task's outcome has not been verified") !=
-          std::string::npos);
-    for (int attempt = 0; attempt < 100 && scenario.fakeModel->requestCount() == 0; ++attempt)
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    CHECK(scenario.fakeModel->requestCount() > 0);
-    if (scenario.fakeModel->requestCount() == 0) return;
-    bool sawRecovery = false;
-    for (const MaiModelMessage& message : scenario.fakeModel->lastRequest().messages) {
-        if (message.role == MaiModelRole::System &&
-            message.content.find("Check other configured specialist tools") != std::string::npos)
-            sawRecovery = true;
-    }
-    CHECK(sawRecovery);
-    for (const MaiMessage& message : scenario.agent->listMessages(scenario.sessionId)) {
-        CHECK(message.text().find("Video task status unavailable.") == std::string::npos);
-        CHECK(message.text().find("Video task failed.") == std::string::npos);
-    }
+    CHECK(task.status == MaiSpecialistTaskStatus::Running);
+    CHECK(scenario.fakeModel->requestCount() == 0);
+    CHECK(scenario.agent->listMessages(scenario.sessionId).empty());
 }
 
-void testRepeatedRateLimitEventuallyNotifiesMainConversation() {
+// 连续限流以后轮询间隔变长，任务仍处于可恢复状态且不产生误导性的失败通知。
+void testRepeatedRateLimitStaysRecoverableAfterRetryBackoff() {
     auto scenario = startScenario(
         R"({"code":"provider_error","http_status":429,"message":"Rate limited"})", false);
-    bool terminal = false;
-    for (int attempt = 0; attempt < 2500; ++attempt) {
-        MaiSpecialistTask task;
-        if (scenario.store->getSpecialistTask(scenario.taskId, scenario.sessionId, task) &&
-            task.status == MaiSpecialistTaskStatus::Failed) {
-            CHECK(task.errorText.find("Repeatedly failed after 3 attempts") != std::string::npos);
-            terminal = true;
-            break;
-        }
+    for (int attempt = 0; attempt < 2500 && scenario.toolCalls->load(std::memory_order_relaxed) < 3;
+         ++attempt)
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
-    CHECK(terminal);
-    bool visible = false;
-    for (int attempt = 0; attempt < 100; ++attempt) {
-        for (const MaiMessage& message : scenario.agent->listMessages(scenario.sessionId)) {
-            if (message.text().find("Video task status unavailable. Repeatedly failed") == 0)
-                visible = true;
-        }
-        if (visible) break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
-    CHECK(visible);
+    CHECK(scenario.toolCalls->load(std::memory_order_relaxed) >= 3);
+    MaiSpecialistTask task;
+    CHECK(scenario.store->getSpecialistTask(scenario.taskId, scenario.sessionId, task));
+    CHECK(task.status == MaiSpecialistTaskStatus::Running);
+    CHECK(scenario.agent->listMessages(scenario.sessionId).empty());
 }
 
 void testRepeatedDownloadTransportErrorKeepsPaidTaskRecoverable() {
@@ -227,20 +195,11 @@ void testRepeatedDownloadTransportErrorKeepsPaidTaskRecoverable() {
     CHECK(scenario.agent->listMessages(scenario.sessionId).empty());
 }
 
-void testCompletedWithoutOutputShowsFailure() {
+// 云端报告完成但文件还未落盘时继续轮询；不能把交付链路故障写成生成失败。
+void testCompletedWithoutOutputStaysRecoverable() {
     auto scenario = startScenario(R"({"status":"succeeded","reply":"Done"})", false, true);
-    waitForStatus(scenario, MaiSpecialistTaskStatus::Failed);
-    bool visible = false;
-    for (int attempt = 0; attempt < 100; ++attempt) {
-        for (const MaiMessage& message : scenario.agent->listMessages(scenario.sessionId)) {
-            if (message.text().find("Video output unavailable. The provider completed the task") ==
-                0)
-                visible = true;
-        }
-        if (visible) break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
-    CHECK(visible);
+    waitForStatus(scenario, MaiSpecialistTaskStatus::Running);
+    CHECK(scenario.agent->listMessages(scenario.sessionId).empty());
 }
 
 void testProviderFailedStatusNotifiesMainConversation() {
@@ -407,21 +366,12 @@ void testTechnicalFailureDoesNotGetModerationGuidance() {
     CHECK(genericOnly);
 }
 
+// 本地 continue 入参异常也只是查询链路故障，任务与原云 ID 必须继续保留。
 void testLocalPollingInputErrorDoesNotClaimProviderFailure() {
     auto scenario =
         startScenario(R"({"code":"invalid_input","message":"message is required"})", false);
-    waitForStatus(scenario, MaiSpecialistTaskStatus::Failed);
-    bool trackingNotice = false;
-    for (int attempt = 0; attempt < 100; ++attempt) {
-        for (const MaiMessage& message : scenario.agent->listMessages(scenario.sessionId)) {
-            if (message.text().find("Video task status unavailable. message is required") == 0)
-                trackingNotice = true;
-            CHECK(message.text().find("Video task failed.") == std::string::npos);
-        }
-        if (trackingNotice) break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
-    CHECK(trackingNotice);
+    waitForStatus(scenario, MaiSpecialistTaskStatus::Running);
+    CHECK(scenario.agent->listMessages(scenario.sessionId).empty());
 }
 
 void testProviderCancellationIsNotReportedAsGenerationFailure() {
@@ -444,12 +394,12 @@ void testProviderCancellationIsNotReportedAsGenerationFailure() {
 
 int main() {
     testFailureVisibleEvenWhenMainModelFails();
-    testAuthorizationFailureIsTerminalWithoutMainModel();
+    testAuthorizationFailureKeepsSubmittedTaskRecoverable();
     testRateLimitRemainsRetryable();
-    testBalanceErrorHandsTaskBackToMainWithoutExposingFailure();
-    testRepeatedRateLimitEventuallyNotifiesMainConversation();
+    testBalanceErrorPreservesPaidTaskAndDoesNotNotifyMain();
+    testRepeatedRateLimitStaysRecoverableAfterRetryBackoff();
     testRepeatedDownloadTransportErrorKeepsPaidTaskRecoverable();
-    testCompletedWithoutOutputShowsFailure();
+    testCompletedWithoutOutputStaysRecoverable();
     testProviderFailedStatusNotifiesMainConversation();
     testFailedSpecialistAddsRecoveryInstructionToMainModel();
     testTextModerationGetsTargetedGuidance();

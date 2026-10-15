@@ -1,3 +1,5 @@
+// 文件作用：验证“提供 OpenSSL 加解密及证书检查工具”的正确行为和边界条件。
+// 验证入口：阅读 main 或测试注册处，核对输入、预期结果与失败输出。
 #include "MaiOpenSslTool.h"
 #if MAI_HAS_OPENSSL_CLI
 #include "MaiOpenSslCliTool.h"
@@ -50,11 +52,13 @@ int main() {
     const auto runVersion = maiRunOpenSslCommand({"version"}, context);
     CHECK(runVersion);
     if (runVersion) CHECK(runVersion.value().exitCode == 0);
-    const auto runDigest = maiRunOpenSslCommand({"dgst", "-sha256", "openssl-ee-cert.pem"}, context);
+    const auto runDigest =
+        maiRunOpenSslCommand({"dgst", "-sha256", "openssl-ee-cert.pem"}, context);
     CHECK(runDigest);
     if (runDigest) CHECK(runDigest.value().exitCode == 0);
     CHECK(!maiRunOpenSslCommand({"dgst", "-sha256", "../../../../etc/passwd"}, context));
-    const auto runAgain = maiRunOpenSslCommand({"x509", "-in", "openssl-ee-cert.pem", "-subject"}, context);
+    const auto runAgain =
+        maiRunOpenSslCommand({"x509", "-in", "openssl-ee-cert.pem", "-subject"}, context);
     CHECK(runAgain);
     if (runAgain) CHECK(runAgain.value().exitCode == 0);
     CHECK(!maiRunOpenSslCommand({"genpkey", "-algorithm", "RSA"}, context));

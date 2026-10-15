@@ -1,3 +1,7 @@
+// 文件作用：Android 应用启动、账户与主导航；MainActivity 负责页面生命周期、事件分发和界面呈现，本文件给出其实现。
+// 类型关系：MainActivity extends Activity implements RemoteIMSessionController.Listener；审阅时可据此追踪父类、接口或回调契约。
+// 主要入口：GalleryItem、onCreate、onResume、onPause。
+// 直接依赖：com.kongshang.maichat.tools.MaiChatHostTools；实现与这些接口协作。
 package com.kongshang.maichat;
 
 import com.kongshang.maichat.tools.MaiChatHostTools;
@@ -93,6 +97,14 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 public final class MainActivity extends Activity implements RemoteIMSessionController.Listener {
+    public static final class GalleryItem {
+        public final String path;
+        public final boolean video;
+        public GalleryItem(String path, boolean video) {
+            this.path = path;
+            this.video = video;
+        }
+    }
     private static final int REQUEST_PICK_IMAGE = 1001;
     private static final int REQUEST_RECORD_AUDIO = 1002;
     private static final int REQUEST_CAMERA_PERMISSION = 1003;
@@ -111,6 +123,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private RemoteIMMediaStore mediaStore;
     private AIAssistantPanel aiAssistant;
     private Dialog videoDialog;
+    private Dialog imageDialog;
     private String pendingVideoSavePath;
     private Runnable pendingGalleryAction;
     private RemoteIMTab activeTab = RemoteIMTab.MESSAGES;
@@ -251,6 +264,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         destroyed = true;
         pendingGalleryAction = null;
         if (videoDialog != null) videoDialog.dismiss();
+        if (imageDialog != null) imageDialog.dismiss();
         if (maiChatHostTools != null) maiChatHostTools.onDestroy();
         AIAssistantController.shared(this).setHostToolHandler(null);
         if (swipeBack != null) swipeBack.dispose();
@@ -539,8 +553,11 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         attachmentButton.setVisibility(canSend ? View.GONE : View.VISIBLE);
     }
 
+    // 作用：根据账号、当前页签和正在打开的聊天状态更新 Android 主页面。
+    // 切换页面时同步 Agent 前后台状态与输入草稿，避免重建页面时丢失原有会话内容。
     private void render() {
         if (destroyed) return;
+        // Agent 页只在当前页签可见时消费实时事件；换账号先撤销旧页状态，再配置新工作区。
         boolean showingAssistant = activityInForeground && activeTab == RemoteIMTab.ASSISTANT
             && activeChatUserId == null && !showInitialLogin && !session.requiresLogin();
         if (aiAssistant != null) aiAssistant.setForeground(showingAssistant);
@@ -565,6 +582,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         }
         if (activeChatUserId != null && activeChatUserId.equals(renderedChatUserId)
             && currentMessageList != null && !showInitialLogin && !session.requiresLogin()) {
+            // 同一会话的消息更新保留原列表实例、滚动位置和输入草稿。
             refreshChatMessages();
             if (renderedVoiceMode != voiceMode || !java.util.Objects.equals(renderedQuote, pendingQuote)) {
                 content.removeView(chatComposer);
@@ -578,6 +596,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         }
         if (activeTab == RemoteIMTab.ASSISTANT && activeChatUserId == null && aiAssistant != null
                 && aiAssistant.isAttachedToWindow() && !showInitialLogin && !session.requiresLogin()) return;
+        // 只有页面身份真的改变才重建导航容器；不能把每条新消息都当作换页。
         currentMessageList = null;
         renderedChatUserId = null;
         messageInput = null;
@@ -607,6 +626,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         });
         insetsHost = navigation;
         imeAnimating = false;
+        // 键盘动画期间只更新布局边距，结束后再执行一次滚动定位，避免消息跳到空白区域。
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(navigation, (view, insets) -> {
             if (insetsHost != navigation) return insets;
             latestInsets = insets;
@@ -658,6 +678,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         }
 
         if (activeChatUserId != null) {
+            // 页面容器建好以后再选择具体内容；聊天页不显示底部主导航。
             renderChatDetail(activeChatUserId);
         } else {
             switch (activeTab) {
@@ -695,6 +716,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         }
     }
 
+    // 作用：组装手机号登录界面、协议状态和提交反馈。
+    // 页面状态变化和用户操作在这里衔接；退出或失败时维持已显示内容。
     private void renderLogin() {
         FrameLayout page = new FrameLayout(this);
         page.setBackgroundColor(Color.WHITE);
@@ -716,6 +739,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             Math.round(getResources().getDisplayMetrics().heightPixels * 0.18f));
         page.addView(form, formParams);
 
+        // 图标、手机号和验证码属于同一表单；手机号输入框占满输入行的可编辑部分。
         ImageView icon = new ImageView(this);
         icon.setImageResource(getApplicationInfo().icon);
         icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
@@ -781,6 +805,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         errorParams.setMargins(0, dp(12), 0, 0);
         form.addView(errorText, errorParams);
 
+        // 首次点击获取验证码；拿到 challenge 后同一主按钮切换为登录，错误仍留在表单内。
         Button login = new Button(this);
         login.setText(loginSubmitting ? "请稍候..." :
             loginChallengeId.isEmpty() && !loginUsesPassword ? "获取验证码" : "登录");
@@ -834,6 +859,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         childrenParams.setMargins(dp(28), dp(2), 0, 0);
         form.addView(childrenLink, childrenParams);
 
+        // 密码与短信两种入口共享手机号和协议状态，切换只清除当前挑战而不丢手机号。
         Button alternate = new Button(this);
         alternate.setAllCaps(false);
         alternate.setText(loginUsesPassword ? "验证码登录" :
@@ -844,6 +870,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         alternateParams.setMargins(0, dp(14), 0, 0);
         form.addView(alternate, alternateParams);
 
+        // 主按钮以手机号、验证码或密码以及两项确认共同决定可用性，避免触发无效请求。
         Runnable updateLoginAppearance = () -> {
             boolean enabled = !loginSubmitting && loginUserDraft.replaceAll("\\D", "").length() == 11
                 && loginAcceptedTerms && loginConfirmedAge
@@ -884,6 +911,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             });
         }
         View.OnClickListener submit = view -> {
+            // 入队前再次校验，防止键盘提交绕过按钮禁用态；失败后保留用户已输入的内容。
             String phone = account.getText().toString().trim();
             if (phone.replaceAll("\\D", "").length() != 11 || loginSubmitting
                 || !loginAcceptedTerms || !loginConfirmedAge) return;
@@ -1058,6 +1086,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         renderConversationRows(rows, "", Collections.emptyList(), false);
     }
 
+    // 用当前搜索条件生成会话列表行；搜索命中消息时保留其所属会话，避免打开错误联系人。
+    // 每次重绘以稳定的会话标识绑定点击事件，不依赖行在列表中的当前位置。
     private void renderConversationRows(
         LinearLayout rows,
         String queryValue,
@@ -1330,6 +1360,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         });
     }
 
+    // 作用：构建聊天详情标题栏与当前联系人的操作入口。
     private View chatDetailHeader(RemoteIMContact contact) {
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
@@ -1383,6 +1414,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         return header;
     }
 
+    // 按消息类型拼装同一气泡内的正文、媒体与审批状态；附件缺失时仍保留消息外壳。
+    // 点击和长按动作只绑定当前消息标识，避免列表重绘后操作到相邻消息。
     private View messageBubble(
         RemoteIMMessage message,
         RemoteIMContact peer,
@@ -1571,6 +1604,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         });
     }
 
+    // 根据审批状态展示当前有效的操作；已经处理的请求只能显示结果，不能再次决策。
+    // 提交时携带原请求标识，服务端回执晚到也不会误改另一条审批消息。
     private View approvalActions(
         RemoteIMMessage message,
         RemoteIMContact peer,
@@ -1680,6 +1715,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     }
 
     @SuppressLint("ClickableViewAccessibility")
+    // 作用：组装聊天输入栏、附件入口和语音手势。
+    // 页面状态变化和用户操作在这里衔接；退出或失败时维持已显示内容。
     private View composer() {
         LinearLayout wrapper = new LinearLayout(this);
         wrapper.setOrientation(LinearLayout.VERTICAL);
@@ -2150,6 +2187,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         return row;
     }
 
+    // 作用：展示联系人添加表单并处理提交结果。
     private void showAddContactDialog() {
         Dialog dialog = new Dialog(this);
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
@@ -2275,6 +2313,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         return section;
     }
 
+    // 作用：根据远控会话状态展示画面、授权和操作入口。
     private void renderRemoteDesktop() {
         RemoteDesktopController controller = session.remoteDesktop();
         if (!controller.isActive()) {
@@ -2487,6 +2526,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     }
 
     @SuppressLint("ClickableViewAccessibility")
+    // 作用：把触摸和缩放手势转换为远程桌面输入事件。
     private void installRemoteGestures(TXCloudVideoView view, RemoteDesktopController controller) {
         final float[] scale = {1f};
         final double[][] lastPoint = {new double[]{0.5, 0.5}};
@@ -2939,7 +2979,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         ImageView image = new ImageView(this);
         image.setScaleType(ImageView.ScaleType.CENTER_CROP);
         image.setBackgroundColor(MaiChatTheme.PAGE);
-        image.setOnClickListener(view -> showFullScreenImage(attachment.localPath()));
+        image.setOnClickListener(view -> showFullScreenImage(
+            attachment.localPath(), imMediaPlaylist(activeChatUserId)));
         TextView imageMissing = MaiChatTheme.text(this, "图片暂不可预览", 14, MaiChatTheme.SECONDARY);
         imageMissing.setVisibility(View.GONE);
         MessageImageLoader.load(attachment.localPath(), dp(260), dp(190), image, () -> {
@@ -2999,14 +3040,49 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     }
 
     private void showVideoPlayer(RemoteIMVideoAttachment attachment) {
+        String peer = activeChatUserId;
         mediaExecutor.execute(() -> {
             boolean exists = new File(attachment.localPath()).isFile();
             runOnUiThread(() -> {
                 if (destroyed) return;
-                if (exists) openVideoPlayer(attachment.localPath());
+                if (exists) openVideoPlayer(attachment.localPath(), 0, imMediaPlaylist(peer));
                 else toast("视频还在下载中，稍后再试");
             });
         });
+    }
+
+    private List<GalleryItem> imMediaPlaylist(String peer) {
+        if (peer == null || session == null) return Collections.emptyList();
+        List<GalleryItem> items = new ArrayList<>();
+        for (RemoteIMMessage message : session.chatState().messagesWith(peer)) {
+            RemoteIMImageAttachment image = message.imageAttachment();
+            if (image != null && new File(image.localPath()).isFile())
+                items.add(new GalleryItem(image.localPath(), false));
+            RemoteIMVideoAttachment video = message.videoAttachment();
+            if (video != null && new File(video.localPath()).isFile())
+                items.add(new GalleryItem(video.localPath(), true));
+        }
+        return items;
+    }
+
+    private List<GalleryItem> normalizeGallery(String path, boolean video,
+                                                List<GalleryItem> candidates) {
+        List<GalleryItem> result = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (GalleryItem item : candidates) {
+            if (item == null || item.path == null || !new File(item.path).isFile()) continue;
+            if (seen.add(item.video + "\0" + item.path)) result.add(item);
+        }
+        if (seen.add(video + "\0" + path)) result.add(0, new GalleryItem(path, video));
+        return result;
+    }
+
+    private int galleryIndex(List<GalleryItem> items, String path, boolean video) {
+        for (int i = 0; i < items.size(); i++) {
+            GalleryItem item = items.get(i);
+            if (item.video == video && item.path.equals(path)) return i;
+        }
+        return 0;
     }
 
     private void openVideoPlayer(String path) {
@@ -3014,7 +3090,23 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     }
 
     private void openVideoPlayer(String path, long startPositionUs) {
+        openVideoPlayer(path, startPositionUs, Collections.emptyList());
+    }
+
+    private void openVideoPlayer(String path, long startPositionUs,
+                                 List<GalleryItem> candidates) {
+        openVideoPlayer(path, startPositionUs, candidates, 0);
+    }
+
+    // 打开指定视频及会话媒体序列，并把初始播放位置交给播放器。
+    // 旧图片或视频预览在这里被关闭；切换动画和播放状态需从实际页面继续核查。
+    private void openVideoPlayer(String path, long startPositionUs,
+                                 List<GalleryItem> candidates, int entryDirection) {
         if (videoDialog != null) videoDialog.dismiss();
+        if (imageDialog != null) imageDialog.dismiss();
+        List<GalleryItem> playlist = normalizeGallery(path, true, candidates);
+        final int[] selected = {galleryIndex(playlist, path, true)};
+        final String[] currentPath = {path};
         Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
         LinearLayout rootView = new LinearLayout(this);
         rootView.setOrientation(LinearLayout.VERTICAL);
@@ -3025,12 +3117,50 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
 
         MaiFfplayVideoView video = new MaiFfplayVideoView(this);
         video.setVideoPath(path, startPositionUs);
+        TextView mediaName = MaiChatTheme.text(this, "", 12, Color.WHITE);
+        mediaName.setGravity(Gravity.CENTER);
+        mediaName.setSingleLine(true);
+        mediaName.setEllipsize(TextUtils.TruncateAt.MIDDLE);
+        mediaName.setBackground(MaiChatTheme.rounded(Color.argb(140, 0, 0, 0), 12, this));
+        if (playlist.size() > 1) {
+            mediaName.setText((selected[0] + 1) + "/" + playlist.size() + " · "
+                + new File(path).getName());
+        } else {
+            mediaName.setVisibility(View.GONE);
+        }
+        video.setOnVideoSwipeListener(direction -> {
+            int next = selected[0] + direction;
+            while (next >= 0 && next < playlist.size()
+                && !new File(playlist.get(next).path).isFile()) next += direction;
+            if (next < 0 || next >= playlist.size()) {
+                toast(direction > 0 ? "已经是最后一项" : "已经是第一项");
+                return;
+            }
+            selected[0] = next;
+            GalleryItem item = playlist.get(next);
+            if (!item.video) {
+                showFullScreenImage(item.path, playlist, direction);
+                return;
+            }
+            currentPath[0] = item.path;
+            mediaName.setText((next + 1) + "/" + playlist.size() + " · "
+                + new File(currentPath[0]).getName());
+            video.animate().cancel();
+            video.setTranslationX(direction * dp(48));
+            video.setAlpha(0.48f);
+            video.setVideoPath(currentPath[0]);
+            video.animate().translationX(0).alpha(1).setDuration(220).start();
+        });
         FrameLayout.LayoutParams videoParams = new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT,
             Gravity.CENTER
         );
         frame.addView(video, videoParams);
+        FrameLayout.LayoutParams nameParams = new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(32), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        nameParams.setMargins(dp(80), dp(20), dp(80), 0);
+        frame.addView(mediaName, nameParams);
 
         TextView close = iconButton("×", 26, Color.WHITE);
         close.setContentDescription("关闭视频");
@@ -3045,17 +3175,18 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
         actions.setPadding(dp(16), 0, dp(18), dp(10));
         TextView share = videoAction("↗", "转发或分享");
-        share.setOnClickListener(view -> sharePreviewVideo(path));
+        share.setOnClickListener(view -> sharePreviewVideo(currentPath[0]));
         actions.addView(share, new LinearLayout.LayoutParams(dp(50), dp(50)));
         TextView save = videoAction("↓", "保存到相册");
-        save.setOnClickListener(view -> savePreviewVideo(path));
+        save.setOnClickListener(view -> savePreviewVideo(currentPath[0]));
         LinearLayout.LayoutParams actionSpacing = new LinearLayout.LayoutParams(dp(50), dp(50));
         actionSpacing.leftMargin = dp(12);
         actions.addView(save, actionSpacing);
         TextView more = videoAction("⋯", "更多操作");
         more.setOnClickListener(view -> new AlertDialog.Builder(this)
-            .setTitle(new File(path).getName())
-            .setItems(new String[]{"复制文件路径"}, (whichDialog, which) -> copyToClipboard(path))
+            .setTitle(new File(currentPath[0]).getName())
+            .setItems(new String[]{"复制文件路径"},
+                (whichDialog, which) -> copyToClipboard(currentPath[0]))
             .setNegativeButton("取消", null).show());
         LinearLayout.LayoutParams moreSpacing = new LinearLayout.LayoutParams(dp(50), dp(50));
         moreSpacing.leftMargin = dp(12);
@@ -3071,6 +3202,14 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         allowKeyboardLocation = false;
         videoDialog = dialog;
         dialog.show();
+        animateGalleryEntry(rootView, entryDirection);
+    }
+
+    private void animateGalleryEntry(View content, int direction) {
+        if (direction == 0) return;
+        content.setTranslationX(direction * dp(48));
+        content.setAlpha(0.48f);
+        content.animate().translationX(0).alpha(1).setDuration(220).start();
     }
 
     private TextView videoAction(String icon, String label) {
@@ -3181,6 +3320,21 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         return openAgentVideo(path, 0);
     }
 
+    public boolean openAgentVideo(String path, List<String> playlist) {
+        if (destroyed || path == null || !new File(path).isFile()) return false;
+        List<GalleryItem> items = new ArrayList<>();
+        for (String candidate : playlist) items.add(new GalleryItem(candidate, true));
+        openVideoPlayer(path, 0, items);
+        return true;
+    }
+
+    public boolean openAgentMedia(String path, boolean video, List<GalleryItem> playlist) {
+        if (destroyed || path == null || !new File(path).isFile()) return false;
+        if (video) openVideoPlayer(path, 0, playlist);
+        else showFullScreenImage(path, playlist);
+        return true;
+    }
+
     public boolean openAgentVideo(String path, long startPositionUs) {
         if (destroyed || path == null || !new File(path).isFile()) return false;
         openVideoPlayer(path, startPositionUs);
@@ -3225,6 +3379,23 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
 
     @SuppressLint("ClickableViewAccessibility")
     public void showFullScreenImage(String path) {
+        showFullScreenImage(path, Collections.emptyList());
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private void showFullScreenImage(String path, List<GalleryItem> candidates) {
+        showFullScreenImage(path, candidates, 0);
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    // 将选中的图片放入全屏媒体序列，接收左右滑动以导航相邻图片或视频。
+    // 封面、来源路径和序列索引在进入前确定，避免滑动时拿错文件。
+    private void showFullScreenImage(String path, List<GalleryItem> candidates,
+                                     int entryDirection) {
+        if (imageDialog != null) imageDialog.dismiss();
+        if (videoDialog != null) videoDialog.dismiss();
+        List<GalleryItem> playlist = normalizeGallery(path, false, candidates);
+        int selected = galleryIndex(playlist, path, false);
         Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
         FrameLayout frame = new FrameLayout(this);
         frame.setBackgroundColor(Color.BLACK);
@@ -3239,6 +3410,10 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         frame.addView(backdrop, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         MaiGraphicsImageView image = new MaiGraphicsImageView(this);
+        image.setPresentationListener(success -> {
+            // 图片解码完成后才让实际画面滑入，避免只动了加载中的黑底。
+            if (success) animateGalleryEntry(image, entryDirection);
+        });
         // 全屏预览直接绑定自己的 TextureView，与气泡使用不同的渲染目标。
         image.showImage(
             path,
@@ -3290,6 +3465,14 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                     last[0] = event.getX();
                     last[1] = event.getY();
                     return true;
+                case MotionEvent.ACTION_UP:
+                    if (scale[0] <= 1.01f) {
+                        float dx = event.getX() - last[0];
+                        float dy = event.getY() - last[1];
+                        if (Math.abs(dx) >= dp(72) && Math.abs(dx) > Math.abs(dy) * 1.4f)
+                            showMediaNeighbor(playlist, selected, dx < 0 ? 1 : -1);
+                    }
+                    return true;
                 default:
                     return true;
             }
@@ -3311,6 +3494,19 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                 ViewGroup.LayoutParams.MATCH_PARENT);
         }
         frame.addView(image, imageParams);
+        if (playlist.size() > 1) {
+            TextView mediaName = MaiChatTheme.text(this,
+                (selected + 1) + "/" + playlist.size() + " · " + new File(path).getName(),
+                12, Color.WHITE);
+            mediaName.setGravity(Gravity.CENTER);
+            mediaName.setSingleLine(true);
+            mediaName.setEllipsize(TextUtils.TruncateAt.MIDDLE);
+            mediaName.setBackground(MaiChatTheme.rounded(Color.argb(140, 0, 0, 0), 12, this));
+            FrameLayout.LayoutParams nameParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(32), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+            nameParams.setMargins(dp(80), dp(20), dp(80), 0);
+            frame.addView(mediaName, nameParams);
+        }
         TextView close = iconButton("×", 26, Color.WHITE);
         close.setBackground(MaiChatTheme.rounded(Color.argb(160, 0, 0, 0), 20, this));
         close.setOnClickListener(view -> dialog.dismiss());
@@ -3318,10 +3514,28 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         closeParams.setMargins(0, dp(14), dp(14), 0);
         frame.addView(close, closeParams);
         dialog.setContentView(frame);
+        dialog.setOnDismissListener(ignored -> {
+            if (imageDialog == dialog) imageDialog = null;
+        });
         allowKeyboardLocation = false;
+        imageDialog = dialog;
         dialog.show();
     }
 
+    private void showMediaNeighbor(List<GalleryItem> playlist, int selected, int direction) {
+        int next = selected + direction;
+        while (next >= 0 && next < playlist.size()
+            && !new File(playlist.get(next).path).isFile()) next += direction;
+        if (next < 0 || next >= playlist.size()) {
+            toast(direction > 0 ? "已经是最后一项" : "已经是第一项");
+            return;
+        }
+        GalleryItem item = playlist.get(next);
+        if (item.video) openVideoPlayer(item.path, 0, playlist, direction);
+        else showFullScreenImage(item.path, playlist, direction);
+    }
+
+    // 作用：根据附件类型展示可打开的文件预览。
     private void showFilePreview(RemoteIMFileAttachment attachment) {
         if (RemoteIMGitDiffDisplayPolicy.isGitDiff(attachment)
             && !RemoteIMGitDiffDisplayPolicy.hasValidIntegrity(attachment)) {
@@ -3488,6 +3702,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         }
     }
 
+    // 作用：展示消息转发目标并提交选中的转发操作。
     private void showForwardMessageDialog(RemoteIMMessage message) {
         List<RemoteIMContact> contacts = session.chatState().contacts();
         if (contacts.isEmpty()) {

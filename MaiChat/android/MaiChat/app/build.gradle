@@ -50,6 +50,17 @@ android {
         }
     }
 
+    // 本机假账号服务必须由调试构建显式启用；发布包不包含该开关。
+    buildTypes {
+        debug {
+            buildConfigField "boolean", "USE_LOCAL_UI_AUTH",
+                (project.findProperty("maichatLocalUiAuth") == "true").toString()
+        }
+        release {
+            buildConfigField "boolean", "USE_LOCAL_UI_AUTH", "false"
+        }
+    }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_11
         targetCompatibility JavaVersion.VERSION_11

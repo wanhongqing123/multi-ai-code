@@ -1,3 +1,6 @@
+// 文件作用：把腾讯 IM SDK 的登录、消息、联系人和媒体能力适配给应用的 IM 协议。
+// 阅读边界：SDK 回调在这里转换为应用事件，界面不直接依赖 SDK 类型。
+// 把腾讯 IM SDK 回调转换为应用消息和附件事件。
 import Foundation
 import MaiChatCore
 import UniformTypeIdentifiers
@@ -71,6 +74,8 @@ final class TencentIMClient:
     private nonisolated static let sdkQueue = DispatchQueue(label: "MaiChat.IMSDKWork", qos: .userInitiated)
     private nonisolated static let incomingQueue = DispatchQueue(label: "MaiChat.IMIncoming", qos: .userInitiated)
 
+    /// 使用服务端签发的 IM 凭证连接腾讯 IM SDK。
+    /// 连接阶段分别处理初始化、登录和回调注册，失败向上层返回可定位错误。
     func connect(sdkAppID: Int, userID: String, userSig: String) async throws {
         let diagnosticAccount = RemoteDiagnosticsProtocol.accountTag(sdkAppID: sdkAppID, ownerUserID: userID)
         Self.diagnosticAccountSnapshot.store(diagnosticAccount)
@@ -564,6 +569,8 @@ final class TencentIMClient:
         }
     }
 
+    /// 按消息类型提交腾讯 IM 发送请求并回传稳定结果。
+    /// 本地待发送状态在服务端确认前保留，失败不能伪装成已送达。
     private func send(
         message: PreparedSDKMessage,
         to userID: String,
@@ -657,6 +664,8 @@ final class TencentIMClient:
         }
     }
 
+    /// 解析入站文本与结构化业务消息。
+    /// 只在协议字段满足要求时生成应用消息，异常载荷保留诊断信息。
     private nonisolated func processIncomingText(msgID: String, sender: V2TIMUserInfo, text: String?) {
         dispatchPrecondition(condition: .onQueue(Self.incomingQueue))
         guard let userID = sender.userID, !userID.isEmpty, let text, !text.isEmpty else {
@@ -829,6 +838,8 @@ final class TencentIMClient:
         }
     }
 
+    /// 把 SDK 消息分派给文本、语音、文件、图片或视频处理器。
+    /// 分派前确认消息身份和方向，防止重复回执形成重复气泡。
     private nonisolated func processIncomingMessage(_ msg: V2TIMMessage) {
         dispatchPrecondition(condition: .onQueue(Self.incomingQueue))
         guard !msg.isSelf else { return }
@@ -916,6 +927,8 @@ final class TencentIMClient:
         )
     }
 
+    /// 把入站语音下载或引用转换为可播放附件。
+    /// 附件未就绪时保留消息本体，待文件可用后再更新气泡。
     private nonisolated func handleIncomingSound(
         msg: V2TIMMessage,
         soundElem: V2TIMSoundElem,
@@ -981,6 +994,8 @@ final class TencentIMClient:
         )
     }
 
+    /// 处理入站文件的名称、大小与本地下载状态。
+    /// 文件下载失败不应移除消息，用户仍可看到并重试。
     private nonisolated func handleIncomingFile(
         msg: V2TIMMessage,
         fileElem: V2TIMFileElem,
@@ -1062,6 +1077,8 @@ final class TencentIMClient:
         )
     }
 
+    /// 处理入站图片缩略图、原图和尺寸信息。
+    /// 图片未下载完成时保持占位尺寸，防止消息列表布局跳动。
     private nonisolated func handleIncomingImage(
         msg: V2TIMMessage,
         imageElem: V2TIMImageElem,
@@ -1139,6 +1156,8 @@ final class TencentIMClient:
         )
     }
 
+    /// 处理入站视频封面、媒体文件与下载进度。
+    /// 消息先保持稳定标识，媒体就绪后只更新附件状态而不重建整页。
     private nonisolated func handleIncomingVideo(
         msg: V2TIMMessage,
         videoElem: V2TIMVideoElem,
@@ -1178,6 +1197,7 @@ final class TencentIMClient:
         )
         Self.logSDK(level: .info, event: "message-receive-callback", fields: diagnosticFields)
 
+        // 先用云消息元数据创建稳定气泡；封面和视频分别就绪时只更新同一个 remoteID。
         emitIncomingVideo(
             fromUserID: fromUserID,
             videoFileURL: videoURL,
@@ -1195,6 +1215,7 @@ final class TencentIMClient:
             stage: .metadata
         )
 
+        // 封面可先于视频到达。下载到临时路径，验证成功后再原子替换正式缓存。
         if let coverURL {
             if Self.isUsableCachedFile(coverURL) {
                 emitIncomingVideo(
@@ -1225,7 +1246,7 @@ final class TencentIMClient:
                     progress: nil,
                     succ: { [weak self] in
                         Self.incomingQueue.async {
-                    guard diagnosticFields["account"] == Self.diagnosticAccountSnapshot.load() else { return }
+                            guard diagnosticFields["account"] == Self.diagnosticAccountSnapshot.load() else { return }
                             var fields = coverFields
                             guard Self.promoteDownloadedFile(from: coverPartURL, to: coverURL) else {
                                 fields["result"] = "failed"
@@ -1257,7 +1278,7 @@ final class TencentIMClient:
                     },
                     fail: { code, _ in
                         Self.incomingQueue.async {
-                    guard diagnosticFields["account"] == Self.diagnosticAccountSnapshot.load() else { return }
+                            guard diagnosticFields["account"] == Self.diagnosticAccountSnapshot.load() else { return }
                             try? FileManager.default.removeItem(at: coverPartURL)
                             var fields = coverFields
                             fields["result"] = "failed"
@@ -1270,6 +1291,7 @@ final class TencentIMClient:
             }
         }
 
+        // 历史消息可能已有完整本地视频；命中缓存时不重新下载，也不改变原消息顺序。
         if Self.isUsableCachedFile(videoURL) {
             emitIncomingVideo(
                 fromUserID: fromUserID,
@@ -1296,6 +1318,7 @@ final class TencentIMClient:
         let videoPartURL = Self.partialDownloadURL(for: videoURL)
         try? FileManager.default.removeItem(at: videoPartURL)
         Self.logSDK(level: .info, event: "media-download-start", fields: videoFields)
+        // 下载回调在独立队列核对账号快照；失败只更新附件状态，不能删掉消息本体。
         videoElem.downloadVideo(
             path: videoPartURL.path,
             progress: nil,

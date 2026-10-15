@@ -11,6 +11,7 @@ on:
       - 'electron/preload.remoteIm.test.ts'
       - 'package.json'
       - 'package-lock.json'
+      - 'scripts/check-line-width.mjs'
       - '.github/workflows/remote-im-tests.yml'
   pull_request:
     branches:
@@ -22,6 +23,7 @@ on:
       - 'electron/preload.remoteIm.test.ts'
       - 'package.json'
       - 'package-lock.json'
+      - 'scripts/check-line-width.mjs'
       - '.github/workflows/remote-im-tests.yml'
 
 jobs:

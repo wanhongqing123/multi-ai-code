@@ -29,6 +29,9 @@ jobs:
       - name: Install deps
         run: npm install
 
+      - name: Check first-party source line width
+        run: npm run check:line-width
+
       - name: Build
         run: npm run dist -- ${{ matrix.os == 'macos-14' && '--mac' || '--win' }}
         env:

@@ -29,7 +29,8 @@ describe('AICLI structured output bridge', () => {
     const observe = vi.fn(() => { throw new Error('diagnostic write failed') })
     const bridge = await createAicliStructuredOutputBridge('diagnostic-session', 'codex', observe)
     try {
-      await expect(bridge.requestControlCommand({ command: 'submit_user_message', text: 'private prompt', displayText: 'private display', inputOrigin: 'local' }))
+      await expect(bridge.requestControlCommand({ command: 'submit_user_message', text: 'private prompt',
+        displayText: 'private display', inputOrigin: 'local' }))
         .resolves.toEqual({ ok: false, error: 'AICLI control bridge is not connected' })
       expect(observe).toHaveBeenCalledWith('submit_user_message')
       expect(observe.mock.calls[0]).toHaveLength(1)

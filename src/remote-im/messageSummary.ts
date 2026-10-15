@@ -182,7 +182,8 @@ export function buildRemoteImMessageSummaryMarkdown(
   lines.push('# 消息记录汇总')
   lines.push('')
   lines.push(
-    `> 📊 **共 ${summary.total} 条消息 · ${summary.sessionCount} 个会话** · 时间范围：${formatSummaryTime(summary.firstAt)} ~ ${formatSummaryTime(summary.lastAt)}`
+    `> 📊 **共 ${summary.total} 条消息 · ${summary.sessionCount} 个会话** · 时间范围：${formatSummaryTime(summary
+      .firstAt)} ~ ${formatSummaryTime(summary.lastAt)}`
   )
 
   for (const { peer, messages: peerMessages } of summary.groups) {
@@ -202,7 +203,8 @@ export function buildRemoteImMessageSummaryMarkdown(
       }
       const failed = message.status === 'failed' ? ' ⚠️ 发送失败' : ''
       lines.push('')
-      lines.push(`**${summarySenderLabel(message, options.ownerUserId)}** · \`${formatSummaryTime(message.createdAt)}\`${failed}`)
+      lines.push(`**${summarySenderLabel(message,
+        options.ownerUserId)}** · \`${formatSummaryTime(message.createdAt)}\`${failed}`)
       const attachment = attachmentLine(message)
       if (attachment) {
         lines.push('')

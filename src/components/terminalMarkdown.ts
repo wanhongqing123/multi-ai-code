@@ -19,8 +19,12 @@ const ORDERED_RE = /^(\s*)(\d+)\.\s+(.+?)\s*$/
 const TABLE_ROW_RE = /^\s*\|.*\|\s*$/
 const TABLE_DIVIDER_RE = /^\s*\|(?:\s*:?-{3,}:?\s*\|)+\s*$/
 const HR_RE = /^\s*([-*_])(?:\s*\1){2,}\s*$/
-const MARKDOWN_HINT_RE =
-  /(^\s{0,3}#{1,6}\s+)|(^\s*[-*+]\s+)|(^\s*\d+\.\s+)|(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(\[[^\]]+\]\([^)]+\))|(^\s*\|.*\|\s*$)|(^\s*```)/m
+const MARKDOWN_HINT_RE = new RegExp(
+  "(^\\s{0,3}#{1,6}\\s+)|(^\\s*[-*+]\\s+)|(^\\s*\\d+\\.\\s+)|(`[^`\\n]+`)|" +
+  "(\\*\\*[^*\\n]+\\*\\*)|(\\[[^\\]]+\\]\\([^)]+\\))|(^\\s*\\|.*\\|\\s*$)|" +
+  "(^\\s*```)",
+  'm'
+)
 
 function wrap(text: string, code: string): string {
   if (!text) return text

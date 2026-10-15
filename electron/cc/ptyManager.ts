@@ -833,7 +833,8 @@ export function registerPtyIpc(): void {
       cli: structuredProvider ?? 'custom', appVersion: app.getVersion()
     })
     const structuredOutputBridge = structuredProvider
-      ? await createAicliStructuredOutputBridge(req.sessionId, structuredProvider, command => diagnostics.control(command))
+      ? await createAicliStructuredOutputBridge(req.sessionId, structuredProvider,
+        command => diagnostics.control(command))
       : null
     if (structuredOutputBridge) {
       effectiveArgs = [...effectiveArgs, ...structuredOutputBridge.args]

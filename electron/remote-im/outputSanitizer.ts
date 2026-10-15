@@ -5,17 +5,32 @@ const THINKING_WITH_EFFORT_RE = /(?:thinking|reasoning)\s+with\s+[\w-]+\s+effort
 const COGITATED_RE = /\bCogitated\s+for\s+\d+(?:\.\d+)?s\b/i
 const MODEL_STATUS_RE =
   /\b(?:Opus|Sonnet|Haiku)\b.*(?:\b\d+h:\d+%|\b\d+d:\d+%|\bctx\s*:?\s*\d+%\/[\w.]+|\bcache\s*:|\bin\s*:|\bout\s*:)/i
-const STATUS_COUNTER_RE =
-  /(?:\bctx\s*:?\s*\d+%\/[\w.]+|\bcache\s*:?\s*[\w.+-]+|\b(?:in|out)\s*:?\s*\d+(?:\.\d+)?[KMG]?\b|\/\s*out\s+\d+|\b\d+d:\d+%|\b\d+h:\d+%|\b\d+d\s+\d+%|\b\d+h\s+\d+%)/i
+const STATUS_COUNTER_RE = new RegExp(
+  String.raw`(?:\bctx\s*:?\s*\d+%\/[\w.]+|\bcache\s*:?\s*[\w.+-]+|\b(?:in|` +
+    String.raw`out)\s*:?\s*\d+(?:\.\d+)?[KMG]?\b|\/\s*out\s+\d+|\b\d+d:\d+%|\b\d+h:\d+%|` +
+    String.raw`\b\d+d\s+\d+%|\b\d+h\s+\d+%)`,
+  'i'
+)
+const STATUS_COUNTER_ONLY_RE = new RegExp(
+  String.raw`^(?:[|·\s]*(?:\d+[hd]:\d+%|ctx:?\d+%\/[\w.]+|cache:?[rw\d.k+.-]+|` +
+    String.raw`in:?\d+(?:\.\d+)?[KMG]?|out:?\d+(?:\.\d+)?[KMG]?)[|·\s]*)+$`,
+  'i'
+)
 const SPINNER_RE = /\b(?:Newspapering|Warping|Cogitating|Thinking|Reasoning)\b/i
-const PROMPT_HINT_RE =
-  /(?:ctrl\+g to edit|Press up to edit queued messages|bypass permissions on|shift\+tab to(?: cycle)?|← for agents|^\s*❯\s*$)/i
+const PROMPT_HINT_RE = new RegExp(
+  String.raw`(?:ctrl\+g to edit|Press up to edit queued messages|bypass permissions on|` +
+    String.raw`shift\+tab to(?: cycle)?|← for agents|^\s*❯\s*$)`,
+  'i'
+)
 const TEMP_PATH_RE = /AppData\\Local\\Temp\\multi-ai-code-mutual/i
 const CLAUDE_BOOT_RE =
   /(?:Welcome back|What's new|Claude Max|Opus\s+\d+(?:\.\d+)?|release-notes|OTEL_LOG_ASSISTANT_RESPONS)/i
 const CODEX_BOOT_HINT_RE = /^Use\s+\/skills\s+to\s+list\s+available\s+skills\.?$/i
-const CODEX_MODEL_STATUS_RE =
-  /^gpt-[\w.-]+\s+\w+\s*·\s*.+\s*·\s*gpt-[\w.-]+\s*·\s*.+\s*·\s*Context\s+\d+%\s+used\s*·\s*\d+h\s+\d+%\s+left\s*·\s*weekly\s+\d+%\s+left$/i
+const CODEX_MODEL_STATUS_RE = new RegExp(
+  String.raw`^gpt-[\w.-]+\s+\w+\s*·\s*.+\s*·\s*gpt-[\w.-]+\s*·\s*.+\s*·\s*Context\s+\d+%\s+` +
+    String.raw`used\s*·\s*\d+h\s+\d+%\s+left\s*·\s*weekly\s+\d+%\s+left$`,
+  'i'
+)
 const CODEX_COMPOSER_PROMPT_RE = /^›\s*\S.*$/
 const CODEX_STARTER_SUGGESTION_RE =
   /^(?:Write tests for @filename|Find and fix a bug in @filename|Run \/review on my current changes)$/i
@@ -107,7 +122,7 @@ function isTerminalNoiseLine(
   if (THINKING_WITH_EFFORT_RE.test(text)) return true
   if (COGITATED_RE.test(text)) return true
   if (/^(?:Opus|Sonnet|Haiku)(?:\s*[|·])?$/i.test(text)) return true
-  if (/^(?:[|·\s]*(?:\d+[hd]:\d+%|ctx:?\d+%\/[\w.]+|cache:?[rw\d.k+.-]+|in:?\d+(?:\.\d+)?[KMG]?|out:?\d+(?:\.\d+)?[KMG]?)[|·\s]*)+$/i.test(text)) return true
+  if (STATUS_COUNTER_ONLY_RE.test(text)) return true
   if (/^(?:●\s*)?high\s*·\s*\/effort$/i.test(text)) return true
   if (MODEL_STATUS_RE.test(text)) return true
   if (STATUS_COUNTER_RE.test(text) && /(?:ctx|token|cache|total|otal|\|)/i.test(text)) return true

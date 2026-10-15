@@ -38,6 +38,9 @@ jobs:
       - name: Install deps
         run: npm ci
 
+      - name: Check first-party source line width
+        run: npm run check:line-width
+
       - name: Run Remote IM tests
         run: npm run test:remote-im
 

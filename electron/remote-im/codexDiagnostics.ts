@@ -80,11 +80,13 @@ export async function readCodexDiagnosticEvents(input: {
             const at = Date.parse(row.timestamp)
             if (!Number.isFinite(at) || at < input.since || at > input.now) continue
             const payload = row.payload
-            if (row.type === 'event_msg' && payload?.type === 'item_completed' && payload.item?.type === 'AgentMessage') {
+            if (row.type === 'event_msg' && payload?.type === 'item_completed' && payload.item
+              ?.type === 'AgentMessage') {
               events.push({ createdAt: at, event: 'item_completed', threadId: payload.thread_id ?? meta.payload.id,
                 turnId: payload.turn_id, messageId: payload.item.id, phase: payload.item.phase,
                 delivery: payload.item.delivery, kind: 'AgentMessage' })
-            } else if (row.type === 'response_item' && payload?.type === 'function_call' && payload.name === 'request_user_input_async') {
+            } else if (row.type === 'response_item' && payload?.type === 'function_call' && payload
+              .name === 'request_user_input_async') {
               events.push({ createdAt: at, event: 'function_call', threadId: meta.payload.id,
                 messageId: payload.call_id, kind: 'request_user_input_async' })
             }
@@ -95,6 +97,8 @@ export async function readCodexDiagnosticEvents(input: {
   }
   events.sort((a, b) => (a as { createdAt: number }).createdAt - (b as { createdAt: number }).createdAt)
   if (events.length > 1000) truncated = true
-  return { source: 'codex-original-events', status: matched ? (invalidLines || inaccessible ? 'partial' : 'ok') : inspected ? 'no-matching-project' : 'unavailable',
+  return { source: 'codex-original-events',
+    status: matched ? (invalidLines || inaccessible ? 'partial' : 'ok')
+      : inspected ? 'no-matching-project' : 'unavailable',
     truncated, invalidLines, events: events.slice(-1000) }
 }

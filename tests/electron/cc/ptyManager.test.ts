@@ -11,7 +11,8 @@ const browserWindowSends = vi.hoisted(() => [] as Array<{ channel: string; paylo
 const interactionEvents = vi.hoisted(() => [] as string[])
 const diagnosticCalls = vi.hoisted(() => [] as Array<{ event: string; args: unknown[] }>)
 const diagnosticThrows = vi.hoisted(() => new Set<string>())
-const saveDialog = vi.hoisted(() => vi.fn(async (): Promise<{ canceled: boolean; filePath?: string }> => ({ canceled: true })))
+const saveDialog = vi.hoisted(() => vi.fn(async (): Promise<{ canceled: boolean; filePath?: string }> =>
+  ({ canceled: true })))
 const diagnosticReport = vi.hoisted(() => vi.fn(() => ({ schemaVersion: 1, files: [] })))
 const ptyInstances = vi.hoisted(() => [] as Array<{
   writes: string[]

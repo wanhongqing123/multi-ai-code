@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { activityKey, receiveActivity, getActivity, clearActivity, clearAccountActivities } from '../../../src/remote-im/activityState'
+import { activityKey, receiveActivity, getActivity, clearActivity,
+  clearAccountActivities } from '../../../src/remote-im/activityState'
 
 afterEach(() => { clearAccountActivities('owner'); vi.useRealTimers() })
 it('ignores reordered stops and heartbeats, expires without touching history', () => {

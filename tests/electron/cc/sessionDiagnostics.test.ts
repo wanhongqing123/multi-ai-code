@@ -12,7 +12,8 @@ function tempRoot(): string {
 }
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
 function events(root: string): any[] {
-  return readFileSync(join(root, 'logs', 'aicli-lifecycle.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line))
+  return readFileSync(join(root, 'logs', 'aicli-lifecycle.jsonl'),
+    'utf8').trim().split('\n').map(line => JSON.parse(line))
 }
 const context = { sessionId: 'session-1', projectId: 'project-1', cli: 'codex', appVersion: '0.1.73' }
 
@@ -21,17 +22,21 @@ describe('AICLI lifecycle diagnostics', () => {
     const root = tempRoot()
     let now = 1000
     const recorder = new SessionDiagnostics(root, context, () => now)
-    recorder.attach(() => ({ pid: 34148, executable: '/bin/codex', lastInputAt: 1050, lastOutputAt: 1080, lastEtxAt: null }))
+    recorder.attach(() => ({ pid: 34148, executable: '/bin/codex', lastInputAt: 1050, lastOutputAt: 1080,
+      lastEtxAt: null }))
     recorder.spawned()
     now = 1100
     recorder.control('model')
     now = 1300
     recorder.stop('project-target-changed', 'project-2')
     // This assertion runs before exited(), as the forensic record must survive kill.
-    expect(events(root).at(-1)).toMatchObject({ event: 'host-stop-requested', hostStopReason: 'project-target-changed', requestedProjectId: 'project-2' })
+    expect(events(root).at(-1)).toMatchObject({ event: 'host-stop-requested',
+      hostStopReason: 'project-target-changed', requestedProjectId: 'project-2' })
     now = 1600
     recorder.exited(-1073741510)
-    expect(events(root).at(-1)).toMatchObject({ event: 'process-exit', pid: 34148, exitCode: -1073741510, exitCodeHex: '0xc000013a', signal: null, lifetimeMs: 600, sinceInputMs: 550, lastControl: 'model', hostStopReason: 'project-target-changed' })
+    expect(events(root).at(-1)).toMatchObject({ event: 'process-exit', pid: 34148, exitCode: -1073741510,
+      exitCodeHex: '0xc000013a', signal: null, lifetimeMs: 600, sinceInputMs: 550, lastControl: 'model',
+      hostStopReason: 'project-target-changed' })
   })
 
   it('does not label an unobserved stop as a host kill', () => {
@@ -47,7 +52,8 @@ describe('AICLI lifecycle diagnostics', () => {
     recorder.spawnFailed(Object.assign(new Error('private command and secret-token'), { code: 'ENOENT' }))
     recorder.spawnFailed({ code: 'secret-token' })
     const report = buildSessionDiagnosticsReport(root, 'test') as any
-    const failures = report.files.flatMap((file: any) => file.events).filter((event: any) => event.event === 'spawn-failed')
+    const failures = report.files.flatMap((file: any) => file.events).filter((event: any) => event
+      .event === 'spawn-failed')
     expect(failures).toHaveLength(2)
     expect(failures[0].spawnErrorCode).toBe('ENOENT')
     expect(failures[1].spawnErrorCode).toBeNull()
@@ -67,8 +73,10 @@ describe('AICLI lifecycle diagnostics', () => {
     const recorded = report.files.flatMap((file: any) => file.events)
     const stops = recorded.filter((event: any) => event.event === 'host-stop-requested')
     expect(stops).toHaveLength(2)
-    expect(stops[0]).toMatchObject({ stopReasonRequested: 'cc:kill', hostStopReason: 'cc:kill', stopRequestedAt: 100, createdAt: 100 })
-    expect(stops[1]).toMatchObject({ stopReasonRequested: 'before-quit', hostStopReason: 'cc:kill', stopRequestedAt: 100, createdAt: 200 })
+    expect(stops[0]).toMatchObject({ stopReasonRequested: 'cc:kill', hostStopReason: 'cc:kill',
+      stopRequestedAt: 100, createdAt: 100 })
+    expect(stops[1]).toMatchObject({ stopReasonRequested: 'before-quit', hostStopReason: 'cc:kill',
+      stopRequestedAt: 100, createdAt: 200 })
     expect(recorded.at(-1)).toMatchObject({ event: 'process-exit', hostStopReason: 'cc:kill', stopRequestedAt: 100 })
   })
 
@@ -88,21 +96,25 @@ describe('AICLI lifecycle diagnostics', () => {
   it('exports the real persisted exit after no active sessions remain', () => {
     const root = tempRoot()
     const recorder = new SessionDiagnostics(root, context)
-    recorder.attach(() => ({ pid: 1234, executable: '/bin/codex', lastInputAt: null, lastOutputAt: null, lastEtxAt: null }))
+    recorder.attach(() => ({ pid: 1234, executable: '/bin/codex', lastInputAt: null, lastOutputAt: null,
+      lastEtxAt: null }))
     recorder.spawned()
     recorder.stop('before-quit')
     recorder.exited(-1073741510)
     const report = buildSessionDiagnosticsReport(root, 'test', []) as any
     expect(report.activeSessions).toEqual([])
-    const exits = report.files.flatMap((file: any) => file.events).filter((event: any) => event.event === 'process-exit')
+    const exits = report.files.flatMap((file: any) => file.events).filter((event: any) => event
+      .event === 'process-exit')
     expect(exits).toHaveLength(1)
-    expect(exits[0]).toMatchObject({ sessionId: 'session-1', pid: 1234, exitCode: -1073741510, hostStopReason: 'before-quit' })
+    expect(exits[0]).toMatchObject({ sessionId: 'session-1', pid: 1234, exitCode: -1073741510,
+      hostStopReason: 'before-quit' })
   })
 
   it('records source-bridge message submission without storing the prompt or extra context', () => {
     const root = tempRoot()
     let now = 100
-    const recorder = new SessionDiagnostics(root, { ...context, prompt: 'private-prompt', env: 'secret-key' } as typeof context, () => now)
+    const recorder = new SessionDiagnostics(root, { ...context, prompt: 'private-prompt',
+      env: 'secret-key' } as typeof context, () => now)
     now = 200
     recorder.control('submit_user_message')
     now = 400
@@ -117,9 +129,11 @@ describe('AICLI lifecycle diagnostics', () => {
     const root = tempRoot()
     const kernelRoot = join(root, 'bin', 'aicli')
     mkdirSync(kernelRoot, { recursive: true })
-    writeFileSync(join(kernelRoot, 'manifest.json'), JSON.stringify({ entries: { codex: { sourceCommit: 'a'.repeat(40) } } }))
+    writeFileSync(join(kernelRoot, 'manifest.json'),
+      JSON.stringify({ entries: { codex: { sourceCommit: 'a'.repeat(40) } } }))
     const recorder = new SessionDiagnostics(root, context)
-    recorder.attach(() => ({ pid: 5, executable: join(kernelRoot, 'codex', 'win32-x64', 'codex.exe'), lastInputAt: null, lastOutputAt: null, lastEtxAt: null }))
+    recorder.attach(() => ({ pid: 5, executable: join(kernelRoot, 'codex', 'win32-x64', 'codex.exe'),
+      lastInputAt: null, lastOutputAt: null, lastEtxAt: null }))
     recorder.spawned()
     expect(events(root).at(-1).sourceCommit).toBe('a'.repeat(40))
   })

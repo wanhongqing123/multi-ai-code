@@ -1012,7 +1012,10 @@ function AppShell() {
               strokeLinejoin="round"
               aria-hidden="true"
             >
-              <path d="M1.9 4.4c0-.72.58-1.3 1.3-1.3h2.63c.34 0 .67.14.91.38l.84.84h4.22c.72 0 1.3.58 1.3 1.3v5.98c0 .72-.58 1.3-1.3 1.3H3.2c-.72 0-1.3-.58-1.3-1.3V4.4Z" />
+              <path d={
+                'M1.9 4.4c0-.72.58-1.3 1.3-1.3h2.63c.34 0 .67.14.91.38l.84.84h4.22' +
+                'c.72 0 1.3.58 1.3 1.3v5.98c0 .72-.58 1.3-1.3 1.3H3.2c-.72 0-1.3-.58-1.3-1.3V4.4Z'
+              } />
             </svg>
             <span className="workspace-picker-name">
               {hasProject ? targetRepo : '选择工作空间'}

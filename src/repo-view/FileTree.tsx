@@ -145,7 +145,8 @@ export default function FileTree({
         ]
       })
     },
-    [childrenByDir, directoryHasVisibleDescendants, expanded, loadingDirs, onSelectFile, queryLower, selectedFile, toggleDir]
+    [childrenByDir, directoryHasVisibleDescendants, expanded, loadingDirs, onSelectFile, queryLower, selectedFile,
+      toggleDir]
   )
 
   const rows = useMemo(() => renderDir('', 0), [renderDir])

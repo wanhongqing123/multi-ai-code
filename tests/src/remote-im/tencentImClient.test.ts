@@ -535,7 +535,8 @@ describe('tencent IM client helpers', () => {
     const textElement = { type: 'TIMTextElem', content: { text: '先文字后图片' } }
     const imageElement = {
       type: 'TIMImageElem',
-      content: { imageInfoArray: [{ type: 3, url: 'https://cos.example.test/pic.png', width: 100, height: 80, size: 900 }] }
+      content: { imageInfoArray: [{ type: 3, url: 'https://cos.example.test/pic.png', width: 100, height: 80,
+        size: 900 }] }
     }
 
     // 文本元素在前：公开 type/payload 会是文本，仅靠公开字段会漏掉图片；靠 _elements 才完整。

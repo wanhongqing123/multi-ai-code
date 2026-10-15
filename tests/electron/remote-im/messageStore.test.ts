@@ -51,8 +51,12 @@ function createFakeDatabase(seedRows: FakeRow[] = []): RemoteImDatabase {
               status: (hasCaptionColumns ? args[13] : hasAttachmentColumns ? args[11] : args[9]) as FakeRow['status'],
               error: (hasCaptionColumns ? args[14] : hasAttachmentColumns ? args[12] : args[10]) as string | null,
               created_at: (hasCaptionColumns ? args[15] : hasAttachmentColumns ? args[13] : args[11]) as number,
-              sent_to_aicli_at: (hasCaptionColumns ? args[16] : hasAttachmentColumns ? args[14] : args[12]) as number | null,
-              sent_to_im_at: (hasCaptionColumns ? args[17] : hasAttachmentColumns ? args[15] : args[13]) as number | null
+              sent_to_aicli_at: (
+                hasCaptionColumns ? args[16] : hasAttachmentColumns ? args[14] : args[12]
+              ) as number | null,
+              sent_to_im_at: (
+                hasCaptionColumns ? args[17] : hasAttachmentColumns ? args[15] : args[13]
+              ) as number | null
             })
             return { lastInsertRowid: nextId++ }
           },

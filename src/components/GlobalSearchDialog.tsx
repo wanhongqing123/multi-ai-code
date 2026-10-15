@@ -85,7 +85,8 @@ export default function GlobalSearchDialog({
               hits.push({
                 source: 'template',
                 title: t.name,
-                snippet: t.body.split('\n').find((ln) => ln.toLowerCase().includes(q.toLowerCase())) ?? t.body.slice(0, 200),
+                snippet: t.body.split('\n').find((ln) => ln.toLowerCase().includes(q.toLowerCase())) ?? t.body
+                  .slice(0, 200),
                 location: '模板'
               })
             }

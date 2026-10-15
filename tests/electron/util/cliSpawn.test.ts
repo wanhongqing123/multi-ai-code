@@ -202,7 +202,8 @@ describe('resolveCliSpawn', () => {
     }
   })
 
-  it('on Windows, prefers the real claude native binary from the npm wrapper package when bin/claude.exe is missing', async () => {
+  it('on Windows, prefers the real claude native binary from the npm wrapper package ' +
+    'when bin/claude.exe is missing', async () => {
     if (!isWindows) return
     const dir = await fs.mkdtemp(join(tmpdir(), 'claude-wrapper-'))
     tempRoots.push(dir)

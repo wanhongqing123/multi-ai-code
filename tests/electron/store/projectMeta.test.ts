@@ -45,7 +45,8 @@ describe('readProjectMetaFile', () => {
   it('repairs trailing garbage after the first complete top-level object', async () => {
     await fs.writeFile(
       metaPath,
-      '{\n  "id": "p2",\n  "name": "demo",\n  "repo_view_ai_settings": {\n    "ai_cli": "codex",\n    "env": {\n      "FOO": "bar"\n    }\n  }\n}  "ai_settings": { "ai_cli": "claude" }\n',
+      ('{\n  "id": "p2",\n  "name": "demo",\n  "repo_view_ai_settings": {\n    "ai_cli": "codex",\n    "env": {\n   ' +
+        '   "FOO": "bar"\n    }\n  }\n}  "ai_settings": { "ai_cli": "claude" }\n'),
       'utf8'
     )
 
@@ -85,7 +86,8 @@ describe('readProjectMetaFile', () => {
     const backup = names.find((name) => name.startsWith('project.json.autofix-') && name.endsWith('.bak'))
     expect(backup).toBeTruthy()
     await expect(fs.readFile(join(projectDir, backup!), 'utf8')).resolves.toBe(
-      '{\n  "id": "p2",\n  "name": "demo",\n  "repo_view_ai_settings": {\n    "ai_cli": "codex",\n    "env": {\n      "FOO": "bar"\n    }\n  }\n}  "ai_settings": { "ai_cli": "claude" }\n'
+      ('{\n  "id": "p2",\n  "name": "demo",\n  "repo_view_ai_settings": {\n    "ai_cli": "codex",\n    "env": {\n   ' +
+        '   "FOO": "bar"\n    }\n  }\n}  "ai_settings": { "ai_cli": "claude" }\n')
     )
 
     await writeProjectMetaFile(metaPath, {
@@ -114,7 +116,8 @@ describe('readProjectMetaFile', () => {
   it('prefers the last complete top-level object when multiple objects were concatenated', async () => {
     await fs.writeFile(
       metaPath,
-      '{\n  "id": "stale",\n  "ai_settings": {\n    "ai_cli": "claude"\n  }\n}{\n  "id": "fresh",\n  "ai_settings": {\n    "ai_cli": "codex"\n  }\n}\n',
+      ('{\n  "id": "stale",\n  "ai_settings": {\n    "ai_cli": "claude"\n  }\n}{\n  "id": "fresh",\n  "ai_settings":' +
+        ' {\n    "ai_cli": "codex"\n  }\n}\n'),
       'utf8'
     )
 

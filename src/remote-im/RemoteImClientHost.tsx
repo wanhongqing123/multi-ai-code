@@ -532,7 +532,8 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
 
     // Status is best-effort: keep only the newest queued state for an activity.
     // Never wait for reconnection and then replay an already-expired indicator.
-    const pendingActivities = new Map<string, { event: import('../../electron/preload.js').RemoteImOutgoingActivityEvent; expiresAt: number }>()
+    const pendingActivities = new Map<string,
+      { event: import('../../electron/preload.js').RemoteImOutgoingActivityEvent; expiresAt: number }>()
     let sendingActivity = false
     const offOutgoingActivity = window.api.remoteIm.onOutgoingActivity((evt) => {
       if (evt.projectId !== props.projectId || !ownedRuntime || cancelled) return

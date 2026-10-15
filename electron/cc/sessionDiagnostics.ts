@@ -20,7 +20,8 @@ const EXPORT_FIELDS = [
   'sessionId', 'projectId', 'cli', 'appVersion', 'sourceCommit', 'hostPid', 'pid',
   'executable', 'codexHome', 'startedAt', 'lifetimeMs', 'lastInputAt', 'sinceInputMs',
   'lastOutputAt', 'lastEtxAt', 'lastControl', 'lastControlAt', 'hostStopReason',
-  'stopRequestedAt', 'stopReasonRequested', 'requestedProjectId', 'event', 'createdAt', 'exitCode', 'signal', 'exitCodeHex',
+  'stopRequestedAt', 'stopReasonRequested', 'requestedProjectId', 'event', 'createdAt', 'exitCode', 'signal',
+    'exitCodeHex',
   'spawnErrorCode'
 ] as const
 // Preserve evidence of earlier write gaps for this host run, scoped to the account.
@@ -167,10 +168,13 @@ export function buildSessionDiagnosticsReport(root: string, appVersion: string, 
     electronVersion: process.versions.electron ?? null, nodeVersion: process.versions.node,
     persistenceError: persistenceErrors.get(resolve(root)) ?? null, activeSessions, files,
     notes: [
-      'Only records collected by versions with lifecycle logging are available; missing history is not proof of no incident.',
+      ('Only records collected by versions with lifecycle logging are available; missing history is not proof of no ' +
+        'incident.'),
       'A null hostStopReason means no host stop request was recorded, not proof of an external kill.',
-      'hostStopReason/stopRequestedAt retain the first stop request; stopReasonRequested/createdAt identify each individual stop request.',
-      'persistenceError is the last write failure observed for this account during this host run; it may remain after writes recover because earlier records may be missing.',
+      ('hostStopReason/stopRequestedAt retain the first stop request; stopReasonRequested/createdAt identify each ' +
+        'individual stop request.'),
+      ('persistenceError is the last write failure observed for this account during this host run; it may remain ' +
+        'after writes recover because earlier records may be missing.'),
       'Input/output text, prompts, environment values, credentials and control arguments are not recorded.',
       'Input/control timestamps describe host writes or requests, not a CLI acknowledgement.',
       'Current session snapshots describe export time, not an earlier incident.'

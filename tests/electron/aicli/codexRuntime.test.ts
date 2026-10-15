@@ -19,7 +19,8 @@ describe('withCodexHome', () => {
     expect(() => withCodexHome({}, 'relative/.codex', process.cwd())).toThrow(/absolute/)
   })
 
-  it.runIf(process.platform === 'win32' || process.platform === 'darwin')('rejects a differently cased host home before creating it', () => {
+  it.runIf(process.platform === 'win32' || process
+    .platform === 'darwin')('rejects a differently cased host home before creating it', () => {
     withTempHome((home) => {
       const fakeUserHome = dirname(home)
       vi.stubEnv(process.platform === 'win32' ? 'USERPROFILE' : 'HOME', fakeUserHome)

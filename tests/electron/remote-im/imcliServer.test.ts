@@ -87,7 +87,9 @@ describe('remote IM CLI bridge server', () => {
 
     try {
       const headers = { authorization: `Bearer ${bridge.token}` }
-      await expect(fetch(`${bridge.url}/whoami?projectId=project-1`, { headers }).then((res) => res.json())).resolves.toMatchObject({
+      await expect(
+        fetch(`${bridge.url}/whoami?projectId=project-1`, { headers }).then((res) => res.json())
+      ).resolves.toMatchObject({
         ok: true,
         value: {
           projectId: 'project-1',
@@ -96,7 +98,9 @@ describe('remote IM CLI bridge server', () => {
           status: 'connected'
         }
       })
-      await expect(fetch(`${bridge.url}/contacts?projectId=project-1`, { headers }).then((res) => res.json())).resolves.toMatchObject({
+      await expect(
+        fetch(`${bridge.url}/contacts?projectId=project-1`, { headers }).then((res) => res.json())
+      ).resolves.toMatchObject({
         ok: true,
         value: {
           contacts: [
@@ -105,7 +109,10 @@ describe('remote IM CLI bridge server', () => {
           ]
         }
       })
-      await expect(fetch(`${bridge.url}/history?projectId=project-1&peer=phone-user&limit=5`, { headers }).then((res) => res.json())).resolves.toMatchObject({
+      await expect(
+        fetch(`${bridge.url}/history?projectId=project-1&peer=phone-user&limit=5`, { headers })
+          .then((res) => res.json())
+      ).resolves.toMatchObject({
         ok: true,
         value: {
           messages: [

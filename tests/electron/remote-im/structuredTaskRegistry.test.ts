@@ -17,7 +17,8 @@ describe('RemoteImStructuredTaskRegistry', () => {
     const task: Task = { taskId: 'task-a', replyId: 'reply-a', value: 'phone', sourceStarted: true }
     registry.add('session', task)
     registry.markExecutionIdle('session', 'task-a')
-    expect(registry.resolve('session', { taskId: 'task-a' })).toEqual({ ...task, sourceStarted: false, executionIdle: true })
+    expect(registry.resolve('session', { taskId: 'task-a' })).toEqual({ ...task, sourceStarted: false,
+      executionIdle: true })
     expect(registry.isLocallyTakenOver('session', 'task-a')).toBe(false)
     registry.markLocalTakeover('session')
     expect(registry.isLocallyTakenOver('session', 'task-a')).toBe(true)

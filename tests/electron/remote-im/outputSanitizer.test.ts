@@ -144,7 +144,8 @@ describe('remote IM output sanitizer', () => {
 
   it('strips inline terminal redraws and remote IM prompt echo from Claude output', () => {
     const noisy =
-      '·4thinking with xhigh effort6thinking with xhigh effort ❯ [来自远程 IM：multi_ai_code_e2e_a] 你好 ●你好！我是ClaudeCode，很高兴和你交流。\n' +
+      ('·4thinking with xhigh effort6thinking with xhigh effort ❯ [来自远程 IM：multi_ai_code_e2e_a] 你好 ●你好！我是ClaudeCode，' +
+        '很高兴和你交流。\n') +
       '\n' +
       '- 阅读、分析或修改代码\n' +
       '- 调试问题、运行测试'

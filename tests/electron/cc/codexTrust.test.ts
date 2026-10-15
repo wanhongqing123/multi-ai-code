@@ -10,7 +10,9 @@ import {
 describe('normalizeTerminalText', () => {
   it('strips ansi escapes and normalizes whitespace', () => {
     const raw =
-      '\u001b[1;1H> \u001b[1mYou are in \u001b[22m/tmp/demo\u001b[3;3HDo\u001b[3;6Hyou\u001b[3;10Htrust\u001b[3;16Hthe\u001b[3;20Hcontents\u001b[3;29Hof\u001b[3;32Hthis\u001b[3;37Hdirectory?\u001b[9;3H\u001b[2mPress enter to continue\u001b[m'
+      ('\u001b[1;1H> \u001b[1mYou are in \u001b[22m/tmp/demo\u001b[3;3HDo\u001b[3;6Hyou\u001b[3;10Htrust\u001b[3;' +
+        '16Hthe\u001b[3;20Hcontents\u001b[3;29Hof\u001b[3;32Hthis\u001b[3;37Hdirectory?\u001b[9;3H\u001b[2mPress ' +
+        'enter to continue\u001b[m')
     expect(normalizeTerminalText(raw)).toContain('Do you trust the contents of this directory?')
     expect(normalizeTerminalText(raw)).toContain('Press enter to continue')
   })
@@ -19,7 +21,8 @@ describe('normalizeTerminalText', () => {
 describe('shouldAutoAcceptCodexTrustPrompt', () => {
   it('returns true when codex trust prompt is present', () => {
     const raw =
-      '\u001b[3;3HDo\u001b[3;6Hyou\u001b[3;10Htrust\u001b[3;16Hthe\u001b[3;20Hcontents\u001b[3;29Hof\u001b[3;32Hthis\u001b[3;37Hdirectory?\u001b[9;3H\u001b[2mPress enter to continue\u001b[m'
+      ('\u001b[3;3HDo\u001b[3;6Hyou\u001b[3;10Htrust\u001b[3;16Hthe\u001b[3;20Hcontents\u001b[3;29Hof\u001b[3;' +
+        '32Hthis\u001b[3;37Hdirectory?\u001b[9;3H\u001b[2mPress enter to continue\u001b[m')
     expect(shouldAutoAcceptCodexTrustPrompt(raw)).toBe(true)
   })
 
@@ -31,7 +34,8 @@ describe('shouldAutoAcceptCodexTrustPrompt', () => {
 describe('isCodexReadyForPromptInjection', () => {
   it('returns false on trust gate output', () => {
     const raw =
-      '\u001b[3;3HDo\u001b[3;6Hyou\u001b[3;10Htrust\u001b[3;16Hthe\u001b[3;20Hcontents\u001b[3;29Hof\u001b[3;32Hthis\u001b[3;37Hdirectory?\u001b[9;3H\u001b[2mPress enter to continue\u001b[m'
+      ('\u001b[3;3HDo\u001b[3;6Hyou\u001b[3;10Htrust\u001b[3;16Hthe\u001b[3;20Hcontents\u001b[3;29Hof\u001b[3;' +
+        '32Hthis\u001b[3;37Hdirectory?\u001b[9;3H\u001b[2mPress enter to continue\u001b[m')
     expect(isCodexReadyForPromptInjection(raw)).toBe(false)
   })
 
@@ -58,7 +62,8 @@ describe('isClaudeReadyForPromptInjection', () => {
       'C:\\msys64\\home\\Administrator\\Apollo\\u3player',
       '',
       '> _',
-      'Administrator@WIN-21CP6RE13DK  C:\\msys64\\home\\Administrator\\Apollo\\u3player  Opus 4.8 (1M context)  ctx-  in:0 out:0',
+      ('Administrator@WIN-21CP6RE13DK  C:\\msys64\\home\\Administrator\\Apollo\\u3player  Opus 4.8 (1M context)  ' +
+        'ctx-  in:0 out:0'),
       '▸ bypass permissions on (shift+tab to cycle) · ← for agents'
     ].join('\n')
 

@@ -563,7 +563,8 @@ app.whenReady().then(async () => {
 
   // ---------- Git IPC: log + diff for Stage 3 Diff Review ----------
 
-  async function runGit(cwd: string, args: string[]): Promise<{ ok: true; stdout: string } | { ok: false; error: string }> {
+  async function runGit(cwd: string, args: string[]): Promise<{ ok: true; stdout: string } | { ok: false;
+    error: string }> {
     try {
       const { stdout } = await execFileAsync('git', args, {
         cwd,

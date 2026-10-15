@@ -418,7 +418,8 @@ describe('remote IM reply protocol', () => {
 
   it('extracts replies from Claude fullscreen terminal redraw chunks', () => {
     const fullscreenChunk = [
-      `[IM_REPLY] Put final Markdown for IM between full-line ${REMOTE_IM_REPLY_OPEN_TAG} and ${REMOTE_IM_REPLY_CLOSE_TAG}; text outside tags is ignored.\r\n`,
+      `[IM_REPLY] Put final Markdown for IM between full-line ${REMOTE_IM_REPLY_OPEN_TAG} and ` +
+        `${REMOTE_IM_REPLY_CLOSE_TAG}; text outside tags is ignored.\r\n`,
       '\u001b[?25l\u001b[20;1H●\u001b[m\u001b[1C',
       `${REMOTE_IM_REPLY_OPEN_TAG}\u001b[1C\u001b[K\r\n`,
       '  debug-ok\u001b[K\r\n',

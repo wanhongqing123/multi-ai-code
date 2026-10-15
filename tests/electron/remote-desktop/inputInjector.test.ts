@@ -166,7 +166,8 @@ describe('remote input injector', () => {
     const injector = createRemoteInputInjector(sink)
     injector.beginSession('session-1')
 
-    injector.handlePacket(packet([{ type: 'key', keyCode: VK_LEFT_WIN, pressed: true }], { sequence: 1 }), 'reliable', 0)
+    injector.handlePacket(packet([{ type: 'key', keyCode: VK_LEFT_WIN, pressed: true }], { sequence: 1 }),
+      'reliable', 0)
     injector.handlePacket(packet([{ type: 'key', keyCode: VK_L, pressed: true }], { sequence: 2 }), 'reliable', 0)
     injector.handlePacket(packet([{ type: 'key', keyCode: VK_L, pressed: false }], { sequence: 3 }), 'reliable', 0)
 

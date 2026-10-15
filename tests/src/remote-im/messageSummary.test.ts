@@ -39,7 +39,8 @@ describe('sender filtering', () => {
   const records = [
     makeMessage({ fromUserId: 'alice', toUserId: 'desktop', content: 'Alice incoming' }),
     makeMessage({ fromUserId: 'bob', toUserId: 'desktop', content: 'Bob incoming' }),
-    makeMessage({ fromUserId: 'desktop', toUserId: 'alice', direction: 'outgoing', role: 'aicli', content: 'Reply to Alice' }),
+    makeMessage({ fromUserId: 'desktop', toUserId: 'alice', direction: 'outgoing', role: 'aicli',
+      content: 'Reply to Alice' }),
     makeMessage({ fromUserId: null, toUserId: 'bob', direction: 'outgoing', role: 'aicli', content: 'Reply to Bob' }),
     makeMessage({ role: 'system', fromUserId: 'receipt', content: 'System receipt' })
   ]

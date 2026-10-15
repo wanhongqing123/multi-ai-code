@@ -2570,7 +2570,8 @@ function ensureSessionListeners(): void {
       if (messageId) {
         state.activityEventIds ??= new Set()
         state.activityEventIds.add(messageId)
-        if (state.activityEventIds.size > 256) state.activityEventIds.delete(state.activityEventIds.values().next().value!)
+        if (state.activityEventIds.size > 256) state.activityEventIds.delete(state.activityEventIds.values().next()
+          .value!)
       }
       markStructuredTaskActive(state)
       const activityKind: RemoteImActivityKind =
@@ -3066,7 +3067,8 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
         await fs.mkdir(dir, { recursive: true })
         const now = new Date()
         const pad = (value: number) => String(value).padStart(2, '0')
-        const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+        const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now
+          .getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
         const safeProjectId = projectId.replace(/[^\w-]/g, '_')
         const filePath = join(dir, `messages-summary-${safeProjectId}-${stamp}.md`)
         await fs.writeFile(filePath, markdown, 'utf8')

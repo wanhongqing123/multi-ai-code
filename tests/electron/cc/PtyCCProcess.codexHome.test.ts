@@ -65,7 +65,8 @@ describe('Codex home selection at the native PTY boundary', () => {
     for (const option of options) {
       expect(option.cwd).toBe(repo)
       expect(Object.keys(option.env).filter(k => k.toUpperCase() === 'CODEX_HOME')).toEqual(['CODEX_HOME'])
-      expect(Object.keys(option.env).filter(k => k.toUpperCase() === 'CODEX_SQLITE_HOME')).toEqual(['CODEX_SQLITE_HOME'])
+      expect(Object.keys(option.env).filter(k => k.toUpperCase() === 'CODEX_SQLITE_HOME'))
+        .toEqual(['CODEX_SQLITE_HOME'])
       expect(option.env.CODEX_SQLITE_HOME).toBe(option.env.CODEX_HOME)
       expect(option.env.CODEX_ANALYTICS_EVENTS_CAPTURE_FILE).toBeUndefined()
       expect(option.env.CODEX_CA_CERTIFICATE).toBe(join(root, 'enterprise-ca.pem'))

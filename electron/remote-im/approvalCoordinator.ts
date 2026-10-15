@@ -98,7 +98,8 @@ function cleanRequired(value: string): string {
   return value.trim()
 }
 
-function approvalIdentity(input: Pick<RemoteImApprovalRequest, 'sessionId' | 'taskId' | 'replyId' | 'threadId' | 'turnId' | 'approvalId'>): string {
+function approvalIdentity(input: Pick<RemoteImApprovalRequest,
+  'sessionId' | 'taskId' | 'replyId' | 'threadId' | 'turnId' | 'approvalId'>): string {
   return JSON.stringify([
     input.sessionId,
     input.taskId,

@@ -51,7 +51,7 @@ describe('ScheduledTaskDialog', () => {
       />
     )
 
-    // \u624b\u52a8\u4efb\u52a1\u4e0e\u5b9a\u65f6\u4efb\u52a1\u7edf\u4e00\u6210\u300c\u4efb\u52a1\u300d\uff0c\u7ba1\u7406\u5668\u4e0d\u518d\u53eb\u300c\u5b9a\u65f6\u4efb\u52a1\u7ba1\u7406\u300d\u3002
+    // 手动任务与定时任务统一为「任务」，管理器不再称为「定时任务管理」。
     expect(markup).toContain('\u4efb\u52a1\u7ba1\u7406')
     expect(markup).not.toContain('\u5b9a\u65f6\u4efb\u52a1\u7ba1\u7406')
     expect(markup).toContain('\u5f53\u524d AICLI\uff1a\u5df2\u542f\u52a8')

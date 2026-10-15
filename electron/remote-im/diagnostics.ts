@@ -10,13 +10,17 @@ const WINDOW_MS = 30 * 60 * 1000
 
 // Deliberately omit text, previews, paths, error messages, environment and
 // credentials. Remote collection must not export arbitrary log properties.
-const ID_FIELDS = ['id', 'ID', 'remoteMessageId', 'callId', 'sessionId', 'taskId', 'replyId', 'messageId', 'partId', 'threadId', 'turnId',
+const ID_FIELDS = ['id', 'ID', 'remoteMessageId', 'callId', 'sessionId', 'taskId', 'replyId', 'messageId', 'partId',
+  'threadId', 'turnId',
   'eventTaskId', 'eventReplyId', 'sourceCommit', 'onDiskBinarySha256']
 const LABEL_FIELDS = ['event', 'kind', 'sourceKind', 'cli', 'status', 'terminalKind',
-  'hostStopReason', 'stopReasonRequested', 'spawnErrorCode', 'signal', 'exitCodeHex', 'appVersion', 'type', 'phase', 'delivery', 'onDiskBinaryStatus', 'stage']
+  'hostStopReason', 'stopReasonRequested', 'spawnErrorCode', 'signal', 'exitCodeHex', 'appVersion', 'type', 'phase',
+    'delivery', 'onDiskBinaryStatus', 'stage']
 const NUMBER_FIELDS = ['createdAt', 'startedAt', 'pid', 'hostPid', 'lifetimeMs', 'lastInputAt',
   'lastOutputAt', 'lastEtxAt', 'stopRequestedAt', 'exitCode', 'textLength', 'inputLength',
-  'resolvedLength', 'forwardedChunks', 'code', 'errorCode', 'messageId', 'attempt', 'onDiskBinaryBytes', 'duration_ms', 'samples', 'slow_samples', 'slow_threshold_ms', 'max_ms', 'average_ms', 'late_ms', 'sample_interval_ms', 'visibleLength', 'cellCount', 'replacedCells']
+  'resolvedLength', 'forwardedChunks', 'code', 'errorCode', 'messageId', 'attempt', 'onDiskBinaryBytes',
+    'duration_ms', 'samples', 'slow_samples', 'slow_threshold_ms', 'max_ms', 'average_ms', 'late_ms',
+    'sample_interval_ms', 'visibleLength', 'cellCount', 'replacedCells']
 
 export function diagnosticMetadata(value: unknown, depth = 0): Record<string, unknown> {
   if (depth > 2) return {}
@@ -30,14 +34,17 @@ export function diagnosticMetadata(value: unknown, depth = 0): Record<string, un
   for (const key of NUMBER_FIELDS) {
     if (typeof row[key] === 'number' && Number.isFinite(row[key])) result[key] = row[key]
   }
-  for (const key of ['ok', 'sourceStarted', 'autoReplyToIm', 'sdkReady', 'isReady', 'accepted', 'hasStream', 'replay']) {
+  for (const key of ['ok', 'sourceStarted', 'autoReplyToIm', 'sdkReady', 'isReady', 'accepted', 'hasStream',
+    'replay']) {
     if (typeof row[key] === 'boolean') result[key] = row[key]
   }
-  if (Array.isArray(row.candidates)) result.candidates = row.candidates.slice(0, 20).map(value => diagnosticMetadata(value, depth + 1))
+  if (Array.isArray(row.candidates)) result.candidates = row.candidates.slice(0,
+    20).map(value => diagnosticMetadata(value, depth + 1))
   return result
 }
 
-async function readTail(path: string): Promise<{ status: string; truncated: boolean; invalidLines: number; rows: Record<string, any>[] }> {
+async function readTail(path: string): Promise<{ status: string; truncated: boolean; invalidLines: number;
+  rows: Record<string, any>[] }> {
   try {
     const file = await fs.open(path, 'r')
     try {
@@ -59,7 +66,8 @@ async function readTail(path: string): Promise<{ status: string; truncated: bool
       return { status: invalidLines ? 'partial' : 'ok', truncated: start > 0, invalidLines, rows }
     } finally { await file.close() }
   } catch (error) {
-    return { status: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unreadable', truncated: false, invalidLines: 0, rows: [] }
+    return { status: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unreadable',
+      truncated: false, invalidLines: 0, rows: [] }
   }
 }
 
@@ -85,11 +93,14 @@ async function activeSessionMetadata(sessions: object[], signal?: AbortSignal): 
       if (!cache.has(path) && cache.size < 4) cache.set(path, (async () => {
         try {
           const before = await fs.stat(path)
-          if (!before.isFile() || before.size > 512 * 1024 * 1024) return { onDiskBinaryStatus: 'too-large-or-not-file' }
+          if (!before.isFile() || before.size > 512 * 1024 * 1024) {
+            return { onDiskBinaryStatus: 'too-large-or-not-file' }
+          }
           const hash = createHash('sha256')
           for await (const chunk of createReadStream(path, { signal })) hash.update(chunk)
           const after = await fs.stat(path)
-          if (before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ino !== after.ino) return { onDiskBinaryStatus: 'changed-during-collection' }
+          if (before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ino !== after
+            .ino) return { onDiskBinaryStatus: 'changed-during-collection' }
           return { onDiskBinaryStatus: 'ok', onDiskBinarySha256: hash.digest('hex'), onDiskBinaryBytes: before.size }
         } catch { return { onDiskBinaryStatus: 'unavailable' } }
       })())
@@ -132,9 +143,12 @@ export function createRemoteDiagnosticsService() {
   }
 }
 
-export async function createRemoteDiagnosticsReport(input: RemoteDiagnosticsInput): Promise<{ ok: true; text: string; attachmentPath: string }> {
+export async function createRemoteDiagnosticsReport(input: RemoteDiagnosticsInput): Promise<{ ok: true;
+  text: string; attachmentPath: string }> {
   input.signal?.throwIfAborted()
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(input.requestId)) throw new Error('invalid diagnostic request id')
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(input.requestId)) {
+    throw new Error('invalid diagnostic request id')
+  }
   const now = input.now ?? Date.now()
   const sources = ['remote-im-runtime.log', 'logs/aicli-lifecycle.jsonl.1', 'logs/aicli-lifecycle.jsonl']
   const loaded = await Promise.all(sources.map(name => readTail(join(input.root, name))))
@@ -162,18 +176,22 @@ export async function createRemoteDiagnosticsReport(input: RemoteDiagnosticsInpu
     return {
       source: sources[index], status: source.status, truncated: source.truncated || scoped.length > MAX_EVENTS,
       invalidLines: source.invalidLines,
-      events: scoped.slice(-MAX_EVENTS).map(row => ({ ...diagnosticMetadata(row), detail: diagnosticMetadata(row.detail) }))
+      events: scoped.slice(-MAX_EVENTS).map(row => ({ ...diagnosticMetadata(row),
+        detail: diagnosticMetadata(row.detail) }))
     }
   })
   if (input.appDataRoot && input.targetRepo) {
-    const projectSessions = [...(input.activeSessions ?? []), ...loaded.slice(1).flatMap(source => source.rows.filter(row => row.projectId === input.projectId))]
+    const projectSessions = [...(input.activeSessions ?? []),
+      ...loaded.slice(1).flatMap(source => source.rows.filter(row => row.projectId === input.projectId))]
     const homes = projectSessions
       .filter(value => (value as { cli?: string }).cli === 'codex')
       .map(value => (value as { codexHome?: unknown }).codexHome)
       .filter((home): home is string => typeof home === 'string')
-    const source = await readCodexDiagnosticEvents({ appDataRoot: input.appDataRoot, targetRepo: input.targetRepo, homes, since: now - WINDOW_MS, now })
+    const source = await readCodexDiagnosticEvents({ appDataRoot: input.appDataRoot, targetRepo: input.targetRepo,
+      homes, since: now - WINDOW_MS, now })
     files.push({ ...source, events: source.events.map(value => ({ ...diagnosticMetadata(value), detail: {} })) })
-    const history = await readTuiHistoryDiagnostics({ appDataRoot: input.appDataRoot, sessions: projectSessions, since: now - WINDOW_MS, now })
+    const history = await readTuiHistoryDiagnostics({ appDataRoot: input.appDataRoot, sessions: projectSessions,
+      since: now - WINDOW_MS, now })
     files.push({ ...history, events: history.events.map(value => ({ ...diagnosticMetadata(value), detail: {} })) })
   }
   const report = {
@@ -182,7 +200,9 @@ export async function createRemoteDiagnosticsReport(input: RemoteDiagnosticsInpu
     electronVersion: process.versions.electron ?? null, exportedAt: now, from: now - WINDOW_MS,
     projectId: input.projectId, files,
     activeSessions: await activeSessionMetadata(input.activeSessions ?? [], input.signal),
-    sourceCoverage: { uiPerformance: 'unavailable', aicliOriginalEvents: files.some(file => file.source === 'codex-original-events' && ['ok', 'partial'].includes(file.status)) ? 'see-codex-original-events' : 'unavailable' },
+    sourceCoverage: { uiPerformance: 'unavailable',
+      aicliOriginalEvents: files.some(file => file.source === 'codex-original-events' && ['ok',
+      'partial'].includes(file.status)) ? 'see-codex-original-events' : 'unavailable' },
     notes: ['仅含当前项目最近 30 分钟的诊断元数据；不含聊天正文、路径、凭据或环境变量。',
       'missing、partial、truncated 或没有匹配事件均不证明没有故障；可能需要补充现场记录。',
       '本报告由 MultiAICode 宿主生成，不需要运行中的 AI；IM 客户端离线时无法回传。',

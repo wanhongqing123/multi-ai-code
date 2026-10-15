@@ -446,7 +446,8 @@ export default function ScheduledTaskDialog(props: Props): JSX.Element {
                   />
                   <h5>执行计划</h5>
                   <div className="scheduled-task-info-row">
-                    <span>触发：{formatScheduleLabel(selectedTask.scheduleType, selectedTask.scheduleTime, selectedTask.scheduleDays)}</span>
+                    <span>触发：{formatScheduleLabel(selectedTask.scheduleType, selectedTask.scheduleTime,
+                      selectedTask.scheduleDays)}</span>
                     <span>超时：{selectedTask.timeoutMinutes} 分钟</span>
                   </div>
                   <h5>AICLI 策略</h5>
@@ -457,7 +458,9 @@ export default function ScheduledTaskDialog(props: Props): JSX.Element {
                   <h5>最近运行记录</h5>
                   <p className="scheduled-task-last-run">
                     {selectedTask.lastRun
-                      ? `${formatDateTime(selectedTask.lastRun.finishedAt ?? selectedTask.lastRun.startedAt ?? selectedTask.lastRun.scheduledAt)} · ${formatScheduledTaskStatus(selectedTask.enabled, selectedTask.lastRun.status).label}`
+                      ? `${formatDateTime(selectedTask.lastRun.finishedAt ?? selectedTask.lastRun.startedAt ??
+                        selectedTask.lastRun.scheduledAt)} · ${formatScheduledTaskStatus(selectedTask
+                        .enabled, selectedTask.lastRun.status).label}`
                       : '还没有运行记录'}
                   </p>
                 </>

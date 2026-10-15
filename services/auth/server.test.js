@@ -1,8 +1,19 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const { createHash, randomBytes } = require('node:crypto');
 const test = require('node:test');
-const { createServer } = require('./server');
+const { createAuthService } = require('./service');
+const { openStore } = require('./store');
+const { createServer, requireDeviceSlotFromEnv } = require('./server');
+
+test('device slot cutover flag defaults off and rejects ambiguous values', () => {
+  assert.equal(requireDeviceSlotFromEnv(undefined), false);
+  assert.equal(requireDeviceSlotFromEnv(''), false);
+  assert.equal(requireDeviceSlotFromEnv('0'), false);
+  assert.equal(requireDeviceSlotFromEnv('1'), true);
+  assert.throws(() => requireDeviceSlotFromEnv('true'), /must be 0 or 1/);
+});
 
 test('HTTP adapter rejects oversized and invalid requests without invoking auth', async () => {
   let calls = 0;
@@ -24,5 +35,81 @@ test('HTTP adapter rejects oversized and invalid requests without invoking auth'
     assert.equal(calls, 1);
   } finally {
     await new Promise(resolve => server.close(resolve));
+  }
+});
+
+test('HTTP desktop request returns a renderable QR PNG and matching URI', async () => {
+  const db = openStore(':memory:');
+  const service = createAuthService({
+    db, sms: { async send() {} },
+    secret: 'test-only-auth-hmac-key-keep-on-server-123456',
+    imSecret: 'test-only-tencent-im-key-keep-on-server-123456',
+    sdkAppId: 123456789
+  });
+  const server = createServer(service);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const proof = randomBytes(32);
+    const response = await fetch(`http://127.0.0.1:${server.address().port}` +
+      '/v1/auth/desktop/request', { method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ platform: 'mac', code_challenge:
+        createHash('sha256').update(proof).digest('base64url') }) });
+    assert.equal(response.status, 200);
+    const request = await response.json();
+    assert.equal(new URL(request.qr_uri).searchParams.get('request_id'),
+      request.request_id);
+    assert.equal(Buffer.from(request.qr_png_base64, 'base64').subarray(0, 8)
+      .toString('hex'), '89504e470d0a1a0a');
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    db.close();
+  }
+});
+
+test('HTTP social login binds a verified identity through the phone challenge', async () => {
+  const db = openStore(':memory:');
+  let smsCode = '';
+  const service = createAuthService({
+    db, sms: { async send(_phone, code) { smsCode = code; } },
+    secret: 'test-only-auth-hmac-key-keep-on-server-123456',
+    imSecret: 'test-only-tencent-im-key-keep-on-server-123456',
+    sdkAppId: 123456789,
+    socialVerifiers: { wechat: async code => code === 'valid-code' ?
+      { appId: 'wx-test', subject: 'official-openid' } : null }
+  });
+  const server = createServer(service);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const post = async (path, body) => {
+      const response = await fetch(`${base}${path}`, { method: 'POST',
+        headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      return { status: response.status, body: await response.json() };
+    };
+    const social = await post('/v1/auth/social/wechat/login', {
+      code: 'valid-code', device_slot: 'ios_phone', age_confirmed_14_plus: true
+    });
+    assert.equal(social.status, 202);
+    const challenge = await post('/v1/auth/sms/challenge', {
+      phone: '13900000001', purpose: 'social_bind', age_confirmed_14_plus: true
+    });
+    assert.equal(challenge.status, 200);
+    const bound = await post('/v1/auth/social/bind', {
+      binding_token: social.body.binding_token, phone: '13900000001',
+      challenge_id: challenge.body.challenge_id, code: smsCode,
+      age_confirmed_14_plus: true
+    });
+    assert.equal(bound.status, 200);
+    assert.equal(bound.body.device_slot, 'ios_phone');
+    const me = await fetch(`${base}/v1/auth/me`, {
+      headers: { authorization: `Bearer ${bound.body.access_token}` }
+    });
+    assert.equal(me.status, 200);
+    assert.equal((await me.json()).user.im_user_id, bound.body.user.im_user_id);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    db.close();
   }
 });

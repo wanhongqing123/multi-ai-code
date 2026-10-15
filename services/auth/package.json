@@ -12,6 +12,7 @@
   "dependencies": {
     "@alicloud/dysmsapi20170525": "^4.3.0",
     "@alicloud/openapi-client": "^0.4.15",
+    "@juit/qrcode": "1.0.115",
     "better-sqlite3": "^12.4.1"
   }
 }

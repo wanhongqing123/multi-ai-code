@@ -6,8 +6,15 @@ const { createAuthService, normalizePhone } = require('./service');
 const { createAliyunSmsSender } = require('./sms');
 const { createArkCredentialIssuer } = require('./ark-credential');
 const { createBailianCredentialIssuer } = require('./bailian-credential');
+const { createSocialVerifiers } = require('./social-providers');
 
 const MAX_BODY_BYTES = 4096;
+
+function requireDeviceSlotFromEnv(value) {
+  if (value === undefined || value === '' || value === '0') return false;
+  if (value === '1') return true;
+  throw new Error('MAICHAT_AUTH_REQUIRE_DEVICE_SLOT must be 0 or 1');
+}
 
 function createServer(service) {
   return http.createServer(async (request, response) => {
@@ -54,6 +61,7 @@ function createServer(service) {
 }
 
 function start(env = process.env) {
+  const requireDeviceSlot = requireDeviceSlotFromEnv(env.MAICHAT_AUTH_REQUIRE_DEVICE_SLOT);
   const modelAllowedPhones = (env.MAICHAT_MODEL_ALLOWED_PHONES || '').split(',')
     .map(normalizePhone).filter(Boolean);
   if (!env.MAICHAT_AUTH_DB_PATH || !env.MAICHAT_AUTH_HMAC_KEY ||
@@ -66,7 +74,9 @@ function start(env = process.env) {
     imSecret: env.MAICHAT_IM_SECRET_KEY,
     issueArkCredential: createArkCredentialIssuer(env),
     issueBailianCredential: createBailianCredentialIssuer(env),
-    sdkAppId: Number(env.MAICHAT_IM_SDK_APP_ID), modelAllowedPhones
+    socialVerifiers: createSocialVerifiers(env),
+    sdkAppId: Number(env.MAICHAT_IM_SDK_APP_ID), modelAllowedPhones,
+    requireDeviceSlot
   });
   const port = Number(env.MAICHAT_AUTH_PORT || 9100);
   if (!Number.isInteger(port) || port < 1 || port > 65535)
@@ -84,4 +94,4 @@ function start(env = process.env) {
 
 if (require.main === module) start();
 
-module.exports = { createServer, start };
+module.exports = { createServer, start, requireDeviceSlotFromEnv };

@@ -8,14 +8,23 @@ Node 服务只监听 `127.0.0.1:9100`。验证码、密码哈希、登录会话�
 
 | 方法与路径 | 功能 |
 |---|---|
-| `POST /v1/auth/sms/challenge` | `{phone,purpose?,age_confirmed_14_plus:true}`；发送验证码，返回挑战 ID；`purpose` 为 `login` 或 `reset` |
-| `POST /v1/auth/sms/verify` | `{phone,challenge_id,code,age_confirmed_14_plus:true}`；首次验证手机号自动创建账号，返回会话 |
-| `POST /v1/auth/password/login` | `{phone,password,age_confirmed_14_plus:true}`；已设置密码的账号登录 |
+| `POST /v1/auth/sms/challenge` | `{phone,purpose?,age_confirmed_14_plus:true}`；发送验证码，返回挑战 ID；`purpose` 为 `login`、`reset` 或 `social_bind` |
+| `POST /v1/auth/sms/verify` | `{phone,challenge_id,code,age_confirmed_14_plus:true,device_slot,device_platform?}`；首次验证手机号自动创建账号，返回会话 |
+| `POST /v1/auth/password/login` | `{phone,password,age_confirmed_14_plus:true,device_slot,device_platform?}`；已设置密码的账号登录 |
 | `POST /v1/auth/password/set` | Bearer 会话 + `{new_password}`；近期登录后设置/修改密码 |
-| `POST /v1/auth/password/reset` | `{phone,challenge_id,code,new_password,age_confirmed_14_plus:true}`；短信验证后重置密码并撤销旧会话 |
+| `POST /v1/auth/password/reset` | `{phone,challenge_id,code,new_password,age_confirmed_14_plus:true,device_slot,device_platform?}`；短信验证后重置密码并撤销旧会话 |
+| `POST /v1/auth/social/wechat/login` | `{code,device_slot,device_platform?,age_confirmed_14_plus:true}`；服务端向微信兑换 code；已绑定返回会话，未绑定返回 202 手机绑定票据 |
+| `POST /v1/auth/social/qq/login` | `{access_token,device_slot,device_platform?,age_confirmed_14_plus:true}`；服务端向 QQ 验证 SDK token 和 AppID；已绑定返回会话，未绑定返回 202 手机绑定票据 |
+| `POST /v1/auth/social/bind` | `{binding_token,phone,challenge_id,code,age_confirmed_14_plus:true}`；消费 `social_bind` 短信码，将已验证的社交身份绑定到该手机号账号并返回会话 |
 | `POST /v1/auth/refresh` | `{refresh_token}`；轮换访问令牌与刷新令牌 |
 | `POST /v1/auth/logout` | Bearer 会话；撤销当前会话 |
 | `GET /v1/auth/me` | Bearer 会话；查询当前账号与脱敏手机号 |
+| `POST /v1/auth/desktop/request` | 桌面端提交 `{platform:"mac"或"windows",code_challenge}`，返回 `request_id`、`qr_uri`、`qr_png_base64`、`display_code`、`expires_in:120` |
+| `GET /v1/auth/desktop/request/{request_id}` | 有效移动端 Bearer；首次查询把 `pending` 标记为 `scanned`，返回 `{platform,display_code,status,expires_in}` |
+| `POST /v1/auth/desktop/approve` | 有效移动端 Bearer + `{request_id}`；确认展示码后批准桌面登录 |
+| `POST /v1/auth/desktop/deny` | 有效移动端 Bearer + `{request_id}`；拒绝桌面登录 |
+| `POST /v1/auth/desktop/cancel` | 桌面端提交 `{request_id,verifier}`；更换二维码或关闭登录时取消请求，也可撤销响应丢失时已领取的会话 |
+| `POST /v1/auth/desktop/claim` | 桌面端提交 `{request_id,verifier}`；等待批准返回 202，批准后一次性返回会话 |
 | `GET /v1/im/credential` | Bearer 会话；只为当前账号签发 Tencent UserSig |
 | `GET /v1/model/seedance-credential` | Bearer 会话且手机号在模型白名单；返回 5 分钟、限定 Seedance 与 Seedream 的临时方舟 Key；路径保留旧名称兼容 App |
 | `GET /v1/model/bailian-credential` | Bearer 会话且手机号在模型白名单；返回 5 分钟百炼临时 Key 和万相 Workspace ID，供万相与百炼可灵共用 |
@@ -27,6 +36,83 @@ Node 服务只监听 `127.0.0.1:9100`。验证码、密码哈希、登录会话�
 `{"phone":"...","im_user_id":"..."}`。已有客户端可自行生成任意账号的 UserSig，
 因此旧客户端登录态不能单独作为旧账号归属证据。一个手机号只能绑定一个旧 IM ID。
 
+## 设备名额与桌面扫码
+
+短信验证、密码登录和密码重置只能申请移动端名额：`ios_phone`、
+`android_phone`、`tablet`。平板另需传 `device_platform:"ios"` 或 `"android"`，
+两个系统的平板共用一个名额。手机可省略 `device_platform`，服务端会按名额填入
+`ios` 或 `android`。同一账号的五个名额（以上三个，加 `mac`、`windows`）
+各只保留一个有效会话；新登录会撤销同名额旧会话。登录与刷新响应带顶层
+`device_slot`、`device_platform`；被替换的旧会话访问受保护接口或刷新时返回
+HTTP 401，`code:"SESSION_REPLACED"`，客户端应退出 IM 并提示设备被替换。
+账号主键和 IM UserID 在这些登录方式之间保持不变。
+
+`MAICHAT_AUTH_REQUIRE_DEVICE_SLOT=0`（默认）时，旧版客户端没有传
+`device_slot` 仍可取得未分类会话，响应中的两个设备字段为 `null`；未分类会话
+不能查询或批准扫码请求。切换为 `1` 并重启服务时，已有未分类会话立即撤销；
+其访问和刷新返回 401、`code:"DEVICE_SLOT_REQUIRED"`。新登录不带名额返回
+400、同一错误码；缺少有效移动名额的请求不会消耗短信验证码。服务还会拒绝并
+撤销切换后从旧进程写入的未分类会话。其他配置值会使服务拒绝启动，避免误以为
+约束已开启。业务会话的撤销不会立即断开已建立的腾讯 IM 连接；已更新客户端
+收到错误后应主动登出，旧客户端则可能保持 IM 连接直到腾讯侧会话失效。
+
+设备类别由客户端声明，服务端按声明实施名额；HTTP `User-Agent` 不作为
+设备证明。桌面程序若恶意自称移动端，仍能调用手机号登录接口。要对不可信
+客户端强制“桌面仅扫码”，还需要可信设备证明或等效的设备绑定机制。
+
+桌面端每次生成新的 32 字节随机 `verifier`，计算
+`code_challenge = base64url(SHA256(verifier 原始字节))`。`verifier` 仅留在桌面端；
+二维码 `qr_uri` 为 `maichat://auth/desktop?request_id=<UUID>`，不包含凭据。
+`qr_png_base64` 是二维码 PNG 文件的原始 base64，可直接解码显示。手机扫描后
+读取请求详情，向用户展示目标平台和六位 `display_code`；用户核对桌面上的号码
+再批准。扫描只标记 `scanned`，不锁定审批账号；最终批准者的账号会归属桌面会话。
+桌面端可每两秒调用 `claim`：`pending` 或 `scanned` 返回 202 和对应状态，
+拒绝或审批会话已撤销返回
+403，请求过期或已兑换返回 410；成功后获得桌面名额对应的会话。请求两分钟
+有效、只能兑换一次，同来源 IP 十分钟最多创建十次。只有有效的移动端名额会话
+可查询或审批，其他会话返回 403、`code:"MOBILE_SESSION_REQUIRED"`。桌面更换
+二维码或关闭登录时，使用同一个 `verifier` 调用 `cancel`；`pending`、`scanned`、
+`approved` 均可取消，成功和重复取消都返回 200、`status:"canceled"`。取消后
+手机查询与审批、桌面兑换均返回 410。若 `claim` 已提交但成功响应丢失，取消
+会撤销该请求确切签发的桌面会话，不影响后来占用同一名额的新会话。桌面端成功
+收到并保存会话后不应再取消该请求。升级前已兑换的旧请求没有所签会话 ID，
+无法安全撤销，取消会返回 409。
+
+## 微信与 QQ 身份绑定
+
+移动端微信登录提交一次性授权 `code`，服务端使用配置在本机的微信 AppID 和
+AppSecret 向微信官方接口兑换；QQ 登录提交 SDK 返回的 `access_token`，服务端
+向 QQ 官方 `oauth2.0/me?fmt=json` 查询，并验证返回的 `client_id` 与配置的
+QQ AppID 一致。OpenID 只取官方响应，客户端提交的 `openid` 或 `unionid` 不参与
+身份判断；数据库只保存带密钥的身份哈希。两个移动平台应使用同一微信移动应用
+AppID 和同一 QQ 应用 AppID，避免同一平台账号产生不同应用范围的 OpenID。
+社交身份索引依赖 `MAICHAT_AUTH_HMAC_KEY`；轮换此密钥前必须迁移现有身份映射，
+否则已绑定的微信、QQ 身份将无法再找到原账号。此密钥需要与账号数据库一同备份。
+此 QQ SDK token 核验流程不使用 QQ AppKey；若以后采用 QQ 服务端 code 兑换，
+AppKey 必须只保存在服务端。
+
+未绑定身份返回 HTTP 202：`{binding_token,expires_in:600,phone_binding_required:true}`，
+此时不创建账号或登录会话。客户端用现有短信接口发码，指定
+`purpose:"social_bind"`，再把手机号、挑战 ID、验证码和绑定票据交给
+`/v1/auth/social/bind`。短信码和票据均只能使用一次。绑定到已有手机号时复用
+其用户主键及腾讯 IM UserID；首次验证新手机号则按现有规则创建账号。一个社交
+身份不能改绑到别的账号，同一账号每种社交平台最多绑定一个身份。社交登录
+始终要求有效的手机或平板名额，即使旧客户端兼容开关仍为 `0` 也是如此。
+
+未配置微信 AppID/AppSecret 或 QQ AppID 的接口返回 503、
+`code:"SOCIAL_PROVIDER_UNAVAILABLE"`，不会接受客户端声称的身份；官方拒绝的
+凭据返回 401、`code:"SOCIAL_CREDENTIAL_INVALID"`。账号服务当前只提供后端
+接口和移动端的账号绑定流程；微信、QQ 官方 SDK 接入及真实平台联调尚未完成。
+
+微信开放平台创建移动应用时，名称和英文名称可填 `MaiChat`，简介应与实际
+聊天、图片及视频创作功能一致。iOS Bundle ID 与 Android 包名均为
+`com.kongshang.maichat`。应用官网应是可公开访问、含产品介绍及下载入口的
+页面；仓库现有 `services/legal/site/index.html` 主要提供用户协议和隐私政策
+入口，若以此页作为官网，提交审核前仍需补齐产品介绍。移动应用图片须按
+控制台当前要求由正式应用商店图标制作，
+不能以微信图标或临时占位图代替。Android 发布签名 MD5 必须取正式签名证书，
+不能填开发调试签名；iOS Universal Link 必须先完成域名关联配置。
+
 ## 防护边界
 
 - 所有格式合法的中国大陆手机号都可以申请验证码；原短信号码白名单不再参与发码。
@@ -35,7 +121,8 @@ Node 服务只监听 `127.0.0.1:9100`。验证码、密码哈希、登录会话�
   都要求明确传入布尔值 `age_confirmed_14_plus: true`。这是用户自我声明，
   不能当作真实年龄核验或监护人同意。
 - 验证码六位、五分钟有效、最多五次输入、只能用一次；同号一分钟内不重发，
-  同号每天十次、同出口每天五十次。新验证码受理后旧码立即失效。
+  同号每天十次、同出口每天五十次。新验证码成功发出后旧码失效；若短信网关
+  对并发请求乱序完成，较早请求不会覆盖较新已送达的验证码。
 - 验证码校验记录和失败登录记录在安全追溯窗口后按天清理；失效或撤销的
   会话记录同样按天清理。服务启动时会先补做一次清理。
 - 密码是可选登录方式，首次账号创建必须先验证手机号。密码至少 15 个字符，
@@ -64,12 +151,27 @@ npm test
 `/var/lib/maichat-auth/`，目录仅授权服务账号，定期备份 SQLite 数据库与 WAL。
 部署时使用示例 systemd 服务及 Nginx 路由，并保留现有素材签发服务。
 
+设备名额上线顺序：
+
+1. 先备份账号数据库，以 `MAICHAT_AUTH_REQUIRE_DEVICE_SLOT=0` 部署新服务及
+   数据库迁移，确认旧版手机仍能登录、刷新，扫码只能由带移动名额的新会话批准。
+2. 发布并验证会提交正确 `device_slot` 的 iOS、Android 手机和平板版本；
+   让客户端在收到 `SESSION_REPLACED` 或 `DEVICE_SLOT_REQUIRED` 后退出 IM 并
+   展示重新登录提示。腾讯 IM 控制台需允许多平台登录，Android 同平台实例数
+   至少为 2，才能同时保留 Android 手机和平板。
+3. 确认准备停止旧版登录后，排空旧账号服务进程，将配置改为 `1` 并启动新服务。
+   启动会撤销所有未分类会话，旧客户端必须升级才能再次登录；这一步会让仍在线
+   的旧版用户退出。
+   配置退回 `0` 也不会自动恢复已撤销的会话，用户需要重新登录。
+4. 用五类设备分别验证登录、同名额替换、扫码批准和旧版请求拒绝；观察登录
+   错误与短信发送情况，再决定是否继续保持强制开关。
+
 旧配置 `MAICHAT_AUTH_ALLOWED_PHONES` 和 `MAICHAT_AUTH_OPEN_REGISTRATION`
 不再影响发码。旧数据库中的 `sms_allowed_phones` 和 `auth_settings` 表无需
 清理，也不再被读取；保留它们不会限制任何合法号码。
 
-测试使用模拟短信，不会联系真实号码：`npm test`。iOS 和 Android 已改为
-手机号验证码／密码登录，并通过本服务领取 UserSig；两端代码构建通过，
-Android 真机的完整短信和 IM 联调仍待验证。桌面端尚未迁移；
-在三端都改为服务端凭据且完成旧 IM 身份映射之前，
-本服务仍只作为测试环境能力。新号码首次完成验证码验证时会创建新 IM UserID。
+测试使用模拟短信，不会联系真实号码：`npm test`。iOS、Android 和桌面端的
+源码已接入统一账号服务；正式服务部署、Android 真机短信与 IM 联调、桌面扫码
+与移动端在生产环境的联调、微信和 QQ 官方 SDK 接入仍待完成。在旧 IM 身份
+映射和密钥轮换完成之前，本服务仍只作为测试环境能力。新号码首次完成验证码
+验证时会创建新 IM UserID。

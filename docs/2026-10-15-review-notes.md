@@ -39,7 +39,7 @@ clangd 的标准文件名是 `compile_commands.json`。可重建入口为：
 - iOS 模拟器：正式 App 使用本机测试账号进入创作中心并切换已有会话；本轮改为显式测试开关后重新运行了该 UI 用例并人工检查截图，切换后消息仍可见。另以 80 条创作中心历史快速上下滑动、2544 条合成 IM 历史检查首屏、旧页加载、旧搜索命中与返回最新。未调用付费模型。本机假账号服务的 IM AppID 只是占位值，所以这组用例不能证明两台客户端真实互发 IM。
 - 测试账号入口：iOS 仅在 Debug 模拟器收到 `MAICHAT_LOCAL_UI_PHONE` 时使用本机假账号服务；Android 仅在 Debug 模拟器以 `-PmaichatLocalUiAuth=true` 构建时使用。普通调试、真机与发布包继续连接正式账号服务。本机服务脚本关闭付费模型签发。
 - iOS 设备：已安装包含搜索命中补漏的构建，但安装后没有自动打开或替用户做真机交互，因此不能宣称最后一版在真机上已完成体验验证。
-- Android：OpenJDK 17 的 Java 构建通过，arm64 JNI 原生构建通过。GraalVM 和 Android Studio JBR 在该工程的 `jlink` 转换阶段失败，属于构建环境差异。
+- Android：OpenJDK 17 的 Java、arm64 JNI 和 Debug APK 构建通过；已把显式启用本机账号服务的 Debug 包安装到 `emulator-5556`，打开正式 App 的消息页与创作中心并检查实际截图。假 IM AppID 导致连接失败，因此没有把这次检查当作真实双端 IM 验证。另一台 `emulator-5554` 因内部空间不足无法安装，本轮未清空该模拟器。GraalVM 和 Android Studio JBR 在该工程的 `jlink` 转换阶段失败，属于构建环境差异。
 - 桌面端：`maichat` 主目标完整构建通过。
 - MaiAgent：完整构建通过，43 项测试全部通过。`MaiSpecialistNotificationTests` 的旧断言曾要求把状态查询异常和暂缺产物终结为生成失败；现已把用例改为核查任务继续运行且不产生失败通知，生产轮询代码未变。
 

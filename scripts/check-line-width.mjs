@@ -3,7 +3,9 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 
 const extensions = new Set(['c', 'cpp', 'h', 'hpp', 'java', 'js', 'jsx', 'mjs', 'mm', 'py', 'swift', 'ts', 'tsx'])
-const upstreamParts = ['/third_party/', '/vendor/', '/Frameworks/', '/build/', '/generated/', '/node_modules/', '/dist/']
+const upstreamParts = [
+  '/third_party/', '/vendor/', '/Frameworks/', '/build/', '/generated/', '/node_modules/', '/dist/'
+]
 const upstreamPaths = [
   'MaiAgent/Graphics/metal/',
   'MaiAgent/Graphics/opengl/',

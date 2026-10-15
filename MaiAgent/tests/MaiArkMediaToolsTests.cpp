@@ -1,5 +1,6 @@
 // 文件作用：验证“封装火山方舟媒体任务的提交、查询和结果取回”的正确行为和边界条件。
-// 验证入口：testDynamicCredentialAndToolIdentity、testInvalidInputsDoNotReachNetwork、testRevisionRejectsAnotherConversation；检查可观察结果而非实现细节。
+// 验证入口：testDynamicCredentialAndToolIdentity、testInvalidInputsDoNotReachNetwork、
+// testRevisionRejectsAnotherConversation；检查可观察结果而非实现细节。
 #include <cstdlib>
 #include <cstdio>
 #include <string>
@@ -63,7 +64,8 @@ void testDynamicCredentialAndToolIdentity() {
     CHECK(!video->requiresPerCallApproval(
         R"({"action":"delegate","mode":"reference","local_image_paths":["first.jpg"]})"));
     CHECK(video->requiresPerCallApproval(
-        R"({"action":"delegate","mode":"reference","video_url":"https://example.com/source.mp4"})"));
+        R"({"action":"delegate","mode":"reference",)"
+            R"("video_url":"https://example.com/source.mp4"})"));
     CHECK(image->requiresPerCallApproval(R"({"action":"revise","message":"adjust"})"));
     CHECK(!video->requiresPerCallApproval(R"({"action":"continue"})"));
     auto videoInfo = nlohmann::json::parse(video->execute(discover, context).output());
@@ -117,7 +119,8 @@ void testDynamicCredentialAndToolIdentity() {
     CHECK(invalidAsset.hasError());
     CHECK(invalidAsset.error().message().find("reference_asset_ids") != std::string::npos);
     const MaiToolResult validAsset = video->execute(
-        R"({"action":"delegate","message":"test","reference_asset_ids":["asset://asset-1234567890"]})",
+        R"({"action":"delegate","message":"test","reference_asset_ids":["asset://asset-1234567890")"
+            R"(]})",
         context);
     CHECK(validAsset.hasError());
     CHECK(validAsset.error().message().find("confirm duration") != std::string::npos);
@@ -158,39 +161,51 @@ void testInvalidInputsDoNotReachNetwork() {
     CHECK(excess.hasError());
     CHECK(excess.error().message().find("at most 9") != std::string::npos);
     const auto tooLong = video->execute(
-        R"({"action":"delegate","message":"Create a video","production":{"duration":16,"ratio":"16:9","resolution":"720p"}})",
+        R"({"action":"delegate","message":"Create a video","production":{"duration":16,)"
+            R"("ratio":"16:9","resolution":"720p"}})",
         context);
     CHECK(tooLong.hasError());
     CHECK(tooLong.error().message().find("4 to 15") != std::string::npos);
     const auto disabled = video->execute(
-        R"({"action":"delegate","model":"doubao-seedance-2-5-260628","message":"Create a video","production":{"duration":4,"ratio":"16:9","resolution":"480p"}})",
+        R"({"action":"delegate","model":"doubao-seedance-2-5-260628","message":"Create a video",)"
+            R"("production":{"duration":4,"ratio":"16:9","resolution":"480p"}})",
         context);
     CHECK(disabled.hasError());
     CHECK(disabled.error().message().find("disabled") != std::string::npos);
     CHECK(!video->requiresPerCallApproval(
-        R"({"action":"delegate","model":"doubao-seedance-2-5-260628","message":"Create a video"})"));
+        R"({"action":"delegate","model":"doubao-seedance-2-5-260628",)"
+            R"("message":"Create a video"})"));
     const auto unsupported4k = video->execute(
-        R"({"action":"delegate","message":"Create a video","production":{"duration":10,"ratio":"16:9","resolution":"4k"}})",
+        R"({"action":"delegate","message":"Create a video","production":{"duration":10,)"
+            R"("ratio":"16:9","resolution":"4k"}})",
         context);
     CHECK(unsupported4k.hasError());
     CHECK(unsupported4k.error().message().find("480p or 720p") != std::string::npos);
     const auto standard4k = video->execute(
-        R"({"action":"delegate","model":"doubao-seedance-2-0-260128","message":"Animate the frame","image_path":"missing.png","production":{"duration":15,"ratio":"adaptive","resolution":"4k"}})",
+        R"({"action":"delegate","model":"doubao-seedance-2-0-260128","message":"Animate the frame")"
+            R"(,"image_path":"missing.png","production":{"duration":15,"ratio":"adaptive",)"
+            R"("resolution":"4k"}})",
         context);
     CHECK(standard4k.hasError());
     CHECK(standard4k.error().message().find("image_path must contain") != std::string::npos);
     const auto invalidEditDuration = video->execute(
-        R"({"action":"delegate","mode":"edit","message":"Change the scene","video_url":"https://example.com/source.mp4","production":{"duration":20,"ratio":"adaptive","resolution":"720p"}})",
+        R"({"action":"delegate","mode":"edit","message":"Change the scene",)"
+            R"("video_url":"https://example.com/source.mp4","production":{"duration":20,)"
+            R"("ratio":"adaptive","resolution":"720p"}})",
         context);
     CHECK(invalidEditDuration.hasError());
     CHECK(invalidEditDuration.error().message().find("4 to 15") != std::string::npos);
     const auto fastTooLong = video->execute(
-        R"({"action":"delegate","model":"doubao-seedance-2-0-fast-260128","message":"Create a video","production":{"duration":16,"ratio":"16:9","resolution":"720p"}})",
+        R"({"action":"delegate","model":"doubao-seedance-2-0-fast-260128",)"
+            R"("message":"Create a video","production":{"duration":16,"ratio":"16:9",)"
+            R"("resolution":"720p"}})",
         context);
     CHECK(fastTooLong.hasError());
     CHECK(fastTooLong.error().message().find("4 to 15") != std::string::npos);
     const auto miniHighResolution = video->execute(
-        R"({"action":"delegate","model":"doubao-seedance-2-0-mini-260615","message":"Create a video","production":{"duration":10,"ratio":"16:9","resolution":"1080p"}})",
+        R"({"action":"delegate","model":"doubao-seedance-2-0-mini-260615",)"
+            R"("message":"Create a video","production":{"duration":10,"ratio":"16:9",)"
+            R"("resolution":"1080p"}})",
         context);
     CHECK(miniHighResolution.hasError());
     CHECK(miniHighResolution.error().message().find("480p or 720p") != std::string::npos);
@@ -204,7 +219,9 @@ void testInvalidInputsDoNotReachNetwork() {
     CHECK(tooManyFastImages.hasError());
     CHECK(tooManyFastImages.error().message().find("at most 9") != std::string::npos);
     const auto miniFifteenSeconds = video->execute(
-        R"({"action":"delegate","model":"doubao-seedance-2-0-mini-260615","message":"Animate a still","image_path":"missing.png","production":{"duration":15,"ratio":"16:9","resolution":"720p"}})",
+        R"({"action":"delegate","model":"doubao-seedance-2-0-mini-260615",)"
+            R"("message":"Animate a still","image_path":"missing.png","production":{"duration":15,)"
+            R"("ratio":"16:9","resolution":"720p"}})",
         context);
     CHECK(miniFifteenSeconds.hasError());
     CHECK(miniFifteenSeconds.error().message().find("image_path must contain") !=
@@ -212,7 +229,8 @@ void testInvalidInputsDoNotReachNetwork() {
     CHECK(
         video
             ->execute(
-                R"({"action":"delegate","message":"Create a video","image_path":"first.png","local_image_paths":["other.png"]})",
+                R"({"action":"delegate","message":"Create a video","image_path":"first.png",)"
+                    R"("local_image_paths":["other.png"]})",
                 context)
             .hasError());
     CHECK(video
@@ -229,25 +247,30 @@ void testInvalidInputsDoNotReachNetwork() {
                         context)
               .hasError());
     const auto invalidAvatar = video->execute(
-        R"({"action":"delegate","message":"test","virtual_avatar_asset_id":"https://example.com/face.jpg"})",
+        R"({"action":"delegate","message":"test","virtual_avatar_asset_id":"https://example.com/fa)"
+            R"(ce.jpg"})",
         context);
     CHECK(invalidAvatar.hasError());
     CHECK(invalidAvatar.error().message().find("asset ID") != std::string::npos);
     const auto authorized = video->execute(
-        R"({"action":"delegate","message":"Keep the authorized person's face","authorized_portrait_asset_id":"asset://asset-20261005230545-tb2zr"})",
+        R"({"action":"delegate","message":"Keep the authorized person's face",)"
+            R"("authorized_portrait_asset_id":"asset://asset-20261005230545-tb2zr"})",
         context);
     CHECK(authorized.hasError());
     CHECK(authorized.error().message().find("confirm duration") != std::string::npos);
     CHECK(
         video
             ->execute(
-                R"({"action":"delegate","message":"test","virtual_avatar_asset_id":"asset-20260401123823-6d4x2","authorized_portrait_asset_id":"asset-20261005230545-tb2zr"})",
+                R"({"action":"delegate","message":"test","virtual_avatar_asset_id":"asset-20260401)"
+                    R"(123823-6d4x2","authorized_portrait_asset_id":"asset-20261005230545-tb2zr"})",
                 context)
             .hasError());
     CHECK(
         video
             ->execute(
-                R"({"action":"delegate","message":"test","mode":"edit","video_url":"https://example.com/clip.mp4","virtual_avatar_asset_id":"asset-20260401123823-6d4x2"})",
+                R"({"action":"delegate","message":"test","mode":"edit",)"
+                    R"("video_url":"https://example.com/clip.mp4","virtual_avatar_asset_id":"asset)"
+                    R"(-20260401123823-6d4x2"})",
                 context)
             .hasError());
     CHECK(image
@@ -261,7 +284,8 @@ void testInvalidInputsDoNotReachNetwork() {
     CHECK(
         image
             ->execute(
-                R"({"action":"delegate","message":"test","image_paths":["a.png","b.png"],"image_path":"c.png"})",
+                R"({"action":"delegate","message":"test","image_paths":["a.png","b.png"],)"
+                    R"("image_path":"c.png"})",
                 context)
             .hasError());
 }
@@ -391,7 +415,9 @@ void testLiveArkWhenExplicitlyConfigured() {
 
     auto image = makeMaiSeedreamImageTool([apiKey] { return apiKey; });
     const MaiToolResult imageResult = image->execute(
-        R"({"action":"delegate","message":"Create one abstract composition blending the colors of image 1 and image 2. No people or text.","image_paths":["first.png","last.png"],"output_path":"live-seedream.png","size":"1K"})",
+        R"({"action":"delegate","message":"Create one abstract composition blending the colors of )"
+            R"(image 1 and image 2. No people or text.","image_paths":["first.png","last.png"],)"
+            R"("output_path":"live-seedream.png","size":"1K"})",
         context);
     if (imageResult.hasError()) {
         std::printf("LIVE Seedream failed: %s\n", imageResult.error().message().c_str());
@@ -406,7 +432,10 @@ void testLiveArkWhenExplicitlyConfigured() {
 
     auto video = makeMaiSeedanceVideoTool([apiKey] { return apiKey; });
     const MaiToolResult submitted = video->execute(
-        R"({"action":"delegate","message":"Make a smooth abstract transition from the first frame to the last frame. No people or text.","mode":"create","image_path":"first.png","last_frame_path":"last.png","production":{"duration":4,"ratio":"adaptive","resolution":"480p","generate_audio":false}})",
+        R"({"action":"delegate","message":"Make a smooth abstract transition from the first frame )"
+            R"(to the last frame. No people or text.","mode":"create","image_path":"first.png",)"
+            R"("last_frame_path":"last.png","production":{"duration":4,"ratio":"adaptive",)"
+            R"("resolution":"480p","generate_audio":false}})",
         context);
     if (submitted.hasError()) {
         std::printf("LIVE Seedance submit failed: %s\n", submitted.error().message().c_str());
@@ -570,7 +599,8 @@ void testVirtualAssetFlow() {
             return std::string{R"({"Id":"asset-1234567890","Status":"Processing"})"};
         }
         return std::string{
-            R"({"Id":"asset-1234567890","Status":"Active","URL":"https://asset.example.com/image.jpg?X-Tos-Signature=secret"})"};
+            R"({"Id":"asset-1234567890","Status":"Active","URL":"https://asset.example.com/image.j)"
+                R"(pg?X-Tos-Signature=secret"})"};
     });
     CHECK(tool->name() == "ark_assets");
     CHECK(!tool->requiresApproval(R"({"action":"get_asset","asset_id":"asset-1234567890"})"));
@@ -581,7 +611,8 @@ void testVirtualAssetFlow() {
     CHECK(!uploaded.hasError());
     CHECK(nlohmann::json::parse(uploaded.output()).at("Status") == "Processing");
     const auto fromUrl = tool->execute(
-        R"({"action":"create_asset","group_id":"group-1234567890","url":"https://example.com/portrait.jpg"})",
+        R"({"action":"create_asset","group_id":"group-1234567890","url":"https://example.com/portr)"
+            R"(ait.jpg"})",
         context);
     CHECK(!fromUrl.hasError());
     const auto ready =
@@ -592,7 +623,8 @@ void testVirtualAssetFlow() {
     CHECK(calls == 3);
     CHECK(
         tool->execute(
-                R"({"action":"upload_image","group_id":"group-1234567890","image_path":"missing.jpg"})",
+                R"({"action":"upload_image","group_id":"group-1234567890","image_path":"missing.jp)"
+                    R"(g"})",
                 context)
             .hasError());
     CHECK(calls == 3);

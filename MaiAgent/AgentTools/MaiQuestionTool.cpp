@@ -47,9 +47,11 @@ public:
     std::string parametersSchema() const override {
         // question 用用户语言表述；options 只是建议选项，用户仍可自由作答。
         return R"({"type":"object","properties":{)"
-               R"("question":{"type":"string","description":"The question, in the user's language"},)"
+               R"("question":{"type":"string","description":"The question, in the user's language")"
+                   R"(},)"
                R"("options":{"type":"array","items":{"type":"string"},)"
-               R"("description":"Suggested answers, if there are a few obvious ones. The user can still answer with anything."}},)"
+               R"("description":"Suggested answers, if there are a few obvious ones. The user can )"
+                   R"(still answer with anything."}},)"
                R"("required":["question"]})";
     }
 

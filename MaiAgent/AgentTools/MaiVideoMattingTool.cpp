@@ -57,7 +57,14 @@ public:
     std::string parametersSchema() const override {
         // 输入/输出必须是不同路径；background.mode 选择纯色、图片或模糊源背景。
         // 纯色用十六进制 color，图片用 image_path，模糊用 blur_sigma。
-        return R"({"type":"object","properties":{"input_path":{"type":"string"},"output_path":{"type":"string"},"background":{"type":"object","properties":{"mode":{"type":"string","enum":["solid","image","blur"]},"color":{"type":"string","pattern":"^#[0-9A-Fa-f]{6}$"},"image_path":{"type":"string"},"blur_sigma":{"type":"number","minimum":1,"maximum":60}},"required":["mode"],"additionalProperties":false},"downsample_ratio":{"type":"number","exclusiveMinimum":0,"maximum":1}},"required":["input_path","output_path","background"],"additionalProperties":false})";
+        return R"({"type":"object","properties":{"input_path":{"type":"string"},)"
+            R"("output_path":{"type":"string"},"background":{"type":"object",)"
+            R"("properties":{"mode":{"type":"string","enum":["solid","image","blur"]},)"
+            R"("color":{"type":"string","pattern":"^#[0-9A-Fa-f]{6}$"},)"
+            R"("image_path":{"type":"string"},"blur_sigma":{"type":"number","minimum":1,)"
+            R"("maximum":60}},"required":["mode"],"additionalProperties":false},)"
+            R"("downsample_ratio":{"type":"number","exclusiveMinimum":0,"maximum":1}},)"
+            R"("required":["input_path","output_path","background"],"additionalProperties":false})";
     }
     bool requiresApproval(const std::string&) const override {
         return true;

@@ -58,7 +58,8 @@ public:
     }
     std::string parametersSchema() const override {
         // scope=local 查网卡地址，public 查网络出口，all 两者都查；默认为工具自己的安全值。
-        return R"({"type":"object","properties":{"scope":{"type":"string","enum":["local","public","all"]}},"required":[],"additionalProperties":false})";
+        return R"({"type":"object","properties":{"scope":{"type":"string","enum":["local",)"
+            R"("public","all"]}},"required":[],"additionalProperties":false})";
     }
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const Json args = Json::parse(raw, nullptr, false);

@@ -166,7 +166,11 @@ public:
     std::string parametersSchema() const override {
         // host/username/command 必填；port 限合法 TCP 端口，timeout_seconds
         // 限单条远程命令，不代表整个复用连接的存活时长。
-        return R"({"type":"object","properties":{"host":{"type":"string"},"port":{"type":"integer","minimum":1,"maximum":65535},"username":{"type":"string"},"command":{"type":"string"},"timeout_seconds":{"type":"integer","minimum":1,"maximum":120}},"required":["host","username","command"],"additionalProperties":false})";
+        return R"({"type":"object","properties":{"host":{"type":"string"},)"
+            R"("port":{"type":"integer","minimum":1,"maximum":65535},"username":{"type":"string"},)"
+            R"("command":{"type":"string"},"timeout_seconds":{"type":"integer","minimum":1,)"
+            R"("maximum":120}},"required":["host","username","command"],)"
+            R"("additionalProperties":false})";
     }
     bool requiresApproval(const std::string&) const override {
         return true;

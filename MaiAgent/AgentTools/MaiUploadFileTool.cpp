@@ -170,7 +170,11 @@ public:
     std::string parametersSchema() const override {
         // url/path 指向上传目标和本地文件；method 仅 PUT/POST；content_type
         // 必须与签名时使用的类型一致。大小和超时字段限制单次上传资源。
-        return R"({"type":"object","properties":{"url":{"type":"string"},"path":{"type":"string"},"method":{"type":"string","enum":["PUT","POST"]},"content_type":{"type":"string"},"max_size_mb":{"type":"integer","minimum":1,"maximum":1024},"timeout_s":{"type":"integer","minimum":1,"maximum":1800}},"required":["url","path"],"additionalProperties":false})";
+        return R"({"type":"object","properties":{"url":{"type":"string"},"path":{"type":"string"},)"
+            R"("method":{"type":"string","enum":["PUT","POST"]},"content_type":{"type":"string"},)"
+            R"("max_size_mb":{"type":"integer","minimum":1,"maximum":1024},)"
+            R"("timeout_s":{"type":"integer","minimum":1,"maximum":1800}},"required":["url",)"
+            R"("path"],"additionalProperties":false})";
     }
     bool requiresApproval(const std::string&) const override {
         return true;

@@ -1,5 +1,6 @@
 // 文件作用：验证“封装阿里云百炼媒体模型任务与状态查询”的正确行为和边界条件。
-// 验证入口：testRevisionIsSessionBound、testOtherSpecialistBoundaries、testLiveWan3WhenExplicitlyConfigured；检查可观察结果而非实现细节。
+// 验证入口：testRevisionIsSessionBound、testOtherSpecialistBoundaries、
+// testLiveWan3WhenExplicitlyConfigured；检查可观察结果而非实现细节。
 #include "MaiModelStudioTools.h"
 
 #include <json.hpp>
@@ -139,7 +140,8 @@ void testOtherSpecialistBoundaries() {
     CHECK(
         image
             ->execute(
-                R"({"action":"delegate","message":"Draw","image_paths":["a.png","b.png","c.png","d.png"]})",
+                R"({"action":"delegate","message":"Draw","image_paths":["a.png","b.png","c.png",)"
+                    R"("d.png"]})",
                 context)
             .hasError());
     CHECK(image
@@ -405,7 +407,8 @@ void testWanAndKlingImageToolsValidateBeforePaidSubmission() {
     CHECK(missingReference.hasError());
     CHECK(missingReference.error().message().find("Media file") != std::string::npos);
     const MaiToolResult unsupportedMulti = kling->execute(
-        R"({"action":"delegate","message":"Blend two pictures","model":"kling/kling-v3-image-generation","image_paths":["a.jpg","b.jpg"],"ratio":"1:1","resolution":"1k"})",
+        R"({"action":"delegate","message":"Blend two pictures","model":"kling/kling-v3-image-gener)"
+            R"(ation","image_paths":["a.jpg","b.jpg"],"ratio":"1:1","resolution":"1k"})",
         context);
     CHECK(unsupportedMulti.hasError());
     CHECK(unsupportedMulti.error().message().find("require Kling Omni") != std::string::npos);

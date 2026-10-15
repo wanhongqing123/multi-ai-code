@@ -61,7 +61,24 @@ public:
         // 每个区域只说明位置、出现时间与已核实的无遮挡参考帧。
         // 不再让 Agent 选择处理算法：有 before_s 就借参考帧，否则由本地模型补画。
         // foreground_edge 仅标记需要保护的前景从哪侧进入，不是另一种算法。
-        return R"({"type":"object","properties":{"input_path":{"type":"string","description":"Existing local MP4 or MOV"},"output_path":{"type":"string","description":"New MP4 path relative to the Agent workspace"},"regions":{"type":"array","minItems":1,"maxItems":16,"items":{"type":"object","properties":{"x":{"type":"integer","minimum":0},"y":{"type":"integer","minimum":0},"width":{"type":"integer","minimum":2},"height":{"type":"integer","minimum":2},"start_s":{"type":"number","minimum":0},"end_s":{"type":"number","exclusiveMinimum":0},"start_frame":{"type":"integer","minimum":0,"description":"Inclusive decoded frame number; takes priority over start_s"},"end_frame":{"type":"integer","minimum":1,"description":"Exclusive decoded frame number; takes priority over end_s"},"before_s":{"type":"number","minimum":0,"description":"Verified clean frame before overlay; omit if none exists"},"after_s":{"type":"number","minimum":0,"description":"Optional verified clean frame after overlay; requires before_s"},"foreground_edge":{"type":"string","enum":["none","left","right"],"description":"Side from which a person enters the repair rectangle; omit if no foreground overlaps"}},"required":["x","y","width","height"],"additionalProperties":false}}},"required":["input_path","output_path","regions"],"additionalProperties":false})";
+        return R"({"type":"object","properties":{"input_path":{"type":"string",)"
+            R"("description":"Existing local MP4 or MOV"},"output_path":{"type":"string",)"
+            R"("description":"New MP4 path relative to the Agent workspace"},)"
+            R"("regions":{"type":"array","minItems":1,"maxItems":16,"items":{"type":"object",)"
+            R"("properties":{"x":{"type":"integer","minimum":0},"y":{"type":"integer","minimum":0})"
+            R"(,"width":{"type":"integer","minimum":2},"height":{"type":"integer","minimum":2},)"
+            R"("start_s":{"type":"number","minimum":0},"end_s":{"type":"number",)"
+            R"("exclusiveMinimum":0},"start_frame":{"type":"integer","minimum":0,)"
+            R"("description":"Inclusive decoded frame number; takes priority over start_s"},)"
+            R"("end_frame":{"type":"integer","minimum":1,"description":"Exclusive decoded frame nu)"
+            R"(mber; takes priority over end_s"},"before_s":{"type":"number","minimum":0,)"
+            R"("description":"Verified clean frame before overlay; omit if none exists"},)"
+            R"("after_s":{"type":"number","minimum":0,"description":"Optional verified clean frame)"
+            R"( after overlay; requires before_s"},"foreground_edge":{"type":"string",)"
+            R"("enum":["none","left","right"],"description":"Side from which a person enters the r)"
+            R"(epair rectangle; omit if no foreground overlaps"}},"required":["x","y","width",)"
+            R"("height"],"additionalProperties":false}}},"required":["input_path","output_path",)"
+            R"("regions"],"additionalProperties":false})";
     }
 
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {

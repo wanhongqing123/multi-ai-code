@@ -245,7 +245,11 @@ public:
     }
     std::string parametersSchema() const override {
         const std::string raw =
-            R"({"type":"object","properties":{"action":{"type":"string","enum":["discover","delegate","continue"]},"message":{"type":"string"},"context":{"type":"string"},"size":{"type":"string"},"conversation_id":{"type":"string"},"parent_task_id":{"type":"string"},"poll_once":{"type":"boolean"}},"required":["action"],"additionalProperties":false})";
+            R"({"type":"object","properties":{"action":{"type":"string","enum":["discover",)"
+                R"("delegate","continue"]},"message":{"type":"string"},"context":{"type":"string"})"
+                R"(,"size":{"type":"string"},"conversation_id":{"type":"string"},)"
+                R"("parent_task_id":{"type":"string"},"poll_once":{"type":"boolean"}},)"
+                R"("required":["action"],"additionalProperties":false})";
         Json schema = Json::parse(raw);
         Json& fields = schema["properties"];
         // 这些英文描述会直接给主模型。图片生成只使用文字，不接受 image_path；

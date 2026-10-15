@@ -49,7 +49,10 @@ int main() {
     assert(schema["properties"]["regions"]["items"]["properties"].contains("start_frame"));
     assert(!schema["properties"]["regions"]["items"]["properties"].contains("mode"));
     const std::string valid =
-        R"({"input_path":"input.mov","output_path":"result.mp4","regions":[{"x":10,"y":20,"width":100,"height":50},{"x":30,"y":40,"width":120,"height":60,"start_s":2,"end_s":4,"start_frame":60,"end_frame":120,"before_s":1.5,"after_s":4.5,"foreground_edge":"right"}]})";
+        R"({"input_path":"input.mov","output_path":"result.mp4","regions":[{"x":10,"y":20,)"
+            R"("width":100,"height":50},{"x":30,"y":40,"width":120,"height":60,"start_s":2,)"
+            R"("end_s":4,"start_frame":60,"end_frame":120,"before_s":1.5,"after_s":4.5,)"
+            R"("foreground_edge":"right"}]})";
     const MaiToolResult processed = tool->execute(valid, context);
     assert(!processed.hasError() && sCalls == 1);
     assert(sOptions.modelPath == "trusted-model.onnx" && sOptions.regions.size() == 2);
@@ -62,18 +65,26 @@ int main() {
 
     // 只给精确帧窗口时，before_s 是参考帧时间，不要求额外填写 start_s。
     const std::string frameOnly =
-        R"({"input_path":"input.mov","output_path":"frame-only.mp4","regions":[{"x":30,"y":40,"width":120,"height":60,"start_frame":60,"end_frame":120,"before_s":1.5,"after_s":4.5}]})";
+        R"({"input_path":"input.mov","output_path":"frame-only.mp4","regions":[{"x":30,"y":40,)"
+            R"("width":120,"height":60,"start_frame":60,"end_frame":120,"before_s":1.5,)"
+            R"("after_s":4.5}]})";
     assert(!tool->execute(frameOnly, context).hasError() && sCalls == 2);
     assert(sOptions.regions[0].startFrame == 60 && sOptions.regions[0].startSeconds == 0);
 
     for (
         const std::string& invalid : {
-            R"({"input_path":"input.mov","output_path":"result.mp4","regions":[{"mode":"inpaint","x":30,"y":40,"width":120,"height":60}]})",
-            R"({"input_path":"input.mov","output_path":"result.mp4","regions":[{"x":30,"y":40,"width":120,"height":60,"after_s":1}]})",
-            R"({"input_path":"input.mov","output_path":"result.mp4","regions":[{"x":30,"y":40,"width":120,"height":60,"foreground_edge":"right"}]})",
-            R"({"input_path":"input.mov","output_path":"result.mp4","regions":[{"x":30,"y":40,"width":120,"height":60,"start_frame":30,"end_frame":20}]})",
-            R"({"input_path":"input.mov","output_path":"../outside.mp4","regions":[{"x":30,"y":40,"width":120,"height":60}]})",
-            R"({"input_path":"input.mov","output_path":"result.mp4","regions":[{"x":30,"y":40,"width":120,"height":60,"start_s":2,"end_s":4,"before_s":3}]})",
+            R"({"input_path":"input.mov","output_path":"result.mp4","regions":[{"mode":"inpaint",)"
+                R"("x":30,"y":40,"width":120,"height":60}]})",
+            R"({"input_path":"input.mov","output_path":"result.mp4","regions":[{"x":30,"y":40,)"
+                R"("width":120,"height":60,"after_s":1}]})",
+            R"({"input_path":"input.mov","output_path":"result.mp4","regions":[{"x":30,"y":40,)"
+                R"("width":120,"height":60,"foreground_edge":"right"}]})",
+            R"({"input_path":"input.mov","output_path":"result.mp4","regions":[{"x":30,"y":40,)"
+                R"("width":120,"height":60,"start_frame":30,"end_frame":20}]})",
+            R"({"input_path":"input.mov","output_path":"../outside.mp4","regions":[{"x":30,"y":40,)"
+                R"("width":120,"height":60}]})",
+            R"({"input_path":"input.mov","output_path":"result.mp4","regions":[{"x":30,"y":40,)"
+                R"("width":120,"height":60,"start_s":2,"end_s":4,"before_s":3}]})",
         }) {
         assert(tool->execute(invalid, context).hasError());
         assert(sCalls == 2);

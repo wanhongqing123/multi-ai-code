@@ -105,7 +105,9 @@ public:
     }
     std::string parametersSchema() const override {
         // arguments 是最多 12 项的受限 OpenSSL 参数；执行层还会拦截未开放的子命令。
-        return R"({"type":"object","properties":{"arguments":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":12}},"required":["arguments"],"additionalProperties":false})";
+        return R"({"type":"object","properties":{"arguments":{"type":"array",)"
+            R"("items":{"type":"string"},"minItems":1,"maxItems":12}},"required":["arguments"],)"
+            R"("additionalProperties":false})";
     }
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const Json parsed = Json::parse(raw, nullptr, false);

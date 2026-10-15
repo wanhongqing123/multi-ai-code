@@ -82,10 +82,13 @@ public:
         // path 指目标文件；old_string 必须是文件中的精确原文，new_string 是替换内容。
         // 执行层还会校验匹配次数，避免把一个含糊片段改到错误位置。
         return R"({"type":"object","properties":{)"
-               R"("path":{"type":"string","description":"Absolute path or path relative to the working directory"},)"
-               R"("old_string":{"type":"string","description":"The exact text to replace, copied from the file"},)"
+               R"("path":{"type":"string","description":"Absolute path or path relative to the wor)"
+                   R"(king directory"},)"
+               R"("old_string":{"type":"string","description":"The exact text to replace,)"
+                   R"( copied from the file"},)"
                R"("new_string":{"type":"string","description":"What to put there instead"},)"
-               R"("replace_all":{"type":"boolean","description":"Replace every occurrence instead of requiring exactly one, default false"}},)"
+               R"("replace_all":{"type":"boolean","description":"Replace every occurrence instead )"
+                   R"(of requiring exactly one, default false"}},)"
                R"("required":["path","old_string","new_string"]})";
     }
 

@@ -704,7 +704,8 @@ public:
         // file_path/file_url 互斥，link_url 与文件互斥；文档/网页不能混严格首尾帧。
         const std::string raw =
             R"({"type":"object","properties":{)"
-            R"("action":{"type":"string","enum":["discover","diagnose","delegate","continue","cancel","delete","revise"]},)"
+            R"("action":{"type":"string","enum":["discover","diagnose","delegate","continue",)"
+                R"("cancel","delete","revise"]},)"
             R"("message":{"type":"string"},"context":{"type":"string"},)"
             R"("conversation_id":{"type":"string"},"mode":{"type":"string",)"
             R"("enum":["create","edit","extend","reference"]},)"
@@ -714,7 +715,8 @@ public:
             R"("last_frame_path":{"type":"string"},"local_image_paths":{"type":"array",)"
             R"("maxItems":10,"items":{"type":"string"}},)"
             R"("resolution":{"type":"string","enum":["480P","720P","1080P"]},)"
-            R"("ratio":{"type":"string","enum":["adaptive","21:9","16:9","4:3","1:1","3:4","9:16"]},)"
+            R"("ratio":{"type":"string","enum":["adaptive","21:9","16:9","4:3","1:1","3:4",)"
+                R"("9:16"]},)"
             R"("duration":{"type":"integer"},"source_duration_seconds":{"type":"number"},)"
             R"("audio":{"type":"boolean"},)"
             R"("prompt_extend":{"type":"boolean"},"watermark":{"type":"boolean"},)"
@@ -1245,7 +1247,19 @@ public:
         // duration、resolution、ratio、audio、watermark 均影响产物或费用，必须在
         // 付费前逐项确认。conversation_id 只用于 continue，不是源视频地址。
         return describeKlingVideoSchema(
-            R"({"type":"object","properties":{"action":{"type":"string","enum":["discover","diagnose","delegate","continue","cancel","delete"]},"model":{"type":"string","enum":["kling/kling-v3-turbo-video-generation","kling/kling-v3-video-generation","kling/kling-v3-omni-video-generation"]},"task_mode":{"type":"string","enum":["create","reference","edit"]},"message":{"type":"string"},"image_path":{"type":"string"},"last_frame_path":{"type":"string"},"local_image_paths":{"type":"array","maxItems":7,"items":{"type":"string"}},"video_path":{"type":"string"},"source_video_url":{"type":"string"},"duration":{"type":"integer"},"resolution":{"type":"string","enum":["std","pro","4k"]},"ratio":{"type":"string","enum":["16:9","9:16","1:1"]},"audio":{"type":"boolean"},"watermark":{"type":"boolean"},"conversation_id":{"type":"string"},"poll_once":{"type":"boolean"}},"required":["action"],"additionalProperties":false})");
+            R"({"type":"object","properties":{"action":{"type":"string","enum":["discover",)"
+                R"("diagnose","delegate","continue","cancel","delete"]},"model":{"type":"string",)"
+                R"("enum":["kling/kling-v3-turbo-video-generation","kling/kling-v3-video-generatio)"
+                R"(n","kling/kling-v3-omni-video-generation"]},"task_mode":{"type":"string",)"
+                R"("enum":["create","reference","edit"]},"message":{"type":"string"},)"
+                R"("image_path":{"type":"string"},"last_frame_path":{"type":"string"},)"
+                R"("local_image_paths":{"type":"array","maxItems":7,"items":{"type":"string"}},)"
+                R"("video_path":{"type":"string"},"source_video_url":{"type":"string"},)"
+                R"("duration":{"type":"integer"},"resolution":{"type":"string","enum":["std",)"
+                R"("pro","4k"]},"ratio":{"type":"string","enum":["16:9","9:16","1:1"]},)"
+                R"("audio":{"type":"boolean"},"watermark":{"type":"boolean"},)"
+                R"("conversation_id":{"type":"string"},"poll_once":{"type":"boolean"}},)"
+                R"("required":["action"],"additionalProperties":false})");
     }
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const Json args = Json::parse(raw, nullptr, false);
@@ -1586,7 +1600,8 @@ public:
         // 万相图像：无 image_paths 时文生图，有 1–9 张时编辑或融合；
         // conversation_id 用于同一会话的 revise，不是随意引用别人的旧任务。
         return R"({"type":"object","properties":{)"
-               R"("action":{"type":"string","enum":["discover","diagnose","delegate","continue","revise"]},)"
+               R"("action":{"type":"string","enum":["discover","diagnose","delegate","continue",)"
+                   R"("revise"]},)"
                R"("message":{"type":"string"},"context":{"type":"string"},)"
                R"("conversation_id":{"type":"string"},"image_path":{"type":"string"},)"
                R"("image_paths":{"type":"array","maxItems":9,"items":{"type":"string"}},)"
@@ -1899,7 +1914,15 @@ public:
         // discover/diagnose 不扣费；delegate 提交异步付费任务；continue 仅查旧任务。
         // image_path 单图、image_paths 多图，均只作私有 OSS 上传源；模型看到 URL。
         // model 可选 V3 或 Omni；Omni 才支持多图与 4k，输出固定一张 PNG。
-        return R"({"type":"object","properties":{"action":{"type":"string","enum":["discover","diagnose","delegate","continue"]},"model":{"type":"string","enum":["kling/kling-v3-image-generation","kling/kling-v3-omni-image-generation"]},"message":{"type":"string"},"context":{"type":"string"},"image_path":{"type":"string"},"image_paths":{"type":"array","maxItems":10,"items":{"type":"string"}},"ratio":{"type":"string","enum":["16:9","9:16","1:1"]},"resolution":{"type":"string","enum":["1k","2k","4k"]},"watermark":{"type":"boolean"},"conversation_id":{"type":"string"},"poll_once":{"type":"boolean"}},"required":["action"],"additionalProperties":false})";
+        return R"({"type":"object","properties":{"action":{"type":"string","enum":["discover",)"
+            R"("diagnose","delegate","continue"]},"model":{"type":"string",)"
+            R"("enum":["kling/kling-v3-image-generation","kling/kling-v3-omni-image-generation"]},)"
+            R"("message":{"type":"string"},"context":{"type":"string"},)"
+            R"("image_path":{"type":"string"},"image_paths":{"type":"array","maxItems":10,)"
+            R"("items":{"type":"string"}},"ratio":{"type":"string","enum":["16:9","9:16","1:1"]},)"
+            R"("resolution":{"type":"string","enum":["1k","2k","4k"]},"watermark":{"type":"boolean)"
+            R"("},"conversation_id":{"type":"string"},"poll_once":{"type":"boolean"}},)"
+            R"("required":["action"],"additionalProperties":false})";
     }
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const Json args = Json::parse(raw, nullptr, false);

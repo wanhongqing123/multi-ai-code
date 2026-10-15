@@ -92,7 +92,10 @@ public:
     }
     std::string parametersSchema() const override {
         // path 与 text 必须二选一；algorithm 限于列出的摘要算法。
-        return R"({"type":"object","properties":{"path":{"type":"string"},"text":{"type":"string"},"algorithm":{"type":"string","enum":["sha256","sha512","sha3-256","blake2b-512","md5"]}},"oneOf":[{"required":["path"]},{"required":["text"]}],"additionalProperties":false})";
+        return R"({"type":"object","properties":{"path":{"type":"string"},"text":{"type":"string"})"
+            R"(,"algorithm":{"type":"string","enum":["sha256","sha512","sha3-256","blake2b-512",)"
+            R"("md5"]}},"oneOf":[{"required":["path"]},{"required":["text"]}],)"
+            R"("additionalProperties":false})";
     }
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const Json args = Json::parse(raw, nullptr, false);
@@ -138,7 +141,8 @@ public:
     }
     std::string parametersSchema() const override {
         // path 必须是工作区可访问的 PEM 或 DER X.509 证书。
-        return R"({"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false})";
+        return R"({"type":"object","properties":{"path":{"type":"string"}},"required":["path"],)"
+            R"("additionalProperties":false})";
     }
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const Json args = Json::parse(raw, nullptr, false);

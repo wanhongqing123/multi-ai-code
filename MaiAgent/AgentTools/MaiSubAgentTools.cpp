@@ -69,8 +69,10 @@ public:
     std::string parametersSchema() const override {
         // task_name 用于状态列表；prompt 必须自包含，子 Agent 看不到当前对话全文。
         return R"({"type":"object","properties":{)"
-               R"("task_name":{"type":"string","description":"A short name for the task, used when reporting status"},)"
-               R"("prompt":{"type":"string","description":"The whole task. The sub-agent cannot see this conversation, so say everything it needs."}},)"
+               R"("task_name":{"type":"string","description":"A short name for the task,)"
+                   R"( used when reporting status"},)"
+               R"("prompt":{"type":"string","description":"The whole task. The sub-agent cannot se)"
+                   R"(e this conversation, so say everything it needs."}},)"
                R"("required":["task_name","prompt"]})";
     }
 
@@ -115,7 +117,8 @@ public:
         // agent_id 来自 spawn_agent；timeout_ms 只控制本次等待，超时后仍可再次等待。
         return R"({"type":"object","properties":{)"
                R"("agent_id":{"type":"string","description":"The id spawn_agent gave you"},)"
-               R"("timeout_ms":{"type":"integer","description":"Give up waiting after this long, default 120000, max 600000"}},)"
+               R"("timeout_ms":{"type":"integer","description":"Give up waiting after this long,)"
+                   R"( default 120000, max 600000"}},)"
                R"("required":["agent_id"]})";
     }
 

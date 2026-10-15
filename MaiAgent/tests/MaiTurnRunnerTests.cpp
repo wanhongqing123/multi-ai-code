@@ -1,5 +1,6 @@
 // 文件作用：验证“编排一轮模型调用、工具执行和事件发布”的正确行为和边界条件。
-// 验证入口：test_prompt_images_reach_the_current_user_message、test_full_turn、test_request_is_assembled_correctly；检查可观察结果而非实现细节。
+// 验证入口：test_prompt_images_reach_the_current_user_message、test_full_turn、
+// test_request_is_assembled_correctly；检查可观察结果而非实现细节。
 // agent loop 的测试：从 submit(Prompt) 到事件流吐完的完整一圈。
 //
 // 用假的 Chat Completions 服务端当模型，所以不需要 API key、不花钱、结果完全确定。

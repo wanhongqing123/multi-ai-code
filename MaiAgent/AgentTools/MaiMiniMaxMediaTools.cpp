@@ -502,7 +502,31 @@ public:
         // content[] 是 V2 多模态输入；image_path 等扁平字段保留单图便利写法。
         // duration、resolution 位于顶层；content 条目用 type/role/path 描述媒体。
         // 参数形状通过后，仍需执行层检查媒体角色、数量和模型规格组合。
-        return mVideo ? describeMiniMaxVideoSchema(R"({"type":"object","properties":{"action":{"type":"string","enum":["discover","validate","delegate","continue","delete"]},"model":{"type":"string","enum":["MiniMax-H3","MiniMax-H3-Max"]},"message":{"type":"string"},"context":{"type":"string"},"image_path":{"type":"string"},"first_frame":{"type":"string"},"last_frame_path":{"type":"string"},"last_frame":{"type":"string"},"local_image_paths":{"type":"array","items":{"type":"string"}},"reference_video_path":{"type":"string"},"reference_video":{"type":"string"},"video_path":{"type":"string"},"reference_audio_path":{"type":"string"},"reference_audio":{"type":"string"},"content":{"type":"array","items":{"type":"object","properties":{"type":{"type":"string","enum":["text","image_url","video_url","audio_url"]},"text":{"type":"string"},"path":{"type":"string"},"role":{"type":"string"}},"required":["type"]}},"duration":{"type":"integer"},"resolution":{"type":"string"},"ratio":{"type":"string"},"prompt_expansion_mode":{"type":"string"},"conversation_id":{"type":"string"},"parent_task_id":{"type":"string"},"poll_once":{"type":"boolean"}},"required":["action"]})") : describeMiniMaxImageSchema(R"({"type":"object","properties":{"action":{"type":"string","enum":["discover","delegate"]},"model":{"type":"string","enum":["image-01","image-01-live"]},"message":{"type":"string"},"context":{"type":"string"},"image_path":{"type":"string"},"image_url":{"type":"string"},"ratio":{"type":"string","enum":["1:1","16:9","4:3","3:2","2:3","3:4","9:16","21:9"]},"width":{"type":"integer"},"height":{"type":"integer"},"prompt_optimizer":{"type":"boolean"},"aigc_watermark":{"type":"boolean"},"seed":{"type":"integer"}},"required":["action"],"additionalProperties":false})");
+        if (mVideo) return describeMiniMaxVideoSchema(R"({"type":"object","properties":{"action":{)"
+            R"("type":"string","enum":["discover","validate","delegate","continue","delete"]},)"
+            R"("model":{"type":"string","enum":["MiniMax-H3","MiniMax-H3-Max"]},)"
+            R"("message":{"type":"string"},"context":{"type":"string"},)"
+            R"("image_path":{"type":"string"},"first_frame":{"type":"string"},)"
+            R"("last_frame_path":{"type":"string"},"last_frame":{"type":"string"},)"
+            R"("local_image_paths":{"type":"array","items":{"type":"string"}},)"
+            R"("reference_video_path":{"type":"string"},"reference_video":{"type":"string"},)"
+            R"("video_path":{"type":"string"},"reference_audio_path":{"type":"string"},)"
+            R"("reference_audio":{"type":"string"},"content":{"type":"array",)"
+            R"("items":{"type":"object","properties":{"type":{"type":"string","enum":["text",)"
+            R"("image_url","video_url","audio_url"]},"text":{"type":"string"},)"
+            R"("path":{"type":"string"},"role":{"type":"string"}},"required":["type"]}},)"
+            R"("duration":{"type":"integer"},"resolution":{"type":"string"},)"
+            R"("ratio":{"type":"string"},"prompt_expansion_mode":{"type":"string"},)"
+            R"("conversation_id":{"type":"string"},"parent_task_id":{"type":"string"},)"
+            R"("poll_once":{"type":"boolean"}},"required":["action"]})");
+        return describeMiniMaxImageSchema(R"({"type":"object","properties":{"action":{"type":"stri)"
+            R"(ng","enum":["discover","delegate"]},"model":{"type":"string","enum":["image-01",)"
+            R"("image-01-live"]},"message":{"type":"string"},"context":{"type":"string"},)"
+            R"("image_path":{"type":"string"},"image_url":{"type":"string"},)"
+            R"("ratio":{"type":"string","enum":["1:1","16:9","4:3","3:2","2:3","3:4","9:16",)"
+            R"("21:9"]},"width":{"type":"integer"},"height":{"type":"integer"},)"
+            R"("prompt_optimizer":{"type":"boolean"},"aigc_watermark":{"type":"boolean"},)"
+            R"("seed":{"type":"integer"}},"required":["action"],"additionalProperties":false})");
     }
     std::optional<MaiSpecialistInfo> specialistInfo() const override {
         const bool configured = mKey && !mKey().empty();

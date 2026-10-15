@@ -1,5 +1,6 @@
 // 文件作用：验证“定义子 Agent 的任务、执行状态和结果”的正确行为和边界条件。
-// 验证入口：test_depth_is_capped、test_depth_is_recorded_on_the_session、test_open_count_is_capped_and_closing_frees_a_slot；检查可观察结果而非实现细节。
+// 验证入口：test_depth_is_capped、test_depth_is_recorded_on_the_session、
+// test_open_count_is_capped_and_closing_frees_a_slot；检查可观察结果而非实现细节。
 // 子 Agent 的测试。
 //
 // 重点是**三条硬规矩**，不是「能不能跑起来」：

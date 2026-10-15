@@ -1,5 +1,6 @@
 // 文件作用：验证“封装智谱图片媒体能力的请求与结果处理”的正确行为和边界条件。
-// 验证入口：testImageDiscoveryAndApproval、testImageRejectsUnsupportedInputsBeforeNetwork、testCannotReadAnotherConversationImageTask；检查可观察结果而非实现细节。
+// 验证入口：testImageDiscoveryAndApproval、testImageRejectsUnsupportedInputsBeforeNetwork、
+// testCannotReadAnotherConversationImageTask；检查可观察结果而非实现细节。
 #include <cstdio>
 #include <string>
 

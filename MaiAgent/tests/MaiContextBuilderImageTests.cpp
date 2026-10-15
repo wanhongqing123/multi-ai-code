@@ -1,5 +1,6 @@
 // 文件作用：验证“MaiContextBuilderImage”的正确行为和边界条件。
-// 验证入口：testCurrentRequestKeepsOnlyRecentToolPixels、testSmallCurrentRequestKeepsEveryImage、testVideoAttachmentUsesAFileReferenceInsteadOfImagePixels；检查可观察结果而非实现细节。
+// 验证入口：testCurrentRequestKeepsOnlyRecentToolPixels、testSmallCurrentRequestKeepsEveryImage、
+// testVideoAttachmentUsesAFileReferenceInsteadOfImagePixels；检查可观察结果而非实现细节。
 #include <cstdio>
 #include <string>
 #include <utility>

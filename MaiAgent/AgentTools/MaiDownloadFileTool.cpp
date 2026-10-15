@@ -317,7 +317,10 @@ public:
     }
     std::string parametersSchema() const override {
         // url 是下载直链；output_path 可选但必须是新文件，大小和超时可设上限。
-        return R"({"type":"object","properties":{"url":{"type":"string"},"output_path":{"type":"string"},"max_size_mb":{"type":"number","minimum":1,"maximum":1024},"timeout_s":{"type":"number","minimum":1,"maximum":600}},"required":["url"],"additionalProperties":false})";
+        return R"({"type":"object","properties":{"url":{"type":"string"},)"
+            R"("output_path":{"type":"string"},"max_size_mb":{"type":"number","minimum":1,)"
+            R"("maximum":1024},"timeout_s":{"type":"number","minimum":1,"maximum":600}},)"
+            R"("required":["url"],"additionalProperties":false})";
     }
     bool requiresApproval(const std::string&) const override {
         return true;

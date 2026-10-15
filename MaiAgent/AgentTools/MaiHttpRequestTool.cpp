@@ -136,7 +136,11 @@ public:
     std::string parametersSchema() const override {
         // url 必填；method 只能在列出的六种 HTTP 方法中选择。
         // headers/body 是请求内容，timeout_seconds 限制等待，执行层另有响应大小限制。
-        return R"({"type":"object","properties":{"url":{"type":"string"},"method":{"type":"string","enum":["GET","HEAD","POST","PUT","PATCH","DELETE"]},"headers":{"type":"object","additionalProperties":{"type":"string"}},"body":{"type":"string"},"timeout_seconds":{"type":"integer","minimum":1,"maximum":120}},"required":["url"],"additionalProperties":false})";
+        return R"({"type":"object","properties":{"url":{"type":"string"},)"
+            R"("method":{"type":"string","enum":["GET","HEAD","POST","PUT","PATCH","DELETE"]},)"
+            R"("headers":{"type":"object","additionalProperties":{"type":"string"}},)"
+            R"("body":{"type":"string"},"timeout_seconds":{"type":"integer","minimum":1,)"
+            R"("maximum":120}},"required":["url"],"additionalProperties":false})";
     }
     bool requiresApproval(const std::string&) const override {
         return true;

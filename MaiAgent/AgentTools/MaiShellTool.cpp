@@ -125,7 +125,8 @@ public:
         // command 是完整命令行；timeout_ms 为有界等待，执行前还要过 shell 审批。
         return R"({"type":"object","properties":{)"
                R"("command":{"type":"string","description":"The command line to run"},)"
-               R"("timeout_ms":{"type":"integer","description":"Give up after this many milliseconds, default 120000, max 600000"}},)"
+               R"("timeout_ms":{"type":"integer","description":"Give up after this many millisecon)"
+                   R"(ds, default 120000, max 600000"}},)"
                R"("required":["command"]})";
     }
 

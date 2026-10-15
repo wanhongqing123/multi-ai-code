@@ -52,7 +52,10 @@ public:
     std::string parametersSchema() const override {
         // input_path/output_path 是不同文件；split_y 指上下区域分界像素，
         // factor 仅在 1.01–1.3 范围内拉伸下半部分。
-        return R"({"type":"object","properties":{"input_path":{"type":"string"},"output_path":{"type":"string"},"split_y":{"type":"integer","minimum":2},"factor":{"type":"number","minimum":1.01,"maximum":1.3}},"required":["input_path","output_path","split_y","factor"],"additionalProperties":false})";
+        return R"({"type":"object","properties":{"input_path":{"type":"string"},)"
+            R"("output_path":{"type":"string"},"split_y":{"type":"integer","minimum":2},)"
+            R"("factor":{"type":"number","minimum":1.01,"maximum":1.3}},"required":["input_path",)"
+            R"("output_path","split_y","factor"],"additionalProperties":false})";
     }
     bool requiresApproval(const std::string&) const override {
         return true;

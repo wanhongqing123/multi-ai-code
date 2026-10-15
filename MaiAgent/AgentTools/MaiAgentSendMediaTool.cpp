@@ -96,7 +96,10 @@ public:
     std::string parametersSchema() const override {
         // file_path 指向当前工作区已有成品；type 必须与 image/video/audio 实际类型一致。
         // caption 是可选说明，最长 1000 字符，不能把文件路径当作最终交付。
-        return R"({"type":"object","properties":{"file_path":{"type":"string"},"type":{"type":"string","enum":["image","video","audio"]},"caption":{"type":"string","maxLength":1000}},"required":["file_path","type"],"additionalProperties":false})";
+        return R"({"type":"object","properties":{"file_path":{"type":"string"},)"
+            R"("type":{"type":"string","enum":["image","video","audio"]},)"
+            R"("caption":{"type":"string","maxLength":1000}},"required":["file_path","type"],)"
+            R"("additionalProperties":false})";
     }
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const Json request = Json::parse(raw, nullptr, false);

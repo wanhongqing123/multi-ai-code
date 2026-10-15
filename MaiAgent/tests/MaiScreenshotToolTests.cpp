@@ -1,5 +1,6 @@
 // 文件作用：验证“把屏幕截图能力封装为 Agent 工具”的正确行为和边界条件。
-// 验证入口：test_tool_contract、test_builtin_registration_matches_platform_support、test_native_capture_returns_a_png；检查可观察结果而非实现细节。
+// 验证入口：test_tool_contract、test_builtin_registration_matches_platform_support、
+// test_native_capture_returns_a_png；检查可观察结果而非实现细节。
 #include <cstdio>
 #include <memory>
 #include <string>

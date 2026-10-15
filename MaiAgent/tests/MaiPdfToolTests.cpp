@@ -1,5 +1,6 @@
 // 文件作用：验证“读取和处理 PDF 文档供 Agent 使用”的正确行为和边界条件。
-// 验证入口：test_generates_pdf_directly_from_markdown、test_creates_validated_pdf_with_approval、test_rejects_paths_outside_workspace；检查可观察结果而非实现细节。
+// 验证入口：test_generates_pdf_directly_from_markdown、test_creates_validated_pdf_with_approval、
+// test_rejects_paths_outside_workspace；检查可观察结果而非实现细节。
 #include "MaiPdfTool.h"
 
 #include <cstdio>
@@ -67,7 +68,8 @@ void test_generates_pdf_directly_from_markdown() {
             return MaiToolResult::success("rendered");
         });
     const MaiToolResult result = tool->execute(
-        R"({"content":"# Report\n\n| Item | Result |\n| --- | --- |\n| Build | **Passed** |\n\n<script>alert(1)</script>","output_path":"report.pdf"})",
+        R"({"content":"# Report\n\n| Item | Result |\n| --- | --- |\n| Build | **Passed** |\n\n<sc)"
+            R"(ript>alert(1)</script>","output_path":"report.pdf"})",
         workspace.context());
     CHECK(!result.hasError());
     const auto artifact = nlohmann::json::parse(result.output(), nullptr, false);
@@ -179,13 +181,15 @@ void test_only_accepts_embedded_markdown_images() {
         });
     CHECK(
         tool->execute(
-                R"pdf({"content":"![image](https://example.com/image.png)","output_path":"external.pdf"})pdf",
+                R"pdf({"content":"![image](https://example.com/image.png)",)pdf"
+                    R"pdf("output_path":"external.pdf"})pdf",
                 workspace.context())
             .hasError());
     CHECK(renderCalls == 0);
     CHECK(
         !tool->execute(
-                 R"pdf({"content":"![image](data:image/png;base64,iVBORw0KGgo=)","output_path":"embedded.pdf"})pdf",
+                 R"pdf({"content":"![image](data:image/png;base64,iVBORw0KGgo=)",)pdf"
+                     R"pdf("output_path":"embedded.pdf"})pdf",
                  workspace.context())
              .hasError());
     CHECK(renderCalls == 1);

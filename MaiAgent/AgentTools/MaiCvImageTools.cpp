@@ -101,30 +101,62 @@ public:
         // 比较：path/second_path 是两张图；changed_pixel_threshold 决定多大灰度差
         // 才把一个像素计为“变化”，尺寸不同由工具内部缩放副本。
         if (mKind == MaiCvImageAnalysisKind::Compare)
-            return R"({"type":"object","properties":{"path":{"type":"string"},"second_path":{"type":"string"},"changed_pixel_threshold":{"type":"integer","minimum":1,"maximum":255}},"required":["path","second_path"],"additionalProperties":false})";
+            return R"({"type":"object","properties":{"path":{"type":"string"},)"
+                R"("second_path":{"type":"string"},"changed_pixel_threshold":{"type":"integer",)"
+                R"("minimum":1,"maximum":255}},"required":["path","second_path"],)"
+                R"("additionalProperties":false})";
         // 质量：只需要一张现有图片；返回数值而非好坏标签。
         if (mKind == MaiCvImageAnalysisKind::Quality)
-            return R"({"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false})";
+            return R"({"type":"object","properties":{"path":{"type":"string"}},"required":["path"])"
+                R"(,"additionalProperties":false})";
         // 轮廓：Canny 高低阈值和最小面积决定哪些区域入选，max_regions 限返回量。
         if (mKind == MaiCvImageAnalysisKind::Contours)
-            return R"({"type":"object","properties":{"path":{"type":"string"},"edge_low":{"type":"integer","minimum":1,"maximum":254},"edge_high":{"type":"integer","minimum":2,"maximum":255},"minimum_area_fraction":{"type":"number","minimum":0,"maximum":1},"max_regions":{"type":"integer","minimum":1,"maximum":200}},"required":["path"],"additionalProperties":false})";
+            return R"({"type":"object","properties":{"path":{"type":"string"},)"
+                R"("edge_low":{"type":"integer","minimum":1,"maximum":254},)"
+                R"("edge_high":{"type":"integer","minimum":2,"maximum":255},)"
+                R"("minimum_area_fraction":{"type":"number","minimum":0,"maximum":1},)"
+                R"("max_regions":{"type":"integer","minimum":1,"maximum":200}},"required":["path"])"
+                R"(,"additionalProperties":false})";
         // 模板：template_path 是要找的小图，阈值和 max_matches 控制匹配置信与数量。
         if (mKind == MaiCvImageAnalysisKind::TemplateMatch)
-            return R"({"type":"object","properties":{"path":{"type":"string"},"template_path":{"type":"string"},"match_threshold":{"type":"number","minimum":0,"maximum":1},"max_matches":{"type":"integer","minimum":1,"maximum":50}},"required":["path","template_path"],"additionalProperties":false})";
+            return R"({"type":"object","properties":{"path":{"type":"string"},)"
+                R"("template_path":{"type":"string"},"match_threshold":{"type":"number",)"
+                R"("minimum":0,"maximum":1},"max_matches":{"type":"integer","minimum":1,)"
+                R"("maximum":50}},"required":["path","template_path"],"additionalProperties":false)"
+                R"(})";
         // 平移：两张图必须原本同尺寸，和支持缩放的 cv_image_compare 不同。
         if (mKind == MaiCvImageAnalysisKind::RegisterTranslation)
-            return R"({"type":"object","properties":{"path":{"type":"string"},"second_path":{"type":"string"}},"required":["path","second_path"],"additionalProperties":false})";
+            return R"({"type":"object","properties":{"path":{"type":"string"},)"
+                R"("second_path":{"type":"string"}},"required":["path","second_path"],)"
+                R"("additionalProperties":false})";
         // 直线：Hough 阈值、最短线比例和最大间隙决定线段，max_lines 限结果量。
         if (mKind == MaiCvImageAnalysisKind::Lines)
-            return R"({"type":"object","properties":{"path":{"type":"string"},"edge_low":{"type":"integer","minimum":1,"maximum":254},"edge_high":{"type":"integer","minimum":2,"maximum":255},"hough_threshold":{"type":"integer","minimum":10,"maximum":300},"min_line_fraction":{"type":"number","minimum":0.01,"maximum":1},"max_gap_fraction":{"type":"number","minimum":0,"maximum":1},"max_lines":{"type":"integer","minimum":1,"maximum":200}},"required":["path"],"additionalProperties":false})";
+            return R"({"type":"object","properties":{"path":{"type":"string"},)"
+                R"("edge_low":{"type":"integer","minimum":1,"maximum":254},)"
+                R"("edge_high":{"type":"integer","minimum":2,"maximum":255},)"
+                R"("hough_threshold":{"type":"integer","minimum":10,"maximum":300},)"
+                R"("min_line_fraction":{"type":"number","minimum":0.01,"maximum":1},)"
+                R"("max_gap_fraction":{"type":"number","minimum":0,"maximum":1},)"
+                R"("max_lines":{"type":"integer","minimum":1,"maximum":200}},"required":["path"],)"
+                R"("additionalProperties":false})";
         // 文档角点：只需图片与边缘阈值，不做透视矫正。
         if (mKind == MaiCvImageAnalysisKind::DocumentCorners)
-            return R"({"type":"object","properties":{"path":{"type":"string"},"edge_low":{"type":"integer","minimum":1,"maximum":254},"edge_high":{"type":"integer","minimum":2,"maximum":255}},"required":["path"],"additionalProperties":false})";
+            return R"({"type":"object","properties":{"path":{"type":"string"},)"
+                R"("edge_low":{"type":"integer","minimum":1,"maximum":254},)"
+                R"("edge_high":{"type":"integer","minimum":2,"maximum":255}},"required":["path"],)"
+                R"("additionalProperties":false})";
         // 阈值遮罩：method 选算法，invert 反转前景，close_kernel 处理小空隙。
         if (mKind == MaiCvImageAnalysisKind::ThresholdMask)
-            return R"({"type":"object","properties":{"path":{"type":"string"},"output_path":{"type":"string"},"method":{"type":"string","enum":["otsu","adaptive","fixed"]},"fixed_threshold":{"type":"integer","minimum":0,"maximum":255},"invert":{"type":"boolean"},"close_kernel":{"type":"integer","minimum":0,"maximum":31}},"required":["path"],"additionalProperties":false})";
+            return R"({"type":"object","properties":{"path":{"type":"string"},)"
+                R"("output_path":{"type":"string"},"method":{"type":"string","enum":["otsu",)"
+                R"("adaptive","fixed"]},"fixed_threshold":{"type":"integer","minimum":0,)"
+                R"("maximum":255},"invert":{"type":"boolean"},"close_kernel":{"type":"integer",)"
+                R"("minimum":0,"maximum":31}},"required":["path"],"additionalProperties":false})";
         // 普通边缘图：output_path 是工作区新 PNG，edge_low/high 是 Canny 阈值。
-        return R"({"type":"object","properties":{"path":{"type":"string"},"output_path":{"type":"string"},"edge_low":{"type":"integer","minimum":1,"maximum":254},"edge_high":{"type":"integer","minimum":2,"maximum":255}},"required":["path"],"additionalProperties":false})";
+        return R"({"type":"object","properties":{"path":{"type":"string"},)"
+            R"("output_path":{"type":"string"},"edge_low":{"type":"integer","minimum":1,)"
+            R"("maximum":254},"edge_high":{"type":"integer","minimum":2,"maximum":255}},)"
+            R"("required":["path"],"additionalProperties":false})";
     }
 
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {

@@ -96,7 +96,9 @@ public:
     std::string parametersSchema() const override {
         // action=scan 只读并返回预览 ID；action=cleanup 要带这次预览 ID，
         // 执行层据此确认待删文件未变化。
-        return R"({"type":"object","properties":{"action":{"type":"string","enum":["scan","cleanup"]},"preview_id":{"type":"string"}},"required":["action"],"additionalProperties":false})";
+        return R"({"type":"object","properties":{"action":{"type":"string","enum":["scan",)"
+            R"("cleanup"]},"preview_id":{"type":"string"}},"required":["action"],)"
+            R"("additionalProperties":false})";
     }
     bool requiresApproval(const std::string& raw) const override {
         const Json args = Json::parse(raw, nullptr, false);

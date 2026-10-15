@@ -460,7 +460,15 @@ public:
         // url 仅供 create_asset，image_path 仅供 upload_image 读取本地文件；
         // asset_id 用于 get_asset，byted_token 用于 H5 结果查询；
         // next_token 用于列表分页。下面仅是形状约束，execute 再按动作核对必需字段。
-        return R"({"type":"object","properties":{"action":{"type":"string","enum":["discover","list_groups","create_group","create_asset","upload_image","get_asset","list_assets","begin_real_validation","get_real_validation"]},"name":{"type":"string"},"description":{"type":"string"},"group_id":{"type":"string"},"group_type":{"type":"string","enum":["AIGC","LivenessFace"]},"url":{"type":"string"},"image_path":{"type":"string"},"asset_id":{"type":"string"},"byted_token":{"type":"string"},"next_token":{"type":"string"}},"required":["action"],"additionalProperties":false})";
+        return R"({"type":"object","properties":{"action":{"type":"string","enum":["discover",)"
+            R"("list_groups","create_group","create_asset","upload_image","get_asset",)"
+            R"("list_assets","begin_real_validation","get_real_validation"]},)"
+            R"("name":{"type":"string"},"description":{"type":"string"},)"
+            R"("group_id":{"type":"string"},"group_type":{"type":"string","enum":["AIGC",)"
+            R"("LivenessFace"]},"url":{"type":"string"},"image_path":{"type":"string"},)"
+            R"("asset_id":{"type":"string"},"byted_token":{"type":"string"},)"
+            R"("next_token":{"type":"string"}},"required":["action"],)"
+                R"("additionalProperties":false})";
     }
 
     bool requiresApproval(const std::string& raw) const override {

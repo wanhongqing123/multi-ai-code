@@ -1,5 +1,6 @@
 // 文件作用：把视频水印移除流程封装为单一 Agent 工具。
-// 对外类型：MaiWatermarkForegroundEdge、MaiWatermarkRepairRegion、MaiTemporalWatermarkOptions、MaiTemporalWatermarkResult；线程、失败和生命周期以类型附近注释为准。
+// 对外类型：MaiWatermarkForegroundEdge、MaiWatermarkRepairRegion、MaiTemporalWatermarkOptions、
+// MaiTemporalWatermarkResult；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 
 #include <memory>

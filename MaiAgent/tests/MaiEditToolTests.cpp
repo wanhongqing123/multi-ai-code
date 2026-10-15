@@ -1,5 +1,6 @@
 // 文件作用：验证“执行 Agent 提出的文本编辑并保留失败信息”的正确行为和边界条件。
-// 验证入口：test_replaces_a_unique_match、test_refuses_when_the_match_is_ambiguous、test_replace_all_changes_every_occurrence；检查可观察结果而非实现细节。
+// 验证入口：test_replaces_a_unique_match、test_refuses_when_the_match_is_ambiguous、
+// test_replace_all_changes_every_occurrence；检查可观察结果而非实现细节。
 // edit 工具的测试。
 //
 // 这个工具的价值全在「拒绝」上：能改的时候改对不难，难的是**该拒绝的时候一定要拒绝**。

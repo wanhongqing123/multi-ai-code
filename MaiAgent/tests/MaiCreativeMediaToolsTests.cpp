@@ -1,5 +1,6 @@
 // 文件作用：验证“MaiCreativeMediaTools”的正确行为和边界条件。
-// 验证入口：testFailedTaskIsStableWithoutProviderRequest、testH3ContentRolesAndRequiredFields、testH3RejectsUnsupportedOutputBeforePaidApproval；检查可观察结果而非实现细节。
+// 验证入口：testFailedTaskIsStableWithoutProviderRequest、testH3ContentRolesAndRequiredFields、
+// testH3RejectsUnsupportedOutputBeforePaidApproval；检查可观察结果而非实现细节。
 #include <cstdio>
 #include <string>
 
@@ -288,19 +289,22 @@ int main() {
     CHECK(
         miniMaxImage
             ->execute(
-                R"({"action":"delegate","model":"image-01-live","message":"Portrait","ratio":"21:9"})",
+                R"({"action":"delegate","model":"image-01-live","message":"Portrait",)"
+                    R"("ratio":"21:9"})",
                 context)
             .hasError());
     CHECK(
         miniMaxImage
             ->execute(
-                R"({"action":"delegate","model":"image-01","message":"Portrait","width":513,"height":512})",
+                R"({"action":"delegate","model":"image-01","message":"Portrait","width":513,)"
+                    R"("height":512})",
                 context)
             .hasError());
     CHECK(
         miniMaxImage
             ->execute(
-                R"({"action":"delegate","message":"Portrait","ratio":"1:1","image_path":"missing.jpg"})",
+                R"({"action":"delegate","message":"Portrait","ratio":"1:1",)"
+                    R"("image_path":"missing.jpg"})",
                 context)
             .hasError());
     for (MaiTool* tool : {miniMaxVideo.get(), miniMaxImage.get()}) {
@@ -321,19 +325,25 @@ int main() {
     CHECK(
         miniMaxVideo
             ->execute(
-                R"({"action":"delegate","model":"MiniMax-H3","message":"A cat","duration":5,"resolution":"1080P","ratio":"9:16"})",
+                R"({"action":"delegate","model":"MiniMax-H3","message":"A cat","duration":5,)"
+                    R"("resolution":"1080P","ratio":"9:16"})",
                 context)
             .hasError());
     CHECK(
         miniMaxVideo
             ->execute(
-                R"({"action":"delegate","model":"MiniMax-H3","message":"A cat","duration":10,"resolution":"768P","ratio":"9:16","content":[{"type":"image_url","role":"first_frame","path":"first.jpg"},{"type":"image_url","role":"reference_image","path":"reference.jpg"}]})",
+                R"({"action":"delegate","model":"MiniMax-H3","message":"A cat","duration":10,)"
+                    R"("resolution":"768P","ratio":"9:16","content":[{"type":"image_url",)"
+                    R"("role":"first_frame","path":"first.jpg"},{"type":"image_url",)"
+                    R"("role":"reference_image","path":"reference.jpg"}]})",
                 context)
             .hasError());
     CHECK(
         miniMaxVideo
             ->execute(
-                R"({"action":"delegate","model":"MiniMax-H3","message":"A cat","duration":10,"resolution":"768P","ratio":"9:16","content":[{"type":"image_url","role":"reference_image","path":"missing.jpg"}]})",
+                R"({"action":"delegate","model":"MiniMax-H3","message":"A cat","duration":10,)"
+                    R"("resolution":"768P","ratio":"9:16","content":[{"type":"image_url",)"
+                    R"("role":"reference_image","path":"missing.jpg"}]})",
                 context)
             .hasError());
     return failures == 0 ? 0 : 1;

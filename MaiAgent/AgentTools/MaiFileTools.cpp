@@ -426,10 +426,14 @@ public:
         // 读取：path 是目标文件；encoding 可覆盖自动识别；offset/limit 控制返回行段，
         // 避免一次把大文件全文塞进模型上下文。
         return R"({"type":"object","properties":{)"
-               R"("path":{"type":"string","description":"Absolute path or path relative to the working directory"},)"
-               R"("encoding":{"type":"string","description":"Source text encoding; default auto. Examples: utf-8, utf-16le, utf-16be, gb18030, gbk, windows-1252"},)"
-               R"("offset":{"type":"integer","description":"1-based line to start from, default 1"},)"
-               R"("limit":{"type":"integer","description":"Maximum number of lines to read, default 500"}},)"
+               R"("path":{"type":"string","description":"Absolute path or path relative to the wor)"
+                   R"(king directory"},)"
+               R"("encoding":{"type":"string","description":"Source text encoding; default auto. E)"
+                   R"(xamples: utf-8, utf-16le, utf-16be, gb18030, gbk, windows-1252"},)"
+               R"("offset":{"type":"integer","description":"1-based line to start from,)"
+                   R"( default 1"},)"
+               R"("limit":{"type":"integer","description":"Maximum number of lines to read,)"
+                   R"( default 500"}},)"
                R"("required":["path"]})";
     }
 
@@ -527,7 +531,9 @@ public:
     }
     std::string parametersSchema() const override {
         // 创建空文件只需 path；路径可相对工作目录，但执行时不允许覆盖已有文件。
-        return R"({"type":"object","properties":{"path":{"type":"string","description":"Absolute path or path relative to the working directory"}},"required":["path"],"additionalProperties":false})";
+        return R"({"type":"object","properties":{"path":{"type":"string",)"
+            R"("description":"Absolute path or path relative to the working directory"}},)"
+            R"("required":["path"],"additionalProperties":false})";
     }
     bool requiresApproval(const std::string&) const override {
         return true;
@@ -580,7 +586,9 @@ public:
     }
     std::string parametersSchema() const override {
         // 创建目录只需 path；已存在的目录可复用，普通文件占位则报错。
-        return R"({"type":"object","properties":{"path":{"type":"string","description":"Absolute path or path relative to the working directory"}},"required":["path"],"additionalProperties":false})";
+        return R"({"type":"object","properties":{"path":{"type":"string",)"
+            R"("description":"Absolute path or path relative to the working directory"}},)"
+            R"("required":["path"],"additionalProperties":false})";
     }
     bool requiresApproval(const std::string&) const override {
         return true;
@@ -627,7 +635,9 @@ public:
     }
     std::string parametersSchema() const override {
         // 删除指定 path 的单个文件；没有递归目录参数。
-        return R"({"type":"object","properties":{"path":{"type":"string","description":"Absolute path or path relative to the working directory"}},"required":["path"],"additionalProperties":false})";
+        return R"({"type":"object","properties":{"path":{"type":"string",)"
+            R"("description":"Absolute path or path relative to the working directory"}},)"
+            R"("required":["path"],"additionalProperties":false})";
     }
     bool requiresApproval(const std::string&) const override {
         return true;
@@ -680,7 +690,8 @@ public:
     std::string parametersSchema() const override {
         // path 是目标文件，content 是写入的全部文本，不是追加片段。
         return R"({"type":"object","properties":{)"
-               R"("path":{"type":"string","description":"Absolute path or path relative to the working directory"},)"
+               R"("path":{"type":"string","description":"Absolute path or path relative to the wor)"
+                   R"(king directory"},)"
                R"("content":{"type":"string","description":"The full content to write"}},)"
                R"("required":["path","content"]})";
     }
@@ -743,7 +754,8 @@ public:
         // pattern 是文件名通配模式；path 限定起始目录，省略时从工作目录搜索。
         return R"({"type":"object","properties":{)"
                R"("pattern":{"type":"string","description":"For example **/*.cpp or src/*.h"},)"
-               R"("path":{"type":"string","description":"Subdirectory to search from, defaults to the working directory root"}},)"
+               R"("path":{"type":"string","description":"Subdirectory to search from,)"
+                   R"( defaults to the working directory root"}},)"
                R"("required":["pattern"]})";
     }
 
@@ -841,9 +853,11 @@ public:
         // pattern 是内容正则，path 限定搜索目录；encoding 处理自动识别不了的旧文本。
         return R"({"type":"object","properties":{)"
                R"("pattern":{"type":"string","description":"Regular expression"},)"
-               R"("path":{"type":"string","description":"Subdirectory to search from, defaults to the working directory root"},)"
+               R"("path":{"type":"string","description":"Subdirectory to search from,)"
+                   R"( defaults to the working directory root"},)"
                R"("encoding":{"type":"string","description":"Source text encoding; default auto"},)"
-               R"("glob":{"type":"string","description":"Only search files matching this pattern, for example *.cpp"}},)"
+               R"("glob":{"type":"string","description":"Only search files matching this pattern,)"
+                   R"( for example *.cpp"}},)"
                R"("required":["pattern"]})";
     }
 

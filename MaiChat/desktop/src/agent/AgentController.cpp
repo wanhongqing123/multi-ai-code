@@ -245,7 +245,10 @@ buildAgent(std::unique_ptr<MaiModelClient> model,
     tools->add(makeMaiAppStorageTool({toUtf8(temporary), toUtf8(cache), {}}));
   }
   tools->add(makeMaiAgentSendMediaTool());
-  const auto arkKey = [key = toUtf8(credentials.arkApiKey)] { return key; };
+  const auto arkKey = [provider = credentials.arkApiKeyProvider,
+                       key = toUtf8(credentials.arkApiKey)] {
+    return provider ? toUtf8(provider()) : key;
+  };
   const auto assetSettings = [base = toUtf8(credentials.cloudServiceUrl),
                               token = toUtf8(credentials.cloudServiceToken)]()
       -> MaiResult<MaiArkAssetServiceSettings> {
@@ -273,8 +276,13 @@ buildAgent(std::unique_ptr<MaiModelClient> model,
   };
   tools->add(makeMaiMiniMaxVideoTool(miniMaxKey, {}, uploadMedia));
   tools->add(makeMaiMiniMaxImageTool(miniMaxKey, {}, uploadMedia));
-  const auto wanCredentials = [key = toUtf8(credentials.wanApiKey),
+  const auto wanCredentials = [provider = credentials.wanCredentialsProvider,
+                               key = toUtf8(credentials.wanApiKey),
                                workspace = toUtf8(credentials.wanWorkspaceId)] {
+    if (provider) {
+      const auto current = provider();
+      return MaiWanCredentials{toUtf8(current.first), toUtf8(current.second)};
+    }
     return MaiWanCredentials{key, workspace};
   };
   tools->add(makeMaiWanVideoTool(wanCredentials, {}, uploadMedia));

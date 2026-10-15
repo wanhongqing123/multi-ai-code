@@ -229,6 +229,27 @@ void RemoteIMApplication::connectToService(int sdkAppId, const QString& userSig)
     });
 }
 
+// SDK 退出实行单飞：签名轮换与会话撤销撞在同一时刻时，只向 SDK 发一次 logout。
+// 回调切回 Qt 所属线程后更新连接状态，再交给调用方决定重连或退出。
+void RemoteIMApplication::disconnectFromService(RemoteIMCompletion completion) {
+    if (completion) disconnectCallbacks_.push_back(std::move(completion));
+    if (disconnecting_) return;
+    disconnecting_ = true;
+    const QPointer<RemoteIMApplication> self(this);
+    client_->disconnectFromService([self](bool ok, const QString& error) {
+        if (!self) return;
+        QMetaObject::invokeMethod(self, [self, ok, error] {
+            if (!self) return;
+            self->connected_ = false;
+            self->disconnecting_ = false;
+            emit self->connectionChanged(false);
+            auto callbacks = std::move(self->disconnectCallbacks_);
+            self->disconnectCallbacks_.clear();
+            for (auto& callback : callbacks) callback(ok, error);
+        }, Qt::AutoConnection);
+    });
+}
+
 void RemoteIMApplication::addContact(const QString& userId, const QString& displayName) {
     state_.upsertContact(RemoteIMContact{userId, displayName});
     state_.selectPeer(userId);

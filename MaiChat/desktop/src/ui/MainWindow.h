@@ -10,6 +10,7 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QMainWindow>
+#include <QPair>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QStackedWidget>
@@ -18,6 +19,7 @@
 #include <QVBoxLayout>
 #include <functional>
 #include <memory>
+#include <vector>
 
 #include "app/RemoteIMApplication.h"
 #include "diagnostics/RemoteDiagnosticsController.h"
@@ -52,12 +54,24 @@ class ImagePreviewDialog;
 class MainWindow final : public QMainWindow {
 public:
     explicit MainWindow(RemoteIMApplication& app, QWidget* parent = nullptr);
+    MainWindow(RemoteIMApplication& app, int imSdkAppId,
+               std::function<QString(const QString&)> userSigProvider,
+               QWidget* parent = nullptr);
+    MainWindow(RemoteIMApplication& app, int imSdkAppId,
+               std::function<QString(const QString&)> userSigProvider,
+               std::function<QString()> arkApiKeyProvider,
+               std::function<QPair<QString, QString>()> wanCredentialsProvider,
+               QWidget* parent = nullptr);
 
     // 开始回复某条消息：右键菜单调它，测试也直接调它。
     void beginReplyTo(const RemoteIMMessage& message);
 
     // 通知点击统一入口：定位会话并唤起窗口，保留最大化/全屏状态。
     void openConversationFromNotification(const QString& peerId);
+    // 会话失效时先把远程桌面 stop 信令交给 IM，再由调用方登出 IM SDK。
+    void prepareForAccountDisconnect(std::function<void()> completion);
+    void finishAccountDisconnect();
+    void setLogoutHandler(std::function<void()> handler);
 
     // 把 IM 收/发的文件附件从本地缓存拷贝到 targetPath（存在则覆盖）。
     // 纯文件操作、不弹 UI，供右键「保存到本地」与单测复用；失败时经
@@ -250,6 +264,11 @@ private:
     void updateConnectionIndicator();
 
     RemoteIMApplication& app_;
+    int imSdkAppId_ = 0;
+    std::function<QString(const QString&)> userSigProvider_;
+    std::function<QString()> arkApiKeyProvider_;
+    std::function<QPair<QString, QString>()> wanCredentialsProvider_;
+    std::function<void()> logoutHandler_;
     RemoteDiagnosticsController* diagnostics_ = nullptr;
     QLabel* diagnosticsStatusLabel_ = nullptr;
     QPushButton* moreButton_ = nullptr;
@@ -300,6 +319,8 @@ private:
     RemoteDesktopController* remoteDesktop_ = nullptr;
     bool remoteDesktopShutdown_ = false;
     bool remoteDesktopShutdownComplete_ = false;
+    bool accountDisconnectPending_ = false;
+    std::vector<std::function<void()>> remoteDesktopShutdownCallbacks_;
     std::unique_ptr<RemoteDesktopSettingsStore> remoteDesktopSettingsStore_;
     // 对端设了访问密码时，本次运行内记住，避免每次重试都问。不落盘。
     QHash<QString, QString> remoteDesktopPasswords_;
@@ -312,6 +333,7 @@ private:
     QLabel* settingsAccountValue_ = nullptr;
     QLabel* settingsConnectionValue_ = nullptr;
     QLabel* settingsSdkAppIdValue_ = nullptr;
+    QPushButton* settingsLogoutButton_ = nullptr;
     QLabel* settingsAgentModelValue_ = nullptr;
     QScrollArea* messageScroll_ = nullptr;
     QSplitterHandle* messageComposerHandle_ = nullptr;

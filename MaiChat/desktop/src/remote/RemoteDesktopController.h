@@ -42,7 +42,7 @@ public:
     struct Config {
         int sdkAppId = 0;
         QString localUserId;
-        // 由 TencentUserSigGenerator 生成，与 IM 共用。
+        // 使用与 IM 同一账号的服务端签发 UserSig。
         std::function<QString(const QString& userId)> userSigProvider;
     };
 

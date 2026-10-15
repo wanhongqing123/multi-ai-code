@@ -40,6 +40,7 @@ private slots:
     void forwardsDownloadedImageAndRejectsMissingAttachment();
     void rejectsInternalAttachmentPlaceholderAsPlainText();
     void rejectsUnsupportedVoiceBeforeQueueing();
+    void disconnectsActiveImOnAccountExit();
 };
 
 void RemoteIMApplicationTest::activityIsIndependentFromContentAndExplicitStopClosesIt() {
@@ -95,6 +96,23 @@ void RemoteIMApplicationTest::sendsTextThroughClientAndMarksSent() {
     QCOMPARE(messages.size(), 1);
     QCOMPARE(messages.first().status, RemoteIMMessageStatus::Sent);
     QVERIFY(stateSpy.count() >= 2);
+}
+
+void RemoteIMApplicationTest::disconnectsActiveImOnAccountExit() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fake = client.get();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.connectToService(1600148979, QStringLiteral("server-signed-user-sig"));
+    QVERIFY(app.isConnected());
+    QCOMPARE(fake->connectedUserId(), QStringLiteral("desktop-user"));
+
+    bool completed = false;
+    app.disconnectFromService([&completed](bool ok, const QString&) {
+        completed = ok;
+    });
+    QVERIFY(completed);
+    QVERIFY(!app.isConnected());
+    QVERIFY(fake->connectedUserId().isEmpty());
 }
 
 void RemoteIMApplicationTest::sendsTextToExplicitPeerWithoutChangingSelection() {

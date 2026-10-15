@@ -8,6 +8,7 @@
 #include <QObject>
 #include <QString>
 #include <memory>
+#include <vector>
 
 #include "im/RemoteIMClient.h"
 #include "model/ChatState.h"
@@ -40,6 +41,7 @@ public:
     int loadEarlierMessages(const QString& peerId);
 
     void connectToService(int sdkAppId, const QString& userSig);
+    void disconnectFromService(RemoteIMCompletion completion = {});
     void addContact(const QString& userId, const QString& displayName);
     void deleteContact(const QString& userId);
 
@@ -131,6 +133,8 @@ private:
     std::unique_ptr<RemoteIMClient> client_;
     std::unique_ptr<LocalMessageDatabase> database_;
     bool connected_ = false;
+    bool disconnecting_ = false;
+    std::vector<RemoteIMCompletion> disconnectCallbacks_;
     QHash<QString, RemoteIMActivitySignal> activityByPeer_;
     QHash<QString, QTimer*> activityExpiryTimers_;
     QTimer* typingHeartbeat_ = nullptr;

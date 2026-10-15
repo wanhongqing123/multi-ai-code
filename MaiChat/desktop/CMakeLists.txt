@@ -2,7 +2,7 @@
 # 平台 SDK 和可选媒体能力由配置阶段检查；真实编译命令可导出给 clangd。
 cmake_minimum_required(VERSION 3.21)
 # C 用于 MaiAgent/third_party/md4c（Markdown 解析，纯 C 实现）。
-project(MaiChatDesktop VERSION 0.1.96 LANGUAGES C CXX)
+project(MaiChatDesktop VERSION 0.1.97 LANGUAGES C CXX)
 if(MSVC AND CMAKE_CL_SHOWINCLUDES_PREFIX MATCHES "^娉")
   # Some CMake/VS2019 locale combinations double-decode /showIncludes. Ninja then
   # records no header dependencies, so changing a public header leaves stale objects.
@@ -370,8 +370,6 @@ add_library(remote_im_core
   src/markdown/MarkdownRenderer.cpp
   src/im/RemoteIMClient.h
   src/im/RemoteIMCredentialDefaults.h
-  src/im/TencentUserSigGenerator.h
-  src/im/TencentUserSigGenerator.cpp
   src/im/TimSdkApi.h
   src/im/DynamicTimSdkApi.h
   src/im/DynamicTimSdkApi.cpp
@@ -443,6 +441,12 @@ if(MAICHAT_TRTC_AVAILABLE)
 endif()
 
 add_library(remote_im_desktop_app
+  src/auth/DesktopAuthClient.h
+  src/auth/DesktopAuthClient.cpp
+  src/auth/ModelServiceTokenStore.h
+  src/auth/ModelServiceTokenStore.cpp
+  src/auth/SecureRefreshTokenStore.h
+  src/auth/SecureRefreshTokenStore.cpp
   src/diagnostics/RemoteDiagnosticsController.h
   src/diagnostics/RemoteDiagnosticsController.cpp
   src/app/RemoteIMApplication.h
@@ -458,7 +462,10 @@ target_include_directories(remote_im_desktop_app PUBLIC src)
 target_link_libraries(remote_im_desktop_app PUBLIC remote_im_core Qt5::Gui maiagent)
 if(WIN32)
   # IShellItemImageFactory（资源管理器的缩略图提供程序）取视频首帧。
-  target_link_libraries(remote_im_desktop_app PRIVATE shell32 ole32)
+  target_link_libraries(remote_im_desktop_app PRIVATE shell32 ole32 Advapi32)
+elseif(APPLE)
+  target_link_libraries(remote_im_desktop_app PRIVATE
+    "-framework Security" "-framework CoreFoundation")
 endif()
 
 add_library(remote_im_desktop_ui
@@ -1134,7 +1141,10 @@ target_link_libraries(chat_state_test PRIVATE remote_im_core Qt5::Test)
 add_executable(fake_remote_im_client_test tests/FakeRemoteIMClientTest.cpp)
 target_link_libraries(fake_remote_im_client_test PRIVATE remote_im_core Qt5::Test)
 
-add_executable(tencent_user_sig_generator_test tests/TencentUserSigGeneratorTest.cpp)
+add_executable(tencent_user_sig_generator_test
+  tests/TencentUserSigGeneratorTest.cpp
+  src/im/TencentUserSigGenerator.h
+  src/im/TencentUserSigGenerator.cpp)
 target_link_libraries(tencent_user_sig_generator_test PRIVATE remote_im_core Qt5::Test ZLIB::ZLIB)
 
 add_executable(tim_sdk_remote_im_client_test tests/TimSdkRemoteIMClientTest.cpp)
@@ -1154,6 +1164,31 @@ target_link_libraries(maichat_host_tools_test PRIVATE remote_im_desktop_app remo
 
 add_executable(login_dialog_test tests/LoginDialogTest.cpp)
 target_link_libraries(login_dialog_test PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)
+
+add_executable(secure_refresh_token_store_test
+  tests/SecureRefreshTokenStoreTest.cpp
+  src/auth/SecureRefreshTokenStore.cpp)
+target_include_directories(secure_refresh_token_store_test PRIVATE src)
+target_link_libraries(secure_refresh_token_store_test PRIVATE Qt5::Core Qt5::Test)
+if(APPLE)
+  target_link_libraries(secure_refresh_token_store_test PRIVATE
+    "-framework Security" "-framework CoreFoundation")
+elseif(WIN32)
+  target_link_libraries(secure_refresh_token_store_test PRIVATE Advapi32)
+endif()
+
+add_executable(model_service_token_store_test
+  tests/ModelServiceTokenStoreTest.cpp
+  src/auth/ModelServiceTokenStore.cpp
+  src/auth/SecureRefreshTokenStore.cpp)
+target_include_directories(model_service_token_store_test PRIVATE src)
+target_link_libraries(model_service_token_store_test PRIVATE Qt5::Core Qt5::Test)
+if(APPLE)
+  target_link_libraries(model_service_token_store_test PRIVATE
+    "-framework Security" "-framework CoreFoundation")
+elseif(WIN32)
+  target_link_libraries(model_service_token_store_test PRIVATE Advapi32)
+endif()
 
 add_executable(app_message_dialog_test tests/AppMessageDialogTest.cpp)
 target_link_libraries(app_message_dialog_test PRIVATE remote_im_desktop_ui remote_im_core Qt5::Widgets Qt5::Test)
@@ -1313,6 +1348,8 @@ add_test(NAME local_message_database_test COMMAND local_message_database_test)
 add_test(NAME remote_im_application_test COMMAND remote_im_application_test)
 add_test(NAME maichat_host_tools_test COMMAND maichat_host_tools_test)
 add_test(NAME login_dialog_test COMMAND login_dialog_test)
+add_test(NAME secure_refresh_token_store_test COMMAND secure_refresh_token_store_test)
+add_test(NAME model_service_token_store_test COMMAND model_service_token_store_test)
 add_test(NAME app_message_dialog_test COMMAND app_message_dialog_test)
 add_test(NAME app_text_input_dialog_test COMMAND app_text_input_dialog_test)
 add_test(NAME file_preview_dialog_test COMMAND file_preview_dialog_test)

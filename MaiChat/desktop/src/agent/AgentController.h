@@ -5,6 +5,7 @@
 #pragma once
 
 #include <QObject>
+#include <QPair>
 #include <QString>
 #include <QStringList>
 #include <QVector>
@@ -65,6 +66,9 @@ public:
     QString miniMaxApiKey;
     QString wanApiKey;
     QString wanWorkspaceId;
+    // 短期 Ark/百炼凭据由账号会话提供；工具执行时实时读取，不捕获构造时的旧密钥。
+    std::function<QString()> arkApiKeyProvider;
+    std::function<QPair<QString, QString>()> wanCredentialsProvider;
     QString cloudServiceUrl;
     QString cloudServiceToken;
     QString modelName = QStringLiteral("glm-5.3");

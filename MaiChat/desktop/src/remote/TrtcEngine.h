@@ -19,7 +19,7 @@
 //     其余功能不受影响。
 namespace RemoteDesktop {
 
-// 进房参数。UserSig 与 IM 共用同一套生成逻辑（TencentUserSigGenerator）。
+// 进房参数。UserSig 与 IM 共用服务端签发的凭据。
 struct TrtcRoomParams {
     int sdkAppId = 0;
     QString userId;

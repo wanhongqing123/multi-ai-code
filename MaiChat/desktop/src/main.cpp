@@ -1,6 +1,5 @@
 // 文件作用：桌面端应用功能；main 负责桌面程序入口、服务初始化和事件循环，本文件给出其实现。
-// 直接依赖：app/RemoteIMApplication.h、im/RemoteIMCredentialDefaults.h、logging/AppLog.h、
-// im/TencentUserSigGenerator.h；实现与这些接口协作。
+// 直接依赖：app/RemoteIMApplication.h、auth/DesktopAuthClient.h、logging/AppLog.h。
 #include <QApplication>
 #include <QCoreApplication>
 #include <QDir>
@@ -13,9 +12,8 @@
 #include <memory>
 
 #include "app/RemoteIMApplication.h"
-#include "im/RemoteIMCredentialDefaults.h"
+#include "auth/DesktopAuthClient.h"
 #include "logging/AppLog.h"
-#include "im/TencentUserSigGenerator.h"
 #include "platform/DesktopRemoteIMClientFactory.h"
 #include "storage/LocalMessageDatabase.h"
 
@@ -23,6 +21,7 @@
 #include <shobjidl.h>
 #endif
 #include "ui/LoginDialog.h"
+#include "ui/AppMessageDialog.h"
 #include "ui/MainWindow.h"
 
 namespace {
@@ -161,37 +160,89 @@ int main(int argc, char* argv[]) {
 
     const QStringList arguments = QCoreApplication::arguments();
     const bool smokeMode = arguments.contains(QStringLiteral("--smoke"));
-    // --login <userId>：跳过登录页直接以该账号进入。远程桌面等功能需要同机
-    // 双开两个账号联调，而 GUI 自动化填表在焦点竞争下并不可靠。
-    QString autoLoginUserId;
-    const int loginIndex = arguments.indexOf(QStringLiteral("--login"));
-    if (loginIndex >= 0 && loginIndex + 1 < arguments.size()) {
-        autoLoginUserId = arguments.at(loginIndex + 1).trimmed();
-    }
-
-    LoginDialog loginDialog;
-    if (smokeMode) {
-        loginDialog.setUserId(QStringLiteral("desktop-im"));
-        QTimer::singleShot(0, &loginDialog, &QDialog::accept);
-    } else if (!autoLoginUserId.isEmpty()) {
-        loginDialog.setUserId(autoLoginUserId);
-        QTimer::singleShot(0, &loginDialog, &QDialog::accept);
-    }
+    DesktopAuthClient auth;
+    LoginDialog loginDialog(&auth);
+    if (smokeMode) QTimer::singleShot(300, &loginDialog, &QDialog::reject);
+    else QTimer::singleShot(0, &loginDialog, &LoginDialog::start);
     if (loginDialog.exec() != QDialog::Accepted) {
         return 0;
     }
 
-    RemoteIMApplication remoteIM(loginDialog.userId(),
+    const DesktopImCredential credential = auth.imCredential();
+    if (!credential.isValid() || credential.userId != auth.authenticatedUserId()) {
+        qCritical("[auth] invalid IM credential after desktop login");
+        return 1;
+    }
+    RemoteIMApplication remoteIM(credential.userId,
                                  createDesktopRemoteIMClient(),
-                                 std::make_unique<LocalMessageDatabase>(messageDatabasePath(loginDialog.userId())));
-    MainWindow window(remoteIM);
+                                 std::make_unique<LocalMessageDatabase>(messageDatabasePath(credential.userId)));
+    MainWindow window(remoteIM, credential.sdkAppId,
+                      [&auth](const QString& userId) {
+        const DesktopImCredential current = auth.imCredential();
+        return current.isValid() && current.userId == userId ? current.userSig : QString();
+    }, auth.arkApiKeyProvider(), auth.bailianCredentialProvider());
+    bool invalidatingSession = false;
+    auth.setCredentialUpdatedHandler([&](const DesktopImCredential& renewed) {
+        if (invalidatingSession || renewed.userId != credential.userId) return;
+        const QString renewedSig = renewed.userSig;
+        const int renewedSdkAppId = renewed.sdkAppId;
+        remoteIM.disconnectFromService(
+            [&, renewedSig, renewedSdkAppId](bool, const QString&) {
+            const DesktopImCredential current = auth.imCredential();
+            if (!invalidatingSession && current.isValid() &&
+                current.userSig == renewedSig && current.userId == credential.userId) {
+                remoteIM.connectToService(renewedSdkAppId, renewedSig);
+            }
+        });
+    });
+    auth.setSessionInvalidatedHandler([&](const QString& reason) {
+        if (invalidatingSession) return;
+        invalidatingSession = true;
+        window.prepareForAccountDisconnect([&, reason] {
+            auto finished = std::make_shared<bool>(false);
+            auto showAndClose = [&window, reason, finished] {
+                if (*finished) return;
+                *finished = true;
+                AppMessageDialog::show(&window, AppMessageDialog::Kind::Warning,
+                                       QStringLiteral("登录已失效"), reason);
+                window.finishAccountDisconnect();
+                QCoreApplication::quit();
+            };
+            remoteIM.disconnectFromService([showAndClose](bool, const QString&) {
+                showAndClose();
+            });
+            QTimer::singleShot(3000, &window, showAndClose);
+        });
+    });
+    window.setLogoutHandler([&] {
+        if (invalidatingSession) return;
+        invalidatingSession = true;
+        window.prepareForAccountDisconnect([&] {
+            auto started = std::make_shared<bool>(false);
+            auto revokeAndClose = [&, started] {
+                if (*started) return;
+                *started = true;
+                auth.logout([&window](bool ok, const QString& error) {
+                    if (!ok) {
+                        AppMessageDialog::show(
+                            &window, AppMessageDialog::Kind::Warning,
+                            QStringLiteral("本机已退出"),
+                            QStringLiteral("本机登录已清除，服务端撤销未确认：%1").arg(error));
+                    }
+                    window.finishAccountDisconnect();
+                    QCoreApplication::quit();
+                });
+            };
+            remoteIM.disconnectFromService([revokeAndClose](bool, const QString&) {
+                revokeAndClose();
+            });
+            QTimer::singleShot(3000, &window, revokeAndClose);
+        });
+    });
     window.show();
-    const QString userSig = TencentUserSigGenerator::generate(
-        RemoteIMCredentialDefaults::sdkAppId,
-        loginDialog.userId(),
-        RemoteIMCredentialDefaults::secretKey()
-    );
-    remoteIM.connectToService(RemoteIMCredentialDefaults::sdkAppId, userSig);
+    remoteIM.connectToService(credential.sdkAppId, credential.userSig);
+    auth.startSessionMonitoring();
+    auth.startModelCredentialMonitoring();
 
     if (smokeMode) {
         QTimer::singleShot(300, &app, &QCoreApplication::quit);

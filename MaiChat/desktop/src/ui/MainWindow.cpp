@@ -99,6 +99,7 @@
 #endif
 
 #include "im/RemoteIMCredentialDefaults.h"
+#include "auth/ModelServiceTokenStore.h"
 #include "im/VideoFileMetadata.h"
 #include "markdown/MarkdownDocument.h"
 #include "markdown/MarkdownLabel.h"
@@ -124,7 +125,6 @@
 #include <QSystemTrayIcon>
 
 #include "im/RemoteIMCredentialDefaults.h"
-#include "im/TencentUserSigGenerator.h"
 #include "remote/TrtcEngine.h"
 #include "ui/RemoteDesktopConsentDialog.h"
 #include "ui/RemoteDesktopProxyDialog.h"
@@ -1544,6 +1544,10 @@ QJsonObject cloudModelKeys(const QString &address, const QString &token) {
   QNetworkRequest request(endpoint);
   request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                        QNetworkRequest::ManualRedirectPolicy);
+  request.setAttribute(QNetworkRequest::CacheLoadControlAttribute,
+                       QNetworkRequest::AlwaysNetwork);
+  request.setAttribute(QNetworkRequest::CacheSaveControlAttribute, false);
+  request.setRawHeader("Cache-Control", "no-store");
   request.setHeader(QNetworkRequest::ContentTypeHeader,
                     QStringLiteral("application/json"));
   request.setRawHeader("Authorization", QByteArray("Bearer ") + token.toUtf8());
@@ -1611,11 +1615,9 @@ AgentController::ModelConfig loadAgentModelConfig() {
           .value(QStringLiteral("agent/cloudServiceUrl"),
                  qEnvironmentVariable("MAICHAT_MEDIA_SERVICE_URL"))
           .toString();
-  const QString serviceToken =
-      settings
-          .value(QStringLiteral("agent/cloudServiceToken"),
-                 qEnvironmentVariable("MAICHAT_MEDIA_SERVICE_TOKEN"))
-          .toString();
+  const auto tokenResult =
+      ModelServiceTokenStore::forCurrentApplication().loadAndMigrate(settings);
+  const QString serviceToken = tokenResult.token;
   config.cloudServiceUrl = serviceUrl;
   config.cloudServiceToken = serviceToken;
   const QJsonObject response = cloudModelKeys(serviceUrl, serviceToken);
@@ -1625,11 +1627,7 @@ AgentController::ModelConfig loadAgentModelConfig() {
       keys.value(deepseek ? QStringLiteral("deepseek") : QStringLiteral("glm"))
           .toString();
   config.glmApiKey = keys.value(QStringLiteral("glm")).toString();
-  config.arkApiKey = keys.value(QStringLiteral("ark")).toString();
   config.miniMaxApiKey = keys.value(QStringLiteral("minimax")).toString();
-  config.wanApiKey = keys.value(QStringLiteral("wan")).toString();
-  config.wanWorkspaceId =
-      response.value(QStringLiteral("wan_workspace_id")).toString();
   const QString policy = settings
                              .value(QStringLiteral("agent/approvalPolicy"),
                                     QStringLiteral("on_request"))
@@ -1676,7 +1674,23 @@ void hideNativeTitleBarIcon(QWidget *window) {
 } // namespace
 
 MainWindow::MainWindow(RemoteIMApplication &app, QWidget *parent)
-    : QMainWindow(parent), app_(app),
+    : MainWindow(app, 0, {}, {}, {}, parent) {}
+
+MainWindow::MainWindow(RemoteIMApplication &app, int imSdkAppId,
+                       std::function<QString(const QString&)> userSigProvider,
+                       QWidget *parent)
+    : MainWindow(app, imSdkAppId, std::move(userSigProvider), {}, {}, parent) {}
+
+MainWindow::MainWindow(
+    RemoteIMApplication &app, int imSdkAppId,
+    std::function<QString(const QString&)> userSigProvider,
+    std::function<QString()> arkApiKeyProvider,
+    std::function<QPair<QString, QString>()> wanCredentialsProvider,
+    QWidget *parent)
+    : QMainWindow(parent), app_(app), imSdkAppId_(imSdkAppId),
+      userSigProvider_(std::move(userSigProvider)),
+      arkApiKeyProvider_(std::move(arkApiKeyProvider)),
+      wanCredentialsProvider_(std::move(wanCredentialsProvider)),
       notificationTracker_(QDateTime::currentMSecsSinceEpoch()) {
   Q_INIT_RESOURCE(resources);
   // 缩放只作用于主界面：登录窗（先于此构造）保持设计尺寸，
@@ -1771,6 +1785,10 @@ void MainWindow::updateWindowChromeBackground(bool active) {
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {
+  if (accountDisconnectPending_) {
+    event->ignore();
+    return;
+  }
   if (remoteDesktopShutdownComplete_) {
     QMainWindow::closeEvent(event);
     return;
@@ -1784,13 +1802,29 @@ void MainWindow::closeEvent(QCloseEvent *event) {
 
   QPointer<MainWindow> window(this);
   stopRemoteDesktopForShutdown([window] {
-    if (!window)
+    if (!window || window->accountDisconnectPending_)
       return;
     QTimer::singleShot(0, window, [window] {
-      if (window)
+      if (window && !window->accountDisconnectPending_)
         window->close();
     });
   });
+}
+
+void MainWindow::prepareForAccountDisconnect(std::function<void()> completion) {
+  accountDisconnectPending_ = true;
+  stopRemoteDesktopForShutdown(std::move(completion));
+}
+
+void MainWindow::finishAccountDisconnect() {
+  accountDisconnectPending_ = false;
+  close();
+}
+
+void MainWindow::setLogoutHandler(std::function<void()> handler) {
+  logoutHandler_ = std::move(handler);
+  if (settingsLogoutButton_)
+    settingsLogoutButton_->setEnabled(static_cast<bool>(logoutHandler_));
 }
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
@@ -2506,7 +2540,7 @@ void MainWindow::buildUi() {
   auto *settingsTitle = new QLabel(QStringLiteral("设置"), settingsContent);
   settingsTitle->setObjectName(QStringLiteral("pageTitle"));
   auto *settingsSubtitle =
-      new QLabel(QStringLiteral("桌面端 IM 使用和移动端一致的内置连接配置。"),
+      new QLabel(QStringLiteral("桌面端通过手机确认登录，并使用服务端签发的聊天凭据。"),
                  settingsContent);
   settingsSubtitle->setObjectName(QStringLiteral("settingsSubtitle"));
 
@@ -2526,7 +2560,7 @@ void MainWindow::buildUi() {
   settingsSdkAppIdValue_ = new QLabel(settingsPanel);
   settingsSdkAppIdValue_->setObjectName(
       QStringLiteral("settingsSdkAppIdValue"));
-  auto *signatureValue = new QLabel(QStringLiteral("内置生成"), settingsPanel);
+  auto *signatureValue = new QLabel(QStringLiteral("服务端签发"), settingsPanel);
   signatureValue->setObjectName(QStringLiteral("settingsSignatureValue"));
   settingsAgentModelValue_ = new QLabel(settingsPanel);
   settingsAgentModelValue_->setObjectName(
@@ -2540,10 +2574,10 @@ void MainWindow::buildUi() {
                         QStringLiteral("显示当前 SDK 登录状态。")));
   settingsPanelLayout->addWidget(
       createSettingsRow(QStringLiteral("SDK AppID"), settingsSdkAppIdValue_,
-                        QStringLiteral("和 iOS 使用同一套内置配置。")));
+                        QStringLiteral("由账号服务提供。")));
   settingsPanelLayout->addWidget(createSettingsRow(
       QStringLiteral("登录签名"), signatureValue,
-      QStringLiteral("启动时自动生成，不需要用户手动填写。")));
+      QStringLiteral("由账号服务签发，仅在运行期间使用。")));
   auto *agentSettingsRow = createSettingsRow(
       QStringLiteral("创作中心模型"), settingsAgentModelValue_,
       QStringLiteral("选择主模型并连接云端服务；模型密钥仅在运行期间使用。"));
@@ -2557,6 +2591,27 @@ void MainWindow::buildUi() {
   connect(agentSettingsButton, &QPushButton::clicked, this,
           &MainWindow::editAgentModelSettings);
   settingsPanelLayout->addWidget(agentSettingsRow);
+  auto *logoutValue = new QLabel(QStringLiteral("当前电脑"), settingsPanel);
+  auto *logoutRow = createSettingsRow(
+      QStringLiteral("桌面登录"), logoutValue,
+      QStringLiteral("退出后此电脑需要重新用手机扫码登录。"));
+  settingsLogoutButton_ = new QPushButton(QStringLiteral("退出登录 / 切换账号"), logoutRow);
+  settingsLogoutButton_->setObjectName(QStringLiteral("settingsLogoutButton"));
+  settingsLogoutButton_->setProperty("settingsRowButton", true);
+  settingsLogoutButton_->setEnabled(false);
+  qobject_cast<QHBoxLayout *>(logoutRow->layout())
+      ->addWidget(settingsLogoutButton_);
+  connect(settingsLogoutButton_, &QPushButton::clicked, this, [this] {
+    if (!logoutHandler_) return;
+    if (!AppMessageDialog::confirm(
+            this, QStringLiteral("退出登录"),
+            QStringLiteral("将撤销此电脑的登录并关闭 MaiChat。下次打开可用手机扫码登录。"),
+            QStringLiteral("退出登录"), true))
+      return;
+    settingsLogoutButton_->setEnabled(false);
+    logoutHandler_();
+  });
+  settingsPanelLayout->addWidget(logoutRow);
 
   settingsLayout->addWidget(settingsTitle);
   settingsLayout->addWidget(settingsSubtitle);
@@ -3626,8 +3681,15 @@ void MainWindow::refreshSettings() {
   settingsConnectionValue_->setText(
       app_.isConnected() ? QStringLiteral("已连接") : QStringLiteral("未连接"));
   settingsSdkAppIdValue_->setText(
-      QString::number(RemoteIMCredentialDefaults::sdkAppId));
+      QString::number(imSdkAppId_ > 0 ? imSdkAppId_ : RemoteIMCredentialDefaults::sdkAppId));
   const AgentController::ModelConfig model = loadAgentModelConfig();
+  QSettings settings;
+  const auto tokenResult =
+      ModelServiceTokenStore::forCurrentApplication().loadAndMigrate(settings);
+  if (tokenResult.secureStorageFailed) {
+    settingsAgentModelValue_->setText(QStringLiteral("安全存储不可用"));
+    return;
+  }
   settingsAgentModelValue_->setText(
       model.baseUrl.isEmpty() || model.apiKey.isEmpty()
           ? QStringLiteral("未配置")
@@ -3653,7 +3715,9 @@ void MainWindow::rebuildAgentPage() {
   delete agentController_;
   agentController_ = nullptr;
 
-  const AgentController::ModelConfig modelConfig = loadAgentModelConfig();
+  AgentController::ModelConfig modelConfig = loadAgentModelConfig();
+  modelConfig.arkApiKeyProvider = arkApiKeyProvider_;
+  modelConfig.wanCredentialsProvider = wanCredentialsProvider_;
   if (replySuggestionController_) {
     ReplySuggestionController::Config replyConfig;
     replyConfig.baseUrl = modelConfig.baseUrl;
@@ -3830,6 +3894,8 @@ void MainWindow::editAgentModelSettings() {
 
   QSettings settings;
   const AgentController::ModelConfig current = loadAgentModelConfig();
+  const ModelServiceTokenStore tokenStore =
+      ModelServiceTokenStore::forCurrentApplication();
   QDialog dialog(this);
   dialog.setObjectName(QStringLiteral("agentModelDialog"));
   dialog.setWindowTitle(QStringLiteral("配置创作中心模型"));
@@ -3862,6 +3928,10 @@ void MainWindow::editAgentModelSettings() {
   error->setWordWrap(true);
   error->hide();
   content->addWidget(error);
+  if (tokenStore.loadAndMigrate(settings).secureStorageFailed) {
+    error->setText(QStringLiteral("系统安全存储不可用，旧明文已清除，请重新输入服务令牌。"));
+    error->show();
+  }
   auto *actions = new QHBoxLayout;
   actions->addStretch(1);
   auto *cancel = new QPushButton(QStringLiteral("取消"), &dialog);
@@ -3876,13 +3946,13 @@ void MainWindow::editAgentModelSettings() {
   connect(save, &QPushButton::clicked, &dialog, [&] {
     const QString address = serviceUrl->text().trimmed();
     const QString entered = serviceToken->text().trimmed();
-    const QString token =
-        entered.isEmpty()
-            ? settings
-                  .value(QStringLiteral("agent/cloudServiceToken"),
-                         qEnvironmentVariable("MAICHAT_MEDIA_SERVICE_TOKEN"))
-                  .toString()
-            : entered;
+    const auto storedToken = tokenStore.loadAndMigrate(settings);
+    if (storedToken.secureStorageFailed && entered.isEmpty()) {
+      error->setText(QStringLiteral("系统安全存储不可用，旧明文已清除，请重新输入服务令牌。"));
+      error->show();
+      return;
+    }
+    const QString token = entered.isEmpty() ? storedToken.token : entered;
     const QUrl endpoint(address);
     if (endpoint.scheme() != QStringLiteral("https") ||
         endpoint.host().isEmpty() || !endpoint.userName().isEmpty() ||
@@ -3905,10 +3975,13 @@ void MainWindow::editAgentModelSettings() {
       error->show();
       return;
     }
+    if (!entered.isEmpty() && !tokenStore.save(settings, entered)) {
+      error->setText(QStringLiteral("系统安全存储写入失败，服务令牌未保存。"));
+      error->show();
+      return;
+    }
     settings.setValue(QStringLiteral("agent/model"), selected);
     settings.setValue(QStringLiteral("agent/cloudServiceUrl"), address);
-    if (!entered.isEmpty())
-      settings.setValue(QStringLiteral("agent/cloudServiceToken"), entered);
     for (const char *obsolete :
          {"agent/apiKey", "agent/deepseekApiKey", "agent/baseUrl",
           "agent/deepseekBaseUrl", "agent/wire", "agent/deepseekWire",
@@ -6725,12 +6798,10 @@ void MainWindow::setupRemoteDesktop() {
                           QStringLiteral("/settings.json")));
 
   RemoteDesktopController::Config config;
-  config.sdkAppId = RemoteIMCredentialDefaults::sdkAppId;
+  config.sdkAppId = imSdkAppId_;
   config.localUserId = ownerId;
-  config.userSigProvider = [](const QString &userId) {
-    return TencentUserSigGenerator::generate(
-        RemoteIMCredentialDefaults::sdkAppId, userId,
-        RemoteIMCredentialDefaults::secretKey());
+  config.userSigProvider = [this, ownerId](const QString &userId) {
+    return userId == ownerId && userSigProvider_ ? userSigProvider_(userId) : QString();
   };
 
   RemoteDesktopSettings remoteSettings = remoteDesktopSettingsStore_->load();
@@ -6962,9 +7033,15 @@ void MainWindow::closeRemoteDesktopViewer() {
 
 void MainWindow::stopRemoteDesktopForShutdown(
     std::function<void()> completion) {
+  if (completion)
+    remoteDesktopShutdownCallbacks_.push_back(std::move(completion));
   if (remoteDesktopShutdown_) {
-    if (remoteDesktopShutdownComplete_ && completion)
-      completion();
+    if (remoteDesktopShutdownComplete_) {
+      auto callbacks = std::move(remoteDesktopShutdownCallbacks_);
+      remoteDesktopShutdownCallbacks_.clear();
+      for (auto &callback : callbacks)
+        callback();
+    }
     return;
   }
   remoteDesktopShutdown_ = true;
@@ -6975,14 +7052,15 @@ void MainWindow::stopRemoteDesktopForShutdown(
   }
 
   auto completed = std::make_shared<bool>(false);
-  auto completeOnce = [this, completed,
-                       completion = std::move(completion)]() mutable {
+  auto completeOnce = [this, completed]() {
     if (*completed)
       return;
     *completed = true;
     remoteDesktopShutdownComplete_ = true;
-    if (completion)
-      completion();
+    auto callbacks = std::move(remoteDesktopShutdownCallbacks_);
+    remoteDesktopShutdownCallbacks_.clear();
+    for (auto &callback : callbacks)
+      callback();
   };
 
   // SDK 异常时不能让应用永久关不掉；正常情况下 sendText 的回执会更早到。

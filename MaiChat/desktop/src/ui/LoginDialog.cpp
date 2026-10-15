@@ -1,158 +1,434 @@
-// 文件作用：桌面端共用界面；LoginDialog 负责对话框呈现、确认交互和结果回传，本文件给出其实现。
-// 主要入口：userId、setUserId、buildUi、applyStyle。
-// 实现边界：与 LoginDialog 的公开声明配套，调用方通过相应接口进入。
+// 文件作用：桌面端扫码登录窗口，呈现二维码、核对码、倒计时和明确的登录结果状态。
+// 类型关系：LoginDialog 继承 QDialog，使用 DesktopAuthClient 执行网络请求和凭据获取。
+// 对外边界：窗口只持有本次扫码 verifier；关闭或更换二维码后废弃旧请求，不提供手输账号入口。
+// 直接依赖：Qt Widgets、DesktopAuthClient 和现有 MaiChat 视觉资源。
 #include "ui/LoginDialog.h"
 
 #include <QLabel>
 #include <QPixmap>
-#include <QProcessEnvironment>
+#include <QPushButton>
 #include <QVBoxLayout>
 
 namespace {
-
-QLabel* makeTextLabel(const QString& text, const QString& objectName, QWidget* parent) {
+QLabel* makeLabel(const QString& text, const QString& name, QWidget* parent) {
     auto* label = new QLabel(text, parent);
-    label->setObjectName(objectName);
+    label->setObjectName(name);
+    label->setAlignment(Qt::AlignCenter);
     return label;
 }
-
-QString envValue(const QString& name) {
-    return QProcessEnvironment::systemEnvironment().value(name).trimmed();
 }
 
-}  // namespace
-
-LoginDialog::LoginDialog(QWidget* parent) : QDialog(parent) {
+LoginDialog::LoginDialog(DesktopAuthClient* auth, QWidget* parent)
+    : QDialog(parent), auth_(auth) {
     Q_INIT_RESOURCE(resources);
     buildUi();
     applyStyle();
-    updateLoginButton();
+    setState(State::Loading);
+    countdownTimer_.setInterval(1000);
+    connect(&countdownTimer_, &QTimer::timeout, this, &LoginDialog::updateCountdown);
+    pollTimer_.setSingleShot(true);
+    connect(&pollTimer_, &QTimer::timeout, this, &LoginDialog::pollClaim);
 }
 
-QString LoginDialog::userId() const {
-    return userIdInput_->text().trimmed();
-}
-
-void LoginDialog::setUserId(const QString& userId) {
-    userIdInput_->setText(userId.trimmed());
-    updateLoginButton();
-}
-
-// 作用：建立对话框或会话卡片的控件层级及信号连接。
+// 登录页保持原产品的居中白底结构。二维码、核对码与状态始终留在同一面板，
+// 网络回调只更新内容，不销毁窗口重建，因此等待和失败切换不会出现空帧。
 void LoginDialog::buildUi() {
     setWindowTitle(QStringLiteral("MaiChat"));
     setModal(true);
-    setMinimumSize(720, 480);
-    resize(920, 560);
+    setMinimumSize(720, 680);
+    resize(920, 700);
+    auto* root = new QVBoxLayout(this);
+    root->setContentsMargins(32, 32, 32, 32);
+    root->addStretch();
+    auto* panel = new QWidget(this);
+    panel->setObjectName(QStringLiteral("loginPanel"));
+    panel->setFixedWidth(440);
+    auto* layout = new QVBoxLayout(panel);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
 
-    auto* rootLayout = new QVBoxLayout(this);
-    rootLayout->setContentsMargins(32, 32, 32, 32);
-    rootLayout->setSpacing(0);
-    rootLayout->addStretch(1);
-
-    auto* loginPanel = new QWidget(this);
-    loginPanel->setObjectName(QStringLiteral("loginPanel"));
-    loginPanel->setFixedWidth(420);
-    auto* loginLayout = new QVBoxLayout(loginPanel);
-    loginLayout->setContentsMargins(0, 0, 0, 0);
-    loginLayout->setSpacing(0);
-
-    auto* logo = makeTextLabel(QString(), QStringLiteral("loginLogo"), loginPanel);
-    logo->setAlignment(Qt::AlignCenter);
+    auto* logo = makeLabel({}, QStringLiteral("loginLogo"), panel);
     logo->setFixedSize(64, 64);
-    const QPixmap appIcon(QStringLiteral(":/maichat/app-icon.png"));
-    // 高分屏（DPR>1）按物理分辨率缩放并声明 DPR，否则 64 逻辑像素的位图会被
-    // 绘制层再放大一次，logo 发虚（源图 1024px，分辨率充足）。
-    const qreal logoDpr = devicePixelRatioF();
-    QPixmap logoPixmap = appIcon.scaled(QSize(64, 64) * logoDpr,
-                                        Qt::KeepAspectRatio, Qt::SmoothTransformation);
-    logoPixmap.setDevicePixelRatio(logoDpr);
+    const QPixmap icon(QStringLiteral(":/maichat/app-icon.png"));
+    const qreal dpr = devicePixelRatioF();
+    QPixmap logoPixmap = icon.scaled(QSize(64, 64) * dpr, Qt::KeepAspectRatio,
+                                     Qt::SmoothTransformation);
+    logoPixmap.setDevicePixelRatio(dpr);
     logo->setPixmap(logoPixmap);
+    layout->addWidget(logo, 0, Qt::AlignHCenter);
+    layout->addSpacing(12);
+    layout->addWidget(makeLabel(QStringLiteral("欢迎使用 MaiChat"),
+                                QStringLiteral("welcomeTitle"), panel));
+    layout->addSpacing(8);
+    layout->addWidget(makeLabel(QStringLiteral("请使用已登录的 MaiChat 手机扫码"),
+                                QStringLiteral("loginSubtitle"), panel));
+    layout->addSpacing(22);
 
-    auto* title = makeTextLabel(QStringLiteral("欢迎使用 MaiChat"), QStringLiteral("welcomeTitle"), loginPanel);
-    title->setAlignment(Qt::AlignCenter);
-
-    loginLayout->addWidget(logo, 0, Qt::AlignHCenter);
-    loginLayout->addSpacing(12);
-    loginLayout->addWidget(title);
-    loginLayout->addSpacing(28);
-
-    userIdInput_ = new QLineEdit(loginPanel);
-    userIdInput_->setObjectName(QStringLiteral("userIdInput"));
-    userIdInput_->setPlaceholderText(QStringLiteral("请输入登录账号"));
-    userIdInput_->setClearButtonEnabled(true);
-    userIdInput_->setFixedHeight(46);
-    loginLayout->addWidget(userIdInput_);
-    loginLayout->addSpacing(16);
-
-    loginButton_ = new QPushButton(QStringLiteral("登录"), loginPanel);
-    loginButton_->setObjectName(QStringLiteral("loginButton"));
-    loginButton_->setCursor(Qt::PointingHandCursor);
-    loginButton_->setDefault(true);
-    loginButton_->setFixedHeight(46);
-    loginLayout->addWidget(loginButton_);
-
-    rootLayout->addWidget(loginPanel, 0, Qt::AlignHCenter);
-    rootLayout->addStretch(1);
-
-    userIdInput_->setText(envValue(QStringLiteral("MAICHAT_USER_ID")));
-
-    connect(userIdInput_, &QLineEdit::textChanged, this, [this] { updateLoginButton(); });
-    connect(loginButton_, &QPushButton::clicked, this, [this] {
-        if (!userId().isEmpty()) accept();
-    });
+    auto* frame = new QWidget(panel);
+    frame->setObjectName(QStringLiteral("qrFrame"));
+    frame->setFixedSize(260, 260);
+    auto* qrLayout = new QVBoxLayout(frame);
+    qrLayout->setContentsMargins(14, 14, 14, 14);
+    qrLabel_ = makeLabel(QStringLiteral("正在生成二维码…"),
+                         QStringLiteral("loginQr"), frame);
+    qrLabel_->setFixedSize(232, 232);
+    qrLayout->addWidget(qrLabel_);
+    layout->addWidget(frame, 0, Qt::AlignHCenter);
+    layout->addSpacing(18);
+    codeLabel_ = makeLabel({}, QStringLiteral("loginCode"), panel);
+    layout->addWidget(codeLabel_);
+    layout->addSpacing(8);
+    statusLabel_ = makeLabel({}, QStringLiteral("loginStatus"), panel);
+    layout->addWidget(statusLabel_);
+    layout->addSpacing(5);
+    detailLabel_ = makeLabel({}, QStringLiteral("loginDetail"), panel);
+    detailLabel_->setWordWrap(true);
+    detailLabel_->setMinimumHeight(38);
+    layout->addWidget(detailLabel_);
+    countdownLabel_ = makeLabel({}, QStringLiteral("loginCountdown"), panel);
+    layout->addWidget(countdownLabel_);
+    layout->addSpacing(17);
+    retryButton_ = new QPushButton(QStringLiteral("更换二维码"), panel);
+    retryButton_->setObjectName(QStringLiteral("loginRetryButton"));
+    retryButton_->setFixedHeight(46);
+    retryButton_->setCursor(Qt::PointingHandCursor);
+    layout->addWidget(retryButton_);
+    layout->addSpacing(10);
+    auto* cancelButton = new QPushButton(QStringLiteral("取消登录"), panel);
+    cancelButton->setObjectName(QStringLiteral("loginCancelButton"));
+    cancelButton->setFixedHeight(38);
+    cancelButton->setCursor(Qt::PointingHandCursor);
+    layout->addWidget(cancelButton);
+    root->addWidget(panel, 0, Qt::AlignHCenter);
+    root->addStretch();
+    connect(retryButton_, &QPushButton::clicked, this, &LoginDialog::retry);
+    connect(cancelButton, &QPushButton::clicked, this, &LoginDialog::reject);
 }
 
 void LoginDialog::applyStyle() {
     setStyleSheet(QStringLiteral(R"(
-        LoginDialog {
-            background: #ffffff;
-        }
-        #loginPanel {
-            background: transparent;
-        }
-        #loginLogo {
-            background: transparent;
-        }
-        #welcomeTitle {
-            color: #0f172a;
-            font-size: 20px;
-            font-weight: 700;
-        }
-        #userIdInput {
-            border: 1px solid #d9e1ec;
-            border-radius: 10px;
-            background: #ffffff;
-            color: #0f172a;
-            padding: 0 14px;
-            font-size: 14px;
-            selection-background-color: #2f81f7;
-        }
-        #userIdInput:focus {
-            border: 2px solid #2f81f7;
-        }
-        #loginButton {
-            border: 0;
-            border-radius: 10px;
-            background: #2f81f7;
-            color: #ffffff;
-            font-size: 15px;
-            font-weight: 700;
-        }
-        #loginButton:hover {
-            background: #256fe0;
-        }
-        #loginButton:pressed {
-            background: #1f63cf;
-        }
-        #loginButton:disabled {
-            background: #eef1f5;
-            color: #aab4c3;
-        }
+        LoginDialog { background: #ffffff; }
+        #loginPanel, #loginLogo { background: transparent; }
+        #welcomeTitle { color: #0f172a; font-size: 20px; font-weight: 700; }
+        #loginSubtitle { color: #64748b; font-size: 13px; }
+        #qrFrame { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; }
+        #loginQr { color: #94a3b8; font-size: 13px; border: 0; }
+        #loginCode { color: #334155; font-size: 15px; font-weight: 600; }
+        #loginStatus { color: #0f172a; font-size: 15px; font-weight: 600; }
+        #loginDetail, #loginCountdown { color: #64748b; font-size: 12px; }
+        #loginRetryButton { border: 0; border-radius: 10px; background: #2f81f7;
+                            color: #ffffff; font-size: 14px; font-weight: 700; }
+        #loginRetryButton:hover { background: #256fe0; }
+        #loginRetryButton:pressed { background: #1f63cf; }
+        #loginRetryButton:disabled { background: #eef1f5; color: #aab4c3; }
+        #loginCancelButton { border: 0; background: transparent; color: #64748b;
+                             font-size: 13px; }
+        #loginCancelButton:hover { color: #0f172a; }
     )"));
 }
 
-void LoginDialog::updateLoginButton() {
-    loginButton_->setEnabled(!userId().isEmpty());
+// 所有可见状态集中处理：每次状态转换同时更新文案、按钮、二维码和倒计时，
+// 防止过期或拒绝后旧码仍可见、连接中仍能重复提交。
+void LoginDialog::setState(State state, const QString& detail) {
+    state_ = state;
+    QString status, hint = detail, action = QStringLiteral("更换二维码");
+    bool enabled = true;
+    const bool showQr = !request_.qrPng.isEmpty() && !request_.verifier.isEmpty() &&
+        (state == State::Waiting || state == State::Scanned ||
+         state == State::NetworkError);
+    switch (state) {
+    case State::Restoring:
+        status = QStringLiteral("正在恢复登录");
+        hint = QStringLiteral("正在验证此电脑上保存的登录信息");
+        enabled = false;
+        break;
+    case State::RestoreError:
+        status = QStringLiteral("恢复登录失败");
+        if (hint.isEmpty()) hint = QStringLiteral("检查网络后重试");
+        action = QStringLiteral("重试恢复登录");
+        break;
+    case State::Loading:
+        status = QStringLiteral("正在生成登录二维码");
+        hint = QStringLiteral("请稍候");
+        enabled = false;
+        break;
+    case State::Waiting:
+        status = QStringLiteral("等待手机扫码并确认");
+        hint = QStringLiteral("请核对手机上的六位数字，再确认登录");
+        break;
+    case State::Scanned:
+        status = QStringLiteral("已扫码，请在手机上确认");
+        hint = QStringLiteral("确认前请核对手机和电脑上的六位数字");
+        break;
+    case State::Expired:
+        status = QStringLiteral("二维码已过期");
+        hint = QStringLiteral("生成新二维码后再用手机扫描");
+        action = QStringLiteral("生成新二维码");
+        break;
+    case State::Denied:
+        status = QStringLiteral("手机拒绝了这次登录");
+        hint = QStringLiteral("如需登录，请重新生成二维码");
+        action = QStringLiteral("生成新二维码");
+        break;
+    case State::ApprovalRevoked:
+        status = QStringLiteral("手机授权已失效");
+        hint = QStringLiteral("请使用当前已登录的手机重新扫码");
+        action = QStringLiteral("生成新二维码");
+        break;
+    case State::NetworkError:
+        status = QStringLiteral("网络连接失败");
+        if (hint.isEmpty()) hint = QStringLiteral("检查网络后重试");
+        action = QStringLiteral("重试连接");
+        break;
+    case State::Connecting:
+        status = QStringLiteral("登录成功，正在连接");
+        hint = QStringLiteral("正在获取安全的聊天凭据");
+        enabled = false;
+        break;
+    case State::CredentialError:
+        status = QStringLiteral("连接聊天服务失败");
+        action = auth_ && auth_->authenticatedUserId().isEmpty() ?
+            QStringLiteral("生成新二维码") : QStringLiteral("重试连接");
+        break;
+    }
+    statusLabel_->setText(status);
+    detailLabel_->setText(hint);
+    retryButton_->setText(action);
+    retryButton_->setEnabled(enabled);
+    if (showQr) {
+        QPixmap pixmap;
+        pixmap.loadFromData(request_.qrPng, "PNG");
+        qrLabel_->setPixmap(pixmap.width() <= 232 && pixmap.height() <= 232 ?
+            pixmap : pixmap.scaled(232, 232, Qt::KeepAspectRatio,
+                                   Qt::FastTransformation));
+    } else {
+        qrLabel_->setPixmap({});
+        qrLabel_->setText(state == State::Loading ? QStringLiteral("正在生成二维码…") :
+                          state == State::Restoring ? QStringLiteral("正在恢复登录…") :
+                          state == State::Connecting ? QStringLiteral("正在连接聊天服务…") :
+                          state == State::CredentialError && auth_ &&
+                              !auth_->authenticatedUserId().isEmpty() ?
+                              QStringLiteral("手机确认已完成") :
+                          QStringLiteral("请生成新二维码"));
+    }
+    codeLabel_->setText(showQr ? QStringLiteral("核对码  %1").arg(request_.displayCode) : QString());
+    countdownLabel_->setVisible(showQr && !expiresAt_.isNull());
 }
 
+void LoginDialog::start() {
+    if (!auth_) return;
+    setState(State::Restoring);
+    const quint64 generation = ++generation_;
+    auth_->restore([this, generation](bool ok, const QString& error) {
+        if (generation != generation_) return;
+        if (ok) accept();
+        else if (auth_->hasRestorableSession()) setState(State::RestoreError, error);
+        else requestQr();
+    });
+}
+
+void LoginDialog::requestQr() {
+    if (!auth_) return;
+    auth_->prepareForQrLogin();
+    ++generation_;
+    const DesktopLoginRequest previous = request_;
+    request_ = {};
+    expiresAt_ = {};
+    pollInFlight_ = false;
+    countdownTimer_.stop();
+    pollTimer_.stop();
+    cancelRequest(previous);
+    setState(State::Loading);
+    qrRestartPending_ = true;
+    continueQrRequest();
+}
+
+void LoginDialog::continueQrRequest() {
+    if (!qrRestartPending_ || closing_ || pendingClaimCount_ != 0 ||
+        pendingCancellationCount_ != 0 || pendingRevocationCount_ != 0) return;
+    qrRestartPending_ = false;
+    const quint64 generation = generation_;
+    auth_->createLoginRequest([this, generation](const DesktopLoginRequest& request,
+                                                  const QString& error) {
+        if (generation != generation_) return;
+        if (!error.isEmpty()) {
+            setState(State::NetworkError, error);
+            return;
+        }
+        QPixmap pixmap;
+        if (!pixmap.loadFromData(request.qrPng, "PNG")) {
+            setState(State::NetworkError, QStringLiteral("登录二维码图片无效"));
+            return;
+        }
+        request_ = request;
+        expiresAt_ = QDateTime::currentDateTimeUtc().addSecs(request.expiresIn);
+        setState(State::Waiting);
+        updateCountdown();
+        countdownTimer_.start();
+        pollTimer_.start(2000);
+    });
+}
+
+void LoginDialog::updateCountdown() {
+    const qint64 remaining = QDateTime::currentDateTimeUtc().secsTo(expiresAt_);
+    if (remaining <= 0) {
+        countdownTimer_.stop();
+        pollTimer_.stop();
+        request_.verifier.clear();
+        setState(State::Expired);
+        return;
+    }
+    countdownLabel_->setText(QStringLiteral("%1 秒后过期").arg(remaining));
+}
+
+// 同一时刻只发送一条 claim。generation 保证更换二维码或取消登录后，
+// 旧网络回复既不能改新页面，也不能接受已经被废弃的会话。
+void LoginDialog::pollClaim() {
+    if (!auth_ || pollInFlight_ || request_.verifier.isEmpty()) return;
+    pollInFlight_ = true;
+    ++pendingClaimCount_;
+    const quint64 generation = generation_;
+    auth_->claim(request_.requestId, request_.verifier,
+                 [this, generation](const DesktopAuthClient::ClaimResult& result) {
+        --pendingClaimCount_;
+        if (generation != generation_ || closing_) {
+            if (result.status == DesktopAuthClient::ClaimStatus::Approved)
+                revokeUnwantedClaim(result.session);
+            continueQrRequest();
+            finishCancellation();
+            return;
+        }
+        pollInFlight_ = false;
+        if (state_ == State::Expired &&
+            result.status != DesktopAuthClient::ClaimStatus::Approved) return;
+        switch (result.status) {
+        case DesktopAuthClient::ClaimStatus::Pending:
+            setState(State::Waiting);
+            pollTimer_.start(2000);
+            break;
+        case DesktopAuthClient::ClaimStatus::Scanned:
+            setState(State::Scanned);
+            pollTimer_.start(2000);
+            break;
+        case DesktopAuthClient::ClaimStatus::Denied:
+            countdownTimer_.stop();
+            request_.verifier.clear();
+            setState(State::Denied);
+            break;
+        case DesktopAuthClient::ClaimStatus::ApprovalRevoked:
+            countdownTimer_.stop();
+            request_.verifier.clear();
+            setState(State::ApprovalRevoked);
+            break;
+        case DesktopAuthClient::ClaimStatus::Expired:
+            countdownTimer_.stop();
+            request_.verifier.clear();
+            setState(State::Expired);
+            break;
+        case DesktopAuthClient::ClaimStatus::Approved:
+            countdownTimer_.stop();
+            request_.verifier.clear();
+            setState(State::Connecting);
+            auth_->adoptApprovedSession(result.session,
+                [this, generation](bool ok, const QString& error) {
+                    if (generation != generation_) return;
+                    if (ok) accept();
+                    else {
+                        if (auth_->authenticatedUserId().isEmpty()) {
+                            request_ = {};
+                            expiresAt_ = {};
+                        }
+                        setState(State::CredentialError, error);
+                    }
+                });
+            break;
+        case DesktopAuthClient::ClaimStatus::Failed:
+            setState(State::NetworkError, result.error);
+            pollTimer_.start(5000);
+            break;
+        }
+    });
+}
+
+void LoginDialog::retry() {
+    if (!auth_) return;
+    if (state_ == State::RestoreError) {
+        start();
+    } else if (state_ == State::CredentialError) {
+        if (auth_->authenticatedUserId().isEmpty()) {
+            requestQr();
+            return;
+        }
+        setState(State::Connecting);
+        const quint64 generation = generation_;
+        auth_->fetchImCredential([this, generation](bool ok, const QString& error) {
+            if (generation != generation_) return;
+            if (ok) accept();
+            else {
+                if (auth_->authenticatedUserId().isEmpty()) {
+                    request_ = {};
+                    expiresAt_ = {};
+                }
+                setState(State::CredentialError, error);
+            }
+        });
+    } else if (state_ == State::NetworkError && !request_.verifier.isEmpty()) {
+        setState(State::Waiting);
+        pollTimer_.stop();
+        pollClaim();
+    } else {
+        requestQr();
+    }
+}
+
+void LoginDialog::reject() {
+    if (closing_) return;
+    closing_ = true;
+    cancellationSetupComplete_ = false;
+    qrRestartPending_ = false;
+    ++generation_;
+    countdownTimer_.stop();
+    pollTimer_.stop();
+    const DesktopLoginRequest previous = request_;
+    request_ = {};
+    // 先隐藏，再等待在途 claim 与撤销结果，避免 claim200 已签发会话却丢掉令牌。
+    hide();
+    cancelRequest(previous);
+    if (auth_ && !auth_->authenticatedUserId().isEmpty()) {
+        ++pendingLogoutCount_;
+        auth_->logout([this](bool, const QString&) {
+            --pendingLogoutCount_;
+            finishCancellation();
+        });
+    }
+    cancellationSetupComplete_ = true;
+    finishCancellation();
+}
+
+void LoginDialog::finishCancellation() {
+    if (!closing_ || !cancellationSetupComplete_) return;
+    if (pendingClaimCount_ != 0 || pendingCancellationCount_ != 0 ||
+        pendingRevocationCount_ != 0 || pendingLogoutCount_ != 0) return;
+    closing_ = false;
+    QDialog::reject();
+}
+
+void LoginDialog::cancelRequest(const DesktopLoginRequest& request) {
+    if (!auth_ || request.verifier.isEmpty()) return;
+    ++pendingCancellationCount_;
+    auth_->cancelLoginRequest(request.requestId, request.verifier, [this] {
+        --pendingCancellationCount_;
+        continueQrRequest();
+        finishCancellation();
+    });
+}
+
+void LoginDialog::revokeUnwantedClaim(const QJsonObject& session) {
+    if (!auth_) return;
+    ++pendingRevocationCount_;
+    auth_->revokeUnwantedClaim(session, [this] {
+        --pendingRevocationCount_;
+        continueQrRequest();
+        finishCancellation();
+    });
+}

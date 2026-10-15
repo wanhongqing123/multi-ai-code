@@ -51,6 +51,7 @@
 #endif
 
 #include "agent/ReplySuggestionController.h"
+#include "auth/SecureRefreshTokenStore.h"
 #include "app/RemoteIMApplication.h"
 #include "im/FakeRemoteIMClient.h"
 #include "markdown/MarkdownDocument.h"
@@ -119,7 +120,10 @@ private slots:
     void attachmentDraftStaysWithItsContact();
     void contactsCurrentSelectionDoesNotLeaveContactsPage();
     void settingsNavigationShowsAccountAndSdkDefaults();
+    void settingsLogoutRequiresConfirmationAndCallsHandler();
     void agentSettingsDialogExposesSecureModelFields();
+    void agentSettingsMigratesLegacyTokenOutOfQSettings();
+    void agentSettingsShowsSecureStorageFailure();
     void agentSettingsRejectsInvalidCloudService();
     void agentSettingsDialogUsesMaiChatVisualStyle();
     void leftNavigationRailIsResizableAndWider();
@@ -1943,6 +1947,44 @@ void MainWindowLayoutTest::settingsNavigationShowsAccountAndSdkDefaults() {
     QVERIFY(settingsPage->findChildren<QLineEdit*>().isEmpty());
 }
 
+void MainWindowLayoutTest::settingsLogoutRequiresConfirmationAndCallsHandler() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    MainWindow window(app);
+    auto* button = window.findChild<QPushButton*>(QStringLiteral("settingsLogoutButton"));
+    QVERIFY(button != nullptr);
+    QCOMPARE(button->text(), QStringLiteral("退出登录 / 切换账号"));
+    QVERIFY(!button->isEnabled());
+
+    bool loggedOut = false;
+    window.setLogoutHandler([&loggedOut] { loggedOut = true; });
+    QVERIFY(button->isEnabled());
+    bool sawCancel = false;
+    QTimer::singleShot(0, &window, [&] {
+        auto* dialog = window.findChild<QDialog*>(QStringLiteral("appMessageDialog"));
+        auto* cancel = dialog ? dialog->findChild<QPushButton*>(
+            QStringLiteral("appMessageCancel")) : nullptr;
+        sawCancel = cancel != nullptr;
+        if (cancel) cancel->click();
+    });
+    button->click();
+    QVERIFY(sawCancel);
+    QVERIFY(!loggedOut);
+
+    bool sawConfirm = false;
+    QTimer::singleShot(0, &window, [&] {
+        auto* dialog = window.findChild<QDialog*>(QStringLiteral("appMessageDialog"));
+        auto* confirm = dialog ? dialog->findChild<QPushButton*>(
+            QStringLiteral("appMessageDanger")) : nullptr;
+        sawConfirm = confirm != nullptr;
+        if (confirm) confirm->click();
+    });
+    button->click();
+    QVERIFY(sawConfirm);
+    QVERIFY(loggedOut);
+    QVERIFY(!button->isEnabled());
+}
+
 void MainWindowLayoutTest::agentSettingsDialogExposesSecureModelFields() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
@@ -1973,6 +2015,92 @@ void MainWindowLayoutTest::agentSettingsDialogExposesSecureModelFields() {
     QVERIFY(sawDialog);
     QVERIFY(serviceTokenIsMasked);
     QVERIFY(legacyFieldsGone);
+}
+
+void MainWindowLayoutTest::agentSettingsMigratesLegacyTokenOutOfQSettings() {
+    const QString originalOrganization = QCoreApplication::organizationName();
+    const QString originalApplication = QCoreApplication::applicationName();
+    struct RestoreIdentity {
+        QString organization;
+        QString application;
+        ~RestoreIdentity() {
+            QCoreApplication::setOrganizationName(organization);
+            QCoreApplication::setApplicationName(application);
+        }
+    } restore{originalOrganization, originalApplication};
+    QCoreApplication::setOrganizationName(QStringLiteral("MaiChatTests"));
+    QCoreApplication::setApplicationName(QStringLiteral("AgentTokenMigration"));
+    QSettings settings;
+    settings.clear();
+    settings.setValue(QStringLiteral("agent/cloudServiceUrl"), QString());
+    const QString dummyToken(43, QLatin1Char('M'));
+    settings.setValue(QStringLiteral("agent/cloudServiceToken"), dummyToken);
+    settings.sync();
+    SecureRefreshTokenStore secureStore(
+        QStringLiteral("com.maichat.desktop.model.test.MaiChatTests.AgentTokenMigration"),
+        QStringLiteral("cloud_service_token"));
+    secureStore.remove();
+    struct Cleanup {
+        SecureRefreshTokenStore& store;
+        QSettings& settings;
+        ~Cleanup() {
+            settings.clear();
+            settings.sync();
+            store.remove();
+        }
+    } cleanup{secureStore, settings};
+
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    MainWindow window(app);
+    settings.sync();
+    QVERIFY(!settings.contains(QStringLiteral("agent/cloudServiceToken")));
+    QCOMPARE(secureStore.read(), dummyToken);
+}
+
+void MainWindowLayoutTest::agentSettingsShowsSecureStorageFailure() {
+    const QString originalOrganization = QCoreApplication::organizationName();
+    const QString originalApplication = QCoreApplication::applicationName();
+    struct RestoreIdentity {
+        QString organization;
+        QString application;
+        ~RestoreIdentity() {
+            QCoreApplication::setOrganizationName(organization);
+            QCoreApplication::setApplicationName(application);
+        }
+    } restore{originalOrganization, originalApplication};
+    QCoreApplication::setOrganizationName(QStringLiteral("MaiChatTests"));
+    QCoreApplication::setApplicationName(QStringLiteral("AgentTokenFailureUi"));
+    QSettings settings;
+    settings.clear();
+    settings.setValue(QStringLiteral("agent/cloudServiceUrl"), QString());
+    settings.setValue(QStringLiteral("agent/cloudServiceTokenMigrationFailed"), true);
+    settings.sync();
+    struct Cleanup {
+        QSettings& settings;
+        ~Cleanup() { settings.clear(); settings.sync(); }
+    } cleanup{settings};
+
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    MainWindow window(app);
+    auto* value = window.findChild<QLabel*>(QStringLiteral("settingsAgentModelValue"));
+    auto* button = window.findChild<QPushButton*>(QStringLiteral("settingsAgentModelButton"));
+    QVERIFY(value != nullptr);
+    QVERIFY(button != nullptr);
+    QCOMPARE(value->text(), QStringLiteral("安全存储不可用"));
+
+    bool showedFailure = false;
+    QTimer::singleShot(0, &window, [&] {
+        auto* dialog = window.findChild<QDialog*>(QStringLiteral("agentModelDialog"));
+        auto* error = dialog ? dialog->findChild<QLabel*>(
+            QStringLiteral("agentModelError")) : nullptr;
+        showedFailure = error && error->isVisible() &&
+                        error->text().contains(QStringLiteral("旧明文已清除"));
+        if (dialog) dialog->reject();
+    });
+    button->click();
+    QVERIFY(showedFailure);
 }
 
 void MainWindowLayoutTest::agentSettingsRejectsInvalidCloudService() {

@@ -1,6 +1,7 @@
 // 文件作用：验证“MaiCore”的正确行为和边界条件。
 // 验证入口：test_id_prefix_and_monotonic、test_session_crud_and_events、
-// test_media_only_prompt_has_no_placeholder_text；检查可观察结果而非实现细节。
+// test_media_only_prompt_has_no_placeholder_text、test_mixed_media_prompt_is_one_message。
+// 检查可观察结果而非实现细节。
 #include <cassert>
 #include <cstdio>
 #include <memory>
@@ -112,6 +113,43 @@ static void test_media_only_prompt_has_no_placeholder_text() {
             ++mediaOnly;
     }
     CHECK(mediaOnly == 2);
+}
+
+static void test_mixed_media_prompt_is_one_message() {
+    MaiFakeModelClient::Turn reply;
+    reply.textChunks = {"received"};
+    auto model =
+        std::make_unique<MaiFakeModelClient>(std::vector<MaiFakeModelClient::Turn>{reply, reply});
+    MaiAgent agent(makeMaiMemoryStore(), std::move(model), nullptr);
+    const std::string session = agent.submit(MaiCreateSession{"/tmp", "", "test-model"}).value();
+    CHECK(agent.submit(MaiSendPrompt{
+        session, "Describe both", {{"photo.jpg", "image/jpeg"}}, {{"clip.mp4", "video/mp4"}}}));
+    agent.waitIdle();
+    CHECK(agent.submit(
+        MaiSendPrompt{session, "", {{"other.jpg", "image/jpeg"}}, {{"other.mp4", "video/mp4"}}}));
+    agent.waitIdle();
+
+    int describedMessages = 0;
+    int mediaOnlyMessages = 0;
+    for (const auto& message : agent.listMessages(session)) {
+        if (message.role != MaiRole::User) continue;
+        const auto& parts = message.parts;
+        if (message.text() == "Describe both") {
+            ++describedMessages;
+            CHECK(parts.size() == 3);
+            CHECK(std::holds_alternative<MaiTextPart>(parts[0].body));
+            CHECK(std::get<MaiImagePart>(parts[1].body).path == "photo.jpg");
+            CHECK(std::get<MaiVideoPart>(parts[2].body).path == "clip.mp4");
+        } else {
+            ++mediaOnlyMessages;
+            CHECK(message.text().empty());
+            CHECK(parts.size() == 2);
+            CHECK(std::get<MaiImagePart>(parts[0].body).path == "other.jpg");
+            CHECK(std::get<MaiVideoPart>(parts[1].body).path == "other.mp4");
+        }
+    }
+    CHECK(describedMessages == 1);
+    CHECK(mediaOnlyMessages == 1);
 }
 
 static void test_quoted_message_is_scoped_and_persisted() {
@@ -257,6 +295,7 @@ int main() {
     test_id_prefix_and_monotonic();
     test_session_crud_and_events();
     test_media_only_prompt_has_no_placeholder_text();
+    test_mixed_media_prompt_is_one_message();
     test_quoted_message_is_scoped_and_persisted();
     test_interrupted_tool_is_recovered_on_startup();
     test_event_handlers_run_with_blocking_disallowed();

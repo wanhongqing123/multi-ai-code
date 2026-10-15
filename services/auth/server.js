@@ -54,8 +54,6 @@ function createServer(service) {
 }
 
 function start(env = process.env) {
-  const allowedPhones = (env.MAICHAT_AUTH_ALLOWED_PHONES || '').split(',')
-    .map(normalizePhone).filter(Boolean);
   const modelAllowedPhones = (env.MAICHAT_MODEL_ALLOWED_PHONES || '').split(',')
     .map(normalizePhone).filter(Boolean);
   if (!env.MAICHAT_AUTH_DB_PATH || !env.MAICHAT_AUTH_HMAC_KEY ||
@@ -68,9 +66,7 @@ function start(env = process.env) {
     imSecret: env.MAICHAT_IM_SECRET_KEY,
     issueArkCredential: createArkCredentialIssuer(env),
     issueBailianCredential: createBailianCredentialIssuer(env),
-    sdkAppId: Number(env.MAICHAT_IM_SDK_APP_ID), allowedPhones,
-    openRegistration: env.MAICHAT_AUTH_OPEN_REGISTRATION === '1',
-    modelAllowedPhones
+    sdkAppId: Number(env.MAICHAT_IM_SDK_APP_ID), modelAllowedPhones
   });
   const port = Number(env.MAICHAT_AUTH_PORT || 9100);
   if (!Number.isInteger(port) || port < 1 || port > 65535)

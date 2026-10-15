@@ -22,7 +22,6 @@ const service = createAuthService({
   secret: randomBytes(32).toString('hex'),
   imSecret: randomBytes(32).toString('hex'),
   sdkAppId: 123456789,
-  allowedPhones: phones,
   modelAllowedPhones: [],
   issueArkCredential: async () => { throw new Error('Paid models are disabled locally'); },
   issueBailianCredential: async () => { throw new Error('Paid models are disabled locally'); }

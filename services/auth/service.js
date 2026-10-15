@@ -39,23 +39,6 @@ function createAuthService(options) {
   const arkIssuanceInFlight = new Map();
   const bailianCredentials = new Map();
   const bailianIssuanceInFlight = new Map();
-  // 环境变量里的旧白名单只导入一次。之后每次发码都查数据库，管理员增删立即生效。
-  // 导入标记与号码放在同一事务，避免服务重启时把已移除的号码重新加回来。
-  db.transaction(() => {
-    const imported = db.prepare(`SELECT value FROM auth_settings
-      WHERE key='sms_allowlist_imported_v1'`).get();
-    if (imported) return;
-    const insert = db.prepare(`INSERT OR IGNORE INTO sms_allowed_phones(phone_e164,created_at)
-      VALUES(?,?)`);
-    for (const input of options.allowedPhones || []) {
-      const phone = normalizePhone(input);
-      if (phone) insert.run(phone, now());
-    }
-    db.prepare(`INSERT INTO auth_settings(key,value)
-      VALUES('sms_allowlist_imported_v1','1')`).run();
-  })();
-  const allowedPhone = db.prepare('SELECT 1 FROM sms_allowed_phones WHERE phone_e164=?');
-  const sendable = phone => options.openRegistration === true || !!allowedPhone.get(phone);
   const keyedHash = text => createHmac('sha256', secret).update(text).digest('hex');
   const phoneHash = phone => keyedHash(`phone:${phone}`);
   const ipHash = ip => keyedHash(`ip:${ip || 'unknown'}`);
@@ -117,7 +100,7 @@ function createAuthService(options) {
     const hashedPhone = phoneHash(phone);
     const hashedIp = ipHash(ip);
     const current = now();
-    // 先限制手机号、出口和重发时间；白名单外给相同的外观响应但不扣短信费用。
+    // 所有格式合法的手机号都能收码；先按手机号、来源 IP 和重发间隔限频。
     const newest = db.prepare(`SELECT created_at FROM sms_challenges WHERE phone_hash=?
       ORDER BY created_at DESC LIMIT 1`).get(hashedPhone);
     const phoneDaily = db.prepare(`SELECT COUNT(*) AS count FROM sms_challenges
@@ -126,8 +109,6 @@ function createAuthService(options) {
       WHERE ip_hash=? AND created_at>?`).get(hashedIp, current - DAY).count;
     if ((newest && current - newest.created_at < MINUTE) || phoneDaily >= 10 || ipDaily >= 50)
       return json(429, { error: 'Please wait before requesting another code' });
-    if (!sendable(phone))
-      return json(200, { challenge_id: randomUUID(), expires_in: 300, resend_after: 60 });
     const id = randomUUID();
     const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
     db.prepare(`INSERT INTO sms_challenges(id,phone_hash,ip_hash,purpose,code_hash,

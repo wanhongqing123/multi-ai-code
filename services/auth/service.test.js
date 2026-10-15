@@ -7,9 +7,8 @@ const test = require('node:test');
 const { openStore } = require('./store');
 const { createAuthService } = require('./service');
 const { bindLegacy } = require('./bind-legacy');
-const { manageSmsAllowlist } = require('./manage-sms-allowlist');
 
-function fixture(allowedPhones = ['+8613900000001'], extra = {}) {
+function fixture(modelAllowedPhones = ['+8613900000001'], extra = {}) {
   const db = openStore(':memory:');
   let current = 1_780_000_000_000;
   const messages = [];
@@ -19,8 +18,7 @@ function fixture(allowedPhones = ['+8613900000001'], extra = {}) {
     secret: 'test-only-auth-hmac-key-keep-on-server-123456',
     imSecret: 'test-only-tencent-im-key-keep-on-server-123456',
     sdkAppId: 123456789,
-    allowedPhones,
-    modelAllowedPhones: allowedPhones,
+    modelAllowedPhones,
     now: () => current,
     ...extra
   });
@@ -41,38 +39,22 @@ function fixture(allowedPhones = ['+8613900000001'], extra = {}) {
   return { db, messages, call, rawCall, advance(milliseconds) { current += milliseconds; } };
 }
 
-test('SMS allowlist changes take effect without recreating the auth service', async () => {
+test('every valid phone can receive a real SMS challenge without an allowlist', async () => {
   const setup = fixture();
   const path = '/v1/auth/sms/challenge';
   const otherPhone = '13900000002';
-  assert.equal((await setup.call('POST', path, { phone: otherPhone })).statusCode, 200);
-  assert.equal(setup.messages.length, 0);
-  assert.deepEqual(manageSmsAllowlist(setup.db, 'add', otherPhone),
-    { allowed: true, changed: true });
-  assert.equal((await setup.call('POST', path, { phone: otherPhone })).statusCode, 200);
+  const challenge = await setup.call('POST', path, { phone: otherPhone });
+  assert.equal(challenge.statusCode, 200);
   assert.equal(setup.messages.length, 1);
-  setup.advance(61_000);
-  assert.deepEqual(manageSmsAllowlist(setup.db, 'remove', otherPhone),
-    { allowed: false, changed: true });
-  assert.equal((await setup.call('POST', path, { phone: otherPhone })).statusCode, 200);
+  assert.equal(setup.messages[0].phone, otherPhone);
+  assert.equal((await setup.call('POST', '/v1/auth/sms/verify', {
+    phone: otherPhone, challenge_id: challenge.body.challenge_id,
+    code: setup.messages[0].code
+  })).statusCode, 200);
+  assert.equal((await setup.call('POST', path, {
+    phone: '12345678901'
+  })).statusCode, 400);
   assert.equal(setup.messages.length, 1);
-  setup.db.close();
-});
-
-test('the old environment allowlist is imported only once', () => {
-  const setup = fixture();
-  assert.equal(manageSmsAllowlist(setup.db, 'check', '13900000001').allowed, true);
-  manageSmsAllowlist(setup.db, 'remove', '13900000001');
-  // 同一个数据库再次初始化时，已删除的号码不能被旧环境变量复活。
-  createAuthService({
-    db: setup.db,
-    sms: { async send() {} },
-    secret: 'test-only-auth-hmac-key-keep-on-server-123456',
-    imSecret: 'test-only-tencent-im-key-keep-on-server-123456',
-    sdkAppId: 123456789,
-    allowedPhones: ['+8613900000001']
-  });
-  assert.equal(manageSmsAllowlist(setup.db, 'check', '13900000001').allowed, false);
   setup.db.close();
 });
 
@@ -258,12 +240,8 @@ test('resend supersedes old codes and cooldown blocks duplicate SMS', async () =
   setup.db.close();
 });
 
-test('allowlist prevents SMS spending and password reset revokes old sessions', async () => {
+test('password reset revokes old sessions', async () => {
   const setup = fixture();
-  const ignored = await setup.call('POST', '/v1/auth/sms/challenge',
-    { phone: '13900000002' });
-  assert.equal(ignored.statusCode, 200);
-  assert.equal(setup.messages.length, 0);
   const sent = await setup.call('POST', '/v1/auth/sms/challenge', { phone: '13900000001' });
   const login = await setup.call('POST', '/v1/auth/sms/verify', {
     phone: '13900000001', challenge_id: sent.body.challenge_id,

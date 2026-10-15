@@ -43,14 +43,6 @@ function openStore(filename) {
       ON sms_challenges(phone_hash, created_at);
     CREATE INDEX IF NOT EXISTS sms_challenges_ip_time
       ON sms_challenges(ip_hash, created_at);
-    CREATE TABLE IF NOT EXISTS sms_allowed_phones (
-      phone_e164 TEXT PRIMARY KEY,
-      created_at INTEGER NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS auth_settings (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL
-    );
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id),

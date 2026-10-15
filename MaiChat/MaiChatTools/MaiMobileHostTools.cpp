@@ -1,3 +1,5 @@
+// 文件作用：把 Agent 工具调用转发给移动端宿主，并管理处理器注册、并发调用与释放。
+// 调用边界：由 MaiChat 媒体或 Agent 宿主调用；平台资源在停止或失败时须正确释放。
 #include "MaiMobileHostTools.h"
 
 #include <cstdlib>
@@ -38,6 +40,8 @@ public:
         return true;
     }
 
+    // 先在锁内固定宿主回调和上下文，再解锁执行；宿主可能回调 Agent，不能持锁跨越边界。
+    // 归还宿主响应后统一解析结果，并把协议错误映射为 Agent 可识别的失败类型。
     MaiToolResult call(const std::string& toolName, const std::string& argumentsJson) {
         void* context = nullptr;
         MaiMobileHostToolHandler handler = nullptr;
@@ -177,6 +181,8 @@ void addMaiMobileHostTool(MaiToolRegistry& tools, const char* name, const char* 
     tools.add(std::make_unique<MaiMobileHostTool>(name, description, schema, dispatcher, approval));
 }
 
+// 集中声明聊天、诊断和媒体宿主工具，保持名称、入参 Schema 与宿主处理器一一对应。
+// 具有外部副作用的入口要求审批，注册时不能因同组只读工具而放宽权限。
 void registerMaiChatHostTools(MaiToolRegistry& tools,
                               const std::shared_ptr<MaiMobileHostDispatcher>& dispatcher) {
     const auto add = [&](const char* name, const char* description, const char* schema,
@@ -317,6 +323,8 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
         R"({"type":"object","properties":{"action":{"type":"string","enum":["play","pause","toggle_pause","replay","step","seek_forward","seek_backward","seek_minute_forward","seek_minute_backward","next_chapter","previous_chapter","seek_percent","seek_seconds","set_speed","next_audio","next_video","next_subtitle","next_program","next_filter","mute","volume_up","volume_down","fullscreen","close"]},"percent":{"type":"number","minimum":0,"maximum":100},"seconds":{"type":"number","minimum":0},"speed":{"type":"number","enum":[0.25,0.5,1,1.5,2]}},"required":["action"],"additionalProperties":false})");
 }
 
+// 移动端相册和播放器工具复用同一个宿主调度器；具体权限与媒体生命周期由手机宿主处理。
+// Schema 限定操作和范围，模型不能凭工具参数请求任意原生调用。
 void registerMobilePhotoTools(MaiToolRegistry& tools,
                               const std::shared_ptr<MaiMobileHostDispatcher>& dispatcher) {
     // 相册工作流：先授权并列出素材；预览用有界 JPEG，任何编辑/转码都先导出原文件。

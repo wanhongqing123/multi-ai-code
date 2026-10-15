@@ -1,3 +1,5 @@
+// 文件作用：配置 Android App 模块的插件、依赖、变体和原生构建选项。
+// 阅读边界：此文件负责构建或测试流程，不在应用运行时解释为业务逻辑。
 plugins {
     id "com.android.application"
 }

@@ -1,3 +1,5 @@
+// 文件作用：将向用户提问的能力暴露为 Agent 工具。
+// 直接依赖：MaiIdGenerator.h、MaiTime.h；本文件在这些接口之间完成调用与结果转换。
 #include <json.hpp>
 
 #include <string>

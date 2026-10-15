@@ -1,3 +1,6 @@
+// 文件作用：桌面端IM 会话、消息与登录；DynamicTimSdkApi 负责腾讯 IM SDK 动态接口加载与调用，本文件给出其实现。
+// 主要入口：getUserProfiles、setSelfInfoUpdatedCallback、selfInfoUpdated、libraryPathFromEnvironment。
+// 实现边界：与 DynamicTimSdkApi 的公开声明配套，调用方通过相应接口进入。
 #include "im/DynamicTimSdkApi.h"
 
 #include <QCoreApplication>

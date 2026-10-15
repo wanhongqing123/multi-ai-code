@@ -1,3 +1,6 @@
+// 文件作用：桌面端运行日志；AppLog 负责应用日志记录与输出，本文件给出其实现。
+// 主要入口：lock。
+// 实现边界：与 AppLog 的公开声明配套，调用方通过相应接口进入。
 #include "logging/AppLog.h"
 
 #include <QCoreApplication>

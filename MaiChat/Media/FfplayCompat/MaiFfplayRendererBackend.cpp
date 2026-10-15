@@ -1,3 +1,5 @@
+// 文件作用：实现 ffplay 视频帧提交到宿主渲染后端的桥接入口。
+// 调用边界：由 MaiChat 媒体或 Agent 宿主调用；平台资源在停止或失败时须正确释放。
 #include "MaiFfplayEntry.h"
 
 #include <cerrno>
@@ -73,6 +75,8 @@ extern "C" int vk_renderer_get_hw_dev(VkRenderer* renderer, AVBufferRef** device
 #endif
 }
 
+// ffplay 使用旧渲染入口提交帧；这里把帧交给宿主图形层，硬件上下文不可用时明确报错。
+// 返回值继续遵守 FFmpeg 错误约定，使播放循环能够区分提交失败和正常退出。
 extern "C" int vk_renderer_display(VkRenderer* renderer, AVFrame* frame, RenderParams*) {
     if (!renderer || !frame) return AVERROR(EINVAL);
     AVFrame* transferred = nullptr;

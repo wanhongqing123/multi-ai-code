@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端创作中心页面在真实窗口中的布局和视觉状态。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QApplication>
 #include <QFont>
 #include <QImage>
@@ -56,6 +58,7 @@ layout.paint(&painter, origin, clip);
 
 }  // namespace
 
+// 启动真实创作中心窗口供人工核对布局；这类视觉探针不能替代用户交互测试。
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
 #ifdef Q_OS_WIN

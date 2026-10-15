@@ -1,3 +1,5 @@
+// 文件作用：桌面端共用界面；MaiGraphicsMacLayer 负责macOS 图形层与窗口合成，本文件给出其实现。
+// 实现边界：与 MaiGraphicsMacLayer 的公开声明配套，调用方通过相应接口进入。
 #import <AppKit/AppKit.h>
 #import <QuartzCore/CAMetalLayer.h>
 

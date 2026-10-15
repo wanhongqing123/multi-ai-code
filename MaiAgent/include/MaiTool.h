@@ -1,3 +1,5 @@
+// 文件作用：定义 Agent 工具接口、参数和执行结果。
+// 对外类型：MaiToolContext、MaiToolImage、MaiToolResult、MaiTool；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 
 #include <atomic>

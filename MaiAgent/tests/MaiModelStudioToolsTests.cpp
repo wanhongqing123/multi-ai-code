@@ -1,3 +1,5 @@
+// 文件作用：验证“封装阿里云百炼媒体模型任务与状态查询”的正确行为和边界条件。
+// 验证入口：testRevisionIsSessionBound、testOtherSpecialistBoundaries、testLiveWan3WhenExplicitlyConfigured；检查可观察结果而非实现细节。
 #include "MaiModelStudioTools.h"
 
 #include <json.hpp>
@@ -49,6 +51,8 @@ void testRevisionIsSessionBound() {
     CHECK(result.error().message().find("not_found") != std::string::npos);
 }
 
+// 验证百炼各媒体专家的输入限制、工具身份和任务状态边界。
+// 非法输入应在发起云任务前失败，已有任务保持可继续查询。
 void testOtherSpecialistBoundaries() {
     MaiWanCredentials credentials;
     auto video = makeMaiWanVideoTool([&] { return credentials; });
@@ -146,6 +150,8 @@ void testOtherSpecialistBoundaries() {
               .hasError());
 }
 
+// 仅在显式配置真实凭据时执行 Wan3 在线验证。
+// 默认测试环境跳过此路径，避免未经授权产生付费任务。
 void testLiveWan3WhenExplicitlyConfigured() {
     const char* key = std::getenv("MAI_WAN3_LIVE_KEY");
     const char* workspaceId = std::getenv("MAI_WAN3_LIVE_WORKSPACE_ID");

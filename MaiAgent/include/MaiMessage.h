@@ -1,3 +1,5 @@
+// 文件作用：定义消息、消息片段和工具结果的核心数据结构。
+// 对外类型：MaiTextPart、MaiReasoningPart、MaiImagePart、MaiVideoPart；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 
 #include <string>

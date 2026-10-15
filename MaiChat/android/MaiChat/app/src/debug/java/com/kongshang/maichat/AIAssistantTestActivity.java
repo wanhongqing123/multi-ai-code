@@ -1,3 +1,6 @@
+// 文件作用：Android 调试构建；AIAssistantTestActivity 负责提供仅在调试环境启用的辅助入口，本文件给出其实现。
+// 类型关系：AIAssistantTestActivity extends Activity；审阅时可据此追踪父类、接口或回调契约。
+// 主要入口：onCreate、onDestroy。
 package com.kongshang.maichat;
 
 import android.app.Activity;

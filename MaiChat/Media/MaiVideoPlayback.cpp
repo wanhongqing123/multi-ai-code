@@ -1,3 +1,5 @@
+// 文件作用：在工作线程中解码视频，并同步处理播放、暂停、跳转和帧呈现。
+// 调用边界：由 MaiChat 媒体或 Agent 宿主调用；平台资源在停止或失败时须正确释放。
 #include "MaiVideoPlayback.h"
 
 #include <algorithm>
@@ -84,6 +86,8 @@ struct MaiVideoPlayback {
         }
     }
 
+    // 解码线程独占 FFmpeg 上下文：先建立视频流和时钟，再循环响应停止、暂停及跳转。
+    // 每帧使用媒体时间戳与播放速度计算展示时刻；任何退出路径都由 RAII 释放解码资源。
     void run() {
 #if defined(_WIN32)
         SetThreadDescription(GetCurrentThread(), L"mai-video");

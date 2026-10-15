@@ -1,3 +1,6 @@
+// 文件作用：定义远程桌面鼠标、键盘和触摸输入包的序列化格式。
+// 定义远端键盘、指针和滚轮事件的传输数据包。
+// 解码时验证字段范围，避免不可信输入直接进入系统注入路径。
 import Foundation
 
 public enum RemoteMouseButton: Int, Equatable, Sendable {

@@ -1,3 +1,5 @@
+// 文件作用：桌面端远程桌面连接与控制；RemoteKeyMapping 负责输入键值与目标协议的映射，本文件给出其声明。
+// 对外边界：本文件给出 RemoteKeyMapping 的类型和函数声明；参数、返回值和对象生命周期以此为准。
 #pragma once
 
 #include <QtGlobal>

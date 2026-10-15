@@ -1,3 +1,6 @@
+// 文件作用：桌面端远程桌面连接与控制；RemoteDesktopSettings 负责用户配置的读取、更新和持久化，本文件给出其实现。
+// 主要入口：isSenderAllowed。
+// 实现边界：与 RemoteDesktopSettings 的公开声明配套，调用方通过相应接口进入。
 #include "remote/RemoteDesktopSettings.h"
 
 #include <QDir>

@@ -1,3 +1,6 @@
+// 文件作用：注册 iOS 相册工具，使 Agent 能按权限读取和管理用户授权的照片。
+// 把移动端相册读取和写入暴露为 Agent 工具。
+// 权限检查与文件路径解析在宿主边界完成，不让模型直接接触系统句柄。
 #include "MaiMobileHostTools.h"
 
 void registerPlatformPhotoAlbumTools(MaiToolRegistry& tools,

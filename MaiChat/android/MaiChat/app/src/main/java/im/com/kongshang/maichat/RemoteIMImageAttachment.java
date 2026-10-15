@@ -1,3 +1,5 @@
+// 文件作用：Android IM 身份、消息同步与本地历史；RemoteIMImageAttachment 负责消息附件元数据、路径和可用状态，本文件给出其实现。
+// 主要入口：localPath、width、height、sizeBytes。
 package com.kongshang.maichat;
 
 import java.util.Objects;

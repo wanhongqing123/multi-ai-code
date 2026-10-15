@@ -1,3 +1,5 @@
+// 文件作用：验证“将 RVM 人像遮罩与原视频背景合成”的正确行为和边界条件。
+// 验证入口：阅读 main 或测试注册处，核对输入、预期结果与失败输出。
 #include <array>
 #include <cstdint>
 #include <cstdio>

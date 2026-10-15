@@ -1,3 +1,5 @@
+// 文件作用：验证“把视频人像抠像流程封装为 Agent 工具”的正确行为和边界条件。
+// 验证入口：阅读 main 或测试注册处，核对输入、预期结果与失败输出。
 #include <array>
 #include <cstdio>
 #include <cstdint>

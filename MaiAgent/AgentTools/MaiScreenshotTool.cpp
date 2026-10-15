@@ -1,3 +1,5 @@
+// 文件作用：把屏幕截图能力封装为 Agent 工具。
+// 直接依赖：MaiFilePath.h、MaiFileSystem.h、MaiIdGenerator.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiScreenshotTool.h"
 
 #include <memory>
@@ -40,6 +42,8 @@ public:
         return true;
     }
 
+    // 截图涉及屏幕隐私，审批后才解析窗口或显示器目标；目标无效时不能回退为整屏截图。
+    // 图像交给受控工作区保存，结果只返回可引用路径和尺寸，不在工具回包里携带像素字节。
     MaiToolResult execute(const std::string& argumentsJson,
                           const MaiToolContext& context) override {
         const json arguments = json::parse(argumentsJson, nullptr, /*allow_exceptions=*/false);

@@ -1,3 +1,5 @@
+// 文件作用：Android 移动端 Agent 工具与宿主能力；MaiMobilePhotoAlbumTool 负责 Agent 工具调用与结果返回，本文件给出其实现。
+// 直接依赖：MaiMobileHostTools.h；实现与这些接口协作。
 #include "MaiMobileHostTools.h"
 
 void registerPlatformPhotoAlbumTools(MaiToolRegistry& tools,

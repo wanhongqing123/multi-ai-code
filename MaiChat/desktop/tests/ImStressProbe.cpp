@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端大量 IM 消息装载和滚动时的页面响应。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QApplication>
 #include <QCoreApplication>
 #include <QElapsedTimer>

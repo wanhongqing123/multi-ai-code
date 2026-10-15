@@ -1,3 +1,5 @@
+// 文件作用：封装 FFmpeg 媒体探测、转码和剪辑工具。
+// 对外类型：MaiFfmpegEngine；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 
 #include <cstddef>

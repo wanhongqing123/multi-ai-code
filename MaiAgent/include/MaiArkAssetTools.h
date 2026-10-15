@@ -1,3 +1,5 @@
+// 文件作用：管理火山方舟素材上传和云端素材引用。
+// 对外类型：MaiArkAssetServiceSettings；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 
 #include <functional>

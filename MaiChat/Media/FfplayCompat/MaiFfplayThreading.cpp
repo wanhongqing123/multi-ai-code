@@ -1,3 +1,5 @@
+// 文件作用：为 ffplay 提供线程、互斥量和条件变量的兼容实现。
+// 调用边界：由 MaiChat 媒体或 Agent 宿主调用；平台资源在停止或失败时须正确释放。
 #include "SDL.h"
 
 #include <chrono>

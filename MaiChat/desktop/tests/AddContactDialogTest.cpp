@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端加联系人对话框的输入门槛、紧凑布局和提交按钮状态。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QLineEdit>
 #include <QPushButton>
 #include <QTest>

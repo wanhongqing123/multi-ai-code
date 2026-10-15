@@ -1,3 +1,5 @@
+// 文件作用：把图片滤镜参数交给 FFmpeg 滤镜图执行，并将输出像素与错误信息交还移动端。
+// 调用边界：由 MaiChat 媒体或 Agent 宿主调用；平台资源在停止或失败时须正确释放。
 #include "MaiImageFilter.h"
 
 #include <cmath>
@@ -72,6 +74,8 @@ std::string number(double value) {
     return stream.str();
 }
 
+// 把受控的操作枚举翻译成 FFmpeg 滤镜表达式；不接受调用方直接传任意滤镜字符串。
+// 每种操作先验证尺寸或强度，失败时写入 error 并返回空串，调用者不得执行空滤镜。
 std::string filterDescription(const Json& input, int width, int height, std::string* error) {
     if (!input.is_object() || !input.value("operation", Json()).is_string()) {
         *error = "operation is required";

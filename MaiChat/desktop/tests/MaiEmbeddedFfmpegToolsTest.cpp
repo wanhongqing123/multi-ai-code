@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端内嵌 FFmpeg 工具的参数处理、执行和取消路径。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include "MaiFfmpegTools.h"
 #include "MaiVideoGeometryTool.h"
 
@@ -74,6 +76,7 @@ MaiToolResult runFilterGraph(MaiTool &convert, const MaiToolContext &context,
 
 } // namespace
 
+// 使用本地媒体样本集中验证 FFmpeg 工具入口、参数限制和产物，不向付费服务提交任务。
 int main(int argc, char **argv) {
   if (argc != 2)
     return 2;

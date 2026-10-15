@@ -1,3 +1,5 @@
+// 文件作用：Android 创作中心的会话、消息和 Agent 交互；AIAssistantTextDecoder 负责 Agent 增量文本的解码与消息结构还原，本文件给出其实现。
+// 主要入口：decode。
 package com.kongshang.maichat;
 
 import java.nio.ByteBuffer;

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 文件作用：为 iOS 工程构建 ONNX Runtime 所需的 Pod/框架产物。
+# 阅读边界：此文件负责构建或测试流程，不在应用运行时解释为业务逻辑。
 set -euo pipefail
 
 # 用上游官方脚本从源码构建 iPhone+模拟器 XCFramework，再组装本地 CocoaPods。

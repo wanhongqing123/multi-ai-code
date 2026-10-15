@@ -1,3 +1,5 @@
+// 文件作用：Android 创作中心的会话、消息和 Agent 交互；AIAssistantController 负责流程编排、异步回调和状态转换，本文件给出其实现。
+// 主要入口：shared、configureAccount、invalidateSharedTemporaryModelCredentials、nativeCreate。
 package com.kongshang.maichat;
 
 import android.content.Context;
@@ -214,6 +216,7 @@ public final class AIAssistantController {
         hostToolHandler = handler;
     }
     @SuppressWarnings("unused") // Called from MaiAgentJni.cpp on an agent worker thread.
+    // 原生 Agent 工具回调在这里按名称分派到手机宿主；解析失败和权限拒绝都编码为可回传错误。
     private byte[] onNativeHostTool(byte[] toolBytes, byte[] argumentsBytes) {
         String tool = new String(toolBytes, StandardCharsets.UTF_8);
         String arguments = new String(argumentsBytes, StandardCharsets.UTF_8);
@@ -342,6 +345,7 @@ public final class AIAssistantController {
                 .getBytes(StandardCharsets.UTF_8);
         }
     }
+    // 作用：初始化控制器依赖、回调和原生 Agent 会话。
     private void initialize() {
         try {
             System.loadLibrary("maichat_agent");
@@ -558,6 +562,7 @@ public final class AIAssistantController {
             }
         }
     }
+    // 作用：把回复里实际存在的媒体引用关联到消息展示项。
     private void attachMediaMentions(JSONObject snapshot) throws org.json.JSONException {
         JSONArray messages = snapshot.optJSONArray("messages");
         if (messages == null) return;
@@ -1026,6 +1031,7 @@ public final class AIAssistantController {
             throw new IllegalArgumentException("图片必须位于当前 App 目录内");
         return candidate;
     }
+    // 作用：校验工作区图片并执行宿主图片转换。
     public ImportedFile transformImageForHost(JSONObject arguments) throws Exception {
         File source = workspaceImageForHost(arguments.optString("path", ""));
         if (source.length() < 1 || source.length() > 50L * 1024 * 1024)
@@ -1106,6 +1112,8 @@ public final class AIAssistantController {
         return new File(workspace, "maichat-diagnostics-"
             + UUID.randomUUID().toString().toLowerCase(java.util.Locale.ROOT) + ".txt");
     }
+    // 将选中的外部输入流导入 Agent 工作区，并依据实际媒体类型生成附件元数据。
+    // 拷贝失败时清理临时内容，不能把只写入一部分的文件交给消息界面。
     private ImportedFile importStream(InputStream input, String sourceMime, String sourceName)
         throws Exception {
         String originalMime = sourceMime == null ? "application/octet-stream"

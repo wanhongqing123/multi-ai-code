@@ -1,3 +1,5 @@
+// 文件作用：封装智谱图片媒体能力的请求与结果处理。
+// 直接依赖：MaiBlockingCheck.h、MaiDownloadFileTool.h、MaiFilePath.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiGlmMediaTools.h"
 
 #include <curl/curl.h>
@@ -93,6 +95,8 @@ struct HttpResult {
     std::optional<MaiToolResult> error;
 };
 
+// 向智谱媒体接口发送 JSON 请求并收集 HTTP 状态、响应体和网络错误。
+// 传输失败不伪造成媒体任务失败，调用方据此决定是否继续查询原任务。
 HttpResult requestJson(const std::string& url, const std::string& key, const std::string& caBundle,
                        const Json* body, const MaiToolContext& context) {
     maiAssertBlockingAllowed("glm_media_tool");
@@ -377,6 +381,8 @@ private:
         return MaiToolResult::success(output.dump());
     }
 
+    // 查询已提交的智谱媒体任务并在完成后下载产物。
+    // 云任务标识保持不变；查询失败与生成失败以不同状态回报。
     MaiToolResult continueTask(const Json& args, const std::string& key,
                                const MaiToolContext& context) const {
         const std::string conversationId = value(args, "conversation_id");

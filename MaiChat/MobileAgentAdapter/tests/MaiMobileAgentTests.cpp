@@ -1,3 +1,7 @@
+// 文件作用：移动端 C++ Agent 适配层；MaiMobileAgentTests 负责行为与回归验证，本文件给出其验证。
+// 运行边界：仅供自动化验证使用，不作为正式 App 或 Agent 的用户功能入口。
+// 覆盖场景：freeHostToolResponse、releaseHostToolContext。
+// 直接依赖：MaiFilePath.h、MaiFileSystem.h、MaiIdGenerator.h、MaiMobileAgent.h；实现与这些接口协作。
 #include "MaiFilePath.h"
 #include "MaiFileSystem.h"
 #include "MaiIdGenerator.h"
@@ -67,6 +71,8 @@ static std::string frame(const Json& delta, const char* finish = nullptr) {
         {"delta", delta}, {"index", 0}, {"finish_reason", finish ? Json(finish) : Json(nullptr)}};
     return "data: " + Json{{"choices", Json::array({choice})}}.dump() + "\n\n";
 }
+// 作用：按测试场景构造移动 Agent、调用公开接口并核对结果。
+// 按真实调用顺序检查输入和可观察结果，失败时保留定位所需的上下文。
 int main() {
 #if !defined(_WIN32)
     const unsigned char pixels[] = {255, 0, 0, 255, 0, 255, 0, 255};
@@ -114,6 +120,8 @@ int main() {
 #endif
 
     httplib::Server server;
+    // 本地假模型端点核对 Agent 发出的请求体，并返回可控的流式事件。
+    // 测试只连环回地址，不会向真实模型供应商提交任务。
     server.Post("/chat/completions", [](const httplib::Request& request,
                                         httplib::Response& response) {
         const Json body = Json::parse(request.body);

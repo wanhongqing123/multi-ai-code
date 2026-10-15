@@ -1,3 +1,6 @@
+// 文件作用：桌面端Markdown 内容解析与呈现；MarkdownLayoutCache 负责Markdown 排版结果缓存与失效，本文件给出其实现。
+// 主要入口：take、clear、count、hits。
+// 实现边界：与 MarkdownLayoutCache 的公开声明配套，调用方通过相应接口进入。
 #include "markdown/MarkdownLayoutCache.h"
 
 #include <QHash>

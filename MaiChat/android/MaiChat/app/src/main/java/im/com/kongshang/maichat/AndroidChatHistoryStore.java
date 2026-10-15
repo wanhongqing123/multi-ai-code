@@ -1,3 +1,6 @@
+// 文件作用：Android IM 身份、消息同步与本地历史；AndroidChatHistoryStore 负责持久化读写与缓存管理，本文件给出其实现。
+// 类型关系：AndroidChatHistoryStore extends SQLiteOpenHelper；审阅时可据此追踪父类、接口或回调契约。
+// 主要入口：messages、hasEarlier、onCreate、onUpgrade。
 package com.kongshang.maichat;
 
 import android.content.ContentValues;
@@ -47,6 +50,7 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
     }
 
     @Override
+    // 作用：创建本地消息表、索引和版本所需的结构。
     public void onCreate(SQLiteDatabase database) {
         database.execSQL(
             "CREATE TABLE contacts ("
@@ -488,6 +492,7 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
         }
     }
 
+    // 作用：按账号和消息稳定标识插入或更新本地记录。
     public void upsertMessage(String ownerId, RemoteIMMessage message) {
         String owner = clean(ownerId);
         String peerId = message.fromUserId().equals(owner)
@@ -603,6 +608,7 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
         return stored;
     }
 
+    // 作用：从数据库游标重建完整消息及附件字段。
     private RemoteIMMessage readMessage(Cursor cursor) {
         RemoteIMImageAttachment image = null;
         String imagePath = mediaPaths.toAbsolutePath(cursor.getString(8));

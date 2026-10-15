@@ -1,3 +1,5 @@
+// 文件作用：封装阿里云百炼媒体模型任务与状态查询。
+// 直接依赖：MaiBlockingCheck.h、MaiDownloadFileTool.h、MaiFilePath.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiModelStudioTools.h"
 
 #include <curl/curl.h>
@@ -167,6 +169,7 @@ struct HttpResponse {
     bool transferFailed = false;
 };
 
+// 百炼接口通过此处统一处理请求、超时和响应格式；异步任务查询错误不能据此认定云端生成失败。
 HttpResponse requestJson(const std::string& url, const std::string& key,
                          const std::string& caBundle, const Json* body, bool async, bool resolveOss,
                          const MaiToolContext& context, long timeoutSeconds = 180L,
@@ -307,6 +310,8 @@ bool hasCredentials(const MaiWanCredentials& credentials) {
     return !credentials.apiKey.empty() && validWorkspaceId(credentials.workspaceId);
 }
 
+// 生成该视频模型的参数说明，供模型在调用前了解输入范围。
+// 输出结构应与委托执行时接受的字段和限制保持一致。
 std::string describeKlingVideoSchema(const std::string& raw) {
     Json schema = Json::parse(raw);
     Json& fields = schema["properties"];
@@ -582,6 +587,8 @@ public:
         return isPaidGenerationAction(raw);
     }
 
+    // 描述这个媒体专家的能力、限制和调用身份，供委托路由使用。
+    // 声明内容必须与实际执行入口一致，避免模型选择不存在的能力。
     std::optional<MaiSpecialistInfo> specialistInfo() const override {
         const MaiWanCredentials credentials = mCredentials ? mCredentials() : MaiWanCredentials{};
         const bool configured = hasCredentials(credentials);
@@ -689,6 +696,8 @@ public:
                "cloud job or downloaded MP4. Cloud moderation may still reject inputs.";
     }
 
+    // 构造模型可见的工具说明和参数约束。
+    // 字段名及可选值须与执行入口的真实校验保持一致。
     std::string parametersSchema() const override {
         // Wan3.0：mode 决定 create/edit/extend/reference；首尾帧和多图参考是两种
         // 不同的控制方式。video_path 最多一个，local_image_paths 最多十张。
@@ -791,6 +800,8 @@ public:
         return schema.dump();
     }
 
+    // 解析模型提供的参数并提交或查询百炼媒体任务。
+    // 成功和失败都转成明确的工具结果；中间状态不能冒充最终产物。
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         // Wan3.0 按 mode 选择创建、编辑、延长或参考；图片/视频都在执行层校验
         // 数量和可访问路径，云端受理后保存任务 ID 等待异步交付。
@@ -884,6 +895,8 @@ public:
     }
 
 private:
+    // 校验万相视频输入与本地素材，再提交供应商任务；付费受理前完成可在本机发现的错误。
+    // 返回并保存真实任务标识，后续查询继续使用同一任务，避免重复提交。
     MaiToolResult delegate(const Json& args, const MaiWanCredentials& credentials,
                            const MaiToolContext& context) const {
         const std::string message = value(args, "message");
@@ -1062,6 +1075,8 @@ private:
         return MaiToolResult::success(result.dump());
     }
 
+    // 用已保存的任务标识查询万相视频的供应商状态，并在完成后取回产物。
+    // 查询或下载故障与生成失败分开返回，不更改云端任务本身。
     MaiToolResult continueTask(const Json& args, const MaiWanCredentials& credentials,
                                const MaiToolContext& context) const {
         const std::string conversationId = value(args, "conversation_id");
@@ -1278,6 +1293,8 @@ public:
     }
 
 private:
+    // 校验百炼可灵视频输入与本地素材，再提交供应商任务；付费受理前完成可在本机发现的错误。
+    // 返回并保存真实任务标识，后续查询继续使用同一任务，避免重复提交。
     MaiToolResult delegate(const Json& args, const MaiWanCredentials& credentials,
                            const MaiToolContext& context) const {
         // 先做型号与素材组合校验、上传 OSS，最后才发异步付费请求。
@@ -1438,6 +1455,8 @@ private:
         return MaiToolResult::success(result.dump());
     }
 
+    // 用已保存的任务标识查询百炼可灵视频的供应商状态，并在完成后取回产物。
+    // 查询或下载故障与生成失败分开返回，不更改云端任务本身。
     MaiToolResult continueTask(const Json& args, const MaiWanCredentials& credentials,
                                const MaiToolContext& context) const {
         const std::string conversationId = value(args, "conversation_id");
@@ -1577,6 +1596,8 @@ public:
                R"("additionalProperties":false})";
     }
 
+    // 解析模型提供的参数并提交或查询百炼媒体任务。
+    // 成功和失败都转成明确的工具结果；中间状态不能冒充最终产物。
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         // 万相不带图时文生图，带图时编辑/融合；修订必须引用当前会话已有产物。
         // 新 PNG 成功发布后才向主模型回报完成，原输入保留。
@@ -1649,6 +1670,8 @@ public:
     }
 
 private:
+    // 校验万相图片输入与本地素材，再提交供应商任务；付费受理前完成可在本机发现的错误。
+    // 返回并保存真实任务标识，后续查询继续使用同一任务，避免重复提交。
     MaiToolResult delegate(const Json& args, const MaiWanCredentials& credentials,
                            const MaiToolContext& context) const {
         const std::string message = value(args, "message");
@@ -1752,6 +1775,8 @@ private:
         return MaiToolResult::success(result.dump());
     }
 
+    // 用已保存的任务标识查询万相图片的供应商状态，并在完成后取回产物。
+    // 查询或下载故障与生成失败分开返回，不更改云端任务本身。
     MaiToolResult continueTask(const Json& args, const MaiWanCredentials& credentials,
                                const MaiToolContext& context) const {
         const std::string conversationId = value(args, "conversation_id");
@@ -1923,6 +1948,8 @@ public:
     }
 
 private:
+    // 校验百炼可灵图片输入与本地素材，再提交供应商任务；付费受理前完成可在本机发现的错误。
+    // 返回并保存真实任务标识，后续查询继续使用同一任务，避免重复提交。
     MaiToolResult delegate(const Json& args, const MaiWanCredentials& credentials,
                            const MaiToolContext& context) const {
         const std::string message = value(args, "message");
@@ -2022,6 +2049,8 @@ private:
         return MaiToolResult::success(result.dump());
     }
 
+    // 用已保存的任务标识查询百炼可灵图片的供应商状态，并在完成后取回产物。
+    // 查询或下载故障与生成失败分开返回，不更改云端任务本身。
     MaiToolResult continueTask(const Json& args, const MaiWanCredentials& credentials,
                                const MaiToolContext& context) const {
         const std::string conversationId = value(args, "conversation_id");

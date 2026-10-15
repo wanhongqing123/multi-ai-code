@@ -1,3 +1,5 @@
+// 文件作用：Android 跨页面复用的界面组件；MaiChatTypography 负责界面字体、字号和文本层级，本文件给出其实现。
+// 主要入口：semibold、body。
 package com.kongshang.maichat;
 
 import android.content.Context;

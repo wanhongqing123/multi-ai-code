@@ -1,3 +1,6 @@
+// 文件作用：桌面端共用界面；RemoteInputCapture 负责本机输入或屏幕内容的采集，本文件给出其实现。
+// 主要入口：attachTo、beginMouseTracking、endMouseTracking、setRemoteVideoSize。
+// 直接依赖：remote/RemoteKeyMapping.h；实现与这些接口协作。
 #include "ui/RemoteInputCapture.h"
 
 #include <QDebug>
@@ -238,6 +241,8 @@ bool RemoteInputCapture::mapPosition(const QPointF& pos, double* x, double* y) c
                                            : sender_.mapToNormalized(pos, x, y);
 }
 
+// 作用：将窗口输入事件转换为远程按键、鼠标和滚轮操作。
+// 页面状态变化和用户操作在这里衔接；退出或失败时维持已显示内容。
 bool RemoteInputCapture::eventFilter(QObject* watched, QEvent* event) {
     if (watched == surface_ && event->type() == QEvent::Resize) {
         // 控件尺寸变了，黑边随之变化，必须重算，否则坐标整体偏移。

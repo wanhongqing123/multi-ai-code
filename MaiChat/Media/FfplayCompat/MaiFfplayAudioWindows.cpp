@@ -1,3 +1,5 @@
+// 文件作用：把 ffplay 音频回调接到 Windows 音频输出，管理设备和缓冲区。
+// 调用边界：由 MaiChat 媒体或 Agent 宿主调用；平台资源在停止或失败时须正确释放。
 #include "SDL.h"
 
 #include <windows.h>
@@ -70,6 +72,7 @@ void playAudio(AudioDevice* device) {
 
 }  // namespace
 
+// 按 ffplay 请求格式打开 Windows 音频设备，失败返回无效句柄；设备回调的缓冲归音频线程持有。
 extern "C" SDL_AudioDeviceID SDL_OpenAudioDevice(const char*, int capture,
                                                   const SDL_AudioSpec* wanted,
                                                   SDL_AudioSpec* obtained, int) {

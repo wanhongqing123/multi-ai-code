@@ -1,3 +1,5 @@
+// 文件作用：提供应用私有存储的查询与文件操作工具。
+// 对外类型：MaiAppStoragePaths；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 
 #include <cstdint>

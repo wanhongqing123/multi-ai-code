@@ -1,3 +1,5 @@
+// 文件作用：读取和处理 PDF 文档供 Agent 使用。
+// 对外契约：下方声明公开参数和返回值；实现位于同名源文件。
 #pragma once
 
 #include <atomic>

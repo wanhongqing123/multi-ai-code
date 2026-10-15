@@ -1,3 +1,6 @@
+// 文件作用：桌面端远程桌面连接与控制；RemoteDesktopSignal 负责信令载荷与状态转换，本文件给出其声明。
+// 对外边界：本文件给出 RemoteDesktopSignal 的类型和函数声明；参数、返回值和对象生命周期以此为准。
+// 直接依赖：remote/CaptureGeometry.h；实现与这些接口协作。
 #pragma once
 
 #include <QString>

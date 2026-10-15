@@ -1,3 +1,5 @@
+// 文件作用：Android IM 身份、消息同步与本地历史；RemoteIMSessionController 负责流程编排、异步回调和状态转换，本文件给出其实现。
+// 主要入口：enqueueIO、switchAccount、persistContact、updateHumanTyping。
 package com.kongshang.maichat;
 
 import android.content.Context;
@@ -587,6 +589,8 @@ public final class RemoteIMSessionController {
         return message;
     }
 
+    // 群发逐个收件人建立发送记录并汇总完成结果；单人失败不应中断剩余收件人。
+    // 返回已接受的收件人数，最终失败明细经 completion 交付，避免把入队当成送达。
     public int broadcastText(
         List<String> rawUserIds,
         String text,
@@ -837,6 +841,8 @@ public final class RemoteIMSessionController {
     public RemoteIMMessage forwardMessage(RemoteIMMessage source, String targetUserId)
         throws IOException { return forwardMessage(source, targetUserId, false); }
 
+    // 校验转发目标与原消息，再按消息类型复制正文或媒体引用并发往目标会话。
+    // 只有 SDK 或本地队列确认接受后才返回新消息，失败时保留原消息不动。
     private RemoteIMMessage forwardMessage(RemoteIMMessage source, String targetUserId, boolean validated)
         throws IOException {
         if (source == null) throw new IllegalArgumentException("message is required");
@@ -1200,6 +1206,7 @@ public final class RemoteIMSessionController {
         });
     }
 
+    // 作用：将入站消息与会话历史、未读数和活动状态合并。
     private void applyIncomingMessage(RemoteIMMessage incoming, RemoteIMActivitySignal replacedActivity) {
         RemoteIMVideoAttachment preparedVideo = pendingVideoMedia.remove(incoming.remoteId());
         if (preparedVideo != null && incoming.videoAttachment() != null) incoming = incoming.withVideoAttachment(preparedVideo);

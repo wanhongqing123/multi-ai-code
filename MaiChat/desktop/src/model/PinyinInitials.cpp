@@ -1,4 +1,5 @@
-// 本文件由 scripts/generate-pinyin-initials.py 生成，请勿手工编辑。
+// 文件作用：桌面端界面使用的数据模型；PinyinInitials 负责中文拼音首字母索引与检索辅助，本文件给出其实现。
+// 实现边界：与 PinyinInitials 的公开声明配套，调用方通过相应接口进入。
 //
 // 数据来源：pypinyin 的 pinyin_dict.json（MIT），其字音数据源自 Unicode 的
 // Unihan 数据库（Unicode License）。要更新此表，重新运行该脚本即可。

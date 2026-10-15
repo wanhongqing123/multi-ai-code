@@ -1,3 +1,5 @@
+// 文件作用：封装 FFmpeg 媒体探测、转码和剪辑工具。
+// 直接依赖：MaiFilePath.h、MaiFileSystem.h、MaiIdGenerator.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiFfmpegTools.h"
 
 #include <atomic>
@@ -137,6 +139,8 @@ public:
         return "ffmpeg:" + (request.is_discarded() ? argumentsJson : request.dump());
     }
 
+    // 校验 FFmpeg 命令数组与工作区访问后运行本地媒体处理。
+    // 进程退出码和诊断输出分别返回，不能把部分文件当成成功成品。
     MaiToolResult execute(const std::string& argumentsJson,
                           const MaiToolContext& context) override {
         const json request = json::parse(argumentsJson, nullptr, false);
@@ -256,6 +260,8 @@ public:
                R"("required":["path"],"additionalProperties":false})";
     }
 
+    // 对指定工作区媒体运行 FFprobe，按调用参数返回时长、流和编码信息。
+    // 仅读取文件，路径无效或探测失败时返回错误而不是空的成功结果。
     MaiToolResult execute(const std::string& argumentsJson,
                           const MaiToolContext& context) override {
         const json request = json::parse(argumentsJson, nullptr, false);

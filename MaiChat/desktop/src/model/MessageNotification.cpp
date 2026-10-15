@@ -1,3 +1,5 @@
+// 文件作用：桌面端界面使用的数据模型；MessageNotification 负责系统消息通知的生成与清理，本文件给出其实现。
+// 实现边界：与 MessageNotification 的公开声明配套，调用方通过相应接口进入。
 #include "model/MessageNotification.h"
 
 namespace MessageNotification {

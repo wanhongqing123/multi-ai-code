@@ -1,3 +1,5 @@
+// 文件作用：组织 Agent 的公开操作、事件流和会话执行入口。
+// 主要入口：submit、pollSpecialistTasks、forwardSpecialistReply；负责提交操作和恢复异步任务结果。
 #include "MaiAgent.h"
 
 #include <algorithm>

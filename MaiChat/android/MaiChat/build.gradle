@@ -1,3 +1,5 @@
+// 文件作用：配置 Android 工程级插件仓库和共用构建规则。
+// 阅读边界：此文件负责构建或测试流程，不在应用运行时解释为业务逻辑。
 plugins {
     id "com.android.application" version "7.4.2" apply false
 }

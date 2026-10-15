@@ -1,3 +1,5 @@
+// 文件作用：Android IM 身份、消息同步与本地历史；RemoteIMApprovalRequest 负责远程 IM 审批请求的数据结构，本文件给出其实现。
+// 主要入口：token、actions、allows、isValidToken。
 package com.kongshang.maichat;
 
 import java.util.ArrayList;

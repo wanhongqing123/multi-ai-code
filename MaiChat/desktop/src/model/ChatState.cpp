@@ -1,3 +1,6 @@
+// 文件作用：桌面端界面使用的数据模型；ChatState 负责状态定义与状态转换，本文件给出其实现。
+// 主要入口：ownerUserId、selectedPeerId、contacts、messages。
+// 直接依赖：model/ContactGroups.h；实现与这些接口协作。
 #include "model/ChatState.h"
 
 #include "model/ContactGroups.h"

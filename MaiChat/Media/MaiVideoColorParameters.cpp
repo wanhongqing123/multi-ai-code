@@ -1,3 +1,5 @@
+// 文件作用：描述视频色域与转换矩阵参数，供解码和渲染链路使用。
+// 调用边界：由 MaiChat 媒体或 Agent 宿主调用；平台资源在停止或失败时须正确释放。
 #include "MaiVideoColorParameters.h"
 
 // These coefficients and the limited/full-range normalization follow OBS's

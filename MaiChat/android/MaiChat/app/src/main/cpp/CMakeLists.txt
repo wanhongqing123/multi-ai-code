@@ -1,3 +1,5 @@
+# 文件作用：把 Android JNI 桥接、图形与媒体代码构建成 App 使用的原生库。
+# 编译选项来自 Gradle/NDK；clangd 数据库由真实原生构建生成。
 cmake_minimum_required(VERSION 3.22)
 project(MaiChatAndroidAgent LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)

@@ -1,3 +1,6 @@
+// 文件作用：协调远程诊断请求、日志收集与结果回传的生命周期。
+// 协调远端排障请求、回执、证据收集与文件下载。
+// 通过随机请求标识匹配发送方，取消或超时后只结束一次用户可见流程。
 import Foundation
 import Combine
 import MaiChatCore
@@ -77,6 +80,8 @@ final class RemoteDiagnosticsCoordinator: ObservableObject {
         status = "已取消回传；已经发出的采集请求无法撤回。"
     }
 
+    /// 启动一次远程排查：准备日志区间、执行只读诊断并汇总可分享结果。
+    /// 任务取消或部分探针失败时仍保留已收集证据，并给出明确状态。
     func start(peer: RemoteIMContact, recipient: RemoteIMContact, expectedIdentity: String? = nil) {
         guard !isRunning, let appState else { return }
         let identity = appState.remoteDiagnosticsIdentity

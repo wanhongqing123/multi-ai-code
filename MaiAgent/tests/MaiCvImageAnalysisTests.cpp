@@ -1,3 +1,5 @@
+// 文件作用：验证“提取图片内容和几何信息供视觉工具使用”的正确行为和边界条件。
+// 验证入口：阅读 main 或测试注册处，核对输入、预期结果与失败输出。
 #include "MaiCvImageAnalysis.h"
 #include "MaiCvImageTools.h"
 
@@ -63,6 +65,7 @@ std::string templateBytes() {
 
 }  // namespace
 
+// 用固定图片验证视觉分析结果、异常输入和模型缺失路径。
 int main() {
     const MaiFilePath root = MaiFileSystem::temporaryDirectory().append(
         MaiFilePath::fromUtf8(MaiIdGenerator::generate("mai_cv_image_real_")));

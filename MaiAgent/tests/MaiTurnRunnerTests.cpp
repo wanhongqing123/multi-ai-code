@@ -1,3 +1,5 @@
+// 文件作用：验证“编排一轮模型调用、工具执行和事件发布”的正确行为和边界条件。
+// 验证入口：test_prompt_images_reach_the_current_user_message、test_full_turn、test_request_is_assembled_correctly；检查可观察结果而非实现细节。
 // agent loop 的测试：从 submit(Prompt) 到事件流吐完的完整一圈。
 //
 // 用假的 Chat Completions 服务端当模型，所以不需要 API key、不花钱、结果完全确定。
@@ -529,6 +531,8 @@ void test_streamed_text_is_checkpointed_before_network_finishes() {
     if (opened.isOk()) runCase(std::move(opened.value()));
 }
 
+// 验证子任务只有文本回复、没有媒体文件时也能回到父 Agent。
+// 回灌内容必须来自真实子任务结果，不能凭空生成文件路径。
 void test_specialist_text_reply_reaches_parent_without_a_file() {
     auto store = makeMaiMemoryStore();
     MaiSessionStore* observer = store.get();
@@ -723,6 +727,8 @@ void test_old_status_failure_recovers_and_delivers_original_task() {
     MaiFileSystem::removeFile(path);
 }
 
+// 验证同一视频任务已交付时不会再次自动发送重复媒体卡片。
+// 按任务标识去重，不受应用沙箱路径变化影响。
 void test_automatic_video_reply_skips_an_existing_media_delivery() {
     const MaiFilePath path = MaiFileSystem::temporaryDirectory().append(
         MaiFilePath::fromUtf8("mai-delivered-" + MaiIdGenerator::generate("tmp_") + ".mp4"));

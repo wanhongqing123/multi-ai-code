@@ -1,3 +1,5 @@
+// 文件作用：封装火山方舟媒体任务的提交、查询和结果取回。
+// 直接依赖：MaiBlockingCheck.h、MaiDownloadFileTool.h、MaiFilePath.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiArkMediaTools.h"
 
 #include <curl/curl.h>
@@ -180,6 +182,7 @@ int checkCanceled(void* user, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
     return static_cast<const MaiToolContext*>(user)->isCanceled() ? 1 : 0;
 }
 
+// 方舟请求统一处理认证、取消、状态码和 JSON 解析；查询异常与生成任务失败分开报告。
 ArkResponse requestJson(const std::string& url, const std::string& key, const std::string& caBundle,
                         const Json* body, const MaiToolContext& context,
                         bool deleteRequest = false) {
@@ -332,6 +335,8 @@ public:
         }
         return isPaidGenerationAction(raw);
     }
+    // 描述这个媒体专家的能力、限制和调用身份，供委托路由使用。
+    // 声明内容必须与实际执行入口一致，避免模型选择不存在的能力。
     std::optional<MaiSpecialistInfo> specialistInfo() const override {
         // discover 按实际配置报告能力：Mini 为默认型号，Fast/标准版可选；2.5 因费用禁用。
         // 本地视频编辑只有上传回调存在时才标记为已接线，实盘状态仍如实标为待验证。
@@ -433,6 +438,8 @@ public:
               "cancel applies only to queued tasks; delete removes delivered succeeded, "
               "failed, or expired Ark records. Running tasks cannot be canceled or deleted"}}};
     }
+    // 构造模型可见的工具说明和参数约束。
+    // 字段名及可选值须与执行入口的真实校验保持一致。
     std::string description() const override {
         // 未配置分支：默认型号是 Seedance 2.0 Mini；没有方舟 API Key 时只能查询能力，
         // 不能把“已注册工具”误当成“可以提交生成任务”。
@@ -522,6 +529,8 @@ public:
                "Use agent_send_media to deliver a "
                "completed video.";
     }
+    // 构造模型可见的工具说明和参数约束。
+    // 字段名及可选值须与执行入口的真实校验保持一致。
     std::string parametersSchema() const override {
         // JSON Schema 只定义字段形状；execute 还会核对模式组合、文件存在、数量、
         // 付费规格与供应商能力。不能因为 schema 接受字段就假定某个组合可用。
@@ -634,6 +643,8 @@ public:
             "Query status once; the App normally polls and delivers the result automatically";
         return schema.dump();
     }
+    // 解析模型提供的参数并提交或查询方舟媒体任务。
+    // 成功和失败都转成明确的工具结果；中间状态不能冒充最终产物。
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const Json args = Json::parse(raw, nullptr, false);
         if (!args.is_object()) return invalid("arguments must be an object");
@@ -741,6 +752,8 @@ public:
     }
 
 private:
+    // 仅管理当前会话已持久化的方舟任务，不能凭任意云任务 ID 修改其他用户任务。
+    // 供应商操作与本地任务状态分别回报，避免只完成一侧却宣称全部成功。
     MaiToolResult manageTask(const Json& args, const std::string& key,
                              const MaiToolContext& context) const {
         // 只接受当前会话持久化的任务；不能凭任意云端 task_id 删除其他任务。
@@ -795,8 +808,11 @@ private:
         return MaiToolResult::success(result.dump());
     }
 
+    // 校验 Seedance 输入并提交异步视频生成任务，保存供应商任务标识以供继续查询。
+    // 付费请求一旦受理，后续持久化失败也必须把真实任务 ID 回给调用方，防止重提。
     MaiToolResult delegate(const Json& args, const std::string& key,
                            const MaiToolContext& context) const {
+        // 第一阶段只做型号、文本长度和动作模式校验；费用较高的型号在这里被拒绝。
         const std::string modelId = stringValue(args, "model").empty()
                                         ? std::string(kDefaultVideoModel)
                                         : stringValue(args, "model");
@@ -827,6 +843,7 @@ private:
         const std::string videoPath = stringValue(args, "video_path");
         const std::string videoUrl = stringValue(args, "video_url");
         const std::string videoTaskId = stringValue(args, "video_task_id");
+        // 第二阶段确定唯一的视频来源，防止同时提交本地、外链和旧任务造成歧义。
         // edit、extend、reference 只能选择本地文件、外链、已有任务三者中的一个。
         // 多张人物参考图是附加输入，不算第二个视频源。
         const int sourceCount = static_cast<int>(!videoPath.empty()) +
@@ -885,7 +902,8 @@ private:
                 bytes == 0 || bytes > 200'000'000)
                 return invalid("video_path must contain 1 to 200000000 bytes");
         }
-        // create/reference 付费前要显式确认时长、画幅和分辨率，不能静默用默认值。
+        // 第三阶段核对付费规格：时长、画幅和分辨率需由调用方明确确认。
+        // 不能静默套默认值后把昂贵任务提交出去。
         const Json production = args.value("production", Json::object());
         if (!production.is_object()) return invalid("production must be an object");
         if ((mode == "create" || mode == "reference") &&
@@ -942,6 +960,7 @@ private:
                 "person's identity; do not use the asset ID as a character name. " +
                 instruction;
         if (instruction.size() > 8000) return invalid("video instruction is too long");
+        // 第四阶段生成供应商 content[]：文本、图片和视频保持各自的协议 role。
         // 参考资产只能作为 image_url 的 asset:// 输入；本地路径只用于读取原始图像。
         // 编辑任务会把这些参考图与源视频一起放进 content，不再把资产当成本地文件。
         Json content = Json::array({Json{{"type", "text"}, {"text", instruction}}});
@@ -1015,7 +1034,7 @@ private:
         }
         if (body.dump().size() > 64'000'000)
             return invalid("Seedance request exceeds the 64 MB body limit");
-        // 素材读取、上传与规格校验完成后才提交一次收费请求。
+        // 第五阶段才是收费提交：前面的任何错误都必须在这个边界前返回。
         ArkResponse result = requestJson(kVideoTasksUrl, key, mCaBundle, &body, context);
         if (result.error) return *result.error;
         const std::string taskId = stringValue(result.data, "id");
@@ -1060,6 +1079,8 @@ private:
         return MaiToolResult::success(output.dump());
     }
 
+    // 根据原任务标识查询 Seedance 的生成状态，并在完成后下载视频产物。
+    // 查询失败保留云任务和本地记录，不能误报为生成失败或触发重新付费。
     MaiToolResult continueTask(const Json& args, const std::string& key,
                                const MaiToolContext& context) const {
         const std::string conversationId = stringValue(args, "conversation_id");
@@ -1242,6 +1263,8 @@ public:
                R"("enum":["1K","1.5K","2K"]}},"required":["action"],)"
                R"("additionalProperties":false})";
     }
+    // 解析模型提供的参数并提交或查询方舟媒体任务。
+    // 成功和失败都转成明确的工具结果；中间状态不能冒充最终产物。
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         // schema 是模型可见的参数外形，执行层仍要核对字段类型、可访问路径、
         // 修订任务归属和输出新文件，全部通过后才允许调用付费接口。

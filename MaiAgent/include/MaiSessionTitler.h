@@ -1,3 +1,5 @@
+// 文件作用：根据会话内容生成简短标题。
+// 对外类型：MaiSessionTitler；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 #include <string>
 

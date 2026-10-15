@@ -1,3 +1,5 @@
+// 文件作用：验证“MaiToolLoop”的正确行为和边界条件。
+// 验证入口：test_tool_loop_closes、test_balance_error_routes_back_to_main_model、test_tool_image_is_persisted_and_fed_back_to_the_model；检查可观察结果而非实现细节。
 // 工具循环测试：模型说要调工具 → 我们执行 → 结果回灌 → 它接着答。
 //
 // 这是 agent 之所以是 agent 的地方，也是 M3 唯一真正需要证明的东西。

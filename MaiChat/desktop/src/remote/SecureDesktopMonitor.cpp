@@ -1,3 +1,6 @@
+// 文件作用：桌面端远程桌面连接与控制；SecureDesktopMonitor 负责安全桌面状态检测与远控保护，本文件给出其实现。
+// 主要入口：poll。
+// 实现边界：与 SecureDesktopMonitor 的公开声明配套，调用方通过相应接口进入。
 #include "remote/SecureDesktopMonitor.h"
 
 #ifdef Q_OS_WIN

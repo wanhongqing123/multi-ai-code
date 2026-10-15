@@ -1,3 +1,5 @@
+// 文件作用：把历史消息、工具结果和附件整理为模型上下文。
+// 对外类型：MaiContextBuilder；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 #include <cstddef>
 #include <string>

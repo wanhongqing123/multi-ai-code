@@ -1,3 +1,6 @@
+// 文件作用：桌面端共用界面；RemoteDiagnosticsDialog 负责对话框呈现、确认交互和结果回传，本文件给出其实现。
+// 主要入口：selectedRecipientId、buildUi、refreshConfirmState、applyStyle。
+// 直接依赖：ui/UiZoom.h；实现与这些接口协作。
 #include "ui/RemoteDiagnosticsDialog.h"
 
 #include <QHBoxLayout>
@@ -30,6 +33,8 @@ QString RemoteDiagnosticsDialog::selectedRecipientId() const {
     return item ? item->data(PeerIdRole).toString() : QString();
 }
 
+// 建立远程排障对话框，展示故障联系人、证据范围和接收人选择。
+// 发送前由用户明确选择对象，日志内容不直接显示为可误发的聊天正文。
 void RemoteDiagnosticsDialog::buildUi(const QString& faultyPeerName,
                                       const QList<RemoteIMContact>& candidates) {
     setObjectName(QStringLiteral("remoteDiagnosticsDialog"));

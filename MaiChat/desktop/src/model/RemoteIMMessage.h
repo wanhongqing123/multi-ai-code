@@ -1,3 +1,5 @@
+// 文件作用：桌面端界面使用的数据模型；RemoteIMMessage 负责消息结构、方向、状态和附件关联，本文件给出其声明。
+// 对外边界：本文件给出 RemoteIMMessage 的类型和函数声明；参数、返回值和对象生命周期以此为准。
 #pragma once
 
 #include <QDateTime>

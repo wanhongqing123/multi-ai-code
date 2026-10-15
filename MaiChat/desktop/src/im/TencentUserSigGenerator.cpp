@@ -1,3 +1,6 @@
+// 文件作用：桌面端IM 会话、消息与登录；TencentUserSigGenerator 负责腾讯 IM UserSig 的签名构造与相关参数处理，本文件给出其实现。
+// 主要入口：generate。
+// 实现边界：与 TencentUserSigGenerator 的公开声明配套，调用方通过相应接口进入。
 #include "im/TencentUserSigGenerator.h"
 
 #include <QDateTime>

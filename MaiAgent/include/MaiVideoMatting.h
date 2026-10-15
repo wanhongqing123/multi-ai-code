@@ -1,3 +1,5 @@
+// 文件作用：定义视频人像抠像流程及模型调用契约。
+// 对外类型：MaiMattingBackgroundKind、MaiVideoMattingOptions、MaiVideoMattingResult；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 
 #include <array>

@@ -1,3 +1,6 @@
+// 文件作用：桌面端创作中心和 Agent 会话；AgentChatPanel 负责面板呈现、输入处理和状态反馈，本文件给出其声明。
+// 类型关系：AgentChatPanel final : public QWidget；审阅时可据此追踪父类、接口或回调契约。
+// 对外边界：本文件给出 AgentChatPanel 的类型和函数声明；参数、返回值和对象生命周期以此为准。
 #pragma once
 
 #include <QString>

@@ -1,3 +1,5 @@
+// 文件作用：验证“列举可见窗口及其基础信息”的正确行为和边界条件。
+// 验证入口：test_contract_and_registration、test_lists_a_visible_native_window；检查可观察结果而非实现细节。
 #include <cstdio>
 #include <memory>
 #include <string>

@@ -1,3 +1,6 @@
+// 文件作用：桌面端共用界面；FilePreviewDialog 负责对话框呈现、确认交互和结果回传，本文件给出其实现。
+// 主要入口：normalizeGitDiffHtmlForQt、buildUi、applyStyle、contentAwareInitialSize。
+// 直接依赖：markdown/MarkdownDocument.h、markdown/MarkdownLayout.h、markdown/MarkdownView.h、ui/UiZoom.h；实现与这些接口协作。
 #include <QHash>
 #include <QHeaderView>
 #include <QSplitter>
@@ -103,6 +106,8 @@ FilePreviewDialog::FilePreviewDialog(const QString& displayName, const QString& 
     resize(contentAwareInitialSize());
 }
 
+// 根据文件格式和显示名建立预览内容、标题与关闭操作。
+// 文本或 Markdown 的真实布局决定后续初始窗口尺寸，不使用固定占位高度。
 void FilePreviewDialog::buildUi(const QString& displayName, const QString& content,
                                 ContentFormat format) {
     fullTitle_ = displayName.trimmed().isEmpty() ? QStringLiteral("文件预览") : displayName.trimmed();
@@ -227,6 +232,7 @@ void FilePreviewDialog::buildUi(const QString& displayName, const QString& conte
     setMinimumSize(UiZoom::s(480), UiZoom::s(360));
 }
 
+// 作用：应用页面现有的颜色、字号、间距和控件外观。
 void FilePreviewDialog::applyStyle() {
     setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
         #filePreviewPanel {
@@ -293,6 +299,7 @@ void FilePreviewDialog::applyStyle() {
     )")));
 }
 
+// 作用：按预览内容的实际尺寸计算初始窗口大小。
 QSize FilePreviewDialog::contentAwareInitialSize() {
     // 初始尺寸由内容与当前屏幕共同决定：短文档不应占满父窗口，长 Diff 则要保留
     // 足够的左右对比宽度，但无论内容多大都不能越过工作区，超出的部分交给滚动条。

@@ -1,3 +1,6 @@
+// 文件作用：桌面端本地数据持久化；LocalSettingsStore 负责持久化读写与缓存管理，本文件给出其实现。
+// 主要入口：load、save。
+// 实现边界：与 LocalSettingsStore 的公开声明配套，调用方通过相应接口进入。
 #include "storage/LocalSettingsStore.h"
 
 #include <QDir>

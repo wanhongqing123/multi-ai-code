@@ -1,3 +1,5 @@
+// 文件作用：Android IM 身份、消息同步与本地历史；RemoteIMApprovalAction 负责远程 IM 审批动作的类型和取值，本文件给出其实现。
+// 主要入口：wireValue、title、decisionDisplayText、fromWireValue。
 package com.kongshang.maichat;
 
 public enum RemoteIMApprovalAction {

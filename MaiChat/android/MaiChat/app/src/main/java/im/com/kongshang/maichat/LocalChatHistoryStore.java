@@ -1,3 +1,5 @@
+// 文件作用：Android IM 身份、消息同步与本地历史；LocalChatHistoryStore 负责持久化读写与缓存管理，本文件给出其实现。
+// 主要入口：save、load、historyFile、writeMessage。
 package com.kongshang.maichat;
 
 import java.io.BufferedReader;
@@ -84,6 +86,7 @@ public final class LocalChatHistoryStore {
         return new File(baseDirectory, safeFileName(ownerUserId) + ".tsv");
     }
 
+    // 作用：将聊天消息和附件字段序列化到本地历史。
     private void writeMessage(BufferedWriter writer, RemoteIMMessage message) throws IOException {
         RemoteIMImageAttachment image = message.imageAttachment();
         RemoteIMVoiceAttachment voice = message.voiceAttachment();
@@ -155,6 +158,7 @@ public final class LocalChatHistoryStore {
         writer.newLine();
     }
 
+    // 作用：从数据库游标重建完整消息及附件字段。
     private RemoteIMMessage readMessage(String[] parts) {
         RemoteIMImageAttachment image = null;
         String imagePath = decode(parts[8]);

@@ -1,3 +1,6 @@
+// 文件作用：桌面端共用界面；MessageImageLoader 负责异步资源读取、缓存和失败反馈，本文件给出其实现。
+// 主要入口：instance、cacheKey、loadInto、load。
+// 直接依赖：diagnostics/PerformanceLog.h、MaiImageDecode.h；实现与这些接口协作。
 #include "diagnostics/PerformanceLog.h"
 #include "ui/MessageImageLoader.h"
 

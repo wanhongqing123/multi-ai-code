@@ -1,3 +1,6 @@
+// 文件作用：验证远程输入包的编码、解码与边界值处理。
+// 验证远端输入数据包的字段范围与往返编码。
+// 异常按键和坐标在解码边界被拒绝。
 import XCTest
 @testable import MaiChatCore
 

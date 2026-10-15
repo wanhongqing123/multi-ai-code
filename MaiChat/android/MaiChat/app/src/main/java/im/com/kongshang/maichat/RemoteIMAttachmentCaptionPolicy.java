@@ -1,3 +1,5 @@
+// 文件作用：Android IM 身份、消息同步与本地历史；RemoteIMAttachmentCaptionPolicy 负责输入筛选、权限判断或展示规则，本文件给出其实现。
+// 主要入口：caption、placement、hasAttachment。
 package com.kongshang.maichat;
 
 /** Pure display policy shared by the Activity and JVM tests. */

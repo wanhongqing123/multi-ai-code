@@ -1,3 +1,6 @@
+// 文件作用：移动端 C++ Agent 适配层；MaiVideoMattingIosTests 负责行为与回归验证，本文件给出其验证。
+// 运行边界：仅供自动化验证使用，不作为正式 App 或 Agent 的用户功能入口。
+// 直接依赖：MaiFilePath.h、MaiFileSystem.h、MaiIdGenerator.h、MaiMobileAgent.h；实现与这些接口协作。
 #include <cstdio>
 #include <string>
 

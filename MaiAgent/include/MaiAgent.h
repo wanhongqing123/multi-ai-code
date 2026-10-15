@@ -1,3 +1,5 @@
+// 文件作用：组织 Agent 的公开操作、事件流和会话执行入口。
+// 对外类型：MaiCreateSession、MaiUpdateSession、MaiDeleteSession、MaiClearMessages；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 
 #include <cstddef>

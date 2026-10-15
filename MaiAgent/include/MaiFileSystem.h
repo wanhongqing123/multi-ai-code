@@ -1,3 +1,5 @@
+// 文件作用：定义跨平台文件系统操作及错误契约。
+// 对外类型：MaiFileEntry、MaiWalkAction、MaiFileSystem；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 
 #include <cstdint>

@@ -1,3 +1,6 @@
+// 文件作用：桌面端远程桌面连接与控制；RemoteInputSender 负责数据发送、回执及失败处理，本文件给出其实现。
+// 主要入口：beginSession、endSession、resetQueues、setContentRect。
+// 实现边界：与 RemoteInputSender 的公开声明配套，调用方通过相应接口进入。
 #include "remote/RemoteInputSender.h"
 
 namespace RemoteInput {
@@ -196,6 +199,7 @@ void RemoteInputSender::queueReleaseAll() {
     reliableQueue_.append(event);
 }
 
+// 作用：把待发送远程输入合并为有序数据包。
 QVector<RemoteInputSender::OutgoingPacket> RemoteInputSender::flush(qint64 nowMs) {
     QVector<OutgoingPacket> outgoing;
     if (!sessionActive_) return outgoing;

@@ -1,3 +1,5 @@
+// 文件作用：声明声明 ffplay 所需的 SDL 兼容类型、事件、音频和渲染接口所需的接口和数据结构。
+// 调用边界：平台实现与上层调用方通过本文件约定参数、所有权和释放方式。
 #pragma once
 
 // Compatibility declarations for FFmpeg's unmodified ffplay.c. This is not

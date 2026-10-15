@@ -1,3 +1,8 @@
+// 文件作用：桌面端共用界面；MaiFfplayVideoDialog 负责对话框呈现、确认交互和结果回传，本文件给出其声明。
+// 类型关系：MaiFfplayVideoDialog final : public QDialog；审阅时可据此追踪父类、接口或回调契约。
+// 对外边界：本文件给出 MaiFfplayVideoDialog 的类型和函数声明；参数、返回值和对象生命周期以此为准。
+// 公开入口：activeDialog、setTitle、setSize、setPosition。
+// 直接依赖：MaiFfplayEntry.h；实现与这些接口协作。
 #pragma once
 
 #include <QDialog>

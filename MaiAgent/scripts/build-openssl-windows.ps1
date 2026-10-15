@@ -1,3 +1,5 @@
+# 文件作用：为 Windows 构建 MaiAgent 使用的 OpenSSL 库和头文件。
+# 阅读边界：此文件负责构建或测试流程，不在应用运行时解释为业务逻辑。
 param(
     [Parameter(Mandatory = $true)][string]$SourceDir,
     [Parameter(Mandatory = $true)][string]$BuildDir

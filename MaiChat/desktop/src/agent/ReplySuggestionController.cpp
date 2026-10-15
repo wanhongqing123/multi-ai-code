@@ -1,3 +1,6 @@
+// 文件作用：桌面端创作中心和 Agent 会话；ReplySuggestionController 负责流程编排、异步回调和状态转换，本文件给出其实现。
+// 主要入口：setConfig、requestSuggestions、cancel。
+// 直接依赖：MaiOpenAiClient.h；实现与这些接口协作。
 #include "agent/ReplySuggestionController.h"
 
 #include <QJsonArray>
@@ -154,6 +157,8 @@ void ReplySuggestionController::setConfig(const Config &config) {
   runtime_->model = makeMaiModelClient(std::move(modelConfig));
 }
 
+// 根据最近消息异步生成回复建议，并用请求代次丢弃旧会话的迟到结果。
+// 后台线程完成后只把仍属于当前请求的建议交给界面。
 quint64 ReplySuggestionController::requestSuggestions(
     const QString &accountId, const QString &peerId,
     const QString &latestMessageId,

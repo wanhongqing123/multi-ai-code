@@ -1,3 +1,5 @@
+// 文件作用：验证“MaiCore”的正确行为和边界条件。
+// 验证入口：test_id_prefix_and_monotonic、test_session_crud_and_events、test_media_only_prompt_has_no_placeholder_text；检查可观察结果而非实现细节。
 #include <cassert>
 #include <cstdio>
 #include <memory>

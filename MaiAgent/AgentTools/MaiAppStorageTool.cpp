@@ -1,3 +1,5 @@
+// 文件作用：提供应用私有存储的查询与文件操作工具。
+// 直接依赖：MaiFilePath.h、MaiFileSystem.h、MaiIdGenerator.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiAppStorageTool.h"
 
 #include <json.hpp>

@@ -1,3 +1,5 @@
+// 文件作用：在权限边界内执行 shell 命令并收集结果。
+// 直接依赖：MaiProcess.h；本文件在这些接口之间完成调用与结果转换。
 #include <json.hpp>
 
 #include <algorithm>

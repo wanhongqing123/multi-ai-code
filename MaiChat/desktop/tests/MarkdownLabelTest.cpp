@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端Markdown 标签的宽度测量、复用缓存和纯文本提取。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QCoreApplication>
 #include <QTest>
 #include <QWidget>

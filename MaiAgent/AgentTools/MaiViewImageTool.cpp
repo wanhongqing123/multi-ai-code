@@ -1,3 +1,5 @@
+// 文件作用：读取工作区图片并返回可供模型查看的内容。
+// 直接依赖：MaiFilePath.h、MaiFileSystem.h、MaiPathGuard.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiViewImageTool.h"
 
 #include <cstddef>
@@ -54,6 +56,8 @@ public:
                R"("required":["path"],"additionalProperties":false})";
     }
 
+    // 只预览可访问的现有图片；路径解析和大小限制先于读取，不能借预览访问工作区外文件。
+    // 读取失败明确返回错误，避免模型把空白预览误判为图片内容为空。
     MaiToolResult execute(const std::string& argumentsJson,
                           const MaiToolContext& context) override {
         const json arguments = json::parse(argumentsJson, nullptr, /*allow_exceptions=*/false);

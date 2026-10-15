@@ -1,3 +1,5 @@
+// 文件作用：Android 联系人和群组管理；DefaultAvatarAtlas 负责默认头像资源的索引和绘制，本文件给出其实现。
+// 主要入口：portrait。
 package com.kongshang.maichat;
 
 import android.content.Context;

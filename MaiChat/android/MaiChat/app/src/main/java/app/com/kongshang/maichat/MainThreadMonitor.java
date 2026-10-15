@@ -1,3 +1,5 @@
+// 文件作用：Android 应用启动、账户与主导航；MainThreadMonitor 负责主线程卡顿采样与诊断记录，本文件给出其实现。
+// 主要入口：write。
 package com.kongshang.maichat;
 
 import android.os.Debug;

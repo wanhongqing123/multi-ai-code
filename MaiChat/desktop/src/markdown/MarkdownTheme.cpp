@@ -1,3 +1,6 @@
+// 文件作用：桌面端Markdown 内容解析与呈现；MarkdownTheme 负责界面颜色和视觉令牌，本文件给出其实现。
+// 主要入口：standard、listBulletForDepth、calloutStyle。
+// 实现边界：与 MarkdownTheme 的公开声明配套，调用方通过相应接口进入。
 #include "markdown/MarkdownTheme.h"
 
 namespace {

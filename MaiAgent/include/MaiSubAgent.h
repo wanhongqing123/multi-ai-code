@@ -1,3 +1,5 @@
+// 文件作用：定义子 Agent 的任务、执行状态和结果。
+// 对外类型：MaiSubAgentInfo、MaiSubAgentHost；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 
 #include <atomic>

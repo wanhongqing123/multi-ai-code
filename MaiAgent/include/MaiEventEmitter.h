@@ -1,3 +1,5 @@
+// 文件作用：构造和发布 Agent 执行过程中的事件。
+// 对外类型：MaiEventEmitter；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 #include <string>
 #include <string_view>

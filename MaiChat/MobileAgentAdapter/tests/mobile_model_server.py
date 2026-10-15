@@ -1,3 +1,5 @@
+# 文件作用：为移动端适配层测试提供本机模型接口响应，不调用付费模型。
+# 阅读边界：此文件负责构建或测试流程，不在应用运行时解释为业务逻辑。
 """Local-only deterministic model fixture for iOS/Android UI tests; never a product server."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json

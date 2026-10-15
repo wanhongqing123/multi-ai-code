@@ -1,3 +1,6 @@
+// 文件作用：桌面端Markdown 内容解析与呈现；MarkdownDocument 负责Markdown 文档结构与块级内容组织，本文件给出其实现。
+// 主要入口：parse、plainText。
+// 直接依赖：md4c.h；实现与这些接口协作。
 #include "markdown/MarkdownDocument.h"
 
 #include <QByteArray>
@@ -239,6 +242,8 @@ QString sanitizeHref(const QString& href) {
     return safe.match(href).hasMatch() ? href : QString();
 }
 
+// 作用：在 Markdown 解析器进入块节点时创建对应文档结构。
+// 先校验外部输入，再更新本地状态；失败路径不能覆盖已有有效结果。
 int enterBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
     auto* builder = static_cast<Builder*>(userdata);
     switch (type) {
@@ -349,6 +354,7 @@ int enterBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
     return 0;
 }
 
+// 作用：在 Markdown 解析器结束块节点时封闭对应文档结构。
 int leaveBlock(MD_BLOCKTYPE type, void* /*detail*/, void* userdata) {
     auto* builder = static_cast<Builder*>(userdata);
     switch (type) {
@@ -481,6 +487,7 @@ int leaveSpan(MD_SPANTYPE type, void* /*detail*/, void* userdata) {
     return 0;
 }
 
+// 作用：把 Markdown 文本节点和样式写入当前块。
 int onText(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* userdata) {
     auto* builder = static_cast<Builder*>(userdata);
     switch (type) {
@@ -590,6 +597,7 @@ QString markdownCalloutTitle(MarkdownCallout callout) {
     return QString();
 }
 
+// 作用：按文档顺序提取可复制的纯文本内容。
 QString MarkdownDocument::plainText() const {
     QStringList pieces;
     // 提示框的标题只在一组的**头一个块**前面加一次。同一个提示框里有三段的话，

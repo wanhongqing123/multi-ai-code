@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端Agent 读取 IM 数据和需要审批的发送工具。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QFileInfo>
@@ -132,6 +134,7 @@ void MaiChatHostToolsTest::readsContactsMessagesSearchAndUnreadState() {
   QCOMPARE(unreadObject.value(QStringLiteral("total_unread")).toInt(), 1);
 }
 
+// 发送和回复工具都必须经过审批门槛；测试同时确认只读工具不会意外获得写入能力。
 void MaiChatHostToolsTest::sendsAndRepliesOnlyThroughApprovalGatedTools() {
   auto client = std::make_unique<FakeRemoteIMClient>();
   auto *fake = client.get();

@@ -1,3 +1,6 @@
+// 文件作用：桌面端共用界面；MainWindow 负责窗口呈现、输入处理和状态反馈，本文件给出其实现。
+// 主要入口：event、updateWindowChromeBackground、closeEvent、eventFilter。
+// 直接依赖：diagnostics/PerformanceLog.h、model/ContactGroups.h、model/MessageNotification.h、model/MessageQuote.h；实现与这些接口协作。
 #include "ui/MainWindow.h"
 #include "diagnostics/PerformanceLog.h"
 
@@ -488,6 +491,7 @@ QSet<QString> &failedAvatarUrls() {
   return urls;
 }
 
+// 作用：异步读取头像并在目标控件仍有效时请求重绘。
 void requestAvatarPixmap(const QString &avatarUrl, QWidget *repaintTarget) {
   const QString url = avatarUrl.trimmed();
   if (url.isEmpty() || avatarPixmapCache().contains(url) ||
@@ -616,6 +620,7 @@ public:
     return QSize(0, UiZoom::s(72));
   }
 
+  // 会话行按实际视口宽度绘制选中背景、头像与预览；行内边距不能叠加 Qt 的滚动条留白。
   void paint(QPainter *painter, const QStyleOptionViewItem &option,
              const QModelIndex &index) const override {
     painter->save();
@@ -736,6 +741,7 @@ public:
     return QSize(0, UiZoom::s(54));
   }
 
+  // 联系人行与分组标题共用委托，先按角色分流，避免把不可选表头绘成普通联系人。
   void paint(QPainter *painter, const QStyleOptionViewItem &option,
              const QModelIndex &index) const override {
     if (index.data(IsGroupHeaderRole).toBool()) {
@@ -794,6 +800,7 @@ public:
   }
 
 private:
+  // 分组标题只承担导航和分隔；悬停可以提示位置，但不显示选中状态。
   void paintGroupHeader(QPainter *painter, const QStyleOptionViewItem &option,
                         const QModelIndex &index) const {
     painter->save();
@@ -4260,6 +4267,8 @@ MainWindow::approvalDisplayState(const RemoteIMMessage &message) const {
   return ApprovalDisplayState::Available;
 }
 
+// 针对切换会话等全量场景重建当前消息行和索引。
+// 此路径会移除旧控件再创建新行；不能用于普通单条消息更新或流式内容刷新。
 void MainWindow::rebuildMessageList(const QString &peerId,
                                     const QList<RemoteIMMessage> &messages) {
   QObject::disconnect(messageScrollToBottomConn_);
@@ -4535,6 +4544,8 @@ bool MainWindow::ensureMessageRendered(const QString &messageId) {
   return false;
 }
 
+// 以消息稳定标识比较新旧集合，仅替换发生变化的消息行。
+// 正在阅读的滚动位置由原容器保留，不走全量重建路径。
 void MainWindow::applyIncrementalMessageUpdate(
     const QList<RemoteIMMessage> &messages) {
   RemoteDiagnostics::PerformanceSpan performance("message-layout");
@@ -5383,6 +5394,8 @@ QWidget *MainWindow::createQuoteBlock(const RemoteIMMessage &message,
   return block;
 }
 
+// 作用：按消息类型组装文本、媒体和操作气泡，并为每个组件建立稳定的父子关系。
+// 气泡几何尺寸由真实内容和当前宽度确定；附件加载只更新该行，不重建整个消息页。
 QWidget *MainWindow::createMessageBubble(const RemoteIMMessage &message) {
   const bool outgoing = message.direction == RemoteIMMessageDirection::Outgoing;
   const bool expandedTextBubble = message.hasApprovalRequest ||
@@ -5429,6 +5442,8 @@ QWidget *MainWindow::createMessageBubble(const RemoteIMMessage &message) {
                           !message.hasVideo && !message.hasVoice &&
                           !message.hasApprovalRequest;
 
+  // 以下五条互斥分支只负责气泡主体；时间、投递状态和审批控件在主体之后统一组装。
+  // 附件路径可能暂时没有实体文件，视图要保留可恢复的占位与打开反馈。
   auto *contentRow = new QHBoxLayout();
   contentRow->setContentsMargins(0, 0, 0, 0);
   contentRow->setSpacing(10);
@@ -5673,6 +5688,8 @@ QWidget *MainWindow::createMessageBubble(const RemoteIMMessage &message) {
       contentRow->addWidget(metaLabel);
     }
   } else if (message.hasFile) {
+    // 文件气泡优先使用用户可读名称，并按文档、差异、视频或普通文件选择打开行为。
+    // 预览不可用时保留另存为入口，不把尚未下载的缓存路径当成可复制文件。
     auto *fileButton = new QPushButton(bubble);
     fileButton->setObjectName(QStringLiteral("messageFileButton"));
     fileButton->setCursor(Qt::PointingHandCursor);
@@ -5784,6 +5801,7 @@ QWidget *MainWindow::createMessageBubble(const RemoteIMMessage &message) {
             });
     contentRow->addWidget(fileButton);
   } else {
+    // 纯文本由 Markdown 视图统一排版；回复和转发仍引用这条消息的稳定标识。
     auto *markdownView = new MarkdownMessageView(bubble);
     markdownView->setReplyHandler(
         [this, quoted = message] { beginReplyTo(quoted); });
@@ -5796,6 +5814,7 @@ QWidget *MainWindow::createMessageBubble(const RemoteIMMessage &message) {
 
   const QString status =
       outgoing ? deliveryStatusIndicator(message.status) : QString();
+  // 投递指示只属于本机发出的消息；收到的消息不凭本地状态补一个假回执。
   if (!status.isEmpty()) {
     deliveryStatusLabel = new QLabel(status, row);
     deliveryStatusLabel->setObjectName(QStringLiteral("messageStatusLabel"));
@@ -5817,6 +5836,8 @@ QWidget *MainWindow::createMessageBubble(const RemoteIMMessage &message) {
 
   if (!outgoing && message.hasApprovalRequest &&
       message.approvalRequest.isValid()) {
+    // 审批按钮读取消息模型的最新决定状态；网络回调后重新按模型刷新本行。
+    // 已处理、正在发送和可点击必须互斥，避免重复提交审批。
     const QString token = message.approvalRequest.token;
     const ApprovalDisplayState approvalState = approvalDisplayState(message);
     if (approvalState != ApprovalDisplayState::Available) {
@@ -5956,8 +5977,7 @@ QWidget *MainWindow::createMessageBubble(const RemoteIMMessage &message) {
   bubbleRow->addWidget(bubble);
   int trailingWidth = deliveryStatusLabel ? UiZoom::s(24) : 0;
   if (!inlineDate) {
-    // Attachments/approval controls are widgets; place their date beside the
-    // bottom edge instead of adding another full-width metadata row.
+    // 附件和审批控件已经占据单独部件；日期贴在底边，避免增加整行元数据高度。
     auto *date =
         new QLabel(QStringLiteral("· ") + messageTimeText(message), row);
     date->setObjectName(QStringLiteral("messageTimeLabel"));
@@ -5967,6 +5987,8 @@ QWidget *MainWindow::createMessageBubble(const RemoteIMMessage &message) {
   }
   if (deliveryStatusLabel)
     bubbleRow->addWidget(deliveryStatusLabel, 0, Qt::AlignVCenter);
+  // 尾部时间和投递标识完成实测后再确定气泡宽度；
+  // 宽度不能提前凭文件类型估算，否则长文本和附件容易挤占可视区。
   bubble->setProperty("trailingMetadataWidth", trailingWidth);
   applyMessageBubbleWidth(bubble, expandedTextBubble);
   if (outgoing)
@@ -6249,6 +6271,7 @@ void MainWindow::applyUiZoom(bool showToastPopup) {
     showZoomToast();
 }
 
+// 作用：按当前缩放比例同步固定尺寸控件的几何位置。
 void MainWindow::applyScaledFixedGeometry() {
   setMinimumSize(UiZoom::s(980), UiZoom::s(640));
   if (auto *header = findChild<QWidget *>(QStringLiteral("chatHeader"))) {
@@ -6398,6 +6421,8 @@ void MainWindow::updateRemoteDesktopButton() {
   remoteDesktopButton_->setEnabled(enabled);
 }
 
+// 作用：建立远程桌面配置面板及其操作反馈。
+// 页面状态变化和用户操作在这里衔接；退出或失败时维持已显示内容。
 QWidget *MainWindow::buildRemoteDesktopSettingsPanel(QWidget *parent) {
   auto *panel = new QWidget(parent);
   panel->setObjectName(QStringLiteral("settingsPanel"));
@@ -6693,6 +6718,8 @@ void MainWindow::editRemoteDesktopProxy() {
       QStringLiteral("重启 MaiChat 后，TRTC 将使用新的网络代理。"));
 }
 
+// 作用：初始化远程桌面控制器、画面和状态回调。
+// 页面状态变化和用户操作在这里衔接；退出或失败时维持已显示内容。
 void MainWindow::setupRemoteDesktop() {
   // 配置与本地消息库同级：每账号一份。
   QString root =
@@ -6779,6 +6806,8 @@ void MainWindow::setupRemoteDesktop() {
                            "无人值守已自动关闭，现在改为每次弹窗确认。"));
       });
 
+  // 观看状态回调同时驱动按钮、远端画面窗和错误提示；
+  // 先更新当前状态再决定是否展示窗口，避免连接中显示旧视频帧。
   connect(
       remoteDesktop_, &RemoteDesktopController::viewerStateChanged, this,
       [this](RemoteDesktop::ViewerState state, const QString &failureReason) {
@@ -7066,6 +7095,7 @@ void MainWindow::showMoreMenu() {
   menu.exec(moreButton_->mapToGlobal(QPoint(0, moreButton_->height())));
 }
 
+// 作用：收集当前远程桌面诊断信息并请求导出。
 void MainWindow::requestRemoteDiagnostics() {
   const QString peerId = app_.chatState().selectedPeerId();
   if (peerId.isEmpty())

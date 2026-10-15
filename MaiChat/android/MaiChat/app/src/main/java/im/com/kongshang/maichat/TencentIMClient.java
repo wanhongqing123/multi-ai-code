@@ -1,3 +1,5 @@
+// 文件作用：Android IM 身份、消息同步与本地历史；TencentIMClient 负责外部接口请求与结果转换，本文件给出其实现。
+// 主要入口：onRecvNewMessage、onConnecting、onConnectSuccess、onConnectFailed。
 package com.kongshang.maichat;
 
 import android.content.Context;

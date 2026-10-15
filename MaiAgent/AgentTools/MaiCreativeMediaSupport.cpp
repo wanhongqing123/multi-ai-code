@@ -1,3 +1,5 @@
+// 文件作用：复用创作媒体工具的路径、素材和响应处理规则。
+// 直接依赖：MaiBlockingCheck.h、MaiDownloadFileTool.h、MaiFilePath.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiCreativeMediaSupport.h"
 
 #include <curl/curl.h>

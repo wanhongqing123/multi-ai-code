@@ -1,3 +1,5 @@
+// 文件作用：手工验证 Responses 在线流式协议与客户端的基本兼容性。
+// 验证入口：阅读 main 或测试注册处，核对输入、预期结果与失败输出。
 #include <atomic>
 #include <cstdlib>
 #include <iostream>
@@ -6,6 +8,7 @@
 
 #include "MaiOpenAiClient.h"
 
+// 手工在线烟测要求调用者显式提供凭据；普通路径和工具往返分开执行，避免测试意外产生额外请求。
 int main(int argc, char** argv) {
     const bool withTool = argc == 2 && std::string(argv[1]) == "--tool-cycle";
     if (argc != 1 && !withTool) {

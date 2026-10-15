@@ -1,3 +1,5 @@
+// 文件作用：分析视频画面几何信息并生成裁剪参数。
+// 直接依赖：MaiFilePath.h、MaiFileSystem.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiVideoGeometryTool.h"
 
 #include <json.hpp>
@@ -91,6 +93,7 @@ private:
 
 }  // namespace
 
+// 伸展下半身视频前先核对输入和输出范围；变换失败时保留源文件，不交付不完整产物。
 MaiResult<MaiStretchLowerResult> maiStretchLowerVideo(const MaiStretchLowerOptions& options,
                                                       MaiFfmpegEngine engine,
                                                       const MaiToolContext& context) {

@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端附件下载结果的交付记录、失败回退和账号切换隔离。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFileInfo>

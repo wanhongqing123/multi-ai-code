@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端引用摘要的消息标识、附件名称和隐私边界。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QtTest>
 
 #include "model/MessageQuote.h"

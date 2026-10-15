@@ -1,3 +1,6 @@
+// 文件作用：把消息 Markdown 解析为可展示的文本、附件和预览结构。
+// 把消息 Markdown 转为可展示与可复制的内容结构。
+// 附件标题和代码内容保持原意，不把文件名误当格式语法。
 import Foundation
 
 private final class ConversationPreviewCache: @unchecked Sendable {
@@ -13,7 +16,7 @@ public enum MarkdownConversationPreview {
 
     public static func text(for message: RemoteIMMessage?) -> String {
         guard let message else { return "暂无消息" }
-        // Keep existing attachment captions/placeholders; do not parse filenames as Markdown.
+        // 保留附件标题和占位内容，不把文件名当作 Markdown 语法解析。
         if message.imageAttachment != nil || message.fileAttachment != nil
             || message.videoAttachment != nil || message.voiceAttachment != nil {
             return message.text
@@ -22,6 +25,8 @@ public enum MarkdownConversationPreview {
         return preview.isEmpty ? "新消息" : preview
     }
 
+    /// 从 Markdown 结构提取适合通知和摘要展示的纯文本。
+    /// 跳过格式标记但保留正文顺序，避免把代码或链接路径误当消息主体。
     public static func plainText(_ markdown: String) -> String {
         let input = String(String.UnicodeScalarView(markdown.unicodeScalars.prefix(8192)))
         let key = input as NSString
@@ -47,8 +52,8 @@ public enum MarkdownConversationPreview {
                 blocks.append(text)
                 text = ""
             }
-            // Full Markdown parsing removes syntax while retaining code contents.
-            // Separate block identities so headings, paragraphs and table cells don't run together.
+            // 完整 Markdown 解析去掉格式标记但保留代码内容；
+            // 标题、段落和表格单元格保持独立块标识，避免纯文本拼接成一行。
             for run in parsed.runs {
                 let components = run.presentationIntent?.components ?? []
                 if components.contains(where: { if case .thematicBreak = $0.kind { return true }; return false }) {

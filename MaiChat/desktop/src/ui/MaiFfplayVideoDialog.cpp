@@ -1,3 +1,6 @@
+// 文件作用：桌面端共用界面；MaiFfplayVideoDialog 负责对话框呈现、确认交互和结果回传，本文件给出其实现。
+// 主要入口：setForwardAction、forwardVideo、saveCopy、activeDialog。
+// 直接依赖：MaiGraphicsPresenter.h；实现与这些接口协作。
 #include "ui/MaiFfplayVideoDialog.h"
 
 #include <QCloseEvent>
@@ -71,6 +74,7 @@ QString bundledResource(const QString& relative) {
 
 }  // namespace
 
+// 构造时一次性连接播放器、进度条和窗口关闭行为；关闭需停止解码与音频后再销毁界面。
 MaiFfplayVideoDialog::MaiFfplayVideoDialog(const QString& path, QWidget* parent)
     : QDialog(parent), path_(path) {
     setWindowTitle(QFileInfo(path).fileName());
@@ -273,6 +277,7 @@ void MaiFfplayVideoDialog::showWindow(void* userData) {
                               Qt::QueuedConnection);
 }
 
+// 作用：验证文件并启动 FFplay，同时同步播放控件状态。
 bool MaiFfplayVideoDialog::startPlayback() {
     if (started_ || !QFileInfo(path_).isFile()) {
         qWarning() << "FFplay popup has no readable video file:" << path_;

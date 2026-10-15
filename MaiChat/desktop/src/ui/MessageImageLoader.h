@@ -1,3 +1,7 @@
+// 文件作用：桌面端共用界面；MessageImageLoader 负责异步资源读取、缓存和失败反馈，本文件给出其声明。
+// 类型关系：MessageImageLoader : public QObject；审阅时可据此追踪父类、接口或回调契约。
+// 对外边界：本文件给出 MessageImageLoader 的类型和函数声明；参数、返回值和对象生命周期以此为准。
+// 公开入口：cacheKey。
 #pragma once
 
 #include <functional>

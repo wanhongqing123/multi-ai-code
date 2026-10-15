@@ -1,3 +1,6 @@
+// 文件作用：桌面端共用界面；RemoteDesktopProxyDialog 负责对话框呈现、确认交互和结果回传，本文件给出其实现。
+// 主要入口：config、buildUi、applyStyle、updateFieldState。
+// 直接依赖：ui/UiZoom.h；实现与这些接口协作。
 #include "ui/RemoteDesktopProxyDialog.h"
 
 #include <QCheckBox>
@@ -30,6 +33,8 @@ RemoteDesktopProxyDialog::Config RemoteDesktopProxyDialog::config() const {
     return result;
 }
 
+// 作用：建立对话框或会话卡片的控件层级及信号连接。
+// 页面状态变化和用户操作在这里衔接；退出或失败时维持已显示内容。
 void RemoteDesktopProxyDialog::buildUi(const Config& config) {
     setObjectName(QStringLiteral("remoteDesktopProxyDialog"));
     setWindowTitle(QStringLiteral("TRTC 网络代理"));
@@ -149,6 +154,7 @@ void RemoteDesktopProxyDialog::buildUi(const Config& config) {
     setMaximumWidth(UiZoom::s(600));
 }
 
+// 作用：应用页面现有的颜色、字号、间距和控件外观。
 void RemoteDesktopProxyDialog::applyStyle() {
     setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
         #remoteDesktopProxyPanel {

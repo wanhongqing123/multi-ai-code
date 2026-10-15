@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端Markdown 样式、表格、引用和 HTML 转义。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QTest>
 
 #include "markdown/MarkdownRenderer.h"

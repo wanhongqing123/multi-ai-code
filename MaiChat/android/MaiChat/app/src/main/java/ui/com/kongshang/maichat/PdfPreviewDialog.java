@@ -1,3 +1,5 @@
+// 文件作用：Android 跨页面复用的界面组件；PdfPreviewDialog 负责对话框呈现、确认交互和结果回传，本文件给出其实现。
+// 主要入口：show、open、validate、requestPage。
 package com.kongshang.maichat;
 
 import android.app.Activity;

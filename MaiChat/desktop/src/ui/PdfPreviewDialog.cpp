@@ -1,3 +1,5 @@
+// 文件作用：桌面端共用界面；PdfPreviewDialog 负责对话框呈现、确认交互和结果回传，本文件给出其实现。
+// 实现边界：与 PdfPreviewDialog 的公开声明配套，调用方通过相应接口进入。
 #include "ui/PdfPreviewDialog.h"
 
 #include <QDesktopServices>

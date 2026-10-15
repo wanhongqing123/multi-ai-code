@@ -1,3 +1,5 @@
+// 文件作用：实现 POSIX 平台的文件系统操作。
+// 主要实现：exists、isDirectory、isSymbolicLink；对应公开接口中的状态和错误处理。
 #include <pthread.h>
 
 #include <dirent.h>

@@ -1,3 +1,5 @@
+// 文件作用：验证“MaiCurlEmbeddedCli”的正确行为和边界条件。
+// 验证入口：阅读 main 或测试注册处，核对输入、预期结果与失败输出。
 #include <chrono>
 #include <cstdio>
 #include <string>
@@ -79,6 +81,7 @@ struct Server {
 
 }  // namespace
 
+// 通过本地服务验证内嵌 curl 的参数、响应和取消，不依赖外部网络。
 int main() {
     Server server;
     const MaiFilePath root = MaiFileSystem::temporaryDirectory().append(

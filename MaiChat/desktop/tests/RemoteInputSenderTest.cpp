@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端远控输入坐标映射、移动批处理和字节预算。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QtTest/QtTest>
 
 #include "remote/RemoteInputSender.h"
@@ -343,6 +345,7 @@ void RemoteInputSenderTest::staysWithinTrtcMessageBudget() {
     QVERIFY(bytes <= kMaxBytesPerSecond);
 }
 
+// 按滑动时间窗核查远控包总数和总字节；多通道共享配额不能各自单独计数。
 void RemoteInputSenderTest::neverExceedsBudgetInAnySlidingWindow() {
     RemoteInputSender sender;
     sender.beginSession(QStringLiteral("s1"));

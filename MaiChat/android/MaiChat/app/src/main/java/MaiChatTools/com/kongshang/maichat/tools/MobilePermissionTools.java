@@ -1,3 +1,6 @@
+// 文件作用：Android 移动端 Agent 工具与宿主能力；MobilePermissionTools 负责 Agent 工具注册、调用与结果返回，本文件给出其实现。
+// 主要入口：hasAllPhotoAccess、hasPhotoRationale、hasAll、hasAny。
+// 直接依赖：com.kongshang.maichat.MainActivity；实现与这些接口协作。
 package com.kongshang.maichat.tools;
 
 import android.Manifest;

@@ -1,3 +1,7 @@
+// 文件作用：桌面端IM 会话、消息与登录；RemoteIMClient 负责外部接口请求与结果转换，本文件给出其声明。
+// 类型关系：RemoteIMClient : public QObject；审阅时可据此追踪父类、接口或回调契约。
+// 对外边界：本文件给出 RemoteIMClient 的类型和函数声明；参数、返回值和对象生命周期以此为准。
+// 直接依赖：model/RemoteIMContact.h、model/RemoteIMMessage.h、model/RemoteIMVideoPayload.h、diagnostics/RemoteDiagnosticsEvidence.h；实现与这些接口协作。
 #pragma once
 
 #include <QObject>

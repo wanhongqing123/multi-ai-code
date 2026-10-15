@@ -1,3 +1,5 @@
+// 文件作用：桌面端 Agent 工具；DesktopPdfRenderer 负责内容渲染和资源生命周期，本文件给出其实现。
+// 实现边界：与 DesktopPdfRenderer 的公开声明配套，调用方通过相应接口进入。
 #include "MaiChatTools/DesktopPdfRenderer.h"
 
 #include <QFile>

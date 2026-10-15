@@ -1,3 +1,6 @@
+// 文件作用：桌面端本地数据持久化；LocalMessageDatabase 负责数据库结构与读写，本文件给出其声明。
+// 对外边界：本文件给出 LocalMessageDatabase 的类型和函数声明；参数、返回值和对象生命周期以此为准。
+// 直接依赖：model/ChatState.h；实现与这些接口协作。
 #pragma once
 
 #include <QHash>

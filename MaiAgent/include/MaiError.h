@@ -1,3 +1,5 @@
+// 文件作用：定义 Agent 统一错误类型与错误转换规则。
+// 对外类型：MaiErrorCode、MaiError、MaiResult；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 
 #include <string>

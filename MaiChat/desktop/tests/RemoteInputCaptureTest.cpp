@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端远控输入捕获、画面留边坐标和紧急退出。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QtTest/QtTest>
 
 #include "ui/RemoteInputCapture.h"

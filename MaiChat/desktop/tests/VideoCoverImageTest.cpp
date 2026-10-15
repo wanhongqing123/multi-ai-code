@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端视频封面比例、占位图和 SDK 必需字段。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QFileInfo>
 #include <QImage>
 #include <QTemporaryDir>

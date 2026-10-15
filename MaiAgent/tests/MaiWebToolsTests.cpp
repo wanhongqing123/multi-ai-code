@@ -1,3 +1,5 @@
+// 文件作用：验证“MaiWebTools”的正确行为和边界条件。
+// 验证入口：test_only_http_urls_are_accepted、test_every_host_needs_approval_and_the_key_is_the_host、test_formats_the_list_and_counts_progress；检查可观察结果而非实现细节。
 // webfetch 和 todowrite 的测试。
 //
 // webfetch 真要联网才能跑通全程，而单元测试不该依赖外网——所以这里测的是

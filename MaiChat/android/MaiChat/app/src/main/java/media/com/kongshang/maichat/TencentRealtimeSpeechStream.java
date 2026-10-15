@@ -1,3 +1,5 @@
+// 文件作用：Android 媒体播放、预览和编辑；TencentRealtimeSpeechStream 负责流式数据接收、解码和结束状态，本文件给出其实现。
+// 主要入口：dispatch、receive、pump、finish。
 package com.kongshang.maichat;
 
 import java.io.File;

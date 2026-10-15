@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端人物视频抠像结果和模型调用边界。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -13,6 +15,7 @@ extern "C" {
 #include <libavformat/avformat.h>
 }
 
+// 以本地素材校验抠像输出尺寸和结果文件；无模型或解码失败时明确返回失败码。
 int main(int argc, char **argv) {
   if (argc < 3)
     return 1;

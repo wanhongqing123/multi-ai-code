@@ -1,3 +1,5 @@
+// 文件作用：定义视频人像抠像流程及模型调用契约。
+// 直接依赖：MaiFilePath.h、MaiFileSystem.h、MaiRvmComposite.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiVideoMatting.h"
 
 #include <algorithm>
@@ -123,6 +125,8 @@ public:
     }
 
 private:
+    // 初始化本地视频模型与推理资源，核对模型输入输出配置。
+    // 准备失败时不留下可被误用的半初始化状态。
     void initialize() {
         auto opened = MaiRvmMattingSession::open(mOptions.modelPath, mOptions.runtimePath,
                                                  mOptions.ortApiBase);
@@ -277,6 +281,8 @@ private:
         }
     }
 
+    // 逐帧更新视频抠像结果，并保持原始帧顺序与时间信息。
+    // 帧处理失败应终止当前结果，不能输出看似完成的残缺视频。
     void processFrame(MaiVideoMattingResult& result) {
         if (mDecodedFrame->width != mWidth || mDecodedFrame->height != mHeight)
             throw std::runtime_error("video resolution changes during playback");

@@ -1,3 +1,5 @@
+// 文件作用：检测禁止阻塞的线程上下文，防止事件线程执行慢操作。
+// 对外类型：MaiScopedDisallowBlocking、MaiScopedAllowBlocking；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 
 // "这个线程现在不许做慢活"。

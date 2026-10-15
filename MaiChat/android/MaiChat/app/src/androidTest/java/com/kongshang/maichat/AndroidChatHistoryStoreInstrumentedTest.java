@@ -1,3 +1,6 @@
+// 文件作用：Android 设备集成测试；AndroidChatHistoryStoreInstrumentedTest 负责覆盖对应界面或服务的设备行为，本文件给出其验证。
+// 运行边界：仅供自动化验证使用，不作为正式 App 或 Agent 的用户功能入口。
+// 覆盖场景：contactGroupsAreAccountScopedTransactionalAndProfileSafe、testIncrementalUpsertSummaryPaginationAndConversationDelete、keepsExistingHistoryWhenVideoColumnsAreAdded。
 package com.kongshang.maichat;
 
 import static org.junit.Assert.assertEquals;
@@ -54,6 +57,7 @@ public class AndroidChatHistoryStoreInstrumentedTest {
     private static final String TEST_DATABASE_NAME = "maichat-history-instrumented-test.db";
 
     @Test
+    // 作用：验证消息增量写入、摘要分页及删除会话后的持久化结果。
     public void testIncrementalUpsertSummaryPaginationAndConversationDelete() {
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         context.deleteDatabase(TEST_DATABASE_NAME);
@@ -119,6 +123,8 @@ public class AndroidChatHistoryStoreInstrumentedTest {
     }
 
     @Test
+    // 作用：验证数据库增加视频字段后旧聊天记录仍可读取。
+    // 按真实调用顺序检查输入和可观察结果，失败时保留定位所需的上下文。
     public void keepsExistingHistoryWhenVideoColumnsAreAdded() throws Exception {
         // 迁移前的 onUpgrade 是 DROP TABLE 再重建，升个版本就把用户聊天记录清空了。
         // 这条用例锁住"加列不能丢历史"。

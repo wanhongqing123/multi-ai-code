@@ -1,3 +1,6 @@
+// 文件作用：Android 移动端 Agent 工具与宿主能力；MobilePhotoTools 负责 Agent 工具注册、调用与结果返回，本文件给出其实现。
+// 主要入口：agentListPhotos、agentListAlbums、agentReadPhoto、agentExportPhotoOriginal。
+// 直接依赖：com.kongshang.maichat.AIAssistantController、com.kongshang.maichat.MainActivity；实现与这些接口协作。
 package com.kongshang.maichat.tools;
 
 import com.kongshang.maichat.AIAssistantController;
@@ -248,6 +251,7 @@ final class MobilePhotoTools {
                 ? "video" : "photo");
     }
 
+    // 作用：校验 Agent 指定的视频文件并保存到系统相册。
     private JSONObject agentSaveVideo(JSONObject arguments) throws Exception {
         if (Build.VERSION.SDK_INT < 29)
             throw new IllegalStateException("当前 Android 版本无法安全保存到系统图库");
@@ -418,6 +422,7 @@ final class MobilePhotoTools {
         return MobileImageVision.segmentPerson(source, target);
     }
 
+    // 作用：按 Agent 请求把工作区图片复制到指定相册。
     private JSONObject agentCopyPhotosToAlbum(JSONObject arguments) throws Exception {
         agentPhotoAccess();
         if (Build.VERSION.SDK_INT < 29)

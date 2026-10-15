@@ -1,3 +1,5 @@
+// 文件作用：列举可见窗口及其基础信息。
+// 直接依赖：MaiScreenshot.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiWindowListTool.h"
 
 #include <algorithm>

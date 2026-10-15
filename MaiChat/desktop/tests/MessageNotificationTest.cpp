@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端消息通知摘要、隐私过滤和重复交付抑制。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QTest>
 
 #include "model/MessageNotification.h"

@@ -1,3 +1,6 @@
+// 文件作用：连接 FFplay 播放内核与 iOS 图像、音频和控制事件的 C 接口。
+// 连接 Swift 播放视图与 C++ FFplay 图形／音频引擎。
+// 桥接函数负责播放命令、帧呈现和句柄生命周期，不持久化用户媒体。
 #include "MaiFfplayIosBridge.h"
 
 #include <atomic>

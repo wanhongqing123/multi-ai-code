@@ -1,3 +1,6 @@
+// 文件作用：桌面端IM 会话、消息与登录；TimSdkRemoteIMClient 负责外部接口请求与结果转换，本文件给出其实现。
+// 主要入口：orderedMessageTime、connectToService、disconnectFromService、deleteContact。
+// 直接依赖：diagnostics/RemoteDiagnosticsProtocol.h、im/DynamicTimSdkApi.h；实现与这些接口协作。
 #include "im/TimSdkRemoteIMClient.h"
 
 #include "diagnostics/RemoteDiagnosticsProtocol.h"
@@ -500,6 +503,7 @@ TimSdkRemoteIMClient::~TimSdkRemoteIMClient() {
     }
 }
 
+// 作用：配置 SDK 并建立指定用户的 IM 连接。
 void TimSdkRemoteIMClient::connectToService(int sdkAppId, const QString& userId, const QString& userSig, RemoteIMCompletion completion) {
     if (sdkAppId <= 0) {
         if (completion) completion(false, QStringLiteral("SDK AppID 不能为空"));
@@ -1088,6 +1092,8 @@ void TimSdkRemoteIMClient::handleConversationListPayload(const QString& jsonPayl
     if (!contacts.isEmpty()) emit contactsReceived(contacts);
 }
 
+// 作用：解析 SDK 历史消息载荷并合并到对应会话。
+// 先校验外部输入，再更新本地状态；失败路径不能覆盖已有有效结果。
 void TimSdkRemoteIMClient::handleHistoryMessagesPayload(const QString& jsonPayload) {
     QList<RemoteIMMessage> messages;
     const QJsonArray sdkMessages = arrayPayload(jsonPayload);
@@ -1297,6 +1303,8 @@ void TimSdkRemoteIMClient::handleIncomingMessages(const QString& jsonMessages) {
     }
 }
 
+// 作用：解析入站消息类型、元数据和附件后更新会话。
+// 先校验外部输入，再更新本地状态；失败路径不能覆盖已有有效结果。
 void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
     // 这两个 return 以前是完全静默的：消息在这里消失，日志里一个字都没有。
     if (message.value(QStringLiteral("message_is_from_self")).toBool(false)) return;
@@ -1538,6 +1546,7 @@ void TimSdkRemoteIMClient::handleIncomingImageUrl(RemoteIMMessage message, const
     });
 }
 
+// 作用：将 SDK 文件地址与原消息附件绑定并处理下载状态。
 void TimSdkRemoteIMClient::handleIncomingFileUrl(RemoteIMMessage message, const QString& url, bool live) {
     // 账号标签在**发起时**捕获，跟着这次下载走。回调里再取「当前账号」是错的：
     // 下载完成时用户可能已经换号，那样旧账号的附件会被算到新账号头上。
@@ -1607,6 +1616,8 @@ void TimSdkRemoteIMClient::handleIncomingFileUrl(RemoteIMMessage message, const 
     });
 }
 
+// 视频和封面分别下载，交付以同一条消息的媒体状态更新，而不是再插入一条新消息。
+// 下载期间若账号切换，旧回调只能丢弃，不能把旧账号附件写入当前会话。
 void TimSdkRemoteIMClient::handleIncomingVideoUrls(RemoteIMMessage message,
                                                    const QString& videoUrl,
                                                    const QString& coverUrl,

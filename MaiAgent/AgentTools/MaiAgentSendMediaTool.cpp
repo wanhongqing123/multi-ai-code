@@ -1,3 +1,5 @@
+// 文件作用：把 Agent 生成的媒体文件交付给聊天或宿主界面。
+// 直接依赖：MaiFilePath.h、MaiFileSystem.h、MaiPathGuard.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiAgentSendMediaTool.h"
 
 #include <algorithm>

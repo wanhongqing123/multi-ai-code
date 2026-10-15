@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端登录窗布局、账号输入和按钮可用状态。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QLabel>
 #include <QLineEdit>
 #include <QPixmap>

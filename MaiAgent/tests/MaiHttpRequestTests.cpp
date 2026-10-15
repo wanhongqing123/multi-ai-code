@@ -1,3 +1,5 @@
+// 文件作用：验证“MaiHttpRequest”的正确行为和边界条件。
+// 验证入口：阅读 main 或测试注册处，核对输入、预期结果与失败输出。
 #include "MaiHttpRequestTool.h"
 
 #include <chrono>

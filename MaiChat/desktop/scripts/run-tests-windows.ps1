@@ -1,3 +1,5 @@
+# 文件作用：在 Windows 构建环境运行桌面端自动化检查。
+# 阅读边界：此文件负责构建或测试流程，不在应用运行时解释为业务逻辑。
 param(
     [string]$BuildDirectory = "build-agent",
     [string]$TestRegex = "",

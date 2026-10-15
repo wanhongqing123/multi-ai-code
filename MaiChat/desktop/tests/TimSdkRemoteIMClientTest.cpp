@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端腾讯 IM SDK 发收消息、附件字段和状态同步。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -213,6 +215,7 @@ void TimSdkRemoteIMClientTest::loadsAndUpdatesOwnAvatarWithoutAddingSelfAsContac
     QVERIFY(!fake->selfInfoCallback);
 }
 
+// 临时活动状态走在线自定义消息，不落入历史，也不能污染普通消息列表。
 void TimSdkRemoteIMClientTest::activityUsesOnlineCustomTransportWithoutHistory() {
     auto api = std::make_unique<FakeTimSdkApi>();
     auto* fake = api.get();
@@ -267,6 +270,7 @@ void TimSdkRemoteIMClientTest::activityUsesOnlineCustomTransportWithoutHistory()
     QCOMPARE(activityCount, 1);
 }
 
+// 模拟 SDK 登录后发送文本和图片，核对真实传给 SDK 的字段和回调顺序。
 void TimSdkRemoteIMClientTest::connectsThroughSdkAndSendsTextAndImage() {
     auto api = std::make_unique<FakeTimSdkApi>();
     auto* fake = api.get();
@@ -353,6 +357,7 @@ void TimSdkRemoteIMClientTest::sendsApprovalDecisionAsV2CloudInteraction() {
              QStringLiteral("approve-once"));
 }
 
+// 图片和配文必须作为同一 SDK 消息提交，避免收件人看到两张分离卡片。
 void TimSdkRemoteIMClientTest::sendsImageWithTextAsSingleMultiElemMessage() {
     auto api = std::make_unique<FakeTimSdkApi>();
     auto* fake = api.get();
@@ -534,6 +539,7 @@ void TimSdkRemoteIMClientTest::deletesFriendAndConversationThroughSdk() {
     QCOMPARE(fake->deletedConversationType, 1);
 }
 
+// 登录后联系人、会话和历史分别由 SDK 回灌；重复或异步回执不得改变当前账号归属。
 void TimSdkRemoteIMClientTest::fetchesContactsConversationsAndHistoryAfterLogin() {
     auto api = std::make_unique<FakeTimSdkApi>();
     auto* fake = api.get();
@@ -619,6 +625,7 @@ void TimSdkRemoteIMClientTest::fetchesContactsConversationsAndHistoryAfterLogin(
     QVERIFY(messages.at(0).createdAtMillis < messages.at(1).createdAtMillis);
 }
 
+// SDK 入站文本和图片转换为相同会话的两类消息，并保留方向及时间顺序。
 void TimSdkRemoteIMClientTest::emitsIncomingTextAndImageFromSdkMessages() {
     auto api = std::make_unique<FakeTimSdkApi>();
     auto* fake = api.get();

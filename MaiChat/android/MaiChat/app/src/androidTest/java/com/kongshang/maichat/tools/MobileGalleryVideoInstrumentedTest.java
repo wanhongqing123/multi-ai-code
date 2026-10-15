@@ -1,3 +1,7 @@
+// 文件作用：Android 设备集成测试；MobileGalleryVideoInstrumentedTest 负责覆盖对应界面或服务的设备行为，本文件给出其验证。
+// 运行边界：仅供自动化验证使用，不作为正式 App 或 Agent 的用户功能入口。
+// 覆盖场景：listsAndExportsVideoBytesInsteadOfItsCover。
+// 直接依赖：com.kongshang.maichat.AIAssistantController、com.kongshang.maichat.MainActivity；实现与这些接口协作。
 package com.kongshang.maichat.tools;
 
 import static org.junit.Assert.assertEquals;
@@ -25,6 +29,7 @@ import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public final class MobileGalleryVideoInstrumentedTest {
+    // 作用：验证相册视频列表和导出使用视频数据而不是封面图片。
     @Test public void listsAndExportsVideoBytesInsteadOfItsCover() throws Exception {
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         InstrumentationRegistry.getInstrumentation().getUiAutomation()

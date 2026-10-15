@@ -1,3 +1,6 @@
+// 文件作用：验证远程桌面信令协议和连接状态转换。
+// 验证远控信令的编码、解码和无效数据拒绝。
+// 覆盖会话标识与授权字段的边界。
 import XCTest
 import CoreGraphics
 @testable import MaiChatCore

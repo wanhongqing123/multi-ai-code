@@ -1,3 +1,5 @@
+// 文件作用：管理火山方舟素材上传和云端素材引用。
+// 直接依赖：MaiBlockingCheck.h、MaiCurlCliTool.h、MaiFilePath.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiArkAssetTools.h"
 
 #include <curl/curl.h>
@@ -161,6 +163,7 @@ std::string serviceEndpoint(std::string base, const char* action) {
     return base + "/" + action;
 }
 
+// 集中执行资源服务请求和重试；只对允许重试的阶段重新发包，避免已签发链接或付费请求被重复提交。
 MaiResult<MaiArkHttpResponse> sendHttp(const std::string& url, const char* method,
                                        const char* stage, const std::string& payload,
                                        const std::vector<std::string>& headerValues,
@@ -255,6 +258,8 @@ MaiResult<MaiArkHttpResponse> sendHttp(const std::string& url, const char* metho
     return {MaiErrorCode::Internal, "Asset request retry state is invalid"};
 }
 
+// 校验本地素材的路径、大小和类型，再通过私有 OSS 通道上传。
+// 只有完整上传成功的 HTTPS 地址才能回给媒体任务提交入口。
 MaiResult<std::string> uploadImageToOss(const std::string& candidate,
                                         const MaiArkAssetServiceSettings& settings,
                                         const std::string& caBundle,
@@ -472,6 +477,8 @@ public:
         return field(args, "action") == "begin_real_validation";
     }
 
+    // 解析模型提供的参数并把媒体素材安全上传到方舟资产服务。
+    // 成功和失败都转成明确的工具结果；中间状态不能冒充最终产物。
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const Json args = Json::parse(raw, nullptr, false);
         if (!args.is_object() || !args.value("action", Json{}).is_string())
@@ -599,6 +606,8 @@ MaiArkAssetProvider makeMaiArkAssetServiceProvider(
         };
 }
 
+// 为媒体工具创建按次取服务配置的私有上传回调。
+// 每次调用重新读取凭据，使宿主轮换或撤销配置后不需要重建 Agent。
 static MaiCreativeMediaUploadProvider makePrivateOssStreamUploader(
     std::function<MaiResult<MaiArkAssetServiceSettings>()> settings, std::string caBundlePath,
     bool allowDocuments) {

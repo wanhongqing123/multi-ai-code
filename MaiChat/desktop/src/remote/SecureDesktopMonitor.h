@@ -1,3 +1,5 @@
+// 文件作用：桌面端远程桌面连接与控制；SecureDesktopMonitor 负责安全桌面状态检测与远控保护，本文件给出其声明。
+// 对外边界：本文件给出 SecureDesktopMonitor 的类型和函数声明；参数、返回值和对象生命周期以此为准。
 #pragma once
 
 #include <memory>

@@ -1,3 +1,5 @@
+// 文件作用：Android JNI 桥接层；MaiGraphicsViewJni 负责 Java 与原生引擎之间的参数和生命周期转换，本文件给出其实现。
+// 直接依赖：MaiGraphicsPresenter.h、MaiVideoPlayback.h、util/base.h；实现与这些接口协作。
 #include <android/log.h>
 #include <android/native_window.h>
 #include <android/native_window_jni.h>

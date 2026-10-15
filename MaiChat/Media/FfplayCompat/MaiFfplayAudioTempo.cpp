@@ -1,3 +1,5 @@
+// 文件作用：通过 SoundTouch 调整音频节奏，使倍速播放保持原音调并在跳转后清空旧样本。
+// 调用边界：由 MaiChat 媒体或 Agent 宿主调用；平台资源在停止或失败时须正确释放。
 #include "MaiFfplayAudioTempo.h"
 
 #include <algorithm>

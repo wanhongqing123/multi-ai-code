@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端PDF 文件校验、应用内预览和加载时关闭。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QtTest/QtTest>
 
 #include <QFile>

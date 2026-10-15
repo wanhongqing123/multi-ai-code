@@ -1,3 +1,5 @@
+// 文件作用：实现 OpenCV 视频处理工具及输出管理。
+// 直接依赖：MaiFilePath.h、MaiFileSystem.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiCvVideoTools.h"
 
 #include <algorithm>
@@ -44,6 +46,8 @@ public:
         return R"({"type":"object","properties":{"path":{"type":"string"},"sample_interval_s":{"type":"number","minimum":0.1,"maximum":5},"motion_ratio_threshold":{"type":"number","exclusiveMinimum":0,"exclusiveMaximum":1},"pixel_threshold":{"type":"integer","minimum":1,"maximum":255},"min_motion_s":{"type":"number","minimum":0,"maximum":30},"max_segments":{"type":"integer","minimum":1,"maximum":2000}},"required":["path"],"additionalProperties":false})";
     }
 
+    // 先校验路径和抽帧限制，再执行本地视频分析；无有效片段时返回结构化结果而非误报工具失败。
+    // 该工具只读取已有视频，取消信号交给分析器检查，避免后台分析阻塞 Agent 的下一次操作。
     MaiToolResult execute(const std::string& argumentsJson,
                           const MaiToolContext& context) override {
         if (!mAnalyzer)

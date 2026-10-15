@@ -1,3 +1,5 @@
+// 文件作用：定义专用模型或代理的能力描述和调用接口。
+// 对外类型：MaiSpecialistCapabilityStatus、MaiSpecialistCapability、MaiSpecialistInfo；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 
 #include <string>

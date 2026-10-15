@@ -1,3 +1,6 @@
+// 文件作用：桌面端远程桌面连接与控制；RemoteDesktopSettings 负责用户配置的读取、更新和持久化，本文件给出其声明。
+// 对外边界：本文件给出 RemoteDesktopSettings 的类型和函数声明；参数、返回值和对象生命周期以此为准。
+// 直接依赖：remote/RemoteDesktopAuth.h、remote/RemoteDesktopSession.h；实现与这些接口协作。
 #pragma once
 
 #include <QByteArray>

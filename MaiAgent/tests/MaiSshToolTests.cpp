@@ -1,3 +1,5 @@
+// 文件作用：验证“执行受控 SSH 连接与远程命令”的正确行为和边界条件。
+// 验证入口：阅读 main 或测试注册处，核对输入、预期结果与失败输出。
 #include "MaiSshTool.h"
 
 #include <cstdio>
@@ -19,6 +21,7 @@ int failures = 0;
 
 }  // namespace
 
+// 使用本地假连接验证 SSH 命令的参数、安全边界和失败回报。
 int main() {
     int passwordCalls = 0;
     int trustCalls = 0;

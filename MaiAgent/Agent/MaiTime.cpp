@@ -1,3 +1,5 @@
+// 文件作用：提供统一时间表示和时间转换规则。
+// 主要实现：getCurrentTime、formatIso8601Utc；对应公开接口中的状态和错误处理。
 #include "MaiTime.h"
 
 #include <chrono>

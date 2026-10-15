@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端IM Markdown 消息在真实桌面窗口中的排版。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QApplication>
 #include <QFont>
 #include <QImage>

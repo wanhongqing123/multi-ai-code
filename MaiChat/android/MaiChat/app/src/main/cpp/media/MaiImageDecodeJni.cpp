@@ -1,3 +1,5 @@
+// 文件作用：Android 媒体播放、预览和编辑；MaiImageDecodeJni 负责 Java 与原生引擎之间的参数和生命周期转换，本文件给出其实现。
+// 直接依赖：MaiImageDecode.h；实现与这些接口协作。
 #include <jni.h>
 #include <android/bitmap.h>
 #include <android/log.h>

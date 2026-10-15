@@ -1,3 +1,5 @@
+// 文件作用：桌面端创作中心和 Agent 会话；MaiDesktopGpuWindows 负责Windows GPU 设备和绘制资源接入，本文件给出其实现。
+// 直接依赖：agent/MaiDesktopGpu.h；实现与这些接口协作。
 #include "agent/MaiDesktopGpu.h"
 
 #include <dxgi1_4.h>

@@ -1,3 +1,5 @@
+// 文件作用：验证“MaiUploadFile”的正确行为和边界条件。
+// 验证入口：阅读 main 或测试注册处，核对输入、预期结果与失败输出。
 #include "MaiUploadFileTool.h"
 
 #include <chrono>
@@ -68,6 +70,7 @@ struct Server {
 
 }  // namespace
 
+// 用本地服务验证上传请求和超限、失败路径，避免测试产生真实外部写入。
 int main() {
     Server server;
     const MaiFilePath root = MaiFileSystem::temporaryDirectory().append(

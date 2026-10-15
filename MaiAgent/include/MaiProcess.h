@@ -1,3 +1,5 @@
+// 文件作用：声明跨平台子进程启动和结果获取接口。
+// 对外类型：MaiProcessOptions、MaiProcessResult；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 
 #include <atomic>

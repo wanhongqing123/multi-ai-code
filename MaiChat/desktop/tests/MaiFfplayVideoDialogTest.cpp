@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端视频弹窗控制、分享保存、倍速音频及关闭释放。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QElapsedTimer>
 #include <QComboBox>
 #include <QFileInfo>
@@ -61,6 +63,7 @@ void MaiFfplayVideoDialogTest::opensControlsAndClosesVideoPopup_data() {
     QTest::newRow("av1") << QStringLiteral(MAICHAT_FFPLAY_AV1_FIXTURE);
 }
 
+// 不同编码素材共用一套打开、控制、关闭路径；关闭后播放器资源必须退出，不能留后台声音。
 void MaiFfplayVideoDialogTest::opensControlsAndClosesVideoPopup() {
     QFETCH(QString, fixturePath);
     sSawFiniteSeek = false;

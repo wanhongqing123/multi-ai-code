@@ -1,3 +1,5 @@
+// 文件作用：Android IM 身份、消息同步与本地历史；RemoteIMMessage 负责消息结构、方向、状态和附件关联，本文件给出其实现。
+// 主要入口：withVideoAttachment、id、fromUserId、remoteId。
 package com.kongshang.maichat;
 
 import java.util.Objects;

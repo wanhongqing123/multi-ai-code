@@ -1,3 +1,6 @@
+// 文件作用：维护远程桌面连接、视频帧、输入事件和会话重连状态。
+// 阅读边界：会话协议与网络时序在这里处理；可视化和手势位于 RemoteDesktopView。
+// 维护 TRTC 远控连接、授权、首帧和退出状态。
 import Foundation
 import MaiChatCore
 import SwiftUI
@@ -171,6 +174,8 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
         }
     }
 
+    /// 发起远程桌面观看请求并记录会话协商状态。
+    /// 请求、等待、接受与取消各阶段分开处理，避免旧回执接入新会话。
     func requestView(
         peerUserID: String,
         sdkAppID: Int,
@@ -264,6 +269,8 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
     }
 
     @discardableResult
+    /// 处理远端控制信令并推进当前会话状态机。
+    /// 仅接受匹配会话标识的信令；过期或乱序消息不能回退已确认状态。
     private func applyIncomingSignal(from userID: String, text: String, decoded: RemoteDesktopSignal?) -> Bool {
         guard RemoteDesktopSignal.isSignalText(text) else { return false }
         guard let signal = decoded else {
@@ -561,6 +568,8 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
         }
     }
 
+    /// 在信令确认后启动媒体接收与画面渲染。
+    /// 启动失败时结束本次会话并释放已占用的设备资源。
     private func startViewing() {
         guard let credentials, !roomID.isEmpty else {
             log(
@@ -781,6 +790,8 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
     }
 
     @discardableResult
+    /// 把触摸、鼠标和键盘输入批量发送到远端。
+    /// 按顺序合并高频事件，保持按下与释放的完整配对。
     private func sendInputEvents(_ events: [RemoteInputEvent], channel: InputChannel) -> Bool {
         guard !events.isEmpty else {
             log(
@@ -977,6 +988,8 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
         }
     }
 
+    /// 通过当前远程桌面传输通道发送控制数据。
+    /// 会话失效或传输失败时返回错误，不吞掉用户输入。
     private func send(_ signal: RemoteDesktopSignal, to userID: String) async throws {
         let startedAt = ProcessInfo.processInfo.systemUptime
         log(
@@ -1081,6 +1094,8 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
         enterRoomStartedUptime = nil
     }
 
+    /// 停止 TRTC 媒体流并释放当前远程桌面资源。
+    /// 清理顺序避免旧连接回调重新激活已结束的页面。
     private func cleanupTRTC() {
         stopViewerHeartbeat()
         var isTRTCExitOutstanding = false
@@ -1291,6 +1306,8 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
         inputDiagnosticTask = nil
     }
 
+    /// 汇总一段时间内的输入事件与延迟诊断。
+    /// 日志记录聚合指标而非逐个高频事件，避免排查本身阻塞主线程。
     private func flushInputDiagnostics(forceHeartbeat: Bool) {
         let snapshot = inputDiagnostics.takeSnapshot()
         if snapshot.hasActivity {
@@ -1573,6 +1590,8 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
         }
     }
 
+    /// 监视远程视频子流是否在预期时间内恢复。
+    /// 超时仅处理当前会话，避免旧定时任务误伤新连接。
     private func scheduleSubstreamRecoveryWatchdog() {
         cancelSubstreamRecoveryWatchdog()
         guard !sessionID.isEmpty else { return }
@@ -1715,6 +1734,8 @@ extension RemoteDesktopSession: TRTCCloudDelegate {
         }
     }
 
+    /// 处理 TRTC 离房回调并同步会话终态。
+    /// 主动离开与异常退出分别记录，防止重复清理或错误重连。
     nonisolated func onExitRoom(_ reason: Int) {
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -1812,6 +1833,8 @@ extension RemoteDesktopSession: TRTCCloudDelegate {
         }
     }
 
+    /// 在收到第一帧远程视频时确认画面真正可用。
+    /// 只有首帧到达后才结束加载状态，避免黑屏期间误报连接完成。
     nonisolated func onFirstVideoFrame(
         _ userId: String,
         streamType: TRTCVideoStreamType,

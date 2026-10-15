@@ -1,3 +1,5 @@
+// 文件作用：Android 媒体播放、预览和编辑；MessageImageDecodePolicy 负责输入筛选、权限判断或展示规则，本文件给出其实现。
+// 主要入口：sampleSize、cacheKey。
 package com.kongshang.maichat;
 
 /**

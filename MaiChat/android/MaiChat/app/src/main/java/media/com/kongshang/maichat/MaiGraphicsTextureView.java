@@ -1,3 +1,6 @@
+// 文件作用：Android 媒体播放、预览和编辑；MaiGraphicsTextureView 负责界面呈现、交互与状态更新，本文件给出其实现。
+// 类型关系：MaiGraphicsTextureView extends TextureView；审阅时可据此追踪父类、接口或回调契约。
+// 主要入口：nativeStart、nativeAttach、nativeShowImage、nativeCreateVideo。
 package com.kongshang.maichat;
 
 import android.content.Context;

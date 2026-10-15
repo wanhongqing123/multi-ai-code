@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端Agent 事件的 Qt 主线程交付、多模态输入和工具注册边界。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -388,6 +390,7 @@ void AgentControllerTest::registers_a_screenshot_tool_that_requires_approval() {
     QCOMPARE(foundListWindows, maiIsScreenshotSupported());
 }
 
+// 验证宿主工具注册顺序与内置工具同时可见；顺序变化不能覆盖需要审批的内置工具。
 void AgentControllerTest::registers_host_tools_after_builtin_tools() {
     auto model = std::make_unique<ScriptedModel>(std::string(), std::string(kText));
     ScriptedModel* scripted = model.get();

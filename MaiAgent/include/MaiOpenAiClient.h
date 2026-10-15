@@ -1,3 +1,5 @@
+// 文件作用：实现兼容 Chat Completions 的模型客户端。
+// 对外契约：下方声明公开参数和返回值；实现位于同名源文件。
 #pragma once
 
 #include <memory>

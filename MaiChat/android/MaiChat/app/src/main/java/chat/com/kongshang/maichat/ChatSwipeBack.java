@@ -1,3 +1,5 @@
+// 文件作用：Android 聊天会话的消息呈现与输入；ChatSwipeBack 负责聊天页的交互式返回手势，本文件给出其实现。
+// 主要入口：begin、update、settle、finishCallback。
 package com.kongshang.maichat;
 
 import android.animation.Animator;

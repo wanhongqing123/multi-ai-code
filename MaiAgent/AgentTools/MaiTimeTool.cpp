@@ -1,3 +1,5 @@
+// 文件作用：向 Agent 提供当前时间查询工具。
+// 直接依赖：MaiTime.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiTimeTool.h"
 
 #include <string>

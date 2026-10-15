@@ -1,3 +1,5 @@
+// 文件作用：定义 Agent 统一错误类型与错误转换规则。
+// 主要实现：ok、make；对应公开接口中的状态和错误处理。
 #include "MaiError.h"
 
 const char* maiErrorCodeToString(MaiErrorCode code) {

@@ -1,3 +1,6 @@
+// 文件作用：Android 媒体播放、预览和编辑；AdtsFrameReader 负责ADTS 音频帧边界和帧数据读取，本文件给出其实现。
+// 类型关系：AdtsFrameReader implements AutoCloseable；审阅时可据此追踪父类、接口或回调契约。
+// 阅读入口：从类型声明开始，依次核对用户事件、状态更新和退出时的资源收尾。
 package com.kongshang.maichat;
 
 import java.io.ByteArrayOutputStream;

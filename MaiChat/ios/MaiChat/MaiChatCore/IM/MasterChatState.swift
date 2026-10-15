@@ -1,3 +1,6 @@
+// 文件作用：维护 IM 会话列表、消息顺序、未读数和本地显示状态的核心规则。
+// 维护联系人、会话消息、附件和未读状态的纯数据模型。
+// 合并消息按稳定标识去重；界面分页从该状态读取而不修改历史。
 import Foundation
 
 public enum MasterChatStateError: Error, Equatable, LocalizedError {
@@ -223,6 +226,8 @@ public enum RemoteIMActivityCodec {
         ))
     }
 
+    /// 从持久化数据恢复 IM 消息及其类型信息。
+    /// 校验缺失字段并兼容旧版本，避免单条损坏消息清空整个会话。
     public static func decode(_ data: Data?) -> RemoteIMActivitySignal? {
         guard let data,
               let wire = try? JSONDecoder().decode(Wire.self, from: data),
@@ -383,6 +388,9 @@ public enum RemoteIMCloudMetadataCodec {
         ))
     }
 
+    /// 解码云消息附带的应用元数据，并验证命名空间、协议版本和来源类型。
+    /// 不可信或旧格式数据返回 nil；有效字段再转为本地交互和引用结构，
+    /// 消息正文因此仍可独立显示，不因元数据损坏而被丢弃。
     public static func decode(_ data: Data?) -> RemoteIMCloudMetadata? {
         guard let data,
               let wire = try? JSONDecoder().decode(WireMetadata.self, from: data),
@@ -2179,6 +2187,8 @@ public struct MasterChatState: Equatable {
     }
 
     @discardableResult
+    /// 把新收到的视频消息并入会话时间线。
+    /// 按稳定消息标识去重，附件状态变化只更新原消息而不新增气泡。
     public mutating func receiveVideo(
         filePath: String,
         coverFilePath: String?,

@@ -1,3 +1,6 @@
+// 文件作用：桌面端应用启动和窗口装配；RemoteIMApplication 负责应用生命周期和全局服务装配，本文件给出其实现。
+// 主要入口：selfProfile、createContactGroup、renameContactGroup、deleteContactGroup。
+// 直接依赖：app/VideoCoverImage.h、im/VideoFileMetadata.h、remote/RemoteDesktopSignal.h；实现与这些接口协作。
 #include "app/RemoteIMApplication.h"
 
 #include <QSet>
@@ -366,6 +369,7 @@ void RemoteIMApplication::sendDiagnosticTo(const QString& peerId, const QString&
     else client_->sendFile(peerId, path, info.fileName(), std::move(done));
 }
 
+// 作用：对选中的联系人发送同一条文本并汇总成功与失败数。
 int RemoteIMApplication::broadcastText(const QStringList& peerIds, const QString& text) {
     if (text.trimmed().isEmpty()) return 0;
 
@@ -419,6 +423,8 @@ int RemoteIMApplication::broadcastText(const QStringList& peerIds, const QString
     return total;
 }
 
+// 转发时生成新的本地消息与发送状态，不复用原消息标识或原会话的引用关系。
+// 附件仍按源文件类型交给客户端发送；缺失的本地文件要返回失败而非发送空消息。
 bool RemoteIMApplication::forwardMessage(const RemoteIMMessage& source,
                                          const QString& peerId) {
     const QString target = peerId.trimmed();
@@ -628,6 +634,8 @@ void RemoteIMApplication::sendVideo(const QString& localPath, const QString& tex
     sendVideoTo(state_.selectedPeerId(), localPath, text, captionAbove);
 }
 
+// 校验视频文件与收件人后发送附件，并把本地发送状态关联到原会话。
+// 文件不可读时直接反馈错误，不留下误导性的已发送消息。
 bool RemoteIMApplication::sendVideoTo(const QString& peerId, const QString& localPath,
                                       const QString& text, bool captionAbove) {
     const QString target = peerId.trimmed();
@@ -720,6 +728,7 @@ void RemoteIMApplication::persistMessage(const RemoteIMMessage& message) {
     database_->insertMessageIfAbsent(message, peerOf(message));
 }
 
+// 作用：连接 IM 客户端信号与应用状态更新入口。
 void RemoteIMApplication::bindClientSignals() {
     connect(client_.get(), &RemoteIMClient::selfProfileReceived, this,
             [this](const QString& userId, const QString& name, const QString& avatarUrl) {

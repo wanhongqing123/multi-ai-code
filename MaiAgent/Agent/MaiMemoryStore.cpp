@@ -1,3 +1,5 @@
+// 文件作用：实现内存中的 Agent 会话和消息存储。
+// 主要内容：以进程内结构保存会话、消息和片段；不进行磁盘持久化，适合测试与短期运行。
 #include "MaiMemoryStore.h"
 
 #include <algorithm>

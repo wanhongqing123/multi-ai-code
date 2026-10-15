@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 文件作用：在当前平台构建 ONNX Runtime，供本地推理模块链接。
+# 阅读边界：此文件负责构建或测试流程，不在应用运行时解释为业务逻辑。
 set -euo pipefail
 
 # 从仓库内的官方 ONNX Runtime 源码构建，第三方依赖由其 CMake 清单固定版本。

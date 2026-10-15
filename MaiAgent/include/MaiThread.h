@@ -1,3 +1,5 @@
+// 文件作用：封装线程命名和线程上下文约束。
+// 对外类型：MaiThread；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 
 #include <string>

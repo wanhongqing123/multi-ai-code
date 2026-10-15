@@ -1,3 +1,5 @@
+// 文件作用：封装 MiniMax 图片及视频生成任务。
+// 对外契约：下方声明公开参数和返回值；实现位于同名源文件。
 #pragma once
 
 #include <functional>

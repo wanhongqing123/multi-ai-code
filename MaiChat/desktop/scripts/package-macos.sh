@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 文件作用：把 macOS 桌面程序和运行时依赖封装为分发产物。
+# 阅读边界：此文件负责构建或测试流程，不在应用运行时解释为业务逻辑。
 set -euo pipefail
 
 usage() {

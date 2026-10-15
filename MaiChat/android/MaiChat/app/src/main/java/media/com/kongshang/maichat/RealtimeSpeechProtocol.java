@@ -1,3 +1,5 @@
+// 文件作用：Android 媒体播放、预览和编辑；RealtimeSpeechProtocol 负责协议字段、编码解码及版本兼容，本文件给出其实现。
+// 主要入口：signedUrl。
 package com.kongshang.maichat;
 
 import org.json.JSONObject;

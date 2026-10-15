@@ -1,3 +1,5 @@
+// 文件作用：Android IM 身份、消息同步与本地历史；BroadcastDeliveryTracker 负责群发消息的交付进度和去重状态，本文件给出其实现。
+// 主要入口：record。
 package com.kongshang.maichat;
 
 import java.util.ArrayList;

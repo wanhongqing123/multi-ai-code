@@ -1,3 +1,5 @@
+// 文件作用：Android 联系人和群组管理；AvatarImageLoader 负责异步资源读取、缓存和失败反馈，本文件给出其实现。
+// 主要入口：sizeOf、load、beginConnection、finish。
 package com.kongshang.maichat;
 
 import android.graphics.Bitmap;

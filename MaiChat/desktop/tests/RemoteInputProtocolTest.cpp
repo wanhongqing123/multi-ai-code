@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端远控输入包的编码、版本和长度边界。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QtTest/QtTest>
 
 #include "remote/RemoteKeyMapping.h"
@@ -40,6 +42,7 @@ void RemoteInputProtocolTest::mapsCanonicalCodesToMacKeys() {
     QCOMPARE(macKeyCodeFromCanonical(0xffff), -1);
 }
 
+// 逐种远控输入事件编码并解码，核对字段原样往返以防一类事件被遗漏。
 void RemoteInputProtocolTest::roundTripsEveryEventType() {
     Packet packet;
     packet.sessionId = QStringLiteral("sess-1");

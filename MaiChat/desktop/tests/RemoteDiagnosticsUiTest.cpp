@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端诊断报告从菜单发起、确认和切换账号时的保护。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QApplication>
 #include <QFile>
 #include <QJsonDocument>
@@ -19,6 +21,7 @@
 
 class RemoteDiagnosticsUiTest : public QObject {
     Q_OBJECT
+    // 从真实菜单驱动诊断确认、取消和账号切换；最终收件人以确认时锁定的身份为准。
     void throughRealMenu(bool confirm, bool switchAccount = false, bool toPeer = false, bool onlyPeer = false) {
         auto client = std::make_unique<FakeRemoteIMClient>(); auto* fake = client.get();
         RemoteIMApplication app("phone", std::move(client));

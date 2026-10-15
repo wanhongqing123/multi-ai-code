@@ -1,3 +1,5 @@
+// 文件作用：Android 远程桌面会话与输入；RemoteDesktopSignal 负责信令载荷与状态转换，本文件给出其实现。
+// 主要入口：fromWireValue、isValid、create、createReject。
 package com.kongshang.maichat;
 
 import org.json.JSONException;

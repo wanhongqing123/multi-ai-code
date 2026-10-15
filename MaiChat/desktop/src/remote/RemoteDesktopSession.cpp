@@ -1,3 +1,5 @@
+// 文件作用：桌面端远程桌面连接与控制；RemoteDesktopSession 负责远程桌面会话状态与连接生命周期，本文件给出其实现。
+// 直接依赖：remote/RemoteDesktopAuth.h；实现与这些接口协作。
 #include "remote/RemoteDesktopSession.h"
 
 #include "remote/RemoteDesktopAuth.h"

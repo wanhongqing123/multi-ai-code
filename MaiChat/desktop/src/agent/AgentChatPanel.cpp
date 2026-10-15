@@ -1,3 +1,6 @@
+// 文件作用：桌面端创作中心和 Agent 会话；AgentChatPanel 负责面板呈现、输入处理和状态反馈，本文件给出其实现。
+// 主要入口：isCurrentSession、sessionId、setModelLabel、setOpenVideoCallback。
+// 直接依赖：MaiPathGuard.h、agent/AgentController.h、markdown/MarkdownView.h、ui/ComposerResizeSplitter.h；实现与这些接口协作。
 #include "agent/AgentChatPanel.h"
 
 #include <QAbstractTextDocumentLayout>

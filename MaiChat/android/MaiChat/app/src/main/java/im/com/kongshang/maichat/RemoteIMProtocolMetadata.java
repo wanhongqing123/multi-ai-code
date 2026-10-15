@@ -1,3 +1,5 @@
+// 文件作用：Android IM 身份、消息同步与本地历史；RemoteIMProtocolMetadata 负责媒体或消息元数据的表达与校验，本文件给出其实现。
+// 主要入口：origin、approvalRequest、approvalDecision、captionAbove。
 package com.kongshang.maichat;
 
 import com.google.gson.Gson;
@@ -107,6 +109,7 @@ public final class RemoteIMProtocolMetadata {
         return decodeMetadata(value).origin();
     }
 
+    // 作用：验证 IM 附加元数据格式并恢复交互字段。
     public static Metadata decodeMetadata(String value) {
         if (value == null || value.trim().isEmpty()) return machineMetadata();
         final WireMetadata wire;

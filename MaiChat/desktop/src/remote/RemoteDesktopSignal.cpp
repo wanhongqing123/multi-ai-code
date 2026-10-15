@@ -1,3 +1,5 @@
+// 文件作用：桌面端远程桌面连接与控制；RemoteDesktopSignal 负责信令载荷与状态转换，本文件给出其实现。
+// 实现边界：与 RemoteDesktopSignal 的公开声明配套，调用方通过相应接口进入。
 #include "remote/RemoteDesktopSignal.h"
 
 #include <QJsonDocument>

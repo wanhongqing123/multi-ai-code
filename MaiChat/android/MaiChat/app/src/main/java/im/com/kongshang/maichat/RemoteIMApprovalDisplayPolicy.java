@@ -1,3 +1,5 @@
+// 文件作用：Android IM 身份、消息同步与本地历史；RemoteIMApprovalDisplayPolicy 负责输入筛选、权限判断或展示规则，本文件给出其实现。
+// 阅读入口：从类型声明开始，依次核对用户事件、状态更新和退出时的资源收尾。
 package com.kongshang.maichat;
 
 import java.util.HashMap;

@@ -1,3 +1,6 @@
+// 文件作用：桌面端界面使用的数据模型；MessageQuote 负责消息引用内容的构造与展示，本文件给出其声明。
+// 对外边界：本文件给出 MessageQuote 的类型和函数声明；参数、返回值和对象生命周期以此为准。
+// 直接依赖：model/RemoteIMMessage.h；实现与这些接口协作。
 #pragma once
 
 #include <QString>

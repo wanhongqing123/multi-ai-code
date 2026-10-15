@@ -1,3 +1,6 @@
+// 文件作用：Android 设备集成测试；GraphicsDirectPresenterInstrumentedTest 负责覆盖对应界面或服务的设备行为，本文件给出其验证。
+// 运行边界：仅供自动化验证使用，不作为正式 App 或 Agent 的用户功能入口。
+// 覆盖场景：messagePreviewDecodesPngIntoNativeImageView、effectRendersStraightToTextureView。
 package com.kongshang.maichat;
 
 import static org.junit.Assert.assertEquals;
@@ -55,6 +58,8 @@ public final class GraphicsDirectPresenterInstrumentedTest {
         assertEquals(1L, decoded.getCount());
     }
 
+    // 作用：验证图形效果直接呈现到 TextureView 且不经过多余的图片副本。
+    // 按真实调用顺序检查输入和可观察结果，失败时保留定位所需的上下文。
     @Test public void effectRendersStraightToTextureView() throws Exception {
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         File source = new File(context.getCacheDir(), "graphics-direct-red.ppm");

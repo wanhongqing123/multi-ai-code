@@ -1,3 +1,5 @@
+// 文件作用：表示跨平台文件路径并保持平台原生路径语义。
+// 对外类型：MaiFilePath；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 
 #include <string>

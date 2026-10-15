@@ -1,3 +1,6 @@
+// 文件作用：为 Agent 提供移动端文档读取与文件交付工具，统一处理访问路径和错误。
+// 处理 Agent 导入文档、工作区文件和用户可见路径。
+// 返回真实可读取的文件结果，失败时保留原始素材。
 import Foundation
 import CoreFoundation
 import Darwin

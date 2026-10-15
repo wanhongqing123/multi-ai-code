@@ -1,3 +1,5 @@
+// 文件作用：Android 联系人和群组管理；ContactGroupDisplayPolicy 负责输入筛选、权限判断或展示规则，本文件给出其实现。
+// 主要入口：Row、matches。
 package com.kongshang.maichat;
 
 import java.util.ArrayList;

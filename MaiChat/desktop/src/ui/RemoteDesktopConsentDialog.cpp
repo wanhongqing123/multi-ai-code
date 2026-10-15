@@ -1,3 +1,6 @@
+// 文件作用：桌面端共用界面；RemoteDesktopConsentDialog 负责对话框呈现、确认交互和结果回传，本文件给出其实现。
+// 主要入口：remainingSeconds、tickForTest、buildUi、applyStyle。
+// 直接依赖：ui/UiZoom.h；实现与这些接口协作。
 #include "ui/RemoteDesktopConsentDialog.h"
 
 #include <QFrame>
@@ -29,6 +32,7 @@ void RemoteDesktopConsentDialog::tickForTest() {
     handleTick();
 }
 
+// 作用：建立对话框或会话卡片的控件层级及信号连接。
 void RemoteDesktopConsentDialog::buildUi(const QString& fromUserId) {
     setObjectName(QStringLiteral("remoteDesktopConsentDialog"));
     setWindowTitle(QStringLiteral("远程桌面请求"));

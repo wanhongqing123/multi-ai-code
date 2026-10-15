@@ -1,3 +1,6 @@
+// 文件作用：桌面端共用界面；ComposerResizeSplitter 负责输入区与消息区的可调整分隔布局，本文件给出其实现。
+// 主要入口：createHandle。
+// 实现边界：与 ComposerResizeSplitter 的公开声明配套，调用方通过相应接口进入。
 #include "ui/ComposerResizeSplitter.h"
 
 #include <QEvent>

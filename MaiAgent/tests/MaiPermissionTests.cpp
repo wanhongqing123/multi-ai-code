@@ -1,3 +1,5 @@
+// 文件作用：验证“定义工具权限请求、审批与默认拒绝规则”的正确行为和边界条件。
+// 验证入口：test_decision_parsing、test_ask_blocks_until_reply、test_reply_to_unknown_id；检查可观察结果而非实现细节。
 // 权限闸门测试。
 //
 // 分两层：
@@ -349,6 +351,8 @@ bool toolPartState(MaiAgent& agent, const std::string& sessionId, MaiToolState& 
     return false;
 }
 
+// 验证写入工具在用户明确授权前保持等待，批准后才真正执行。
+// 拒绝或取消时原文件不能发生变化。
 void test_write_waits_for_approval_then_runs() {
     Workspace workspace;
     auto underTest =

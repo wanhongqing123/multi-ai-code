@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端Markdown 文本在真实字体与窗口尺寸下的呈现。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QApplication>
 #include <QFont>
 #include <QImage>

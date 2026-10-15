@@ -1,3 +1,5 @@
+// 文件作用：生成会话、消息和事件使用的稳定标识。
+// 主要实现：generate、newSessionId、newMessageId；对应公开接口中的状态和错误处理。
 #include "MaiIdGenerator.h"
 
 #include <atomic>

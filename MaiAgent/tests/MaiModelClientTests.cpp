@@ -1,3 +1,5 @@
+// 文件作用：验证“定义模型请求、流式响应和客户端接口契约”的正确行为和边界条件。
+// 验证入口：test_text_stream_one_byte_at_a_time、test_text_stream_all_at_once、test_tool_call_fragments；检查可观察结果而非实现细节。
 // LLM 客户端的测试。
 //
 // 不打真实的大模型：一是要 API key、二是要钱、三是结果不确定。
@@ -57,6 +59,7 @@ struct FakeServer {
     std::string lastBody;
     std::string lastAuthorization;
 
+    // 本地假服务器记录真实请求字节，并按测试配置模拟断流、心跳和重试；客户端协议断言不能只对自身数据结构做比较。
     void start() {
         auto handle = [this](const httplib::Request& request, httplib::Response& response) {
             const int requestNumber = ++requestCount;
@@ -711,6 +714,8 @@ void test_user_image_is_sent_as_multimodal_content() {
     MaiFileSystem::removeRecursively(root);
 }
 
+// 验证历史大图在模型请求中使用有界缓存预览，避免反复解码完整原图。
+// 假服务器只接收本地请求，不产生外部模型费用。
 void test_large_historical_image_uses_cached_bounded_preview() {
     FakeServer fake;
     fake.script = text_delta("ok") + std::string(kDone);
@@ -944,6 +949,8 @@ void test_invalid_utf8_history_is_replaced_before_serialization() {
           std::string::npos);
 }
 
+// 验证 Responses 流中推理文本与函数调用按事件顺序分别回传。
+// 工具参数未完整结束前不能上报为可执行的完整调用。
 void test_responses_streams_reasoning_text_and_function_calls() {
     FakeServer fake;
     fake.chunk = 1;
@@ -1003,6 +1010,8 @@ void test_responses_streams_reasoning_text_and_function_calls() {
     }
 }
 
+// 验证历史图片和扁平工具定义被序列化为供应商要求的 Responses 结构。
+// 与假服务器收到的请求体比较，避免只对照本地构造函数自证正确。
 void test_responses_serializes_history_images_and_flat_tools() {
     FakeServer fake;
     fake.script = sse(json{{"type", "response.completed"},

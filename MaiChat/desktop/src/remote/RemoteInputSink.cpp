@@ -1,3 +1,6 @@
+// 文件作用：桌面端远程桌面连接与控制；RemoteInputSink 负责远程输入事件的接收与派发，本文件给出其实现。
+// 主要入口：utf16Units、buttonFlag。
+// 直接依赖：remote/RemoteInputInjector.h、remote/RemoteKeyMapping.h；实现与这些接口协作。
 #include "remote/RemoteInputInjector.h"
 
 #include <QtGlobal>

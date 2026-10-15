@@ -1,3 +1,5 @@
+// 文件作用：将 curl 命令行能力适配为 Agent 工具。
+// 对外契约：下方声明公开参数和返回值；实现位于同名源文件。
 #pragma once
 
 #include <memory>

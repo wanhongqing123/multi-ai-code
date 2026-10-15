@@ -1,3 +1,5 @@
+// 文件作用：实现 Windows 平台的子进程管理。
+// 直接依赖：MaiProcess.h、MaiBlockingCheck.h、MaiFilePath.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiProcess.h"
 
 #include <windows.h>

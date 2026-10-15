@@ -1,3 +1,7 @@
+// 文件作用：桌面端远程桌面连接与控制；TrtcEngine 负责 TRTC 音视频会话引擎接入，本文件给出其实现。
+// 类型关系：TrtcEngine final : public ITrtcEngine, public liteav::ITRTCCloudCallback；审阅时可据此追踪父类、接口或回调契约。
+// 主要入口：configureNetworkProxy、postToMainThread。
+// 直接依赖：ITRTCCloud.h、TRTCCloudCallback.h、remote/TrtcNetworkProxyApi.h；实现与这些接口协作。
 #include "remote/TrtcEngine.h"
 
 #include <QDebug>

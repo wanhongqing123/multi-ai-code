@@ -1,3 +1,5 @@
+// 文件作用：启动命令行 Agent，解析启动参数并连接核心库。
+// 直接依赖：MaiAgent.h、MaiOpenAiClient.h、MaiMemoryStore.h；本文件在这些接口之间完成调用与结果转换。
 // maiagent-console：直接链库的交互式控制台。
 //
 // ── 它是这个仓库里唯一的宿主进程 ────────────────────────────────
@@ -329,6 +331,8 @@ void MaiConsoleRenderer::setCurrentSession(std::string sessionId) {
     mCurrentSession = std::move(sessionId);
 }
 
+// 把核心事件转换为终端可读的单条输出。
+// 根据事件类型选择可显示字段，不改变原始事件内容。
 std::string MaiConsoleRenderer::format(const MaiEvent& event) {
     // 别的会话（子 Agent）在说话。**不把它的正文原样混进来**：
     // 父和子的字会无缝拼在一起，读起来像一个人精神分裂。
@@ -605,6 +609,7 @@ bool switchSession(MaiAgent& agent, MaiConsoleRenderer& renderer, const std::str
 
 }  // namespace
 
+// 控制台只负责装配模型、存储和交互循环；操作失败回报给用户，退出前关闭事件消费和会话资源。
 int main(int argc, char** argv) {
     std::string directory;
     std::string modelUrl;

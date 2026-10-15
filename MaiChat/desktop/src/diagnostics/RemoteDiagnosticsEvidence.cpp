@@ -1,3 +1,5 @@
+// 文件作用：桌面端诊断信息采集与导出；RemoteDiagnosticsEvidence 负责诊断证据的归集与隐私处理，本文件给出其实现。
+// 实现边界：与 RemoteDiagnosticsEvidence 的公开声明配套，调用方通过相应接口进入。
 #include "diagnostics/RemoteDiagnosticsEvidence.h"
 
 namespace RemoteDiagnostics {

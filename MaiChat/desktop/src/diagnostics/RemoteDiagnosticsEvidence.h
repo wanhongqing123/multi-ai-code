@@ -1,3 +1,5 @@
+// 文件作用：桌面端诊断信息采集与导出；RemoteDiagnosticsEvidence 负责诊断证据的归集与隐私处理，本文件给出其声明。
+// 对外边界：本文件给出 RemoteDiagnosticsEvidence 的类型和函数声明；参数、返回值和对象生命周期以此为准。
 #pragma once
 
 #include <QList>

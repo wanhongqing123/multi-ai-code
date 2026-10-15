@@ -1,3 +1,5 @@
+// 文件作用：桌面端诊断信息采集与导出；RemoteDiagnosticsProtocol 负责协议字段、编码解码及版本兼容，本文件给出其实现。
+// 实现边界：与 RemoteDiagnosticsProtocol 的公开声明配套，调用方通过相应接口进入。
 #include "diagnostics/RemoteDiagnosticsProtocol.h"
 
 #include <QJsonArray>

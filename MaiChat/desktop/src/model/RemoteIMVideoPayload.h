@@ -1,3 +1,5 @@
+// 文件作用：桌面端界面使用的数据模型；RemoteIMVideoPayload 负责传输载荷的数据结构与字段校验，本文件给出其声明。
+// 对外边界：本文件给出 RemoteIMVideoPayload 的类型和函数声明；参数、返回值和对象生命周期以此为准。
 #pragma once
 
 #include <QString>

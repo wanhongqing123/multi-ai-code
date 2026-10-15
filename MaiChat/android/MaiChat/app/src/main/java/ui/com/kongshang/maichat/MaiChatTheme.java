@@ -1,3 +1,5 @@
+// 文件作用：Android 跨页面复用的界面组件；MaiChatTheme 负责界面颜色和视觉令牌，本文件给出其实现。
+// 主要入口：dp、rounded、gradientAvatar、text。
 package com.kongshang.maichat;
 
 import android.content.Context;

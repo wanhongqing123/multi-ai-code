@@ -1,3 +1,5 @@
+// 文件作用：Android IM 身份、消息同步与本地历史；RemoteIMMediaStore 负责持久化读写与缓存管理，本文件给出其实现。
+// 主要入口：copyPickedImage、createVoiceRecordingFile、createRealtimeVoiceRecordingFile、createCameraPhotoFile。
 package com.kongshang.maichat;
 
 import java.io.File;

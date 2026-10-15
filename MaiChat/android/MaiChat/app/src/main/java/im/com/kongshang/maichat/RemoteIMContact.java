@@ -1,3 +1,5 @@
+// 文件作用：Android IM 身份、消息同步与本地历史；RemoteIMContact 负责联系人身份、资料和关系状态，本文件给出其实现。
+// 主要入口：userId、displayName、avatarUrl、groupName。
 package com.kongshang.maichat;
 
 import java.util.Objects;

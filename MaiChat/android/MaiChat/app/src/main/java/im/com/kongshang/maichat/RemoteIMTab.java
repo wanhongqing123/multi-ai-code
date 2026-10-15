@@ -1,3 +1,5 @@
+// 文件作用：Android IM 身份、消息同步与本地历史；RemoteIMTab 负责 IM 主页面签的选中状态，本文件给出其实现。
+// 主要入口：title。
 package com.kongshang.maichat;
 
 public enum RemoteIMTab {

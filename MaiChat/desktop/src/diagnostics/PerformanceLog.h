@@ -1,3 +1,6 @@
+// 文件作用：桌面端诊断信息采集与导出；PerformanceLog 负责性能指标采样和日志输出，本文件给出其声明。
+// 对外边界：本文件给出 PerformanceLog 的类型和函数声明；参数、返回值和对象生命周期以此为准。
+// 公开入口：shared。
 #pragma once
 #include <QElapsedTimer>
 #include <QJsonObject>

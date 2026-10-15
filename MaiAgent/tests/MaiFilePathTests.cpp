@@ -1,3 +1,5 @@
+// 文件作用：验证“表示跨平台文件路径并保持平台原生路径语义”的正确行为和边界条件。
+// 验证入口：test_append、test_dir_name_and_base_name、test_is_absolute；检查可观察结果而非实现细节。
 // MaiFilePath / MaiFileSystem 的测试。
 //
 // ── 为什么这个文件里还留着 std::filesystem ──────────────────────

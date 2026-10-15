@@ -1,3 +1,5 @@
+// 文件作用：包装 ffplay 的启动、停止、跳转和播放器状态，把宿主命令交给播放循环。
+// 调用边界：由 MaiChat 媒体或 Agent 宿主调用；平台资源在停止或失败时须正确释放。
 #include "MaiFfplayEntry.h"
 
 #include <setjmp.h>

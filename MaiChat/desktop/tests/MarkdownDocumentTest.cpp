@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端Markdown 文档块、列表、代码和不安全链接的解析。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QtTest>
 
 #include "markdown/MarkdownDocument.h"
@@ -258,6 +260,7 @@ void MarkdownDocumentTest::nestsQuotesByDepth() {
     QCOMPARE(textOf(blocks[4].spans), QStringLiteral("结尾"));
 }
 
+// 提示块和引用块相邻时保留各自语义，列表仍可嵌套，后续普通段落不得被吞并。
 void MarkdownDocumentTest::recognizesCallouts() {
     // GFM 提示框。老的 HTML 渲染器认这个，换成自绘后不认就是退化。
     const MarkdownDocument tip =

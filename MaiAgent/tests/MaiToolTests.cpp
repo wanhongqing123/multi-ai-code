@@ -1,3 +1,5 @@
+// 文件作用：验证“定义 Agent 工具接口、参数和执行结果”的正确行为和边界条件。
+// 验证入口：test_path_escape_is_blocked、test_sibling_with_shared_prefix_is_outside、test_write_cannot_escape；检查可观察结果而非实现细节。
 // 工具层测试。
 //
 // 顺序是有意的：先测路径边界，再测功能。
@@ -346,6 +348,7 @@ void test_write() {
     CHECK(!makeMaiReadTool()->requiresApproval(args({{"path", "x.txt"}})));
 }
 
+// 分别验证旧编码、BOM 和非法二进制输入；模型看到的必须是解码后的文本，错误编码不能静默变乱码。
 void test_read_decodes_non_utf8_files_for_the_model() {
     Workspace workspace;
     const MaiToolContext context = workspace.context();

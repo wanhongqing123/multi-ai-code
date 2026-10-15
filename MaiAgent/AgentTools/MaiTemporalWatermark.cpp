@@ -1,3 +1,5 @@
+// 文件作用：实现跨帧水印区域检测与时间一致性修复。
+// 直接依赖：MaiFilePath.h、MaiFileSystem.h、MaiIdGenerator.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiTemporalWatermark.h"
 
 #include <algorithm>
@@ -111,6 +113,8 @@ public:
         return mInferenceMilliseconds;
     }
 
+    // 对标记的缺失图像区域执行本地模型推理。
+    // 调用前后保持输入尺寸和掩码语义一致，结果只覆盖需要修复的位置。
     cv::Mat infer(const cv::Mat& image, const cv::Mat& missingMask) const {
         const auto started = MaiWatermarkClock::now();
         if (image.type() != CV_8UC3 || missingMask.type() != CV_8UC1 || image.cols != kModelSize ||
@@ -420,6 +424,8 @@ std::vector<RegionState> prepareRegions(const MaiTemporalWatermarkOptions& optio
     return states;
 }
 
+// 解码参考帧并建立时序补全缓存，供后续去水印帧复用背景信息。
+// 只在需要的区域调用模型，保持原视频其他像素和时间顺序不变。
 int buildReferenceCache(const std::string& inputPath, const MaiTemporalWatermarkOptions& options,
                         const MaiToolContext& context, MaiLamaSession& model,
                         VideoMetadata& metadata, std::vector<RegionState>& states) {
@@ -793,6 +799,8 @@ public:
     }
 
 private:
+    // 打开输入视频并准备解码、修复与输出所需的 FFmpeg 资源。
+    // 任一流或编解码器不可用时立即失败，避免继续处理半初始化的视频。
     void initialize() {
         requireFfmpeg(avformat_open_input(&mInput, mInputPath.c_str(), nullptr, nullptr),
                       "open input video");

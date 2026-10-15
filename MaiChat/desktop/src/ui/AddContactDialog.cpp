@@ -1,3 +1,6 @@
+// 文件作用：桌面端共用界面；AddContactDialog 负责对话框呈现、确认交互和结果回传，本文件给出其实现。
+// 主要入口：userId、setUserId、buildUi、applyStyle。
+// 实现边界：与 AddContactDialog 的公开声明配套，调用方通过相应接口进入。
 #include "ui/AddContactDialog.h"
 
 #include <QFrame>
@@ -31,6 +34,7 @@ void AddContactDialog::setUserId(const QString& userId) {
     updateConfirmButton();
 }
 
+// 作用：建立对话框或会话卡片的控件层级及信号连接。
 void AddContactDialog::buildUi() {
     setObjectName(QStringLiteral("addContactDialog"));
     setWindowTitle(QStringLiteral("添加联系人"));
@@ -97,6 +101,7 @@ void AddContactDialog::buildUi() {
     });
 }
 
+// 作用：应用页面现有的颜色、字号、间距和控件外观。
 void AddContactDialog::applyStyle() {
     setStyleSheet(QStringLiteral(R"(
         QDialog#addContactDialog {

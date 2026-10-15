@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# 文件作用：生成联系人检索使用的拼音首字母映射数据。
+# 阅读边界：此文件负责构建或测试流程，不在应用运行时解释为业务逻辑。
 """生成汉字拼音首字母表（src/model/PinyinInitials.cpp）。
 
 数据来源：pypinyin 的 pinyin_dict.json（MIT 许可；其字音数据源自 Unicode 的

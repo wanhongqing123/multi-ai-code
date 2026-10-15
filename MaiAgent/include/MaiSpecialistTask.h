@@ -1,3 +1,5 @@
+// 文件作用：记录专用模型异步任务与状态转换。
+// 对外类型：MaiSpecialistTaskStatus、MaiSpecialistTask、MaiSpecialistTaskStore；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 
 #include <cstddef>

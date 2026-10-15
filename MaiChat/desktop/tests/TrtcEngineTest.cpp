@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端TRTC 参数校验、共享编码和停止操作。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QtTest/QtTest>
 
 #include <QJsonDocument>

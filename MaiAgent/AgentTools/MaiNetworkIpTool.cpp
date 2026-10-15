@@ -1,3 +1,5 @@
+// 文件作用：查询网络接口地址并向 Agent 返回可读结果。
+// 实现入口：阅读本文件的公开函数与调用路径，核对返回值和资源收尾。
 #include "MaiNetworkIpTool.h"
 
 #include <curl/curl.h>
@@ -94,6 +96,7 @@ private:
 
 }  // namespace
 
+// 枚举本机可用网卡地址并过滤无意义地址；仅返回诊断所需的网络接口信息。
 std::vector<MaiLocalIpAddress> maiLocalIpAddresses() {
     std::vector<MaiLocalIpAddress> result;
 #if defined(_WIN32)

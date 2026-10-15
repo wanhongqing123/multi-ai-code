@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端视频预览关闭时播放器及异步资源的释放。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QFileInfo>
 #include <QMediaPlayer>
 #include <QPointer>

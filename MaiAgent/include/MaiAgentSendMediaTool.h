@@ -1,3 +1,5 @@
+// 文件作用：把 Agent 生成的媒体文件交付给聊天或宿主界面。
+// 对外类型：MaiAgentMedia；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 
 #include <cstdint>

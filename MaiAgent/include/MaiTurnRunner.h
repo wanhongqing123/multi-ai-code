@@ -1,3 +1,5 @@
+// 文件作用：编排一轮模型调用、工具执行和事件发布。
+// 对外类型：MaiTurnRunner；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 #include <atomic>
 #include <cstddef>

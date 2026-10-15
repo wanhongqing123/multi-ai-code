@@ -1,3 +1,6 @@
+// 文件作用：桌面端共用界面；VideoPreviewDialog 负责对话框呈现、确认交互和结果回传，本文件给出其实现。
+// 主要入口：setForwardAction、saveCopy、closeEvent、shutdownPlayer。
+// 直接依赖：ui/UiZoom.h；实现与这些接口协作。
 #include "ui/VideoPreviewDialog.h"
 
 #include <QFileInfo>
@@ -21,6 +24,7 @@
 
 #include "ui/UiZoom.h"
 
+// 视频预览将播放器生命周期绑定到窗口；异步回调晚到时不能访问已经关闭的控件。
 VideoPreviewDialog::VideoPreviewDialog(const QString& videoPath, const QString& title, QWidget* parent)
     : QDialog(parent), videoPath_(videoPath) {
     setWindowTitle(title.isEmpty() ? QStringLiteral("视频") : title);

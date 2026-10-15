@@ -1,3 +1,6 @@
+// 文件作用：桌面端本地数据持久化；LocalMessageDatabase 负责数据库结构与读写，本文件给出其实现。
+// 主要入口：isOpen、migrate、loadInto、loadRecentInto。
+// 直接依赖：diagnostics/PerformanceLog.h、model/ContactGroups.h；实现与这些接口协作。
 #include "diagnostics/PerformanceLog.h"
 #include "storage/LocalMessageDatabase.h"
 
@@ -122,6 +125,7 @@ bool LocalMessageDatabase::isOpen() const {
     return db_.isOpen();
 }
 
+// 作用：按数据库版本迁移本地消息表并保留旧记录。
 void LocalMessageDatabase::migrate() {
     QSqlQuery query(db_);
     query.exec(QStringLiteral(
@@ -438,6 +442,7 @@ void LocalMessageDatabase::removeContactCascade(const QString& userId) {
     deleteContact.exec();
 }
 
+// 作用：以稳定消息标识写入新记录并避免重复消息。
 bool LocalMessageDatabase::insertMessageIfAbsent(const RemoteIMMessage& message, const QString& peer) {
     RemoteDiagnostics::PerformanceSpan performance("history-write");
     if (!db_.isOpen() || message.id.isEmpty()) return false;

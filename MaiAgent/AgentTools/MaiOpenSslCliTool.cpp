@@ -1,3 +1,5 @@
+// 文件作用：将 OpenSSL 命令行能力封装为受控工具。
+// 直接依赖：MaiFilePath.h、MaiFileSystem.h、mai_openssl_embed.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiOpenSslCliTool.h"
 
 #include <json.hpp>

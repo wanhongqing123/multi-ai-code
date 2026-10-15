@@ -1,3 +1,5 @@
+// 文件作用：桌面端 Agent 工具；MaiImageVision 负责本地图片内容分析与视觉模型调用，本文件给出其实现。
+// 实现边界：与 MaiImageVision 的公开声明配套，调用方通过相应接口进入。
 #include "MaiImageVision.h"
 
 #include <algorithm>
@@ -144,6 +146,7 @@ maiImageVisionDetectFacesRgba(void *handle, const unsigned char *pixels,
 }
 
 extern "C" MaiVisionMaskResult
+// 分割接口检查图像尺寸、缓冲长度和模型句柄；失败时释放中间结果并返回可识别错误。
 maiImageVisionSegmentPersonRgba(void *handle, const unsigned char *pixels,
                                 int width, int height, int stride) {
   MaiVisionMaskResult result{};

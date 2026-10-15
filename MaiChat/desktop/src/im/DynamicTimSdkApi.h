@@ -1,3 +1,8 @@
+// 文件作用：桌面端IM 会话、消息与登录；DynamicTimSdkApi 负责腾讯 IM SDK 动态接口加载与调用，本文件给出其声明。
+// 类型关系：DynamicTimSdkApi final : public TimSdkApi；审阅时可据此追踪父类、接口或回调契约。
+// 对外边界：本文件给出 DynamicTimSdkApi 的类型和函数声明；参数、返回值和对象生命周期以此为准。
+// 公开入口：libraryPathFromEnvironment、completeOnce、receiveMessages、selfInfoUpdated。
+// 直接依赖：im/TimSdkApi.h；实现与这些接口协作。
 #pragma once
 
 #include <QLibrary>

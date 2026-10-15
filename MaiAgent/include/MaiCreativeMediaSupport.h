@@ -1,3 +1,5 @@
+// 文件作用：复用创作媒体工具的路径、素材和响应处理规则。
+// 对外类型：MaiCreativeHttpResult；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 
 #include <functional>

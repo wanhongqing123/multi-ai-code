@@ -1,3 +1,6 @@
+// 文件作用：桌面端创作中心和 Agent 会话；AgentSessionList 负责列表内容、选择状态和滚动行为，本文件给出其声明。
+// 类型关系：AgentSessionList final : public QWidget；审阅时可据此追踪父类、接口或回调契约。
+// 对外边界：本文件给出 AgentSessionList 的类型和函数声明；参数、返回值和对象生命周期以此为准。
 #pragma once
 
 #include <QString>

@@ -1,3 +1,6 @@
+// 文件作用：桌面端共用界面；RemoteDesktopViewPanel 负责面板呈现、输入处理和状态反馈，本文件给出其实现。
+// 主要入口：buildUi、applyStyle、showIdle、beginSession。
+// 直接依赖：ui/RemoteDesktopSessionCard.h、ui/UiZoom.h；实现与这些接口协作。
 #include "ui/RemoteDesktopViewPanel.h"
 
 #include <QGridLayout>

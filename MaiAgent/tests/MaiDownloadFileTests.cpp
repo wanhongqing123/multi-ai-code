@@ -1,3 +1,5 @@
+// 文件作用：验证“MaiDownloadFile”的正确行为和边界条件。
+// 验证入口：testBinaryRedirectAndFilename、testPathSizeHttpAndTimeoutFailures；检查可观察结果而非实现细节。
 #include <chrono>
 #include <cstdio>
 #include <string>

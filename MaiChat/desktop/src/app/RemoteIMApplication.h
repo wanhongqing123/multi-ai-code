@@ -1,3 +1,7 @@
+// 文件作用：桌面端应用启动和窗口装配；RemoteIMApplication 负责应用生命周期和全局服务装配，本文件给出其声明。
+// 类型关系：RemoteIMApplication final : public QObject；审阅时可据此追踪父类、接口或回调契约。
+// 对外边界：本文件给出 RemoteIMApplication 的类型和函数声明；参数、返回值和对象生命周期以此为准。
+// 直接依赖：im/RemoteIMClient.h、model/ChatState.h、storage/LocalMessageDatabase.h；实现与这些接口协作。
 #pragma once
 
 #include <QHash>

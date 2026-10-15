@@ -1,3 +1,6 @@
+// 文件作用：桌面端Markdown 内容解析与呈现；MarkdownLayout 负责Markdown 段落和行的实际排版，本文件给出其声明。
+// 对外边界：本文件给出 MarkdownLayout 的类型和函数声明；参数、返回值和对象生命周期以此为准。
+// 直接依赖：markdown/MarkdownDocument.h、markdown/MarkdownTheme.h；实现与这些接口协作。
 #pragma once
 
 #include <QPointF>

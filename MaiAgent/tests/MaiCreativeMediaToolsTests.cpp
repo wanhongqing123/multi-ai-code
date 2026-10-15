@@ -1,3 +1,5 @@
+// 文件作用：验证“MaiCreativeMediaTools”的正确行为和边界条件。
+// 验证入口：testFailedTaskIsStableWithoutProviderRequest、testH3ContentRolesAndRequiredFields、testH3RejectsUnsupportedOutputBeforePaidApproval；检查可观察结果而非实现细节。
 #include <cstdio>
 #include <string>
 
@@ -100,6 +102,8 @@ std::string localErrorMessage(MaiTool& tool, const nlohmann::json& args,
                : std::string{};
 }
 
+// 验证 H3 请求把文本、首尾帧和参考素材放在正确的内容角色中。
+// 缺少必需字段时应在本地拒绝，不进入供应商付费链路。
 void testH3ContentRolesAndRequiredFields() {
     using Json = nlohmann::json;
     auto video = makeMaiMiniMaxVideoTool([] { return std::string("test-key"); });
@@ -188,6 +192,8 @@ void testH3RejectsUnsupportedOutputBeforePaidApproval() {
     }
 }
 
+// 验证每一种 H3 本地参考路径都经过存在性与类型校验。
+// 无效输入只返回校验错误，不能上传素材或创建付费任务。
 void testH3LocalValidationChecksAllReferencePathsWithoutBilling() {
     using Json = nlohmann::json;
     const MaiFilePath root = MaiFileSystem::temporaryDirectory().append(
@@ -246,6 +252,7 @@ void testH3LocalValidationChecksAllReferencePathsWithoutBilling() {
 
 }  // namespace
 
+// 使用假服务验证付费生成前的本地检查、任务状态转换和结果交付，不创建真实云任务。
 int main() {
     CHECK(maiCreativeHttpsUrl("https://example.com/object.jpg?signature=abc"));
     CHECK(!maiCreativeHttpsUrl("http://example.com/object.jpg"));

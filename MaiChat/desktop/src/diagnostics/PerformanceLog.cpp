@@ -1,3 +1,6 @@
+// 文件作用：桌面端诊断信息采集与导出；PerformanceLog 负责性能指标采样和日志输出，本文件给出其实现。
+// 主要入口：shared、setContext、record、heartbeat。
+// 实现边界：与 PerformanceLog 的公开声明配套，调用方通过相应接口进入。
 #include "diagnostics/PerformanceLog.h"
 #include <QDateTime>
 #include <QJsonArray>

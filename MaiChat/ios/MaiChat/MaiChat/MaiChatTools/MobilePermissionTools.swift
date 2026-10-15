@@ -1,3 +1,6 @@
+// 文件作用：集中检查与请求相机、相册、麦克风等系统权限，并向 Agent 返回明确结果。
+// 查询和请求 iOS 系统能力授权，并转换成 Agent 可理解的结果。
+// 权限未明确授予时不执行受保护操作。
 import AVFoundation
 import Contacts
 import CoreLocation
@@ -108,6 +111,8 @@ extension AIMobileHostToolProvider {
         }.value
     }
 
+    /// 按权限类型请求 iOS 系统授权并统一返回结果。
+    /// 已拒绝或受限制的权限直接报告状态，避免重复弹窗或误报可用。
     func requestSystemPermission(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
         // 按用户当前任务申请单项权限；不能一次性弹出所有系统授权。
         let permission = Self.string(arguments, key: "permission")

@@ -1,3 +1,5 @@
+// 文件作用：定义模型请求、流式响应和客户端接口契约。
+// 对外类型：MaiWireApi、MaiToolInvocation、MaiModelRole、MaiModelImage；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 
 #include <atomic>

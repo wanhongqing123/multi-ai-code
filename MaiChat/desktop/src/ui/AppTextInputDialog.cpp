@@ -1,3 +1,6 @@
+// 文件作用：桌面端共用界面；AppTextInputDialog 负责对话框呈现、确认交互和结果回传，本文件给出其实现。
+// 主要入口：text、getText、buildUi、applyStyle。
+// 直接依赖：ui/UiZoom.h；实现与这些接口协作。
 #include "ui/AppTextInputDialog.h"
 
 #include <QFrame>
@@ -24,6 +27,7 @@ QString AppTextInputDialog::getText(QWidget* parent, const Options& options, boo
     return ok ? dialog.text() : QString();
 }
 
+// 根据输入类型装配标题、说明、输入框与操作按钮；密码场景必须遮挡文字并保留取消路径。
 void AppTextInputDialog::buildUi(const Options& options) {
     setObjectName(QStringLiteral("appTextInputDialog"));
     setWindowTitle(options.title);
@@ -93,6 +97,7 @@ void AppTextInputDialog::buildUi(const Options& options) {
     input_->setFocus(Qt::OtherFocusReason);
 }
 
+// 作用：应用页面现有的颜色、字号、间距和控件外观。
 void AppTextInputDialog::applyStyle() {
     setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
         #appTextInputPanel {

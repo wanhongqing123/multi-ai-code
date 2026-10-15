@@ -1,3 +1,5 @@
+# 文件作用：在 Windows 上构建桌面播放器所需的 FFmpeg 库。
+# 阅读边界：此文件负责构建或测试流程，不在应用运行时解释为业务逻辑。
 param(
     [Parameter(Mandatory = $true)][string]$SourceDirectory,
     [Parameter(Mandatory = $true)][string]$BuildDirectory,

@@ -1,3 +1,5 @@
+// 文件作用：桌面端IM 会话、消息与登录；VideoFileMetadata 负责视频时长、尺寸和编码信息读取，本文件给出其实现。
+// 实现边界：与 VideoFileMetadata 的公开声明配套，调用方通过相应接口进入。
 #include "im/VideoFileMetadata.h"
 
 #include <QFile>

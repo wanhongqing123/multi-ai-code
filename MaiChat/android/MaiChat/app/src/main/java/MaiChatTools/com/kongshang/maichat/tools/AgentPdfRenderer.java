@@ -1,3 +1,5 @@
+// 文件作用：Android 移动端 Agent 工具与宿主能力；AgentPdfRenderer 负责内容渲染和资源生命周期，本文件给出其实现。
+// 主要入口：render、embeddedImage。
 package com.kongshang.maichat.tools;
 
 import android.graphics.Bitmap;
@@ -30,6 +32,7 @@ public final class AgentPdfRenderer {
 
     private AgentPdfRenderer() {}
 
+    // 作用：校验 HTML 输入、排版文本和内嵌图片，再把结果写入指定 PDF 文件。
     public static JSONObject render(String html, File output) throws Exception {
         if (html == null || html.isEmpty() || html.getBytes(StandardCharsets.UTF_8).length > 10 * 1024 * 1024)
             throw new IllegalArgumentException("HTML source is empty or exceeds 10 MB");

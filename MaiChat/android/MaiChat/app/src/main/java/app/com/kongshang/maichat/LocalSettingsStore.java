@@ -1,3 +1,5 @@
+// 文件作用：Android 应用启动、账户与主导航；LocalSettingsStore 负责持久化读写与缓存管理，本文件给出其实现。
+// 主要入口：load、save。
 package com.kongshang.maichat;
 
 import java.io.File;

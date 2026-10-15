@@ -1,3 +1,5 @@
+// 文件作用：移动端 C++ Agent 适配层；MaiMobileAgent 负责移动 Agent 生命周期、工具注册和宿主回调，本文件给出其声明。
+// 对外边界：本文件给出 MaiMobileAgent 的类型和函数声明；参数、返回值和对象生命周期以此为准。
 #pragma once
 #ifdef __cplusplus
 extern "C" {

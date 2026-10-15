@@ -1,3 +1,5 @@
+// 文件作用：桌面端共用界面；PdfPreviewMac 负责macOS PDF 文件预览，本文件给出其实现。
+// 实现边界：与 PdfPreviewMac 的公开声明配套，调用方通过相应接口进入。
 #include <QByteArray>
 #include <QString>
 

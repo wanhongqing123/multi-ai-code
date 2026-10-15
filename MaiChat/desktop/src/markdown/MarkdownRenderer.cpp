@@ -1,3 +1,6 @@
+// 文件作用：桌面端Markdown 内容解析与呈现；MarkdownRenderer 负责内容渲染和资源生命周期，本文件给出其实现。
+// 主要入口：renderPreviewHtml、renderToHtml。
+// 直接依赖：md4c-html.h；实现与这些接口协作。
 #include "markdown/MarkdownRenderer.h"
 
 #include <QByteArray>

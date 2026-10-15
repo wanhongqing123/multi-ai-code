@@ -1,3 +1,5 @@
+// 文件作用：使用 SQLite 持久化 Agent 会话和消息。
+// 对外契约：下方声明公开参数和返回值；实现位于同名源文件。
 #pragma once
 
 #include <memory>

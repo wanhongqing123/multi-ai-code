@@ -1,3 +1,5 @@
+// 文件作用：定义会话和消息存储接口契约。
+// 对外类型：MaiSessionStore；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 
 #include <cstddef>

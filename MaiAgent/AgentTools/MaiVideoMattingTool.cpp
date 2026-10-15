@@ -1,3 +1,5 @@
+// 文件作用：把视频人像抠像流程封装为 Agent 工具。
+// 直接依赖：MaiFilePath.h、MaiFileSystem.h、MaiPathGuard.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiVideoMattingTool.h"
 
 #include <cmath>
@@ -61,6 +63,8 @@ public:
         return true;
     }
 
+    // 解析模型提供的参数并执行本地视频抠像。
+    // 成功和失败都转成明确的工具结果；中间状态不能冒充最终产物。
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const Json request = Json::parse(raw, nullptr, false);
         if (!request.is_object() || !request.contains("input_path") ||

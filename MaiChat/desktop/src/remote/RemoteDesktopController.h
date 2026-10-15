@@ -1,3 +1,7 @@
+// 文件作用：桌面端远程桌面连接与控制；RemoteDesktopController 负责流程编排、异步回调和状态转换，本文件给出其声明。
+// 类型关系：RemoteDesktopController : public QObject；审阅时可据此追踪父类、接口或回调契约。
+// 对外边界：本文件给出 RemoteDesktopController 的类型和函数声明；参数、返回值和对象生命周期以此为准。
+// 直接依赖：remote/DisplaySleepBlocker.h、remote/RemoteDesktopSession.h、remote/RemoteDesktopSettings.h、remote/RemoteDesktopSignal.h；实现与这些接口协作。
 #pragma once
 
 #include <QObject>

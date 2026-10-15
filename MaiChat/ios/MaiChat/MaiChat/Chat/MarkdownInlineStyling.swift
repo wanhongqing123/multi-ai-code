@@ -1,3 +1,6 @@
+// 文件作用：为聊天中的 Markdown 行内元素提供一致的 SwiftUI 字体和颜色样式。
+// 为消息正文中的代码、链接和强调片段指定稳定配色。
+// 属性修改前先固定文本区间，避免遍历中改变富文本 run 边界。
 import SwiftUI
 
 enum MarkdownInlineStyling {

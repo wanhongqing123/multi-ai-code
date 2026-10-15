@@ -1,3 +1,5 @@
+// 文件作用：验证“MaiStore”的正确行为和边界条件。
+// 验证入口：test_survives_reopen、test_specialist_reply_survives_reopen、test_migrates_unfinished_tool_index；检查可观察结果而非实现细节。
 // 存储层测试。
 //
 // 核心是一组**契约用例**：同一套断言对内存存储和 SQLite 存储各跑一遍。
@@ -134,6 +136,7 @@ void contract_list_sessions_ordering(MaiSessionStore& store, const char* which) 
     CHECK(store.listSessions().empty());
 }
 
+// 同一组消息与片段契约同时运行在内存和 SQLite 存储上；顺序、关联和修改语义必须一致。
 void contract_messages_and_parts(MaiSessionStore& store, const char* which) {
     std::printf("   [%s] messages and parts round-trip\n", which);
 
@@ -279,6 +282,8 @@ void contract_message_pages(MaiSessionStore& store, const char* which) {
     if (afterAppend.size() == 2) CHECK(afterAppend[0].id == ids[2]);
 }
 
+// 复用同一存储契约验证中断后的工具调用能恢复为明确状态。
+// 重启后不得把半完成的工具片段当成已成功结果。
 void contract_recovers_interrupted_tools(MaiSessionStore& store, const char* which) {
     std::printf("   [%s] interrupted tools recover without changing completed calls\n", which);
     const std::string sessionId = MaiIdGenerator::newSessionId();
@@ -483,6 +488,7 @@ void contract_concurrent_writes(MaiSessionStore& store, const char* which) {
     CHECK(!store.lastWriteError().hasError());
 }
 
+// 模拟异步任务回执落库和再次读取；回复只能挂在原任务与原会话上，避免续领时丢结果。
 void contract_specialist_reply(MaiSessionStore& store, const char* which) {
     std::printf("   [%s] specialist text stream notifies parent once without an artifact\n", which);
     const std::string owner = MaiIdGenerator::newSessionId();
@@ -646,6 +652,8 @@ void contract_specialist_media_delivery_dedup(MaiSessionStore& store, const char
         CHECK(pending.id != task.id);
 }
 
+// 对内存和 SQLite 实现运行相同的会话、消息、工具与任务存储契约。
+// 每项断言只依赖公开接口和可读取的持久化结果。
 void runContract(MaiSessionStore& store, const char* which) {
     contract_session_crud(store, which);
     contract_list_sessions_ordering(store, which);
@@ -956,6 +964,8 @@ void test_non_ascii_round_trip() {
     }
 }
 
+// 验证 SQLite 写入前处理非法 UTF-8，读回时不破坏会话结构。
+// 失败应明确返回，而不是保存以后无法再次解码的字节。
 void test_sqlite_sanitizes_invalid_utf8_before_write() {
     std::printf("-> test_sqlite_sanitizes_invalid_utf8_before_write\n");
     TempDir temp;

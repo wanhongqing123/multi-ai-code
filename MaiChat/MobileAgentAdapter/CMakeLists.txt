@@ -1,3 +1,5 @@
+# 文件作用：装配 iOS/Android 共用的移动 Agent 适配层和平台媒体依赖。
+# 构建边界：只暴露移动宿主所需的 C++ 接口，核心 Agent 仍由 MaiAgent 构建。
 cmake_minimum_required(VERSION 3.22)
 project(MaiChatMobileAgent LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)

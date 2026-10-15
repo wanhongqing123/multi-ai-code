@@ -1,3 +1,5 @@
+// 文件作用：提供工作区文件的读取、列举和写入工具。
+// 直接依赖：MaiApplyPatchTool.h、MaiEditTool.h、MaiFilePath.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiFileTools.h"
 
 #include <algorithm>
@@ -162,6 +164,8 @@ std::string normalizedEncoding(const std::string& name) {
     return result;
 }
 
+// 按调用方指定的旧编码读取文件字节，再转为模型可处理的文本。
+// 转码失败返回错误，不以损坏文本覆盖源文件。
 MaiResult<std::string> decodeLegacy(const std::string& bytes, const std::string& encoding,
                                     const MaiToolContext& context) {
     if (context.decodeText) return context.decodeText(bytes, encoding);
@@ -429,6 +433,8 @@ public:
                R"("required":["path"]})";
     }
 
+    // 解析模型提供的参数并读取或管理工作区文件。
+    // 成功和失败都转成明确的工具结果；中间状态不能冒充最终产物。
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const json args = parseArguments(raw);
         if (args.contains("encoding") && !args["encoding"].is_string())

@@ -1,3 +1,5 @@
+// 文件作用：验证“读取工作区图片并返回可供模型查看的内容”的正确行为和边界条件。
+// 验证入口：test_png_is_returned_as_a_model_image、test_rejects_invalid_images_and_escaped_paths、test_desktop_can_view_image_outside_session_directory；检查可观察结果而非实现细节。
 #include <cstdio>
 #include <filesystem>
 #include <fstream>

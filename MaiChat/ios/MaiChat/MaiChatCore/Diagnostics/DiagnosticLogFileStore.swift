@@ -1,3 +1,6 @@
+// 文件作用：把诊断事件写入本地文件并管理日志文件的读取与轮转。
+// 将诊断事件按批次写入本地日志文件并执行容量控制。
+// 写入失败保留可重试批次，不阻塞主线程交互。
 import Foundation
 
 public actor DiagnosticLogFileStore {

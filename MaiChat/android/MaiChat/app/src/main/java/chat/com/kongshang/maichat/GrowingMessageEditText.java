@@ -1,3 +1,6 @@
+// 文件作用：Android 聊天会话的消息呈现与输入；GrowingMessageEditText 负责文本内容的整理与展示，本文件给出其实现。
+// 类型关系：GrowingMessageEditText extends android.widget.EditText；审阅时可据此追踪父类、接口或回调契约。
+// 主要入口：configure。
 package com.kongshang.maichat;
 
 import android.content.Context;

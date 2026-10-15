@@ -1,3 +1,5 @@
+// 文件作用：验证“读取和处理 PDF 文档供 Agent 使用”的正确行为和边界条件。
+// 验证入口：test_generates_pdf_directly_from_markdown、test_creates_validated_pdf_with_approval、test_rejects_paths_outside_workspace；检查可观察结果而非实现细节。
 #include "MaiPdfTool.h"
 
 #include <cstdio>

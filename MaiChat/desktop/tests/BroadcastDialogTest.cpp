@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端群发收件人勾选、过滤、半选状态和发送门槛。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPushButton>

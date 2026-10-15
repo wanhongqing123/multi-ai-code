@@ -1,3 +1,5 @@
+// 文件作用：手工对照 MiniMax 在线接口与本地媒体工具的请求和结果格式。
+// 验证入口：阅读 main 或测试注册处，核对输入、预期结果与失败输出。
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
@@ -20,6 +22,7 @@ std::string value(const Json& data, const char* field) {
 
 }  // namespace
 
+// 仅在手工提供在线凭据时运行，核对真实服务返回与本地 Schema 的一致性；不会被普通单测自动触发。
 int main(int argc, char** argv) {
     const bool references = argc == 5 && std::string(argv[1]) == "--references";
     const bool validateReferences = argc == 5 && std::string(argv[1]) == "--validate-references";

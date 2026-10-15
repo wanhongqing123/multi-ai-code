@@ -1,3 +1,6 @@
+// 文件作用：Android 聊天会话的消息呈现与输入；ActivityBubbleView 负责界面呈现、交互与状态更新，本文件给出其实现。
+// 类型关系：ActivityBubbleView extends View；审阅时可据此追踪父类、接口或回调契约。
+// 主要入口：updateAnimation、statusText。
 package com.kongshang.maichat;
 
 import android.animation.ValueAnimator;

@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端远控配置落盘、安全默认值和损坏配置回退。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QtTest/QtTest>
 
 #include <QTemporaryDir>

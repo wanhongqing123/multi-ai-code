@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端聊天消息排序、状态更新和入站内容还原。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QtTest/QtTest>
 
 #include "model/ChatState.h"
@@ -122,6 +124,7 @@ void ChatStateTest::updatesMessageStatus() {
     QCOMPARE(state.messagesWith("ios-user").first().status, RemoteIMMessageStatus::Sent);
 }
 
+// 混合不同联系人和相同秒时间戳，核查会话顺序稳定且不会把别人的消息串入当前窗口。
 void ChatStateTest::returnsPeerMessagesChronologically() {
     ChatState state("desktop-user");
 

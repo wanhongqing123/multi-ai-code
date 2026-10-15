@@ -1,3 +1,6 @@
+// 文件作用：桌面端诊断信息采集与导出；RemoteDiagnosticsController 负责流程编排、异步回调和状态转换，本文件给出其实现。
+// 主要入口：setTimeouts、contextValid、cancel、finish。
+// 直接依赖：diagnostics/PerformanceLog.h、diagnostics/RemoteDiagnosticsProtocol.h、app/RemoteIMApplication.h；实现与这些接口协作。
 #include "diagnostics/PerformanceLog.h"
 #include "diagnostics/RemoteDiagnosticsController.h"
 #include "diagnostics/RemoteDiagnosticsProtocol.h"

@@ -1,3 +1,5 @@
+// 文件作用：验证桌面图像渲染和图形资源接入。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include "ui/MessageImageLoader.h"
 
 #include <QApplication>

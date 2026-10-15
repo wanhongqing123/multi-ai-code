@@ -1,3 +1,6 @@
+// 文件作用：桌面端Markdown 内容解析与呈现；MarkdownDocument 负责Markdown 文档结构与块级内容组织，本文件给出其声明。
+// 对外边界：本文件给出 MarkdownDocument 的类型和函数声明；参数、返回值和对象生命周期以此为准。
+// 公开入口：parse。
 #pragma once
 
 #include <QFlags>

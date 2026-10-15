@@ -1,3 +1,6 @@
+// 文件作用：展示远程桌面画面，并将触摸、键盘和工具栏操作映射为远端输入。
+// 呈现远程画面、输入工具栏与键盘／鼠标交互。
+// 旋转和键盘变化只调整视口，远端输入与本地页面布局分开。
 import MaiChatCore
 import SwiftUI
 import UIKit
@@ -514,6 +517,8 @@ private struct RemoteDesktopViewport: UIViewRepresentable {
         uiView.bindRenderView(nil)
     }
 
+    /// 把远端画面和输入会话的最新状态同步到视图。
+    /// 仅更新发生变化的内容，避免视频帧到来时重建手势层。
     private func update(_ view: RemoteDesktopViewportUIView) {
         view.bindRenderView = bind
         view.traceID = traceID
@@ -1149,6 +1154,8 @@ private final class RemotePointerUIView: UIView, UIGestureRecognizerDelegate {
         }
     }
 
+    /// 把触摸坐标换算成远端画面的归一化位置。
+    /// 按画面实际显示矩形夹取边界，避免黑边区域产生错误点击。
     private func normalizedPoint(at location: CGPoint, clamped: Bool = false) -> CGPoint? {
         guard bounds.width > 0,
               bounds.height > 0,

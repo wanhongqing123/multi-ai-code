@@ -1,3 +1,6 @@
+// 文件作用：将 IM 的联系人、会话和消息操作封装为 Agent 可调用的工具。
+// 阅读边界：工具负责输入校验与结果摘要；实际 IM 操作由应用状态层执行。
+// 把 Agent 的 IM 操作转换为联系人、发送和查询动作。
 import AVFoundation
 import Foundation
 import CoreFoundation
@@ -132,6 +135,8 @@ extension AIMobileHostToolProvider {
         ])
     }
 
+    /// 将 Agent 选择的图片、视频或文件发送到指定 IM 会话。
+    /// 先核对账号、联系人与本地路径，发送成功后才返回可引用的消息标识。
     func sendMedia(
         appState: RemoteIMAppState,
         arguments: [String: Any]

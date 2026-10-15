@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端主窗口消息、视频封面和状态提示的布局行为。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QAbstractButton>
 #include <QAction>
 #include <QApplication>
@@ -573,6 +575,7 @@ void MainWindowLayoutTest::listScrollBarsAreNarrowAndStillScrollableAcrossZoomLe
     QCOMPARE(list->viewport()->width(), list->width());
 }
 
+// 同秒消息和状态刷新仍保持会话列表稳定倒序，避免仅因重绘而抖动。
 void MainWindowLayoutTest::conversationListPutsNewestMessageFirst() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
@@ -691,6 +694,7 @@ void MainWindowLayoutTest::conversationListBreaksTimeTiesByName() {
     QCOMPARE(again, order);
 }
 
+// 引用栏必须显示目标消息，发送后清掉引用状态，避免下一条消息误带旧引用。
 void MainWindowLayoutTest::replyBarShowsTargetAndClearsAfterSending() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
@@ -980,6 +984,7 @@ void MainWindowLayoutTest::droppingAnImageFileSendsTheOriginalFileAsAnImage() {
     QCOMPARE(fakeClient->lastFilePath(), QString());   // 没有走文件卡分支
 }
 
+// 设置项增多时边框仍须可见，行背景不能覆盖面板层级。
 void MainWindowLayoutTest::settingsPanelBorderIsNotCoveredByRows() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
@@ -1161,6 +1166,7 @@ void MainWindowLayoutTest::composerUsesEmbeddedIconSendAction() {
     }
 }
 
+// AI 回复建议只填入输入框供用户审阅，不能自动发送或悄悄改变选中会话。
 void MainWindowLayoutTest::aiReplySuggestionOnlyFillsComposer() {
     QSettings settings;
     const bool hadBaseUrl = settings.contains(QStringLiteral("agent/baseUrl"));
@@ -1517,6 +1523,7 @@ void MainWindowLayoutTest::sendsMultilineTextWithoutFlatteningReturns() {
     QVERIFY(markdownView->plainText().contains(QStringLiteral("line 2")));
 }
 
+// 发送消息的元信息在气泡内完整可见，长文本换行不应把时间和状态挤出可视区。
 void MainWindowLayoutTest::rendersSentMessageFromTopWithMetadata() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
@@ -1720,6 +1727,7 @@ void MainWindowLayoutTest::composerResizeCursorClearsAfterPointerLeaves() {
     QCOMPARE(agentHandle->cursor().shape(), Qt::ArrowCursor);
 }
 
+// 拖动输入区分隔条时保留最新消息可见；布局变化不能让滚动锚点落进空白。
 void MainWindowLayoutTest::composerResizeKeepsLatestMessageVisible() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
@@ -2139,6 +2147,7 @@ void MainWindowLayoutTest::conversationListsUseDelegateItemsForSmoothScrolling()
     }
 }
 
+// Markdown 气泡使用实际排版高度，文本与气泡边界不能被裁切。
 void MainWindowLayoutTest::rendersMarkdownMessageContent() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
@@ -2261,6 +2270,7 @@ void MainWindowLayoutTest::markdownBubbleHasCompactBottomSpacing() {
     QVERIFY(view->height() >= view->contentHeight());
 }
 
+// 审批按钮的可见状态与发送结构化决策绑定，不能仅更新本地按钮而没有真实发送。
 void MainWindowLayoutTest::rendersApprovalButtonsAndSendsStructuredDecision() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     auto* fakeClient = client.get();
@@ -2404,6 +2414,7 @@ void MainWindowLayoutTest::restoresSubmittedApprovalStateFromDatabase() {
     QVERIFY(sentLabel->text().contains(QStringLiteral("已发送")));
 }
 
+// 服务端最终审批状态优先于延迟到达的本机发送回执，防止已经失效的按钮重新出现。
 void MainWindowLayoutTest::authoritativeApprovalResolutionOverridesLateSentDecision() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));

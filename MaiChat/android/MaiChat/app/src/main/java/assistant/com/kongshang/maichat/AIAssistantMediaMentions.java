@@ -1,3 +1,5 @@
+// 文件作用：Android 创作中心的会话、消息和 Agent 交互；AIAssistantMediaMentions 负责创作中心回复里的媒体路径识别与展示决策，本文件给出其实现。
+// 主要入口：cards。
 package com.kongshang.maichat;
 
 import java.io.File;

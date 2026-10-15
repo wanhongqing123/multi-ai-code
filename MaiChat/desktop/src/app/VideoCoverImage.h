@@ -1,3 +1,6 @@
+// 文件作用：桌面端应用启动和窗口装配；VideoCoverImage 负责视频封面帧的加载与缩放，本文件给出其声明。
+// 对外边界：本文件给出 VideoCoverImage 的类型和函数声明；参数、返回值和对象生命周期以此为准。
+// 直接依赖：im/VideoFileMetadata.h；实现与这些接口协作。
 #pragma once
 
 #include <QImage>

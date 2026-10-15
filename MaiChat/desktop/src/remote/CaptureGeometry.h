@@ -1,3 +1,5 @@
+// 文件作用：桌面端远程桌面连接与控制；CaptureGeometry 负责几何尺寸和坐标转换，本文件给出其声明。
+// 对外边界：本文件给出 CaptureGeometry 的类型和函数声明；参数、返回值和对象生命周期以此为准。
 #pragma once
 
 #include <QRect>

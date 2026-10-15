@@ -1,3 +1,5 @@
+// 文件作用：实现 OpenAI Responses 协议的请求和流式解析。
+// 直接依赖：MaiFilePath.h、MaiFileSystem.h、MaiPathGuard.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiResponsesClient.h"
 
 #include <curl/curl.h>
@@ -80,6 +82,8 @@ std::string base64Encode(const std::string& input) {
     return output;
 }
 
+// 把经工作区路径校验的图片转换为 Responses 接口可接受的数据 URL。
+// 不支持的类型或不存在的文件直接失败，避免把缺图请求送给供应商。
 MaiResult<std::string> imageDataUrl(const MaiModelRequest& request, const MaiModelImage& image,
                                     const MaiModelImagePreparer& prepareImage) {
     if (request.workingDirectory.empty())
@@ -144,6 +148,8 @@ const char* roleName(MaiModelRole role) {
     return "user";
 }
 
+// 把模型消息、图片和工具定义组装为 Responses 请求体。
+// 工具结果引用原调用标识；图像准备失败时直接返回错误，不能发送缺媒体的请求。
 MaiResult<std::string> buildBody(const MaiModelRequest& request,
                                  const MaiModelImagePreparer& prepareImage) {
     Json input = Json::array();
@@ -291,6 +297,8 @@ void emitFullOutput(StreamContext& context, const Json& response) {
     }
 }
 
+// 解析单条模型流事件，更新当前请求的增量内容与完成状态。
+// 异常或未知事件不能污染已确认的消息和工具调用片段。
 void handleEvent(StreamContext& context, const Json& event) {
     const std::string type = stringField(event, "type");
     if (type.empty()) return;
@@ -432,6 +440,8 @@ public:
         return MaiWireApi::Responses;
     }
 
+    // 建立 Responses 流并逐事件更新上层，保留取消与传输失败的明确结果。
+    // 只在供应商确认完成后结束流，不从连接关闭推断模型已经完成。
     MaiError stream(const MaiModelRequest& request, const MaiStreamSink& sink,
                     const std::atomic<bool>& cancel) override {
         MaiResult<std::string> built =

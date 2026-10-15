@@ -1,3 +1,5 @@
+// 文件作用：定义 Agent 会话及其持久化状态。
+// 主要实现：isRoot、isUntitled；对应公开接口中的状态和错误处理。
 #include "MaiSession.h"
 
 bool MaiSession::isRoot() const {

@@ -1,3 +1,5 @@
+// 文件作用：把内存中的图像像素编码为可保存或发送的图片文件。
+// 调用边界：由 MaiChat 媒体或 Agent 宿主调用；平台资源在停止或失败时须正确释放。
 #include "MaiImageEncode.h"
 
 #include <cerrno>
@@ -18,6 +20,7 @@ MaiImageEncodeResult failed(int error) { return {nullptr, 0, error}; }
 
 } // namespace
 
+// 编码前限制像素和 ICC 数据长度，避免外部图像让分配量失控；结果内存由调用方按接口释放。
 extern "C" MaiImageEncodeResult maiImageEncodePngRgba(const unsigned char *rgba, int width,
                                                       int height, int stride,
                                                       const unsigned char *icc_profile,

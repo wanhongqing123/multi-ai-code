@@ -1,3 +1,6 @@
+// 文件作用：桌面端Markdown 内容解析与呈现；MarkdownLabel 负责Markdown 文本控件的绘制与交互，本文件给出其实现。
+// 主要入口：setTheme、theme、setMarkdown、markdown。
+// 直接依赖：markdown/MarkdownDocument.h、markdown/MarkdownLayout.h、markdown/MarkdownLayoutCache.h；实现与这些接口协作。
 #include "markdown/MarkdownLabel.h"
 
 #include <QApplication>

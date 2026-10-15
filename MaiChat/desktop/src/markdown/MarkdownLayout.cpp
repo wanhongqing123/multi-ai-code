@@ -1,3 +1,6 @@
+// 文件作用：桌面端Markdown 内容解析与呈现；MarkdownLayout 负责Markdown 段落和行的实际排版，本文件给出其实现。
+// 主要入口：setTrailingNote、layout、width、height。
+// 实现边界：与 MarkdownLayout 的公开声明配套，调用方通过相应接口进入。
 #include "markdown/MarkdownLayout.h"
 
 #include <QFontMetricsF>
@@ -803,6 +806,7 @@ bool MarkdownLayout::isEmpty() const {
     return impl_->runs.empty() && impl_->shapes.isEmpty();
 }
 
+// 作用：根据已排版行的真实几何位置绘制 Markdown 内容。
 void MarkdownLayout::paint(QPainter* painter, const QPointF& origin, const QRectF& clip) const {
     if (painter == nullptr) return;
     const bool clipped = clip.isValid();

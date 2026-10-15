@@ -1,3 +1,5 @@
+// 文件作用：定义消息、消息片段和工具结果的核心数据结构。
+// 主要实现：isInProgress、text；对应公开接口中的状态和错误处理。
 #include "MaiMessage.h"
 
 const char* maiToolStateToString(MaiToolState state) {

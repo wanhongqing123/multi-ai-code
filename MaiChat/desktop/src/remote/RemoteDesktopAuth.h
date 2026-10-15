@@ -1,3 +1,5 @@
+// 文件作用：桌面端远程桌面连接与控制；RemoteDesktopAuth 负责身份认证、凭据校验和会话续期，本文件给出其声明。
+// 对外边界：本文件给出 RemoteDesktopAuth 的类型和函数声明；参数、返回值和对象生命周期以此为准。
 #pragma once
 
 #include <QByteArray>

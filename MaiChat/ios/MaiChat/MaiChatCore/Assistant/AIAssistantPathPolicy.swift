@@ -1,3 +1,6 @@
+// 文件作用：规范创作中心工作区路径和附件路径，阻止越界访问或错误引用。
+// 校验创作中心工具可访问的工作区路径。
+// 路径解析拒绝越界与不可信别名，文件操作由具体工具执行。
 import Foundation
 
 public enum AIAssistantPathPolicy {

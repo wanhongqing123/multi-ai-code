@@ -1,3 +1,5 @@
+// 文件作用：Android IM 身份、消息同步与本地历史；RemoteIMSlashCommandCatalog 负责斜杠命令的枚举、查找与说明，本文件给出其实现。
+// 主要入口：suggestions。
 package com.kongshang.maichat;
 
 import java.util.ArrayList;

@@ -1,3 +1,5 @@
+// 文件作用：桌面端共用界面；PdfPreviewWindows 负责Windows PDF 文件预览，本文件给出其实现。
+// 直接依赖：ui/PdfPreviewDialog.h；实现与这些接口协作。
 #include "ui/PdfPreviewDialog.h"
 
 #include <algorithm>
@@ -13,6 +15,7 @@
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Storage.Streams.h>
 
+// 作用：用 Windows PDF 接口渲染指定页并返回图像与尺寸。
 PdfPreviewPage renderWindowsPdfPage(const QString &path, int pageIndex) {
   PdfPreviewPage result;
   bool apartmentInitialized = false;

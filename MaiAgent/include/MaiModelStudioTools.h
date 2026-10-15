@@ -1,3 +1,5 @@
+// 文件作用：封装阿里云百炼媒体模型任务与状态查询。
+// 对外类型：MaiWanCredentials；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 
 #include <functional>

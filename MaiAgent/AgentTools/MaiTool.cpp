@@ -1,3 +1,5 @@
+// 文件作用：定义 Agent 工具接口、参数和执行结果。
+// 主要实现：approvalKey、approvalKeys、requiresApproval；对应公开接口中的状态和错误处理。
 #include "MaiTool.h"
 
 #include <algorithm>

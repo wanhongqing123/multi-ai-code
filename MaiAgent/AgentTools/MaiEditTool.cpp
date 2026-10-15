@@ -1,3 +1,5 @@
+// 文件作用：执行 Agent 提出的文本编辑并保留失败信息。
+// 直接依赖：MaiFilePath.h、MaiFileSystem.h；本文件在这些接口之间完成调用与结果转换。
 #include <json.hpp>
 
 #include <cstddef>
@@ -103,6 +105,8 @@ public:
                             : std::vector<std::string>{"file:" + path};
     }
 
+    // 解析模型提供的参数并编辑已授权的本地文件。
+    // 成功和失败都转成明确的工具结果；中间状态不能冒充最终产物。
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const json args = parseArguments(raw);
         const std::string requested = args.contains("path") && args["path"].is_string()

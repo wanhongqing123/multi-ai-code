@@ -1,3 +1,5 @@
+// 文件作用：桌面端应用启动和窗口装配；VideoCoverImage 负责视频封面帧的加载与缩放，本文件给出其实现。
+// 实现边界：与 VideoCoverImage 的公开声明配套，调用方通过相应接口进入。
 #include "app/VideoCoverImage.h"
 
 #include <QDateTime>

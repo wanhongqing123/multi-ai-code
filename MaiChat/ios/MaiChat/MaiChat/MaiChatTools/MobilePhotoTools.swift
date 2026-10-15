@@ -1,3 +1,6 @@
+// 文件作用：实现 Agent 对 iOS 照片库和本地媒体资源的查询与导出工具。
+// 处理系统相册浏览、导入和保存照片／视频。
+// 相册变更在 Photos 自有队列执行，主线程只接收完成结果。
 import Foundation
 import AVFoundation
 import CoreFoundation
@@ -179,6 +182,8 @@ extension AIMobileHostToolProvider {
         }
     }
 
+    /// 导出用户授权照片的原始资源到受控工作区。
+    /// 异步导出完成后才返回路径，取消或失败时清理不完整临时文件。
     func exportPhotoOriginal(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
         let status = await photoAuthorization()
         guard status == .authorized || status == .limited else {
@@ -342,6 +347,8 @@ extension AIMobileHostToolProvider {
         }
     }
 
+    /// 按工具参数在本地对图片执行变换并生成新文件。
+    /// 源图片保持不变，输出路径、尺寸和失败原因在返回前校验。
     func transformImage(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
         let path = Self.string(arguments, key: "path")
         let workspacePath = AIAssistantModel.shared.workspacePath

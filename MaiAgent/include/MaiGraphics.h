@@ -1,3 +1,5 @@
+// 文件作用：声明 Agent 使用的图形处理能力和资源接口。
+// 对外契约：下方声明公开参数和返回值；实现位于同名源文件。
 #pragma once
 
 // OBS's gs_* interface is the Graphics API exported by MaiAgent. Link the

@@ -1,3 +1,6 @@
+// 文件作用：实现 Agent 在 iOS 上读取、检查与处理本地图片的工具入口。
+// 提供工作区图片分析、转换和输出文件处理。
+// 输入与输出路径分离，图片处理失败不覆盖原文件。
 import Foundation
 import CoreFoundation
 import Darwin
@@ -38,6 +41,8 @@ extension AIMobileHostToolProvider {
         ])
     }
 
+    /// 对授权图片执行本地人脸检测并返回边界框。
+    /// 输入路径和图片尺寸先验证，检测失败返回原因而不写回源文件。
     func detectFaces(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
         do {
             let source = try workspaceImageMetadata(arguments).url
@@ -94,6 +99,8 @@ extension AIMobileHostToolProvider {
         }
     }
 
+    /// 对图片执行人像分割并生成可复用的遮罩结果。
+    /// 遮罩与原图坐标保持一致，失败时不交付不完整产物。
     func segmentPerson(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
         do {
             let source = try workspaceImageMetadata(arguments).url

@@ -1,3 +1,6 @@
+// 文件作用：定义语音识别的会话接口、回调数据和错误类型，隔离具体识别 SDK。
+// 定义语音转文字的开始、停止、取消和增量回调契约。
+// 界面只消费会话结果，具体 SDK 的音频采集在实现类中。
 import Foundation
 
 enum SpeechRecognitionError: LocalizedError {

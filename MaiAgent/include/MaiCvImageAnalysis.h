@@ -1,3 +1,5 @@
+// 文件作用：提取图片内容和几何信息供视觉工具使用。
+// 对外类型：MaiToolContext、MaiCvImageAnalysisKind、MaiCvThresholdMethod、MaiCvImageAnalysisOptions；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 
 #include <cstdint>

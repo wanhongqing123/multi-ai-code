@@ -1,3 +1,6 @@
+// 文件作用：用本地 SQLite 保存 IM 消息、会话索引和同步游标，支持离线读取。
+// 阅读边界：持久化顺序和去重在此实现；网络消息由 IM 客户端获取。
+// 使用 SQLite 保存消息、附件元数据、会话摘要和搜索索引。
 import Foundation
 import MaiChatCore
 import SQLite3
@@ -320,7 +323,8 @@ final class LocalChatHistoryStore {
         LocalChatHistoryPersistence(baseDirectoryURL: baseDirectoryURL)
     }
 
-    /// Loads one bounded conversation window using a stable cursor.
+    /// 按稳定游标读取单个会话的有界历史页。
+    /// 先迁移旧数据，再以时间和消息标识共同排序；缺少账号、联系人或有效页长时返回空页。
     func loadConversationPage(
         sdkAppID: Int?,
         ownerUserID: String,
@@ -392,7 +396,8 @@ final class LocalChatHistoryStore {
         }
     }
 
-    /// Returns at most one newest message per peer for the conversation list.
+    /// 为会话列表读取每位联系人最新的一条持久化消息。
+    /// 先规范化账号和联系人标识，再按数据库结果去重；不把完整历史带入列表页面。
     func loadConversationSummaries(
         sdkAppID: Int?,
         ownerUserID: String,
@@ -449,9 +454,9 @@ final class LocalChatHistoryStore {
         }
     }
 
-    /// Searches the complete persisted history for this account, not only the bounded pages
-    /// currently loaded into memory. `instr` treats `%` and `_` as literal user text, avoiding
-    /// the wildcard surprises of LIKE while still supporting ASCII case-insensitive matching.
+    /// 搜索该账号的完整持久化历史，而非只搜索当前已经打开的消息页。
+    /// 使用 SQLite instr 将百分号和下划线视为普通文本，避免 LIKE 通配符误匹配；
+    /// 返回数量受上限约束，搜索结果通过稳定消息标识供界面定位。
     func searchMessages(
         sdkAppID: Int?,
         ownerUserID: String,
@@ -594,6 +599,8 @@ final class LocalChatHistoryStore {
         }
     }
 
+    /// 在同一事务中应用会话、消息和游标变更。
+    /// 只提交本次变化，不能因当前页未加载就删除数据库里更早的消息。
     func applyMutations(
         _ mutations: [LocalChatHistoryMutation]
     ) throws -> LocalChatHistorySaveResult {
@@ -695,6 +702,8 @@ final class LocalChatHistoryStore {
         return Int(sqlite3_changes(database))
     }
 
+    /// 把消息正文和附件元数据写入本地 SQLite。
+    /// 稳定消息标识用于覆盖更新；失败时整个批次回滚，避免半条消息。
     private func insertMessages(
         _ messages: [RemoteIMMessage],
         into database: OpaquePointer,
@@ -823,6 +832,8 @@ final class LocalChatHistoryStore {
         }
     }
 
+    /// 从数据库行还原完整 IM 消息及附件引用。
+    /// 按字段版本处理旧数据；无法恢复的附件不应使整页历史消失。
     private func decodeMessage(from statement: OpaquePointer) -> RemoteIMMessage? {
         guard let id = UUID(uuidString: textColumn(statement, at: 0)),
               let direction = RemoteIMMessageDirection(rawValue: textColumn(statement, at: 5)),
@@ -954,6 +965,8 @@ final class LocalChatHistoryStore {
         return try operation(database)
     }
 
+    /// 把旧版数据库结构升级到当前会话游标和附件格式。
+    /// 迁移必须保留原消息顺序与标识，并在失败时保留可重试的旧数据。
     private func migrate(_ database: OpaquePointer) throws {
         let previousSchemaVersion = try databaseUserVersion(database)
         try execute(database, sql: "PRAGMA journal_mode = WAL")

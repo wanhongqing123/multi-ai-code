@@ -1,3 +1,6 @@
+// 文件作用：桌面端远程桌面连接与控制；CaptureGeometry 负责几何尺寸和坐标转换，本文件给出其实现。
+// 主要入口：isValid。
+// 实现边界：与 CaptureGeometry 的公开声明配套，调用方通过相应接口进入。
 #include "remote/CaptureGeometry.h"
 
 namespace RemoteDesktop {

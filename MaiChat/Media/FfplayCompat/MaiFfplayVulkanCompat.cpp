@@ -1,3 +1,5 @@
+// 文件作用：为未启用 Vulkan 的 ffplay 构建提供兼容入口。
+// 调用边界：由 MaiChat 媒体或 Agent 宿主调用；平台资源在停止或失败时须正确释放。
 extern "C" {
 #include "ffplay_renderer.h"
 #include <libavutil/error.h>

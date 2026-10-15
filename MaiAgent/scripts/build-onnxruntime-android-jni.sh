@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 文件作用：为 Android JNI 构建本地 ONNX Runtime，并保留与应用 ABI 一致的产物。
+# 阅读边界：此文件负责构建或测试流程，不在应用运行时解释为业务逻辑。
 set -euo pipefail
 
 # Android 没有使用 ONNX Runtime 的 Java API，只打包由源码编出的原生 C API 库。

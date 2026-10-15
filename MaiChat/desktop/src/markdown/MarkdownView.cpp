@@ -1,3 +1,6 @@
+// 文件作用：桌面端Markdown 内容解析与呈现；MarkdownView 负责界面呈现、交互与状态更新，本文件给出其实现。
+// 主要入口：setTheme、applyScrollBarStyle、theme、setMaxContentWidth。
+// 直接依赖：markdown/MarkdownDocument.h、markdown/MarkdownLayout.h；实现与这些接口协作。
 #include "markdown/MarkdownView.h"
 
 #include <QApplication>
@@ -246,6 +249,7 @@ bool MarkdownView::isAtBottom() const {
     return verticalScrollBar()->value() >= verticalScrollBar()->maximum() - 2;
 }
 
+// 作用：在宽度或内容变化后重新计算文档排版并更新滚动区域。
 void MarkdownView::relayoutAll() {
     const MarkdownTheme& theme = runtime_->theme;
     const qreal margin = theme.viewMargin;

@@ -1,3 +1,5 @@
+// 文件作用：把图片文件解码为供移动端或桌面端绘制的像素缓冲。
+// 调用边界：由 MaiChat 媒体或 Agent 宿主调用；平台资源在停止或失败时须正确释放。
 #include "MaiImageDecode.h"
 
 #include <algorithm>
@@ -193,6 +195,7 @@ MaiImageDecodeResult resizeRgba(const unsigned char *pixels, int width, int heig
         rotation);
 }
 
+// 网格图片需按瓦片次序拼接后缩放；任一瓦片失败都释放已分配像素，避免交付局部图像。
 MaiImageDecodeResult decodeTileGrid(AVFormatContext *format, const AVStreamGroup *group,
                                     int maxWidth, int maxHeight) {
     const AVStreamGroupTileGrid *grid = group->params.tile_grid;
@@ -327,6 +330,7 @@ MaiImageDecodeResult decodeTileGrid(AVFormatContext *format, const AVStreamGroup
 
 } // namespace
 
+// 统一识别图片容器、限制输出尺寸并返回像素缓冲；调用方必须按接口约定释放结果。
 extern "C" MaiImageDecodeResult maiImageDecodeFile(const char *path, int max_width,
                                                    int max_height) {
     if (!path || !*path || max_width < 0 || max_height < 0)

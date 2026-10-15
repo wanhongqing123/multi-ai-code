@@ -1,3 +1,5 @@
+// 文件作用：执行受控 SSH 连接与远程命令。
+// 直接依赖：MaiBlockingCheck.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiSshTool.h"
 
 #if defined(_WIN32)
@@ -127,9 +129,13 @@ struct SshConnection {
     Clock::time_point lastUsed = Clock::now();
 };
 
+// 建立 SSH 连接并校验服务器指纹，然后完成指定账号的身份认证。
+// 指纹不匹配、认证失败或取消时关闭会话，不把连接加入可复用池。
 MaiResult<std::unique_ptr<SshConnection>> openSshConnection(
     const MaiSshExecRequest& request, const MaiSshHostKeyVerifier& verifyHostKey,
     const std::atomic<bool>* cancel);
+// 在已认证连接上执行一条命令，按超时和取消条件收集输出与退出状态。
+// 通道关闭或读取失败时返回错误，避免把截断输出当成完整结果。
 MaiResult<MaiSshExecResult> executeSshCommand(SshConnection& connection,
                                               const MaiSshExecRequest& request,
                                               const std::atomic<bool>* cancel);
@@ -169,6 +175,8 @@ public:
         return true;
     }
 
+    // 解析模型提供的参数并建立 SSH 连接并执行受控命令。
+    // 成功和失败都转成明确的工具结果；中间状态不能冒充最终产物。
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const Json args = Json::parse(raw, nullptr, false);
         if (!args.is_object() || !args.value("host", Json{}).is_string() ||
@@ -255,6 +263,8 @@ private:
     std::map<std::string, std::unique_ptr<SshConnection>> mConnections;
 };
 
+// 打开连接并完成 libssh2 初始化、服务器指纹核验及账号认证。
+// 仅在全部步骤成功后返回可复用会话；任一失败都释放临时网络资源。
 MaiResult<std::unique_ptr<SshConnection>> openSshConnection(
     const MaiSshExecRequest& request, const MaiSshHostKeyVerifier& verifyHostKey,
     const std::atomic<bool>* cancel) {
@@ -317,6 +327,8 @@ MaiResult<std::unique_ptr<SshConnection>> openSshConnection(
     return connection;
 }
 
+// 在已认证的连接上打开命令通道，按超时或取消条件收集完整输出。
+// 关闭通道后才回报退出状态，避免把半截标准输出当成成功结果。
 MaiResult<MaiSshExecResult> executeSshCommand(SshConnection& connection,
                                               const MaiSshExecRequest& request,
                                               const std::atomic<bool>* cancel) {

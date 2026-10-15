@@ -1,3 +1,6 @@
+// 文件作用：桌面端创作中心和 Agent 会话；AgentController 负责流程编排、异步回调和状态转换，本文件给出其实现。
+// 主要入口：openError、lastError、agent、createSession。
+// 直接依赖：MaiAgentSendMediaTool.h、MaiAppStorageTool.h、MaiArkAssetTools.h、MaiArkMediaTools.h；实现与这些接口协作。
 #include "agent/AgentController.h"
 #include "MaiAgentSendMediaTool.h"
 #include "MaiAppStorageTool.h"
@@ -216,6 +219,8 @@ std::unique_ptr<MaiSessionStore> openStore(const QString &databasePath,
 }
 
 std::unique_ptr<MaiAgent>
+// 为桌面端装配 MaiAgent 核心、模型客户端和平台宿主工具。
+// 工具的权限及工作目录在这里统一传入，实际操作仍由工具入口负责校验。
 buildAgent(std::unique_ptr<MaiModelClient> model,
            std::unique_ptr<MaiSessionStore> store, const QString &defaultModel,
            MaiApprovalPolicy approvalPolicy,

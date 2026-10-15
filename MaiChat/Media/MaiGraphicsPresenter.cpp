@@ -1,3 +1,5 @@
+// 文件作用：接收解码画面并把图像交给平台图形层显示。
+// 调用边界：由 MaiChat 媒体或 Agent 宿主调用；平台资源在停止或失败时须正确释放。
 #include "MaiGraphicsPresenter.h"
 
 #include <algorithm>
@@ -180,6 +182,7 @@ AVPixelFormat pixelFormat(gs_color_format format) {
     }
 }
 
+// 先由图形库解码本地图，再按目标视口限制像素量；失败时释放临时像素，不交付半张图片。
 bool decodeImage(const char* path, uint32_t maxWidth, uint32_t maxHeight, bool fillView,
                  MaiDecodedImage* image) {
     gs_color_format format = GS_UNKNOWN;
@@ -397,6 +400,7 @@ public:
         });
     }
 
+    // 校验帧格式和尺寸后复制需要跨线程使用的平面数据；渲染任务不能借用解码器短生命周期指针。
     bool showVideoFrame(uint64_t id, const MaiVideoFrame* source,
                         const MaiVideoSubtitle* subtitle, bool fillView) {
         if (!source || !source->width || !source->height || source->width > 16384 ||
@@ -566,6 +570,7 @@ private:
         return mHdrConversionEffect != nullptr;
     }
 
+    // 以当前交换链尺寸计算画面矩形，叠加字幕后再提交；交换链不可用时返回失败供上层恢复。
     bool drawTexture(MaiGraphicsViewState* view, gs_texture_t* texture, uint32_t sourceWidth,
                      uint32_t sourceHeight, gs_texture_t* subtitle = nullptr,
                      bool hdr = false) {
@@ -692,6 +697,8 @@ private:
         return true;
     }
 
+    // 从已上传的平面纹理选择 SDR 或 HDR 转换效果；RGBA 帧直接复用原纹理。
+    // 转换纹理的像素格式变化时重建目标，失败返回空指针交由渲染入口处理。
     gs_texture_t* convertVideo(MaiGraphicsViewState* view, const MaiDecodedVideoFrame& frame) {
         if (frame.format == MAI_VIDEO_PIXEL_RGBA || frame.format == MAI_VIDEO_PIXEL_BGRA)
             return view->videoTextures[0];

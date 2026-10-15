@@ -1,3 +1,6 @@
+// 文件作用：验证 Markdown 消息到气泡、链接和附件预览的转换结果。
+// 验证 Markdown 展示、代码块、附件标题和文本选择。
+// 覆盖消息渲染在不同内容结构下的可读性。
 import XCTest
 import Combine
 import SwiftUI
@@ -441,6 +444,8 @@ final class MarkdownPresentationTests: XCTestCase {
     }
 
     @MainActor
+    /// 验证最新消息跟随意图在空会话、发送和重新进入之间保持正确。
+    /// 消息尚未出现时不滚进空白区域，出现后定位到真实底部。
     func testLatestIntentRestoresBlankEntryAndResumesAfterSending() async throws {
         let scroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
         scroll.contentSize = CGSize(width: 390, height: 3000)

@@ -1,3 +1,5 @@
+// 文件作用：Android 远程桌面会话与输入；RemoteInputPacket 负责远程输入数据包的编码与解码，本文件给出其实现。
+// 主要入口：move、button、wheel、key。
 package com.kongshang.maichat;
 
 import org.json.JSONArray;

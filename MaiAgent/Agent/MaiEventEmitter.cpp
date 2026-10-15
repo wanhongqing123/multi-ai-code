@@ -1,3 +1,5 @@
+// 文件作用：构造和发布 Agent 执行过程中的事件。
+// 主要实现：emitSession、emitMessage；对应公开接口中的状态和错误处理。
 #include "MaiEventEmitter.h"
 
 #include "MaiIdGenerator.h"

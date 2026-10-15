@@ -1,3 +1,5 @@
+// 文件作用：移动端 C++ Agent 适配层；MaiMobileAgent 负责移动 Agent 生命周期、工具注册和宿主回调，本文件给出其实现。
+// 直接依赖：MaiMobileHostTools.h、MaiAgent.h、MaiAgentSendMediaTool.h、MaiAppStorageTool.h；实现与这些接口协作。
 #include "MaiMobileAgent.h"
 #include "MaiMobileHostTools.h"
 
@@ -411,6 +413,8 @@ struct MaiMobileAgent {
     return false;
   }
 
+  // 作用：按宿主配置装配移动 Agent 的模型、工具和工作区能力。
+  // 先校验外部输入，再更新本地状态；失败路径不能覆盖已有有效结果。
   void configure(const Json &request) {
     // 切换主模型时不能中断正在运行的任务；先创建共享存储，再配置线协议和工具集。
     if (anyBusy())
@@ -699,6 +703,8 @@ struct MaiMobileAgent {
     });
   }
 
+  // 将持久化消息转为移动端可读快照，并保留最新消息和未完成任务的状态。
+  // 返回值只包含本次请求选中的会话内容，不改动 Agent 存储。
   Json serializeMessages(const std::vector<MaiMessage> &source,
                          bool sessionBusy) {
     Json messages = Json::array();
@@ -760,6 +766,7 @@ struct MaiMobileAgent {
     return messages;
   }
 
+  // 作用：读取指定会话的有限消息快照和任务状态。
   Json snapshot(const std::string &selected, bool force, int limit) {
     std::unordered_map<std::string, std::string> errorCopy;
     std::unordered_set<std::string> changedParts;

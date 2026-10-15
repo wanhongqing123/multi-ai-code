@@ -1,3 +1,5 @@
+// 文件作用：Android IM 身份、消息同步与本地历史；RemoteIMTimestampFormatter 负责面向界面的文本和时间格式化，本文件给出其实现。
+// 主要入口：format、isSameDay、formatted。
 package com.kongshang.maichat;
 
 import java.text.SimpleDateFormat;

@@ -1,3 +1,5 @@
+// 文件作用：Android 移动端 Agent 工具与宿主能力；MobileImageVision 负责移动端本地图片视觉分析，本文件给出其实现。
+// 主要入口：detectFaces、segmentPerson、prepare。
 package com.kongshang.maichat.tools;
 
 import android.graphics.Bitmap;
@@ -123,6 +125,7 @@ public final class MobileImageVision {
             .put("y", Math.round(point.y * scaleY)));
     }
 
+    // 先按模型输入限制缩放与旋转源图，再构造像素缓冲；解码失败直接抛错，不传空图给推理器。
     private static PreparedImage prepare(File source) throws Exception {
         if (source.length() < 1 || source.length() > 50L * 1024 * 1024)
             throw new IllegalArgumentException("源图片不能超过 50 MB");

@@ -1,3 +1,5 @@
+// 文件作用：分析视频帧和视频时序中的视觉信息。
+// 直接依赖：MaiTool.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiCvVideoAnalysis.h"
 
 #include <algorithm>
@@ -200,6 +202,8 @@ private:
     std::unique_ptr<SwsContext, MaiCvScaleCloser> mScale;
 };
 
+// 按时间顺序解码视频，计算片段、运动和画面变化等本地分析结果。
+// 读取异常终止本次分析，关闭 FFmpeg 资源后再把错误返回给工具层。
 MaiCvVideoAnalysisResult analyze(const std::string& path, const MaiCvVideoAnalysisOptions& options,
                                  const MaiToolContext& context) {
     AVFormatContext* opened = nullptr;

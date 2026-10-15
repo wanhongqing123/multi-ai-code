@@ -1,3 +1,5 @@
+// 文件作用：验证 macOS 图形呈现器的帧接收和平台图层接入。
+// 运行边界：仅用于本地或设备验证，不作为正式播放器的业务入口。
 #import <AppKit/AppKit.h>
 #import <QuartzCore/CAMetalLayer.h>
 
@@ -26,6 +28,7 @@ static void onVideo(MaiVideoPlayback* playback, MaiVideoPlaybackEvent event,
     if (event == MAI_VIDEO_ERROR) atomic_store(&video_status, -1);
 }
 
+// 在真实图形上下文中提交视频帧并观察回调；超时或错误须返回非零，不能把空白画面当成功。
 int main(int argc, char** argv) {
     if (argc != 5) return 2;
     @autoreleasepool {

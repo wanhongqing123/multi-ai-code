@@ -1,3 +1,5 @@
+# 文件作用：配置 Qt 桌面端、IM、远程桌面、创作中心与 MaiAgent 的构建目标。
+# 平台 SDK 和可选媒体能力由配置阶段检查；真实编译命令可导出给 clangd。
 cmake_minimum_required(VERSION 3.21)
 # C 用于 MaiAgent/third_party/md4c（Markdown 解析，纯 C 实现）。
 project(MaiChatDesktop VERSION 0.1.96 LANGUAGES C CXX)

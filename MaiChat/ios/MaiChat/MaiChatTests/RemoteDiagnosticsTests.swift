@@ -1,3 +1,6 @@
+// 文件作用：验证远程诊断请求、结果汇总和敏感信息处理。
+// 验证远端诊断请求匹配、证据过滤和导出结果。
+// 使用本地测试载荷，不向真实联系人发送。
 import XCTest
 import MaiChatCore
 import SwiftUI

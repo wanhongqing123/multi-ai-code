@@ -1,3 +1,5 @@
+// 文件作用：验证变速后音频时长、连续采样及跳转后的旧缓冲清理。
+// 运行边界：仅用于本地或设备验证，不作为正式播放器的业务入口。
 #include <cmath>
 #include <cstdint>
 #include <cstdio>

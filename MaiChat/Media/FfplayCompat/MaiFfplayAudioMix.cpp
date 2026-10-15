@@ -1,3 +1,5 @@
+// 文件作用：提供 ffplay 需要的音频采样混合入口。
+// 调用边界：由 MaiChat 媒体或 Agent 宿主调用；平台资源在停止或失败时须正确释放。
 #include "SDL.h"
 
 #include <algorithm>

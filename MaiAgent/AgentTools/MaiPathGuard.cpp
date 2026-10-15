@@ -1,3 +1,5 @@
+// 文件作用：校验工具目标路径是否位于允许的工作区内。
+// 直接依赖：MaiFilePath.h、MaiFileSystem.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiFilePath.h"
 #include "MaiFileSystem.h"
 #include "MaiPathGuard.h"

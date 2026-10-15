@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端远控输入注入、序号校验和异常时按键释放。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QtTest/QtTest>
 
 #include "remote/RemoteInputInjector.h"

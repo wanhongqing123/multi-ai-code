@@ -1,3 +1,5 @@
+# 文件作用：把 Windows 桌面程序和依赖打包为安装产物。
+# 阅读边界：此文件负责构建或测试流程，不在应用运行时解释为业务逻辑。
 ﻿# 构建 Windows 安装程序（NSIS）：staging（复用 package-windows.ps1）→ makensis。
 #
 # 用法（先完成 Release 构建）：

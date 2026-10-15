@@ -1,3 +1,5 @@
+// 文件作用：执行受控 SSH 连接与远程命令。
+// 对外类型：MaiSshExecRequest、MaiSshExecResult；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 
 #include <atomic>

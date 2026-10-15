@@ -1,3 +1,5 @@
+// 文件作用：Android IM 身份、消息同步与本地历史；RemoteIMActivitySignal 负责信令载荷与状态转换，本文件给出其实现。
+// 主要入口：encode、decode。
 package com.kongshang.maichat;
 
 import org.json.JSONObject;

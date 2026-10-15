@@ -1,3 +1,6 @@
+// 文件作用：Android 聊天会话的消息呈现与输入；ChatMessageList 负责列表内容、选择状态和滚动行为，本文件给出其实现。
+// 类型关系：ChatMessageList extends ListView；审阅时可据此追踪父类、接口或回调契约。
+// 主要入口：targetPosition、key。
 package com.kongshang.maichat;
 
 import android.content.Context;

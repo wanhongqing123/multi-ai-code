@@ -1,3 +1,5 @@
+// 文件作用：Android 聊天会话的消息呈现与输入；MessageQuote 负责消息引用内容的构造与展示，本文件给出其实现。
+// 主要入口：from、kind、digest、authoredCaption。
 package com.kongshang.maichat;
 
 import java.io.File;

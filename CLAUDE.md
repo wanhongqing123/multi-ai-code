@@ -6,7 +6,7 @@
 | 目录 | 是什么 | 约定在哪 |
 |---|---|---|
 | `MaiAgent/` | agent 核心，纯 C++，可移植的库 | **`MaiAgent/CLAUDE.md`** → `MaiAgent/docs/CodingStyle.md` |
-| `MaiChat/` | Qt 桌面端（C++/Qt） | 无独立约定文件；风格照 `MaiChat/desktop/src` 现有代码 |
+| `MaiChat/` | iOS、Android 与 Qt 桌面端产品 | **`MaiChat/CLAUDE.md`**；桌面代码风格照 `MaiChat/desktop/src` |
 | `electron/` | 主仓库的 Electron 外壳（TS） | 无独立约定文件 |
 | `third_party/aicli/codex/` | codex 源码，**只读参考**，不要改 | 上游的 |
 

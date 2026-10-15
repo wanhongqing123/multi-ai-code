@@ -1,3 +1,5 @@
+// 文件作用：把历史消息、工具结果和附件整理为模型上下文。
+// 主要实现：build；对应公开接口中的状态和错误处理。
 #include "MaiContextBuilder.h"
 
 #include <algorithm>
@@ -36,12 +38,16 @@ MaiContextBuilder::MaiContextBuilder() : MaiContextBuilder(Options{}) {}
 
 MaiContextBuilder::MaiContextBuilder(Options options) : mOptions(std::move(options)) {}
 
+// 把持久化会话历史转换为模型请求的上下文消息。
+// 文本、媒体、工具调用和工具回执按原事件顺序组装；裁剪只影响本次请求，不改存储。
 std::vector<MaiModelMessage> MaiContextBuilder::build(
     const std::vector<MaiMessage>& history) const {
     std::vector<MaiModelMessage> out;
     out.reserve(history.size() + 1);
     std::size_t currentUserOutputIndex = std::numeric_limits<std::size_t>::max();
 
+    // 先确定本轮用户输入与可回灌图片数量；过旧的像素不进入本次模型请求，
+    // 但仍留在会话和工作区里，用户引用时可以按原路径再次读取。
     std::size_t latestUserIndex = history.size();
     for (std::size_t index = 0; index < history.size(); ++index) {
         if (history[index].role == MaiRole::User) latestUserIndex = index;
@@ -73,6 +79,8 @@ std::vector<MaiModelMessage> MaiContextBuilder::build(
     for (std::size_t messageIndex = 0; messageIndex < history.size(); ++messageIndex) {
         const auto& message = history[messageIndex];
         if (message.role == MaiRole::User) {
+            // 用户消息的文字、图片、视频和引用共享同一模型消息。
+            // 当前轮附件使用精确工作区路径，避免模型根据文件名猜测来源。
             MaiModelMessage modelMessage;
             modelMessage.role = MaiModelRole::User;
             modelMessage.content = message.text();
@@ -229,9 +237,8 @@ std::vector<MaiModelMessage> MaiContextBuilder::build(
                     ++omittedImages;
                     continue;
                 }
-                // Chat Completions only accepts image_url parts on a user message. Keep the tool
-                // result immediately after its assistant call, then add the captured image as the
-                // next observation so the model receives the actual pixels instead of a path.
+                // Chat Completions 只允许用户消息携带 image_url：
+                // 先保留工具调用与回执的相邻顺序，再把实际像素作为下一条观察消息。
                 flush_batch();
                 MaiModelMessage observation;
                 observation.role = MaiModelRole::User;
@@ -246,6 +253,7 @@ std::vector<MaiModelMessage> MaiContextBuilder::build(
             out.push_back(std::move(pending));
         }
     }
+    // 对未回灌的旧图明确告知模型：文件仍存在，只是本轮上下文没有携带像素。
     if (omittedImages != 0) {
         MaiModelMessage note;
         note.role = MaiModelRole::System;
@@ -259,6 +267,8 @@ std::vector<MaiModelMessage> MaiContextBuilder::build(
     }
     const std::size_t latestUser =
         currentUserOutputIndex < out.size() ? currentUserOutputIndex : out.size();
+    // 先给单条内容分别设限，再从最旧一端裁剪总字节预算。
+    // 本轮用户输入和已配对工具回执保持完整顺序，裁剪仅作用于请求副本。
     for (std::size_t index = 0; index < out.size(); ++index) {
         MaiModelMessage& message = out[index];
         const std::size_t limit = message.role == MaiModelRole::ToolResult

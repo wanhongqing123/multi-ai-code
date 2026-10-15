@@ -1,3 +1,6 @@
+// 文件作用：验证 IM 会话状态、消息排序和未读数的核心规则。
+// 验证联系人、消息、引用和未读状态的转换规则。
+// 按消息稳定标识校验去重与顺序。
 import XCTest
 @testable import MaiChatCore
 
@@ -97,6 +100,8 @@ final class MasterChatStateTests: XCTestCase {
         ))
     }
 
+    /// 验证新消息通知只展示用户可读预览。
+    /// 本地附件路径不得泄漏到系统通知正文。
     func testNewMessageNotificationPreviewDoesNotExposeAttachmentPath() {
         let image = RemoteIMMessage(
             fromUserID: "peer-a",

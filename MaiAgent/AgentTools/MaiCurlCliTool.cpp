@@ -1,3 +1,5 @@
+// 文件作用：将 curl 命令行能力适配为 Agent 工具。
+// 直接依赖：MaiBlockingCheck.h、MaiFilePath.h、MaiFileSystem.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiCurlCliTool.h"
 
 #include <curl/curl.h>
@@ -182,6 +184,8 @@ public:
         return "curl:" + (arguments.is_discarded() ? raw : arguments.dump());
     }
 
+    // 解析模型提供的参数并执行受工具权限约束的 curl 请求。
+    // 成功和失败都转成明确的工具结果；中间状态不能冒充最终产物。
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const Json request = Json::parse(raw, nullptr, false);
         if (!request.is_object() || !request.value("arguments", Json{}).is_array() ||

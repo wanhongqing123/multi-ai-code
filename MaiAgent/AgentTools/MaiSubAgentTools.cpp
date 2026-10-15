@@ -1,3 +1,5 @@
+// 文件作用：提供创建、查询和管理子 Agent 的工具。
+// 直接依赖：MaiSubAgent.h；本文件在这些接口之间完成调用与结果转换。
 #include <json.hpp>
 
 #include <string>

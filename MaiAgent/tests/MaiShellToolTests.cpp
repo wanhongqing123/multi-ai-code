@@ -1,3 +1,5 @@
+// 文件作用：验证“在权限边界内执行 shell 命令并收集结果”的正确行为和边界条件。
+// 验证入口：test_read_only_commands_run_without_asking、test_anything_that_can_change_things_asks_first、test_shell_metacharacters_always_ask；检查可观察结果而非实现细节。
 // shell 工具的测试。
 //
 // 重点全在**审批粒度**上，那是这个工具唯一的安全阀。执行本身反而简单：

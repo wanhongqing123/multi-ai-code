@@ -1,3 +1,7 @@
+// 文件作用：桌面端Markdown 内容解析与呈现；MarkdownTheme 负责界面颜色和视觉令牌，本文件给出其声明。
+// 对外边界：本文件给出 MarkdownTheme 的类型和函数声明；参数、返回值和对象生命周期以此为准。
+// 公开入口：standard。
+// 直接依赖：markdown/MarkdownDocument.h；实现与这些接口协作。
 #pragma once
 
 #include <QColor>

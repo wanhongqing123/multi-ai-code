@@ -1,3 +1,5 @@
+// 文件作用：桌面端远程桌面连接与控制；DisplaySleepBlocker 负责展示期间的系统休眠阻止与恢复，本文件给出其声明。
+// 对外边界：本文件给出 DisplaySleepBlocker 的类型和函数声明；参数、返回值和对象生命周期以此为准。
 #pragma once
 
 #include <QtGlobal>

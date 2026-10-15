@@ -1,3 +1,6 @@
+// 文件作用：Android 设备集成测试；AIAssistantInstrumentedTest 负责覆盖对应界面或服务的设备行为，本文件给出其验证。
+// 运行边界：仅供自动化验证使用，不作为正式 App 或 Agent 的用户功能入口。
+// 覆盖场景：bundledRvmProcessesVideoWithOriginalAudio、streamsUnicodeStopsAndKeepsNativeComposer、httpsUsesSystemRootsAndRejectsExpiredCertificate、visibleText。
 package com.kongshang.maichat;
 
 import static org.junit.Assert.*;
@@ -124,6 +127,7 @@ public class AIAssistantInstrumentedTest {
         return null;
     }
     @Test
+    // 作用：验证 Unicode 增量输出、停止动作及原生输入框状态在同一会话中保持一致。
     public void streamsUnicodeStopsAndKeepsNativeComposer() throws Exception {
         try (ActivityScenario<AIAssistantTestActivity> scenario =
                  ActivityScenario.launch(AIAssistantTestActivity.class)) {

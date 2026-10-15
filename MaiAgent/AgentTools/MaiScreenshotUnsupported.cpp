@@ -1,3 +1,5 @@
+// 文件作用：为不支持截图的平台提供明确失败实现。
+// 直接依赖：MaiScreenshot.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiScreenshot.h"
 
 bool maiIsScreenshotSupported() {

@@ -1,3 +1,6 @@
+// 文件作用：用 iOS Keychain 保存账号恢复所需的敏感令牌，并封装读取与删除操作。
+// 封装账号和服务令牌在 iOS Keychain 中的保存与读取。
+// 模型临时密钥不在此长期落盘；失败返回系统错误供上层处理。
 import Foundation
 import Security
 

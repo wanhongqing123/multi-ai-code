@@ -1,3 +1,5 @@
+// 文件作用：Android 媒体播放、预览和编辑；VoiceRecordingController 负责流程编排、异步回调和状态转换，本文件给出其实现。
+// 主要入口：finishOnWorker、deliver。
 package com.kongshang.maichat;
 
 import android.media.MediaRecorder;

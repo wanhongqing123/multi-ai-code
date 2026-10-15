@@ -1,3 +1,5 @@
+// 文件作用：Android 远程桌面会话与输入；RemoteDesktopController 负责流程编排、异步回调和状态转换，本文件给出其实现。
+// 主要入口：onEnterRoom、onUserSubStreamAvailable、onFirstVideoFrame、onUserVideoSizeChanged。
 package com.kongshang.maichat;
 
 import android.content.Context;
@@ -29,6 +31,8 @@ public final class RemoteDesktopController {
     private final Listener listener;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final TRTCCloud cloud;
+    // TRTC 回调把房间进入、首帧和断连事件推进同一远控会话状态机。
+    // 回调只更新当前有效会话，失效或失败时停止画面而不保留旧连接提示。
     private final TRTCCloudListener cloudListener = new TRTCCloudListener() {
         @Override
         public void onEnterRoom(long result) {

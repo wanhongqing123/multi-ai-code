@@ -1,3 +1,5 @@
+// 文件作用：Android 创作中心的会话、消息和 Agent 交互；AIAssistantPathPolicy 负责输入筛选、权限判断或展示规则，本文件给出其实现。
+// 主要入口：resolve。
 package com.kongshang.maichat;
 
 import java.io.File;

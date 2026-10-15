@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端消息检索的匹配顺序、大小写和前后跳转。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QtTest>
 
 #include "model/MessageSearch.h"

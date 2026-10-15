@@ -1,3 +1,6 @@
+// 文件作用：Android 本地测试；AndroidContactGroupMigrationTest 负责覆盖对应类的状态和数据行为，本文件给出其验证。
+// 运行边界：仅供自动化验证使用，不作为正式 App 或 Agent 的用户功能入口。
+// 覆盖场景：v3ContactsMigrateWithoutLossAndGroupOperationsRemainAccountScoped。
 package com.kongshang.maichat;
 
 import static org.junit.Assert.assertEquals;
@@ -20,6 +23,8 @@ import java.util.List;
 @Config(sdk = 34)
 public class AndroidContactGroupMigrationTest {
     @Test
+    // 作用：验证旧联系人迁移后分组操作仍按账号隔离。
+    // 按真实调用顺序检查输入和可观察结果，失败时保留定位所需的上下文。
     public void v3ContactsMigrateWithoutLossAndGroupOperationsRemainAccountScoped() {
         Context context = ApplicationProvider.getApplicationContext();
         String databaseName = "maichat-contact-groups-robolectric.db";

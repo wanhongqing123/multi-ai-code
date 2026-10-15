@@ -1,3 +1,6 @@
+// 文件作用：实现腾讯实时语音识别与麦克风采集，向输入界面持续返回转写结果。
+// 阅读边界：这里只处理识别会话与回调；悬浮层的显示和发送由页面状态决定。
+// 封装腾讯实时 ASR 会话、麦克风权限和音频缓冲。
 import AVFoundation
 import Combine
 import Foundation
@@ -39,6 +42,8 @@ private final class SpeechEngineHandle: @unchecked Sendable {
         }
     }
     @MainActor
+    /// 申请麦克风、激活音频会话并启动实时识别。
+    /// 每次开始分配新的会话代次；旧识别器回调不得更新当前转写悬浮层。
     func start(delegate: TencentRealtimeSpeechRecognizer) async throws -> (began: TimeInterval, returned: TimeInterval) {
         let storage = storage, cancellation = cancellation
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<(TimeInterval, TimeInterval), Error>) in
@@ -94,7 +99,7 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
     private var firstTextUptime: TimeInterval?
     private var firstCallbackUptime: TimeInterval?
     private var textUpdateCount = 0
-    // Frozen at session start so delayed SDK callbacks retain their original conversation.
+    // 在会话开始时固定诊断字段，使迟到的 SDK 回调仍归属原会话。
     private var diagnosticFields: [String: String] = [:]
     private var stopRequestedUptime: TimeInterval?
     // 必须保持串行：取消与快速重启依赖 deactivate/activate 严格按入队顺序执行。
@@ -113,6 +118,9 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
 
     var diagnosticSessionID: UInt64 { sessionSequence }
 
+    /// 开始一轮实时语音识别：核验凭据和麦克风权限，关闭旧会话并建立本轮音频回调。
+    /// 每次启动递增会话序号，使迟到的旧识别结果不能写入新悬浮层；
+    /// 任一步失败都抛出错误交给输入界面收起悬浮层并保留原草稿。
     func start(diagnosticFields: [String: String]) async throws {
         guard isAvailable else { throw SpeechRecognitionError.unavailable }
         guard await requestRecordPermission() else {
@@ -229,8 +237,7 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
                       self.isCurrentRecognizer(stoppingID) else { return }
                 // 个别 SDK/网络状态下 stop 后不会回调 DidFinish。屏幕上的实时文本已经
                 // 是服务端返回的识别结果，用它兜底，避免界面无限停在“正在完成识别”。
-                // finish owns cleanup; calling cancel here too performs SDK
-                // teardown twice before the waiting UI can resume.
+                // 收尾由 finish 负责；此处再取消会在等待界面恢复前重复拆除 SDK 会话。
                 self.finish(.success(self.liveText), sourceID: stoppingID,
                             completion: "stop-timeout-fallback")
             }
@@ -363,9 +370,8 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
         return result.text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    // callbackUptime is delegate entry, not a network receive timestamp. When
-    // callbackOnMainThread is true, SDK-internal main-queue delay is already
-    // included; interpret it alongside the foreground run-loop probe.
+    // callbackUptime 是进入代理回调的时刻，不是网络接收时刻；
+    // 若回调在主线程，SDK 内部排队时间已包含在内，需结合前台 run-loop 采样判断。
     private nonisolated func publish(
         _ text: String,
         source: String,
@@ -421,6 +427,8 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
         }
     }
 
+    /// 结束当前识别会话并完成等待中的转写结果。
+    /// 只回收匹配会话的资源，回调缺失时使用已收到的实时文本兜底。
     private func finish(
         _ result: Result<String, Error>,
         sourceID: ObjectIdentifier? = nil,
@@ -481,8 +489,8 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
         isRecognizing = false
         stopTimeoutTask?.cancel()
         stopTimeoutTask = nil
-        // An idle cancel must not enqueue setActive(false) ahead of the next
-        // activation, or interfere with another audio feature in the app.
+        // 空闲时取消不能在下一次激活前排入 setActive(false)，
+        // 否则会干扰应用内其他正在使用音频会话的功能。
         if wasActive || sessionStartedUptime != nil {
             Self.deactivateAudioSession()
         }

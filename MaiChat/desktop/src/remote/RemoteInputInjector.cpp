@@ -1,3 +1,6 @@
+// 文件作用：桌面端远程桌面连接与控制；RemoteInputInjector 负责把远端输入事件注入本机操作系统，本文件给出其实现。
+// 主要入口：beginSession、endSession、handlePacket、applyEvent。
+// 实现边界：与 RemoteInputInjector 的公开声明配套，调用方通过相应接口进入。
 #include "remote/RemoteInputInjector.h"
 
 namespace RemoteInput {

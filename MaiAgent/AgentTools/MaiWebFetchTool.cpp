@@ -1,3 +1,5 @@
+// 文件作用：获取网页内容并转换为模型可读文本。
+// 直接依赖：MaiBlockingCheck.h；本文件在这些接口之间完成调用与结果转换。
 #include <curl/curl.h>
 #include <json.hpp>
 
@@ -109,6 +111,8 @@ void replaceAll(std::string& text, const std::string& from, const std::string& t
     }
 }
 
+// 清理网页标记并提取供模型阅读的文本内容。
+// 脚本、样式和不可见标签不应混进最终正文。
 std::string htmlToText(std::string html) {
     removeElement(html, "script");
     removeElement(html, "style");
@@ -213,6 +217,8 @@ public:
         return host.empty() ? "curl_fetch:<unknown>" : "curl_fetch:" + host;
     }
 
+    // 解析模型提供的参数并抓取网页并整理为可读文本。
+    // 成功和失败都转成明确的工具结果；中间状态不能冒充最终产物。
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const json args = parseArguments(raw);
         const std::string url = args.value("url", std::string{});

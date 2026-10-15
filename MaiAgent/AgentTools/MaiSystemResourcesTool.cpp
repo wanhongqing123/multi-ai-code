@@ -1,3 +1,5 @@
+// 文件作用：查询设备资源与系统状态供 Agent 决策。
+// 直接依赖：MaiFilePath.h、MaiFileSystem.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiSystemResourcesTool.h"
 
 #include <json.hpp>
@@ -109,6 +111,7 @@ private:
 
 }  // namespace
 
+// 跨平台采样进程和系统资源；不可用的字段保持缺省，不把读取失败伪装成零占用。
 MaiSystemResources maiReadSystemResources() {
     MaiSystemResources result;
 #if defined(__APPLE__)

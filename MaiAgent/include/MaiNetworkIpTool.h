@@ -1,3 +1,5 @@
+// 文件作用：查询网络接口地址并向 Agent 返回可读结果。
+// 对外类型：MaiLocalIpAddress；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 
 #include <memory>

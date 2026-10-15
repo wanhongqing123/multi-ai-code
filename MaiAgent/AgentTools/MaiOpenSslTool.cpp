@@ -1,3 +1,5 @@
+// 文件作用：提供 OpenSSL 加解密及证书检查工具。
+// 直接依赖：MaiFilePath.h、MaiFileSystem.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiOpenSslTool.h"
 
 #include <openssl/asn1.h>

@@ -1,3 +1,5 @@
+// 文件作用：定义工具权限请求、审批与默认拒绝规则。
+// 主要内容：权限闸门创建待审批请求、等待用户决定并处理取消；无明确授权时不放行。
 #include "MaiPermission.h"
 
 #include <chrono>
@@ -87,6 +89,8 @@ MaiPermissionGate::~MaiPermissionGate() {
     mApprovals->decided.notify_all();
 }
 
+// 登记审批请求后才广播给界面，随后等待决定、取消或超时。
+// 没有明确许可时按拒绝处理；登记与唤醒顺序保证快速回复不会丢失。
 MaiPermissionDecision MaiPermissionGate::ask(const MaiPermissionRequest& request,
                                              const Announce& announce,
                                              const std::atomic<bool>& cancel) {

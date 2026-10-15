@@ -1,3 +1,5 @@
+// 文件作用：检测禁止阻塞的线程上下文，防止事件线程执行慢操作。
+// 直接依赖：MaiThread.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiBlockingCheck.h"
 
 #include <cstdio>

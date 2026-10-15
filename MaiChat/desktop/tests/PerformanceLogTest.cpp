@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端性能指标聚合、心跳重置和采样容量提示。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QTest>
 #include <QJsonArray>
 #include "diagnostics/PerformanceLog.h"

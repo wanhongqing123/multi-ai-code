@@ -1,3 +1,5 @@
+// 文件作用：分析视频画面几何信息并生成裁剪参数。
+// 对外类型：MaiStretchLowerOptions、MaiStretchLowerResult；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 
 #include <memory>

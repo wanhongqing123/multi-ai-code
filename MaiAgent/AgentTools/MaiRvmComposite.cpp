@@ -1,3 +1,5 @@
+// 文件作用：将 RVM 人像遮罩与原视频背景合成。
+// 实现入口：阅读本文件的公开函数与调用路径，核对返回值和资源收尾。
 #include "MaiRvmComposite.h"
 
 #include <algorithm>

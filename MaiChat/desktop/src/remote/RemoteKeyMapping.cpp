@@ -1,3 +1,5 @@
+// 文件作用：桌面端远程桌面连接与控制；RemoteKeyMapping 负责输入键值与目标协议的映射，本文件给出其实现。
+// 实现边界：与 RemoteKeyMapping 的公开声明配套，调用方通过相应接口进入。
 #include "remote/RemoteKeyMapping.h"
 
 #include <QtCore/qnamespace.h>
@@ -67,6 +69,7 @@ constexpr quint32 kVkOem7 = 0xde;
 
 }  // namespace
 
+// 把 Qt 平台键值映射到远控协议的稳定键码；未映射按键返回保留值，不能直接透传本机数值。
 quint32 canonicalKeyCodeFromQt(int qtKey, bool keypad) {
     if (qtKey >= Qt::Key_A && qtKey <= Qt::Key_Z) {
         return static_cast<quint32>('A' + qtKey - Qt::Key_A);
@@ -148,6 +151,8 @@ quint32 canonicalKeyCodeFromQt(int qtKey, bool keypad) {
     }
 }
 
+// 作用：把通用按键编码映射为 macOS 虚拟键码。
+// 先校验外部输入，再更新本地状态；失败路径不能覆盖已有有效结果。
 int macKeyCodeFromCanonical(quint32 keyCode) {
     // CGKeyCode 的数值是 Apple 虚拟键盘的物理位置，不随当前输入法变化。
     switch (keyCode) {

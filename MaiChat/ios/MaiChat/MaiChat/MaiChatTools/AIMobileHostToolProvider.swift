@@ -1,3 +1,6 @@
+// 文件作用：注册创作中心可调用的手机宿主工具，并把工具请求转发到 iOS 能力实现。
+// 阅读边界：工具参数、权限和返回值在这里校验；界面控制由对应播放器及页面执行。
+// 向移动 Agent 注册相册、IM、媒体和系统权限工具。
 import Foundation
 import CoreFoundation
 import Darwin
@@ -31,6 +34,8 @@ final class AIMobileHostToolProvider {
 
     weak var appState: RemoteIMAppState?
 
+    /// 校验 Agent 工具名与参数，再分派到对应 iOS 宿主能力。
+    /// 所有失败分支返回明确错误码；播放器和媒体工具不得把仅受理误报为完成。
     func execute(name: String, argumentsJSON: String) async -> AIMaiChatHostToolExecution {
         guard let arguments = Self.parseArguments(argumentsJSON) else {
             return .failure(code: "invalid_input", message: "arguments must be a JSON object")
@@ -268,6 +273,8 @@ final class AIMobileHostToolProvider {
         }
     }
 
+    /// 把工作区视频上传到已配置的 OSS 资源服务。
+    /// 检查文件类型、访问路径和响应地址，失败时保留本地文件供用户重试。
     private func uploadOssVideo(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
         guard let signer = ossSignerConfiguration() else {
             return .failure(code: "not_configured", message: "Configure the OSS signer in model settings")

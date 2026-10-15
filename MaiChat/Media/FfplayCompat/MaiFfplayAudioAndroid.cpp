@@ -1,3 +1,5 @@
+// 文件作用：把 ffplay 音频回调接到 Android 音频输出，管理设备启动和释放。
+// 调用边界：由 MaiChat 媒体或 Agent 宿主调用；平台资源在停止或失败时须正确释放。
 #include "SDL.h"
 
 #include <aaudio/AAudio.h>

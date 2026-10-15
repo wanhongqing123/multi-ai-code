@@ -1,3 +1,5 @@
+// 文件作用：运行 RVM 人像抠像模型并维护逐帧推理状态。
+// 直接依赖：MaiFilePath.h、MaiFileSystem.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiRvmMatting.h"
 
 #include <array>
@@ -174,6 +176,7 @@ std::string MaiRvmMattingSession::runtimeVersion() const {
     return mImpl->apiBase->GetVersionString();
 }
 
+// 一次推理要保持输入尺寸、模型张量和输出掩码一致；状态帧仅在成功后更新，失败不污染下一帧。
 MaiResult<MaiRvmMattingResult> MaiRvmMattingSession::infer(float* rgbPlanar, int width, int height,
                                                            float downsampleRatio) {
     if (rgbPlanar == nullptr || width <= 0 || height <= 0 ||

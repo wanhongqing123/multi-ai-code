@@ -1,3 +1,5 @@
+// 文件作用：实现兼容 Chat Completions 的模型客户端。
+// 直接依赖：MaiFilePath.h、MaiFileSystem.h、MaiPathGuard.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiOpenAiClient.h"
 
 #include <curl/curl.h>
@@ -151,6 +153,8 @@ std::string base64Encode(const std::string& input) {
 
 using ImagePreparer = std::function<MaiResult<std::string>(const std::string&, const std::string&)>;
 
+// 校验工作区内的图片和 MIME 类型，再构造模型请求使用的数据 URL。
+// 路径或图片准备失败时返回明确错误，不能静默丢掉用户附图。
 MaiResult<std::string> imageDataUrl(const MaiModelRequest& request, const MaiModelImage& image,
                                     const ImagePreparer& prepareImage) {
     if (request.workingDirectory.empty())
@@ -322,6 +326,8 @@ std::string providerErrorMessage(const std::string& body) {
     return code.empty() ? message : message + " (" + code + ")";
 }
 
+// 解析单条模型流事件，更新当前请求的增量内容与完成状态。
+// 异常或未知事件不能污染已确认的消息和工具调用片段。
 void handleSseLine(StreamCtx& context, const std::string& line) {
     if (line.empty()) return;
     if (line[0] == ':') return;               // 注释 / 心跳
@@ -446,6 +452,8 @@ public:
         return MaiWireApi::ChatCompletions;
     }
 
+    // 发送 Chat Completions 流式请求并将增量事件交给上层 sink。
+    // 请求构造或传输失败时返回错误，不向会话写入伪造的完成事件。
     MaiError stream(const MaiModelRequest& request, const MaiStreamSink& sink,
                     const std::atomic<bool>& cancel) override {
         std::string url = mConfig.baseUrl;

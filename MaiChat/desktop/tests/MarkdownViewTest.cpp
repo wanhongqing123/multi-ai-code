@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端Markdown 选择、链接、滚动定位和内容更新。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QLabel>
 #include <QScrollBar>
 #include <QSignalSpy>

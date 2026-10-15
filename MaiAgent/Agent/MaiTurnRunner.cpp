@@ -1,3 +1,5 @@
+// 文件作用：编排一轮模型调用、工具执行和事件发布。
+// 主要实现：run、succeeded；对应公开接口中的状态和错误处理。
 #include "MaiTurnRunner.h"
 
 #include <algorithm>
@@ -79,6 +81,8 @@ constexpr const char* kBalanceRecovery =
     "from checking an already-submitted task, its outcome is unverified; do not claim that "
     "generation failed or silently submit a duplicate paid task.";
 
+// 把子任务失败状态转换成可回灌给主 Agent 的准确说明。
+// 只使用真实错误与已确认的产物，不能把查询异常写成生成失败。
 std::string specialistFailureGuidance(const nlohmann::json& specialist) {
     // 子工具失败先把原始结果回灌主模型，再按可观察到的信号附加下一步建议。
     // 下方每个分支只是建议，不把笼统审核标签伪装成已查明的根因。
@@ -257,6 +261,8 @@ bool MaiTurnRunner::succeeded() const {
     return !mError.hasError();
 }
 
+// 执行单轮 Agent 工作：准备上下文、调用模型、处理工具并持久化事件。
+// 取消和失败分支沿用同一事件生命周期，避免留下未完成的活动轮次。
 void MaiTurnRunner::runUnchecked(const std::atomic<bool>& cancel) {
     if (!mDependencies.model) {
         mError = MaiError::make(MaiErrorCode::NotConfigured, "no model client configured");
@@ -350,6 +356,8 @@ void MaiTurnRunner::runUnchecked(const std::atomic<bool>& cancel) {
     finish(cancel);
 }
 
+// 从会话存储和当前内存中的 assistant 消息构造下一次模型请求。
+// 刚执行完的工具结果可能尚未进入旧快照，因此以内存中的最新片段覆盖它。
 MaiModelRequest MaiTurnRunner::buildRequest(const std::string& modelName,
                                             bool requireFinalAnswer) const {
     MaiModelRequest request;
@@ -451,6 +459,8 @@ std::vector<MaiToolInvocation> MaiTurnRunner::requestCompletion(const MaiModelRe
     return calls;
 }
 
+// 按模型给出的顺序执行工具调用，并为每次调用持久化真实结果与可见事件。
+// 权限、取消和工具失败都产生对应回执，不能让模型误以为调用已经成功。
 void MaiTurnRunner::executeTools(const std::vector<MaiToolInvocation>& calls,
                                  const std::atomic<bool>& cancel) {
     MaiSession session;
@@ -576,6 +586,8 @@ void MaiTurnRunner::executeTools(const std::vector<MaiToolInvocation>& calls,
     }
 }
 
+// 在执行可能写入或访问外部资源的工具前检查用户授权。
+// 相同被拒调用沿用拒绝结果，避免模型重复请求造成弹窗循环。
 MaiToolResult MaiTurnRunner::checkPermission(const MaiToolInvocation& call,
                                              const std::string& partId,
                                              const MaiToolContext& context, bool& allowed,

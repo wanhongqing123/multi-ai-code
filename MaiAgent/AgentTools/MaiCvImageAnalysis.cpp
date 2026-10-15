@@ -1,3 +1,5 @@
+// 文件作用：提取图片内容和几何信息供视觉工具使用。
+// 直接依赖：MaiBlockingCheck.h、MaiFilePath.h、MaiFileSystem.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiCvImageAnalysis.h"
 
 #include <opencv2/core.hpp>
@@ -214,6 +216,8 @@ void detectDocumentCorners(const cv::Mat& edges, MaiCvImageAnalysisResult& resul
 
 }  // namespace
 
+// 按分析类型读取一张或两张图片，提取质量指标或画面差异特征。
+// 解码、尺寸或取消错误写入结果对象，不用部分分析值冒充完整结论。
 MaiCvImageAnalysisResult analyzeMaiCvImage(const std::string& firstPath,
                                            const std::string& secondPath,
                                            const MaiCvImageAnalysisOptions& options,

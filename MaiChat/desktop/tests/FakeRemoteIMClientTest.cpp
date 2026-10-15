@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端假 IM 客户端的发送、接收和预设失败行为。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QtTest/QtTest>
 
 #include "im/FakeRemoteIMClient.h"

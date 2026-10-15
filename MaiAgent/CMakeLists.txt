@@ -1,3 +1,5 @@
+# 文件作用：配置可移植的 MaiAgent C++ 核心、内置工具和本地测试目标。
+# 构建边界：第三方依赖在仓库内构建；桌面与移动宿主只链接公开库接口。
 cmake_minimum_required(VERSION 3.20)
 # C 也要开：sqlite3 和 md4c 都是 C 源码。只写 CXX 的话 CMake 生成到一半会说
 # CMAKE_C_COMPILE_OBJECT 没设，错误信息离真正原因很远。

@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端消息去重、时间排序、分页和重启后的持久化。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QSet>
 #include <QSqlDatabase>
 #include <QSqlQuery>
@@ -270,6 +272,7 @@ void LocalMessageDatabaseTest::roundTripsVideoAttachment() {
     QCOMPARE(loaded.text, QStringLiteral("看下这段录屏"));
 }
 
+// 审批请求持久化后重开数据库，字段和动作标识必须原样恢复才能安全继续处理。
 void LocalMessageDatabaseTest::roundTripsApprovalRequest() {
     QTemporaryDir dir;
     LocalMessageDatabase db(dir.filePath("messages.db"));
@@ -345,6 +348,7 @@ void LocalMessageDatabaseTest::roundTripsApprovalRequest() {
              RemoteIMApprovalAction::AutoDeclined);
 }
 
+// 用旧版表结构执行迁移；新增视频列不能清掉既有聊天记录或改变消息方向。
 void LocalMessageDatabaseTest::upgradesPreVideoDatabaseWithoutLosingOldMessages() {
     QTemporaryDir dir;
     const QString path = dir.filePath("messages.db");

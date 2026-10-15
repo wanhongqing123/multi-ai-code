@@ -1,3 +1,5 @@
+// 文件作用：记录和更新 Agent 的待办任务列表。
+// 实现入口：阅读本文件的公开函数与调用路径，核对返回值和资源收尾。
 #include <json.hpp>
 
 #include <string>
@@ -48,6 +50,8 @@ public:
                R"("required":["todos"]})";
     }
 
+    // 解析模型提供的参数并更新 Agent 的任务清单。
+    // 成功和失败都转成明确的工具结果；中间状态不能冒充最终产物。
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         (void)context;
         const json args = parseArguments(raw);

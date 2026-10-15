@@ -1,3 +1,5 @@
+// 文件作用：验证“实现 OpenCV 图片处理工具及参数校验”的正确行为和边界条件。
+// 验证入口：testImageTools；检查可观察结果而非实现细节。
 #include "MaiCvImageTools.h"
 
 #include <json.hpp>
@@ -47,6 +49,8 @@ MaiCvImageAnalysisResult fakeAnalyzer(const std::string& first, const std::strin
     return result;
 }
 
+// 覆盖本地图片分析和编辑工具的参数、结果文件及失败路径。
+// 核对原图是否保留，避免把生成文件与输入文件混淆。
 void testImageTools() {
     const MaiFilePath root = MaiFileSystem::temporaryDirectory().append(
         MaiFilePath::fromUtf8(MaiIdGenerator::generate("mai_cv_image_")));

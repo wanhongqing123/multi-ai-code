@@ -1,3 +1,5 @@
+// 文件作用：分发 Agent 事件并管理订阅者生命周期。
+// 主要实现：subscribe、unsubscribe；对应公开接口中的状态和错误处理。
 #include "MaiEventBus.h"
 
 #include "MaiBlockingCheck.h"

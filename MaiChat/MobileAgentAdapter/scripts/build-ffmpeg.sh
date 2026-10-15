@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 文件作用：构建移动端 Agent 适配层使用的 FFmpeg 产物。
+# 阅读边界：此文件负责构建或测试流程，不在应用运行时解释为业务逻辑。
 set -euo pipefail
 
 source_dir="$1"

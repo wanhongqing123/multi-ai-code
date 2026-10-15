@@ -1,3 +1,5 @@
+// 文件作用：把视频水印移除流程封装为单一 Agent 工具。
+// 直接依赖：MaiFilePath.h、MaiFileSystem.h、MaiPathGuard.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiTemporalWatermarkTool.h"
 
 #include <cmath>

@@ -1,3 +1,5 @@
+// 文件作用：验证“分析视频帧和视频时序中的视觉信息”的正确行为和边界条件。
+// 验证入口：阅读 main 或测试注册处，核对输入、预期结果与失败输出。
 #include "MaiCvVideoAnalysis.h"
 #include "MaiCvVideoTools.h"
 
@@ -11,6 +13,7 @@
 #include "MaiFilePath.h"
 #include "MaiTool.h"
 
+// 用同一素材核查场景、动作和时间轴分析的边界；失败码保留具体阶段，便于定位模型或解码问题。
 int main(int argc, char** argv) {
     const bool reportOnly = argc == 3 && std::string(argv[1]) == "--report";
     if (argc != 2 && !reportOnly) return 2;

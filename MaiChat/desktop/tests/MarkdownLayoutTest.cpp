@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端Markdown 标题、代码块和列表在不同宽度下的实际排版。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QImage>
 #include <QPainter>
 #include <QtTest>

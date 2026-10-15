@@ -1,3 +1,6 @@
+// 文件作用：桌面端 Agent 工具；MaiChatHostTools 负责 Agent 工具注册、调用与结果返回，本文件给出其实现。
+// 主要入口：unreadSummary。
+// 直接依赖：MaiTool.h、app/RemoteIMApplication.h、model/MessageQuote.h、model/MessageSearch.h；实现与这些接口协作。
 #include "MaiChatTools/MaiChatHostTools.h"
 
 #include <QJsonArray>
@@ -189,6 +192,8 @@ public:
   }
 
 private:
+  // 校验联系人、媒体类型与本地文件，再通过宿主 IM 发送对应附件。
+  // 只将真实发送结果回给 Agent，不能把文件存在等同于消息已交付。
   MaiToolResult sendMedia(const QJsonObject &arguments,
                           const MaiToolContext &context) const {
     const QString peerId = arguments.value(QStringLiteral("peer_id")).toString().trimmed();
@@ -503,6 +508,7 @@ void addTool(MaiToolRegistry &registry, HostToolKind kind, const char *name,
 
 } // namespace
 
+// 桌面宿主工具按读写能力注册；有外部副作用的工具必须经过审批，名称与 Schema 供模型发现。
 void registerMaiChatHostTools(MaiToolRegistry &registry,
                               RemoteIMApplication &app) {
   addTool(

@@ -1,3 +1,5 @@
+// 文件作用：提供统一时间表示和时间转换规则。
+// 对外类型：MaiTime；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 
 #include <cstdint>

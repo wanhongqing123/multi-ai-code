@@ -1,3 +1,5 @@
+// 文件作用：Android 媒体播放、预览和编辑；MessageImageLoader 负责异步资源读取、缓存和失败反馈，本文件给出其实现。
+// 主要入口：nativeDecodeImage、cached、load、deliver。
 package com.kongshang.maichat;
 
 import android.graphics.Bitmap;

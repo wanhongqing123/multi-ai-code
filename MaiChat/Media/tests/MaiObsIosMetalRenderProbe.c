@@ -1,3 +1,5 @@
+// 文件作用：在 iOS 设备上探测 OBS 与 Metal 图形链路能否建立并呈现画面。
+// 运行边界：仅用于本地或设备验证，不作为正式播放器的业务入口。
 #include <stdint.h>
 #include <stdatomic.h>
 #include <time.h>

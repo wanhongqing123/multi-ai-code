@@ -1,3 +1,5 @@
+// 文件作用：验证“封装火山方舟媒体任务的提交、查询和结果取回”的正确行为和边界条件。
+// 验证入口：testDynamicCredentialAndToolIdentity、testInvalidInputsDoNotReachNetwork、testRevisionRejectsAnotherConversation；检查可观察结果而非实现细节。
 #include <cstdlib>
 #include <cstdio>
 #include <string>
@@ -23,6 +25,8 @@ int failures = 0;
         }                                                                   \
     } while (0)
 
+// 验证方舟媒体工具在每次调用时读取最新凭据，同时保持对模型公开的工具身份稳定。
+// 使用本地假响应核对参数，不提交真实付费任务。
 void testDynamicCredentialAndToolIdentity() {
     std::string key;
     auto video = makeMaiSeedanceVideoTool([&] { return key; });

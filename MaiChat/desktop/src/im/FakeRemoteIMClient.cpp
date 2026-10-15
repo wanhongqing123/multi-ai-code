@@ -1,3 +1,6 @@
+// 文件作用：桌面端IM 会话、消息与登录；FakeRemoteIMClient 负责外部接口请求与结果转换，本文件给出其实现。
+// 主要入口：connectToService、disconnectFromService、deleteContact、sendText。
+// 实现边界：与 FakeRemoteIMClient 的公开声明配套，调用方通过相应接口进入。
 #include "im/FakeRemoteIMClient.h"
 
 FakeRemoteIMClient::FakeRemoteIMClient(QObject* parent) : RemoteIMClient(parent) {}

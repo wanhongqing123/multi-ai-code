@@ -1,3 +1,6 @@
+// 文件作用：Android 聊天会话的消息呈现与输入；SwipeActionRow 负责列表行横滑操作的手势与动作呈现，本文件给出其实现。
+// 类型关系：SwipeActionRow extends FrameLayout；审阅时可据此追踪父类、接口或回调契约。
+// 主要入口：close、onInterceptTouchEvent、onTouchEvent、performClick。
 package com.kongshang.maichat;
 
 import android.annotation.SuppressLint;

@@ -1,3 +1,5 @@
+// 文件作用：定义 Agent 会话及其持久化状态。
+// 对外类型：MaiSession；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 
 #include <string>

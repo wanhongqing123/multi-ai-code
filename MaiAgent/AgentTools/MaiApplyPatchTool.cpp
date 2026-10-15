@@ -1,3 +1,5 @@
+// 文件作用：解析并应用受权限控制的补丁修改。
+// 直接依赖：MaiFilePath.h、MaiFileSystem.h；本文件在这些接口之间完成调用与结果转换。
 #include <json.hpp>
 
 #include <algorithm>
@@ -189,6 +191,8 @@ struct ParseOutcome {
     std::vector<Operation> operations;
 };
 
+// 按补丁语法解析文件块、上下文和增删行。
+// 先验证结构再执行文件修改，不接受不完整或越界的补丁。
 ParseOutcome parsePatch(const std::string& patch) {
     ParseOutcome outcome;
     std::string ending;
@@ -403,6 +407,8 @@ public:
                              : std::vector<std::string>(paths.begin(), paths.end());
     }
 
+    // 解析模型提供的参数并解析并应用工作区补丁。
+    // 成功和失败都转成明确的工具结果；中间状态不能冒充最终产物。
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const json args = parseArguments(raw);
         const std::string patch = args.contains("patch") && args["patch"].is_string()

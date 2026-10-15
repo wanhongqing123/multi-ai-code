@@ -1,3 +1,6 @@
+// 文件作用：桌面端创作中心和 Agent 会话；AgentSessionList 负责列表内容、选择状态和滚动行为，本文件给出其实现。
+// 主要入口：refresh、setCurrent。
+// 直接依赖：agent/AgentController.h、ui/UiZoom.h；实现与这些接口协作。
 #include "agent/AgentSessionList.h"
 
 #include <QDir>

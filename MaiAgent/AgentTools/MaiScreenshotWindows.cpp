@@ -1,3 +1,5 @@
+// 文件作用：实现 Windows 平台屏幕截图。
+// 直接依赖：MaiScreenshot.h、MaiBlockingCheck.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiScreenshot.h"
 
 #include <windows.h>
@@ -201,6 +203,8 @@ private:
     HRESULT mResult;
 };
 
+// 通过 Windows Imaging Component 将捕获像素编码为 PNG，并填写真实图像尺寸。
+// COM、像素布局或编码失败时返回错误，不输出不完整的截图字节。
 MaiError encodePng(const std::vector<std::uint8_t>& pixels, UINT sourceWidth, UINT sourceHeight,
                    MaiScreenshot& screenshot) {
     ComApartment apartment;
@@ -291,6 +295,8 @@ MaiError encodePng(const std::vector<std::uint8_t>& pixels, UINT sourceWidth, UI
     return {};
 }
 
+// 从指定 Windows Graphics Capture 项读取一帧并交给 PNG 编码路径。
+// D3D 设备、帧池及会话均按作用域释放，失败时不保留旧帧冒充新截图。
 MaiError captureGraphicsItem(const winrt::Windows::Graphics::Capture::GraphicsCaptureItem& item,
                              MaiScreenshot& screenshot) {
     ComPtr<ID3D11Device> device;

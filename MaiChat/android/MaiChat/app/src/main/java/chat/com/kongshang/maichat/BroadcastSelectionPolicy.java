@@ -1,3 +1,5 @@
+// 文件作用：Android 聊天会话的消息呈现与输入；BroadcastSelectionPolicy 负责输入筛选、权限判断或展示规则，本文件给出其实现。
+// 主要入口：uniqueRecipientIds。
 package com.kongshang.maichat;
 
 import java.util.ArrayList;

@@ -1,3 +1,5 @@
+// 文件作用：根据会话内容生成简短标题。
+// 主要实现：makeTitle、apply；对应公开接口中的状态和错误处理。
 #include "MaiSessionTitler.h"
 
 MaiSessionTitler::MaiSessionTitler() : MaiSessionTitler(Options{}) {}

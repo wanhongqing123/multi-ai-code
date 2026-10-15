@@ -1,3 +1,5 @@
+// 文件作用：实现 OpenCV 图片处理工具及参数校验。
+// 直接依赖：MaiFilePath.h、MaiFileSystem.h、MaiIdGenerator.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiCvImageTools.h"
 
 #include <json.hpp>
@@ -37,6 +39,8 @@ public:
         return {};
     }
 
+    // 构造模型可见的工具说明和参数约束。
+    // 字段名及可选值须与执行入口的真实校验保持一致。
     std::string description() const override {
         // 每个英文描述都会暴露给主模型；中文注释明确这些数值工具能做什么、
         // 不能做什么，避免把几何指标误当成人物识别或画质结论。

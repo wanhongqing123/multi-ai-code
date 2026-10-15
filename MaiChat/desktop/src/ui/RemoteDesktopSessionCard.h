@@ -1,3 +1,6 @@
+// 文件作用：桌面端共用界面；RemoteDesktopSessionCard 负责远程桌面会话卡片的状态呈现，本文件给出其声明。
+// 类型关系：RemoteDesktopSessionCard final : public QWidget；审阅时可据此追踪父类、接口或回调契约。
+// 对外边界：本文件给出 RemoteDesktopSessionCard 的类型和函数声明；参数、返回值和对象生命周期以此为准。
 #pragma once
 
 #include <QElapsedTimer>

@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端远程诊断发送对象锁定、取消和错误证据隔离。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>

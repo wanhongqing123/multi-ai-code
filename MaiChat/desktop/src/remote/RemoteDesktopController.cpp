@@ -1,3 +1,6 @@
+// 文件作用：桌面端远程桌面连接与控制；RemoteDesktopController 负责流程编排、异步回调和状态转换，本文件给出其实现。
+// 主要入口：setInputSink、setSecureDesktopProbe、startHostControlSide、stopHostControlSide。
+// 直接依赖：remote/RemoteDesktopAuth.h、remote/RemoteDesktopSession.h；实现与这些接口协作。
 #include "remote/RemoteDesktopController.h"
 
 #include <QDateTime>
@@ -166,6 +169,7 @@ void RemoteDesktopController::flushPendingInput(qint64 nowMs) {
     flushInputTrace(nowMs);
 }
 
+// 作用：把聚合的远控输入记录按时间批量写入诊断日志。
 void RemoteDesktopController::flushInputTrace(qint64 nowMs) {
     if (traceWindowStartMs_ == 0) traceWindowStartMs_ = nowMs;
     if (nowMs - traceWindowStartMs_ < 1000) return;
@@ -338,6 +342,7 @@ TrtcRoomParams RemoteDesktopController::roomParams(const QString& roomId) const 
     return params;
 }
 
+// 作用：识别远控文本信令并更新连接或输入状态。
 bool RemoteDesktopController::handleIncomingText(const QString& fromUserId, const QString& text) {
     if (!RemoteDesktopSignals::isSignalText(text)) return false;
 
@@ -436,6 +441,8 @@ void RemoteDesktopController::recordAuthAttempt(const HostInviteInput& input,
     emit settingsChanged(settings_);
 }
 
+// 把远控宿主侧的授权决定映射成会话状态、提示与信令动作。
+// 拒绝或失效的决定不应开启捕获，也不能让观看方误认为连接完成。
 void RemoteDesktopController::applyHostDecision(const HostDecision& decision,
                                                 const QString& peerId,
                                                 SignalSendCompletion completion) {

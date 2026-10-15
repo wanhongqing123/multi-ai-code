@@ -1,3 +1,6 @@
+// 文件作用：Android 媒体播放、预览和编辑；TencentSpeechRecognizer 负责语音识别会话与结果回调，本文件给出其实现。
+// 类型关系：TencentSpeechRecognizer implements SpeechRecognizer；审阅时可据此追踪父类、接口或回调契约。
+// 主要入口：isAvailable、transcribe、transcribeOnWorker、didStartRecord。
 package com.kongshang.maichat;
 
 import android.os.Handler;
@@ -60,6 +63,7 @@ public final class TencentSpeechRecognizer implements SpeechRecognizer {
 
     @Override public void close() { closed = true; thread.quitSafely(); }
 
+    // 作用：在后台线程上传音频并解析语音识别回执。
     private void transcribeOnWorker(File audioFile, String format, Callback callback) {
         if (closed) return;
         if (!isAvailable()) {

@@ -1,3 +1,6 @@
+// 文件作用：采集 App 运行诊断事件及性能时间点，供故障定位和日志导出使用。
+// 记录结构化事件、主线程延迟和可导出的本地日志批次。
+// 日志字段须经过隐私处理，异步写入失败不得阻塞用户操作。
 import Foundation
 import MaiChatCore
 import OSLog

@@ -1,3 +1,5 @@
+// 文件作用：验证“提供应用私有存储的查询与文件操作工具”的正确行为和边界条件。
+// 验证入口：阅读 main 或测试注册处，核对输入、预期结果与失败输出。
 #include "MaiAppStorageTool.h"
 
 #include <json.hpp>
@@ -27,6 +29,7 @@ int failures = 0;
 
 }  // namespace
 
+// 按应用私有目录的读写、路径保护和缺失文件场景验证工具，不访问用户真实文件。
 int main() {
     const MaiFilePath root = MaiFileSystem::temporaryDirectory().append(
         MaiFilePath::fromUtf8(MaiIdGenerator::generate("storage_test_")));

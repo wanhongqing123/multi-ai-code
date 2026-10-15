@@ -1,3 +1,6 @@
+// 文件作用：桌面端操作系统能力适配；UnsupportedRemoteIMClient 负责外部接口请求与结果转换，本文件给出其实现。
+// 主要入口：connectToService、disconnectFromService、deleteContact、sendText。
+// 实现边界：与 UnsupportedRemoteIMClient 的公开声明配套，调用方通过相应接口进入。
 #include "platform/UnsupportedRemoteIMClient.h"
 
 UnsupportedRemoteIMClient::UnsupportedRemoteIMClient(QObject* parent) : RemoteIMClient(parent) {}

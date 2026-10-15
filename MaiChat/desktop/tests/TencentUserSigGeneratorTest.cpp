@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端腾讯 IM UserSig 签名载荷和非法输入拒绝。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QByteArray>
 #include <QJsonDocument>
 #include <QJsonObject>

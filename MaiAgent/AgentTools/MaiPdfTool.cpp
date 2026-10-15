@@ -1,3 +1,5 @@
+// 文件作用：读取和处理 PDF 文档供 Agent 使用。
+// 直接依赖：MaiFilePath.h、MaiFileSystem.h、MaiPathGuard.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiPdfTool.h"
 
 #include <algorithm>
@@ -144,6 +146,8 @@ public:
                             : std::vector<std::string>{"file:" + path};
     }
 
+    // 校验输出路径和内容来源，生成工作区 PDF 并回报实际文件位置。
+    // 内容渲染或写入失败时保留原文件，不返回尚未完成的产物。
     MaiToolResult execute(const std::string& argumentsJson,
                           const MaiToolContext& context) override {
         const json arguments = json::parse(argumentsJson, nullptr, false);

@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端创作中心会话切换、工作区选择及跨会话状态隔离。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QApplication>
 #include <QClipboard>
 #include <QDir>
@@ -384,6 +386,7 @@ void AgentPanelSessionTest::switchingSessionsShowsLatestMessage() {
     QTRY_VERIFY(view->isAtBottom());
 }
 
+// 同一消息中的媒体提及按数量决定是否生成气泡；跨消息不合并数量，避免正文里的文件名变成错误附件。
 void AgentPanelSessionTest::inlineMediaBubblesRespectMessageBoundary() {
     class ListingModel final : public MaiModelClient {
     public:
@@ -604,6 +607,7 @@ void AgentPanelSessionTest::chosenWorkspaceCreatesIndependentSession() {
              QDir(secondDirectory.path()).canonicalPath());
 }
 
+// 待审批操作切换会话后仍需绑定原会话；返回时显示原请求而非重新发起操作。
 void AgentPanelSessionTest::pendingApprovalIsRestoredAfterSessionSwitch() {
     std::atomic<int> executed{0};
     AgentController controller(

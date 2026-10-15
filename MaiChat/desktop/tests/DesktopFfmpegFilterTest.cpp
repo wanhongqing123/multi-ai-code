@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端 FFmpeg 滤镜处理的结果与错误返回。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <cmath>
 #include <cstdio>
 

@@ -1,3 +1,5 @@
+// 文件作用：Android IM 身份、消息同步与本地历史；RemoteIMMediaPaths 负责 IM 媒体附件的本地路径解析，本文件给出其实现。
+// 主要入口：forApp、root、directory、toStoredPath。
 package com.kongshang.maichat;
 
 import android.content.Context;

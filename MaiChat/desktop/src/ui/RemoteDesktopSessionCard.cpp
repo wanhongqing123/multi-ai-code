@@ -1,3 +1,6 @@
+// 文件作用：桌面端共用界面；RemoteDesktopSessionCard 负责远程桌面会话卡片的状态呈现，本文件给出其实现。
+// 主要入口：buildUi、applyStyle、setNoticeText、noticeText。
+// 直接依赖：ui/UiZoom.h；实现与这些接口协作。
 #include "ui/RemoteDesktopSessionCard.h"
 
 #include <QHBoxLayout>
@@ -70,6 +73,7 @@ RemoteDesktopSessionCard::RemoteDesktopSessionCard(QString peerUserId, QWidget* 
     durationTimer_->start();
 }
 
+// 作用：建立对话框或会话卡片的控件层级及信号连接。
 void RemoteDesktopSessionCard::buildUi() {
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -145,6 +149,7 @@ void RemoteDesktopSessionCard::buildUi() {
     refreshControlButton();
 }
 
+// 作用：应用页面现有的颜色、字号、间距和控件外观。
 void RemoteDesktopSessionCard::applyStyle() {
     setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
         #remoteCardHeader {

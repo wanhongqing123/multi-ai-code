@@ -1,3 +1,5 @@
+// 文件作用：Android 聊天会话的消息呈现与输入；MarkdownRenderer 负责内容渲染和资源生命周期，本文件给出其实现。
+// 主要入口：cacheKey、initialize、prepare、preparePresentations。
 package com.kongshang.maichat;
 
 import android.content.Context;

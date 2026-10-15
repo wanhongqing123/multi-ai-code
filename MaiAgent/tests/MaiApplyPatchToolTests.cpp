@@ -1,3 +1,5 @@
+// 文件作用：验证“解析并应用受权限控制的补丁修改”的正确行为和边界条件。
+// 验证入口：test_updates_several_places_in_one_file、test_one_patch_can_touch_several_files、test_nothing_is_written_when_any_part_fails；检查可观察结果而非实现细节。
 // apply_patch 的测试。
 //
 // 这个工具和 edit 的区别就在「全有或全无」上，所以用例的重心是**失败的那一半**：

@@ -1,3 +1,5 @@
+// 文件作用：桌面端界面使用的数据模型；MessageSearch 负责聊天历史的检索与结果定位，本文件给出其实现。
+// 直接依赖：model/PinyinInitials.h；实现与这些接口协作。
 #include "model/MessageSearch.h"
 
 #include <QStringList>

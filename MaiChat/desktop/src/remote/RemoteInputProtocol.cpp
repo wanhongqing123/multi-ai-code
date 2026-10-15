@@ -1,3 +1,5 @@
+// 文件作用：桌面端远程桌面连接与控制；RemoteInputProtocol 负责协议字段、编码解码及版本兼容，本文件给出其实现。
+// 实现边界：与 RemoteInputProtocol 的公开声明配套，调用方通过相应接口进入。
 #include "remote/RemoteInputProtocol.h"
 
 #include <QJsonArray>

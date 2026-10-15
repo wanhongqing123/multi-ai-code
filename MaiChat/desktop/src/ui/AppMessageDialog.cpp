@@ -1,3 +1,6 @@
+// 文件作用：桌面端共用界面；AppMessageDialog 负责对话框呈现、确认交互和结果回传，本文件给出其实现。
+// 主要入口：show、confirm、buildUi、applyStyle。
+// 直接依赖：ui/UiZoom.h；实现与这些接口协作。
 #include "ui/AppMessageDialog.h"
 
 #include <QFrame>
@@ -35,6 +38,7 @@ bool AppMessageDialog::confirm(QWidget* parent, const QString& title, const QStr
     return dialog.exec() == QDialog::Accepted;
 }
 
+// 作用：建立对话框或会话卡片的控件层级及信号连接。
 void AppMessageDialog::buildUi(const Options& options) {
     setObjectName(QStringLiteral("appMessageDialog"));
     setWindowTitle(options.title);
@@ -109,6 +113,7 @@ void AppMessageDialog::buildUi(const Options& options) {
     setMaximumWidth(UiZoom::s(620));
 }
 
+// 作用：应用页面现有的颜色、字号、间距和控件外观。
 void AppMessageDialog::applyStyle() {
     setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
         #appMessagePanel {

@@ -1,3 +1,5 @@
+// 文件作用：分析视频帧和视频时序中的视觉信息。
+// 对外类型：MaiToolContext、MaiCvVideoAnalysisKind、MaiCvVideoAnalysisOptions、MaiCvTimeSegment；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 
 #include <cstdint>

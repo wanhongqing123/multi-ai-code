@@ -1,3 +1,6 @@
+// 文件作用：验证 IM 本地历史数据库的写入、读取、迁移和去重行为。
+// 验证本地消息写入、分页、搜索和迁移后的读取结果。
+// 覆盖账号隔离、中断恢复以及分页边界与记录数量。
 import XCTest
 @testable import MaiChatCore
 import SQLite3
@@ -131,6 +134,8 @@ final class LocalChatHistoryStoreTests: XCTestCase {
         )
     }
 
+    /// 验证结构化审批请求可以原样持久化和恢复。
+    /// 不依赖消息正文解析，防止文案变更影响审批状态。
     func testPersistsStructuredApprovalRequestWithoutParsingMessageText() throws {
         let directoryURL = makeTemporaryDirectoryURL()
         defer { try? FileManager.default.removeItem(at: directoryURL) }
@@ -238,6 +243,8 @@ final class LocalChatHistoryStoreTests: XCTestCase {
         )
     }
 
+    /// 验证局部页面写入只更新变更消息。
+    /// 未加载的历史页必须保留在数据库，不能因当前快照缺失而删除。
     func testPersistenceOnlyUpsertsChangedMessagesWithoutDeletingUnloadedHistory() async throws {
         let directoryURL = makeTemporaryDirectoryURL()
         defer { try? FileManager.default.removeItem(at: directoryURL) }
@@ -337,6 +344,8 @@ final class LocalChatHistoryStoreTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: legacyURL.path))
     }
 
+    /// 验证会话历史按稳定游标分页加载。
+    /// 相邻页无重复、无遗漏，末页正确终止。
     func testLoadsConversationHistoryInStableCursorPages() async throws {
         let directoryURL = makeTemporaryDirectoryURL()
         defer { try? FileManager.default.removeItem(at: directoryURL) }
@@ -435,6 +444,8 @@ final class LocalChatHistoryStoreTests: XCTestCase {
         )
     }
 
+    /// 验证搜索覆盖各会话的完整持久化历史。
+    /// 结果保持会话归属和时间顺序，当前界面未加载的页也能命中。
     func testSearchesCompletePersistedHistoryAcrossConversations() async throws {
         let directoryURL = makeTemporaryDirectoryURL()
         defer { try? FileManager.default.removeItem(at: directoryURL) }
@@ -509,6 +520,8 @@ final class LocalChatHistoryStoreTests: XCTestCase {
         XCTAssertTrue(blankHits.isEmpty)
     }
 
+    /// 验证旧版数据库向联系人游标结构迁移。
+    /// 迁移前后的消息数量、附件和会话归属必须一致。
     func testMigratesV2RowsToPeerCursorSchemaWithoutLosingMessages() async throws {
         let directoryURL = makeTemporaryDirectoryURL()
         defer { try? FileManager.default.removeItem(at: directoryURL) }
@@ -658,6 +671,8 @@ final class LocalChatHistoryStoreTests: XCTestCase {
         )
     }
 
+    /// 验证图片、视频、语音及文件附件的数据库往返。
+    /// 路径和元数据恢复后仍指向同一用户资源。
     func testPersistsMessageAttachments() throws {
         let directoryURL = makeTemporaryDirectoryURL()
         defer { try? FileManager.default.removeItem(at: directoryURL) }
@@ -740,6 +755,8 @@ final class LocalChatHistoryStoreTests: XCTestCase {
         )
     }
 
+    /// 验证新图片引用以相对路径保存到应用支持目录。
+    /// 重新读取后仍能解析，避免沙盒路径变化造成附件失效。
     func testPersistsNewApplicationSupportImageAsRelativeReference() throws {
         let directoryURL = makeTemporaryDirectoryURL()
         defer { try? FileManager.default.removeItem(at: directoryURL) }

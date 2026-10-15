@@ -1,3 +1,6 @@
+// 文件作用：Android 跨页面复用的界面组件；MaiChatSymbolView 负责界面呈现、交互与状态更新，本文件给出其实现。
+// 类型关系：MaiChatSymbolView extends View；审阅时可据此追踪父类、接口或回调契约。
+// 主要入口：setSymbolColor、onDraw、drawMessage、drawContacts。
 package com.kongshang.maichat;
 
 import android.annotation.SuppressLint;

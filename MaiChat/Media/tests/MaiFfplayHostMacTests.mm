@@ -1,3 +1,5 @@
+// 文件作用：验证 macOS 上 ffplay 宿主的播放控制与资源生命周期。
+// 运行边界：仅用于本地或设备验证，不作为正式播放器的业务入口。
 #import <AppKit/AppKit.h>
 #import <QuartzCore/CAMetalLayer.h>
 
@@ -37,6 +39,7 @@ static bool presentRgba(void* context, const uint8_t* pixels,
     return maiGraphicsPresenterShowFrame(view, pixels, width, height, stride, false);
 }
 
+// 在 macOS 上实际打开播放器并驱动暂停、跳转和关闭；回调超时视为失败而非静默通过。
 int main(int argc, char** argv) {
     if (argc != 4) return 2;
     @autoreleasepool {

@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端文件预览的长文本滚动、表格、差异和窗口尺寸。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QtTest/QtTest>
 
 #include <QApplication>

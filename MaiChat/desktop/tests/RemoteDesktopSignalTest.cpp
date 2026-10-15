@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端远控信令编码解码、版本校验和非法载荷拒绝。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QtTest/QtTest>
 
 #include "remote/RemoteDesktopSignal.h"

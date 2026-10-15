@@ -1,3 +1,6 @@
+// 文件作用：桌面端共用界面；BroadcastDialog 负责对话框呈现、确认交互和结果回传，本文件给出其实现。
+// 主要入口：selectedPeerIds、messageText、buildUi、toggleGroupSelection。
+// 直接依赖：model/MessageSearch.h、ui/UiZoom.h；实现与这些接口协作。
 #include "ui/BroadcastDialog.h"
 
 #include <QFrame>
@@ -52,6 +55,8 @@ QString BroadcastDialog::messageText() const {
     return messageInput_ ? messageInput_->toPlainText() : QString();
 }
 
+// 构建群发或转发对话框，展示可选联系人、分组及当前预选范围。
+// 发送前由该界面明确呈现目标集合，避免把未选中的联系人误纳入任务。
 void BroadcastDialog::buildUi(const QList<RemoteIMContact>& contacts,
                               const QStringList& groups,
                               const QString& preselectedGroup) {
@@ -277,6 +282,7 @@ void BroadcastDialog::refreshSendState() {
                                      : QStringLiteral("还没有选人"));
 }
 
+// 作用：应用页面现有的颜色、字号、间距和控件外观。
 void BroadcastDialog::applyStyle() {
     setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
         #broadcastPanel {

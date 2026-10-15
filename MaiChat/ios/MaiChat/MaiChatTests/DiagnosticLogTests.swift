@@ -1,3 +1,6 @@
+// 文件作用：验证诊断日志的格式、脱敏和持久化相关行为。
+// 验证诊断日志字段、隐私处理和格式稳定性。
+// 断言面向真实可读输出，不依赖文件内部实现细节。
 import Foundation
 import XCTest
 @testable import MaiChatCore
@@ -73,6 +76,8 @@ final class DiagnosticLogTests: XCTestCase {
         XCTAssertEqual(DiagnosticLogPrivacy.sanitized("value", maximumLength: -10), "…")
     }
 
+    /// 验证高频输入日志的聚合、快照和清零顺序。
+    /// 覆盖多次采样边界，确保导出结果不丢计数也不重复计数。
     func testInputAccumulatorSnapshotsAndResetsCounters() {
         var value = RemoteInputDiagnosticAccumulator()
         value.recordPointerSeen()

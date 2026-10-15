@@ -1,3 +1,5 @@
+// 文件作用：提供压缩和解压缩文件的工具能力。
+// 直接依赖：MaiFilePath.h、MaiFileSystem.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiZlibTool.h"
 
 #include <zlib.h>
@@ -71,6 +73,8 @@ public:
         return name() + ":" + (output.empty() ? defaultOutputPath(input, mCompress) : output);
     }
 
+    // 解析模型提供的参数并压缩或解压工作区数据。
+    // 成功和失败都转成明确的工具结果；中间状态不能冒充最终产物。
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const Json args = Json::parse(raw, nullptr, false);
         if (!args.is_object() || !args.value("input_path", Json{}).is_string() ||

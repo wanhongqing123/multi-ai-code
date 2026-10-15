@@ -1,3 +1,5 @@
+// 文件作用：验证桌面端 OpenCV 模型加载和图像处理可用性。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <cstdio>
 #include <vector>
 
@@ -28,6 +30,7 @@ std::vector<uchar> readModel(const char* path) {
             reinterpret_cast<const uchar*>(bytes.constData() + bytes.size())};
 }
 
+// 读取本地模型与图片验证 OpenCV 推理输出；模型不可用时返回明确失败状态。
 int main(int argc, char** argv) {
     if (argc != 4) {
         std::puts("face, person, and sample image paths are required");

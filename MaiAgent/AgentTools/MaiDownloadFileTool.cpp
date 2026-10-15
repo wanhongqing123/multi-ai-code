@@ -1,3 +1,5 @@
+// 文件作用：下载远程文件到受控工作区并报告传输结果。
+// 直接依赖：MaiBlockingCheck.h、MaiFilePath.h、MaiFileSystem.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiDownloadFileTool.h"
 
 #include <curl/curl.h>
@@ -328,6 +330,8 @@ public:
         return "curl_download:" + (host.empty() ? "<unknown>" : host);
     }
 
+    // 解析模型提供的参数并把远端文件下载到允许的工作区路径。
+    // 成功和失败都转成明确的工具结果；中间状态不能冒充最终产物。
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const Json arguments = Json::parse(raw, nullptr, false);
         if (!arguments.is_object() || !arguments.contains("url") || !arguments["url"].is_string())

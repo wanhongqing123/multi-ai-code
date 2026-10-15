@@ -1,3 +1,6 @@
+// 文件作用：桌面端共用界面；LoginDialog 负责对话框呈现、确认交互和结果回传，本文件给出其实现。
+// 主要入口：userId、setUserId、buildUi、applyStyle。
+// 实现边界：与 LoginDialog 的公开声明配套，调用方通过相应接口进入。
 #include "ui/LoginDialog.h"
 
 #include <QLabel>
@@ -35,6 +38,7 @@ void LoginDialog::setUserId(const QString& userId) {
     updateLoginButton();
 }
 
+// 作用：建立对话框或会话卡片的控件层级及信号连接。
 void LoginDialog::buildUi() {
     setWindowTitle(QStringLiteral("MaiChat"));
     setModal(true);

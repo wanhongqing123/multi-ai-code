@@ -1,3 +1,5 @@
+// 文件作用：封装 MiniMax 图片及视频生成任务。
+// 直接依赖：MaiCreativeMediaSupport.h、MaiFilePath.h、MaiFileSystem.h；本文件在这些接口之间完成调用与结果转换。
 #include "MaiMiniMaxMediaTools.h"
 
 #include <json.hpp>
@@ -32,6 +34,8 @@ std::size_t utf8CodePointCount(const std::string& text) {
         text.begin(), text.end(), [](unsigned char byte) { return (byte & 0xc0) != 0x80; }));
 }
 
+// 生成该视频模型的参数说明，供模型在调用前了解输入范围。
+// 输出结构应与委托执行时接受的字段和限制保持一致。
 std::string describeMiniMaxVideoSchema(const std::string& raw) {
     Json schema = Json::parse(raw);
     Json& fields = schema["properties"];
@@ -266,6 +270,8 @@ std::optional<MaiToolResult> validateH3OutputSpec(const Json& args, const std::s
     return std::nullopt;
 }
 
+// 汇总 MiniMax H3 的文本、首尾帧和参考视频输入，并在付费提交前检查组合规则。
+// localOnly 路径只生成请求预览，不上传素材或创建云任务。
 std::optional<MaiToolResult> prepareH3Request(const Json& args, const std::string& model,
                                               std::string prompt, const std::string& key,
                                               const std::string& caBundle,
@@ -590,6 +596,8 @@ public:
         }
         return action != "discover" && action != "validate" && action != "continue";
     }
+    // 根据 action 分派 MiniMax 参数校验、图片生成、视频委托与状态查询。
+    // 本地校验不触发付费请求；异步查询沿用受理时返回的云任务标识。
     MaiToolResult execute(const std::string& argumentsJson,
                           const MaiToolContext& context) override {
         // validate 只核对本地字段和媒体文件；delegate 才上传并付费创建 H3 任务。
@@ -706,6 +714,8 @@ private:
              std::move(body)}}.dump());
     }
 
+    // 分派 MiniMax 图片或视频生成，先完成本地参数和素材校验再发付费请求。
+    // 异步视频任务保留云任务 ID，后续由 continue 查询与取回产物。
     MaiToolResult delegate(const Json& args, const std::string& key,
                            const MaiToolContext& context) const {
         const std::string message = value(args, "message");
@@ -782,6 +792,8 @@ private:
         return MaiToolResult::success(output.dump());
     }
 
+    // 校验 MiniMax 图片模型和参考图后发起图像生成，保存最终图片到工作区。
+    // 不修改参考原图；输入无效时在付费调用前返回明确错误。
     MaiToolResult delegateImage(const Json& args, const std::string& key, const std::string& prompt,
                                 const MaiToolContext& context) const {
         if (prompt.empty() || utf8CodePointCount(prompt) > 1500)
@@ -882,6 +894,8 @@ private:
         return MaiToolResult::success(output.dump());
     }
 
+    // 按已受理任务 ID 查询 MiniMax 视频状态，完成后取回工作区产物。
+    // 查询异常和供应商生成失败分开报告，避免 Agent 误发重复付费任务。
     MaiToolResult continueTask(const Json& args, const std::string& key,
                                const MaiToolContext& context) const {
         const std::string conversationId = value(args, "conversation_id");

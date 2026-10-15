@@ -1,3 +1,5 @@
+// 文件作用：验证桌面 UI 缩放比例边界和像素尺寸转换。
+// 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QtTest/QtTest>
 
 #include "ui/UiZoom.h"

@@ -1,3 +1,5 @@
+// 文件作用：查询设备资源与系统状态供 Agent 决策。
+// 对外类型：MaiGpuResources、MaiSystemResources；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 
 #include <cstdint>

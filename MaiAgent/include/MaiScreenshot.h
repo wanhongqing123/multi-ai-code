@@ -1,3 +1,5 @@
+// 文件作用：声明屏幕截图能力和返回数据契约。
+// 对外类型：MaiScreenshot、MaiScreenshotTarget、MaiScreenshotRequest；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 
 #include <cstdint>

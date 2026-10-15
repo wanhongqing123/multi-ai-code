@@ -2,6 +2,13 @@
 // 阅读边界：本文件不保存长期模型密钥；安全存储由账号状态和系统存储层负责。
 // 封装手机号验证、账号登录、刷新令牌及服务端 IM 凭据请求。
 import Foundation
+import UIKit
+
+extension Notification.Name {
+    static let maiChatAccountSessionReplaced = Notification.Name("MaiChatAccountSessionReplaced")
+    static let maiChatAccountDeviceSlotRequired =
+        Notification.Name("MaiChatAccountDeviceSlotRequired")
+}
 
 struct MaiChatAuthChallenge: Decodable, Sendable {
     let challengeId: String
@@ -19,6 +26,60 @@ struct MaiChatAuthSession: Decodable, Sendable {
     let refreshToken: String
     let expiresIn: Int
     let user: MaiChatAuthUser
+}
+
+enum MaiChatSocialProvider: String, Sendable {
+    case wechat
+    case qq
+
+    var displayName: String { self == .wechat ? "微信" : "QQ" }
+}
+
+/// 正式 SDK 适配器只把平台颁发的凭据交给账号服务，不在本机信任 openid。
+enum MaiChatSocialCredential: Sendable {
+    case wechatAuthorizationCode(String)
+    case qqSDKAccessToken(String)
+
+    var provider: MaiChatSocialProvider {
+        switch self {
+        case .wechatAuthorizationCode: return .wechat
+        case .qqSDKAccessToken: return .qq
+        }
+    }
+}
+
+struct MaiChatSocialBindingIntent: Sendable {
+    let provider: MaiChatSocialProvider
+    let bindingToken: String
+    let expiresIn: Int
+}
+
+enum MaiChatSocialLoginResult: Sendable {
+    case signedIn(MaiChatAuthSession)
+    case bindingRequired(MaiChatSocialBindingIntent)
+}
+
+private struct MaiChatSocialBindingResponse: Decodable, Sendable {
+    let bindingToken: String
+    let expiresIn: Int
+    let phoneBindingRequired: Bool
+}
+
+struct MaiChatDesktopLoginRequestInfo: Decodable, Sendable {
+    let platform: String
+    let displayCode: String
+    let status: String
+    let expiresIn: Int
+
+    var canDecide: Bool { status == "pending" || status == "scanned" }
+}
+
+private struct MaiChatCurrentAccount: Decodable, Sendable {
+    let user: MaiChatAuthUser
+}
+
+private struct MaiChatDesktopLoginDecision: Decodable, Sendable {
+    let status: String
 }
 
 struct MaiChatIMCredential: Decodable, Sendable {
@@ -41,13 +102,18 @@ struct MaiChatBailianCredential: Decodable, Sendable {
 
 private struct MaiChatAuthServerError: Decodable {
     let error: String
+    let code: String?
 }
 
 enum MaiChatAuthError: LocalizedError {
     case invalidServerResponse
     case requestFailed(String)
     case sessionExpired
+    case sessionReplaced
+    case deviceSlotRequired
     case identityMismatch
+    case desktopCodeMismatch
+    case desktopRequestUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -63,10 +129,26 @@ enum MaiChatAuthError: LocalizedError {
                 "Please wait before trying again": "登录尝试过多，请稍后再试",
                 "Password must be 15-128 characters": "密码须为 15–128 个字符",
                 "Sign in again before changing the password": "请重新登录后再修改密码",
+                "Desktop login request not found": "未找到这次电脑登录请求",
+                "Desktop login request expired": "电脑登录二维码已过期，请刷新后重试",
+                "Desktop login request already decided": "这次电脑登录请求已处理",
+                "Mobile session required": "请先在手机或平板上登录",
+                "Invalid social login request": "第三方登录凭据无效，请重试",
+                "Social login is unavailable": "第三方登录暂不可用，请稍后重试",
+                "Social credential is invalid": "第三方授权已失效，请重新授权",
+                "Invalid social binding request": "手机号绑定请求无效，请重新授权",
+                "Social binding expired": "绑定已过期，请重新使用第三方账号登录",
+                "Social identity is already bound": "此第三方账号已绑定其他手机号",
+                "Account already has this social provider": "此手机号已绑定另一个同类第三方账号",
+                "Account unavailable": "账号暂不可用",
             ]
             return translations[message] ?? message
         case .sessionExpired: return "登录已过期，请重新用手机号登录"
+        case .sessionReplaced: return "账号已在另一台同类设备登录，请重新登录"
+        case .deviceSlotRequired: return "请更新 App 后重新登录"
         case .identityMismatch: return "当前 IM 账号与手机号账号不一致，请重新登录"
+        case .desktopCodeMismatch: return "电脑上的验证码与此请求不一致，请重新扫码"
+        case .desktopRequestUnavailable: return "这次电脑登录请求已处理，请刷新二维码后重试"
         }
     }
 }
@@ -78,8 +160,15 @@ actor MaiChatAuthClient {
 
     // UI 测试显式注入本机账号后才连接模拟服务；普通模拟器运行仍使用正式账号服务。
     #if DEBUG && targetEnvironment(simulator)
-    private let baseURL = URL(string: ProcessInfo.processInfo.environment["MAICHAT_LOCAL_UI_PHONE"] != nil
-        ? "http://127.0.0.1:18190/v1/" : "https://ichat.life/api/v1/")!
+    private let baseURL: URL = {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["MAICHAT_LOCAL_UI_PHONE"] != nil else {
+            return URL(string: "https://ichat.life/api/v1/")!
+        }
+        let configuredPort = Int(environment["MAICHAT_LOCAL_UI_AUTH_PORT"] ?? "")
+        let port = configuredPort.flatMap { (1...65535).contains($0) ? $0 : nil } ?? 18190
+        return URL(string: "http://127.0.0.1:\(port)/v1/")!
+    }()
     #else
     private let baseURL = URL(string: "https://ichat.life/api/v1/")!
     #endif
@@ -88,6 +177,15 @@ actor MaiChatAuthClient {
     private var accessExpiresAt = Date.distantPast
     private var refreshTask: Task<MaiChatAuthSession, Error>?
     private var sessionVersion: UInt64 = 0
+
+    private func mobileDeviceFields() async -> [String: Any] {
+        let slot = await MainActor.run {
+            UIDevice.current.userInterfaceIdiom == .pad ? "tablet" : "ios_phone"
+        }
+        return slot == "tablet"
+            ? ["device_slot": slot, "device_platform": "ios"]
+            : ["device_slot": slot]
+    }
 
     func requestCode(
         phone: String, purpose: String = "login", ageConfirmed: Bool
@@ -104,12 +202,13 @@ actor MaiChatAuthClient {
     func verifyCode(
         phone: String, challengeId: String, code: String, ageConfirmed: Bool
     ) async throws -> MaiChatAuthSession {
+        let device = await mobileDeviceFields()
         let session: MaiChatAuthSession = try await request(
             "auth/sms/verify", method: "POST",
             body: [
                 "phone": phone, "challenge_id": challengeId, "code": code,
                 "age_confirmed_14_plus": ageConfirmed
-            ]
+            ].merging(device) { _, new in new }
         )
         sessionVersion &+= 1
         try adopt(session)
@@ -119,16 +218,155 @@ actor MaiChatAuthClient {
     func loginWithPassword(
         phone: String, password: String, ageConfirmed: Bool
     ) async throws -> MaiChatAuthSession {
+        let device = await mobileDeviceFields()
         let session: MaiChatAuthSession = try await request(
             "auth/password/login", method: "POST",
             body: [
                 "phone": phone, "password": password,
+                "age_confirmed_14_plus": ageConfirmed
+            ].merging(device) { _, new in new }
+        )
+        sessionVersion &+= 1
+        try adopt(session)
+        return session
+    }
+
+    func resetPassword(
+        phone: String, challengeId: String, code: String,
+        newPassword: String, ageConfirmed: Bool
+    ) async throws -> MaiChatAuthSession {
+        let device = await mobileDeviceFields()
+        let session: MaiChatAuthSession = try await request(
+            "auth/password/reset", method: "POST",
+            body: [
+                "phone": phone, "challenge_id": challengeId, "code": code,
+                "new_password": newPassword, "age_confirmed_14_plus": ageConfirmed
+            ].merging(device) { _, new in new }
+        )
+        sessionVersion &+= 1
+        try adopt(session)
+        return session
+    }
+
+    /// 仅接受正式 SDK 适配器交来的微信 code 或 QQ token；服务端校验后决定登录或绑手机。
+    func loginSocial(
+        credential: MaiChatSocialCredential, ageConfirmed: Bool
+    ) async throws -> MaiChatSocialLoginResult {
+        let path: String
+        let credentialField: String
+        let value: String
+        switch credential {
+        case let .wechatAuthorizationCode(code):
+            path = "auth/social/wechat/login"
+            credentialField = "code"
+            value = code
+        case let .qqSDKAccessToken(token):
+            path = "auth/social/qq/login"
+            credentialField = "access_token"
+            value = token
+        }
+        let device = await mobileDeviceFields()
+        let (data, status) = try await requestData(
+            path, method: "POST",
+            body: [credentialField: value, "age_confirmed_14_plus": ageConfirmed]
+                .merging(device) { _, new in new }
+        )
+        switch status {
+        case 200:
+            let session: MaiChatAuthSession = try decodeResponse(data)
+            sessionVersion &+= 1
+            try adopt(session)
+            return .signedIn(session)
+        case 202:
+            let response: MaiChatSocialBindingResponse = try decodeResponse(data)
+            guard response.phoneBindingRequired, response.expiresIn > 0,
+                  response.bindingToken.range(
+                    of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression
+                  ) != nil else { throw MaiChatAuthError.invalidServerResponse }
+            return .bindingRequired(MaiChatSocialBindingIntent(
+                provider: credential.provider,
+                bindingToken: response.bindingToken,
+                expiresIn: response.expiresIn
+            ))
+        default:
+            throw MaiChatAuthError.invalidServerResponse
+        }
+    }
+
+    /// 绑定 intent 已保存设备槽；短信只证明手机号归属，不由客户端提供 openid。
+    func bindSocial(
+        intent: MaiChatSocialBindingIntent, phone: String,
+        challengeId: String, code: String, ageConfirmed: Bool
+    ) async throws -> MaiChatAuthSession {
+        let session: MaiChatAuthSession = try await request(
+            "auth/social/bind", method: "POST",
+            body: [
+                "binding_token": intent.bindingToken,
+                "phone": phone, "challenge_id": challengeId, "code": code,
                 "age_confirmed_14_plus": ageConfirmed
             ]
         )
         sessionVersion &+= 1
         try adopt(session)
         return session
+    }
+
+    func desktopLoginRequestInfo(id: String, code: String) async throws
+        -> MaiChatDesktopLoginRequestInfo {
+        let token = try await currentAccessToken()
+        guard id.count == 36, let requestID = UUID(uuidString: id)?.uuidString.lowercased() else {
+            throw MaiChatAuthError.invalidServerResponse
+        }
+        let info: MaiChatDesktopLoginRequestInfo = try await request(
+            "auth/desktop/request/\(requestID)", method: "GET", bearer: token
+        )
+        if !code.isEmpty && code != info.displayCode {
+            throw MaiChatAuthError.desktopCodeMismatch
+        }
+        return info
+    }
+
+    /// 前台检查本机槽位仍归当前账号；网络失败保留本机状态，稍后重试。
+    func validateCurrentSession(expectedUserID: String) async throws {
+        let token = try await currentAccessToken()
+        let account: MaiChatCurrentAccount
+        do {
+            account = try await request("auth/me", method: "GET", bearer: token)
+        } catch MaiChatAuthError.requestFailed("Authentication required") {
+            // 访问令牌提前失效时刷新一次；同槽替换的专用错误会直接向上抛出。
+            accessToken = nil
+            let renewedToken = try await currentAccessToken()
+            account = try await request("auth/me", method: "GET", bearer: renewedToken)
+        }
+        guard account.user.imUserId == expectedUserID else {
+            throw MaiChatAuthError.identityMismatch
+        }
+    }
+
+    func approveDesktopLoginRequest(id: String, code: String) async throws {
+        try await decideDesktopLoginRequest(id: id, code: code, approved: true)
+    }
+
+    func denyDesktopLoginRequest(id: String, code: String) async throws {
+        try await decideDesktopLoginRequest(id: id, code: code, approved: false)
+    }
+
+    private func decideDesktopLoginRequest(
+        id: String, code: String, approved: Bool
+    ) async throws {
+        let info = try await desktopLoginRequestInfo(id: id, code: code)
+        guard info.canDecide else { throw MaiChatAuthError.desktopRequestUnavailable }
+        let token = try await currentAccessToken()
+        let path = approved ? "auth/desktop/approve" : "auth/desktop/deny"
+        guard let requestID = UUID(uuidString: id)?.uuidString.lowercased() else {
+            throw MaiChatAuthError.invalidServerResponse
+        }
+        let decision: MaiChatDesktopLoginDecision = try await request(
+            path, method: "POST", body: ["request_id": requestID], bearer: token
+        )
+        guard decision.status == (approved ? "approved" : "denied") else {
+            throw MaiChatAuthError.invalidServerResponse
+        }
     }
 
     func setPassword(_ password: String) async throws {
@@ -248,6 +486,27 @@ actor MaiChatAuthClient {
         body: [String: Any]? = nil,
         bearer: String? = nil
     ) async throws -> T {
+        let (data, _) = try await requestData(
+            path, method: method, body: body, bearer: bearer
+        )
+        return try decodeResponse(data)
+    }
+
+    private func decodeResponse<T: Decodable & Sendable>(_ data: Data) throws -> T {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        do { return try decoder.decode(T.self, from: data) }
+        catch { throw MaiChatAuthError.invalidServerResponse }
+    }
+
+    /// 保留 HTTP 状态码，让社交登录安全地区分已登录(200)和待绑手机(202)。
+    private func requestData(
+        _ path: String,
+        method: String,
+        body: [String: Any]? = nil,
+        bearer: String? = nil
+    ) async throws -> (Data, Int) {
+        let requestedSessionVersion = sessionVersion
         var request = URLRequest(url: baseURL.appendingPathComponent(path))
         request.httpMethod = method
         request.timeoutInterval = 20
@@ -265,12 +524,28 @@ actor MaiChatAuthClient {
             throw MaiChatAuthError.invalidServerResponse
         }
         guard (200..<300).contains(response.statusCode) else {
-            let message = try? JSONDecoder().decode(MaiChatAuthServerError.self, from: data).error
-            throw MaiChatAuthError.requestFailed(message ?? "登录服务暂时不可用（\(response.statusCode)）")
+            let serverError = try? JSONDecoder().decode(MaiChatAuthServerError.self, from: data)
+            if response.statusCode == 401,
+               serverError?.code == "SESSION_REPLACED" ||
+               serverError?.code == "DEVICE_SLOT_REQUIRED" {
+                guard sessionVersion == requestedSessionVersion else {
+                    throw MaiChatAuthError.sessionExpired
+                }
+                _ = discardLocalSession()
+                let replaced = serverError?.code == "SESSION_REPLACED"
+                await MainActor.run {
+                    NotificationCenter.default.post(
+                        name: replaced ? .maiChatAccountSessionReplaced :
+                            .maiChatAccountDeviceSlotRequired,
+                        object: nil
+                    )
+                }
+                throw replaced ? MaiChatAuthError.sessionReplaced :
+                    MaiChatAuthError.deviceSlotRequired
+            }
+            throw MaiChatAuthError.requestFailed(serverError?.error ??
+                "登录服务暂时不可用（\(response.statusCode)）")
         }
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        do { return try decoder.decode(T.self, from: data) }
-        catch { throw MaiChatAuthError.invalidServerResponse }
+        return (data, response.statusCode)
     }
 }

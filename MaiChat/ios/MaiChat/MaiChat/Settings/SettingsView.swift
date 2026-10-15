@@ -193,6 +193,21 @@ private struct AccountSettingsView: View {
                 }
             }
 
+            if appState.hasUnifiedAccount {
+                Section {
+                    NavigationLink {
+                        DesktopLoginScanView()
+                    } label: {
+                        Label("扫码登录电脑", systemImage: "qrcode.viewfinder")
+                    }
+                    .accessibilityIdentifier("desktop-login-entry")
+                } header: {
+                    Text("设备登录")
+                } footer: {
+                    Text("扫描电脑上的 MaiChat 登录二维码，并比对六位核对码。")
+                }
+            }
+
         }
     }
 

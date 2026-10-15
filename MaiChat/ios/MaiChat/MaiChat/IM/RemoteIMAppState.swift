@@ -32,6 +32,23 @@ struct RemoteIMBroadcastResult: Equatable {
     let failedUserIDs: [String]
 }
 
+enum MaiChatSocialAccountOutcome: Sendable {
+    case signedIn
+    case phoneBindingRequired(MaiChatSocialBindingIntent)
+}
+
+private final class AccountInvalidationObservers {
+    let tokens: [NSObjectProtocol]
+
+    init(tokens: [NSObjectProtocol]) {
+        self.tokens = tokens
+    }
+
+    deinit {
+        for token in tokens { NotificationCenter.default.removeObserver(token) }
+    }
+}
+
 @MainActor
 final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider {
     private struct ConversationHistoryState {
@@ -90,6 +107,9 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
 
     private let settingsStore: LocalSettingsStore
     private let accountAuth = MaiChatAuthClient.shared
+    private var accountInvalidationObservers: AccountInvalidationObservers?
+    private var isHandlingAccountInvalidation = false
+    private var accountInvalidationReason: MaiChatAuthError?
     private let historyPersistence: LocalChatHistoryPersistence
     private let client: RemoteIMClient
     private let shouldConnectOnLaunch: Bool
@@ -221,6 +241,22 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 self?.applyPresenceStatusUpdates(updates)
             }
         }
+        let sessionReplacedToken = NotificationCenter.default.addObserver(
+            forName: .maiChatAccountSessionReplaced, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                await self?.handleAccountSessionInvalidation(.sessionReplaced)
+            }
+        }
+        let deviceSlotToken = NotificationCenter.default.addObserver(
+            forName: .maiChatAccountDeviceSlotRequired, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                await self?.handleAccountSessionInvalidation(.deviceSlotRequired)
+            }
+        }
+        accountInvalidationObservers = AccountInvalidationObservers(
+            tokens: [sessionReplacedToken, deviceSlotToken])
         Task { [weak self] in
             await self?.loadConversationSummariesForCurrentAccount()
         }
@@ -388,8 +424,97 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         try await finishAccountLogin(session)
     }
 
+    /// 普通界面只接收登录结果；微信/QQ SDK 的凭据交由账号客户端和服务端核验。
+    func loginWithSocialCredential(
+        _ credential: MaiChatSocialCredential, ageConfirmed: Bool
+    ) async throws -> MaiChatSocialAccountOutcome {
+        let result = try await accountAuth.loginSocial(
+            credential: credential, ageConfirmed: ageConfirmed
+        )
+        switch result {
+        case let .signedIn(session):
+            try await finishAccountLogin(session)
+            return .signedIn
+        case let .bindingRequired(intent):
+            return .phoneBindingRequired(intent)
+        }
+    }
+
+    func requestSocialBindingCode(
+        phone: String, ageConfirmed: Bool
+    ) async throws -> MaiChatAuthChallenge {
+        try await requestAccountCode(
+            phone: phone, purpose: "social_bind", ageConfirmed: ageConfirmed
+        )
+    }
+
+    func completeSocialBinding(
+        intent: MaiChatSocialBindingIntent, phone: String,
+        challengeId: String, code: String, ageConfirmed: Bool
+    ) async throws {
+        let session = try await accountAuth.bindSocial(
+            intent: intent, phone: phone, challengeId: challengeId,
+            code: code, ageConfirmed: ageConfirmed
+        )
+        try await finishAccountLogin(session)
+    }
+
     func setAccountPassword(_ password: String) async throws {
         try await accountAuth.setPassword(password)
+    }
+
+    func resetAccountPassword(
+        phone: String, challengeId: String, code: String,
+        newPassword: String, ageConfirmed: Bool
+    ) async throws {
+        let session = try await accountAuth.resetPassword(
+            phone: phone, challengeId: challengeId, code: code,
+            newPassword: newPassword, ageConfirmed: ageConfirmed
+        )
+        try await finishAccountLogin(session)
+    }
+
+    func desktopLoginRequestInfo(id: String, code: String) async throws
+        -> MaiChatDesktopLoginRequestInfo {
+        try await accountAuth.desktopLoginRequestInfo(id: id, code: code)
+    }
+
+    func approveDesktopLoginRequest(id: String, code: String) async throws {
+        try await accountAuth.approveDesktopLoginRequest(id: id, code: code)
+    }
+
+    func denyDesktopLoginRequest(id: String, code: String) async throws {
+        try await accountAuth.denyDesktopLoginRequest(id: id, code: code)
+    }
+
+    func validateCurrentAccountSession() async {
+        guard hasUnifiedAccount, hasCompletedInitialLogin,
+              !masterUserID.isEmpty else { return }
+        let expectedUserID = masterUserID
+        do {
+            try await accountAuth.validateCurrentSession(expectedUserID: expectedUserID)
+        } catch MaiChatAuthError.sessionReplaced, MaiChatAuthError.deviceSlotRequired {
+            // 账号客户端已经通知统一的退出流程。
+        } catch MaiChatAuthError.sessionExpired {
+            await endInvalidAccountSession(
+                expectedUserID: expectedUserID, error: .sessionExpired)
+        } catch MaiChatAuthError.identityMismatch {
+            await endInvalidAccountSession(
+                expectedUserID: expectedUserID, error: .identityMismatch)
+        } catch {
+            AppDiagnosticLog.shared.record(
+                level: .warning, category: "auth",
+                event: "foreground-session-check-failed",
+                fields: ["error": error.localizedDescription]
+            )
+        }
+    }
+
+    private func endInvalidAccountSession(
+        expectedUserID: String, error: MaiChatAuthError
+    ) async {
+        guard masterUserID == expectedUserID else { return }
+        await handleAccountSessionInvalidation(error)
     }
 
     @discardableResult
@@ -410,6 +535,38 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             return false
         }
         let oldToken = await accountAuth.discardLocalSession()
+        await clearLocalAccountPresentation()
+        if let oldToken {
+            Task { await accountAuth.revokeServerSession(oldToken) }
+        }
+        return true
+    }
+
+    private func handleAccountSessionInvalidation(_ reason: MaiChatAuthError) async {
+        // 专用 401 比并发请求产生的普通“会话过期”更准确，退出期间保留它。
+        switch reason {
+        case .deviceSlotRequired, .sessionReplaced:
+            accountInvalidationReason = reason
+        default:
+            if accountInvalidationReason == nil { accountInvalidationReason = reason }
+        }
+        guard hasUnifiedAccount || hasCompletedInitialLogin else {
+            errorMessage = accountInvalidationReason?.localizedDescription
+            return
+        }
+        guard !isHandlingAccountInvalidation else { return }
+        isHandlingAccountInvalidation = true
+        defer { isHandlingAccountInvalidation = false }
+        let didSwitch = await switchPhoneAccount()
+        if !didSwitch {
+            // 凭据已失效时仍须离开旧 IM 会话；本地保存失败不能让旧账号停在界面中。
+            _ = await accountAuth.discardLocalSession()
+            await clearLocalAccountPresentation()
+        }
+        errorMessage = accountInvalidationReason?.localizedDescription
+    }
+
+    private func clearLocalAccountPresentation() async {
         AICloudCredentialSync.invalidateTemporaryModelCredentials()
         AIAssistantModel.resetForAccountSwitch()
         await disconnect()
@@ -420,10 +577,6 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         resetAccountPresentation(userID: "", saved: nil)
         _ = settingsStore.saveImmediately(currentStoredSettings())
         errorMessage = nil
-        if let oldToken {
-            Task { await accountAuth.revokeServerSession(oldToken) }
-        }
-        return true
     }
 
     private func finishAccountLogin(_ session: MaiChatAuthSession) async throws {
@@ -451,6 +604,8 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         }
         masterUserID = session.user.imUserId
         sdkAppIDText = String(credential.sdkAppId)
+        accountInvalidationReason = nil
+        errorMessage = nil
         hasUnifiedAccount = true
         // 手机号验证已完成；IM 暂时连不上时仍进入账号页，保留重连入口。
         hasCompletedInitialLogin = true

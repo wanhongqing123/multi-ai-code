@@ -1,0 +1,239 @@
+// 文件作用：用本机测试账号验证 iOS 扫码登录与会话替换的真实界面。
+import XCTest
+
+final class DesktopLoginUITests: XCTestCase {
+    private struct LocalDesktopRequest: Decodable {
+        let qrUri: String
+    }
+
+    func testDesktopLoginScannerEntry() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let phone = environment["MAICHAT_LOCAL_UI_PHONE"],
+              let password = environment["MAICHAT_LOCAL_UI_PASSWORD"] else {
+            throw XCTSkip("需要本机测试账号")
+        }
+        let app = launchAccountApp(phone: phone, password: password)
+        let me = app.buttons["我"]
+        XCTAssertTrue(me.waitForExistence(timeout: 30))
+        me.tap()
+        let settings = app.buttons["设置"]
+        if !settings.waitForExistence(timeout: 2) {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.955)).tap()
+        }
+        XCTAssertTrue(settings.waitForExistence(timeout: 10))
+        settings.tap()
+        dismissLocalIMError(in: app)
+        let entry = app.buttons["desktop-login-entry"]
+        XCTAssertTrue(entry.waitForExistence(timeout: 10))
+        let settingsScreenshot = XCTAttachment(screenshot: app.screenshot())
+        settingsScreenshot.name = "desktop-login-settings-entry"
+        settingsScreenshot.lifetime = .keepAlways
+        add(settingsScreenshot)
+        entry.tap()
+        XCTAssertTrue(app.staticTexts["扫描电脑上的二维码"].waitForExistence(timeout: 10))
+        let scannerScreenshot = XCTAttachment(screenshot: app.screenshot())
+        scannerScreenshot.name = "desktop-login-scanner"
+        scannerScreenshot.lifetime = .keepAlways
+        add(scannerScreenshot)
+    }
+
+    @MainActor func testDesktopLoginConfirmationAndCancel() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let phone = environment["MAICHAT_LOCAL_UI_PHONE"],
+              let password = environment["MAICHAT_LOCAL_UI_PASSWORD"] else {
+            throw XCTSkip("需要本机测试账号")
+        }
+        let qr = try await makeDesktopRequest(platform: "mac")
+        let app = launchAccountApp(phone: phone, password: password, qr: qr)
+        let me = app.buttons["我"]
+        XCTAssertTrue(me.waitForExistence(timeout: 30))
+        me.tap()
+        let settings = app.buttons["设置"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 10))
+        settings.tap()
+        dismissLocalIMError(in: app)
+        let entry = app.buttons["desktop-login-entry"]
+        XCTAssertTrue(entry.waitForExistence(timeout: 10))
+        entry.tap()
+        XCTAssertTrue(app.staticTexts["desktop-login-code"].waitForExistence(timeout: 15))
+        let confirmation = XCTAttachment(screenshot: app.screenshot())
+        confirmation.name = "desktop-login-confirmation"
+        confirmation.lifetime = .keepAlways
+        add(confirmation)
+        XCUIDevice.shared.orientation = .landscapeLeft
+        defer { XCUIDevice.shared.orientation = .portrait }
+        XCTAssertTrue(app.staticTexts["desktop-login-code"].waitForExistence(timeout: 10))
+        let landscapeDeadline = Date().addingTimeInterval(5)
+        while app.frame.width < app.frame.height && Date() < landscapeDeadline {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        XCTAssertGreaterThan(app.frame.width, app.frame.height)
+        try await Task.sleep(for: .seconds(1))
+        XCTAssertTrue(app.staticTexts["desktop-login-code"].isHittable)
+        XCTAssertTrue(app.buttons["desktop-login-approve"].isHittable)
+        XCUIDevice.shared.orientation = .portrait
+        let portraitDeadline = Date().addingTimeInterval(5)
+        while app.frame.height < app.frame.width && Date() < portraitDeadline {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        app.buttons["desktop-login-deny"].tap()
+        XCTAssertTrue(app.staticTexts["已取消本次登录"].waitForExistence(timeout: 15))
+        let cancelled = XCTAttachment(screenshot: app.screenshot())
+        cancelled.name = "desktop-login-cancelled"
+        cancelled.lifetime = .keepAlways
+        add(cancelled)
+    }
+
+    @MainActor func testDesktopLoginApproval() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let phone = environment["MAICHAT_LOCAL_UI_PHONE"],
+              let password = environment["MAICHAT_LOCAL_UI_PASSWORD"] else {
+            throw XCTSkip("需要本机测试账号")
+        }
+        let qr = try await makeDesktopRequest(platform: "windows")
+        let app = launchAccountApp(phone: phone, password: password, qr: qr)
+        let me = app.buttons["我"]
+        XCTAssertTrue(me.waitForExistence(timeout: 30))
+        me.tap()
+        let settings = app.buttons["设置"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 10))
+        settings.tap()
+        dismissLocalIMError(in: app)
+        let entry = app.buttons["desktop-login-entry"]
+        XCTAssertTrue(entry.waitForExistence(timeout: 10))
+        entry.tap()
+        XCTAssertTrue(app.staticTexts["desktop-login-code"].waitForExistence(timeout: 15))
+        app.buttons["desktop-login-approve"].tap()
+        XCTAssertTrue(app.staticTexts["已允许电脑登录"].waitForExistence(timeout: 15))
+        let approved = XCTAttachment(screenshot: app.screenshot())
+        approved.name = "desktop-login-approved"
+        approved.lifetime = .keepAlways
+        add(approved)
+    }
+
+    @MainActor func testReplacedPhoneSessionReturnsToLogin() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let phone = environment["MAICHAT_LOCAL_UI_PHONE"],
+              let password = environment["MAICHAT_LOCAL_UI_PASSWORD"] else {
+            throw XCTSkip("需要本机测试账号")
+        }
+        let app = launchAccountApp(phone: phone, password: password)
+        let me = app.buttons["我"]
+        XCTAssertTrue(me.waitForExistence(timeout: 30))
+        me.tap()
+        let settings = app.buttons["设置"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 10))
+        settings.tap()
+        dismissLocalIMError(in: app)
+        let entry = app.buttons["desktop-login-entry"]
+        XCTAssertTrue(entry.waitForExistence(timeout: 10))
+
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:18190/v1/auth/password/login")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "phone": phone, "password": password,
+            "age_confirmed_14_plus": true,
+            "device_slot": "ios_phone", "device_platform": "ios"
+        ])
+        let (_, response) = try await URLSession.shared.data(for: request)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(app.textFields["account-phone"].waitForExistence(timeout: 15))
+        let explanation = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "账号已在另一台同类设备登录")
+        ).firstMatch
+        XCTAssertTrue(explanation.waitForExistence(timeout: 5))
+        let login = XCTAttachment(screenshot: app.screenshot())
+        login.name = "phone-session-replaced-login"
+        login.lifetime = .keepAlways
+        add(login)
+    }
+
+    @MainActor func testLegacyDeviceSlotRejectionClearsAccessAndRefreshSessions() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["MAICHAT_LOCAL_UI_DEVICE_SLOT_TEST"] == "1",
+              let phone = environment["MAICHAT_LOCAL_UI_PHONE"],
+              let password = environment["MAICHAT_LOCAL_UI_PASSWORD"] else {
+            throw XCTSkip("需要严格设备槽本机测试服务")
+        }
+        let app = launchAccountApp(phone: phone, password: password)
+        XCTAssertTrue(app.buttons["我"].waitForExistence(timeout: 30))
+        try await forceLegacyDeviceSlot()
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(app.textFields["account-phone"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["请更新 App 后重新登录"].waitForExistence(timeout: 10))
+
+        app.terminate()
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] = password
+        app.launch()
+        XCTAssertTrue(app.buttons["我"].waitForExistence(timeout: 30))
+        try await forceLegacyDeviceSlot()
+        app.terminate()
+        // 保留本机刷新令牌，不让本机自动登录钩子在第二次启动时新建会话。
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] = ""
+        app.launch()
+        XCTAssertTrue(app.textFields["account-phone"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["请更新 App 后重新登录"].waitForExistence(timeout: 10))
+        let login = XCTAttachment(screenshot: app.screenshot())
+        login.name = "legacy-device-slot-refresh-rejected"
+        login.lifetime = .keepAlways
+        add(login)
+    }
+
+    private func launchAccountApp(
+        phone: String, password: String, qr: String = ""
+    ) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = phone
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] = password
+        app.launchEnvironment["MAICHAT_LOCAL_UI_DESKTOP_QR"] = qr
+        app.launch()
+        // 本机模拟服务重启后，旧 Keychain 会话可在首次启动时被清理；重开即用新账号登录。
+        if !app.buttons["我"].waitForExistence(timeout: 10),
+           app.textFields["account-phone"].exists {
+            app.terminate()
+            app.launch()
+        }
+        return app
+    }
+
+    private func dismissLocalIMError(in app: XCUIApplication) {
+        let error = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "IM 操作失败")
+        ).firstMatch
+        if error.exists { error.tap() }
+    }
+
+    @MainActor private func makeDesktopRequest(platform: String) async throws -> String {
+        let bytes = Data((0..<32).map { _ in UInt8.random(in: .min ... .max) })
+        let challenge = bytes.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:18190/v1/auth/desktop/request")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "platform": platform, "code_challenge": challenge
+        ])
+        let (data, response) = try await URLSession.shared.data(for: request)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(LocalDesktopRequest.self, from: data).qrUri
+    }
+
+    @MainActor private func forceLegacyDeviceSlot() async throws {
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:18190/v1/test/force-legacy-slot")!)
+        request.httpMethod = "POST"
+        let (data, response) = try await URLSession.shared.data(for: request)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+        let value = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Int])
+        XCTAssertGreaterThan(value["changed"] ?? 0, 0)
+    }
+
+}

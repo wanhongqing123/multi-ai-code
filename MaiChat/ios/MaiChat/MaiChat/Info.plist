@@ -17,7 +17,7 @@
   <key>LSRequiresIPhoneOS</key>
   <true/>
   <key>NSCameraUsageDescription</key>
-  <string>用于拍摄照片并发送远程 IM 图片消息。</string>
+  <string>用于拍摄照片、发送远程 IM 图片消息，以及扫描电脑登录二维码。</string>
   <key>NSAppTransportSecurity</key>
   <dict>
     <key>NSAllowsLocalNetworking</key>

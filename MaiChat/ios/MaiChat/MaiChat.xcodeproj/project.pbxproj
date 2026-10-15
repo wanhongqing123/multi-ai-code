@@ -10,12 +10,15 @@
 		0329ABDC04BBAC38945C24FA /* AIMobileHostToolProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29776A2C7E5D525FFA6CED8D /* AIMobileHostToolProvider.swift */; };
 		060F9E4EA6E9FABAF30CF2E5 /* RemoteDiagnosticsCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 862125851990D87705405E68 /* RemoteDiagnosticsCoordinator.swift */; };
 		06A4AB7E2BF7C60D639D23CA /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C56C06620B6A4AB7289B13D /* SettingsView.swift */; };
+		D153C2A4F2F5D6211CEB78B5 /* DesktopLoginScanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D2095160132FC761449A82E /* DesktopLoginScanView.swift */; };
 		0877D888456B3E24B13A6ED3 /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A781F92B5DE618E07394EA0C /* ChatView.swift */; };
 		0B2637847F5454F182126805 /* ComposerDraftState.swift in Sources */ = {isa = PBXBuildFile; fileRef = C846ED66C1F881705954E761 /* ComposerDraftState.swift */; };
 		0C3D673C246BAE33893EFDCD /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0075BCCB2188B8EB8E6F11FA /* RootView.swift */; };
 		10E63571389FF61C9869CE9E /* AIAssistantModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24AF3608C85D5AE5D045283D /* AIAssistantModel.swift */; };
 		17D2334D14B8A1F571A7D69B /* AppDiagnosticLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A47E3BD08877657A12C0C35 /* AppDiagnosticLog.swift */; };
 		194E338FF3D0DE993B165814 /* AIAssistantUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89FDF5DC4F6DB91F2A1B3FD5 /* AIAssistantUITests.swift */; };
+		D153C2A4F2F5D6211CEB78B6 /* DesktopLoginUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D2095160132FC761449A82F /* DesktopLoginUITests.swift */; };
+		D153C2A4F2F5D6211CEB78B8 /* SocialLoginUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D2095160132FC761449A831 /* SocialLoginUITests.swift */; };
 		194EF7AD3FFBA215E15BC6C2 /* remote-diagnostics-failure-receipts.json in Resources */ = {isa = PBXBuildFile; fileRef = 1F8D037EEC9C74A8F43E4083 /* remote-diagnostics-failure-receipts.json */; };
 		19AC531DF862B4E8460E9AFC /* MessageBubbleLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C5A4C74E12DC407146E1EBF /* MessageBubbleLayout.swift */; };
 		19E85AD53A94BD7E9DF9A1B5 /* SpeechRecognizing.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBE546568A0B3FFA1551D803 /* SpeechRecognizing.swift */; };
@@ -50,6 +53,7 @@
 		9CEE6443CEA6DFF1F20AAF48 /* RemoteIMAppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0F4570F9254D92809B25F35 /* RemoteIMAppState.swift */; };
 		9D0563575F319BE5C4DEBEB6 /* TencentIMClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = C74D63C0AABABA134584A252 /* TencentIMClient.swift */; };
 		A0787EEE0051E9674B39C7C0 /* PhoneAccountLoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9289D6B36E7E744EA1D6D196 /* PhoneAccountLoginView.swift */; };
+		D153C2A4F2F5D6211CEB78B7 /* SocialPhoneBindingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D2095160132FC761449A830 /* SocialPhoneBindingView.swift */; };
 		A61181A92420CE7BED70E67C /* LocalChatHistoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 131DCE635A48A9FA78E58E2E /* LocalChatHistoryStore.swift */; };
 		A96F037E371DD412156D6280 /* RemoteDiagnosticsCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 862125851990D87705405E68 /* RemoteDiagnosticsCoordinator.swift */; };
 		B3C7936F82D3E8A8FCE2998D /* LocalChatHistoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 131DCE635A48A9FA78E58E2E /* LocalChatHistoryStore.swift */; };
@@ -156,14 +160,18 @@
 		862125851990D87705405E68 /* RemoteDiagnosticsCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDiagnosticsCoordinator.swift; sourceTree = "<group>"; };
 		8888872A869DC80CF8DF58B6 /* MobileImageTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileImageTools.swift; sourceTree = "<group>"; };
 		89FDF5DC4F6DB91F2A1B3FD5 /* AIAssistantUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAssistantUITests.swift; sourceTree = "<group>"; };
+		8D2095160132FC761449A82F /* DesktopLoginUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopLoginUITests.swift; sourceTree = "<group>"; };
+		8D2095160132FC761449A831 /* SocialLoginUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocialLoginUITests.swift; sourceTree = "<group>"; };
 		8A47E3BD08877657A12C0C35 /* AppDiagnosticLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDiagnosticLog.swift; sourceTree = "<group>"; };
 		8C56C06620B6A4AB7289B13D /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		8D2095160132FC761449A82E /* DesktopLoginScanView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopLoginScanView.swift; sourceTree = "<group>"; };
 		8C57A0E06309C4F110DA1CBF /* remote-diagnostics-report.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "remote-diagnostics-report.json"; sourceTree = "<group>"; };
 		8C7043E7ADEC49D3648291AF /* ffplay-sample.mp4 */ = {isa = PBXFileReference; path = "ffplay-sample.mp4"; sourceTree = "<group>"; };
 		CEEE01E212AB430DA101F001 /* ffplay-seek-sample.mp4 */ = {isa = PBXFileReference; path = "ffplay-seek-sample.mp4"; sourceTree = "<group>"; };
 		8F61CFA51E87A9791A0ECB26 /* MarkdownInlineStyling.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownInlineStyling.swift; sourceTree = "<group>"; };
 		91C089D3C5D222B69986D04F /* RemoteDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDiagnostics.swift; sourceTree = "<group>"; };
 		9289D6B36E7E744EA1D6D196 /* PhoneAccountLoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneAccountLoginView.swift; sourceTree = "<group>"; };
+		8D2095160132FC761449A830 /* SocialPhoneBindingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocialPhoneBindingView.swift; sourceTree = "<group>"; };
 		96C6084AAC26D9F252151972 /* RemoteDesktopView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDesktopView.swift; sourceTree = "<group>"; };
 		975D1B034E3ED14E787A9284 /* MasterChatStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MasterChatStateTests.swift; sourceTree = "<group>"; };
 		9A066546C97129E56C379365 /* DiagnosticLogFileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticLogFileStore.swift; sourceTree = "<group>"; };
@@ -241,6 +249,8 @@
 			isa = PBXGroup;
 			children = (
 				89FDF5DC4F6DB91F2A1B3FD5 /* AIAssistantUITests.swift */,
+				8D2095160132FC761449A82F /* DesktopLoginUITests.swift */,
+				8D2095160132FC761449A831 /* SocialLoginUITests.swift */,
 			);
 			path = MaiChatUITests;
 			sourceTree = "<group>";
@@ -402,6 +412,7 @@
 				2FE19F9A1D05D98FE499F66B /* KeychainSecretStore.swift */,
 				A4FD40D258B32299ADDF36C3 /* LocalSettingsStore.swift */,
 				8C56C06620B6A4AB7289B13D /* SettingsView.swift */,
+				8D2095160132FC761449A82E /* DesktopLoginScanView.swift */,
 			);
 			path = Settings;
 			sourceTree = "<group>";
@@ -452,6 +463,7 @@
 			children = (
 				73E259698A238F25ED2ED12E /* MaiChatApp.swift */,
 				9289D6B36E7E744EA1D6D196 /* PhoneAccountLoginView.swift */,
+				8D2095160132FC761449A830 /* SocialPhoneBindingView.swift */,
 				0075BCCB2188B8EB8E6F11FA /* RootView.swift */,
 			);
 			path = App;
@@ -765,6 +777,7 @@
 				565AD4A1181778D023B2900E /* MobilePermissionTools.swift in Sources */,
 				D357B7A7100F4773EB0864A6 /* MobilePhotoTools.swift in Sources */,
 				A0787EEE0051E9674B39C7C0 /* PhoneAccountLoginView.swift in Sources */,
+				D153C2A4F2F5D6211CEB78B7 /* SocialPhoneBindingView.swift in Sources */,
 				EC4CC462A846C4BBBB877005 /* RemoteDesktopSession.swift in Sources */,
 				FEA124404840D00F968F232A /* RemoteDesktopView.swift in Sources */,
 				A96F037E371DD412156D6280 /* RemoteDiagnosticsCoordinator.swift in Sources */,
@@ -773,6 +786,7 @@
 				E6827C0322D4694D998F2551 /* RemoteIMClient.swift in Sources */,
 				0C3D673C246BAE33893EFDCD /* RootView.swift in Sources */,
 				06A4AB7E2BF7C60D639D23CA /* SettingsView.swift in Sources */,
+				D153C2A4F2F5D6211CEB78B5 /* DesktopLoginScanView.swift in Sources */,
 				19E85AD53A94BD7E9DF9A1B5 /* SpeechRecognizing.swift in Sources */,
 				9D0563575F319BE5C4DEBEB6 /* TencentIMClient.swift in Sources */,
 				865303D314A23F16D52058CE /* TencentSpeechRecognizer.swift in Sources */,
@@ -784,6 +798,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				194E338FF3D0DE993B165814 /* AIAssistantUITests.swift in Sources */,
+				D153C2A4F2F5D6211CEB78B6 /* DesktopLoginUITests.swift in Sources */,
+				D153C2A4F2F5D6211CEB78B8 /* SocialLoginUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -878,7 +894,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 81;
+				CURRENT_PROJECT_VERSION = 83;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -897,7 +913,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
-				MARKETING_VERSION = 0.1.81;
+				MARKETING_VERSION = 0.1.83;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -1055,7 +1071,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 81;
+				CURRENT_PROJECT_VERSION = 83;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -1068,7 +1084,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
-				MARKETING_VERSION = 0.1.81;
+				MARKETING_VERSION = 0.1.83;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";

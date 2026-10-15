@@ -326,6 +326,7 @@ struct MaiChatApp: App {
                 let environment = ProcessInfo.processInfo.environment
                 if let phone = environment["MAICHAT_LOCAL_UI_PHONE"],
                    let password = environment["MAICHAT_LOCAL_UI_PASSWORD"],
+                   !password.isEmpty,
                    let appState = bootstrap.appState {
                     do {
                         try await appState.loginWithAccountPassword(

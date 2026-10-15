@@ -309,6 +309,21 @@ struct RootView: View {
             appState.synchronizeSystemNotificationBadge()
             schedulePendingNotificationRoute(sceneIsActive: scenePhase == .active)
         }
+        .task(id: scenePhase == .active && appState.hasUnifiedAccount &&
+              !appState.shouldShowInitialLogin) {
+            guard scenePhase == .active, appState.hasUnifiedAccount,
+                  !appState.shouldShowInitialLogin else { return }
+            // 进入前台立即检查；前台每 30 秒复查。切到后台时 SwiftUI 取消该任务。
+            while !Task.isCancelled && appState.hasUnifiedAccount &&
+                  !appState.shouldShowInitialLogin {
+                await appState.validateCurrentAccountSession()
+                do {
+                    try await Task.sleep(for: .seconds(30))
+                } catch {
+                    return
+                }
+            }
+        }
         .onChange(of: appState.shouldShowInitialLogin) { needsLogin in
             if needsLogin {
                 activeChatContact = nil

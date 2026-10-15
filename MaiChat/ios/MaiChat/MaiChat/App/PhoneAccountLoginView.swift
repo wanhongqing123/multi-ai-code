@@ -17,6 +17,9 @@ struct PhoneAccountLoginView: View {
     @State private var isBusy = false
     @State private var errorMessage: String?
     @State private var information: String?
+    @State private var socialBinding: MaiChatSocialBindingIntent?
+    @State private var didInjectSocialCredential = false
+    @State private var isSocialLoggingIn = false
 
     private let accent = Color(red: 42 / 255, green: 211 / 255, blue: 142 / 255)
     private let termsURL = URL(string: "https://ichat.life/legal/terms.html")!
@@ -24,6 +27,20 @@ struct PhoneAccountLoginView: View {
     private let childrenURL = URL(string: "https://ichat.life/legal/children.html")!
 
     var body: some View {
+        Group {
+            if let socialBinding {
+                SocialPhoneBindingView(intent: socialBinding) {
+                    self.socialBinding = nil
+                    information = nil
+                }
+            } else {
+                phoneLoginContent
+            }
+        }
+        .task { await injectLocalSocialCredentialIfNeeded() }
+    }
+
+    private var phoneLoginContent: some View {
         GeometryReader { geometry in
             ScrollView {
                 VStack(spacing: 0) {
@@ -102,6 +119,10 @@ struct PhoneAccountLoginView: View {
                         .font(.system(size: 13))
                         if let information {
                             Text(information).font(.footnote).foregroundStyle(.secondary)
+                        }
+                        if let accountError = appState.errorMessage,
+                           appState.shouldShowInitialLogin {
+                            Text(accountError).font(.footnote).foregroundStyle(.red)
                         }
                         if let errorMessage {
                             Text(errorMessage).font(.footnote).foregroundStyle(.red)
@@ -189,6 +210,7 @@ struct PhoneAccountLoginView: View {
         guard confirmedMinimumAge, acceptedAgreement else { return }
         isBusy = true
         defer { isBusy = false }
+        appState.errorMessage = nil
         errorMessage = nil
         information = nil
         do {
@@ -206,6 +228,7 @@ struct PhoneAccountLoginView: View {
         guard confirmedMinimumAge, acceptedAgreement else { return }
         isBusy = true
         defer { isBusy = false }
+        appState.errorMessage = nil
         errorMessage = nil
         do {
             if usesPassword {
@@ -227,6 +250,53 @@ struct PhoneAccountLoginView: View {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    /// 将正式 SDK 交来的凭据交给账号服务；绑手机时在当前登录容器切换页面。
+    private func startSocialLogin(
+        _ credential: MaiChatSocialCredential, ageConfirmed: Bool
+    ) async {
+        guard !isBusy, !isSocialLoggingIn else { return }
+        isSocialLoggingIn = true
+        defer { isSocialLoggingIn = false }
+        errorMessage = nil
+        information = "正在验证\(credential.provider.displayName)账号…"
+        do {
+            let outcome = try await appState.loginWithSocialCredential(
+                credential, ageConfirmed: ageConfirmed
+            )
+            switch outcome {
+            case .signedIn:
+                dismiss()
+            case let .phoneBindingRequired(intent):
+                information = nil
+                socialBinding = intent
+            }
+        } catch {
+            information = nil
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// 只在 Debug 模拟器注入本机假 SDK 凭据；正式包不展示无配置的第三方入口。
+    private func injectLocalSocialCredentialIfNeeded() async {
+        #if DEBUG && targetEnvironment(simulator)
+        let environment = ProcessInfo.processInfo.environment
+        guard !didInjectSocialCredential,
+              environment["MAICHAT_LOCAL_UI_SOCIAL_TEST"] == "1",
+              environment["MAICHAT_LOCAL_UI_PHONE"] != nil,
+              let provider = environment["MAICHAT_LOCAL_UI_SOCIAL_PROVIDER"],
+              let value = environment["MAICHAT_LOCAL_UI_SOCIAL_CREDENTIAL"],
+              !value.isEmpty else { return }
+        let credential: MaiChatSocialCredential
+        switch provider {
+        case "wechat": credential = .wechatAuthorizationCode(value)
+        case "qq": credential = .qqSDKAccessToken(value)
+        default: return
+        }
+        didInjectSocialCredential = true
+        await startSocialLogin(credential, ageConfirmed: true)
+        #endif
     }
 
     private static var applicationIcon: UIImage {

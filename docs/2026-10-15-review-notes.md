@@ -21,7 +21,7 @@
 
 ## 中文注释与命名
 
-按用户澄清的口径，注释比例是约数，不要求逐行配对。已核对 672 个被 Git 跟踪的自有源码与脚本：每个文件开头都有中文文件作用说明；其中补齐了此前漏掉的 MaiChat 媒体层和桌面测试文件。上游 `MaiChat/Media/ffplay.c`、第三方 Framework、`vendor`、`third_party` 和 `MaiAgent/Graphics` 保持原样。长函数按入口、关键阶段和失败边界补注释；静态扫描找出 406 个超过 50 行的候选代码块，排除类、lambda 等误判后，没有发现缺少注释的候选函数。该扫描是审阅辅助，不代替逐个核对语义。`MaiSqliteStore.cpp` 内部的 `exec`、`runWith`、`step` 已改成表明事务控制、文本参数和预处理语句职责的名称，`MaiStoreTests` 通过；全仓库命名审阅仍需继续。
+按用户澄清的口径，注释比例是约数，不要求逐行配对。已核对 672 个被 Git 跟踪的自有源码与脚本：每个文件开头都有中文文件作用说明；其中补齐了此前漏掉的 MaiChat 媒体层和桌面测试文件。上游 `MaiChat/Media/ffplay.c`、第三方 Framework、`vendor`、`third_party` 和 `MaiAgent/Graphics` 保持原样。长函数按入口、关键阶段和失败边界补注释；静态扫描找出 406 个超过 50 行的候选代码块，排除类、lambda 等误判后，没有发现缺少注释的候选函数。该扫描是审阅辅助，不代替逐个核对语义。命名复核将 SQLite 内部的 `exec`、`runWith`、`step` 以及移动端创作中心的 `call`、`op`、`emit`、`add`、`key` 等私有短名改成表达职责的名称；标准生命周期方法如 `start`、`stop` 仍保留。旧代码的逐函数命名复核尚未全部完成。
 
 ## clangd
 

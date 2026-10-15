@@ -155,7 +155,7 @@ final class AICloudCredentialStore: @unchecked Sendable {
         return Date().addingTimeInterval(90) >= arkExpiresAt
     }
 
-    func key(_ provider: String) -> String {
+    func apiKey(_ provider: String) -> String {
         lock.lock()
         defer { lock.unlock() }
         if provider == "ark", Date() >= arkExpiresAt { return "" }
@@ -420,7 +420,7 @@ actor AIAssistantBackend {
     private var root: URL?
     private var initialized = false
     private func storedKey(for model: String) -> String {
-        AICloudCredentialStore.shared.key(model == "deepseek-flash" ? "deepseek" : "glm")
+        AICloudCredentialStore.shared.apiKey(model == "deepseek-flash" ? "deepseek" : "glm")
     }
 
     init() {
@@ -449,9 +449,9 @@ actor AIAssistantBackend {
         }
     }
 
-    private func call(_ op: String, values: [String: Any] = [:], force: Bool = false) throws -> AIResponse {
+    private func requestAgentOperation(_ operation: String, values: [String: Any] = [:], force: Bool = false) throws -> AIResponse {
         var request: [String: Any] = values
-        request["op"] = op
+        request["op"] = operation
         request["force"] = force
         let data = try JSONSerialization.data(withJSONObject: request)
         guard let text = String(data: data, encoding: .utf8),
@@ -504,7 +504,7 @@ actor AIAssistantBackend {
         #endif
         try configure(settings, key: key)
         #if targetEnvironment(simulator)
-        if uiTest { _ = try call("create") }
+        if uiTest { _ = try requestAgentOperation("create") }
         #endif
         initialized = true
         return AIAssistantOpenResult(
@@ -523,7 +523,7 @@ actor AIAssistantBackend {
         let workspace = root.appendingPathComponent("Workspace", isDirectory: true)
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
         let appRootPath = AIAssistantPathPolicy.appRoot(workspacePath: workspace.path)
-        _ = try call("configure", values: ["database": root.appendingPathComponent("sessions.sqlite").path,
+        _ = try requestAgentOperation("configure", values: ["database": root.appendingPathComponent("sessions.sqlite").path,
             "workspace": workspace.path, "baseUrl": config.baseUrl, "apiKey": key,
             "wire": config.effectiveWire,
             "model": config.model, "policy": config.policy, "appRoot": appRootPath,
@@ -559,21 +559,21 @@ actor AIAssistantBackend {
     }
 
     func request(_ operation: String, values: [String: String] = [:], force: Bool = false) throws -> AIResponse {
-        try call(operation, values: values.mapValues { $0 as Any }, force: force)
+        try requestAgentOperation(operation, values: values.mapValues { $0 as Any }, force: force)
     }
 
     func snapshot(session: String, limit: Int, force: Bool) throws -> AIResponse {
-        try call("snapshot", values: ["session": session, "messageLimit": limit], force: force)
+        try requestAgentOperation("snapshot", values: ["session": session, "messageLimit": limit], force: force)
     }
 
     func messagesPage(session: String, beforeId: String, limit: Int) throws -> [AIMessage] {
-        try call("messages_page", values: ["session": session, "before": beforeId,
+        try requestAgentOperation("messages_page", values: ["session": session, "before": beforeId,
                                             "limit": limit]).messages ?? []
     }
 
     func send(session: String, text: String, images: [AIImportedFile],
               videos: [AIImportedFile], quoteMessageId: String) throws -> AIResponse {
-        try call("send", values: [
+        try requestAgentOperation("send", values: [
             "session": session,
             "text": text,
             "quoteMessageId": quoteMessageId,
@@ -585,7 +585,7 @@ actor AIAssistantBackend {
     func suggestReplies(messages: [[String: String]], accountUserID: String) async throws
         -> AIReplySuggestions {
         _ = try await open(accountUserID: accountUserID)
-        let response = try call("suggest_replies", values: ["messages": messages])
+        let response = try requestAgentOperation("suggest_replies", values: ["messages": messages])
         guard let natural = response.natural?.trimmingCharacters(in: .whitespacesAndNewlines),
               let casual = response.casual?.trimmingCharacters(in: .whitespacesAndNewlines),
               let professional = response.professional?.trimmingCharacters(in: .whitespacesAndNewlines),

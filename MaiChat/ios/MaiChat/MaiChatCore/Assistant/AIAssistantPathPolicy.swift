@@ -83,7 +83,7 @@ public enum AIAssistantMediaMentionPolicy {
             let quoted = codePath?.matches(in: line, range: bounds) ?? []
             for match in quoted {
                 guard let range = Range(match.range(at: 1), in: line) else { continue }
-                add(String(line[range]), workspacePath: workspacePath,
+                appendMediaMention(String(line[range]), workspacePath: workspacePath,
                     appRootPath: appRootPath, seen: &seen, result: &result)
                 if result.count > maximumCardsPerMessage { return [] }
             }
@@ -91,7 +91,7 @@ public enum AIAssistantMediaMentionPolicy {
                 guard !quoted.contains(where: {
                     NSIntersectionRange($0.range, match.range).length > 0
                 }), let range = Range(match.range, in: line) else { continue }
-                add(String(line[range]), workspacePath: workspacePath,
+                appendMediaMention(String(line[range]), workspacePath: workspacePath,
                     appRootPath: appRootPath, seen: &seen, result: &result)
                 if result.count > maximumCardsPerMessage { return [] }
             }
@@ -99,7 +99,7 @@ public enum AIAssistantMediaMentionPolicy {
         return result
     }
 
-    private static func add(_ raw: String, workspacePath: String, appRootPath: String?,
+    private static func appendMediaMention(_ raw: String, workspacePath: String, appRootPath: String?,
                             seen: inout Set<String>,
                             result: inout [AIAssistantMediaMention]) {
         let path = raw.trimmingCharacters(in: .whitespacesAndNewlines)

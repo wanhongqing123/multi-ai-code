@@ -83,14 +83,14 @@ final class AIMobileHostToolProvider {
         case "mobile_preview_image": return previewImage(arguments)
         case "mobile_photos_add_to_album": return await addPhotosToAlbum(arguments)
         case "ark_api_key":
-            return Self.jsonSuccess(["key": AICloudCredentialStore.shared.key("ark")])
+            return Self.jsonSuccess(["key": AICloudCredentialStore.shared.apiKey("ark")])
         case "glm_api_key":
-            return Self.jsonSuccess(["key": AICloudCredentialStore.shared.key("glm")])
+            return Self.jsonSuccess(["key": AICloudCredentialStore.shared.apiKey("glm")])
         case "minimax_api_key":
-            return Self.jsonSuccess(["key": AICloudCredentialStore.shared.key("minimax")])
+            return Self.jsonSuccess(["key": AICloudCredentialStore.shared.apiKey("minimax")])
         case "wan_credentials":
             return Self.jsonSuccess([
-                "key": AICloudCredentialStore.shared.key("wan"),
+                "key": AICloudCredentialStore.shared.apiKey("wan"),
                 "workspace_id": AICloudCredentialStore.shared.workspaceId()
             ])
         default: break

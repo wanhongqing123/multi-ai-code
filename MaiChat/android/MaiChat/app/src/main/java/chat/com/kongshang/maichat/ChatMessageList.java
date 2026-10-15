@@ -75,7 +75,7 @@ final class ChatMessageList extends ListView {
     }
     private int targetPosition() {
         if (position == Position.LATEST) return adapter.getCount() - 1;
-        for (int index = 0; index < adapter.getCount(); index++) if (key(index).equals(targetId)) return index;
+        for (int index = 0; index < adapter.getCount(); index++) if (rowStableKeyAt(index).equals(targetId)) return index;
         return -1;
     }
     @Override protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
@@ -88,7 +88,7 @@ final class ChatMessageList extends ListView {
         if (position == Position.NONE) return;
         int target = targetPosition();
         if (target < 0) return;
-        if (pinsKeyboard() && keyboardAnchor == null) keyboardAnchor = key(target);
+        if (pinsKeyboard() && keyboardAnchor == null) keyboardAnchor = rowStableKeyAt(target);
         Position requested = position;
         int requestedOffset = targetOffset;
         position = Position.NONE; targetId = null;
@@ -135,7 +135,7 @@ final class ChatMessageList extends ListView {
             activity = nextActivity; bindingRevision = revision;
             Map<String, Long> ids = new HashMap<>();
             for (int i = 0; i < adapter.getCount(); i++) {
-                String key = key(i);
+                String key = rowStableKeyAt(i);
                 ids.put(key, stableIds.containsKey(key) ? stableIds.get(key) : ++nextId);
             }
             stableIds.clear(); stableIds.putAll(ids);
@@ -147,7 +147,7 @@ final class ChatMessageList extends ListView {
             restoreMessage(anchor, offset);
         } else if (position != Position.NONE) requestLayout();
     }
-    private String key(int position) {
+    private String rowStableKeyAt(int position) {
         return position < messages.size() ? messages.get(position).id() : "activity:" + activity.activityId;
     }
     private static final class Binding {
@@ -160,7 +160,7 @@ final class ChatMessageList extends ListView {
     private final class Rows extends BaseAdapter {
         @Override public int getCount() { return messages.size() + (activity == null ? 0 : 1); }
         @Override public Object getItem(int position) { return position < messages.size() ? messages.get(position) : activity; }
-        @Override public long getItemId(int position) { return stableIds.getOrDefault(key(position), -1L); }
+        @Override public long getItemId(int position) { return stableIds.getOrDefault(rowStableKeyAt(position), -1L); }
         @Override public boolean hasStableIds() { return true; }
         @Override public int getViewTypeCount() { return 2; }
         @Override public int getItemViewType(int position) { return position < messages.size() ? 0 : 1; }

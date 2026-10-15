@@ -203,7 +203,7 @@ public final class AIAssistantController {
         worker.post(() -> {
             worker.removeCallbacks(poll);
             if (next != null && !closed) {
-                emit();
+                publishState();
                 poll.run();
             }
         });
@@ -420,7 +420,7 @@ public final class AIAssistantController {
             }
         } catch (Throwable failure) {
             error = safeMessage(failure);
-            emit();
+            publishState();
         }
     }
     private static String safeMessage(Throwable error) {
@@ -451,7 +451,7 @@ public final class AIAssistantController {
         }
         return new File(new File(base, "Accounts"), folder.toString());
     }
-    private JSONObject call(JSONObject request) throws Exception {
+    private JSONObject invokeNativeAgent(JSONObject request) throws Exception {
         if (Looper.myLooper() == Looper.getMainLooper())
             throw new IllegalStateException("Native agent on UI thread");
         if (handle == 0)
@@ -464,8 +464,8 @@ public final class AIAssistantController {
             throw new IllegalStateException(result.optString("error", "操作失败"));
         return result;
     }
-    private JSONObject op(String name) throws Exception {
-        return new JSONObject().put("op", name).put("session", selected);
+    private JSONObject makeOperationRequest(String operationName) throws Exception {
+        return new JSONObject().put("op", operationName).put("session", selected);
     }
     private void configure(String url, String name, String approval, String key,
                            String selectedWire) throws Exception {
@@ -474,7 +474,7 @@ public final class AIAssistantController {
             throw new IllegalStateException("无法创建工作区");
         File runtime = new File(context.getApplicationInfo().nativeLibraryDir,
             "libonnxruntime.so");
-        call(op("configure")
+        invokeNativeAgent(makeOperationRequest("configure")
                 .put("baseUrl", url)
                 .put("apiKey", key)
                 .put("wire", selectedWire)
@@ -534,18 +534,18 @@ public final class AIAssistantController {
     }
     private void refresh(boolean force) {
         try {
-            JSONObject result = call(op("snapshot").put("force", force));
+            JSONObject result = invokeNativeAgent(makeOperationRequest("snapshot").put("force", force));
             if (result.optBoolean("changed")) {
                 hideReasoningText(result);
                 attachMediaMentions(result);
                 data = result;
                 if (!result.optString("error").isEmpty())
                     error = result.optString("error");
-                emit();
+                publishState();
             }
         } catch (Exception e) {
             error = safeMessage(e);
-            emit();
+            publishState();
         }
     }
     private static void hideReasoningText(JSONObject snapshot) {
@@ -614,7 +614,7 @@ public final class AIAssistantController {
             message.put("inline_media", cards);
         }
     }
-    private void emit() {
+    private void publishState() {
         State next = new State(data, selected, baseUrl, model, policy, error, ready);
         state = next;
         Listener target = listener;
@@ -643,7 +643,7 @@ public final class AIAssistantController {
             JSONObject suggestions = null;
             String failure = null;
             try {
-                suggestions = call(new JSONObject().put("op", "suggest_replies")
+                suggestions = invokeNativeAgent(new JSONObject().put("op", "suggest_replies")
                     .put("messages", context));
             } catch (Exception e) {
                 failure = safeMessage(e);
@@ -663,7 +663,7 @@ public final class AIAssistantController {
                 refreshBailianCredential(true);
                 String target = intendedSession;
                 if (target.isEmpty()) {
-                    target = call(op("create")).getString("id");
+                    target = invokeNativeAgent(makeOperationRequest("create")).getString("id");
                     selected = target;
                 }
                 JSONArray images = new JSONArray();
@@ -675,14 +675,14 @@ public final class AIAssistantController {
                     videos.put(new JSONObject().put("path", file.relativePath)
                         .put("mimeType", file.mimeType));
                 }
-                call(op("send").put("session", target).put("text", text)
+                invokeNativeAgent(makeOperationRequest("send").put("session", target).put("text", text)
                     .put("images", images).put("videos", videos));
                 error = "";
                 success = true;
                 refresh(true);
             } catch (Exception e) {
                 error = safeMessage(e);
-                emit();
+                publishState();
             }
             boolean sent = success;
             main.post(() -> completion.accept(sent));
@@ -697,7 +697,7 @@ public final class AIAssistantController {
             try {
                 JSONObject request =
                     new JSONObject(values.toString()).put("op", operation).put("session", target);
-                JSONObject result = call(request);
+                JSONObject result = invokeNativeAgent(request);
                 if (operation.equals("create"))
                     selected = result.getString("id");
                 if (operation.equals("delete") && selected.equals(target))
@@ -708,7 +708,7 @@ public final class AIAssistantController {
                     main.post(completion);
             } catch (Exception e) {
                 error = safeMessage(e);
-                emit();
+                publishState();
             }
         });
     }
@@ -749,7 +749,7 @@ public final class AIAssistantController {
                 refresh(true);
             } catch (Exception failure) {
                 error = safeMessage(failure);
-                emit();
+                publishState();
             }
             boolean saved = success;
             main.post(() -> completion.accept(saved));
@@ -793,7 +793,7 @@ public final class AIAssistantController {
                 error = "";
             } catch (Exception failure) {
                 error = safeMessage(failure);
-                emit();
+                publishState();
             }
             boolean result = success;
             main.post(() -> completion.accept(result));
@@ -913,7 +913,7 @@ public final class AIAssistantController {
                     uri.getLastPathSegment());
             } catch (Exception e) {
                 error = safeMessage(e);
-                emit();
+                publishState();
             }
             ImportedFile result = imported;
             main.post(() -> completion.accept(result));
@@ -990,7 +990,7 @@ public final class AIAssistantController {
                 imported = importStream(input, "image/jpeg", source.getName());
             } catch (Exception e) {
                 error = safeMessage(e);
-                emit();
+                publishState();
             } finally {
                 if (source != null) source.delete();
             }
@@ -1008,7 +1008,7 @@ public final class AIAssistantController {
                 value = File.createTempFile("capture-", ".jpg", directory);
             } catch (Exception e) {
                 error = safeMessage(e);
-                emit();
+                publishState();
             }
             File result = value;
             main.post(() -> completion.accept(result));

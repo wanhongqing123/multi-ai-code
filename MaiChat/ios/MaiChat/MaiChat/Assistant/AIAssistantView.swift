@@ -1757,7 +1757,7 @@ struct AIVideoBubbleUITestRoot: View {
 }
 
 struct AITranscriptUITestRoot: View {
-    private func part(_ id: String, kind: String, text: String? = nil,
+    private func makeTestPart(_ id: String, kind: String, text: String? = nil,
                       tool: String? = nil) -> AIPart {
         AIPart(id: id, kind: kind, text: text, tool: tool,
                input: tool == nil ? nil : "{}", output: tool == nil ? nil : "done",
@@ -1766,11 +1766,11 @@ struct AITranscriptUITestRoot: View {
     }
 
     var body: some View {
-        let parts = [part("reasoning-1", kind: "reasoning", text: "检查视频"),
-                     part("reasoning-2", kind: "reasoning", text: "检查视频")]
-            + (0..<4).map { part("ffmpeg-\($0)", kind: "tool", tool: "ffmpeg") }
-            + (0..<4).map { part("view-image-\($0)", kind: "tool", tool: "view_image") }
-            + [part("answer", kind: "text", text: "处理完成，结果已经准备好。")]
+        let parts = [makeTestPart("reasoning-1", kind: "reasoning", text: "检查视频"),
+                     makeTestPart("reasoning-2", kind: "reasoning", text: "检查视频")]
+            + (0..<4).map { makeTestPart("ffmpeg-\($0)", kind: "tool", tool: "ffmpeg") }
+            + (0..<4).map { makeTestPart("view-image-\($0)", kind: "tool", tool: "view_image") }
+            + [makeTestPart("answer", kind: "text", text: "处理完成，结果已经准备好。")]
         let message = AIMessage(id: "transcript", role: "assistant", created: 0,
                                 completed: 1, active: false, parts: parts)
         AIMessageRow(message: message, workspacePath: "", quote: {})

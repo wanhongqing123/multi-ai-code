@@ -45,7 +45,7 @@ final class AIAssistantMediaMentions {
             Matcher code = CODE_PATH.matcher(line);
             while (code.find()) {
                 codeRanges.add(new int[] {code.start(), code.end()});
-                add(code.group(1), resolver, seen, result);
+                appendMediaMention(code.group(1), resolver, seen, result);
                 if (result.size() > MAX_CARDS) return Collections.emptyList();
             }
             Matcher bare = BARE_PATH.matcher(line);
@@ -56,14 +56,14 @@ final class AIAssistantMediaMentions {
                         insideCode = true; break;
                     }
                 if (insideCode) continue;
-                add(bare.group(), resolver, seen, result);
+                appendMediaMention(bare.group(), resolver, seen, result);
                 if (result.size() > MAX_CARDS) return Collections.emptyList();
             }
         }
         return result;
     }
 
-    private static void add(String raw, Function<String, File> resolver,
+    private static void appendMediaMention(String raw, Function<String, File> resolver,
                             Set<String> seen, List<Mention> result) {
         String path = raw.trim();
         String lower = path.toLowerCase(Locale.ROOT);

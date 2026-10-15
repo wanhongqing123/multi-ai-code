@@ -56,8 +56,20 @@ public final class TencentSpeechRecognizer implements SpeechRecognizer {
     public void transcribe(File audioFile, String format, Callback callback) {
         if (callback == null || closed) return;
         worker.post(() -> transcribeOnWorker(audioFile, format, new Callback() {
-            @Override public void onText(String text) { mainHandler.post(() -> { if (!closed) callback.onText(text); }); }
-            @Override public void onError(String message) { mainHandler.post(() -> { if (!closed) callback.onError(message); }); }
+            @Override
+            public void onText(String text) {
+                mainHandler.post(() -> {
+                    if (!closed)
+                        callback.onText(text);
+                });
+            }
+            @Override
+            public void onError(String message) {
+                mainHandler.post(() -> {
+                    if (!closed)
+                        callback.onError(message);
+                });
+            }
         }));
     }
 

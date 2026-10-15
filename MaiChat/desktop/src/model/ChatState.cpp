@@ -213,12 +213,14 @@ RemoteIMMessage ChatState::queueOutgoingApprovalDecision(
     return message;
 }
 
-RemoteIMMessage ChatState::queueOutgoingImage(const QString& localPath, int width, int height, qint64 sizeBytes, const QString& text, bool captionAbove) {
+RemoteIMMessage ChatState::queueOutgoingImage(const QString& localPath, int width, int height, qint64 sizeBytes,
+                                              const QString& text, bool captionAbove) {
     return queueOutgoingImageTo(requireSelectedPeer(), localPath, width, height, sizeBytes,
                                 text, captionAbove);
 }
 
-RemoteIMMessage ChatState::queueOutgoingImageTo(const QString& peerId, const QString& localPath, int width, int height, qint64 sizeBytes, const QString& text, bool captionAbove) {
+RemoteIMMessage ChatState::queueOutgoingImageTo(const QString& peerId, const QString& localPath, int width, int height,
+                                                qint64 sizeBytes, const QString& text, bool captionAbove) {
     const QString cleanPath = clean(localPath);
     if (cleanPath.isEmpty()) throw std::invalid_argument("localPath is required");
     const QString peer = clean(peerId);
@@ -261,12 +263,15 @@ RemoteIMMessage ChatState::queueOutgoingVoiceTo(const QString& peerId, const QSt
     return message;
 }
 
-RemoteIMMessage ChatState::queueOutgoingFile(const QString& localPath, const QString& fileName, const QString& mimeType, qint64 sizeBytes, const QString& text, bool captionAbove) {
+RemoteIMMessage ChatState::queueOutgoingFile(const QString& localPath, const QString& fileName, const QString& mimeType,
+                                             qint64 sizeBytes, const QString& text, bool captionAbove) {
     return queueOutgoingFileTo(requireSelectedPeer(), localPath, fileName, mimeType, sizeBytes,
                                text, captionAbove);
 }
 
-RemoteIMMessage ChatState::queueOutgoingFileTo(const QString& peerId, const QString& localPath, const QString& fileName, const QString& mimeType, qint64 sizeBytes, const QString& text, bool captionAbove) {
+RemoteIMMessage ChatState::queueOutgoingFileTo(const QString& peerId, const QString& localPath, const QString& fileName,
+                                               const QString& mimeType, qint64 sizeBytes, const QString& text,
+                                               bool captionAbove) {
     const QString cleanPath = clean(localPath);
     if (cleanPath.isEmpty()) throw std::invalid_argument("localPath is required");
     const QString peer = clean(peerId);
@@ -288,12 +293,16 @@ RemoteIMMessage ChatState::queueOutgoingFileTo(const QString& peerId, const QStr
     return message;
 }
 
-RemoteIMMessage ChatState::queueOutgoingVideo(const QString& localPath, const QString& fileName, const QString& coverPath, int durationSeconds, qint64 sizeBytes, const QString& text, bool captionAbove) {
+RemoteIMMessage ChatState::queueOutgoingVideo(const QString& localPath, const QString& fileName,
+                                              const QString& coverPath, int durationSeconds, qint64 sizeBytes,
+                                              const QString& text, bool captionAbove) {
     return queueOutgoingVideoTo(requireSelectedPeer(), localPath, fileName, coverPath,
                                 durationSeconds, sizeBytes, text, captionAbove);
 }
 
-RemoteIMMessage ChatState::queueOutgoingVideoTo(const QString& peerId, const QString& localPath, const QString& fileName, const QString& coverPath, int durationSeconds, qint64 sizeBytes, const QString& text, bool captionAbove) {
+RemoteIMMessage ChatState::queueOutgoingVideoTo(const QString& peerId, const QString& localPath,
+                                                const QString& fileName, const QString& coverPath, int durationSeconds,
+                                                qint64 sizeBytes, const QString& text, bool captionAbove) {
     const QString cleanPath = clean(localPath);
     if (cleanPath.isEmpty()) throw std::invalid_argument("localPath is required");
     const QString peer = clean(peerId);
@@ -333,7 +342,8 @@ RemoteIMMessage ChatState::receiveText(const QString& fromUserId, const QString&
     return message;
 }
 
-RemoteIMMessage ChatState::receiveImage(const QString& fromUserId, const QString& localPath, int width, int height, qint64 sizeBytes) {
+RemoteIMMessage ChatState::receiveImage(const QString& fromUserId, const QString& localPath, int width, int height,
+                                        qint64 sizeBytes) {
     const QString peerId = clean(fromUserId);
     const QString cleanPath = clean(localPath);
     if (peerId.isEmpty()) throw std::invalid_argument("fromUserId is required");
@@ -353,7 +363,8 @@ RemoteIMMessage ChatState::receiveImage(const QString& fromUserId, const QString
     return message;
 }
 
-RemoteIMMessage ChatState::receiveFile(const QString& fromUserId, const QString& localPath, const QString& fileName, const QString& mimeType, qint64 sizeBytes) {
+RemoteIMMessage ChatState::receiveFile(const QString& fromUserId, const QString& localPath, const QString& fileName,
+                                       const QString& mimeType, qint64 sizeBytes) {
     const QString peerId = clean(fromUserId);
     const QString cleanPath = clean(localPath);
     if (peerId.isEmpty()) throw std::invalid_argument("fromUserId is required");

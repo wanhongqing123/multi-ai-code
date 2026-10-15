@@ -31,7 +31,11 @@ final class ActivityBubbleView extends View {
     }
     @Override protected void onAttachedToWindow() { super.onAttachedToWindow(); updateAnimation(); }
     @Override protected void onDetachedFromWindow() { animation.cancel(); super.onDetachedFromWindow(); }
-    @Override protected void onWindowVisibilityChanged(int visibility) { super.onWindowVisibilityChanged(visibility); updateAnimation(); }
+    @Override
+    protected void onWindowVisibilityChanged(int visibility) {
+        super.onWindowVisibilityChanged(visibility);
+        updateAnimation();
+    }
     private void updateAnimation() {
         if (animation == null) return;
         if (isAttachedToWindow() && getWindowVisibility() == VISIBLE && ValueAnimator.areAnimatorsEnabled()) {

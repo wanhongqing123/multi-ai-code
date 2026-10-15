@@ -108,7 +108,8 @@ final class AppDiagnosticLog: DiagnosticLogSink {
         emitToUnifiedLog(entry)
         recentEntries.append(entry)
         if recentEntries.count > 2048 {
-            droppedAccountEntries += recentEntries.prefix(512).filter { $0.fields["account"] == performanceAccountTag }.count
+            droppedAccountEntries +=
+                recentEntries.prefix(512).filter { $0.fields["account"] == performanceAccountTag }.count
             recentEntries.removeFirst(512)
         }
         pendingEntries.append(entry)
@@ -135,7 +136,9 @@ final class AppDiagnosticLog: DiagnosticLogSink {
         do {
             let url = try await fileStore.makeExportSnapshot(in: exportDirectoryURL)
             record(level: .info, category: "interaction-performance", event: "diagnostic-export-finished",
-                fields: fields.merging(["duration_ms": String(Int((ProcessInfo.processInfo.systemUptime - started) * 1000))]) { _, b in b })
+                fields: fields.merging([
+                    "duration_ms": String(Int((ProcessInfo.processInfo.systemUptime - started) * 1000))
+                ]) { _, b in b })
             return url
         } catch {
             record(level: .warning, category: "interaction-performance", event: "diagnostic-export-failed",
@@ -146,7 +149,8 @@ final class AppDiagnosticLog: DiagnosticLogSink {
 
     func remoteMetadata(peerUserID: String, accountTag: String, since: Date) -> [RemoteDiagnosticsLogEntry] {
         flushInteractionTimings()
-        let retained = RemoteDiagnosticsProtocol.scopedLogs(recentEntries, accountTag: accountTag, peerUserID: peerUserID, since: since, limit: 2048)
+        let retained = RemoteDiagnosticsProtocol.scopedLogs(
+            recentEntries, accountTag: accountTag, peerUserID: peerUserID, since: since, limit: 2048)
         var result = Array(retained.suffix(1000))
         result.append(RemoteDiagnosticsLogEntry(DiagnosticLogEntry(sequence: sequence,
             createdAt: Self.timestampFormatter.string(from: Date()), level: .info, category: "diagnostics",
@@ -325,19 +329,31 @@ final class AppDiagnosticLog: DiagnosticLogSink {
         switch entry.level {
         case .debug:
             logger.debug(
-                "[\(category, privacy: .public)] event=\(event, privacy: .public) seq=\(entry.sequence, privacy: .public) fields=\(fields, privacy: .private(mask: .hash))"
+                """
+                [\(category, privacy: .public)] event=\(event, privacy: .public) \
+                seq=\(entry.sequence, privacy: .public) fields=\(fields, privacy: .private(mask: .hash))
+                """
             )
         case .info:
             logger.info(
-                "[\(category, privacy: .public)] event=\(event, privacy: .public) seq=\(entry.sequence, privacy: .public) fields=\(fields, privacy: .private(mask: .hash))"
+                """
+                [\(category, privacy: .public)] event=\(event, privacy: .public) \
+                seq=\(entry.sequence, privacy: .public) fields=\(fields, privacy: .private(mask: .hash))
+                """
             )
         case .warning:
             logger.warning(
-                "[\(category, privacy: .public)] event=\(event, privacy: .public) seq=\(entry.sequence, privacy: .public) fields=\(fields, privacy: .private(mask: .hash))"
+                """
+                [\(category, privacy: .public)] event=\(event, privacy: .public) \
+                seq=\(entry.sequence, privacy: .public) fields=\(fields, privacy: .private(mask: .hash))
+                """
             )
         case .error:
             logger.error(
-                "[\(category, privacy: .public)] event=\(event, privacy: .public) seq=\(entry.sequence, privacy: .public) fields=\(fields, privacy: .private(mask: .hash))"
+                """
+                [\(category, privacy: .public)] event=\(event, privacy: .public) \
+                seq=\(entry.sequence, privacy: .public) fields=\(fields, privacy: .private(mask: .hash))
+                """
             )
         }
     }
@@ -349,7 +365,10 @@ final class AppDiagnosticLog: DiagnosticLogSink {
             category: "diagnostics"
         )
         logger.error(
-            "[diagnostics] event=\(event, privacy: .public) domain=\(value.domain, privacy: .private(mask: .hash)) code=\(value.code, privacy: .public)"
+            """
+            [diagnostics] event=\(event, privacy: .public) \
+            domain=\(value.domain, privacy: .private(mask: .hash)) code=\(value.code, privacy: .public)
+            """
         )
     }
 }

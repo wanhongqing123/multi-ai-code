@@ -44,9 +44,11 @@ private final class SpeechEngineHandle: @unchecked Sendable {
     @MainActor
     /// 申请麦克风、激活音频会话并启动实时识别。
     /// 每次开始分配新的会话代次；旧识别器回调不得更新当前转写悬浮层。
-    func start(delegate: TencentRealtimeSpeechRecognizer) async throws -> (began: TimeInterval, returned: TimeInterval) {
+    func start(delegate: TencentRealtimeSpeechRecognizer) async throws -> (began: TimeInterval, returned: TimeInterval)
+    {
         let storage = storage, cancellation = cancellation
-        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<(TimeInterval, TimeInterval), Error>) in
+        return try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<(TimeInterval, TimeInterval), Error>) in
             RemoteIMBackgroundWork.audioQueue.async {
                 do {
                     try cancellation.check()
@@ -227,7 +229,9 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
                     AppDiagnosticLog.shared.record(level: .info, category: "asr", event: "sdk-stop-returned",
                         fields: fields.merging(["duration_ms": String(duration), "session": String(session),
                                                 "executor": "audio-queue",
-                                                "ui_resume_ms": Self.milliseconds(from: returnedAt, to: ProcessInfo.processInfo.systemUptime)]) { _, value in value })
+                            "ui_resume_ms": Self.milliseconds(
+                                from: returnedAt, to: ProcessInfo.processInfo.systemUptime),
+                        ]) { _, value in value })
                 }
             }
             stopTimeoutTask?.cancel()

@@ -29,7 +29,11 @@ constexpr qint64 kSlowDecodeMs = 50;      // 只有超过这个值才记一条�
 class DecodeTask : public QRunnable {
 public:
     DecodeTask(MessageImageLoader* owner, QString path, QSize target, QString key)
-        : owner_(owner), path_(std::move(path)), target_(target), key_(std::move(key)), context_(RemoteDiagnostics::PerformanceLog::shared().context()) {
+        : owner_(owner),
+          path_(std::move(path)),
+          target_(target),
+          key_(std::move(key)),
+          context_(RemoteDiagnostics::PerformanceLog::shared().context()) {
         setAutoDelete(true);
     }
 

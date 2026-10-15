@@ -1,0 +1,23 @@
+# MaiChat 自有 C/C++ 代码使用 120 列；第三方源码不使用此配置重排。
+Language: Cpp
+BasedOnStyle: Google
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 120
+AccessModifierOffset: -4
+IndentAccessModifiers: false
+PointerAlignment: Left
+DerivePointerAlignment: false
+ReflowComments: false
+AlignTrailingComments: true
+SortIncludes: false
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortCaseLabelsOnASingleLine: true
+---
+Language: Java
+BasedOnStyle: Google
+IndentWidth: 4
+ContinuationIndentWidth: 8
+ColumnLimit: 120

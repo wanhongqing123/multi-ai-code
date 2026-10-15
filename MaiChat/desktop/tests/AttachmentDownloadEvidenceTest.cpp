@@ -270,7 +270,8 @@ void AttachmentDownloadEvidenceTest::directoryAtCachePathIsNotAFileHit()
     QVERIFY(QDir().mkdir(target));
     fake->deliver(fileMessage(url, name, QStringLiteral("m-directory")));
     const AccountTag account{123456, QStringLiteral("desktop-user")};
-    QTRY_VERIFY_WITH_TIMEOUT(hasPhase(client.diagnosticsEvidence().exportFor(account, "phone-user"), AttachmentPhase::WriteFailed), 1500);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        hasPhase(client.diagnosticsEvidence().exportFor(account, "phone-user"), AttachmentPhase::WriteFailed), 1500);
     const auto events = client.diagnosticsEvidence().exportFor(account, "phone-user");
     QVERIFY(!hasPhase(events, AttachmentPhase::CacheHit));
     QVERIFY(!hasPhase(events, AttachmentPhase::Delivered)); QCOMPARE(live.count(), 0);

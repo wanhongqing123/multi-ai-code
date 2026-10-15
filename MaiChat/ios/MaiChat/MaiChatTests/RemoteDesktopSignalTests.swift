@@ -39,7 +39,11 @@ final class RemoteDesktopSignalTests: XCTestCase {
 
     func testDecodesDesktopCaptureGeometryFixture() throws {
         let text = RemoteDesktopSignal.prefix
-            + #"{"v":1,"type":"accept","sessionId":"session-geometry-1","roomId":"mc-room-1","captureGeometry":{"sourceWidth":2560,"sourceHeight":1600,"captureX":0,"captureY":0,"captureWidth":2560,"captureHeight":1600,"contentMode":"fit","revision":1}}"#
+            + #"""
+                {"v":1,"type":"accept","sessionId":"session-geometry-1","roomId":"mc-room-1",\#
+                "captureGeometry":{"sourceWidth":2560,"sourceHeight":1600,"captureX":0,"captureY":0,\#
+                "captureWidth":2560,"captureHeight":1600,"contentMode":"fit","revision":1}}
+                """#
         let expectedGeometry = makeGeometry()
 
         let signal = try XCTUnwrap(RemoteDesktopSignal.decodeText(text))
@@ -86,7 +90,11 @@ final class RemoteDesktopSignalTests: XCTestCase {
         )
         let encoded = try constructed.encodedText()
         let maliciousText = RemoteDesktopSignal.prefix
-            + #"{"v":1,"type":"invite","sessionId":"invite-with-geometry","captureGeometry":{"sourceWidth":2560,"sourceHeight":1600,"captureX":0,"captureY":0,"captureWidth":2560,"captureHeight":1600,"contentMode":"fit","revision":1}}"#
+            + #"""
+                {"v":1,"type":"invite","sessionId":"invite-with-geometry","captureGeometry":{"sourceWidth":2560,\#
+                "sourceHeight":1600,"captureX":0,"captureY":0,"captureWidth":2560,"captureHeight":1600,\#
+                "contentMode":"fit","revision":1}}
+                """#
 
         XCTAssertNil(constructed.captureGeometry)
         XCTAssertEqual(constructed.captureGeometryDisposition, .absent)
@@ -99,7 +107,11 @@ final class RemoteDesktopSignalTests: XCTestCase {
 
     func testInvalidRevisionDropsOnlyCaptureGeometry() throws {
         let text = RemoteDesktopSignal.prefix
-            + #"{"v":1,"type":"accept","sessionId":"invalid-revision","roomId":"mc-room-1","captureGeometry":{"sourceWidth":2560,"sourceHeight":1600,"captureX":0,"captureY":0,"captureWidth":2560,"captureHeight":1600,"contentMode":"fit","revision":0}}"#
+            + #"""
+                {"v":1,"type":"accept","sessionId":"invalid-revision","roomId":"mc-room-1",\#
+                "captureGeometry":{"sourceWidth":2560,"sourceHeight":1600,"captureX":0,"captureY":0,\#
+                "captureWidth":2560,"captureHeight":1600,"contentMode":"fit","revision":0}}
+                """#
         let candidate = makeGeometry(revision: 0)
 
         let signal = try XCTUnwrap(RemoteDesktopSignal.decodeText(text))
@@ -114,7 +126,11 @@ final class RemoteDesktopSignalTests: XCTestCase {
 
     func testOutOfBoundsCaptureDropsOnlyCaptureGeometry() throws {
         let text = RemoteDesktopSignal.prefix
-            + #"{"v":1,"type":"accept","sessionId":"out-of-bounds","roomId":"mc-room-1","captureGeometry":{"sourceWidth":2560,"sourceHeight":1600,"captureX":2000,"captureY":0,"captureWidth":1000,"captureHeight":1600,"contentMode":"fit","revision":1}}"#
+            + #"""
+                {"v":1,"type":"accept","sessionId":"out-of-bounds","roomId":"mc-room-1",\#
+                "captureGeometry":{"sourceWidth":2560,"sourceHeight":1600,"captureX":2000,"captureY":0,\#
+                "captureWidth":1000,"captureHeight":1600,"contentMode":"fit","revision":1}}
+                """#
         let candidate = makeGeometry(captureX: 2_000, captureWidth: 1_000)
 
         let signal = try XCTUnwrap(RemoteDesktopSignal.decodeText(text))
@@ -129,7 +145,11 @@ final class RemoteDesktopSignalTests: XCTestCase {
 
     func testUnsupportedModeDropsOnlyCaptureGeometry() throws {
         let text = RemoteDesktopSignal.prefix
-            + #"{"v":1,"type":"accept","sessionId":"bad-mode","roomId":"mc-room-1","captureGeometry":{"sourceWidth":2560,"sourceHeight":1600,"captureX":0,"captureY":0,"captureWidth":2560,"captureHeight":1600,"contentMode":"fill","revision":1}}"#
+            + #"""
+                {"v":1,"type":"accept","sessionId":"bad-mode","roomId":"mc-room-1",\#
+                "captureGeometry":{"sourceWidth":2560,"sourceHeight":1600,"captureX":0,"captureY":0,\#
+                "captureWidth":2560,"captureHeight":1600,"contentMode":"fill","revision":1}}
+                """#
         let candidate = makeGeometry(contentMode: "fill")
 
         let signal = try XCTUnwrap(RemoteDesktopSignal.decodeText(text))
@@ -144,7 +164,11 @@ final class RemoteDesktopSignalTests: XCTestCase {
 
     func testOversizedGeometryDropsOnlyCaptureGeometry() throws {
         let text = RemoteDesktopSignal.prefix
-            + #"{"v":1,"type":"accept","sessionId":"oversized","roomId":"mc-room-1","captureGeometry":{"sourceWidth":65536,"sourceHeight":1600,"captureX":0,"captureY":0,"captureWidth":65536,"captureHeight":1600,"contentMode":"fit","revision":1}}"#
+            + #"""
+                {"v":1,"type":"accept","sessionId":"oversized","roomId":"mc-room-1",\#
+                "captureGeometry":{"sourceWidth":65536,"sourceHeight":1600,"captureX":0,"captureY":0,\#
+                "captureWidth":65536,"captureHeight":1600,"contentMode":"fit","revision":1}}
+                """#
         let candidate = makeGeometry(sourceWidth: 65_536, captureWidth: 65_536)
 
         let signal = try XCTUnwrap(RemoteDesktopSignal.decodeText(text))

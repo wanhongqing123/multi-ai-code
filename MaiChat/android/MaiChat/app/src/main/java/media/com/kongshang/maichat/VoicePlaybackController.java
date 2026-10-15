@@ -42,5 +42,12 @@ final class VoicePlaybackController {
         try { player.stop(); } catch (IllegalStateException ignored) { }
         player.release(); player = null;
     }
-    void close() { closed = true; generation.incrementAndGet(); worker.post(() -> { release(); thread.quitSafely(); }); }
+    void close() {
+        closed = true;
+        generation.incrementAndGet();
+        worker.post(() -> {
+            release();
+            thread.quitSafely();
+        });
+    }
 }

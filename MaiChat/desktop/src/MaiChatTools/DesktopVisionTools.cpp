@@ -95,7 +95,8 @@ public:
     }
 
     std::string parametersSchema() const override {
-        return R"({"type":"object","properties":{"path":{"type":"string","description":"Absolute or relative image path"}},"required":["path"],"additionalProperties":false})";
+        return R"({"type":"object","properties":{"path":{"type":"string","description":"Absolute or relative image pat)"
+            R"(h"}},"required":["path"],"additionalProperties":false})";
     }
 
     bool requiresApproval(const std::string&) const override {

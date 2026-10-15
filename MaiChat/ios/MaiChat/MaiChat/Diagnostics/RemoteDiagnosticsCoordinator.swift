@@ -45,7 +45,10 @@ final class RemoteDiagnosticsCoordinator: ObservableObject {
     private let deliveryTimeout: Duration
     var contextIdentity: String { appState?.remoteDiagnosticsIdentity ?? "" }
 
-    init(appState: any RemoteDiagnosticsContextProvider, timeout: Duration = .seconds(60), pollInterval: Duration = .milliseconds(500), deliveryTimeout: Duration = .seconds(30)) {
+    init(
+        appState: any RemoteDiagnosticsContextProvider, timeout: Duration = .seconds(60),
+        pollInterval: Duration = .milliseconds(500), deliveryTimeout: Duration = .seconds(30)
+    ) {
         self.appState = appState
         self.timeout = timeout
         self.pollInterval = pollInterval
@@ -88,7 +91,8 @@ final class RemoteDiagnosticsCoordinator: ObservableObject {
             status = "确认期间账号或连接已变更，未发起采集，请关闭后重新确认。"
             return
         }
-        guard appState.remoteDiagnosticsMayContinue(identity: identity, peer: peer.userID, recipient: recipient.userID) else {
+        guard appState.remoteDiagnosticsMayContinue(identity: identity, peer: peer.userID, recipient: recipient.userID)
+        else {
             status = "当前账号、连接或好友已失效，未发起采集。"
             return
         }
@@ -117,7 +121,10 @@ final class RemoteDiagnosticsCoordinator: ObservableObject {
                 var remoteFailed = false
                 while requested != false && ContinuousClock.now < deadline {
                     try Task.checkCancellation()
-                    guard appState.remoteDiagnosticsMayContinue(identity: identity, peer: peer.userID, recipient: recipient.userID) else {
+                    guard
+                        appState.remoteDiagnosticsMayContinue(
+                            identity: identity, peer: peer.userID, recipient: recipient.userID)
+                    else {
                         self.status = "账号、连接或好友已变更，已取消回传。"
                         return
                     }
@@ -147,7 +154,8 @@ final class RemoteDiagnosticsCoordinator: ObservableObject {
                                 else { throw RemoteDiagnosticsError.oversizedReport }
                                 let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: path))
                                 defer { try? handle.close() }
-                                let data = try handle.read(upToCount: RemoteDiagnosticsProtocol.maximumBytes + 1) ?? Data()
+                                let data =
+                                    try handle.read(upToCount: RemoteDiagnosticsProtocol.maximumBytes + 1) ?? Data()
                                 return try RemoteDiagnosticsProtocol.sanitizedReport(data, requestID: requestID)
                             }.value
                             break
@@ -166,7 +174,10 @@ final class RemoteDiagnosticsCoordinator: ObservableObject {
                     try await Task.sleep(for: self.pollInterval)
                 }
                 try Task.checkCancellation()
-                guard appState.remoteDiagnosticsMayContinue(identity: identity, peer: peer.userID, recipient: recipient.userID) else {
+                guard
+                    appState.remoteDiagnosticsMayContinue(
+                        identity: identity, peer: peer.userID, recipient: recipient.userID)
+                else {
                     self.status = "账号、连接或好友已变更，已取消回传。"
                     return
                 }
@@ -180,24 +191,34 @@ final class RemoteDiagnosticsCoordinator: ObservableObject {
                     logs: appState.remoteDiagnosticsLogs(peer: peer.userID, since: began.addingTimeInterval(-1800))
                 )
                 let file = try await Task.detached {
-                    let data = try RemoteDiagnosticsProtocol.mergedReport(requestID: requestID, local: local, remote: sanitizedRemote, missingReason: missingReason)
-                    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("MaiChatRemoteDiagnostics", isDirectory: true)
-                    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-                    let url = folder.appendingPathComponent("maichat-diagnostics-\(requestID.uuidString.lowercased()).md")
+                    let data = try RemoteDiagnosticsProtocol.mergedReport(
+                        requestID: requestID, local: local, remote: sanitizedRemote, missingReason: missingReason)
+                    let folder = FileManager.default.temporaryDirectory.appendingPathComponent(
+                        "MaiChatRemoteDiagnostics", isDirectory: true)
+                    try FileManager.default.createDirectory(
+                        at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+                    let url = folder.appendingPathComponent(
+                        "maichat-diagnostics-\(requestID.uuidString.lowercased()).md")
                     try data.write(to: url, options: .atomic)
                     try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
                     return url
                 }.value
                 try Task.checkCancellation()
-                guard appState.remoteDiagnosticsMayContinue(identity: identity, peer: peer.userID, recipient: recipient.userID) else {
+                guard
+                    appState.remoteDiagnosticsMayContinue(
+                        identity: identity, peer: peer.userID, recipient: recipient.userID)
+                else {
                     self.status = "账号或好友已变更，报告未发送。"
                     return
                 }
                 self.isSending = true
                 self.status = "正在将\(remote == nil ? "部分" : "合并")报告发送给 \(recipient.displayName)…"
-                let sent = await self.deliver { await appState.sendRemoteDiagnosticsReport(file, to: recipient, identity: identity) }
+                let sent = await self.deliver {
+                    await appState.sendRemoteDiagnosticsReport(file, to: recipient, identity: identity)
+                }
                 if sent == true {
-                    self.status = "已发送给 \(recipient.displayName)\(remote == nil ? "（远端现场缺失，原因已写入报告）" : "，缺失或截断项目已在报告中标明")。"
+                    self.status =
+                        "已发送给 \(recipient.displayName)\(remote == nil ? "（远端现场缺失，原因已写入报告）" : "，缺失或截断项目已在报告中标明")。"
                 } else if sent == nil {
                     self.status = "发送结果尚未确认，请查看排查好友聊天中的消息状态，避免连续重发。"
                 } else {

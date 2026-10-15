@@ -449,14 +449,16 @@ actor AIAssistantBackend {
         }
     }
 
-    private func requestAgentOperation(_ operation: String, values: [String: Any] = [:], force: Bool = false) throws -> AIResponse {
+    private func requestAgentOperation(_ operation: String, values: [String: Any] = [:], force: Bool = false) throws
+        -> AIResponse
+    {
         var request: [String: Any] = values
         request["op"] = operation
         request["force"] = force
         let data = try JSONSerialization.data(withJSONObject: request)
         guard let text = String(data: data, encoding: .utf8),
-              let response = text.withCString({ maiMobileAgentRequest(UnsafeMutableRawPointer(bitPattern: address), $0) }) else {
-            throw AIBackendError(message: "创作中心初始化失败")
+            let response = text.withCString({ maiMobileAgentRequest(UnsafeMutableRawPointer(bitPattern: address), $0) })
+        else { throw AIBackendError(message: "创作中心初始化失败")
         }
         defer { maiMobileAgentFree(response) }
         let decoded = try JSONDecoder().decode(AIResponse.self, from: Data(String(cString: response).utf8))
@@ -477,7 +479,10 @@ actor AIAssistantBackend {
         var directory = try AIAssistantWorkspaceLocator.directory(for: accountUserID)
         #if targetEnvironment(simulator)
         let uiTest = ProcessInfo.processInfo.arguments.contains("--ai-ui-test")
-        if uiTest { directory = FileManager.default.temporaryDirectory.appendingPathComponent("AIAssistantUITest-" + ProcessInfo.processInfo.environment["MAICHAT_AI_TEST_ID", default: "manual"]) }
+            if uiTest {
+                directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+                    "AIAssistantUITest-" + ProcessInfo.processInfo.environment["MAICHAT_AI_TEST_ID", default: "manual"])
+            }
         #endif
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         root = directory
@@ -523,8 +528,11 @@ actor AIAssistantBackend {
         let workspace = root.appendingPathComponent("Workspace", isDirectory: true)
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
         let appRootPath = AIAssistantPathPolicy.appRoot(workspacePath: workspace.path)
-        _ = try requestAgentOperation("configure", values: ["database": root.appendingPathComponent("sessions.sqlite").path,
-            "workspace": workspace.path, "baseUrl": config.baseUrl, "apiKey": key,
+        _ = try requestAgentOperation(
+            "configure",
+            values: [
+                "database": root.appendingPathComponent("sessions.sqlite").path,
+                "workspace": workspace.path, "baseUrl": config.baseUrl, "apiKey": key,
             "wire": config.effectiveWire,
             "model": config.model, "policy": config.policy, "appRoot": appRootPath,
             "caBundle": caBundle.path,
@@ -550,7 +558,8 @@ actor AIAssistantBackend {
         let previousKey = storedKey(for: previous.model)
         try configure(normalized, key: effectiveKey) // 正在工作时核心拒绝，不能先覆盖已保存配置。
         do {
-            try JSONEncoder().encode(normalized).write(to: root!.appendingPathComponent("settings.json"), options: .atomic)
+            try JSONEncoder().encode(normalized).write(
+                to: root!.appendingPathComponent("settings.json"), options: .atomic)
             settings = normalized
         } catch {
             try? configure(previous, key: previousKey)
@@ -966,7 +975,12 @@ final class AIAssistantModel: ObservableObject {
         guard selected == session else { return nil }
         messages = Array(latest.reversed()).map { $0.withoutReasoningText() }
         historyLoaded = true
-        logAIHistoryEvent("first-page session=\(session) count=\(latest.count) newest=\(latest.first?.id ?? "none") role=\(latest.first?.role ?? "none") parts=\(latest.first?.parts.count ?? 0)")
+        logAIHistoryEvent(
+            """
+            first-page session=\(session) count=\(latest.count) newest=\(latest.first?.id ?? "none") \
+            role=\(latest.first?.role ?? "none") parts=\(latest.first?.parts.count ?? 0)
+            """
+        )
         return latest.first?.id
     }
 
@@ -978,7 +992,12 @@ final class AIAssistantModel: ObservableObject {
             guard selected == session else { return }
             mergeMessages(earlier)
             hasOlderMessages = earlier.count == Self.recentMessageCount - 1
-            logAIHistoryEvent("older-page session=\(session) added=\(earlier.count) first=\(messages.first?.id ?? "none") last=\(messages.last?.id ?? "none")")
+            logAIHistoryEvent(
+                """
+                older-page session=\(session) added=\(earlier.count) first=\(messages.first?.id ?? "none") \
+                last=\(messages.last?.id ?? "none")
+                """
+            )
             await refresh(force: true)
         } catch {
             logAIHistoryEvent("older-page error=\(error.localizedDescription)")

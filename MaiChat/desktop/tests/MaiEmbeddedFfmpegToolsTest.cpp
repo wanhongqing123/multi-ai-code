@@ -400,7 +400,8 @@ int main(int argc, char **argv) {
   }
   const MaiToolResult nestedExpression = runFilterGraph(
       *convert, context, {"testsrc2=s=128x128:d=0.1:r=1"},
-      R"([0:v]format=rgb24,split[t1][t2];[t1]boxblur=8[norm];[t2][norm]blend=all_mode=difference,geq=lum='255-100*pow(p(X\,Y)/255\,2)'[out])");
+      R"([0:v]format=rgb24,split[t1][t2];[t1]boxblur=8[norm];[t2][norm]blend=all_mode=difference,)"
+          R"(geq=lum='255-100*pow(p(X\,Y)/255\,2)'[out])");
   if (nestedExpression.hasError()) {
     std::fprintf(stderr, "nested geq expression failed: %s\n",
                  nestedExpression.error().message().c_str());

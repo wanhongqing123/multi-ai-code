@@ -946,7 +946,11 @@ private final class RemoteDesktopViewportUIView: UIView, UIScrollViewDelegate {
         }
         if let captureGeometry {
             fields["source_size"] = "\(captureGeometry.sourceWidth)x\(captureGeometry.sourceHeight)"
-            fields["capture_rect"] = "\(captureGeometry.captureX),\(captureGeometry.captureY) \(captureGeometry.captureWidth)x\(captureGeometry.captureHeight)"
+            fields["capture_rect"] =
+                """
+                \(captureGeometry.captureX),\(captureGeometry.captureY) \(captureGeometry.captureWidth)\
+                x\(captureGeometry.captureHeight)
+                """
             fields["content_mode"] = captureGeometry.contentMode
             fields["geometry_revision"] = String(captureGeometry.revision)
             fields["geometry_fallback"] = "active-content"

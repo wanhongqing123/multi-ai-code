@@ -87,9 +87,10 @@ public:
         operations.append(QStringLiteral("deleteConversation"));
         deletedConversationId = conversationId;
         deletedConversationType = conversationType;
-        if (completion) completion(deleteConversationCode,
-                                   deleteConversationCode == 0 ? QString() : QStringLiteral("delete conversation failed"),
-                                   QString());
+        if (completion)
+            completion(deleteConversationCode,
+                       deleteConversationCode == 0 ? QString() : QStringLiteral("delete conversation failed"),
+                       QString());
         return deleteConversationCode;
     }
 
@@ -193,7 +194,8 @@ void TimSdkRemoteIMClientTest::loadsAndUpdatesOwnAvatarWithoutAddingSelfAsContac
     auto api = std::make_unique<FakeTimSdkApi>();
     auto* fake = api.get();
     fake->profilePayload = QString::fromUtf8(
-        R"([{"user_profile_identifier":"owner","user_profile_nick_name":"Owner","user_profile_face_url":"https://example.com/first.jpg"}])");
+        R"([{"user_profile_identifier":"owner","user_profile_nick_name":"Owner","user_profile_face_url":"https://examp)"
+            R"(le.com/first.jpg"}])");
     TimSdkRemoteIMClient client(std::move(api));
     QSignalSpy profiles(&client, &RemoteIMClient::selfProfileReceived);
     QSignalSpy contacts(&client, &RemoteIMClient::contactsReceived);
@@ -276,9 +278,8 @@ void TimSdkRemoteIMClientTest::connectsThroughSdkAndSendsTextAndImage() {
     TimSdkRemoteIMClient client(std::move(api));
 
     bool connected = false;
-    client.connectToService(123456, QStringLiteral("desktop-user"), QStringLiteral("sig-value"), [&](bool ok, const QString&) {
-        connected = ok;
-    });
+    client.connectToService(123456, QStringLiteral("desktop-user"), QStringLiteral("sig-value"),
+                            [&](bool ok, const QString&) { connected = ok; });
 
     QVERIFY(connected);
     QCOMPARE(fake->initializedSdkAppId, 123456ULL);
@@ -290,10 +291,11 @@ void TimSdkRemoteIMClientTest::connectsThroughSdkAndSendsTextAndImage() {
     RemoteIMSendReceipt sentReceipt;
     fake->sendPayload = QStringLiteral(
         "{\"message_msg_id\":\"sdk-sent-1\",\"message_server_time\":1700000001}");
-    client.sendText(QStringLiteral("phone-user"), QStringLiteral("hello\nworld"), [&](bool ok, const QString&, const RemoteIMSendReceipt& receipt) {
-        textSent = ok;
-        sentReceipt = receipt;
-    });
+    client.sendText(QStringLiteral("phone-user"), QStringLiteral("hello\nworld"),
+                    [&](bool ok, const QString&, const RemoteIMSendReceipt& receipt) {
+                        textSent = ok;
+                        sentReceipt = receipt;
+                    });
     QVERIFY(textSent);
     // 发送回执带 SDK 稳定 id 与服务端顺序（和漫游/实时投递使用同一排序键）。
     QCOMPARE(sentReceipt.remoteMessageId, QStringLiteral("sdk-sent-1#0"));
@@ -314,9 +316,8 @@ void TimSdkRemoteIMClientTest::connectsThroughSdkAndSendsTextAndImage() {
     QCOMPARE(metadata.value(QStringLiteral("origin")).toString(), QStringLiteral("machine"));
 
     bool imageSent = false;
-    client.sendImage(QStringLiteral("phone-user"), QStringLiteral("/tmp/outgoing.png"), [&](bool ok, const QString&, const RemoteIMSendReceipt&) {
-        imageSent = ok;
-    });
+    client.sendImage(QStringLiteral("phone-user"), QStringLiteral("/tmp/outgoing.png"),
+                     [&](bool ok, const QString&, const RemoteIMSendReceipt&) { imageSent = ok; });
     QVERIFY(imageSent);
     QCOMPARE(fake->lastConversationId, QStringLiteral("phone-user"));
     elem = firstElement(fake->lastJsonMessage);
@@ -605,7 +606,8 @@ void TimSdkRemoteIMClientTest::fetchesContactsConversationsAndHistoryAfterLogin(
     QCOMPARE(friendContacts.first().userId, QStringLiteral("phone-user"));
     QCOMPARE(friendContacts.first().displayName, QStringLiteral("手机"));
     QCOMPARE(friendContacts.first().avatarUrl, QStringLiteral("https://example.com/iphone.png"));
-    const QList<RemoteIMContact> conversationContacts = qvariant_cast<QList<RemoteIMContact>>(contactsSpy.takeFirst().at(0));
+    const QList<RemoteIMContact> conversationContacts =
+        qvariant_cast<QList<RemoteIMContact>>(contactsSpy.takeFirst().at(0));
     QCOMPARE(conversationContacts.size(), 1);
     QCOMPARE(conversationContacts.first().userId, QStringLiteral("phone-user"));
     QCOMPARE(conversationContacts.first().avatarUrl,
@@ -1047,10 +1049,11 @@ void TimSdkRemoteIMClientTest::rejectsMissingCredentials() {
     bool ok = true;
     QString error;
 
-    client.connectToService(0, QStringLiteral("desktop-user"), QStringLiteral("sig-value"), [&](bool result, const QString& message) {
-        ok = result;
-        error = message;
-    });
+    client.connectToService(0, QStringLiteral("desktop-user"), QStringLiteral("sig-value"),
+                            [&](bool result, const QString& message) {
+                                ok = result;
+                                error = message;
+                            });
 
     QVERIFY(!ok);
     QVERIFY(error.contains(QStringLiteral("SDK AppID")));

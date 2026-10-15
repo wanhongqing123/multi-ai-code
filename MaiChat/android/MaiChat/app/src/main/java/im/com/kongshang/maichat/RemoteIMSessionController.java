@@ -66,7 +66,8 @@ public final class RemoteIMSessionController {
     private int mediaRevision;
     public int mediaRevision() { return mediaRevision; }
     private boolean restoringAccount;
-    private final java.util.concurrent.ExecutorService ioExecutor = java.util.concurrent.Executors.newSingleThreadExecutor();
+    private final java.util.concurrent.ExecutorService ioExecutor =
+            java.util.concurrent.Executors.newSingleThreadExecutor();
     private final java.util.Set<String> loadingPeers = new java.util.HashSet<>();
     private final Map<String, Integer> pageRequests = new HashMap<>();
     private final Map<String, Integer> peerEpochs = new HashMap<>();
@@ -716,11 +717,13 @@ public final class RemoteIMSessionController {
         return sendImageMessageTo(chatState.selectedPeerId(), localPath, width, height, sizeBytes);
     }
 
-    public RemoteIMMessage sendImageMessageTo(String peer, String localPath, int width, int height, long sizeBytes) throws IOException {
+    public RemoteIMMessage sendImageMessageTo(String peer, String localPath, int width, int height, long sizeBytes)
+            throws IOException {
         return sendImageMessageTo(peer, localPath, width, height, sizeBytes, null);
     }
 
-    public RemoteIMMessage sendImageMessageTo(String peer, String localPath, int width, int height, long sizeBytes, RemoteIMQuote quote) throws IOException {
+    public RemoteIMMessage sendImageMessageTo(String peer, String localPath, int width, int height, long sizeBytes,
+            RemoteIMQuote quote) throws IOException {
         RemoteIMMessage message = chatState.queueOutgoingImageTo(peer, localPath, width, height, sizeBytes);
         message.setQuote(quote);
         if (!productionMode) {
@@ -747,7 +750,8 @@ public final class RemoteIMSessionController {
         return sendVoiceMessageTo(peer, localPath, durationSeconds, null);
     }
 
-    public RemoteIMMessage sendVoiceMessageTo(String peer, String localPath, int durationSeconds, RemoteIMQuote quote) throws IOException {
+    public RemoteIMMessage sendVoiceMessageTo(String peer, String localPath, int durationSeconds, RemoteIMQuote quote)
+            throws IOException {
         RemoteIMMessage message = chatState.queueOutgoingVoiceTo(peer, localPath, durationSeconds);
         message.setQuote(quote);
         if (!productionMode) {
@@ -776,11 +780,13 @@ public final class RemoteIMSessionController {
         return sendFileMessageTo(chatState.selectedPeerId(), localPath, fileName, mimeType, sizeBytes);
     }
 
-    public RemoteIMMessage sendFileMessageTo(String peer, String localPath, String fileName, String mimeType, long sizeBytes) throws IOException {
+    public RemoteIMMessage sendFileMessageTo(
+            String peer, String localPath, String fileName, String mimeType, long sizeBytes) throws IOException {
         return sendFileMessageTo(peer, localPath, fileName, mimeType, sizeBytes, null);
     }
 
-    public RemoteIMMessage sendFileMessageTo(String peer, String localPath, String fileName, String mimeType, long sizeBytes, RemoteIMQuote quote) throws IOException {
+    public RemoteIMMessage sendFileMessageTo(String peer, String localPath, String fileName, String mimeType,
+            long sizeBytes, RemoteIMQuote quote) throws IOException {
         RemoteIMMessage message = chatState.queueOutgoingFileTo(
             peer, localPath,
             fileName,
@@ -809,7 +815,8 @@ public final class RemoteIMSessionController {
         return sendVideoMessageTo(peer, attachment, null);
     }
 
-    public RemoteIMMessage sendVideoMessageTo(String peer, RemoteIMVideoAttachment attachment, RemoteIMQuote quote) throws IOException {
+    public RemoteIMMessage sendVideoMessageTo(String peer, RemoteIMVideoAttachment attachment, RemoteIMQuote quote)
+            throws IOException {
         RemoteIMMessage message = chatState.queueOutgoingVideoTo(peer, attachment);
         message.setQuote(quote);
         if (!productionMode) { markMessageSentAndSave(message); return message; }
@@ -825,16 +832,25 @@ public final class RemoteIMSessionController {
         int generation = accountGeneration;
         enqueueIO(() -> {
             try {
-                if (snapshot.imageAttachment() != null) requireForwardingFile(snapshot.imageAttachment().localPath(), "图片");
-                if (snapshot.voiceAttachment() != null) requireForwardingFile(snapshot.voiceAttachment().localPath(), "语音");
-                if (snapshot.videoAttachment() != null) requireForwardingFile(snapshot.videoAttachment().localPath(), "视频");
-                if (snapshot.fileAttachment() != null) requireForwardingFile(snapshot.fileAttachment().localPath(), "文件");
+                if (snapshot.imageAttachment() != null)
+                    requireForwardingFile(snapshot.imageAttachment().localPath(), "图片");
+                if (snapshot.voiceAttachment() != null)
+                    requireForwardingFile(snapshot.voiceAttachment().localPath(), "语音");
+                if (snapshot.videoAttachment() != null)
+                    requireForwardingFile(snapshot.videoAttachment().localPath(), "视频");
+                if (snapshot.fileAttachment() != null)
+                    requireForwardingFile(snapshot.fileAttachment().localPath(), "文件");
                 runOnMain(() -> {
                     if (generation != accountGeneration) return;
                     try { completed.accept(forwardMessage(snapshot, targetUserId, true)); }
                     catch (IOException | RuntimeException error) { failed.accept(error.getMessage()); }
                 });
-            } catch (Exception error) { runOnMain(() -> { if (generation == accountGeneration) failed.accept(error.getMessage()); }); }
+            } catch (Exception error) {
+                runOnMain(() -> {
+                    if (generation == accountGeneration)
+                        failed.accept(error.getMessage());
+                });
+            }
         });
     }
 
@@ -971,7 +987,10 @@ public final class RemoteIMSessionController {
             AndroidChatHistoryStore.Page page;
             try { page = historyStore.loadConversationPage(owner, peer, cursorTime, cursorId, 20); }
             catch (RuntimeException error) {
-                runOnMain(() -> { if (generation == accountGeneration && pageRequests.getOrDefault(peer, 0) == request) loadingPeers.remove(peer); });
+                runOnMain(() -> {
+                    if (generation == accountGeneration && pageRequests.getOrDefault(peer, 0) == request)
+                        loadingPeers.remove(peer);
+                });
                 throw error;
             }
             runOnMain(() -> {
@@ -1042,7 +1061,8 @@ public final class RemoteIMSessionController {
         return null;
     }
 
-    public void findQuotedMessage(String peer, String remoteId, java.util.function.Consumer<RemoteIMMessage> completion) {
+    public void findQuotedMessage(
+            String peer, String remoteId, java.util.function.Consumer<RemoteIMMessage> completion) {
         RemoteIMMessage cached = findQuotedMessage(peer, remoteId);
         if (cached != null || !productionMode) { completion.accept(cached); return; }
         String owner = chatState.ownerUserId();
@@ -1196,11 +1216,13 @@ public final class RemoteIMSessionController {
         int peerEpoch = peerEpochs.getOrDefault(incoming.fromUserId(), 0);
         RemoteIMActivitySignal replacedActivity = activities.get(incoming.fromUserId());
         enqueueIO(() -> {
-            boolean duplicate = !incoming.remoteId().isEmpty() && historyStore.containsRemoteId(owner, incoming.remoteId());
+            boolean duplicate =
+                    !incoming.remoteId().isEmpty() && historyStore.containsRemoteId(owner, incoming.remoteId());
             runOnMain(() -> {
                 if (duplicate || generation != accountGeneration
                     || peerEpoch != peerEpochs.getOrDefault(incoming.fromUserId(), 0)) return;
-                if (!incoming.remoteId().isEmpty() && chatState.messageWithRemoteId(incoming.remoteId()) != null) return;
+                if (!incoming.remoteId().isEmpty() && chatState.messageWithRemoteId(incoming.remoteId()) != null)
+                    return;
                 applyIncomingMessage(incoming, replacedActivity);
             });
         });
@@ -1209,9 +1231,11 @@ public final class RemoteIMSessionController {
     // 作用：将入站消息与会话历史、未读数和活动状态合并。
     private void applyIncomingMessage(RemoteIMMessage incoming, RemoteIMActivitySignal replacedActivity) {
         RemoteIMVideoAttachment preparedVideo = pendingVideoMedia.remove(incoming.remoteId());
-        if (preparedVideo != null && incoming.videoAttachment() != null) incoming = incoming.withVideoAttachment(preparedVideo);
+        if (preparedVideo != null && incoming.videoAttachment() != null)
+            incoming = incoming.withVideoAttachment(preparedVideo);
         RemoteIMActivitySignal currentActivity = activities.get(incoming.fromUserId());
-        if (replacedActivity != null && currentActivity != null && replacedActivity.activityId.equals(currentActivity.activityId)) {
+        if (replacedActivity != null && currentActivity != null
+                && replacedActivity.activityId.equals(currentActivity.activityId)) {
             activities.clear(incoming.fromUserId());
         }
         boolean knownContact = contactExists(incoming.fromUserId());
@@ -1294,7 +1318,8 @@ public final class RemoteIMSessionController {
                 unreadByUserId.getOrDefault(incoming.fromUserId(), 0) + 1
             );
         }
-        if (!visibleConversationUserId.equals(incoming.fromUserId())) chatState.retainRecentMessages(incoming.fromUserId(), 20);
+        if (!visibleConversationUserId.equals(incoming.fromUserId()))
+            chatState.retainRecentMessages(incoming.fromUserId(), 20);
         if (!knownContact) {
             refreshContactMetadata(Collections.singletonList(incoming.fromUserId()));
         }
@@ -1436,18 +1461,22 @@ public final class RemoteIMSessionController {
             });
         }
 
-        @Override public void onVideoMediaUpdated(String sender, String recipient, String remoteId, RemoteIMVideoAttachment attachment) {
+        @Override
+        public void onVideoMediaUpdated(
+                String sender, String recipient, String remoteId, RemoteIMVideoAttachment attachment) {
             runOnMain(() -> {
                 if (requiresLogin() || !chatState.ownerUserId().equals(recipient)) return;
                 pendingVideoMedia.put(remoteId, attachment);
-                if (pendingVideoMedia.size() > 128) pendingVideoMedia.remove(pendingVideoMedia.keySet().iterator().next());
+                if (pendingVideoMedia.size() > 128)
+                    pendingVideoMedia.remove(pendingVideoMedia.keySet().iterator().next());
                 RemoteIMMessage current = chatState.updateVideoMedia(remoteId, attachment);
                 if (current != null) {
                     pendingVideoMedia.remove(remoteId); persistMessage(current);
                 } else {
                     enqueueIO(() -> {
                         RemoteIMMessage stored = historyStore.messageWithRemoteId(recipient, sender, remoteId);
-                        if (stored != null) historyStore.upsertMessage(recipient, stored.withVideoAttachment(attachment));
+                        if (stored != null)
+                            historyStore.upsertMessage(recipient, stored.withVideoAttachment(attachment));
                     });
                 }
                 mediaRevision++; notifyStateChanged();

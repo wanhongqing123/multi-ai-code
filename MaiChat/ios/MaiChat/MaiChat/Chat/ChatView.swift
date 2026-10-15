@@ -164,7 +164,8 @@ private actor RemoteIMImagePipeline {
     }
 
     private static func cacheKey(for request: RemoteIMImageRequest) -> NSString {
-        "\(request.filePath)#\(request.maximumPixelSize)#\(request.fileSize)#\(request.modificationMilliseconds)" as NSString
+        "\(request.filePath)#\(request.maximumPixelSize)#\(request.fileSize)#\(request.modificationMilliseconds)"
+            as NSString
     }
 
     nonisolated private static func decode(
@@ -1016,8 +1017,8 @@ private struct ConversationPreviewText: View {
             .task(id: message?.text) {
                 let message = message
                 do {
-                    let result = try await RemoteIMBackgroundWork.parse { MarkdownConversationPreview.text(for: message) }
-                    guard !Task.isCancelled else { return }
+                let result = try await RemoteIMBackgroundWork.parse { MarkdownConversationPreview.text(for: message) }
+                guard !Task.isCancelled else { return }
                     preparedSource = message?.text
                     preparedText = result
                 } catch { }
@@ -1844,8 +1845,9 @@ private struct ChatDetailView: View {
 
 struct VoiceActionFramesKey: PreferenceKey {
     static let defaultValue: [VoiceTranscriptionTarget: CGRect] = [:]
-    static func reduce(value: inout [VoiceTranscriptionTarget: CGRect], nextValue: () -> [VoiceTranscriptionTarget: CGRect]) {
-        value.merge(nextValue()) { _, new in new }
+    static func reduce(
+        value: inout [VoiceTranscriptionTarget: CGRect], nextValue: () -> [VoiceTranscriptionTarget: CGRect]
+    ) { value.merge(nextValue()) { _, new in new }
     }
 }
 
@@ -2625,17 +2627,22 @@ private struct MessageListView: View {
                                 }
                                 .id(message.id)
                                 .onAppear {
-                                    if message.id == appState.chatState.messages(with: peerUserID).first?.id, scrollIntent.userBrowsedHistory {
-                                        Task { await loadEarlierMessagesIfNeeded() }
+                                        if message.id == appState.chatState.messages(with: peerUserID).first?.id,
+                                            scrollIntent.userBrowsedHistory
+                                        {
+                                            Task { await loadEarlierMessagesIfNeeded() }
                                     }
                                     let owner = appState.chatState.ownerUserID
                                     guard message.fromUserID == owner || message.toUserID == owner else { return }
                                     let peer = message.direction == .incoming ? message.fromUserID : message.toUserID
-                                    AppDiagnosticLog.shared.record(level: .debug, category: "remote-im-ui", event: "row-presented", fields: [
-                                        "account": appState.remoteDiagnosticsAccountTag,
+                                        AppDiagnosticLog.shared.record(
+                                            level: .debug, category: "remote-im-ui", event: "row-presented",
+                                            fields: [
+                                                "account": appState.remoteDiagnosticsAccountTag,
                                         "peer": DiagnosticLogPrivacy.stableTag(peer, prefix: "u"),
-                                        "message": DiagnosticLogPrivacy.stableTag(message.remoteID ?? message.id.uuidString, prefix: "m"),
-                                        "text_bytes": String(message.text.utf8.count)
+                                                "message": DiagnosticLogPrivacy.stableTag(
+                                                    message.remoteID ?? message.id.uuidString, prefix: "m"),
+                                                "text_bytes": String(message.text.utf8.count)
                                     ])
                                 }
                             }
@@ -4655,8 +4662,10 @@ private struct FileBubbleContent: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: isGitDiff ? "arrow.left.arrow.right.square" : attachment.mimeType == "text/html" ? "safari" : "doc.text")
-                .font(.system(size: 20, weight: .semibold))
+            Image(
+                systemName: isGitDiff
+                    ? "arrow.left.arrow.right.square" : attachment.mimeType == "text/html" ? "safari" : "doc.text"
+            ).font(.system(size: 20, weight: .semibold))
                 .foregroundStyle(RemoteIMStyle.blue)
                 .frame(width: 38, height: 38)
                 .background(RemoteIMStyle.blueSoft, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -4874,7 +4883,9 @@ struct MarkdownLikeText: View {
     }
 
     var body: some View {
-        let document = (prepared?.source == source ? prepared : nil) ?? MarkdownRenderCache.shared.cached(source) ?? (retainsPreviousWhilePreparing ? prepared : nil)
+        let document =
+            (prepared?.source == source ? prepared : nil) ?? MarkdownRenderCache.shared.cached(source)
+            ?? (retainsPreviousWhilePreparing ? prepared : nil)
         let blocks = document?.blocks ?? []
         return VStack(alignment: .leading,
                       spacing: assistantTypography ? ChatTypography.paragraphSpacing : 12) {
@@ -5128,8 +5139,9 @@ private struct MarkdownListView: View {
                     Group {
                         if let checked = item.isChecked {
                             Image(systemName: checked ? "checkmark.square.fill" : "square")
-                                .foregroundStyle(checked ? Color(red: 0.09, green: 0.51, blue: 0.42) : RemoteIMStyle.textSecondary)
-                                .accessibilityLabel(checked ? "已完成" : "未完成")
+                            .foregroundStyle(
+                                checked ? Color(red: 0.09, green: 0.51, blue: 0.42) : RemoteIMStyle.textSecondary
+                            ).accessibilityLabel(checked ? "已完成" : "未完成")
                         } else {
                             Text(item.marker).foregroundStyle(RemoteIMStyle.blue)
                         }
@@ -5229,8 +5241,10 @@ private struct MarkdownTableView: View {
                             )
                         }
                     }
-                    .background(rowIndex.isMultiple(of: 2) ? Color.white.opacity(0.85) : Color(red: 0.96, green: 0.97, blue: 0.98))
-                    .overlay(alignment: .bottom) {
+                    .background(
+                        rowIndex.isMultiple(of: 2)
+                            ? Color.white.opacity(0.85) : Color(red: 0.96, green: 0.97, blue: 0.98)
+                    ).overlay(alignment: .bottom) {
                         Rectangle().fill(RemoteIMStyle.border.opacity(0.6)).frame(height: 0.5)
                     }
                 }
@@ -5310,7 +5324,11 @@ private func parseMarkdownBlocks(_ source: String) -> [MarkdownBlock] {
                 codeLines.append(codeLine)
                 index += 1
             }
-            blocks.append(MarkdownBlock(kind: .code(language: language, text: codeLines.joined(separator: "\n"), lineCount: max(1, codeLines.count))))
+            blocks.append(
+                MarkdownBlock(
+                    kind: .code(
+                        language: language, text: codeLines.joined(separator: "\n"), lineCount: max(1, codeLines.count))
+                ))
             continue
         }
 
@@ -5335,7 +5353,9 @@ private func parseMarkdownBlocks(_ source: String) -> [MarkdownBlock] {
         }
 
         let rule = trimmed.filter { !$0.isWhitespace }
-        if rule.count >= 3, let marker = rule.first, ["-", "*", "_"].contains(String(marker)), rule.allSatisfy({ $0 == marker }) {
+        if rule.count >= 3, let marker = rule.first, ["-", "*", "_"].contains(String(marker)),
+            rule.allSatisfy({ $0 == marker })
+        {
             flushMarkdown()
             blocks.append(MarkdownBlock(kind: .divider))
             index += 1
@@ -5574,7 +5594,11 @@ private final class NativeVoiceRecorder: @unchecked Sendable {
                     continuation.resume(returning: nil); return
                 }
                 recorder.stop()
-                let duration = max(1, Int(ceil(ProcessInfo.processInfo.systemUptime - (startedAt ?? ProcessInfo.processInfo.systemUptime))))
+                let duration = max(
+                    1,
+                    Int(
+                        ceil(ProcessInfo.processInfo.systemUptime - (startedAt ?? ProcessInfo.processInfo.systemUptime))
+                    ))
                 self.recorder = nil; recordingURL = nil; startedAt = nil; sessionID = nil
                 continuation.resume(returning: RemoteIMVoiceRecording(fileURL: url, durationSeconds: duration))
             }
@@ -5999,8 +6023,8 @@ private struct ComposerView: View {
             guard !items.isEmpty else { return }
             Task { await sendSelectedMedia(items) }
         }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
-            updateKeyboardVisibleHeight(from: notification)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) {
+            notification in updateKeyboardVisibleHeight(from: notification)
         }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
             keyboardVisibleHeight = UIScreen.main.bounds.height
@@ -6476,8 +6500,9 @@ private struct ComposerView: View {
                     level: .info,
                     category: "asr",
                     event: "gesture-started",
-                    fields: ["mode": "transcription"].merging(transcriptionPresentation.diagnosticFields) { _, context in context }
-                )
+                    fields: ["mode": "transcription"].merging(transcriptionPresentation.diagnosticFields) {
+                        _, context in context
+                    })
                 realtimeStartTask = Task { await startRealtimeTranscription() }
             } else {
                 Task { await startVoiceRecording() }

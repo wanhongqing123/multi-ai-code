@@ -41,14 +41,20 @@ final class MaiChatTypography {
     static final class BlueBulletSpan implements LeadingMarginSpan {
         private final int margin;
         private final float radius, gap;
-        BlueBulletSpan(float density, int level) { margin = Math.round((level == 0 ? 24 : level > 4 ? 0 : 12) * density); radius = 1.5f * density; gap = 9 * density; }
+        BlueBulletSpan(float density, int level) {
+            margin = Math.round((level == 0 ? 24 : level > 4 ? 0 : 12) * density);
+            radius = 1.5f * density;
+            gap = 9 * density;
+        }
         @Override public int getLeadingMargin(boolean first) { return margin; }
-        @Override public void drawLeadingMargin(Canvas canvas, Paint paint, int x, int direction, int top, int baseline, int bottom,
-            CharSequence text, int start, int end, boolean first, Layout layout) {
+        @Override
+        public void drawLeadingMargin(Canvas canvas, Paint paint, int x, int direction, int top, int baseline,
+                int bottom, CharSequence text, int start, int end, boolean first, Layout layout) {
             if (!first || !(text instanceof Spanned) || ((Spanned) text).getSpanStart(this) != start) return;
             int color = paint.getColor(); Paint.Style style = paint.getStyle();
             paint.setColor(MaiChatTheme.BLUE); paint.setStyle(Paint.Style.FILL);
-            canvas.drawCircle(x + direction * (margin - gap), baseline + (paint.ascent() + paint.descent()) / 2, radius, paint);
+            canvas.drawCircle(
+                    x + direction * (margin - gap), baseline + (paint.ascent() + paint.descent()) / 2, radius, paint);
             paint.setColor(color); paint.setStyle(style);
         }
     }

@@ -18,7 +18,8 @@ public:
     QList<QByteArray> reports;
     RemoteIMSendCompletion pendingText, pendingFile;
     bool holdText = false, holdFile = false;
-    void recordFailure(const QString& id, const QString& peer = "machine", RemoteDiagnostics::AccountTag owner = {1, "phone"}) {
+    void recordFailure(const QString& id, const QString& peer = "machine",
+                       RemoteDiagnostics::AccountTag owner = {1, "phone"}) {
         RemoteDiagnostics::AttachmentEvent event;
         event.account = owner; event.peerId = peer; event.messageId = "sdk-download-id";
         event.requestId = id; event.phase = RemoteDiagnostics::AttachmentPhase::DownloadFailed;
@@ -69,7 +70,10 @@ class RemoteDiagnosticsControllerTest : public QObject {
         auto event = events[0].toObject(); event.insert("text", "PRIVATE_BODY_SENTINEL");
         events[0] = event; source.insert("events", events); files[0] = source; payload.insert("files", files);
         const auto path = temp_.filePath(QUuid::createUuid().toString(QUuid::WithoutBraces) + ".json");
-        QFile file(path); QVERIFY(file.open(QIODevice::WriteOnly)); file.write(QJsonDocument(payload).toJson()); file.close();
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(QJsonDocument(payload).toJson());
+        file.close();
         RemoteIMMessage message;
         message.id = QUuid::createUuid().toString(); message.fromUserId = from; message.toUserId = "phone";
         message.hasFile = true; message.file.localPath = path;
@@ -87,7 +91,10 @@ private slots:
         controller_->setTimeouts(1000, 1000);
     }
     void cleanup() { controller_.reset(); app_.reset(); }
-    void initTestCase() { QStandardPaths::setTestModeEnabled(true); QCoreApplication::setApplicationName("MaiChatDiagnosticsControllerTest"); }
+    void initTestCase() {
+        QStandardPaths::setTestModeEnabled(true);
+        QCoreApplication::setApplicationName("MaiChatDiagnosticsControllerTest");
+    }
     void cancellationBeforeDispatchSendsNothing() {
         controller_->start("machine", "helper"); controller_->cancel();
         QTest::qWait(120); QVERIFY(client_->texts.isEmpty()); QVERIFY(client_->reports.isEmpty());
@@ -102,7 +109,8 @@ private slots:
         QCOMPARE(client_->reportTargets, QStringList{"helper"});
         QVERIFY(client_->reports.first().contains("call-async"));
         QVERIFY(client_->reports.first().contains("sdk-id"));
-        for (const auto& field : {"aicli:event-forwarded", "session-a", "task-a", "reply-a", "candidate-task", "candidate-reply"})
+        for (const auto& field :
+             {"aicli:event-forwarded", "session-a", "task-a", "reply-a", "candidate-task", "candidate-reply"})
             QVERIFY2(client_->reports.first().contains(field), field);
         QVERIFY(client_->reports.first().contains("1800000000000"));
         QVERIFY(client_->reports.first().contains("1799998000000"));
@@ -152,7 +160,10 @@ private slots:
     }
     void accountChangeAndFriendRemovalCancel() {
         controller_->start("machine", "helper"); QTRY_COMPARE(client_->texts.size(), 1);
-        client_->account = {2, "phone"}; response(); QTRY_VERIFY(!controller_->isRunning()); QVERIFY(client_->reports.isEmpty());
+        client_->account = {2, "phone"};
+        response();
+        QTRY_VERIFY(!controller_->isRunning());
+        QVERIFY(client_->reports.isEmpty());
         client_->account = {1, "phone"}; controller_->start("machine", "helper");
         app_->deleteContact("helper"); QTRY_VERIFY(!controller_->isRunning()); QVERIFY(client_->reports.isEmpty());
     }

@@ -34,7 +34,8 @@ final class RealtimeSpeechProtocol {
         for (String sentence : sentences.values()) text.append(sentence);
         return text.toString().trim();
     }
-    static String signedUrl(String appId, String secretId, String secretKey, String voiceId, long timestamp, int nonce) throws Exception {
+    static String signedUrl(String appId, String secretId, String secretKey, String voiceId, long timestamp, int nonce)
+            throws Exception {
         if (!appId.matches("[0-9]{5,20}")) throw new IllegalArgumentException("Invalid speech account");
         TreeMap<String, String> parameters = new TreeMap<>();
         parameters.put("engine_model_type", "16k_zh"); parameters.put("expired", Long.toString(timestamp + 3600));
@@ -49,7 +50,8 @@ final class RealtimeSpeechProtocol {
         String endpoint = "asr.cloud.tencent.com/asr/v2/" + appId;
         Mac hmac = Mac.getInstance("HmacSHA1");
         hmac.init(new SecretKeySpec(secretKey.getBytes(StandardCharsets.UTF_8), "HmacSHA1"));
-        String signature = Base64.getEncoder().encodeToString(hmac.doFinal((endpoint + "?" + query).getBytes(StandardCharsets.UTF_8)));
+        String signature = Base64.getEncoder().encodeToString(
+                hmac.doFinal((endpoint + "?" + query).getBytes(StandardCharsets.UTF_8)));
         return "wss://" + endpoint + "?" + query + "&signature=" + URLEncoder.encode(signature, "UTF-8");
     }
 }

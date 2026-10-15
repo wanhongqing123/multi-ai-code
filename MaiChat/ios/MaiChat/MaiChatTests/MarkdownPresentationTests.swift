@@ -121,7 +121,8 @@ final class MarkdownPresentationTests: XCTestCase {
     @MainActor
     func testRemovingNavigationHostReleasesControllers() async throws {
         for _ in 0..<3 {
-            var host: UIHostingController<NavigationLifetimeHarness>? = UIHostingController(rootView: NavigationLifetimeHarness())
+            var host: UIHostingController<NavigationLifetimeHarness>? = UIHostingController(
+                rootView: NavigationLifetimeHarness())
             let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 640))
             window.rootViewController = host
             window.makeKeyAndVisible()
@@ -271,7 +272,8 @@ final class MarkdownPresentationTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(100))
         navigation.popViewController(animated: true)
         try await Task.sleep(for: .milliseconds(100))
-        XCTAssertNotNil(previousPage.view.superview, "Previous page, including its bar, is visible during the transition")
+        XCTAssertNotNil(
+            previousPage.view.superview, "Previous page, including its bar, is visible during the transition")
         XCTAssertEqual(try XCTUnwrap(probe.frames[0]).minY, originalBar.minY, accuracy: 1)
         try await Task.sleep(for: .milliseconds(600))
         XCTAssertTrue(navigation.topViewController === previousPage)
@@ -415,7 +417,8 @@ final class MarkdownPresentationTests: XCTestCase {
         coordinator.allowsBottomFollowing = false
         scroll.frame.size.height = 400
         try await Task.sleep(for: .milliseconds(30))
-        XCTAssertEqual(scroll.contentOffset.y, 2300, accuracy: 1, "Search positioning disables automatic bottom following")
+        XCTAssertEqual(
+            scroll.contentOffset.y, 2300, accuracy: 1, "Search positioning disables automatic bottom following")
     }
 
     @MainActor
@@ -809,8 +812,8 @@ final class MarkdownPresentationTests: XCTestCase {
                 .coordinateSpace(name: "entry")
                 .onAppear {
                     probe.proxy = proxy
-                    if performsExplicitPositioning && MessageInitialScrollAnchor.requiresDeferredPositioning && !intent.userBrowsedHistory,
-                       let latestID = messages.last?.id {
+                    if performsExplicitPositioning && MessageInitialScrollAnchor.requiresDeferredPositioning
+                        && !intent.userBrowsedHistory, let latestID = messages.last?.id {
                         intent.positionAtBottom(proxy: proxy, id: latestID)
                     }
                 }
@@ -819,8 +822,8 @@ final class MarkdownPresentationTests: XCTestCase {
                     intent.positionAtBottom(proxy: proxy, id: targetID)
                 }
                 .onChange(of: arrival.hasArrived) { arrived in
-                    if performsExplicitPositioning && MessageInitialScrollAnchor.requiresDeferredPositioning && arrived && !intent.userBrowsedHistory,
-                       let latestID = messages.last?.id {
+                    if performsExplicitPositioning && MessageInitialScrollAnchor.requiresDeferredPositioning && arrived
+                        && !intent.userBrowsedHistory, let latestID = messages.last?.id {
                         intent.positionAtBottom(proxy: proxy, id: latestID)
                     }
                 }
@@ -934,7 +937,8 @@ final class MarkdownPresentationTests: XCTestCase {
         XCTAssertLessThan(history.minY, navigation.view.bounds.height)
         // UIKit 取消返回后重新显示同一控制器，以及晚到的消息，
         // 都不能再次触发到达定位或移动正在阅读的历史。
-        navigation.navigationController(navigation, didShow: try XCTUnwrap(navigation.topViewController), animated: true)
+        navigation.navigationController(
+            navigation, didShow: try XCTUnwrap(navigation.topViewController), animated: true)
         model.items.append(HistoryItem(id: 350))
         navigation.update(root: root, detail: detail, selectionID: "a", onPop: {})
         try await Task.sleep(for: .milliseconds(300))
@@ -978,7 +982,13 @@ final class MarkdownPresentationTests: XCTestCase {
             }
             let scroll = findScroll(navigation.view)
             XCTAssertEqual(probe.nearBottom, true,
-                           "Late row growth must keep the visible conversation at its latest message. latest=\(latest) offset=\(String(describing: scroll?.contentOffset)) content=\(String(describing: scroll?.contentSize)) viewport=\(String(describing: scroll?.bounds))")
+                """
+                Late row growth must keep the visible conversation at its latest message. latest=\(latest) \
+                offset=\(String(describing: scroll?.contentOffset)) \
+                content=\(String(describing: scroll?.contentSize)) \
+                viewport=\(String(describing: scroll?.bounds))
+                """
+            )
             navigation.update(root: root, detail: nil, selectionID: nil,
                               onPop: {}, animated: false)
             try await Task.sleep(for: .milliseconds(100))
@@ -1088,7 +1098,11 @@ final class MarkdownPresentationTests: XCTestCase {
             }
             let scroll = findScroll(window)
             XCTAssertEqual(probe.nearBottom, true,
-                           "height=\(height) last=\(last) offset=\(String(describing: scroll?.contentOffset)) content=\(String(describing: scroll?.contentSize))")
+                """
+                height=\(height) last=\(last) offset=\(String(describing: scroll?.contentOffset)) \
+                content=\(String(describing: scroll?.contentSize))
+                """
+            )
         }
     }
 
@@ -1111,7 +1125,8 @@ final class MarkdownPresentationTests: XCTestCase {
         let settled = try XCTUnwrap(probe.frames[99])
         try await Task.sleep(for: .milliseconds(300))
         let later = try XCTUnwrap(probe.frames[99])
-        XCTAssertEqual(later.minY, settled.minY, accuracy: 1, "No self-sustaining scroll/layout oscillation after sending stops")
+        XCTAssertEqual(
+            later.minY, settled.minY, accuracy: 1, "No self-sustaining scroll/layout oscillation after sending stops")
     }
 
     @MainActor
@@ -1163,7 +1178,8 @@ final class MarkdownPresentationTests: XCTestCase {
         XCTAssertEqual(MarkdownConversationPreview.text(for: message), "更新")
         XCTAssertEqual(MarkdownConversationPreview.text(for: nil), "暂无消息")
         let attachment = RemoteIMMessage(fromUserID: "a", toUserID: "b", text: "[文件消息] **report**.md",
-            fileAttachment: RemoteIMFileAttachment(localFilePath: "/tmp/report.md", fileName: "report.md", mimeType: "text/markdown"),
+            fileAttachment: RemoteIMFileAttachment(
+                localFilePath: "/tmp/report.md", fileName: "report.md", mimeType: "text/markdown"),
             direction: .incoming, status: .received, createdAt: Date())
         XCTAssertEqual(MarkdownConversationPreview.text(for: attachment), attachment.text)
     }
@@ -1172,7 +1188,8 @@ final class MarkdownPresentationTests: XCTestCase {
         let emoji = "👨‍👩‍👧‍👦"
         XCTAssertEqual(MarkdownConversationPreview.plainText(String(repeating: emoji, count: 170)),
                        String(repeating: emoji, count: 160) + "…")
-        XCTAssertLessThanOrEqual(MarkdownConversationPreview.plainText(String(repeating: "长", count: 100_000)).count, 161)
+        XCTAssertLessThanOrEqual(
+            MarkdownConversationPreview.plainText(String(repeating: "长", count: 100_000)).count, 161)
         XCTAssertEqual(MarkdownConversationPreview.plainText("---"), "")
     }
 

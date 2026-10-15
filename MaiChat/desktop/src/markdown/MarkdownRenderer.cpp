@@ -77,9 +77,10 @@ QString renderBody(const QString& markdown) {
     static const QRegularExpression sourceLine(QStringLiteral("(?:^|\\n)[ \t]{0,3}此消息来自 imcli[ \t]*$"));
     static const QRegularExpression sourceParagraphEnd(QStringLiteral("此消息来自 imcli(?=\\s*</p>\\s*$)"));
     if (sourceLine.match(normalized).hasMatch()) {
-        html.replace(sourceParagraphEnd, QStringLiteral(
-            "<span class=\"imcli-source-note\" style=\"color:#0f8ddd;background-color:#e6f5ff;font-size:12px;font-weight:600;\">"
-            "此消息来自 imcli</span>"));
+        html.replace(sourceParagraphEnd,
+                     QStringLiteral("<span class=\"imcli-source-note\" "
+                                    "style=\"color:#0f8ddd;background-color:#e6f5ff;font-size:12px;font-weight:600;\">"
+                                    "此消息来自 imcli</span>"));
     }
 
     // 任务列表：QTextDocument 渲染不了 <input type="checkbox">，换成字符。
@@ -111,8 +112,10 @@ QString renderBody(const QString& markdown) {
             body.replace(row.capturedStart(), row.capturedLength(), replacement);
             rowOffset = row.capturedStart() + replacement.size();
         }
-        const QString replacement = QStringLiteral("<table border=\"0\" cellspacing=\"0\" cellpadding=\"8\" style=\"border-collapse:collapse;margin-bottom:8px;\">")
-            + body + QStringLiteral("</table>");
+        const QString replacement = QStringLiteral(
+                                        "<table border=\"0\" cellspacing=\"0\" cellpadding=\"8\" "
+                                        "style=\"border-collapse:collapse;margin-bottom:8px;\">") +
+                                    body + QStringLiteral("</table>");
         html.replace(match.capturedStart(), match.capturedLength(), replacement);
         tableOffset = match.capturedStart() + replacement.size();
     }
@@ -135,9 +138,10 @@ QString renderBody(const QString& markdown) {
         QString code = match.captured(2);
         if (code.endsWith(QLatin1Char('\n'))) code.chop(1);
         const QString replacement = QStringLiteral(
-            "<table width=\"100%\" cellspacing=\"0\" cellpadding=\"10\" bgcolor=\"#f7f7f7\" style=\"margin-top:0;margin-bottom:8px;\">"
-            "<tr><td><pre><code%1>%2</code></pre></td></tr></table>")
-            .arg(match.captured(1), code);
+                                        "<table width=\"100%\" cellspacing=\"0\" cellpadding=\"10\" "
+                                        "bgcolor=\"#f7f7f7\" style=\"margin-top:0;margin-bottom:8px;\">"
+                                        "<tr><td><pre><code%1>%2</code></pre></td></tr></table>")
+                                        .arg(match.captured(1), code);
         html.replace(match.capturedStart(), match.capturedLength(), replacement);
         codeOffset = match.capturedStart() + replacement.size();
     }
@@ -167,12 +171,16 @@ QString MarkdownRenderer::renderPreviewHtml(const QString& markdown) {
     // <p><code>[!TIP]</code> 绝不能匹配普通文字标记。
     for (const auto& callout : callouts) {
         // 沿用预览规则：行首普通提示标记后可接同一行文字；富文本消息仍严格要求独立标记。
-        const QRegularExpression marker(QStringLiteral("<blockquote>\\s*<p>\\[!%1\\](?:[ \\t]*(?:\\n|<br\\s*/?>\\n?|(?=</p>))|[ \\t]+)")
-            .arg(QString::fromLatin1(callout.name)), QRegularExpression::CaseInsensitiveOption);
+        const QRegularExpression marker(
+            QStringLiteral("<blockquote>\\s*<p>\\[!%1\\](?:[ \\t]*(?:\\n|<br\\s*/?>\\n?|(?=</p>))|[ \\t]+)")
+                .arg(QString::fromLatin1(callout.name)),
+            QRegularExpression::CaseInsensitiveOption);
         html.replace(marker, QStringLiteral("<blockquote><p>") + callout.title + QStringLiteral("："));
     }
-    html.replace(QStringLiteral("<input type=\"checkbox\" class=\"task-list-item-checkbox\" disabled checked>"), QStringLiteral("☑ "));
-    html.replace(QStringLiteral("<input type=\"checkbox\" class=\"task-list-item-checkbox\" disabled>"), QStringLiteral("☐ "));
+    html.replace(QStringLiteral("<input type=\"checkbox\" class=\"task-list-item-checkbox\" disabled checked>"),
+                 QStringLiteral("☑ "));
+    html.replace(QStringLiteral("<input type=\"checkbox\" class=\"task-list-item-checkbox\" disabled>"),
+                 QStringLiteral("☐ "));
     // 提取预览只需要图片转义后的替代文字，不加载图片资源。
     static const QRegularExpression image(QStringLiteral("<img\\b[^>]*\\balt=\"([^\"]*)\"[^>]*>"));
     html.replace(image, QStringLiteral("\\1"));

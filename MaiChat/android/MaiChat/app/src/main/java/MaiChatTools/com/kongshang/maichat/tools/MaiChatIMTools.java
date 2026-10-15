@@ -1,6 +1,7 @@
 // 文件作用：Android 移动端 Agent 工具与宿主能力；MaiChatIMTools 负责 Agent 工具注册、调用与结果返回，本文件给出其实现。
 // 主要入口：hostListContacts、hostListConversations、hostGetMessages、hostSearchMessages。
-// 直接依赖：com.kongshang.maichat.AIAssistantController、com.kongshang.maichat.MainActivity、com.kongshang.maichat.MessageQuote、com.kongshang.maichat.RemoteIMContact；实现与这些接口协作。
+// 直接依赖：com.kongshang.maichat.AIAssistantController、com.kongshang.maichat.MainActivity、
+// com.kongshang.maichat.MessageQuote、com.kongshang.maichat.RemoteIMContact；实现与这些接口协作。
 package com.kongshang.maichat.tools;
 
 import android.graphics.Bitmap;

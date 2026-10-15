@@ -75,7 +75,9 @@ final class ChatMessageList extends ListView {
     }
     private int targetPosition() {
         if (position == Position.LATEST) return adapter.getCount() - 1;
-        for (int index = 0; index < adapter.getCount(); index++) if (rowStableKeyAt(index).equals(targetId)) return index;
+        for (int index = 0; index < adapter.getCount(); index++)
+            if (rowStableKeyAt(index).equals(targetId))
+                return index;
         return -1;
     }
     @Override protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
@@ -98,7 +100,9 @@ final class ChatMessageList extends ListView {
             layoutChildren();
             return;
         }
-        int offset = requested == Position.RESTORE ? requestedOffset : requested == Position.SEARCH ? getHeight() / 3 : 0;
+        int offset = requested == Position.RESTORE ? requestedOffset
+                : requested == Position.SEARCH     ? getHeight() / 3
+                                                   : 0;
         setSelectionFromTop(target, offset);
         layoutChildren();
         if (requested == Position.LATEST || requested == Position.MESSAGE_BOTTOM) {
@@ -158,18 +162,25 @@ final class ChatMessageList extends ListView {
     }
     private final class Rows extends BaseAdapter {
         @Override public int getCount() { return messages.size() + (activity == null ? 0 : 1); }
-        @Override public Object getItem(int position) { return position < messages.size() ? messages.get(position) : activity; }
+        @Override
+        public Object getItem(int position) {
+            return position < messages.size() ? messages.get(position) : activity;
+        }
         @Override public long getItemId(int position) { return stableIds.getOrDefault(rowStableKeyAt(position), -1L); }
         @Override public boolean hasStableIds() { return true; }
         @Override public int getViewTypeCount() { return 2; }
         @Override public int getItemViewType(int position) { return position < messages.size() ? 0 : 1; }
         @Override public boolean isEnabled(int position) { return true; }
         @Override public View getView(int position, View convertView, ViewGroup parent) {
-            Binding previous = convertView != null && convertView.getTag() instanceof Binding ? (Binding) convertView.getTag() : null;
+            Binding previous = convertView != null && convertView.getTag() instanceof Binding
+                    ? (Binding) convertView.getTag()
+                    : null;
             Binding next = new Binding(); next.revision = bindingRevision;
             if (position < messages.size()) {
                 next.message = messages.get(position);
-                if (previous != null && Objects.equals(previous.message, next.message) && previous.revision == next.revision) return convertView;
+                if (previous != null && Objects.equals(previous.message, next.message)
+                        && previous.revision == next.revision)
+                    return convertView;
                 convertView = renderer.messageView(next.message);
             } else {
                 next.activityKind = activity.kind; next.activityId = activity.activityId;

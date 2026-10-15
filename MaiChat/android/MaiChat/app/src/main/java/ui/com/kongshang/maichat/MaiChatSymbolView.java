@@ -110,20 +110,12 @@ public final class MaiChatSymbolView extends View {
         float radius = bounds.width() * 0.16f;
         canvas.drawCircle(bounds.left + bounds.width() * 0.36f, bounds.top + radius, radius, paint);
         canvas.drawCircle(bounds.left + bounds.width() * 0.72f, bounds.top + radius * 1.35f, radius * 0.82f, paint);
-        canvas.drawArc(
-            new RectF(bounds.left, bounds.top + bounds.height() * 0.35f, bounds.left + bounds.width() * 0.72f, bounds.bottom),
-            195,
-            150,
-            false,
-            paint
-        );
-        canvas.drawArc(
-            new RectF(bounds.left + bounds.width() * 0.42f, bounds.top + bounds.height() * 0.45f, bounds.right, bounds.bottom),
-            200,
-            135,
-            false,
-            paint
-        );
+        canvas.drawArc(new RectF(bounds.left, bounds.top + bounds.height() * 0.35f,
+                               bounds.left + bounds.width() * 0.72f, bounds.bottom),
+                195, 150, false, paint);
+        canvas.drawArc(new RectF(bounds.left + bounds.width() * 0.42f, bounds.top + bounds.height() * 0.45f,
+                               bounds.right, bounds.bottom),
+                200, 135, false, paint);
     }
 
     private void drawRemote(Canvas canvas, RectF bounds) {
@@ -132,7 +124,8 @@ public final class MaiChatSymbolView extends View {
         float centerX = bounds.centerX();
         float standTop = monitor.bottom;
         canvas.drawLine(centerX, standTop, centerX, bounds.bottom, paint);
-        canvas.drawLine(centerX - bounds.width() * 0.2f, bounds.bottom, centerX + bounds.width() * 0.2f, bounds.bottom, paint);
+        canvas.drawLine(
+                centerX - bounds.width() * 0.2f, bounds.bottom, centerX + bounds.width() * 0.2f, bounds.bottom, paint);
     }
 
     private void drawUser(Canvas canvas, RectF bounds) {

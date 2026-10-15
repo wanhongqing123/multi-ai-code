@@ -43,8 +43,19 @@ public struct RemoteDiagnosticsLogEntry: Codable, Sendable {
     public init(_ entry: DiagnosticLogEntry) {
         createdAt = entry.createdAt
         event = entry.event
-        let allowed: Set<String> = ["peer", "message", "launch", "kind", "result", "code", "duration_ms", "operation", "cached_messages", "near_bottom", "scroll_action", "app_version", "build", "ios", "pid", "scope", "layout", "asr_session", "action", "mode", "completion", "callback_on_main", "phase", "active_operation"]
-        let numeric: Set<String> = ["samples", "slow_samples", "slow_threshold_ms", "max_ms", "average_ms", "late_ms", "sample_interval_ms", "mutation_count", "upserted_count", "removed_count", "message_count", "limit", "dropped_entries", "export_truncated", "retained_entries", "capacity", "loaded_messages", "eager_rows", "history_rows", "text_bytes", "session", "characters", "text_updates", "audio_session_ms", "audio_queue_ms", "audio_category_ms", "audio_activate_ms", "audio_resume_ms", "sdk_start_call_ms", "elapsed_ms", "latency_ms", "callback_latency_ms", "callback_extract_ms", "main_actor_wait_ms", "stop_wait_ms"]
+        let allowed: Set<String> = [
+            "peer", "message", "launch", "kind", "result", "code", "duration_ms", "operation", "cached_messages",
+            "near_bottom", "scroll_action", "app_version", "build", "ios", "pid", "scope", "layout", "asr_session",
+            "action", "mode", "completion", "callback_on_main", "phase", "active_operation",
+        ]
+        let numeric: Set<String> = [
+            "samples", "slow_samples", "slow_threshold_ms", "max_ms", "average_ms", "late_ms", "sample_interval_ms",
+            "mutation_count", "upserted_count", "removed_count", "message_count", "limit", "dropped_entries",
+            "export_truncated", "retained_entries", "capacity", "loaded_messages", "eager_rows", "history_rows",
+            "text_bytes", "session", "characters", "text_updates", "audio_session_ms", "audio_queue_ms",
+            "audio_category_ms", "audio_activate_ms", "audio_resume_ms", "sdk_start_call_ms", "elapsed_ms",
+            "latency_ms", "callback_latency_ms", "callback_extract_ms", "main_actor_wait_ms", "stop_wait_ms",
+        ]
         fields = entry.fields.filter { key, value in
             if numeric.contains(key) {
                 guard value.count <= 30, let number = Double(value), number.isFinite, number >= 0 else { return false }
@@ -153,8 +164,14 @@ public struct RemoteDiagnosticsLocalEvidence: Codable, Sendable {
             "status": speech.isEmpty ? "no-retained-session-evidence" : "retained-session-evidence",
             "sessionCount": String(speechSessions.count),
             "sessionsWithMissingStages": String(speechSessions.filter { !$0.missingStages.isEmpty }.count),
-            "limits": "No audio packet timestamps, network RTT or screen-presentation timing; no blocking stack traces. Missing stages may be ongoing, outside the window or dropped, not necessarily a product failure.",
-            "timing": "release_to_apply includes send wait in send mode; first_text_to_ui_state is not pixel presentation."
+            "limits":
+                """
+                No audio packet timestamps, network RTT or screen-presentation timing; no blocking stack \
+                traces. Missing stages may be ongoing, outside the window or dropped, not necessarily a \
+                product failure.
+                """,
+            "timing":
+                "release_to_apply includes send wait in send mode; first_text_to_ui_state is not pixel presentation.",
         ]
         let performance = logs.filter { RemoteDiagnosticsProtocol.performanceEvents.contains($0.event) }
         performanceCoverage = [
@@ -166,18 +183,34 @@ public struct RemoteDiagnosticsLocalEvidence: Codable, Sendable {
             "dropCounterScope": "since-last-account-activation", "mainRunloopDelayThresholdMs": "150",
             "operationSlowThresholdMs": "16", "stackTraces": "unavailable",
             "retention": "in-memory-current-launch-bounded-2048-entries-export-last-1000",
-            "droppedEntries": logs.last(where: { $0.event == "diagnostic-log-coverage" })?.fields["dropped_entries"] ?? "unknown",
-            "exportTruncated": logs.last(where: { $0.event == "diagnostic-log-coverage" })?.fields["export_truncated"] ?? "unknown",
-            "interpretation": "App-wide timings are not proof this conversation caused a stall; absent events are not zero latency."
+            "droppedEntries": logs.last(where: { $0.event == "diagnostic-log-coverage" })?.fields["dropped_entries"]
+                ?? "unknown",
+            "exportTruncated": logs.last(where: { $0.event == "diagnostic-log-coverage" })?.fields["export_truncated"]
+                ?? "unknown",
+            "interpretation":
+                "App-wide timings are not proof this conversation caused a stall; absent events are not zero latency.",
         ]
-        logCoverage = "当前账号本次启动以来保留的近期元数据；保留近期本地观察到的消息，不用服务端时钟排除这些消息。较早条目可能受容量上限影响。row-presented 只证明视图挂载，不证明屏幕像素已绘制。语音事件以 asr_session 关联当前会话；ui-first-text-updated 只表示界面状态更新，非屏幕绘制完成。识别回调时间不是网络接收时间；stop_wait_ms 包括主线程调度等待；transcription-applied 的 duration_ms 从松手开始计时，发送模式包含发送等待。"
+        logCoverage =
+            """
+            当前账号本次启动以来保留的近期元数据；保留近期本地观察到的消息，不用服务端时钟排除这些消息。较早条目可能受容量上限影响。row-presented 只证明视图挂载，不证明屏幕像素已绘制。\
+            语音事件以 asr_session 关联当前会话；ui-first-text-updated 只表示界面状态更新，非屏幕绘制完成。识别回调时间不是网络接收时间；stop_wait_ms \
+            包括主线程调度等待；transcription-applied 的 duration_ms 从松手开始计时，发送模式包含发送等待。
+            """
     }
 }
 
 public enum RemoteDiagnosticsProtocol {
-    public static let performanceEvents: Set<String> = ["composer-edit", "composer-text-mutation", "composer-update", "composer-layout", "composer-height-queue", "asr-main-actor-wait", "main-runloop-delay"]
-    public static let contextEvents: Set<String> = ["app-active", "app-inactive", "diagnostic-export-start", "diagnostic-export-finished", "diagnostic-export-failed"]
-    public static let historyEvents: Set<String> = ["history-save-slow", "history-save-failed", "history-load-failed", "history-load-completed"]
+    public static let performanceEvents: Set<String> = [
+        "composer-edit", "composer-text-mutation", "composer-update", "composer-layout", "composer-height-queue",
+        "asr-main-actor-wait", "main-runloop-delay",
+    ]
+    public static let contextEvents: Set<String> = [
+        "app-active", "app-inactive", "diagnostic-export-start", "diagnostic-export-finished",
+        "diagnostic-export-failed",
+    ]
+    public static let historyEvents: Set<String> = [
+        "history-save-slow", "history-save-failed", "history-load-failed", "history-load-completed",
+    ]
     public static let maximumBytes = 2 * 1024 * 1024
 
     public static func accountTag(sdkAppID: Int, ownerUserID: String) -> String {
@@ -189,13 +222,19 @@ public enum RemoteDiagnosticsProtocol {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let peer = DiagnosticLogPrivacy.stableTag(peerUserID, prefix: "u")
-        let connectionEvents: Set<String> = ["login-start", "login-finished", "connect-start", "connect-finished", "disconnect-start", "disconnect-finished", "sdk-connecting", "sdk-connected", "sdk-connect-failed", "sdk-kicked-offline", "sdk-user-sig-expired"]
+        let connectionEvents: Set<String> = [
+            "login-start", "login-finished", "connect-start", "connect-finished", "disconnect-start",
+            "disconnect-finished", "sdk-connecting", "sdk-connected", "sdk-connect-failed", "sdk-kicked-offline",
+            "sdk-user-sig-expired",
+        ]
         return entries.filter { entry in
             guard !accountTag.isEmpty, entry.fields["account"] == accountTag,
                   let date = formatter.date(from: entry.createdAt), date >= since else { return false }
             return entry.fields["peer"] == peer || connectionEvents.contains(entry.event) ||
-                (entry.category == "interaction-performance" && (performanceEvents.contains(entry.event) || contextEvents.contains(entry.event)) && entry.fields["scope"] == "account-process") ||
-                (entry.fields["peer"] == nil && historyEvents.contains(entry.event))
+                (entry.category == "interaction-performance"
+                    && (performanceEvents.contains(entry.event) || contextEvents.contains(entry.event))
+                    && entry.fields["scope"] == "account-process")
+                || (entry.fields["peer"] == nil && historyEvents.contains(entry.event))
         }.suffix(max(0, min(limit, 2048))).map(RemoteDiagnosticsLogEntry.init)
     }
 
@@ -217,7 +256,9 @@ public enum RemoteDiagnosticsProtocol {
 
     /// 上下文提供者必须先按账号过滤条目，还要核对当前对端和随机数；
     /// 其他附件的失败不能结束本次等待。
-    public static func reportDownloadFailed(_ logs: [RemoteDiagnosticsLogEntry], requestID: UUID, peerUserID: String) -> Bool {
+    public static func reportDownloadFailed(_ logs: [RemoteDiagnosticsLogEntry], requestID: UUID, peerUserID: String)
+        -> Bool
+    {
         logs.contains {
             $0.event == "media-download-finished" && $0.fields["kind"] == "file" &&
                 $0.fields["result"] == "failed" &&
@@ -270,11 +311,13 @@ public enum RemoteDiagnosticsProtocol {
             return clean
         }
         result["activeSessions"] = (raw["activeSessions"] as? [Any] ?? []).prefix(32).map { metadata($0) }
-        if let coverage = raw["sourceCoverage"] as? [String: Any], let original = coverage["aicliOriginalEvents"] as? String,
-           ["see-codex-original-events", "unavailable"].contains(original) {
+        if let coverage = raw["sourceCoverage"] as? [String: Any],
+            let original = coverage["aicliOriginalEvents"] as? String,
+            ["see-codex-original-events", "unavailable"].contains(original) {
             result["sourceCoverage"] = ["aicliOriginalEvents": original]
         }
-        if let coverage = raw["sourceCoverage"] as? [String: Any], coverage["uiPerformance"] as? String == "unavailable" {
+        if let coverage = raw["sourceCoverage"] as? [String: Any], coverage["uiPerformance"] as? String == "unavailable"
+        {
             var clean = result["sourceCoverage"] as? [String: Any] ?? [:]
             clean["uiPerformance"] = "unavailable"
             result["sourceCoverage"] = clean
@@ -298,11 +341,21 @@ public enum RemoteDiagnosticsProtocol {
     private static func metadata(_ value: Any, depth: Int = 0) -> [String: Any] {
         guard depth <= 3, let raw = value as? [String: Any] else { return [:] }
         var result: [String: Any] = [:]
-        for key in ["id", "ID", "remoteMessageId", "callId", "sessionId", "taskId", "replyId", "messageId", "partId", "threadId", "turnId", "eventTaskId", "eventReplyId", "sourceCommit", "onDiskBinarySha256", "onDiskBinaryStatus", "stage", "event", "kind", "type", "phase", "delivery", "sourceKind", "cli", "status", "terminalKind", "hostStopReason", "stopReasonRequested", "spawnErrorCode", "signal", "exitCodeHex", "appVersion"] {
-            if let value = safeString(raw[key]) { result[key] = value }
+        for key in [
+            "id", "ID", "remoteMessageId", "callId", "sessionId", "taskId", "replyId", "messageId", "partId",
+            "threadId", "turnId", "eventTaskId", "eventReplyId", "sourceCommit", "onDiskBinarySha256",
+            "onDiskBinaryStatus", "stage", "event", "kind", "type", "phase", "delivery", "sourceKind", "cli", "status",
+            "terminalKind", "hostStopReason", "stopReasonRequested", "spawnErrorCode", "signal", "exitCodeHex",
+            "appVersion",
+        ] { if let value = safeString(raw[key]) { result[key] = value }
         }
-        for key in ["createdAt", "startedAt", "pid", "hostPid", "lifetimeMs", "lastInputAt", "lastOutputAt", "lastEtxAt", "stopRequestedAt", "exitCode", "textLength", "inputLength", "resolvedLength", "forwardedChunks", "code", "errorCode", "messageId", "attempt", "onDiskBinaryBytes", "duration_ms", "samples", "slow_samples", "slow_threshold_ms", "max_ms", "average_ms", "late_ms", "sample_interval_ms", "visibleLength", "cellCount", "replacedCells"] {
-            if let value = finiteNumber(raw[key]) { result[key] = value }
+        for key in [
+            "createdAt", "startedAt", "pid", "hostPid", "lifetimeMs", "lastInputAt", "lastOutputAt", "lastEtxAt",
+            "stopRequestedAt", "exitCode", "textLength", "inputLength", "resolvedLength", "forwardedChunks", "code",
+            "errorCode", "messageId", "attempt", "onDiskBinaryBytes", "duration_ms", "samples", "slow_samples",
+            "slow_threshold_ms", "max_ms", "average_ms", "late_ms", "sample_interval_ms", "visibleLength", "cellCount",
+            "replacedCells",
+        ] { if let value = finiteNumber(raw[key]) { result[key] = value }
         }
         for key in ["ok", "sourceStarted", "autoReplyToIm", "sdkReady", "isReady", "accepted", "hasStream", "replay"] {
             if let value = raw[key] as? Bool { result[key] = value }

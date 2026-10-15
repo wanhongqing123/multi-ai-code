@@ -1,6 +1,7 @@
 // 文件作用：Android 本地测试；RemoteIMActivityTest 负责覆盖对应类的状态和数据行为，本文件给出其验证。
 // 运行边界：仅供自动化验证使用，不作为正式 App 或 Agent 的用户功能入口。
-// 覆盖场景：decodesTheDesktopAndIosWireFormat、heartbeatsDoNotRefreshUiAndAnOldStopCannotRemoveANewLease、contentClosesTheBurstButTheNextStageAndAccountCanStartAgain、signal。
+// 覆盖场景：decodesTheDesktopAndIosWireFormat、heartbeatsDoNotRefreshUiAndAnOldStopCannotRemoveANewLease、
+// contentClosesTheBurstButTheNextStageAndAccountCanStartAgain、signal。
 package com.kongshang.maichat;
 
 import org.junit.Test;
@@ -12,18 +13,26 @@ public class RemoteIMActivityTest {
         return new RemoteIMActivitySignal(id, sequence, kind, active, 12000);
     }
     @Test public void decodesTheDesktopAndIosWireFormat() {
-        String json = "{\"namespace\":\"multi-ai-code-activity\",\"version\":2,\"activityId\":\"machine:test\",\"sequence\":3,\"kind\":\"machine-tool\",\"active\":true,\"startedAtMs\":1700000000000,\"taskStartedAtMs\":1699999995000,\"ttlMs\":12000}";
+        String json = "{\"namespace\":\"multi-ai-code-activity\",\"version\":2,\"activityId\":\"machine:test\","
+                      + "\"sequence\":3,\"kind\":\"machine-tool\",\"active\":true,\"startedAtMs\":1700000000000,"
+                      + "\"taskStartedAtMs\":1699999995000,\"ttlMs\":12000}";
         RemoteIMActivitySignal value = RemoteIMActivitySignal.decode(json.getBytes(StandardCharsets.UTF_8));
         assertNotNull(value); assertEquals(RemoteIMActivitySignal.Kind.MACHINE_TOOL, value.kind);
         assertEquals(3, value.sequence); assertEquals("machine:test", value.activityId);
         assertEquals(1700000000000L, value.startedAtMs);
         assertEquals(1699999995000L, value.taskStartedAtMs);
         assertEquals(value.kind, RemoteIMActivitySignal.decode(value.encode()).kind);
-        assertNull(RemoteIMActivitySignal.decode(json.replace("\"version\":2", "\"version\":1").getBytes(StandardCharsets.UTF_8)));
-        assertNull(RemoteIMActivitySignal.decode(json.replace(",\"startedAtMs\":1700000000000,\"taskStartedAtMs\":1699999995000", "").getBytes(StandardCharsets.UTF_8)));
-        assertNull(RemoteIMActivitySignal.decode(json.replace("\"active\":true", "\"active\":\"true\"").getBytes(StandardCharsets.UTF_8)));
-        assertNull(RemoteIMActivitySignal.decode(json.replace("\"sequence\":3", "\"sequence\":3.5").getBytes(StandardCharsets.UTF_8)));
-        assertNull(RemoteIMActivitySignal.decode(json.replace("machine:test", "bad id").getBytes(StandardCharsets.UTF_8)));
+        assertNull(RemoteIMActivitySignal.decode(
+                json.replace("\"version\":2", "\"version\":1").getBytes(StandardCharsets.UTF_8)));
+        assertNull(RemoteIMActivitySignal.decode(
+                json.replace(",\"startedAtMs\":1700000000000,\"taskStartedAtMs\":1699999995000", "")
+                        .getBytes(StandardCharsets.UTF_8)));
+        assertNull(RemoteIMActivitySignal.decode(
+                json.replace("\"active\":true", "\"active\":\"true\"").getBytes(StandardCharsets.UTF_8)));
+        assertNull(RemoteIMActivitySignal.decode(
+                json.replace("\"sequence\":3", "\"sequence\":3.5").getBytes(StandardCharsets.UTF_8)));
+        assertNull(
+                RemoteIMActivitySignal.decode(json.replace("machine:test", "bad id").getBytes(StandardCharsets.UTF_8)));
     }
     @Test public void heartbeatsDoNotRefreshUiAndAnOldStopCannotRemoveANewLease() {
         RemoteIMActivityState state = new RemoteIMActivityState();
@@ -42,7 +51,8 @@ public class RemoteIMActivityTest {
         RemoteIMActivityState state = new RemoteIMActivityState();
         state.receive("peer", signal("burst", 1, RemoteIMActivitySignal.Kind.MACHINE_THINKING, true), 0);
         assertTrue(state.clear("peer"));
-        assertFalse(state.receive("peer", signal("burst", 2, RemoteIMActivitySignal.Kind.MACHINE_THINKING, true), 1000));
+        assertFalse(
+                state.receive("peer", signal("burst", 2, RemoteIMActivitySignal.Kind.MACHINE_THINKING, true), 1000));
         assertTrue(state.receive("peer", signal("next", 1, RemoteIMActivitySignal.Kind.MACHINE_TOOL, true), 2000));
         state.reset(); assertNull(state.get("peer"));
         assertTrue(state.receive("peer", signal("burst", 1, RemoteIMActivitySignal.Kind.MACHINE_THINKING, true), 3000));

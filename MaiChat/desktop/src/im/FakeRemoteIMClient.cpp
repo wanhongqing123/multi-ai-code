@@ -5,7 +5,8 @@
 
 FakeRemoteIMClient::FakeRemoteIMClient(QObject* parent) : RemoteIMClient(parent) {}
 
-void FakeRemoteIMClient::connectToService(int sdkAppId, const QString& userId, const QString&, RemoteIMCompletion completion) {
+void FakeRemoteIMClient::connectToService(int sdkAppId, const QString& userId, const QString&,
+                                          RemoteIMCompletion completion) {
     sdkAppId_ = sdkAppId > 0 ? quint64(sdkAppId) : 0;
     connectedUserId_ = userId.trimmed();
     complete(std::move(completion));
@@ -49,14 +50,16 @@ void FakeRemoteIMClient::sendVoice(const QString&, const QString&, int, RemoteIM
     complete(std::move(completion));
 }
 
-void FakeRemoteIMClient::sendFile(const QString& peerId, const QString& localPath, const QString& fileName, RemoteIMSendCompletion completion) {
+void FakeRemoteIMClient::sendFile(const QString& peerId, const QString& localPath, const QString& fileName,
+                                  RemoteIMSendCompletion completion) {
     lastFilePeerId_ = peerId.trimmed();
     lastFilePath_ = localPath.trimmed();
     lastFileName_ = fileName.trimmed();
     completeSend(std::move(completion));
 }
 
-void FakeRemoteIMClient::sendVideo(const QString& peerId, const RemoteIMVideoPayload& video, RemoteIMSendCompletion completion) {
+void FakeRemoteIMClient::sendVideo(const QString& peerId, const RemoteIMVideoPayload& video,
+                                   RemoteIMSendCompletion completion) {
     lastVideoPeerId_ = peerId.trimmed();
     lastVideo_ = video;
     completeSend(std::move(completion));
@@ -93,7 +96,8 @@ void FakeRemoteIMClient::emitIncomingText(const QString& fromUserId, const QStri
     emit incomingText(fromUserId.trimmed(), text.trimmed());
 }
 
-void FakeRemoteIMClient::emitIncomingImage(const QString& fromUserId, const QString& localPath, int width, int height, qint64 sizeBytes) {
+void FakeRemoteIMClient::emitIncomingImage(const QString& fromUserId, const QString& localPath, int width, int height,
+                                           qint64 sizeBytes) {
     emit incomingImage(fromUserId.trimmed(), localPath.trimmed(), width, height, sizeBytes);
 }
 

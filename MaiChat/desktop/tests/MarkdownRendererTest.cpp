@@ -42,7 +42,8 @@ void MarkdownRendererTest::stylesStandaloneImcliSourceFooter() {
 }
 
 void MarkdownRendererTest::rendersCommonAiCliMarkdown() {
-    const QString html = MarkdownRenderer::renderToHtml(QStringLiteral("## 标题\n\n**重点** 和 `code`\n\n- 第一条\n- [链接](https://example.com)"));
+    const QString html = MarkdownRenderer::renderToHtml(
+        QStringLiteral("## 标题\n\n**重点** 和 `code`\n\n- 第一条\n- [链接](https://example.com)"));
 
     QVERIFY(html.contains(QStringLiteral("<h2>标题</h2>")));
     QVERIFY(html.contains(QStringLiteral("<strong>重点</strong>")));
@@ -65,7 +66,8 @@ void MarkdownRendererTest::collapsesSoftLineBreaksLikeElectron() {
 }
 
 void MarkdownRendererTest::escapesRawHtmlAndUnsafeLinks() {
-    const QString html = MarkdownRenderer::renderToHtml(QStringLiteral("<script>alert(1)</script>\n[x](javascript:alert(1))"));
+    const QString html =
+        MarkdownRenderer::renderToHtml(QStringLiteral("<script>alert(1)</script>\n[x](javascript:alert(1))"));
 
     QVERIFY(html.contains(QStringLiteral("&lt;script&gt;alert(1)&lt;/script&gt;")));
     QVERIFY(!html.contains(QStringLiteral("<script>")));
@@ -137,7 +139,8 @@ void MarkdownRendererTest::preservesLiteralCalloutMarkers() {
 }
 
 void MarkdownRendererTest::stylesTaskMarkersAndPreservesCodeLines() {
-    const QString html = MarkdownRenderer::renderToHtml(QStringLiteral("- [x] done\n- [ ] todo\n\n```cpp\n%1 <literal>\nsecond\n```"));
+    const QString html =
+        MarkdownRenderer::renderToHtml(QStringLiteral("- [x] done\n- [ ] todo\n\n```cpp\n%1 <literal>\nsecond\n```"));
     QVERIFY(html.contains(QStringLiteral("color:#16836b;\">☑</span>")));
     QVERIFY(html.contains(QStringLiteral("color:#64748b;\">☐</span>")));
     QVERIFY(html.contains(QStringLiteral("%1 &lt;literal&gt;\nsecond")));
@@ -155,7 +158,8 @@ void MarkdownRendererTest::rendersCalloutsWithMixedLineEndingsAndNestedQuotes() 
 }
 
 void MarkdownRendererTest::toleratesCalloutMarkerCaseAndTrailingSpaces() {
-    for (const QString& marker : {QStringLiteral("[!Note] "), QStringLiteral("[!note]\t"), QStringLiteral("[!NOTE]  ")}) {
+    for (const QString& marker :
+         {QStringLiteral("[!Note] "), QStringLiteral("[!note]\t"), QStringLiteral("[!NOTE]  ")}) {
         const QString html = MarkdownRenderer::renderToHtml(QStringLiteral("> ") + marker + QStringLiteral("\r\n> 正文"));
         QVERIFY(html.contains(QStringLiteral("<strong>提示</strong>")));
         QVERIFY(html.contains(QStringLiteral("正文")));

@@ -1,6 +1,8 @@
 // 文件作用：Android 本地测试；RealtimeSpeechProtocolTest 负责覆盖对应类的状态和数据行为，本文件给出其验证。
 // 运行边界：仅供自动化验证使用，不作为正式 App 或 Agent 的用户功能入口。
-// 覆盖场景：partialUpdatesReplaceTheirSentenceInsteadOfDuplicatingIt、signatureMatchesAnIndependentHmacFixtureAndEscapesBase64、incompleteFramesWaitForMoreDataAndTheBudgetPreventsBursts、frame。
+// 覆盖场景：partialUpdatesReplaceTheirSentenceInsteadOfDuplicatingIt、
+// signatureMatchesAnIndependentHmacFixtureAndEscapesBase64、incompleteFramesWaitForMoreDataAndTheBudgetPreventsBursts、
+// frame。
 package com.kongshang.maichat;
 
 import org.json.JSONObject;
@@ -12,14 +14,19 @@ import static org.junit.Assert.*;
 public class RealtimeSpeechProtocolTest {
     @Test public void partialUpdatesReplaceTheirSentenceInsteadOfDuplicatingIt() throws Exception {
         RealtimeSpeechProtocol result = new RealtimeSpeechProtocol();
-        result.accept(new JSONObject("{\"code\":0,\"result\":{\"index\":0,\"slice_type\":1,\"voice_text_str\":\"今天\"}}"));
-        result.accept(new JSONObject("{\"code\":0,\"result\":{\"index\":0,\"slice_type\":2,\"voice_text_str\":\"今天开会。\"}}"));
-        result.accept(new JSONObject("{\"code\":0,\"result\":{\"index\":0,\"slice_type\":1,\"voice_text_str\":\"旧结果\"}}"));
-        result.accept(new JSONObject("{\"code\":0,\"result\":{\"index\":1,\"slice_type\":2,\"voice_text_str\":\"请准时。\"},\"final\":1}"));
+        result.accept(
+                new JSONObject("{\"code\":0,\"result\":{\"index\":0,\"slice_type\":1,\"voice_text_str\":\"今天\"}}"));
+        result.accept(new JSONObject(
+                "{\"code\":0,\"result\":{\"index\":0,\"slice_type\":2,\"voice_text_str\":\"今天开会。\"}}"));
+        result.accept(
+                new JSONObject("{\"code\":0,\"result\":{\"index\":0,\"slice_type\":1,\"voice_text_str\":\"旧结果\"}}"));
+        result.accept(new JSONObject(
+                "{\"code\":0,\"result\":{\"index\":1,\"slice_type\":2,\"voice_text_str\":\"请准时。\"},\"final\":1}"));
         assertEquals("今天开会。请准时。", result.text()); assertTrue(result.complete());
     }
     @Test public void signatureMatchesAnIndependentHmacFixtureAndEscapesBase64() throws Exception {
-        String url = RealtimeSpeechProtocol.signedUrl("123456789", "AKID_TEST_ONLY", "test-secret-key", "test-voice", 1700000000L, 12345);
+        String url = RealtimeSpeechProtocol.signedUrl(
+                "123456789", "AKID_TEST_ONLY", "test-secret-key", "test-voice", 1700000000L, 12345);
         assertTrue(url.endsWith("&signature=KXqGp%2BsgYzdyVAiirIbDGnh9NjM%3D"));
         assertTrue(url.contains("voice_format=16"));
         assertTrue(url.contains("expired=1700003600"));

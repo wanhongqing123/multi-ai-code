@@ -13,7 +13,8 @@ public:
     explicit FakeRemoteIMClient(QObject* parent = nullptr);
     RemoteDiagnostics::AccountTag currentAccount() const override { return {sdkAppId_, connectedUserId_}; }
 
-    void connectToService(int sdkAppId, const QString& userId, const QString& userSig, RemoteIMCompletion completion) override;
+    void connectToService(int sdkAppId, const QString& userId, const QString& userSig,
+                          RemoteIMCompletion completion) override;
     void disconnectFromService(RemoteIMCompletion completion) override;
     void deleteContact(const QString& userId, RemoteIMCompletion completion) override;
     void sendText(const QString& peerId, const QString& text, RemoteIMSendCompletion completion) override;
@@ -22,9 +23,12 @@ public:
                               RemoteIMApprovalAction action,
                               RemoteIMSendCompletion completion) override;
     void sendImage(const QString& peerId, const QString& localPath, RemoteIMSendCompletion completion) override;
-    void sendVoice(const QString& peerId, const QString& localPath, int durationSeconds, RemoteIMCompletion completion) override;
-    void sendFile(const QString& peerId, const QString& localPath, const QString& fileName, RemoteIMSendCompletion completion) override;
-    void sendVideo(const QString& peerId, const RemoteIMVideoPayload& video, RemoteIMSendCompletion completion) override;
+    void sendVoice(const QString& peerId, const QString& localPath, int durationSeconds,
+                   RemoteIMCompletion completion) override;
+    void sendFile(const QString& peerId, const QString& localPath, const QString& fileName,
+                  RemoteIMSendCompletion completion) override;
+    void sendVideo(const QString& peerId, const RemoteIMVideoPayload& video,
+                   RemoteIMSendCompletion completion) override;
 
     QString connectedUserId() const;
     QString lastDeletedContactId() const;
@@ -43,7 +47,8 @@ public:
     void deferNextSend();
     void finishDeferredSend();
     void emitIncomingText(const QString& fromUserId, const QString& text);
-    void emitIncomingImage(const QString& fromUserId, const QString& localPath, int width, int height, qint64 sizeBytes);
+    void emitIncomingImage(const QString& fromUserId, const QString& localPath, int width, int height,
+                           qint64 sizeBytes);
 
 private:
     void complete(RemoteIMCompletion completion);

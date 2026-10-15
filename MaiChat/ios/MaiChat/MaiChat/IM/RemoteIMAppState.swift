@@ -986,8 +986,9 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         let identity = remoteDiagnosticsIdentity
         let peer = chatState.selectedPeerID
         replyPreparationTask = Task { [weak self] in
-            guard let quote = try? await RemoteIMBackgroundWork.parse({ RemoteIMMessageQuotePolicy.quote(for: message) }),
-                  let self, !Task.isCancelled, self.remoteDiagnosticsIdentity == identity,
+            guard
+                let quote = try? await RemoteIMBackgroundWork.parse({ RemoteIMMessageQuotePolicy.quote(for: message) }),
+                let self, !Task.isCancelled, self.remoteDiagnosticsIdentity == identity,
                   self.chatState.selectedPeerID == peer else { return }
             self.draft.quote = quote
         }
@@ -1314,7 +1315,10 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     }
 
     var remoteDiagnosticsIdentity: String {
-        "\(chatState.ownerUserID)|\(historyAccountGeneration)|\(accountRebuildRequestGeneration)|\(chatHistorySDKAppID ?? 0)"
+        """
+        \(chatState.ownerUserID)|\(historyAccountGeneration)|\(accountRebuildRequestGeneration)\
+        |\(chatHistorySDKAppID ?? 0)
+        """
     }
 
     func remoteDiagnosticsLogs(peer: String, since: Date) -> [RemoteDiagnosticsLogEntry] {
@@ -1342,7 +1346,8 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             enqueueHistoryUpsert(message)
             let receipt = try await client.sendText(to: peerID, text: text, origin: .human, quote: nil)
             guard remoteDiagnosticsIdentity == identity else { return false }
-            try chatState.updateMessageDelivery(id: message.id, remoteID: receipt.remoteID, createdAt: receipt.createdAt)
+            try chatState.updateMessageDelivery(
+                id: message.id, remoteID: receipt.remoteID, createdAt: receipt.createdAt)
             enqueueCurrentMessage(id: message.id)
             return true
         } catch {
@@ -1355,10 +1360,12 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     }
 
     func sendRemoteDiagnosticsReport(_ file: URL, to recipient: RemoteIMContact, identity: String) async -> Bool {
-        guard remoteDiagnosticsMayContinue(identity: identity, peer: recipient.userID, recipient: recipient.userID) else { return false }
+        guard remoteDiagnosticsMayContinue(identity: identity, peer: recipient.userID, recipient: recipient.userID)
+        else { return false }
         let source = RemoteIMMessage(fromUserID: chatState.ownerUserID, toUserID: recipient.userID,
             text: "请协助分析这份远程排障报告。",
-            fileAttachment: RemoteIMFileAttachment(localFilePath: file.path, fileName: file.lastPathComponent, mimeType: "text/markdown"),
+            fileAttachment: RemoteIMFileAttachment(
+                localFilePath: file.path, fileName: file.lastPathComponent, mimeType: "text/markdown"),
             direction: .outgoing, status: .pending, createdAt: Date())
         var messageID: UUID?
         do {
@@ -1367,7 +1374,8 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             messageID = queued.id
             enqueueHistoryUpsert(queued)
             let receipt = try await client.sendFile(to: recipient.userID,
-                file: RemoteIMFile(fileURL: file, fileName: file.lastPathComponent, mimeType: "text/markdown", sizeBytes: nil))
+                file: RemoteIMFile(
+                    fileURL: file, fileName: file.lastPathComponent, mimeType: "text/markdown", sizeBytes: nil))
             guard remoteDiagnosticsIdentity == identity else { return false }
             try chatState.updateMessageDelivery(id: queued.id, remoteID: receipt.remoteID, createdAt: receipt.createdAt)
             enqueueCurrentMessage(id: queued.id)
@@ -1446,7 +1454,8 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             return false
         }
         let identity = remoteDiagnosticsIdentity
-        let attachmentReady = (try? await RemoteIMBackgroundWork.metadata { Self.forwardAttachmentIsReady(source) }) ?? false
+        let attachmentReady =
+            (try? await RemoteIMBackgroundWork.metadata { Self.forwardAttachmentIsReady(source) }) ?? false
         guard identity == remoteDiagnosticsIdentity, !Task.isCancelled else { return false }
         guard attachmentReady else {
             errorMessage = "附件尚未下载完成，暂时无法转发"

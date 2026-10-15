@@ -60,7 +60,8 @@ void AddContactDialog::buildUi() {
     panelLayout->setSpacing(0);
 
     auto* title = makeLabel(QStringLiteral("添加联系人"), QStringLiteral("addContactTitle"), panel);
-    auto* subtitle = makeLabel(QStringLiteral("输入对方 IM 账号 ID，添加后会自动打开会话。"), QStringLiteral("addContactSubtitle"), panel);
+    auto* subtitle = makeLabel(QStringLiteral("输入对方 IM 账号 ID，添加后会自动打开会话。"),
+                               QStringLiteral("addContactSubtitle"), panel);
     panelLayout->addWidget(title);
     panelLayout->addSpacing(8);
     panelLayout->addWidget(subtitle);
@@ -165,7 +166,8 @@ void AddContactDialog::applyStyle() {
 void AddContactDialog::updateConfirmButton() {
     const bool canSubmit = !userId().isEmpty();
     confirmButton_->setEnabled(canSubmit);
-    confirmButton_->setStyleSheet(canSubmit
-                                      ? QStringLiteral("#addContactConfirmButton { background: #0f8dde; border: 0; color: #ffffff; } #addContactConfirmButton:hover { background: #087fc9; }")
-                                      : QStringLiteral("#addContactConfirmButton { background: #acd2ea; border: 0; color: #e8f4fb; }"));
+    confirmButton_->setStyleSheet(
+        canSubmit ? QStringLiteral("#addContactConfirmButton { background: #0f8dde; border: 0; color: #ffffff; } "
+                                   "#addContactConfirmButton:hover { background: #087fc9; }")
+                  : QStringLiteral("#addContactConfirmButton { background: #acd2ea; border: 0; color: #e8f4fb; }"));
 }

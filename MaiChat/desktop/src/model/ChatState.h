@@ -53,18 +53,29 @@ public:
     RemoteIMMessage queueOutgoingTextTo(const QString& peerId, const QString& text);
     RemoteIMMessage queueOutgoingApprovalDecision(const QString& token,
                                                    RemoteIMApprovalAction action);
-    RemoteIMMessage queueOutgoingImage(const QString& localPath, int width, int height, qint64 sizeBytes, const QString& text = QString(), bool captionAbove = false);
-    RemoteIMMessage queueOutgoingImageTo(const QString& peerId, const QString& localPath, int width, int height, qint64 sizeBytes, const QString& text = QString(), bool captionAbove = false);
+    RemoteIMMessage queueOutgoingImage(const QString& localPath, int width, int height, qint64 sizeBytes,
+                                       const QString& text = QString(), bool captionAbove = false);
+    RemoteIMMessage queueOutgoingImageTo(const QString& peerId, const QString& localPath, int width, int height,
+                                         qint64 sizeBytes, const QString& text = QString(), bool captionAbove = false);
     RemoteIMMessage queueOutgoingVoice(const QString& localPath, int durationSeconds);
     RemoteIMMessage queueOutgoingVoiceTo(const QString& peerId, const QString& localPath, int durationSeconds);
-    RemoteIMMessage queueOutgoingFile(const QString& localPath, const QString& fileName, const QString& mimeType, qint64 sizeBytes, const QString& text = QString(), bool captionAbove = false);
-    RemoteIMMessage queueOutgoingFileTo(const QString& peerId, const QString& localPath, const QString& fileName, const QString& mimeType, qint64 sizeBytes, const QString& text = QString(), bool captionAbove = false);
-    RemoteIMMessage queueOutgoingVideo(const QString& localPath, const QString& fileName, const QString& coverPath, int durationSeconds, qint64 sizeBytes, const QString& text = QString(), bool captionAbove = false);
-    RemoteIMMessage queueOutgoingVideoTo(const QString& peerId, const QString& localPath, const QString& fileName, const QString& coverPath, int durationSeconds, qint64 sizeBytes, const QString& text = QString(), bool captionAbove = false);
+    RemoteIMMessage queueOutgoingFile(const QString& localPath, const QString& fileName, const QString& mimeType,
+                                      qint64 sizeBytes, const QString& text = QString(), bool captionAbove = false);
+    RemoteIMMessage queueOutgoingFileTo(const QString& peerId, const QString& localPath, const QString& fileName,
+                                        const QString& mimeType, qint64 sizeBytes, const QString& text = QString(),
+                                        bool captionAbove = false);
+    RemoteIMMessage queueOutgoingVideo(const QString& localPath, const QString& fileName, const QString& coverPath,
+                                       int durationSeconds, qint64 sizeBytes, const QString& text = QString(),
+                                       bool captionAbove = false);
+    RemoteIMMessage queueOutgoingVideoTo(const QString& peerId, const QString& localPath, const QString& fileName,
+                                         const QString& coverPath, int durationSeconds, qint64 sizeBytes,
+                                         const QString& text = QString(), bool captionAbove = false);
     RemoteIMMessage receiveText(const QString& fromUserId, const QString& text);
-    RemoteIMMessage receiveImage(const QString& fromUserId, const QString& localPath, int width, int height, qint64 sizeBytes);
+    RemoteIMMessage receiveImage(const QString& fromUserId, const QString& localPath, int width, int height,
+                                 qint64 sizeBytes);
     RemoteIMMessage receiveVoice(const QString& fromUserId, const QString& localPath, int durationSeconds);
-    RemoteIMMessage receiveFile(const QString& fromUserId, const QString& localPath, const QString& fileName, const QString& mimeType, qint64 sizeBytes);
+    RemoteIMMessage receiveFile(const QString& fromUserId, const QString& localPath, const QString& fileName,
+                                const QString& mimeType, qint64 sizeBytes);
     QList<RemoteIMMessage> messagesWith(const QString& peerId) const;
     // 按会话顺序逐条访问，不复制。messagesWith 会把整个会话深拷贝一份，
     // 放在每次按键上跑（搜索）就是可感知的卡顿。

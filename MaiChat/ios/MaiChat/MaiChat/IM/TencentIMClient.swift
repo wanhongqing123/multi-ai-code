@@ -334,8 +334,11 @@ final class TencentIMClient:
         origin: RemoteIMMessageOrigin,
         quote: RemoteIMQuote?
     ) async throws -> RemoteIMSendReceipt {
-        guard let message = try await Self.makeMessage({ V2TIMManager.sharedInstance().createTextMessage(text: text) }) else {
-            Self.logMessageCreateFailure(kind: "text", peerUserID: userID)
+            guard
+                let message = try await Self.makeMessage({ V2TIMManager.sharedInstance().createTextMessage(text: text) }
+                )
+            else {
+                Self.logMessageCreateFailure(kind: "text", peerUserID: userID)
             throw RemoteIMClientError.operationFailed(code: -1, description: "create text message failed")
         }
         return try await send(
@@ -422,8 +425,10 @@ final class TencentIMClient:
         )
     }
 
-    func sendVoice(to userID: String, recording: RemoteIMVoiceRecording, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt {
-        guard let message = try await Self.makeMessage({ V2TIMManager.sharedInstance().createSoundMessage(
+        func sendVoice(to userID: String, recording: RemoteIMVoiceRecording, origin: RemoteIMMessageOrigin) async throws
+            -> RemoteIMSendReceipt
+        {
+            guard let message = try await Self.makeMessage({ V2TIMManager.sharedInstance().createSoundMessage(
             audioFilePath: recording.fileURL.path,
             duration: Int32(recording.durationSeconds)
         ) }) else {
@@ -440,9 +445,15 @@ final class TencentIMClient:
         )
     }
 
-    func sendImage(to userID: String, image: RemoteIMImageFile, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt {
-        guard let message = try await Self.makeMessage({ V2TIMManager.sharedInstance().createImageMessage(imagePath: image.fileURL.path) }) else {
-            Self.logMessageCreateFailure(kind: "image", peerUserID: userID)
+        func sendImage(to userID: String, image: RemoteIMImageFile, origin: RemoteIMMessageOrigin) async throws
+            -> RemoteIMSendReceipt
+        {
+            guard
+                let message = try await Self.makeMessage({
+                    V2TIMManager.sharedInstance().createImageMessage(imagePath: image.fileURL.path)
+                })
+            else {
+                Self.logMessageCreateFailure(kind: "image", peerUserID: userID)
             throw RemoteIMClientError.operationFailed(code: -1, description: "create image message failed")
         }
         return try await send(
@@ -459,8 +470,10 @@ final class TencentIMClient:
         )
     }
 
-    func sendVideo(to userID: String, video: RemoteIMVideoFile, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt {
-        guard let message = try await Self.makeMessage({ V2TIMManager.sharedInstance().createVideoMessage(
+        func sendVideo(to userID: String, video: RemoteIMVideoFile, origin: RemoteIMMessageOrigin) async throws
+            -> RemoteIMSendReceipt
+        {
+            guard let message = try await Self.makeMessage({ V2TIMManager.sharedInstance().createVideoMessage(
             videoFilePath: video.fileURL.path,
             type: video.fileType,
             duration: Int32(clamping: video.durationSeconds),
@@ -484,8 +497,10 @@ final class TencentIMClient:
         )
     }
 
-    func sendFile(to userID: String, file: RemoteIMFile, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt {
-        guard let message = try await Self.makeMessage({ V2TIMManager.sharedInstance().createFileMessage(
+        func sendFile(to userID: String, file: RemoteIMFile, origin: RemoteIMMessageOrigin) async throws
+            -> RemoteIMSendReceipt
+        {
+            guard let message = try await Self.makeMessage({ V2TIMManager.sharedInstance().createFileMessage(
             filePath: file.fileURL.path,
             fileName: file.fileName
         ) }) else {
@@ -596,8 +611,9 @@ final class TencentIMClient:
                 guard message.account == Self.diagnosticAccountSnapshot.load() else {
                     continuation.resume(throwing: CancellationError()); return
                 }
-                message.value.cloudCustomData = RemoteIMCloudMetadataCodec.encode(cloudMetadata ?? RemoteIMCloudMetadata(origin: origin))
-                V2TIMManager.sharedInstance().sendMessage(
+                    message.value.cloudCustomData = RemoteIMCloudMetadataCodec.encode(
+                        cloudMetadata ?? RemoteIMCloudMetadata(origin: origin))
+                    V2TIMManager.sharedInstance().sendMessage(
                     message: message.value,
                     receiver: userID,
                     groupID: nil,
@@ -962,8 +978,11 @@ final class TencentIMClient:
                     fields["result"] = "ok"
                     fields["duration_ms"] = Self.elapsedMilliseconds(since: startedAt)
                     Self.logSDK(level: .info, event: "media-download-finished", fields: fields)
-                    Task { @MainActor [weak self, fromUserID, targetURL, durationSeconds, remoteID, origin, quote, createdAt] in
-                        guard diagnosticFields["account"] == Self.diagnosticAccountSnapshot.load() else { return }
+                        Task {
+                            @MainActor [
+                                weak self, fromUserID, targetURL, durationSeconds, remoteID, origin, quote, createdAt
+                            ] in
+                            guard diagnosticFields["account"] == Self.diagnosticAccountSnapshot.load() else { return }
                         let event = IncomingRemoteIMVoice(
                             fromUserID: fromUserID,
                             fileURL: targetURL,
@@ -1040,8 +1059,12 @@ final class TencentIMClient:
                     fields["result"] = "ok"
                     fields["duration_ms"] = Self.elapsedMilliseconds(since: startedAt)
                     Self.logSDK(level: .info, event: "media-download-finished", fields: fields)
-                    Task { @MainActor [weak self, fromUserID, targetURL, fileName, mimeType, remoteID, sizeBytes, origin, quote, createdAt, caption, captionAbove] in
-                        guard diagnosticFields["account"] == Self.diagnosticAccountSnapshot.load() else { return }
+                        Task {
+                            @MainActor [
+                                weak self, fromUserID, targetURL, fileName, mimeType, remoteID, sizeBytes, origin,
+                                quote, createdAt, caption, captionAbove
+                            ] in
+                            guard diagnosticFields["account"] == Self.diagnosticAccountSnapshot.load() else { return }
                         let event = IncomingRemoteIMFile(
                             accountTag: diagnosticFields["account"] ?? "unbound",
                             fromUserID: fromUserID,
@@ -1120,8 +1143,12 @@ final class TencentIMClient:
                     fields["result"] = "ok"
                     fields["duration_ms"] = Self.elapsedMilliseconds(since: startedAt)
                     Self.logSDK(level: .info, event: "media-download-finished", fields: fields)
-                    Task { @MainActor [weak self, fromUserID, targetURL, remoteID, width, height, sizeBytes, origin, quote, createdAt, caption, captionAbove] in
-                        guard diagnosticFields["account"] == Self.diagnosticAccountSnapshot.load() else { return }
+                        Task {
+                            @MainActor [
+                                weak self, fromUserID, targetURL, remoteID, width, height, sizeBytes, origin, quote,
+                                createdAt, caption, captionAbove
+                            ] in
+                            guard diagnosticFields["account"] == Self.diagnosticAccountSnapshot.load() else { return }
                         let event = IncomingRemoteIMImage(
                             fromUserID: fromUserID,
                             fileURL: targetURL,
@@ -1451,8 +1478,11 @@ final class TencentIMClient:
         createdAt: Date
     ) {
         let account = Self.diagnosticAccountSnapshot.load()
-        Task { @MainActor [weak self, fromUserID, text, remoteID, origin, approvalRequest, approvalDecision, quote, createdAt] in
-            guard account == Self.diagnosticAccountSnapshot.load() else { return }
+            Task {
+                @MainActor [
+                    weak self, fromUserID, text, remoteID, origin, approvalRequest, approvalDecision, quote, createdAt
+                ] in
+                guard account == Self.diagnosticAccountSnapshot.load() else { return }
             let event = IncomingRemoteIMText(
                 fromUserID: fromUserID,
                 text: text,
@@ -1677,8 +1707,10 @@ final class TencentIMClient:
         }
     }
 
-    private nonisolated static func statusMap(from userStatusList: [V2TIMUserStatus]) -> [String: RemoteIMPresenceStatus] {
-        userStatusList.reduce(into: [:]) { partialResult, item in
+        private nonisolated static func statusMap(from userStatusList: [V2TIMUserStatus]) -> [String:
+            RemoteIMPresenceStatus]
+        {
+            userStatusList.reduce(into: [:]) { partialResult, item in
             guard let userID = item.userID,
                   !userID.isEmpty else { return }
             partialResult[userID] = Self.presenceStatus(from: item.statusType)
@@ -1735,20 +1767,24 @@ final class TencentIMClient: RemoteIMClient {
         throw RemoteIMClientError.sdkNotIntegrated
     }
 
-    func sendVoice(to userID: String, recording: RemoteIMVoiceRecording, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt {
-        throw RemoteIMClientError.sdkNotIntegrated
+        func sendVoice(to userID: String, recording: RemoteIMVoiceRecording, origin: RemoteIMMessageOrigin) async throws
+            -> RemoteIMSendReceipt
+        { throw RemoteIMClientError.sdkNotIntegrated
     }
 
-    func sendImage(to userID: String, image: RemoteIMImageFile, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt {
-        throw RemoteIMClientError.sdkNotIntegrated
+        func sendImage(to userID: String, image: RemoteIMImageFile, origin: RemoteIMMessageOrigin) async throws
+            -> RemoteIMSendReceipt
+        { throw RemoteIMClientError.sdkNotIntegrated
     }
 
-    func sendVideo(to userID: String, video: RemoteIMVideoFile, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt {
-        throw RemoteIMClientError.sdkNotIntegrated
+        func sendVideo(to userID: String, video: RemoteIMVideoFile, origin: RemoteIMMessageOrigin) async throws
+            -> RemoteIMSendReceipt
+        { throw RemoteIMClientError.sdkNotIntegrated
     }
 
-    func sendFile(to userID: String, file: RemoteIMFile, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt {
-        throw RemoteIMClientError.sdkNotIntegrated
+        func sendFile(to userID: String, file: RemoteIMFile, origin: RemoteIMMessageOrigin) async throws
+            -> RemoteIMSendReceipt
+        { throw RemoteIMClientError.sdkNotIntegrated
     }
 
     func deleteContact(userID: String) async throws {

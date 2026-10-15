@@ -1256,22 +1256,31 @@ void MainWindowLayoutTest::conversationPreviewUsesPlainMarkdown_data() {
     QTest::addColumn<QString>("source");
     QTest::addColumn<QString>("expected");
     QTest::addColumn<bool>("attachment");
-    QTest::newRow("heading-inline") << QStringLiteral("## 标题\n\n**重点** 与 `code`") << QStringLiteral("标题 重点 与 code") << false;
-    QTest::newRow("link-strike") << QStringLiteral("[文档](https://example.com) 与 ~~旧版~~") << QStringLiteral("文档 与 旧版") << false;
-    QTest::newRow("code-literals") << QStringLiteral("```cpp\na*b*c\npath_with_under_score\n```") << QStringLiteral("a*b*c path_with_under_score") << false;
+    QTest::newRow("heading-inline") << QStringLiteral("## 标题\n\n**重点** 与 `code`")
+                                    << QStringLiteral("标题 重点 与 code") << false;
+    QTest::newRow("link-strike") << QStringLiteral("[文档](https://example.com) 与 ~~旧版~~")
+                                 << QStringLiteral("文档 与 旧版") << false;
+    QTest::newRow("code-literals") << QStringLiteral("```cpp\na*b*c\npath_with_under_score\n```")
+                                   << QStringLiteral("a*b*c path_with_under_score") << false;
     QTest::newRow("callout") << QStringLiteral("> [!TIP]\n> 使用 **独立目录**") << QStringLiteral("建议：使用 独立目录") << false;
     QTest::newRow("same-line-preview-callout") << QStringLiteral("> [!TIP] 正文") << QStringLiteral("建议：正文") << false;
-    QTest::newRow("emphasized-preview-callout") << QStringLiteral("> **[!TIP]** 正文") << QStringLiteral("建议：正文") << false;
-    QTest::newRow("linked-literal-callout") << QStringLiteral("> [[!TIP]](https://example.com)") << QStringLiteral("[!TIP]") << false;
+    QTest::newRow("emphasized-preview-callout")
+        << QStringLiteral("> **[!TIP]** 正文") << QStringLiteral("建议：正文") << false;
+    QTest::newRow("linked-literal-callout")
+        << QStringLiteral("> [[!TIP]](https://example.com)") << QStringLiteral("[!TIP]") << false;
     QTest::newRow("tasks") << QStringLiteral("- [x] 完成\n- [ ] 待办") << QStringLiteral("☑ 完成 ☐ 待办") << false;
     QTest::newRow("table") << QStringLiteral("| A | B |\n|---|---|\n|1|2|") << QStringLiteral("A B 1 2") << false;
-    QTest::newRow("reference-link") << QStringLiteral("[文档][ref]\n\n[ref]: https://example.com") << QStringLiteral("文档") << false;
-    QTest::newRow("image-alt") << QStringLiteral("![替代文字](https://example.com/a.png)") << QStringLiteral("替代文字") << false;
-    QTest::newRow("inline-code-literals") << QStringLiteral("`**literal**` 与 `a_b`") << QStringLiteral("**literal** 与 a_b") << false;
+    QTest::newRow("reference-link") << QStringLiteral("[文档][ref]\n\n[ref]: https://example.com")
+                                    << QStringLiteral("文档") << false;
+    QTest::newRow("image-alt") << QStringLiteral("![替代文字](https://example.com/a.png)") << QStringLiteral("替代文字")
+                               << false;
+    QTest::newRow("inline-code-literals")
+        << QStringLiteral("`**literal**` 与 `a_b`") << QStringLiteral("**literal** 与 a_b") << false;
     QTest::newRow("callout-in-code") << QStringLiteral("```text\n> [!TIP]\n```") << QStringLiteral("> [!TIP]") << false;
     QTest::newRow("inline-callout-code") << QStringLiteral("> `[!TIP]`") << QStringLiteral("[!TIP]") << false;
     QTest::newRow("crlf") << QStringLiteral("## 标题\r\n\r\n下一段") << QStringLiteral("标题 下一段") << false;
-    QTest::newRow("attachment") << QStringLiteral("[文件消息] **report**.md") << QStringLiteral("[文件消息] **report**.md") << true;
+    QTest::newRow("attachment") << QStringLiteral("[文件消息] **report**.md")
+                                << QStringLiteral("[文件消息] **report**.md") << true;
     QTest::newRow("only-markup") << QStringLiteral("---") << QStringLiteral("新消息") << false;
     const QString emoji = QString::fromUtf8("👨‍👩‍👧‍👦");
     QTest::newRow("long-emoji") << emoji.repeated(170) << (emoji.repeated(160) + QStringLiteral("…")) << false;

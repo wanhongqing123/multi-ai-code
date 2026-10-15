@@ -83,14 +83,16 @@ enum RemoteIMBackgroundWork {
     static func metadata<T: Sendable>(_ operation: @escaping @Sendable () throws -> T) async throws -> T {
         try await submit(to: metadataQueue) { _ in try operation() }
     }
-    static func fileCancellable<T: Sendable>(_ operation: @escaping @Sendable (Cancellation) throws -> T) async throws -> T {
-        try await submit(to: fileQueue, operation)
+    static func fileCancellable<T: Sendable>(_ operation: @escaping @Sendable (Cancellation) throws -> T) async throws
+        -> T
+    { try await submit(to: fileQueue, operation)
     }
     static func parse<T: Sendable>(_ operation: @escaping @Sendable () throws -> T) async throws -> T {
         try await submit(to: parsingQueue) { _ in try operation() }
     }
-    static func parseCancellable<T: Sendable>(_ operation: @escaping @Sendable (Cancellation) throws -> T) async throws -> T {
-        try await submit(to: parsingQueue, operation)
+    static func parseCancellable<T: Sendable>(_ operation: @escaping @Sendable (Cancellation) throws -> T) async throws
+        -> T
+    { try await submit(to: parsingQueue, operation)
     }
 
     private static func submit<T: Sendable>(to queue: DispatchQueue,
@@ -202,7 +204,8 @@ enum RemoteIMMediaStorage {
         values.isExcludedFromBackup = true
         try excludedRoot.setResourceValues(values)
         for category in Category.allCases {
-            try FileManager.default.createDirectory(at: directoryURL(category: category), withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(
+                at: directoryURL(category: category), withIntermediateDirectories: true)
         }
     }
 

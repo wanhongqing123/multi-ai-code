@@ -19,7 +19,14 @@ public:
     void heartbeat(qint64 monotonicMs, bool active, qint64 atMs = -1);
     QJsonObject snapshot(qint64 sinceMs, qint64 nowMs) const;
 private:
-    struct Aggregate { qint64 bucket = 0; QString metric; int samples = 0; int slow = 0; double total = 0; double maximum = 0; };
+    struct Aggregate {
+        qint64 bucket = 0;
+        QString metric;
+        int samples = 0;
+        int slow = 0;
+        double total = 0;
+        double maximum = 0;
+    };
     QString context_;
     QVector<Aggregate> values_;
     qint64 previousTick_ = -1;
@@ -28,8 +35,15 @@ private:
 };
 class PerformanceSpan {
 public:
-    explicit PerformanceSpan(const char* metric) : metric_(QString::fromLatin1(metric)), context_(PerformanceLog::shared().context()) { timer_.start(); }
-    ~PerformanceSpan() { if (context_ == PerformanceLog::shared().context()) PerformanceLog::shared().record(metric_, timer_.nsecsElapsed() / 1000000.0); }
+    explicit PerformanceSpan(const char* metric)
+        : metric_(QString::fromLatin1(metric)), context_(PerformanceLog::shared().context()) {
+        timer_.start();
+    }
+    ~PerformanceSpan() {
+        if (context_ == PerformanceLog::shared().context())
+            PerformanceLog::shared().record(metric_, timer_.nsecsElapsed() / 1000000.0);
+    }
+
 private:
     QString metric_;
     QString context_;

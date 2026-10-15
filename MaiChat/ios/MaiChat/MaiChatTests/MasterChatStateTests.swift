@@ -469,14 +469,22 @@ final class MasterChatStateTests: XCTestCase {
         )
         XCTAssertEqual(
             RemoteIMCloudMetadataCodec.decode(Data(
-                #"{"namespace":"multi-ai-code","version":2,"origin":"machine","interaction":{"kind":"approval-request","token":"approval-wire-1","actions":["approve-once","approve-prefix","reject"]}}"#.utf8
-            )),
+                    #"""
+                        {"namespace":"multi-ai-code","version":2,"origin":"machine",\#
+                        "interaction":{"kind":"approval-request","token":"approval-wire-1",\#
+                        "actions":["approve-once","approve-prefix","reject"]}}
+                        """#
+                        .utf8)),
             requestMetadata
         )
         XCTAssertEqual(
             RemoteIMCloudMetadataCodec.decode(Data(
-                #"{"namespace":"multi-ai-code","version":2,"origin":"human","interaction":{"kind":"approval-decision","token":"approval-wire-1","action":"approve-once"}}"#.utf8
-            )),
+                    #"""
+                        {"namespace":"multi-ai-code","version":2,"origin":"human",\#
+                        "interaction":{"kind":"approval-decision","token":"approval-wire-1",\#
+                        "action":"approve-once"}}
+                        """#
+                        .utf8)),
             decisionMetadata
         )
     }
@@ -556,7 +564,11 @@ final class MasterChatStateTests: XCTestCase {
     }
 
     func testRemoteMessageDecodesLegacyHistoryWithoutCaptionPlacement() throws {
-        let legacyJSON = #"{"id":"44444444-4444-4444-4444-444444444444","fromUserID":"mac","toUserID":"ios","text":"[图片消息] photo.png","direction":"incoming","status":"received","createdAt":0}"#
+        let legacyJSON =
+            #"""
+                {"id":"44444444-4444-4444-4444-444444444444","fromUserID":"mac","toUserID":"ios","text":"[图片消息]\#
+                 photo.png","direction":"incoming","status":"received","createdAt":0}
+                """#
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .secondsSince1970
         let message = try decoder.decode(RemoteIMMessage.self, from: Data(legacyJSON.utf8))
@@ -572,24 +584,39 @@ final class MasterChatStateTests: XCTestCase {
             #"{"namespace":"multi-ai-code","version":1,"origin":"machine"}"#.utf8
         )))
         XCTAssertNil(RemoteIMCloudMetadataCodec.decode(Data(
-            #"{"namespace":"multi-ai-code","version":2,"origin":"human","interaction":{"kind":"approval-request","token":"approval-wire-1","actions":["approve-once","reject"]}}"#.utf8
-        )))
+                    #"""
+                        {"namespace":"multi-ai-code","version":2,"origin":"human",\#
+                        "interaction":{"kind":"approval-request","token":"approval-wire-1",\#
+                        "actions":["approve-once","reject"]}}
+                        """#
+                        .utf8)))
         XCTAssertNil(RemoteIMCloudMetadataCodec.decode(Data(
-            #"{"namespace":"multi-ai-code","version":2,"origin":"machine","interaction":{"kind":"approval-decision","token":"approval-wire-1","action":"approve-once"}}"#.utf8
-        )))
+                    #"""
+                        {"namespace":"multi-ai-code","version":2,"origin":"machine",\#
+                        "interaction":{"kind":"approval-decision","token":"approval-wire-1",\#
+                        "action":"approve-once"}}
+                        """#
+                        .utf8)))
     }
 
     func testApprovalResolvedMetadataBecomesAnAuthoritativeIncomingDecision() {
         let autoDeclined = RemoteIMCloudMetadataCodec.decode(Data(
-            #"{"namespace":"multi-ai-code","version":2,"origin":"machine","interaction":{"kind":"approval-resolved","token":"approval-wire-1","outcome":"auto-declined"}}"#.utf8
-        ))
+                #"""
+                    {"namespace":"multi-ai-code","version":2,"origin":"machine",\#
+                    "interaction":{"kind":"approval-resolved","token":"approval-wire-1","outcome":"auto-declined"}}
+                    """#
+                    .utf8))
         XCTAssertEqual(
             autoDeclined?.approvalDecision,
             RemoteIMApprovalDecision(token: "approval-wire-1", action: .autoDeclined)
         )
         XCTAssertNil(RemoteIMCloudMetadataCodec.decode(Data(
-            #"{"namespace":"multi-ai-code","version":2,"origin":"human","interaction":{"kind":"approval-resolved","token":"approval-wire-1","outcome":"auto-declined"}}"#.utf8
-        )))
+                    #"""
+                        {"namespace":"multi-ai-code","version":2,"origin":"human",\#
+                        "interaction":{"kind":"approval-resolved","token":"approval-wire-1",\#
+                        "outcome":"auto-declined"}}
+                        """#
+                        .utf8)))
     }
 
     func testPeerPolicyRejectsBlankAndCurrentLoginAccount() {

@@ -37,7 +37,10 @@ public final class MarkdownRenderer {
         return "date:" + timestamp + ":" + day + "\0" + source(text);
     }
     private static final LruCache<String, Spanned> cache = new LruCache<String, Spanned>(2 * 1024 * 1024) {
-        @Override protected int sizeOf(String key, Spanned value) { return Math.max(1, (key.length() + value.length()) * 2); }
+        @Override
+        protected int sizeOf(String key, Spanned value) {
+            return Math.max(1, (key.length() + value.length()) * 2);
+        }
     };
     private MarkdownRenderer() { }
     public static synchronized void initialize(Context context) {
@@ -48,24 +51,40 @@ public final class MarkdownRenderer {
         markwon = Markwon.builder(context.getApplicationContext())
             .usePlugin(new io.noties.markwon.AbstractMarkwonPlugin() {
                 @Override public void configureTheme(io.noties.markwon.core.MarkwonTheme.Builder theme) {
-                    theme.linkColor(MaiChatTheme.BLUE).isLinkUnderlined(false)
-                        .listItemColor(MaiChatTheme.BLUE).blockMargin(Math.round(24 * density)).bulletWidth(Math.round(3 * density))
-                        .headingTypeface(MaiChatTypography.semibold()).headingBreakHeight(0)
-                        .headingTextSizeMultipliers(new float[]{22f/14, 18f/14, 16f/14, 1, 1, 1})
-                        .codeTypeface(android.graphics.Typeface.MONOSPACE).codeTextSize(Math.round(13 * scaledDensity))
-                        .codeTextColor(MaiChatTypography.CODE_COLOR).codeBackgroundColor(MaiChatTypography.CODE_BACKGROUND)
-                        .codeBlockTypeface(android.graphics.Typeface.MONOSPACE).codeBlockTextSize(Math.round(12 * scaledDensity))
-                        .codeBlockTextColor(MaiChatTheme.TEXT).codeBlockBackgroundColor(android.graphics.Color.rgb(244, 246, 249))
-                        .codeBlockMargin(Math.round(12 * density)).blockQuoteColor(MaiChatTheme.BLUE)
-                        .blockQuoteWidth(Math.round(3 * density)).thematicBreakColor(MaiChatTheme.BORDER);
+                    theme.linkColor(MaiChatTheme.BLUE)
+                            .isLinkUnderlined(false)
+                            .listItemColor(MaiChatTheme.BLUE)
+                            .blockMargin(Math.round(24 * density))
+                            .bulletWidth(Math.round(3 * density))
+                            .headingTypeface(MaiChatTypography.semibold())
+                            .headingBreakHeight(0)
+                            .headingTextSizeMultipliers(new float[] {22f / 14, 18f / 14, 16f / 14, 1, 1, 1})
+                            .codeTypeface(android.graphics.Typeface.MONOSPACE)
+                            .codeTextSize(Math.round(13 * scaledDensity))
+                            .codeTextColor(MaiChatTypography.CODE_COLOR)
+                            .codeBackgroundColor(MaiChatTypography.CODE_BACKGROUND)
+                            .codeBlockTypeface(android.graphics.Typeface.MONOSPACE)
+                            .codeBlockTextSize(Math.round(12 * scaledDensity))
+                            .codeBlockTextColor(MaiChatTheme.TEXT)
+                            .codeBlockBackgroundColor(android.graphics.Color.rgb(244, 246, 249))
+                            .codeBlockMargin(Math.round(12 * density))
+                            .blockQuoteColor(MaiChatTheme.BLUE)
+                            .blockQuoteWidth(Math.round(3 * density))
+                            .thematicBreakColor(MaiChatTheme.BORDER);
                 }
                 @Override public void configureSpansFactory(io.noties.markwon.MarkwonSpansFactory.Builder builder) {
-                    builder.appendFactory(org.commonmark.node.Heading.class, (configuration, props) ->
-                        new android.text.style.ForegroundColorSpan(io.noties.markwon.core.CoreProps.HEADING_LEVEL.require(props) <= 2 ? MaiChatTypography.HEADING_COLOR : MaiChatTheme.TEXT));
+                    builder.appendFactory(org.commonmark.node.Heading.class,
+                            (configuration, props)
+                                    -> new android.text.style.ForegroundColorSpan(
+                                            io.noties.markwon.core.CoreProps.HEADING_LEVEL.require(props) <= 2
+                                                    ? MaiChatTypography.HEADING_COLOR
+                                                    : MaiChatTheme.TEXT));
                     io.noties.markwon.SpanFactory fallback = builder.requireFactory(org.commonmark.node.ListItem.class);
                     builder.setFactory(org.commonmark.node.ListItem.class, (configuration, props) -> {
-                        if (io.noties.markwon.core.CoreProps.LIST_ITEM_TYPE.require(props) == io.noties.markwon.core.CoreProps.ListItemType.BULLET) {
-                            return new MaiChatTypography.BlueBulletSpan(density, io.noties.markwon.core.CoreProps.BULLET_LIST_ITEM_LEVEL.require(props));
+                        if (io.noties.markwon.core.CoreProps.LIST_ITEM_TYPE.require(props)
+                                == io.noties.markwon.core.CoreProps.ListItemType.BULLET) {
+                            return new MaiChatTypography.BlueBulletSpan(
+                                    density, io.noties.markwon.core.CoreProps.BULLET_LIST_ITEM_LEVEL.require(props));
                         }
                         return fallback.getSpans(configuration, props);
                     });
@@ -80,7 +99,8 @@ public final class MarkdownRenderer {
     }
     private static String source(String value) { return value == null ? "" : value.replace("\r\n", "\n"); }
     private static Spanned prepare(String value, Long timestamp) {
-        if (Looper.myLooper() == Looper.getMainLooper()) throw new IllegalStateException("Markdown parsing on UI thread");
+        if (Looper.myLooper() == Looper.getMainLooper())
+            throw new IllegalStateException("Markdown parsing on UI thread");
         String key = cacheKey(value, timestamp);
         Spanned ready = cache.get(key);
         if (ready == null) {
@@ -90,20 +110,31 @@ public final class MarkdownRenderer {
                 ready = new android.text.SpannedString(source(value));
             }
             android.text.SpannableStringBuilder styled = new android.text.SpannableStringBuilder(ready);
-            java.util.regex.Matcher note = java.util.regex.Pattern.compile("(?m)^此消息来自\\s*imcli[。.]?\\s*$").matcher(styled);
+            java.util.regex.Matcher note =
+                    java.util.regex.Pattern.compile("(?m)^此消息来自\\s*imcli[。.]?\\s*$").matcher(styled);
             while (note.find()) {
-                if (styled.getSpans(note.start(), note.end(), io.noties.markwon.core.spans.CodeBlockSpan.class).length > 0) continue;
-                styled.setSpan(new android.text.style.ForegroundColorSpan(MaiChatTheme.BLUE), note.start(), note.end(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-                styled.setSpan(new android.text.style.BackgroundColorSpan(MaiChatTheme.BLUE_SOFT), note.start(), note.end(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-                styled.setSpan(new android.text.style.AbsoluteSizeSpan(Math.round(12 * scaledDensity)), note.start(), note.end(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-                styled.setSpan(new MaiChatTypography.SemiboldSpan(), note.start(), note.end(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                if (styled.getSpans(note.start(), note.end(), io.noties.markwon.core.spans.CodeBlockSpan.class).length
+                        > 0)
+                    continue;
+                styled.setSpan(new android.text.style.ForegroundColorSpan(MaiChatTheme.BLUE), note.start(), note.end(),
+                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                styled.setSpan(new android.text.style.BackgroundColorSpan(MaiChatTheme.BLUE_SOFT), note.start(),
+                        note.end(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                styled.setSpan(new android.text.style.AbsoluteSizeSpan(Math.round(12 * scaledDensity)), note.start(),
+                        note.end(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                styled.setSpan(new MaiChatTypography.SemiboldSpan(), note.start(), note.end(),
+                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
             }
             if (timestamp != null) {
-                while (styled.length() > 0 && Character.isWhitespace(styled.charAt(styled.length() - 1))) styled.delete(styled.length() - 1, styled.length());
+                while (styled.length() > 0 && Character.isWhitespace(styled.charAt(styled.length() - 1)))
+                    styled.delete(styled.length() - 1, styled.length());
                 int start = styled.length(); styled.append("  · ").append(RemoteIMTimestampFormatter.format(timestamp));
-                styled.setSpan(new android.text.style.ForegroundColorSpan(MaiChatTheme.BLUE), start, styled.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-                styled.setSpan(new android.text.style.AbsoluteSizeSpan(Math.round(11 * scaledDensity)), start, styled.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-                styled.setSpan(new MaiChatTypography.SemiboldSpan(), start, styled.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                styled.setSpan(new android.text.style.ForegroundColorSpan(MaiChatTheme.BLUE), start, styled.length(),
+                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                styled.setSpan(new android.text.style.AbsoluteSizeSpan(Math.round(11 * scaledDensity)), start,
+                        styled.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                styled.setSpan(
+                        new MaiChatTypography.SemiboldSpan(), start, styled.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
             }
             ready = styled;
             cache.put(key, ready);
@@ -117,7 +148,11 @@ public final class MarkdownRenderer {
     }
     static void preparePresentations(List<Presentation> sources, BooleanSupplier current, Runnable completion) {
         worker.execute(() -> {
-            for (Presentation item : sources) { if (!current.getAsBoolean()) return; prepare(item.text, item.timestamp); }
+            for (Presentation item : sources) {
+                if (!current.getAsBoolean())
+                    return;
+                prepare(item.text, item.timestamp);
+            }
             main.post(() -> { if (current.getAsBoolean()) completion.run(); });
         });
     }

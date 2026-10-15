@@ -161,10 +161,14 @@ protocol RemoteIMClient: AnyObject {
         token: String,
         action: RemoteIMApprovalAction
     ) async throws -> RemoteIMSendReceipt
-    func sendVoice(to userID: String, recording: RemoteIMVoiceRecording, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt
-    func sendImage(to userID: String, image: RemoteIMImageFile, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt
-    func sendVideo(to userID: String, video: RemoteIMVideoFile, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt
-    func sendFile(to userID: String, file: RemoteIMFile, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt
+    func sendVoice(to userID: String, recording: RemoteIMVoiceRecording, origin: RemoteIMMessageOrigin) async throws
+        -> RemoteIMSendReceipt
+    func sendImage(to userID: String, image: RemoteIMImageFile, origin: RemoteIMMessageOrigin) async throws
+        -> RemoteIMSendReceipt
+    func sendVideo(to userID: String, video: RemoteIMVideoFile, origin: RemoteIMMessageOrigin) async throws
+        -> RemoteIMSendReceipt
+    func sendFile(to userID: String, file: RemoteIMFile, origin: RemoteIMMessageOrigin) async throws
+        -> RemoteIMSendReceipt
     func deleteContact(userID: String) async throws
     func clearHistory(userID: String) async throws
     func refreshUserProfiles(userIDs: [String]) async throws -> [RemoteIMUserProfile]

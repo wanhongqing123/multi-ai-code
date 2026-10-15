@@ -64,11 +64,13 @@ void RemoteDiagnosticsProtocolTest::retainsNumericHostTimesAndRejectsWrongTypes(
     const auto id = newRequestId();
     auto body = minimalReport(id);
     body.insert("exportedAt", 1800000000000.0);
-    body.insert("activeSessions", QJsonArray{QJsonObject{{"startedAt", 1799999999000.0}, {"sessionId", "s"}, {"cli", "codex"}}});
+    body.insert("activeSessions",
+                QJsonArray{QJsonObject{{"startedAt", 1799999999000.0}, {"sessionId", "s"}, {"cli", "codex"}}});
     auto parsed = parseReport(reportBytes(body), attachmentFileName(id), id, kPeer, kPeer);
     QVERIFY(parsed.accepted);
     QCOMPARE(parsed.report.value("exportedAt").toDouble(), 1800000000000.0);
-    QCOMPARE(parsed.report.value("activeSessions").toArray()[0].toObject().value("startedAt").toDouble(), 1799999999000.0);
+    QCOMPARE(parsed.report.value("activeSessions").toArray()[0].toObject().value("startedAt").toDouble(),
+             1799999999000.0);
     body.insert("exportedAt", "1800000000000");
     body.insert("activeSessions", QJsonArray{QJsonObject{{"startedAt", "1799999999000"}, {"sessionId", "s"}}});
     parsed = parseReport(reportBytes(body), attachmentFileName(id), id, kPeer, kPeer);

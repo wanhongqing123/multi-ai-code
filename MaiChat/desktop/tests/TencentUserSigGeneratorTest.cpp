@@ -56,7 +56,8 @@ void TencentUserSigGeneratorTest::generatesDeterministicTencentUserSigPayload() 
     QCOMPARE(payload.value(QStringLiteral("TLS.sdkappid")).toInt(), 1400000000);
     QCOMPARE(payload.value(QStringLiteral("TLS.expire")).toInt(), 604800);
     QCOMPARE(payload.value(QStringLiteral("TLS.time")).toInt(), 1700000000);
-    QCOMPARE(payload.value(QStringLiteral("TLS.sig")).toString(), QStringLiteral("57RbWolBbRKyFp7zn2OutFLug34qrpKe0Eb8yaH7GP0="));
+    QCOMPARE(payload.value(QStringLiteral("TLS.sig")).toString(),
+             QStringLiteral("57RbWolBbRKyFp7zn2OutFLug34qrpKe0Eb8yaH7GP0="));
 }
 
 void TencentUserSigGeneratorTest::generatedUserSigUsesTencentZlibWrapper() {
@@ -77,9 +78,12 @@ void TencentUserSigGeneratorTest::generatedUserSigUsesTencentZlibWrapper() {
 }
 
 void TencentUserSigGeneratorTest::rejectsInvalidInputs() {
-    QVERIFY(TencentUserSigGenerator::generate(0, QStringLiteral("ios-master"), QStringLiteral("test-secret")).isEmpty());
-    QVERIFY(TencentUserSigGenerator::generate(1400000000, QStringLiteral("   "), QStringLiteral("test-secret")).isEmpty());
-    QVERIFY(TencentUserSigGenerator::generate(1400000000, QStringLiteral("ios-master"), QStringLiteral("   ")).isEmpty());
+    QVERIFY(
+        TencentUserSigGenerator::generate(0, QStringLiteral("ios-master"), QStringLiteral("test-secret")).isEmpty());
+    QVERIFY(
+        TencentUserSigGenerator::generate(1400000000, QStringLiteral("   "), QStringLiteral("test-secret")).isEmpty());
+    QVERIFY(
+        TencentUserSigGenerator::generate(1400000000, QStringLiteral("ios-master"), QStringLiteral("   ")).isEmpty());
 }
 
 QTEST_MAIN(TencentUserSigGeneratorTest)

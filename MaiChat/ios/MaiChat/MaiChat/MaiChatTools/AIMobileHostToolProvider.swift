@@ -336,7 +336,9 @@ final class AIMobileHostToolProvider {
             let (_, uploadResponse) = try await session.upload(for: uploadRequest, fromFile: source)
             guard let result = uploadResponse as? HTTPURLResponse,
                   (200...299).contains(result.statusCode) else {
-                return .failure(code: "upload_failed", message: "OSS rejected the video upload; check the signed URL and Bucket permissions")
+                return .failure(
+                    code: "upload_failed",
+                    message: "OSS rejected the video upload; check the signed URL and Bucket permissions")
             }
             return Self.jsonSuccess(["url": readURL.absoluteString])
         } catch {

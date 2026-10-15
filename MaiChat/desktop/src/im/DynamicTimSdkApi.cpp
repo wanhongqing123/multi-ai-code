@@ -57,7 +57,8 @@ QStringList defaultSdkLibraryCandidates() {
         candidates.append(QDir(root).filePath(QStringLiteral("windows/shared_lib/Win64/ImSDK.dll")));
 #endif
 #elif defined(Q_OS_MACOS)
-        candidates.append(QDir(root).filePath(QStringLiteral("macos/ImSDKForMac_Plus.framework/Versions/A/ImSDKForMac_Plus")));
+        candidates.append(
+            QDir(root).filePath(QStringLiteral("macos/ImSDKForMac_Plus.framework/Versions/A/ImSDKForMac_Plus")));
         candidates.append(QDir(root).filePath(QStringLiteral("macos/ImSDKForMac_Plus.framework/ImSDKForMac_Plus")));
 #endif
     }

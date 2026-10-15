@@ -436,7 +436,12 @@ private final class AIMessageViewportLog {
         self.session = session
         visibleHeight = height
         lastReportedNearBottom = nearBottom
-        logAIHistoryEvent("viewport session=\(session) content=\(Int(content)) visible=\(height) offset=\(Int(offset)) remaining=\(Int(remaining)) nearBottom=\(nearBottom)")
+        logAIHistoryEvent(
+            """
+            viewport session=\(session) content=\(Int(content)) visible=\(height) offset=\(Int(offset)) \
+            remaining=\(Int(remaining)) nearBottom=\(nearBottom)
+            """
+        )
     }
 
     func nearBottomBeforeKeyboard(opening: Bool) -> Bool {
@@ -546,7 +551,13 @@ private struct AIAssistantMessageList: View {
                     isAttachmentPanelPresented = false
                 }
                 .onAppear {
-                    logAIHistoryEvent("message-list appear session=\(model.selected) count=\(model.visibleMessages.count) first=\(model.visibleMessages.first?.id ?? "none") last=\(model.visibleMessages.last?.id ?? "none")")
+                    logAIHistoryEvent(
+                        """
+                        message-list appear session=\(model.selected) count=\(model.visibleMessages.count) \
+                        first=\(model.visibleMessages.first?.id ?? "none") \
+                        last=\(model.visibleMessages.last?.id ?? "none")
+                        """
+                    )
                 }
                 .onChange(of: model.visibleMessages.first?.id) { _ in
                     if let anchor = prependAnchorID {
@@ -640,7 +651,13 @@ private struct AIAssistantMessageList: View {
     }
 
     private func position(at id: String, proxy: ScrollViewProxy, anchor: UnitPoint) {
-        logAIHistoryEvent("scroll-request session=\(model.selected) target=\(id) first=\(model.visibleMessages.first?.id ?? "none") last=\(model.visibleMessages.last?.id ?? "none")")
+        logAIHistoryEvent(
+            """
+            scroll-request session=\(model.selected) target=\(id) \
+            first=\(model.visibleMessages.first?.id ?? "none") \
+            last=\(model.visibleMessages.last?.id ?? "none")
+            """
+        )
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
         withTransaction(transaction) { proxy.scrollTo(id, anchor: anchor) }
@@ -1030,8 +1047,10 @@ private struct AIMessageRow: View, Equatable {
                 }
                 if !message.active {
                     HStack {
-                        Text(message.completed == 0 ? "已中断" : "用时 \(max(0, (message.completed - message.created) / 1000)) 秒")
-                            .font(AssistantMessageFont.metadata)
+                        Text(
+                            message.completed == 0
+                                ? "已中断" : "用时 \(max(0, (message.completed - message.created) / 1000)) 秒"
+                        ).font(AssistantMessageFont.metadata)
                         Button { RemoteIMClipboard.writeText(message.text) } label: {
                             Image(systemName: "doc.on.doc")
                         }
@@ -1364,7 +1383,12 @@ private struct AIMessageRow: View, Equatable {
         return type.conforms(to: .image)
     }
     private func toolStatus(_ state: String?) -> String {
-        switch state { case "completed": return "已完成"; case "error": return "失败"; case "pending": return "等待授权"; default: return "正在运行" }
+        switch state {
+        case "completed": return "已完成";
+        case "error": return "失败";
+        case "pending": return "等待授权";
+        default: return "正在运行"
+        }
     }
 }
 
@@ -3047,7 +3071,9 @@ private struct AIQuestionCard: View {
             }
         }.padding().background(Color.blue.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
     }
-    private func reply(_ text: String) { Task { await model.action("answer", values: ["id": question.id, "text": text]) } }
+    private func reply(_ text: String) {
+        Task { await model.action("answer", values: ["id": question.id, "text": text]) }
+    }
 }
 private struct AISettingsView: View {
     @ObservedObject var model: AIAssistantModel

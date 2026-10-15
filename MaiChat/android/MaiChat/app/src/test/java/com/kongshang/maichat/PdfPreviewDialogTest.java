@@ -1,6 +1,7 @@
 // 文件作用：Android 本地测试；PdfPreviewDialogTest 负责覆盖对应类的状态和数据行为，本文件给出其验证。
 // 运行边界：仅供自动化验证使用，不作为正式 App 或 Agent 的用户功能入口。
-// 覆盖场景：onlyPreviewsPdfInsideTheSelectedWorkspace、completedPdfToolResultBecomesPreviewableArtifact、diagnosticToolResultOnlyExposesAWorkspaceTextFile。
+// 覆盖场景：onlyPreviewsPdfInsideTheSelectedWorkspace、completedPdfToolResultBecomesPreviewableArtifact、
+// diagnosticToolResultOnlyExposesAWorkspaceTextFile。
 package com.kongshang.maichat;
 
 import static org.junit.Assert.assertEquals;
@@ -59,7 +60,8 @@ public class PdfPreviewDialogTest {
             .put("output", "{\"path\":\"maichat-diagnostics-test.txt\",\"mime_type\":\"text/plain\",\"bytes\":1234}");
         assertEquals("maichat-diagnostics-test.txt",
             AIAssistantPanel.diagnosticPathFromToolOutput(part));
-        part.put("output", "{\"path\":\"../maichat-diagnostics-test.txt\",\"mime_type\":\"text/plain\",\"bytes\":1234}");
+        part.put(
+                "output", "{\"path\":\"../maichat-diagnostics-test.txt\",\"mime_type\":\"text/plain\",\"bytes\":1234}");
         assertNull(AIAssistantPanel.diagnosticPathFromToolOutput(part));
         part.put("output", "{\"path\":\"maichat-diagnostics-test.txt\",\"mime_type\":\"text/plain\",\"bytes\":0}");
         assertNull(AIAssistantPanel.diagnosticPathFromToolOutput(part));

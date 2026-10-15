@@ -75,13 +75,36 @@ const QStringList& eventStringFields()
 
 const QStringList& eventNumberFields()
 {
-    static const QStringList fields{
-        QStringLiteral("attempt"),
-        QStringLiteral("code"),
-        QStringLiteral("errorCode"),
-        QStringLiteral("at"), "createdAt", "startedAt", "pid", "hostPid", "lifetimeMs", "lastInputAt",
-        "lastOutputAt", "lastEtxAt", "stopRequestedAt", "exitCode", "textLength", "inputLength",
-        "resolvedLength", "forwardedChunks", "onDiskBinaryBytes", "duration_ms", "samples", "slow_samples", "slow_threshold_ms", "max_ms", "average_ms", "late_ms", "sample_interval_ms", "visibleLength", "cellCount", "replacedCells"};
+    static const QStringList fields{QStringLiteral("attempt"),
+                                    QStringLiteral("code"),
+                                    QStringLiteral("errorCode"),
+                                    QStringLiteral("at"),
+                                    "createdAt",
+                                    "startedAt",
+                                    "pid",
+                                    "hostPid",
+                                    "lifetimeMs",
+                                    "lastInputAt",
+                                    "lastOutputAt",
+                                    "lastEtxAt",
+                                    "stopRequestedAt",
+                                    "exitCode",
+                                    "textLength",
+                                    "inputLength",
+                                    "resolvedLength",
+                                    "forwardedChunks",
+                                    "onDiskBinaryBytes",
+                                    "duration_ms",
+                                    "samples",
+                                    "slow_samples",
+                                    "slow_threshold_ms",
+                                    "max_ms",
+                                    "average_ms",
+                                    "late_ms",
+                                    "sample_interval_ms",
+                                    "visibleLength",
+                                    "cellCount",
+                                    "replacedCells"};
     return fields;
 }
 
@@ -101,9 +124,14 @@ const QStringList& eventStringOrNumberFields()
 
 const QStringList& eventBoolFields()
 {
-    static const QStringList fields{
-        QStringLiteral("sdkReady"), QStringLiteral("isReady"), QStringLiteral("accepted"), QStringLiteral("hasStream"), QStringLiteral("replay"),
-        "ok", "sourceStarted", "autoReplyToIm"};
+    static const QStringList fields{QStringLiteral("sdkReady"),
+                                    QStringLiteral("isReady"),
+                                    QStringLiteral("accepted"),
+                                    QStringLiteral("hasStream"),
+                                    QStringLiteral("replay"),
+                                    "ok",
+                                    "sourceStarted",
+                                    "autoReplyToIm"};
     return fields;
 }
 
@@ -406,7 +434,8 @@ ParsedReport parseReport(const QByteArray& payload,
                     QStringLiteral("sourceCoverage.aicliOriginalEvents"));
             }
         }
-        if (value.toObject().value("uiPerformance").toString() == "unavailable") coverage.insert("uiPerformance", "unavailable");
+        if (value.toObject().value("uiPerformance").toString() == "unavailable")
+            coverage.insert("uiPerformance", "unavailable");
         out.insert(QStringLiteral("sourceCoverage"), coverage);
     }
 

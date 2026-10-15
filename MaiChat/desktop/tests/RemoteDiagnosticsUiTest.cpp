@@ -92,7 +92,10 @@ class RemoteDiagnosticsUiTest : public QObject {
         auto* controller = window.findChild<RemoteDiagnosticsController*>();
         if (!confirm || switchAccount) {
             QVERIFY(!controller); QVERIFY(fake->lastText().isEmpty()); QVERIFY(fake->lastFilePath().isEmpty());
-            if (switchAccount) QVERIFY(window.findChild<QLabel*>("remoteDiagnosticsStatus")->text().contains(QStringLiteral("账号已变更")));
+            if (switchAccount)
+                QVERIFY(window.findChild<QLabel*>("remoteDiagnosticsStatus")
+                            ->text()
+                            .contains(QStringLiteral("账号已变更")));
             return;
         }
         QVERIFY(controller); QTRY_VERIFY(fake->lastText().startsWith("/diagnostics "));
@@ -104,7 +107,10 @@ class RemoteDiagnosticsUiTest : public QObject {
         QTemporaryDir temp;
         const auto path = temp.filePath("report.json");
         QFile file(path); QVERIFY(file.open(QIODevice::WriteOnly));
-        file.write(QJsonDocument(QJsonObject{{"schemaVersion", 1}, {"requestId", controller->requestId()}, {"files", QJsonArray{}}}).toJson());
+        file.write(
+            QJsonDocument(
+                QJsonObject{{"schemaVersion", 1}, {"requestId", controller->requestId()}, {"files", QJsonArray{}}})
+                .toJson());
         file.close();
         RemoteIMMessage message; message.fromUserId = "machine"; message.toUserId = "phone";
         message.createdAtMillis = 1; message.hasFile = true; message.file.localPath = path;

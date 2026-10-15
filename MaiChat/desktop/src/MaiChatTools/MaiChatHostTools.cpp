@@ -514,7 +514,8 @@ void registerMaiChatHostTools(MaiToolRegistry &registry,
   addTool(
       registry, HostToolKind::ListContacts, "maichat_list_contacts",
       "List MaiChat contacts. Use query to filter by user ID or display name.",
-      R"({"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":200}}})",
+      R"({"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":200})"
+          R"(}})",
       app);
   addTool(
       registry, HostToolKind::ListConversations, "maichat_list_conversations",
@@ -525,12 +526,14 @@ void registerMaiChatHostTools(MaiToolRegistry &registry,
   addTool(
       registry, HostToolKind::GetMessages, "maichat_get_messages",
       "Read recent messages in a MaiChat conversation with a specific contact.",
-      R"({"type":"object","properties":{"peer_id":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":200}},"required":["peer_id"]})",
+      R"({"type":"object","properties":{"peer_id":{"type":"string"},"limit":{"type":"integer","minimum":1,)"
+          R"("maximum":200}},"required":["peer_id"]})",
       app);
   addTool(
       registry, HostToolKind::SearchMessages, "maichat_search_messages",
       "Search MaiChat message text across all contacts or within one contact.",
-      R"({"type":"object","properties":{"query":{"type":"string"},"peer_id":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":200}},"required":["query"]})",
+      R"({"type":"object","properties":{"query":{"type":"string"},"peer_id":{"type":"string"},)"
+          R"("limit":{"type":"integer","minimum":1,"maximum":200}},"required":["query"]})",
       app);
   addTool(registry, HostToolKind::GetUnreadSummary,
           "maichat_get_unread_summary",
@@ -540,25 +543,30 @@ void registerMaiChatHostTools(MaiToolRegistry &registry,
       registry, HostToolKind::SendText, "maichat_send_text",
       "Queue a text message to a MaiChat contact. This changes external state "
       "and requires user approval.",
-      R"({"type":"object","properties":{"peer_id":{"type":"string"},"text":{"type":"string"}},"required":["peer_id","text"]})",
+      R"({"type":"object","properties":{"peer_id":{"type":"string"},"text":{"type":"string"}},"required":["peer_id",)"
+          R"("text"]})",
       app, true);
   addTool(
       registry, HostToolKind::SendMedia, "maichat_send_media",
       "Send an Agent workspace image or video as a persistent MaiChat message "
       "bubble, or audio as a file card. Optional caption is kept with the media. "
       "This changes external state and requires user approval.",
-      R"({"type":"object","properties":{"peer_id":{"type":"string"},"file_path":{"type":"string"},"type":{"type":"string","enum":["image","video","audio"]},"caption":{"type":"string"}},"required":["peer_id","file_path","type"],"additionalProperties":false})",
+      R"({"type":"object","properties":{"peer_id":{"type":"string"},"file_path":{"type":"string"},)"
+          R"("type":{"type":"string","enum":["image","video","audio"]},"caption":{"type":"string"}},)"
+          R"("required":["peer_id","file_path","type"],"additionalProperties":false})",
       app, true);
   addTool(
       registry, HostToolKind::ReplyMessage, "maichat_reply_message",
       "Queue a quoted text reply to a MaiChat message. This changes external "
       "state and requires user approval.",
-      R"({"type":"object","properties":{"peer_id":{"type":"string"},"message_id":{"type":"string"},"text":{"type":"string"}},"required":["peer_id","message_id","text"]})",
+      R"({"type":"object","properties":{"peer_id":{"type":"string"},"message_id":{"type":"string"},)"
+          R"("text":{"type":"string"}},"required":["peer_id","message_id","text"]})",
       app, true);
   addTool(
       registry, HostToolKind::BroadcastText, "maichat_broadcast_text",
       "Queue the same text message to multiple MaiChat contacts. The complete "
       "recipient list and text require user approval for every call.",
-      R"({"type":"object","properties":{"peer_ids":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":200},"text":{"type":"string"}},"required":["peer_ids","text"]})",
+      R"({"type":"object","properties":{"peer_ids":{"type":"array","items":{"type":"string"},"minItems":1,)"
+          R"("maxItems":200},"text":{"type":"string"}},"required":["peer_ids","text"]})",
       app, true);
 }

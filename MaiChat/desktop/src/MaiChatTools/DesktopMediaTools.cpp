@@ -35,7 +35,8 @@ public:
                "message video use the same player. Relative paths start in the Agent workspace.";
     }
     std::string parametersSchema() const override {
-        return R"({"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false})";
+        return R"({"type":"object","properties":{"path":{"type":"string"}},"required":["path"],)"
+            R"("additionalProperties":false})";
     }
     MaiToolResult execute(const std::string& argumentsJson,
                           const MaiToolContext& context) override {
@@ -91,7 +92,13 @@ public:
                "actions remain available.";
     }
     std::string parametersSchema() const override {
-        return R"({"type":"object","properties":{"action":{"type":"string","enum":["play","pause","toggle_pause","step","seek_forward","seek_backward","seek_minute_forward","seek_minute_backward","next_chapter","previous_chapter","seek_percent","seek_seconds","set_speed","next_audio","next_video","next_subtitle","next_program","next_filter","mute","volume_up","volume_down","fullscreen","close"]},"percent":{"type":"number","minimum":0,"maximum":100},"seconds":{"type":"number","minimum":0},"speed":{"type":"number","enum":[0.25,0.5,1,1.5,2]}},"required":["action"],"additionalProperties":false})";
+        return R"({"type":"object","properties":{"action":{"type":"string","enum":["play","pause","toggle_pause",)"
+            R"("step","seek_forward","seek_backward","seek_minute_forward","seek_minute_backward","next_chapter",)"
+            R"("previous_chapter","seek_percent","seek_seconds","set_speed","next_audio","next_video","next_subtitle",)"
+            R"("next_program","next_filter","mute","volume_up","volume_down","fullscreen","close"]},)"
+            R"("percent":{"type":"number","minimum":0,"maximum":100},"seconds":{"type":"number","minimum":0},)"
+            R"("speed":{"type":"number","enum":[0.25,0.5,1,1.5,2]}},"required":["action"],"additionalProperties":false)"
+            R"(})";
     }
     MaiToolResult execute(const std::string& argumentsJson,
                           const MaiToolContext&) override {

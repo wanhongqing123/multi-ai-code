@@ -56,7 +56,8 @@ final class MainThreadMonitor {
                 } else if (now - pulse >= 500 && now - lastStall >= 2000) {
                     lastStall = now;
                     StringBuilder stack = new StringBuilder("main-stall delayMs=" + (now - pulse));
-                    for (StackTraceElement item : Looper.getMainLooper().getThread().getStackTrace()) stack.append("\n  at ").append(item);
+                    for (StackTraceElement item : Looper.getMainLooper().getThread().getStackTrace())
+                        stack.append("\n  at ").append(item);
                     write(stack.toString());
                 }
                 if (now - lastMemory >= 30000) {
@@ -76,7 +77,8 @@ final class MainThreadMonitor {
                 File previous = new File(directory, "ui.previous.log"); previous.delete(); log.renameTo(previous);
             }
             try (FileOutputStream out = new FileOutputStream(log, true)) {
-                out.write((System.currentTimeMillis() + " " + context + " " + event + "\n").getBytes(StandardCharsets.UTF_8));
+                out.write((System.currentTimeMillis() + " " + context + " " + event + "\n")
+                                .getBytes(StandardCharsets.UTF_8));
             }
         } catch (Exception ignored) { }
     }

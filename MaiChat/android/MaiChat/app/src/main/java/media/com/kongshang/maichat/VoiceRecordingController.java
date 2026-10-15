@@ -56,7 +56,9 @@ final class VoiceRecordingController {
                 recorder.setAudioSource(MediaRecorder.AudioSource.MIC);
                 recorder.setOutputFormat(MediaRecorder.OutputFormat.AAC_ADTS);
                 recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
-                recorder.setAudioSamplingRate(16000); recorder.setAudioChannels(1); recorder.setAudioEncodingBitRate(32000);
+                recorder.setAudioSamplingRate(16000);
+                recorder.setAudioChannels(1);
+                recorder.setAudioEncodingBitRate(32000);
                 recorder.setOutputFile(clip.file.getAbsolutePath());
                 recorder.prepare(); recorder.start(); started = SystemClock.elapsedRealtime();
                 if (!BuildConfig.TENCENT_ASR_APP_ID.isEmpty() && !BuildConfig.TENCENT_ASR_SECRET_ID.isEmpty()
@@ -107,7 +109,8 @@ final class VoiceRecordingController {
         clip.delivered = true; clips.remove(clip);
         main.post(() -> {
             if (closed || clip.cancelled) return;
-            if (clip.text != null && !clip.text.trim().isEmpty()) clip.completion.recognized(clip.text.trim(), clip.file, clip.seconds);
+            if (clip.text != null && !clip.text.trim().isEmpty())
+                clip.completion.recognized(clip.text.trim(), clip.file, clip.seconds);
             else clip.completion.finished(clip.file, clip.seconds);
         });
     }
@@ -115,7 +118,12 @@ final class VoiceRecordingController {
         closed = true;
         worker.post(() -> {
             finishOnWorker(true);
-            for (Clip clip : clips) { clip.cancelled = true; if (clip.stream != null) clip.stream.cancel(); clip.file.delete(); }
+            for (Clip clip : clips) {
+                clip.cancelled = true;
+                if (clip.stream != null)
+                    clip.stream.cancel();
+                clip.file.delete();
+            }
             clips.clear(); thread.quitSafely();
         });
     }

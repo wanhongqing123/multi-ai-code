@@ -30,12 +30,19 @@ struct RemoteDiagnosticsView: View {
                     Picker("接收报告", selection: $recipientID) {
                         Text("请选择好友").tag("")
                         ForEach(recipients, id: \.userID) { contact in
-                            Text(contact.displayName == contact.userID ? contact.userID : "\(contact.displayName) (\(contact.userID))").tag(contact.userID)
+                            Text(
+                                contact.displayName == contact.userID
+                                    ? contact.userID : "\(contact.displayName) (\(contact.userID))"
+                            ).tag(contact.userID)
                         }
                     }
                     .disabled(coordinator.isRunning)
-                    Text("确认后将自动合并并发送给所选好友。报告包含消息收发、输入处理、界面响应和存储性能记录，不含聊天正文、登录凭据或环境变量；远端未响应或记录缺失时会明确标注。采集请求会作为一条消息留在当前聊天。")
-                        .font(.footnote).foregroundStyle(.secondary)
+                    Text(
+                        """
+                        确认后将自动合并并发送给所选好友。报告包含消息收发、输入处理、界面响应和存储性能记录，不含聊天正文、登录凭据或环境变量；远端未响应或记录缺失时会明确标注。\
+                        采集请求会作为一条消息留在当前聊天。
+                        """
+                    ).font(.footnote).foregroundStyle(.secondary)
                 }
                 Section {
                     Button("确认收集并发送") {

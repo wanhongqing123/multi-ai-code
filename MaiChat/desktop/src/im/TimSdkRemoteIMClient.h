@@ -21,7 +21,8 @@ public:
     explicit TimSdkRemoteIMClient(std::unique_ptr<TimSdkApi> api, QObject* parent = nullptr);
     ~TimSdkRemoteIMClient() override;
 
-    void connectToService(int sdkAppId, const QString& userId, const QString& userSig, RemoteIMCompletion completion) override;
+    void connectToService(int sdkAppId, const QString& userId, const QString& userSig,
+                          RemoteIMCompletion completion) override;
     void disconnectFromService(RemoteIMCompletion completion) override;
     void deleteContact(const QString& userId, RemoteIMCompletion completion) override;
     void sendText(const QString& peerId, const QString& text, RemoteIMSendCompletion completion) override;
@@ -36,12 +37,18 @@ public:
                               RemoteIMSendCompletion completion) override;
     void sendMachineText(const QString& peerId, const QString& text, RemoteIMSendCompletion completion) override;
     void sendImage(const QString& peerId, const QString& localPath, RemoteIMSendCompletion completion) override;
-    void sendVoice(const QString& peerId, const QString& localPath, int durationSeconds, RemoteIMCompletion completion) override;
-    void sendFile(const QString& peerId, const QString& localPath, const QString& fileName, RemoteIMSendCompletion completion) override;
-    void sendImageWithText(const QString& peerId, const QString& imagePath, const QString& text, bool captionAbove, RemoteIMSendCompletion completion) override;
-    void sendFileWithText(const QString& peerId, const QString& localPath, const QString& fileName, const QString& text, bool captionAbove, RemoteIMSendCompletion completion) override;
-    void sendVideo(const QString& peerId, const RemoteIMVideoPayload& video, RemoteIMSendCompletion completion) override;
-    void sendVideoWithText(const QString& peerId, const RemoteIMVideoPayload& video, const QString& text, bool captionAbove, RemoteIMSendCompletion completion) override;
+    void sendVoice(const QString& peerId, const QString& localPath, int durationSeconds,
+                   RemoteIMCompletion completion) override;
+    void sendFile(const QString& peerId, const QString& localPath, const QString& fileName,
+                  RemoteIMSendCompletion completion) override;
+    void sendImageWithText(const QString& peerId, const QString& imagePath, const QString& text, bool captionAbove,
+                           RemoteIMSendCompletion completion) override;
+    void sendFileWithText(const QString& peerId, const QString& localPath, const QString& fileName, const QString& text,
+                          bool captionAbove, RemoteIMSendCompletion completion) override;
+    void sendVideo(const QString& peerId, const RemoteIMVideoPayload& video,
+                   RemoteIMSendCompletion completion) override;
+    void sendVideoWithText(const QString& peerId, const RemoteIMVideoPayload& video, const QString& text,
+                           bool captionAbove, RemoteIMSendCompletion completion) override;
 
 private:
     void sendTextWithOrigin(const QString& peerId,

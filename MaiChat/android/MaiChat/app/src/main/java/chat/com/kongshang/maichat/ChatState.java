@@ -715,7 +715,9 @@ public final class ChatState {
         if (values.size() <= limit) return;
         java.util.Set<String> keep = new java.util.HashSet<>();
         for (int index = values.size() - limit; index < values.size(); index++) keep.add(values.get(index).id());
-        messages.removeIf(message -> (peer.equals(message.fromUserId()) || peer.equals(message.toUserId())) && !keep.contains(message.id()));
+        messages.removeIf(message
+                -> (peer.equals(message.fromUserId()) || peer.equals(message.toUserId()))
+                        && !keep.contains(message.id()));
     }
 
     public void mergeMessages(List<RemoteIMMessage> incoming) {

@@ -59,8 +59,11 @@ final class ChatSwipeBack {
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL:
                 if (velocity != null) { velocity.addMovement(event); velocity.computeCurrentVelocity(1000); }
-                boolean complete = event.getActionMasked() == MotionEvent.ACTION_UP &&
-                    (progress > .3f || velocity != null && velocity.getXVelocity() > 900 * page.getResources().getDisplayMetrics().density);
+                boolean complete = event.getActionMasked() == MotionEvent.ACTION_UP
+                        && (progress > .3f
+                                || velocity != null
+                                        && velocity.getXVelocity()
+                                                > 900 * page.getResources().getDisplayMetrics().density);
                 if (velocity != null) { velocity.recycle(); velocity = null; }
                 if (dragging) { settle(complete); return true; }
                 return fallback.apply(event);
@@ -100,8 +103,11 @@ final class ChatSwipeBack {
                     if (complete) { host.hideKeyboard(); host.completed(); }
                     else {
                         host.page().setTranslationX(0);
-                        androidx.core.view.WindowInsetsCompat insets = androidx.core.view.ViewCompat.getRootWindowInsets(host.page());
-                        host.cancelled(activeKeyboard.controlled() || insets != null && insets.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime()));
+                        androidx.core.view.WindowInsetsCompat insets =
+                                androidx.core.view.ViewCompat.getRootWindowInsets(host.page());
+                        host.cancelled(activeKeyboard.controlled()
+                                || insets != null
+                                        && insets.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime()));
                     }
                     keyboard = null;
                 });
@@ -109,7 +115,11 @@ final class ChatSwipeBack {
         });
         animator.start();
     }
-    private interface Keyboard { void progress(float value); void finish(boolean shown, Runnable complete); boolean controlled(); }
+    private interface Keyboard {
+        void progress(float value);
+        void finish(boolean shown, Runnable complete);
+        boolean controlled();
+    }
 
     @androidx.annotation.RequiresApi(30)
     private static final class Api30Keyboard implements Keyboard, android.view.WindowInsetsAnimationControlListener {
@@ -123,11 +133,13 @@ final class ChatSwipeBack {
         private final android.os.CancellationSignal cancellation = new android.os.CancellationSignal();
         Api30Keyboard(View page, Runnable fallback) {
             this.fallback = fallback;
-            page.getWindowInsetsController().controlWindowInsetsAnimation(android.view.WindowInsets.Type.ime(), -1, null,
-                cancellation, this);
+            page.getWindowInsetsController().controlWindowInsetsAnimation(
+                    android.view.WindowInsets.Type.ime(), -1, null, cancellation, this);
         }
         @Override public void onReady(android.view.WindowInsetsAnimationController controller, int types) {
-            this.controller = controller; start = controller.getCurrentInsets(); hidden = controller.getHiddenStateInsets();
+            this.controller = controller;
+            start = controller.getCurrentInsets();
+            hidden = controller.getHiddenStateInsets();
             progress(progress);
             if (finishShown != null) controller.finish(finishShown);
         }

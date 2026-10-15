@@ -1,7 +1,10 @@
-// 文件作用：Android 设备集成测试；MaiFfplayPlaybackInstrumentedTest 负责覆盖对应界面或服务的设备行为，本文件给出其验证。
-// 运行边界：仅供自动化验证使用，不作为正式 App 或 Agent 的用户功能入口。
-// 覆盖场景：swipingGalleryMovesFromImageToVideoAndBack、swipingActiveVideoMovesBetweenConversationFiles、agentOpensControlsAndClosesGraphicsVideo、writeImage。
-// 直接依赖：com.kongshang.maichat.AIAssistantController、com.kongshang.maichat.MainActivity、com.kongshang.maichat.MaiFfplayVideoView；实现与这些接口协作。
+// 文件作用：Android 设备集成测试；MaiFfplayPlaybackInstrumentedTest
+// 负责覆盖对应界面或服务的设备行为，本文件给出其验证。 运行边界：仅供自动化验证使用，不作为正式 App 或 Agent
+// 的用户功能入口。
+// 覆盖场景：swipingGalleryMovesFromImageToVideoAndBack、swipingActiveVideoMovesBetweenConversationFiles、
+// agentOpensControlsAndClosesGraphicsVideo、writeImage。
+// 直接依赖：com.kongshang.maichat.AIAssistantController、com.kongshang.maichat.MainActivity、
+// com.kongshang.maichat.MaiFfplayVideoView；实现与这些接口协作。
 package com.kongshang.maichat.tools;
 
 import static org.junit.Assert.assertEquals;

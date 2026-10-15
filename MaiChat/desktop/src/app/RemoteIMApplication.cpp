@@ -302,18 +302,19 @@ bool RemoteIMApplication::sendTextTo(const QString& peerId, const QString& text,
     persistMessage(message);
     emit stateChanged();
 
-    client_->sendTextWithQuote(message.toUserId, message.text, message.quote, message.hasQuote,
-                      [this, messageId = message.id](bool ok, const QString& error, const RemoteIMSendReceipt& receipt) {
-        // 发送成功且 SDK 给了稳定 id：内存与库同步换 id，漫游重投同一条消息
-        // 时按主键去重（否则临时 UUID 与漫游 id 对不上，重启后会重复显示）。
-        const QString effectiveId = adoptRemoteMessageId(messageId, ok ? receipt.remoteMessageId : QString());
-        if (ok) {
-            state_.updateMessageTime(effectiveId, receipt.createdAtMillis);
-            if (database_) database_->updateMessageTime(effectiveId, receipt.createdAtMillis);
-        }
-        markMessage(effectiveId, ok ? RemoteIMMessageStatus::Sent : RemoteIMMessageStatus::Failed);
-        if (!ok) emit errorMessage(error.isEmpty() ? QStringLiteral("文本消息发送失败") : error);
-    });
+    client_->sendTextWithQuote(
+        message.toUserId, message.text, message.quote, message.hasQuote,
+        [this, messageId = message.id](bool ok, const QString& error, const RemoteIMSendReceipt& receipt) {
+            // 发送成功且 SDK 给了稳定 id：内存与库同步换 id，漫游重投同一条消息
+            // 时按主键去重（否则临时 UUID 与漫游 id 对不上，重启后会重复显示）。
+            const QString effectiveId = adoptRemoteMessageId(messageId, ok ? receipt.remoteMessageId : QString());
+            if (ok) {
+                state_.updateMessageTime(effectiveId, receipt.createdAtMillis);
+                if (database_) database_->updateMessageTime(effectiveId, receipt.createdAtMillis);
+            }
+            markMessage(effectiveId, ok ? RemoteIMMessageStatus::Sent : RemoteIMMessageStatus::Failed);
+            if (!ok) emit errorMessage(error.isEmpty() ? QStringLiteral("文本消息发送失败") : error);
+        });
     return true;
 }
 

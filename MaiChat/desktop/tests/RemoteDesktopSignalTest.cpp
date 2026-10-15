@@ -178,7 +178,9 @@ void RemoteDesktopSignalTest::decodesSharedCaptureGeometryFixture() {
     // 与 Swift 端共用的逐字段 fixture。字段名与层级一旦漂移，这里会直接失败；
     // v 仍是 1，老客户端只会忽略新增对象。
     const QString fixture = signalPrefix() + QStringLiteral(
-        R"({"v":1,"type":"accept","sessionId":"session-geometry-1","roomId":"mc-room-1","captureGeometry":{"sourceWidth":2560,"sourceHeight":1600,"captureX":0,"captureY":0,"captureWidth":2560,"captureHeight":1600,"contentMode":"fit","revision":1}})");
+        R"({"v":1,"type":"accept","sessionId":"session-geometry-1","roomId":"mc-room-1","captureGeometry":{"sourceWidt)"
+            R"(h":2560,"sourceHeight":1600,"captureX":0,"captureY":0,"captureWidth":2560,"captureHeight":1600,)"
+            R"("contentMode":"fit","revision":1}})");
 
     const Signal decoded = decodeSignal(fixture);
     QCOMPARE(decoded.type, Type::Accept);
@@ -215,15 +217,20 @@ void RemoteDesktopSignalTest::ignoresInvalidOptionalGeometryWithoutRejectingAcce
         QStringLiteral("null"),
         QStringLiteral(R"("not-an-object")"),
         // 超大尺寸必须在进入 QRect/浮点计算前拒绝。
-        QStringLiteral(R"({"sourceWidth":999999999,"sourceHeight":1600,"captureX":0,"captureY":0,"captureWidth":2560,"captureHeight":1600,"contentMode":"fit","revision":1})"),
+        QStringLiteral(R"({"sourceWidth":999999999,"sourceHeight":1600,"captureX":0,"captureY":0,"captureWidth":2560,)"
+            R"("captureHeight":1600,"contentMode":"fit","revision":1})"),
         // captureX + captureWidth 越过 source 右边界。
-        QStringLiteral(R"({"sourceWidth":2560,"sourceHeight":1600,"captureX":2500,"captureY":0,"captureWidth":100,"captureHeight":1600,"contentMode":"fit","revision":1})"),
+        QStringLiteral(R"({"sourceWidth":2560,"sourceHeight":1600,"captureX":2500,"captureY":0,"captureWidth":100,)"
+            R"("captureHeight":1600,"contentMode":"fit","revision":1})"),
         // 非整数不能被 toInt 静默截断。
-        QStringLiteral(R"({"sourceWidth":2560.5,"sourceHeight":1600,"captureX":0,"captureY":0,"captureWidth":2560,"captureHeight":1600,"contentMode":"fit","revision":1})"),
+        QStringLiteral(R"({"sourceWidth":2560.5,"sourceHeight":1600,"captureX":0,"captureY":0,"captureWidth":2560,)"
+            R"("captureHeight":1600,"contentMode":"fit","revision":1})"),
         // 未知 mode 只让增强映射失效，不影响 Accept 进房。
-        QStringLiteral(R"({"sourceWidth":2560,"sourceHeight":1600,"captureX":0,"captureY":0,"captureWidth":2560,"captureHeight":1600,"contentMode":"crop","revision":1})"),
+        QStringLiteral(R"({"sourceWidth":2560,"sourceHeight":1600,"captureX":0,"captureY":0,"captureWidth":2560,)"
+            R"("captureHeight":1600,"contentMode":"crop","revision":1})"),
         // 超过跨语言约定的 INT_MAX 会让 int 编码溢出，必须整体忽略该可选对象。
-        QStringLiteral(R"({"sourceWidth":2560,"sourceHeight":1600,"captureX":0,"captureY":0,"captureWidth":2560,"captureHeight":1600,"contentMode":"fit","revision":2147483648})")};
+        QStringLiteral(R"({"sourceWidth":2560,"sourceHeight":1600,"captureX":0,"captureY":0,"captureWidth":2560,)"
+            R"("captureHeight":1600,"contentMode":"fit","revision":2147483648})")};
 
     for (const QString& geometry : invalidObjects) {
         const Signal decoded =

@@ -43,8 +43,9 @@ void RemoteDiagnosticsController::setTimeouts(int responseMs, int sendMs) {
 }
 
 bool RemoteDiagnosticsController::contextValid() const {
-    if (!app_ || !app_->isConnected() || !account_.isValid() ||
-        app_->client().currentAccount() != account_ || app_->chatState().ownerUserId() != account_.ownerUserId) return false;
+    if (!app_ || !app_->isConnected() || !account_.isValid() || app_->client().currentAccount() != account_ ||
+        app_->chatState().ownerUserId() != account_.ownerUserId)
+        return false;
     bool peer = false, recipient = false;
     for (const auto& contact : app_->chatState().contacts()) {
         peer |= contact.userId == peer_; recipient |= contact.userId == recipient_;
@@ -123,7 +124,10 @@ void RemoteDiagnosticsController::poll() {
         status_ = QStringLiteral("采集请求发送未确认，仍在等待报告…"); emit changed();
     }
     if (elapsed_.elapsed() >= responseMs_) {
-        auto reason = missingReason_.isEmpty() ? QStringLiteral("等待结束仍未收到有效报告；可能是对方未响应、版本不支持、采集失败或附件下载失败。") : missingReason_;
+        auto reason =
+            missingReason_.isEmpty()
+                ? QStringLiteral("等待结束仍未收到有效报告；可能是对方未响应、版本不支持、采集失败或附件下载失败。")
+                : missingReason_;
         if (!requestConfirmed_) reason += QStringLiteral("采集请求发送结果也尚未确认，不能据此断言未送达。");
         sendReport({}, reason);
     }
@@ -136,9 +140,14 @@ QJsonObject RemoteDiagnosticsController::localEvidence() const {
         ++loaded;
         // 即使远端时钟有偏差也保留本地已观察到的行；报告原始时间戳，
         // 不把时间顺序当作因果证明。
-        messages.append(QJsonObject{{"id", safeId(message.id)}, {"createdAt", double(message.createdAtMillis)},
+        messages.append(QJsonObject{
+            {"id", safeId(message.id)},
+            {"createdAt", double(message.createdAtMillis)},
             {"direction", message.direction == RemoteIMMessageDirection::Incoming ? "incoming" : "outgoing"},
-            {"status", int(message.status)}, {"kind", message.hasFile ? "file" : message.hasImage ? "image" : "message"}});
+            {"status", int(message.status)},
+            {"kind", message.hasFile    ? "file"
+                     : message.hasImage ? "image"
+                                        : "message"}});
         if (messages.size() > 1000) messages.removeFirst();
     });
     return {{"client", "DesktopMaiChat"}, {"platform", QSysInfo::productType()},
@@ -165,20 +174,28 @@ void RemoteDiagnosticsController::sendReport(const QJsonObject& remote, const QS
         events.append(entry);
     }
     local.insert("attachmentEvents", events);
-    local.insert("performance", RemoteDiagnostics::PerformanceLog::shared().snapshot(beganAt_ - 1800000, QDateTime::currentMSecsSinceEpoch()));
+    local.insert("performance", RemoteDiagnostics::PerformanceLog::shared().snapshot(
+                                    beganAt_ - 1800000, QDateTime::currentMSecsSinceEpoch()));
     QByteArray report = QStringLiteral("# 远程排障报告\n\n排障编号：%1\n\n仅诊断元数据，不含正文、路径或登录凭据。\n\n").arg(requestId_).toUtf8();
     report += "## A 端本地现场\n\n```json\n" + json(local) + "```\n\n";
     if (remote.isEmpty()) report += "## 远端现场缺失\n\n" + missingReason.toUtf8() + "\n";
     else report += "## B 端远程现场\n\n```json\n" + json(remote) + "```\n";
-    report += QStringLiteral("\n磁盘文件哈希只反映采集时磁盘文件，不证明运行中的进程加载的是它。sourceCommit 是启动时的来源记录。missing、unavailable、partial、truncated 或没有事件不证明没有故障。\n").toUtf8();
+    report += QStringLiteral(
+                  "\n磁盘文件哈希只反映采集时磁盘文件，不证明运行中的进程加载的是它。sourceCommit "
+                  "是启动时的来源记录。missing、unavailable、partial、truncated 或没有事件不证明没有故障。\n")
+                  .toUtf8();
     if (report.size() > 6 * 1024 * 1024) { finish(QStringLiteral("合并报告超过上限，未发送。")); return; }
     QDir dir(QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/remote-diagnostics"));
     if (!dir.mkpath(".")) { finish(QStringLiteral("无法保存排障报告，未发送。")); return; }
     QFile::setPermissions(dir.absolutePath(), QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
     int retained = 0;
-    for (const auto& info : dir.entryInfoList({QStringLiteral("maichat-diagnostics-*.md")}, QDir::Files | QDir::NoSymLinks)) {
-        if (!RemoteDiagnostics::isValidRequestId(info.completeBaseName().mid(QStringLiteral("maichat-diagnostics-").size()))) continue;
-        if (info.lastModified().msecsTo(QDateTime::currentDateTime()) > 86400000) QFile::remove(info.absoluteFilePath());
+    for (const auto& info :
+         dir.entryInfoList({QStringLiteral("maichat-diagnostics-*.md")}, QDir::Files | QDir::NoSymLinks)) {
+        if (!RemoteDiagnostics::isValidRequestId(
+                info.completeBaseName().mid(QStringLiteral("maichat-diagnostics-").size())))
+            continue;
+        if (info.lastModified().msecsTo(QDateTime::currentDateTime()) > 86400000)
+            QFile::remove(info.absoluteFilePath());
         else ++retained;
     }
     if (retained >= 64) { finish(QStringLiteral("排障报告缓存已满，未生成新附件。")); return; }
@@ -188,7 +205,9 @@ void RemoteDiagnosticsController::sendReport(const QJsonObject& remote, const QS
     file.setPermissions(QFile::ReadOwner | QFile::WriteOwner);
     if (file.write(report) != report.size() || !file.commit()) { finish(QStringLiteral("排障报告保存失败，未发送。")); return; }
     if (!contextValid()) { finish(QStringLiteral("账号或好友已变更，报告未发送。")); return; }
-    status_ = QStringLiteral("正在将%1报告发送给 %2…").arg(remote.isEmpty() ? QStringLiteral("部分") : QStringLiteral("合并"), recipient_); emit changed();
+    status_ = QStringLiteral("正在将%1报告发送给 %2…")
+                  .arg(remote.isEmpty() ? QStringLiteral("部分") : QStringLiteral("合并"), recipient_);
+    emit changed();
     if (!running_ || !contextValid()) return;
     const auto generation = generation_;
     QPointer<RemoteDiagnosticsController> self(this);

@@ -1,6 +1,9 @@
 // 文件作用：Android 本地测试；ChatMessageListTest 负责覆盖对应类的状态和数据行为，本文件给出其验证。
 // 运行边界：仅供自动化验证使用，不作为正式 App 或 Agent 的用户功能入口。
-// 覆盖场景：aShortConversationStartsAtTheTopWithoutBlankSpace、enteringAndSendingScrollButIncomingAndReceiptsPreserveTheAnchor、aLongNewestMessageAlignsItsBottomAndALaterReplyDoesNotReplaceTheOwnSendTarget、activityIsVisibleAtLatestWithoutMovingTheMessageAnchor。
+// 覆盖场景：aShortConversationStartsAtTheTopWithoutBlankSpace、
+// enteringAndSendingScrollButIncomingAndReceiptsPreserveTheAnchor、
+// aLongNewestMessageAlignsItsBottomAndALaterReplyDoesNotReplaceTheOwnSendTarget、
+// activityIsVisibleAtLatestWithoutMovingTheMessageAnchor。
 package com.kongshang.maichat;
 
 import android.view.View;
@@ -31,11 +34,13 @@ public class ChatMessageListTest {
         for (int n = 0; n < count; n++) {
             int i = messages.size();
             messages.add(new RemoteIMMessage("id" + i, "remote" + i, "peer", "owner", "message " + i,
-                RemoteIMMessage.Direction.INCOMING, RemoteIMMessage.Status.RECEIVED, i, null, null, null, null, RemoteIMOrigin.HUMAN));
+                    RemoteIMMessage.Direction.INCOMING, RemoteIMMessage.Status.RECEIVED, i, null, null, null, null,
+                    RemoteIMOrigin.HUMAN));
         }
     }
     private void layout(ChatMessageList list) {
-        list.measure(View.MeasureSpec.makeMeasureSpec(400, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY));
+        list.measure(View.MeasureSpec.makeMeasureSpec(400, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY));
         list.layout(0, 0, 400, 600);
     }
     @Test public void aShortConversationStartsAtTheTopWithoutBlankSpace() {
@@ -80,7 +85,8 @@ public class ChatMessageListTest {
         add(40); ChatMessageList list = list();
         list.requestLatestAfterUpdate(); list.update(messages, null, 0); layout(list);
         String anchor = list.firstVisibleMessageId(); int offset = list.firstVisibleOffset();
-        RemoteIMActivitySignal activity = new RemoteIMActivitySignal("visible", 1, RemoteIMActivitySignal.Kind.HUMAN_TYPING, true, 12000);
+        RemoteIMActivitySignal activity =
+                new RemoteIMActivitySignal("visible", 1, RemoteIMActivitySignal.Kind.HUMAN_TYPING, true, 12000);
         list.update(messages, activity, 0); layout(list);
         assertEquals(anchor, list.firstVisibleMessageId()); assertEquals(offset, list.firstVisibleOffset());
         assertEquals(40, list.getLastVisiblePosition());
@@ -93,7 +99,8 @@ public class ChatMessageListTest {
         String anchor = list.firstVisibleMessageId(); int offset = list.firstVisibleOffset();
         list.update(messages, null, 0); layout(list);
         assertEquals(anchor, list.firstVisibleMessageId()); assertEquals(offset, list.firstVisibleOffset());
-        RemoteIMActivitySignal activity = new RemoteIMActivitySignal("a", 1, RemoteIMActivitySignal.Kind.MACHINE_TOOL, true, 12000);
+        RemoteIMActivitySignal activity =
+                new RemoteIMActivitySignal("a", 1, RemoteIMActivitySignal.Kind.MACHINE_TOOL, true, 12000);
         list.update(messages, activity, 0); layout(list);
         assertEquals(anchor, list.firstVisibleMessageId()); assertEquals(31, list.getCount());
         add(1); list.update(messages, null, 0); layout(list);

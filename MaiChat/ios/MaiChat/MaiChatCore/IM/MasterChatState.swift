@@ -1946,8 +1946,9 @@ public struct MasterChatState: Equatable {
     ) throws -> RemoteIMMessage {
         let cleanFilePath = filePath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanFilePath.isEmpty else { throw MasterChatStateError.blankMessage }
-        guard let peerID = (targetPeerID ?? selectedPeerID)?.trimmingCharacters(in: .whitespacesAndNewlines), !peerID.isEmpty else {
-            throw MasterChatStateError.noSelectedPeer
+        guard let peerID = (targetPeerID ?? selectedPeerID)?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !peerID.isEmpty
+        else { throw MasterChatStateError.noSelectedPeer
         }
         let voiceAttachment = RemoteIMVoiceAttachment(
             localFilePath: cleanFilePath,
@@ -1977,8 +1978,9 @@ public struct MasterChatState: Equatable {
     ) throws -> RemoteIMMessage {
         let cleanFilePath = filePath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanFilePath.isEmpty else { throw MasterChatStateError.blankMessage }
-        guard let peerID = (targetPeerID ?? selectedPeerID)?.trimmingCharacters(in: .whitespacesAndNewlines), !peerID.isEmpty else {
-            throw MasterChatStateError.noSelectedPeer
+        guard let peerID = (targetPeerID ?? selectedPeerID)?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !peerID.isEmpty
+        else { throw MasterChatStateError.noSelectedPeer
         }
         let imageAttachment = RemoteIMImageAttachment(
             localFilePath: cleanFilePath,
@@ -2012,8 +2014,9 @@ public struct MasterChatState: Equatable {
     ) throws -> RemoteIMMessage {
         let cleanFilePath = filePath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanFilePath.isEmpty else { throw MasterChatStateError.blankMessage }
-        guard let peerID = (targetPeerID ?? selectedPeerID)?.trimmingCharacters(in: .whitespacesAndNewlines), !peerID.isEmpty else {
-            throw MasterChatStateError.noSelectedPeer
+        guard let peerID = (targetPeerID ?? selectedPeerID)?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !peerID.isEmpty
+        else { throw MasterChatStateError.noSelectedPeer
         }
         let videoAttachment = RemoteIMVideoAttachment(
             localPath: cleanFilePath,
@@ -2047,8 +2050,9 @@ public struct MasterChatState: Equatable {
     ) throws -> RemoteIMMessage {
         let cleanFilePath = filePath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanFilePath.isEmpty else { throw MasterChatStateError.blankMessage }
-        guard let peerID = (targetPeerID ?? selectedPeerID)?.trimmingCharacters(in: .whitespacesAndNewlines), !peerID.isEmpty else {
-            throw MasterChatStateError.noSelectedPeer
+        guard let peerID = (targetPeerID ?? selectedPeerID)?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !peerID.isEmpty
+        else { throw MasterChatStateError.noSelectedPeer
         }
         let fileAttachment = RemoteIMFileAttachment(
             localFilePath: cleanFilePath,

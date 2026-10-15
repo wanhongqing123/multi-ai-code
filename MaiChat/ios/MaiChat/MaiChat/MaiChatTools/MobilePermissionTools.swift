@@ -57,7 +57,9 @@ extension AIMobileHostToolProvider {
             }
             return Self.jsonSuccess(result)
         case .timeout:
-            return Self.jsonSuccess(["code": "timeout", "message": "A location fix was not available within 10 seconds."])
+            return Self.jsonSuccess([
+                "code": "timeout", "message": "A location fix was not available within 10 seconds.",
+            ])
         case .unavailable:
             return Self.jsonSuccess(["code": "unavailable", "message": "The device could not provide a location fix."])
         }
@@ -119,7 +121,8 @@ extension AIMobileHostToolProvider {
         guard ["photos", "camera", "microphone", "location", "contacts",
                "calendar", "notifications"].contains(permission) else {
             return .failure(code: "invalid_input",
-                            message: "supported permissions: photos, camera, microphone, location, contacts, calendar, notifications")
+                message:
+                    "supported permissions: photos, camera, microphone, location, contacts, calendar, notifications")
         }
         guard UIApplication.shared.applicationState == .active else {
             return .failure(code: "not_configured",

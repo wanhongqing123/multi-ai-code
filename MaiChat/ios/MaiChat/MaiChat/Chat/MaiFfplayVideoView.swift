@@ -302,7 +302,13 @@ private final class MaiFfplayMetalView: UIView {
         guard size != lastSize else { return }
         lastSize = size
         #if DEBUG
-        NSLog("[FFplayDisplay] resize %@", "view=\(Int(bounds.width))x\(Int(bounds.height)) scale=\(contentScaleFactor) pixels=\(Int(size.width))x\(Int(size.height))")
+            NSLog(
+                "[FFplayDisplay] resize %@",
+                """
+                view=\(Int(bounds.width))x\(Int(bounds.height)) scale=\(contentScaleFactor) \
+                pixels=\(Int(size.width))x\(Int(size.height))
+                """
+            )
         #endif
         maiGraphicsPresenterResize(viewID, UInt32(size.width), UInt32(size.height))
     }
@@ -322,7 +328,13 @@ private final class MaiFfplayMetalView: UIView {
         lastSize = CGSize(width: max(1, bounds.width * contentScaleFactor),
                           height: max(1, bounds.height * contentScaleFactor))
         #if DEBUG
-        NSLog("[FFplayDisplay] attach %@", "view=\(Int(bounds.width))x\(Int(bounds.height)) contentScale=\(contentScaleFactor) screenScale=\(window?.screen.scale ?? 0) pixels=\(Int(lastSize.width))x\(Int(lastSize.height))")
+            NSLog(
+                "[FFplayDisplay] attach %@",
+                """
+                view=\(Int(bounds.width))x\(Int(bounds.height)) contentScale=\(contentScaleFactor) \
+                screenScale=\(window?.screen.scale ?? 0) pixels=\(Int(lastSize.width))x\(Int(lastSize.height))
+                """
+            )
         #endif
         viewID = maiGraphicsPresenterAttach(
             Unmanaged.passUnretained(layer).toOpaque(), UInt32(lastSize.width),

@@ -194,7 +194,8 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
     add("maichat_list_contacts",
         "List MaiChat contacts. Use query to filter by user ID or display name.",
         // query 按用户 ID 或显示名筛选；limit 限本次最多返回 200 人。
-        R"({"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":200}}})");
+        R"({"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","minimum":1,)"
+            R"("maximum":200}}})");
     add("maichat_list_conversations",
         "List MaiChat conversations ordered by latest message, including unread counts.",
         // 会话按最新消息排序；limit 只限制返回条数，未读数来自会话记录。
@@ -202,11 +203,13 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
     add("maichat_get_messages",
         "Read recent messages in a MaiChat conversation with a specific contact.",
         // peer_id 必须是指定联系人；limit 限这一次读取的最近消息条数。
-        R"({"type":"object","properties":{"peer_id":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":200}},"required":["peer_id"]})");
+        R"({"type":"object","properties":{"peer_id":{"type":"string"},"limit":{"type":"integer","minimum":1,)"
+            R"("maximum":200}},"required":["peer_id"]})");
     add("maichat_search_messages",
         "Search MaiChat message text across all contacts or within one contact.",
         // query 是必需的检索词；peer_id 可选，传入后只查该联系人。
-        R"({"type":"object","properties":{"query":{"type":"string"},"peer_id":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":200}},"required":["query"]})");
+        R"({"type":"object","properties":{"query":{"type":"string"},"peer_id":{"type":"string"},)"
+            R"("limit":{"type":"integer","minimum":1,"maximum":200}},"required":["query"]})");
     add("maichat_get_unread_summary", "Summarize unread MaiChat messages by contact.",
         // 不收参数，按联系人汇总未读消息。
         R"({"type":"object","properties":{}})");
@@ -222,33 +225,43 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
     add("maichat_send_text",
         "Send text to a MaiChat contact through the host. Requires user approval.",
         // peer_id 与 text 均必填；真正发送前弹出用户确认。
-        R"({"type":"object","properties":{"peer_id":{"type":"string"},"text":{"type":"string"}},"required":["peer_id","text"]})",
+        R"({"type":"object","properties":{"peer_id":{"type":"string"},"text":{"type":"string"}},"required":["peer_id",)"
+            R"("text"]})",
         true);
     add("maichat_send_media",
         "Send an accessible Agent workspace image or video as a persistent media bubble, "
         "or audio as a file card. The optional caption follows as a text message. "
         "Requires user approval.",
         // file_path 指 Agent 可访问媒体；type 为 image/video/audio；caption 另发文本。
-        R"({"type":"object","properties":{"peer_id":{"type":"string"},"file_path":{"type":"string"},"type":{"type":"string","enum":["image","video","audio"]},"caption":{"type":"string"}},"required":["peer_id","file_path","type"],"additionalProperties":false})",
+        R"({"type":"object","properties":{"peer_id":{"type":"string"},"file_path":{"type":"string"},)"
+            R"("type":{"type":"string","enum":["image","video","audio"]},"caption":{"type":"string"}},)"
+            R"("required":["peer_id","file_path","type"],"additionalProperties":false})",
         true);
     add("maichat_reply_message",
         "Send a quoted reply to a MaiChat message through the host. Requires user approval.",
         // 回复要同时给联系人、原消息 ID 和回复正文；发出前逐次确认。
-        R"({"type":"object","properties":{"peer_id":{"type":"string"},"message_id":{"type":"string"},"text":{"type":"string"}},"required":["peer_id","message_id","text"]})",
+        R"({"type":"object","properties":{"peer_id":{"type":"string"},"message_id":{"type":"string"},)"
+            R"("text":{"type":"string"}},"required":["peer_id","message_id","text"]})",
         true);
     add("maichat_broadcast_text",
-        "Send the same text to multiple MaiChat contacts through the host. The complete recipient list and text require user approval for every call.",
+        "Send the same text to multiple MaiChat contacts through the host. The complete recipient list and text "
+        "require user approval for every call.",
         // peer_ids 为本次完整收件人列表，1–200 人；群发每次都显示名单和正文供确认。
-        R"({"type":"object","properties":{"peer_ids":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":200},"text":{"type":"string"}},"required":["peer_ids","text"]})",
+        R"({"type":"object","properties":{"peer_ids":{"type":"array","items":{"type":"string"},"minItems":1,)"
+        R"("maxItems":200},"text":{"type":"string"}},"required":["peer_ids","text"]})",
         true);
 #if defined(__ANDROID__)
     // 电话号码和短信能力只在 Android 注册，iOS 没有等价的系统读取接口。
     // permission 只允许列出的系统能力；Android 比 iOS 多号码和短信两项。
     constexpr const char* permissionSchema =
-        R"({"type":"object","properties":{"permission":{"type":"string","enum":["photos","camera","microphone","location","contacts","calendar","notifications","phone_number","sms"]}},"required":["permission"],"additionalProperties":false})";
+        R"({"type":"object","properties":{"permission":{"type":"string","enum":["photos","camera","microphone",)"
+            R"("location","contacts","calendar","notifications","phone_number","sms"]}},"required":["permission"],)"
+            R"("additionalProperties":false})";
 #else
     constexpr const char* permissionSchema =
-        R"({"type":"object","properties":{"permission":{"type":"string","enum":["photos","camera","microphone","location","contacts","calendar","notifications"]}},"required":["permission"],"additionalProperties":false})";
+        R"({"type":"object","properties":{"permission":{"type":"string","enum":["photos","camera","microphone",)"
+            R"("location","contacts","calendar","notifications"]}},"required":["permission"],)"
+            R"("additionalProperties":false})";
 #endif
     // 先按任务所需申请单项 OS 权限；有限授权可继续读取被用户选中的媒体或联系人。
     add("mobile_request_permission",
@@ -272,7 +285,8 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
         "depending on the installer. Do not use for OTP retrieval without an explicit user request.",
         // limit 最多 20 条；after_ms 只取该时间之后的消息。
         // 读取需要用户明确请求和系统 sms 授权，不能把短信作为普通上下文抓取。
-        R"({"type":"object","properties":{"limit":{"type":"integer","minimum":1,"maximum":20},"after_ms":{"type":"integer","minimum":0}},"additionalProperties":false})");
+        R"({"type":"object","properties":{"limit":{"type":"integer","minimum":1,"maximum":20},)"
+            R"("after_ms":{"type":"integer","minimum":0}},"additionalProperties":false})");
 #endif
     // 定位工具只在前台读一次当前位置；没有权限先调用 mobile_request_permission。
     add("mobile_get_location",
@@ -289,7 +303,8 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
         "addresses in pages of at most 50; query matches these fields. A limited iOS grant "
         "exposes only the selected contacts. Call mobile_request_permission first.",
         // query 可匹配姓名、号码、邮箱；offset/limit 分页，单页最多 50 人。
-        R"({"type":"object","properties":{"query":{"type":"string"},"offset":{"type":"integer","minimum":0,"maximum":1000},"limit":{"type":"integer","minimum":1,"maximum":50}},"additionalProperties":false})");
+        R"({"type":"object","properties":{"query":{"type":"string"},"offset":{"type":"integer","minimum":0,)"
+            R"("maximum":1000},"limit":{"type":"integer","minimum":1,"maximum":50}},"additionalProperties":false})");
     add("mobile_get_contact",
         "Read one accessible system contact by the id returned from mobile_list_contacts. "
         "Requires contacts permission and returns only name, phone numbers, and email addresses.",
@@ -305,7 +320,8 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
         "IM video messages use the same player.",
         // path 是当前 Agent 可访问的现有视频；start_seconds 是可选的原片绝对起播秒数。
         // 直接从指定位置打开比“先打开、立刻再调用 seek”更稳定。
-        R"({"type":"object","properties":{"path":{"type":"string"},"start_seconds":{"type":"number","minimum":0}},"required":["path"],"additionalProperties":false})");
+        R"({"type":"object","properties":{"path":{"type":"string"},"start_seconds":{"type":"number","minimum":0}},)"
+            R"("required":["path"],"additionalProperties":false})");
     add("maichat_video_command",
         "Control the currently open FFplay video. set_speed accepts 0.25, 0.5, 1, 1.5, or 2 "
         "and changes audio tempo without changing pitch using SoundTouch. It briefly restarts the same "
@@ -320,7 +336,13 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
         // replay 在当前播放器中从 0 秒重新播放；seek_seconds(0) 也按重播处理。
         // set_speed 带 speed 倍数；seek_seconds 带源片绝对秒数；seek_percent 带百分比。
         // 改速仍在现有播放器中播放同一文件；SoundTouch.setTempo 保持音调，不另存转码文件。
-        R"({"type":"object","properties":{"action":{"type":"string","enum":["play","pause","toggle_pause","replay","step","seek_forward","seek_backward","seek_minute_forward","seek_minute_backward","next_chapter","previous_chapter","seek_percent","seek_seconds","set_speed","next_audio","next_video","next_subtitle","next_program","next_filter","mute","volume_up","volume_down","fullscreen","close"]},"percent":{"type":"number","minimum":0,"maximum":100},"seconds":{"type":"number","minimum":0},"speed":{"type":"number","enum":[0.25,0.5,1,1.5,2]}},"required":["action"],"additionalProperties":false})");
+        R"({"type":"object","properties":{"action":{"type":"string","enum":["play","pause","toggle_pause","replay",)"
+            R"("step","seek_forward","seek_backward","seek_minute_forward","seek_minute_backward","next_chapter",)"
+            R"("previous_chapter","seek_percent","seek_seconds","set_speed","next_audio","next_video","next_subtitle",)"
+            R"("next_program","next_filter","mute","volume_up","volume_down","fullscreen","close"]},)"
+            R"("percent":{"type":"number","minimum":0,"maximum":100},"seconds":{"type":"number","minimum":0},)"
+            R"("speed":{"type":"number","enum":[0.25,0.5,1,1.5,2]}},"required":["action"],"additionalProperties":false)"
+            R"(})");
 }
 
 // 移动端相册和播放器工具复用同一个宿主调度器；具体权限与媒体生命周期由手机宿主处理。
@@ -335,7 +357,8 @@ void registerMobilePhotoTools(MaiToolRegistry& tools,
         "Each item includes mediaType; use offset and limit to page. A limited grant exposes "
         "only the user's selected media.",
         // offset/limit 分页；album_id 可将范围限制在一个相册。
-        R"({"type":"object","properties":{"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":100},"album_id":{"type":"string"}}})",
+        R"({"type":"object","properties":{"offset":{"type":"integer","minimum":0},"limit":{"type":"integer",)"
+            R"("minimum":1,"maximum":100},"album_id":{"type":"string"}}})",
         dispatcher, false));
     tools.add(std::make_unique<MaiMobileHostTool>(
         "mobile_list_albums",
@@ -361,7 +384,8 @@ void registerMobilePhotoTools(MaiToolRegistry& tools,
         "for any image edit or media conversion. The library item stays unchanged. For an iOS Live Photo, "
         "component=video exports its paired video; otherwise its still photo is exported.",
         // id 是相册项目 ID；Live Photo 的 component=video 取配对视频，省略取静图。
-        R"({"type":"object","properties":{"id":{"type":"string"},"component":{"type":"string","enum":["photo","video"]}},"required":["id"]})",
+        R"({"type":"object","properties":{"id":{"type":"string"},"component":{"type":"string","enum":["photo","video"])"
+            R"(}},"required":["id"]})",
         dispatcher, false));
     tools.add(std::make_unique<MaiMobileHostTool>(
         "mobile_export_media_original",
@@ -369,7 +393,8 @@ void registerMobilePhotoTools(MaiToolRegistry& tools,
         "Agent workspace, preserving its media format. Use this for videos before ffprobe, "
         "ffmpeg, or playback. A Live Photo exports its still image unless component=video.",
         // 与原图导出共用素材 ID/Live Photo component 约定；视频分析应选原始视频。
-        R"({"type":"object","properties":{"id":{"type":"string"},"component":{"type":"string","enum":["photo","video"]}},"required":["id"]})",
+        R"({"type":"object","properties":{"id":{"type":"string"},"component":{"type":"string","enum":["photo","video"])"
+            R"(}},"required":["id"]})",
         dispatcher, false));
     tools.add(std::make_unique<MaiMobileHostTool>(
         "mobile_save_image",
@@ -402,7 +427,12 @@ void registerMobilePhotoTools(MaiToolRegistry& tools,
         "to the system gallery if requested.",
         // operation 每次只做一项裁剪、旋转、缩放、翻转、灰度、锐化、调色或轻度美化。
         // 其余坐标/强度字段只对所选操作有效，执行层逐项校验范围。
-        R"({"type":"object","properties":{"path":{"type":"string"},"operation":{"type":"string","enum":["crop","rotate","resize","flip_horizontal","flip_vertical","grayscale","sharpen","adjust","beautify"]},"x":{"type":"integer"},"y":{"type":"integer"},"width":{"type":"integer"},"height":{"type":"integer"},"degrees":{"type":"integer"},"brightness":{"type":"number"},"contrast":{"type":"number"},"saturation":{"type":"number"},"strength":{"type":"number"},"amount":{"type":"number"}},"required":["path","operation"]})",
+        R"({"type":"object","properties":{"path":{"type":"string"},"operation":{"type":"string","enum":["crop",)"
+            R"("rotate","resize","flip_horizontal","flip_vertical","grayscale","sharpen","adjust","beautify"]},)"
+            R"("x":{"type":"integer"},"y":{"type":"integer"},"width":{"type":"integer"},"height":{"type":"integer"},)"
+            R"("degrees":{"type":"integer"},"brightness":{"type":"number"},"contrast":{"type":"number"},)"
+            R"("saturation":{"type":"number"},"strength":{"type":"number"},"amount":{"type":"number"}},)"
+            R"("required":["path","operation"]})",
         dispatcher, false));
     tools.add(std::make_unique<MaiMobileHostTool>(
         "mobile_beautify_image",
@@ -410,7 +440,8 @@ void registerMobilePhotoTools(MaiToolRegistry& tools,
         "slightly richer colors. This is not face-aware skin retouching. Strength is 0..1. "
         "The source remains unchanged; preview the returned path before saving it.",
         // path 为输入；strength 取 0–1。结果是新图，属于整图轻度处理而非脸部识别。
-        R"({"type":"object","properties":{"path":{"type":"string"},"strength":{"type":"number","minimum":0,"maximum":1}},"required":["path"]})",
+        R"({"type":"object","properties":{"path":{"type":"string"},"strength":{"type":"number","minimum":0,)"
+            R"("maximum":1}},"required":["path"]})",
         dispatcher, false));
     tools.add(std::make_unique<MaiMobileHostTool>(
         "mobile_detect_faces",

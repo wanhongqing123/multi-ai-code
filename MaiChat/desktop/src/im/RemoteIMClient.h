@@ -1,7 +1,8 @@
 // 文件作用：桌面端IM 会话、消息与登录；RemoteIMClient 负责外部接口请求与结果转换，本文件给出其声明。
 // 类型关系：RemoteIMClient : public QObject；审阅时可据此追踪父类、接口或回调契约。
 // 对外边界：本文件给出 RemoteIMClient 的类型和函数声明；参数、返回值和对象生命周期以此为准。
-// 直接依赖：model/RemoteIMContact.h、model/RemoteIMMessage.h、model/RemoteIMVideoPayload.h、diagnostics/RemoteDiagnosticsEvidence.h；实现与这些接口协作。
+// 直接依赖：model/RemoteIMContact.h、model/RemoteIMMessage.h、model/RemoteIMVideoPayload.h、
+// diagnostics/RemoteDiagnosticsEvidence.h；实现与这些接口协作。
 #pragma once
 
 #include <QObject>
@@ -57,7 +58,8 @@ public:
     // 当前登录身份。无效（未登录）时排障不该开始，也不该导出任何记录。
     virtual RemoteDiagnostics::AccountTag currentAccount() const { return {}; }
 
-    virtual void connectToService(int sdkAppId, const QString& userId, const QString& userSig, RemoteIMCompletion completion) = 0;
+    virtual void connectToService(int sdkAppId, const QString& userId, const QString& userSig,
+                                  RemoteIMCompletion completion) = 0;
     virtual void disconnectFromService(RemoteIMCompletion completion) = 0;
     virtual void deleteContact(const QString& userId, RemoteIMCompletion completion) = 0;
     virtual void sendText(const QString& peerId, const QString& text, RemoteIMSendCompletion completion) = 0;
@@ -93,9 +95,11 @@ public:
         sendText(peerId, text, std::move(completion));
     }
     virtual void sendImage(const QString& peerId, const QString& localPath, RemoteIMSendCompletion completion) = 0;
-    virtual void sendVoice(const QString& peerId, const QString& localPath, int durationSeconds, RemoteIMCompletion completion) = 0;
+    virtual void sendVoice(const QString& peerId, const QString& localPath, int durationSeconds,
+                           RemoteIMCompletion completion) = 0;
     // 发送任意文件。默认不支持（Fake/Unsupported 客户端据此优雅降级），仅 TimSdk 真正实现。
-    virtual void sendFile(const QString& peerId, const QString& localPath, const QString& fileName, RemoteIMSendCompletion completion) {
+    virtual void sendFile(const QString& peerId, const QString& localPath, const QString& fileName,
+                          RemoteIMSendCompletion completion) {
         Q_UNUSED(peerId);
         Q_UNUSED(localPath);
         Q_UNUSED(fileName);
@@ -105,7 +109,8 @@ public:
     // 仅 TimSdk 真正合并成一条。
     // captionAbove 决定配文元素排在附件元素之前还是之后。消息本身就是一个元素数组，
     // 顺序天然就是排版信息，不需要额外的协议字段。
-    virtual void sendImageWithText(const QString& peerId, const QString& imagePath, const QString& text, bool captionAbove, RemoteIMSendCompletion completion) {
+    virtual void sendImageWithText(const QString& peerId, const QString& imagePath, const QString& text,
+                                   bool captionAbove, RemoteIMSendCompletion completion) {
         if (text.trimmed().isEmpty()) { sendImage(peerId, imagePath, std::move(completion)); return; }
         // 降级路径发的是两条消息，先后顺序就是它们在对方会话里的先后顺序。
         if (captionAbove) {
@@ -116,7 +121,8 @@ public:
         sendImage(peerId, imagePath, {});
         sendText(peerId, text, std::move(completion));
     }
-    virtual void sendFileWithText(const QString& peerId, const QString& localPath, const QString& fileName, const QString& text, bool captionAbove, RemoteIMSendCompletion completion) {
+    virtual void sendFileWithText(const QString& peerId, const QString& localPath, const QString& fileName,
+                                  const QString& text, bool captionAbove, RemoteIMSendCompletion completion) {
         if (text.trimmed().isEmpty()) { sendFile(peerId, localPath, fileName, std::move(completion)); return; }
         if (captionAbove) {
             sendText(peerId, text, {});
@@ -128,12 +134,14 @@ public:
     }
     // 发送视频。payload 里的时长/尺寸/封面必须由应用层备齐（见 RemoteIMVideoPayload），
     // 与 sendFile 一样默认不支持，只有 TimSdk 客户端真正实现。
-    virtual void sendVideo(const QString& peerId, const RemoteIMVideoPayload& video, RemoteIMSendCompletion completion) {
+    virtual void sendVideo(const QString& peerId, const RemoteIMVideoPayload& video,
+                           RemoteIMSendCompletion completion) {
         Q_UNUSED(peerId);
         Q_UNUSED(video);
         if (completion) completion(false, QStringLiteral("当前 IM 客户端不支持发送视频"), {});
     }
-    virtual void sendVideoWithText(const QString& peerId, const RemoteIMVideoPayload& video, const QString& text, bool captionAbove, RemoteIMSendCompletion completion) {
+    virtual void sendVideoWithText(const QString& peerId, const RemoteIMVideoPayload& video, const QString& text,
+                                   bool captionAbove, RemoteIMSendCompletion completion) {
         if (text.trimmed().isEmpty()) { sendVideo(peerId, video, std::move(completion)); return; }
         if (captionAbove) {
             sendText(peerId, text, {});
@@ -156,7 +164,8 @@ signals:
     void incomingText(const QString& fromUserId, const QString& text);
     void incomingImage(const QString& fromUserId, const QString& localPath, int width, int height, qint64 sizeBytes);
     void incomingVoice(const QString& fromUserId, const QString& localPath, int durationSeconds);
-    void incomingFile(const QString& fromUserId, const QString& localPath, const QString& fileName, const QString& mimeType, qint64 sizeBytes);
+    void incomingFile(const QString& fromUserId, const QString& localPath, const QString& fileName,
+                      const QString& mimeType, qint64 sizeBytes);
     void disconnected();
 
 protected:

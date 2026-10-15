@@ -20,7 +20,8 @@ import static org.junit.Assert.*;
 public class MarkdownRendererTest {
     @Test public void backgroundPreparationHandlesNestedMarkdownAndPreservesCodeEscapes() throws Exception {
         MarkdownRenderer.initialize(ApplicationProvider.getApplicationContext());
-        String source = "# Heading\n\n- **bold** and [site](https://example.com)\n  - child\n\n`literal \\n`\n\n~~removed~~\n\n| A | B |\n|---|---|\n|one|two|";
+        String source = "# Heading\n\n- **bold** and [site](https://example.com)\n  - child\n\n`literal "
+                        + "\\n`\n\n~~removed~~\n\n| A | B |\n|---|---|\n|one|two|";
         AtomicBoolean completed = new AtomicBoolean();
         MarkdownRenderer.prepare(Collections.singletonList(source), () -> true, () -> completed.set(true));
         long deadline = System.nanoTime() + 3_000_000_000L;

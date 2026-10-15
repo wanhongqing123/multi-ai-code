@@ -54,7 +54,8 @@ public final class TencentIMClient {
         void onConnectionStateChanged(ConnectionState state, String detail);
         void onIncomingMessage(RemoteIMMessage message);
         default void onIncomingActivity(String sender, String recipient, RemoteIMActivitySignal signal) { }
-        default void onVideoMediaUpdated(String sender, String recipient, String remoteId, RemoteIMVideoAttachment attachment) { }
+        default void onVideoMediaUpdated(
+                String sender, String recipient, String remoteId, RemoteIMVideoAttachment attachment) {}
         void onProfilesUpdated(List<RemoteIMContact> contacts);
         void onPresenceUpdated(Map<String, PresenceStatus> statuses);
     }
@@ -72,7 +73,8 @@ public final class TencentIMClient {
     // 日志一律英文：logcat 在不同机器上的编码不一致，中文容易变成乱码，
     // 也不便直接贴进 issue 检索。桌面端 AppLog 用的是同一条约定。
     private static final String TAG = "MaiChat.im";
-    private static final java.util.concurrent.ExecutorService MEDIA_COMPLETION = java.util.concurrent.Executors.newSingleThreadExecutor();
+    private static final java.util.concurrent.ExecutorService MEDIA_COMPLETION =
+            java.util.concurrent.Executors.newSingleThreadExecutor();
 
     private final android.os.HandlerThread sdkThread = new android.os.HandlerThread("MaiChat-IM");
     private final android.os.Handler sdkHandler;
@@ -276,7 +278,8 @@ public final class TencentIMClient {
     public void sendImage(String peerId, String path, RemoteIMOrigin origin, SendCompletion completion) {
         sendImage(peerId, path, origin, null, completion);
     }
-    public void sendImage(String peerId, String path, RemoteIMOrigin origin, RemoteIMQuote quote, SendCompletion completion) {
+    public void sendImage(
+            String peerId, String path, RemoteIMOrigin origin, RemoteIMQuote quote, SendCompletion completion) {
         if (closed) return;
         if (android.os.Looper.myLooper() != sdkThread.getLooper()) {
             sdkHandler.post(() -> sendImage(peerId, path, origin, quote, completion)); return;
@@ -285,10 +288,12 @@ public final class TencentIMClient {
         send(message, peerId, RemoteIMProtocolMetadata.encode(origin, quote), completion);
     }
 
-    public void sendVoice(String peerId, String path, int durationSeconds, RemoteIMOrigin origin, SendCompletion completion) {
+    public void sendVoice(
+            String peerId, String path, int durationSeconds, RemoteIMOrigin origin, SendCompletion completion) {
         sendVoice(peerId, path, durationSeconds, origin, null, completion);
     }
-    public void sendVoice(String peerId, String path, int durationSeconds, RemoteIMOrigin origin, RemoteIMQuote quote, SendCompletion completion) {
+    public void sendVoice(String peerId, String path, int durationSeconds, RemoteIMOrigin origin, RemoteIMQuote quote,
+            SendCompletion completion) {
         if (closed) return;
         if (android.os.Looper.myLooper() != sdkThread.getLooper()) {
             sdkHandler.post(() -> sendVoice(peerId, path, durationSeconds, origin, quote, completion)); return;
@@ -297,10 +302,12 @@ public final class TencentIMClient {
         send(message, peerId, RemoteIMProtocolMetadata.encode(origin, quote), completion);
     }
 
-    public void sendFile(String peerId, String path, String fileName, RemoteIMOrigin origin, SendCompletion completion) {
+    public void sendFile(
+            String peerId, String path, String fileName, RemoteIMOrigin origin, SendCompletion completion) {
         sendFile(peerId, path, fileName, origin, null, completion);
     }
-    public void sendFile(String peerId, String path, String fileName, RemoteIMOrigin origin, RemoteIMQuote quote, SendCompletion completion) {
+    public void sendFile(String peerId, String path, String fileName, RemoteIMOrigin origin, RemoteIMQuote quote,
+            SendCompletion completion) {
         if (closed) return;
         if (android.os.Looper.myLooper() != sdkThread.getLooper()) {
             sdkHandler.post(() -> sendFile(peerId, path, fileName, origin, quote, completion)); return;
@@ -309,10 +316,12 @@ public final class TencentIMClient {
         send(message, peerId, RemoteIMProtocolMetadata.encode(origin, quote), completion);
     }
 
-    public void sendVideo(String peerId, RemoteIMVideoAttachment attachment, RemoteIMOrigin origin, SendCompletion completion) {
+    public void sendVideo(
+            String peerId, RemoteIMVideoAttachment attachment, RemoteIMOrigin origin, SendCompletion completion) {
         sendVideo(peerId, attachment, origin, null, completion);
     }
-    public void sendVideo(String peerId, RemoteIMVideoAttachment attachment, RemoteIMOrigin origin, RemoteIMQuote quote, SendCompletion completion) {
+    public void sendVideo(String peerId, RemoteIMVideoAttachment attachment, RemoteIMOrigin origin, RemoteIMQuote quote,
+            SendCompletion completion) {
         if (closed) return;
         if (android.os.Looper.myLooper() != sdkThread.getLooper()) {
             sdkHandler.post(() -> sendVideo(peerId, attachment, origin, quote, completion)); return;
@@ -320,7 +329,8 @@ public final class TencentIMClient {
         String path = attachment.localPath();
         int dot = path.lastIndexOf('.');
         String type = dot >= 0 ? path.substring(dot + 1).toLowerCase(Locale.ROOT) : "mp4";
-        V2TIMMessage message = V2TIMManager.getMessageManager().createVideoMessage(path, type, attachment.durationSeconds(), attachment.coverPath());
+        V2TIMMessage message = V2TIMManager.getMessageManager().createVideoMessage(
+                path, type, attachment.durationSeconds(), attachment.coverPath());
         send(message, peerId, RemoteIMProtocolMetadata.encode(origin, quote), completion);
     }
 
@@ -845,7 +855,8 @@ public final class TencentIMClient {
                 MEDIA_COMPLETION.execute(() -> {
                     try {
                         java.nio.file.Files.move(videoPart.toPath(), videoTarget.toPath(),
-                            java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+                                java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                                java.nio.file.StandardCopyOption.ATOMIC_MOVE);
                     } catch (java.io.IOException error) { Log.w(TAG, "Cannot finalize video download", error); return; }
                     if (closed) return;
                     sdkHandler.post(() -> {

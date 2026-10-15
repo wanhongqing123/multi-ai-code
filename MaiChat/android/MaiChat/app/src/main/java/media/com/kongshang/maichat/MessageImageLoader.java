@@ -87,7 +87,9 @@ public final class MessageImageLoader {
             Tag tag = (Tag) view.getTag();
             if (tag.id != request.id) return;
             if (bitmap != null) {
-                if (!(view.getDrawable() instanceof BitmapDrawable) || ((BitmapDrawable) view.getDrawable()).getBitmap() != bitmap) view.setImageBitmap(bitmap);
+                if (!(view.getDrawable() instanceof BitmapDrawable)
+                        || ((BitmapDrawable) view.getDrawable()).getBitmap() != bitmap)
+                    view.setImageBitmap(bitmap);
             } else if (tag.missing != null) tag.missing.onMissing();
         });
     }

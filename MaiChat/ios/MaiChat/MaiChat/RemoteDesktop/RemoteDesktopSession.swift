@@ -1469,7 +1469,8 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
     ) -> [String: String] {
         [
             "source_size": "\(geometry.sourceWidth)x\(geometry.sourceHeight)",
-            "capture_rect": "\(geometry.captureX),\(geometry.captureY) \(geometry.captureWidth)x\(geometry.captureHeight)",
+            "capture_rect":
+                "\(geometry.captureX),\(geometry.captureY) \(geometry.captureWidth)x\(geometry.captureHeight)",
             "content_mode": geometry.contentMode,
             "geometry_revision": String(geometry.revision),
         ]

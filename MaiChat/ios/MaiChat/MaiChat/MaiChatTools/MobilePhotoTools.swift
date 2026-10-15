@@ -107,7 +107,8 @@ extension AIMobileHostToolProvider {
                 items.append([
                     "id": photo.localIdentifier,
                     "mediaType": mediaType,
-                    "created_at_ms": Int64(((photo.creationDate ?? .distantPast).timeIntervalSince1970 * 1000).rounded()),
+                    "created_at_ms": Int64(
+                        ((photo.creationDate ?? .distantPast).timeIntervalSince1970 * 1000).rounded()),
                     "width": photo.pixelWidth,
                     "height": photo.pixelHeight,
                     "duration_ms": mediaType == "video" ? Int64((photo.duration * 1000).rounded()) : 0,

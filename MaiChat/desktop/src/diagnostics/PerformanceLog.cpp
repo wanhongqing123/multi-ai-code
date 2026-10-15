@@ -47,15 +47,28 @@ QJsonObject PerformanceLog::snapshot(qint64 sinceMs, qint64 nowMs) const {
             {"max_ms", a.maximum}, {"average_ms", a.total / a.samples}});
     }
     QJsonArray supported;
-    for (const auto* name : {"composer-change", "composer-event-queue", "message-refresh", "message-layout", "history-load", "history-write", "image-decode", "main-runloop-delay"}) supported.append(QString::fromLatin1(name));
+    for (const auto* name : {"composer-change", "composer-event-queue", "message-refresh", "message-layout",
+                             "history-load", "history-write", "image-decode", "main-runloop-delay"})
+        supported.append(QString::fromLatin1(name));
     return {{"supportedMetrics", supported},
-        {"firstRetainedBucketAt", events.isEmpty() ? QJsonValue() : events.first().toObject().value("createdAt")},
-        {"lastRetainedBucketAt", events.isEmpty() ? QJsonValue() : events.last().toObject().value("createdAt")},
-        {"startupBeforeWindow", "unavailable"}, {"status", context_.isEmpty() ? "unavailable" : "ok"}, {"scope", "account-process"},
-        {"from", double(sinceMs)}, {"to", double(nowMs)}, {"collectionStartedAt", double(startedAt_)},
-        {"bucket_ms", 2000}, {"sample_interval_ms", 250}, {"capacity", 4096},
-        {"droppedBuckets", double(dropped_)}, {"truncated", dropped_ > 0}, {"events", events},
-        {"eventCount", events.size()}, {"stackTraces", "unavailable"},
-        {"interpretation", "Aggregates measure app work and late UI ticks, not physical keypress latency or causal stacks. Empty metrics mean no retained samples."}};
+            {"firstRetainedBucketAt", events.isEmpty() ? QJsonValue() : events.first().toObject().value("createdAt")},
+            {"lastRetainedBucketAt", events.isEmpty() ? QJsonValue() : events.last().toObject().value("createdAt")},
+            {"startupBeforeWindow", "unavailable"},
+            {"status", context_.isEmpty() ? "unavailable" : "ok"},
+            {"scope", "account-process"},
+            {"from", double(sinceMs)},
+            {"to", double(nowMs)},
+            {"collectionStartedAt", double(startedAt_)},
+            {"bucket_ms", 2000},
+            {"sample_interval_ms", 250},
+            {"capacity", 4096},
+            {"droppedBuckets", double(dropped_)},
+            {"truncated", dropped_ > 0},
+            {"events", events},
+            {"eventCount", events.size()},
+            {"stackTraces", "unavailable"},
+            {"interpretation",
+             "Aggregates measure app work and late UI ticks, not physical keypress latency or causal stacks. Empty "
+             "metrics mean no retained samples."}};
 }
 }

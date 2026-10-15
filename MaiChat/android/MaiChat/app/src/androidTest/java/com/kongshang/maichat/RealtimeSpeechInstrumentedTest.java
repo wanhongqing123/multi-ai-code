@@ -1,6 +1,7 @@
 // 文件作用：Android 设备集成测试；RealtimeSpeechInstrumentedTest 负责覆盖对应界面或服务的设备行为，本文件给出其验证。
 // 运行边界：仅供自动化验证使用，不作为正式 App 或 Agent 的用户功能入口。
-// 覆盖场景：emulatorRecordingStopsOffUiAndProducesCompleteAacFrames、syntheticSpeechGetsPartialAndFinalResultsFromTheConfiguredService。
+// 覆盖场景：emulatorRecordingStopsOffUiAndProducesCompleteAacFrames、
+// syntheticSpeechGetsPartialAndFinalResultsFromTheConfiguredService。
 package com.kongshang.maichat;
 
 import androidx.test.platform.app.InstrumentationRegistry;
@@ -21,11 +22,14 @@ public class RealtimeSpeechInstrumentedTest {
     @Test public void emulatorRecordingStopsOffUiAndProducesCompleteAacFrames() throws Exception {
         Assume.assumeTrue("Synthetic emulator microphone only", android.os.Build.MODEL.startsWith("sdk_"));
         android.content.Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
-        InstrumentationRegistry.getInstrumentation().getUiAutomation().grantRuntimePermission(context.getPackageName(), android.Manifest.permission.RECORD_AUDIO);
-        try (androidx.test.core.app.ActivityScenario<MainActivity> scenario = androidx.test.core.app.ActivityScenario.launch(MainActivity.class)) {
+        InstrumentationRegistry.getInstrumentation().getUiAutomation().grantRuntimePermission(
+                context.getPackageName(), android.Manifest.permission.RECORD_AUDIO);
+        try (androidx.test.core.app.ActivityScenario<MainActivity> scenario =
+                        androidx.test.core.app.ActivityScenario.launch(MainActivity.class)) {
             CountDownLatch done = new CountDownLatch(1), uiPulse = new CountDownLatch(1);
             AtomicReference<File> output = new AtomicReference<>();
-            VoiceRecordingController recorder = new VoiceRecordingController(new RemoteIMMediaStore(RemoteIMMediaPaths.forApp(context)));
+            VoiceRecordingController recorder =
+                    new VoiceRecordingController(new RemoteIMMediaStore(RemoteIMMediaPaths.forApp(context)));
             try {
                 long startedAt = android.os.SystemClock.elapsedRealtime();
                 scenario.onActivity(activity -> {
@@ -36,7 +40,8 @@ public class RealtimeSpeechInstrumentedTest {
                     new android.os.Handler(android.os.Looper.getMainLooper()).post(uiPulse::countDown);
                 });
                 assertTrue("Recorder initialization must not block UI", uiPulse.await(500, TimeUnit.MILLISECONDS));
-                assertTrue("UI was blocked before the heartbeat could run", android.os.SystemClock.elapsedRealtime() - startedAt < 500);
+                assertTrue("UI was blocked before the heartbeat could run",
+                        android.os.SystemClock.elapsedRealtime() - startedAt < 500);
                 Thread.sleep(1400);
                 scenario.onActivity(activity -> recorder.finish(false));
                 assertTrue("Recorder did not stop", done.await(12, TimeUnit.SECONDS));
@@ -54,8 +59,10 @@ public class RealtimeSpeechInstrumentedTest {
     }
 
     @Test public void syntheticSpeechGetsPartialAndFinalResultsFromTheConfiguredService() throws Exception {
-        File audio = new File(InstrumentationRegistry.getInstrumentation().getTargetContext().getCacheDir(), "speech-synthetic.aac");
-        Assume.assumeTrue("Requires a local synthetic fixture and development credentials", audio.isFile() && !BuildConfig.TENCENT_ASR_APP_ID.isEmpty());
+        File audio = new File(
+                InstrumentationRegistry.getInstrumentation().getTargetContext().getCacheDir(), "speech-synthetic.aac");
+        Assume.assumeTrue("Requires a local synthetic fixture and development credentials",
+                audio.isFile() && !BuildConfig.TENCENT_ASR_APP_ID.isEmpty());
         CountDownLatch done = new CountDownLatch(1);
         AtomicReference<String> result = new AtomicReference<>();
         List<String> events = new CopyOnWriteArrayList<>();
@@ -73,7 +80,8 @@ public class RealtimeSpeechInstrumentedTest {
             assertNotNull("ASR failed: " + events, result.get());
             assertTrue("No streamed partial result", !partials.isEmpty());
             assertTrue("Expected recognized synthetic phrase", result.get().contains("测试"));
-            assertTrue("Final result must come from the server: " + events, events.stream().anyMatch(value -> value.startsWith("asr-server-final")));
+            assertTrue("Final result must come from the server: " + events,
+                    events.stream().anyMatch(value -> value.startsWith("asr-server-final")));
         } finally { stream.cancel(); }
     }
 }

@@ -38,7 +38,9 @@ final class RemoteIMActivityState {
     }
     Set<String> expire(long now) {
         Set<String> changed = new LinkedHashSet<>();
-        for (Map.Entry<String, Long> entry : expiry.entrySet()) if (entry.getValue() <= now) changed.add(entry.getKey());
+        for (Map.Entry<String, Long> entry : expiry.entrySet())
+            if (entry.getValue() <= now)
+                changed.add(entry.getKey());
         for (String peer : changed) { signals.remove(peer); expiry.remove(peer); }
         return changed;
     }

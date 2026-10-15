@@ -1,8 +1,10 @@
-// 文件作用：Android 创作中心的会话、消息和 Agent 交互；AIAssistantController 负责流程编排、异步回调和状态转换，本文件给出其实现。
+// 文件作用：Android 创作中心的会话、消息和 Agent 交互。
+// AIAssistantController 负责流程编排、异步回调和状态转换。
 // 主要入口：shared、configureAccount、invalidateSharedTemporaryModelCredentials、nativeCreate。
 package com.kongshang.maichat;
 
 import android.content.Context;
+import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Matrix;
@@ -11,6 +13,7 @@ import android.net.Uri;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
+import android.provider.OpenableColumns;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.util.Base64;
@@ -87,11 +90,16 @@ public final class AIAssistantController {
     public static final class ImportedFile {
         public final String relativePath;
         public final String mimeType;
+        final String displayName;
         final boolean image;
         ImportedFile(String relativePath, String mimeType, boolean image) {
+            this(relativePath, mimeType, image, relativePath);
+        }
+        ImportedFile(String relativePath, String mimeType, boolean image, String displayName) {
             this.relativePath = relativePath;
             this.mimeType = mimeType;
             this.image = image;
+            this.displayName = displayName;
         }
     }
     private static AIAssistantController shared;
@@ -216,7 +224,8 @@ public final class AIAssistantController {
         hostToolHandler = handler;
     }
     @SuppressWarnings("unused") // Called from MaiAgentJni.cpp on an agent worker thread.
-    // 原生 Agent 工具回调在这里按名称分派到手机宿主；解析失败和权限拒绝都编码为可回传错误。
+    // 原生 Agent 工具回调在这里按名称分派到手机宿主。
+    // 解析失败和权限拒绝都编码为可回传错误。
     private byte[] onNativeHostTool(byte[] toolBytes, byte[] argumentsBytes) {
         String tool = new String(toolBytes, StandardCharsets.UTF_8);
         String arguments = new String(argumentsBytes, StandardCharsets.UTF_8);
@@ -625,14 +634,31 @@ public final class AIAssistantController {
             });
     }
     void select(String id) {
+        select(id, null);
+    }
+    void select(String id, Consumer<Boolean> completion) {
         worker.post(() -> {
-            selected = id;
-            error = "";
-            refresh(true);
+            boolean success = false;
+            try {
+                selected = id;
+                error = "";
+                refresh(true);
+                success = true;
+            } catch (Exception failure) {
+                error = safeMessage(failure);
+                publishState();
+            }
+            if (completion != null) {
+                boolean result = success;
+                main.post(() -> completion.accept(result));
+            }
         });
     }
     void create() {
-        action("create", new JSONObject(), null);
+        create(null);
+    }
+    void create(Consumer<Boolean> completion) {
+        actionWithResult("create", new JSONObject(), null, completion);
     }
     void send(String text, Consumer<Boolean> completion) {
         send(text, java.util.Collections.emptyList(), completion);
@@ -654,7 +680,11 @@ public final class AIAssistantController {
         });
     }
     void send(String text, java.util.List<ImportedFile> attachments, Consumer<Boolean> completion) {
-        String intendedSession = state.selected;
+        send(state.selected, text, attachments, completion);
+    }
+    // 发送目标由可见输入栏决定，不再重读可能先于面板更新的控制器选中状态。
+    void send(String intendedSession, String text, java.util.List<ImportedFile> attachments,
+              Consumer<Boolean> completion) {
         java.util.List<ImportedFile> intendedAttachments = new java.util.ArrayList<>(attachments);
         worker.post(() -> {
             boolean success = false;
@@ -692,8 +722,13 @@ public final class AIAssistantController {
         save(name, policy, completion);
     }
     void action(String operation, JSONObject values, Runnable completion) {
-        String target = state.selected;
+        actionWithResult(operation, values, completion, null);
+    }
+    private void actionWithResult(String operation, JSONObject values, Runnable completion,
+                                  Consumer<Boolean> settled) {
+        String target = values.optString("session", state.selected);
         worker.post(() -> {
+            boolean success = false;
             try {
                 JSONObject request =
                     new JSONObject(values.toString()).put("op", operation).put("session", target);
@@ -704,11 +739,16 @@ public final class AIAssistantController {
                     selected = "";
                 error = "";
                 refresh(true);
+                success = true;
                 if (completion != null)
                     main.post(completion);
             } catch (Exception e) {
                 error = safeMessage(e);
                 publishState();
+            }
+            if (settled != null) {
+                boolean result = success;
+                main.post(() -> settled.accept(result));
             }
         });
     }
@@ -831,7 +871,8 @@ public final class AIAssistantController {
             try (java.io.OutputStream output = connection.getOutputStream()) { output.write(body); }
             int status = connection.getResponseCode();
             if (status != 200)
-                throw new IOException(status == 401 ? "云端服务令牌不匹配" : "云端密钥服务暂时不可用");
+                throw new IOException(status == 401
+                    ? "云端服务令牌不匹配" : "云端密钥服务暂时不可用");
             try (InputStream input = connection.getInputStream();
                  java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream()) {
                 byte[] buffer = new byte[2048];
@@ -920,6 +961,47 @@ public final class AIAssistantController {
         });
     }
 
+    // 相册输入在工作线程导入；图片转换为模型支持的格式，视频保留原件供 Agent 读取。
+    void importComposerMedia(Uri uri, Consumer<ImportedFile> completion) {
+        worker.post(() -> {
+            ImportedFile imported = null;
+            try {
+                String mime = context.getContentResolver().getType(uri);
+                if (mime == null) throw new IllegalArgumentException("无法识别媒体格式");
+                mime = mime.toLowerCase(java.util.Locale.ROOT);
+                if (mime.startsWith("video/")) {
+                    imported = importOriginalMediaForHost(uri);
+                } else if (mime.startsWith("image/")) {
+                    try (InputStream input = context.getContentResolver().openInputStream(uri)) {
+                        if (input == null) throw new IOException("无法读取图片");
+                        imported = importStream(input, mime, uri.getLastPathSegment());
+                    }
+                } else {
+                    throw new IllegalArgumentException("只能添加图片或视频");
+                }
+                imported = new ImportedFile(imported.relativePath, imported.mimeType,
+                    imported.image, sourceDisplayName(uri, imported.relativePath));
+            } catch (Exception e) {
+                error = safeMessage(e);
+                publishState();
+            }
+            ImportedFile result = imported;
+            main.post(() -> completion.accept(result));
+        });
+    }
+    private String sourceDisplayName(Uri uri, String fallback) {
+        try (Cursor cursor = context.getContentResolver().query(
+                 uri, new String[] {OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                String value = cursor.getString(0);
+                if (value != null && !value.trim().isEmpty()) return value.trim();
+            }
+        } catch (Exception ignored) {
+            // 部分媒体 Provider 不提供显示名；使用工作区文件名作为回退。
+        }
+        return fallback;
+    }
+
     public ImportedFile importPhotoForHost(Uri uri) throws Exception {
         if (root == null) throw new IllegalStateException("AI 工作区尚未准备好");
         if (android.os.Build.VERSION.SDK_INT >= 29) {
@@ -945,8 +1027,10 @@ public final class AIAssistantController {
     public ImportedFile importOriginalMediaForHost(Uri uri) throws Exception {
         if (root == null) throw new IllegalStateException("AI 工作区尚未准备好");
         String mime = context.getContentResolver().getType(uri);
+        if (mime != null) mime = mime.toLowerCase(java.util.Locale.ROOT);
         if (mime == null || !(mime.startsWith("image/") || mime.startsWith("video/")))
             throw new IllegalArgumentException("只能导入系统图库中的图片或视频");
+        boolean image = mime.startsWith("image/");
         String extension;
         switch (mime.toLowerCase(java.util.Locale.ROOT)) {
         case "image/jpeg": extension = "jpg"; break;
@@ -972,8 +1056,8 @@ public final class AIAssistantController {
             int count;
             while ((count = input.read(buffer)) >= 0) {
                 copied += count;
-                if (mime.startsWith("image/") && copied > 100L * 1024 * 1024)
-                    throw new IllegalArgumentException("照片超过 100 MB");
+                if (copied > 100L * 1024 * 1024)
+                    throw new IllegalArgumentException(image ? "照片超过 100 MB" : "视频超过 100 MB");
                 output.write(buffer, 0, count);
             }
             if (copied == 0) throw new IOException("媒体文件为空");
@@ -981,7 +1065,7 @@ public final class AIAssistantController {
             target.delete();
             throw error;
         }
-        return new ImportedFile(name, mime, true);
+        return new ImportedFile(name, mime, image);
     }
     void importCameraFile(File source, Consumer<ImportedFile> completion) {
         worker.post(() -> {
@@ -994,6 +1078,8 @@ public final class AIAssistantController {
             } finally {
                 if (source != null) source.delete();
             }
+            if (imported != null)
+                imported = new ImportedFile(imported.relativePath, imported.mimeType, true, "拍摄照片");
             ImportedFile result = imported;
             main.post(() -> completion.accept(result));
         });
@@ -1018,6 +1104,23 @@ public final class AIAssistantController {
         if (root == null || relativePath == null || relativePath.trim().isEmpty()) return null;
         try { return resolveAppFile(relativePath); }
         catch (IOException | IllegalArgumentException error) { return null; }
+    }
+    void discardComposerMedia(ImportedFile file) {
+        if (file == null) return;
+        worker.post(() -> {
+            String path = file.relativePath;
+            if (root == null || path == null || path.contains("/") || path.contains("\\")
+                || !(path.startsWith("image-") || path.startsWith("gallery-")
+                    || path.startsWith("import-"))) return;
+            File workspace = new File(root, "Workspace");
+            File candidate = new File(workspace, path);
+            try {
+                if (candidate.getCanonicalFile().getParentFile().equals(workspace.getCanonicalFile()))
+                    Files.deleteIfExists(candidate.toPath());
+            } catch (IOException failure) {
+                Log.w("MaiChatAgent", "Could not discard unused media", failure);
+            }
+        });
     }
     private File resolveAppFile(String path) throws IOException {
         if (root == null)
@@ -1172,7 +1275,13 @@ public final class AIAssistantController {
         String extension = image ? AIAssistantMediaPolicy.extension(mime) : "txt";
         String name = (image ? "image-" : "import-")
             + UUID.randomUUID().toString().substring(0, 8) + "." + extension;
-        Files.write(new File(new File(root, "Workspace"), name).toPath(), value);
+        File target = new File(new File(root, "Workspace"), name);
+        try {
+            Files.write(target.toPath(), value);
+        } catch (IOException failure) {
+            target.delete();
+            throw failure;
+        }
         return new ImportedFile(name, mime, image);
     }
     private SecretKey encryptionKey() throws Exception {

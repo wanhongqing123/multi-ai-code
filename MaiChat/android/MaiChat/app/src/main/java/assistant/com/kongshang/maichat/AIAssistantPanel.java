@@ -1,5 +1,6 @@
-// 文件作用：Android 创作中心的会话、消息和 Agent 交互；AIAssistantPanel 负责面板呈现、输入处理和状态反馈，本文件给出其实现。
-// 类型关系：AIAssistantPanel extends LinearLayout implements AIAssistantController.Listener；审阅时可据此追踪父类、接口或回调契约。
+// 文件作用：Android 创作中心的会话、消息和 Agent 交互。
+// AIAssistantPanel 负责面板呈现、输入处理和状态反馈。
+// 类型关系：AIAssistantPanel extends LinearLayout implements AIAssistantController.Listener。
 // 主要入口：onScrollStateChanged、onTextChanged、onAttachedToWindow、onDetachedFromWindow。
 package com.kongshang.maichat;
 
@@ -39,6 +40,7 @@ import org.json.JSONObject;
 
 /** Stable composer + recycled message rows. No native calls, disk I/O or parsing on UI. */
 final class AIAssistantPanel extends LinearLayout implements AIAssistantController.Listener {
+    private static final int MAX_MEDIA_ATTACHMENTS = 10;
     static final int REQUEST_FILE = 7107;
     static final int REQUEST_IMAGE = 7108;
     static final int REQUEST_CAMERA = 7109;
@@ -47,6 +49,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     final AIAssistantController controller;
     final EditText composer;
     final Button send;
+    private final Button newConversationButton;
     private final Button modelButton, policyButton;
     private final TextView error;
     private final LatestMessageList list;
@@ -59,6 +62,8 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     private int renderedMessageHash, renderedMessageLength, renderedVisibleLimit = -1;
     private final Map<String, String> drafts = new HashMap<>();
     private final Map<String, List<AIAssistantController.ImportedFile>> attachments = new HashMap<>();
+    private final Map<String, Integer> pendingMediaImports = new HashMap<>();
+    private final Set<String> deletedSessions = new HashSet<>();
     private final Set<String> expanded = new HashSet<>();
     private List<JSONObject> messages = Collections.emptyList();
     private boolean following = true, submitting;
@@ -66,6 +71,10 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     private final Button older;
     private boolean visibleToUser = true;
     private File pendingCameraFile;
+    private String pendingMediaSession, pendingFileSession, pendingCameraSession, submittingSession = "";
+    private String firstSentSession = "";
+    private boolean navigationPending;
+    private int navigationGeneration;
     private final VoiceRecordingController voiceRecorder;
     private final SpeechRecognizer speechRecognizer;
     private boolean voiceRecording, cancelVoice;
@@ -106,10 +115,8 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         TextView title = text("创作中心", 18, MaiChatTheme.TEXT);
         title.setTypeface(MaiChatTypography.semibold());
         header.addView(title, new LayoutParams(0, dp(48), 1));
-        header.addView(button("＋", "新对话", v -> {
-            following = true;
-            controller.create();
-        }), new LayoutParams(dp(46), dp(48)));
+        newConversationButton = button("＋", "新对话", v -> requestNewConversation());
+        header.addView(newConversationButton, new LayoutParams(dp(46), dp(48)));
         header.addView(button("⋯", "对话选项", v -> menu()), new LayoutParams(dp(46), dp(48)));
         addView(header, matchWrap());
         list = new LatestMessageList();
@@ -181,10 +188,13 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             }
         });
         box.addView(composer, matchWrap());
-        attachmentTray = column();
-        box.addView(attachmentTray, matchWrap());
+        HorizontalScrollView attachmentScroll = new HorizontalScrollView(activity);
+        attachmentScroll.setHorizontalScrollBarEnabled(false);
+        attachmentTray = row();
+        attachmentScroll.addView(attachmentTray);
+        box.addView(attachmentScroll, matchWrap());
         LinearLayout actions = row();
-        actions.addView(button("＋", "添加图片或文件", v -> attachmentMenu()),
+        actions.addView(button("＋", "添加图片、视频或文件", v -> attachmentMenu()),
             new LayoutParams(dp(36), dp(40)));
         Button voice = button("◉", "按住语音转文字", null);
         voice.setOnTouchListener((view, event) -> voiceTouch(event));
@@ -232,10 +242,15 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         if (changedSession) {
             String previous = selected;
             drafts.put(previous, composer.getText().toString());
-            boolean firstSend = submitting && selected.isEmpty();
+            boolean firstSend = submitting && previous.isEmpty()
+                && previous.equals(submittingSession);
             selected = next.selected;
-            if (firstSend && attachments.containsKey(previous))
-                attachments.put(selected, attachments.remove(previous));
+            if (firstSend) {
+                firstSentSession = selected;
+                if (attachments.containsKey(previous))
+                    attachments.put(selected, attachments.remove(previous));
+                drafts.put(selected, drafts.remove(previous));
+            }
             if (!firstSend)
                 composer.setText(drafts.getOrDefault(selected, ""));
             visibleLimit = 50;
@@ -322,18 +337,22 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         boolean busy = state != null && state.busy();
         send.setText(busy ? "■" : "↑");
         send.setContentDescription(busy ? "停止" : "发送");
+        newConversationButton.setEnabled(!submitting && !navigationPending);
         send.setEnabled(state != null && state.ready && !submitting
-            && (busy || !composer.getText().toString().trim().isEmpty()
-                || !currentAttachments().isEmpty()));
+            && !navigationPending
+            && (busy || (pendingMediaImports.getOrDefault(selected, 0) == 0
+                && (!composer.getText().toString().trim().isEmpty()
+                    || !currentAttachments().isEmpty()))));
         // 提交期间保持原生编辑器焦点；禁用控件会让输入法意外收起。
     }
     private void send() {
-        if (state == null || submitting)
+        if (state == null || submitting || navigationPending)
             return;
         if (state.busy()) {
-            controller.action("stop", new JSONObject(), null);
+            controller.action("stop", value("session", selected), null);
             return;
         }
+        if (pendingMediaImports.getOrDefault(selected, 0) > 0) return;
         if (!state.data.optBoolean("configured")) {
             settings();
             return;
@@ -349,18 +368,27 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         }
         String submittedText = source;
         submitting = true;
+        submittingSession = origin;
+        firstSentSession = "";
+        updateAttachments();
         updateSend();
         following = true;
-        controller.send(source, sending, success -> {
+        controller.send(origin, source, sending, success -> {
             submitting = false;
-            if (success && (origin.isEmpty() || selected.equals(origin))
-                && (composer.getText().toString().equals(submittedText)
-                    || composer.getText().toString().trim().isEmpty()))
-                composer.setText("");
+            String target = origin.isEmpty() && !firstSentSession.isEmpty()
+                ? firstSentSession : origin;
             if (success) {
-                attachments.remove(origin);
-                if (origin.isEmpty()) attachments.remove(selected);
+                if (selected.equals(target) && composer.getText().toString().equals(submittedText))
+                    composer.setText("");
+                if (submittedText.equals(drafts.get(target))) drafts.put(target, "");
+                List<AIAssistantController.ImportedFile> values = attachments.get(target);
+                if (values != null) {
+                    values.removeAll(sending);
+                    if (values.isEmpty()) attachments.remove(target);
+                }
             }
+            submittingSession = "";
+            firstSentSession = "";
             updateAttachments();
             updateSend();
             if (success)
@@ -368,7 +396,9 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         });
     }
     void importFile(Uri uri) {
-        String origin = selected;
+        importFile(uri, selected);
+    }
+    private void importFile(Uri uri, String origin) {
         controller.importFile(uri, file -> {
             if (file == null)
                 return;
@@ -379,62 +409,124 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         return attachments.getOrDefault(selected, Collections.emptyList());
     }
     private void acceptImportedFile(AIAssistantController.ImportedFile file, String target) {
-        if (!file.image) {
+        if (deletedSessions.contains(target)) {
+            controller.discardComposerMedia(file);
+            return;
+        }
+        if (!file.image && !file.mimeType.startsWith("video/")) {
             String reference = "\n请查看工作区文件：" + file.relativePath + "\n";
             if (target.equals(selected)) composer.append(reference);
             else drafts.put(target, drafts.getOrDefault(target, "") + reference);
             return;
         }
         attachments.computeIfAbsent(target, ignored -> new ArrayList<>()).add(file);
-        if (target.equals(selected)) {
-            updateAttachments(); updateSend();
-            if (state != null && AIAssistantMediaPolicy.supportsImages(state.model)) send();
-            else Toast.makeText(activity, "图片已保留，请切换到 glm-5.3-flash 后发送。",
-                Toast.LENGTH_LONG).show();
-        }
+        if (target.equals(selected)) { updateAttachments(); updateSend(); }
     }
+    // 只重绘当前会话的横向草稿托盘；缩略图、序号和移除操作都绑定同一份附件列表。
     private void updateAttachments() {
         if (attachmentTray == null) return;
         attachmentTray.removeAllViews();
+        composer.setHint(currentAttachments().isEmpty() ? "随心输入" : "添加说明（可选）");
+        int imageOrdinal = 0;
+        int videoOrdinal = 0;
         for (AIAssistantController.ImportedFile file : currentAttachments()) {
-            LinearLayout chip = row();
-            chip.setPadding(dp(8), dp(4), dp(8), dp(4));
+            int ordinal = file.image ? ++imageOrdinal : ++videoOrdinal;
+            LinearLayout chip = column();
+            chip.setPadding(dp(5), dp(5), dp(5), dp(5));
             chip.setBackground(MaiChatTheme.bordered(MaiChatTheme.BLUE_SOFT,
                 MaiChatTheme.BORDER, 9, activity));
-            ImageView preview = new ImageView(activity);
-            preview.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            File image = controller.workspaceFile(file.relativePath);
-            if (image != null) MessageImageLoader.load(image.getPath(), dp(72), dp(54), preview, null);
-            chip.addView(preview, new LayoutParams(dp(72), dp(54)));
-            TextView name = text(file.relativePath, 12, MaiChatTheme.TEXT);
-            name.setMaxLines(2);
-            LayoutParams nameParams = new LayoutParams(0, dp(54), 1);
-            nameParams.setMargins(dp(8), 0, dp(8), 0);
-            chip.addView(name, nameParams);
-            chip.addView(button("×", "移除图片", view -> {
+            LinearLayout top = row();
+            File source = controller.workspaceFile(file.relativePath);
+            if (file.image) {
+                ImageView preview = new ImageView(activity);
+                preview.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                preview.setContentDescription("预览图片");
+                if (source != null)
+                    MessageImageLoader.load(source.getPath(), dp(82), dp(58), preview, null);
+                preview.setOnClickListener(view -> previewAttachment(file));
+                top.addView(preview, new LayoutParams(dp(82), dp(58)));
+            } else {
+                FrameLayout preview = new FrameLayout(activity);
+                preview.setBackgroundColor(Color.rgb(38, 46, 58));
+                preview.setContentDescription("预览视频 " + ordinal);
+                ImageView cover = new ImageView(activity);
+                cover.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                preview.addView(cover, new FrameLayout.LayoutParams(
+                    LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
+                if (source != null)
+                    MessageImageLoader.load(source.getPath(), dp(82), dp(58), cover, null);
+                TextView play = text("▶", 20, Color.WHITE);
+                play.setGravity(Gravity.CENTER);
+                play.setBackground(MaiChatTheme.rounded(Color.argb(180, 0, 0, 0), 18, activity));
+                FrameLayout.LayoutParams playParams = new FrameLayout.LayoutParams(dp(36), dp(36));
+                playParams.gravity = Gravity.CENTER;
+                preview.addView(play, playParams);
+                preview.setOnClickListener(view -> previewAttachment(file));
+                top.addView(preview, new LayoutParams(dp(82), dp(58)));
+            }
+            Button remove = button("×", "移除" + (file.image ? "图片" : "视频"), view -> {
                 List<AIAssistantController.ImportedFile> values = attachments.get(selected);
                 if (values != null) {
                     values.remove(file);
                     if (values.isEmpty()) attachments.remove(selected);
+                    controller.discardComposerMedia(file);
                 }
                 updateAttachments(); updateSend();
-            }), new LayoutParams(dp(36), dp(54)));
+            });
+            remove.setEnabled(!submitting);
+            top.addView(remove, new LayoutParams(dp(48), dp(58)));
+            chip.addView(top, matchWrap());
+            TextView name = text((file.image ? "图片 " : "视频 ") + ordinal
+                + " · " + file.displayName, 11, MaiChatTheme.TEXT);
+            name.setSingleLine(true);
+            name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            name.setContentDescription((file.image ? "图片 " : "视频 ") + ordinal
+                + "，" + file.displayName);
+            chip.addView(name, matchWrap());
             LayoutParams params = matchWrap();
-            params.setMargins(0, dp(4), 0, dp(4));
+            params.width = dp(140);
+            params.setMargins(0, dp(4), dp(6), dp(4));
             attachmentTray.addView(chip, params);
         }
+        int pendingCount = pendingMediaImports.getOrDefault(selected, 0);
+        if (pendingCount > 0) {
+            TextView loading = text("正在添加媒体（" + pendingCount + "）…", 12,
+                MaiChatTheme.SECONDARY);
+            loading.setGravity(Gravity.CENTER);
+            loading.setPadding(dp(12), dp(5), dp(12), dp(5));
+            attachmentTray.addView(loading, new LayoutParams(dp(126), dp(82)));
+        }
+    }
+    private void previewAttachment(AIAssistantController.ImportedFile file) {
+        File source = controller.workspaceFile(file.relativePath);
+        if (source == null || !source.isFile() || !(activity instanceof MainActivity)
+            || !((MainActivity) activity).openAgentMedia(
+                source.getAbsolutePath(), !file.image, draftMediaPlaylist()))
+            Toast.makeText(activity, "媒体文件无法预览", Toast.LENGTH_SHORT).show();
+    }
+    private List<MainActivity.GalleryItem> draftMediaPlaylist() {
+        List<MainActivity.GalleryItem> result = new ArrayList<>();
+        for (AIAssistantController.ImportedFile file : currentAttachments()) {
+            File source = controller.workspaceFile(file.relativePath);
+            if (source != null && source.isFile())
+                result.add(new MainActivity.GalleryItem(source.getAbsolutePath(), !file.image));
+        }
+        return result;
     }
     private void attachmentMenu() {
         new AlertDialog.Builder(activity)
-            .setItems(new String[] {"从相册选择", "拍照", "导入文本文件"}, (dialog, which) -> {
+            .setItems(new String[] {"选择图片或视频", "拍照", "导入文本文件"}, (dialog, which) -> {
                 if (which == 0) {
-                    ((MainActivity) activity).requestGalleryAccess(() -> {
-                        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT)
-                            .setType("image/*").addCategory(Intent.CATEGORY_OPENABLE);
-                        activity.startActivityForResult(intent, REQUEST_IMAGE);
-                    });
+                    pendingMediaSession = selected;
+                    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT)
+                        .setType("*/*")
+                        .putExtra(Intent.EXTRA_MIME_TYPES, new String[] {"image/*", "video/*"})
+                        .putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                        .addCategory(Intent.CATEGORY_OPENABLE);
+                    activity.startActivityForResult(intent, REQUEST_IMAGE);
                 } else if (which == 1) requestCamera();
                 else {
+                    pendingFileSession = selected;
                     Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT)
                         .setType("text/*").addCategory(Intent.CATEGORY_OPENABLE);
                     activity.startActivityForResult(intent, REQUEST_FILE);
@@ -442,23 +534,47 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             })
             .show();
     }
+    // 系统选择器返回后按启动时的会话归档，避免导入期间切换对话造成错发。
     boolean handleActivityResult(int requestCode, Intent data) {
         if (requestCode == REQUEST_FILE) {
-            if (data != null && data.getData() != null) importFile(data.getData());
+            String target = pendingFileSession == null ? selected : pendingFileSession;
+            pendingFileSession = null;
+            if (data != null && data.getData() != null) importFile(data.getData(), target);
             return true;
         }
         if (requestCode == REQUEST_IMAGE) {
-            if (data != null && data.getClipData() != null) {
+            String target = pendingMediaSession == null ? selected : pendingMediaSession;
+            pendingMediaSession = null;
+            LinkedHashSet<Uri> chosen = new LinkedHashSet<>();
+            if (data != null && data.getClipData() != null)
                 for (int i = 0; i < data.getClipData().getItemCount(); i++)
-                    importFile(data.getClipData().getItemAt(i).getUri());
-            } else if (data != null && data.getData() != null) importFile(data.getData());
+                    chosen.add(data.getClipData().getItemAt(i).getUri());
+            else if (data != null && data.getData() != null)
+                chosen.add(data.getData());
+            int existing = attachments.getOrDefault(target, Collections.emptyList()).size();
+            int available = Math.max(0, MAX_MEDIA_ATTACHMENTS - existing
+                - pendingMediaImports.getOrDefault(target, 0));
+            if (chosen.size() > available)
+                Toast.makeText(activity, "每条消息最多添加 10 个图片或视频", Toast.LENGTH_LONG).show();
+            for (Uri uri : chosen) {
+                if (available-- <= 0) break;
+                beginMediaImport(target);
+                controller.importComposerMedia(uri, imported -> {
+                    finishMediaImport(target);
+                    if (imported != null) acceptImportedFile(imported, target);
+                });
+            }
             return true;
         }
         if (requestCode == REQUEST_CAMERA) {
-            File file = pendingCameraFile; pendingCameraFile = null;
+            File file = pendingCameraFile;
+            String target = pendingCameraSession == null ? selected : pendingCameraSession;
+            pendingCameraFile = null;
+            pendingCameraSession = null;
             if (file != null) {
-                String target = selected;
+                beginMediaImport(target);
                 controller.importCameraFile(file, imported -> {
+                    finishMediaImport(target);
                     if (imported != null) acceptImportedFile(imported, target);
                 });
             }
@@ -467,20 +583,42 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         return false;
     }
     void handleActivityCancelled(int requestCode) {
+        if (requestCode == REQUEST_FILE) pendingFileSession = null;
+        if (requestCode == REQUEST_IMAGE) pendingMediaSession = null;
         if (requestCode == REQUEST_CAMERA && pendingCameraFile != null) {
             pendingCameraFile.delete();
             pendingCameraFile = null;
         }
+        if (requestCode == REQUEST_CAMERA) pendingCameraSession = null;
+    }
+    private void beginMediaImport(String target) {
+        pendingMediaImports.put(target, pendingMediaImports.getOrDefault(target, 0) + 1);
+        if (target.equals(selected)) { updateAttachments(); updateSend(); }
+    }
+    private void finishMediaImport(String target) {
+        int remaining = pendingMediaImports.getOrDefault(target, 0) - 1;
+        if (remaining > 0) pendingMediaImports.put(target, remaining);
+        else pendingMediaImports.remove(target);
+        if (target.equals(selected)) { updateAttachments(); updateSend(); }
     }
     void onCameraPermission(boolean granted) {
         if (granted) openCamera();
-        else Toast.makeText(activity, "没有相机权限，无法拍照", Toast.LENGTH_LONG).show();
+        else {
+            pendingCameraSession = null;
+            Toast.makeText(activity, "没有相机权限，无法拍照", Toast.LENGTH_LONG).show();
+        }
     }
     void onAudioPermission(boolean granted) {
         Toast.makeText(activity, granted ? "麦克风已启用，请按住语音按钮"
             : "没有麦克风权限，无法语音转文字", Toast.LENGTH_LONG).show();
     }
     private void requestCamera() {
+        if (currentAttachments().size() + pendingMediaImports.getOrDefault(selected, 0)
+            >= MAX_MEDIA_ATTACHMENTS) {
+            Toast.makeText(activity, "每条消息最多添加 10 个图片或视频", Toast.LENGTH_LONG).show();
+            return;
+        }
+        pendingCameraSession = selected;
         if (activity.checkSelfPermission(Manifest.permission.CAMERA)
             == android.content.pm.PackageManager.PERMISSION_GRANTED) openCamera();
         else activity.requestPermissions(new String[] {Manifest.permission.CAMERA},
@@ -488,7 +626,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     }
     private void openCamera() {
         controller.prepareCameraFile(file -> {
-            if (file == null) return;
+            if (file == null) { pendingCameraSession = null; return; }
             pendingCameraFile = file;
             Uri output = FileProvider.getUriForFile(activity,
                 activity.getPackageName() + ".files", file);
@@ -797,7 +935,9 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                     pending.addView(more, matchWrap());
                 } else if (portraitValidation) {
                     pending.addView(text("创建真人验证链接", 17, MaiChatTheme.TEXT), matchWrap());
-                    pending.addView(text("将创建一次性 H5 链接，请由照片中的本人打开并完成验证。认证凭证有效期为 30 分钟。",
+                    pending.addView(text("将创建一次性 H5 链接，"
+                        + "请由照片中的本人打开并完成验证。"
+                        + "认证凭证有效期为 30 分钟。",
                         13, MaiChatTheme.SECONDARY), matchWrap());
                 } else {
                     TextView heading = text(
@@ -858,47 +998,96 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             }
     }
     private void sessions() {
+        if (submitting || navigationPending) return;
         if (state == null)
             return;
         JSONArray items = state.data.optJSONArray("sessions");
         if (items == null)
             return;
-        String[] titles = new String[items.length() + 1];
+        // 尚未发送的空白会话也要能从列表返回，否则创建新对话会让草稿失去入口。
+        boolean blankDraft = !attachments.getOrDefault("", Collections.emptyList()).isEmpty()
+            || pendingMediaImports.getOrDefault("", 0) > 0
+            || !(selected.isEmpty() ? composer.getText().toString()
+                : drafts.getOrDefault("", "")).trim().isEmpty();
+        int offset = blankDraft ? 2 : 1;
+        String[] titles = new String[items.length() + offset];
         titles[0] = "＋ 新对话";
+        if (blankDraft) titles[1] = "未发送草稿";
         for (int i = 0; i < items.length(); i++) {
             JSONObject s = items.optJSONObject(i);
             String title = s.optString("title");
-            titles[i + 1] =
+            titles[i + offset] =
                 (title.equals("New session") ? "新对话" : title) + (s.optBoolean("busy") ? " ···" : "");
         }
         new AlertDialog.Builder(activity)
             .setTitle("对话")
             .setItems(titles,
                 (d, which) -> {
-                    following = true;
                     if (which == 0)
-                        controller.create();
+                        requestNewConversation();
+                    else if (blankDraft && which == 1)
+                        requestConversation("");
                     else
-                        controller.select(items.optJSONObject(which - 1).optString("id"));
+                        requestConversation(items.optJSONObject(which - offset).optString("id"));
                 })
             .setNegativeButton("取消", null)
             .show();
     }
+    private void requestNewConversation() {
+        if (submitting || navigationPending) return;
+        following = true;
+        navigationPending = true;
+        int generation = ++navigationGeneration;
+        updateSend();
+        controller.create(success -> finishNavigation(generation));
+    }
+    private void requestConversation(String target) {
+        if (submitting || navigationPending) return;
+        following = true;
+        navigationPending = true;
+        int generation = ++navigationGeneration;
+        updateSend();
+        controller.select(target, success -> finishNavigation(generation));
+    }
+    private void finishNavigation(int generation) {
+        if (navigationGeneration != generation) return;
+        navigationPending = false;
+        updateSend();
+    }
     private void menu() {
+        if (submitting || navigationPending) return;
         new AlertDialog.Builder(activity)
             .setItems(new String[] {"清空当前对话", "删除当前对话"},
                 (d, which) -> {
                     if (state == null || state.busy() || selected.isEmpty())
                         return;
                     String op = which == 0 ? "clear" : "delete";
+                    String target = selected;
                     new AlertDialog.Builder(activity)
                         .setMessage(which == 0 ? "清空当前对话的所有消息？" : "删除当前对话？")
                         .setNegativeButton("取消", null)
                         .setPositiveButton(
-                            "确定", (dialog, w) -> controller.action(op, new JSONObject(), null))
+                            "确定", (dialog, w) -> {
+                                controller.action(op, value("session", target), which == 1
+                                    ? () -> discardDeletedSession(target) : null);
+                            })
                         .show();
                 })
             .show();
+    }
+    private void discardDeletedSession(String target) {
+        deletedSessions.add(target);
+        List<AIAssistantController.ImportedFile> removed = attachments.remove(target);
+        if (removed != null)
+            for (AIAssistantController.ImportedFile file : removed)
+                controller.discardComposerMedia(file);
+        pendingMediaImports.remove(target);
+        drafts.remove(target);
+        if (selected.equals(target)) {
+            composer.setText("");
+            updateAttachments();
+            updateSend();
+        }
     }
     // 作用：展示创作中心的模型或权限设置入口。
     private void settings() {
@@ -1028,7 +1217,8 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                     diagnosticCards.clear();
                     mediaCards.clear();
                     status = null;
-                    TextView empty = text("有什么可以帮你？\n\n可以聊天、分析图片和文件，也可以语音转文字。", 16,
+                    TextView empty = text("有什么可以帮你？\n\n"
+                        + "可以聊天、分析图片、视频和文件，也可以语音转文字。", 16,
                         MaiChatTheme.SECONDARY);
                     empty.setPadding(0, dp(50), 0, dp(50));
                     empty.setGravity(Gravity.CENTER);

@@ -1,4 +1,5 @@
-// 文件作用：Android 设备集成测试；AIAssistantInstrumentedTest 负责覆盖对应界面或服务的设备行为，本文件给出其验证。
+// 文件作用：Android 设备集成测试。
+// AIAssistantInstrumentedTest 覆盖对应界面或服务的设备行为。
 // 运行边界：仅供自动化验证使用，不作为正式 App 或 Agent 的用户功能入口。
 // 覆盖场景：bundledRvmProcessesVideoWithOriginalAudio、streamsUnicodeStopsAndKeepsNativeComposer、
 // httpsUsesSystemRootsAndRejectsExpiredCertificate、visibleText。
@@ -6,11 +7,17 @@ package com.kongshang.maichat;
 
 import static org.junit.Assert.*;
 
+import android.content.ClipData;
 import android.content.Context;
+import android.content.Intent;
 import android.graphics.Bitmap;
+import android.graphics.Color;
+import android.net.Uri;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.TextView;
+import androidx.core.content.FileProvider;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
@@ -126,6 +133,137 @@ public class AIAssistantInstrumentedTest {
                     return result;
             }
         return null;
+    }
+    @Test
+    // 验证混合媒体先留在草稿、可移除，且切换会话不会丢失说明和附件。
+    public void mediaDraftWaitsForSendAndStaysInItsSession() throws Exception {
+        Context app = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Context tests = InstrumentationRegistry.getInstrumentation().getContext();
+        File sources = new File(app.getCacheDir(), "AssistantMediaDraft-" + UUID.randomUUID());
+        assertTrue(sources.mkdirs());
+        File image = new File(sources, "sample.png");
+        File video = new File(sources, "sample.mp4");
+        Bitmap pixels = Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888);
+        pixels.eraseColor(Color.BLUE);
+        try {
+            try (FileOutputStream output = new FileOutputStream(image)) {
+                assertTrue(pixels.compress(Bitmap.CompressFormat.PNG, 100, output));
+            }
+            try (InputStream input = tests.getAssets().open("gallery-sample.mp4")) {
+                Files.copy(input, video.toPath());
+            }
+            Uri imageUri = FileProvider.getUriForFile(app,
+                app.getPackageName() + ".files", image);
+            Uri videoUri = FileProvider.getUriForFile(app,
+                app.getPackageName() + ".files", video);
+            Intent selection = new Intent();
+            ClipData items = ClipData.newUri(app.getContentResolver(), "media", imageUri);
+            items.addItem(new ClipData.Item(videoUri));
+            selection.setClipData(items);
+            try (ActivityScenario<AIAssistantTestActivity> scenario =
+                     ActivityScenario.launch(AIAssistantTestActivity.class)) {
+                await(scenario, panel -> panel.controller.state.ready);
+                scenario.onActivity(activity -> activity.panel.controller.select(""));
+                await(scenario, panel -> panel.controller.state.selected.isEmpty());
+                InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+                java.util.concurrent.atomic.AtomicReference<String> origin =
+                    new java.util.concurrent.atomic.AtomicReference<>();
+                java.util.concurrent.atomic.AtomicInteger initialCount =
+                    new java.util.concurrent.atomic.AtomicInteger();
+                scenario.onActivity(activity -> {
+                    AIAssistantPanel panel = activity.panel;
+                    origin.set(panel.controller.state.selected);
+                    org.json.JSONArray messages = panel.controller.state.data.optJSONArray("messages");
+                    initialCount.set(messages == null ? 0 : messages.length());
+                    panel.composer.setText("请分析这些素材");
+                    panel.handleActivityResult(AIAssistantPanel.REQUEST_IMAGE, selection);
+                });
+                assertEquals("", origin.get());
+                await(scenario, panel -> visibleText(panel, "图片 1")
+                    && visibleText(panel, "视频 1") && panel.send.isEnabled());
+                File captures = new File(app.getExternalFilesDir(null), "test-captures");
+                assertTrue(captures.isDirectory() || captures.mkdirs());
+                Bitmap mixed = InstrumentationRegistry.getInstrumentation()
+                    .getUiAutomation().takeScreenshot();
+                try (FileOutputStream output = new FileOutputStream(
+                         new File(captures, "android-ai-media-mixed.png"))) {
+                    assertTrue(mixed.compress(Bitmap.CompressFormat.PNG, 100, output));
+                }
+                scenario.onActivity(activity -> {
+                    activity.panel.composer.requestFocus();
+                    ((android.view.inputmethod.InputMethodManager) activity.getSystemService(
+                         Context.INPUT_METHOD_SERVICE)).showSoftInput(
+                             activity.panel.composer,
+                             android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
+                });
+                await(scenario, panel -> {
+                    androidx.core.view.WindowInsetsCompat insets =
+                        androidx.core.view.ViewCompat.getRootWindowInsets(panel);
+                    return insets != null
+                        && insets.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime());
+                });
+                Thread.sleep(400);
+                Bitmap withKeyboard = InstrumentationRegistry.getInstrumentation()
+                    .getUiAutomation().takeScreenshot();
+                try (FileOutputStream output = new FileOutputStream(
+                         new File(captures, "android-ai-media-keyboard.png"))) {
+                    assertTrue(withKeyboard.compress(Bitmap.CompressFormat.PNG, 100, output));
+                }
+                scenario.onActivity(activity -> {
+                    AIAssistantPanel panel = activity.panel;
+                    org.json.JSONArray messages = panel.controller.state.data.optJSONArray("messages");
+                    assertEquals(initialCount.get(), messages == null ? 0 : messages.length());
+                    assertEquals("请分析这些素材", panel.composer.getText().toString());
+                    assertNotNull(findDescription(panel, "预览视频 1"));
+                    assertTrue(findDescription(panel, "新对话").performClick());
+                });
+                await(scenario, panel -> !panel.controller.state.selected.equals(origin.get())
+                    && panel.composer.getText().length() == 0
+                    && findDescription(panel, "预览图片") == null);
+                if (origin.get().isEmpty()) {
+                    scenario.onActivity(activity ->
+                        assertTrue(findDescription(activity.panel, "对话列表").performClick()));
+                    AccessibilityNodeInfo draft = null;
+                    long deadline = System.currentTimeMillis() + 3000;
+                    while (draft == null && System.currentTimeMillis() < deadline) {
+                        AccessibilityNodeInfo root = InstrumentationRegistry.getInstrumentation()
+                            .getUiAutomation().getRootInActiveWindow();
+                        if (root != null) {
+                            java.util.List<AccessibilityNodeInfo> matches =
+                                root.findAccessibilityNodeInfosByText("未发送草稿");
+                            if (!matches.isEmpty()) draft = matches.get(0);
+                        }
+                        if (draft == null) Thread.sleep(50);
+                    }
+                    assertNotNull("新对话后应能返回未发送草稿", draft);
+                    boolean opened = draft.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                    if (!opened && draft.getParent() != null)
+                        opened = draft.getParent().performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                    assertTrue("未发送草稿应可点击", opened);
+                } else {
+                    scenario.onActivity(activity -> activity.panel.controller.select(origin.get()));
+                }
+                await(scenario, panel -> panel.controller.state.selected.equals(origin.get())
+                    && panel.composer.getText().toString().equals("请分析这些素材")
+                    && findDescription(panel, "预览图片") != null
+                    && findDescription(panel, "预览视频 1") != null);
+                scenario.onActivity(activity ->
+                    assertTrue(findDescription(activity.panel, "移除视频").performClick()));
+                await(scenario, panel -> findDescription(panel, "预览图片") != null
+                    && findDescription(panel, "预览视频 1") == null);
+                Bitmap screenshot = InstrumentationRegistry.getInstrumentation()
+                    .getUiAutomation().takeScreenshot();
+                try (FileOutputStream output = new FileOutputStream(
+                         new File(captures, "android-ai-media-draft.png"))) {
+                    assertTrue(screenshot.compress(Bitmap.CompressFormat.PNG, 100, output));
+                }
+            }
+        } finally {
+            pixels.recycle();
+            Files.deleteIfExists(image.toPath());
+            Files.deleteIfExists(video.toPath());
+            Files.deleteIfExists(sources.toPath());
+        }
     }
     @Test
     // 作用：验证 Unicode 增量输出、停止动作及原生输入框状态在同一会话中保持一致。

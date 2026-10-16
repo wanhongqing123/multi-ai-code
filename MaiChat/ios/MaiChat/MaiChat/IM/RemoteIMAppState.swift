@@ -567,7 +567,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     }
 
     private func clearLocalAccountPresentation() async {
-        AICloudCredentialSync.invalidateTemporaryModelCredentials()
+        AICloudCredentialSync.invalidateAccountModelCredentials()
         AIAssistantModel.resetForAccountSwitch()
         await disconnect()
         masterUserID = ""
@@ -589,7 +589,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         let previousUserID = masterUserID
         let wasConnected = connectionState == .connected
         if previousUserID != session.user.imUserId {
-            AICloudCredentialSync.invalidateTemporaryModelCredentials()
+            AICloudCredentialSync.invalidateAccountModelCredentials()
         }
         if wasConnected && previousUserID != session.user.imUserId {
             await disconnect()
@@ -614,6 +614,8 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 NSLocalizedDescriptionKey: "保存登录账号失败，请重试"
             ])
         }
+        // 账号已经落地后领取主聊天 Key；失败不撤销 IM 登录，进入创作中心时可重试。
+        _ = try? await AICloudCredentialSync.refreshMainModelKeysIfAvailable()
         if wasConnected && previousUserID == session.user.imUserId {
             return
         }

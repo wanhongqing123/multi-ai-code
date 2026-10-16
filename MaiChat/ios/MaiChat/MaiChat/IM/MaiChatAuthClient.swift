@@ -100,6 +100,10 @@ struct MaiChatBailianCredential: Decodable, Sendable {
     let wanWorkspaceId: String
 }
 
+struct MaiChatMainModelKeys: Decodable, Sendable {
+    let apiKeys: [String: String]
+}
+
 private struct MaiChatAuthServerError: Decodable {
     let error: String
     let code: String?
@@ -419,6 +423,24 @@ actor MaiChatAuthClient {
             return try await request("model/bailian-credential", method: "GET",
                                      bearer: renewed)
         }
+    }
+
+    func mainModelKeysIfAvailable() async throws -> MaiChatMainModelKeys? {
+        guard accessToken != nil || !refreshStore.readSecretKey().isEmpty else { return nil }
+        let expectedSessionVersion = sessionVersion
+        let token = try await currentAccessToken()
+        let issued: MaiChatMainModelKeys
+        do {
+            issued = try await request("model/api-keys", method: "GET", bearer: token)
+        } catch MaiChatAuthError.requestFailed("Authentication required") {
+            accessToken = nil
+            let renewed = try await currentAccessToken()
+            issued = try await request("model/api-keys", method: "GET", bearer: renewed)
+        }
+        guard sessionVersion == expectedSessionVersion else {
+            throw MaiChatAuthError.sessionExpired
+        }
+        return issued
     }
 
     /// 先撤销本机登录，保证 App 在切换过程中被系统结束时不会恢复旧账号。

@@ -88,13 +88,28 @@ final class AICloudCredentialStore: @unchecked Sendable {
     private var bailianExpiresAt = Date.distantPast
     private var bailianWorkspaceId = ""
 
-    func replace(_ next: [String: String]) {
+    func replaceMainChatKeys(_ next: [String: String]) {
         lock.lock()
-        let ark = values["ark"]
-        let bailian = values["wan"]
-        values = next
-        if let ark, Date() < arkExpiresAt { values["ark"] = ark }
-        if let bailian, Date() < bailianExpiresAt { values["wan"] = bailian }
+        for provider in ["glm", "deepseek"] {
+            if let key = next[provider], !key.isEmpty { values[provider] = key }
+            else { values.removeValue(forKey: provider) }
+        }
+        lock.unlock()
+    }
+
+    func setLegacyMediaKey(_ key: String) {
+        lock.lock()
+        if key.isEmpty { values.removeValue(forKey: "minimax") }
+        else { values["minimax"] = key }
+        lock.unlock()
+    }
+
+    func clearAll() {
+        lock.lock()
+        values.removeAll()
+        arkExpiresAt = .distantPast
+        bailianExpiresAt = .distantPast
+        bailianWorkspaceId = ""
         lock.unlock()
     }
 
@@ -156,21 +171,38 @@ final class AICloudCredentialStore: @unchecked Sendable {
 }
 
 enum AICloudCredentialSync {
-    private static let modelProviders = ["glm", "deepseek", "minimax"]
     @MainActor private static var arkRefreshTask: Task<Void, Error>?
     @MainActor private static var arkRetryAfter = Date.distantPast
     @MainActor private static var bailianRefreshTask: Task<Void, Error>?
     @MainActor private static var bailianRetryAfter = Date.distantPast
 
-    @MainActor static func invalidateTemporaryModelCredentials() {
+    @MainActor static func invalidateAccountModelCredentials() {
         arkRefreshTask?.cancel()
         arkRefreshTask = nil
         arkRetryAfter = .distantPast
-        AICloudCredentialStore.shared.clearTemporaryArk()
         bailianRefreshTask?.cancel()
         bailianRefreshTask = nil
         bailianRetryAfter = .distantPast
-        AICloudCredentialStore.shared.clearTemporaryBailian()
+        AICloudCredentialStore.shared.clearAll()
+    }
+
+    static func refreshMainModelKeysIfAvailable() async throws -> Bool {
+        guard let issued = try await MaiChatAuthClient.shared.mainModelKeysIfAvailable()
+        else { return false }
+        var valid: [String: String] = [:]
+        for provider in ["glm", "deepseek"] {
+            guard let key = issued.apiKeys[provider], !key.isEmpty,
+                  key.utf8.count <= 4_096,
+                  key.unicodeScalars.allSatisfy({
+                      !CharacterSet.controlCharacters.contains($0)
+                  }) else { continue }
+            valid[provider] = key
+        }
+        guard !valid.isEmpty else {
+            throw AIBackendError(message: "当前账号没有可用的主聊天模型")
+        }
+        AICloudCredentialStore.shared.replaceMainChatKeys(valid)
+        return true
     }
 
     @MainActor static func refreshBailianIfNeeded(force: Bool = false) async throws {
@@ -246,11 +278,11 @@ enum AICloudCredentialSync {
         return (url, token)
     }
 
-    static func syncIfConfigured() async throws -> Bool {
-        // 旧共享令牌只同步尚未迁移的供应商；百炼和方舟改由手机号会话签发短期 Key。
+    static func syncLegacyMediaKeyIfConfigured() async throws -> Bool {
+        // MiniMax 媒体工具仍使用旧素材服务设置；GLM/DeepSeek 主聊天由账号自动领取。
         guard let service = serviceEndpoint() else { return false }
         let requestBody = try JSONSerialization.data(withJSONObject: [
-            "action": "fetch", "providers": ["glm", "deepseek", "minimax"]
+            "action": "fetch", "providers": ["minimax"]
         ])
         let response = try await MaiChatHttpClient.request(
             url: service.url, method: "POST", bearer: service.token,
@@ -264,18 +296,15 @@ enum AICloudCredentialSync {
               let keys = body["api_keys"] as? [String: String] else {
             throw AIBackendError(message: "云端密钥服务暂时不可用")
         }
-        var validKeys: [String: String] = [:]
-        var savedProviders: [String] = []
-        for name in modelProviders {
-            guard let key = keys[name], !key.isEmpty, key.utf8.count <= 4_096,
-                  key.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) })
-            else { continue }
-            validKeys[name] = key
-            savedProviders.append(name)
-        }
-        AICloudCredentialStore.shared.replace(validKeys)
+        let key = keys["minimax"] ?? ""
+        guard key.utf8.count <= 4_096,
+              key.unicodeScalars.allSatisfy({
+                  !CharacterSet.controlCharacters.contains($0)
+              }) else { throw AIBackendError(message: "素材服务返回的凭据无效") }
+        AICloudCredentialStore.shared.setLegacyMediaKey(key)
         UserDefaults.standard.set(Date(), forKey: "cloud-credentials-last-sync")
-        UserDefaults.standard.set(savedProviders.sorted(), forKey: "cloud-credentials-synced-providers")
+        UserDefaults.standard.set(key.isEmpty ? [] : ["minimax"],
+                                  forKey: "cloud-credentials-synced-providers")
         return true
     }
 }
@@ -484,7 +513,8 @@ actor AIAssistantBackend {
             settings.model = "glm-5.3"
         }
         settings.selectModel(settings.model)
-        _ = try? await AICloudCredentialSync.syncIfConfigured()
+        _ = try? await AICloudCredentialSync.refreshMainModelKeysIfAvailable()
+        _ = try? await AICloudCredentialSync.syncLegacyMediaKeyIfConfigured()
         try? await AICloudCredentialSync.refreshSeedanceIfNeeded(force: true)
         try? await AICloudCredentialSync.refreshBailianIfNeeded(force: true)
         var key = storedKey(for: settings.model)
@@ -543,6 +573,14 @@ actor AIAssistantBackend {
         var normalized = config
         normalized.selectModel(config.model)
         let effectiveKey = storedKey(for: normalized.model)
+        #if targetEnvironment(simulator)
+        let isLocalUITest = ProcessInfo.processInfo.arguments.contains("--ai-ui-test")
+        #else
+        let isLocalUITest = false
+        #endif
+        guard !effectiveKey.isEmpty || isLocalUITest else {
+            throw AIBackendError(message: "请先登录已开通模型服务的账号")
+        }
         let previous = settings
         let previousKey = storedKey(for: previous.model)
         try configure(normalized, key: effectiveKey) // 正在工作时核心拒绝，不能先覆盖已保存配置。

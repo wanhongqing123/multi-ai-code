@@ -231,7 +231,8 @@ struct MaiChatApp: App {
     init() {
         AppDiagnosticLog.shared.install()
         Task.detached(priority: .utility) {
-            _ = try? await AICloudCredentialSync.syncIfConfigured()
+            _ = try? await AICloudCredentialSync.refreshMainModelKeysIfAvailable()
+            _ = try? await AICloudCredentialSync.syncLegacyMediaKeyIfConfigured()
             try? await AICloudCredentialSync.refreshSeedanceIfNeeded()
             try? await AICloudCredentialSync.refreshBailianIfNeeded()
         }

@@ -97,6 +97,16 @@ public final class MaiChatAuthClient {
         }
     }
 
+    public static final class MainModelKeys {
+        public final String glm;
+        public final String deepseek;
+
+        MainModelKeys(String glm, String deepseek) {
+            this.glm = glm;
+            this.deepseek = deepseek;
+        }
+    }
+
     public static final class DesktopRequestInfo {
         public final String platform;
         public final String displayCode;
@@ -331,6 +341,27 @@ public final class MaiChatAuthClient {
             !result.workspaceId.matches("(?:ws|llm)-[A-Za-z0-9_-]{1,120}"))
             throw new IOException("百炼临时凭据无效");
         return result;
+    }
+
+    public synchronized MainModelKeys mainModelKeys() throws Exception {
+        if (!hasSession()) return null;
+        JSONObject keys = authenticatedRequest("model/api-keys", "GET", null)
+            .getJSONObject("api_keys");
+        String glm = keys.getString("glm");
+        String deepseek = keys.getString("deepseek");
+        if ((glm.isEmpty() && deepseek.isEmpty()) || !validModelKey(glm) ||
+            !validModelKey(deepseek))
+            throw new IOException("主聊天模型凭据无效");
+        return new MainModelKeys(glm, deepseek);
+    }
+
+    private static boolean validModelKey(String key) {
+        if (key.length() > 4096) return false;
+        for (int index = 0; index < key.length(); index++) {
+            char character = key.charAt(index);
+            if (character < 32 || character == 127) return false;
+        }
+        return true;
     }
 
     /** 先同步撤销本机登录状态，避免用户点退出后进程立即结束又自动登录。 */

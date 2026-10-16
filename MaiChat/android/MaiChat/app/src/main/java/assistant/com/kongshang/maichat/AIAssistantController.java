@@ -397,12 +397,20 @@ public final class AIAssistantController {
             if (cloudUrlFile.isFile())
                 cloudServiceUrl = new String(Files.readAllBytes(cloudUrlFile.toPath()),
                     StandardCharsets.UTF_8).trim();
+            if (testEndpoint == null) {
+                try {
+                    refreshMainModelKeys();
+                } catch (Exception failure) {
+                    Log.w("MaiChatAgent", "Account model keys are unavailable");
+                }
+            }
             if (testEndpoint == null && !cloudServiceUrl.isEmpty()) {
                 try {
                     String token = readEncryptedKey("cloud-service-token.enc");
-                    if (!token.isEmpty()) applyCloudCredentials(fetchCloudCredentials(cloudServiceUrl, token));
+                    if (!token.isEmpty())
+                        applyLegacyMediaKey(fetchCloudCredentials(cloudServiceUrl, token));
                 } catch (Exception failure) {
-                    Log.w("MaiChatAgent", "Cloud credential synchronization is unavailable");
+                    Log.w("MaiChatAgent", "Legacy media credential is unavailable");
                 }
             }
             refreshSeedanceCredential(true);
@@ -758,7 +766,11 @@ public final class AIAssistantController {
                     throw new IllegalArgumentException("请选择受支持的主模型");
                 String effectiveUrl = selectedName.equals("deepseek-flash")
                     ? DEEPSEEK_URL : GLM_RESPONSES_URL;
+                if (testEndpoint == null && (glmApiKey.isEmpty() || deepseekApiKey.isEmpty()))
+                    refreshMainModelKeys();
                 String key = selectedName.equals("deepseek-flash") ? deepseekApiKey : glmApiKey;
+                if (testEndpoint == null && key.isEmpty())
+                    throw new IOException("请先登录已开通模型服务的账号");
                 configure(effectiveUrl, selectedName, approval, key, "responses");
                 byte[] config = new JSONObject().put("baseUrl", effectiveUrl)
                     .put("model", selectedName).put("policy", approval)
@@ -810,7 +822,7 @@ public final class AIAssistantController {
                     String token = newToken.trim().isEmpty()
                         ? readEncryptedKey("cloud-service-token.enc") : newToken.trim();
                     JSONObject response = fetchCloudCredentials(nextUrl, token);
-                    applyCloudCredentials(response);
+                    applyLegacyMediaKey(response);
                     if (!newToken.trim().isEmpty())
                         writeEncryptedKey("cloud-service-token.enc", token);
                     android.util.AtomicFile file =
@@ -849,9 +861,7 @@ public final class AIAssistantController {
         java.net.URI endpoint = new java.net.URI("https", null, source.getHost(), source.getPort(),
             basePath + "credentials", null, null);
         byte[] body = new JSONObject().put("action", "fetch")
-            .put("providers", new JSONArray()
-                .put("glm").put("deepseek")
-                .put("minimax"))
+            .put("providers", new JSONArray().put("minimax"))
             .toString().getBytes(StandardCharsets.UTF_8);
         MaiChatHttpTransport.Result response =
             MaiChatHttpTransport.postCloudCredentials(endpoint.toURL(), body, token);
@@ -860,23 +870,19 @@ public final class AIAssistantController {
                 ? "云端服务令牌不匹配" : "云端密钥服务暂时不可用");
         return new JSONObject(new String(response.body, StandardCharsets.UTF_8));
     }
-    private void applyCloudCredentials(JSONObject response) throws Exception {
+    private void refreshMainModelKeys() throws Exception {
+        MaiChatAuthClient.MainModelKeys keys = accountAuth.mainModelKeys();
+        if (keys == null) return;
+        glmApiKey = keys.glm;
+        deepseekApiKey = keys.deepseek;
+    }
+    private void applyLegacyMediaKey(JSONObject response) throws Exception {
         JSONObject keys = response.optJSONObject("api_keys");
         if (keys == null) throw new IOException("云端密钥响应无效");
-        glmApiKey = deepseekApiKey = "";
-        miniMaxApiKey = "";
-        for (String provider : new String[] {"glm", "deepseek",
-                "minimax"}) {
-            String value = keys.optString(provider, "");
-            if (value.isEmpty() || value.length() > 4096 ||
-                value.indexOf('\r') >= 0 || value.indexOf('\n') >= 0) continue;
-            switch (provider) {
-            case "glm": glmApiKey = value; break;
-            case "deepseek": deepseekApiKey = value; break;
-            case "minimax": miniMaxApiKey = value; break;
-            default: break;
-            }
-        }
+        String value = keys.optString("minimax", "");
+        if (value.length() > 4096 || value.indexOf('\r') >= 0 ||
+            value.indexOf('\n') >= 0) throw new IOException("素材服务凭据无效");
+        miniMaxApiKey = value;
         apiKey = model.equals("deepseek-flash") ? deepseekApiKey : glmApiKey;
     }
 

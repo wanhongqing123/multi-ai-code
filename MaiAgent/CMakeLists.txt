@@ -248,9 +248,11 @@ set(ENABLE_ZLIB_COMPRESSION OFF CACHE BOOL "" FORCE)
 set(CRYPTO_BACKEND OpenSSL CACHE STRING "" FORCE)
 add_subdirectory(third_party/libssh2 EXCLUDE_FROM_ALL)
 if(MAI_OPENSSL_BUILD_DIR)
-  target_include_directories(libcurl_object BEFORE PRIVATE
-    "${MAI_OPENSSL_BUILD_DIR}/include"
-    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/openssl/include")
+  if(TARGET libcurl_object)
+    target_include_directories(libcurl_object BEFORE PRIVATE
+      "${MAI_OPENSSL_BUILD_DIR}/include"
+      "${CMAKE_CURRENT_SOURCE_DIR}/third_party/openssl/include")
+  endif()
   target_include_directories(libcurl_static BEFORE PRIVATE
     "${MAI_OPENSSL_BUILD_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/openssl/include")

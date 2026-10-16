@@ -408,18 +408,22 @@ public class AIAssistantInstrumentedTest {
                         androidx.core.view.ViewCompat.getRootWindowInsets(p);
                     boolean imeVisible = insets != null
                         && insets.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime());
+                    int visibleBottom = list == null ? -1 : list.getHeight()
+                        - (list.getClipToPadding() ? list.getPaddingBottom() : 0);
                     latestPosition.set("count=" + (list == null ? -1 : list.getCount())
                         + ", firstVisible=" + (list == null ? -1 : list.getFirstVisiblePosition())
                         + ", lastVisible=" + (list == null ? -1 : list.getLastVisiblePosition())
                         + ", listHeight=" + (list == null ? -1 : list.getHeight())
                         + ", paddingBottom=" + (list == null ? -1 : list.getPaddingBottom())
+                        + ", clipToPadding=" + (list != null && list.getClipToPadding())
+                        + ", visibleBottom=" + visibleBottom
                         + ", lastTop=" + (last == null ? -1 : last.getTop())
                         + ", lastBottom=" + (last == null ? -1 : last.getBottom())
                         + ", lastHeight=" + (last == null ? -1 : last.getHeight())
                         + ", imeVisible=" + imeVisible);
                     return list != null && list.getLastVisiblePosition() == list.getCount() - 1
                         && last != null
-                        && last.getBottom() <= list.getHeight() - list.getPaddingBottom() + 2
+                        && last.getBottom() <= visibleBottom + 2
                         && last.getBottom() > 0 && imeVisible;
                 });
             } catch (AssertionError error) {

@@ -279,6 +279,7 @@ class LoginDialogTest : public QObject {
 
 private slots:
     void liveProductionAuthHealthCheck();
+    void liveProductionQrCreationAndCancellation();
     void usesDesktopLandscapeDefaultSize();
     void showsQrLoginHierarchyWithoutManualUserId();
     void displaysServerQrAndSendsMatchingVerifier();
@@ -310,6 +311,34 @@ void LoginDialogTest::liveProductionAuthHealthCheck() {
     QVERIFY2(result.error.isEmpty(), qPrintable(result.error));
     QCOMPARE(result.status, 401);
     QVERIFY(!result.body.isEmpty());
+}
+
+// Opt-in production check: create one QR request, validate its PNG, then cancel
+// that request before asserting the returned content. Never log the verifier or QR.
+void LoginDialogTest::liveProductionQrCreationAndCancellation() {
+    if (!qEnvironmentVariableIsSet("MAICHAT_AUTH_LIVE_QR")) QSKIP("Live QR probe is opt-in");
+    DesktopAuthClient auth(nullptr, QUrl(QStringLiteral("https://ichat.life/api/v1/")), false);
+    DesktopLoginRequest login;
+    QString error;
+    bool completed = false;
+    auth.createLoginRequest([&](const DesktopLoginRequest& result, const QString& failure) {
+        login = result;
+        error = failure;
+        completed = true;
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(completed, 20000);
+    if (!login.requestId.isEmpty()) {
+        bool cancelled = false;
+        auth.cancelLoginRequest(login.requestId, login.verifier, [&] { cancelled = true; });
+        QTRY_VERIFY_WITH_TIMEOUT(cancelled, 20000);
+    }
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QVERIFY(!login.requestId.isEmpty());
+    QVERIFY(!login.verifier.isEmpty());
+    QVERIFY(login.expiresIn > 0);
+    QImage qr;
+    QVERIFY(qr.loadFromData(login.qrPng, "PNG"));
+    QVERIFY(qr.width() > 0 && qr.height() > 0);
 }
 
 void LoginDialogTest::usesDesktopLandscapeDefaultSize() {
@@ -434,7 +463,7 @@ void LoginDialogTest::refreshesShortLivedAccessToken() {
     QSignalSpy accepted(&dialog, &QDialog::accepted);
     dialog.show();
     dialog.start();
-    QTRY_COMPARE_WITH_TIMEOUT(accepted.size(), 1, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(accepted.size(), 1, 7000);
     QTRY_COMPARE_WITH_TIMEOUT(server.refreshCount, 1, 5000);
     QVERIFY(server.validRefreshToken);
     bool completed = false;

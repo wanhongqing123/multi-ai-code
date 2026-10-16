@@ -92,7 +92,7 @@ target_include_directories(mai_md4c PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/third_par
 # 嵌入式的那台机器多半没网，而配置阶段失败比编译失败更难查。
 #
 # TLS 后端按平台挑，不是一律 OpenSSL：
-#   Windows  Schannel —— 零额外依赖，走系统证书库，公司代理的证书自动认
+#   Windows  OpenSSL - vendored static TLS; callers use the native CA store.
 #   Linux    OpenSSL  —— 发行版自带
 #   嵌入式   mbedTLS  —— OpenSSL 三五兆，mbedTLS 两百来 K
 set(BUILD_CURL_EXE      OFF CACHE BOOL "" FORCE)
@@ -124,8 +124,8 @@ set(USE_LIBIDN2         OFF CACHE BOOL "" FORCE)
 set(CURL_ENABLE_SSL     ON  CACHE BOOL "" FORCE)
 
 if(WIN32)
-  set(CURL_USE_SCHANNEL ON  CACHE BOOL "" FORCE)
-  set(CURL_USE_OPENSSL  OFF CACHE BOOL "" FORCE)
+  set(CURL_USE_SCHANNEL OFF CACHE BOOL "" FORCE)
+  set(CURL_USE_OPENSSL  ON  CACHE BOOL "" FORCE)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
   # Secure Transport 后端的上游实现只协商到 TLS 1.2；当前签名服务的公网
   # 链路会断开这类握手。iOS 改用已为本平台构建的 OpenSSL 3，CA 根证书由
@@ -188,6 +188,48 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT MAI_OPENSSL_CLI_TARGET
 endif()
 
 # EXCLUDE_FROM_ALL：curl 自己那些辅助目标不要跟着我们的 all 一起构建。
+if(WIN32 AND NOT MAI_OPENSSL_CRYPTO_TARGET)
+  if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+    message(FATAL_ERROR "Vendored OpenSSL currently supports Windows x64 only")
+  endif()
+  # Enabling TLS changes OpenSSL's generated configuration, so retain the
+  # existing crypto-only cache and build the SSL archives in a separate dir.
+  set(mai_openssl_windows_build "${CMAKE_CURRENT_BINARY_DIR}/vendor/openssl-tls-build")
+  if(NOT EXISTS "${mai_openssl_windows_build}/libcrypto.lib" OR
+     NOT EXISTS "${mai_openssl_windows_build}/libssl.lib")
+    execute_process(
+      COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/build-openssl-windows.ps1"
+        -SourceDir "${CMAKE_CURRENT_SOURCE_DIR}/third_party/openssl"
+        -BuildDir "${mai_openssl_windows_build}"
+      RESULT_VARIABLE mai_openssl_windows_result
+      OUTPUT_FILE "${CMAKE_CURRENT_BINARY_DIR}/mai-openssl-build.log"
+      ERROR_FILE "${CMAKE_CURRENT_BINARY_DIR}/mai-openssl-build-error.log")
+    if(NOT mai_openssl_windows_result EQUAL 0)
+      message(FATAL_ERROR "Vendored OpenSSL TLS build failed; see mai-openssl-build-error.log")
+    endif()
+  endif()
+  add_library(mai_openssl_windows STATIC IMPORTED GLOBAL)
+  set_target_properties(mai_openssl_windows PROPERTIES
+    IMPORTED_LOCATION "${mai_openssl_windows_build}/libcrypto.lib")
+  add_library(mai_openssl_windows_ssl STATIC IMPORTED GLOBAL)
+  set_target_properties(mai_openssl_windows_ssl PROPERTIES
+    IMPORTED_LOCATION "${mai_openssl_windows_build}/libssl.lib"
+    INTERFACE_LINK_LIBRARIES mai_openssl_windows)
+  set(MAI_OPENSSL_BUILD_DIR "${mai_openssl_windows_build}")
+  set(MAI_OPENSSL_CRYPTO_TARGET mai_openssl_windows)
+  set(MAI_OPENSSL_SSL_TARGET mai_openssl_windows_ssl)
+  set(MAI_OPENSSL_INCLUDE_DIR "${mai_openssl_windows_build}/include;${CMAKE_CURRENT_SOURCE_DIR}/third_party/openssl/include")
+  set(OPENSSL_ROOT_DIR "${mai_openssl_windows_build}" CACHE PATH "" FORCE)
+  set(OPENSSL_USE_STATIC_LIBS TRUE CACHE BOOL "" FORCE)
+  set(OPENSSL_CRYPTO_LIBRARY "${mai_openssl_windows_build}/libcrypto.lib" CACHE FILEPATH "" FORCE)
+  set(OPENSSL_SSL_LIBRARY "${mai_openssl_windows_build}/libssl.lib" CACHE FILEPATH "" FORCE)
+  # FindOpenSSL's MSVC branch derives the public variables from these paths.
+  set(LIB_EAY_RELEASE "${mai_openssl_windows_build}/libcrypto.lib" CACHE FILEPATH "" FORCE)
+  set(SSL_EAY_RELEASE "${mai_openssl_windows_build}/libssl.lib" CACHE FILEPATH "" FORCE)
+  set(OPENSSL_INCLUDE_DIR "${mai_openssl_windows_build}/include" CACHE PATH "" FORCE)
+endif()
+
 add_subdirectory(third_party/curl EXCLUDE_FROM_ALL)
 
 # A private prefixed zlib avoids colliding with Qt, FFmpeg, or platform zlib symbols.
@@ -201,42 +243,14 @@ add_subdirectory(third_party/zlib EXCLUDE_FROM_ALL)
 # Z_PREFIX does not rename z_errmsg, which collides with the media libraries' zlib.
 target_compile_definitions(zlibstatic PRIVATE Z_PREFIX z_errmsg=mai_z_errmsg)
 
-if(WIN32 AND NOT MAI_OPENSSL_CRYPTO_TARGET)
-  if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
-    message(FATAL_ERROR "Vendored OpenSSL currently supports Windows x64 only")
-  endif()
-  set(mai_openssl_windows_build "${CMAKE_CURRENT_BINARY_DIR}/vendor/openssl-build")
-  if(NOT EXISTS "${mai_openssl_windows_build}/libcrypto.lib")
-    execute_process(
-      COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File
-        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/build-openssl-windows.ps1"
-        -SourceDir "${CMAKE_CURRENT_SOURCE_DIR}/third_party/openssl"
-        -BuildDir "${mai_openssl_windows_build}"
-      RESULT_VARIABLE mai_openssl_windows_result
-      OUTPUT_FILE "${CMAKE_CURRENT_BINARY_DIR}/mai-openssl-build.log"
-      ERROR_FILE "${CMAKE_CURRENT_BINARY_DIR}/mai-openssl-build-error.log")
-    if(NOT mai_openssl_windows_result EQUAL 0)
-      message(FATAL_ERROR "Vendored OpenSSL build failed; see mai-openssl-build-error.log")
-    endif()
-  endif()
-  add_library(mai_openssl_windows STATIC IMPORTED GLOBAL)
-  set_target_properties(mai_openssl_windows PROPERTIES
-    IMPORTED_LOCATION "${mai_openssl_windows_build}/libcrypto.lib")
-  set(MAI_OPENSSL_BUILD_DIR "${mai_openssl_windows_build}")
-  set(MAI_OPENSSL_CRYPTO_TARGET mai_openssl_windows)
-  set(MAI_OPENSSL_INCLUDE_DIR "${mai_openssl_windows_build}/include;${CMAKE_CURRENT_SOURCE_DIR}/third_party/openssl/include")
-  set(OPENSSL_CRYPTO_LIBRARY "${mai_openssl_windows_build}/libcrypto.lib" CACHE FILEPATH "" FORCE)
-  # FindOpenSSL's MSVC branch derives OPENSSL_CRYPTO_LIBRARY from LIB_EAY_RELEASE.
-  set(LIB_EAY_RELEASE "${mai_openssl_windows_build}/libcrypto.lib" CACHE FILEPATH "" FORCE)
-  set(OPENSSL_INCLUDE_DIR "${mai_openssl_windows_build}/include" CACHE PATH "" FORCE)
-endif()
-
-
 set(LIBSSH2_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
 set(ENABLE_ZLIB_COMPRESSION OFF CACHE BOOL "" FORCE)
 set(CRYPTO_BACKEND OpenSSL CACHE STRING "" FORCE)
 add_subdirectory(third_party/libssh2 EXCLUDE_FROM_ALL)
 if(MAI_OPENSSL_BUILD_DIR)
+  target_include_directories(libcurl_object BEFORE PRIVATE
+    "${MAI_OPENSSL_BUILD_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/openssl/include")
   target_include_directories(libcurl_static BEFORE PRIVATE
     "${MAI_OPENSSL_BUILD_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/openssl/include")
@@ -477,7 +491,9 @@ if(MAIAGENT_BUILD_TESTS)
     endif()
     add_test(NAME ${test_name} COMMAND ${test_name})
   endforeach()
-  # Windows 随库 OpenSSL 只构建 Crypto；本地 TLS 模拟测试仅在有 SSL 库的平台启用。
+  target_include_directories(MaiStoreTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/sqlite)
+  # 随库 OpenSSL 同时构建 SSL 和 Crypto；有 SSL 库的平台都运行本地 TLS 模拟测试。
   if(MAI_OPENSSL_SSL_TARGET)
     target_compile_definitions(MaiArkMediaToolsTests PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT
       MAI_ARK_ASSET_TLS_TESTS MAI_AGENT_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
@@ -492,6 +508,7 @@ if(MAIAGENT_BUILD_TESTS)
   endif()
   add_executable(MaiCurlEmbeddedCliTests tests/MaiCurlEmbeddedCliTests.cpp)
   target_include_directories(MaiCurlEmbeddedCliTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/curl/include
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/curl/src
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/httplib)
   target_link_libraries(MaiCurlEmbeddedCliTests PRIVATE

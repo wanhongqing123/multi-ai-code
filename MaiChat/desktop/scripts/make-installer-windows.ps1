@@ -84,12 +84,9 @@ if (-not $pluginDir) {
 Write-Host "nsis plugins: $pluginDir"
 
 # 4) 编译安装程序
-# 版本号取仓库根 package.json 的 version——Electron 与 qt-im 共用同一版本源，
-# 每次发布前通过 `npm version patch` 递增，两端安装包版本一致。
-$repoRoot = (Resolve-Path (Join-Path $projectRoot '..\..')).Path
-$pkgJsonPath = Join-Path $repoRoot 'package.json'
-$appSemver = (Get-Content $pkgJsonPath -Raw -Encoding UTF8 | ConvertFrom-Json).version
-if (-not $appSemver) { throw "无法从 $pkgJsonPath 读取 version" }
+# MaiChat 版本由自己的 CMake 项目决定，与 Electron 的 package.json 独立。
+$appSemver = & (Join-Path $PSScriptRoot 'read-maichat-version.ps1') `
+    -ProjectRoot $projectRoot -BuildPath (Join-Path $projectRoot $BuildDir)
 $gitHash = (& git -C $projectRoot rev-parse --short HEAD 2>$null)
 if (-not $gitHash) { $gitHash = 'unknown' }
 $appVersion = "$appSemver-$gitHash"   # 显示版本，如 0.1.1-abc1234

@@ -26,6 +26,8 @@ $buildPath = Join-Path $projectRoot $BuildDir
 # 定位新生成的程序，不能误用构建目录根部残留的旧 maichat.exe。
 $cachePath = Join-Path $buildPath 'CMakeCache.txt'
 if (-not (Test-Path $cachePath)) { throw "未找到 $cachePath，请先配置 Release 构建" }
+$appSemver = & (Join-Path $PSScriptRoot 'read-maichat-version.ps1') `
+    -ProjectRoot $projectRoot -BuildPath $buildPath
 $ffmpegEnabled = Select-String -Path $cachePath -Pattern '^MAICHAT_ENABLE_FFMPEG:BOOL=(ON|TRUE|1)$' -Quiet
 $opencvEnabled = Select-String -Path $cachePath -Pattern '^MAICHAT_ENABLE_OPENCV:BOOL=(ON|TRUE|1)$' -Quiet
 $runtimeOutputLine = Select-String -Path $cachePath -Pattern '^EXECUTABLE_OUTPUT_PATH:PATH=(.+)$'
@@ -238,13 +240,9 @@ if ($SkipZip) {
 # 压缩，文件名带日期与 git 短哈希便于追溯
 $gitHash = (& git -C $projectRoot rev-parse --short HEAD 2>$null)
 if (-not $gitHash) { $gitHash = 'unknown' }
-# 版本号取仓库根 package.json，和 make-installer-windows.ps1 同一个来源。
+# 版本号取 MaiChat 自己的 CMake 项目，和 make-installer-windows.ps1 同一个来源。
 # 名字里带上版本，是因为 Release 页面上光看 zip 名认不出它属于哪一版
 # ——安装包和 macOS 的 dmg 都带，唯独 zip 不带的话，三个产物摆在一起会以为漏了。
-$repoRoot = Split-Path -Parent (Split-Path -Parent $projectRoot)
-$pkgJson = Join-Path $repoRoot 'package.json'
-$appSemver = (Get-Content $pkgJson -Raw -Encoding UTF8 | ConvertFrom-Json).version
-if (-not $appSemver) { throw "无法从 $pkgJson 读取 version" }
 $zipName = "MaiChat-win64-v$appSemver-$(Get-Date -Format yyyyMMdd)-$gitHash.zip"
 $zipPath = Join-Path $distRoot $zipName
 if (Test-Path $zipPath) { Remove-Item $zipPath -Force }

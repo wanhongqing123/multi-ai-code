@@ -2,6 +2,8 @@
 // 验证入口：阅读 main 或测试注册处，核对输入、预期结果与失败输出。
 #include <chrono>
 #include <cstdio>
+#include <cstdint>
+#include <cstdlib>
 #include <string>
 #include <thread>
 #include <utility>
@@ -9,6 +11,7 @@
 
 #include <httplib.h>
 #include <json.hpp>
+#include <curl/curl.h>
 
 #include "MaiFilePath.h"
 #include "MaiFileSystem.h"
@@ -38,6 +41,11 @@ int run(std::vector<std::string> arguments) {
 
 int cancelImmediately(void*) {
     return 1;
+}
+
+size_t discardResponse(char*, size_t size, size_t count, void*) {
+    if (size != 0 && count > SIZE_MAX / size) return 0;
+    return size * count;
 }
 
 struct Server {
@@ -81,8 +89,36 @@ struct Server {
 
 }  // namespace
 
-// 通过本地服务验证内嵌 curl 的参数、响应和取消，不依赖外部网络。
+// 默认用本地服务验证内嵌 curl；显式启用时才请求正式账号只读端点。
 int main() {
+#if defined(_WIN32)
+    const char* sslVersion = curl_version_info(CURLVERSION_NOW)->ssl_version;
+    std::printf("embedded curl TLS backend: %s\n", sslVersion ? sslVersion : "missing");
+    CHECK(sslVersion != nullptr);
+    if (sslVersion) CHECK(std::string(sslVersion).find("OpenSSL/") != std::string::npos);
+    if (std::getenv("MAI_CURL_LIVE_AUTH_TEST") != nullptr) {
+        CURL* curl = curl_easy_init();
+        CHECK(curl != nullptr);
+        if (curl) {
+            curl_easy_setopt(curl, CURLOPT_URL, "https://ichat.life/api/v1/auth/me");
+            curl_easy_setopt(curl, CURLOPT_PROXY, "");
+            CHECK(curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, CURLSSLOPT_NATIVE_CA) == CURLE_OK);
+            CHECK(curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L) == CURLE_OK);
+            CHECK(curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L) == CURLE_OK);
+            curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
+            curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 10000L);
+            curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 15000L);
+            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, discardResponse);
+            const CURLcode transfer = curl_easy_perform(curl);
+            long status = 0;
+            curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+            std::printf("live auth TLS result: curl=%d HTTP=%ld\n", int(transfer), status);
+            CHECK(transfer == CURLE_OK);
+            CHECK(status == 401);
+            curl_easy_cleanup(curl);
+        }
+    }
+#endif
     Server server;
     const MaiFilePath root = MaiFileSystem::temporaryDirectory().append(
         MaiFilePath::fromUtf8(MaiIdGenerator::generate("curl-cli-test-")));

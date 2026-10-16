@@ -16,14 +16,14 @@ Push-Location $BuildDir
 try {
     if (-not (Test-Path 'Makefile')) {
         & perl (Join-Path $SourceDir 'Configure') 'VC-WIN64A' 'no-shared' 'no-tests' `
-            'no-apps' 'no-ssl' 'no-module' 'no-async' 'no-legacy' 'no-comp' `
+            'no-apps' 'no-module' 'no-async' 'no-legacy' 'no-comp' `
             "--prefix=$(Join-Path $BuildDir 'install')"
         if ($LASTEXITCODE -ne 0) { throw 'OpenSSL Configure failed' }
     }
     & nmake build_generated
     if ($LASTEXITCODE -ne 0) { throw 'OpenSSL generated-header build failed' }
-    & nmake libcrypto.lib
-    if ($LASTEXITCODE -ne 0) { throw 'OpenSSL libcrypto build failed' }
+    & nmake libcrypto.lib libssl.lib
+    if ($LASTEXITCODE -ne 0) { throw 'OpenSSL static library build failed' }
 } finally {
     Pop-Location
 }

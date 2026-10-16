@@ -15,7 +15,7 @@ final class DesktopLoginUITests: XCTestCase {
         let app = launchAccountApp(phone: phone, password: password)
         let me = app.buttons["我"]
         XCTAssertTrue(me.waitForExistence(timeout: 30))
-        me.tap()
+        tapMeTab(in: app)
         let settings = app.buttons["设置"]
         if !settings.waitForExistence(timeout: 2) {
             app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.955)).tap()
@@ -47,7 +47,7 @@ final class DesktopLoginUITests: XCTestCase {
         let app = launchAccountApp(phone: phone, password: password, qr: qr)
         let me = app.buttons["我"]
         XCTAssertTrue(me.waitForExistence(timeout: 30))
-        me.tap()
+        tapMeTab(in: app)
         let settings = app.buttons["设置"]
         XCTAssertTrue(settings.waitForExistence(timeout: 10))
         settings.tap()
@@ -94,7 +94,7 @@ final class DesktopLoginUITests: XCTestCase {
         let app = launchAccountApp(phone: phone, password: password, qr: qr)
         let me = app.buttons["我"]
         XCTAssertTrue(me.waitForExistence(timeout: 30))
-        me.tap()
+        tapMeTab(in: app)
         let settings = app.buttons["设置"]
         XCTAssertTrue(settings.waitForExistence(timeout: 10))
         settings.tap()
@@ -120,7 +120,7 @@ final class DesktopLoginUITests: XCTestCase {
         let app = launchAccountApp(phone: phone, password: password)
         let me = app.buttons["我"]
         XCTAssertTrue(me.waitForExistence(timeout: 30))
-        me.tap()
+        tapMeTab(in: app)
         let settings = app.buttons["设置"]
         XCTAssertTrue(settings.waitForExistence(timeout: 10))
         settings.tap()
@@ -192,7 +192,8 @@ final class DesktopLoginUITests: XCTestCase {
         app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] = password
         app.launchEnvironment["MAICHAT_LOCAL_UI_DESKTOP_QR"] = qr
         app.launch()
-        // 本机模拟服务重启后，旧 Keychain 会话可在首次启动时被清理；重开即用新账号登录。
+        // 本机模拟服务重启后，旧 Keychain 会话可在首次启动时被清理；
+        // 重开即用新账号登录。
         if !app.buttons["我"].waitForExistence(timeout: 10),
            app.textFields["account-phone"].exists {
             app.terminate()
@@ -206,6 +207,11 @@ final class DesktopLoginUITests: XCTestCase {
             NSPredicate(format: "label CONTAINS %@", "IM 操作失败")
         ).firstMatch
         if error.exists { error.tap() }
+    }
+
+    /// SwiftUI TabView 的“我”在 iOS 26 无可点击 frame；按实际底栏中心进入个人页。
+    private func tapMeTab(in app: XCUIApplication) {
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.925)).tap()
     }
 
     @MainActor private func makeDesktopRequest(platform: String) async throws -> String {

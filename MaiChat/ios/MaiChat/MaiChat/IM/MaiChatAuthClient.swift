@@ -500,6 +500,7 @@ actor MaiChatAuthClient {
     }
 
     /// 保留 HTTP 状态码，让社交登录安全地区分已登录(200)和待绑手机(202)。
+    /// JSON 与账号状态仍由本层处理；libcurl 只负责在后台线程进行一次有证书校验的传输。
     private func requestData(
         _ path: String,
         method: String,
@@ -507,25 +508,25 @@ actor MaiChatAuthClient {
         bearer: String? = nil
     ) async throws -> (Data, Int) {
         let requestedSessionVersion = sessionVersion
-        var request = URLRequest(url: baseURL.appendingPathComponent(path))
-        request.httpMethod = method
-        request.timeoutInterval = 20
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
-        if let bearer {
-            request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
+        let url = baseURL.appendingPathComponent(path)
+        let requestBody = try body.map { try JSONSerialization.data(withJSONObject: $0) }
+        let caBundlePath: String
+        if url.scheme == "https" {
+            guard let caBundle = Bundle.main.url(
+                forResource: "cacert", withExtension: "pem", subdirectory: "MaiAgentCertificates"
+            ) else { throw MaiChatAuthError.requestFailed("登录服务证书不可用") }
+            caBundlePath = caBundle.path
+        } else {
+            // 只有 Debug 模拟器的显式本机 UI 测试会使用 HTTP；C++ 桥接也限制为 127.0.0.1。
+            caBundlePath = ""
         }
-        if let body {
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        }
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let response = response as? HTTPURLResponse else {
-            throw MaiChatAuthError.invalidServerResponse
-        }
-        guard (200..<300).contains(response.statusCode) else {
+        let (data, statusCode) = try await Self.performCurlRequest(
+            url: url.absoluteString, method: method, bearer: bearer,
+            body: requestBody ?? Data(), caBundlePath: caBundlePath
+        )
+        guard (200..<300).contains(statusCode) else {
             let serverError = try? JSONDecoder().decode(MaiChatAuthServerError.self, from: data)
-            if response.statusCode == 401,
+            if statusCode == 401,
                serverError?.code == "SESSION_REPLACED" ||
                serverError?.code == "DEVICE_SLOT_REQUIRED" {
                 guard sessionVersion == requestedSessionVersion else {
@@ -544,8 +545,63 @@ actor MaiChatAuthClient {
                     MaiChatAuthError.deviceSlotRequired
             }
             throw MaiChatAuthError.requestFailed(serverError?.error ??
-                "登录服务暂时不可用（\(response.statusCode)）")
+                "登录服务暂时不可用（\(statusCode)）")
         }
-        return (data, response.statusCode)
+        return (data, statusCode)
+    }
+
+    /// libcurl 是同步接口，必须离开 actor 和主线程；每个调用只发送一次请求。
+    private nonisolated static func performCurlRequest(
+        url: String, method: String, bearer: String?, body: Data, caBundlePath: String
+    ) async throws -> (Data, Int) {
+        try Task.checkCancellation()
+        return try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                var response = MaiChatAuthHttpResult()
+                defer { maiChatAuthHttpFreeResult(&response) }
+                url.withCString { urlPointer in
+                    method.withCString { methodPointer in
+                        (bearer ?? "").withCString { bearerPointer in
+                            caBundlePath.withCString { caBundlePointer in
+                                body.withUnsafeBytes { bytes in
+                                    maiChatAuthHttpPerform(
+                                        urlPointer, methodPointer, bearerPointer,
+                                        method == "GET" ? nil :
+                                            bytes.bindMemory(to: UInt8.self).baseAddress,
+                                        body.count, caBundlePointer, &response
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                if response.transportCode != 0 {
+                    continuation.resume(throwing: Self.transportError(response.transportCode))
+                    return
+                }
+                guard (100...599).contains(response.statusCode) else {
+                    continuation.resume(throwing: MaiChatAuthError.invalidServerResponse)
+                    return
+                }
+                let data = response.responseBody.map {
+                    Data(bytes: $0, count: response.responseLength)
+                } ?? Data()
+                continuation.resume(returning: (data, Int(response.statusCode)))
+            }
+        }
+    }
+
+    /// 给用户保留可操作的中文错误；诊断码用于区分网络、证书、代理和响应上限。
+    private nonisolated static func transportError(_ code: Int32) -> MaiChatAuthError {
+        let message: String
+        switch code {
+        case -5: message = "当前网络代理无法用于登录，请切换网络或代理配置"
+        case -2, 63: message = "登录服务响应过大，请稍后再试"
+        case 28: message = "连接登录服务超时，请检查网络后重试"
+        case 60, 77, 58: message = "无法验证登录服务证书，请检查网络设置"
+        case -1, -3, -4: message = "账号网络组件配置失败，请更新 App"
+        default: message = "连接登录服务失败，请检查网络后重试"
+        }
+        return .requestFailed("\(message)（curl \(code)）")
     }
 }

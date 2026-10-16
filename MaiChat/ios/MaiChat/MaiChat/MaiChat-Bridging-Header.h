@@ -8,3 +8,4 @@
 #include "../../../Media/MaiImageDecode.h"
 #include "../../../Media/FfplayCompat/MaiFfplayEntry.h"
 #include "Media/MaiFfplayIosBridge.h"
+#include "IM/MaiChatAuthTransport.h"

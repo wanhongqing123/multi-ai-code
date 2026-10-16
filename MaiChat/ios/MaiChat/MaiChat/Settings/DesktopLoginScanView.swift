@@ -489,8 +489,7 @@ private struct DesktopQRCodeCameraView: UIViewRepresentable {
     }
 
     static func dismantleUIView(_ view: DesktopQRCodePreview, coordinator: Coordinator) {
-        coordinator.setRunning(false)
-        view.previewLayer.session = nil
+        coordinator.stopAndDetachPreview(view)
     }
 
     /// 一个视图生命周期只使用一个采集会话；重复二维码只交给界面一次。
@@ -526,6 +525,19 @@ private struct DesktopQRCodeCameraView: UIViewRepresentable {
                     }
                 } else if self.session.isRunning {
                     self.session.stopRunning()
+                }
+            }
+        }
+
+        // 扫码后 SwiftUI 会立即拆掉取景视图。预览层的 session setter 内部也会
+        // 提交采集配置，不能在主线程解绑的同时从采集队列调用 stopRunning。
+        // 保留视图到停止完成，再回主线程解绑；队列顺序还保证先前的启动已结束。
+        func stopAndDetachPreview(_ view: DesktopQRCodePreview) {
+            requestedRunning = false
+            queue.async { [self, view] in
+                if session.isRunning { session.stopRunning() }
+                DispatchQueue.main.async {
+                    view.previewLayer.session = nil
                 }
             }
         }

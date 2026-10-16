@@ -590,6 +590,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         let wasConnected = connectionState == .connected
         if previousUserID != session.user.imUserId {
             AICloudCredentialSync.invalidateAccountModelCredentials()
+            AIAssistantModel.resetForAccountSwitch()
         }
         if wasConnected && previousUserID != session.user.imUserId {
             await disconnect()

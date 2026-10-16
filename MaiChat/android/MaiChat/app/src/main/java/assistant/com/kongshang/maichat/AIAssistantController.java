@@ -29,7 +29,6 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.security.KeyStore;
 import java.security.MessageDigest;
-import java.security.cert.X509Certificate;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -42,9 +41,6 @@ import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.TrustManagerFactory;
-import javax.net.ssl.X509TrustManager;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -1339,22 +1335,7 @@ public final class AIAssistantController {
             cipher.doFinal(Base64.decode(value.getString("data"), Base64.NO_WRAP)), StandardCharsets.UTF_8);
     }
     private void exportSystemCertificates() throws Exception {
-        TrustManagerFactory factory =
-            TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-        factory.init((KeyStore) null);
-        StringBuilder pem = new StringBuilder();
-        for (TrustManager manager : factory.getTrustManagers())
-            if (manager instanceof X509TrustManager) {
-                for (X509Certificate certificate : ((X509TrustManager) manager).getAcceptedIssuers()) {
-                    pem.append("-----BEGIN CERTIFICATE-----\n")
-                        .append(Base64.encodeToString(certificate.getEncoded(), Base64.NO_WRAP))
-                        .append("\n-----END CERTIFICATE-----\n");
-                }
-            }
-        if (pem.length() == 0)
-            throw new IllegalStateException("无法读取系统信任证书");
-        Files.write(
-            new File(root, "trusted-roots.pem").toPath(), pem.toString().getBytes(StandardCharsets.US_ASCII));
+        SystemCertificateBundle.writeCurrentPem(new File(root, "trusted-roots.pem"));
     }
     void close() {
         listener = null;

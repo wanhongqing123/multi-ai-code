@@ -110,3 +110,13 @@ iPhone 先前的 0.1.84 签名包已安装并启动；之后仅规整 C++ 格式
 
 链路中的注入式重置仍是网络侧问题；这次移动端调整恢复了已测试手机的账号
 接口可达性。不能把原故障归因于手机号、短信白名单或备案状态。
+
+## 与阿里云 SNI 文档核对
+
+[阿里云《SNI兼容性导致HTTPS访问异常》](https://help.aliyun.com/zh/waf/https-access-exceptions-arising-from-sni-compatibility)
+讨论的是客户端**不发送 SNI**，接入 WAF 的多域名站点因而返回缺省证书，
+客户端报“服务器证书不可信”的情形。文档也列出“iOS 正常、Android 异常”
+作为可能现象，但现象相似不能代替握手证据。本次 Android 失败的 ClientHello
+已包含 `ichat.life` SNI，服务器在发送证书之前就收到异常 RST，未发生缺省
+证书不可信；Mbed TLS 与 OpenSSL 两组 curl 都发送正常 SNI，仅前者失败。
+因此该文档解释了 SNI 的用途，**不能把本次故障定性为 Android 不支持 SNI**。

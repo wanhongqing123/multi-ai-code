@@ -132,6 +132,12 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
   # 宿主 App 通过 caBundle 提供，仍保持服务端证书与域名校验。
   set(CURL_USE_SECTRANSP OFF CACHE BOOL "" FORCE)
   set(CURL_USE_OPENSSL ON CACHE BOOL "" FORCE)
+elseif(ANDROID AND MAI_OPENSSL_SSL_TARGET)
+  # MaiChat 已为 Android 构建同一份 OpenSSL。真机蜂窝链路上，Mbed TLS 的
+  # ClientHello 会在 HTTP 请求前被重置；OpenSSL 经 CA/域名校验后正常返回。
+  # 仅在宿主确实提供 OpenSSL 静态库时选用它，独立嵌入式构建仍可使用 mbedTLS。
+  set(CURL_USE_MBEDTLS OFF CACHE BOOL "" FORCE)
+  set(CURL_USE_OPENSSL ON CACHE BOOL "" FORCE)
 elseif(ANDROID AND TARGET mbedtls)
   set(CURL_USE_MBEDTLS ON CACHE BOOL "" FORCE)
   set(CURL_USE_OPENSSL OFF CACHE BOOL "" FORCE)

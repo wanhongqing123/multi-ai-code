@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstddef>
+#include <cstdlib>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -413,6 +414,52 @@ std::unique_ptr<MaiTool> makeMaiFfmpegTool(MaiFfmpegEngine engine) {
 
 std::unique_ptr<MaiTool> makeMaiFfprobeTool(MaiFfmpegEngine engine) {
     return engine.runFfprobe ? std::make_unique<MaiFfprobeTool>(engine) : nullptr;
+}
+
+MaiVideoMetadataProvider makeMaiFfprobeVideoMetadataProvider(MaiFfmpegEngine engine) {
+    if (!engine.runFfprobe) return {};
+    return [engine](const std::string& path,
+                    const MaiToolContext& context) -> MaiResult<MaiVideoMetadata> {
+        auto probe = makeMaiFfprobeTool(engine);
+        const json request = {{"path", path}, {"mode", "metadata"}, {"select_streams", "v:0"}};
+        const MaiToolResult result = probe->execute(request.dump(), context);
+        if (result.hasError()) return result.error();
+        const json metadata = json::parse(result.output(), nullptr, false);
+        if (!metadata.is_object() || !metadata.value("streams", json::array()).is_array() ||
+            metadata.value("streams", json::array()).empty())
+            return {MaiErrorCode::Protocol, "FFprobe returned no video stream"};
+
+        const auto parseDecimal = [](const json& value) -> double {
+            if (value.is_number()) return value.get<double>();
+            if (!value.is_string()) return 0;
+            const std::string text = value.get<std::string>();
+            char* end = nullptr;
+            const double number = std::strtod(text.c_str(), &end);
+            return end == text.c_str() || *end != '\0' || !std::isfinite(number) ? 0 : number;
+        };
+        const auto parseRate = [&](const json& value) -> double {
+            if (!value.is_string()) return parseDecimal(value);
+            const std::string text = value.get<std::string>();
+            const std::size_t slash = text.find('/');
+            if (slash == std::string::npos) return parseDecimal(value);
+            const double numerator = parseDecimal(text.substr(0, slash));
+            const double denominator = parseDecimal(text.substr(slash + 1));
+            return denominator > 0 ? numerator / denominator : 0;
+        };
+
+        const json& stream = metadata["streams"].front();
+        double duration = parseDecimal(stream.value("duration", json{}));
+        if (duration <= 0)
+            duration =
+                parseDecimal(metadata.value("format", json::object()).value("duration", json{}));
+        double framesPerSecond = parseRate(stream.value("avg_frame_rate", json{}));
+        if (framesPerSecond <= 0) framesPerSecond = parseRate(stream.value("r_frame_rate", json{}));
+        if (!std::isfinite(duration) || duration <= 0)
+            return {MaiErrorCode::Protocol, "FFprobe returned no valid video duration"};
+        if (!std::isfinite(framesPerSecond) || framesPerSecond <= 0)
+            return {MaiErrorCode::Protocol, "FFprobe returned no valid video frame rate"};
+        return MaiVideoMetadata{duration, framesPerSecond};
+    };
 }
 
 MaiImagePreviewCallback makeMaiFfmpegImagePreview(MaiFfmpegEngine engine) {

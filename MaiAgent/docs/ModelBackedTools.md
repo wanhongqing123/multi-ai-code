@@ -296,36 +296,34 @@ FFmpeg 全片解码通过。两个结果都带 `revision_of` 指向旧任务；�
 提供该型号，运行时也拒绝显式传入。`discover` 分别列出
 型号规格，付费确认界面显示实际型号；修订会从原方舟任务查询型号并保持一致。
 Fast/Mini 的历史限时折扣已于 2026-10-07 14:00 结束，不能把活动价作为现价。
-工具同时接入 HTTPS 视频 URL 或已完成 Seedance 任务的引用路径。标准 2.0、Fast、
-Mini 的生成与编辑均已在方舟服务端做过 4 秒／480p 实测；2.5 未调用，
-iOS 工具层仍需单独验收。用户选择独立的阿里云 OSS 存储后，iOS 宿主停用了
-曾接入的腾讯 IM 云文件上传入口。现有 OSS 签名服务实现放在
-`services/oss-media-signer/`：iOS 从签名服务取得短期 PUT/GET URL，直接上传
-本地 `video_path`，上传成功后把临时 GET URL 交给方舟。未在模型配置中填写完整
-签名服务地址和令牌时，能力上报 `upload_not_configured`；配置后上报
-`implemented_unverified`，直到真实 iOS 上传和方舟读取均通过。HTTPS 视频 URL
-和已有 Seedance 任务引用仍可用。方舟视频生成接口要求视频 URL 或素材 ID；
-长期 AK/SK 不下发到手机，不能把仅有 Ark API Key 误认为对象存储的上传权限。
+标准 2.0、Fast、Mini 的生成与编辑均已在方舟服务端做过 4 秒／480p 实测；2.5
+未调用。新的本地图片和视频统一执行 `prepare`：先直传私有 OSS，再调用 Ark
+`CreateAsset`，轮询 `GetAsset` 至 `Active`，最后把 `asset://<ID>` 交给付费
+`delegate`。签名 GET URL 只用于 Ark 入库，不能直接出现在 Seedance 付费请求中。
+本地视频由 `prepare` 内部调用 FFprobe 实测时长与帧率；Seedance 2.0 只接受
+2–15 秒、24–60 fps 的输入视频，越界时在上传和付费前拒绝，Agent 和用户都不估算数值。
+已完成的 Seedance 任务 ID 是唯一的视频来源例外，可直接复用而不重新入库。
+OSS 签名服务位于 `services/oss-media-signer/`；未配置素材服务时，本地媒体准备
+不可用。长期 AK/SK 不下发到设备，仅有 Ark API Key 也不代表具备 OSS 或素材库权限。
 接口取值参考[方舟创建视频生成任务文档](https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh)。
 
-对已经取得有效素材 ID 的视频，单张可用 `virtual_avatar_asset_id` 或
-`authorized_portrait_asset_id`；多张用 `reference_asset_ids`（Seedance 2.0 最多 9 张）。
-工具把每个 ID 转成 `content.image_url.url=asset://<ID>`，`role=reference_image`。
-`local_image_paths` 是多张本地文件的上传入口，工具逐张直传私有 OSS 后只将
-短期 HTTPS 地址交给方舟，不再生成 Base64 请求体。素材入库后不要再把同一照片作为
-本地路径传入，应改用 `reference_asset_ids`；以上两种单张字段不与多张字段混用。
+已经取得有效素材 ID 的单张人物图可用 `virtual_avatar_asset_id` 或
+`authorized_portrait_asset_id`，多张图用 `reference_asset_ids`；视频用
+`video_asset_id`，严格首尾帧用 `first_frame_asset_id`、`last_frame_asset_id`。
+工具在付费提交前重新核对素材为 `Active` 且媒体类型正确，再按对应 role 生成
+`asset://` 输入。`prepare` 接受本地路径和明确的素材组，返回可直接用于 `delegate`
+的资产字段；不要在 `delegate` 中再次传本地路径。
 
-图片有清晰真人且仍要使用 Seedance 时，在首次付费前让用户选择：普通私人照片可先
-尝试 AIGC 虚拟资产入库；公众人物或需要正式真人肖像验证时建议 H5 路径。AIGC
-素材的 `Active` 仅代表入库成功，不等于真人授权，也不保证视频生成审核通过。
-`ark_assets` 可列出、创建、查询 AIGC 素材；本地图先直传私有 OSS，再通过
-`CreateAsset` 入库，`GetAsset` 返回 Active 后才引用素材 ID。素材审核结果以方舟为准。
+素材含可识别自然人时，必须使用由本人完成 H5 验证得到的 `LivenessFace` 组；
+不能把普通私人照片或视频放入 AIGC 组。AIGC 组只用于虚拟或非真人形象，其
+`Active` 不代表真人授权，也不保证生成审核通过。图片和视频都先直传私有 OSS，
+再通过 `CreateAsset` 入库；`GetAsset` 返回 Active 后才可引用素材 ID。
 参考[方舟含肖像视频指南](https://docs.volcengine.com/docs/ark/seedance-portrait-asset-guide?lang=zh)。
 真人验证使用 `ark_assets begin_real_validation` 获取一次性 H5Link 和 BytedToken；
 由本人打开链接完成认证。随后用 `get_real_validation` 和 BytedToken 查询 GroupId，
-把同一人的照片经 OSS 上传到该组，逐张等 `GetAsset` 返回 Active，再把资产 ID
-交给 `reference_asset_ids`。每个 H5 组只对应一人，含多张人脸的合照不能直接登记到
-该真人组。BytedToken 有效期 30 分钟，无法替本人无感完成认证。
+把同一人的图片或视频经 OSS 上传到该组，逐项等 `GetAsset` 返回 Active，再把资产
+ID 交给对应 Seedance 字段。每个 H5 组只对应一人；视频会隔秒抽帧进行一致性校验，
+侧脸或多人画面可能导致入库失败。BytedToken 有效期 30 分钟，无法替本人完成认证。
 工具可用 `group_type=LivenessFace` 查询本账号的真人素材组；跨账号授权素材可能不可见。
 服务端使用 AK/SK，App 不持有。真实 H5 链路仍需在已开通相应权益的账号实测。
 详见[真人人像素材资产使用指南](https://docs.volcengine.com/docs/ark/guide-preview?lang=zh)和

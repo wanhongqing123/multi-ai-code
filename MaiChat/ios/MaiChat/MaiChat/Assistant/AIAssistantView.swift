@@ -968,6 +968,24 @@ private struct AIMessageRow: View, Equatable {
                 }
             } else {
                 if !toolParts.isEmpty {
+                    if let stage = seedanceStage {
+                        Label {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(stage.title).font(.system(size: 14, weight: .semibold))
+                                if !stage.detail.isEmpty {
+                                    Text(stage.detail).font(.system(size: 12))
+                                }
+                            }
+                        } icon: {
+                            Image(systemName: stage.failed
+                                  ? "exclamationmark.triangle.fill" : "person.crop.rectangle")
+                        }
+                        .foregroundStyle(stage.failed ? Color.red : Color.blue)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .background((stage.failed ? Color.red : Color.blue).opacity(0.08),
+                                    in: RoundedRectangle(cornerRadius: 12))
+                    }
                     AIExpandableBlock(title: toolDisclosureTitle) {
                         VStack(alignment: .leading, spacing: 10) {
                             ForEach(toolParts) { tool in
@@ -1308,6 +1326,50 @@ private struct AIMessageRow: View, Equatable {
         if states.allSatisfy({ $0 == "canceled" }) { return "已取消" }
         if states.contains("canceled") { return "部分取消" }
         return "已完成"
+    }
+    private var seedanceStage: (title: String, detail: String, failed: Bool)? {
+        guard let part = toolParts.last(where: { $0.tool == "seedance_video" }),
+              let inputText = part.input, let inputData = inputText.data(using: .utf8),
+              let input = try? JSONSerialization.jsonObject(with: inputData) as? [String: Any]
+        else { return nil }
+        let action = input["action"] as? String ?? ""
+        if part.state == "error" {
+            return ("人物替换 · 当前阶段失败", part.error ?? "请查看工具详情后重试当前阶段", true)
+        }
+        var output: [String: Any] = [:]
+        if let outputText = part.output, let data = outputText.data(using: .utf8) {
+            output = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+        }
+        if action == "prepare" {
+            if part.state == "running" {
+                return ("人物替换 · 正在准备素材", "上传 OSS、登记 Ark 并等待 Active", false)
+            }
+            if output["status"] as? String == "processing" {
+                let count = (output["pending_asset_ids"] as? [String])?.count ?? 0
+                return ("人物替换 · 素材处理中", count > 0 ? "还有 \(count) 个素材等待 Active" :
+                        "等待 Ark 完成素材预处理", false)
+            }
+            if output["status"] as? String == "ready" {
+                return ("人物替换 · 素材已 Active", "下一步仅提交资产 ID，并等待付费确认", false)
+            }
+        }
+        if action == "delegate" || action == "revise" {
+            if part.state == "pending" {
+                return ("人物替换 · 等待付费确认", "确认后才会提交 Seedance 生成任务", false)
+            }
+            let status = output["status"] as? String ?? ""
+            if status == "queued" { return ("人物替换 · 云端排队中", "已保存任务 ID，不会重复提交", false) }
+            if status == "running" { return ("人物替换 · 云端生成中", "生成完成后会自动下载", false) }
+            if status == "succeeded" { return ("人物替换 · 已完成", "成片已下载到工作区", false) }
+            return ("人物替换 · 正在提交", "使用已 Active 的资产 ID", false)
+        }
+        if action == "continue" {
+            let status = output["status"] as? String ?? ""
+            if status == "queued" { return ("人物替换 · 云端排队中", "正在等待供应商调度", false) }
+            if status == "running" { return ("人物替换 · 云端生成中", "正在生成视频", false) }
+            if status == "succeeded" { return ("人物替换 · 已完成", "成片已下载到工作区", false) }
+        }
+        return nil
     }
     private func pdfArtifactPath(for part: AIPart) -> String? {
         guard part.tool == "generate_pdf", part.state == "completed",
@@ -3138,6 +3200,9 @@ private struct AIPermissionCard: View {
         if let duration = (fields["duration"] as? Int) ?? (production["duration"] as? Int) {
             details.append("\(duration) 秒")
         }
+        if let sourceDuration = fields["source_duration_seconds"] as? Double {
+            details.append(String(format: "源片 %.1f 秒", sourceDuration))
+        }
         if let resolution = (fields["resolution"] as? String) ??
             (production["resolution"] as? String) { details.append(resolution) }
         if let ratio = (fields["ratio"] as? String) ??
@@ -3152,6 +3217,16 @@ private struct AIPermissionCard: View {
         }
         let assetCount = (fields["reference_asset_ids"] as? [String])?.count ?? 0
         if assetCount > 0 { details.append("已登记参考素材 \(assetCount) 张") }
+        let strictFrameAssetCount = ["first_frame_asset_id", "last_frame_asset_id"].filter {
+            (fields[$0] as? String)?.isEmpty == false
+        }.count
+        if strictFrameAssetCount > 0 { details.append("已登记严格帧 \(strictFrameAssetCount) 张") }
+        if (fields["video_asset_id"] as? String)?.isEmpty == false {
+            details.append("已登记视频素材")
+        }
+        if let groupType = fields["asset_group_type"] as? String {
+            details.append(groupType == "LivenessFace" ? "真人授权素材组" : "虚拟素材组")
+        }
         if let size = fields["size"] as? String { details.append(size) }
         let imageCount = ((fields["local_image_paths"] as? [String])?.count ??
                           (fields["image_paths"] as? [String])?.count ?? 0)
@@ -3166,7 +3241,9 @@ private struct AIPermissionCard: View {
             + ((((fields["reference_video_path"] as? String)?.isEmpty == false) ||
                 ((fields["reference_video"] as? String)?.isEmpty == false) ||
                 ((fields["video_url"] as? String)?.isEmpty == false) ||
-                ((fields["video_path"] as? String)?.isEmpty == false)) ? 1 : 0)
+                ((fields["video_path"] as? String)?.isEmpty == false) ||
+                ((fields["video_asset_id"] as? String)?.isEmpty == false) ||
+                ((fields["video_task_id"] as? String)?.isEmpty == false)) ? 1 : 0)
         if videoCount > 0 { details.append("参考视频 \(videoCount) 个") }
         let audioCount = content.filter { ($0["type"] as? String) == "audio_url" }.count
             + ((((fields["reference_audio_path"] as? String)?.isEmpty == false) ||
@@ -3196,7 +3273,12 @@ private struct AIPermissionCard: View {
                 .font(.headline)
                 .foregroundStyle(Color.primary)
             if isPaidGeneration {
-                Text((fields["reference_asset_ids"] as? [String])?.isEmpty == false
+                let usesRegisteredAsset =
+                    (fields["reference_asset_ids"] as? [String])?.isEmpty == false ||
+                    ["first_frame_asset_id", "last_frame_asset_id", "video_asset_id"].contains {
+                        (fields[$0] as? String)?.isEmpty == false
+                    }
+                Text(usesRegisteredAsset
                      ? "将使用已登记的参考素材；平台仍会审核。确认后提交给\(paidProvider)，可能消耗模型额度。"
                      : (fields["virtual_avatar_asset_id"] as? String)?.isEmpty == false
                      ? "将使用平台虚拟人像，不保留真实人物长相。确认后提交给\(paidProvider)，可能消耗模型额度。"
@@ -3219,12 +3301,6 @@ private struct AIPermissionCard: View {
                 }
                 if !paidDetails.isEmpty {
                     Text(paidDetails)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                if permission.tool == "seedance_video",
-                   (fields["video_path"] as? String)?.isEmpty == false {
-                    Text("本地视频将上传到你配置的私有阿里云 OSS，再由 Seedance 通过临时链接读取。")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }

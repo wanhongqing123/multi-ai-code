@@ -329,7 +329,7 @@ void testPossibleRealPersonDoesNotForceProviderSwitch() {
     CHECK(targeted);
 }
 
-void testSeedanceRealFaceUsesOriginalAssetRoute() {
+void testSeedanceRealFaceUsesAuthorizedAssetRoute() {
     auto scenario = startScenario(R"({"status":"failed","reply":"image may contain real person"})",
                                   true, true, true, "seedance_video");
     waitForStatus(scenario, MaiSpecialistTaskStatus::Failed);
@@ -340,9 +340,9 @@ void testSeedanceRealFaceUsesOriginalAssetRoute() {
     bool targeted = false;
     for (const MaiModelMessage& message : scenario.fakeModel->lastRequest().messages) {
         if (message.role == MaiModelRole::System &&
-            message.content.find("ark_assets upload_image") != std::string::npos &&
-            message.content.find("get_asset until it is Active") != std::string::npos &&
-            message.content.find("Do not default to flipping, oil-painting") != std::string::npos)
+            message.content.find("Use an existing LivenessFace group") != std::string::npos &&
+            message.content.find("wait until every asset is Active") != std::string::npos &&
+            message.content.find("Do not flip, repaint, or rewrite a face") != std::string::npos)
             targeted = true;
     }
     CHECK(targeted);
@@ -406,7 +406,7 @@ int main() {
     testAmbiguousModerationGivesConcreteInputPlan();
     testImageModerationKeepsSameProviderFirst();
     testPossibleRealPersonDoesNotForceProviderSwitch();
-    testSeedanceRealFaceUsesOriginalAssetRoute();
+    testSeedanceRealFaceUsesAuthorizedAssetRoute();
     testTechnicalFailureDoesNotGetModerationGuidance();
     testLocalPollingInputErrorDoesNotClaimProviderFailure();
     testProviderCancellationIsNotReportedAsGenerationFailure();

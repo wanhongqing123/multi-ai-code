@@ -473,6 +473,19 @@ if(MAIAGENT_BUILD_TESTS)
     endif()
     add_test(NAME ${test_name} COMMAND ${test_name})
   endforeach()
+  # Windows 随库 OpenSSL 只构建 Crypto；本地 TLS 模拟测试仅在有 SSL 库的平台启用。
+  if(MAI_OPENSSL_SSL_TARGET)
+    target_compile_definitions(MaiArkMediaToolsTests PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT
+      MAI_ARK_ASSET_TLS_TESTS MAI_AGENT_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_include_directories(MaiArkMediaToolsTests PRIVATE ${MAI_OPENSSL_INCLUDE_DIR})
+    target_link_libraries(MaiArkMediaToolsTests PRIVATE ${MAI_OPENSSL_SSL_TARGET}
+      ${MAI_OPENSSL_CRYPTO_TARGET})
+  elseif(NOT WIN32 AND NOT ANDROID AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    find_package(OpenSSL REQUIRED COMPONENTS SSL)
+    target_compile_definitions(MaiArkMediaToolsTests PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT
+      MAI_ARK_ASSET_TLS_TESTS MAI_AGENT_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(MaiArkMediaToolsTests PRIVATE OpenSSL::SSL)
+  endif()
   add_executable(MaiCurlEmbeddedCliTests tests/MaiCurlEmbeddedCliTests.cpp)
   target_include_directories(MaiCurlEmbeddedCliTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/curl/src

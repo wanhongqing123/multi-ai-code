@@ -143,58 +143,26 @@ constexpr auto kMarkdownBaseInstructions =
     "extension direction in the message, ratio=adaptive, and measured "
     "source_duration_seconds. Input plus requested output must be at most 30 "
     "seconds. "
-    // 真人参考图分为普通资产登记和 H5 真人认证两条路径，必须使用真正返回的资产
-    // ID。
-    "Before paid Seedance generation with a recognizable real person, "
-    "explain two asset paths and let the user choose once in the plan. "
-    "For ordinary private photos, suggest trying AIGC virtual-asset "
-    "registration; "
-    "for public figures or a verified real-person likeness, suggest H5 "
-    "real-portrait "
-    "authorization. Do not identify someone as a public figure from the photo "
-    "alone. "
-    "Do not describe an AIGC asset as real-person authorization. For the AIGC "
-    "path, "
-    "check matching Active assets or use ark_assets upload_image for each "
-    "required "
-    "image, then wait for Active. Ark may still reject the image or video. For "
-    "the "
-    "real-portrait path, use an existing authorized asset or call ark_assets "
-    "begin_real_validation, give its H5Link to the user to send to the person, "
-    "and wait for that person to finish. Then call get_real_validation with "
-    "the "
-    "BytedToken within 30 minutes; only after it returns a GroupId, use "
-    "upload_image "
-    "for matching single-person photos in that group and wait for Active. Each "
-    "H5 "
-    "group belongs to one person; a multi-face family photo cannot be uploaded "
-    "as that person's verified portrait. Do not create a normal "
-    "AIGC group for the H5 path. "
-    // 资产状态变成 Active 后只传 ID；多张图逐张登记，不能再用本地路径重复提交。
-    "After either path has Active assets, submit all selected IDs in "
-    "reference_asset_ids with paid-call "
-    "approval. Do not pass the same photos through local_image_paths "
-    "again; "
-    "that would resubmit local files. "
-    // 视频编辑需要把源视频先直传 OSS，再把临时 URL 和人物素材 ID 一起交给
-    // Seedance；人物素材继续使用已登记的资产 ID，不重新上传本地文件。
-    "If the task edits a user-uploaded video, "
-    "use video_path as the source; the tool uploads it to private OSS and "
-    "passes "
-    "its temporary URL to Seedance. Add the chosen Active portrait assets in "
-    "reference_asset_ids so the source video and all selected photos are both "
-    "included. "
-    // 非真人图片的本地路径先直传 OSS，再由 Seedance 读取短期 HTTPS 链接。
-    "For images without recognizable real people, "
-    "pass local paths to the Seedance tool; it uploads them to private OSS and "
-    "sends "
-    "short-lived HTTPS URLs, never Base64 bytes, to Ark. If Ark rejects an "
-    "uncertain "
-    "original for a possible real face, return to the two asset paths before "
-    "changing models. Do not silently drop photos or assume asset review will "
-    "accept every face. If registration fails or Ark requires H5 "
-    "authorization, "
-    "follow its actual result. "
+    // Seedance 的新本地素材只有一条路径：准备资产、等 Active、再付费提交 ID。
+    "For every new local image or video used by Seedance, first call "
+    "seedance_video prepare with the local paths, an existing asset_group_id, "
+    "and its asset_group_type. For a local video, prepare runs FFprobe itself and "
+    "rejects anything outside Seedance 2.0's 2-15 second and 24-60 fps limits. "
+    "Do not estimate or provide media metadata yourself. Preparation uploads to "
+    "private OSS, registers "
+    "Ark assets, and waits for Active. Then call delegate with only the returned "
+    "asset IDs and obtain the final paid-call approval. Never pass an OSS signed "
+    "URL or repeat the local paths in delegate. A completed Seedance task ID is "
+    "the only media-source exception and can be reused directly. "
+    // AIGC 组只用于虚拟素材；可识别真人必须先由本人完成 H5 授权。
+    "AIGC groups are only for fictional or virtual subjects. If any selected "
+    "photo or video contains a recognizable natural person, use an existing "
+    "LivenessFace group or call ark_assets begin_real_validation, give the H5 "
+    "link to that person, and resolve its GroupId with get_real_validation. "
+    "Do not infer authorization from pixels, put a real person in an AIGC group, "
+    "or call an Active AIGC asset authorized. Each LivenessFace group belongs to "
+    "one person; multi-person media can fail consistency review. Preserve every "
+    "selected input and report Processing, Active, or Failed accurately. "
     // 资产服务故障是传输问题；保留原方案并重试，不能误判成内容审核失败。
     "Do not treat an ark_assets transport error as an image moderation "
     "decision. "
@@ -340,736 +308,603 @@ constexpr auto kMarkdownBaseInstructions =
     "moderation. Consider another "
     "provider only after bounded same-provider attempts fail.";
 
-std::string encodeBase64(const std::string &input) {
-  constexpr char kAlphabet[] =
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  std::string output;
-  output.reserve(((input.size() + 2) / 3) * 4);
-  for (std::size_t offset = 0; offset < input.size(); offset += 3) {
-    const auto first = static_cast<unsigned char>(input[offset]);
-    const auto second = offset + 1 < input.size()
-                            ? static_cast<unsigned char>(input[offset + 1])
-                            : 0;
-    const auto third = offset + 2 < input.size()
-                           ? static_cast<unsigned char>(input[offset + 2])
-                           : 0;
-    output.push_back(kAlphabet[first >> 2]);
-    output.push_back(kAlphabet[((first & 0x03) << 4) | (second >> 4)]);
-    output.push_back(offset + 1 < input.size()
-                         ? kAlphabet[((second & 0x0F) << 2) | (third >> 6)]
-                         : '=');
-    output.push_back(offset + 2 < input.size() ? kAlphabet[third & 0x3F] : '=');
-  }
-  return output;
+std::string encodeBase64(const std::string& input) {
+    constexpr char kAlphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string output;
+    output.reserve(((input.size() + 2) / 3) * 4);
+    for (std::size_t offset = 0; offset < input.size(); offset += 3) {
+        const auto first = static_cast<unsigned char>(input[offset]);
+        const auto second = offset + 1 < input.size() ? static_cast<unsigned char>(input[offset + 1]) : 0;
+        const auto third = offset + 2 < input.size() ? static_cast<unsigned char>(input[offset + 2]) : 0;
+        output.push_back(kAlphabet[first >> 2]);
+        output.push_back(kAlphabet[((first & 0x03) << 4) | (second >> 4)]);
+        output.push_back(offset + 1 < input.size() ? kAlphabet[((second & 0x0F) << 2) | (third >> 6)] : '=');
+        output.push_back(offset + 2 < input.size() ? kAlphabet[third & 0x3F] : '=');
+    }
+    return output;
 }
 
-char *ownedResponse(const std::string &response) {
-  char *result = static_cast<char *>(std::malloc(response.size() + 1));
-  if (result)
-    std::memcpy(result, response.c_str(), response.size() + 1);
-  return result;
+char* ownedResponse(const std::string& response) {
+    char* result = static_cast<char*>(std::malloc(response.size() + 1));
+    if (result) std::memcpy(result, response.c_str(), response.size() + 1);
+    return result;
 }
 
-} // namespace
+}  // namespace
 
 // 这是移动端适配器，JSON 只在语言边界，MaiAgent 的公开接口仍是领域对象。
 struct MaiMobileAgent {
-  std::mutex mutex;
-  bool dirty = true;
-  bool structureChanged = true;
-  std::string cachedSession;
-  int cachedLimit = -1;
-  std::vector<MaiMessage> cachedMessages;
-  std::unordered_map<std::string, std::string> pendingDeltas;
-  std::unordered_map<std::string, std::string> liveParts;
-  std::unordered_map<std::string, std::string> errors;
-  std::string workspace;
-  std::string model;
-  MaiModelConfig suggestionConfig;
-  bool configured = false;
-  const void *ortApiBase = nullptr;
-  std::shared_ptr<MaiMobileHostDispatcher> hostTools =
-      makeMaiMobileHostDispatcher();
-  // 最后销毁 agent：回调捕获的字段必须活到工作线程退出。
-  std::unique_ptr<MaiAgent> agent;
+    std::mutex mutex;
+    bool dirty = true;
+    bool structureChanged = true;
+    std::string cachedSession;
+    int cachedLimit = -1;
+    std::vector<MaiMessage> cachedMessages;
+    std::unordered_map<std::string, std::string> pendingDeltas;
+    std::unordered_map<std::string, std::string> liveParts;
+    std::unordered_map<std::string, std::string> errors;
+    std::string workspace;
+    std::string model;
+    MaiModelConfig suggestionConfig;
+    bool configured = false;
+    const void* ortApiBase = nullptr;
+    std::shared_ptr<MaiMobileHostDispatcher> hostTools = makeMaiMobileHostDispatcher();
+    // 最后销毁 agent：回调捕获的字段必须活到工作线程退出。
+    std::unique_ptr<MaiAgent> agent;
 
-  ~MaiMobileAgent() {
-    agent.reset();
-    clearMaiMobileHostToolHandler(hostTools);
-  }
+    ~MaiMobileAgent() {
+        agent.reset();
+        clearMaiMobileHostToolHandler(hostTools);
+    }
 
-  static std::string result(MaiResult<std::string> value) {
-    if (!value)
-      throw std::runtime_error(value.error().message());
-    return value.value();
-  }
+    static std::string result(MaiResult<std::string> value) {
+        if (!value) throw std::runtime_error(value.error().message());
+        return value.value();
+    }
 
-  bool anyBusy() const {
-    if (!agent)
-      return false;
-    for (const auto &session : agent->listSessions())
-      if (agent->isBusy(session.id))
-        return true;
-    return false;
-  }
+    bool anyBusy() const {
+        if (!agent) return false;
+        for (const auto& session : agent->listSessions())
+            if (agent->isBusy(session.id)) return true;
+        return false;
+    }
 
-  // 作用：按宿主配置装配移动 Agent 的模型、工具和工作区能力。
-  // 先校验外部输入，再更新本地状态；失败路径不能覆盖已有有效结果。
-  void configure(const Json &request) {
-    // 切换主模型时不能中断正在运行的任务；先创建共享存储，再配置线协议和工具集。
-    if (anyBusy())
-      throw std::runtime_error("Stop active tasks before changing the model.");
-    auto store = makeMaiSqliteStore(request.at("database").get<std::string>());
-    if (!store)
-      throw std::runtime_error(store.error().message());
-    MaiModelConfig config;
-    config.baseUrl = request.at("baseUrl").get<std::string>();
-    config.apiKey = request.value("apiKey", "");
-    config.caBundlePath = request.value("caBundle", "");
-    // Responses/Chat 是主模型线协议，和 Seedance 等专业工具的供应商 API 无关。
-    const std::string wire = request.value("wire", std::string{});
-    if (wire == "responses" ||
-        (wire.empty() &&
-         request.value("model", std::string{}) == "deepseek-flash"))
-      config.wire = MaiWireApi::Responses;
-    else if (!wire.empty() && wire != "chat_completions")
-      throw std::runtime_error("Unsupported model wire protocol.");
-    MaiFfmpegEngine ffmpegEngine{
-        mai_ffmpeg_execute,       mai_ffmpeg_set_cancel_check,
-        mai_ffprobe_execute,      mai_ffprobe_set_cancel_check,
-        mai_fftools_set_log_sink, mai_fftools_error_string};
-    config.prepareImage = makeMaiFfmpegModelImagePreparer(ffmpegEngine);
-    suggestionConfig = config;
-    auto tools = std::make_unique<MaiToolRegistry>();
-    // 两个移动端只提供真实可用的本地文件和网络工具，不暴露桌面 shell。
-    registerMaiFileTools(*tools);
-    registerMaiCurlTools(*tools, config.caBundlePath);
-    tools->add(makeMaiZlibCompressTool());
-    tools->add(makeMaiZlibDecompressTool());
-    tools->add(makeMaiOpenSslCliTool());
-    tools->add(makeMaiSystemResourcesTool(
-        [dispatcher = hostTools]() -> std::optional<MaiGpuResources> {
-          const MaiToolResult response =
-              callMaiMobileHostTool(dispatcher, "mobile_gpu_info", "{}");
-          if (response.hasError())
-            return std::nullopt;
-          const Json parsed = Json::parse(response.output(), nullptr, false);
-          if (!parsed.is_object() || !parsed.value("available", false))
-            return std::nullopt;
-          MaiGpuResources gpu;
-          gpu.name = parsed.value("name", std::string{});
-          gpu.unifiedMemory = parsed.value("unified_memory", false);
-          if (parsed.value("app_allocated_bytes", Json{}).is_number_unsigned())
-            gpu.appAllocatedBytes =
-                parsed["app_allocated_bytes"].get<std::uint64_t>();
-          if (parsed.value("recommended_working_set_bytes", Json{})
-                  .is_number_unsigned())
-            gpu.recommendedWorkingSetBytes =
-                parsed["recommended_working_set_bytes"].get<std::uint64_t>();
-          return gpu;
+    // 作用：按宿主配置装配移动 Agent 的模型、工具和工作区能力。
+    // 先校验外部输入，再更新本地状态；失败路径不能覆盖已有有效结果。
+    void configure(const Json& request) {
+        // 切换主模型时不能中断正在运行的任务；先创建共享存储，再配置线协议和工具集。
+        if (anyBusy()) throw std::runtime_error("Stop active tasks before changing the model.");
+        auto store = makeMaiSqliteStore(request.at("database").get<std::string>());
+        if (!store) throw std::runtime_error(store.error().message());
+        MaiModelConfig config;
+        config.baseUrl = request.at("baseUrl").get<std::string>();
+        config.apiKey = request.value("apiKey", "");
+        config.caBundlePath = request.value("caBundle", "");
+        // Responses/Chat 是主模型线协议，和 Seedance 等专业工具的供应商 API 无关。
+        const std::string wire = request.value("wire", std::string{});
+        if (wire == "responses" || (wire.empty() && request.value("model", std::string{}) == "deepseek-flash"))
+            config.wire = MaiWireApi::Responses;
+        else if (!wire.empty() && wire != "chat_completions")
+            throw std::runtime_error("Unsupported model wire protocol.");
+        MaiFfmpegEngine ffmpegEngine{mai_ffmpeg_execute,       mai_ffmpeg_set_cancel_check,
+                                     mai_ffprobe_execute,      mai_ffprobe_set_cancel_check,
+                                     mai_fftools_set_log_sink, mai_fftools_error_string};
+        config.prepareImage = makeMaiFfmpegModelImagePreparer(ffmpegEngine);
+        suggestionConfig = config;
+        auto tools = std::make_unique<MaiToolRegistry>();
+        // 两个移动端只提供真实可用的本地文件和网络工具，不暴露桌面 shell。
+        registerMaiFileTools(*tools);
+        registerMaiCurlTools(*tools, config.caBundlePath);
+        tools->add(makeMaiZlibCompressTool());
+        tools->add(makeMaiZlibDecompressTool());
+        tools->add(makeMaiOpenSslCliTool());
+        tools->add(makeMaiSystemResourcesTool([dispatcher = hostTools]() -> std::optional<MaiGpuResources> {
+            const MaiToolResult response = callMaiMobileHostTool(dispatcher, "mobile_gpu_info", "{}");
+            if (response.hasError()) return std::nullopt;
+            const Json parsed = Json::parse(response.output(), nullptr, false);
+            if (!parsed.is_object() || !parsed.value("available", false)) return std::nullopt;
+            MaiGpuResources gpu;
+            gpu.name = parsed.value("name", std::string{});
+            gpu.unifiedMemory = parsed.value("unified_memory", false);
+            if (parsed.value("app_allocated_bytes", Json{}).is_number_unsigned())
+                gpu.appAllocatedBytes = parsed["app_allocated_bytes"].get<std::uint64_t>();
+            if (parsed.value("recommended_working_set_bytes", Json{}).is_number_unsigned())
+                gpu.recommendedWorkingSetBytes = parsed["recommended_working_set_bytes"].get<std::uint64_t>();
+            return gpu;
         }));
-    tools->add(makeMaiNetworkIpTool(config.caBundlePath));
-    if (request.value("temporaryDirectory", Json{}).is_string() &&
-        request.value("cacheDirectory", Json{}).is_string()) {
-      tools->add(makeMaiAppStorageTool(
-          {request["temporaryDirectory"].get<std::string>(),
-           request["cacheDirectory"].get<std::string>(),
-           request.at("workspace").get<std::string>()}));
-    }
-    const auto sshPassword =
-        [dispatcher =
-             hostTools](const std::string &host, int port,
-                        const std::string &username) -> MaiResult<std::string> {
-      const MaiToolResult response = callMaiMobileHostTool(
-          dispatcher, "mobile_ssh_password",
-          Json{{"host", host}, {"port", port}, {"username", username}}.dump());
-      if (response.hasError())
-        return response.error();
-      const Json parsed = Json::parse(response.output(), nullptr, false);
-      if (!parsed.is_object() || !parsed.value("password", Json{}).is_string())
-        return {MaiErrorCode::Protocol,
-                "SSH password dialog returned no password"};
-      return parsed["password"].get<std::string>();
-    };
-    const auto sshTrust =
-        [dispatcher =
-             hostTools](const std::string &host, int port,
-                        const std::string &fingerprint) -> MaiResult<bool> {
-      const MaiToolResult response = callMaiMobileHostTool(
-          dispatcher, "mobile_ssh_trust_host",
-          Json{{"host", host}, {"port", port}, {"fingerprint", fingerprint}}
-              .dump());
-      if (response.hasError())
-        return response.error();
-      const Json parsed = Json::parse(response.output(), nullptr, false);
-      if (!parsed.is_object() || !parsed.value("trusted", Json{}).is_boolean())
-        return {MaiErrorCode::Protocol,
-                "SSH host-key dialog returned no decision"};
-      return parsed["trusted"].get<bool>();
-    };
-    tools->add(makeMaiSshTool(sshPassword, sshTrust));
-    tools->add(makeMaiAgentSendMediaTool());
-    tools->add(makeMaiQuestionTool());
-    tools->add(makeMaiCurrentTimeTool());
-    tools->add(makeMaiTodoWriteTool());
-    tools->add(makeMaiViewImageTool(makeMaiFfmpegImagePreview(ffmpegEngine)));
-    tools->add(makeMaiFfmpegTool(ffmpegEngine));
-    tools->add(makeMaiFfprobeTool(ffmpegEngine));
-    tools->add(makeMaiStretchLowerVideoTool(ffmpegEngine));
-    tools->add(makeMaiCvSceneDetectTool(analyzeMaiCvVideo));
-    tools->add(makeMaiCvMotionDetectTool(analyzeMaiCvVideo));
-    tools->add(makeMaiCvImageQualityTool(analyzeMaiCvImage));
-    tools->add(makeMaiCvImageCompareTool(analyzeMaiCvImage));
-    tools->add(makeMaiCvFindContoursTool(analyzeMaiCvImage));
-    tools->add(makeMaiCvDetectEdgesTool(analyzeMaiCvImage));
-    tools->add(makeMaiCvTemplateMatchTool(analyzeMaiCvImage));
-    tools->add(makeMaiCvRegisterTranslationTool(analyzeMaiCvImage));
-    tools->add(makeMaiCvDetectLinesTool(analyzeMaiCvImage));
-    tools->add(makeMaiCvDocumentCornersTool(analyzeMaiCvImage));
-    tools->add(makeMaiCvThresholdMaskTool(analyzeMaiCvImage));
-    const auto arkKey = [dispatcher = hostTools]() -> std::string {
-      const MaiToolResult result =
-          callMaiMobileHostTool(dispatcher, "ark_api_key", "{}");
-      if (result.hasError())
-        return {};
-      const Json response = Json::parse(result.output(), nullptr, false);
-      return response.is_object() && response.value("key", Json{}).is_string()
-                 ? response["key"].get<std::string>()
-                 : std::string{};
-    };
-    const auto assetSettings =
-        [dispatcher = hostTools]() -> MaiResult<MaiArkAssetServiceSettings> {
-      const MaiToolResult response =
-          callMaiMobileHostTool(dispatcher, "mobile_ark_service_config", "{}");
-      if (response.hasError())
-        return response.error();
-      const Json value = Json::parse(response.output(), nullptr, false);
-      if (!value.is_object() || !value.value("base_url", Json{}).is_string() ||
-          !value.value("token", Json{}).is_string())
-        return {MaiErrorCode::Protocol,
-                "Ark Assets service configuration is invalid"};
-      return MaiArkAssetServiceSettings{value["base_url"].get<std::string>(),
-                                        value["token"].get<std::string>()};
-    };
-    // 所有图片和视频创作工具共用私有 OSS 直传；模型只收到短期 HTTPS 读取链接。
-    const bool assetsConfigured = static_cast<bool>(assetSettings());
-    const MaiCreativeMediaUploadProvider uploadMedia =
-        assetsConfigured
-            ? makeMaiPrivateOssMediaUploader(assetSettings, config.caBundlePath)
-            : MaiCreativeMediaUploadProvider{};
-    if (assetsConfigured) {
-      // 资产登记与视频直传共用 C++ 网络通道，iOS/Android
-      // 都不依赖各自的上传实现。
-      // 密钥和服务令牌由宿主提供；工具拿到的是回调，不把凭据写进模型提示词。
-      tools->add(
-          makeMaiSeedanceVideoTool(arkKey, config.caBundlePath, uploadMedia));
-      tools->add(makeMaiArkAssetTool(
-          makeMaiArkAssetServiceProvider(assetSettings, config.caBundlePath)));
-    } else {
-      tools->add(
-          makeMaiSeedanceVideoTool(arkKey, config.caBundlePath, uploadMedia));
-      tools->add(makeMaiArkAssetTool());
-    }
-    tools->add(
-        makeMaiSeedreamImageTool(arkKey, config.caBundlePath, uploadMedia));
-    const auto glmKey = [dispatcher = hostTools]() -> std::string {
-      const MaiToolResult result =
-          callMaiMobileHostTool(dispatcher, "glm_api_key", "{}");
-      if (result.hasError())
-        return {};
-      const Json response = Json::parse(result.output(), nullptr, false);
-      return response.is_object() && response.value("key", Json{}).is_string()
-                 ? response["key"].get<std::string>()
-                 : std::string{};
-    };
-    tools->add(makeMaiGlmImageTool(glmKey, config.caBundlePath));
-    const auto miniMaxKey = [dispatcher = hostTools]() -> std::string {
-      const MaiToolResult result =
-          callMaiMobileHostTool(dispatcher, "minimax_api_key", "{}");
-      if (result.hasError())
-        return {};
-      const Json response = Json::parse(result.output(), nullptr, false);
-      return response.is_object() && response.value("key", Json{}).is_string()
-                 ? response["key"].get<std::string>()
-                 : std::string{};
-    };
-    tools->add(
-        makeMaiMiniMaxVideoTool(miniMaxKey, config.caBundlePath, uploadMedia));
-    tools->add(
-        makeMaiMiniMaxImageTool(miniMaxKey, config.caBundlePath, uploadMedia));
-    const auto wanCredentials = [dispatcher =
-                                     hostTools]() -> MaiWanCredentials {
-      const MaiToolResult result =
-          callMaiMobileHostTool(dispatcher, "wan_credentials", "{}");
-      if (result.hasError())
-        return {};
-      const Json response = Json::parse(result.output(), nullptr, false);
-      if (!response.is_object())
-        return {};
-      return {response.value("key", std::string{}),
-              response.value("workspace_id", std::string{})};
-    };
-    tools->add(
-        makeMaiWanVideoTool(wanCredentials, config.caBundlePath, uploadMedia));
-    tools->add(makeMaiBailianKlingVideoTool(wanCredentials, config.caBundlePath,
-                                            uploadMedia));
-    tools->add(
-        makeMaiWanImageTool(wanCredentials, config.caBundlePath, uploadMedia));
-    tools->add(makeMaiBailianKlingImageTool(wanCredentials, config.caBundlePath,
-                                            uploadMedia));
-    const std::string rvmModel = request.value("rvmModelPath", "");
-    const std::string lamaModel = request.value("lamaModelPath", "");
-    const std::string ortRuntime = request.value("ortRuntimePath", "");
-    if (!rvmModel.empty() &&
-        MaiFileSystem::exists(MaiFilePath::fromUtf8(rvmModel))) {
-      if (ortApiBase != nullptr ||
-          (!ortRuntime.empty() &&
-           MaiFileSystem::exists(MaiFilePath::fromUtf8(ortRuntime)))) {
-        tools->add(makeMaiVideoMattingTool(maiMatteVideo, rvmModel, ortRuntime,
-                                           ortApiBase));
-      }
-    }
-    // 去水印仅暴露新的本地模型 + 临近干净帧工具，不再注册旧 delogo 实现。
-    if (!lamaModel.empty() &&
-        MaiFileSystem::exists(MaiFilePath::fromUtf8(lamaModel)) &&
-        (ortApiBase != nullptr ||
-         (!ortRuntime.empty() &&
-          MaiFileSystem::exists(MaiFilePath::fromUtf8(ortRuntime))))) {
-      tools->add(makeMaiTemporalWatermarkTool(
-          maiRepairVideoWatermarks, lamaModel, ortRuntime, ortApiBase));
-    }
-    tools->add(makeMaiPdfTool(
-        [dispatcher = hostTools](const std::string &html,
-                                 const std::string &output,
-                                 const std::atomic<bool> *cancel) {
-          if (cancel != nullptr && cancel->load(std::memory_order_relaxed))
-            return MaiToolResult::failure(MaiErrorCode::Canceled,
-                                          "PDF generation was canceled");
-          return callMaiMobileHostTool(
-              dispatcher, "generate_pdf",
-              Json{{"html", html}, {"output_path", output}}.dump());
+        tools->add(makeMaiNetworkIpTool(config.caBundlePath));
+        if (request.value("temporaryDirectory", Json{}).is_string() &&
+            request.value("cacheDirectory", Json{}).is_string()) {
+            tools->add(makeMaiAppStorageTool({request["temporaryDirectory"].get<std::string>(),
+                                              request["cacheDirectory"].get<std::string>(),
+                                              request.at("workspace").get<std::string>()}));
+        }
+        const auto sshPassword = [dispatcher = hostTools](const std::string& host, int port,
+                                                          const std::string& username) -> MaiResult<std::string> {
+            const MaiToolResult response = callMaiMobileHostTool(
+                dispatcher, "mobile_ssh_password", Json{{"host", host}, {"port", port}, {"username", username}}.dump());
+            if (response.hasError()) return response.error();
+            const Json parsed = Json::parse(response.output(), nullptr, false);
+            if (!parsed.is_object() || !parsed.value("password", Json{}).is_string())
+                return {MaiErrorCode::Protocol, "SSH password dialog returned no password"};
+            return parsed["password"].get<std::string>();
+        };
+        const auto sshTrust = [dispatcher = hostTools](const std::string& host, int port,
+                                                       const std::string& fingerprint) -> MaiResult<bool> {
+            const MaiToolResult response =
+                callMaiMobileHostTool(dispatcher, "mobile_ssh_trust_host",
+                                      Json{{"host", host}, {"port", port}, {"fingerprint", fingerprint}}.dump());
+            if (response.hasError()) return response.error();
+            const Json parsed = Json::parse(response.output(), nullptr, false);
+            if (!parsed.is_object() || !parsed.value("trusted", Json{}).is_boolean())
+                return {MaiErrorCode::Protocol, "SSH host-key dialog returned no decision"};
+            return parsed["trusted"].get<bool>();
+        };
+        tools->add(makeMaiSshTool(sshPassword, sshTrust));
+        tools->add(makeMaiAgentSendMediaTool());
+        tools->add(makeMaiQuestionTool());
+        tools->add(makeMaiCurrentTimeTool());
+        tools->add(makeMaiTodoWriteTool());
+        tools->add(makeMaiViewImageTool(makeMaiFfmpegImagePreview(ffmpegEngine)));
+        tools->add(makeMaiFfmpegTool(ffmpegEngine));
+        tools->add(makeMaiFfprobeTool(ffmpegEngine));
+        tools->add(makeMaiStretchLowerVideoTool(ffmpegEngine));
+        tools->add(makeMaiCvSceneDetectTool(analyzeMaiCvVideo));
+        tools->add(makeMaiCvMotionDetectTool(analyzeMaiCvVideo));
+        tools->add(makeMaiCvImageQualityTool(analyzeMaiCvImage));
+        tools->add(makeMaiCvImageCompareTool(analyzeMaiCvImage));
+        tools->add(makeMaiCvFindContoursTool(analyzeMaiCvImage));
+        tools->add(makeMaiCvDetectEdgesTool(analyzeMaiCvImage));
+        tools->add(makeMaiCvTemplateMatchTool(analyzeMaiCvImage));
+        tools->add(makeMaiCvRegisterTranslationTool(analyzeMaiCvImage));
+        tools->add(makeMaiCvDetectLinesTool(analyzeMaiCvImage));
+        tools->add(makeMaiCvDocumentCornersTool(analyzeMaiCvImage));
+        tools->add(makeMaiCvThresholdMaskTool(analyzeMaiCvImage));
+        const auto arkKey = [dispatcher = hostTools]() -> std::string {
+            const MaiToolResult result = callMaiMobileHostTool(dispatcher, "ark_api_key", "{}");
+            if (result.hasError()) return {};
+            const Json response = Json::parse(result.output(), nullptr, false);
+            return response.is_object() && response.value("key", Json{}).is_string()
+                       ? response["key"].get<std::string>()
+                       : std::string{};
+        };
+        const auto assetSettings = [dispatcher = hostTools]() -> MaiResult<MaiArkAssetServiceSettings> {
+            const MaiToolResult response = callMaiMobileHostTool(dispatcher, "mobile_ark_service_config", "{}");
+            if (response.hasError()) return response.error();
+            const Json value = Json::parse(response.output(), nullptr, false);
+            if (!value.is_object() || !value.value("base_url", Json{}).is_string() ||
+                !value.value("token", Json{}).is_string())
+                return {MaiErrorCode::Protocol, "Ark Assets service configuration is invalid"};
+            return MaiArkAssetServiceSettings{value["base_url"].get<std::string>(), value["token"].get<std::string>()};
+        };
+        // 所有图片和视频创作工具共用私有 OSS 直传；模型只收到短期 HTTPS 读取链接。
+        const bool assetsConfigured = static_cast<bool>(assetSettings());
+        const MaiCreativeMediaUploadProvider uploadMedia =
+            assetsConfigured ? makeMaiPrivateOssMediaUploader(assetSettings, config.caBundlePath)
+                             : MaiCreativeMediaUploadProvider{};
+        // 万相复用同一签名与直传实现，但将输入素材归入独立的 wan-inputs 前缀。
+        const MaiCreativeMediaUploadProvider wanUploadMedia =
+            assetsConfigured
+                ? makeMaiPrivateOssMediaUploader(assetSettings, config.caBundlePath, MaiOssUploadPurpose::WanInput)
+                : MaiCreativeMediaUploadProvider{};
+        const MaiArkAssetProvider assetProvider =
+            assetsConfigured ? makeMaiArkAssetServiceProvider(assetSettings, config.caBundlePath)
+                             : MaiArkAssetProvider{};
+        const MaiVideoMetadataProvider seedanceVideoMetadata = makeMaiFfprobeVideoMetadataProvider(ffmpegEngine);
+        if (assetsConfigured) {
+            // Seedance 本地素材由同一 C++ 资产通道完成 OSS 上传、Ark 入库与状态查询。
+            // 密钥和服务令牌由宿主提供；工具拿到的是回调，不把凭据写进模型提示词。
+            tools->add(makeMaiSeedanceVideoTool(arkKey, config.caBundlePath, assetProvider, seedanceVideoMetadata));
+            tools->add(makeMaiArkAssetTool(assetProvider));
+        } else {
+            tools->add(makeMaiSeedanceVideoTool(arkKey, config.caBundlePath, {}, seedanceVideoMetadata));
+            tools->add(makeMaiArkAssetTool());
+        }
+        tools->add(makeMaiSeedreamImageTool(arkKey, config.caBundlePath, uploadMedia));
+        const auto glmKey = [dispatcher = hostTools]() -> std::string {
+            const MaiToolResult result = callMaiMobileHostTool(dispatcher, "glm_api_key", "{}");
+            if (result.hasError()) return {};
+            const Json response = Json::parse(result.output(), nullptr, false);
+            return response.is_object() && response.value("key", Json{}).is_string()
+                       ? response["key"].get<std::string>()
+                       : std::string{};
+        };
+        tools->add(makeMaiGlmImageTool(glmKey, config.caBundlePath));
+        const auto miniMaxKey = [dispatcher = hostTools]() -> std::string {
+            const MaiToolResult result = callMaiMobileHostTool(dispatcher, "minimax_api_key", "{}");
+            if (result.hasError()) return {};
+            const Json response = Json::parse(result.output(), nullptr, false);
+            return response.is_object() && response.value("key", Json{}).is_string()
+                       ? response["key"].get<std::string>()
+                       : std::string{};
+        };
+        tools->add(makeMaiMiniMaxVideoTool(miniMaxKey, config.caBundlePath, uploadMedia));
+        tools->add(makeMaiMiniMaxImageTool(miniMaxKey, config.caBundlePath, uploadMedia));
+        const auto wanCredentials = [dispatcher = hostTools]() -> MaiWanCredentials {
+            const MaiToolResult result = callMaiMobileHostTool(dispatcher, "wan_credentials", "{}");
+            if (result.hasError()) return {};
+            const Json response = Json::parse(result.output(), nullptr, false);
+            if (!response.is_object()) return {};
+            return {response.value("key", std::string{}), response.value("workspace_id", std::string{})};
+        };
+        tools->add(makeMaiWanVideoTool(wanCredentials, config.caBundlePath, wanUploadMedia));
+        tools->add(makeMaiBailianKlingVideoTool(wanCredentials, config.caBundlePath, uploadMedia));
+        tools->add(makeMaiWanImageTool(wanCredentials, config.caBundlePath, wanUploadMedia));
+        tools->add(makeMaiBailianKlingImageTool(wanCredentials, config.caBundlePath, uploadMedia));
+        const std::string rvmModel = request.value("rvmModelPath", "");
+        const std::string lamaModel = request.value("lamaModelPath", "");
+        const std::string ortRuntime = request.value("ortRuntimePath", "");
+        if (!rvmModel.empty() && MaiFileSystem::exists(MaiFilePath::fromUtf8(rvmModel))) {
+            if (ortApiBase != nullptr ||
+                (!ortRuntime.empty() && MaiFileSystem::exists(MaiFilePath::fromUtf8(ortRuntime)))) {
+                tools->add(makeMaiVideoMattingTool(maiMatteVideo, rvmModel, ortRuntime, ortApiBase));
+            }
+        }
+        // 去水印仅暴露新的本地模型 + 临近干净帧工具，不再注册旧 delogo 实现。
+        if (!lamaModel.empty() && MaiFileSystem::exists(MaiFilePath::fromUtf8(lamaModel)) &&
+            (ortApiBase != nullptr ||
+             (!ortRuntime.empty() && MaiFileSystem::exists(MaiFilePath::fromUtf8(ortRuntime))))) {
+            tools->add(makeMaiTemporalWatermarkTool(maiRepairVideoWatermarks, lamaModel, ortRuntime, ortApiBase));
+        }
+        tools->add(makeMaiPdfTool([dispatcher = hostTools](const std::string& html, const std::string& output,
+                                                           const std::atomic<bool>* cancel) {
+            if (cancel != nullptr && cancel->load(std::memory_order_relaxed))
+                return MaiToolResult::failure(MaiErrorCode::Canceled, "PDF generation was canceled");
+            return callMaiMobileHostTool(dispatcher, "generate_pdf",
+                                         Json{{"html", html}, {"output_path", output}}.dump());
         }));
-    registerMaiChatHostTools(*tools, hostTools);
-    registerMobilePhotoTools(*tools, hostTools);
-    MaiAgent::Options options;
-    options.defaultModel = request.at("model").get<std::string>();
-    options.fileAccessRoot =
-        request.value("appRoot", request.at("workspace").get<std::string>());
-    options.decodeText =
-        [dispatcher =
-             hostTools](const std::string &bytes,
-                        const std::string &encoding) -> MaiResult<std::string> {
-      const MaiToolResult result = callMaiMobileHostTool(
-          dispatcher, "mobile_decode_text",
-          Json{{"base64", encodeBase64(bytes)}, {"encoding", encoding}}.dump());
-      if (result.hasError())
-        return result.error();
-      return result.output();
-    };
-    options.baseInstructions = kMarkdownBaseInstructions;
-    const auto policy = request.value("policy", "on-request");
-    if (policy == "never")
-      options.approvalPolicy = MaiApprovalPolicy::Never;
-    else if (policy == "unless-trusted")
-      options.approvalPolicy = MaiApprovalPolicy::UnlessTrusted;
-    else if (policy != "on-request")
-      throw std::runtime_error("Unknown approval policy.");
-    auto replacement = std::make_unique<MaiAgent>(std::move(store.value()),
-                                                  makeMaiModelClient(config),
-                                                  std::move(tools), options);
-    agent.reset();
-    pendingDeltas.clear();
-    liveParts.clear();
-    errors.clear();
-    agent = std::move(replacement);
-    workspace = request.at("workspace").get<std::string>();
-    model = options.defaultModel;
-    configured = !config.apiKey.empty() && !model.empty();
-    dirty = true;
-    structureChanged = true;
-    cachedSession.clear();
-    cachedLimit = -1;
-    cachedMessages.clear();
-    agent->eventBus().subscribe([this](const MaiEvent &event) {
-      // 网络线程只合并增量，不读数据库、不解析 Markdown、不调用 UI。
-      std::lock_guard<std::mutex> lock(mutex);
-      dirty = true;
-      if (event.type == MaiEventType::MessagePartDelta)
-        pendingDeltas[event.partId] += event.delta;
-      else
+        registerMaiChatHostTools(*tools, hostTools);
+        registerMobilePhotoTools(*tools, hostTools);
+        MaiAgent::Options options;
+        options.defaultModel = request.at("model").get<std::string>();
+        options.fileAccessRoot = request.value("appRoot", request.at("workspace").get<std::string>());
+        options.decodeText = [dispatcher = hostTools](const std::string& bytes,
+                                                      const std::string& encoding) -> MaiResult<std::string> {
+            const MaiToolResult result = callMaiMobileHostTool(
+                dispatcher, "mobile_decode_text", Json{{"base64", encodeBase64(bytes)}, {"encoding", encoding}}.dump());
+            if (result.hasError()) return result.error();
+            return result.output();
+        };
+        options.baseInstructions = kMarkdownBaseInstructions;
+        const auto policy = request.value("policy", "on-request");
+        if (policy == "never")
+            options.approvalPolicy = MaiApprovalPolicy::Never;
+        else if (policy == "unless-trusted")
+            options.approvalPolicy = MaiApprovalPolicy::UnlessTrusted;
+        else if (policy != "on-request")
+            throw std::runtime_error("Unknown approval policy.");
+        auto replacement =
+            std::make_unique<MaiAgent>(std::move(store.value()), makeMaiModelClient(config), std::move(tools), options);
+        agent.reset();
+        pendingDeltas.clear();
+        liveParts.clear();
+        errors.clear();
+        agent = std::move(replacement);
+        workspace = request.at("workspace").get<std::string>();
+        model = options.defaultModel;
+        configured = !config.apiKey.empty() && !model.empty();
+        dirty = true;
         structureChanged = true;
-      if (event.type == MaiEventType::SessionError)
-        errors[event.sessionId] = event.detail;
-    });
-  }
-
-  // 将持久化消息转为移动端可读快照，并保留最新消息和未完成任务的状态。
-  // 返回值只包含本次请求选中的会话内容，不改动 Agent 存储。
-  Json serializeMessages(const std::vector<MaiMessage> &source,
-                         bool sessionBusy) {
-    Json messages = Json::array();
-    std::string latestId;
-    for (const auto &message : source)
-      if (message.id > latestId)
-        latestId = message.id;
-    for (const auto &message : source) {
-      Json parts = Json::array();
-      for (const auto &part : message.parts) {
-        Json value = {{"id", part.id}};
-        std::visit(
-            [&](const auto &body) {
-              using T = std::decay_t<decltype(body)>;
-              if constexpr (std::is_same_v<T, MaiToolPart>) {
-                value.update({{"kind", "tool"},
-                              {"tool", body.tool},
-                              {"input", body.input},
-                              {"output", body.output},
-                              {"error", body.error},
-                              {"state", maiToolStateToString(body.state)}});
-              } else if constexpr (std::is_same_v<T, MaiImagePart>) {
-                value.update({{"kind", "image"},
-                              {"path", body.path},
-                              {"mimeType", body.mimeType}});
-              } else if constexpr (std::is_same_v<T, MaiVideoPart>) {
-                value.update({{"kind", "video"},
-                              {"path", body.path},
-                              {"mimeType", body.mimeType}});
-              } else if constexpr (std::is_same_v<T, MaiQuotePart>) {
-                value.update({{"kind", "quote"},
-                              {"messageId", body.messageId},
-                              {"preview", body.preview}});
-              } else {
-                std::string text = body.text;
-                auto live = liveParts.find(part.id);
-                if (message.isInProgress() && live != liveParts.end() &&
-                    live->second.size() > text.size())
-                  text = live->second;
-                value.update(
-                    {{"kind",
-                      std::is_same_v<T, MaiTextPart> ? "text" : "reasoning"},
-                     {"text", text}});
-              }
-            },
-            part.body);
-        parts.push_back(std::move(value));
-        if (!message.isInProgress())
-          liveParts.erase(part.id);
-      }
-      messages.push_back({{"id", message.id},
-                          {"role", maiRoleToString(message.role)},
-                          {"created", message.created},
-                          {"completed", message.completed},
-                          {"active", message.isInProgress() && sessionBusy &&
-                                         message.id == latestId},
-                          {"parts", parts}});
-    }
-    return messages;
-  }
-
-  // 作用：读取指定会话的有限消息快照和任务状态。
-  Json snapshot(const std::string &selected, bool force, int limit) {
-    std::unordered_map<std::string, std::string> errorCopy;
-    std::unordered_set<std::string> changedParts;
-    bool reload = force || cachedSession != selected || cachedLimit != limit;
-    {
-      std::lock_guard<std::mutex> lock(mutex);
-      if (!dirty && !force)
-        return {{"ok", true}, {"changed", false}};
-      dirty = false;
-      reload |= structureChanged;
-      structureChanged = false;
-      for (auto &delta : pendingDeltas) {
-        liveParts[delta.first] += delta.second;
-        changedParts.insert(delta.first);
-      }
-      pendingDeltas.clear();
-      errorCopy = errors;
-    }
-    Json sessions = Json::array();
-    bool busy = false;
-    for (const auto &session : agent->listSessions()) {
-      if (!session.isRoot())
-        continue;
-      const bool active = agent->isBusy(session.id);
-      busy |= active;
-      sessions.push_back(
-          {{"id", session.id}, {"title", session.title}, {"busy", active}});
-    }
-    // 增量期间复用消息结构，避免每个批次重新读整段 SQLite 历史。
-    if (reload) {
-      if (limit < 0)
-        cachedMessages = agent->listMessages(selected);
-      else if (limit == 0)
+        cachedSession.clear();
+        cachedLimit = -1;
         cachedMessages.clear();
-      else
-        cachedMessages = agent->listMessagesPage(selected, "", limit);
-      cachedSession = selected;
-      cachedLimit = limit;
+        agent->eventBus().subscribe([this](const MaiEvent& event) {
+            // 网络线程只合并增量，不读数据库、不解析 Markdown、不调用 UI。
+            std::lock_guard<std::mutex> lock(mutex);
+            dirty = true;
+            if (event.type == MaiEventType::MessagePartDelta)
+                pendingDeltas[event.partId] += event.delta;
+            else
+                structureChanged = true;
+            if (event.type == MaiEventType::SessionError) errors[event.sessionId] = event.detail;
+        });
     }
-    const bool sessionBusy = agent->isBusy(selected);
-    Json messages;
-    if (limit >= 0 && !reload && !changedParts.empty()) {
-      std::vector<MaiMessage> changedMessages;
-      for (const auto &message : cachedMessages) {
-        for (const auto &part : message.parts) {
-          if (changedParts.count(part.id) == 0)
-            continue;
-          changedMessages.push_back(message);
-          break;
-        }
-      }
-      messages = serializeMessages(changedMessages, sessionBusy);
-    } else {
-      messages = serializeMessages(cachedMessages, sessionBusy);
-    }
-    Json permissions = Json::array(), questions = Json::array();
-    for (const auto &p : agent->listPendingPermissions())
-      if (p.sessionId == selected)
-        permissions.push_back({{"id", p.id},
-                               {"tool", p.toolName},
-                               {"input", p.arguments},
-                               {"allowForSession", p.allowForSession},
-                               {"rememberOnApproval", p.rememberOnApproval},
-                               {"fileCount", p.approvalKeys.size()}});
-    for (const auto &q : agent->listPendingQuestions())
-      if (q.sessionId == selected)
-        questions.push_back(
-            {{"id", q.id}, {"question", q.question}, {"options", q.options}});
-    if (!busy)
-      liveParts.clear();
-    return {{"ok", true},
-            {"changed", true},
-            {"sessions", sessions},
-            {"messages", messages},
-            {"permissions", permissions},
-            {"questions", questions},
-            {"busy", busy},
-            {"configured", configured},
-            {"error", errorCopy[selected]}};
-  }
 
-  Json request(const Json &r) {
-    const std::string op = r.at("op");
-    if (op == "configure") {
-      configure(r);
-      return {{"ok", true}};
-    }
-    if (!agent)
-      throw std::runtime_error("Agent is not initialized.");
-    const std::string session = r.value("session", "");
-    if (op == "snapshot") {
-      const int limit = r.value("messageLimit", -1);
-      if (limit < -1 || limit > 100)
-        throw std::runtime_error("messageLimit must be between 0 and 100.");
-      return snapshot(session, r.value("force", false), limit);
-    }
-    if (op == "messages_page") {
-      const int limit = r.value("limit", 30);
-      if (limit < 1 || limit > 100)
-        throw std::runtime_error("limit must be between 1 and 100.");
-      const std::string before = r.value("before", "");
-      const auto page = agent->listMessagesPage(session, before, limit);
-      return {
-          {"ok", true},
-          {"messages",
-           serializeMessages(page, before.empty() && agent->isBusy(session))}};
-    }
-    if (op == "suggest_replies") {
-      if (!configured)
-        throw std::runtime_error("Configure a model and API key first.");
-      if (!r.contains("messages") || !r["messages"].is_array() ||
-          r["messages"].empty() || r["messages"].size() > 30)
-        throw std::runtime_error(
-            "Messages must contain between 1 and 30 items.");
-      MaiModelRequest modelRequest;
-      modelRequest.model = model;
-      modelRequest.temperature = 0.5;
-      modelRequest.baseInstructions =
-          "You generate reply suggestions for a private chat. Return only one "
-          "JSON object "
-          "with exactly these string fields: natural, casual, professional. "
-          "Each value must "
-          "be a short reply in the conversation language. Do not send a "
-          "message, call a "
-          "tool, use Markdown fences, or include explanations.";
-      MaiModelMessage context;
-      context.role = MaiModelRole::User;
-      context.content =
-          "Recent conversation, oldest first:\n" + r["messages"].dump();
-      modelRequest.messages.push_back(std::move(context));
-      std::string response;
-      MaiStreamSink sink;
-      sink.onText = [&](std::string_view delta) {
-        response.append(delta.data(), delta.size());
-      };
-      std::atomic<bool> cancel{false};
-      const MaiError error = makeMaiModelClient(suggestionConfig)
-                                 ->stream(modelRequest, sink, cancel);
-      if (error)
-        throw std::runtime_error(error.message());
-      std::string clean = response;
-      const auto firstLine = clean.find('\n');
-      const auto closingFence = clean.rfind("```");
-      if (clean.rfind("```", 0) == 0 && firstLine != std::string::npos &&
-          closingFence > firstLine)
-        clean = clean.substr(firstLine + 1, closingFence - firstLine - 1);
-      const Json suggestions = Json::parse(clean);
-      for (const char *key : {"natural", "casual", "professional"})
-        if (!suggestions.contains(key) || !suggestions[key].is_string() ||
-            suggestions[key].get<std::string>().empty())
-          throw std::runtime_error(
-              "The model returned incomplete reply suggestions.");
-      return {{"ok", true},
-              {"natural", suggestions["natural"]},
-              {"casual", suggestions["casual"]},
-              {"professional", suggestions["professional"]}};
-    }
-    std::string id;
-    if (op == "create")
-      id = result(agent->submit(MaiCreateSession{workspace, "", model}));
-    else if (op == "send") {
-      if (!configured)
-        throw std::runtime_error("Configure a model and API key first.");
-      // iOS 在升级或恢复后可能给同一数据容器分配新的绝对路径。图片片段只保存
-      // 工作区相对路径，所以每轮发送前都把会话根目录迁到当前容器位置。
-      result(
-          agent->submit(MaiUpdateSession{session, "", model, "", workspace}));
-      {
-        std::lock_guard<std::mutex> lock(mutex);
-        errors.erase(session);
-      }
-      std::vector<MaiModelImage> images;
-      if (r.contains("images")) {
-        if (!r["images"].is_array() || r["images"].size() > 10)
-          throw std::runtime_error(
-              "Images must be an array with at most 10 items.");
-        for (const auto &value : r["images"]) {
-          if (!value.is_object() || !value.contains("path") ||
-              !value["path"].is_string() || !value.contains("mimeType") ||
-              !value["mimeType"].is_string())
-            throw std::runtime_error(
-                "Each image needs path and mimeType strings.");
-          images.push_back({value["path"].get<std::string>(),
-                            value["mimeType"].get<std::string>()});
+    // 将持久化消息转为移动端可读快照，并保留最新消息和未完成任务的状态。
+    // 返回值只包含本次请求选中的会话内容，不改动 Agent 存储。
+    Json serializeMessages(const std::vector<MaiMessage>& source, bool sessionBusy) {
+        Json messages = Json::array();
+        std::string latestId;
+        for (const auto& message : source)
+            if (message.id > latestId) latestId = message.id;
+        for (const auto& message : source) {
+            Json parts = Json::array();
+            for (const auto& part : message.parts) {
+                Json value = {{"id", part.id}};
+                std::visit(
+                    [&](const auto& body) {
+                        using T = std::decay_t<decltype(body)>;
+                        if constexpr (std::is_same_v<T, MaiToolPart>) {
+                            value.update({{"kind", "tool"},
+                                          {"tool", body.tool},
+                                          {"input", body.input},
+                                          {"output", body.output},
+                                          {"error", body.error},
+                                          {"state", maiToolStateToString(body.state)}});
+                        } else if constexpr (std::is_same_v<T, MaiImagePart>) {
+                            value.update({{"kind", "image"}, {"path", body.path}, {"mimeType", body.mimeType}});
+                        } else if constexpr (std::is_same_v<T, MaiVideoPart>) {
+                            value.update({{"kind", "video"}, {"path", body.path}, {"mimeType", body.mimeType}});
+                        } else if constexpr (std::is_same_v<T, MaiQuotePart>) {
+                            value.update({{"kind", "quote"}, {"messageId", body.messageId}, {"preview", body.preview}});
+                        } else {
+                            std::string text = body.text;
+                            auto live = liveParts.find(part.id);
+                            if (message.isInProgress() && live != liveParts.end() && live->second.size() > text.size())
+                                text = live->second;
+                            value.update(
+                                {{"kind", std::is_same_v<T, MaiTextPart> ? "text" : "reasoning"}, {"text", text}});
+                        }
+                    },
+                    part.body);
+                parts.push_back(std::move(value));
+                if (!message.isInProgress()) liveParts.erase(part.id);
+            }
+            messages.push_back({{"id", message.id},
+                                {"role", maiRoleToString(message.role)},
+                                {"created", message.created},
+                                {"completed", message.completed},
+                                {"active", message.isInProgress() && sessionBusy && message.id == latestId},
+                                {"parts", parts}});
         }
-      }
-      std::vector<MaiVideoPart> videos;
-      if (r.contains("videos")) {
-        if (!r["videos"].is_array() || r["videos"].size() > 10)
-          throw std::runtime_error(
-              "Videos must be an array with at most 10 items.");
-        for (const auto &value : r["videos"]) {
-          if (!value.is_object() || !value.contains("path") ||
-              !value["path"].is_string() || !value.contains("mimeType") ||
-              !value["mimeType"].is_string())
-            throw std::runtime_error(
-                "Each video needs path and mimeType strings.");
-          videos.push_back({value["path"].get<std::string>(),
-                            value["mimeType"].get<std::string>()});
+        return messages;
+    }
+
+    // 作用：读取指定会话的有限消息快照和任务状态。
+    Json snapshot(const std::string& selected, bool force, int limit) {
+        std::unordered_map<std::string, std::string> errorCopy;
+        std::unordered_set<std::string> changedParts;
+        bool reload = force || cachedSession != selected || cachedLimit != limit;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            if (!dirty && !force) return {{"ok", true}, {"changed", false}};
+            dirty = false;
+            reload |= structureChanged;
+            structureChanged = false;
+            for (auto& delta : pendingDeltas) {
+                liveParts[delta.first] += delta.second;
+                changedParts.insert(delta.first);
+            }
+            pendingDeltas.clear();
+            errorCopy = errors;
         }
-      }
-      if (r.contains("quoteMessageId") && !r["quoteMessageId"].is_string())
-        throw std::runtime_error("quoteMessageId must be a string.");
-      id = result(agent->submit(MaiSendPrompt{
-          session, r.at("text"), std::move(images), std::move(videos),
-          r.value("quoteMessageId", std::string{})}));
-    } else if (op == "stop")
-      result(agent->submit(MaiInterrupt{session}));
-    else if (op == "delete")
-      result(agent->submit(MaiDeleteSession{session}));
-    else if (op == "clear")
-      result(agent->submit(MaiClearMessages{session}));
-    else if (op == "rename")
-      result(agent->submit(MaiUpdateSession{session, r.at("title"), "", ""}));
-    else if (op == "permission") {
-      MaiPermissionDecision decision = MaiPermissionDecision::Denied;
-      if (!maiParsePermissionDecision(r.at("decision"), decision))
-        throw std::runtime_error("Unknown permission decision.");
-      result(agent->submit(MaiReplyPermission{r.at("id"), decision}));
-    } else if (op == "answer")
-      result(agent->submit(MaiReplyQuestion{r.at("id"), r.at("text")}));
-    else
-      throw std::runtime_error("Unknown operation.");
-    return {{"ok", true}, {"id", id}};
-  }
+        Json sessions = Json::array();
+        bool busy = false;
+        for (const auto& session : agent->listSessions()) {
+            if (!session.isRoot()) continue;
+            const bool active = agent->isBusy(session.id);
+            busy |= active;
+            sessions.push_back({{"id", session.id}, {"title", session.title}, {"busy", active}});
+        }
+        // 增量期间复用消息结构，避免每个批次重新读整段 SQLite 历史。
+        if (reload) {
+            if (limit < 0)
+                cachedMessages = agent->listMessages(selected);
+            else if (limit == 0)
+                cachedMessages.clear();
+            else
+                cachedMessages = agent->listMessagesPage(selected, "", limit);
+            cachedSession = selected;
+            cachedLimit = limit;
+        }
+        const bool sessionBusy = agent->isBusy(selected);
+        Json messages;
+        if (limit >= 0 && !reload && !changedParts.empty()) {
+            std::vector<MaiMessage> changedMessages;
+            for (const auto& message : cachedMessages) {
+                for (const auto& part : message.parts) {
+                    if (changedParts.count(part.id) == 0) continue;
+                    changedMessages.push_back(message);
+                    break;
+                }
+            }
+            messages = serializeMessages(changedMessages, sessionBusy);
+        } else {
+            messages = serializeMessages(cachedMessages, sessionBusy);
+        }
+        Json permissions = Json::array(), questions = Json::array();
+        for (const auto& p : agent->listPendingPermissions())
+            if (p.sessionId == selected)
+                permissions.push_back({{"id", p.id},
+                                       {"tool", p.toolName},
+                                       {"input", p.arguments},
+                                       {"allowForSession", p.allowForSession},
+                                       {"rememberOnApproval", p.rememberOnApproval},
+                                       {"fileCount", p.approvalKeys.size()}});
+        for (const auto& q : agent->listPendingQuestions())
+            if (q.sessionId == selected)
+                questions.push_back({{"id", q.id}, {"question", q.question}, {"options", q.options}});
+        if (!busy) liveParts.clear();
+        return {{"ok", true},
+                {"changed", true},
+                {"sessions", sessions},
+                {"messages", messages},
+                {"permissions", permissions},
+                {"questions", questions},
+                {"busy", busy},
+                {"configured", configured},
+                {"error", errorCopy[selected]}};
+    }
+
+    Json request(const Json& r) {
+        const std::string op = r.at("op");
+        if (op == "configure") {
+            configure(r);
+            return {{"ok", true}};
+        }
+        if (!agent) throw std::runtime_error("Agent is not initialized.");
+        const std::string session = r.value("session", "");
+        if (op == "snapshot") {
+            const int limit = r.value("messageLimit", -1);
+            if (limit < -1 || limit > 100) throw std::runtime_error("messageLimit must be between 0 and 100.");
+            return snapshot(session, r.value("force", false), limit);
+        }
+        if (op == "messages_page") {
+            const int limit = r.value("limit", 30);
+            if (limit < 1 || limit > 100) throw std::runtime_error("limit must be between 1 and 100.");
+            const std::string before = r.value("before", "");
+            const auto page = agent->listMessagesPage(session, before, limit);
+            return {{"ok", true}, {"messages", serializeMessages(page, before.empty() && agent->isBusy(session))}};
+        }
+        if (op == "suggest_replies") {
+            if (!configured) throw std::runtime_error("Configure a model and API key first.");
+            if (!r.contains("messages") || !r["messages"].is_array() || r["messages"].empty() ||
+                r["messages"].size() > 30)
+                throw std::runtime_error("Messages must contain between 1 and 30 items.");
+            MaiModelRequest modelRequest;
+            modelRequest.model = model;
+            modelRequest.temperature = 0.5;
+            modelRequest.baseInstructions =
+                "You generate reply suggestions for a private chat. Return only one "
+                "JSON object "
+                "with exactly these string fields: natural, casual, professional. "
+                "Each value must "
+                "be a short reply in the conversation language. Do not send a "
+                "message, call a "
+                "tool, use Markdown fences, or include explanations.";
+            MaiModelMessage context;
+            context.role = MaiModelRole::User;
+            context.content = "Recent conversation, oldest first:\n" + r["messages"].dump();
+            modelRequest.messages.push_back(std::move(context));
+            std::string response;
+            MaiStreamSink sink;
+            sink.onText = [&](std::string_view delta) { response.append(delta.data(), delta.size()); };
+            std::atomic<bool> cancel{false};
+            const MaiError error = makeMaiModelClient(suggestionConfig)->stream(modelRequest, sink, cancel);
+            if (error) throw std::runtime_error(error.message());
+            std::string clean = response;
+            const auto firstLine = clean.find('\n');
+            const auto closingFence = clean.rfind("```");
+            if (clean.rfind("```", 0) == 0 && firstLine != std::string::npos && closingFence > firstLine)
+                clean = clean.substr(firstLine + 1, closingFence - firstLine - 1);
+            const Json suggestions = Json::parse(clean);
+            for (const char* key : {"natural", "casual", "professional"})
+                if (!suggestions.contains(key) || !suggestions[key].is_string() ||
+                    suggestions[key].get<std::string>().empty())
+                    throw std::runtime_error("The model returned incomplete reply suggestions.");
+            return {{"ok", true},
+                    {"natural", suggestions["natural"]},
+                    {"casual", suggestions["casual"]},
+                    {"professional", suggestions["professional"]}};
+        }
+        std::string id;
+        if (op == "create")
+            id = result(agent->submit(MaiCreateSession{workspace, "", model}));
+        else if (op == "send") {
+            if (!configured) throw std::runtime_error("Configure a model and API key first.");
+            // iOS 在升级或恢复后可能给同一数据容器分配新的绝对路径。图片片段只保存
+            // 工作区相对路径，所以每轮发送前都把会话根目录迁到当前容器位置。
+            result(agent->submit(MaiUpdateSession{session, "", model, "", workspace}));
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                errors.erase(session);
+            }
+            std::vector<MaiModelImage> images;
+            if (r.contains("images")) {
+                if (!r["images"].is_array() || r["images"].size() > 10)
+                    throw std::runtime_error("Images must be an array with at most 10 items.");
+                for (const auto& value : r["images"]) {
+                    if (!value.is_object() || !value.contains("path") || !value["path"].is_string() ||
+                        !value.contains("mimeType") || !value["mimeType"].is_string())
+                        throw std::runtime_error("Each image needs path and mimeType strings.");
+                    images.push_back({value["path"].get<std::string>(), value["mimeType"].get<std::string>()});
+                }
+            }
+            std::vector<MaiVideoPart> videos;
+            if (r.contains("videos")) {
+                if (!r["videos"].is_array() || r["videos"].size() > 10)
+                    throw std::runtime_error("Videos must be an array with at most 10 items.");
+                for (const auto& value : r["videos"]) {
+                    if (!value.is_object() || !value.contains("path") || !value["path"].is_string() ||
+                        !value.contains("mimeType") || !value["mimeType"].is_string())
+                        throw std::runtime_error("Each video needs path and mimeType strings.");
+                    videos.push_back({value["path"].get<std::string>(), value["mimeType"].get<std::string>()});
+                }
+            }
+            if (r.contains("quoteMessageId") && !r["quoteMessageId"].is_string())
+                throw std::runtime_error("quoteMessageId must be a string.");
+            id = result(agent->submit(MaiSendPrompt{session, r.at("text"), std::move(images), std::move(videos),
+                                                    r.value("quoteMessageId", std::string{})}));
+        } else if (op == "stop")
+            result(agent->submit(MaiInterrupt{session}));
+        else if (op == "delete")
+            result(agent->submit(MaiDeleteSession{session}));
+        else if (op == "clear")
+            result(agent->submit(MaiClearMessages{session}));
+        else if (op == "rename")
+            result(agent->submit(MaiUpdateSession{session, r.at("title"), "", ""}));
+        else if (op == "permission") {
+            MaiPermissionDecision decision = MaiPermissionDecision::Denied;
+            if (!maiParsePermissionDecision(r.at("decision"), decision))
+                throw std::runtime_error("Unknown permission decision.");
+            result(agent->submit(MaiReplyPermission{r.at("id"), decision}));
+        } else if (op == "answer")
+            result(agent->submit(MaiReplyQuestion{r.at("id"), r.at("text")}));
+        else
+            throw std::runtime_error("Unknown operation.");
+        return {{"ok", true}, {"id", id}};
+    }
 };
 
-void *maiMobileAgentCreate(void) {
-  try {
-    return new MaiMobileAgent();
-  } catch (...) {
-    return nullptr;
-  }
+void* maiMobileAgentCreate(void) {
+    try {
+        return new MaiMobileAgent();
+    } catch (...) {
+        return nullptr;
+    }
 }
-void maiMobileAgentDestroy(void *handle) {
-  delete static_cast<MaiMobileAgent *>(handle);
+void maiMobileAgentDestroy(void* handle) {
+    delete static_cast<MaiMobileAgent*>(handle);
 }
-int maiMobileAgentSetHostToolHandler(
-    void *handle, void *context, MaiMobileHostToolHandler handler,
-    MaiMobileHostToolResponseFree responseFree,
-    MaiMobileHostToolContextRelease contextRelease) {
-  if (handle == nullptr)
-    return 0;
-  auto *mobile = static_cast<MaiMobileAgent *>(handle);
-  if (mobile->anyBusy())
-    return 0;
-  return setMaiMobileHostToolHandler(mobile->hostTools, context, handler,
-                                     responseFree, contextRelease)
-             ? 1
-             : 0;
+int maiMobileAgentSetHostToolHandler(void* handle, void* context, MaiMobileHostToolHandler handler,
+                                     MaiMobileHostToolResponseFree responseFree,
+                                     MaiMobileHostToolContextRelease contextRelease) {
+    if (handle == nullptr) return 0;
+    auto* mobile = static_cast<MaiMobileAgent*>(handle);
+    if (mobile->anyBusy()) return 0;
+    return setMaiMobileHostToolHandler(mobile->hostTools, context, handler, responseFree, contextRelease) ? 1 : 0;
 }
-int maiMobileAgentSetOrtApiBase(void *handle, const void *apiBase) {
-  if (handle == nullptr || apiBase == nullptr)
-    return 0;
-  auto *mobile = static_cast<MaiMobileAgent *>(handle);
-  if (mobile->agent != nullptr)
-    return 0;
-  mobile->ortApiBase = apiBase;
-  return 1;
+int maiMobileAgentSetOrtApiBase(void* handle, const void* apiBase) {
+    if (handle == nullptr || apiBase == nullptr) return 0;
+    auto* mobile = static_cast<MaiMobileAgent*>(handle);
+    if (mobile->agent != nullptr) return 0;
+    mobile->ortApiBase = apiBase;
+    return 1;
 }
-char *maiMobileMatteVideo(const char *argumentsJson, const char *workspace,
-                          const char *modelPath, const char *runtimePath,
-                          const void *apiBase) {
-  try {
-    if (argumentsJson == nullptr || workspace == nullptr ||
-        modelPath == nullptr)
-      return ownedResponse(
-          R"({"ok":false,"error":"invalid matting arguments"})");
-    auto tool = makeMaiVideoMattingTool(
-        maiMatteVideo, modelPath, runtimePath != nullptr ? runtimePath : "",
-        apiBase);
-    if (!tool)
-      return ownedResponse(
-          R"({"ok":false,"error":"video matting is unavailable"})");
-    MaiToolContext context;
-    context.root = workspace;
-    context.allowOutsideWorkingDirectory = true;
-    const MaiToolResult result = tool->execute(argumentsJson, context);
-    if (result.hasError())
-      return ownedResponse(
-          Json{{"ok", false},
-               {"errorCode", maiErrorCodeToString(result.error().code())},
-               {"error", result.error().message()}}
-              .dump());
-    return ownedResponse(
-        Json{{"ok", true}, {"output", result.output()}}.dump());
-  } catch (const std::exception &error) {
-    return ownedResponse(Json{{"ok", false}, {"error", error.what()}}.dump());
-  }
+char* maiMobileMatteVideo(const char* argumentsJson, const char* workspace, const char* modelPath,
+                          const char* runtimePath, const void* apiBase) {
+    try {
+        if (argumentsJson == nullptr || workspace == nullptr || modelPath == nullptr)
+            return ownedResponse(R"({"ok":false,"error":"invalid matting arguments"})");
+        auto tool =
+            makeMaiVideoMattingTool(maiMatteVideo, modelPath, runtimePath != nullptr ? runtimePath : "", apiBase);
+        if (!tool) return ownedResponse(R"({"ok":false,"error":"video matting is unavailable"})");
+        MaiToolContext context;
+        context.root = workspace;
+        context.allowOutsideWorkingDirectory = true;
+        const MaiToolResult result = tool->execute(argumentsJson, context);
+        if (result.hasError())
+            return ownedResponse(Json{{"ok", false},
+                                      {"errorCode", maiErrorCodeToString(result.error().code())},
+                                      {"error", result.error().message()}}
+                                     .dump());
+        return ownedResponse(Json{{"ok", true}, {"output", result.output()}}.dump());
+    } catch (const std::exception& error) {
+        return ownedResponse(Json{{"ok", false}, {"error", error.what()}}.dump());
+    }
 }
-char *maiMobileAgentRequest(void *handle, const char *request) {
-  std::string response;
-  try {
-    if (!handle || !request)
-      throw std::runtime_error("Invalid bridge handle.");
-    response = static_cast<MaiMobileAgent *>(handle)
-                   ->request(Json::parse(request))
-                   .dump();
-  } catch (const std::exception &e) {
-    response = Json{{"ok", false}, {"error", e.what()}}.dump();
-  } catch (...) {
-    response = "{\"ok\":false,\"error\":\"Native agent failure.\"}";
-  }
-  return ownedResponse(response);
+char* maiMobileAgentRequest(void* handle, const char* request) {
+    std::string response;
+    try {
+        if (!handle || !request) throw std::runtime_error("Invalid bridge handle.");
+        response = static_cast<MaiMobileAgent*>(handle)->request(Json::parse(request)).dump();
+    } catch (const std::exception& e) {
+        response = Json{{"ok", false}, {"error", e.what()}}.dump();
+    } catch (...) {
+        response = "{\"ok\":false,\"error\":\"Native agent failure.\"}";
+    }
+    return ownedResponse(response);
 }
-void maiMobileAgentFree(char *response) { std::free(response); }
+void maiMobileAgentFree(char* response) {
+    std::free(response);
+}

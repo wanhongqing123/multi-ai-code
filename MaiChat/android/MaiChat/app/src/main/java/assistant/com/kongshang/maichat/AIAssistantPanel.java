@@ -797,6 +797,9 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                     ? "可灵 V3 Turbo" : "可灵 V3");
         int duration = input.optInt("duration", production.optInt("duration", 0));
         if (duration > 0) values.add(duration + " 秒");
+        if (input.has("source_duration_seconds"))
+            values.add(String.format(java.util.Locale.ROOT, "源片 %.1f 秒",
+                input.optDouble("source_duration_seconds")));
         String resolution = input.optString("resolution", production.optString("resolution"));
         String ratio = input.optString("ratio", production.optString("ratio"));
         if (!resolution.isEmpty()) values.add(resolution);
@@ -808,6 +811,13 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         JSONArray registeredAssets = input.optJSONArray("reference_asset_ids");
         if (registeredAssets != null && registeredAssets.length() > 0)
             values.add("已登记参考素材 " + registeredAssets.length() + " 张");
+        int strictFrameAssets = !input.optString("first_frame_asset_id").isEmpty() ? 1 : 0;
+        if (!input.optString("last_frame_asset_id").isEmpty()) strictFrameAssets++;
+        if (strictFrameAssets > 0) values.add("已登记严格帧 " + strictFrameAssets + " 张");
+        if (!input.optString("video_asset_id").isEmpty()) values.add("已登记视频素材");
+        if (!input.optString("asset_group_type").isEmpty())
+            values.add(input.optString("asset_group_type").equals("LivenessFace")
+                ? "真人授权素材组" : "虚拟素材组");
         if (!input.optString("size").isEmpty()) values.add(input.optString("size"));
         JSONArray images = input.optJSONArray("local_image_paths");
         if (images == null) images = input.optJSONArray("image_paths");
@@ -821,7 +831,9 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         int videoCount = !input.optString("video_path").isEmpty()
             || !input.optString("reference_video_path").isEmpty()
             || !input.optString("reference_video").isEmpty()
-            || !input.optString("video_url").isEmpty() ? 1 : 0;
+            || !input.optString("video_url").isEmpty()
+            || !input.optString("video_asset_id").isEmpty()
+            || !input.optString("video_task_id").isEmpty() ? 1 : 0;
         int audioCount = !input.optString("reference_audio_path").isEmpty()
             || !input.optString("reference_audio").isEmpty() ? 1 : 0;
         if (content != null) {
@@ -909,7 +921,12 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 } else if (paid) {
                     pending.addView(text(paidApprovalTitle(tool, input), 17, MaiChatTheme.TEXT), matchWrap());
                     JSONArray registeredAssets = input.optJSONArray("reference_asset_ids");
-                    String note = registeredAssets != null && registeredAssets.length() > 0
+                    boolean usesRegisteredAsset =
+                        registeredAssets != null && registeredAssets.length() > 0
+                        || !input.optString("first_frame_asset_id").isEmpty()
+                        || !input.optString("last_frame_asset_id").isEmpty()
+                        || !input.optString("video_asset_id").isEmpty();
+                    String note = usesRegisteredAsset
                         ? "将使用已登记的参考素材；平台仍会审核。确认后提交给"
                             + paidProvider(tool) + "，可能消耗模型额度。"
                         : !input.optString("virtual_avatar_asset_id").isEmpty()
@@ -1418,8 +1435,9 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                             MarkdownRenderer.bindStreaming(view, source);
                         }
                     } else {
-                        view.setText(toolStatus(part.optString("state")) + " "
-                            + part.optString("tool") + "  ›");
+                        String stage = seedanceToolStage(part);
+                        view.setText(stage == null ? toolStatus(part.optString("state")) + " "
+                            + part.optString("tool") + "  ›" : stage + "  ›");
                         TextView detail = parts.get(id + ":detail");
                         if (detail != null)
                             detail.setText(part.optString("input") + "\n"
@@ -1524,6 +1542,41 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             : state.equals("error")      ? "失败"
             : state.equals("pending")    ? "等待授权"
                                          : "正在运行";
+    }
+    private String seedanceToolStage(JSONObject part) {
+        if (!part.optString("tool").equals("seedance_video")) return null;
+        JSONObject input;
+        JSONObject output;
+        try { input = new JSONObject(part.optString("input", "{}")); }
+        catch (Exception ignored) { input = new JSONObject(); }
+        try { output = new JSONObject(part.optString("output", "{}")); }
+        catch (Exception ignored) { output = new JSONObject(); }
+        if (part.optString("state").equals("error")) return "人物替换 · 当前阶段失败";
+        String action = input.optString("action");
+        if (action.equals("prepare")) {
+            if (part.optString("state").equals("running"))
+                return "人物替换 · 正在准备素材";
+            if (output.optString("status").equals("processing"))
+                return "人物替换 · 素材处理中";
+            if (output.optString("status").equals("ready"))
+                return "人物替换 · 素材已 Active";
+        }
+        if (action.equals("delegate") || action.equals("revise")) {
+            if (part.optString("state").equals("pending"))
+                return "人物替换 · 等待付费确认";
+            String status = output.optString("status");
+            if (status.equals("queued")) return "人物替换 · 云端排队中";
+            if (status.equals("running")) return "人物替换 · 云端生成中";
+            if (status.equals("succeeded")) return "人物替换 · 已完成";
+            return "人物替换 · 正在提交";
+        }
+        if (action.equals("continue")) {
+            String status = output.optString("status");
+            if (status.equals("queued")) return "人物替换 · 云端排队中";
+            if (status.equals("running")) return "人物替换 · 云端生成中";
+            if (status.equals("succeeded")) return "人物替换 · 已完成";
+        }
+        return null;
     }
     static String pdfPathFromToolOutput(JSONObject part) {
         if (!part.optString("tool").equals("generate_pdf")

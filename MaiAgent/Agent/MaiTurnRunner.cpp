@@ -106,20 +106,17 @@ std::string specialistFailureGuidance(const nlohmann::json& specialist) {
         (detail.find("real person") != std::string::npos ||
          detail.find("human face") != std::string::npos ||
          detail.find("portrait") != std::string::npos)) {
-        // Seedance 报可能有真人时，先查或登记原图资产，等 Active 后以资产 ID 重试
-        // 同一模型；多张图逐张登记，不能偷偷丢图或再把本地原图直接提交。
-        return " The original-image Seedance attempt was rejected for a possible real face. "
-               "Keep every original reference unchanged. Check whether an Active asset for the "
-               "same image already exists; otherwise use ark_assets upload_image with the "
-               "original local image, then get_asset until it is Active or Failed. If Active, "
-               "retry the selected Seedance model using reference_asset_ids with all Active "
-               "asset:// IDs and new paid-call approval. Do not pass those photos again through "
-               "local_image_paths; that would resubmit local files. For several required "
-               "photos, register each separately and do not silently drop one. Do not default "
-               "to flipping, oil-painting, or rewriting a face "
-               "to evade review. If asset registration fails or requires a real-person "
-               "authorization step, report the actual provider result to the main model and "
-               "follow that authorized path; do not claim every real photo is accepted.";
+        // Seedance 报可能有真人时，保留原素材并要求真人授权组；不能降级到 AIGC 组，
+        // 也不能通过改脸绕过审核。重试仍须使用 Active 资产和新的付费确认。
+        return " The Seedance attempt was rejected for a possible real person. Keep every "
+               "original image and video unchanged. Do not register a natural person in an "
+               "AIGC group. Use an existing LivenessFace group for that person, or complete "
+               "ark_assets begin_real_validation and get_real_validation first. Prepare each "
+               "required local medium through OSS and Ark Assets, wait until every asset is "
+               "Active, then retry the same Seedance model using only asset:// IDs and new "
+               "paid-call approval. Do not resubmit local paths or silently drop an input. "
+               "Do not flip, repaint, or rewrite a face to evade review. If registration is "
+               "Processing or Failed, report that actual state instead of changing models.";
     }
     if (detail.find("text sensitive") != std::string::npos ||
         detail.find("prompt sensitive") != std::string::npos) {

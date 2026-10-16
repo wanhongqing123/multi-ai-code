@@ -21,7 +21,7 @@ function request(body, token = env.MAICHAT_OSS_SIGNER_TOKEN) {
   };
 }
 
-test('signs a private video PUT and temporary GET for a random object key', async () => {
+test('signs a private Ark video PUT and temporary GET for a random object key', async () => {
   const calls = [];
   const handle = createHandler({
     env,
@@ -39,10 +39,11 @@ test('signs a private video PUT and temporary GET for a random object key', asyn
       };
     }
   });
-  const result = await handle(request({ filename: 'clip.MOV', size_bytes: 20_000_000 }));
+  const result = await handle(request({ filename: 'clip.MOV', size_bytes: 20_000_000,
+    purpose: 'ark_asset_input' }));
   assert.equal(result.statusCode, 200);
   const body = JSON.parse(result.body);
-  assert.equal(body.object_key, 'seedance-inputs/2026-10-08/1234-unique.mov');
+  assert.equal(body.object_key, 'ark-asset-inputs/2026-10-08/1234-unique.mov');
   assert.equal(body.upload_headers['Content-Type'], 'video/quicktime');
   assert.deepEqual(calls.map(call => [call[0], call[1], call[3]]), [
     ['PUT', 900, body.object_key], ['GET', 86400, body.object_key]
@@ -54,10 +55,14 @@ test('signs a private video PUT and temporary GET for a random object key', asyn
 test('rejects unauthorized and oversized requests before signing', async () => {
   let created = false;
   const handle = createHandler({ env, makeClient: () => { created = true; } });
-  assert.equal((await handle(request({ filename: 'clip.mp4', size_bytes: 1 }, 'wrong'))).statusCode, 401);
-  assert.equal((await handle(request({ filename: 'clip.mp4', size_bytes: 200_000_001 }))).statusCode, 400);
-  assert.equal((await handle(request({ filename: 'clip.exe', size_bytes: 12 }))).statusCode, 400);
-  assert.equal((await handle(request({ filename: 'photo.jpg', size_bytes: 30_000_001 }))).statusCode, 400);
+  assert.equal((await handle(request({ filename: 'clip.mp4', size_bytes: 1,
+    purpose: 'ark_asset_input' }, 'wrong'))).statusCode, 401);
+  assert.equal((await handle(request({ filename: 'clip.mp4', size_bytes: 200_000_001,
+    purpose: 'ark_asset_input' }))).statusCode, 400);
+  assert.equal((await handle(request({ filename: 'clip.exe', size_bytes: 12,
+    purpose: 'ark_asset_input' }))).statusCode, 400);
+  assert.equal((await handle(request({ filename: 'photo.jpg', size_bytes: 30_000_001,
+    purpose: 'ark_asset_input' }))).statusCode, 400);
   assert.equal(created, false);
 });
 
@@ -122,12 +127,74 @@ test('signs direct JPEG uploads for private Ark input storage', async () => {
       calls.push(args);
       return `https://example.oss-cn-hangzhou.aliyuncs.com/${args[3]}?signed=yes`;
     } }) });
-  const result = await handle(request({ filename: 'photo.JPG', size_bytes: 1_000_000 }));
+  const result = await handle(request({ filename: 'photo.JPG', size_bytes: 1_000_000,
+    purpose: 'ark_asset_input' }));
   assert.equal(result.statusCode, 200);
   const body = JSON.parse(result.body);
   assert.equal(body.object_key, 'ark-asset-inputs/2026-10-08/image-id.jpg');
   assert.equal(body.upload_headers['Content-Type'], 'image/jpeg');
   assert.deepEqual(calls.map(call => call[0]), ['PUT', 'GET']);
+});
+
+test('routes explicit upload purposes to fixed prefixes for supported file types', async () => {
+  const signedKeys = [];
+  const handle = createHandler({ env, newID: () => 'fixed-id',
+    currentTime: () => new Date('2026-10-08T00:00:00Z'),
+    makeClient: () => ({ signatureUrlV4: async (...args) => {
+      signedKeys.push(args[3]);
+      return `https://example.oss-cn-hangzhou.aliyuncs.com/${args[3]}?signed=yes`;
+    } }) });
+  const cases = [
+    ['wan_input', 'photo.JPG', 'wan-inputs/2026-10-08/fixed-id.jpg'],
+    ['wan_input', 'photo.PNG', 'wan-inputs/2026-10-08/fixed-id.png'],
+    ['wan_input', 'clip.MP4', 'wan-inputs/2026-10-08/fixed-id.mp4'],
+    ['wan_input', 'clip.MOV', 'wan-inputs/2026-10-08/fixed-id.mov'],
+    ['wan_input', 'proposal.PDF', 'wan-inputs/2026-10-08/fixed-id.pdf'],
+    ['ark_asset_input', 'photo.png', 'ark-asset-inputs/2026-10-08/fixed-id.png'],
+    ['ark_asset_input', 'clip.mp4', 'ark-asset-inputs/2026-10-08/fixed-id.mp4'],
+    ['ark_asset_input', 'clip.mov', 'ark-asset-inputs/2026-10-08/fixed-id.mov'],
+    ['shared_media_input', 'photo.png', 'shared-media-inputs/2026-10-08/fixed-id.png'],
+    ['shared_media_input', 'clip.mov', 'shared-media-inputs/2026-10-08/fixed-id.mov'],
+    ['shared_media_input', 'proposal.pdf', 'shared-media-inputs/2026-10-08/fixed-id.pdf']
+  ];
+  for (const [purpose, filename, expectedKey] of cases) {
+    const result = await handle(request({ filename, size_bytes: 100, purpose }));
+    assert.equal(result.statusCode, 200);
+    assert.equal(JSON.parse(result.body).object_key, expectedKey);
+  }
+  assert.equal(signedKeys.length, cases.length * 2);
+});
+
+test('rejects unknown or mismatched upload purposes before signing', async () => {
+  let created = false;
+  const handle = createHandler({ env, makeClient: () => { created = true; } });
+  for (const body of [
+    { filename: 'photo.jpg', size_bytes: 100 },
+    { filename: 'photo.jpg', size_bytes: 100, purpose: 'wan-inputs/../seedance-inputs' },
+    { filename: 'photo.jpg', size_bytes: 100, purpose: '__proto__' },
+    { filename: 'photo.jpg', size_bytes: 100, purpose: '' },
+    { filename: 'photo.jpg', size_bytes: 100, purpose: null },
+    { filename: 'photo.jpg', size_bytes: 100, purpose: 'seedance_input' },
+    { filename: 'clip.mp4', size_bytes: 100, purpose: 'seedance_input' },
+    { filename: 'proposal.pdf', size_bytes: 100, purpose: 'ark_asset_input' },
+    { filename: 'proposal.pdf', size_bytes: 100, purpose: 'seedance_input' }
+  ]) {
+    assert.equal((await handle(request(body))).statusCode, 400);
+  }
+  assert.equal(created, false);
+});
+
+test('never accepts a caller-supplied object path', async () => {
+  const handle = createHandler({ env, newID: () => 'safe-id',
+    currentTime: () => new Date('2026-10-08T00:00:00Z'),
+    makeClient: () => ({ signatureUrlV4: async (...args) =>
+      `https://example.oss-cn-hangzhou.aliyuncs.com/${args[3]}?signed=yes` }) });
+  const result = await handle(request({ filename: '../../private/photo.jpg',
+    size_bytes: 100, purpose: 'wan_input', prefix: 'another-prefix',
+    object_key: '../../private/overwrite.jpg' }));
+  assert.equal(result.statusCode, 200);
+  assert.equal(JSON.parse(result.body).object_key,
+    'wan-inputs/2026-10-08/safe-id.jpg');
 });
 
 test('signs private Wan document uploads with their real MIME type and 100 MB cap', async () => {
@@ -138,22 +205,25 @@ test('signs private Wan document uploads with their real MIME type and 100 MB ca
       calls.push(args);
       return `https://example.oss-cn-hangzhou.aliyuncs.com/${args[3]}?signed=yes`;
     } }) });
-  const result = await handle(request({ filename: 'proposal.PPTX', size_bytes: 2_000_000 }));
+  const result = await handle(request({ filename: 'proposal.PPTX', size_bytes: 2_000_000,
+    purpose: 'wan_input' }));
   assert.equal(result.statusCode, 200);
   const signed = JSON.parse(result.body);
-  assert.equal(signed.object_key, 'seedance-inputs/2026-10-08/document-id.pptx');
+  assert.equal(signed.object_key, 'wan-inputs/2026-10-08/document-id.pptx');
   assert.equal(signed.upload_headers['Content-Type'],
     'application/vnd.openxmlformats-officedocument.presentationml.presentation');
   assert.deepEqual(calls.map(call => call[0]), ['PUT', 'GET']);
   assert.equal((await handle(request({ filename: 'proposal.pptx',
-    size_bytes: 100_000_001 }))).statusCode, 400);
+    size_bytes: 100_000_001, purpose: 'wan_input' }))).statusCode, 400);
 });
 
 test('fails closed when credentials or route are missing', async () => {
   const missing = createHandler({ env: { ...env, ALIBABA_CLOUD_ACCESS_KEY_SECRET: '' } });
-  assert.equal((await missing(request({ filename: 'clip.mp4', size_bytes: 12 }))).statusCode, 503);
+  assert.equal((await missing(request({ filename: 'clip.mp4', size_bytes: 12,
+    purpose: 'ark_asset_input' }))).statusCode, 503);
   const active = createHandler({ env });
-  const wrongRoute = request({ filename: 'clip.mp4', size_bytes: 12 });
+  const wrongRoute = request({ filename: 'clip.mp4', size_bytes: 12,
+    purpose: 'ark_asset_input' });
   wrongRoute.rawPath = '/other';
   assert.equal((await active(wrongRoute)).statusCode, 404);
 });
@@ -186,6 +256,127 @@ test('uses the Ark signing key only for validated asset actions', async () => {
     group_id: 'group-1234567890', url: 'http://localhost/photo.jpg' }));
   assert.equal(invalid.statusCode, 400);
   assert.equal(calls.length, 3);
+});
+
+test('forwards only supported Ark asset types and defaults old clients to Image', async () => {
+  const assetEnv = { ...env, VOLC_ACCESS_KEY_ID: 'ark-ak',
+    VOLC_SECRET_ACCESS_KEY: 'ark-sk' };
+  const calls = [];
+  const handle = createHandler({ env: assetEnv, callArk: async (action, payload) => {
+    calls.push({ action, payload });
+    return { Result: { Id: 'asset-1234567890' } };
+  } });
+  const assetRequest = body => ({ ...request(body), rawPath: '/ark-assets' });
+  const base = { action: 'create_asset', group_id: 'group-1234567890',
+    url: 'https://videos.example.com/clip.mp4' };
+  assert.equal((await handle(assetRequest({ ...base, asset_type: 'Video' }))).statusCode, 200);
+  assert.deepEqual(calls[0], { action: 'CreateAsset', payload: {
+    GroupId: 'group-1234567890', URL: base.url, AssetType: 'Video',
+    Name: 'Video', ProjectName: 'default'
+  } });
+  assert.equal((await handle(assetRequest({ ...base, asset_type: 'Image' }))).statusCode, 200);
+  assert.equal(calls[1].payload.AssetType, 'Image');
+  assert.equal((await handle(assetRequest(base))).statusCode, 200);
+  assert.equal(calls[2].payload.AssetType, 'Image');
+  for (const assetType of ['Audio', 'video', '', null, '../Video']) {
+    assert.equal((await handle(assetRequest({ ...base,
+      asset_type: assetType }))).statusCode, 400);
+  }
+  assert.equal((await handle(assetRequest({ ...base, asset_type: 'Video',
+    url: 'http://localhost/clip.mp4' }))).statusCode, 400);
+  assert.equal((await handle(assetRequest({ ...base, asset_type: 'Video',
+    group_id: '../group-123' }))).statusCode, 400);
+  assert.equal(calls.length, 3);
+});
+
+test('looks up an Ark group by validated ID without returning service credentials', async () => {
+  const assetEnv = { ...env, VOLC_ACCESS_KEY_ID: 'ark-ak',
+    VOLC_SECRET_ACCESS_KEY: 'ark-sk', VOLC_ARK_PROJECT_NAME: 'real-project' };
+  const calls = [];
+  const handle = createHandler({ env: assetEnv, callArk: async (action, payload, credentials) => {
+    calls.push({ action, payload, credentials });
+    return { Result: { Id: 'group-real-123456', GroupType: 'LivenessFace' } };
+  } });
+  const assetRequest = body => ({ ...request(body), rawPath: '/ark-assets' });
+  const result = await handle(assetRequest({ action: 'get_group',
+    group_id: 'group-real-123456' }));
+  assert.equal(result.statusCode, 200);
+  assert.deepEqual(JSON.parse(result.body), { result: {
+    Id: 'group-real-123456', GroupType: 'LivenessFace'
+  } });
+  assert.equal(calls[0].action, 'GetAssetGroup');
+  assert.deepEqual(calls[0].payload, {
+    Id: 'group-real-123456', ProjectName: 'real-project'
+  });
+  assert.equal(calls[0].credentials.secretKey, 'ark-sk');
+  assert.ok(!result.body.includes('ark-sk'));
+  for (const groupId of ['', 'asset-123456', '../group-real-123456']) {
+    assert.equal((await handle(assetRequest({ action: 'get_group',
+      group_id: groupId }))).statusCode, 400);
+  }
+  assert.equal(calls.length, 1);
+});
+
+test('checks the expected Ark group type before creating a real-person video asset', async () => {
+  const assetEnv = { ...env, VOLC_ACCESS_KEY_ID: 'ark-ak',
+    VOLC_SECRET_ACCESS_KEY: 'ark-sk' };
+  const calls = [];
+  let actualGroupType = 'LivenessFace';
+  const handle = createHandler({ env: assetEnv, callArk: async (action, payload) => {
+    calls.push({ action, payload });
+    if (action === 'GetAssetGroup') return { Result: {
+      Id: 'group-real-123456', GroupType: actualGroupType
+    } };
+    return { Result: { Id: 'asset-video-123456' } };
+  } });
+  const assetRequest = body => ({ ...request(body), rawPath: '/ark-assets' });
+  const video = { action: 'create_asset', group_id: 'group-real-123456',
+    url: 'https://videos.example.com/clip.mp4', asset_type: 'Video',
+    expected_group_type: 'LivenessFace' };
+  const created = await handle(assetRequest(video));
+  assert.equal(created.statusCode, 200);
+  assert.deepEqual(calls.map(call => call.action), ['GetAssetGroup', 'CreateAsset']);
+  assert.deepEqual(calls[0].payload, {
+    Id: 'group-real-123456', ProjectName: 'default'
+  });
+  assert.equal(calls[1].payload.AssetType, 'Video');
+
+  actualGroupType = 'AIGC';
+  const mismatch = await handle(assetRequest(video));
+  assert.equal(mismatch.statusCode, 409);
+  assert.equal(calls.at(-1).action, 'GetAssetGroup');
+  assert.equal(calls.filter(call => call.action === 'CreateAsset').length, 1);
+
+  for (const expectedGroupType of ['', 'RealPerson', null, '../LivenessFace']) {
+    assert.equal((await handle(assetRequest({ ...video,
+      expected_group_type: expectedGroupType }))).statusCode, 400);
+  }
+  assert.equal(calls.length, 3);
+
+  actualGroupType = '';
+  assert.equal((await handle(assetRequest(video))).statusCode, 502);
+  assert.equal(calls.filter(call => call.action === 'CreateAsset').length, 1);
+  assert.ok(!created.body.includes('ark-sk'));
+});
+
+test('does not create an Ark asset when the group lookup fails', async () => {
+  const assetEnv = { ...env, VOLC_ACCESS_KEY_ID: 'ark-ak',
+    VOLC_SECRET_ACCESS_KEY: 'ark-sk' };
+  const actions = [];
+  const handle = createHandler({ env: assetEnv, callArk: async action => {
+    actions.push(action);
+    return { ResponseMetadata: { RequestId: 'request-123', Error: {
+      Code: 'GroupUnavailable', Message: 'Group lookup failed'
+    } } };
+  } });
+  const result = await handle({ ...request({ action: 'create_asset',
+    group_id: 'group-real-123456', url: 'https://videos.example.com/clip.mp4',
+    asset_type: 'Video', expected_group_type: 'LivenessFace' }),
+    rawPath: '/ark-assets' });
+  assert.equal(result.statusCode, 502);
+  assert.equal(JSON.parse(result.body).provider_code, 'GroupUnavailable');
+  assert.deepEqual(actions, ['GetAssetGroup']);
+  assert.ok(!result.body.includes('ark-sk'));
 });
 
 test('Ark Assets works without OSS configuration', async () => {

@@ -49,7 +49,7 @@ namespace {
 // 桌面端与移动端一致：先从工具描述初筛，再以 discover
 // 的真实接线状态选择候选模型。 这里仅约束主模型如何读取能力，不给通用 Agent
 // 核心添加任何单一供应商的硬路由。
-const char *const kDesktopSystemPrompt =
+const char* const kDesktopSystemPrompt =
     R"(You are the AI assistant embedded in MaiChat.
 Video generation rule: before any paid video delegate, use discover to identify configured
 specialists with implemented capabilities for this request. Read descriptions for initial routing,
@@ -89,18 +89,21 @@ another ratio. Do not silently trim longer footage. For Wan3 video extension use
 wan_video mode=extend with one source video,
 an explicit extension direction, ratio=adaptive, and measured source_duration_seconds; input
 plus requested output must not exceed 30 seconds.
-If Seedance is selected and reference photos visibly contain real people, explain two asset paths
-before a paid task and let the user choose once: ordinary private photos can be registered as
-AIGC virtual assets; public figures or verified real-person likenesses should use H5 real-portrait
-authorization. Do not infer that a person is public from a photo alone. For the chosen path, check
-matching Active assets or register each required photo with ark_assets upload_image, wait for
-Active, then submit the same Seedance model with all selected reference_asset_ids and paid
-approval. H5 authorization needs begin_real_validation, the person's completion of its link, and
-get_real_validation before uploading matching photos into that verified group. Never call an AIGC
-asset real-person authorization. Non-real-person images use local paths as input to the tool;
-the tool uploads them to private OSS and sends short-lived HTTPS URLs to Seedance, not Base64.
-Do not silently drop a photo or assume every face will pass asset review. If Ark requires H5
-authorization, follow its actual result. Do not default to
+For every new local image or video used by Seedance, first call seedance_video prepare with the
+local paths, an existing asset_group_id, and its asset_group_type. For a local video, prepare runs
+FFprobe itself and rejects anything outside Seedance 2.0's 2-15 second and 24-60 fps limits. Do
+not estimate or provide media metadata yourself. Preparation uploads to private OSS, registers
+Ark assets, and waits for Active. Then
+call delegate with only the returned asset
+IDs and obtain the final paid-call approval. Never pass an OSS signed URL or repeat local paths in
+delegate. A completed Seedance task ID is the only media-source exception and may be reused.
+AIGC groups are only for fictional or virtual subjects. If any selected image or video contains a
+recognizable natural person, use an existing LivenessFace group or call ark_assets
+begin_real_validation, let that person complete the H5 link, and resolve its GroupId with
+get_real_validation. Do not infer authorization from pixels, put a natural person in an AIGC
+group, or describe an Active AIGC asset as authorized. Each LivenessFace group belongs to one
+person; multi-person media may fail consistency review. Preserve every selected input and report
+Processing, Active, or Failed accurately. Do not default to
 flipping or oil-painting a real face to evade review. For other image issues, if an image edit is
 allowed and still serves the user's goal, preserve the original, make a light
 FFmpeg/OpenCV edit, preview it, and retry the selected model with new paid approval. If
@@ -171,30 +174,30 @@ disguise explicitly prohibited material, reconstruct a prohibited identity, or p
 will pass moderation. Consider another
 provider only after bounded same-provider attempts fail.)";
 
-std::string toUtf8(const QString &text) {
-  const QByteArray bytes = text.toUtf8();
-  return std::string(bytes.constData(), static_cast<std::size_t>(bytes.size()));
+std::string toUtf8(const QString& text) {
+    const QByteArray bytes = text.toUtf8();
+    return std::string(bytes.constData(), static_cast<std::size_t>(bytes.size()));
 }
 
-QString fromUtf8(const std::string &text) {
-  return QString::fromUtf8(text.data(), static_cast<int>(text.size()));
+QString fromUtf8(const std::string& text) {
+    return QString::fromUtf8(text.data(), static_cast<int>(text.size()));
 }
 
 // 界面要知道一个片段是正文、思考还是工具卡。增量事件本身不带这个信息（见头文件里那一段），
 // 所以查一次记下来。
 enum class PartKind { Unknown, Text, Reasoning, Tool };
 
-} // namespace
+}  // namespace
 
 struct AgentController::Runtime {
-  std::unique_ptr<MaiAgent> agent;
-  MaiEventBus::Token token = 0;
-  QString openError;
-  QString lastError;
-  // 只有主线程碰它：所有事件都排队到主线程之后才分类。
-  QHash<QString, QHash<QString, PartKind>> partKindsBySession;
-  QHash<QString, QHash<QString, QString>> livePartTextBySession;
-  QString modelName;
+    std::unique_ptr<MaiAgent> agent;
+    MaiEventBus::Token token = 0;
+    QString openError;
+    QString lastError;
+    // 只有主线程碰它：所有事件都排队到主线程之后才分类。
+    QHash<QString, QHash<QString, PartKind>> partKindsBySession;
+    QHash<QString, QHash<QString, QString>> livePartTextBySession;
+    QString modelName;
 };
 
 namespace {
@@ -205,521 +208,463 @@ namespace {
 // 这些情况下用户仍然应该能用
 // agent（只是这次的对话不会留下来），而不是面对一个打不开的窗口。 错误从
 // openError() 取，界面自己决定怎么提示。
-std::unique_ptr<MaiSessionStore> openStore(const QString &databasePath,
-                                           QString &openError) {
-  if (databasePath.isEmpty())
-    return makeMaiMemoryStore();
+std::unique_ptr<MaiSessionStore> openStore(const QString& databasePath, QString& openError) {
+    if (databasePath.isEmpty()) return makeMaiMemoryStore();
 
-  auto opened = makeMaiSqliteStore(toUtf8(databasePath));
-  if (!opened) {
-    openError = fromUtf8(opened.error().message());
-    return makeMaiMemoryStore();
-  }
-  return std::move(opened.value());
+    auto opened = makeMaiSqliteStore(toUtf8(databasePath));
+    if (!opened) {
+        openError = fromUtf8(opened.error().message());
+        return makeMaiMemoryStore();
+    }
+    return std::move(opened.value());
 }
 
 std::unique_ptr<MaiAgent>
 // 为桌面端装配 MaiAgent 核心、模型客户端和平台宿主工具。
 // 工具的权限及工作目录在这里统一传入，实际操作仍由工具入口负责校验。
-buildAgent(std::unique_ptr<MaiModelClient> model,
-           std::unique_ptr<MaiSessionStore> store, const QString &defaultModel,
-           MaiApprovalPolicy approvalPolicy,
-           const AgentController::ToolRegistrar &hostTools,
-           const AgentController::ModelConfig &credentials) {
-  // MaiAgent 内置工具总是装着；平台不支持的能力由核心在注册时排除。
-  // 会话没有工作目录时工具层会明确拒绝，
-  // 要不要把工具声明给模型看是 MaiContextBuilder 的事，不是这里的。
-  auto tools = std::make_unique<MaiToolRegistry>();
-  registerMaiBuiltinTools(*tools);
-#if defined(Q_OS_MAC) || defined(Q_OS_WIN)
-  tools->add(makeMaiSystemResourcesTool(maiDesktopGpuResources));
-#endif
-  const QString cache =
-      QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
-  const QString temporaryBase =
-      QStandardPaths::writableLocation(QStandardPaths::TempLocation);
-  const QString temporary =
-      QDir(temporaryBase).filePath(QStringLiteral("MaiChatAgentTemp"));
-  if (!cache.isEmpty() && !temporaryBase.isEmpty() && QDir().mkpath(cache) &&
-      QDir().mkpath(temporary)) {
-    tools->add(makeMaiAppStorageTool({toUtf8(temporary), toUtf8(cache), {}}));
-  }
-  tools->add(makeMaiAgentSendMediaTool());
-  const auto arkKey = [provider = credentials.arkApiKeyProvider,
-                       key = toUtf8(credentials.arkApiKey)] {
-    return provider ? toUtf8(provider()) : key;
-  };
-  const auto assetSettings = [base = toUtf8(credentials.cloudServiceUrl),
-                              token = toUtf8(credentials.cloudServiceToken)]()
-      -> MaiResult<MaiArkAssetServiceSettings> {
-    if (base.empty() || token.empty())
-      return {MaiErrorCode::NotConfigured,
-              "Ark Assets service is not configured"};
-    return MaiArkAssetServiceSettings{base, token};
-  };
-  // 桌面端与手机端使用同一 C++ OSS 上传实现，付费模型不接收本地 Base64 素材。
-  const bool assetsConfigured = static_cast<bool>(assetSettings());
-  const MaiCreativeMediaUploadProvider uploadMedia =
-      assetsConfigured ? makeMaiPrivateOssMediaUploader(assetSettings)
-                       : MaiCreativeMediaUploadProvider{};
-  tools->add(makeMaiSeedanceVideoTool(arkKey, {}, uploadMedia));
-  if (assetsConfigured)
-    tools->add(
-        makeMaiArkAssetTool(makeMaiArkAssetServiceProvider(assetSettings)));
-  else
-    tools->add(makeMaiArkAssetTool());
-  tools->add(makeMaiSeedreamImageTool(arkKey, {}, uploadMedia));
-  const auto glmKey = [key = toUtf8(credentials.glmApiKey)] { return key; };
-  tools->add(makeMaiGlmImageTool(glmKey));
-  const auto miniMaxKey = [key = toUtf8(credentials.miniMaxApiKey)] {
-    return key;
-  };
-  tools->add(makeMaiMiniMaxVideoTool(miniMaxKey, {}, uploadMedia));
-  tools->add(makeMaiMiniMaxImageTool(miniMaxKey, {}, uploadMedia));
-  const auto wanCredentials = [provider = credentials.wanCredentialsProvider,
-                               key = toUtf8(credentials.wanApiKey),
-                               workspace = toUtf8(credentials.wanWorkspaceId)] {
-    if (provider) {
-      const auto current = provider();
-      return MaiWanCredentials{toUtf8(current.first), toUtf8(current.second)};
-    }
-    return MaiWanCredentials{key, workspace};
-  };
-  tools->add(makeMaiWanVideoTool(wanCredentials, {}, uploadMedia));
-  tools->add(makeMaiBailianKlingVideoTool(wanCredentials, {}, uploadMedia));
-  tools->add(makeMaiWanImageTool(wanCredentials, {}, uploadMedia));
-  tools->add(makeMaiBailianKlingImageTool(wanCredentials, {}, uploadMedia));
+buildAgent(std::unique_ptr<MaiModelClient> model, std::unique_ptr<MaiSessionStore> store, const QString& defaultModel,
+           MaiApprovalPolicy approvalPolicy, const AgentController::ToolRegistrar& hostTools,
+           const AgentController::ModelConfig& credentials) {
+    // MaiAgent 内置工具总是装着；平台不支持的能力由核心在注册时排除。
+    // 会话没有工作目录时工具层会明确拒绝，
+    // 要不要把工具声明给模型看是 MaiContextBuilder 的事，不是这里的。
+    auto tools = std::make_unique<MaiToolRegistry>();
+    registerMaiBuiltinTools(*tools);
 #if defined(MAICHAT_EMBEDDED_FFMPEG)
-  MaiFfmpegEngine ffmpegEngine{
-      mai_ffmpeg_execute,       mai_ffmpeg_set_cancel_check,
-      mai_ffprobe_execute,      mai_ffprobe_set_cancel_check,
-      mai_fftools_set_log_sink, mai_fftools_error_string};
-  tools->add(makeMaiViewImageTool(makeMaiFfmpegImagePreview(ffmpegEngine)));
-  tools->add(makeMaiFfmpegTool(ffmpegEngine));
-  tools->add(makeMaiFfprobeTool(ffmpegEngine));
-  tools->add(makeMaiStretchLowerVideoTool(ffmpegEngine));
+    const MaiFfmpegEngine ffmpegEngine{mai_ffmpeg_execute,       mai_ffmpeg_set_cancel_check,
+                                       mai_ffprobe_execute,      mai_ffprobe_set_cancel_check,
+                                       mai_fftools_set_log_sink, mai_fftools_error_string};
+    const MaiVideoMetadataProvider seedanceVideoMetadata = makeMaiFfprobeVideoMetadataProvider(ffmpegEngine);
+#else
+    const MaiVideoMetadataProvider seedanceVideoMetadata;
+#endif
+#if defined(Q_OS_MAC) || defined(Q_OS_WIN)
+    tools->add(makeMaiSystemResourcesTool(maiDesktopGpuResources));
+#endif
+    const QString cache = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+    const QString temporaryBase = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+    const QString temporary = QDir(temporaryBase).filePath(QStringLiteral("MaiChatAgentTemp"));
+    if (!cache.isEmpty() && !temporaryBase.isEmpty() && QDir().mkpath(cache) && QDir().mkpath(temporary)) {
+        tools->add(makeMaiAppStorageTool({toUtf8(temporary), toUtf8(cache), {}}));
+    }
+    tools->add(makeMaiAgentSendMediaTool());
+    const auto arkKey = [provider = credentials.arkApiKeyProvider, key = toUtf8(credentials.arkApiKey)] {
+        return provider ? toUtf8(provider()) : key;
+    };
+    const auto assetSettings = [base = toUtf8(credentials.cloudServiceUrl),
+                                token =
+                                    toUtf8(credentials.cloudServiceToken)]() -> MaiResult<MaiArkAssetServiceSettings> {
+        if (base.empty() || token.empty()) return {MaiErrorCode::NotConfigured, "Ark Assets service is not configured"};
+        return MaiArkAssetServiceSettings{base, token};
+    };
+    // 桌面端与手机端使用同一 C++ OSS 上传实现，付费模型不接收本地 Base64 素材。
+    const bool assetsConfigured = static_cast<bool>(assetSettings());
+    const MaiCreativeMediaUploadProvider uploadMedia =
+        assetsConfigured ? makeMaiPrivateOssMediaUploader(assetSettings) : MaiCreativeMediaUploadProvider{};
+    // 万相使用相同上传服务，但输入对象写入独立的 wan-inputs 前缀。
+    const MaiCreativeMediaUploadProvider wanUploadMedia =
+        assetsConfigured ? makeMaiPrivateOssMediaUploader(assetSettings, {}, MaiOssUploadPurpose::WanInput)
+                         : MaiCreativeMediaUploadProvider{};
+    const MaiArkAssetProvider assetProvider =
+        assetsConfigured ? makeMaiArkAssetServiceProvider(assetSettings) : MaiArkAssetProvider{};
+    tools->add(makeMaiSeedanceVideoTool(arkKey, {}, assetProvider, seedanceVideoMetadata));
+    if (assetsConfigured)
+        tools->add(makeMaiArkAssetTool(assetProvider));
+    else
+        tools->add(makeMaiArkAssetTool());
+    tools->add(makeMaiSeedreamImageTool(arkKey, {}, uploadMedia));
+    const auto glmKey = [key = toUtf8(credentials.glmApiKey)] { return key; };
+    tools->add(makeMaiGlmImageTool(glmKey));
+    const auto miniMaxKey = [key = toUtf8(credentials.miniMaxApiKey)] { return key; };
+    tools->add(makeMaiMiniMaxVideoTool(miniMaxKey, {}, uploadMedia));
+    tools->add(makeMaiMiniMaxImageTool(miniMaxKey, {}, uploadMedia));
+    const auto wanCredentials = [provider = credentials.wanCredentialsProvider, key = toUtf8(credentials.wanApiKey),
+                                 workspace = toUtf8(credentials.wanWorkspaceId)] {
+        if (provider) {
+            const auto current = provider();
+            return MaiWanCredentials{toUtf8(current.first), toUtf8(current.second)};
+        }
+        return MaiWanCredentials{key, workspace};
+    };
+    tools->add(makeMaiWanVideoTool(wanCredentials, {}, wanUploadMedia));
+    tools->add(makeMaiBailianKlingVideoTool(wanCredentials, {}, uploadMedia));
+    tools->add(makeMaiWanImageTool(wanCredentials, {}, wanUploadMedia));
+    tools->add(makeMaiBailianKlingImageTool(wanCredentials, {}, uploadMedia));
+#if defined(MAICHAT_EMBEDDED_FFMPEG)
+    tools->add(makeMaiViewImageTool(makeMaiFfmpegImagePreview(ffmpegEngine)));
+    tools->add(makeMaiFfmpegTool(ffmpegEngine));
+    tools->add(makeMaiFfprobeTool(ffmpegEngine));
+    tools->add(makeMaiStretchLowerVideoTool(ffmpegEngine));
 #endif
 #if defined(MAICHAT_CV_VIDEO_ANALYSIS)
-  tools->add(makeMaiCvSceneDetectTool(analyzeMaiCvVideo));
-  tools->add(makeMaiCvMotionDetectTool(analyzeMaiCvVideo));
-  tools->add(makeMaiCvImageQualityTool(analyzeMaiCvImage));
-  tools->add(makeMaiCvImageCompareTool(analyzeMaiCvImage));
-  tools->add(makeMaiCvFindContoursTool(analyzeMaiCvImage));
-  tools->add(makeMaiCvDetectEdgesTool(analyzeMaiCvImage));
-  tools->add(makeMaiCvTemplateMatchTool(analyzeMaiCvImage));
-  tools->add(makeMaiCvRegisterTranslationTool(analyzeMaiCvImage));
-  tools->add(makeMaiCvDetectLinesTool(analyzeMaiCvImage));
-  tools->add(makeMaiCvDocumentCornersTool(analyzeMaiCvImage));
-  tools->add(makeMaiCvThresholdMaskTool(analyzeMaiCvImage));
+    tools->add(makeMaiCvSceneDetectTool(analyzeMaiCvVideo));
+    tools->add(makeMaiCvMotionDetectTool(analyzeMaiCvVideo));
+    tools->add(makeMaiCvImageQualityTool(analyzeMaiCvImage));
+    tools->add(makeMaiCvImageCompareTool(analyzeMaiCvImage));
+    tools->add(makeMaiCvFindContoursTool(analyzeMaiCvImage));
+    tools->add(makeMaiCvDetectEdgesTool(analyzeMaiCvImage));
+    tools->add(makeMaiCvTemplateMatchTool(analyzeMaiCvImage));
+    tools->add(makeMaiCvRegisterTranslationTool(analyzeMaiCvImage));
+    tools->add(makeMaiCvDetectLinesTool(analyzeMaiCvImage));
+    tools->add(makeMaiCvDocumentCornersTool(analyzeMaiCvImage));
+    tools->add(makeMaiCvThresholdMaskTool(analyzeMaiCvImage));
 #if defined(MAICHAT_RVM_BUNDLED)
-  const QDir applicationDirectory(QCoreApplication::applicationDirPath());
+    const QDir applicationDirectory(QCoreApplication::applicationDirPath());
 #if defined(Q_OS_WIN)
-  const QString modelPath = applicationDirectory.filePath(
-      QStringLiteral("MaiAgentModels/rvm_mobilenetv3_fp32.onnx"));
-  const QString runtimePath =
-      applicationDirectory.filePath(QStringLiteral("onnxruntime.dll"));
-  const QString providerPath = applicationDirectory.filePath(
-      QStringLiteral("onnxruntime_providers_shared.dll"));
-  const bool assetsAvailable = QFileInfo::exists(modelPath) &&
-                               QFileInfo::exists(runtimePath) &&
-                               QFileInfo::exists(providerPath);
+    const QString modelPath = applicationDirectory.filePath(QStringLiteral("MaiAgentModels/rvm_mobilenetv3_fp32.onnx"));
+    const QString runtimePath = applicationDirectory.filePath(QStringLiteral("onnxruntime.dll"));
+    const QString providerPath = applicationDirectory.filePath(QStringLiteral("onnxruntime_providers_shared.dll"));
+    const bool assetsAvailable =
+        QFileInfo::exists(modelPath) && QFileInfo::exists(runtimePath) && QFileInfo::exists(providerPath);
 #else
-  const QString modelPath = applicationDirectory.filePath(
-      QStringLiteral("../Resources/MaiAgentModels/rvm_mobilenetv3_fp32.onnx"));
-  const QString runtimePath = applicationDirectory.filePath(
-      QStringLiteral("../Frameworks/libonnxruntime.1.26.0.dylib"));
-  const bool assetsAvailable =
-      QFileInfo::exists(modelPath) && QFileInfo::exists(runtimePath);
+    const QString modelPath =
+        applicationDirectory.filePath(QStringLiteral("../Resources/MaiAgentModels/rvm_mobilenetv3_fp32.onnx"));
+    const QString runtimePath =
+        applicationDirectory.filePath(QStringLiteral("../Frameworks/libonnxruntime.1.26.0.dylib"));
+    const bool assetsAvailable = QFileInfo::exists(modelPath) && QFileInfo::exists(runtimePath);
 #endif
-  if (assetsAvailable) {
-    tools->add(makeMaiVideoMattingTool(maiMatteVideo, toUtf8(modelPath),
-                                       toUtf8(runtimePath)));
-  }
+    if (assetsAvailable) {
+        tools->add(makeMaiVideoMattingTool(maiMatteVideo, toUtf8(modelPath), toUtf8(runtimePath)));
+    }
 #endif
 #endif
-  tools->add(makeMaiPdfTool(renderDesktopPdf));
+    tools->add(makeMaiPdfTool(renderDesktopPdf));
 #if defined(MAICHAT_DESKTOP_VISION)
-  registerDesktopVisionTools(*tools);
+    registerDesktopVisionTools(*tools);
 #endif
-  if (hostTools)
-    hostTools(*tools);
+    if (hostTools) hostTools(*tools);
 
-  MaiAgent::Options options;
-  if (!defaultModel.isEmpty())
-    options.defaultModel = toUtf8(defaultModel);
-  // 0 = 无限等。桌面端有人盯着，超时自动拒绝等于替用户做决定。
-  options.permissionTimeoutMs = 0;
-  options.approvalPolicy = approvalPolicy;
-  options.allowOutsideWorkingDirectory = true;
-  options.baseInstructions = kDesktopSystemPrompt;
+    MaiAgent::Options options;
+    if (!defaultModel.isEmpty()) options.defaultModel = toUtf8(defaultModel);
+    // 0 = 无限等。桌面端有人盯着，超时自动拒绝等于替用户做决定。
+    options.permissionTimeoutMs = 0;
+    options.approvalPolicy = approvalPolicy;
+    options.allowOutsideWorkingDirectory = true;
+    options.baseInstructions = kDesktopSystemPrompt;
 
-  return std::make_unique<MaiAgent>(std::move(store), std::move(model),
-                                    std::move(tools), options);
+    return std::make_unique<MaiAgent>(std::move(store), std::move(model), std::move(tools), options);
 }
 
-} // namespace
+}  // namespace
 
-AgentController::AgentController(std::unique_ptr<MaiModelClient> model,
-                                 const QString &databasePath, QObject *parent)
-    : AgentController(std::move(model), databasePath, ToolRegistrar(), parent) {
-}
+AgentController::AgentController(std::unique_ptr<MaiModelClient> model, const QString& databasePath, QObject* parent)
+    : AgentController(std::move(model), databasePath, ToolRegistrar(), parent) {}
 
-AgentController::AgentController(std::unique_ptr<MaiModelClient> model,
-                                 const QString &databasePath,
-                                 ToolRegistrar hostTools, QObject *parent)
+AgentController::AgentController(std::unique_ptr<MaiModelClient> model, const QString& databasePath,
+                                 ToolRegistrar hostTools, QObject* parent)
     : QObject(parent), runtime_(std::make_unique<Runtime>()) {
-  // 排队投递要求这个类型是注册过的。放在构造里而不是全局静态，是因为注册本身是幂等且线程安全的，
-  // 而全局静态的初始化顺序不好讲。
-  qRegisterMetaType<MaiEvent>("MaiEvent");
+    // 排队投递要求这个类型是注册过的。放在构造里而不是全局静态，是因为注册本身是幂等且线程安全的，
+    // 而全局静态的初始化顺序不好讲。
+    qRegisterMetaType<MaiEvent>("MaiEvent");
 
-  runtime_->agent = buildAgent(
-      std::move(model), openStore(databasePath, runtime_->openError), QString(),
-      MaiApprovalPolicy::OnRequest, hostTools, AgentController::ModelConfig{});
+    runtime_->agent = buildAgent(std::move(model), openStore(databasePath, runtime_->openError), QString(),
+                                 MaiApprovalPolicy::OnRequest, hostTools, AgentController::ModelConfig{});
 
-  // **显式 QueuedConnection，不用 Auto。**
-  //
-  // Auto 连接方式按“发射线程和接收方线程是不是同一个”在运行期决定：
-  // 核心工作线程过来的走排队，
-  // 而主线程自己调 submit()
-  // 时同步发出的那几条（会话建好、消息建好）会走直连。两条路混着，
-  // 事件到达界面的顺序就不再和发生顺序一致了——界面可能先收到某条增量，再收到"这条消息建好了"。
-  //
-  // 一律排队就都是先进先出，而且分类逻辑永远只在主线程上跑。
-  connect(this, &AgentController::eventQueued, this,
-          &AgentController::onEventQueued, Qt::QueuedConnection);
+    // **显式 QueuedConnection，不用 Auto。**
+    //
+    // Auto 连接方式按“发射线程和接收方线程是不是同一个”在运行期决定：
+    // 核心工作线程过来的走排队，
+    // 而主线程自己调 submit()
+    // 时同步发出的那几条（会话建好、消息建好）会走直连。两条路混着，
+    // 事件到达界面的顺序就不再和发生顺序一致了——界面可能先收到某条增量，再收到"这条消息建好了"。
+    //
+    // 一律排队就都是先进先出，而且分类逻辑永远只在主线程上跑。
+    connect(this, &AgentController::eventQueued, this, &AgentController::onEventQueued, Qt::QueuedConnection);
 
-  // 订阅要放在最后：前面几步没做完就收到事件的话，onEventQueued
-  // 会碰到半个对象。
-  runtime_->token = runtime_->agent->eventBus().subscribe(
-      [this](const MaiEvent &event) { rawEvent(event); });
+    // 订阅要放在最后：前面几步没做完就收到事件的话，onEventQueued
+    // 会碰到半个对象。
+    runtime_->token = runtime_->agent->eventBus().subscribe([this](const MaiEvent& event) { rawEvent(event); });
 }
 
-AgentController::AgentController(const ModelConfig &model,
-                                 const QString &databasePath, QObject *parent)
+AgentController::AgentController(const ModelConfig& model, const QString& databasePath, QObject* parent)
     : AgentController(model, databasePath, ToolRegistrar(), parent) {}
 
-AgentController::AgentController(const ModelConfig &model,
-                                 const QString &databasePath,
-                                 ToolRegistrar hostTools, QObject *parent)
+AgentController::AgentController(const ModelConfig& model, const QString& databasePath, ToolRegistrar hostTools,
+                                 QObject* parent)
     : QObject(parent), runtime_(std::make_unique<Runtime>()) {
-  qRegisterMetaType<MaiEvent>("MaiEvent");
+    qRegisterMetaType<MaiEvent>("MaiEvent");
 
-  // baseUrl 为空 = 空转。建会话、翻历史照常，发消息会以 NotConfigured 收场。
-  std::unique_ptr<MaiModelClient> client;
-  if (!model.baseUrl.isEmpty()) {
-    MaiModelConfig config;
-    config.baseUrl = toUtf8(model.baseUrl);
-    config.apiKey = toUtf8(model.apiKey);
-    config.wire = model.wire;
+    // baseUrl 为空 = 空转。建会话、翻历史照常，发消息会以 NotConfigured 收场。
+    std::unique_ptr<MaiModelClient> client;
+    if (!model.baseUrl.isEmpty()) {
+        MaiModelConfig config;
+        config.baseUrl = toUtf8(model.baseUrl);
+        config.apiKey = toUtf8(model.apiKey);
+        config.wire = model.wire;
 #if defined(MAICHAT_EMBEDDED_FFMPEG)
-    MaiFfmpegEngine ffmpegEngine{
-        mai_ffmpeg_execute,       mai_ffmpeg_set_cancel_check,
-        mai_ffprobe_execute,      mai_ffprobe_set_cancel_check,
-        mai_fftools_set_log_sink, mai_fftools_error_string};
-    config.prepareImage = makeMaiFfmpegModelImagePreparer(ffmpegEngine);
+        MaiFfmpegEngine ffmpegEngine{mai_ffmpeg_execute,       mai_ffmpeg_set_cancel_check,
+                                     mai_ffprobe_execute,      mai_ffprobe_set_cancel_check,
+                                     mai_fftools_set_log_sink, mai_fftools_error_string};
+        config.prepareImage = makeMaiFfmpegModelImagePreparer(ffmpegEngine);
 #endif
-    client = makeMaiModelClient(config);
-  }
+        client = makeMaiModelClient(config);
+    }
 
-  runtime_->modelName = model.modelName;
-  runtime_->agent = buildAgent(
-      std::move(client), openStore(databasePath, runtime_->openError),
-      model.modelName, model.approvalPolicy, hostTools, model);
+    runtime_->modelName = model.modelName;
+    runtime_->agent = buildAgent(std::move(client), openStore(databasePath, runtime_->openError), model.modelName,
+                                 model.approvalPolicy, hostTools, model);
 
-  connect(this, &AgentController::eventQueued, this,
-          &AgentController::onEventQueued, Qt::QueuedConnection);
-  runtime_->token = runtime_->agent->eventBus().subscribe(
-      [this](const MaiEvent &event) { rawEvent(event); });
+    connect(this, &AgentController::eventQueued, this, &AgentController::onEventQueued, Qt::QueuedConnection);
+    runtime_->token = runtime_->agent->eventBus().subscribe([this](const MaiEvent& event) { rawEvent(event); });
 }
 
 AgentController::~AgentController() {
-  // 顺序很讲究，别调。
-  //
-  // 退订只是第一道：MaiEventBus
-  // 明说了"退订返回之后，处理函数仍可能正在别的线程上执行"。
-  // 真正让它安全的是下面那句 reset——MaiAgent
-  // 的析构会叫停所有在跑的轮次**并等它们退出**， 返回之后就再没有线程能进到
-  // rawEvent 里了。
-  //
-  // 反过来写（先 reset 再退订）也能跑，
-  // 但析构过程中发出的最后几条事件会打到一个正在销毁的 QObject 上。
-  runtime_->agent->eventBus().unsubscribe(runtime_->token);
-  runtime_->agent.reset();
+    // 顺序很讲究，别调。
+    //
+    // 退订只是第一道：MaiEventBus
+    // 明说了"退订返回之后，处理函数仍可能正在别的线程上执行"。
+    // 真正让它安全的是下面那句 reset——MaiAgent
+    // 的析构会叫停所有在跑的轮次**并等它们退出**， 返回之后就再没有线程能进到
+    // rawEvent 里了。
+    //
+    // 反过来写（先 reset 再退订）也能跑，
+    // 但析构过程中发出的最后几条事件会打到一个正在销毁的 QObject 上。
+    runtime_->agent->eventBus().unsubscribe(runtime_->token);
+    runtime_->agent.reset();
 }
 
-QString AgentController::openError() const { return runtime_->openError; }
+QString AgentController::openError() const {
+    return runtime_->openError;
+}
 
-QString AgentController::lastError() const { return runtime_->lastError; }
+QString AgentController::lastError() const {
+    return runtime_->lastError;
+}
 
-MaiAgent &AgentController::agent() { return *runtime_->agent; }
+MaiAgent& AgentController::agent() {
+    return *runtime_->agent;
+}
 
 // ---- 变更 ----
 
-QString AgentController::createSession(const QString &directory,
-                                       const QString &title) {
-  MaiResult<std::string> created = runtime_->agent->submit(
-      MaiCreateSession{toUtf8(directory), toUtf8(title), {}});
-  if (!created) {
-    runtime_->lastError = fromUtf8(created.error().message());
-    return QString();
-  }
-  return fromUtf8(created.value());
-}
-
-bool AgentController::sendPrompt(const QString &sessionId,
-                                 const QString &text) {
-  return sendPrompt(sessionId, text, {});
-}
-
-bool AgentController::sendPrompt(const QString &sessionId, const QString &text,
-                                 const QStringList &imagePaths) {
-  if (imagePaths.size() > 10) {
-    runtime_->lastError = QStringLiteral("一次最多添加 10 张图片。");
-    return false;
-  }
-  std::vector<MaiModelImage> images;
-  images.reserve(static_cast<std::size_t>(imagePaths.size()));
-  QMimeDatabase mimeDatabase;
-  for (const QString &path : imagePaths) {
-    const QString mimeType =
-        mimeDatabase.mimeTypeForFile(path).name().toLower();
-    if (mimeType != QStringLiteral("image/jpeg") &&
-        mimeType != QStringLiteral("image/png") &&
-        mimeType != QStringLiteral("image/webp") &&
-        mimeType != QStringLiteral("image/gif")) {
-      runtime_->lastError =
-          QStringLiteral("暂不支持这种图片格式：%1").arg(mimeType);
-      return false;
+QString AgentController::createSession(const QString& directory, const QString& title) {
+    MaiResult<std::string> created = runtime_->agent->submit(MaiCreateSession{toUtf8(directory), toUtf8(title), {}});
+    if (!created) {
+        runtime_->lastError = fromUtf8(created.error().message());
+        return QString();
     }
-    images.push_back({toUtf8(path), toUtf8(mimeType)});
-  }
-  if (!runtime_->modelName.isEmpty() &&
-      !setModel(sessionId, runtime_->modelName))
-    return false;
-  MaiResult<std::string> sent = runtime_->agent->submit(
-      MaiSendPrompt{toUtf8(sessionId), toUtf8(text), std::move(images)});
-  if (!sent) {
-    runtime_->lastError = fromUtf8(sent.error().message());
-    return false;
-  }
-  return true;
+    return fromUtf8(created.value());
 }
 
-bool AgentController::setModel(const QString &sessionId, const QString &model) {
-  const QString selected = model.trimmed();
-  if (sessionId.isEmpty() || selected.isEmpty()) {
-    runtime_->lastError = QStringLiteral("模型名称不能为空。");
-    return false;
-  }
-  MaiResult<std::string> updated = runtime_->agent->submit(
-      MaiUpdateSession{toUtf8(sessionId), "", toUtf8(selected), "", ""});
-  if (!updated) {
-    runtime_->lastError = fromUtf8(updated.error().message());
-    return false;
-  }
-  runtime_->modelName = selected;
-  return true;
+bool AgentController::sendPrompt(const QString& sessionId, const QString& text) {
+    return sendPrompt(sessionId, text, {});
 }
 
-bool AgentController::interrupt(const QString &sessionId) {
-  MaiResult<std::string> stopped =
-      runtime_->agent->submit(MaiInterrupt{toUtf8(sessionId)});
-  if (!stopped) {
-    runtime_->lastError = fromUtf8(stopped.error().message());
-    return false;
-  }
-  return true;
+bool AgentController::sendPrompt(const QString& sessionId, const QString& text, const QStringList& imagePaths) {
+    if (imagePaths.size() > 10) {
+        runtime_->lastError = QStringLiteral("一次最多添加 10 张图片。");
+        return false;
+    }
+    std::vector<MaiModelImage> images;
+    images.reserve(static_cast<std::size_t>(imagePaths.size()));
+    QMimeDatabase mimeDatabase;
+    for (const QString& path : imagePaths) {
+        const QString mimeType = mimeDatabase.mimeTypeForFile(path).name().toLower();
+        if (mimeType != QStringLiteral("image/jpeg") && mimeType != QStringLiteral("image/png") &&
+            mimeType != QStringLiteral("image/webp") && mimeType != QStringLiteral("image/gif")) {
+            runtime_->lastError = QStringLiteral("暂不支持这种图片格式：%1").arg(mimeType);
+            return false;
+        }
+        images.push_back({toUtf8(path), toUtf8(mimeType)});
+    }
+    if (!runtime_->modelName.isEmpty() && !setModel(sessionId, runtime_->modelName)) return false;
+    MaiResult<std::string> sent =
+        runtime_->agent->submit(MaiSendPrompt{toUtf8(sessionId), toUtf8(text), std::move(images)});
+    if (!sent) {
+        runtime_->lastError = fromUtf8(sent.error().message());
+        return false;
+    }
+    return true;
+}
+
+bool AgentController::setModel(const QString& sessionId, const QString& model) {
+    const QString selected = model.trimmed();
+    if (sessionId.isEmpty() || selected.isEmpty()) {
+        runtime_->lastError = QStringLiteral("模型名称不能为空。");
+        return false;
+    }
+    MaiResult<std::string> updated =
+        runtime_->agent->submit(MaiUpdateSession{toUtf8(sessionId), "", toUtf8(selected), "", ""});
+    if (!updated) {
+        runtime_->lastError = fromUtf8(updated.error().message());
+        return false;
+    }
+    runtime_->modelName = selected;
+    return true;
+}
+
+bool AgentController::interrupt(const QString& sessionId) {
+    MaiResult<std::string> stopped = runtime_->agent->submit(MaiInterrupt{toUtf8(sessionId)});
+    if (!stopped) {
+        runtime_->lastError = fromUtf8(stopped.error().message());
+        return false;
+    }
+    return true;
 }
 
 bool AgentController::setApprovalPolicy(MaiApprovalPolicy policy) {
-  if (!runtime_->agent->setApprovalPolicy(policy)) {
-    runtime_->lastError =
-        QStringLiteral("请先停止正在执行的任务，再切换批准方式。");
-    return false;
-  }
-  return true;
+    if (!runtime_->agent->setApprovalPolicy(policy)) {
+        runtime_->lastError = QStringLiteral("请先停止正在执行的任务，再切换批准方式。");
+        return false;
+    }
+    return true;
 }
 
 MaiApprovalPolicy AgentController::approvalPolicy() const {
-  return runtime_->agent->approvalPolicy();
+    return runtime_->agent->approvalPolicy();
 }
 
-bool AgentController::approvePermission(const QString &permissionId,
-                                        bool approveForSession) {
-  const MaiPermissionDecision decision =
-      approveForSession ? MaiPermissionDecision::ApprovedForSession
-                        : MaiPermissionDecision::Approved;
-  MaiResult<std::string> replied = runtime_->agent->submit(
-      MaiReplyPermission{toUtf8(permissionId), decision});
-  if (!replied) {
-    runtime_->lastError = fromUtf8(replied.error().message());
-    return false;
-  }
-  return true;
+bool AgentController::approvePermission(const QString& permissionId, bool approveForSession) {
+    const MaiPermissionDecision decision =
+        approveForSession ? MaiPermissionDecision::ApprovedForSession : MaiPermissionDecision::Approved;
+    MaiResult<std::string> replied = runtime_->agent->submit(MaiReplyPermission{toUtf8(permissionId), decision});
+    if (!replied) {
+        runtime_->lastError = fromUtf8(replied.error().message());
+        return false;
+    }
+    return true;
 }
 
-bool AgentController::denyPermission(const QString &permissionId) {
-  MaiResult<std::string> replied = runtime_->agent->submit(
-      MaiReplyPermission{toUtf8(permissionId), MaiPermissionDecision::Denied});
-  if (!replied) {
-    runtime_->lastError = fromUtf8(replied.error().message());
-    return false;
-  }
-  return true;
+bool AgentController::denyPermission(const QString& permissionId) {
+    MaiResult<std::string> replied =
+        runtime_->agent->submit(MaiReplyPermission{toUtf8(permissionId), MaiPermissionDecision::Denied});
+    if (!replied) {
+        runtime_->lastError = fromUtf8(replied.error().message());
+        return false;
+    }
+    return true;
 }
 
-bool AgentController::answerQuestion(const QString &questionId,
-                                     const QString &answer) {
-  MaiResult<std::string> replied = runtime_->agent->submit(
-      MaiReplyQuestion{toUtf8(questionId), toUtf8(answer)});
-  if (!replied) {
-    runtime_->lastError = fromUtf8(replied.error().message());
-    return false;
-  }
-  return true;
+bool AgentController::answerQuestion(const QString& questionId, const QString& answer) {
+    MaiResult<std::string> replied = runtime_->agent->submit(MaiReplyQuestion{toUtf8(questionId), toUtf8(answer)});
+    if (!replied) {
+        runtime_->lastError = fromUtf8(replied.error().message());
+        return false;
+    }
+    return true;
 }
 
 std::vector<MaiQuestionRequest> AgentController::pendingQuestions() const {
-  return runtime_->agent->listPendingQuestions();
+    return runtime_->agent->listPendingQuestions();
 }
 
-std::vector<MaiSubAgentInfo>
-AgentController::subAgents(const QString &parentSessionId) const {
-  return runtime_->agent->listSubAgents(toUtf8(parentSessionId));
+std::vector<MaiSubAgentInfo> AgentController::subAgents(const QString& parentSessionId) const {
+    return runtime_->agent->listSubAgents(toUtf8(parentSessionId));
 }
 
-bool AgentController::isChildOf(const QString &sessionId,
-                                const QString &parentSessionId) const {
-  if (sessionId.isEmpty() || parentSessionId.isEmpty())
-    return false;
-  MaiSession session;
-  if (!runtime_->agent->getSession(toUtf8(sessionId), session))
-    return false;
-  return fromUtf8(session.parentId) == parentSessionId;
+bool AgentController::isChildOf(const QString& sessionId, const QString& parentSessionId) const {
+    if (sessionId.isEmpty() || parentSessionId.isEmpty()) return false;
+    MaiSession session;
+    if (!runtime_->agent->getSession(toUtf8(sessionId), session)) return false;
+    return fromUtf8(session.parentId) == parentSessionId;
 }
 
-QString AgentController::livePartText(const QString &sessionId,
-                                      const QString &partId) const {
-  const auto session = runtime_->livePartTextBySession.constFind(sessionId);
-  if (session == runtime_->livePartTextBySession.constEnd())
-    return {};
-  return session.value().value(partId);
+QString AgentController::livePartText(const QString& sessionId, const QString& partId) const {
+    const auto session = runtime_->livePartTextBySession.constFind(sessionId);
+    if (session == runtime_->livePartTextBySession.constEnd()) return {};
+    return session.value().value(partId);
 }
 
 // ---- 事件 ----
 
-void AgentController::rawEvent(const MaiEvent &event) {
-  // **这里跑在核心的线程上**（流式期间是网络读线程）。能做的只有一件事：把事件排队交给主线程。
-  // emit 一个跨线程的排队连接就是加锁往队列塞个指针，
-  // 符合 MaiEventBus 那条"处理函数里不许做慢活"的契约。
-  //
-  // 不要在这里查存储、碰部件、或者做任何分类——那些都在 onEventQueued 里做。
-  emit eventQueued(event);
+void AgentController::rawEvent(const MaiEvent& event) {
+    // **这里跑在核心的线程上**（流式期间是网络读线程）。能做的只有一件事：把事件排队交给主线程。
+    // emit 一个跨线程的排队连接就是加锁往队列塞个指针，
+    // 符合 MaiEventBus 那条"处理函数里不许做慢活"的契约。
+    //
+    // 不要在这里查存储、碰部件、或者做任何分类——那些都在 onEventQueued 里做。
+    emit eventQueued(event);
 }
 
-void AgentController::onEventQueued(const MaiEvent &event) {
-  // 这里已经在主线程上了：查存储、刷界面都随意。
-  const QString sessionId = fromUtf8(event.sessionId);
-  const QString messageId = fromUtf8(event.messageId);
-  const QString partId = fromUtf8(event.partId);
+void AgentController::onEventQueued(const MaiEvent& event) {
+    // 这里已经在主线程上了：查存储、刷界面都随意。
+    const QString sessionId = fromUtf8(event.sessionId);
+    const QString messageId = fromUtf8(event.messageId);
+    const QString partId = fromUtf8(event.partId);
 
-  switch (event.type) {
-  case MaiEventType::MessagePartUpdated: {
-    // 片段第一次出现，或者工具卡状态变了。查一次存储看它是什么。
-    //
-    // 工具片段每次都要查（状态会变）；正文和思考只需要查第一次——它们的类型不会变，
-    // 之后来的全是增量。
-    auto &partKinds = runtime_->partKindsBySession[sessionId];
-    const auto known = partKinds.constFind(partId);
-    if (known != partKinds.constEnd() && known.value() != PartKind::Tool)
-      return;
+    switch (event.type) {
+        case MaiEventType::MessagePartUpdated: {
+            // 片段第一次出现，或者工具卡状态变了。查一次存储看它是什么。
+            //
+            // 工具片段每次都要查（状态会变）；正文和思考只需要查第一次——它们的类型不会变，
+            // 之后来的全是增量。
+            auto& partKinds = runtime_->partKindsBySession[sessionId];
+            const auto known = partKinds.constFind(partId);
+            if (known != partKinds.constEnd() && known.value() != PartKind::Tool) return;
 
-    PartKind kind = PartKind::Unknown;
-    for (const MaiMessage &message :
-         runtime_->agent->listMessages(event.sessionId)) {
-      if (message.id != event.messageId)
-        continue;
-      for (const MaiMessagePart &part : message.parts) {
-        if (part.id != event.partId)
-          continue;
-        if (std::get_if<MaiTextPart>(&part.body) != nullptr) {
-          kind = PartKind::Text;
-        } else if (std::get_if<MaiReasoningPart>(&part.body) != nullptr) {
-          kind = PartKind::Reasoning;
-        } else {
-          kind = PartKind::Tool;
+            PartKind kind = PartKind::Unknown;
+            for (const MaiMessage& message : runtime_->agent->listMessages(event.sessionId)) {
+                if (message.id != event.messageId) continue;
+                for (const MaiMessagePart& part : message.parts) {
+                    if (part.id != event.partId) continue;
+                    if (std::get_if<MaiTextPart>(&part.body) != nullptr) {
+                        kind = PartKind::Text;
+                    } else if (std::get_if<MaiReasoningPart>(&part.body) != nullptr) {
+                        kind = PartKind::Reasoning;
+                    } else {
+                        kind = PartKind::Tool;
+                    }
+                    break;
+                }
+                break;
+            }
+            if (kind == PartKind::Unknown) return;
+
+            partKinds.insert(partId, kind);
+            if (kind == PartKind::Tool) emit toolPartChanged(sessionId, messageId, partId);
+            // 正文和思考片段这里不发信号：内容还是空的，界面没什么可画。等第一条增量到了再说。
+            return;
         }
-        break;
-      }
-      break;
+
+        case MaiEventType::MessagePartDelta: {
+            // 两种增量的 field 都是 "text"，只能靠上面那张表区分。
+            // 查不到就当正文——但那说明 message.part.updated 没到，属于上游的 bug，
+            // 不是这里该悄悄兜住的事（MaiAgent 那边为此改过一次"先落库再广播"）。
+            PartKind kind = PartKind::Text;
+            const auto sessionKinds = runtime_->partKindsBySession.constFind(sessionId);
+            if (sessionKinds != runtime_->partKindsBySession.constEnd())
+                kind = sessionKinds.value().value(partId, PartKind::Text);
+            const QString delta = fromUtf8(event.delta);
+            runtime_->livePartTextBySession[sessionId][partId] += delta;
+            if (kind == PartKind::Reasoning) {
+                emit reasoningDelta(sessionId, messageId, partId, delta);
+            } else {
+                emit textDelta(sessionId, messageId, partId, delta);
+            }
+            return;
+        }
+
+        case MaiEventType::SessionIdle:
+            // 一轮结束，这一轮的片段表可以丢了。不丢的话长会话会一直涨。
+            runtime_->partKindsBySession.remove(sessionId);
+            emit turnFinished(sessionId);
+            runtime_->livePartTextBySession.remove(sessionId);
+            return;
+
+        case MaiEventType::SessionError: emit turnFailed(sessionId, fromUtf8(event.detail)); return;
+
+        case MaiEventType::SessionUpdated:
+            if (!event.detail.empty()) {
+                emit sessionTitleChanged(sessionId, fromUtf8(event.detail));
+            }
+            return;
+
+        case MaiEventType::PermissionAsked: emit permissionAsked(fromUtf8(event.permissionId), sessionId); return;
+
+        case MaiEventType::PermissionReplied:
+            emit permissionReplied(fromUtf8(event.permissionId), fromUtf8(event.detail));
+            return;
+
+        case MaiEventType::QuestionAsked:
+            emit questionAsked(fromUtf8(event.questionId), sessionId, fromUtf8(event.partId));
+            return;
+
+        case MaiEventType::QuestionAnswered: emit questionAnswered(fromUtf8(event.questionId), sessionId); return;
+
+        default:
+            // SessionCreated / SessionDeleted / MessageUpdated / MessageRemoved /
+            // MessagePartRemoved / SessionStatus：界面拿不到新信息。
+            // 建会话和发消息的返回值里已经有 id 了，删除由发起那一侧自己知道。
+            return;
     }
-    if (kind == PartKind::Unknown)
-      return;
-
-    partKinds.insert(partId, kind);
-    if (kind == PartKind::Tool)
-      emit toolPartChanged(sessionId, messageId, partId);
-    // 正文和思考片段这里不发信号：内容还是空的，界面没什么可画。等第一条增量到了再说。
-    return;
-  }
-
-  case MaiEventType::MessagePartDelta: {
-    // 两种增量的 field 都是 "text"，只能靠上面那张表区分。
-    // 查不到就当正文——但那说明 message.part.updated 没到，属于上游的 bug，
-    // 不是这里该悄悄兜住的事（MaiAgent 那边为此改过一次"先落库再广播"）。
-    PartKind kind = PartKind::Text;
-    const auto sessionKinds = runtime_->partKindsBySession.constFind(sessionId);
-    if (sessionKinds != runtime_->partKindsBySession.constEnd())
-      kind = sessionKinds.value().value(partId, PartKind::Text);
-    const QString delta = fromUtf8(event.delta);
-    runtime_->livePartTextBySession[sessionId][partId] += delta;
-    if (kind == PartKind::Reasoning) {
-      emit reasoningDelta(sessionId, messageId, partId, delta);
-    } else {
-      emit textDelta(sessionId, messageId, partId, delta);
-    }
-    return;
-  }
-
-  case MaiEventType::SessionIdle:
-    // 一轮结束，这一轮的片段表可以丢了。不丢的话长会话会一直涨。
-    runtime_->partKindsBySession.remove(sessionId);
-    emit turnFinished(sessionId);
-    runtime_->livePartTextBySession.remove(sessionId);
-    return;
-
-  case MaiEventType::SessionError:
-    emit turnFailed(sessionId, fromUtf8(event.detail));
-    return;
-
-  case MaiEventType::SessionUpdated:
-    if (!event.detail.empty()) {
-      emit sessionTitleChanged(sessionId, fromUtf8(event.detail));
-    }
-    return;
-
-  case MaiEventType::PermissionAsked:
-    emit permissionAsked(fromUtf8(event.permissionId), sessionId);
-    return;
-
-  case MaiEventType::PermissionReplied:
-    emit permissionReplied(fromUtf8(event.permissionId),
-                           fromUtf8(event.detail));
-    return;
-
-  case MaiEventType::QuestionAsked:
-    emit questionAsked(fromUtf8(event.questionId), sessionId,
-                       fromUtf8(event.partId));
-    return;
-
-  case MaiEventType::QuestionAnswered:
-    emit questionAnswered(fromUtf8(event.questionId), sessionId);
-    return;
-
-  default:
-    // SessionCreated / SessionDeleted / MessageUpdated / MessageRemoved /
-    // MessagePartRemoved / SessionStatus：界面拿不到新信息。
-    // 建会话和发消息的返回值里已经有 id 了，删除由发起那一侧自己知道。
-    return;
-  }
 }

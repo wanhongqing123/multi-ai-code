@@ -21,6 +21,10 @@
 #include "MaiFilePath.h"
 #include "MaiFileSystem.h"
 
+static MaiCreativeMediaUploadProvider makePrivateOssStreamUploader(
+    std::function<MaiResult<MaiArkAssetServiceSettings>()> settings, std::string caBundlePath,
+    bool allowDocuments, MaiOssUploadPurpose purpose);
+
 namespace {
 
 using Json = nlohmann::json;
@@ -163,6 +167,18 @@ std::string serviceEndpoint(std::string base, const char* action) {
     return base + "/" + action;
 }
 
+Json signUploadBody(const std::string& fileName, std::uint64_t fileSize,
+                    MaiOssUploadPurpose purpose) {
+    Json body = {{"filename", fileName}, {"size_bytes", fileSize}};
+    switch (purpose) {
+        case MaiOssUploadPurpose::SharedMediaInput: body["purpose"] = "shared_media_input"; break;
+        case MaiOssUploadPurpose::WanInput: body["purpose"] = "wan_input"; break;
+        case MaiOssUploadPurpose::ArkAssetInput: body["purpose"] = "ark_asset_input"; break;
+        default: body["purpose"] = "invalid"; break;
+    }
+    return body;
+}
+
 // 集中执行资源服务请求和重试；只对允许重试的阶段重新发包，避免已签发链接或付费请求被重复提交。
 MaiResult<MaiArkHttpResponse> sendHttp(const std::string& url, const char* method,
                                        const char* stage, const std::string& payload,
@@ -262,8 +278,8 @@ MaiResult<MaiArkHttpResponse> sendHttp(const std::string& url, const char* metho
 // 只有完整上传成功的 HTTPS 地址才能回给媒体任务提交入口。
 MaiResult<std::string> uploadImageToOss(const std::string& candidate,
                                         const MaiArkAssetServiceSettings& settings,
-                                        const std::string& caBundle,
-                                        const MaiToolContext& context) {
+                                        const std::string& caBundle, const MaiToolContext& context,
+                                        MaiOssUploadPurpose purpose) {
     const std::string path = context.resolvePath(candidate);
     const MaiFilePath source = MaiFilePath::fromUtf8(path);
     std::uint64_t fileSize = 0;
@@ -278,7 +294,7 @@ MaiResult<std::string> uploadImageToOss(const std::string& candidate,
                       (fileName.size() >= 5 && fileName.substr(fileName.size() - 5) == ".jpeg");
     if (!png && !jpeg) return {MaiErrorCode::InvalidInput, "OSS accepts JPG or PNG images"};
     const std::string authorization = "Authorization: Bearer " + settings.token;
-    const Json signBody = {{"filename", fileName}, {"size_bytes", fileSize}};
+    const Json signBody = signUploadBody(fileName, fileSize, purpose);
     auto signedResponse =
         sendHttp(serviceEndpoint(settings.baseUrl, "sign-upload"), "POST", "sign_upload",
                  signBody.dump(), {authorization, "Content-Type: application/json"}, caBundle,
@@ -345,19 +361,31 @@ MaiResult<std::string> invokeAssetService(const std::string& raw,
     if (request["action"] == "upload_image") {
         // 本地图入库有三步：服务器签发 OSS 链接、客户端直传原图、再调用 Ark CreateAsset。
         // 传给 Ark 的是临时 HTTPS 读取地址，不是手机上的文件路径。
-        const auto uploaded = uploadImageToOss(request.value("image_path", std::string{}), settings,
-                                               caBundle, context);
+        const auto uploaded =
+            uploadImageToOss(request.value("image_path", std::string{}), settings, caBundle,
+                             context, MaiOssUploadPurpose::ArkAssetInput);
         if (!uploaded) return uploaded.error();
         request.erase("image_path");
         request["action"] = "create_asset";
         request["url"] = uploaded.value();
+    } else if (request["action"] == "upload_video") {
+        // 复用流式上传，视频字节不进入服务请求体，也不整段读入内存。
+        const auto upload = makePrivateOssStreamUploader(
+            [settings]() -> MaiResult<MaiArkAssetServiceSettings> { return settings; }, caBundle,
+            false, MaiOssUploadPurpose::ArkAssetInput);
+        const auto uploaded = upload(request.value("video_path", std::string{}), context);
+        if (!uploaded) return uploaded.error();
+        request.erase("video_path");
+        request["action"] = "create_asset";
+        request["asset_type"] = "Video";
+        request["url"] = uploaded.value();
     }
     const std::string action = request["action"].get<std::string>();
     // 只读动作与写入动作使用不同的重试策略；写入结果未知时不能盲目重放。
-    const MaiAssetRetryPolicy policy =
-        action == "list_groups" || action == "list_assets" || action == "get_asset"
-            ? MaiAssetRetryPolicy::ReadOnly
-            : MaiAssetRetryPolicy::ConnectOnly;
+    const MaiAssetRetryPolicy policy = action == "list_groups" || action == "list_assets" ||
+                                               action == "get_asset" || action == "get_group"
+                                           ? MaiAssetRetryPolicy::ReadOnly
+                                           : MaiAssetRetryPolicy::ConnectOnly;
     auto result = sendHttp(serviceEndpoint(settings.baseUrl, "ark-assets"), "POST", "ark_assets",
                            request.dump(), {authorization, "Content-Type: application/json"},
                            caBundle, context, policy);
@@ -390,11 +418,26 @@ std::string field(const Json& object, const char* key) {
 }
 
 bool validId(const std::string& id, const char* prefix) {
-    return id.rfind(prefix, 0) == 0 && id.size() <= 128 &&
-           std::all_of(id.begin(), id.end(), [](unsigned char ch) {
+    return id.rfind(prefix, 0) == 0 && id.size() > std::char_traits<char>::length(prefix) &&
+           id.size() <= 128 && std::all_of(id.begin(), id.end(), [](unsigned char ch) {
                return (ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'Z') ||
                       (ch >= 'a' && ch <= 'z') || ch == '-' || ch == '_';
            });
+}
+
+MaiResult<bool> verifyAssetGroup(const MaiArkAssetProvider& provider, const std::string& groupId,
+                                 const std::string& expectedGroupType,
+                                 const MaiToolContext& context) {
+    if (context.isCanceled()) return {MaiErrorCode::Canceled, "Ark Assets request was canceled"};
+    const Json groupRequest = {{"action", "get_group"}, {"group_id", groupId}};
+    const MaiResult<std::string> groupResponse = provider(groupRequest.dump(), context);
+    if (!groupResponse) return groupResponse.error();
+    const Json group = Json::parse(groupResponse.value(), nullptr, false);
+    if (!group.is_object() || field(group, "Id") != groupId || field(group, "GroupType").empty())
+        return {MaiErrorCode::Protocol, "Ark did not return the requested asset group"};
+    if (field(group, "GroupType") != expectedGroupType)
+        return {MaiErrorCode::InvalidInput, "Asset group type does not match the requested type"};
+    return true;
 }
 
 MaiToolResult invalid(const char* message) {
@@ -424,51 +467,62 @@ public:
         // 英文描述按以下顺序向主模型说明完整资产流程：
         // 1. list_groups/create_group 管理组；list_assets/get_asset 查询素材状态。
         //    同一人物或同一批相关照片优先复用合适组，不为每张图都新建组。
-        // 2. create_asset 接受方舟可读取的 HTTPS 图像 URL；upload_image 接受本地图，
-        //    先经短期 OSS 签名直传原图，再把读取 URL 登记到 Ark。图片上传与入库
-        //    是异步的，必须用 get_asset 等到 Active 或 Failed。
+        // 2. create_asset 接受方舟可读取的 HTTPS 图像 URL；upload_image 和 upload_video
+        //    接受本地文件，先经短期 OSS 签名直传，再把读取 URL 登记到 Ark。
+        //    入库是异步的，必须用 get_asset 等到 Active 或 Failed。
         // 3. 普通 AIGC 素材登记不等于真人肖像授权。真人验证由
         //    begin_real_validation 返回一次性 H5 链接，本人完成后用
         //    get_real_validation 取对应组 ID。凭证仅 30 分钟有效。
         // 4. 同一个真人验证组只属于一个人，多人同框可能被拒。只有 Active 的
         //    素材 ID 能以 asset://<ID> 交给 Seedance；项目必须与视频 Key 匹配。
-        // 5. 平台仍可能拒绝图片；工具返回真实状态和原因，不暗示入库必定过审。
+        // 5. 平台仍可能拒绝素材；工具返回真实状态和原因，不暗示入库必定过审。
         //    AK/SK 留在服务端，模型也不应看到服务令牌或签名 URL。
         return "Manage Seedance private avatar assets. Use list_groups, create_group, "
-               "create_asset, upload_image, get_asset, list_assets, begin_real_validation, "
+               "create_asset, upload_image, upload_video, get_group, get_asset, list_assets, "
+               "begin_real_validation, "
                "or get_real_validation. For a real portrait, begin_real_validation returns "
                "a one-time H5 link for that person; after they finish, get_real_validation "
                "returns the verified group ID. Each verified group belongs to one person; "
-               "multi-face images may be rejected. The token expires after 30 minutes. "
-               "Reuse a suitable group "
-               "for related photos; do not create a new group for every image. create_asset "
+               "multi-face media may be rejected. The token expires after 30 minutes. "
+               "Reuse a suitable group for related media. create_asset "
                "submits an existing Ark-accessible HTTPS image URL directly. For local JPEG/PNG "
-               "files, "
-               "upload_image sends the original source directly to private OSS through a "
-               "short-lived signed upload URL, then registers its signed read URL. Ark "
-               "processes uploads asynchronously: call get_asset until Status is Active or Failed. "
-               "Only an Active asset ID can be passed to seedance_video as "
-               "virtual_avatar_asset_id. Ark may reject a submission after upload; return its "
-               "actual status and reason. The asset project must match the video API key project. "
+               "files, upload_image sends the original source directly to private OSS through a "
+               "short-lived signed upload URL, then registers its signed read URL. "
+               "upload_video does the same for a local MP4/MOV up to 200 MB, registering it "
+               "as a Video asset in the supplied group. For real people, use a group obtained "
+               "through that person's verification and set expected_group_type=LivenessFace on "
+               "the upload. "
+               "For a virtual subject, set expected_group_type=AIGC. The group is checked "
+               "before upload; an AIGC group does not grant real portrait rights. The configured "
+               "asset project must match the video API key project. "
+               "Ark processes uploads asynchronously: call get_asset until Status is Active or "
+               "Failed. "
+               "Only Active asset IDs can be used as asset://<ID> in supported Seedance inputs. "
+               "Ark checks video duration, dimensions, frame rate, and face consistency "
+               "asynchronously; return its actual status and reason. "
                "The service keeps Ark Assets AK/SK; local-file upload also requires its OSS "
                "signer. Do not alter a real face merely to avoid provider review.";
     }
 
     std::string parametersSchema() const override {
         // action 决定读/写动作；name/description 只用于新建或命名素材。
-        // group_id 关联素材组，group_type 区分 AIGC 与真人验证组；
-        // url 仅供 create_asset，image_path 仅供 upload_image 读取本地文件；
+        // group_id 关联素材组，group_type 是列表过滤条件；
+        // expected_group_type 是视频上传前必填的组类型，图片上传可选。
+        // url 仅供 create_asset，image_path/video_path 仅供本地上传动作读取文件；
         // asset_id 用于 get_asset，byted_token 用于 H5 结果查询；
         // next_token 用于列表分页。下面仅是形状约束，execute 再按动作核对必需字段。
         return R"({"type":"object","properties":{"action":{"type":"string","enum":["discover",)"
-            R"("list_groups","create_group","create_asset","upload_image","get_asset",)"
-            R"("list_assets","begin_real_validation","get_real_validation"]},)"
-            R"("name":{"type":"string"},"description":{"type":"string"},)"
-            R"("group_id":{"type":"string"},"group_type":{"type":"string","enum":["AIGC",)"
-            R"("LivenessFace"]},"url":{"type":"string"},"image_path":{"type":"string"},)"
-            R"("asset_id":{"type":"string"},"byted_token":{"type":"string"},)"
-            R"("next_token":{"type":"string"}},"required":["action"],)"
-                R"("additionalProperties":false})";
+               R"("list_groups","create_group","create_asset","upload_image","upload_video",)"
+               R"("get_group","get_asset",)"
+               R"("list_assets","begin_real_validation","get_real_validation"]},)"
+               R"("name":{"type":"string"},"description":{"type":"string"},)"
+               R"("group_id":{"type":"string"},"group_type":{"type":"string","enum":["AIGC",)"
+               R"("LivenessFace"]},"url":{"type":"string"},"image_path":{"type":"string"},)"
+               R"("video_path":{"type":"string"},"expected_group_type":{"type":"string",)"
+               R"("enum":["AIGC","LivenessFace"]},)"
+               R"("asset_id":{"type":"string"},"byted_token":{"type":"string"},)"
+               R"("next_token":{"type":"string"}},"required":["action"],)"
+               R"("additionalProperties":false})";
     }
 
     bool requiresApproval(const std::string& raw) const override {
@@ -476,7 +530,7 @@ public:
         if (!args.is_object() || !args.value("action", Json{}).is_string()) return true;
         const std::string action = field(args, "action");
         return action != "discover" && action != "list_groups" && action != "list_assets" &&
-               action != "get_asset" && action != "get_real_validation";
+               action != "get_group" && action != "get_asset" && action != "get_real_validation";
     }
 
     bool requiresPerCallApproval(const std::string& raw) const override {
@@ -496,8 +550,9 @@ public:
             return MaiToolResult::success(
                 Json{{"configured", static_cast<bool>(mProvider)},
                      {"actions",
-                      {"list_groups", "create_group", "create_asset", "upload_image", "get_asset",
-                       "list_assets", "begin_real_validation", "get_real_validation"}},
+                      {"list_groups", "create_group", "create_asset", "upload_image",
+                       "upload_video", "get_group", "get_asset", "list_assets",
+                       "begin_real_validation", "get_real_validation"}},
                      {"asset_type", "AIGC"},
                      {"asset_types", {"AIGC", "LivenessFace"}},
                      {"usage", "Use asset://<ID> only after get_asset reports Active"}}
@@ -505,6 +560,16 @@ public:
         if (!mProvider)
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,
                                           "Ark Assets service is not configured on this device");
+        if (action == "upload_video") {
+            const auto uploaded = uploadMaiArkVideoAsset(
+                mProvider, field(args, "group_id"), field(args, "video_path"), field(args, "name"),
+                field(args, "expected_group_type"), context);
+            if (!uploaded)
+                return MaiToolResult::failure(uploaded.error().code(), uploaded.error().message());
+            Json result = {{"Id", uploaded.value().id}};
+            if (!uploaded.value().status.empty()) result["Status"] = uploaded.value().status;
+            return MaiToolResult::success(result.dump());
+        }
         Json request = {{"action", action}};
         // 先在工具层拒绝缺字段或越界路径；通过后才请求服务器，避免无效远端调用。
         if (action == "create_group") {
@@ -538,9 +603,26 @@ public:
                            [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
             if (extension != ".jpg" && extension != ".jpeg" && extension != ".png")
                 return invalid("image_path must be JPEG or PNG");
+            const std::string name = field(args, "name");
+            if (name.size() > 64) return invalid("name is too long (up to 64 bytes)");
+            if (args.contains("expected_group_type")) {
+                const std::string expectedGroupType = field(args, "expected_group_type");
+                if (expectedGroupType != "AIGC" && expectedGroupType != "LivenessFace")
+                    return invalid("expected_group_type must be AIGC or LivenessFace");
+                const auto verified =
+                    verifyAssetGroup(mProvider, groupId, expectedGroupType, context);
+                if (!verified)
+                    return MaiToolResult::failure(verified.error().code(),
+                                                  verified.error().message());
+                request["expected_group_type"] = expectedGroupType;
+            }
             request["group_id"] = groupId;
             request["image_path"] = source;
-            request["name"] = field(args, "name");
+            request["name"] = name;
+        } else if (action == "get_group") {
+            const std::string groupId = field(args, "group_id");
+            if (!validId(groupId, "group-")) return invalid("valid group_id is required");
+            request["group_id"] = groupId;
         } else if (action == "get_asset") {
             const std::string assetId = field(args, "asset_id");
             if (!validId(assetId, "asset-")) return invalid("valid asset_id is required");
@@ -599,6 +681,45 @@ private:
 
 }  // namespace
 
+MaiResult<MaiArkVideoAsset> uploadMaiArkVideoAsset(
+    const MaiArkAssetProvider& provider, const std::string& groupId, const std::string& videoPath,
+    const std::string& name, const std::string& expectedGroupType, const MaiToolContext& context) {
+    if (!provider) return {MaiErrorCode::NotConfigured, "Ark Assets service is not configured"};
+    if (!validId(groupId, "group-"))
+        return {MaiErrorCode::InvalidInput, "valid group_id is required"};
+    if (expectedGroupType != "AIGC" && expectedGroupType != "LivenessFace")
+        return {MaiErrorCode::InvalidInput, "expected_group_type must be AIGC or LivenessFace"};
+    if (name.size() > 64) return {MaiErrorCode::InvalidInput, "name is too long (up to 64 bytes)"};
+    const std::string source = context.resolvePath(videoPath);
+    const MaiFilePath sourcePath = MaiFilePath::fromUtf8(source);
+    std::uint64_t size = 0;
+    if (source.empty() || MaiFileSystem::isSymbolicLink(sourcePath) ||
+        !MaiFileSystem::fileSize(sourcePath, size) || size == 0 || size > 200'000'000)
+        return {MaiErrorCode::InvalidInput,
+                "video_path must be an accessible MP4/MOV under 200 MB"};
+    const std::string base = sourcePath.baseName().toUtf8();
+    const std::size_t dot = base.find_last_of('.');
+    std::string extension = dot == std::string::npos ? std::string{} : base.substr(dot);
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    if (extension != ".mp4" && extension != ".mov")
+        return {MaiErrorCode::InvalidInput, "video_path must be MP4 or MOV"};
+    const auto verified = verifyAssetGroup(provider, groupId, expectedGroupType, context);
+    if (!verified) return verified.error();
+    if (context.isCanceled()) return {MaiErrorCode::Canceled, "Ark Assets request was canceled"};
+    const Json request = {{"action", "upload_video"},
+                          {"group_id", groupId},
+                          {"video_path", source},
+                          {"name", name},
+                          {"expected_group_type", expectedGroupType}};
+    const MaiResult<std::string> response = provider(request.dump(), context);
+    if (!response) return response.error();
+    const Json result = Json::parse(response.value(), nullptr, false);
+    if (!result.is_object() || !validId(field(result, "Id"), "asset-"))
+        return {MaiErrorCode::Protocol, "Ark did not return a video asset ID"};
+    return MaiArkVideoAsset{field(result, "Id"), field(result, "Status")};
+}
+
 std::unique_ptr<MaiTool> makeMaiArkAssetTool(MaiArkAssetProvider provider) {
     return std::make_unique<MaiArkAssetTool>(std::move(provider));
 }
@@ -618,9 +739,10 @@ MaiArkAssetProvider makeMaiArkAssetServiceProvider(
 // 每次调用重新读取凭据，使宿主轮换或撤销配置后不需要重建 Agent。
 static MaiCreativeMediaUploadProvider makePrivateOssStreamUploader(
     std::function<MaiResult<MaiArkAssetServiceSettings>()> settings, std::string caBundlePath,
-    bool allowDocuments) {
-    return [settings = std::move(settings), caBundlePath = std::move(caBundlePath), allowDocuments](
-               const std::string& path, const MaiToolContext& context) -> MaiResult<std::string> {
+    bool allowDocuments, MaiOssUploadPurpose purpose) {
+    return [settings = std::move(settings), caBundlePath = std::move(caBundlePath), allowDocuments,
+            purpose](const std::string& path,
+                     const MaiToolContext& context) -> MaiResult<std::string> {
         const MaiResult<MaiArkAssetServiceSettings> configuration = settings();
         if (!configuration) return configuration.error();
         if (!validHttps(configuration.value().baseUrl) || configuration.value().token.size() < 32)
@@ -647,7 +769,7 @@ static MaiCreativeMediaUploadProvider makePrivateOssStreamUploader(
 
         // 服务端只签发短期链接，不接收视频字节；每次上传都使用新的对象名。
         const std::string authorization = "Authorization: Bearer " + configuration.value().token;
-        const Json signBody = {{"filename", fileName}, {"size_bytes", fileSize}};
+        const Json signBody = signUploadBody(fileName, fileSize, purpose);
         const auto signedResponse = sendHttp(
             serviceEndpoint(configuration.value().baseUrl, "sign-upload"), "POST",
             "media_sign_upload", signBody.dump(), {authorization, "Content-Type: application/json"},
@@ -703,17 +825,12 @@ static MaiCreativeMediaUploadProvider makePrivateOssStreamUploader(
     };
 }
 
-std::function<MaiResult<std::string>(const std::string&, const MaiToolContext&)>
-makeMaiPrivateOssVideoUploader(std::function<MaiResult<MaiArkAssetServiceSettings>()> settings,
-                               std::string caBundlePath) {
-    return makePrivateOssStreamUploader(std::move(settings), std::move(caBundlePath), false);
-}
-
 MaiCreativeMediaUploadProvider makeMaiPrivateOssMediaUploader(
-    std::function<MaiResult<MaiArkAssetServiceSettings>()> settings, std::string caBundlePath) {
-    auto uploadStream = makePrivateOssStreamUploader(settings, caBundlePath, true);
+    std::function<MaiResult<MaiArkAssetServiceSettings>()> settings, std::string caBundlePath,
+    MaiOssUploadPurpose purpose) {
+    auto uploadStream = makePrivateOssStreamUploader(settings, caBundlePath, true, purpose);
     return [settings = std::move(settings), caBundlePath = std::move(caBundlePath),
-            uploadStream = std::move(uploadStream)](
+            uploadStream = std::move(uploadStream), purpose](
                const std::string& path, const MaiToolContext& context) -> MaiResult<std::string> {
         std::string name = MaiFilePath::fromUtf8(path).baseName().toUtf8();
         std::transform(name.begin(), name.end(), name.begin(),
@@ -728,6 +845,6 @@ MaiCreativeMediaUploadProvider makeMaiPrivateOssMediaUploader(
         if (!configuration) return configuration.error();
         if (!validHttps(configuration.value().baseUrl) || configuration.value().token.size() < 32)
             return {MaiErrorCode::NotConfigured, "OSS signing service is not configured"};
-        return uploadImageToOss(path, configuration.value(), caBundlePath, context);
+        return uploadImageToOss(path, configuration.value(), caBundlePath, context, purpose);
     };
 }

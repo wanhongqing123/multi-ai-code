@@ -22,6 +22,12 @@ const DOCUMENT_TYPES = Object.freeze({
 });
 const UPLOAD_TTL_SECONDS = 15 * 60;
 const READ_TTL_SECONDS = 24 * 60 * 60;
+const UPLOAD_PURPOSES = Object.freeze({
+  ark_asset_input: Object.freeze({ prefix: 'ark-asset-inputs', types: ['image', 'video'] }),
+  shared_media_input: Object.freeze({ prefix: 'shared-media-inputs',
+    types: ['image', 'video', 'document'] }),
+  wan_input: Object.freeze({ prefix: 'wan-inputs', types: ['image', 'video', 'document'] })
+});
 
 function jsonResponse(statusCode, value) {
   return {
@@ -227,11 +233,20 @@ function createHandler(options = {}) {
         payload = { Name: body.name, Description: validText(body.description, 300)
           ? body.description : '', GroupType: 'AIGC', ProjectName: project };
       } else if (action === 'create_asset' && validId(body.group_id, 'group-') &&
-                 validHttpsUrl(body.url) && validText(body.name || 'Image', 64)) {
-        payload = { GroupId: body.group_id, URL: body.url, AssetType: 'Image',
-          Name: body.name || 'Image', ProjectName: project };
+                 validHttpsUrl(body.url) &&
+                 (!Object.hasOwn(body, 'asset_type') ||
+                  body.asset_type === 'Image' || body.asset_type === 'Video') &&
+                 (!Object.hasOwn(body, 'expected_group_type') ||
+                  body.expected_group_type === 'AIGC' ||
+                  body.expected_group_type === 'LivenessFace') &&
+                 validText(body.name || body.asset_type || 'Image', 64)) {
+        const assetType = body.asset_type || 'Image';
+        payload = { GroupId: body.group_id, URL: body.url, AssetType: assetType,
+          Name: body.name || assetType, ProjectName: project };
       } else if (action === 'get_asset' && validId(body.asset_id, 'asset-')) {
         payload = { Id: body.asset_id, ProjectName: project };
+      } else if (action === 'get_group' && validId(body.group_id, 'group-')) {
+        payload = { Id: body.group_id, ProjectName: project };
       } else if (action === 'list_groups') {
         payload = { Filter: { GroupType: groupType }, MaxResults: 100, ProjectName: project };
         if (body.next_token && validText(body.next_token, 2048))
@@ -255,11 +270,28 @@ function createHandler(options = {}) {
       }
       const arkAction = {
         create_group: 'CreateAssetGroup', create_asset: 'CreateAsset',
-        get_asset: 'GetAsset', list_groups: 'ListAssetGroups', list_assets: 'ListAssets',
+        get_asset: 'GetAsset', get_group: 'GetAssetGroup',
+        list_groups: 'ListAssetGroups', list_assets: 'ListAssets',
         begin_real_validation: 'CreateVisualValidateSession',
         get_real_validation: 'GetVisualValidateResult'
       }[action];
       try {
+        if (action === 'create_asset' && Object.hasOwn(body, 'expected_group_type')) {
+          const lookup = await callArk('GetAssetGroup',
+            { Id: body.group_id, ProjectName: project }, { accessKeyId, secretKey });
+          const lookupError = lookup?.ResponseMetadata?.Error;
+          if (lookupError)
+            return jsonResponse(502, { error: lookupError.Message || 'Ark rejected the request',
+              provider_code: lookupError.Code || '',
+              request_id: lookup.ResponseMetadata.RequestId || '' });
+          const group = lookup?.Result;
+          if (!group || typeof group !== 'object' ||
+              (group.Id && group.Id !== body.group_id) ||
+              (group.GroupType !== 'AIGC' && group.GroupType !== 'LivenessFace'))
+            return jsonResponse(502, { error: 'Ark returned an invalid asset group' });
+          if (group.GroupType !== body.expected_group_type)
+            return jsonResponse(409, { error: 'Asset group type does not match' });
+        }
         const response = await callArk(arkAction, payload, { accessKeyId, secretKey });
         const error = response?.ResponseMetadata?.Error;
         if (error) return jsonResponse(502, { error: error.Message || 'Ark rejected the request',
@@ -292,6 +324,12 @@ function createHandler(options = {}) {
     if ((!video && !image && !document) || !Number.isSafeInteger(size) || size < 1 ||
         size > (image ? MAX_IMAGE_BYTES : video ? MAX_VIDEO_BYTES : MAX_DOCUMENT_BYTES))
       return jsonResponse(400, { error: 'Provide supported media or a document within its size limit' });
+    const type = image ? 'image' : video ? 'video' : 'document';
+    const purpose = body.purpose;
+    if (typeof purpose !== 'string' || !Object.hasOwn(UPLOAD_PURPOSES, purpose) ||
+        !UPLOAD_PURPOSES[purpose].types.includes(type))
+      return jsonResponse(400, { error: 'Invalid upload purpose for this file type' });
+    const prefix = UPLOAD_PURPOSES[purpose].prefix;
 
     try {
       if (!client) client = makeClient({
@@ -302,8 +340,6 @@ function createHandler(options = {}) {
         authorizationV4: true,
         secure: true
       });
-      // 文档复用已授权的媒体前缀，避免要求线上 RAM 临时扩大 Bucket 权限。
-      const prefix = image ? 'ark-asset-inputs' : 'seedance-inputs';
       const objectKey = `${prefix}/${currentTime().toISOString().slice(0, 10)}/${newID()}${extension}`;
       const contentType = image ? (extension === '.png' ? 'image/png' : 'image/jpeg')
         : video ? (extension === '.mov' ? 'video/quicktime' : 'video/mp4')

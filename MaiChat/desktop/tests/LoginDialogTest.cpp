@@ -18,6 +18,7 @@
 #include <memory>
 
 #include "ui/LoginDialog.h"
+#include "auth/DesktopCurlAuthTransport.h"
 
 namespace {
 
@@ -277,6 +278,7 @@ class LoginDialogTest : public QObject {
     Q_OBJECT
 
 private slots:
+    void liveProductionAuthHealthCheck();
     void usesDesktopLandscapeDefaultSize();
     void showsQrLoginHierarchyWithoutManualUserId();
     void displaysServerQrAndSendsMatchingVerifier();
@@ -297,6 +299,18 @@ private slots:
     void waitsForLateClaimBeforeClosing();
     void cancelAfterApprovalRevokesAdoptedSession();
 };
+
+// 显式启用时，用正式账号的无凭据只读端点验收最终链接的 curl/OpenSSL。
+// 不创建二维码、不修改账号状态，也不触发模型或付费任务。
+void LoginDialogTest::liveProductionAuthHealthCheck() {
+    if (!qEnvironmentVariableIsSet("MAICHAT_AUTH_LIVE_PROBE")) QSKIP("Live probe is opt-in");
+    const auto cancelled = std::make_shared<std::atomic_bool>(false);
+    const DesktopCurlAuthResult result = DesktopCurlAuthTransport::perform(
+        QUrl(QStringLiteral("https://ichat.life/api/v1/auth/me")), "GET", {}, {}, cancelled);
+    QVERIFY2(result.error.isEmpty(), qPrintable(result.error));
+    QCOMPARE(result.status, 401);
+    QVERIFY(!result.body.isEmpty());
+}
 
 void LoginDialogTest::usesDesktopLandscapeDefaultSize() {
     LoginDialog dialog;

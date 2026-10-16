@@ -1,19 +1,19 @@
 // 文件作用：桌面端账号服务客户端，负责扫码、会话续期、前台校验及 IM/模型临时凭据。
 // 类型关系：DesktopAuthClient 继承 QObject；DesktopLoginRequest 和 DesktopImCredential 是只承载结果的数据结构。
 // 对外边界：刷新令牌交给系统安全存储；访问令牌、verifier、UserSig 和模型密钥只在进程内使用。
-// 直接依赖：Qt Network、SecureRefreshTokenStore；不依赖登录窗口或 IM SDK。
+// 直接依赖：DesktopCurlAuthTransport、SecureRefreshTokenStore；不依赖登录窗口或 IM SDK。
 #pragma once
 
 #include <QByteArray>
 #include <QDateTime>
 #include <QJsonObject>
-#include <QNetworkAccessManager>
 #include <QObject>
 #include <QMutex>
 #include <QPair>
 #include <QTimer>
 #include <QUrl>
 #include <functional>
+#include <atomic>
 #include <memory>
 #include <vector>
 
@@ -97,7 +97,7 @@ private:
     void clearModelCredentials();
     QString responseError(const HttpResult& result) const;
 
-    QNetworkAccessManager network_;
+    std::vector<std::shared_ptr<std::atomic_bool>> pendingRequests_;
     SecureRefreshTokenStore secureStore_;
     bool useSecureStore_ = true;
     QUrl baseUrl_;

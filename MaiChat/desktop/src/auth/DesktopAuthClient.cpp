@@ -1,18 +1,20 @@
 // 文件作用：实现桌面扫码授权、令牌轮换、前台会话检查及服务端签发的 IM/模型临时凭据获取。
 // 主要入口：createLoginRequest、claim、restore、fetchImCredential、startSessionMonitoring 和模型续领。
 // 实现边界：验证账号与设备槽位；所有网络请求禁止重定向与缓存，回复大小受限，不记录敏感令牌。
-// 直接依赖：Qt Network、SecureRefreshTokenStore；界面状态由 LoginDialog 决定。
+// 直接依赖：DesktopCurlAuthTransport、SecureRefreshTokenStore；界面状态由 LoginDialog 决定。
 #include "auth/DesktopAuthClient.h"
+#include "auth/DesktopCurlAuthTransport.h"
 
 #include <QCryptographicHash>
+#include <QFutureWatcher>
 #include <QGuiApplication>
 #include <QJsonDocument>
-#include <QNetworkReply>
-#include <QNetworkRequest>
 #include <QMutexLocker>
 #include <QRandomGenerator>
 #include <QRegularExpression>
 #include <QtGlobal>
+#include <QtConcurrent>
+#include <algorithm>
 #include <memory>
 
 namespace {
@@ -81,63 +83,49 @@ DesktopAuthClient::DesktopAuthClient(QObject* parent, QUrl baseUrl,
 }
 
 DesktopAuthClient::~DesktopAuthClient() {
+    // 窗口关闭后停止未完成请求；工作线程只持有数据副本，不再访问本对象。
+    for (const auto& request : pendingRequests_) request->store(true);
     clearModelCredentials();
 }
 
-// 所有账号请求走此入口。手动拒绝重定向与缓存，逐段读取回复以限制服务端返回体大小。
-// 完成回调始终在此对象的 Qt 线程执行，调用方可以按窗口生命周期丢弃过期结果。
-void DesktopAuthClient::request(
-    const QString& path, const QByteArray& method, const QJsonObject& body,
-    const QString& bearer, std::function<void(const HttpResult&)> completion) {
-    QNetworkRequest request(baseUrl_.resolved(QUrl(path)));
-    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
-    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
-                         QNetworkRequest::ManualRedirectPolicy);
-    request.setAttribute(QNetworkRequest::CacheLoadControlAttribute,
-                         QNetworkRequest::AlwaysNetwork);
-    request.setAttribute(QNetworkRequest::CacheSaveControlAttribute, false);
-    request.setRawHeader("Cache-Control", "no-store");
-    if (!bearer.isEmpty())
-        request.setRawHeader("Authorization", QByteArray("Bearer ") + bearer.toUtf8());
-    QNetworkReply* reply = method == "GET" ? network_.get(request) :
-        network_.post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
-    reply->setReadBufferSize(kMaxAuthResponseBytes + 1);
-    auto bytes = std::make_shared<QByteArray>();
-    auto tooLarge = std::make_shared<bool>(false);
-    connect(reply, &QIODevice::readyRead, this, [reply, bytes, tooLarge] {
-        if (reply->isOpen()) bytes->append(reply->readAll());
-        if (bytes->size() > kMaxAuthResponseBytes) {
-            *tooLarge = true;
-            reply->abort();
-        }
-    });
-    QTimer::singleShot(15000, reply, [reply] {
-        if (reply->isRunning()) reply->abort();
-    });
-    connect(reply, &QNetworkReply::finished, this,
-            [reply, bytes, tooLarge, completion = std::move(completion)] {
-        HttpResult result;
-        result.status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        if (reply->isOpen()) bytes->append(reply->readAll());
-        QJsonParseError parseError;
-        QJsonDocument json;
-        if (!*tooLarge && bytes->size() <= kMaxAuthResponseBytes) {
-            json = QJsonDocument::fromJson(*bytes, &parseError);
-            if (parseError.error == QJsonParseError::NoError && json.isObject())
-                result.body = json.object();
-        }
-        if (*tooLarge || bytes->size() > kMaxAuthResponseBytes) {
-            result.status = 0;
-            result.error = QStringLiteral("登录服务返回的数据过大");
-        } else if (reply->error() != QNetworkReply::NoError) {
-            result.error = reply->errorString();
-            if (result.status < 400 || result.body.isEmpty()) result.status = 0;
-        } else if (!json.isObject()) {
-            result.error = QStringLiteral("登录服务返回了无效数据");
-        }
-        reply->deleteLater();
-        completion(result);
-    });
+// 所有账号请求走此入口。耗时的 libcurl 调用在后台执行，窗口线程只解析最终结果。
+// 完成回调始终在此对象的 Qt 线程执行；窗口销毁后停止传输并丢弃过期回调。
+void DesktopAuthClient::request(const QString& path, const QByteArray& method, const QJsonObject& body,
+                                const QString& bearer, std::function<void(const HttpResult&)> completion) {
+    const QUrl url = baseUrl_.resolved(QUrl(path));
+    const QByteArray payload = method == "POST" ? QJsonDocument(body).toJson(QJsonDocument::Compact) : QByteArray();
+    const QByteArray authorization = bearer.toUtf8();
+    auto cancelled = std::make_shared<std::atomic_bool>(false);
+    pendingRequests_.push_back(cancelled);
+    auto* watcher = new QFutureWatcher<DesktopCurlAuthResult>(this);
+    connect(watcher, &QFutureWatcher<DesktopCurlAuthResult>::finished, this,
+            [this, watcher, cancelled, completion = std::move(completion)] {
+                const DesktopCurlAuthResult response = watcher->result();
+                pendingRequests_.erase(std::remove(pendingRequests_.begin(), pendingRequests_.end(), cancelled),
+                                       pendingRequests_.end());
+                watcher->deleteLater();
+                HttpResult result;
+                result.status = response.status;
+                QJsonParseError parseError;
+                QJsonDocument json;
+                if (!response.responseTooLarge && response.body.size() <= kMaxAuthResponseBytes) {
+                    json = QJsonDocument::fromJson(response.body, &parseError);
+                    if (parseError.error == QJsonParseError::NoError && json.isObject()) result.body = json.object();
+                }
+                if (response.responseTooLarge || response.body.size() > kMaxAuthResponseBytes) {
+                    result.status = 0;
+                    result.error = QStringLiteral("登录服务返回的数据过大");
+                } else if (!response.error.isEmpty()) {
+                    result.error = response.error;
+                    result.status = 0;
+                } else if (!json.isObject()) {
+                    result.error = QStringLiteral("登录服务返回了无效数据");
+                }
+                completion(result);
+            });
+    watcher->setFuture(QtConcurrent::run([url, method, payload, authorization, cancelled] {
+        return DesktopCurlAuthTransport::perform(url, method, payload, authorization, cancelled);
+    }));
 }
 
 QString DesktopAuthClient::responseError(const HttpResult& result) const {

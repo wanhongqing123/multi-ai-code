@@ -65,7 +65,7 @@ find_package(ZLIB REQUIRED)
 # 两边同一个工具链、同一套 Release 选项，省掉 ABI 对不上的一整类问题。
 #
 # 它自带的第三方依赖全在 MaiAgent/third_party 里，**构建过程不下载任何东西**。
-# 和这边的依赖不打架：Windows 上它的 curl 走 Schannel（不碰我们 vendor 的 openssl），
+# 和这边的依赖不打架：桌面账号与 MaiAgent 复用同一份 OpenSSL 版 curl；
 # sqlite 是它自己 amalgamation 的一份，这边本来也没有。
 #
 # 测试关掉：那是 MaiAgent 自己仓库里跑的事，不该拖慢这边的构建。
@@ -443,6 +443,9 @@ endif()
 add_library(remote_im_desktop_app
   src/auth/DesktopAuthClient.h
   src/auth/DesktopAuthClient.cpp
+  src/auth/DesktopCurlAuthTransport.h
+  src/auth/DesktopCurlAuthTransport.cpp
+  src/auth/AuthCertificates.qrc
   src/auth/ModelServiceTokenStore.h
   src/auth/ModelServiceTokenStore.cpp
   src/auth/SecureRefreshTokenStore.h
@@ -459,7 +462,8 @@ add_library(remote_im_desktop_app
 target_include_directories(remote_im_desktop_app PUBLIC src)
 # Qt5::Gui：视频封面要用 QImage/QPainter 画（并在 Windows 上把系统缩略图的 HBITMAP
 # 转成 QImage）。remote_im_core 保持无 GUI 依赖，封面这层留在应用层。
-target_link_libraries(remote_im_desktop_app PUBLIC remote_im_core Qt5::Gui maiagent)
+target_link_libraries(remote_im_desktop_app PUBLIC remote_im_core Qt5::Gui maiagent
+  PRIVATE Qt5::Concurrent CURL::libcurl)
 if(WIN32)
   # IShellItemImageFactory（资源管理器的缩略图提供程序）取视频首帧。
   target_link_libraries(remote_im_desktop_app PRIVATE shell32 ole32 Advapi32)

@@ -7,10 +7,7 @@ import android.graphics.BitmapFactory;
 import android.util.LruCache;
 import android.widget.ImageView;
 
-import java.io.ByteArrayOutputStream;
-import java.io.InputStream;
 import java.lang.ref.WeakReference;
-import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -95,40 +92,20 @@ public final class AvatarImageLoader {
     }
 
     private static Bitmap download(String value) {
-        HttpURLConnection connection = null;
         try {
-            connection = (HttpURLConnection) new URL(value).openConnection();
-            connection.setConnectTimeout(5_000);
-            connection.setReadTimeout(8_000);
-            connection.setInstanceFollowRedirects(true);
-            try (InputStream input = connection.getInputStream()) {
-                byte[] data = readBounded(input);
-                BitmapFactory.Options bounds = new BitmapFactory.Options();
-                bounds.inJustDecodeBounds = true;
-                BitmapFactory.decodeByteArray(data, 0, data.length, bounds);
-                BitmapFactory.Options decode = new BitmapFactory.Options();
-                decode.inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight);
-                decode.inPreferredConfig = Bitmap.Config.RGB_565;
-                return BitmapFactory.decodeByteArray(data, 0, data.length, decode);
-            }
+            MaiChatHttpTransport.Result response = MaiChatHttpTransport.getAvatar(new URL(value));
+            if (response.status != 200 || response.body.length > MAX_DOWNLOAD_BYTES) return null;
+            byte[] data = response.body;
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeByteArray(data, 0, data.length, bounds);
+            BitmapFactory.Options decode = new BitmapFactory.Options();
+            decode.inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight);
+            decode.inPreferredConfig = Bitmap.Config.RGB_565;
+            return BitmapFactory.decodeByteArray(data, 0, data.length, decode);
         } catch (Exception error) {
             return null;
-        } finally {
-            if (connection != null) connection.disconnect();
         }
-    }
-
-    private static byte[] readBounded(InputStream input) throws Exception {
-        ByteArrayOutputStream output = new ByteArrayOutputStream(32 * 1024);
-        byte[] buffer = new byte[8 * 1024];
-        int total = 0;
-        int count;
-        while ((count = input.read(buffer)) >= 0) {
-            total += count;
-            if (total > MAX_DOWNLOAD_BYTES) throw new IllegalStateException("avatar too large");
-            output.write(buffer, 0, count);
-        }
-        return output.toByteArray();
     }
 
     private static int sampleSize(int width, int height) {

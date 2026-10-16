@@ -22,6 +22,7 @@ final class MaiChatAuthTransport {
     private static final int FAILURE_CERTIFICATE = 2;
     private static final int FAILURE_TOO_LARGE = 3;
     private static final int FAILURE_SETUP = 4;
+    private static final int FAILURE_HEADER_TOO_LARGE = 5;
 
     static final class Result {
         final int status;
@@ -88,6 +89,7 @@ final class MaiChatAuthTransport {
                 case FAILURE_TIMEOUT: throw new IOException("连接登录服务超时，请稍后再试");
                 case FAILURE_CERTIFICATE: throw new IOException("无法验证登录服务证书");
                 case FAILURE_TOO_LARGE: throw new IOException("登录服务响应过大");
+                case FAILURE_HEADER_TOO_LARGE: throw new IOException("登录服务响应过大");
                 case FAILURE_SETUP: throw new IOException("账号网络组件配置失败");
                 default: throw new IOException("登录服务连接失败，请检查网络后重试");
             }

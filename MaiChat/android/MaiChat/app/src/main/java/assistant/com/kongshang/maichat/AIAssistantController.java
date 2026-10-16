@@ -848,41 +848,17 @@ public final class AIAssistantController {
         else if (!basePath.endsWith("/")) basePath += "/";
         java.net.URI endpoint = new java.net.URI("https", null, source.getHost(), source.getPort(),
             basePath + "credentials", null, null);
-        javax.net.ssl.HttpsURLConnection connection =
-            (javax.net.ssl.HttpsURLConnection) endpoint.toURL().openConnection();
-        connection.setRequestMethod("POST");
-        connection.setConnectTimeout(10_000);
-        connection.setReadTimeout(20_000);
-        connection.setUseCaches(false);
-        connection.setInstanceFollowRedirects(false);
-        connection.setDoOutput(true);
-        connection.setRequestProperty("Authorization", "Bearer " + token);
-        connection.setRequestProperty("Content-Type", "application/json");
         byte[] body = new JSONObject().put("action", "fetch")
             .put("providers", new JSONArray()
                 .put("glm").put("deepseek")
                 .put("minimax"))
             .toString().getBytes(StandardCharsets.UTF_8);
-        try {
-            try (java.io.OutputStream output = connection.getOutputStream()) { output.write(body); }
-            int status = connection.getResponseCode();
-            if (status != 200)
-                throw new IOException(status == 401
-                    ? "云端服务令牌不匹配" : "云端密钥服务暂时不可用");
-            try (InputStream input = connection.getInputStream();
-                 java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream()) {
-                byte[] buffer = new byte[2048];
-                int count;
-                while ((count = input.read(buffer)) >= 0) {
-                    if (bytes.size() + count > 16_384)
-                        throw new IOException("云端密钥响应过大");
-                    bytes.write(buffer, 0, count);
-                }
-                return new JSONObject(bytes.toString(StandardCharsets.UTF_8.name()));
-            }
-        } finally {
-            connection.disconnect();
-        }
+        MaiChatHttpTransport.Result response =
+            MaiChatHttpTransport.postCloudCredentials(endpoint.toURL(), body, token);
+        if (response.status != 200)
+            throw new IOException(response.status == 401
+                ? "云端服务令牌不匹配" : "云端密钥服务暂时不可用");
+        return new JSONObject(new String(response.body, StandardCharsets.UTF_8));
     }
     private void applyCloudCredentials(JSONObject response) throws Exception {
         JSONObject keys = response.optJSONObject("api_keys");

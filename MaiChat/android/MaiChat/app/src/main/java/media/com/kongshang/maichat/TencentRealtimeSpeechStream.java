@@ -1,4 +1,4 @@
-// 文件作用：Android 媒体播放、预览和编辑；TencentRealtimeSpeechStream 负责流式数据接收、解码和结束状态，本文件给出其实现。
+// 文件作用：按实时节奏读取 AAC，并通过 WebSocket 接收腾讯语音识别结果。
 // 主要入口：dispatch、receive、pump、finish。
 package com.kongshang.maichat;
 
@@ -8,12 +8,6 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.Response;
-import okhttp3.WebSocket;
-import okhttp3.WebSocketListener;
-import okio.ByteString;
 import org.json.JSONObject;
 
 /** Streams the same compressed AAC file retained for fallback, without a second microphone. */
@@ -23,17 +17,17 @@ final class TencentRealtimeSpeechStream {
         void finished(String text);
         default void diagnostic(String event) {}
     }
-    private static final OkHttpClient HTTP = new OkHttpClient.Builder()
-                                                     .connectTimeout(5, TimeUnit.SECONDS)
-                                                     .writeTimeout(5, TimeUnit.SECONDS)
-                                                     .readTimeout(0, TimeUnit.MILLISECONDS)
-                                                     .build();
+    private interface SocketFactory {
+        CurlRealtimeSpeechWebSocket open(String voiceId, CurlRealtimeSpeechWebSocket.Listener listener)
+            throws Exception;
+    }
     private final ScheduledExecutorService worker = Executors.newSingleThreadScheduledExecutor();
     private final String voiceId = UUID.randomUUID().toString();
     private final RealtimeSpeechProtocol transcript = new RealtimeSpeechProtocol();
     private final Listener listener;
     private final File audio;
-    private WebSocket socket;
+    private final SocketFactory socketFactory;
+    private CurlRealtimeSpeechWebSocket socket;
     private AdtsFrameReader reader;
     private ScheduledFuture<?> pumping;
     private boolean ready, audioEnded, endSent, finished;
@@ -41,24 +35,35 @@ final class TencentRealtimeSpeechStream {
     private String previousText = "";
 
     TencentRealtimeSpeechStream(File audio, String appId, String secretId, String secretKey, Listener listener) {
-        this.audio = audio; this.listener = listener;
+        this(audio, listener, (voiceId, callback) -> {
+            String url = RealtimeSpeechProtocol.signedUrl(appId, secretId, secretKey, voiceId,
+                System.currentTimeMillis() / 1000,
+                new java.security.SecureRandom().nextInt(Integer.MAX_VALUE - 1) + 1);
+            return new CurlRealtimeSpeechWebSocket(url, callback);
+        });
+    }
+
+    // 本地 WSS 集成测试的连接入口；不读取付费服务凭据。
+    TencentRealtimeSpeechStream(File audio, String url, byte[] caPem, MaiChatAuthTransport.ProxyRoute proxy,
+                                Listener listener) {
+        this(audio, listener, (voiceId, callback) ->
+            new CurlRealtimeSpeechWebSocket(url, caPem, proxy, callback));
+    }
+
+    private TencentRealtimeSpeechStream(File audio, Listener listener, SocketFactory socketFactory) {
+        this.audio = audio; this.listener = listener; this.socketFactory = socketFactory;
         worker.execute(() -> {
             try {
-                String url = RealtimeSpeechProtocol.signedUrl(appId, secretId, secretKey, voiceId,
-                        System.currentTimeMillis() / 1000,
-                        new java.security.SecureRandom().nextInt(Integer.MAX_VALUE - 1) + 1);
                 listener.diagnostic("asr-start");
-                socket = HTTP.newWebSocket(new Request.Builder().url(url).build(), new WebSocketListener() {
-                    @Override public void onMessage(WebSocket socket, String text) { dispatch(() -> receive(text)); }
-                    @Override
-                    public void onFailure(WebSocket socket, Throwable error, Response response) {
+                socket = socketFactory.open(voiceId, new CurlRealtimeSpeechWebSocket.Listener() {
+                    @Override public void message(String text) { dispatch(() -> receive(text)); }
+                    @Override public void failed(int code) {
                         dispatch(() -> {
-                            listener.diagnostic("asr-transport-failed type=" + error.getClass().getSimpleName());
+                            listener.diagnostic("asr-transport-failed curl=" + code);
                             finish(null);
                         });
                     }
-                    @Override
-                    public void onClosed(WebSocket socket, int code, String reason) {
+                    @Override public void closed() {
                         dispatch(() -> {
                             if (!finished)
                                 finish(null);
@@ -102,7 +107,7 @@ final class TencentRealtimeSpeechStream {
             // TLS 握手即使较慢，AAC 样本仍按实时节奏发送，不能瞬间倾倒积压音频。
             long budget = ((System.nanoTime() - readyAt) / 1_000_000 + 200) * 16;
             byte[] packet = reader.readUntilSample(budget);
-            if (socket.queueSize() > 128 * 1024 || packet.length > 0 && !socket.send(ByteString.of(packet))) {
+            if (packet.length > 0 && !socket.sendBinary(packet)) {
                 finish(null);
                 return;
             }
@@ -113,7 +118,10 @@ final class TencentRealtimeSpeechStream {
             if (audioEnded && reader.atEnd()) {
                 endSent = true;
                 listener.diagnostic("asr-end-sent samples=" + reader.samples());
-                socket.send("{\"type\":\"end\"}");
+                if (!socket.sendText("{\"type\":\"end\"}")) {
+                    finish(null);
+                    return;
+                }
                 pumping.cancel(false);
                 worker.schedule(() -> {
                     listener.diagnostic("asr-end-timeout");

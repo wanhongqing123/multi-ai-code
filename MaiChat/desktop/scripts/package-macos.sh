@@ -11,7 +11,7 @@ Usage:
   MaiChat/desktop/scripts/package-macos.sh [--build-dir build] [--out-dir dist] [--app-only] [--macdeployqt /path/to/macdeployqt]
 
 The script expects a built macOS bundle:
-  <build-dir>/MaiChat.app
+  <build-dir>/bin/MaiChat.app
 
 Outputs:
   <out-dir>/MaiChat-macos-arm64/
@@ -58,7 +58,7 @@ project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 repo_root="$(git -C "$project_root" rev-parse --show-toplevel)"
 build_path="$project_root/$build_dir"
 app_name="MaiChat.app"
-source_app="$build_path/$app_name"
+source_app="$build_path/bin/$app_name"
 
 if [[ ! -d "$source_app" ]]; then
   cat >&2 <<EOF
@@ -139,6 +139,14 @@ bundle_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$staged_a
 short_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$staged_app/Contents/Info.plist" 2>/dev/null || true)"
 if [[ -z "$bundle_version" || -z "$short_version" ]]; then
   echo "Invalid app bundle: CFBundleVersion and CFBundleShortVersionString must be set." >&2
+  exit 1
+fi
+
+# 打包前核对 App 实际版本与本次 CMake 配置，避免把旧 bundle 当成新构建发布。
+expected_version="$(sed -n 's/^CMAKE_PROJECT_VERSION:STATIC=//p' "$build_path/CMakeCache.txt" | head -1)"
+if [[ -z "$expected_version" || "$bundle_version" != "$expected_version" ||
+      "$short_version" != "$expected_version" ]]; then
+  echo "App bundle version does not match the configured project version: $expected_version." >&2
   exit 1
 fi
 

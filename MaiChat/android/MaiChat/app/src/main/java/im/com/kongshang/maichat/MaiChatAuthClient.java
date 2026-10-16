@@ -1,6 +1,6 @@
 // 文件作用：Android IM 身份、消息同步与本地历史。
 // MaiChatAuthClient 负责外部接口请求与结果转换，本文件给出其实现。
-// 主要入口：shared、hasSession、requestCode、credential。
+// 主要入口：shared、hasSession、requestCode、refresh、credential。
 package com.kongshang.maichat;
 
 import android.content.Context;
@@ -8,7 +8,10 @@ import android.content.SharedPreferences;
 import android.os.Build;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
+import android.system.ErrnoException;
+import android.system.OsConstants;
 import android.util.Base64;
+import android.util.Log;
 
 import org.json.JSONObject;
 
@@ -17,18 +20,26 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
+import java.net.Proxy;
+import java.net.ProxySelector;
+import java.net.SocketException;
 import java.net.URL;
+import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
+import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
+import javax.net.ssl.HttpsURLConnection;
 
 /** 手机号账号协议。刷新令牌只以 Android Keystore 加密形式落盘，UserSig 由后台签发。 */
 public final class MaiChatAuthClient {
+    private static final String AUTH_NETWORK_LOG_TAG = "MaiChatAuthNetwork";
     private static volatile MaiChatAuthClient shared;
 
     public static MaiChatAuthClient shared(Context context) {
@@ -477,22 +488,80 @@ public final class MaiChatAuthClient {
     private static HttpResponse requestWithStatus(
         String path, String method, JSONObject body, String bearer)
         throws Exception {
-        HttpURLConnection connection = (HttpURLConnection) new URL(BASE_URL + path).openConnection();
+        URL requestUrl = new URL(BASE_URL + path);
+        byte[] requestBody = body == null ? null : body.toString().getBytes(StandardCharsets.UTF_8);
         try {
+            return executeRequest(requestUrl, method, requestBody, bearer, false);
+        } catch (EarlyAuthenticationConnectionReset failure) {
+            // POST 尚未写入请求体，或 GET 尚未读取响应体；可安全地重建一次连接。
+            Log.w(AUTH_NETWORK_LOG_TAG, "账号连接在发送请求体前被重置，使用兼容连接重试一次");
+            return executeRequest(requestUrl, method, requestBody, bearer, true);
+        }
+    }
+
+    private static HttpResponse executeRequest(
+        URL requestUrl, String method, byte[] requestBody, String bearer, boolean omitServerName)
+        throws Exception {
+        HttpURLConnection connection = (HttpURLConnection) (omitServerName
+            ? requestUrl.openConnection(Proxy.NO_PROXY) : requestUrl.openConnection());
+        try {
+            if (omitServerName) {
+                if (!hasDirectProxyRoute(requestUrl))
+                    throw new IOException("账号网络代理已变化，请重试");
+                HttpsURLConnection secureConnection = (HttpsURLConnection) connection;
+                // 只改这一条连接的 SNI；原有证书信任链和域名校验器保持不变。
+                secureConnection.setSSLSocketFactory(new AuthenticationNoSniSocketFactory(
+                    secureConnection.getSSLSocketFactory()));
+            }
             connection.setRequestMethod(method);
             connection.setConnectTimeout(10_000);
             connection.setReadTimeout(20_000);
+            connection.setInstanceFollowRedirects(false);
             connection.setRequestProperty("Accept", "application/json");
             connection.setRequestProperty("Cache-Control", "no-store");
             if (!bearer.isEmpty())
                 connection.setRequestProperty("Authorization", "Bearer " + bearer);
-            if (body != null) {
-                byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
+            if (requestBody != null) {
                 connection.setDoOutput(true);
                 connection.setRequestProperty("Content-Type", "application/json");
-                try (OutputStream output = connection.getOutputStream()) { output.write(bytes); }
+                // 固定长度流式发送，阻止 HTTP 栈在请求体写出后透明重放短信等 POST。
+                connection.setFixedLengthStreamingMode(requestBody.length);
+                OutputStream bodyOutput;
+                try {
+                    // Android 在 getOutputStream 内完成 TLS 握手；此时还没有一字节请求体写出。
+                    bodyOutput = connection.getOutputStream();
+                } catch (SocketException failure) {
+                    if (isConnectionReset(failure)
+                        && canUseNoSniFallback(requestUrl, connection, omitServerName))
+                        throw new EarlyAuthenticationConnectionReset(failure);
+                    throw failure;
+                }
+                // 输出流创建后，写入或关闭失败可能已被服务端接收，绝不能自动重发。
+                try (OutputStream output = bodyOutput) { output.write(requestBody); }
             }
-            int status = connection.getResponseCode();
+            if ("GET".equals(method) && requestBody == null) {
+                try { connection.connect(); }
+                catch (SocketException failure) {
+                    if (isConnectionReset(failure)
+                        && canUseNoSniFallback(requestUrl, connection, omitServerName))
+                        throw new EarlyAuthenticationConnectionReset(failure);
+                    throw failure;
+                }
+            }
+            int status;
+            if ("GET".equals(method) && requestBody == null) {
+                // 部分 Android 实现把 GET 的 TLS 握手延至 getResponseCode；GET 可安全回退一次。
+                try { status = connection.getResponseCode(); }
+                catch (SocketException failure) {
+                    if (isConnectionReset(failure)
+                        && canUseNoSniFallback(requestUrl, connection, omitServerName))
+                        throw new EarlyAuthenticationConnectionReset(failure);
+                    throw failure;
+                }
+            } else {
+                // POST 请求体写出后的响应错误绝不能触发自动重发。
+                status = connection.getResponseCode();
+            }
             InputStream input = status < 400
                 ? connection.getInputStream() : connection.getErrorStream();
             ByteArrayOutputStream output = new ByteArrayOutputStream();
@@ -517,6 +586,48 @@ public final class MaiChatAuthClient {
             return new HttpResponse(status, result);
         } finally {
             connection.disconnect();
+        }
+    }
+
+    private static final class EarlyAuthenticationConnectionReset extends IOException {
+        EarlyAuthenticationConnectionReset(SocketException cause) { super(cause); }
+    }
+
+    static boolean isConnectionReset(SocketException failure) {
+        Throwable cause = failure;
+        while (cause != null) {
+            if (cause instanceof ErrnoException
+                && ((ErrnoException) cause).errno == OsConstants.ECONNRESET) return true;
+            cause = cause.getCause();
+        }
+        String message = failure.getMessage();
+        return message != null && message.toLowerCase(Locale.ROOT).contains("connection reset");
+    }
+
+    static boolean canUseNoSniFallback(
+        URL requestUrl, HttpURLConnection connection, boolean omitServerName) {
+        if (omitServerName || connection.usingProxy() || !"https".equals(requestUrl.getProtocol())
+            || !"ichat.life".equalsIgnoreCase(requestUrl.getHost())
+            || (requestUrl.getPort() != -1 && requestUrl.getPort() != 443)
+            || !requestUrl.getPath().startsWith("/api/v1/")
+            || !hasDirectProxyRoute(requestUrl)) return false;
+        // 调用位置保证 POST 尚未取得输出流或 GET 尚未读响应体；这里只限制域名和次数。
+        return true;
+    }
+
+    private static boolean hasDirectProxyRoute(URL requestUrl) {
+        try {
+            ProxySelector selector = ProxySelector.getDefault();
+            if (selector == null) return false;
+            List<Proxy> candidates = selector.select(requestUrl.toURI());
+            if (candidates == null || candidates.isEmpty()) return false;
+            for (Proxy candidate : candidates) {
+                if (candidate == null || candidate.type() != Proxy.Type.DIRECT) return false;
+            }
+            return true;
+        } catch (RuntimeException | URISyntaxException failure) {
+            // 无法确认代理路径时不绕过系统网络设置。
+            return false;
         }
     }
 

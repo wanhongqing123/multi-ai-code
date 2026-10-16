@@ -51,7 +51,7 @@ function mobileDevice(body, requireDeviceSlot = false) {
 
 function createAuthService(options) {
   const { db, sms, secret, imSecret, sdkAppId, issueArkCredential,
-    issueBailianCredential } = options;
+    issueBailianCredential, issueMainModelKeys } = options;
   if (!db || !sms || typeof sms.send !== 'function' ||
       typeof secret !== 'string' || secret.length < 32 ||
       typeof imSecret !== 'string' || imSecret.length < 32 ||
@@ -679,7 +679,8 @@ function createAuthService(options) {
         '/v1/auth/desktop/deny', '/v1/auth/password/set',
         '/v1/auth/logout'].includes(path)) ||
       (method === 'GET' && ['/v1/auth/me', '/v1/im/credential',
-        '/v1/model/seedance-credential', '/v1/model/bailian-credential'].includes(path));
+        '/v1/model/seedance-credential', '/v1/model/bailian-credential',
+        '/v1/model/api-keys'].includes(path));
     if (protectedRoute && !session) return authenticationFailure(headers);
     if (method === 'GET' && path.startsWith('/v1/auth/desktop/request/'))
       return desktopRequestInfo(path.slice('/v1/auth/desktop/request/'.length), session);
@@ -707,6 +708,15 @@ function createAuthService(options) {
       return json(200, { sdk_app_id: sdkAppId, user_id: session.im_user_id,
         user_sig: createUserSig(sdkAppId, session.im_user_id, imSecret, issuedAt),
         expires_at: issuedAt + 7 * 24 * 60 * 60 });
+    }
+    if (method === 'GET' && path === '/v1/model/api-keys') {
+      if (!session) return json(401, { error: 'Authentication required' });
+      if (!modelAllowedPhones.has(session.phone_e164))
+        return json(403, { error: 'Model access is not enabled for this account' });
+      if (typeof issueMainModelKeys !== 'function')
+        return json(503, { error: 'Main chat model keys are unavailable' });
+      try { return json(200, await issueMainModelKeys()); }
+      catch { return json(503, { error: 'Main chat model keys are unavailable' }); }
     }
     if (method === 'GET' && path === '/v1/model/seedance-credential') {
       if (!session) return json(401, { error: 'Authentication required' });

@@ -58,6 +58,11 @@
 
 ## 模型 API Key 同步
 
+`POST /account-model-keys` 只接受账号服务在本机回环使用的独立令牌，
+`{"action":"main_chat"}` 仅返回 GLM/DeepSeek 主聊天 Key。账号服务先验证登录会话
+和模型白名单，再下发给 App；模型请求仍由 App 直接访问供应商，素材服务不代理流量。
+公网 Nginx 必须对该路径返回 404。
+
 `POST /credentials` 只接受服务 Bearer 令牌。`{"action":"status"}` 返回已配置的
 模型名和 Assets／OSS 状态，不返回密钥。`{"action":"fetch","providers":
 ["ark","glm","glm_video","deepseek","wan","kling","minimax"]}` 只返回请求中指定且

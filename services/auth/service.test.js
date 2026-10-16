@@ -149,6 +149,31 @@ test('only an allowed signed-in account receives short-lived Seedance credential
   denied.db.close();
 });
 
+test('main chat keys require an allowed signed-in account', async () => {
+  let issued = 0;
+  const setup = fixture(undefined, { issueMainModelKeys: async () => {
+    ++issued;
+    return { api_keys: { glm: 'glm-model-key', deepseek: 'deepseek-model-key' } };
+  } });
+  const path = '/v1/model/api-keys';
+  assert.equal((await setup.call('GET', path)).statusCode, 401);
+  const allowed = await signInWithSms(setup);
+  const response = await setup.call('GET', path, {}, allowed.body.access_token);
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.body, {
+    api_keys: { glm: 'glm-model-key', deepseek: 'deepseek-model-key' }
+  });
+  assert.equal(issued, 1);
+  setup.db.close();
+
+  const denied = fixture(['+8613900000002'], { issueMainModelKeys: async () => {
+    throw new Error('must not issue');
+  } });
+  const other = await signInWithSms(denied);
+  assert.equal((await denied.call('GET', path, {}, other.body.access_token)).statusCode, 403);
+  denied.db.close();
+});
+
 test('only a signed-in model account receives cached short-lived Bailian credentials', async () => {
   let issued = 0;
   const setup = fixture(undefined, { issueBailianCredential: async () => ({

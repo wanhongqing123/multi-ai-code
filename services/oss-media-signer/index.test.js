@@ -490,6 +490,24 @@ test('synchronizes only requested model keys and never returns AccessKeys', asyn
     headers: { Authorization: 'Bearer wrong' } })).statusCode, 401);
 });
 
+test('account-only main model key route never accepts the client service token', async () => {
+  const authToken = 'fedcba9876543210fedcba9876543210';
+  const configured = { ...env, MAICHAT_AUTH_SERVICE_TOKEN: authToken,
+    MAICHAT_GLM_API_KEY: 'glm-model-key', MAICHAT_DEEPSEEK_API_KEY: 'deepseek-model-key' };
+  const handle = createHandler({ env: configured });
+  const requestKeys = token => ({ ...request({ action: 'main_chat' }, token),
+    rawPath: '/account-model-keys' });
+  assert.equal((await handle(requestKeys(env.MAICHAT_OSS_SIGNER_TOKEN))).statusCode, 401);
+  const issued = await handle(requestKeys(authToken));
+  assert.equal(issued.statusCode, 200);
+  assert.deepEqual(JSON.parse(issued.body), {
+    api_keys: { glm: 'glm-model-key', deepseek: 'deepseek-model-key' }
+  });
+  assert.ok(!issued.body.includes('fedcba9876543210'));
+  assert.equal((await handle({ ...requestKeys(authToken),
+    body: JSON.stringify({ action: 'fetch' }) })).statusCode, 400);
+});
+
 test('issues a five-minute Seedance and Seedream key only to the account service', async () => {
   const now = new Date('2026-10-08T00:00:00Z');
   const internalToken = 'fedcba9876543210fedcba9876543210';

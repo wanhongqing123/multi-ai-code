@@ -103,11 +103,11 @@ function createHandler(options = {}) {
       return portraitCallbackResponse();
     if (method !== 'POST' || (!route.endsWith('/sign-upload') &&
         !route.endsWith('/ark-assets') && route !== '/credentials' &&
-        route !== '/temporary-credentials'))
+        route !== '/temporary-credentials' && route !== '/account-model-keys'))
       return jsonResponse(404, { error: 'Not found' });
 
     // 登录服务专用令牌绝不发给 App；其他旧接口仍使用原签名服务令牌。
-    const token = route === '/temporary-credentials'
+    const token = route === '/temporary-credentials' || route === '/account-model-keys'
       ? env.MAICHAT_AUTH_SERVICE_TOKEN || ''
       : env.MAICHAT_MEDIA_SERVICE_TOKEN || env.MAICHAT_OSS_SIGNER_TOKEN || '';
     if (token.length < 32) return jsonResponse(503, { error: 'Service token is not configured' });
@@ -115,6 +115,15 @@ function createHandler(options = {}) {
       return jsonResponse(401, { error: 'Unauthorized' });
 
     const body = requestBody(event);
+    if (route === '/account-model-keys') {
+      if (body?.action !== 'main_chat')
+        return jsonResponse(400, { error: 'Invalid model key request' });
+      const glm = env.MAICHAT_GLM_API_KEY || '';
+      const deepseek = env.MAICHAT_DEEPSEEK_API_KEY || '';
+      if (!glm && !deepseek)
+        return jsonResponse(503, { error: 'Main chat models are not configured' });
+      return jsonResponse(200, { api_keys: { glm, deepseek } });
+    }
     if (route === '/temporary-credentials') {
       if (body?.action === 'bailian_video') {
         const permanentKey = env.MAICHAT_WAN_API_KEY || '';

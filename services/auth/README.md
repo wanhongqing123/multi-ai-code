@@ -28,6 +28,7 @@ Node 服务只监听 `127.0.0.1:9100`。验证码、密码哈希、登录会话�
 | `GET /v1/im/credential` | Bearer 会话；只为当前账号签发 Tencent UserSig |
 | `GET /v1/model/seedance-credential` | Bearer 会话且手机号在模型白名单；返回 5 分钟、限定 Seedance 与 Seedream 的临时方舟 Key；路径保留旧名称兼容 App |
 | `GET /v1/model/bailian-credential` | Bearer 会话且手机号在模型白名单；返回 5 分钟百炼临时 Key 和万相 Workspace ID，供万相与百炼可灵共用 |
+| `GET /v1/model/api-keys` | Bearer 会话且手机号在模型白名单；返回主聊天 GLM/DeepSeek Key，客户端直接调用供应商 |
 
 接口经 Nginx 对外使用 `/api/v1/...`；服务内部路由仍为 `/v1/...`。
 用户主键和腾讯 IM UserID 与手机号分离，换号不改变 IM 身份。首次登录前如需
@@ -134,7 +135,9 @@ AppKey 必须只保存在服务端。
   请求素材服务签发，火山 AK/SK、百炼永久 API Key 不下发。百炼临时 Key 继承
   主 Key 的模型权限，5 分钟内如泄漏仍可使用；业务配额仍须在百炼控制台限制。
   旧共享令牌的 `/credentials` 不再返回方舟、万相与百炼可灵长期 Key；其他模型
-  仍属联调链路，不能用于公开账号发长期 Key。
+  中的主聊天 GLM/DeepSeek 可由账号服务按登录会话下发。它们目前是供应商长期 Key，
+  会进入客户端进程；退出登录无法撤销已被复制的 Key，密钥保护方式留待后续方案。
+  服务端只下发凭据，绝不转发模型请求或流式响应。
 - 桌面端和已发布的旧版移动客户端仍可能持有旧 IM 签名密钥。完成迁移后需轮换
   该密钥；仅从新包移除明文无法撤销旧包和历史源码中的密钥。
 

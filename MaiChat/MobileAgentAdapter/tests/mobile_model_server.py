@@ -17,7 +17,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if prompt == 'write':
                 call = {'index': 0, 'id': 'call_mobile_write', 'type': 'function', 'function': {
-                    'name': 'write', 'arguments': json.dumps({'path': 'ui-result.txt', 'content': 'approved'})}}
+                    'name': 'file_write',
+                    'arguments': json.dumps({'path': 'ui-result.txt', 'content': 'approved'})}}
                 response = {'choices': [{'index': 0, 'delta': {'tool_calls': [call]},
                                          'finish_reason': 'tool_calls'}]}
                 self.wfile.write(('data: ' + json.dumps(response) + '\n\ndata: [DONE]\n\n').encode())

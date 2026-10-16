@@ -13,6 +13,7 @@ import android.content.Context;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
 import android.media.MediaMetadataRetriever;
 import android.media.MediaPlayer;
 import android.net.Uri;
@@ -48,13 +49,14 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     private final Activity activity;
     final AIAssistantController controller;
     final EditText composer;
-    final Button send;
-    private final Button newConversationButton;
-    private final Button modelButton, policyButton;
+    final ImageButton send;
+    private final ImageButton voiceModeButton, attachmentOrStopButton;
+    private final Button voiceHoldButton;
     private final TextView error;
     private final LatestMessageList list;
     private final LinearLayout pending;
-    private final LinearLayout attachmentTray;
+    private final LinearLayout attachmentSection, attachmentTray, attachmentPanel;
+    private final TextView attachmentCount;
     private final MessageAdapter adapter = new MessageAdapter();
     private AIAssistantController.State state;
     private String selected = "", pendingSignature = "";
@@ -67,7 +69,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     private final Set<String> expanded = new HashSet<>();
     private List<JSONObject> messages = Collections.emptyList();
     private boolean following = true, submitting;
-    private int visibleLimit = 50;
+    private int visibleLimit = 30;
     private final Button older;
     private boolean visibleToUser = true;
     private File pendingCameraFile;
@@ -77,7 +79,8 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     private int navigationGeneration;
     private final VoiceRecordingController voiceRecorder;
     private final SpeechRecognizer speechRecognizer;
-    private boolean voiceRecording, cancelVoice;
+    private boolean voiceMode, voiceRecording, cancelVoice, attachmentPanelVisible;
+    private String voicePartialText = "";
     private int voiceGeneration;
     private final Runnable elapsed = new Runnable() {
         @Override
@@ -110,22 +113,36 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         setOrientation(VERTICAL);
         setBackgroundColor(Color.WHITE);
         MarkdownRenderer.initialize(activity);
-        LinearLayout header = row();
-        header.addView(button("☰", "对话列表", v -> sessions()), new LayoutParams(dp(48), dp(48)));
+        FrameLayout header = new FrameLayout(activity);
+        ImageButton sessionsButton = headerIcon(R.drawable.ic_ai_sidebar, "对话列表", v -> sessions());
+        FrameLayout.LayoutParams sessionsParams = new FrameLayout.LayoutParams(dp(34), dp(34),
+            Gravity.START | Gravity.CENTER_VERTICAL);
+        sessionsParams.setMarginStart(dp(16));
+        header.addView(sessionsButton, sessionsParams);
         TextView title = text("创作中心", 18, MaiChatTheme.TEXT);
         title.setTypeface(MaiChatTypography.semibold());
-        header.addView(title, new LayoutParams(0, dp(48), 1));
-        newConversationButton = button("＋", "新对话", v -> requestNewConversation());
-        header.addView(newConversationButton, new LayoutParams(dp(46), dp(48)));
-        header.addView(button("⋯", "对话选项", v -> menu()), new LayoutParams(dp(46), dp(48)));
-        addView(header, matchWrap());
+        title.setGravity(Gravity.CENTER);
+        header.addView(title, new FrameLayout.LayoutParams(
+            LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT, Gravity.CENTER));
+        ImageButton moreButton = headerIcon(R.drawable.ic_ai_more, "更多", null);
+        moreButton.setOnClickListener(v -> menu(v));
+        FrameLayout.LayoutParams moreParams = new FrameLayout.LayoutParams(dp(34), dp(34),
+            Gravity.END | Gravity.CENTER_VERTICAL);
+        moreParams.setMarginEnd(dp(16));
+        header.addView(moreButton, moreParams);
+        addView(header, new LayoutParams(LayoutParams.MATCH_PARENT, dp(54)));
+        View headerDivider = new View(activity);
+        headerDivider.setBackgroundColor(Color.argb(18, 0, 0, 0));
+        addView(headerDivider, new LayoutParams(LayoutParams.MATCH_PARENT, dp(1)));
         list = new LatestMessageList();
+        list.setStackFromBottom(true);
+        list.setTranscriptMode(ListView.TRANSCRIPT_MODE_NORMAL);
         list.setDivider(null);
-        list.setDividerHeight(dp(16));
-        list.setPadding(dp(16), dp(12), dp(16), dp(12));
+        list.setDividerHeight(dp(24));
+        list.setPadding(dp(24), dp(18), dp(24), dp(24));
         list.setClipToPadding(false);
         older = button("显示更早消息", "显示更早消息", v -> {
-            visibleLimit += 50;
+            visibleLimit += 30;
             updateMessages();
         });
         // 首次快照尚未返回时不能显示历史入口；只在确认有更早消息后再露出。
@@ -157,17 +174,42 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         error.setTextIsSelectable(true);
         error.setVisibility(GONE);
         addView(error, matchWrap());
-        LinearLayout box = column();
-        box.setPadding(dp(12), dp(6), dp(12), dp(6));
-        box.setBackground(MaiChatTheme.bordered(Color.WHITE, MaiChatTheme.BORDER, 18, activity));
+        View composerDivider = new View(activity);
+        composerDivider.setBackgroundColor(MaiChatTheme.BORDER);
+        addView(composerDivider, new LayoutParams(LayoutParams.MATCH_PARENT, dp(1)));
+        LinearLayout composerArea = column();
+        composerArea.setBackgroundColor(Color.WHITE);
+        attachmentSection = column();
+        attachmentSection.setPadding(dp(16), dp(10), dp(16), 0);
+        attachmentCount = text("待发送附件", 12, MaiChatTheme.SECONDARY);
+        attachmentCount.setTypeface(MaiChatTypography.semibold());
+        attachmentSection.addView(attachmentCount, matchWrap());
+        HorizontalScrollView attachmentScroll = new HorizontalScrollView(activity);
+        attachmentScroll.setHorizontalScrollBarEnabled(false);
+        attachmentTray = row();
+        attachmentScroll.addView(attachmentTray);
+        attachmentSection.addView(attachmentScroll, matchWrap());
+        attachmentSection.setVisibility(GONE);
+        composerArea.addView(attachmentSection, matchWrap());
+
+        LinearLayout inputRow = row();
+        inputRow.setGravity(Gravity.BOTTOM);
+        inputRow.setPadding(dp(16), dp(12), dp(16), dp(10));
+        voiceModeButton = circularIcon(R.drawable.ic_ai_voice, "切换到按住转文字", true,
+            v -> setVoiceMode(!voiceMode));
+        inputRow.addView(voiceModeButton, new LayoutParams(dp(44), dp(44)));
+
+        FrameLayout inputSurface = new FrameLayout(activity);
         composer = new EditText(activity);
         composer.setTag("ai-composer");
         composer.setContentDescription("创作中心消息输入框");
-        composer.setHint("随心输入");
-        composer.setTextSize(14);
+        composer.setHint("可按住转文字");
+        composer.setTextSize(16);
         composer.setMinLines(1);
         composer.setMaxLines(6);
-        composer.setBackgroundColor(Color.TRANSPARENT);
+        composer.setMinHeight(dp(44));
+        composer.setPadding(dp(13), dp(9), dp(13), dp(9));
+        composer.setBackground(MaiChatTheme.bordered(Color.WHITE, MaiChatTheme.BLUE, 14, activity));
         composer.setInputType(android.text.InputType.TYPE_CLASS_TEXT
             | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
             | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
@@ -183,37 +225,60 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         });
         composer.setOnFocusChangeListener((v, focused) -> {
             if (focused) {
+                hideAttachmentPanel();
                 following = true;
                 locateLatest();
             }
         });
-        box.addView(composer, matchWrap());
-        HorizontalScrollView attachmentScroll = new HorizontalScrollView(activity);
-        attachmentScroll.setHorizontalScrollBarEnabled(false);
-        attachmentTray = row();
-        attachmentScroll.addView(attachmentTray);
-        box.addView(attachmentScroll, matchWrap());
-        LinearLayout actions = row();
-        actions.addView(button("＋", "添加图片、视频或文件", v -> attachmentMenu()),
-            new LayoutParams(dp(36), dp(40)));
-        Button voice = button("◉", "按住语音转文字", null);
-        voice.setOnTouchListener((view, event) -> voiceTouch(event));
-        actions.addView(voice, new LayoutParams(dp(36), dp(40)));
-        policyButton = button("请求批准", "权限设置", v -> settings());
-        policyButton.setTextSize(11);
-        actions.addView(policyButton, new LayoutParams(LayoutParams.WRAP_CONTENT, dp(40)));
-        modelButton = button("未配置模型", "切换模型", v -> modelMenu());
-        modelButton.setTextSize(11);
-        modelButton.setSingleLine(true);
-        actions.addView(modelButton, new LayoutParams(0, dp(40), 1));
-        send = button("↑", "发送", v -> send());
-        send.setTextColor(Color.WHITE);
-        send.setBackground(MaiChatTheme.rounded(Color.rgb(29, 32, 36), 18, activity));
-        actions.addView(send, new LayoutParams(dp(36), dp(36)));
-        box.addView(actions, matchWrap());
-        LayoutParams bp = matchWrap();
-        bp.setMargins(dp(12), dp(8), dp(12), dp(10));
-        addView(box, bp);
+        inputSurface.addView(composer, new FrameLayout.LayoutParams(
+            LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
+        voiceHoldButton = button("按住转文字", "按住转文字", null);
+        voiceHoldButton.setTextSize(16);
+        voiceHoldButton.setTextColor(MaiChatTheme.TEXT);
+        voiceHoldButton.setSingleLine(true);
+        voiceHoldButton.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        voiceHoldButton.setBackground(MaiChatTheme.bordered(
+            Color.WHITE, MaiChatTheme.BLUE, 14, activity));
+        voiceHoldButton.setOnTouchListener((view, event) -> voiceTouch(event));
+        voiceHoldButton.setVisibility(GONE);
+        inputSurface.addView(voiceHoldButton, new FrameLayout.LayoutParams(
+            LayoutParams.MATCH_PARENT, dp(44)));
+        LayoutParams inputParams = new LayoutParams(0, LayoutParams.WRAP_CONTENT, 1);
+        inputParams.setMargins(dp(8), 0, dp(8), 0);
+        inputRow.addView(inputSurface, inputParams);
+
+        attachmentOrStopButton = circularIcon(R.drawable.ic_ai_add, "展开更多功能", false,
+            v -> {
+                if (state != null && state.busy())
+                    controller.action("stop", value("session", selected), null);
+                else
+                    setAttachmentPanelVisible(!attachmentPanelVisible);
+            });
+        inputRow.addView(attachmentOrStopButton, new LayoutParams(dp(44), dp(44)));
+        send = circularIcon(R.drawable.ic_ai_send, "发送给 AI", false, v -> send());
+        send.setBackground(MaiChatTheme.rounded(MaiChatTheme.BLUE, 22, activity));
+        send.setVisibility(GONE);
+        LayoutParams sendParams = new LayoutParams(dp(44), dp(44));
+        sendParams.setMargins(dp(8), 0, 0, 0);
+        inputRow.addView(send, sendParams);
+        composerArea.addView(inputRow, matchWrap());
+
+        attachmentPanel = row();
+        attachmentPanel.setPadding(dp(16), dp(8), dp(16), dp(14));
+        attachmentPanel.addView(attachmentAction(
+            R.drawable.ic_ai_gallery, "相册", "选择图片或视频", v -> openMediaPicker()),
+            new LayoutParams(0, dp(64), 1));
+        attachmentPanel.addView(attachmentAction(
+            R.drawable.ic_ai_camera, "拍照", "拍照", v -> {
+                hideAttachmentPanel();
+                requestCamera();
+            }), new LayoutParams(0, dp(64), 1));
+        attachmentPanel.addView(attachmentAction(
+            R.drawable.ic_ai_file, "文件", "导入文本文件", v -> openTextFilePicker()),
+            new LayoutParams(0, dp(64), 1));
+        attachmentPanel.setVisibility(GONE);
+        composerArea.addView(attachmentPanel, matchWrap());
+        addView(composerArea, matchWrap());
     }
     @Override
     protected void onAttachedToWindow() {
@@ -253,7 +318,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             }
             if (!firstSend)
                 composer.setText(drafts.getOrDefault(selected, ""));
-            visibleLimit = 50;
+            visibleLimit = 30;
             expanded.clear();
             following = true;
             pendingLatestSession = selected;
@@ -261,10 +326,6 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         state = next;
         error.setText(next.error);
         error.setVisibility(next.error.isEmpty() ? GONE : VISIBLE);
-        modelButton.setText(next.data.optBoolean("configured") ? next.model : "未配置模型");
-        policyButton.setText(next.policy.equals("never") ? "完全访问"
-                : next.policy.equals("unless-trusted")   ? "帮我批准"
-                                                         : "请求批准");
         updateSend();
         updateAttachments();
         updateMessages();
@@ -309,41 +370,90 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             && last.getBottom() <= list.getHeight() - list.getPaddingBottom() + dp(30);
     }
     private void locateLatest() {
-        list.requestLayout();
+        list.showLatestContent();
     }
     private final class LatestMessageList extends ListView {
         LatestMessageList() {
             super(activity);
         }
-        @Override
-        protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
-            super.onLayout(changed, left, top, right, bottom);
-            if (!following || getCount() == 0)
-                return;
-            int target = getCount() - 1;
-            setSelectionFromTop(target, 0);
-            layoutChildren();
-            View last = getChildAt(target - getFirstVisiblePosition());
-            if (last != null) {
-                setSelectionFromTop(
-                    target, getHeight() - getPaddingBottom() - getPaddingTop() - last.getHeight());
-                layoutChildren();
-            }
+        // 短消息使用系统的底部堆叠；当最后一条消息本身高于视口时，必须等真实行高
+        // 可用后设置负偏移，才能看到该消息末尾，不能按字符数估算高度。
+        void showLatestContent() {
+            post(() -> {
+                if (!following || getCount() == 0) return;
+                int target = getCount() - 1;
+                setSelection(target);
+                postOnAnimation(() -> {
+                    if (!following || target != getCount() - 1) return;
+                    View last = getChildAt(target - getFirstVisiblePosition());
+                    if (last == null) return;
+                    int viewportHeight = getHeight() - getPaddingTop() - getPaddingBottom();
+                    if (last.getHeight() > viewportHeight) {
+                        int top = getPaddingTop() + viewportHeight - last.getHeight();
+                        setSelectionFromTop(target, top);
+                    }
+                });
+            });
         }
     }
     private void updateSend() {
-        if (send == null)
-            return;
+        if (send == null) return;
         boolean busy = state != null && state.busy();
-        send.setText(busy ? "■" : "↑");
-        send.setContentDescription(busy ? "停止" : "发送");
-        newConversationButton.setEnabled(!submitting && !navigationPending);
-        send.setEnabled(state != null && state.ready && !submitting
-            && !navigationPending
-            && (busy || (pendingMediaImports.getOrDefault(selected, 0) == 0
-                && (!composer.getText().toString().trim().isEmpty()
-                    || !currentAttachments().isEmpty()))));
+        boolean hasDraft = !composer.getText().toString().trim().isEmpty()
+            || !currentAttachments().isEmpty();
+        boolean canSubmit = state != null && state.ready && !busy && !submitting
+            && !navigationPending && pendingMediaImports.getOrDefault(selected, 0) == 0 && hasDraft;
+        send.setVisibility(!voiceMode && hasDraft && !busy ? VISIBLE : GONE);
+        send.setEnabled(canSubmit);
+        attachmentOrStopButton.setImageResource(busy ? R.drawable.ic_ai_stop : R.drawable.ic_ai_add);
+        attachmentOrStopButton.setContentDescription(busy ? "停止" :
+            (attachmentPanelVisible ? "收起更多功能" : "展开更多功能"));
+        attachmentOrStopButton.setColorFilter(busy ? Color.WHITE : MaiChatTheme.TEXT);
+        attachmentOrStopButton.setBackground(busy
+            ? MaiChatTheme.rounded(Color.rgb(29, 32, 36), 22, activity)
+            : MaiChatTheme.bordered(Color.WHITE, MaiChatTheme.BORDER, 22, activity));
+        attachmentOrStopButton.setEnabled(state != null && state.ready && !submitting);
+        voiceModeButton.setEnabled(state != null && state.ready && !busy && !submitting);
+        voiceHoldButton.setEnabled(state != null && state.ready && !busy && !submitting);
         // 提交期间保持原生编辑器焦点；禁用控件会让输入法意外收起。
+    }
+    private void setVoiceMode(boolean enabled) {
+        if (voiceRecording || voiceMode == enabled) return;
+        voiceMode = enabled;
+        hideAttachmentPanel();
+        voiceModeButton.setImageResource(enabled ? R.drawable.ic_ai_keyboard : R.drawable.ic_ai_voice);
+        voiceModeButton.setContentDescription(enabled ? "切换到键盘输入" : "切换到按住转文字");
+        composer.setVisibility(enabled ? GONE : VISIBLE);
+        voiceHoldButton.setVisibility(enabled ? VISIBLE : GONE);
+        if (enabled) hideKeyboard();
+        updateSend();
+    }
+    private void setAttachmentPanelVisible(boolean visible) {
+        if (attachmentPanelVisible == visible) return;
+        if (visible && voiceMode) setVoiceMode(false);
+        attachmentPanelVisible = visible;
+        attachmentPanel.animate().cancel();
+        if (visible) {
+            hideKeyboard();
+            attachmentPanel.setVisibility(VISIBLE);
+            attachmentPanel.setAlpha(0);
+            attachmentPanel.setTranslationY(dp(8));
+            attachmentPanel.animate().alpha(1).translationY(0).setDuration(160).start();
+        } else {
+            attachmentPanel.animate().alpha(0).translationY(dp(8)).setDuration(120)
+                .withEndAction(() -> {
+                    if (!attachmentPanelVisible) attachmentPanel.setVisibility(GONE);
+                }).start();
+        }
+        updateSend();
+    }
+    private void hideAttachmentPanel() {
+        if (attachmentPanelVisible) setAttachmentPanelVisible(false);
+    }
+    private void hideKeyboard() {
+        ((android.view.inputmethod.InputMethodManager) activity.getSystemService(
+             Context.INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(getWindowToken(), 0);
+        composer.clearFocus();
     }
     private void send() {
         if (state == null || submitting || navigationPending)
@@ -426,7 +536,8 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     private void updateAttachments() {
         if (attachmentTray == null) return;
         attachmentTray.removeAllViews();
-        composer.setHint(currentAttachments().isEmpty() ? "随心输入" : "添加说明（可选）");
+        if (!currentAttachments().isEmpty() && voiceMode) setVoiceMode(false);
+        composer.setHint(currentAttachments().isEmpty() ? "可按住转文字" : "添加说明（可选）");
         int imageOrdinal = 0;
         int videoOrdinal = 0;
         for (AIAssistantController.ImportedFile file : currentAttachments()) {
@@ -496,6 +607,11 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             loading.setPadding(dp(12), dp(5), dp(12), dp(5));
             attachmentTray.addView(loading, new LayoutParams(dp(126), dp(82)));
         }
+        int attachmentCountValue = currentAttachments().size();
+        attachmentCount.setText(attachmentCountValue == 0 ? "待发送附件"
+            : "待发送附件  " + attachmentCountValue);
+        attachmentSection.setVisibility(
+            attachmentCountValue > 0 || pendingCount > 0 ? VISIBLE : GONE);
     }
     private void previewAttachment(AIAssistantController.ImportedFile file) {
         File source = controller.workspaceFile(file.relativePath);
@@ -513,26 +629,22 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         }
         return result;
     }
-    private void attachmentMenu() {
-        new AlertDialog.Builder(activity)
-            .setItems(new String[] {"选择图片或视频", "拍照", "导入文本文件"}, (dialog, which) -> {
-                if (which == 0) {
-                    pendingMediaSession = selected;
-                    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT)
-                        .setType("*/*")
-                        .putExtra(Intent.EXTRA_MIME_TYPES, new String[] {"image/*", "video/*"})
-                        .putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
-                        .addCategory(Intent.CATEGORY_OPENABLE);
-                    activity.startActivityForResult(intent, REQUEST_IMAGE);
-                } else if (which == 1) requestCamera();
-                else {
-                    pendingFileSession = selected;
-                    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT)
-                        .setType("text/*").addCategory(Intent.CATEGORY_OPENABLE);
-                    activity.startActivityForResult(intent, REQUEST_FILE);
-                }
-            })
-            .show();
+    private void openMediaPicker() {
+        hideAttachmentPanel();
+        pendingMediaSession = selected;
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT)
+            .setType("*/*")
+            .putExtra(Intent.EXTRA_MIME_TYPES, new String[] {"image/*", "video/*"})
+            .putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+            .addCategory(Intent.CATEGORY_OPENABLE);
+        activity.startActivityForResult(intent, REQUEST_IMAGE);
+    }
+    private void openTextFilePicker() {
+        hideAttachmentPanel();
+        pendingFileSession = selected;
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT)
+            .setType("text/*").addCategory(Intent.CATEGORY_OPENABLE);
+        activity.startActivityForResult(intent, REQUEST_FILE);
     }
     // 系统选择器返回后按启动时的会话归档，避免导入期间切换对话造成错发。
     boolean handleActivityResult(int requestCode, Intent data) {
@@ -645,13 +757,37 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 return;
             }
             if (choices[which].equalsIgnoreCase(state.model)) return;
-            modelButton.setEnabled(false);
             controller.switchModel(choices[which], success -> {
-                modelButton.setEnabled(true);
                 if (!success) Toast.makeText(activity, controller.state.error,
                     Toast.LENGTH_LONG).show();
             });
         }).show();
+    }
+    private void policyMenu() {
+        if (state == null) return;
+        String[] titles = {"请求批准", "帮我批准", "完全访问"};
+        String[] values = {"on-request", "unless-trusted", "never"};
+        int checked = state.policy.equals("never") ? 2
+            : state.policy.equals("unless-trusted") ? 1 : 0;
+        new AlertDialog.Builder(activity)
+            .setTitle("操作权限")
+            .setSingleChoiceItems(titles, checked, (dialog, which) -> {
+                if (state.busy()) {
+                    Toast.makeText(activity, "请先停止当前任务再修改权限", Toast.LENGTH_LONG).show();
+                    return;
+                }
+                dialog.dismiss();
+                controller.save(state.model, values[which], success -> {
+                    if (!success) Toast.makeText(activity, controller.state.error,
+                        Toast.LENGTH_LONG).show();
+                });
+            })
+            .setNegativeButton("取消", null)
+            .show();
+    }
+    private String policyTitle(String policy) {
+        return policy.equals("never") ? "完全访问"
+            : policy.equals("unless-trusted") ? "帮我批准" : "请求批准";
     }
     private boolean voiceTouch(MotionEvent event) {
         if (voiceRecorder == null || state == null || state.busy() || submitting
@@ -667,7 +803,10 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         }
         if (!voiceRecording) return false;
         if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
-            cancelVoice = event.getY() < -dp(60); return true;
+            cancelVoice = event.getY() < -dp(60);
+            voiceHoldButton.setText(cancelVoice ? "松开取消"
+                : voicePartialText.isEmpty() ? "正在听，请说话…" : voicePartialText);
+            return true;
         }
         if (event.getActionMasked() == MotionEvent.ACTION_UP
             || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
@@ -681,7 +820,13 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         int generation = ++voiceGeneration;
         boolean started = voiceRecorder.tryStart(new VoiceRecordingController.Completion() {
             @Override public void partial(String text) {
-                if (voiceRecording && generation == voiceGeneration) composer.setText(text);
+                if (voiceRecording && generation == voiceGeneration) {
+                    voicePartialText = text == null ? "" : text.trim();
+                    composer.setText(voicePartialText);
+                    if (!cancelVoice)
+                        voiceHoldButton.setText(voicePartialText.isEmpty()
+                            ? "正在听，请说话…" : voicePartialText);
+                }
             }
             @Override public void recognized(String text, File file, int seconds) {
                 file.delete();
@@ -723,13 +868,13 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             Toast.makeText(activity, "麦克风正在被其他录音使用", Toast.LENGTH_LONG).show();
             return;
         }
-        voiceRecording = true; cancelVoice = false;
-        composer.setHint("松开发送，上滑取消");
+        voiceRecording = true; cancelVoice = false; voicePartialText = "";
+        voiceHoldButton.setText("正在听，请说话…");
     }
     private void finishVoice(boolean cancel) {
         if (!voiceRecording) return;
-        voiceRecording = false; cancelVoice = false;
-        composer.setHint("随心输入");
+        voiceRecording = false; cancelVoice = false; voicePartialText = "";
+        voiceHoldButton.setText("按住转文字");
         if (cancel) {
             voiceGeneration++;
             composer.setText("");
@@ -1016,39 +1161,67 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     }
     private void sessions() {
         if (submitting || navigationPending) return;
-        if (state == null)
-            return;
+        if (state == null) return;
         JSONArray items = state.data.optJSONArray("sessions");
-        if (items == null)
-            return;
+        if (items == null) return;
         // 尚未发送的空白会话也要能从列表返回，否则创建新对话会让草稿失去入口。
         boolean blankDraft = !attachments.getOrDefault("", Collections.emptyList()).isEmpty()
             || pendingMediaImports.getOrDefault("", 0) > 0
             || !(selected.isEmpty() ? composer.getText().toString()
                 : drafts.getOrDefault("", "")).trim().isEmpty();
-        int offset = blankDraft ? 2 : 1;
-        String[] titles = new String[items.length() + offset];
-        titles[0] = "＋ 新对话";
-        if (blankDraft) titles[1] = "未发送草稿";
+        FrameLayout overlay = new FrameLayout(activity);
+        overlay.setBackgroundColor(Color.argb(42, 0, 0, 0));
+        LinearLayout drawer = column();
+        drawer.setBackgroundColor(Color.WHITE);
+        drawer.setElevation(dp(18));
+        LinearLayout drawerHeader = row();
+        drawerHeader.setPadding(dp(18), 0, dp(12), 0);
+        TextView drawerTitle = text("对话", 18, MaiChatTheme.TEXT);
+        drawerTitle.setTypeface(MaiChatTypography.semibold());
+        drawerHeader.addView(drawerTitle, new LayoutParams(0, dp(54), 1));
+        ImageButton create = circularIcon(R.drawable.ic_ai_add, "新对话", false, null);
+        drawerHeader.addView(create, new LayoutParams(dp(40), dp(40)));
+        drawer.addView(drawerHeader, matchWrap());
+        ScrollView scroll = new ScrollView(activity);
+        LinearLayout sessionList = column();
+        sessionList.setPadding(dp(10), dp(6), dp(10), dp(18));
+        scroll.addView(sessionList);
+        drawer.addView(scroll, new LayoutParams(LayoutParams.MATCH_PARENT, 0, 1));
+        int drawerWidth = Math.min(dp(360),
+            Math.round(activity.getResources().getDisplayMetrics().widthPixels * 0.86f));
+        FrameLayout.LayoutParams drawerParams = new FrameLayout.LayoutParams(
+            drawerWidth, LayoutParams.MATCH_PARENT, Gravity.START);
+        overlay.addView(drawer, drawerParams);
+        PopupWindow popup = new PopupWindow(
+            overlay, LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT, true);
+        popup.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        popup.setOutsideTouchable(true);
+        overlay.setOnClickListener(v -> popup.dismiss());
+        drawer.setOnClickListener(v -> {});
+        create.setOnClickListener(v -> {
+            popup.dismiss();
+            requestNewConversation();
+        });
+        if (blankDraft)
+            sessionList.addView(sessionDrawerRow("未发送草稿", "", selected.isEmpty(), v -> {
+                popup.dismiss();
+                requestConversation("");
+            }), matchWrap());
         for (int i = 0; i < items.length(); i++) {
-            JSONObject s = items.optJSONObject(i);
-            String title = s.optString("title");
-            titles[i + offset] =
-                (title.equals("New session") ? "新对话" : title) + (s.optBoolean("busy") ? " ···" : "");
+            JSONObject session = items.optJSONObject(i);
+            if (session == null) continue;
+            String id = session.optString("id");
+            String title = session.optString("title");
+            if (title.equals("New session")) title = "新对话";
+            String detail = session.optBoolean("busy") ? "正在处理" : "";
+            sessionList.addView(sessionDrawerRow(title, detail, id.equals(selected), v -> {
+                popup.dismiss();
+                requestConversation(id);
+            }), matchWrap());
         }
-        new AlertDialog.Builder(activity)
-            .setTitle("对话")
-            .setItems(titles,
-                (d, which) -> {
-                    if (which == 0)
-                        requestNewConversation();
-                    else if (blankDraft && which == 1)
-                        requestConversation("");
-                    else
-                        requestConversation(items.optJSONObject(which - offset).optString("id"));
-                })
-            .setNegativeButton("取消", null)
-            .show();
+        popup.showAtLocation(this, Gravity.START | Gravity.TOP, 0, 0);
+        drawer.setTranslationX(-drawerWidth);
+        drawer.animate().translationX(0).setDuration(180).start();
     }
     private void requestNewConversation() {
         if (submitting || navigationPending) return;
@@ -1071,25 +1244,45 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         navigationPending = false;
         updateSend();
     }
-    private void menu() {
+    private void menu(View anchor) {
         if (submitting || navigationPending) return;
+        if (state == null) return;
+        LinearLayout panel = column();
+        panel.setPadding(0, dp(4), 0, dp(4));
+        panel.setBackground(MaiChatTheme.bordered(Color.WHITE, Color.rgb(232, 235, 240), 14, activity));
+        PopupWindow popup = new PopupWindow(panel, dp(264), LayoutParams.WRAP_CONTENT, true);
+        popup.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        popup.setOutsideTouchable(true);
+        String modelValue = state.data.optBoolean("configured") ? state.model : "未配置";
+        panel.addView(actionPanelRow("模型", modelValue, MaiChatTheme.TEXT, v -> {
+            popup.dismiss();
+            if (state.data.optBoolean("configured")) modelMenu(); else settings();
+        }), matchWrap());
+        panel.addView(actionPanelDivider(), new LayoutParams(LayoutParams.MATCH_PARENT, dp(1)));
+        panel.addView(actionPanelRow("操作权限", policyTitle(state.policy), MaiChatTheme.TEXT, v -> {
+            popup.dismiss();
+            if (state.data.optBoolean("configured")) policyMenu(); else settings();
+        }), matchWrap());
+        panel.addView(actionPanelDivider(), new LayoutParams(LayoutParams.MATCH_PARENT, dp(1)));
+        View clear = actionPanelRow("清空当前对话", "",
+            selected.isEmpty() || state.busy() ? MaiChatTheme.SECONDARY : MaiChatTheme.RED, v -> {
+            popup.dismiss();
+            confirmClearConversation();
+        });
+        clear.setEnabled(!selected.isEmpty() && !state.busy());
+        panel.addView(clear, matchWrap());
+        panel.measure(MeasureSpec.UNSPECIFIED, MeasureSpec.UNSPECIFIED);
+        popup.setElevation(dp(14));
+        popup.showAsDropDown(anchor, anchor.getWidth() - dp(264), dp(6));
+    }
+    private void confirmClearConversation() {
+        if (state == null || state.busy() || selected.isEmpty()) return;
+        String target = selected;
         new AlertDialog.Builder(activity)
-            .setItems(new String[] {"清空当前对话", "删除当前对话"},
-                (d, which) -> {
-                    if (state == null || state.busy() || selected.isEmpty())
-                        return;
-                    String op = which == 0 ? "clear" : "delete";
-                    String target = selected;
-                    new AlertDialog.Builder(activity)
-                        .setMessage(which == 0 ? "清空当前对话的所有消息？" : "删除当前对话？")
-                        .setNegativeButton("取消", null)
-                        .setPositiveButton(
-                            "确定", (dialog, w) -> {
-                                controller.action(op, value("session", target), which == 1
-                                    ? () -> discardDeletedSession(target) : null);
-                            })
-                        .show();
-                })
+            .setMessage("清空当前对话的所有消息？")
+            .setNegativeButton("取消", null)
+            .setPositiveButton("确定",
+                (dialog, which) -> controller.action("clear", value("session", target), null))
             .show();
     }
     private void discardDeletedSession(String target) {
@@ -1234,15 +1427,42 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                     diagnosticCards.clear();
                     mediaCards.clear();
                     status = null;
-                    TextView empty = text("有什么可以帮你？\n\n"
-                        + "可以聊天、分析图片、视频和文件，也可以语音转文字。", 16,
+                    setGravity(Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+                    LinearLayout welcome = column();
+                    welcome.setGravity(Gravity.CENTER_HORIZONTAL);
+                    welcome.setPadding(0, dp(70), 0, dp(70));
+                    ImageView sparkles = new ImageView(activity);
+                    sparkles.setImageResource(R.drawable.ic_ai_sparkles);
+                    sparkles.setContentDescription("创作中心");
+                    welcome.addView(sparkles, new LayoutParams(dp(40), dp(40)));
+                    TextView heading = text("有什么可以帮你？", 22, MaiChatTheme.TEXT);
+                    heading.setTypeface(MaiChatTypography.semibold());
+                    heading.setGravity(Gravity.CENTER);
+                    LayoutParams headingParams = matchWrap();
+                    headingParams.setMargins(0, dp(14), 0, 0);
+                    welcome.addView(heading, headingParams);
+                    TextView detail = text("可以聊天、分析文本和处理导入的文件。", 16,
                         MaiChatTheme.SECONDARY);
-                    empty.setPadding(0, dp(50), 0, dp(50));
-                    empty.setGravity(Gravity.CENTER);
-                    addView(empty, matchWrap());
+                    detail.setGravity(Gravity.CENTER);
+                    LayoutParams detailParams = matchWrap();
+                    detailParams.setMargins(0, dp(12), 0, 0);
+                    welcome.addView(detail, detailParams);
+                    if (state != null && !state.data.optBoolean("configured")) {
+                        Button configure = button("配置模型", "配置模型", v -> settings());
+                        configure.setTextColor(Color.WHITE);
+                        configure.setTextSize(14);
+                        configure.setTypeface(MaiChatTypography.semibold());
+                        configure.setBackground(MaiChatTheme.rounded(MaiChatTheme.BLUE, 10, activity));
+                        LayoutParams configureParams = new LayoutParams(dp(104), dp(38));
+                        configureParams.setMargins(0, dp(16), 0, 0);
+                        welcome.addView(configure, configureParams);
+                    }
+                    addView(welcome, matchWrap());
                 }
                 return;
             }
+            setGravity(Gravity.NO_GRAVITY);
+            setMinimumHeight(0);
             JSONArray array = value.optJSONArray("parts");
             if (array == null)
                 array = new JSONArray();
@@ -1429,6 +1649,8 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                         continue;
                     if (kind.equals("text")) {
                         String source = part.optString("text");
+                        view.setTextColor(MaiChatTheme.TEXT);
+                        view.setAlpha(1f);
                         view.setVisibility(source.isEmpty() ? GONE : VISIBLE);
                         if (!source.equals(view.getContentDescription())) {
                             view.setContentDescription(source);
@@ -1484,6 +1706,15 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                     }
                 }
             updateTime();
+        }
+        @Override
+        protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+            super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+            if (message == null) {
+                int viewport = list.getHeight() - list.getPaddingTop() - list.getPaddingBottom();
+                if (viewport > getMeasuredHeight())
+                    setMeasuredDimension(getMeasuredWidth(), viewport);
+            }
         }
         private void addInlineMediaCards(JSONArray items) {
             if (items == null) return;
@@ -1869,6 +2100,100 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     }
     private int dp(int value) {
         return MaiChatTheme.dp(activity, value);
+    }
+    private ImageButton headerIcon(int drawable, String description, OnClickListener action) {
+        ImageButton button = new ImageButton(activity);
+        button.setImageResource(drawable);
+        button.setColorFilter(MaiChatTheme.TEXT);
+        button.setScaleType(ImageView.ScaleType.CENTER);
+        button.setPadding(dp(8), dp(8), dp(8), dp(8));
+        button.setBackground(MaiChatTheme.rounded(Color.rgb(246, 247, 250), 10, activity));
+        button.setContentDescription(description);
+        button.setOnClickListener(action);
+        return button;
+    }
+    private ImageButton circularIcon(int drawable, String description, boolean blue,
+                                     OnClickListener action) {
+        ImageButton button = new ImageButton(activity);
+        button.setImageResource(drawable);
+        button.setColorFilter(blue ? MaiChatTheme.BLUE : MaiChatTheme.TEXT);
+        button.setScaleType(ImageView.ScaleType.CENTER);
+        button.setPadding(dp(10), dp(10), dp(10), dp(10));
+        button.setBackground(blue
+            ? MaiChatTheme.bordered(MaiChatTheme.BLUE_SOFT, MaiChatTheme.BORDER, 22, activity)
+            : MaiChatTheme.bordered(Color.WHITE, MaiChatTheme.BORDER, 22, activity));
+        button.setContentDescription(description);
+        button.setOnClickListener(action);
+        return button;
+    }
+    private View attachmentAction(int drawable, String title, String description,
+                                  OnClickListener action) {
+        LinearLayout item = column();
+        item.setGravity(Gravity.CENTER);
+        item.setContentDescription(description);
+        item.setBackground(MaiChatTheme.rounded(Color.rgb(247, 249, 252), 12, activity));
+        item.setOnClickListener(action);
+        item.setClickable(true);
+        item.setFocusable(true);
+        ImageView icon = new ImageView(activity);
+        icon.setImageResource(drawable);
+        item.addView(icon, new LayoutParams(dp(24), dp(24)));
+        TextView label = text(title, 12, MaiChatTheme.TEXT);
+        label.setGravity(Gravity.CENTER);
+        LayoutParams labelParams = matchWrap();
+        labelParams.setMargins(0, dp(5), 0, 0);
+        item.addView(label, labelParams);
+        return item;
+    }
+    private View sessionDrawerRow(String title, String detail, boolean selected,
+                                  OnClickListener action) {
+        LinearLayout row = column();
+        row.setPadding(dp(14), dp(10), dp(14), dp(10));
+        row.setBackground(MaiChatTheme.rounded(
+            selected ? MaiChatTheme.BLUE_SOFT : Color.TRANSPARENT, 10, activity));
+        row.setOnClickListener(action);
+        row.setClickable(true);
+        row.setFocusable(true);
+        TextView heading = text(title, 15, MaiChatTheme.TEXT);
+        heading.setTypeface(selected ? MaiChatTypography.semibold() : android.graphics.Typeface.SANS_SERIF);
+        heading.setSingleLine(true);
+        heading.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        row.addView(heading, matchWrap());
+        if (!detail.isEmpty()) {
+            TextView status = text(detail, 12, MaiChatTheme.BLUE);
+            LayoutParams statusParams = matchWrap();
+            statusParams.setMargins(0, dp(3), 0, 0);
+            row.addView(status, statusParams);
+        }
+        LayoutParams params = matchWrap();
+        params.setMargins(0, dp(2), 0, dp(2));
+        row.setLayoutParams(params);
+        return row;
+    }
+    private View actionPanelRow(String title, String value, int titleColor,
+                                OnClickListener action) {
+        LinearLayout row = column();
+        row.setPadding(dp(14), dp(9), dp(14), dp(9));
+        row.setMinimumHeight(dp(52));
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setOnClickListener(action);
+        row.setClickable(true);
+        row.setFocusable(true);
+        TextView heading = text(title, 14, titleColor);
+        heading.setTypeface(MaiChatTypography.semibold());
+        row.addView(heading, matchWrap());
+        if (!value.isEmpty()) {
+            TextView detail = text(value, 11, MaiChatTheme.SECONDARY);
+            detail.setSingleLine(true);
+            detail.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            row.addView(detail, matchWrap());
+        }
+        return row;
+    }
+    private View actionPanelDivider() {
+        View divider = new View(activity);
+        divider.setBackgroundColor(Color.rgb(239, 242, 246));
+        return divider;
     }
     private TextView text(String source, int size, int color) {
         return MaiChatTheme.text(activity, source, size, color);

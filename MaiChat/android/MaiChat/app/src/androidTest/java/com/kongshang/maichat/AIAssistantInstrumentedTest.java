@@ -89,6 +89,7 @@ public class AIAssistantInstrumentedTest {
         long deadline = System.currentTimeMillis() + 15000;
         AtomicBoolean passed = new AtomicBoolean();
         while (!passed.get() && System.currentTimeMillis() < deadline) {
+            dismissPageSizeCompatibilityDialog();
             scenario.onActivity(a -> {
                 try {
                     passed.set(check.check(a.panel));
@@ -99,6 +100,40 @@ public class AIAssistantInstrumentedTest {
             Thread.sleep(50);
         }
         assertTrue("AI UI condition timed out", passed.get());
+    }
+    private void dismissPageSizeCompatibilityDialog() {
+        AccessibilityNodeInfo root = InstrumentationRegistry.getInstrumentation()
+            .getUiAutomation().getRootInActiveWindow();
+        if (root == null) return;
+        for (String label : new String[] {"Don't Show Again", "OK"}) {
+            java.util.List<AccessibilityNodeInfo> matches = root.findAccessibilityNodeInfosByText(label);
+            if (!matches.isEmpty()) {
+                matches.get(0).performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                return;
+            }
+        }
+    }
+    private AccessibilityNodeInfo awaitSystemText(String text, long timeoutMilliseconds)
+            throws InterruptedException {
+        long deadline = System.currentTimeMillis() + timeoutMilliseconds;
+        while (System.currentTimeMillis() < deadline) {
+            AccessibilityNodeInfo root = InstrumentationRegistry.getInstrumentation()
+                .getUiAutomation().getRootInActiveWindow();
+            if (root != null) {
+                java.util.List<AccessibilityNodeInfo> matches = root.findAccessibilityNodeInfosByText(text);
+                if (!matches.isEmpty()) return matches.get(0);
+            }
+            Thread.sleep(50);
+        }
+        return null;
+    }
+    private boolean clickNodeOrParent(AccessibilityNodeInfo node) {
+        AccessibilityNodeInfo current = node;
+        while (current != null) {
+            if (current.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true;
+            current = current.getParent();
+        }
+        return false;
     }
     private boolean visibleText(View view, String text) {
         if (view instanceof TextView && ((TextView) view).getText().toString().contains(text)) {
@@ -215,31 +250,20 @@ public class AIAssistantInstrumentedTest {
                     assertEquals(initialCount.get(), messages == null ? 0 : messages.length());
                     assertEquals("请分析这些素材", panel.composer.getText().toString());
                     assertNotNull(findDescription(panel, "预览视频 1"));
-                    assertTrue(findDescription(panel, "新对话").performClick());
+                    assertTrue(findDescription(panel, "对话列表").performClick());
                 });
+                AccessibilityNodeInfo newConversation = awaitSystemText("新对话", 3000);
+                assertNotNull("会话抽屉应提供新对话入口", newConversation);
+                assertTrue(clickNodeOrParent(newConversation));
                 await(scenario, panel -> !panel.controller.state.selected.equals(origin.get())
                     && panel.composer.getText().length() == 0
                     && findDescription(panel, "预览图片") == null);
                 if (origin.get().isEmpty()) {
                     scenario.onActivity(activity ->
                         assertTrue(findDescription(activity.panel, "对话列表").performClick()));
-                    AccessibilityNodeInfo draft = null;
-                    long deadline = System.currentTimeMillis() + 3000;
-                    while (draft == null && System.currentTimeMillis() < deadline) {
-                        AccessibilityNodeInfo root = InstrumentationRegistry.getInstrumentation()
-                            .getUiAutomation().getRootInActiveWindow();
-                        if (root != null) {
-                            java.util.List<AccessibilityNodeInfo> matches =
-                                root.findAccessibilityNodeInfosByText("未发送草稿");
-                            if (!matches.isEmpty()) draft = matches.get(0);
-                        }
-                        if (draft == null) Thread.sleep(50);
-                    }
+                    AccessibilityNodeInfo draft = awaitSystemText("未发送草稿", 3000);
                     assertNotNull("新对话后应能返回未发送草稿", draft);
-                    boolean opened = draft.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-                    if (!opened && draft.getParent() != null)
-                        opened = draft.getParent().performAction(AccessibilityNodeInfo.ACTION_CLICK);
-                    assertTrue("未发送草稿应可点击", opened);
+                    assertTrue("未发送草稿应可点击", clickNodeOrParent(draft));
                 } else {
                     scenario.onActivity(activity -> activity.panel.controller.select(origin.get()));
                 }
@@ -266,6 +290,36 @@ public class AIAssistantInstrumentedTest {
         }
     }
     @Test
+    // 验证创作中心主界面与 iOS 共用的入口层级和输入区状态切换。
+    public void composerMatchesIosInteractionStructure() throws Exception {
+        try (ActivityScenario<AIAssistantTestActivity> scenario =
+                 ActivityScenario.launch(AIAssistantTestActivity.class)) {
+            await(scenario, panel -> panel.controller.state.ready);
+            scenario.onActivity(activity -> {
+                AIAssistantPanel panel = activity.panel;
+                assertNotNull(findDescription(panel, "对话列表"));
+                assertNotNull(findDescription(panel, "更多"));
+                assertNull(findDescription(panel, "新对话"));
+                assertNull(findDescription(panel, "权限设置"));
+                assertNull(findDescription(panel, "切换模型"));
+                assertNotNull(findDescription(panel, "切换到按住转文字"));
+                assertNotNull(findDescription(panel, "展开更多功能"));
+                assertEquals(View.GONE, panel.send.getVisibility());
+                panel.composer.setText("hello");
+                assertEquals(View.VISIBLE, panel.send.getVisibility());
+                assertNotNull(findDescription(panel, "展开更多功能"));
+                panel.composer.setText("");
+                assertTrue(findDescription(panel, "展开更多功能").performClick());
+                assertNotNull(findDescription(panel, "选择图片或视频"));
+                assertNotNull(findDescription(panel, "拍照"));
+                assertNotNull(findDescription(panel, "导入文本文件"));
+                assertTrue(findDescription(panel, "切换到按住转文字").performClick());
+                assertNotNull(findDescription(panel, "按住转文字"));
+                assertNotNull(findDescription(panel, "切换到键盘输入"));
+            });
+        }
+    }
+    @Test
     // 作用：验证 Unicode 增量输出、停止动作及原生输入框状态在同一会话中保持一致。
     public void streamsUnicodeStopsAndKeepsNativeComposer() throws Exception {
         try (ActivityScenario<AIAssistantTestActivity> scenario =
@@ -276,7 +330,9 @@ public class AIAssistantInstrumentedTest {
             scenario.onActivity(a -> {
                 input.set(a.panel.composer);
                 a.panel.composer.setText("中文🙂 UI streaming check");
-                a.panel.send.performClick();
+                assertEquals(View.VISIBLE, a.panel.send.getVisibility());
+                assertTrue(a.panel.send.isEnabled());
+                assertTrue(a.panel.send.performClick());
             });
             await(scenario, p -> !p.controller.state.busy() && visibleText(p, "Mobile response ready"));
             scenario.onActivity(a -> {
@@ -293,7 +349,9 @@ public class AIAssistantInstrumentedTest {
             });
             scenario.onActivity(a -> {
                 a.panel.composer.setText("write");
-                a.panel.send.performClick();
+                assertEquals(View.VISIBLE, a.panel.send.getVisibility());
+                assertTrue(a.panel.send.isEnabled());
+                assertTrue(a.panel.send.performClick());
             });
             await(scenario,
                 p
@@ -310,12 +368,15 @@ public class AIAssistantInstrumentedTest {
                     && p.controller.state.data.optJSONArray("permissions").length() == 0);
             scenario.onActivity(a -> {
                 a.panel.composer.setText("stop");
-                a.panel.send.performClick();
+                assertTrue(a.panel.send.isEnabled());
+                assertTrue(a.panel.send.performClick());
             });
             await(scenario, p -> p.controller.state.busy());
             scenario.onActivity(a -> {
-                assertEquals("停止", a.panel.send.getContentDescription());
-                a.panel.send.performClick();
+                View stop = findDescription(a.panel, "停止");
+                assertNotNull(stop);
+                assertEquals(View.GONE, a.panel.send.getVisibility());
+                assertTrue(stop.performClick());
             });
             await(scenario, p -> !p.controller.state.busy());
             scenario.onActivity(a -> {
@@ -332,7 +393,8 @@ public class AIAssistantInstrumentedTest {
             });
             scenario.onActivity(a -> {
                 a.panel.composer.setText("long");
-                a.panel.send.performClick();
+                assertTrue(a.panel.send.isEnabled());
+                assertTrue(a.panel.send.performClick());
             });
             await(scenario, p -> !p.controller.state.busy() && visibleText(p, "Tail marker"));
             await(scenario, p -> {

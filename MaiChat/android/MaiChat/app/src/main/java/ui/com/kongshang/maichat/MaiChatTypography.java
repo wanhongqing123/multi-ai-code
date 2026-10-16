@@ -16,10 +16,10 @@ import android.widget.TextView;
 
 /** Matches the effective iOS MarkdownLikeText metrics using Android system fonts. */
 final class MaiChatTypography {
-    static final int BODY_SP = 14;
-    static final int DATE_SP = 11;
-    static final int INLINE_CODE_SP = 13;
-    static final int CODE_BLOCK_SP = 12;
+    static final int BODY_SP = 16;
+    static final int DATE_SP = 12;
+    static final int INLINE_CODE_SP = 14;
+    static final int CODE_BLOCK_SP = 14;
     static final int CODE_COLOR = android.graphics.Color.rgb(107, 59, 150);
     static final int CODE_BACKGROUND = android.graphics.Color.rgb(242, 237, 250);
     static final int HEADING_COLOR = android.graphics.Color.rgb(28, 79, 138);
@@ -30,7 +30,7 @@ final class MaiChatTypography {
     static TextView body(Context context) {
         TextView view = MaiChatTheme.text(context, "", BODY_SP, MaiChatTheme.TEXT);
         view.setTypeface(Typeface.SANS_SERIF, Typeface.NORMAL);
-        view.setLineSpacing(MaiChatTheme.dp(context, 4), 1);
+        view.setLineSpacing(MaiChatTheme.dp(context, 6), 1);
         view.setTextIsSelectable(true);
         return view;
     }

@@ -280,7 +280,7 @@ class LoginDialogTest : public QObject {
 private slots:
     void liveProductionAuthHealthCheck();
     void liveProductionQrCreationAndCancellation();
-    void usesDesktopLandscapeDefaultSize();
+    void usesCompactDesktopSize();
     void showsQrLoginHierarchyWithoutManualUserId();
     void displaysServerQrAndSendsMatchingVerifier();
     void replacingQrCancelsPreviousRequest();
@@ -341,16 +341,18 @@ void LoginDialogTest::liveProductionQrCreationAndCancellation() {
     QVERIFY(qr.width() > 0 && qr.height() > 0);
 }
 
-void LoginDialogTest::usesDesktopLandscapeDefaultSize() {
+void LoginDialogTest::usesCompactDesktopSize() {
     LoginDialog dialog;
+    dialog.show();
+    QCoreApplication::processEvents();
     if (qEnvironmentVariableIsSet("MAICHAT_CAPTURE_LOGIN")) {
-        dialog.show();
-        QCoreApplication::processEvents();
         dialog.grab().save(qEnvironmentVariable("MAICHAT_CAPTURE_LOGIN"));
     }
-
-    QVERIFY(dialog.width() > dialog.height());
-    QVERIFY(dialog.minimumWidth() > dialog.minimumHeight());
+    QVERIFY2(dialog.width() <= 560, "Login window is wider than the QR flow needs");
+    QVERIFY2(dialog.height() <= 620, "Login window is taller than the QR flow needs");
+    auto* cancel = dialog.findChild<QPushButton*>(QStringLiteral("loginCancelButton"));
+    QVERIFY(cancel != nullptr);
+    QVERIFY(dialog.rect().contains(cancel->mapTo(&dialog, cancel->rect().bottomRight())));
 }
 
 void LoginDialogTest::showsQrLoginHierarchyWithoutManualUserId() {
@@ -375,10 +377,12 @@ void LoginDialogTest::showsQrLoginHierarchyWithoutManualUserId() {
     QCOMPARE(dialog.windowTitle(), QStringLiteral("MaiChat"));
     const QPixmap logoPixmap = logo->pixmap(Qt::ReturnByValue);
     QVERIFY(!logoPixmap.isNull());
-    QCOMPARE(title->text(), QStringLiteral("欢迎使用 MaiChat"));
-    QCOMPARE(status->text(), QStringLiteral("正在生成登录二维码"));
+    QCOMPARE(title->text(), QStringLiteral("MaiChat"));
+    QCOMPARE(status->text(), QStringLiteral("正在生成二维码"));
+    QCOMPARE(qr->text(), status->text());
+    QVERIFY(!status->isVisible());
     QVERIFY(!retryButton->isEnabled());
-    QCOMPARE(cancelButton->text(), QStringLiteral("取消登录"));
+    QCOMPARE(cancelButton->text(), QStringLiteral("取消"));
     QVERIFY(dialog.findChild<QLineEdit*>() == nullptr);
 }
 
@@ -389,6 +393,7 @@ void LoginDialogTest::displaysServerQrAndSendsMatchingVerifier() {
     auto* status = dialog.findChild<QLabel*>(QStringLiteral("loginStatus"));
     auto* code = dialog.findChild<QLabel*>(QStringLiteral("loginCode"));
     auto* qr = dialog.findChild<QLabel*>(QStringLiteral("loginQr"));
+    auto* detail = dialog.findChild<QLabel*>(QStringLiteral("loginDetail"));
     auto* cancel = dialog.findChild<QPushButton*>(QStringLiteral("loginCancelButton"));
     QSignalSpy rejected(&dialog, &QDialog::rejected);
 
@@ -399,6 +404,7 @@ void LoginDialogTest::displaysServerQrAndSendsMatchingVerifier() {
     QCOMPARE(server.challenge.size(), 43);
     QCOMPARE(code->text(), QStringLiteral("核对码  123456"));
     QVERIFY(!qr->pixmap(Qt::ReturnByValue).isNull());
+    QVERIFY(!detail->isVisible());
     if (qEnvironmentVariableIsSet("MAICHAT_CAPTURE_QR_LOGIN"))
         dialog.grab().save(qEnvironmentVariable("MAICHAT_CAPTURE_QR_LOGIN"));
     QTRY_VERIFY_WITH_TIMEOUT(server.verifierValid, 5000);
@@ -497,9 +503,18 @@ void LoginDialogTest::showsDeniedAndExpiredStates() {
         DesktopAuthClient auth(nullptr, server.url(), false);
         LoginDialog dialog(&auth);
         auto* status = dialog.findChild<QLabel*>(QStringLiteral("loginStatus"));
+        auto* qr = dialog.findChild<QLabel*>(QStringLiteral("loginQr"));
+        auto* detail = dialog.findChild<QLabel*>(QStringLiteral("loginDetail"));
         dialog.show();
         dialog.start();
         QTRY_COMPARE_WITH_TIMEOUT(status->text(), expected.second, 5000);
+        if (expected.first == 410) {
+            QCOMPARE(qr->text(), expected.second);
+            QVERIFY(!status->isVisible());
+            QVERIFY(!detail->isVisible());
+            if (qEnvironmentVariableIsSet("MAICHAT_CAPTURE_EXPIRED_LOGIN"))
+                dialog.grab().save(qEnvironmentVariable("MAICHAT_CAPTURE_EXPIRED_LOGIN"));
+        }
     }
 }
 

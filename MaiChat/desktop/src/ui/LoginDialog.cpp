@@ -35,68 +35,67 @@ LoginDialog::LoginDialog(DesktopAuthClient* auth, QWidget* parent)
 void LoginDialog::buildUi() {
     setWindowTitle(QStringLiteral("MaiChat"));
     setModal(true);
-    setMinimumSize(720, 680);
-    resize(920, 700);
+    setMinimumSize(480, 540);
+    resize(520, 560);
     auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(32, 32, 32, 32);
+    root->setContentsMargins(24, 24, 24, 24);
     root->addStretch();
     auto* panel = new QWidget(this);
     panel->setObjectName(QStringLiteral("loginPanel"));
-    panel->setFixedWidth(440);
+    panel->setFixedWidth(400);
     auto* layout = new QVBoxLayout(panel);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
     auto* logo = makeLabel({}, QStringLiteral("loginLogo"), panel);
-    logo->setFixedSize(64, 64);
+    logo->setFixedSize(48, 48);
     const QPixmap icon(QStringLiteral(":/maichat/app-icon.png"));
     const qreal dpr = devicePixelRatioF();
-    QPixmap logoPixmap = icon.scaled(QSize(64, 64) * dpr, Qt::KeepAspectRatio,
+    QPixmap logoPixmap = icon.scaled(QSize(48, 48) * dpr, Qt::KeepAspectRatio,
                                      Qt::SmoothTransformation);
     logoPixmap.setDevicePixelRatio(dpr);
     logo->setPixmap(logoPixmap);
     layout->addWidget(logo, 0, Qt::AlignHCenter);
-    layout->addSpacing(12);
-    layout->addWidget(makeLabel(QStringLiteral("欢迎使用 MaiChat"),
-                                QStringLiteral("welcomeTitle"), panel));
     layout->addSpacing(8);
-    layout->addWidget(makeLabel(QStringLiteral("请使用已登录的 MaiChat 手机扫码"),
+    layout->addWidget(makeLabel(QStringLiteral("MaiChat"),
+                                QStringLiteral("welcomeTitle"), panel));
+    layout->addSpacing(4);
+    layout->addWidget(makeLabel(QStringLiteral("使用手机扫码登录"),
                                 QStringLiteral("loginSubtitle"), panel));
-    layout->addSpacing(22);
+    layout->addSpacing(14);
 
     auto* frame = new QWidget(panel);
     frame->setObjectName(QStringLiteral("qrFrame"));
-    frame->setFixedSize(260, 260);
+    frame->setFixedSize(220, 220);
     auto* qrLayout = new QVBoxLayout(frame);
     qrLayout->setContentsMargins(14, 14, 14, 14);
     qrLabel_ = makeLabel(QStringLiteral("正在生成二维码…"),
                          QStringLiteral("loginQr"), frame);
-    qrLabel_->setFixedSize(232, 232);
+    qrLabel_->setFixedSize(192, 192);
     qrLayout->addWidget(qrLabel_);
     layout->addWidget(frame, 0, Qt::AlignHCenter);
-    layout->addSpacing(18);
+    layout->addSpacing(10);
     codeLabel_ = makeLabel({}, QStringLiteral("loginCode"), panel);
     layout->addWidget(codeLabel_);
-    layout->addSpacing(8);
+    layout->addSpacing(5);
     statusLabel_ = makeLabel({}, QStringLiteral("loginStatus"), panel);
     layout->addWidget(statusLabel_);
-    layout->addSpacing(5);
+    layout->addSpacing(4);
     detailLabel_ = makeLabel({}, QStringLiteral("loginDetail"), panel);
     detailLabel_->setWordWrap(true);
-    detailLabel_->setMinimumHeight(38);
     layout->addWidget(detailLabel_);
     countdownLabel_ = makeLabel({}, QStringLiteral("loginCountdown"), panel);
     layout->addWidget(countdownLabel_);
-    layout->addSpacing(17);
+    layout->addSpacing(10);
     retryButton_ = new QPushButton(QStringLiteral("更换二维码"), panel);
     retryButton_->setObjectName(QStringLiteral("loginRetryButton"));
-    retryButton_->setFixedHeight(46);
+    retryButton_->setFixedHeight(42);
     retryButton_->setCursor(Qt::PointingHandCursor);
     layout->addWidget(retryButton_);
-    layout->addSpacing(10);
-    auto* cancelButton = new QPushButton(QStringLiteral("取消登录"), panel);
+    layout->addSpacing(6);
+    auto* cancelButton = new QPushButton(QStringLiteral("取消"), panel);
     cancelButton->setObjectName(QStringLiteral("loginCancelButton"));
-    cancelButton->setFixedHeight(38);
+    cancelButton->setFixedHeight(30);
     cancelButton->setCursor(Qt::PointingHandCursor);
     layout->addWidget(cancelButton);
     root->addWidget(panel, 0, Qt::AlignHCenter);
@@ -112,7 +111,7 @@ void LoginDialog::applyStyle() {
         #welcomeTitle { color: #0f172a; font-size: 20px; font-weight: 700; }
         #loginSubtitle { color: #64748b; font-size: 13px; }
         #qrFrame { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; }
-        #loginQr { color: #94a3b8; font-size: 13px; border: 0; }
+        #loginQr { color: #64748b; font-size: 14px; border: 0; }
         #loginCode { color: #334155; font-size: 15px; font-weight: 600; }
         #loginStatus { color: #0f172a; font-size: 15px; font-weight: 600; }
         #loginDetail, #loginCountdown { color: #64748b; font-size: 12px; }
@@ -139,7 +138,7 @@ void LoginDialog::setState(State state, const QString& detail) {
     switch (state) {
     case State::Restoring:
         status = QStringLiteral("正在恢复登录");
-        hint = QStringLiteral("正在验证此电脑上保存的登录信息");
+        hint.clear();
         enabled = false;
         break;
     case State::RestoreError:
@@ -148,32 +147,32 @@ void LoginDialog::setState(State state, const QString& detail) {
         action = QStringLiteral("重试恢复登录");
         break;
     case State::Loading:
-        status = QStringLiteral("正在生成登录二维码");
-        hint = QStringLiteral("请稍候");
+        status = QStringLiteral("正在生成二维码");
+        hint.clear();
         enabled = false;
         break;
     case State::Waiting:
         status = QStringLiteral("等待手机扫码并确认");
-        hint = QStringLiteral("请核对手机上的六位数字，再确认登录");
+        hint.clear();
         break;
     case State::Scanned:
         status = QStringLiteral("已扫码，请在手机上确认");
-        hint = QStringLiteral("确认前请核对手机和电脑上的六位数字");
+        hint.clear();
         break;
     case State::Expired:
         status = QStringLiteral("二维码已过期");
-        hint = QStringLiteral("生成新二维码后再用手机扫描");
-        action = QStringLiteral("生成新二维码");
+        hint.clear();
+        action = QStringLiteral("重新生成");
         break;
     case State::Denied:
         status = QStringLiteral("手机拒绝了这次登录");
-        hint = QStringLiteral("如需登录，请重新生成二维码");
-        action = QStringLiteral("生成新二维码");
+        hint.clear();
+        action = QStringLiteral("重新生成");
         break;
     case State::ApprovalRevoked:
         status = QStringLiteral("手机授权已失效");
-        hint = QStringLiteral("请使用当前已登录的手机重新扫码");
-        action = QStringLiteral("生成新二维码");
+        hint.clear();
+        action = QStringLiteral("重新生成");
         break;
     case State::NetworkError:
         status = QStringLiteral("网络连接失败");
@@ -182,7 +181,7 @@ void LoginDialog::setState(State state, const QString& detail) {
         break;
     case State::Connecting:
         status = QStringLiteral("登录成功，正在连接");
-        hint = QStringLiteral("正在获取安全的聊天凭据");
+        hint.clear();
         enabled = false;
         break;
     case State::CredentialError:
@@ -192,24 +191,20 @@ void LoginDialog::setState(State state, const QString& detail) {
         break;
     }
     statusLabel_->setText(status);
+    statusLabel_->setVisible(showQr);
     detailLabel_->setText(hint);
+    detailLabel_->setVisible(!hint.isEmpty());
     retryButton_->setText(action);
     retryButton_->setEnabled(enabled);
     if (showQr) {
         QPixmap pixmap;
         pixmap.loadFromData(request_.qrPng, "PNG");
-        qrLabel_->setPixmap(pixmap.width() <= 232 && pixmap.height() <= 232 ?
-            pixmap : pixmap.scaled(232, 232, Qt::KeepAspectRatio,
+        qrLabel_->setPixmap(pixmap.width() <= 192 && pixmap.height() <= 192 ?
+            pixmap : pixmap.scaled(192, 192, Qt::KeepAspectRatio,
                                    Qt::FastTransformation));
     } else {
         qrLabel_->setPixmap({});
-        qrLabel_->setText(state == State::Loading ? QStringLiteral("正在生成二维码…") :
-                          state == State::Restoring ? QStringLiteral("正在恢复登录…") :
-                          state == State::Connecting ? QStringLiteral("正在连接聊天服务…") :
-                          state == State::CredentialError && auth_ &&
-                              !auth_->authenticatedUserId().isEmpty() ?
-                              QStringLiteral("手机确认已完成") :
-                          QStringLiteral("请生成新二维码"));
+        qrLabel_->setText(status);
     }
     codeLabel_->setText(showQr ? QStringLiteral("核对码  %1").arg(request_.displayCode) : QString());
     countdownLabel_->setVisible(showQr && !expiresAt_.isNull());

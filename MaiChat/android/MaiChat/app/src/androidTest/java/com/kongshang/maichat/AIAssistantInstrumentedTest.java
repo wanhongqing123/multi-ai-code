@@ -397,17 +397,34 @@ public class AIAssistantInstrumentedTest {
                 assertTrue(a.panel.send.performClick());
             });
             await(scenario, p -> !p.controller.state.busy() && visibleText(p, "Tail marker"));
-            await(scenario, p -> {
-                android.widget.ListView list = (android.widget.ListView) findList(p);
-                if (list == null || list.getLastVisiblePosition() != list.getCount() - 1)
-                    return false;
-                View last = list.getChildAt(list.getChildCount() - 1);
-                androidx.core.view.WindowInsetsCompat insets =
-                    androidx.core.view.ViewCompat.getRootWindowInsets(p);
-                return last.getBottom() <= list.getHeight() - list.getPaddingBottom() + 2
-                    && last.getBottom() > 0 && insets != null
-                    && insets.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime());
-            });
+            java.util.concurrent.atomic.AtomicReference<String> latestPosition =
+                new java.util.concurrent.atomic.AtomicReference<>("not measured");
+            try {
+                await(scenario, p -> {
+                    android.widget.ListView list = (android.widget.ListView) findList(p);
+                    View last = list == null || list.getChildCount() == 0 ? null
+                        : list.getChildAt(list.getChildCount() - 1);
+                    androidx.core.view.WindowInsetsCompat insets =
+                        androidx.core.view.ViewCompat.getRootWindowInsets(p);
+                    boolean imeVisible = insets != null
+                        && insets.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime());
+                    latestPosition.set("count=" + (list == null ? -1 : list.getCount())
+                        + ", firstVisible=" + (list == null ? -1 : list.getFirstVisiblePosition())
+                        + ", lastVisible=" + (list == null ? -1 : list.getLastVisiblePosition())
+                        + ", listHeight=" + (list == null ? -1 : list.getHeight())
+                        + ", paddingBottom=" + (list == null ? -1 : list.getPaddingBottom())
+                        + ", lastTop=" + (last == null ? -1 : last.getTop())
+                        + ", lastBottom=" + (last == null ? -1 : last.getBottom())
+                        + ", lastHeight=" + (last == null ? -1 : last.getHeight())
+                        + ", imeVisible=" + imeVisible);
+                    return list != null && list.getLastVisiblePosition() == list.getCount() - 1
+                        && last != null
+                        && last.getBottom() <= list.getHeight() - list.getPaddingBottom() + 2
+                        && last.getBottom() > 0 && imeVisible;
+                });
+            } catch (AssertionError error) {
+                throw new AssertionError("Latest message geometry: " + latestPosition.get(), error);
+            }
             CountDownLatch saved = new CountDownLatch(1);
             AtomicBoolean savedOK = new AtomicBoolean();
             scenario.onActivity(a

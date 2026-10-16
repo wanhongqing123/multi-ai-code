@@ -250,16 +250,14 @@ final class AIMobileHostToolProvider {
             return Self.jsonSuccess(["configured": false, "assets_configured": false])
         }
         do {
-            var request = URLRequest(url: service.url)
-            request.httpMethod = "POST"
-            request.cachePolicy = .reloadIgnoringLocalCacheData
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("Bearer \(service.token)", forHTTPHeaderField: "Authorization")
-            request.httpBody = try JSONSerialization.data(withJSONObject: ["action": "status"])
-            let session = URLSession(configuration: .ephemeral)
-            defer { session.finishTasksAndInvalidate() }
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+            let requestBody = try JSONSerialization.data(withJSONObject: ["action": "status"])
+            let response = try await MaiChatHttpClient.request(
+                url: service.url, method: "POST", bearer: service.token,
+                contentType: "application/json", body: requestBody,
+                maximumResponseBytes: 16_384
+            )
+            let data = response.body
+            guard response.statusCode == 200,
                   data.count <= 16_384,
                   let status = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 return Self.jsonSuccess(["configured": false, "assets_configured": false])
@@ -289,30 +287,22 @@ final class AIMobileHostToolProvider {
             return .failure(code: "invalid_input", message: "Video must be an accessible MP4/MOV under 200 MB")
         }
         do {
-            var signRequest = URLRequest(url: signer.url)
-            signRequest.httpMethod = "POST"
-            signRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            signRequest.setValue("Bearer \(signer.token)", forHTTPHeaderField: "Authorization")
-            signRequest.httpBody = try JSONSerialization.data(withJSONObject: [
+            let signBody = try JSONSerialization.data(withJSONObject: [
                 "filename": source.lastPathComponent, "size_bytes": size
             ])
-            let configuration = URLSessionConfiguration.default
-            configuration.timeoutIntervalForRequest = 60
-            configuration.timeoutIntervalForResource = 900
-            configuration.waitsForConnectivity = true
-            let session = URLSession(configuration: configuration)
-            defer { session.finishTasksAndInvalidate() }
-            let (signedData, signedResponse) = try await session.data(for: signRequest)
-            guard let http = signedResponse as? HTTPURLResponse else {
-                return .failure(code: "protocol", message: "OSS signer returned no HTTP response")
-            }
-            if http.statusCode == 401 {
+            let signedResponse = try await MaiChatHttpClient.request(
+                url: signer.url, method: "POST", bearer: signer.token,
+                contentType: "application/json", body: signBody,
+                maximumResponseBytes: 16_384, timeoutMilliseconds: 60_000
+            )
+            let signedData = signedResponse.body
+            if signedResponse.statusCode == 401 {
                 return .failure(code: "not_configured", message: "OSS signer token was rejected")
             }
-            if http.statusCode == 503 {
+            if signedResponse.statusCode == 503 {
                 return .failure(code: "not_configured", message: "OSS signer is not configured")
             }
-            guard http.statusCode == 200, signedData.count <= 16_384,
+            guard signedResponse.statusCode == 200, signedData.count <= 16_384,
                   let signed = try JSONSerialization.jsonObject(with: signedData) as? [String: Any],
                   let uploadText = signed["upload_url"] as? String,
                   let readText = signed["read_url"] as? String,
@@ -330,12 +320,12 @@ final class AIMobileHostToolProvider {
                     ? "video/quicktime" : "video/mp4") else {
                 return .failure(code: "upload_failed", message: "OSS did not return valid upload links")
             }
-            var uploadRequest = URLRequest(url: uploadURL)
-            uploadRequest.httpMethod = "PUT"
-            uploadRequest.setValue(contentType, forHTTPHeaderField: "Content-Type")
-            let (_, uploadResponse) = try await session.upload(for: uploadRequest, fromFile: source)
-            guard let result = uploadResponse as? HTTPURLResponse,
-                  (200...299).contains(result.statusCode) else {
+            let uploadResponse = try await MaiChatHttpClient.request(
+                url: uploadURL, method: "PUT", contentType: contentType,
+                uploadFile: source, maximumResponseBytes: 16_384,
+                timeoutMilliseconds: 900_000
+            )
+            guard (200...299).contains(uploadResponse.statusCode) else {
                 return .failure(
                     code: "upload_failed",
                     message: "OSS rejected the video upload; check the signed URL and Bucket permissions")

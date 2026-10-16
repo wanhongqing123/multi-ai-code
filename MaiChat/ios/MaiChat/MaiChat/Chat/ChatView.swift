@@ -726,9 +726,12 @@ final class RemoteIMAvatarImageStore: ObservableObject {
             Task {
                 defer { loading.remove(value) }
                 do {
-                    let (data, response) = try await URLSession.shared.data(from: url)
-                    guard let response = response as? HTTPURLResponse,
-                          (200..<300).contains(response.statusCode),
+                    let response = try await MaiChatHttpClient.request(
+                        url: url, method: "GET", maximumResponseBytes: 4 * 1024 * 1024,
+                        followSafeGetRedirects: true
+                    )
+                    let data = response.body
+                    guard (200..<300).contains(response.statusCode),
                           data.count <= 4 * 1024 * 1024,
                           let image = Self.thumbnail(from: data) else {
                         failed.insert(value)

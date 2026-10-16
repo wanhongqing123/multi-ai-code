@@ -2,13 +2,13 @@
 // 安全边界：HTTPS 只信任 App 随包 CA，校验域名与证书；不跟随跳转，也不重试写入请求。
 // 内存边界：响应最多 64 KiB；请求与响应只在一次调用期间存在，不记录账号令牌。
 #include "MaiChatAuthTransport.h"
+#include "MaiChatSystemProxy.h"
 
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
 
-#include <CFNetwork/CFNetwork.h>
 #include <curl/curl.h>
 
 namespace {
@@ -25,13 +25,6 @@ struct ResponseCollector {
     size_t length = 0;
     size_t headerLength = 0;
     bool limitExceeded = false;
-};
-
-struct SystemProxy {
-    bool direct = true;
-    long type = CURLPROXY_HTTP;
-    char host[260] = {};
-    long port = 0;
 };
 
 size_t receiveResponse(char* contents, size_t size, size_t count, void* context) {
@@ -102,61 +95,10 @@ bool isValidRequest(const char* url, const char* method, const char* bearer, con
     return std::strcmp(method, "POST") == 0;
 }
 
-// CFNetwork 会选择当前 Wi-Fi/蜂窝网络的系统代理；PAC 结果无法同步解析时安全失败。
-// 绝不忽略代理设置直接连接账号服务器，以免绕开用户的网络策略。
-bool selectSystemProxy(const char* url, SystemProxy* route) {
-    if (std::strncmp(url, "http://127.0.0.1:", 17) == 0) return true;
-    CFDictionaryRef settings = CFNetworkCopySystemProxySettings();
-    if (settings == nullptr) return false;
-    CFURLRef target = CFURLCreateWithBytes(kCFAllocatorDefault, reinterpret_cast<const UInt8*>(url), std::strlen(url),
-                                           kCFStringEncodingUTF8, nullptr);
-    CFArrayRef candidates = target == nullptr ? nullptr : CFNetworkCopyProxiesForURL(target, settings);
-    CFRelease(settings);
-    if (target != nullptr) CFRelease(target);
-    if (candidates == nullptr) return false;
-    const bool hasCandidate = CFArrayGetCount(candidates) > 0;
-    const auto* selected = hasCandidate ? static_cast<CFDictionaryRef>(CFArrayGetValueAtIndex(candidates, 0)) : nullptr;
-    const auto type = selected == nullptr || CFGetTypeID(selected) != CFDictionaryGetTypeID()
-                          ? nullptr
-                          : static_cast<CFStringRef>(CFDictionaryGetValue(selected, kCFProxyTypeKey));
-    if (type == nullptr || CFGetTypeID(type) != CFStringGetTypeID()) {
-        CFRelease(candidates);
-        return false;
-    }
-    if (CFEqual(type, kCFProxyTypeNone)) {
-        CFRelease(candidates);
-        return true;
-    }
-    // CFProxySupport.h 将 HTTPS 定义为用于 HTTPS 请求的 CONNECT 隧道，而非 TLS 到代理。
-    const bool httpTunnel = CFEqual(type, kCFProxyTypeHTTP) || CFEqual(type, kCFProxyTypeHTTPS);
-    const bool socks = CFEqual(type, kCFProxyTypeSOCKS);
-    const auto host = static_cast<CFStringRef>(CFDictionaryGetValue(selected, kCFProxyHostNameKey));
-    const auto port = static_cast<CFNumberRef>(CFDictionaryGetValue(selected, kCFProxyPortNumberKey));
-    char rawHost[256] = {};
-    int portNumber = 0;
-    const bool valid = (httpTunnel || socks) && host != nullptr && port != nullptr &&
-                       CFGetTypeID(host) == CFStringGetTypeID() && CFGetTypeID(port) == CFNumberGetTypeID() &&
-                       CFStringGetCString(host, rawHost, sizeof(rawHost), kCFStringEncodingUTF8) &&
-                       CFNumberGetValue(port, kCFNumberIntType, &portNumber) && portNumber > 0 && portNumber <= 65535 &&
-                       rawHost[0] != '\0';
-    if (valid) {
-        route->direct = false;
-        route->type = socks ? CURLPROXY_SOCKS5_HOSTNAME : CURLPROXY_HTTP;
-        route->port = portNumber;
-        const int written = std::snprintf(route->host, sizeof(route->host),
-                                          std::strchr(rawHost, ':') == nullptr ? "%s" : "[%s]", rawHost);
-        if (written < 0 || static_cast<size_t>(written) >= sizeof(route->host)) {
-            CFRelease(candidates);
-            return false;
-        }
-    }
-    CFRelease(candidates);
-    return valid;
-}
-
 // 每个 setopt 都核对返回值；任何配置失败都发生在发送 HTTP 请求之前。
 bool configureRequest(CURL* curl, const char* url, const char* method, const uint8_t* body, size_t bodyLength,
-                      const char* caBundlePath, const SystemProxy& proxy, ResponseCollector* collector) {
+                      const char* caBundlePath, const maiChatNetwork::SystemProxy& proxy,
+                      ResponseCollector* collector) {
     CURLcode setup = CURLE_OK;
     auto set = [&](CURLoption option, auto value) {
         if (setup == CURLE_OK) setup = curl_easy_setopt(curl, option, value);
@@ -183,16 +125,7 @@ bool configureRequest(CURL* curl, const char* url, const char* method, const uin
     set(CURLOPT_MAXFILESIZE_LARGE, static_cast<curl_off_t>(kMaximumResponseBytes));
     set(CURLOPT_ACCEPT_ENCODING, "identity");
     if (caBundlePath != nullptr) set(CURLOPT_CAINFO, caBundlePath);
-    if (proxy.direct) {
-        set(CURLOPT_PROXY, "");
-        set(CURLOPT_NOPROXY, "*");
-    } else {
-        set(CURLOPT_PROXY, proxy.host);
-        set(CURLOPT_PROXYPORT, proxy.port);
-        set(CURLOPT_PROXYTYPE, proxy.type);
-        set(CURLOPT_NOPROXY, "");
-        if (proxy.type == CURLPROXY_HTTP) set(CURLOPT_HTTPPROXYTUNNEL, 1L);
-    }
+    if (setup != CURLE_OK || !maiChatNetwork::configureSystemProxy(curl, proxy)) return false;
     if (std::strcmp(method, "POST") == 0) {
         set(CURLOPT_POST, 1L);
         set(CURLOPT_POSTFIELDS, bodyLength == 0 ? static_cast<const void*>("") : body);
@@ -234,8 +167,8 @@ extern "C" void maiChatAuthHttpPerform(const char* url, const char* method, cons
         return;
     }
     // 必须先解析 iOS 当前代理；PAC 等无法安全解析的配置不可回退成直连。
-    SystemProxy proxy;
-    if (!selectSystemProxy(url, &proxy)) {
+    maiChatNetwork::SystemProxy proxy;
+    if (!maiChatNetwork::selectSystemProxy(url, &proxy)) {
         result->transportCode = -5;
         return;
     }

@@ -9,3 +9,4 @@
 #include "../../../Media/FfplayCompat/MaiFfplayEntry.h"
 #include "Media/MaiFfplayIosBridge.h"
 #include "IM/MaiChatAuthTransport.h"
+#include "IM/MaiChatHttpTransport.h"

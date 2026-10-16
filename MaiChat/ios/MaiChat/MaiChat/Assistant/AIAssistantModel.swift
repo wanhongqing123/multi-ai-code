@@ -80,15 +80,6 @@ enum AIAssistantWorkspaceLocator {
     }
 }
 
-final class AICloudNoRedirectDelegate: NSObject, URLSessionTaskDelegate {
-    func urlSession(_ session: URLSession, task: URLSessionTask,
-                    willPerformHTTPRedirection response: HTTPURLResponse,
-                    newRequest request: URLRequest,
-                    completionHandler: @escaping (URLRequest?) -> Void) {
-        completionHandler(nil)
-    }
-}
-
 final class AICloudCredentialStore: @unchecked Sendable {
     static let shared = AICloudCredentialStore()
     private let lock = NSLock()
@@ -258,22 +249,16 @@ enum AICloudCredentialSync {
     static func syncIfConfigured() async throws -> Bool {
         // 旧共享令牌只同步尚未迁移的供应商；百炼和方舟改由手机号会话签发短期 Key。
         guard let service = serviceEndpoint() else { return false }
-        var request = URLRequest(url: service.url)
-        request.httpMethod = "POST"
-        request.cachePolicy = .reloadIgnoringLocalCacheData
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(service.token)", forHTTPHeaderField: "Authorization")
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
+        let requestBody = try JSONSerialization.data(withJSONObject: [
             "action": "fetch", "providers": ["glm", "deepseek", "minimax"]
         ])
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 15
-        configuration.timeoutIntervalForResource = 30
-        let session = URLSession(configuration: configuration,
-                                 delegate: AICloudNoRedirectDelegate(), delegateQueue: nil)
-        defer { session.finishTasksAndInvalidate() }
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+        let response = try await MaiChatHttpClient.request(
+            url: service.url, method: "POST", bearer: service.token,
+            contentType: "application/json", body: requestBody,
+            maximumResponseBytes: 16_384, timeoutMilliseconds: 30_000
+        )
+        let data = response.body
+        guard response.statusCode == 200,
               data.count <= 16_384,
               let body = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let keys = body["api_keys"] as? [String: String] else {

@@ -1262,7 +1262,12 @@ void testMediaSignUploadPurposes() {
     const auto settings = [address]() -> MaiResult<MaiArkAssetServiceSettings> {
         return MaiArkAssetServiceSettings{address, std::string(32, 't')};
     };
-    const auto defaultUpload = makeMaiPrivateOssMediaUploader(settings, authority);
+    const auto seedreamUpload =
+        makeMaiPrivateOssMediaUploader(settings, authority, MaiOssUploadPurpose::SeedreamInput);
+    const auto miniMaxUpload =
+        makeMaiPrivateOssMediaUploader(settings, authority, MaiOssUploadPurpose::MiniMaxInput);
+    const auto klingUpload =
+        makeMaiPrivateOssMediaUploader(settings, authority, MaiOssUploadPurpose::KlingInput);
     const auto wanUpload =
         makeMaiPrivateOssMediaUploader(settings, authority, MaiOssUploadPurpose::WanInput);
     auto assetTool = makeMaiArkAssetTool(makeMaiArkAssetServiceProvider(settings, authority));
@@ -1291,15 +1296,18 @@ void testMediaSignUploadPurposes() {
         CHECK(body.at("size_bytes") == expectedBytes);
         CHECK(body.at("purpose") == expectedPurpose);
     };
-    checkSignRequest(defaultUpload, "portrait.JPG", "portrait.jpg", 10, "shared_media_input");
-    checkSignRequest(defaultUpload, "reference.MOV", "reference.MOV", 10, "shared_media_input");
+    checkSignRequest(seedreamUpload, "portrait.JPG", "portrait.jpg", 10, "seedream_input");
+    checkSignRequest(miniMaxUpload, "portrait.JPG", "portrait.jpg", 10, "minimax_input");
+    checkSignRequest(miniMaxUpload, "reference.MOV", "reference.MOV", 10, "minimax_input");
+    checkSignRequest(klingUpload, "portrait.JPG", "portrait.jpg", 10, "kling_input");
+    checkSignRequest(klingUpload, "reference.MOV", "reference.MOV", 10, "kling_input");
     checkSignRequest(wanUpload, "portrait.JPG", "portrait.jpg", 10, "wan_input");
     checkSignRequest(wanUpload, "reference.MOV", "reference.MOV", 10, "wan_input");
     checkSignRequest(wanUpload, "script.pdf", "script.pdf", 8, "wan_input");
     checkSignRequest(assetImageUpload, "portrait.JPG", "portrait.jpg", 10, "ark_asset_input");
     {
         std::lock_guard<std::mutex> lock(mutex);
-        CHECK(requests.size() == 6);
+        CHECK(requests.size() == 9);
     }
     server.stop();
     worker.join();
@@ -1496,10 +1504,12 @@ void testPrivateOssUploaderAcceptsDocumentSourceWithoutBase64() {
     MaiToolContext context;
     context.root = source.dirName().toUtf8();
     int configReads = 0;
-    auto uploader = makeMaiPrivateOssMediaUploader([&]() -> MaiResult<MaiArkAssetServiceSettings> {
-        ++configReads;
-        return {MaiErrorCode::NotConfigured, "Synthetic signer unavailable"};
-    });
+    auto uploader = makeMaiPrivateOssMediaUploader(
+        [&]() -> MaiResult<MaiArkAssetServiceSettings> {
+            ++configReads;
+            return {MaiErrorCode::NotConfigured, "Synthetic signer unavailable"};
+        },
+        {}, MaiOssUploadPurpose::WanInput);
     const auto document = uploader(source.baseName().toUtf8(), context);
     CHECK(!document);
     CHECK(configReads == 1);

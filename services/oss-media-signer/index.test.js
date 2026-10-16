@@ -153,9 +153,11 @@ test('routes explicit upload purposes to fixed prefixes for supported file types
     ['ark_asset_input', 'photo.png', 'ark-asset-inputs/2026-10-08/fixed-id.png'],
     ['ark_asset_input', 'clip.mp4', 'ark-asset-inputs/2026-10-08/fixed-id.mp4'],
     ['ark_asset_input', 'clip.mov', 'ark-asset-inputs/2026-10-08/fixed-id.mov'],
-    ['shared_media_input', 'photo.png', 'shared-media-inputs/2026-10-08/fixed-id.png'],
-    ['shared_media_input', 'clip.mov', 'shared-media-inputs/2026-10-08/fixed-id.mov'],
-    ['shared_media_input', 'proposal.pdf', 'shared-media-inputs/2026-10-08/fixed-id.pdf']
+    ['seedream_input', 'photo.png', 'seedream-inputs/2026-10-08/fixed-id.png'],
+    ['minimax_input', 'photo.png', 'minimax-inputs/2026-10-08/fixed-id.png'],
+    ['minimax_input', 'clip.mov', 'minimax-inputs/2026-10-08/fixed-id.mov'],
+    ['kling_input', 'photo.png', 'kling-inputs/2026-10-08/fixed-id.png'],
+    ['kling_input', 'clip.mov', 'kling-inputs/2026-10-08/fixed-id.mov']
   ];
   for (const [purpose, filename, expectedKey] of cases) {
     const result = await handle(request({ filename, size_bytes: 100, purpose }));
@@ -174,8 +176,12 @@ test('rejects unknown or mismatched upload purposes before signing', async () =>
     { filename: 'photo.jpg', size_bytes: 100, purpose: '__proto__' },
     { filename: 'photo.jpg', size_bytes: 100, purpose: '' },
     { filename: 'photo.jpg', size_bytes: 100, purpose: null },
+    { filename: 'photo.jpg', size_bytes: 100, purpose: 'generic_media_input' },
     { filename: 'photo.jpg', size_bytes: 100, purpose: 'seedance_input' },
     { filename: 'clip.mp4', size_bytes: 100, purpose: 'seedance_input' },
+    { filename: 'clip.mp4', size_bytes: 100, purpose: 'seedream_input' },
+    { filename: 'proposal.pdf', size_bytes: 100, purpose: 'minimax_input' },
+    { filename: 'proposal.pdf', size_bytes: 100, purpose: 'kling_input' },
     { filename: 'proposal.pdf', size_bytes: 100, purpose: 'ark_asset_input' },
     { filename: 'proposal.pdf', size_bytes: 100, purpose: 'seedance_input' }
   ]) {

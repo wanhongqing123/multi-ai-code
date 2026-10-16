@@ -171,7 +171,9 @@ Json signUploadBody(const std::string& fileName, std::uint64_t fileSize,
                     MaiOssUploadPurpose purpose) {
     Json body = {{"filename", fileName}, {"size_bytes", fileSize}};
     switch (purpose) {
-        case MaiOssUploadPurpose::SharedMediaInput: body["purpose"] = "shared_media_input"; break;
+        case MaiOssUploadPurpose::SeedreamInput: body["purpose"] = "seedream_input"; break;
+        case MaiOssUploadPurpose::MiniMaxInput: body["purpose"] = "minimax_input"; break;
+        case MaiOssUploadPurpose::KlingInput: body["purpose"] = "kling_input"; break;
         case MaiOssUploadPurpose::WanInput: body["purpose"] = "wan_input"; break;
         case MaiOssUploadPurpose::ArkAssetInput: body["purpose"] = "ark_asset_input"; break;
         default: body["purpose"] = "invalid"; break;

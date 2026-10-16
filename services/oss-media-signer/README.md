@@ -10,10 +10,10 @@
 ## 阿里云侧准备
 
 1. 创建**私有** OSS Bucket。当前目标是 `maichat-ai-video-resource`，地域
-   `oss-cn-guangzhou`。给 `ark-asset-inputs/`、`wan-inputs/` 和
-   `shared-media-inputs/` 设置生命周期规则。
+   `oss-cn-guangzhou`。给 `ark-asset-inputs/`、`seedream-inputs/`、
+   `minimax-inputs/`、`kling-inputs/` 和 `wan-inputs/` 设置生命周期规则。
 2. 创建专用 RAM 身份，仅授予该 Bucket 的 `ark-asset-inputs/*`、
-   `wan-inputs/*` 与 `shared-media-inputs/*` 对象
+   `seedream-inputs/*`、`minimax-inputs/*`、`kling-inputs/*` 与 `wan-inputs/*` 对象
    `oss:PutObject`、`oss:GetObject` 权限。不要使用主账号 AccessKey。将下面的
    `YOUR_BUCKET` 换成实际 Bucket 名称后，可作为 RAM 自定义策略的起点：
 
@@ -24,8 +24,10 @@
        "Effect": "Allow",
        "Action": ["oss:PutObject", "oss:GetObject"],
        "Resource": ["acs:oss:*:*:YOUR_BUCKET/ark-asset-inputs/*",
-                    "acs:oss:*:*:YOUR_BUCKET/wan-inputs/*",
-                    "acs:oss:*:*:YOUR_BUCKET/shared-media-inputs/*"]
+                    "acs:oss:*:*:YOUR_BUCKET/seedream-inputs/*",
+                    "acs:oss:*:*:YOUR_BUCKET/minimax-inputs/*",
+                    "acs:oss:*:*:YOUR_BUCKET/kling-inputs/*",
+                    "acs:oss:*:*:YOUR_BUCKET/wan-inputs/*"]
      }]
    }
    ```
@@ -142,13 +144,13 @@ MP4/MOV（不超过 200 MB），以及 Wan3 参考文档 DOC/DOCX、XLS/XLSX、
 PPT/PPTX、PDF、TXT、KEY、PAGES、NUMBERS、MD（不超过 100 MB）。
 `purpose` 为必填，只能取服务端固定值：`wan_input` 允许上述图片、视频和文档，写入
 `wan-inputs/`；`ark_asset_input` 只允许 JPEG/PNG、MP4/MOV，写入
-`ark-asset-inputs/`；
-`shared_media_input` 供非 Wan、非 Seedance 的通用素材调用，统一写入
-`shared-media-inputs/`。
+`ark-asset-inputs/`；`seedream_input` 只允许图片，写入 `seedream-inputs/`；
+`minimax_input` 允许图片和视频，写入 `minimax-inputs/`；`kling_input` 允许图片和
+视频，写入 `kling-inputs/`。
 缺少用途、未知用途或用途与文件类型不符时
 返回 400。对象路径由服务器生成，
-请求中的路径或前缀字段不能覆盖它。上线新客户端前，先为 `wan-inputs/*` 和
-`shared-media-inputs/*` 部署 RAM 权限与生命周期规则，并让全部调用方带上用途字段。
+请求中的路径或前缀字段不能覆盖它。上线新客户端前，先为上述五个目录部署 RAM
+权限与生命周期规则，并让全部调用方带上用途字段。
 实际 Bucket 用量与访问权限仍应在阿里云控制台监控。
 
 参考：[OSS 预签名 PUT 上传](https://help.aliyun.com/zh/oss/developer-reference/upload-objects-using-a-signed-url-generated-with-oss-sdk-for-node-js/)、

@@ -477,16 +477,16 @@ struct MaiMobileAgent {
                 return {MaiErrorCode::Protocol, "Ark Assets service configuration is invalid"};
             return MaiArkAssetServiceSettings{value["base_url"].get<std::string>(), value["token"].get<std::string>()};
         };
-        // 所有图片和视频创作工具共用私有 OSS 直传；模型只收到短期 HTTPS 读取链接。
+        // 各模型复用同一套私有 OSS 直传实现，但必须写入各自的明确目录。
         const bool assetsConfigured = static_cast<bool>(assetSettings());
-        const MaiCreativeMediaUploadProvider uploadMedia =
-            assetsConfigured ? makeMaiPrivateOssMediaUploader(assetSettings, config.caBundlePath)
-                             : MaiCreativeMediaUploadProvider{};
-        // 万相复用同一签名与直传实现，但将输入素材归入独立的 wan-inputs 前缀。
-        const MaiCreativeMediaUploadProvider wanUploadMedia =
-            assetsConfigured
-                ? makeMaiPrivateOssMediaUploader(assetSettings, config.caBundlePath, MaiOssUploadPurpose::WanInput)
-                : MaiCreativeMediaUploadProvider{};
+        const auto modelUploadMedia = [&](MaiOssUploadPurpose purpose) {
+            return assetsConfigured ? makeMaiPrivateOssMediaUploader(assetSettings, config.caBundlePath, purpose)
+                                    : MaiCreativeMediaUploadProvider{};
+        };
+        const MaiCreativeMediaUploadProvider seedreamUploadMedia = modelUploadMedia(MaiOssUploadPurpose::SeedreamInput);
+        const MaiCreativeMediaUploadProvider miniMaxUploadMedia = modelUploadMedia(MaiOssUploadPurpose::MiniMaxInput);
+        const MaiCreativeMediaUploadProvider klingUploadMedia = modelUploadMedia(MaiOssUploadPurpose::KlingInput);
+        const MaiCreativeMediaUploadProvider wanUploadMedia = modelUploadMedia(MaiOssUploadPurpose::WanInput);
         const MaiArkAssetProvider assetProvider =
             assetsConfigured ? makeMaiArkAssetServiceProvider(assetSettings, config.caBundlePath)
                              : MaiArkAssetProvider{};
@@ -500,7 +500,7 @@ struct MaiMobileAgent {
             tools->add(makeMaiSeedanceVideoTool(arkKey, config.caBundlePath, {}, seedanceVideoMetadata));
             tools->add(makeMaiArkAssetTool());
         }
-        tools->add(makeMaiSeedreamImageTool(arkKey, config.caBundlePath, uploadMedia));
+        tools->add(makeMaiSeedreamImageTool(arkKey, config.caBundlePath, seedreamUploadMedia));
         const auto glmKey = [dispatcher = hostTools]() -> std::string {
             const MaiToolResult result = callMaiMobileHostTool(dispatcher, "glm_api_key", "{}");
             if (result.hasError()) return {};
@@ -518,8 +518,8 @@ struct MaiMobileAgent {
                        ? response["key"].get<std::string>()
                        : std::string{};
         };
-        tools->add(makeMaiMiniMaxVideoTool(miniMaxKey, config.caBundlePath, uploadMedia));
-        tools->add(makeMaiMiniMaxImageTool(miniMaxKey, config.caBundlePath, uploadMedia));
+        tools->add(makeMaiMiniMaxVideoTool(miniMaxKey, config.caBundlePath, miniMaxUploadMedia));
+        tools->add(makeMaiMiniMaxImageTool(miniMaxKey, config.caBundlePath, miniMaxUploadMedia));
         const auto wanCredentials = [dispatcher = hostTools]() -> MaiWanCredentials {
             const MaiToolResult result = callMaiMobileHostTool(dispatcher, "wan_credentials", "{}");
             if (result.hasError()) return {};
@@ -528,9 +528,9 @@ struct MaiMobileAgent {
             return {response.value("key", std::string{}), response.value("workspace_id", std::string{})};
         };
         tools->add(makeMaiWanVideoTool(wanCredentials, config.caBundlePath, wanUploadMedia));
-        tools->add(makeMaiBailianKlingVideoTool(wanCredentials, config.caBundlePath, uploadMedia));
+        tools->add(makeMaiBailianKlingVideoTool(wanCredentials, config.caBundlePath, klingUploadMedia));
         tools->add(makeMaiWanImageTool(wanCredentials, config.caBundlePath, wanUploadMedia));
-        tools->add(makeMaiBailianKlingImageTool(wanCredentials, config.caBundlePath, uploadMedia));
+        tools->add(makeMaiBailianKlingImageTool(wanCredentials, config.caBundlePath, klingUploadMedia));
         const std::string rvmModel = request.value("rvmModelPath", "");
         const std::string lamaModel = request.value("lamaModelPath", "");
         const std::string ortRuntime = request.value("ortRuntimePath", "");

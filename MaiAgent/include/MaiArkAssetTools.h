@@ -21,9 +21,9 @@ struct MaiArkAssetServiceSettings {
     std::string token;
 };
 
-// 签发目的必须显式传给服务端。三个值分别对应 shared-media-inputs、wan-inputs 和
-// ark-asset-inputs 分区，调用方不能自行覆盖对象前缀。
-enum class MaiOssUploadPurpose { SharedMediaInput, WanInput, ArkAssetInput };
+// 签发目的必须显式传给服务端。每个值都对应同名模型或 Ark 素材库的独立 OSS 分区，
+// 调用方不能自行覆盖对象前缀，也不能用一个“通用”用途混放不同模型的文件。
+enum class MaiOssUploadPurpose { SeedreamInput, MiniMaxInput, KlingInput, WanInput, ArkAssetInput };
 
 // Ark CreateAsset 在素材处理完成前就返回 ID。接口未提供状态时 status 为空；
 // 调用方必须用 get_asset 查到 Active 后才能使用 asset://<id>，Failed 表示不可用。
@@ -57,11 +57,11 @@ MaiArkAssetProvider makeMaiArkAssetServiceProvider(
 // 图片（JPG/PNG）、视频（MP4/MOV）及 Wan3 支持的文档统一走签发服务直传 OSS，
 // 返回 24 小时有效的签名 HTTPS 读取地址。纯音频和其他格式不在签发范围内。
 // 上传失败不会触发付费模型请求；创作工具不得回退 Base64 或厂商临时上传。
-// purpose 总会写入签发请求。默认 SharedMediaInput 写入 shared-media-inputs；WanInput 写入
-// wan-inputs；ArkAssetInput 写入 ark-asset-inputs。已有调用方使用默认参数仍会发出明确目的。
+// purpose 总会写入签发请求，分别写入 seedream-inputs、minimax-inputs、kling-inputs、
+// wan-inputs 或 ark-asset-inputs。调用方必须明确指定用途，避免新增模型误入其他目录。
 MaiCreativeMediaUploadProvider makeMaiPrivateOssMediaUploader(
-    std::function<MaiResult<MaiArkAssetServiceSettings>()> settings, std::string caBundlePath = {},
-    MaiOssUploadPurpose purpose = MaiOssUploadPurpose::SharedMediaInput);
+    std::function<MaiResult<MaiArkAssetServiceSettings>()> settings, std::string caBundlePath,
+    MaiOssUploadPurpose purpose);
 
 // 创建、查询素材组和素材，并上传图片/视频及检查异步审核状态。只有 Active 素材能以
 // asset://<ID> 交给 Seedance；上传不会修改本地原图。

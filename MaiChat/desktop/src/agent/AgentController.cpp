@@ -257,14 +257,16 @@ buildAgent(std::unique_ptr<MaiModelClient> model, std::unique_ptr<MaiSessionStor
         if (base.empty() || token.empty()) return {MaiErrorCode::NotConfigured, "Ark Assets service is not configured"};
         return MaiArkAssetServiceSettings{base, token};
     };
-    // 桌面端与手机端使用同一 C++ OSS 上传实现，付费模型不接收本地 Base64 素材。
+    // 桌面端与手机端使用同一 C++ OSS 上传实现，每个模型写入自己的明确目录。
     const bool assetsConfigured = static_cast<bool>(assetSettings());
-    const MaiCreativeMediaUploadProvider uploadMedia =
-        assetsConfigured ? makeMaiPrivateOssMediaUploader(assetSettings) : MaiCreativeMediaUploadProvider{};
-    // 万相使用相同上传服务，但输入对象写入独立的 wan-inputs 前缀。
-    const MaiCreativeMediaUploadProvider wanUploadMedia =
-        assetsConfigured ? makeMaiPrivateOssMediaUploader(assetSettings, {}, MaiOssUploadPurpose::WanInput)
-                         : MaiCreativeMediaUploadProvider{};
+    const auto modelUploadMedia = [&](MaiOssUploadPurpose purpose) {
+        return assetsConfigured ? makeMaiPrivateOssMediaUploader(assetSettings, {}, purpose)
+                                : MaiCreativeMediaUploadProvider{};
+    };
+    const MaiCreativeMediaUploadProvider seedreamUploadMedia = modelUploadMedia(MaiOssUploadPurpose::SeedreamInput);
+    const MaiCreativeMediaUploadProvider miniMaxUploadMedia = modelUploadMedia(MaiOssUploadPurpose::MiniMaxInput);
+    const MaiCreativeMediaUploadProvider klingUploadMedia = modelUploadMedia(MaiOssUploadPurpose::KlingInput);
+    const MaiCreativeMediaUploadProvider wanUploadMedia = modelUploadMedia(MaiOssUploadPurpose::WanInput);
     const MaiArkAssetProvider assetProvider =
         assetsConfigured ? makeMaiArkAssetServiceProvider(assetSettings) : MaiArkAssetProvider{};
     tools->add(makeMaiSeedanceVideoTool(arkKey, {}, assetProvider, seedanceVideoMetadata));
@@ -272,12 +274,12 @@ buildAgent(std::unique_ptr<MaiModelClient> model, std::unique_ptr<MaiSessionStor
         tools->add(makeMaiArkAssetTool(assetProvider));
     else
         tools->add(makeMaiArkAssetTool());
-    tools->add(makeMaiSeedreamImageTool(arkKey, {}, uploadMedia));
+    tools->add(makeMaiSeedreamImageTool(arkKey, {}, seedreamUploadMedia));
     const auto glmKey = [key = toUtf8(credentials.glmApiKey)] { return key; };
     tools->add(makeMaiGlmImageTool(glmKey));
     const auto miniMaxKey = [key = toUtf8(credentials.miniMaxApiKey)] { return key; };
-    tools->add(makeMaiMiniMaxVideoTool(miniMaxKey, {}, uploadMedia));
-    tools->add(makeMaiMiniMaxImageTool(miniMaxKey, {}, uploadMedia));
+    tools->add(makeMaiMiniMaxVideoTool(miniMaxKey, {}, miniMaxUploadMedia));
+    tools->add(makeMaiMiniMaxImageTool(miniMaxKey, {}, miniMaxUploadMedia));
     const auto wanCredentials = [provider = credentials.wanCredentialsProvider, key = toUtf8(credentials.wanApiKey),
                                  workspace = toUtf8(credentials.wanWorkspaceId)] {
         if (provider) {
@@ -287,9 +289,9 @@ buildAgent(std::unique_ptr<MaiModelClient> model, std::unique_ptr<MaiSessionStor
         return MaiWanCredentials{key, workspace};
     };
     tools->add(makeMaiWanVideoTool(wanCredentials, {}, wanUploadMedia));
-    tools->add(makeMaiBailianKlingVideoTool(wanCredentials, {}, uploadMedia));
+    tools->add(makeMaiBailianKlingVideoTool(wanCredentials, {}, klingUploadMedia));
     tools->add(makeMaiWanImageTool(wanCredentials, {}, wanUploadMedia));
-    tools->add(makeMaiBailianKlingImageTool(wanCredentials, {}, uploadMedia));
+    tools->add(makeMaiBailianKlingImageTool(wanCredentials, {}, klingUploadMedia));
 #if defined(MAICHAT_EMBEDDED_FFMPEG)
     tools->add(makeMaiViewImageTool(makeMaiFfmpegImagePreview(ffmpegEngine)));
     tools->add(makeMaiFfmpegTool(ffmpegEngine));

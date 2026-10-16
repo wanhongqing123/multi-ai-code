@@ -24,8 +24,9 @@ const UPLOAD_TTL_SECONDS = 15 * 60;
 const READ_TTL_SECONDS = 24 * 60 * 60;
 const UPLOAD_PURPOSES = Object.freeze({
   ark_asset_input: Object.freeze({ prefix: 'ark-asset-inputs', types: ['image', 'video'] }),
-  shared_media_input: Object.freeze({ prefix: 'shared-media-inputs',
-    types: ['image', 'video', 'document'] }),
+  kling_input: Object.freeze({ prefix: 'kling-inputs', types: ['image', 'video'] }),
+  minimax_input: Object.freeze({ prefix: 'minimax-inputs', types: ['image', 'video'] }),
+  seedream_input: Object.freeze({ prefix: 'seedream-inputs', types: ['image'] }),
   wan_input: Object.freeze({ prefix: 'wan-inputs', types: ['image', 'video', 'document'] })
 });
 

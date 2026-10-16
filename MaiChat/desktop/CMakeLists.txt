@@ -1070,7 +1070,7 @@ if(WIN32 AND MAICHAT_ENABLE_FFMPEG)
   target_link_libraries(MaiFfplayVideoDialogTest PRIVATE remote_im_desktop_ui Qt5::Test)
   add_test(NAME MaiFfplayVideoDialogTest COMMAND MaiFfplayVideoDialogTest)
   set_tests_properties(MaiFfplayVideoDialogTest PROPERTIES
-    PASS_REGULAR_EXPRESSION "Seek to 50%"
+    PASS_REGULAR_EXPRESSION "Seek to 50([.][0-9]+)?%"
     FAIL_REGULAR_EXPRESSION "Seek to (inf|nan)%")
 endif()
 

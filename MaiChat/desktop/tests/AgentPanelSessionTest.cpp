@@ -431,7 +431,8 @@ void AgentPanelSessionTest::inlineMediaBubblesRespectMessageBoundary() {
         if (bubble->text().contains(QStringLiteral("clip.mp4")))
             QTest::mouseClick(bubble, Qt::LeftButton);
     }
-    QCOMPARE(openedVideo, directory.filePath(QStringLiteral("clip.mp4")));
+    QCOMPARE(QDir::fromNativeSeparators(openedVideo),
+             QDir::fromNativeSeparators(directory.filePath(QStringLiteral("clip.mp4"))));
     QVERIFY(controller.sendPrompt(session, QStringLiteral("second")));
     controller.agent().waitIdle();
     QTRY_COMPARE(panel.findChildren<QPushButton*>(

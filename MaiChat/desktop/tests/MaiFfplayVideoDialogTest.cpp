@@ -13,7 +13,9 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 
 #include "MaiChatTools/DesktopMediaTools.h"
@@ -29,7 +31,16 @@ namespace {
 std::atomic<bool> sSawFiniteSeek{false};
 
 void captureDiagnostic(void*, int, const char* line) {
-    if (line && std::strstr(line, "Seek to 50%")) sSawFiniteSeek = true;
+    if (!line) return;
+    const char* seek = std::strstr(line, "Seek to ");
+    if (!seek) return;
+    seek += std::strlen("Seek to ");
+    char* end = nullptr;
+    const double percent = std::strtod(seek, &end);
+    if (end != seek && *end == '%' && std::isfinite(percent) &&
+        std::abs(percent - 50.0) < 0.01) {
+        sSawFiniteSeek = true;
+    }
 }
 
 }  // namespace

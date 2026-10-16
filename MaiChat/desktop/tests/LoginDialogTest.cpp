@@ -21,6 +21,16 @@
 
 namespace {
 
+QString testPlatformName() {
+#ifdef Q_OS_MACOS
+    return QStringLiteral("mac");
+#elif defined(Q_OS_WIN)
+    return QStringLiteral("windows");
+#else
+    return {};
+#endif
+}
+
 class FakeQrServer : public QObject {
 public:
     // 用一个本地 HTTP 服务覆盖扫码、会话、IM 和模型端点；测试可以延迟 claim
@@ -109,7 +119,7 @@ public:
                         response = {{QStringLiteral("access_token"), QString(43, QLatin1Char('B'))},
                                     {QStringLiteral("refresh_token"), QString(43, QLatin1Char('S'))},
                                     {QStringLiteral("expires_in"), 900},
-                                    {QStringLiteral("device_slot"), QStringLiteral("mac")},
+                                    {QStringLiteral("device_slot"), testPlatformName()},
                                     {QStringLiteral("user"), QJsonObject{
                                         {QStringLiteral("im_user_id"), QStringLiteral("im-auth-test")}}}};
                     } else {
@@ -139,7 +149,7 @@ public:
                     if (status == 200) {
                         response = {{QStringLiteral("user"), QJsonObject{
                                         {QStringLiteral("im_user_id"), QStringLiteral("im-auth-test")}}},
-                                    {QStringLiteral("device_slot"), QStringLiteral("mac")}};
+                                    {QStringLiteral("device_slot"), testPlatformName()}};
                     } else if (status == 401) {
                         response = {{QStringLiteral("error"),
                                      QStringLiteral("Session replaced by another device")},
@@ -210,7 +220,7 @@ public:
         return {{QStringLiteral("access_token"), QString(43, QLatin1Char('A'))},
                 {QStringLiteral("refresh_token"), QString(43, QLatin1Char('R'))},
                 {QStringLiteral("expires_in"), initialAccessExpiresIn},
-                {QStringLiteral("device_slot"), QStringLiteral("mac")},
+                {QStringLiteral("device_slot"), testPlatformName()},
                 {QStringLiteral("user"), QJsonObject{
                     {QStringLiteral("im_user_id"), QStringLiteral("im-auth-test")}}}};
     }
@@ -342,7 +352,7 @@ void LoginDialogTest::displaysServerQrAndSendsMatchingVerifier() {
     dialog.show();
     dialog.start();
     QTRY_COMPARE_WITH_TIMEOUT(status->text(), QStringLiteral("等待手机扫码并确认"), 5000);
-    QCOMPARE(server.platform, QStringLiteral("mac"));
+    QCOMPARE(server.platform, testPlatformName());
     QCOMPARE(server.challenge.size(), 43);
     QCOMPARE(code->text(), QStringLiteral("核对码  123456"));
     QVERIFY(!qr->pixmap(Qt::ReturnByValue).isNull());
@@ -607,7 +617,7 @@ void LoginDialogTest::retriesStoredSessionAfterTransientRestoreFailure() {
         {QStringLiteral("access_token"), QString(43, QLatin1Char('A'))},
         {QStringLiteral("refresh_token"), QString(43, QLatin1Char('R'))},
         {QStringLiteral("expires_in"), 900},
-        {QStringLiteral("device_slot"), QStringLiteral("mac")},
+        {QStringLiteral("device_slot"), testPlatformName()},
         {QStringLiteral("user"), QJsonObject{
             {QStringLiteral("im_user_id"), QStringLiteral("im-auth-test")}}}
     };

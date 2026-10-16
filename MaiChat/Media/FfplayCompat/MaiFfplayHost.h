@@ -6,6 +6,12 @@
 
 #include "../MaiGraphicsPresenter.h"
 
+#if defined(_WIN32)
+#define MAI_FFPLAY_EXPORT __declspec(dllexport)
+#else
+#define MAI_FFPLAY_EXPORT __attribute__((visibility("default")))
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -30,7 +36,7 @@ typedef struct MaiFfplayHost {
 
 void maiFfplayBindHost(const MaiFfplayHost* host);
 MaiFfplayHost maiFfplayCurrentHost(void);
-int maiFfplaySourceHasHdrWithoutSubtitles(const char* path);
+MAI_FFPLAY_EXPORT int maiFfplaySourceHasHdrWithoutSubtitles(const char* path);
 
 #ifdef __cplusplus
 }

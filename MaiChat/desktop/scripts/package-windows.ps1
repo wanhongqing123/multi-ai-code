@@ -1,6 +1,6 @@
-# 文件作用：整理 Windows 桌面程序、SDK 和插件的发布目录。
+﻿# 文件作用：整理 Windows 桌面程序、SDK 和插件的发布目录。
 # 阅读边界：此文件负责构建或测试流程，不在应用运行时解释为业务逻辑。
-﻿# 打包 Windows 免安装绿色版：exe + Qt DLL + VC 运行库 + ImSDK，解压即用，
+# 打包 Windows 免安装绿色版：exe + Qt DLL + VC 运行库 + ImSDK，解压即用，
 # 目标机器无需安装 Qt 或 VC++ 运行库（Win10+ 自带 UCRT）。
 #
 # 用法（先完成 Release 构建）：
@@ -177,15 +177,13 @@ if ($ffmpegEnabled) {
 # 与 CMake 的资产开关一致：仅在 FFmpeg/OpenCV 和官方 Windows 运行时齐备时打包。
 $repositoryRoot = (Resolve-Path (Join-Path $projectRoot '..\..')).Path
 $rvmSourceModel = Join-Path $repositoryRoot 'MaiAgent\models\rvm_mobilenetv3_fp32.onnx'
-$ortSourceRuntime = Join-Path $repositoryRoot 'MaiAgent\third_party\onnxruntime\windows-x64\onnxruntime.dll'
-$ortSourceProvider = Join-Path $repositoryRoot 'MaiAgent\third_party\onnxruntime\windows-x64\onnxruntime_providers_shared.dll'
+$ortSourceRuntime = Join-Path $repositoryRoot 'MaiAgent\build\vendor\onnxruntime-windows-x64\onnxruntime.dll'
+$ortSourceProvider = Join-Path $repositoryRoot 'MaiAgent\build\vendor\onnxruntime-windows-x64\onnxruntime_providers_shared.dll'
 if ($ffmpegEnabled -and $opencvEnabled -and
     (Test-Path -LiteralPath $rvmSourceModel) -and
-    (Test-Path -LiteralPath $ortSourceRuntime) -and
-    (Test-Path -LiteralPath $ortSourceProvider)) {
+    (Test-Path -LiteralPath $ortSourceRuntime)) {
     foreach ($asset in @(
         'onnxruntime.dll',
-        'onnxruntime_providers_shared.dll',
         'MaiAgentModels\rvm_mobilenetv3_fp32.onnx',
         'MaiAgentModels\RVM_LICENSE',
         'MaiAgentModels\ONNXRUNTIME_LICENSE',
@@ -198,6 +196,13 @@ if ($ffmpegEnabled -and $opencvEnabled -and
         $target = Join-Path $staging $asset
         New-Item -ItemType Directory -Force (Split-Path -Parent $target) | Out-Null
         Copy-Item -LiteralPath $source -Destination $target -Force
+    }
+    if (Test-Path -LiteralPath $ortSourceProvider) {
+        $provider = Join-Path $exeDir 'onnxruntime_providers_shared.dll'
+        if (-not (Test-Path -LiteralPath $provider)) {
+            throw "Windows RVM provider 构建产物缺失：$provider"
+        }
+        Copy-Item -LiteralPath $provider -Destination (Join-Path $staging 'onnxruntime_providers_shared.dll') -Force
     }
     Write-Host 'RVM 模型、ONNX Runtime DLL 和许可文件已打包'
 } else {

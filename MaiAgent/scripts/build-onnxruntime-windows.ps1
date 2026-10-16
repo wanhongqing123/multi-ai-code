@@ -14,7 +14,7 @@ if (-not (Test-Path $buildScript)) {
 
 # Windows 使用 DirectML 调用 GPU，并启用 XNNPACK 的 CPU 优化。
 # CUDA 和 TensorRT 依赖额外的 NVIDIA SDK，不能在普通 Windows 构建中无条件开启。
-& $buildScript --config Release --build_dir $BuildDir --update --build --parallel `
+& $buildScript --config Release --build_dir $BuildDir --update --build --parallel 6 `
     --skip_tests --skip_submodule_sync --build_shared_lib --use_dml --use_xnnpack `
     --cmake_extra_defines CMAKE_POLICY_VERSION_MINIMUM=3.5 `
     CMAKE_DISABLE_FIND_PACKAGE_Protobuf=ON onnxruntime_BUILD_UNIT_TESTS=OFF

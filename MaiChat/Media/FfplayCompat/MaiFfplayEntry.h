@@ -8,12 +8,6 @@
 extern "C" {
 #endif
 
-#if defined(_WIN32)
-#define MAI_FFPLAY_EXPORT __declspec(dllexport)
-#else
-#define MAI_FFPLAY_EXPORT __attribute__((visibility("default")))
-#endif
-
 // 在调用方的播放线程阻塞，直到宿主 ffplay 会话关闭。
 // 实现包含的 ffplay.c 与上游字节一致；进程退出和信号处理在此层拦截。
 MAI_FFPLAY_EXPORT int maiFfplayRun(const MaiFfplayHost* host, int argc, char** argv);

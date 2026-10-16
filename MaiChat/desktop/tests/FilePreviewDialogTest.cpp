@@ -497,7 +497,7 @@ void FilePreviewDialogTest::draggingVisiblePanelEdgeResizesTheMarkdownPreview() 
     QVERIFY(panel != nullptr);
 
     const QPoint edge = panel->mapToGlobal(QPoint(panel->width() - 12, panel->height() / 2));
-    QWidget* hit = QApplication::widgetAt(edge);
+    QWidget* hit = dialog.childAt(dialog.mapFromGlobal(edge));
     QCOMPARE(hit, static_cast<QWidget*>(panel));
     const int before = dialog.width();
     sendMouseAt(hit, QEvent::MouseButtonPress, edge, Qt::LeftButton, Qt::LeftButton);

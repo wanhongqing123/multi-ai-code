@@ -198,7 +198,8 @@ set(ZLIB_BUILD_STATIC ON CACHE BOOL "" FORCE)
 set(ZLIB_INSTALL OFF CACHE BOOL "" FORCE)
 set(ZLIB_PREFIX ON CACHE BOOL "" FORCE)
 add_subdirectory(third_party/zlib EXCLUDE_FROM_ALL)
-target_compile_definitions(zlibstatic PRIVATE Z_PREFIX)
+# Z_PREFIX does not rename z_errmsg, which collides with the media libraries' zlib.
+target_compile_definitions(zlibstatic PRIVATE Z_PREFIX z_errmsg=mai_z_errmsg)
 
 if(WIN32 AND NOT MAI_OPENSSL_CRYPTO_TARGET)
   if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
@@ -221,9 +222,12 @@ if(WIN32 AND NOT MAI_OPENSSL_CRYPTO_TARGET)
   add_library(mai_openssl_windows STATIC IMPORTED GLOBAL)
   set_target_properties(mai_openssl_windows PROPERTIES
     IMPORTED_LOCATION "${mai_openssl_windows_build}/libcrypto.lib")
+  set(MAI_OPENSSL_BUILD_DIR "${mai_openssl_windows_build}")
   set(MAI_OPENSSL_CRYPTO_TARGET mai_openssl_windows)
   set(MAI_OPENSSL_INCLUDE_DIR "${mai_openssl_windows_build}/include;${CMAKE_CURRENT_SOURCE_DIR}/third_party/openssl/include")
   set(OPENSSL_CRYPTO_LIBRARY "${mai_openssl_windows_build}/libcrypto.lib" CACHE FILEPATH "" FORCE)
+  # FindOpenSSL's MSVC branch derives OPENSSL_CRYPTO_LIBRARY from LIB_EAY_RELEASE.
+  set(LIB_EAY_RELEASE "${mai_openssl_windows_build}/libcrypto.lib" CACHE FILEPATH "" FORCE)
   set(OPENSSL_INCLUDE_DIR "${mai_openssl_windows_build}/include" CACHE PATH "" FORCE)
 endif()
 

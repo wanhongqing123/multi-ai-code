@@ -58,10 +58,9 @@ final class AIMobileHostToolProvider {
         case "mobile_save_video": return await saveVideo(arguments)
         case "mobile_ssh_password": return await requestSSHPassword(arguments)
         case "mobile_ssh_trust_host": return await trustSSHHost(arguments)
-        case "oss_video_upload_config":
-            return await privateServiceStatus()
-        case "mobile_oss_upload_video": return await uploadOssVideo(arguments)
         case "mobile_ark_service_config":
+            // 宿主只提供私有服务配置。
+            // Ark 资产登记、OSS 签名及文件上传由共享 C++ 工具执行。
             guard let endpoint = privateServiceEndpoint("ark-assets"),
                   var parts = URLComponents(url: endpoint.url, resolvingAgainstBaseURL: false),
                   parts.path.hasSuffix("/ark-assets") else {
@@ -231,6 +230,7 @@ final class AIMobileHostToolProvider {
               components.query == nil, components.fragment == nil else {
             return nil
         }
+        // 用户设置中仍可能保存旧的 sign-upload 地址，先恢复服务根路径再拼正式 Ark 入口。
         if components.path.hasSuffix("/sign-upload") {
             components.path = String(components.path.dropLast("sign-upload".count))
         } else if !components.path.hasSuffix("/") {
@@ -239,101 +239,6 @@ final class AIMobileHostToolProvider {
         components.path += action
         guard let url = components.url else { return nil }
         return (url, token)
-    }
-
-    private func ossSignerConfiguration() -> (url: URL, token: String)? {
-        privateServiceEndpoint("sign-upload")
-    }
-
-    private func privateServiceStatus() async -> AIMaiChatHostToolExecution {
-        guard let service = privateServiceEndpoint("credentials") else {
-            return Self.jsonSuccess(["configured": false, "assets_configured": false])
-        }
-        do {
-            let requestBody = try JSONSerialization.data(withJSONObject: ["action": "status"])
-            let response = try await MaiChatHttpClient.request(
-                url: service.url, method: "POST", bearer: service.token,
-                contentType: "application/json", body: requestBody,
-                maximumResponseBytes: 16_384
-            )
-            let data = response.body
-            guard response.statusCode == 200,
-                  data.count <= 16_384,
-                  let status = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                return Self.jsonSuccess(["configured": false, "assets_configured": false])
-            }
-            return Self.jsonSuccess([
-                "configured": status["storage_configured"] as? Bool ?? false,
-                "assets_configured": status["assets_configured"] as? Bool ?? false
-            ])
-        } catch {
-            return Self.jsonSuccess(["configured": false, "assets_configured": false])
-        }
-    }
-
-    /// 把工作区视频上传到已配置的 OSS 资源服务。
-    /// 检查文件类型、访问路径和响应地址，失败时保留本地文件供用户重试。
-    private func uploadOssVideo(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
-        guard let signer = ossSignerConfiguration() else {
-            return .failure(code: "not_configured", message: "Configure the OSS signer in model settings")
-        }
-        let path = Self.string(arguments, key: "path")
-        guard let source = AIAssistantPathPolicy.resolve(
-            path, workspacePath: AIAssistantModel.shared.workspacePath
-        ), ["mp4", "mov"].contains(source.pathExtension.lowercased()),
-           let values = try? source.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
-           values.isRegularFile == true, let size = values.fileSize,
-           size > 0, size <= 200_000_000 else {
-            return .failure(code: "invalid_input", message: "Video must be an accessible MP4/MOV under 200 MB")
-        }
-        do {
-            let signBody = try JSONSerialization.data(withJSONObject: [
-                "filename": source.lastPathComponent, "size_bytes": size
-            ])
-            let signedResponse = try await MaiChatHttpClient.request(
-                url: signer.url, method: "POST", bearer: signer.token,
-                contentType: "application/json", body: signBody,
-                maximumResponseBytes: 16_384, timeoutMilliseconds: 60_000
-            )
-            let signedData = signedResponse.body
-            if signedResponse.statusCode == 401 {
-                return .failure(code: "not_configured", message: "OSS signer token was rejected")
-            }
-            if signedResponse.statusCode == 503 {
-                return .failure(code: "not_configured", message: "OSS signer is not configured")
-            }
-            guard signedResponse.statusCode == 200, signedData.count <= 16_384,
-                  let signed = try JSONSerialization.jsonObject(with: signedData) as? [String: Any],
-                  let uploadText = signed["upload_url"] as? String,
-                  let readText = signed["read_url"] as? String,
-                  let upload = URLComponents(string: uploadText),
-                  let read = URLComponents(string: readText),
-                  upload.scheme == "https", read.scheme == "https",
-                  upload.host?.isEmpty == false, upload.host == read.host,
-                  upload.path == read.path,
-                  upload.user == nil, read.user == nil,
-                  upload.password == nil, read.password == nil,
-                  let uploadURL = upload.url, let readURL = read.url,
-                  let headers = signed["upload_headers"] as? [String: String],
-                  let contentType = headers["Content-Type"],
-                  contentType == (source.pathExtension.lowercased() == "mov"
-                    ? "video/quicktime" : "video/mp4") else {
-                return .failure(code: "upload_failed", message: "OSS did not return valid upload links")
-            }
-            let uploadResponse = try await MaiChatHttpClient.request(
-                url: uploadURL, method: "PUT", contentType: contentType,
-                uploadFile: source, maximumResponseBytes: 16_384,
-                timeoutMilliseconds: 900_000
-            )
-            guard (200...299).contains(uploadResponse.statusCode) else {
-                return .failure(
-                    code: "upload_failed",
-                    message: "OSS rejected the video upload; check the signed URL and Bucket permissions")
-            }
-            return Self.jsonSuccess(["url": readURL.absoluteString])
-        } catch {
-            return .failure(code: "upload_failed", message: error.localizedDescription)
-        }
     }
 
     static func jsonSuccess(_ object: [String: Any]) -> AIMaiChatHostToolExecution {

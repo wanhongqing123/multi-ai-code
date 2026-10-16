@@ -1,11 +1,10 @@
-// 文件作用：让 iOS 自有头像、模型凭据及素材服务共用 libcurl/OpenSSL 请求通道。
+// 文件作用：让 iOS 自有头像和旧模型凭据共用 libcurl/OpenSSL 请求通道。
 // 安全边界：HTTPS 校验证书和域名；代理无效即停止，不跳转或重试带凭据请求。
-// 资源边界：响应按调用方上限接收，大文件 PUT 从磁盘逐块读取，取消标记终止传输。
+// 资源边界：响应按调用方上限接收，取消标记终止传输。
 #include "MaiChatHttpTransport.h"
 #include "MaiChatSystemProxy.h"
 
 #include <atomic>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
@@ -14,19 +13,16 @@
 #include <string>
 
 #include <curl/curl.h>
-#include <sys/stat.h>
 #include <strings.h>
 
 struct MaiChatHttpCancellation {
     std::atomic<bool> canceled{false};
-    std::atomic<int64_t> uploadedBytes{0};
 };
 
 namespace {
 
 constexpr size_t kMaximumUrlBytes = 4096;
 constexpr size_t kMaximumJsonRequestBytes = 32 * 1024;
-constexpr size_t kMaximumUploadBytes = 200 * 1000 * 1000;
 constexpr size_t kMaximumSupportedResponseBytes = 4 * 1024 * 1024;
 constexpr size_t kMaximumHeaderBytes = 16 * 1024;
 constexpr size_t kMaximumRedirectLocationBytes = 4096;
@@ -110,16 +106,8 @@ size_t receiveHeader(char* bytes, size_t size, size_t count, void* context) {
     return length;
 }
 
-size_t readUpload(char* bytes, size_t size, size_t count, void* context) {
-    FILE* file = static_cast<FILE*>(context);
-    if (size != 0 && count > SIZE_MAX / size) return CURL_READFUNC_ABORT;
-    const size_t length = std::fread(bytes, 1, size * count, file);
-    return std::ferror(file) ? CURL_READFUNC_ABORT : length;
-}
-
-int reportProgress(void* context, curl_off_t, curl_off_t, curl_off_t uploaded, curl_off_t) {
+int reportProgress(void* context, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
     auto* cancellation = static_cast<MaiChatHttpCancellation*>(context);
-    cancellation->uploadedBytes.store(static_cast<int64_t>(uploaded), std::memory_order_relaxed);
     return cancellation->canceled.load(std::memory_order_relaxed) ? 1 : 0;
 }
 
@@ -131,7 +119,7 @@ bool printableHeaderValue(const char* value) {
     return true;
 }
 
-// 使用 curl URL 解析器校验目标；原 URL 保持不变，避免破坏 OSS 签名查询串。
+// 使用 curl URL 解析器校验目标；原 URL 保持不变，避免破坏头像 CDN 的签名查询串。
 bool validUrl(const char* value, bool* secure) {
     if (value == nullptr || std::strlen(value) > kMaximumUrlBytes || std::strpbrk(value, "\r\n") != nullptr)
         return false;
@@ -159,8 +147,8 @@ bool validUrl(const char* value, bool* secure) {
 }
 
 bool validateRequest(const char* url, const char* method, const char* bearer, const char* contentType,
-                     const uint8_t* requestBody, size_t requestLength, const char* uploadFilePath,
-                     size_t maximumResponseBytes, long timeoutMilliseconds, const char* caBundlePath) {
+                     const uint8_t* requestBody, size_t requestLength, size_t maximumResponseBytes,
+                     long timeoutMilliseconds, const char* caBundlePath) {
     bool secure = false;
     if (!validUrl(url, &secure) || method == nullptr || !printableHeaderValue(bearer) ||
         !printableHeaderValue(contentType) || maximumResponseBytes == 0 ||
@@ -169,17 +157,13 @@ bool validateRequest(const char* url, const char* method, const char* bearer, co
         return false;
     const bool get = std::strcmp(method, "GET") == 0;
     const bool post = std::strcmp(method, "POST") == 0;
-    const bool put = std::strcmp(method, "PUT") == 0;
-    if (!get && !post && !put) return false;
-    // 历史头像可以使用公开 HTTP 地址；任何凭据、JSON 写入或文件上传都必须使用 HTTPS。
-    if (!secure && (!get || bearer[0] != '\0' || uploadFilePath != nullptr)) return false;
-    if (get) return requestLength == 0 && uploadFilePath == nullptr && contentType[0] == '\0';
-    if (post) return uploadFilePath == nullptr && requestLength <= kMaximumJsonRequestBytes &&
-                     (requestLength == 0 || requestBody != nullptr) &&
-                     std::strcmp(contentType, "application/json") == 0;
-    return requestLength == 0 && uploadFilePath != nullptr && uploadFilePath[0] != '\0' &&
-           (std::strcmp(contentType, "video/mp4") == 0 ||
-            std::strcmp(contentType, "video/quicktime") == 0);
+    if (!get && !post) return false;
+    // 历史头像可以使用公开 HTTP 地址；任何凭据或 JSON 写入都必须使用 HTTPS。
+    if (!secure && (!get || bearer[0] != '\0')) return false;
+    if (get) return requestLength == 0 && contentType[0] == '\0';
+    return requestLength <= kMaximumJsonRequestBytes &&
+           (requestLength == 0 || requestBody != nullptr) &&
+           std::strcmp(contentType, "application/json") == 0;
 }
 
 bool addHeader(curl_slist** headers, const std::string& header) {
@@ -191,8 +175,7 @@ bool addHeader(curl_slist** headers, const std::string& header) {
 
 bool configureCurl(CURL* curl, const char* url, const char* method, const char* bearer,
                    const char* contentType, const uint8_t* requestBody, size_t requestLength,
-                   FILE* upload, curl_off_t uploadLength, size_t maximumResponseBytes,
-                   long timeoutMilliseconds, const char* caBundlePath,
+                   size_t maximumResponseBytes, long timeoutMilliseconds, const char* caBundlePath,
                    const maiChatNetwork::SystemProxy& proxy, MaiChatHttpCancellation* cancellation,
                    ResponseCollector* collector, curl_slist** headers) {
     CURLcode setup = CURLE_OK;
@@ -219,7 +202,7 @@ bool configureCurl(CURL* curl, const char* url, const char* method, const char* 
     set(CURLOPT_HEADERFUNCTION, receiveHeader);
     set(CURLOPT_HEADERDATA, collector);
     set(CURLOPT_MAXFILESIZE_LARGE, static_cast<curl_off_t>(maximumResponseBytes));
-    // 进度回调同时服务上传字节统计和任务取消，不依赖 Swift 主线程轮询连接状态。
+    // 进度回调负责传递任务取消，不依赖 Swift 主线程轮询连接状态。
     set(CURLOPT_XFERINFOFUNCTION, reportProgress);
     set(CURLOPT_XFERINFODATA, cancellation);
     set(CURLOPT_NOPROGRESS, 0L);
@@ -230,15 +213,10 @@ bool configureCurl(CURL* curl, const char* url, const char* method, const char* 
         set(CURLOPT_POST, 1L);
         set(CURLOPT_POSTFIELDS, requestLength == 0 ? static_cast<const void*>("") : requestBody);
         set(CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(requestLength));
-    } else if (std::strcmp(method, "PUT") == 0) {
-        set(CURLOPT_UPLOAD, 1L);
-        set(CURLOPT_READFUNCTION, readUpload);
-        set(CURLOPT_READDATA, upload);
-        set(CURLOPT_INFILESIZE_LARGE, uploadLength);
     } else {
         set(CURLOPT_HTTPGET, 1L);
     }
-    // 只发送白名单内的头。OSS 的签名查询串与 Content-Type 均保持原值。
+    // 只发送白名单内的请求头；带令牌的 JSON POST 不允许跳转。
     const bool validHeaders = addHeader(headers, "Expect:") &&
                               (contentType[0] == '\0' ||
                                addHeader(headers, std::string("Content-Type: ") + contentType)) &&
@@ -263,22 +241,16 @@ extern "C" void maiChatHttpFreeCancellation(MaiChatHttpCancellation* cancellatio
     delete cancellation;
 }
 
-extern "C" int64_t maiChatHttpUploadedBytes(const MaiChatHttpCancellation* cancellation) {
-    return cancellation == nullptr ? 0 : cancellation->uploadedBytes.load(std::memory_order_relaxed);
-}
-
-// 请求在 Swift 指定的后台队列执行；调用返回前释放文件、headers 和 easy handle。
+// 请求在 Swift 指定的后台队列执行；调用返回前释放 headers 和 easy handle。
 extern "C" void maiChatHttpPerform(const char* url, const char* method, const char* bearer,
                                     const char* contentType, const uint8_t* requestBody, size_t requestLength,
-                                    const char* uploadFilePath, size_t maximumResponseBytes,
-                                    long timeoutMilliseconds, const char* caBundlePath,
+                                    size_t maximumResponseBytes, long timeoutMilliseconds, const char* caBundlePath,
                                     MaiChatHttpCancellation* cancellation, MaiChatHttpResult* result) {
     if (result == nullptr) return;
     *result = {};
     // 先做请求与协议校验，再检查取消；出错时不创建网络连接。
     if (cancellation == nullptr || !validateRequest(url, method, bearer, contentType, requestBody, requestLength,
-                                                    uploadFilePath, maximumResponseBytes, timeoutMilliseconds,
-                                                    caBundlePath)) {
+                                                    maximumResponseBytes, timeoutMilliseconds, caBundlePath)) {
         result->transportCode = -1;
         return;
     }
@@ -304,25 +276,11 @@ extern "C" void maiChatHttpPerform(const char* url, const char* method, const ch
         result->transportCode = -3;
         return;
     }
-    // 文件长度从已打开的句柄取得，禁止上传目录、空文件和超过 200 MB 的文件。
-    // readUpload 每次仅从该句柄读取 libcurl 请求的块，不创建 200 MB 内存副本。
-    std::unique_ptr<FILE, decltype(&std::fclose)> upload(nullptr, std::fclose);
-    curl_off_t uploadLength = 0;
-    if (uploadFilePath != nullptr) {
-        upload.reset(std::fopen(uploadFilePath, "rb"));
-        struct stat info = {};
-        if (upload == nullptr || fstat(fileno(upload.get()), &info) != 0 || !S_ISREG(info.st_mode) ||
-            info.st_size <= 0 || static_cast<uint64_t>(info.st_size) > kMaximumUploadBytes) {
-            result->transportCode = -1;
-            return;
-        }
-        uploadLength = static_cast<curl_off_t>(info.st_size);
-    }
     ResponseCollector collector;
     curl_slist* headers = nullptr;
     const bool configured = configureCurl(curl.get(), url, method, bearer, contentType, requestBody,
-                                          requestLength, upload.get(), uploadLength, maximumResponseBytes,
-                                          timeoutMilliseconds, caBundlePath, proxy, cancellation, &collector, &headers);
+                                          requestLength, maximumResponseBytes, timeoutMilliseconds,
+                                          caBundlePath, proxy, cancellation, &collector, &headers);
     if (!configured) {
         curl_slist_free_all(headers);
         result->transportCode = -4;

@@ -1,4 +1,4 @@
-// 文件作用：为 iOS 自有头像、模型凭据和素材请求提供统一的异步 curl 接口。
+// 文件作用：为 iOS 自有头像和旧模型凭据请求提供统一的异步 curl 接口。
 // 传输由 MaiChatHttpTransport.cpp 执行；本层负责证书路径、任务取消和响应所有权。
 // 不把服务令牌写入日志，也不让同步的 curl 操作占用 SwiftUI 主线程。
 import Foundation
@@ -38,28 +38,24 @@ private final class MaiChatHttpCancellationHandle: @unchecked Sendable {
     deinit { maiChatHttpFreeCancellation(pointer) }
 
     func cancel() { maiChatHttpCancel(pointer) }
-    func uploadedBytes() -> Int64 { maiChatHttpUploadedBytes(pointer) }
 }
 
 enum MaiChatHttpClient {
-    /// URL 的原始查询串保持不变，尤其不能重新编码 OSS 的签名参数。
+    /// URL 的原始查询串保持不变，避免改变头像 CDN 地址中的签名参数。
     /// curl 在后台队列执行，请求取消时共享原子标记会中断正在进行的传输。
     static func request(
         url: URL, method: String, bearer: String? = nil, contentType: String = "",
-        body: Data = Data(), uploadFile: URL? = nil, maximumResponseBytes: Int,
-        timeoutMilliseconds: Int = 30_000,
-        followSafeGetRedirects: Bool = false,
-        onUploadProgress: (@Sendable (Int64) -> Void)? = nil
+        body: Data = Data(), maximumResponseBytes: Int,
+        timeoutMilliseconds: Int = 30_000, followSafeGetRedirects: Bool = false
     ) async throws -> MaiChatHttpResponse {
-        // 只有公开头像 GET 可以逐跳重定向；带令牌的 POST 与 OSS PUT 永远只请求原始 URL。
+        // 只有公开头像 GET 可以逐跳重定向；带令牌的 JSON POST 永远只请求原始 URL。
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               ["http", "https"].contains(components.scheme?.lowercased() ?? ""),
               components.host?.isEmpty == false,
               components.user == nil, components.password == nil, components.fragment == nil,
-              uploadFile == nil || uploadFile?.isFileURL == true,
               !followSafeGetRedirects ||
                   (method == "GET" && bearer == nil && contentType.isEmpty &&
-                   body.isEmpty && uploadFile == nil) else {
+                   body.isEmpty) else {
             throw MaiChatHttpClientError.invalidRequest
         }
         // curl 不读取 iOS 系统信任库，因此从 App 随包证书中显式提供 CA 路径。
@@ -76,16 +72,7 @@ enum MaiChatHttpClient {
             throw MaiChatHttpClientError.transport(-3)
         }
         try Task.checkCancellation()
-        // 原生标记由请求和进度任务共同持有；取消时不会释放仍在使用的 C++ 指针。
-        let progressTask = onUploadProgress.map { progress in
-            Task.detached(priority: .utility) {
-                while !Task.isCancelled {
-                    progress(cancellation.uploadedBytes())
-                    try? await Task.sleep(for: .milliseconds(100))
-                }
-            }
-        }
-        defer { progressTask?.cancel() }
+        // 原生标记由异步请求持有到后台传输结束；取消时不会释放正在使用的 C++ 指针。
         var currentURL = url
         for redirectCount in 0...5 {
             try Task.checkCancellation()
@@ -98,23 +85,19 @@ enum MaiChatHttpClient {
                         var nativeResult = MaiChatHttpResult()
                         defer { maiChatHttpFreeResult(&nativeResult) }
                         let rawURL = requestURL.absoluteString
-                        let uploadPath = uploadFile?.path ?? ""
                         rawURL.withCString { urlPointer in
                             method.withCString { methodPointer in
                                 (bearer ?? "").withCString { bearerPointer in
                                     contentType.withCString { typePointer in
-                                        uploadPath.withCString { uploadPointer in
-                                            certificatePath.withCString { certificatePointer in
-                                                body.withUnsafeBytes { bytes in
-                                                    maiChatHttpPerform(
-                                                        urlPointer, methodPointer, bearerPointer, typePointer,
-                                                        body.isEmpty ? nil :
-                                                            bytes.bindMemory(to: UInt8.self).baseAddress,
-                                                        body.count, uploadFile == nil ? nil : uploadPointer,
-                                                        maximumResponseBytes, timeoutMilliseconds,
-                                                        certificatePointer, cancellation.pointer, &nativeResult
-                                                    )
-                                                }
+                                        certificatePath.withCString { certificatePointer in
+                                            body.withUnsafeBytes { bytes in
+                                                maiChatHttpPerform(
+                                                    urlPointer, methodPointer, bearerPointer, typePointer,
+                                                    body.isEmpty ? nil :
+                                                        bytes.bindMemory(to: UInt8.self).baseAddress,
+                                                    body.count, maximumResponseBytes, timeoutMilliseconds,
+                                                    certificatePointer, cancellation.pointer, &nativeResult
+                                                )
                                             }
                                         }
                                     }

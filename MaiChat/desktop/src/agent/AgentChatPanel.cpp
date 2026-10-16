@@ -1204,9 +1204,10 @@ QString AgentChatPanel::sessionId() const {
     return runtime_->sessionId;
 }
 
-void AgentChatPanel::setModelLabel(const QString& model) {
+void AgentChatPanel::setModelLabel(const QString& model, bool configured) {
     runtime_->modelChip->setText(model);
-    runtime_->modelConfigured = model != QStringLiteral("未配置模型") && !model.trimmed().isEmpty();
+    runtime_->modelConfigured = configured &&
+        model != QStringLiteral("未配置模型") && !model.trimmed().isEmpty();
     runtime_->modelChip->setEnabled(runtime_->modelConfigured && !runtime_->running);
 }
 

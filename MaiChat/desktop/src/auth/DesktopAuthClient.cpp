@@ -16,6 +16,7 @@
 #include <QtConcurrent>
 #include <algorithm>
 #include <memory>
+#include <utility>
 
 namespace {
 
@@ -32,6 +33,14 @@ QByteArray base64Url(const QByteArray& bytes) {
 bool validToken(const QString& token) {
     static const QRegularExpression pattern(QStringLiteral("^[A-Za-z0-9_-]{43}$"));
     return pattern.match(token).hasMatch();
+}
+
+bool validModelApiKey(const QString& key) {
+    const QByteArray bytes = key.toUtf8();
+    if (bytes.isEmpty() || bytes.size() > 4096) return false;
+    return std::all_of(key.cbegin(), key.cend(), [](QChar character) {
+        return character.unicode() >= 0x20 && character.unicode() != 0x7f;
+    });
 }
 
 bool validRequestId(const QString& requestId) {
@@ -600,6 +609,67 @@ void DesktopAuthClient::adoptApprovedSession(const QJsonObject& session,
 
 void DesktopAuthClient::fetchImCredential(Completion completion) {
     fetchImCredentialImpl(std::move(completion), true);
+}
+
+void DesktopAuthClient::fetchMainModelKeys(MainModelKeysCompletion completion) {
+    fetchMainModelKeysImpl(std::move(completion), true);
+}
+
+void DesktopAuthClient::fetchMainModelKeysImpl(MainModelKeysCompletion completion,
+                                               bool retryAfterUnauthorized) {
+    if (loggingOut_ || userId_.isEmpty()) {
+        if (completion) completion({}, QStringLiteral("请先登录 MaiChat"));
+        return;
+    }
+    if (accessToken_.isEmpty() ||
+        accessExpiresAt_ <= QDateTime::currentDateTimeUtc().addSecs(60)) {
+        refresh([this, completion, retryAfterUnauthorized](bool ok, const QString& error) {
+            if (ok) fetchMainModelKeysImpl(completion, retryAfterUnauthorized);
+            else if (completion) completion({}, error);
+        });
+        return;
+    }
+    request(QStringLiteral("model/api-keys"), "GET", {}, accessToken_,
+            [this, completion, retryAfterUnauthorized](const HttpResult& result) {
+        if (loggingOut_ || userId_.isEmpty()) {
+            if (completion) completion({}, QStringLiteral("本次登录已取消"));
+            return;
+        }
+        if (result.status == 401 && retryAfterUnauthorized) {
+            refresh([this, completion](bool ok, const QString& error) {
+                if (ok) fetchMainModelKeysImpl(completion, false);
+                else if (completion) completion({}, error);
+            });
+            return;
+        }
+        if (result.status != 200) {
+            const QString error = result.status == 403 ?
+                QStringLiteral("此账号尚未开通主聊天模型") : responseError(result);
+            if (result.status == 401) invalidateSession(error);
+            if (completion) completion({}, error);
+            return;
+        }
+        const QJsonObject keys = result.body.value(QStringLiteral("api_keys")).toObject();
+        if (!keys.value(QStringLiteral("glm")).isString() ||
+            !keys.value(QStringLiteral("deepseek")).isString()) {
+            if (completion)
+                completion({}, QStringLiteral("账号服务返回的模型凭据无效"));
+            return;
+        }
+        const QString glm = keys.value(QStringLiteral("glm")).toString();
+        const QString deepseek = keys.value(QStringLiteral("deepseek")).toString();
+        if ((!glm.isEmpty() && !validModelApiKey(glm)) ||
+            (!deepseek.isEmpty() && !validModelApiKey(deepseek)) ||
+            (glm.isEmpty() && deepseek.isEmpty())) {
+            if (completion)
+                completion({}, QStringLiteral("账号服务返回的模型凭据无效"));
+            return;
+        }
+        QHash<QString, QString> available;
+        if (!glm.isEmpty()) available.insert(QStringLiteral("glm"), glm);
+        if (!deepseek.isEmpty()) available.insert(QStringLiteral("deepseek"), deepseek);
+        if (completion) completion(available, {});
+    });
 }
 
 // 取 IM 凭据前保证访问令牌有效；401 只刷新重试一次，防止无界循环。

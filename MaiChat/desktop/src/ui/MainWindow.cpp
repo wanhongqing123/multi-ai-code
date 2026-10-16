@@ -1514,7 +1514,8 @@ QString readTextFile(const QString &path) {
 
 namespace {
 
-QJsonObject cloudModelKeys(const QString &address, const QString &token) {
+// 旧素材服务仍向 MiniMax 媒体工具提供进程内 Key；主聊天 Key 只走账号服务。
+QJsonObject legacyMediaModelKeys(const QString &address, const QString &token) {
   static QString lastAddress;
   static QString lastToken;
   static QJsonObject cached;
@@ -1531,9 +1532,7 @@ QJsonObject cloudModelKeys(const QString &address, const QString &token) {
   if (token.size() < 32 || endpoint.scheme() != QStringLiteral("https") ||
       endpoint.host().isEmpty() || !endpoint.userName().isEmpty() ||
       !endpoint.password().isEmpty() || !endpoint.query().isEmpty() ||
-      !endpoint.fragment().isEmpty()) {
-    return {};
-  }
+      !endpoint.fragment().isEmpty()) return {};
   QString path = endpoint.path();
   if (path.endsWith(QStringLiteral("/sign-upload")))
     path.chop(QStringLiteral("sign-upload").size());
@@ -1551,14 +1550,11 @@ QJsonObject cloudModelKeys(const QString &address, const QString &token) {
   request.setHeader(QNetworkRequest::ContentTypeHeader,
                     QStringLiteral("application/json"));
   request.setRawHeader("Authorization", QByteArray("Bearer ") + token.toUtf8());
-  const QJsonArray providers = {
-      QStringLiteral("ark"), QStringLiteral("glm"), QStringLiteral("deepseek"),
-      QStringLiteral("wan"), QStringLiteral("minimax")};
   QNetworkReply *reply = manager.post(
       request,
-      QJsonDocument(
-          QJsonObject{{QStringLiteral("action"), QStringLiteral("fetch")},
-                      {QStringLiteral("providers"), providers}})
+      QJsonDocument(QJsonObject{{QStringLiteral("action"), QStringLiteral("fetch")},
+                                {QStringLiteral("providers"),
+                                 QJsonArray{QStringLiteral("minimax")}}})
           .toJson(QJsonDocument::Compact));
   QEventLoop loop;
   QTimer timer;
@@ -1568,21 +1564,19 @@ QJsonObject cloudModelKeys(const QString &address, const QString &token) {
   timer.start(5'000);
   loop.exec();
   const QByteArray body = reply->readAll();
-  const bool valid =
-      reply->error() == QNetworkReply::NoError &&
-      reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() ==
-          200 &&
+  const bool valid = reply->error() == QNetworkReply::NoError &&
+      reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 200 &&
       body.size() <= 16'384;
   reply->deleteLater();
-  if (!valid)
-    return {};
+  if (!valid) return {};
   cached = QJsonDocument::fromJson(body).object();
   return cached;
 }
 
 // 本地只保存已选模型和云服务连接信息。Responses 地址由供应商确定；
 // 模型凭据领取后仅驻留当前进程内存。
-AgentController::ModelConfig loadAgentModelConfig() {
+AgentController::ModelConfig loadAgentModelConfig(
+    const QHash<QString, QString>& modelKeys) {
   AgentController::ModelConfig config;
 
   QSettings settings;
@@ -1620,14 +1614,12 @@ AgentController::ModelConfig loadAgentModelConfig() {
   const QString serviceToken = tokenResult.token;
   config.cloudServiceUrl = serviceUrl;
   config.cloudServiceToken = serviceToken;
-  const QJsonObject response = cloudModelKeys(serviceUrl, serviceToken);
-  const QJsonObject keys =
-      response.value(QStringLiteral("api_keys")).toObject();
-  config.apiKey =
-      keys.value(deepseek ? QStringLiteral("deepseek") : QStringLiteral("glm"))
-          .toString();
-  config.glmApiKey = keys.value(QStringLiteral("glm")).toString();
-  config.miniMaxApiKey = keys.value(QStringLiteral("minimax")).toString();
+  config.apiKey = modelKeys.value(deepseek ? QStringLiteral("deepseek") :
+                                    QStringLiteral("glm"));
+  config.glmApiKey = modelKeys.value(QStringLiteral("glm"));
+  config.miniMaxApiKey = legacyMediaModelKeys(serviceUrl, serviceToken)
+                             .value(QStringLiteral("api_keys"))
+                             .toObject().value(QStringLiteral("minimax")).toString();
   const QString policy = settings
                              .value(QStringLiteral("agent/approvalPolicy"),
                                     QStringLiteral("on_request"))
@@ -1726,7 +1718,7 @@ MainWindow::MainWindow(
   performanceTimer->start();
   buildUi();
   applyStyle();
-  const AgentController::ModelConfig replyModel = loadAgentModelConfig();
+  const AgentController::ModelConfig replyModel = loadAgentModelConfig(modelApiKeys_);
   ReplySuggestionController::Config replyConfig;
   replyConfig.baseUrl = replyModel.baseUrl;
   replyConfig.apiKey = replyModel.apiKey;
@@ -2580,9 +2572,9 @@ void MainWindow::buildUi() {
       QStringLiteral("由账号服务签发，仅在运行期间使用。")));
   auto *agentSettingsRow = createSettingsRow(
       QStringLiteral("创作中心模型"), settingsAgentModelValue_,
-      QStringLiteral("选择主模型并连接云端服务；模型密钥仅在运行期间使用。"));
+      QStringLiteral("登录后自动领取主模型凭据；旧媒体服务单独设置。"));
   auto *agentSettingsButton =
-      new QPushButton(QStringLiteral("配置"), agentSettingsRow);
+      new QPushButton(QStringLiteral("选择"), agentSettingsRow);
   agentSettingsButton->setObjectName(
       QStringLiteral("settingsAgentModelButton"));
   agentSettingsButton->setProperty("settingsRowButton", true);
@@ -3682,18 +3674,37 @@ void MainWindow::refreshSettings() {
       app_.isConnected() ? QStringLiteral("已连接") : QStringLiteral("未连接"));
   settingsSdkAppIdValue_->setText(
       QString::number(imSdkAppId_ > 0 ? imSdkAppId_ : RemoteIMCredentialDefaults::sdkAppId));
-  const AgentController::ModelConfig model = loadAgentModelConfig();
-  QSettings settings;
-  const auto tokenResult =
-      ModelServiceTokenStore::forCurrentApplication().loadAndMigrate(settings);
-  if (tokenResult.secureStorageFailed) {
-    settingsAgentModelValue_->setText(QStringLiteral("安全存储不可用"));
+  const AgentController::ModelConfig model = loadAgentModelConfig(modelApiKeys_);
+  if (!modelKeyError_.isEmpty()) {
+    settingsAgentModelValue_->setText(modelKeyError_);
     return;
   }
   settingsAgentModelValue_->setText(
       model.baseUrl.isEmpty() || model.apiKey.isEmpty()
-          ? QStringLiteral("未配置")
+          ? (modelApiKeys_.isEmpty() ? QStringLiteral("正在连接模型") :
+             QStringLiteral("当前模型未开通"))
           : QStringLiteral("%1 · 已配置").arg(model.modelName));
+}
+
+void MainWindow::setMainModelKeys(QHash<QString, QString> keys,
+                                  const QString& error) {
+  const bool keysChanged = keys != modelApiKeys_;
+  modelApiKeys_ = std::move(keys);
+  modelKeyError_ = error;
+  if (keysChanged) {
+    rebuildAgentPage();
+  } else if (agentPanel_ && modelApiKeys_.isEmpty()) {
+    const QString label = modelKeyError_.isEmpty() ?
+        QStringLiteral("正在连接模型") :
+        modelKeyError_.contains(QStringLiteral("未开通")) ?
+            QStringLiteral("模型未开通") : QStringLiteral("模型连接失败");
+    agentPanel_->setModelLabel(label, false);
+  }
+  refreshSettings();
+}
+
+void MainWindow::setModelKeyRefreshHandler(std::function<void()> handler) {
+  modelKeyRefreshHandler_ = std::move(handler);
 }
 
 void MainWindow::rebuildAgentPage() {
@@ -3715,7 +3726,7 @@ void MainWindow::rebuildAgentPage() {
   delete agentController_;
   agentController_ = nullptr;
 
-  AgentController::ModelConfig modelConfig = loadAgentModelConfig();
+  AgentController::ModelConfig modelConfig = loadAgentModelConfig(modelApiKeys_);
   modelConfig.arkApiKeyProvider = arkApiKeyProvider_;
   modelConfig.wanCredentialsProvider = wanCredentialsProvider_;
   if (replySuggestionController_) {
@@ -3830,10 +3841,15 @@ void MainWindow::rebuildAgentPage() {
         else
           app_.sendFile(path);
       });
-  agentPanel_->setModelLabel(modelConfig.baseUrl.isEmpty() ||
-                                     modelConfig.apiKey.isEmpty()
-                                 ? QStringLiteral("未配置模型")
-                                 : modelConfig.modelName);
+  const bool modelReady = !modelConfig.baseUrl.isEmpty() &&
+                          !modelConfig.apiKey.isEmpty();
+  const QString modelLabel = modelReady ? modelConfig.modelName :
+      !modelKeyError_.isEmpty() ?
+          (modelKeyError_.contains(QStringLiteral("未开通")) ?
+              QStringLiteral("模型未开通") : QStringLiteral("模型连接失败")) :
+      !modelApiKeys_.isEmpty() ? QStringLiteral("模型未开通") :
+                                 QStringLiteral("正在连接模型");
+  agentPanel_->setModelLabel(modelLabel, modelReady);
   agentSplitter->addWidget(agentSessions_);
   agentSplitter->addWidget(agentPanel_);
   agentSplitter->setStretchFactor(0, 0);
@@ -3862,7 +3878,7 @@ void MainWindow::rebuildAgentPage() {
           [this](const QString &model) {
             const QString selected = model.trimmed();
             if (selected.isEmpty() ||
-                selected == loadAgentModelConfig().modelName)
+                selected == loadAgentModelConfig(modelApiKeys_).modelName)
               return;
             QSettings settings;
             settings.setValue(QStringLiteral("agent/model"), selected);
@@ -3893,45 +3909,101 @@ void MainWindow::editAgentModelSettings() {
   }
 
   QSettings settings;
-  const AgentController::ModelConfig current = loadAgentModelConfig();
+  const AgentController::ModelConfig current = loadAgentModelConfig(modelApiKeys_);
   const ModelServiceTokenStore tokenStore =
       ModelServiceTokenStore::forCurrentApplication();
   QDialog dialog(this);
   dialog.setObjectName(QStringLiteral("agentModelDialog"));
-  dialog.setWindowTitle(QStringLiteral("配置创作中心模型"));
+  dialog.setWindowTitle(QStringLiteral("选择创作中心模型"));
   dialog.setModal(true);
-  dialog.setMinimumWidth(UiZoom::s(500));
+  dialog.setMinimumWidth(UiZoom::s(380));
   auto *content = new QVBoxLayout(&dialog);
-  content->setContentsMargins(UiZoom::s(28), UiZoom::s(24), UiZoom::s(28),
-                              UiZoom::s(24));
+  content->setContentsMargins(UiZoom::s(24), UiZoom::s(22), UiZoom::s(24),
+                              UiZoom::s(22));
   content->setSpacing(UiZoom::s(12));
 
-  content->addWidget(new QLabel(QStringLiteral("云端服务地址"), &dialog));
-  auto *serviceUrl = new QLineEdit(&dialog);
+  content->addWidget(new QLabel(QStringLiteral("主聊天模型"), &dialog));
+  auto *model = new QComboBox(&dialog);
+  model->setObjectName(QStringLiteral("agentModelName"));
+  model->addItems({QStringLiteral("glm-5.3"),
+                   QStringLiteral("glm-5.3-flash"),
+                   QStringLiteral("deepseek-flash")});
+  model->setCurrentText(current.modelName);
+  content->addWidget(model);
+  auto *accountStatus = new QLabel(&dialog);
+  accountStatus->setWordWrap(true);
+  content->addWidget(accountStatus);
+  const auto updateAccountStatus = [this, model, accountStatus] {
+    if (!modelKeyError_.isEmpty()) {
+      accountStatus->setText(modelKeyError_);
+      return;
+    }
+    if (modelApiKeys_.isEmpty()) {
+      accountStatus->setText(QStringLiteral("登录后自动获取主模型凭据"));
+      return;
+    }
+    const QString provider = model->currentText() == QStringLiteral("deepseek-flash") ?
+        QStringLiteral("deepseek") : QStringLiteral("glm");
+    accountStatus->setText(modelApiKeys_.value(provider).isEmpty() ?
+        QStringLiteral("此账号暂不可用所选模型") :
+        QStringLiteral("当前账号可使用此模型"));
+  };
+  connect(model, &QComboBox::currentTextChanged, &dialog,
+          [updateAccountStatus](const QString&) { updateAccountStatus(); });
+  updateAccountStatus();
+
+  auto *retry = new QPushButton(
+      modelApiKeys_.isEmpty() ? QStringLiteral("重试获取") :
+                                QStringLiteral("更新凭据"), &dialog);
+  retry->setObjectName(QStringLiteral("agentModelRetry"));
+  retry->setVisible(bool(modelKeyRefreshHandler_));
+  content->addWidget(retry);
+  connect(retry, &QPushButton::clicked, &dialog, [this, &dialog] {
+    if (modelKeyRefreshHandler_) modelKeyRefreshHandler_();
+    dialog.reject();
+    showToast(QStringLiteral("正在连接模型"), 13, 1800);
+  });
+
+  auto *advanced = new QPushButton(QStringLiteral("高级媒体服务设置（旧版）"), &dialog);
+  advanced->setObjectName(QStringLiteral("agentMediaAdvancedToggle"));
+  advanced->setCheckable(true);
+  content->addWidget(advanced);
+  auto *mediaFields = new QWidget(&dialog);
+  mediaFields->setObjectName(QStringLiteral("agentMediaAdvancedFields"));
+  auto *mediaLayout = new QVBoxLayout(mediaFields);
+  mediaLayout->setContentsMargins(0, 0, 0, 0);
+  mediaLayout->setSpacing(UiZoom::s(8));
+  mediaLayout->addWidget(new QLabel(
+      QStringLiteral("仅供仍需旧素材服务的上传签名和媒体工具使用"), mediaFields));
+  mediaLayout->addWidget(new QLabel(QStringLiteral("素材服务地址"), mediaFields));
+  auto *serviceUrl = new QLineEdit(mediaFields);
   serviceUrl->setObjectName(QStringLiteral("agentCloudServiceUrl"));
   serviceUrl->setPlaceholderText(QStringLiteral("https://ichat.life/maichat"));
-  serviceUrl->setText(
-      settings
-          .value(QStringLiteral("agent/cloudServiceUrl"),
-                 qEnvironmentVariable("MAICHAT_MEDIA_SERVICE_URL"))
-          .toString());
-  content->addWidget(serviceUrl);
-  content->addWidget(new QLabel(QStringLiteral("服务令牌"), &dialog));
-  auto *serviceToken = new QLineEdit(&dialog);
+  const QString savedAddress =
+      settings.value(QStringLiteral("agent/cloudServiceUrl"),
+                     qEnvironmentVariable("MAICHAT_MEDIA_SERVICE_URL")).toString();
+  serviceUrl->setText(savedAddress);
+  mediaLayout->addWidget(serviceUrl);
+  mediaLayout->addWidget(new QLabel(QStringLiteral("素材服务令牌"), mediaFields));
+  auto *serviceToken = new QLineEdit(mediaFields);
   serviceToken->setObjectName(QStringLiteral("agentCloudServiceToken"));
   serviceToken->setEchoMode(QLineEdit::Password);
   serviceToken->setPlaceholderText(QStringLiteral("留空保留原令牌"));
-  content->addWidget(serviceToken);
-
-  auto *error = new QLabel(&dialog);
+  mediaLayout->addWidget(serviceToken);
+  auto *error = new QLabel(mediaFields);
   error->setObjectName(QStringLiteral("agentModelError"));
   error->setWordWrap(true);
   error->hide();
-  content->addWidget(error);
+  mediaLayout->addWidget(error);
   if (tokenStore.loadAndMigrate(settings).secureStorageFailed) {
-    error->setText(QStringLiteral("系统安全存储不可用，旧明文已清除，请重新输入服务令牌。"));
+    error->setText(QStringLiteral(
+        "旧素材服务令牌的安全存储不可用；主聊天模型仍可通过账号使用。"));
     error->show();
   }
+  content->addWidget(mediaFields);
+  mediaFields->hide();
+  connect(advanced, &QPushButton::toggled, mediaFields, &QWidget::setVisible);
+
   auto *actions = new QHBoxLayout;
   actions->addStretch(1);
   auto *cancel = new QPushButton(QStringLiteral("取消"), &dialog);
@@ -3946,42 +4018,35 @@ void MainWindow::editAgentModelSettings() {
   connect(save, &QPushButton::clicked, &dialog, [&] {
     const QString address = serviceUrl->text().trimmed();
     const QString entered = serviceToken->text().trimmed();
-    const auto storedToken = tokenStore.loadAndMigrate(settings);
-    if (storedToken.secureStorageFailed && entered.isEmpty()) {
-      error->setText(QStringLiteral("系统安全存储不可用，旧明文已清除，请重新输入服务令牌。"));
-      error->show();
-      return;
+    const bool mediaChanged = address != savedAddress || !entered.isEmpty();
+    if (mediaChanged) {
+      const auto storedToken = tokenStore.loadAndMigrate(settings);
+      if (storedToken.secureStorageFailed && entered.isEmpty()) {
+        error->setText(QStringLiteral("请重新输入素材服务令牌。"));
+        advanced->setChecked(true);
+        error->show();
+        return;
+      }
+      const QString token = entered.isEmpty() ? storedToken.token : entered;
+      const QUrl endpoint(address);
+      if (endpoint.scheme() != QStringLiteral("https") ||
+          endpoint.host().isEmpty() || !endpoint.userName().isEmpty() ||
+          !endpoint.password().isEmpty() || !endpoint.query().isEmpty() ||
+          !endpoint.fragment().isEmpty() || token.size() < 32) {
+        error->setText(QStringLiteral("请填写有效的素材服务地址和令牌。"));
+        advanced->setChecked(true);
+        error->show();
+        return;
+      }
+      if (!entered.isEmpty() && !tokenStore.save(settings, entered)) {
+        error->setText(QStringLiteral("系统安全存储写入失败，令牌未保存。"));
+        advanced->setChecked(true);
+        error->show();
+        return;
+      }
+      settings.setValue(QStringLiteral("agent/cloudServiceUrl"), address);
     }
-    const QString token = entered.isEmpty() ? storedToken.token : entered;
-    const QUrl endpoint(address);
-    if (endpoint.scheme() != QStringLiteral("https") ||
-        endpoint.host().isEmpty() || !endpoint.userName().isEmpty() ||
-        !endpoint.password().isEmpty() || !endpoint.query().isEmpty() ||
-        !endpoint.fragment().isEmpty() || token.size() < 32) {
-      error->setText(QStringLiteral("请填写有效的云端服务地址和令牌。"));
-      error->show();
-      return;
-    }
-    const QJsonObject keys = cloudModelKeys(address, token)
-                                 .value(QStringLiteral("api_keys"))
-                                 .toObject();
-    const QString selected = current.modelName;
-    const QString provider = selected == QStringLiteral("deepseek-flash")
-                                 ? QStringLiteral("deepseek")
-                                 : QStringLiteral("glm");
-    if (keys.value(provider).toString().isEmpty()) {
-      error->setText(
-          QStringLiteral("云端服务未提供所选模型的密钥，请检查连接。"));
-      error->show();
-      return;
-    }
-    if (!entered.isEmpty() && !tokenStore.save(settings, entered)) {
-      error->setText(QStringLiteral("系统安全存储写入失败，服务令牌未保存。"));
-      error->show();
-      return;
-    }
-    settings.setValue(QStringLiteral("agent/model"), selected);
-    settings.setValue(QStringLiteral("agent/cloudServiceUrl"), address);
+    settings.setValue(QStringLiteral("agent/model"), model->currentText());
     for (const char *obsolete :
          {"agent/apiKey", "agent/deepseekApiKey", "agent/baseUrl",
           "agent/deepseekBaseUrl", "agent/wire", "agent/deepseekWire",
@@ -3989,17 +4054,17 @@ void MainWindow::editAgentModelSettings() {
       settings.remove(QLatin1String(obsolete));
     settings.sync();
     if (settings.status() != QSettings::NoError) {
-      error->setText(QStringLiteral("模型配置保存失败，请检查设置目录权限。"));
+      error->setText(QStringLiteral("模型选择保存失败，请检查设置目录权限。"));
+      advanced->setChecked(true);
       error->show();
       return;
     }
     dialog.accept();
   });
-  if (dialog.exec() != QDialog::Accepted)
-    return;
+  if (dialog.exec() != QDialog::Accepted) return;
   rebuildAgentPage();
   refreshSettings();
-  showToast(QStringLiteral("AI 模型配置已保存"), 13, 1800);
+  showToast(QStringLiteral("主模型已选择"), 13, 1800);
 }
 
 void MainWindow::setUpMessageNotifications() {

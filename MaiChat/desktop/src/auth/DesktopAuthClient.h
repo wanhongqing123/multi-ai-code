@@ -6,6 +6,7 @@
 
 #include <QByteArray>
 #include <QDateTime>
+#include <QHash>
 #include <QJsonObject>
 #include <QObject>
 #include <QMutex>
@@ -66,6 +67,10 @@ public:
                              std::function<void()> completion = {});
     void adoptApprovedSession(const QJsonObject& session, Completion completion);
     void fetchImCredential(Completion completion);
+    // 账号鉴权 GET：仅把 GLM/DeepSeek Key 交给调用方内存，不写本机存储。
+    using MainModelKeysCompletion =
+        std::function<void(const QHash<QString, QString>&, const QString&)>;
+    void fetchMainModelKeys(MainModelKeysCompletion completion);
     void startSessionMonitoring();
     void checkSessionNow();
     void logout(Completion completion);
@@ -88,6 +93,8 @@ private:
                  const QString& bearer, std::function<void(const HttpResult&)> completion);
     void refresh(Completion completion);
     void fetchImCredentialImpl(Completion completion, bool retryAfterUnauthorized);
+    void fetchMainModelKeysImpl(MainModelKeysCompletion completion,
+                                bool retryAfterUnauthorized);
     bool adoptSession(const QJsonObject& body, QString* error);
     void scheduleRefresh();
     void scheduleCredentialRefresh();

@@ -179,6 +179,23 @@ public:
                                          QDateTime::currentDateTimeUtc()
                                              .addSecs(modelCredentialExpiresIn).toSecsSinceEpoch())}};
                     }
+                } else if (headers.startsWith("get /v1/model/api-keys ")) {
+                    ++mainModelRequestCount;
+                    mainModelBearer = headers.contains("authorization: bearer " +
+                        QByteArray(43, refreshCount > 0 ? 'b' : 'a'));
+                    if (modelAccessDenied) {
+                        status = 403;
+                        response = {{QStringLiteral("error"),
+                                     QStringLiteral("Model access is not enabled for this account")}};
+                    } else {
+                        response = {{QStringLiteral("api_keys"), QJsonObject{
+                            {QStringLiteral("glm"), invalidMainModelShape ?
+                                QJsonValue(42) : QJsonValue(missingGlmKey ? QString() :
+                                    QString(40, QLatin1Char('G')))},
+                            {QStringLiteral("deepseek"), invalidMainModelKey ?
+                                QStringLiteral("bad\nkey") :
+                                QString(40, QLatin1Char('D'))}}}};
+                    }
                 } else if (headers.startsWith("get /v1/model/bailian-credential ")) {
                     ++bailianCredentialRequestCount;
                     if (modelAccessDenied) {
@@ -260,6 +277,11 @@ public:
     int cancelRequestCount = 0;
     bool cancelHadProof = false;
     int arkCredentialRequestCount = 0;
+    int mainModelRequestCount = 0;
+    bool mainModelBearer = false;
+    bool invalidMainModelKey = false;
+    bool missingGlmKey = false;
+    bool invalidMainModelShape = false;
     int bailianCredentialRequestCount = 0;
     bool modelAccessDenied = false;
     int modelCredentialExpiresIn = 300;
@@ -279,6 +301,7 @@ class LoginDialogTest : public QObject {
 
 private slots:
     void liveProductionAuthHealthCheck();
+    void liveProductionMainModelKeyGate();
     void liveProductionQrCreationAndCancellation();
     void usesCompactDesktopSize();
     void showsQrLoginHierarchyWithoutManualUserId();
@@ -294,6 +317,7 @@ private slots:
     void logoutRevokesServerSessionAndClearsMemory();
     void refusesOversizedQrResponseAndAuthRedirect();
     void refreshesTemporaryModelCredentialsThroughLiveProviders();
+    void fetchesMainModelKeysThroughAccountSession();
     void refusesMalformedTemporaryModelCredentials();
     void retriesStoredSessionAfterTransientRestoreFailure();
     void revokesLateApprovedClaimBeforeReplacingQr();
@@ -640,6 +664,101 @@ void LoginDialogTest::refreshesTemporaryModelCredentialsThroughLiveProviders() {
     QTRY_VERIFY_WITH_TIMEOUT(finished, 5000);
     QVERIFY(arkProvider().isEmpty());
     QVERIFY(bailianProvider().first.isEmpty());
+}
+
+void LoginDialogTest::liveProductionMainModelKeyGate() {
+    if (!qEnvironmentVariableIsSet("MAICHAT_AUTH_LIVE_MODEL_KEYS"))
+        QSKIP("Live model key gate is opt-in");
+    const auto cancelled = std::make_shared<std::atomic_bool>(false);
+    const DesktopCurlAuthResult result = DesktopCurlAuthTransport::perform(
+        QUrl(QStringLiteral("https://ichat.life/api/v1/model/api-keys")),
+        "GET", {}, {}, cancelled);
+    QVERIFY2(result.error.isEmpty(), qPrintable(result.error));
+    QCOMPARE(result.status, 401);
+    QVERIFY(!result.body.isEmpty());
+}
+
+void LoginDialogTest::fetchesMainModelKeysThroughAccountSession() {
+    FakeQrServer server;
+    server.claimStatus = 200;
+    DesktopAuthClient auth(nullptr, server.url(), false);
+    LoginDialog dialog(&auth);
+    QSignalSpy accepted(&dialog, &QDialog::accepted);
+    dialog.show();
+    dialog.start();
+    QTRY_COMPARE_WITH_TIMEOUT(accepted.size(), 1, 5000);
+
+    bool finished = false;
+    QHash<QString, QString> keys;
+    QString error;
+    auth.fetchMainModelKeys([&](const QHash<QString, QString>& received,
+                                const QString& failure) {
+        keys = received;
+        error = failure;
+        finished = true;
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(finished, 5000);
+    QVERIFY(error.isEmpty());
+    QVERIFY(server.mainModelBearer);
+    QCOMPARE(server.mainModelRequestCount, 1);
+    QCOMPARE(keys.value(QStringLiteral("glm")), QString(40, QLatin1Char('G')));
+    QCOMPARE(keys.value(QStringLiteral("deepseek")), QString(40, QLatin1Char('D')));
+
+    server.modelAccessDenied = true;
+    finished = false;
+    auth.fetchMainModelKeys([&](const QHash<QString, QString>& received,
+                                const QString& failure) {
+        keys = received;
+        error = failure;
+        finished = true;
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(finished, 5000);
+    QVERIFY(keys.isEmpty());
+    QVERIFY(!error.isEmpty());
+    QCOMPARE(server.mainModelRequestCount, 2);
+
+    server.modelAccessDenied = false;
+    server.invalidMainModelKey = true;
+    finished = false;
+    auth.fetchMainModelKeys([&](const QHash<QString, QString>& received,
+                                const QString& failure) {
+        keys = received;
+        error = failure;
+        finished = true;
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(finished, 5000);
+    QVERIFY(keys.isEmpty());
+    QVERIFY(!error.isEmpty());
+    QCOMPARE(server.mainModelRequestCount, 3);
+
+    server.invalidMainModelKey = false;
+    server.missingGlmKey = true;
+    finished = false;
+    auth.fetchMainModelKeys([&](const QHash<QString, QString>& received,
+                                const QString& failure) {
+        keys = received;
+        error = failure;
+        finished = true;
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(finished, 5000);
+    QVERIFY(error.isEmpty());
+    QVERIFY(keys.value(QStringLiteral("glm")).isEmpty());
+    QCOMPARE(keys.value(QStringLiteral("deepseek")), QString(40, QLatin1Char('D')));
+    QCOMPARE(server.mainModelRequestCount, 4);
+
+    server.missingGlmKey = false;
+    server.invalidMainModelShape = true;
+    finished = false;
+    auth.fetchMainModelKeys([&](const QHash<QString, QString>& received,
+                                const QString& failure) {
+        keys = received;
+        error = failure;
+        finished = true;
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(finished, 5000);
+    QVERIFY(keys.isEmpty());
+    QVERIFY(!error.isEmpty());
+    QCOMPARE(server.mainModelRequestCount, 5);
 }
 
 void LoginDialogTest::refusesMalformedTemporaryModelCredentials() {

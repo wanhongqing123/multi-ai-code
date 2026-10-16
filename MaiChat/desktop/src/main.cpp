@@ -6,6 +6,7 @@
 #include <QFileInfo>
 #include <QFont>
 #include <QFontDatabase>
+#include <QHash>
 #include <QSslSocket>
 #include <QStandardPaths>
 #include <QTimer>
@@ -239,7 +240,19 @@ int main(int argc, char* argv[]) {
             QTimer::singleShot(3000, &window, revokeAndClose);
         });
     });
+    bool modelKeysInFlight = false;
+    const auto refreshMainModelKeys = [&] {
+        if (invalidatingSession || modelKeysInFlight) return;
+        modelKeysInFlight = true;
+        auth.fetchMainModelKeys([&](const QHash<QString, QString>& keys,
+                                   const QString& error) {
+            modelKeysInFlight = false;
+            if (!invalidatingSession) window.setMainModelKeys(keys, error);
+        });
+    };
+    window.setModelKeyRefreshHandler(refreshMainModelKeys);
     window.show();
+    if (!smokeMode) refreshMainModelKeys();
     remoteIM.connectToService(credential.sdkAppId, credential.userSig);
     auth.startSessionMonitoring();
     auth.startModelCredentialMonitoring();

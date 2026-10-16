@@ -72,6 +72,9 @@ public:
     void prepareForAccountDisconnect(std::function<void()> completion);
     void finishAccountDisconnect();
     void setLogoutHandler(std::function<void()> handler);
+    // 账号服务下发的 GLM/DeepSeek Key 只存在当前窗口进程内，切换账号时清空。
+    void setMainModelKeys(QHash<QString, QString> keys, const QString& error = {});
+    void setModelKeyRefreshHandler(std::function<void()> handler);
 
     // 把 IM 收/发的文件附件从本地缓存拷贝到 targetPath（存在则覆盖）。
     // 纯文件操作、不弹 UI，供右键「保存到本地」与单测复用；失败时经
@@ -268,6 +271,9 @@ private:
     std::function<QString(const QString&)> userSigProvider_;
     std::function<QString()> arkApiKeyProvider_;
     std::function<QPair<QString, QString>()> wanCredentialsProvider_;
+    QHash<QString, QString> modelApiKeys_;
+    QString modelKeyError_;
+    std::function<void()> modelKeyRefreshHandler_;
     std::function<void()> logoutHandler_;
     RemoteDiagnosticsController* diagnostics_ = nullptr;
     QLabel* diagnosticsStatusLabel_ = nullptr;

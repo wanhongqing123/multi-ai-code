@@ -146,9 +146,9 @@ extern "C" void SDL_CloseAudioDevice(SDL_AudioDeviceID id) {
         device->closing = true;
     }
     device->condition.notify_all();
-    waveOutReset(device->output);
     SetEvent(device->bufferDone);
     if (device->worker.joinable()) device->worker.join();
+    waveOutReset(device->output);
     for (auto& header : device->headers)
         waveOutUnprepareHeader(device->output, &header, sizeof(WAVEHDR));
     waveOutClose(device->output);

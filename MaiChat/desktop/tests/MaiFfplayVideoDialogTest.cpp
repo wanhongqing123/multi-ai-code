@@ -109,14 +109,20 @@ void MaiFfplayVideoDialogTest::mainWindowDocksSamePlayerAcrossNavigationAndFulls
     }
     auto* fullscreen = player->findChild<QPushButton*>(QStringLiteral("ffplayFullscreenButton"));
     auto* close = player->findChild<QPushButton*>(QStringLiteral("ffplayCloseButton"));
+#if defined(Q_OS_MAC)
     QVERIFY(fullscreen);
+#else
+    QVERIFY(!fullscreen);
+#endif
     QVERIFY(close);
+#if defined(Q_OS_MAC)
     fullscreen->click();
     QTRY_VERIFY(player->isFullScreen());
     QTRY_VERIFY(!slot->isVisible());
     fullscreen->click();
     QTRY_VERIFY(!player->isFullScreen());
     QTRY_VERIFY(slot->isVisible());
+#endif
     auto* contacts = window.findChild<QPushButton*>(QStringLiteral("contactsNavButton"));
     QVERIFY(contacts);
     contacts->click();

@@ -35,6 +35,7 @@ private slots:
     void clearDropsEverything();
     void readingColumnStaysCenteredAndCapped();
     void embeddedWidgetGrowingPushesTheRestDown();
+    void batchedHistoryMatchesImmediateLayout();
 
 private:
     void prepare(MarkdownView& view);
@@ -264,6 +265,35 @@ void MarkdownViewTest::embeddedWidgetGrowingPushesTheRestDown() {
     card->setFixedHeight(120);
     QCOMPARE(qRound(view.itemRect(QStringLiteral("card")).height()), 120);
     QCOMPARE(view.itemRect(QStringLiteral("after")).top(), before + 90);
+}
+
+void MarkdownViewTest::batchedHistoryMatchesImmediateLayout() {
+    MarkdownView immediate;
+    MarkdownView batched;
+    prepare(immediate);
+    prepare(batched);
+    batched.beginBatchUpdates();
+    for (int index = 0; index < 30; ++index) {
+        const QString id = QStringLiteral("message-%1").arg(index);
+        const QString body = QStringLiteral("# 标题\n\n正文 %1").arg(index);
+        immediate.addItem(id, MarkdownView::Style::Document, body);
+        batched.addItem(id, MarkdownView::Style::Document, body);
+    }
+    auto* immediateCard = new QLabel(QStringLiteral("工具卡"));
+    auto* batchedCard = new QLabel(QStringLiteral("工具卡"));
+    immediateCard->setFixedHeight(48);
+    batchedCard->setFixedHeight(48);
+    immediate.addWidget(QStringLiteral("card"), immediateCard);
+    batched.addWidget(QStringLiteral("card"), batchedCard);
+    batched.endBatchUpdates();
+
+    QCOMPARE(batched.itemCount(), immediate.itemCount());
+    QCOMPARE(batched.contentHeight(), immediate.contentHeight());
+    QCOMPARE(batched.itemRect(QStringLiteral("message-20")), immediate.itemRect(QStringLiteral("message-20")));
+    QCOMPARE(batched.itemRect(QStringLiteral("card")), immediate.itemRect(QStringLiteral("card")));
+    batched.scrollToBottom();
+    QCOMPARE(batchedCard->y(),
+             qRound(batched.itemRect(QStringLiteral("card")).top()) - batched.verticalScrollBar()->value());
 }
 
 QTEST_MAIN(MarkdownViewTest)

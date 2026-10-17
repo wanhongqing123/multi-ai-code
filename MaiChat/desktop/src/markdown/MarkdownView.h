@@ -73,6 +73,10 @@ public:
     // 嵌一个部件。所有权转给视图。
     void addWidget(const QString& id, QWidget* widget);
 
+    // 恢复历史消息时合并排版；endBatchUpdates 后几何与滚动范围才更新。
+    void beginBatchUpdates();
+    void endBatchUpdates();
+
     void clear();
     bool isEmpty() const;
     int itemCount() const;

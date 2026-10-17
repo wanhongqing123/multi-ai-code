@@ -84,6 +84,21 @@ QString fromUtf8(const std::string& text) {
     return QString::fromUtf8(text.data(), static_cast<int>(text.size()));
 }
 
+QString defaultWorkspaceDirectory() {
+    const QStringList roots = {
+        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation),
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation),
+        QDir::homePath(),
+    };
+    for (const QString& root : roots) {
+        if (root.isEmpty() || QDir(root).isRoot()) continue;
+        const QString workspace = QDir(root).filePath(QStringLiteral("MaiChat Workspace"));
+        if (!QDir().mkpath(workspace) || !QFileInfo(workspace).isWritable()) continue;
+        return QDir(workspace).canonicalPath();
+    }
+    return {};
+}
+
 struct LocalMediaMention {
     QString path;
     bool video = false;
@@ -1413,9 +1428,10 @@ void AgentChatPanel::updateApprovalPolicyUi() {
 
 void AgentChatPanel::openSession(const QString& sessionId) {
     if (sessionId.isEmpty()) {
-        QString directory = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
-        if (directory.isEmpty() || !QFileInfo(directory).isDir() || !QFileInfo(directory).isWritable()) {
-            directory = QDir::homePath();
+        const QString directory = defaultWorkspaceDirectory();
+        if (directory.isEmpty()) {
+            appendNotice(QStringLiteral("无法创建创作中心工作目录"), true);
+            return;
         }
         openSessionInDirectory(directory);
         return;
@@ -1441,6 +1457,17 @@ void AgentChatPanel::openSession(const QString& sessionId) {
 
     MaiSession session;
     if (runtime_->controller->agent().getSession(toUtf8(runtime_->sessionId), session)) {
+        // 系统根目录不适合作为素材输出位置。只修复这类会话，保留其它目录；
+        // 运行中的工具也不能中途换工作目录。
+        if (QDir(fromUtf8(session.directory)).isRoot() &&
+            !runtime_->controller->agent().isBusy(toUtf8(runtime_->sessionId))) {
+            const QString workspace = defaultWorkspaceDirectory();
+            if (!workspace.isEmpty()) {
+                const auto updated = runtime_->controller->agent().submit(
+                    MaiUpdateSession{toUtf8(runtime_->sessionId), "", "", "", toUtf8(workspace)});
+                if (updated) session.directory = toUtf8(workspace);
+            }
+        }
         // 用 isUntitled() 而不是 title.isEmpty()：核心给新会话填的是一个占位标题
         // （"New session"），不是空串。判空的话那串占位符会直接显示在头部。
         runtime_->title->setText(QStringLiteral("创作中心"));
@@ -1483,6 +1510,7 @@ void AgentChatPanel::openSessionInDirectory(const QString& directory) {
 void AgentChatPanel::reloadFromStore() {
     // 视图自己会把嵌进去的部件删掉，这儿只要把索引清干净。
     runtime_->flushTimer->stop();
+    runtime_->view->beginBatchUpdates();
     runtime_->view->clear();
     runtime_->pendingThinking = nullptr;
     runtime_->pendingThinkingItemId.clear();
@@ -1555,6 +1583,7 @@ void AgentChatPanel::reloadFromStore() {
             appendTextMediaCards(fromUtf8(message.id), textFragments.join(QLatin1Char('\n')),
                                  fromUtf8(selectedSession.directory));
     }
+    runtime_->view->endBatchUpdates();
     setRunning(sessionBusy);
     // 权限事件只交付一次。切换会话后从审批闸门恢复可操作状态，
     // 不能把存储中的 Pending 片段直接绘成“排队中”。
@@ -1968,7 +1997,7 @@ void AgentChatPanel::showQuestion(const QString& questionId) {
         runtime_->pendingQuestionId = questionId;
         appendNotice(text, false);
         runtime_->editor->setPlaceholderText(QStringLiteral("回答它…"));
-        runtime_->send->setText(QStringLiteral("回答"));
+        setRunning(runtime_->running);
         runtime_->hint->setText(QStringLiteral("它在等你回答"));
         runtime_->editor->setFocus();
         scrollToBottom();
@@ -2154,23 +2183,26 @@ void AgentChatPanel::onClear() {
 
 void AgentChatPanel::setRunning(bool running) {
     runtime_->running = running;
+    const bool stopping = running && runtime_->pendingQuestionId.isEmpty();
     runtime_->send->setText(QString());
     runtime_->send->setIcon(
-        makeComposerActionIcon(running, QColor(QString::fromLatin1(running ? kDanger : "#ffffff"))));
-    runtime_->send->setToolTip(running ? QStringLiteral("停止任务") : QStringLiteral("发送消息"));
+        makeComposerActionIcon(stopping, QColor(QString::fromLatin1(stopping ? kDanger : "#ffffff"))));
+    runtime_->send->setToolTip(!runtime_->pendingQuestionId.isEmpty() ? QStringLiteral("回答问题")
+                               : stopping                             ? QStringLiteral("停止任务")
+                                                                      : QStringLiteral("发送消息"));
     runtime_->send->setAccessibleName(runtime_->send->toolTip());
     runtime_->send->setStyleSheet(
-        UiZoom::scaleQss(running ? QStringLiteral("QPushButton#agentSendButton{background:#fff5f3;color:%1;"
-                                                  "border:1px solid #f0c3bd;border-radius:18px;padding:0;}"
-                                                  "QPushButton#agentSendButton:hover{background:#fee4e2;}")
-                                       .arg(kDanger)
-                                 : QStringLiteral("QPushButton#agentSendButton{background:%1;color:#ffffff;"
-                                                  "border:none;border-radius:18px;padding:0;}"
-                                                  "QPushButton#agentSendButton:hover{background:#095a9f;}"
-                                                  "QPushButton#agentSendButton:pressed{background:#084d87;}"
-                                                  "QPushButton#agentSendButton:disabled{background:#b8d3e8;"
-                                                  "color:#eef6ff;}")
-                                       .arg(kAccent)));
+        UiZoom::scaleQss(stopping ? QStringLiteral("QPushButton#agentSendButton{background:#fff5f3;color:%1;"
+                                                   "border:1px solid #f0c3bd;border-radius:18px;padding:0;}"
+                                                   "QPushButton#agentSendButton:hover{background:#fee4e2;}")
+                                        .arg(kDanger)
+                                  : QStringLiteral("QPushButton#agentSendButton{background:%1;color:#ffffff;"
+                                                   "border:none;border-radius:18px;padding:0;}"
+                                                   "QPushButton#agentSendButton:hover{background:#095a9f;}"
+                                                   "QPushButton#agentSendButton:pressed{background:#084d87;}"
+                                                   "QPushButton#agentSendButton:disabled{background:#b8d3e8;"
+                                                   "color:#eef6ff;}")
+                                        .arg(kAccent)));
     runtime_->hint->setEnabled(!running);
     runtime_->modelChip->setEnabled(!running && runtime_->modelConfigured);
     if (runtime_->moreButton) runtime_->moreButton->setEnabled(!running);

@@ -79,6 +79,8 @@ struct MarkdownView::Runtime {
     std::vector<std::unique_ptr<Item>> items;
     qreal contentHeight = 0;
     int maxContentWidth = 0;
+    int batchDepth = 0;
+    bool layoutDirty = false;
 
     // 贴底跟随。用户自己往上滚过就停掉——正在看历史却被拽回底部很烦。
     bool stickToBottom = true;
@@ -207,6 +209,21 @@ void MarkdownView::addWidget(const QString& id, QWidget* widget) {
     relayoutAll();
 }
 
+void MarkdownView::beginBatchUpdates() {
+    ++runtime_->batchDepth;
+}
+
+void MarkdownView::endBatchUpdates() {
+    if (runtime_->batchDepth <= 0) {
+        Q_ASSERT(false);
+        return;
+    }
+    if (--runtime_->batchDepth == 0 && runtime_->layoutDirty) {
+        runtime_->layoutDirty = false;
+        relayoutAll();
+    }
+}
+
 void MarkdownView::clear() {
     for (const std::unique_ptr<Item>& item : runtime_->items) {
         if (item->widget == nullptr) continue;
@@ -251,11 +268,14 @@ bool MarkdownView::isAtBottom() const {
 
 // 作用：在宽度或内容变化后重新计算文档排版并更新滚动区域。
 void MarkdownView::relayoutAll() {
+    if (runtime_->batchDepth > 0) {
+        runtime_->layoutDirty = true;
+        return;
+    }
     const MarkdownTheme& theme = runtime_->theme;
     const qreal margin = theme.viewMargin;
     const qreal full = qMax<qreal>(viewport()->width() - 2 * margin, 1);
-    const qreal available =
-        runtime_->maxContentWidth > 0 ? qMin<qreal>(full, runtime_->maxContentWidth) : full;
+    const qreal available = runtime_->maxContentWidth > 0 ? qMin<qreal>(full, runtime_->maxContentWidth) : full;
     // 列宽不够占满时居中。原来是靠 addStretch(1)/addWidget(列,20)/addStretch(1)
     // 那种权重摆出来的，权重给错一次列就只剩三分之一宽。
     const qreal left = margin + (full - available) / 2;

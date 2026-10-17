@@ -221,7 +221,8 @@ class AgentPanelSessionTest : public QObject {
 
 private slots:
     void newSessionAvoidsFilesystemRoot();
-    void newSessionUsesDocumentsInsteadOfProcessDirectory();
+    void newSessionUsesAppWorkspaceInsteadOfProcessDirectory();
+    void rootWorkspaceMovesToAppDirectoryWithoutChangingCustomWorkspace();
     void newSessionOffersWorkspaceChoice();
     void chosenWorkspaceCreatesIndependentSession();
     void answerFromAnotherSessionDoesNotLeakIn();
@@ -568,12 +569,14 @@ void AgentPanelSessionTest::approvalFromAnotherSessionIsStillShown() {
     QCOMPARE(spy.count(), 1);
 }
 
-void AgentPanelSessionTest::newSessionUsesDocumentsInsteadOfProcessDirectory() {
+void AgentPanelSessionTest::newSessionUsesAppWorkspaceInsteadOfProcessDirectory() {
     QTemporaryDir processDirectory;
     QVERIFY(processDirectory.isValid());
     struct RestoreCurrentDirectory {
         QString original = QDir::currentPath();
-        ~RestoreCurrentDirectory() { QDir::setCurrent(original); }
+        ~RestoreCurrentDirectory() {
+            QDir::setCurrent(original);
+        }
     } restore;
     QVERIFY(QDir::setCurrent(processDirectory.path()));
 
@@ -582,19 +585,41 @@ void AgentPanelSessionTest::newSessionUsesDocumentsInsteadOfProcessDirectory() {
     panel.openSession();
     const auto sessions = controller.agent().listSessions();
     QCOMPARE(sessions.size(), std::size_t(1));
-    QString documents = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
-    if (documents.isEmpty() || !QFileInfo(documents).isDir() ||
-        !QFileInfo(documents).isWritable()) documents = QDir::homePath();
-    QCOMPARE(QDir(QString::fromStdString(sessions.front().directory)).canonicalPath(),
-             QDir(documents).canonicalPath());
+    const QString workspace = QString::fromStdString(sessions.front().directory);
+    QVERIFY(workspace.endsWith(QStringLiteral("MaiChat Workspace")));
+    QVERIFY(QFileInfo(workspace).isWritable());
+    QVERIFY(!QDir(workspace).isRoot());
+    QVERIFY(QDir(workspace).canonicalPath() != processDirectory.path());
+}
+
+void AgentPanelSessionTest::rootWorkspaceMovesToAppDirectoryWithoutChangingCustomWorkspace() {
+    QTemporaryDir customDirectory;
+    QVERIFY(customDirectory.isValid());
+    AgentController controller(std::make_unique<SilentModel>(), QString());
+    AgentChatPanel panel(controller);
+    const QString rootSession = controller.createSession(QDir::rootPath());
+    const QString customSession = controller.createSession(customDirectory.path());
+    QVERIFY(!rootSession.isEmpty());
+    QVERIFY(!customSession.isEmpty());
+
+    panel.openSession();
+    MaiSession defaultSession;
+    QVERIFY(controller.agent().getSession(panel.sessionId().toStdString(), defaultSession));
+    panel.openSession(rootSession);
+    MaiSession restored;
+    QVERIFY(controller.agent().getSession(rootSession.toStdString(), restored));
+    QCOMPARE(restored.directory, defaultSession.directory);
+
+    panel.openSession(customSession);
+    QVERIFY(controller.agent().getSession(customSession.toStdString(), restored));
+    QCOMPARE(QDir(QString::fromStdString(restored.directory)).canonicalPath(), customDirectory.path());
 }
 
 void AgentPanelSessionTest::newSessionOffersWorkspaceChoice() {
     Harness harness;
     auto* more = harness.panel->findChild<QPushButton*>(QStringLiteral("agentMoreActions"));
     auto* editor = harness.panel->findChild<ComposerTextEdit*>();
-    auto* workspace =
-        harness.panel->findChild<QPushButton*>(QStringLiteral("agentChooseWorkspaceButton"));
+    auto* workspace = harness.panel->findChild<QPushButton*>(QStringLiteral("agentChooseWorkspaceButton"));
     QVERIFY(more != nullptr);
     QVERIFY(editor != nullptr);
     QVERIFY(workspace != nullptr);
@@ -706,12 +731,17 @@ void AgentPanelSessionTest::pendingQuestionIsRestoredOnlyInItsSession() {
     send->click();
     QTRY_COMPARE(controller.pendingQuestions().size(), std::size_t(1));
     QTRY_COMPARE(editor->placeholderText(), QStringLiteral("回答它…"));
+    QCOMPARE(send->text(), QString());
+    QCOMPARE(send->toolTip(), QStringLiteral("回答问题"));
+    QVERIFY(!send->icon().isNull());
 
     panel.openSession(controller.createSession(QDir::currentPath()));
     QCOMPARE(editor->placeholderText(), QStringLiteral("交给它做点什么…"));
     QCOMPARE(send->toolTip(), QStringLiteral("发送消息"));
     panel.openSession(session);
     QCOMPARE(editor->placeholderText(), QStringLiteral("回答它…"));
+    QCOMPARE(send->text(), QString());
+    QCOMPARE(send->toolTip(), QStringLiteral("回答问题"));
     editor->setPlainText(QStringLiteral("A"));
     send->click();
     controller.agent().waitIdle();

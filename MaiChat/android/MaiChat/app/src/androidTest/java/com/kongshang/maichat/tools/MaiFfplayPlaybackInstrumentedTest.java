@@ -9,11 +9,14 @@ package com.kongshang.maichat.tools;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 import android.app.Activity;
+import android.app.UiAutomation;
 import android.content.Context;
 import android.content.Intent;
+import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.os.SystemClock;
@@ -31,6 +34,7 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.json.JSONObject;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -240,6 +244,39 @@ public final class MaiFfplayPlaybackInstrumentedTest {
             assertNotNull("FFplay video view was not created", view);
             assertTrue("FFmpeg frame did not reach Graphics", view.hasPresentedFrame());
             MaiFfplayVideoView player = view;
+            AtomicInteger dockHeight = new AtomicInteger();
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                View expand = findDescription(player.getRootView(), "放大视频");
+                assertNotNull(expand);
+                dockHeight.set(player.getHeight());
+                assertTrue("Video should leave space for chat", dockHeight.get()
+                    < activity.getWindow().getDecorView().getHeight());
+                assertTrue(expand.performClick());
+                assertSame(player, MaiFfplayVideoView.activeView());
+            });
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            assertTrue("Expand should enlarge the same player", player.getHeight() > dockHeight.get());
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                View collapse = findDescription(player.getRootView(), "返回分屏");
+                assertNotNull(collapse);
+                assertTrue(collapse.performClick());
+                assertSame(player, MaiFfplayVideoView.activeView());
+            });
+            InstrumentationRegistry.getInstrumentation().getUiAutomation()
+                .setRotation(UiAutomation.ROTATION_FREEZE_90);
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            long landscapeDeadline = SystemClock.uptimeMillis() + 5000;
+            while (activity.getResources().getConfiguration().orientation
+                    != Configuration.ORIENTATION_LANDSCAPE
+                    && SystemClock.uptimeMillis() < landscapeDeadline) SystemClock.sleep(50);
+            assertEquals("Activity should reflow in landscape", Configuration.ORIENTATION_LANDSCAPE,
+                activity.getResources().getConfiguration().orientation);
+            assertTrue("Landscape dock should leave room beside the video",
+                player.getWidth() < activity.getWindow().getDecorView().getWidth());
+            captureScreen(context, "android-video-landscape-dock.png");
+            InstrumentationRegistry.getInstrumentation().getUiAutomation()
+                .setRotation(UiAutomation.ROTATION_FREEZE_0);
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
             InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
                 View speedButton = findDescription(player, "播放倍速");
                 assertNotNull(speedButton);
@@ -275,6 +312,8 @@ public final class MaiFfplayPlaybackInstrumentedTest {
                 new JSONObject().put("action", "close")).getBoolean("accepted"));
             assertTrue(!activity.isFinishing());
         } finally {
+            InstrumentationRegistry.getInstrumentation().getUiAutomation()
+                .setRotation(UiAutomation.ROTATION_FREEZE_0);
             if (MaiFfplayVideoView.activeView() != null)
                 InstrumentationRegistry.getInstrumentation().runOnMainSync(
                     () -> MaiFfplayVideoView.activeView().stop());

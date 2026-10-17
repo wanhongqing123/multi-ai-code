@@ -136,6 +136,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private Dialog videoDialog;
     private boolean videoExpanded;
     private Dialog imageDialog;
+    private MaiGraphicsImageView galleryImageView;
+    private String galleryImagePath;
     private String pendingVideoSavePath;
     private String pendingImageSavePath;
     private Runnable pendingGalleryAction;
@@ -4086,11 +4088,15 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     // 封面、来源路径和序列索引在进入前确定，避免滑动时拿错文件。
     private void showFullScreenImage(String path, List<GalleryItem> candidates,
                                      int entryDirection) {
-        if (imageDialog != null) imageDialog.dismiss();
+        boolean reuseDialog = imageDialog != null && imageDialog.isShowing();
+        String previousPath = galleryImagePath;
+        Bitmap previousFrame = reuseDialog && entryDirection != 0 && galleryImageView != null
+            ? galleryImageView.snapshot() : null;
         if (videoDialog != null) videoDialog.dismiss();
         List<GalleryItem> playlist = normalizeGallery(path, false, candidates);
         int selected = galleryIndex(playlist, path, false);
-        Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
+        Dialog dialog = reuseDialog ? imageDialog :
+            new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
         FrameLayout frame = new FrameLayout(this);
         frame.setBackgroundColor(Color.BLACK);
         // 同一入口供 IM 与 AI 助手共用：背景铺满屏幕，前景仍完整显示原图。
@@ -4103,18 +4109,32 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         }
         frame.addView(backdrop, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        View previousPreview = previousFrame == null ? null : gallerySnapshot(previousFrame);
         MaiGraphicsImageView image = new MaiGraphicsImageView(this);
+        final boolean[] transitioned = {false};
         image.setPresentationListener(success -> {
+            if (imageDialog != dialog || galleryImageView != image || transitioned[0]) return;
             // 图片解码完成后才让实际画面滑入，避免只动了加载中的黑底。
-            if (success) animateGalleryEntry(image, entryDirection);
+            if (success) {
+                transitioned[0] = true;
+                animateGalleryEntry(image, entryDirection);
+                if (previousPreview != null) {
+                    previousPreview.animate().translationX(-entryDirection * dp(48))
+                        .alpha(0).setDuration(220)
+                        .withEndAction(() -> frame.removeView(previousPreview)).start();
+                }
+            }
         });
         // 全屏预览直接绑定自己的 TextureView，与气泡使用不同的渲染目标。
         image.showImage(
             path,
             false,
             () -> {
+                if (imageDialog != dialog || galleryImageView != image) return;
                 toast("图片暂不可预览");
-                dialog.dismiss();
+                if (entryDirection != 0 && previousPath != null && !previousPath.equals(path))
+                    showFullScreenImage(previousPath, candidates, 0);
+                else dialog.dismiss();
             });
         final float[] scale = {1f};
         final float[] last = {0f, 0f};
@@ -4188,6 +4208,9 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                 ViewGroup.LayoutParams.MATCH_PARENT);
         }
         frame.addView(image, imageParams);
+        if (previousPreview != null)
+            frame.addView(previousPreview, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         if (playlist.size() > 1) {
             TextView mediaName = MaiChatTheme.text(this,
                 (selected + 1) + "/" + playlist.size() + " · " + new File(path).getName(),
@@ -4226,11 +4249,35 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         frame.addView(actions, actionParams);
         dialog.setContentView(frame);
         dialog.setOnDismissListener(ignored -> {
-            if (imageDialog == dialog) imageDialog = null;
+            if (imageDialog == dialog) {
+                imageDialog = null;
+                galleryImageView = null;
+                galleryImagePath = null;
+            }
         });
         allowKeyboardLocation = false;
         imageDialog = dialog;
-        dialog.show();
+        galleryImageView = image;
+        galleryImagePath = path;
+        if (!reuseDialog) dialog.show();
+    }
+
+    private View gallerySnapshot(Bitmap bitmap) {
+        FrameLayout snapshot = new FrameLayout(this);
+        snapshot.setBackgroundColor(Color.BLACK);
+        ImageView backdrop = new ImageView(this);
+        backdrop.setImageBitmap(bitmap);
+        backdrop.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        backdrop.setAlpha(0.48f);
+        if (Build.VERSION.SDK_INT >= 31)
+            backdrop.setRenderEffect(android.graphics.RenderEffect.createBlurEffect(
+                dp(24), dp(24), android.graphics.Shader.TileMode.CLAMP));
+        snapshot.addView(backdrop, new FrameLayout.LayoutParams(-1, -1));
+        ImageView foreground = new ImageView(this);
+        foreground.setImageBitmap(bitmap);
+        foreground.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        snapshot.addView(foreground, new FrameLayout.LayoutParams(-1, -1));
+        return snapshot;
     }
 
     private void showMediaNeighbor(List<GalleryItem> playlist, int selected, int direction) {

@@ -34,6 +34,7 @@ import com.kongshang.maichat.MaiFfplayVideoView;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -90,6 +91,62 @@ public final class MaiFfplayPlaybackInstrumentedTest {
         try (FileOutputStream output = new FileOutputStream(file)) {
             assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output));
         } finally { bitmap.recycle(); }
+    }
+
+    @Test public void adjacentImagesKeepOnePreviewWindowAndShowBothImages() throws Exception {
+        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Activity activity = InstrumentationRegistry.getInstrumentation().startActivitySync(
+            new Intent(context, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        File first = AIAssistantController.shared(activity).workspaceFile("gallery-red.png");
+        File second = AIAssistantController.shared(activity).workspaceFile("gallery-blue.png");
+        assertNotNull(first);
+        assertNotNull(second);
+        try {
+            writeImage(first, Color.RED);
+            writeImage(second, Color.BLUE);
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() ->
+                ((MainActivity) activity).openAgentMedia(first.getAbsolutePath(), false,
+                    Arrays.asList(new MainActivity.GalleryItem(first.getAbsolutePath(), false),
+                        new MainActivity.GalleryItem(second.getAbsolutePath(), false))));
+            awaitGalleryName("gallery-red.png");
+            awaitCenterColor(Color.RED);
+            SystemClock.sleep(300);
+            Field imageDialog = MainActivity.class.getDeclaredField("imageDialog");
+            imageDialog.setAccessible(true);
+            Object preview = imageDialog.get(activity);
+            assertNotNull(preview);
+            swipeScreen(true);
+            assertSame("Swiping must keep the same preview window", preview, imageDialog.get(activity));
+            awaitGalleryName("gallery-blue.png");
+            awaitCenterColor(Color.BLUE);
+            captureScreen(context, "android-image-gallery-continuous.png");
+            SystemClock.sleep(500);
+            swipeScreen(false);
+            assertSame(preview, imageDialog.get(activity));
+            awaitCenterColor(Color.RED);
+        } finally {
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(activity::finish);
+            first.delete();
+            second.delete();
+        }
+    }
+
+    private static void awaitCenterColor(int expected) {
+        long deadline = SystemClock.uptimeMillis() + 10000;
+        while (SystemClock.uptimeMillis() < deadline) {
+            Bitmap screen = InstrumentationRegistry.getInstrumentation()
+                .getUiAutomation().takeScreenshot();
+            if (screen != null) {
+                int color = screen.getPixel(screen.getWidth() / 2, screen.getHeight() / 2);
+                screen.recycle();
+                if (expected == Color.RED && Color.red(color) > 180 && Color.blue(color) < 80)
+                    return;
+                if (expected == Color.BLUE && Color.blue(color) > 180 && Color.red(color) < 80)
+                    return;
+            }
+            SystemClock.sleep(50);
+        }
+        throw new AssertionError("Preview did not show the expected image color");
     }
 
     @Test public void imagePreviewOffersIosActionsAndSavesToGallery() throws Exception {

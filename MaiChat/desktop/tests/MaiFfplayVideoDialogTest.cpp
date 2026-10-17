@@ -8,6 +8,7 @@
 #include <QSlider>
 #include <QLabel>
 #include <QScreen>
+#include <QStackedWidget>
 #include <QWidget>
 #include <QtTest>
 
@@ -17,10 +18,14 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 
 #include "MaiChatTools/DesktopMediaTools.h"
 #include "MaiTool.h"
 #include "ui/MaiFfplayVideoDialog.h"
+#include "ui/MainWindow.h"
+#include "app/RemoteIMApplication.h"
+#include "im/FakeRemoteIMClient.h"
 
 #if defined(__APPLE__)
 extern "C" uint64_t maiFfplayAppleNonSilentBufferCount(void);
@@ -54,7 +59,95 @@ private slots:
     void opensControlsAndClosesVideoPopup();
     void slowedPlaybackExtendsAudibleOutput();
     void localVideoShowsPixels();
+    void mainWindowDocksSamePlayerAcrossNavigationAndFullscreen();
 };
+
+void MaiFfplayVideoDialogTest::mainWindowDocksSamePlayerAcrossNavigationAndFullscreen() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("video-dock-test"), std::move(client));
+    MainWindow window(app);
+    window.resize(1500, 900);
+    window.show();
+    QVERIFY(window.openDockedVideo(QStringLiteral(MAICHAT_FFPLAY_VIDEO_FIXTURE)));
+    QPointer<MaiFfplayVideoDialog> player = MaiFfplayVideoDialog::activeDialog();
+    QVERIFY(player);
+    auto* slot = window.findChild<QWidget*>(QStringLiteral("videoDockSlot"));
+    auto* stack = window.findChild<QStackedWidget*>(QStringLiteral("contentStack"));
+    QVERIFY(slot);
+    QVERIFY(stack);
+    QTRY_VERIFY(slot->isVisible());
+    QTRY_VERIFY(player->presentedFrames() > 0);
+    QVERIFY(player->isVisible());
+    player->raise();
+    QCoreApplication::processEvents();
+    QWidget* surface = player->findChild<QWidget*>(QStringLiteral("ffplayVideoSurface"));
+    QVERIFY(surface);
+    const auto visiblePixels = [surface] {
+        const QPoint position = surface->mapToGlobal(QPoint(0, 0));
+        const QImage pixels = surface->screen()->grabWindow(
+            0, position.x(), position.y(), surface->width(), surface->height()).toImage();
+        int low = 255;
+        int high = 0;
+        for (int y = pixels.height() / 4; y < pixels.height() * 3 / 4; y += 8)
+            for (int x = pixels.width() / 4; x < pixels.width() * 3 / 4; x += 8) {
+                const QColor color = pixels.pixelColor(x, y);
+                const int value = std::max({color.red(), color.green(), color.blue()});
+                low = std::min(low, value);
+                high = std::max(high, value);
+            }
+        return high - low > 32;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(visiblePixels(), 2000);
+    QTRY_COMPARE(player->pos(), slot->mapToGlobal(QPoint(0, 0)));
+    QCOMPARE(player->size(), slot->size());
+    const QByteArray capture = qgetenv("MAICHAT_TEST_CAPTURE_PATH");
+    if (!capture.isEmpty()) {
+        QTest::qWait(200);
+        QVERIFY(player->screen()->grabWindow(0, window.x(), window.y(),
+                                              window.width(), window.height())
+                    .save(QString::fromUtf8(capture)));
+    }
+    auto* fullscreen = player->findChild<QPushButton*>(QStringLiteral("ffplayFullscreenButton"));
+    auto* close = player->findChild<QPushButton*>(QStringLiteral("ffplayCloseButton"));
+    QVERIFY(fullscreen);
+    QVERIFY(close);
+    fullscreen->click();
+    QTRY_VERIFY(player->isFullScreen());
+    QTRY_VERIFY(!slot->isVisible());
+    fullscreen->click();
+    QTRY_VERIFY(!player->isFullScreen());
+    QTRY_VERIFY(slot->isVisible());
+    auto* contacts = window.findChild<QPushButton*>(QStringLiteral("contactsNavButton"));
+    QVERIFY(contacts);
+    contacts->click();
+    QCOMPARE(MaiFfplayVideoDialog::activeDialog(), player);
+    QVERIFY(stack->isVisible());
+    window.resize(900, 800);
+    QTRY_VERIFY(slot->parentWidget()->layout()->geometry().width() < 1100);
+    QTRY_VERIFY(slot->height() < slot->parentWidget()->height());
+    QTRY_COMPARE(player->pos(), slot->mapToGlobal(QPoint(0, 0)));
+    QCOMPARE(MaiFfplayVideoDialog::activeDialog(), player);
+    window.move(window.pos() + QPoint(20, 15));
+    QTRY_COMPARE(player->pos(), slot->mapToGlobal(QPoint(0, 0)));
+    close->click();
+    QTRY_VERIFY(player.isNull());
+    QVERIFY(!slot->isVisible());
+    MaiToolRegistry registry;
+    registerDesktopMediaTools(registry, &window);
+    MaiToolContext context;
+    const QFileInfo fixture(QStringLiteral(MAICHAT_FFPLAY_VIDEO_FIXTURE));
+    context.root = fixture.dir().absolutePath().toStdString();
+    QVERIFY(!registry.find("maichat_play_video")
+                 ->execute(QStringLiteral("{\"path\":\"%1\"}")
+                               .arg(fixture.fileName()).toStdString(), context)
+                 .hasError());
+    QTRY_VERIFY(slot->isVisible());
+    QVERIFY(!registry.find("maichat_video_command")
+                 ->execute(R"({"action":"pause"})", context).hasError());
+    QVERIFY(!registry.find("maichat_video_command")
+                 ->execute(R"({"action":"close"})", context).hasError());
+    QTRY_VERIFY(!slot->isVisible());
+}
 
 void MaiFfplayVideoDialogTest::exposesSaveAndForwardActions() {
     MaiFfplayVideoDialog dialog(QStringLiteral(MAICHAT_FFPLAY_VIDEO_FIXTURE));

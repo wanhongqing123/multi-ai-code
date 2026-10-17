@@ -44,6 +44,7 @@ public:
     bool isPlaying() const { return playing_; }
     uint64_t presentedFrames() const;
     void setForwardAction(std::function<void(const QString&)> action);
+    void setDocked(bool docked) { docked_ = docked; }
 
 protected:
     void showEvent(QShowEvent* event) override;
@@ -86,6 +87,7 @@ private:
     uint64_t viewId_ = 0;
     bool started_ = false;
     bool playing_ = true;
+    bool docked_ = false;
     double playbackSpeed_ = 1.0;
     int64_t startPositionUs_ = 0;
     std::atomic<bool> playbackFinished_{false};

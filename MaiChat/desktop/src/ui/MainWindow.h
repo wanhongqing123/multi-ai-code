@@ -12,6 +12,7 @@
 #include <QMainWindow>
 #include <QMutex>
 #include <QPair>
+#include <QPointer>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QStackedWidget>
@@ -77,6 +78,7 @@ public:
     void setAccountModelKeys(QHash<QString, QString> keys, const QString& error = {});
     void setModelKeyRefreshHandler(std::function<void()> handler);
     void setMediaServiceAccessProvider(std::function<QPair<QString, QString>()> provider);
+    bool openDockedVideo(const QString& path, const QStringList& playlist = {});
 
     // 把 IM 收/发的文件附件从本地缓存拷贝到 targetPath（存在则覆盖）。
     // 纯文件操作、不弹 UI，供右键「保存到本地」与单测复用；失败时经
@@ -198,6 +200,7 @@ private:
     void openImagePreview(const QString& imagePath);
     void openFilePreview(const RemoteIMFileAttachment& attachment);
     void openVideoPreview(const RemoteIMVideoAttachment& attachment);
+    void syncVideoDock();
     void forwardLocalVideo(const QString& path);
     // 右键菜单入口：弹「另存为」对话框（默认下载目录 + 原文件名），把附件保存到用户选的位置。
     void saveFileAttachmentToLocal(const RemoteIMFileAttachment& attachment);
@@ -304,6 +307,8 @@ private:
     QPushButton* contactsNavButton_ = nullptr;
     QPushButton* settingsNavButton_ = nullptr;
     QStackedWidget* contentStack_ = nullptr;
+    QWidget* videoDockSlot_ = nullptr;
+    QPointer<QWidget> videoDialog_;
     QWidget* messagesPage_ = nullptr;
     QWidget* contactsPage_ = nullptr;
     QWidget* settingsPage_ = nullptr;

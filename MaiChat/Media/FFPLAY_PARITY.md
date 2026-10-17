@@ -30,14 +30,14 @@ SDL. `MaiChat/Media/ffplay.c` must remain byte-identical to FFmpeg's original;
 the compatibility layer maps its platform calls to MaiChat. Agent commands
 must exercise the same playback session as MaiChat's own controls.
 
-Speed switching reopens the same source in the same popup at its current source-media
+Speed switching reopens the same source in the same player at its current source-media
 position. The compatibility entry point applies `setpts` to video. The native audio
 backends feed FFplay's decoded 16-bit PCM through SoundTouch `setTempo`, which changes
 duration without changing pitch. At non-1× rates FFplay uses the video clock for sync;
 the shared audio device outputs stretched PCM directly, without creating a new file.
 Changing speed causes a brief pause. SoundTouch 2.3.3 source and its LGPL-2.1 license
 are kept under `MaiAgent/third_party/soundtouch`.
-The Agent `maichat_video_command` and native popup controls call the same path.
+The Agent `maichat_video_command` and player controls call the same path.
 
 ## iOS picture quality: 2026-10-03 device evidence
 

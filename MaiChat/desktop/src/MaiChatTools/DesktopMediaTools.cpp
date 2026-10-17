@@ -15,6 +15,7 @@
 
 #include "MaiTool.h"
 #include "ui/MaiFfplayVideoDialog.h"
+#include "ui/MainWindow.h"
 
 namespace {
 
@@ -31,7 +32,7 @@ public:
     explicit DesktopPlayVideoTool(QWidget* window) : window_(window) {}
     std::string name() const override { return "maichat_play_video"; }
     std::string description() const override {
-        return "Open a local video in MaiChat's FFplay/Graphics popup. The Agent and IM "
+        return "Open a local video in MaiChat's FFplay/Graphics player. The Agent and IM "
                "message video use the same player. Relative paths start in the Agent workspace.";
     }
     std::string parametersSchema() const override {
@@ -55,6 +56,10 @@ public:
         bool opened = false;
         const auto show = [&] {
             if (window_.isNull()) return;
+            if (auto* mainWindow = dynamic_cast<MainWindow*>(window_.data())) {
+                opened = mainWindow->openDockedVideo(path);
+                return;
+            }
             if (auto existing = MaiFfplayVideoDialog::activeDialog()) existing->close();
             auto* dialog = new MaiFfplayVideoDialog(path, window_.data());
             dialog->setAttribute(Qt::WA_DeleteOnClose);
@@ -68,7 +73,7 @@ public:
                                           "cannot dispatch video playback to MaiChat UI");
         if (!opened)
             return MaiToolResult::failure(MaiErrorCode::Internal,
-                                          "FFplay or Graphics could not open the video popup");
+                                          "FFplay or Graphics could not open the video player");
         return MaiToolResult::success(R"({"opened":true})");
     }
 
@@ -83,7 +88,7 @@ public:
     std::string description() const override {
         // set_speed 在当前弹窗内重启同一 FFplay 源文件并回到原片位置；
         // atempo 保持音调，音画同步，不生成转码文件，但切速有短暂中断。
-        return "Control the currently open FFplay video popup. set_speed accepts speed "
+        return "Control the currently open FFplay video player. set_speed accepts speed "
                "0.25, 0.5, 1, 1.5, or 2; it keeps audio in sync and preserves pitch through "
                "FFmpeg atempo. Changing speed briefly restarts the same popup at its source "
                "position without creating a new media file. seek_seconds jumps to an absolute "

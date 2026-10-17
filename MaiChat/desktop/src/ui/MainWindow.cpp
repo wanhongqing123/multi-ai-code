@@ -1682,6 +1682,8 @@ MainWindow::MainWindow(
 
 bool MainWindow::event(QEvent *event) {
   const bool handled = QMainWindow::event(event);
+  if (event->type() == QEvent::Move)
+    QTimer::singleShot(0, this, [this] { syncVideoDock(); });
 #ifdef Q_OS_WIN
   if (event->type() == QEvent::WindowActivate) {
     updateWindowChromeBackground(true);
@@ -1707,6 +1709,7 @@ void MainWindow::updateWindowChromeBackground(bool active) {
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {
+  if (videoDialog_) videoDialog_->close();
   if (accountDisconnectPending_) {
     event->ignore();
     return;
@@ -1735,6 +1738,7 @@ void MainWindow::closeEvent(QCloseEvent *event) {
 
 void MainWindow::prepareForAccountDisconnect(std::function<void()> completion) {
   accountDisconnectPending_ = true;
+  if (videoDialog_) videoDialog_->close();
   stopRemoteDesktopForShutdown(std::move(completion));
 }
 
@@ -1750,6 +1754,13 @@ void MainWindow::setLogoutHandler(std::function<void()> handler) {
 }
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
+  if (watched == videoDockSlot_ &&
+      (event->type() == QEvent::Resize || event->type() == QEvent::Move))
+    QTimer::singleShot(0, this, [this] { syncVideoDock(); });
+  if (watched == videoDialog_ &&
+      (event->type() == QEvent::WindowStateChange || event->type() == QEvent::Show ||
+       event->type() == QEvent::Hide))
+    QTimer::singleShot(0, this, [this] { syncVideoDock(); });
   if (watched == messageComposerHandle_ && messageScroll_) {
     if (event->type() == QEvent::MouseButtonPress &&
         static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton) {
@@ -1863,6 +1874,7 @@ void MainWindow::resizeEvent(QResizeEvent *event) {
     updateMessageBubbleWidths();
     // 结果面板是按搜索框位置摆的浮层，不在布局里，窗口一变它就得重新对位。
     layoutGlobalSearchResults();
+    syncVideoDock();
   });
 }
 
@@ -1924,8 +1936,19 @@ void MainWindow::buildUi() {
   rootNavigationSplitter->setChildrenCollapsible(false);
   rootNavigationSplitter->setHandleWidth(1);
 
-  contentStack_ = new QStackedWidget(rootNavigationSplitter);
+  auto *contentArea = new QWidget(rootNavigationSplitter);
+  auto *contentLayout = new QHBoxLayout(contentArea);
+  contentLayout->setContentsMargins(0, 0, 0, 0);
+  contentLayout->setSpacing(0);
+  videoDockSlot_ = new QWidget(contentArea);
+  videoDockSlot_->setObjectName(QStringLiteral("videoDockSlot"));
+  videoDockSlot_->setStyleSheet(QStringLiteral("background:#080c14;"));
+  videoDockSlot_->installEventFilter(this);
+  videoDockSlot_->hide();
+  contentLayout->addWidget(videoDockSlot_);
+  contentStack_ = new QStackedWidget(contentArea);
   contentStack_->setObjectName(QStringLiteral("contentStack"));
+  contentLayout->addWidget(contentStack_, 1);
 
   messagesPage_ = new QWidget(contentStack_);
   messagesPage_->setObjectName(QStringLiteral("messagesPage"));
@@ -2575,7 +2598,7 @@ void MainWindow::buildUi() {
   contentStack_->addWidget(agentPage_);
 
   rootNavigationSplitter->addWidget(navRail_);
-  rootNavigationSplitter->addWidget(contentStack_);
+  rootNavigationSplitter->addWidget(contentArea);
   rootNavigationSplitter->setStretchFactor(0, 0);
   rootNavigationSplitter->setStretchFactor(1, 1);
   // 第一格给导航栏的实际定宽。原先写死 180，是导航栏还带文字时的宽度：
@@ -3792,13 +3815,7 @@ void MainWindow::rebuildAgentPage() {
   agentPanel_ = new AgentChatPanel(*agentController_, agentSplitter);
 #if defined(MAICHAT_HAS_FFPLAY)
   agentPanel_->setOpenVideoCallback([this](const QString &path, const QStringList &paths) {
-    auto *dialog = new MaiFfplayVideoDialog(path, this);
-    dialog->setPlaylist(paths);
-    dialog->setForwardAction([this](const QString &currentPath) { forwardLocalVideo(currentPath); });
-    dialog->setAttribute(Qt::WA_DeleteOnClose);
-    dialog->show();
-    if (!dialog->isStarted())
-      dialog->close();
+    openDockedVideo(path, paths);
   });
 #endif
   agentPanel_->setForwardMediaCallback(
@@ -4929,6 +4946,70 @@ bool MainWindow::composerTextPrecedesFirstAttachment(
   return !before.trimmed().isEmpty();
 }
 
+bool MainWindow::openDockedVideo(const QString &path, const QStringList &playlist) {
+#if defined(MAICHAT_HAS_FFPLAY)
+  if (!videoDockSlot_ || !QFileInfo(path).isFile()) return false;
+  if (auto active = MaiFfplayVideoDialog::activeDialog()) active->close();
+  auto *dialog = new MaiFfplayVideoDialog(path, this);
+  dialog->setObjectName(QStringLiteral("dockedVideoPlayer"));
+  dialog->setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);
+  dialog->setMinimumSize(0, 0);
+  dialog->setDocked(true);
+  dialog->setPlaylist(playlist);
+  dialog->setForwardAction([this](const QString &currentPath) {
+    forwardLocalVideo(currentPath);
+  });
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  dialog->installEventFilter(this);
+  videoDialog_ = dialog;
+  connect(dialog, &QObject::destroyed, this, [this] {
+    if (!videoDialog_ && videoDockSlot_) videoDockSlot_->hide();
+  });
+  dialog->show();
+  dialog->raise();
+  syncVideoDock();
+  QTimer::singleShot(0, this, [this] { syncVideoDock(); });
+  if (dialog->isStarted()) return true;
+  dialog->close();
+  return false;
+#else
+  Q_UNUSED(path);
+  Q_UNUSED(playlist);
+  return false;
+#endif
+}
+
+void MainWindow::syncVideoDock() {
+  if (!videoDockSlot_) return;
+  if (!videoDialog_ || !videoDialog_->isVisible() || videoDialog_->isFullScreen()) {
+    videoDockSlot_->hide();
+    return;
+  }
+  QWidget *area = videoDockSlot_->parentWidget();
+  auto *layout = qobject_cast<QBoxLayout *>(area ? area->layout() : nullptr);
+  if (!area || !layout) return;
+  const bool vertical = area->width() < UiZoom::s(1100);
+  const auto direction = vertical ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight;
+  if (layout->direction() != direction) layout->setDirection(direction);
+  if (vertical) {
+    videoDockSlot_->setMinimumWidth(0);
+    videoDockSlot_->setMaximumWidth(QWIDGETSIZE_MAX);
+    const int height = qMin(qMax(area->height() / 2, UiZoom::s(240)),
+                            qMax(0, area->height() - UiZoom::s(300)));
+    videoDockSlot_->setFixedHeight(height);
+  } else {
+    videoDockSlot_->setMinimumHeight(0);
+    videoDockSlot_->setMaximumHeight(QWIDGETSIZE_MAX);
+    const int width = qMin(area->width() * 52 / 100,
+                           qMax(0, area->width() - UiZoom::s(640)));
+    videoDockSlot_->setFixedWidth(width);
+  }
+  videoDockSlot_->show();
+  if (videoDockSlot_->width() > 0 && videoDockSlot_->height() > 0)
+    videoDialog_->setGeometry(QRect(videoDockSlot_->mapToGlobal(QPoint(0, 0)),
+                                    videoDockSlot_->size()));
+}
+
 void MainWindow::openVideoPreview(const RemoteIMVideoAttachment &attachment) {
   const QString path = attachment.localPath.trimmed();
   if (path.isEmpty() || !QFile::exists(path)) {
@@ -4937,28 +5018,19 @@ void MainWindow::openVideoPreview(const RemoteIMVideoAttachment &attachment) {
         QStringLiteral("视频尚未下载完成或本地缓存已被清理。"));
     return;
   }
-  const QString title = attachment.fileName.trimmed().isEmpty()
-                            ? QFileInfo(path).fileName()
-                            : attachment.fileName.trimmed();
 #if defined(MAICHAT_HAS_FFPLAY)
-  auto *dialog = new MaiFfplayVideoDialog(path, this);
-#else
-  auto *dialog = new VideoPreviewDialog(path, title, this);
-#endif
-#if defined(MAICHAT_HAS_FFPLAY)
-  dialog->setForwardAction([this](const QString &currentPath) { forwardLocalVideo(currentPath); });
-#else
-  dialog->setForwardAction([this, path] { forwardLocalVideo(path); });
-#endif
-  dialog->setAttribute(Qt::WA_DeleteOnClose);
-  dialog->show();
-#if defined(MAICHAT_HAS_FFPLAY)
-  if (!dialog->isStarted()) {
-    dialog->close();
+  if (!openDockedVideo(path))
     AppMessageDialog::show(this, AppMessageDialog::Kind::Warning,
                            QStringLiteral("无法播放"),
                            QStringLiteral("FFplay 渲染后端或视频文件不可用。"));
-  }
+#else
+  const QString title = attachment.fileName.trimmed().isEmpty()
+                            ? QFileInfo(path).fileName()
+                            : attachment.fileName.trimmed();
+  auto *dialog = new VideoPreviewDialog(path, title, this);
+  dialog->setForwardAction([this, path] { forwardLocalVideo(path); });
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  dialog->show();
 #endif
 }
 

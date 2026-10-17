@@ -323,9 +323,21 @@ MaiFfplayVideoDialog::MaiFfplayVideoDialog(const QString& path, QWidget* parent)
         else showFullScreen();
     });
     actions->insertWidget(actions->count() - 1, fullscreenButton);
+    auto* closeButton = new QPushButton(QStringLiteral("×"), controlParent);
+    closeButton->setObjectName(QStringLiteral("ffplayCloseButton"));
+    closeButton->setToolTip(QStringLiteral("关闭视频"));
+    closeButton->setStyleSheet(forward->styleSheet());
+    connect(closeButton, &QPushButton::clicked, this, &QDialog::close);
+    actions->addWidget(closeButton);
     panelLayout->addLayout(actions);
     overlay_->raise();
 #else
+    auto* closeButton = new QPushButton(QStringLiteral("×"), controlParent);
+    closeButton->setObjectName(QStringLiteral("ffplayCloseButton"));
+    closeButton->setToolTip(QStringLiteral("关闭视频"));
+    closeButton->setStyleSheet(forward->styleSheet());
+    connect(closeButton, &QPushButton::clicked, this, &QDialog::close);
+    actions->addWidget(closeButton);
     layout->addLayout(actions);
 #endif
 }
@@ -411,6 +423,7 @@ void MaiFfplayVideoDialog::setTitle(void* userData, const char* title) {
 void MaiFfplayVideoDialog::setSize(void* userData, int width, int height) {
     auto* dialog = static_cast<MaiFfplayVideoDialog*>(userData);
     QMetaObject::invokeMethod(dialog, [dialog, width, height] {
+        if (dialog->docked_) return;
 #if defined(Q_OS_MAC)
         dialog->resize(std::max(width, 640), std::max(height, 420));
 #else
@@ -421,7 +434,9 @@ void MaiFfplayVideoDialog::setSize(void* userData, int width, int height) {
 
 void MaiFfplayVideoDialog::setPosition(void* userData, int x, int y) {
     auto* dialog = static_cast<MaiFfplayVideoDialog*>(userData);
-    QMetaObject::invokeMethod(dialog, [dialog, x, y] { dialog->move(x, y); },
+    QMetaObject::invokeMethod(dialog, [dialog, x, y] {
+        if (!dialog->docked_) dialog->move(x, y);
+    },
                               Qt::QueuedConnection);
 }
 

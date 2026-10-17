@@ -974,6 +974,7 @@ if(APPLE AND TARGET maiagent_obs_metal)
       ${CMAKE_CURRENT_SOURCE_DIR}/../Media/data/video_conversion.effect
       ${CMAKE_CURRENT_BINARY_DIR}/maiagent/Graphics/data/video_conversion.effect
     DEPENDS maiagent_graphics_data)
+  add_dependencies(MaiFfplayVideoDialogTest maiagent_obs_metal maichat_media_effects)
   enable_language(OBJC)
   add_executable(MaiGraphicsPresenterMacTests
     ../Media/tests/MaiGraphicsPresenterMacTests.m)

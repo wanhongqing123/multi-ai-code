@@ -53,6 +53,7 @@ private slots:
     void opensControlsAndClosesVideoPopup_data();
     void opensControlsAndClosesVideoPopup();
     void slowedPlaybackExtendsAudibleOutput();
+    void localVideoShowsPixels();
 };
 
 void MaiFfplayVideoDialogTest::exposesSaveAndForwardActions() {
@@ -118,15 +119,20 @@ void MaiFfplayVideoDialogTest::opensControlsAndClosesVideoPopup() {
     QWidget* surface = dialog->findChild<QWidget*>(QStringLiteral("ffplayVideoSurface"));
     QVERIFY(surface != nullptr);
     const auto hasVisibleColor = [surface] {
-        const QImage pixels = surface->screen()->grabWindow(surface->winId()).toImage();
-        int colorfulPixels = 0;
+        const QPoint topLeft = surface->mapToGlobal(QPoint(0, 0));
+        const QImage pixels = surface->screen()->grabWindow(
+            0, topLeft.x(), topLeft.y(), surface->width(), surface->height()).toImage();
+        int minimumValue = 255;
+        int maximumValue = 0;
         for (int y = 0; y < pixels.height(); y += 8) {
             for (int x = 0; x < pixels.width(); x += 8) {
                 const QColor color = pixels.pixelColor(x, y);
-                if (std::max({color.red(), color.green(), color.blue()}) > 32) ++colorfulPixels;
+                const int value = std::max({color.red(), color.green(), color.blue()});
+                minimumValue = std::min(minimumValue, value);
+                maximumValue = std::max(maximumValue, value);
             }
         }
-        return colorfulPixels > 20;
+        return maximumValue - minimumValue > 32;
     };
     QTRY_VERIFY_WITH_TIMEOUT(hasVisibleColor(), 2000);
     QTRY_VERIFY_WITH_TIMEOUT(!commandTool->execute(R"({"action":"pause"})", context).hasError(),
@@ -192,6 +198,37 @@ void MaiFfplayVideoDialogTest::slowedPlaybackExtendsAudibleOutput() {
     dialog->close();
     QTRY_VERIFY(dialog.isNull());
 #endif
+}
+
+void MaiFfplayVideoDialogTest::localVideoShowsPixels() {
+    const QString path = qEnvironmentVariable("MAICHAT_FFPLAY_LOCAL_VIDEO");
+    if (!QFileInfo(path).isFile()) QSKIP("No local video fixture");
+    MaiFfplayVideoDialog dialog(path);
+    dialog.resize(1280, 900);
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    QVERIFY(dialog.isStarted());
+    QTRY_VERIFY_WITH_TIMEOUT(dialog.presentedFrames() > 0, 5000);
+    QWidget* surface = dialog.findChild<QWidget*>(QStringLiteral("ffplayVideoSurface"));
+    QVERIFY(surface != nullptr);
+    QTest::qWait(500);
+    const QPoint topLeft = surface->mapToGlobal(QPoint(0, 0));
+    const QImage pixels = surface->screen()->grabWindow(
+        0, topLeft.x(), topLeft.y(), surface->width(), surface->height()).toImage();
+    const QString capturePath = qEnvironmentVariable("MAICHAT_FFPLAY_CAPTURE");
+    if (!capturePath.isEmpty()) QVERIFY(pixels.save(capturePath));
+    int minimumValue = 255;
+    int maximumValue = 0;
+    for (int y = 0; y < pixels.height(); y += 8)
+        for (int x = 0; x < pixels.width(); x += 8) {
+            const QColor color = pixels.pixelColor(x, y);
+            const int value = std::max({color.red(), color.green(), color.blue()});
+            minimumValue = std::min(minimumValue, value);
+            maximumValue = std::max(maximumValue, value);
+        }
+    qInfo() << "local video pixels" << pixels.size() << minimumValue << maximumValue;
+    QVERIFY(maximumValue - minimumValue > 32);
+    dialog.close();
 }
 
 QTEST_MAIN(MaiFfplayVideoDialogTest)

@@ -84,7 +84,7 @@ MaiFfplayVideoDialog::MaiFfplayVideoDialog(const QString& path, QWidget* parent)
     surface_ = new QWidget(this);
     surface_->setObjectName(QStringLiteral("ffplayVideoSurface"));
     surface_->setAttribute(Qt::WA_NativeWindow);
-#if defined(Q_OS_WIN)
+#if defined(Q_OS_WIN) || defined(Q_OS_MAC)
     surface_->setAttribute(Qt::WA_PaintOnScreen);
     surface_->setAttribute(Qt::WA_NoSystemBackground);
 #else

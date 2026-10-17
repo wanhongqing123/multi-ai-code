@@ -156,6 +156,7 @@ class MetalDevice {
         let opaqueSelf = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
 
         CVDisplayLinkSetOutputCallback(displayLink!, displayLinkCallback, opaqueSelf)
+        CVDisplayLinkStart(displayLink!)
     }
 #endif
 

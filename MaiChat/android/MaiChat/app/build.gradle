@@ -43,10 +43,6 @@ android {
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
-        buildConfigField "String", "TENCENT_ASR_APP_ID", "\"${asrValue('tencent.asr.appId')}\""
-        buildConfigField "String", "TENCENT_ASR_SECRET_ID", "\"${asrValue('tencent.asr.secretId')}\""
-        buildConfigField "String", "TENCENT_ASR_SECRET_KEY", "\"${asrValue('tencent.asr.secretKey')}\""
-
         externalNativeBuild { cmake { arguments "-DANDROID_STL=c++_shared", "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON" } }
 
         ndk {
@@ -70,9 +66,15 @@ android {
         debug {
             buildConfigField "boolean", "USE_LOCAL_UI_AUTH",
                 (project.findProperty("maichatLocalUiAuth") == "true").toString()
+            buildConfigField "String", "TENCENT_ASR_APP_ID", "\"${asrValue('tencent.asr.appId')}\""
+            buildConfigField "String", "TENCENT_ASR_SECRET_ID", "\"${asrValue('tencent.asr.secretId')}\""
+            buildConfigField "String", "TENCENT_ASR_SECRET_KEY", "\"${asrValue('tencent.asr.secretKey')}\""
         }
         release {
             buildConfigField "boolean", "USE_LOCAL_UI_AUTH", "false"
+            buildConfigField "String", "TENCENT_ASR_APP_ID", '""'
+            buildConfigField "String", "TENCENT_ASR_SECRET_ID", '""'
+            buildConfigField "String", "TENCENT_ASR_SECRET_KEY", '""'
             signingConfig signingConfigs.release
         }
     }

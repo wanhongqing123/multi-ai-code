@@ -26,6 +26,7 @@
 #include <QComboBox>
 #include <QContextMenuEvent>
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QDialog>
@@ -1564,13 +1565,21 @@ AgentController::ModelConfig loadAgentModelConfig(
 
 // 会话和消息落在哪。放应用数据目录，不放当前目录——
 // 当前目录是用户的工作目录，往里扔数据库文件不礼貌。
-QString agentDatabasePath() {
-  const QString root =
-      QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+QString accountAgentDirectory(const QString &ownerUserId) {
+  if (ownerUserId.isEmpty()) return {};
+  QString root = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
   if (root.isEmpty())
-    return QString(); // 取不到就纯内存，不要为此起不来
-  QDir().mkpath(root);
-  return root + QStringLiteral("/agent.db");
+    root = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+  if (root.isEmpty()) return {};
+  const QString account = QString::fromLatin1(
+      QCryptographicHash::hash(ownerUserId.toUtf8(), QCryptographicHash::Sha256).toHex());
+  return QDir(root).filePath(QStringLiteral("Agent/Accounts/%1").arg(account));
+}
+
+QString agentDatabasePath(const QString &ownerUserId) {
+  const QString root = accountAgentDirectory(ownerUserId);
+  if (root.isEmpty() || !QDir().mkpath(root)) return {};
+  return QDir(root).filePath(QStringLiteral("agent.db"));
 }
 
 #ifdef Q_OS_WIN
@@ -3738,7 +3747,7 @@ void MainWindow::rebuildAgentPage() {
     replySuggestionController_->setConfig(replyConfig);
   }
   agentController_ = new AgentController(
-      modelConfig, agentDatabasePath(),
+      modelConfig, agentDatabasePath(app_.chatState().ownerUserId()),
       [this](MaiToolRegistry &registry) {
         registerMaiChatHostTools(registry, app_);
         const auto sshPassword =
@@ -3813,6 +3822,10 @@ void MainWindow::rebuildAgentPage() {
       this);
   agentSessions_ = new AgentSessionList(*agentController_, agentSplitter);
   agentPanel_ = new AgentChatPanel(*agentController_, agentSplitter);
+  const QString accountRoot = accountAgentDirectory(app_.chatState().ownerUserId());
+  agentPanel_->setDefaultWorkspaceDirectory(
+      accountRoot.isEmpty() ? QString() :
+          QDir(accountRoot).filePath(QStringLiteral("Workspace")));
 #if defined(MAICHAT_HAS_FFPLAY)
   agentPanel_->setOpenVideoCallback([this](const QString &path, const QStringList &paths) {
     openDockedVideo(path, paths);

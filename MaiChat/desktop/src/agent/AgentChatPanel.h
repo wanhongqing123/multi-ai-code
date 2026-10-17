@@ -53,8 +53,9 @@ public:
     explicit AgentChatPanel(AgentController& controller, QWidget* parent = nullptr);
     ~AgentChatPanel() override;
 
-    // 开一个会话。传空表示在用户文档目录新建。
+    // 新建会话使用当前账号在应用数据目录下的默认工作区。
     void openSession(const QString& sessionId = QString());
+    void setDefaultWorkspaceDirectory(const QString& directory);
 
     // 在用户选定的工作目录新建会话；不改变已有会话的目录边界。
     void openSessionInDirectory(const QString& directory);
@@ -162,4 +163,6 @@ private:
     std::unique_ptr<Runtime> runtime_;
     std::function<void(const QString&, const QStringList&)> openVideo_;
     std::function<void(const QString&, const QString&)> forwardMedia_;
+    QString defaultWorkspaceDirectory_;
+    bool defaultWorkspaceConfigured_ = false;
 };

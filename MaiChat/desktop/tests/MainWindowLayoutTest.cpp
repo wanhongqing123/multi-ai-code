@@ -6,6 +6,7 @@
 #include <QClipboard>
 #include <QComboBox>
 #include <QDateTime>
+#include <QCryptographicHash>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QLabel>
@@ -20,6 +21,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSettings>
+#include <QStandardPaths>
 #include <QSignalSpy>
 #include <QSplitter>
 #include <QSplitterHandle>
@@ -45,6 +47,7 @@
 #include <QTextEdit>
 #include <QTimer>
 #include <QUrl>
+#include <QUuid>
 #include <QVBoxLayout>
 #include <QWidget>
 #include <memory>
@@ -104,6 +107,7 @@ private slots:
     void aiReplySuggestionOnlyFillsComposer();
     void exposesResizableSplitters();
     void agentConversationListUsesResizableSplitter();
+    void agentAccountsUseDistinctDefaultStorage();
     void compactSplittersKeepDragTargets_data();
     void compactSplittersKeepDragTargets();
     void composerResizeHandleAlignsWithEditorBorder_data();
@@ -1437,6 +1441,59 @@ void MainWindowLayoutTest::agentConversationListUsesResizableSplitter() {
     QApplication::sendEvent(handle, &move);
     QTest::mouseRelease(handle, Qt::LeftButton, Qt::NoModifier, finish);
     QVERIFY(splitter->sizes().at(0) != before);
+}
+
+void MainWindowLayoutTest::agentAccountsUseDistinctDefaultStorage() {
+    const QString suffix = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    const QString ownerA = QStringLiteral("storage-a-%1").arg(suffix);
+    const QString ownerB = QStringLiteral("storage-b-%1").arg(suffix);
+    const QString dataRoot = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+    QVERIFY(!dataRoot.isEmpty());
+    const auto accountRoot = [&dataRoot](const QString& owner) {
+        const QString hash = QString::fromLatin1(
+            QCryptographicHash::hash(owner.toUtf8(), QCryptographicHash::Sha256).toHex());
+        return QDir(dataRoot).filePath(QStringLiteral("Agent/Accounts/%1").arg(hash));
+    };
+    const QString rootA = accountRoot(ownerA);
+    const QString rootB = accountRoot(ownerB);
+    QString sessionA;
+    QString sessionB;
+    {
+        RemoteIMApplication app(ownerA, std::make_unique<FakeRemoteIMClient>());
+        MainWindow window(app);
+        auto* panel = window.findChild<AgentChatPanel*>();
+        QVERIFY(panel);
+        panel->openSession();
+        sessionA = panel->sessionId();
+        QVERIFY(!sessionA.isEmpty());
+        auto* controller = window.findChild<AgentController*>();
+        QVERIFY(controller);
+        MaiSession session;
+        QVERIFY(controller->agent().getSession(sessionA.toStdString(), session));
+        QCOMPARE(QString::fromStdString(session.directory),
+                 QDir(QDir(rootA).filePath(QStringLiteral("Workspace"))).canonicalPath());
+        QVERIFY(QFileInfo(QDir(rootA).filePath(QStringLiteral("agent.db"))).isFile());
+    }
+    {
+        RemoteIMApplication app(ownerB, std::make_unique<FakeRemoteIMClient>());
+        MainWindow window(app);
+        auto* panel = window.findChild<AgentChatPanel*>();
+        QVERIFY(panel);
+        panel->openSession();
+        sessionB = panel->sessionId();
+        QVERIFY(!sessionB.isEmpty());
+        auto* controller = window.findChild<AgentController*>();
+        QVERIFY(controller);
+        MaiSession session;
+        QVERIFY(controller->agent().getSession(sessionB.toStdString(), session));
+        QCOMPARE(QString::fromStdString(session.directory),
+                 QDir(QDir(rootB).filePath(QStringLiteral("Workspace"))).canonicalPath());
+        QVERIFY(QFileInfo(QDir(rootB).filePath(QStringLiteral("agent.db"))).isFile());
+        QVERIFY(!controller->agent().getSession(sessionA.toStdString(), session));
+    }
+    QVERIFY(sessionA != sessionB);
+    QDir(rootA).removeRecursively();
+    QDir(rootB).removeRecursively();
 }
 
 void MainWindowLayoutTest::rendersEmptyConversationState() {

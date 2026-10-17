@@ -84,7 +84,13 @@ QString fromUtf8(const std::string& text) {
     return QString::fromUtf8(text.data(), static_cast<int>(text.size()));
 }
 
-QString defaultWorkspaceDirectory() {
+QString defaultWorkspaceDirectory(const QString& preferred, bool configured) {
+    if (configured) {
+        if (preferred.isEmpty()) return {};
+        if (QDir(preferred).isRoot() || !QDir().mkpath(preferred) ||
+            !QFileInfo(preferred).isWritable()) return {};
+        return QDir(preferred).canonicalPath();
+    }
     const QStringList roots = {
         QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation),
         QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation),
@@ -1594,7 +1600,8 @@ void AgentChatPanel::updateApprovalPolicyUi() {
 
 void AgentChatPanel::openSession(const QString& sessionId) {
     if (sessionId.isEmpty()) {
-        const QString directory = defaultWorkspaceDirectory();
+        const QString directory = defaultWorkspaceDirectory(
+            defaultWorkspaceDirectory_, defaultWorkspaceConfigured_);
         if (directory.isEmpty()) {
             appendNotice(QStringLiteral("无法创建创作中心工作目录"), true);
             return;
@@ -1624,17 +1631,6 @@ void AgentChatPanel::openSession(const QString& sessionId) {
 
     MaiSession session;
     if (runtime_->controller->agent().getSession(toUtf8(runtime_->sessionId), session)) {
-        // 系统根目录不适合作为素材输出位置。只修复这类会话，保留其它目录；
-        // 运行中的工具也不能中途换工作目录。
-        if (QDir(fromUtf8(session.directory)).isRoot() &&
-            !runtime_->controller->agent().isBusy(toUtf8(runtime_->sessionId))) {
-            const QString workspace = defaultWorkspaceDirectory();
-            if (!workspace.isEmpty()) {
-                const auto updated = runtime_->controller->agent().submit(
-                    MaiUpdateSession{toUtf8(runtime_->sessionId), "", "", "", toUtf8(workspace)});
-                if (updated) session.directory = toUtf8(workspace);
-            }
-        }
         // 用 isUntitled() 而不是 title.isEmpty()：核心给新会话填的是一个占位标题
         // （"New session"），不是空串。判空的话那串占位符会直接显示在头部。
         runtime_->title->setText(QStringLiteral("创作中心"));
@@ -1649,6 +1645,11 @@ void AgentChatPanel::openSession(const QString& sessionId) {
     }
     reloadFromStore();
     emit sessionListChanged();
+}
+
+void AgentChatPanel::setDefaultWorkspaceDirectory(const QString& directory) {
+    defaultWorkspaceDirectory_ = directory;
+    defaultWorkspaceConfigured_ = true;
 }
 
 void AgentChatPanel::openSessionInDirectory(const QString& directory) {

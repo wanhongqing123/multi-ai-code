@@ -266,7 +266,6 @@ class AgentPanelSessionTest : public QObject {
 private slots:
     void newSessionAvoidsFilesystemRoot();
     void newSessionUsesAppWorkspaceInsteadOfProcessDirectory();
-    void rootWorkspaceMovesToAppDirectoryWithoutChangingCustomWorkspace();
     void newSessionOffersWorkspaceChoice();
     void chosenWorkspaceCreatesIndependentSession();
     void answerFromAnotherSessionDoesNotLeakIn();
@@ -756,29 +755,6 @@ void AgentPanelSessionTest::newSessionUsesAppWorkspaceInsteadOfProcessDirectory(
     QVERIFY(QFileInfo(workspace).isWritable());
     QVERIFY(!QDir(workspace).isRoot());
     QVERIFY(QDir(workspace).canonicalPath() != processDirectory.path());
-}
-
-void AgentPanelSessionTest::rootWorkspaceMovesToAppDirectoryWithoutChangingCustomWorkspace() {
-    QTemporaryDir customDirectory;
-    QVERIFY(customDirectory.isValid());
-    AgentController controller(std::make_unique<SilentModel>(), QString());
-    AgentChatPanel panel(controller);
-    const QString rootSession = controller.createSession(QDir::rootPath());
-    const QString customSession = controller.createSession(customDirectory.path());
-    QVERIFY(!rootSession.isEmpty());
-    QVERIFY(!customSession.isEmpty());
-
-    panel.openSession();
-    MaiSession defaultSession;
-    QVERIFY(controller.agent().getSession(panel.sessionId().toStdString(), defaultSession));
-    panel.openSession(rootSession);
-    MaiSession restored;
-    QVERIFY(controller.agent().getSession(rootSession.toStdString(), restored));
-    QCOMPARE(restored.directory, defaultSession.directory);
-
-    panel.openSession(customSession);
-    QVERIFY(controller.agent().getSession(customSession.toStdString(), restored));
-    QCOMPARE(QDir(QString::fromStdString(restored.directory)).canonicalPath(), customDirectory.path());
 }
 
 void AgentPanelSessionTest::newSessionOffersWorkspaceChoice() {

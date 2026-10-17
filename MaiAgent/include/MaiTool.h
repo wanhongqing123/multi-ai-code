@@ -7,6 +7,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "MaiError.h"
@@ -197,7 +198,12 @@ public:
 class MaiToolRegistry {
 public:
     void add(std::unique_ptr<MaiTool> tool);
+    // 后台仍需读取历史任务时可内部注册；不会进入模型工具清单，也不能由模型调用。
+    void addInternal(std::unique_ptr<MaiTool> tool);
+    // 内部任务恢复使用，可读取内部工具。
     MaiTool* find(const std::string& name) const;
+    // 模型调用只允许公开工具；未公开的名字即使从历史文本中出现也不能执行。
+    MaiTool* findForModel(const std::string& name) const;
     bool isEmpty() const;
 
     // 给模型的工具清单。
@@ -208,6 +214,7 @@ public:
 
 private:
     std::vector<std::unique_ptr<MaiTool>> mTools;
+    std::unordered_set<std::string> mInternalNames;
 };
 
 // 把所有内置工具装进清单。

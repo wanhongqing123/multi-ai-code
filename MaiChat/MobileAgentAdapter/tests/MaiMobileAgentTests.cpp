@@ -142,19 +142,15 @@ int main() {
         CHECK(body["messages"].front()["content"].get<std::string>().find(
                   "GitHub-Flavored Markdown") != std::string::npos);
         // 移动端不能向模型宣称可以执行桌面 shell。
-        bool hasCreateFile = false, hasCreateDirectory = false, hasDeleteFile = false,
-             hasViewImage = false, hasMaiChatContacts = false, hasMaiChatSend = false,
-             hasMaiChatBroadcast = false, hasGeneratePdf = false,
-             hasMobilePhotos = false, hasMobileAlbums = false,
-             hasMobilePhotoRead = false, hasMobilePhotoOriginal = false,
-             hasMobileMediaOriginal = false,
-             hasMobilePhotoSave = false, hasMobileTransform = false,
-             hasMobileBeautify = false, hasFfprobe = false, hasMobilePreview = false,
-             hasFaceDetection = false, hasPersonSegmentation = false,
-             hasMobilePhotoAlbumWrite = false, hasPermissionRequest = false,
-             hasSceneDetect = false, hasMotionDetect = false,
-             hasDownloadFile = false, hasLocation = false, hasMaiChatMedia = false,
-             hasVideoMatting = false, hasAgentMedia = false;
+        bool hasCreateFile = false, hasCreateDirectory = false, hasDeleteFile = false, hasViewImage = false,
+             hasMaiChatContacts = false, hasMaiChatSend = false, hasMaiChatBroadcast = false, hasGeneratePdf = false,
+             hasMobilePhotos = false, hasMobileAlbums = false, hasMobilePhotoRead = false,
+             hasMobilePhotoOriginal = false, hasMobileMediaOriginal = false, hasMobilePhotoSave = false,
+             hasMobileTransform = false, hasMobileBeautify = false, hasFfprobe = false, hasMobilePreview = false,
+             hasFaceDetection = false, hasPersonSegmentation = false, hasMobilePhotoAlbumWrite = false,
+             hasPermissionRequest = false, hasSceneDetect = false, hasMotionDetect = false, hasDownloadFile = false,
+             hasLocation = false, hasMaiChatMedia = false, hasVideoMatting = false, hasAgentMedia = false,
+             hasSeedance = false, hasSeedream = false;
         for (const auto& tool : body["tools"]) {
             CHECK(tool["function"]["name"] != "shell");
             if (tool["function"]["name"] == "file_create") hasCreateFile = true;
@@ -166,6 +162,8 @@ int main() {
             if (tool["function"]["name"] == "maichat_send_text") hasMaiChatSend = true;
             if (tool["function"]["name"] == "maichat_send_media") hasMaiChatMedia = true;
             if (tool["function"]["name"] == "agent_send_media") hasAgentMedia = true;
+            if (tool["function"]["name"] == "seedance_video") hasSeedance = true;
+            if (tool["function"]["name"] == "seedream_image") hasSeedream = true;
             if (tool["function"]["name"] == "curl") hasDownloadFile = true;
             if (tool["function"]["name"] == "maichat_broadcast_text")
                 hasMaiChatBroadcast = true;
@@ -203,6 +201,8 @@ int main() {
         CHECK(hasMaiChatSend);
         CHECK(hasMaiChatMedia);
         CHECK(hasAgentMedia);
+        CHECK(!hasSeedance);
+        CHECK(!hasSeedream);
         CHECK(hasDownloadFile);
         CHECK(hasMaiChatBroadcast);
         CHECK(hasMobilePhotos);

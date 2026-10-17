@@ -490,6 +490,8 @@ void AgentControllerTest::registers_host_tools_after_builtin_tools() {
     bool foundBuiltin = false;
     bool foundHost = false;
     bool foundAgentMedia = false;
+    bool foundSeedance = false;
+    bool foundSeedream = false;
 #if defined(MAICHAT_TEST_CV_VIDEO_ANALYSIS)
     bool foundSceneDetect = false;
     bool foundMotionDetect = false;
@@ -501,6 +503,8 @@ void AgentControllerTest::registers_host_tools_after_builtin_tools() {
         if (tool.name == "file_read") foundBuiltin = true;
         if (tool.name == "agent_send_media") foundAgentMedia = true;
         if (tool.name == "maichat_probe") foundHost = true;
+        if (tool.name == "seedance_video") foundSeedance = true;
+        if (tool.name == "seedream_image") foundSeedream = true;
 #if defined(MAICHAT_TEST_CV_VIDEO_ANALYSIS)
         if (tool.name == "cv_scene_detect") foundSceneDetect = true;
         if (tool.name == "cv_motion_detect") foundMotionDetect = true;
@@ -512,6 +516,8 @@ void AgentControllerTest::registers_host_tools_after_builtin_tools() {
     QVERIFY(foundBuiltin);
     QVERIFY(foundHost);
     QVERIFY(foundAgentMedia);
+    QVERIFY(!foundSeedance);
+    QVERIFY(!foundSeedream);
 #if defined(MAICHAT_TEST_CV_VIDEO_ANALYSIS)
     QVERIFY(foundSceneDetect);
     QVERIFY(foundMotionDetect);

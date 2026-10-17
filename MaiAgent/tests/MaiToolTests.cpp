@@ -574,6 +574,18 @@ void test_registry() {
     const std::size_t before = reg.specs().size();
     reg.add(makeMaiReadTool());
     CHECK(reg.specs().size() == before);
+
+    MaiToolRegistry internal;
+    internal.addInternal(makeMaiReadTool());
+    CHECK(internal.isEmpty());
+    CHECK(internal.find("file_read") != nullptr);
+    CHECK(internal.findForModel("file_read") == nullptr);
+    CHECK(internal.specs().empty());
+    CHECK(internal.specialists().empty());
+    internal.add(makeMaiReadTool());
+    CHECK(!internal.isEmpty());
+    CHECK(internal.findForModel("file_read") != nullptr);
+    CHECK(internal.specs().size() == 1);
 }
 
 MaiCvVideoAnalysisResult sampleVideoAnalysis(const std::string&,

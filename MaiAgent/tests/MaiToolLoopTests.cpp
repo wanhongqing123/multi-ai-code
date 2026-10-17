@@ -126,6 +126,27 @@ public:
     }
 };
 
+class InternalVideoTool final : public MaiTool {
+public:
+    explicit InternalVideoTool(std::atomic<int>& calls) : mCalls(calls) {}
+    std::string name() const override {
+        return "seedance_video";
+    }
+    std::string description() const override {
+        return "Internal task recovery only.";
+    }
+    std::string parametersSchema() const override {
+        return R"({"type":"object"})";
+    }
+    MaiToolResult execute(const std::string&, const MaiToolContext&) override {
+        ++mCalls;
+        return MaiToolResult::success("submitted");
+    }
+
+private:
+    std::atomic<int>& mCalls;
+};
+
 class BalanceErrorTool final : public MaiTool {
 public:
     std::string name() const override {
@@ -524,6 +545,32 @@ void test_unknown_tool_does_not_kill_the_turn() {
     CHECK(hasFinalText);
 }
 
+void test_internal_tool_is_not_visible_or_callable_by_model() {
+    Workspace workspace;
+    std::atomic<int> calls{0};
+    auto model = std::make_unique<MaiFakeModelClient>(std::vector<MaiFakeModelClient::Turn>{
+        callTurn("seedance_video", R"({})"), sayTurn("The tool is unavailable.")});
+    MaiFakeModelClient* observer = model.get();
+    auto tools = std::make_unique<MaiToolRegistry>();
+    tools->addInternal(std::make_unique<InternalVideoTool>(calls));
+    MaiAgent agent(makeMaiMemoryStore(), std::move(model), std::move(tools));
+    const std::string sessionId =
+        agent.submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
+    agent.submit(MaiSendPrompt{sessionId, "create video"});
+    agent.waitIdle();
+
+    CHECK(observer->request(0).tools.empty());
+    CHECK(calls.load(std::memory_order_relaxed) == 0);
+    const auto messages = agent.listMessages(sessionId);
+    bool rejected = false;
+    if (messages.size() == 2)
+        for (const MaiMessagePart& part : messages[1].parts)
+            if (const auto* tool = std::get_if<MaiToolPart>(&part.body))
+                rejected = tool->state == MaiToolState::Error &&
+                           tool->error.find("no tool named") != std::string::npos;
+    CHECK(rejected);
+}
+
 void test_path_escape_through_model() {
     Workspace workspace;
     auto underTest = makeAgent({callTurn("file_read", R"({"path":"../../../etc/passwd"})"),
@@ -714,6 +761,7 @@ int main() {
     test_repeated_missing_final_answer_reports_error();
     test_tool_error_is_fed_back();
     test_unknown_tool_does_not_kill_the_turn();
+    test_internal_tool_is_not_visible_or_callable_by_model();
     test_path_escape_through_model();
     test_iteration_cap();
     test_iteration_cap_provides_a_final_status();

@@ -157,6 +157,14 @@ void testDynamicCredentialAndToolIdentity() {
     CHECK(specialists[1].capabilities[2].id == "multi_image_edit");
     CHECK(specialists[1].capabilities[2].status ==
           MaiSpecialistCapabilityStatus::UploadNotConfigured);
+    MaiToolRegistry internal;
+    internal.addInternal(makeMaiSeedanceVideoTool([&] { return key; }));
+    internal.addInternal(makeMaiSeedreamImageTool([&] { return key; }));
+    CHECK(internal.specs().empty());
+    CHECK(internal.specialists().empty());
+    CHECK(internal.find("seedance_video") != nullptr);
+    CHECK(internal.findForModel("seedance_video") == nullptr);
+    CHECK(internal.findForModel("seedream_image") == nullptr);
     key.clear();
     specialists = registry.specialists();
     CHECK(!specialists[0].configured);

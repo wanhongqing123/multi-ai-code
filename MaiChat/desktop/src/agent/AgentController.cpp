@@ -90,14 +90,10 @@ another ratio. Do not silently trim longer footage. For Wan3 video extension use
 wan_video mode=extend with one source video,
 an explicit extension direction, ratio=adaptive, and measured source_duration_seconds; input
 plus requested output must not exceed 30 seconds.
-For every new local image or video used by Seedance, first call seedance_video prepare with the
-local paths, an existing asset_group_id, and its asset_group_type. For a local video, prepare runs
-FFprobe itself and rejects anything outside Seedance 2.0's 2-15 second and 24-60 fps limits. Do
-not estimate or provide media metadata yourself. Preparation uploads to private OSS, registers
-Ark assets, and waits for Active. Then
-call delegate with only the returned asset
-IDs and obtain the final paid-call approval. Never pass an OSS signed URL or repeat local paths in
-delegate. A completed Seedance task ID is the only media-source exception and may be reused.
+Seedance video and Seedream image generation are temporarily disabled because the Ark account
+balance is insufficient. Do not choose them for new tasks or prepare new media for them.
+Previously submitted Seedance tasks still receive background status checks and downloaded
+results. Preserve their task IDs; do not try to call the unlisted specialist tool.
 AIGC groups are only for fictional or virtual subjects. If any selected image or video contains a
 recognizable natural person, use an existing LivenessFace group or call ark_assets
 begin_real_validation, let that person complete the H5 link, and resolve its GroupId with
@@ -145,17 +141,18 @@ If approval is rejected, do not submit or retry. Use model tools for semantic ch
 clothes, scene, or action. Prefer local FFmpeg/OpenCV for geometry, crop, color,
 stabilization, frame joining, or speed changes to preserve identity pixels. Reuse existing
 cloud task IDs for progress checks instead of submitting a paid duplicate.
-When the user asks to cancel a video job, use that specialist's cancel action with its saved
-conversation_id. Ark and Model Studio cancel only queued/PENDING jobs; if already running,
-report the actual provider refusal and keep checking the existing job. For deletion, Ark can
-delete completed cloud task records, while Wan and Bailian Kling only remove delivered local
-task records; do not claim cloud deletion or remove the downloaded video in that case.
+When the user asks to cancel a video job, use an available specialist's cancel action with its
+saved conversation_id. Model Studio cancels only queued/PENDING jobs; if already running,
+report the actual provider refusal and keep checking the existing job. Previously submitted
+Seedance jobs remain under background status checks, but their unlisted tool cannot be called
+for manual cancellation. Wan and Bailian Kling only remove delivered local task records;
+do not claim cloud deletion or remove the downloaded video in that case.
 GLM and MiniMax likewise only delete local records after delivery; no verified cloud cancel
 endpoint is wired for them, so do not claim their running cloud tasks were canceled.
 For multiple user images, inspect the chosen video specialist's input limits and never silently
 drop an image.
-If the limit is exceeded, combine images with seedream_image for semantic fusion or FFmpeg for
-a visible layout, then show the plan before a paid call. On task failure, inspect the provider
+If the limit is exceeded, discover an available image specialist for semantic fusion or use
+FFmpeg for a visible layout, then show the plan before a paid call. On task failure, inspect the provider
 stage and reason, repair technical inputs when possible, and seek a new per-call approval before
 any paid retry. Do not loop on provider content rejection or imply that an ambiguous error
 identifies one input. Treat a specialist error as internal work to resolve, not an immediate
@@ -272,12 +269,13 @@ buildAgent(std::unique_ptr<MaiModelClient> model, std::unique_ptr<MaiSessionStor
     const MaiCreativeMediaUploadProvider wanUploadMedia = modelUploadMedia(MaiOssUploadPurpose::WanInput);
     const MaiArkAssetProvider assetProvider =
         assetsConfigured ? makeMaiArkAssetServiceProvider(assetSettings) : MaiArkAssetProvider{};
-    tools->add(makeMaiSeedanceVideoTool(arkKey, {}, assetProvider, seedanceVideoMetadata));
+    // 不提供给主模型；保留实例供后台轮询已提交的 Seedance 任务。
+    tools->addInternal(makeMaiSeedanceVideoTool(arkKey, {}, assetProvider, seedanceVideoMetadata));
     if (assetsConfigured)
         tools->add(makeMaiArkAssetTool(assetProvider));
     else
         tools->add(makeMaiArkAssetTool());
-    tools->add(makeMaiSeedreamImageTool(arkKey, {}, seedreamUploadMedia));
+    tools->addInternal(makeMaiSeedreamImageTool(arkKey, {}, seedreamUploadMedia));
     const auto glmKey = [provider = credentials.glmApiKeyProvider,
                          key = toUtf8(credentials.glmApiKey)] {
         return provider ? toUtf8(provider()) : key;

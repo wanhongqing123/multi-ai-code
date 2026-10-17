@@ -143,17 +143,12 @@ constexpr auto kMarkdownBaseInstructions =
     "extension direction in the message, ratio=adaptive, and measured "
     "source_duration_seconds. Input plus requested output must be at most 30 "
     "seconds. "
-    // Seedance 的新本地素材只有一条路径：准备资产、等 Active、再付费提交 ID。
-    "For every new local image or video used by Seedance, first call "
-    "seedance_video prepare with the local paths, an existing asset_group_id, "
-    "and its asset_group_type. For a local video, prepare runs FFprobe itself and "
-    "rejects anything outside Seedance 2.0's 2-15 second and 24-60 fps limits. "
-    "Do not estimate or provide media metadata yourself. Preparation uploads to "
-    "private OSS, registers "
-    "Ark assets, and waits for Active. Then call delegate with only the returned "
-    "asset IDs and obtain the final paid-call approval. Never pass an OSS signed "
-    "URL or repeat the local paths in delegate. A completed Seedance task ID is "
-    "the only media-source exception and can be reused directly. "
+    // 方舟账号余额不足时暂停 Seedance 和 Seedream 新生成，历史任务仍可查询取回。
+    "Seedance video and Seedream image generation are temporarily disabled "
+    "because the Ark account balance is insufficient. Do not choose them for "
+    "new tasks or prepare new media for them. Previously submitted Seedance "
+    "tasks still receive background status checks and downloaded results. "
+    "Preserve their task IDs; do not call the unlisted specialist tool. "
     // AIGC 组只用于虚拟素材；可识别真人必须先由本人完成 H5 授权。
     "AIGC groups are only for fictional or virtual subjects. If any selected "
     "photo or video contains a recognizable natural person, use an existing "
@@ -166,9 +161,8 @@ constexpr auto kMarkdownBaseInstructions =
     // 资产服务故障是传输问题；保留原方案并重试，不能误判成内容审核失败。
     "Do not treat an ark_assets transport error as an image moderation "
     "decision. "
-    "Keep the selected Seedance model and the original references while the "
-    "asset service is temporarily unreachable; do not propose another model "
-    "solely because of that outage. "
+    "For an existing Seedance task, keep its task ID and original references "
+    "if the asset service is temporarily unreachable; do not submit a duplicate. "
     // 仅在允许的前提下处理图像：轻度处理优先，油画化是兜底；记录损失并补偿描述。
     "Do not default to "
     "flipping or oil-painting a real face to evade review. For other image "
@@ -254,11 +248,12 @@ constexpr auto kMarkdownBaseInstructions =
     "cloud task ID when checking progress; do not submit a paid duplicate. "
     // 取消与删除必须走已保存的任务上下文；取消仅限供应商仍在排队的任务。
     // 百炼没有云端视频任务删除 API，其 delete 只移除已交付的本地记录。
-    "When the user asks to cancel a video job, call the selected specialist's "
-    "cancel action with its saved conversation_id. Ark and Model Studio can "
-    "cancel only queued/PENDING jobs; if the provider says it has started, "
-    "preserve the task and continue polling. Ark can delete completed cloud "
-    "task records. Wan and Bailian Kling delete only the delivered local task "
+    "When the user asks to cancel a video job, call an available specialist's "
+    "cancel action with its saved conversation_id. Model Studio can cancel only "
+    "queued/PENDING jobs; if the provider says it has started, preserve the task "
+    "and continue polling. Previously submitted Seedance jobs still receive "
+    "background checks, but their unlisted tool cannot be called for manual "
+    "cancellation. Wan and Bailian Kling delete only the delivered local task "
     "record, leaving cloud results and downloaded videos intact. GLM and "
     "MiniMax also allow local-record deletion after delivery, but no verified "
     "provider cancel API is wired for them; never claim a local stop canceled "
@@ -266,9 +261,8 @@ constexpr auto kMarkdownBaseInstructions =
     // 多图任务先查模型上限；超出时用图像融合或可见拼接，让每张输入都进入流程。
     "For multiple user images, inspect the chosen video specialist's input "
     "limits and never "
-    "silently drop an image. If the limit is exceeded, combine images with "
-    "seedream_image "
-    "for semantic fusion or FFmpeg for a visible layout, then show the plan "
+    "silently drop an image. If the limit is exceeded, discover an available "
+    "image specialist for semantic fusion or use FFmpeg for a visible layout, then show the plan "
     "before the paid "
     "call. On task failure, inspect the provider stage and reason, repair "
     "technical inputs "
@@ -494,13 +488,15 @@ struct MaiMobileAgent {
         if (assetsConfigured) {
             // Seedance 本地素材由同一 C++ 资产通道完成 OSS 上传、Ark 入库与状态查询。
             // 密钥和服务令牌由宿主提供；工具拿到的是回调，不把凭据写进模型提示词。
-            tools->add(makeMaiSeedanceVideoTool(arkKey, config.caBundlePath, assetProvider, seedanceVideoMetadata));
+            // 对主模型隐藏，后台仍按工具名轮询已提交的 Seedance 任务。
+            tools->addInternal(
+                makeMaiSeedanceVideoTool(arkKey, config.caBundlePath, assetProvider, seedanceVideoMetadata));
             tools->add(makeMaiArkAssetTool(assetProvider));
         } else {
-            tools->add(makeMaiSeedanceVideoTool(arkKey, config.caBundlePath, {}, seedanceVideoMetadata));
+            tools->addInternal(makeMaiSeedanceVideoTool(arkKey, config.caBundlePath, {}, seedanceVideoMetadata));
             tools->add(makeMaiArkAssetTool());
         }
-        tools->add(makeMaiSeedreamImageTool(arkKey, config.caBundlePath, seedreamUploadMedia));
+        tools->addInternal(makeMaiSeedreamImageTool(arkKey, config.caBundlePath, seedreamUploadMedia));
         const auto glmKey = [dispatcher = hostTools]() -> std::string {
             const MaiToolResult result = callMaiMobileHostTool(dispatcher, "glm_api_key", "{}");
             if (result.hasError()) return {};

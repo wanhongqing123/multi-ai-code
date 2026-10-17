@@ -67,7 +67,8 @@ struct Scenario {
 };
 
 Scenario startScenario(std::string result, bool withModel, bool success = false,
-                       bool modelSucceeds = false, std::string specialistName = "wan_video") {
+                       bool modelSucceeds = false, std::string specialistName = "wan_video",
+                       bool internalTool = false) {
     auto store = makeMaiMemoryStore();
     Scenario scenario;
     scenario.store = store.get();
@@ -101,8 +102,12 @@ Scenario startScenario(std::string result, bool withModel, bool success = false,
         model = std::move(fake);
     }
     auto tools = std::make_unique<MaiToolRegistry>();
-    tools->add(std::make_unique<StaticMediaTool>(std::move(result), success,
-                                                 std::move(specialistName), scenario.toolCalls));
+    auto specialist = std::make_unique<StaticMediaTool>(
+        std::move(result), success, std::move(specialistName), scenario.toolCalls);
+    if (internalTool)
+        tools->addInternal(std::move(specialist));
+    else
+        tools->add(std::move(specialist));
     scenario.agent =
         std::make_unique<MaiAgent>(std::move(store), std::move(model), std::move(tools));
     return scenario;
@@ -134,6 +139,13 @@ void testFailureVisibleEvenWhenMainModelFails() {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     CHECK(visible);
+}
+
+void testInternalSpecialistStillChecksSubmittedTask() {
+    auto scenario =
+        startScenario(R"({"status":"running"})", false, true, false, "seedance_video", true);
+    waitForStatus(scenario, MaiSpecialistTaskStatus::Running);
+    CHECK(scenario.toolCalls->load(std::memory_order_relaxed) > 0);
 }
 
 // 403 只说明本次状态查询受阻，不能据此宣布已经受理的云任务失败。
@@ -394,6 +406,7 @@ void testProviderCancellationIsNotReportedAsGenerationFailure() {
 
 int main() {
     testFailureVisibleEvenWhenMainModelFails();
+    testInternalSpecialistStillChecksSubmittedTask();
     testAuthorizationFailureKeepsSubmittedTaskRecoverable();
     testRateLimitRemainsRetryable();
     testBalanceErrorPreservesPaidTaskAndDoesNotNotifyMain();

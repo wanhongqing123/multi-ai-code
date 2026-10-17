@@ -130,6 +130,7 @@ const char* maiSpecialistCapabilityStatusToString(MaiSpecialistCapabilityStatus 
 void MaiToolRegistry::add(std::unique_ptr<MaiTool> tool) {
     if (!tool) return;
     const std::string name = tool->name();
+    mInternalNames.erase(name);
     // 同名覆盖：注册表里不该出现两个同名工具，模型按名字调，撞了就不确定跑哪个。
     auto existing = std::find_if(
         mTools.begin(), mTools.end(),
@@ -141,6 +142,13 @@ void MaiToolRegistry::add(std::unique_ptr<MaiTool> tool) {
     mTools.push_back(std::move(tool));
 }
 
+void MaiToolRegistry::addInternal(std::unique_ptr<MaiTool> tool) {
+    if (!tool) return;
+    const std::string name = tool->name();
+    add(std::move(tool));
+    mInternalNames.insert(name);
+}
+
 MaiTool* MaiToolRegistry::find(const std::string& name) const {
     auto hit = std::find_if(
         mTools.begin(), mTools.end(),
@@ -148,14 +156,19 @@ MaiTool* MaiToolRegistry::find(const std::string& name) const {
     return hit == mTools.end() ? nullptr : hit->get();
 }
 
+MaiTool* MaiToolRegistry::findForModel(const std::string& name) const {
+    return mInternalNames.count(name) == 0 ? find(name) : nullptr;
+}
+
 bool MaiToolRegistry::isEmpty() const {
-    return mTools.empty();
+    return mTools.size() == mInternalNames.size();
 }
 
 std::vector<MaiToolSpec> MaiToolRegistry::specs() const {
     std::vector<MaiToolSpec> out;
     out.reserve(mTools.size());
     for (const auto& tool : mTools) {
+        if (mInternalNames.count(tool->name()) > 0) continue;
         MaiToolSpec spec;
         spec.name = tool->name();
         spec.description = tool->description();
@@ -168,6 +181,7 @@ std::vector<MaiToolSpec> MaiToolRegistry::specs() const {
 std::vector<MaiSpecialistInfo> MaiToolRegistry::specialists() const {
     std::vector<MaiSpecialistInfo> out;
     for (const auto& tool : mTools) {
+        if (mInternalNames.count(tool->name()) > 0) continue;
         if (auto info = tool->specialistInfo()) out.push_back(std::move(*info));
     }
     return out;

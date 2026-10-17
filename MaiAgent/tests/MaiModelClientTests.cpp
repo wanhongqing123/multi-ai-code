@@ -2,7 +2,7 @@
 // 验证入口：test_text_stream_one_byte_at_a_time、test_text_stream_all_at_once、test_tool_call_fragments；检查可观察结果而非实现细节。
 // LLM 客户端的测试。
 //
-// 不打真实的大模型：一是要 API key、二是要钱、三是结果不确定。
+// 默认不打真实的大模型；可显式启用无账号 Key 的 TLS 探针，服务端拒绝后不会计费。
 // 这里起一个假的 Chat Completions 服务端，
 // 喂**对抗性分片**的 SSE ——把工具调用的 arguments 一个字符一个字符地切、切在 JSON 的引号中间、
 // 把多个事件塞进同一个 TCP 包、再掺几个心跳注释行和畸形行。
@@ -11,6 +11,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <thread>
 #include <vector>
@@ -1112,6 +1113,29 @@ void test_responses_needs_terminal_event_and_reports_incomplete() {
 }  // namespace
 
 int main() {
+#if defined(_WIN32)
+    if (std::getenv("MAI_MODEL_LIVE_TLS_TEST") != nullptr) {
+        MaiModelConfig config;
+        config.baseUrl = "https://open.bigmodel.cn/api/v1";
+        config.wire = MaiWireApi::Responses;
+        config.maxRetries = 0;
+        config.connectTimeoutSeconds = 10;
+        config.totalTimeoutSeconds = 15;
+        MaiModelRequest request;
+        request.model = "glm-5.3-flash";
+        MaiModelMessage user;
+        user.role = MaiModelRole::User;
+        user.content = "unauthenticated TLS probe";
+        request.messages.push_back(std::move(user));
+        const std::atomic<bool> cancel{false};
+        MaiStreamSink sink;
+        auto client = makeMaiModelClient(config);
+        const MaiError error = client->stream(request, sink, cancel);
+        std::printf("live model TLS result: code=%d message=%s\n", int(error.code()),
+                    error.message().c_str());
+        CHECK(error.code() != MaiErrorCode::Network);
+    }
+#endif
     test_text_stream_one_byte_at_a_time();
     test_text_stream_all_at_once();
     test_tool_call_fragments();

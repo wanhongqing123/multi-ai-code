@@ -489,6 +489,13 @@ public:
             context.cancel = &cancel;
             context.inactivityTimeoutSeconds = mConfig.inactivityTimeoutSeconds;
             curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+#if defined(_WIN32)
+            // 内嵌 OpenSSL 没有随包 PEM 时使用 Windows 信任根；显式 CA 路径仍保持独立。
+            if (mConfig.caBundlePath.empty())
+                curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, long(CURLSSLOPT_NATIVE_CA));
+            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+#endif
             if (!mConfig.caBundlePath.empty())
                 curl_easy_setopt(curl, CURLOPT_CAINFO, mConfig.caBundlePath.c_str());
             curl_easy_setopt(curl, CURLOPT_POST, 1L);

@@ -147,7 +147,10 @@ private:
     // 多端同时开着时别人先裁决了，这里存的就是个过期的 id。
     void replyForPart(const QString& partId, bool forSession, bool approve);
 
-    void appendUserBubble(const QString& text);
+    void appendUserBubble(const QString& text, const QString& quotedPreview = QString());
+    void appendQuoteAction(const QString& messageId);
+    void beginQuote(const QString& messageId);
+    void clearQuote();
     void appendNotice(const QString& text, bool isError);
     void setRunning(bool running);
     void scrollToBottom();

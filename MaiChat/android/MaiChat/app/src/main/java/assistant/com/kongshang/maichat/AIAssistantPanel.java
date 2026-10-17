@@ -56,6 +56,8 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     private final LatestMessageList list;
     private final LinearLayout pending;
     private final LinearLayout attachmentSection, attachmentTray, attachmentPanel;
+    private final LinearLayout quoteSection;
+    private final TextView quoteText;
     private final TextView attachmentCount;
     private final MessageAdapter adapter = new MessageAdapter();
     private AIAssistantController.State state;
@@ -75,6 +77,8 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     private File pendingCameraFile;
     private String pendingMediaSession, pendingFileSession, pendingCameraSession, submittingSession = "";
     private String firstSentSession = "";
+    private JSONObject quotedMessage;
+    private String quoteSession = "";
     private boolean navigationPending;
     private int navigationGeneration;
     private final VoiceRecordingController voiceRecorder;
@@ -179,6 +183,27 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         addView(composerDivider, new LayoutParams(LayoutParams.MATCH_PARENT, dp(1)));
         LinearLayout composerArea = column();
         composerArea.setBackgroundColor(Color.WHITE);
+        quoteSection = row();
+        quoteSection.setGravity(Gravity.CENTER_VERTICAL);
+        quoteSection.setPadding(dp(16), dp(8), dp(16), dp(8));
+        quoteSection.setBackgroundColor(MaiChatTheme.BLUE_SOFT);
+        TextView quoteIcon = text("↩", 17, MaiChatTheme.BLUE);
+        quoteSection.addView(quoteIcon, new LayoutParams(dp(28), LayoutParams.WRAP_CONTENT));
+        quoteText = text("", 12, MaiChatTheme.TEXT);
+        quoteText.setMaxLines(2);
+        quoteText.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        quoteSection.addView(quoteText, new LayoutParams(0, LayoutParams.WRAP_CONTENT, 1));
+        TextView cancelQuote = text("×", 22, MaiChatTheme.SECONDARY);
+        cancelQuote.setGravity(Gravity.CENTER);
+        cancelQuote.setContentDescription("取消引用");
+        cancelQuote.setOnClickListener(view -> {
+            quotedMessage = null;
+            quoteSession = "";
+            updateQuote();
+        });
+        quoteSection.addView(cancelQuote, new LayoutParams(dp(32), dp(32)));
+        quoteSection.setVisibility(GONE);
+        composerArea.addView(quoteSection, matchWrap());
         attachmentSection = column();
         attachmentSection.setPadding(dp(16), dp(10), dp(16), 0);
         attachmentCount = text("待发送附件", 12, MaiChatTheme.SECONDARY);
@@ -318,6 +343,10 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             }
             if (!firstSend)
                 composer.setText(drafts.getOrDefault(selected, ""));
+            if (!firstSend) {
+                quotedMessage = null;
+                quoteSession = "";
+            }
             visibleLimit = 30;
             expanded.clear();
             following = true;
@@ -328,6 +357,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         error.setVisibility(next.error.isEmpty() ? GONE : VISIBLE);
         updateSend();
         updateAttachments();
+        updateQuote();
         updateMessages();
         updatePending();
     }
@@ -477,13 +507,15 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             return;
         }
         String submittedText = source;
+        String quotedMessageId = quotedMessage != null && quoteSession.equals(origin)
+            ? quotedMessage.optString("id") : "";
         submitting = true;
         submittingSession = origin;
         firstSentSession = "";
         updateAttachments();
         updateSend();
         following = true;
-        controller.send(origin, source, sending, success -> {
+        controller.send(origin, source, sending, quotedMessageId, success -> {
             submitting = false;
             String target = origin.isEmpty() && !firstSentSession.isEmpty()
                 ? firstSentSession : origin;
@@ -491,6 +523,12 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 if (selected.equals(target) && composer.getText().toString().equals(submittedText))
                     composer.setText("");
                 if (submittedText.equals(drafts.get(target))) drafts.put(target, "");
+                if (!quotedMessageId.isEmpty() && selected.equals(target) &&
+                    quotedMessage != null && quotedMessageId.equals(quotedMessage.optString("id"))) {
+                    quotedMessage = null;
+                    quoteSession = "";
+                    updateQuote();
+                }
                 List<AIAssistantController.ImportedFile> values = attachments.get(target);
                 if (values != null) {
                     values.removeAll(sending);
@@ -517,6 +555,51 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     }
     private List<AIAssistantController.ImportedFile> currentAttachments() {
         return attachments.getOrDefault(selected, Collections.emptyList());
+    }
+    private void beginQuote(JSONObject message) {
+        if (message == null || message.optString("id").isEmpty()) return;
+        quotedMessage = message;
+        quoteSession = selected;
+        updateQuote();
+        composer.requestFocus();
+        android.view.inputmethod.InputMethodManager keyboard =
+            (android.view.inputmethod.InputMethodManager) activity.getSystemService(Context.INPUT_METHOD_SERVICE);
+        if (keyboard != null) keyboard.showSoftInput(composer,
+            android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
+    }
+    static String quotePreview(JSONObject message) {
+        if (message == null) return "消息";
+        JSONArray parts = message.optJSONArray("parts");
+        StringBuilder content = new StringBuilder();
+        List<String> media = new ArrayList<>();
+        if (parts != null)
+            for (int i = 0; i < parts.length(); i++) {
+                JSONObject part = parts.optJSONObject(i);
+                if (part == null) continue;
+                String kind = part.optString("kind");
+                if (kind.equals("text")) content.append(part.optString("text"));
+                else if (kind.equals("image")) media.add("图片");
+                else if (kind.equals("video")) media.add("视频");
+                else if (kind.equals("tool")) {
+                    JSONObject artifact = mediaFromToolOutput(part);
+                    if (artifact != null) {
+                        String type = artifact.optString("type");
+                        media.add(type.equals("video") ? "视频" : type.equals("image") ? "图片" : "音频");
+                    }
+                }
+            }
+        String excerpt = content.toString().trim();
+        if (excerpt.isEmpty()) excerpt = "消息";
+        if (excerpt.codePointCount(0, excerpt.length()) > 80)
+            excerpt = excerpt.substring(0, excerpt.offsetByCodePoints(0, 80));
+        return (media.isEmpty() ? "" : "[" + String.join("、", media) + "] ") + excerpt;
+    }
+    private void updateQuote() {
+        boolean visible = quotedMessage != null && quoteSession.equals(selected);
+        quoteSection.setVisibility(visible ? VISIBLE : GONE);
+        if (visible)
+            quoteText.setText((quotedMessage.optString("role").equals("user")
+                ? "引用你的消息\n" : "引用 AI 消息\n") + quotePreview(quotedMessage));
     }
     private void acceptImportedFile(AIAssistantController.ImportedFile file, String target) {
         if (deletedSessions.contains(target)) {
@@ -1350,11 +1433,13 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         String key = "";
         final Map<String, TextView> parts = new HashMap<>();
         final Map<String, ImageView> imageParts = new HashMap<>();
-        final Map<String, Button> videoParts = new HashMap<>();
+        final Map<String, LinearLayout> videoParts = new HashMap<>();
         final Map<String, Button> pdfCards = new HashMap<>();
         final Map<String, Button> diagnosticCards = new HashMap<>();
         final Map<String, LinearLayout> mediaCards = new HashMap<>();
         TextView status;
+        TextView toolSummary;
+        LinearLayout toolDetails;
         MessageRow() {
             super(activity);
             setOrientation(VERTICAL);
@@ -1373,6 +1458,8 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                     diagnosticCards.clear();
                     mediaCards.clear();
                     status = null;
+                    toolSummary = null;
+                    toolDetails = null;
                     setGravity(Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
                     LinearLayout welcome = column();
                     welcome.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -1419,12 +1506,15 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             JSONArray array = value.optJSONArray("parts");
             if (array == null)
                 array = new JSONArray();
+            String toolGroupId = "tools:" + value.optString("id");
             StringBuilder structure = new StringBuilder(value.optString("id"));
+            structure.append(expanded.contains(toolGroupId));
             for (int i = 0; i < array.length(); i++) {
                 JSONObject part = array.optJSONObject(i);
                 if (part == null || part.optString("kind").equals("reasoning")) continue;
                 structure.append(part.optString("id"))
-                    .append(expanded.contains(part.optString("id")));
+                    .append(expanded.contains(part.optString("id")))
+                    .append(mediaFromToolOutput(part) != null);
             }
             JSONArray inlineMedia = value.optJSONArray("inline_media");
             if (inlineMedia != null)
@@ -1443,9 +1533,20 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 diagnosticCards.clear();
                 mediaCards.clear();
                 status = null;
+                toolSummary = null;
+                toolDetails = null;
                 if (outgoing) {
                     LinearLayout bubble = column();
                     TextView body = MaiChatTypography.body(activity);
+                    for (int i = 0; i < array.length(); i++) {
+                        JSONObject part = array.optJSONObject(i);
+                        if (part == null || !part.optString("kind").equals("quote")) continue;
+                        TextView quote = text("↩  " + part.optString("preview", "已引用消息"),
+                            12, MaiChatTheme.SECONDARY);
+                        quote.setMaxLines(2);
+                        quote.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                        bubble.addView(quote, matchWrap());
+                    }
                     bubble.addView(body, matchWrap());
                     for (int i = 0; i < array.length(); i++) {
                         JSONObject part = array.optJSONObject(i);
@@ -1458,12 +1559,8 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                     for (int i = 0; i < array.length(); i++) {
                         JSONObject part = array.optJSONObject(i);
                         if (part == null || !part.optString("kind").equals("video")) continue;
-                        Button video = new Button(activity);
-                        video.setAllCaps(false);
-                        video.setTextSize(14);
-                        video.setBackground(MaiChatTheme.bordered(
-                            MaiChatTheme.BLUE_SOFT, MaiChatTheme.BORDER, 10, activity));
-                        bubble.addView(video, new LayoutParams(dp(220), dp(88)));
+                        LinearLayout video = column();
+                        bubble.addView(video, matchWrap());
                         videoParts.put(part.optString("id"), video);
                     }
                     bubble.setPadding(dp(12), dp(10), dp(12), dp(10));
@@ -1472,20 +1569,48 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                     lp.gravity = Gravity.END;
                     lp.leftMargin = dp(28);
                     addView(bubble, lp);
+                    TextView quoteAction = text("↩  引用", 12, MaiChatTheme.SECONDARY);
+                    quoteAction.setContentDescription("引用这条消息");
+                    quoteAction.setOnClickListener(view -> beginQuote(value));
+                    LayoutParams quoteLayout = matchWrap();
+                    quoteLayout.gravity = Gravity.END;
+                    quoteLayout.topMargin = dp(4);
+                    addView(quoteAction, quoteLayout);
                     parts.put("user", body);
                 } else {
                     for (int i = 0; i < array.length(); i++) {
                         JSONObject part = array.optJSONObject(i);
                         String id = part.optString("id"), kind = part.optString("kind");
+                        boolean deliveredMedia = kind.equals("tool") &&
+                            mediaFromToolOutput(part) != null;
                         // 思考正文不创建视图；本行底部的状态文字已足够提示进度。
                         if (kind.equals("reasoning"))
                             continue;
+                        if (kind.equals("tool") && !deliveredMedia && toolDetails == null) {
+                            toolSummary = text("", 12, MaiChatTheme.SECONDARY);
+                            toolSummary.setSingleLine(true);
+                            toolSummary.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                            toolSummary.setContentDescription(toolGroupTitle(array));
+                            toolSummary.setPadding(0, dp(4), 0, dp(4));
+                            toolSummary.setOnClickListener(v -> {
+                                if (!expanded.add(toolGroupId)) expanded.remove(toolGroupId);
+                                adapter.notifyDataSetChanged();
+                            });
+                            LayoutParams summaryLayout = matchWrap();
+                            summaryLayout.bottomMargin = dp(4);
+                            addView(toolSummary, summaryLayout);
+                            toolDetails = column();
+                            toolDetails.setPadding(dp(12), 0, 0, 0);
+                            toolDetails.setVisibility(expanded.contains(toolGroupId) ? VISIBLE : GONE);
+                            addView(toolDetails, matchWrap());
+                        }
                         TextView view = kind.equals("text") ? MaiChatTypography.body(activity)
                                                             : text("", 12, MaiChatTheme.SECONDARY);
                         parts.put(id, view);
                         LayoutParams lp = matchWrap();
-                        lp.bottomMargin = dp(12);
-                        addView(view, lp);
+                        lp.bottomMargin = kind.equals("tool") && !deliveredMedia ? dp(4) : dp(12);
+                        if (kind.equals("tool") && !deliveredMedia) toolDetails.addView(view, lp);
+                        else addView(view, lp);
                         if (!kind.equals("text"))
                             view.setOnClickListener(v -> {
                                 if (!expanded.add(id))
@@ -1497,7 +1622,8 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                             detail.setTextIsSelectable(true);
                             detail.setTypeface(android.graphics.Typeface.MONOSPACE);
                             parts.put(id + ":detail", detail);
-                            addView(detail, lp);
+                            if (kind.equals("tool") && !deliveredMedia) toolDetails.addView(detail, lp);
+                            else addView(detail, lp);
                         }
                         if (kind.equals("tool")) {
                             Button preview = button("预览 PDF", "预览生成的 PDF", clicked -> {
@@ -1540,7 +1666,15 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                         }
                     }
                     status = text("", 11, MaiChatTheme.SECONDARY);
-                    addView(status, matchWrap());
+                    LinearLayout footer = row();
+                    footer.setGravity(Gravity.CENTER_VERTICAL);
+                    footer.addView(status, new LayoutParams(0, LayoutParams.WRAP_CONTENT, 1));
+                    TextView quoteAction = text("↩  引用", 11, MaiChatTheme.SECONDARY);
+                    quoteAction.setContentDescription("引用这条消息");
+                    quoteAction.setOnClickListener(view -> beginQuote(value));
+                    footer.addView(quoteAction, new LayoutParams(
+                        LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT));
+                    addView(footer, matchWrap());
                     status.setOnClickListener(v -> {
                         StringBuilder text = new StringBuilder();
                         JSONArray a = message.optJSONArray("parts");
@@ -1555,6 +1689,11 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                     });
                 }
                 addInlineMediaCards(inlineMedia);
+            }
+            if (toolSummary != null) {
+                String title = toolGroupTitle(array);
+                toolSummary.setText("⌘  " + title + (expanded.contains(toolGroupId) ? "  ⌄" : "  ›"));
+                toolSummary.setContentDescription(title);
             }
             if (outgoing) {
                 StringBuilder body = new StringBuilder();
@@ -1575,16 +1714,18 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                         }
                     }
                     if (part.optString("kind").equals("video")) {
-                        Button card = videoParts.get(part.optString("id"));
+                        LinearLayout card = videoParts.get(part.optString("id"));
                         File file = controller.workspaceFile(part.optString("path"));
                         if (card != null) {
                             boolean playable = file != null && file.isFile();
-                            card.setText(playable ? "▶  " + file.getName() : "视频文件已丢失");
-                            card.setEnabled(playable && activity instanceof MainActivity);
-                            card.setOnClickListener(view -> {
-                                if (playable) ((MainActivity) activity).openAgentMedia(
-                                    file.getAbsolutePath(), true, mediaPlaylist());
-                            });
+                            if (playable && !file.getPath().equals(card.getTag())) {
+                                card.setTag(file.getPath());
+                                showAgentMediaCard(card, file, "video", "");
+                            } else if (!playable && !"missing".equals(card.getTag())) {
+                                card.setTag("missing");
+                                card.removeAllViews();
+                                card.addView(text("视频文件已丢失", 13, MaiChatTheme.SECONDARY), matchWrap());
+                            }
                         }
                     }
                 }
@@ -1686,25 +1827,10 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                     layout.bottomMargin = dp(8);
                     addView(audio, layout);
                 } else if (kind.equals("video")) {
-                    Button video = button("▶  " + file.getName(),
-                        "播放视频 " + file.getName(), view -> {
-                            File available = controller.workspaceFile(path);
-                            if (available != null && available.isFile()
-                                && activity instanceof MainActivity)
-                                ((MainActivity) activity).openAgentMedia(
-                                    available.getAbsolutePath(), true, mediaPlaylist());
-                            else
-                                Toast.makeText(activity, "文件已被移动或删除", Toast.LENGTH_SHORT).show();
-                        });
-                    video.setAllCaps(false);
-                    video.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
-                    video.setPadding(dp(14), 0, dp(14), 0);
-                    video.setBackground(MaiChatTheme.bordered(
-                        MaiChatTheme.BLUE_SOFT, MaiChatTheme.BORDER, 12, activity));
-                    video.setOnLongClickListener(view -> {
-                        showAgentMediaMenu(view, file, "video"); return true;
-                    });
-                    LayoutParams layout = new LayoutParams(LayoutParams.MATCH_PARENT, dp(56));
+                    LinearLayout video = column();
+                    video.setTag(file.getPath());
+                    showAgentMediaCard(video, file, "video", "");
+                    LayoutParams layout = matchWrap();
                     layout.bottomMargin = dp(8);
                     addView(video, layout);
                 }
@@ -1726,6 +1852,34 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             : state.equals("error")      ? "失败"
             : state.equals("pending")    ? "等待授权"
                                          : "正在运行";
+    }
+    static String toolGroupTitle(JSONArray parts) {
+        if (parts == null) return "";
+        int count = 0;
+        boolean running = false, pending = false, failed = false;
+        boolean canceled = false, allCanceled = true;
+        Map<String, Integer> names = new LinkedHashMap<>();
+        for (int i = 0; i < parts.length(); i++) {
+            JSONObject part = parts.optJSONObject(i);
+            if (part == null || !part.optString("kind").equals("tool") ||
+                mediaFromToolOutput(part) != null) continue;
+            count++;
+            String name = part.optString("tool", "工具");
+            names.put(name, names.getOrDefault(name, 0) + 1);
+            String state = part.optString("state");
+            running |= state.equals("running");
+            pending |= state.equals("pending");
+            failed |= state.equals("error");
+            canceled |= state.equals("canceled");
+            allCanceled &= state.equals("canceled");
+        }
+        if (count == 0) return "";
+        String status = running ? "运行中" : pending ? "等待授权" : failed ? "有失败"
+            : allCanceled ? "已取消" : canceled ? "部分取消" : "已完成";
+        StringBuilder title = new StringBuilder("工具调用 ").append(count).append(" 次，").append(status);
+        for (Map.Entry<String, Integer> name : names.entrySet())
+            title.append(" · ").append(name.getKey()).append(" ×").append(name.getValue());
+        return title.toString();
     }
     private String seedanceToolStage(JSONObject part) {
         if (!part.optString("tool").equals("seedance_video")) return null;
@@ -1872,25 +2026,57 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             result.add(new MainActivity.GalleryItem(file.getAbsolutePath(), video));
     }
 
+    static int[] videoCardSize(int width, int height) {
+        if (width <= 0 || height <= 0) return new int[] {280, 181};
+        double scale = Math.min(280.0 / width, 320.0 / height);
+        return new int[] {Math.max(1, (int) Math.round(width * scale)),
+            Math.max(1, (int) Math.round(height * scale))};
+    }
+
     // 根据文件类型在当前消息位置展示可点击的媒体卡片和实际缩略图。
     // 预览资源就绪后更新该卡片，不用文件名文本代替视频或图片内容。
     private void showAgentMediaCard(LinearLayout container, File file, String type,
                                     String caption) {
         container.removeAllViews();
         if (type.equals("image") || type.equals("video")) {
+            boolean video = type.equals("video");
+            int[] initialSize = video ? videoCardSize(0, 0) : new int[] {220, 240};
             FrameLayout preview = new FrameLayout(activity);
+            if (video) {
+                preview.setContentDescription("播放视频 " + file.getName());
+                android.graphics.drawable.GradientDrawable background =
+                    new android.graphics.drawable.GradientDrawable(
+                        android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+                        new int[] {Color.rgb(26, 43, 69), Color.rgb(46, 82, 120)});
+                background.setCornerRadius(dp(10));
+                preview.setBackground(background);
+                preview.setClipToOutline(true);
+            }
             ImageView cover = new ImageView(activity);
             cover.setScaleType(ImageView.ScaleType.FIT_CENTER);
-            preview.addView(cover, new FrameLayout.LayoutParams(dp(220), dp(240)));
-            MessageImageLoader.load(file.getAbsolutePath(), dp(220), dp(240), cover,
+            preview.addView(cover, new FrameLayout.LayoutParams(
+                LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
+            MessageImageLoader.load(file.getAbsolutePath(),
+                video ? dp(280) : dp(220), video ? dp(320) : dp(240), cover,
                 () -> cover.setContentDescription("媒体无法显示"));
-            if (type.equals("video")) {
-                TextView play = text("▶", 30, Color.WHITE);
+            if (video) {
+                TextView play = text("▶", 20, Color.WHITE);
                 play.setGravity(Gravity.CENTER);
-                play.setBackground(MaiChatTheme.rounded(Color.argb(180, 0, 0, 0), 28, activity));
+                play.setBackground(MaiChatTheme.rounded(Color.argb(190, 0, 0, 0), 26, activity));
                 FrameLayout.LayoutParams playLayout = new FrameLayout.LayoutParams(dp(52), dp(52));
                 playLayout.gravity = Gravity.CENTER;
                 preview.addView(play, playLayout);
+                TextView name = text(file.getName(), 12, Color.WHITE);
+                name.setSingleLine(true);
+                name.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+                name.setTypeface(MaiChatTypography.semibold());
+                name.setPadding(dp(7), dp(4), dp(7), dp(4));
+                name.setBackground(MaiChatTheme.rounded(Color.argb(150, 0, 0, 0), 6, activity));
+                FrameLayout.LayoutParams nameLayout = new FrameLayout.LayoutParams(
+                    LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.LEFT | Gravity.TOP);
+                nameLayout.setMargins(dp(8), dp(8), dp(8), 0);
+                preview.addView(name, nameLayout);
+                name.setMaxWidth(dp(Math.max(1, initialSize[0] - 16)));
                 TextView duration = text("0:00", 12, Color.WHITE);
                 duration.setPadding(dp(5), dp(2), dp(5), dp(2));
                 duration.setBackground(MaiChatTheme.rounded(Color.argb(180, 0, 0, 0), 8, activity));
@@ -1905,15 +2091,35 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                         metadata.setDataSource(file.getAbsolutePath());
                         long ms = Long.parseLong(metadata.extractMetadata(
                             MediaMetadataRetriever.METADATA_KEY_DURATION));
+                        String widthText = metadata.extractMetadata(
+                            MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH);
+                        String heightText = metadata.extractMetadata(
+                            MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT);
+                        String rotationText = metadata.extractMetadata(
+                            MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION);
+                        int width = widthText == null ? 0 : Integer.parseInt(widthText);
+                        int height = heightText == null ? 0 : Integer.parseInt(heightText);
+                        int rotation = rotationText == null ? 0 : Integer.parseInt(rotationText);
+                        if (rotation == 90 || rotation == 270) {
+                            int swap = width; width = height; height = swap;
+                        }
+                        int[] size = videoCardSize(width, height);
                         activity.runOnUiThread(() -> {
-                            if (file.getPath().equals(container.getTag()))
+                            if (file.getPath().equals(container.getTag())) {
                                 duration.setText(String.format(Locale.ROOT, "%d:%02d",
                                     ms / 60000, (ms / 1000) % 60));
+                                preview.setLayoutParams(new LayoutParams(dp(size[0]), dp(size[1])));
+                                name.setMaxWidth(dp(Math.max(1, size[0] - 16)));
+                            }
                         });
                     } catch (Exception ignored) { }
                     finally { try { metadata.release(); } catch (Exception ignored) { } }
                 }, "agent-video-metadata").start();
                 preview.setOnClickListener(view -> {
+                    if (!file.isFile()) {
+                        Toast.makeText(activity, "文件已被移动或删除", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
                     if (activity instanceof MainActivity)
                         ((MainActivity) activity).openAgentMedia(
                             file.getAbsolutePath(), true, mediaPlaylist());
@@ -1925,14 +2131,45 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                             file.getAbsolutePath(), false, mediaPlaylist());
                 });
             }
-            container.addView(preview, new LayoutParams(dp(220), dp(240)));
+            container.addView(preview, new LayoutParams(dp(initialSize[0]), dp(initialSize[1])));
             preview.setOnLongClickListener(view -> {
                 showAgentMediaMenu(view, file, type); return true;
             });
         } else if (type.equals("audio")) {
-            Button audio = button("▶  " + file.getName(), "播放音频", null);
-            audio.setBackground(MaiChatTheme.bordered(
-                MaiChatTheme.BLUE_SOFT, MaiChatTheme.BORDER, 10, activity));
+            LinearLayout audio = row();
+            audio.setGravity(Gravity.CENTER_VERTICAL);
+            audio.setPadding(dp(10), dp(10), dp(10), dp(10));
+            audio.setBackground(MaiChatTheme.rounded(Color.rgb(244, 246, 249), 12, activity));
+            audio.setContentDescription("播放音频");
+            ImageButton play = new ImageButton(activity);
+            play.setImageResource(android.R.drawable.ic_media_play);
+            play.setImageTintList(android.content.res.ColorStateList.valueOf(MaiChatTheme.BLUE));
+            play.setBackground(MaiChatTheme.rounded(MaiChatTheme.BLUE_SOFT, 19, activity));
+            play.setPadding(dp(10), dp(10), dp(10), dp(10));
+            audio.addView(play, new LayoutParams(dp(38), dp(38)));
+            LinearLayout labels = column();
+            labels.setPadding(dp(12), 0, 0, 0);
+            TextView name = text(file.getName(), 14, MaiChatTheme.TEXT);
+            name.setSingleLine(true);
+            name.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+            labels.addView(name, matchWrap());
+            TextView duration = text("0:00", 11, MaiChatTheme.SECONDARY);
+            labels.addView(duration, matchWrap());
+            audio.addView(labels, new LayoutParams(0, LayoutParams.WRAP_CONTENT, 1));
+            new Thread(() -> {
+                MediaMetadataRetriever metadata = new MediaMetadataRetriever();
+                try {
+                    metadata.setDataSource(file.getAbsolutePath());
+                    String value = metadata.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
+                    long ms = value == null ? 0 : Long.parseLong(value);
+                    activity.runOnUiThread(() -> {
+                        if (audio.getParent() == container)
+                            duration.setText(String.format(Locale.ROOT, "%d:%02d",
+                                ms / 60000, (ms / 1000) % 60));
+                    });
+                } catch (Exception ignored) { }
+                finally { try { metadata.release(); } catch (Exception ignored) { } }
+            }, "agent-audio-metadata").start();
             final MediaPlayer[] playback = new MediaPlayer[1];
             final boolean[] ready = {false};
             audio.setOnClickListener(view -> {
@@ -1943,24 +2180,32 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                         player.setDataSource(file.getAbsolutePath());
                         player.setOnPreparedListener(prepared -> {
                             ready[0] = true;
-                            prepared.start(); audio.setText("❚❚  " + file.getName());
+                            prepared.start();
+                            play.setImageResource(android.R.drawable.ic_media_pause);
+                            audio.setContentDescription("暂停音频");
                         });
                         player.setOnCompletionListener(done -> {
-                            audio.setText("▶  " + file.getName());
+                            play.setImageResource(android.R.drawable.ic_media_play);
+                            audio.setContentDescription("播放音频");
                             done.seekTo(0);
                         });
                         player.prepareAsync();
                     } else if (!ready[0]) {
                         return;
                     } else if (playback[0].isPlaying()) {
-                        playback[0].pause(); audio.setText("▶  " + file.getName());
+                        playback[0].pause();
+                        play.setImageResource(android.R.drawable.ic_media_play);
+                        audio.setContentDescription("播放音频");
                     } else {
-                        playback[0].start(); audio.setText("❚❚  " + file.getName());
+                        playback[0].start();
+                        play.setImageResource(android.R.drawable.ic_media_pause);
+                        audio.setContentDescription("暂停音频");
                     }
                 } catch (Exception failure) {
-                    audio.setText("音频无法播放");
+                    duration.setText("音频无法播放");
                 }
             });
+            play.setOnClickListener(view -> audio.performClick());
             audio.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
                 @Override public void onViewAttachedToWindow(View view) { }
                 @Override public void onViewDetachedFromWindow(View view) {
@@ -1972,7 +2217,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             audio.setOnLongClickListener(view -> {
                 showAgentMediaMenu(view, file, type); return true;
             });
-            container.addView(audio, matchWrap());
+            container.addView(audio, new LayoutParams(dp(240), LayoutParams.WRAP_CONTENT));
         }
         if (!caption.isEmpty()) {
             TextView description = MaiChatTypography.body(activity);

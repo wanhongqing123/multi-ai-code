@@ -18,6 +18,8 @@ import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.os.SystemClock;
 import android.view.MotionEvent;
+import android.view.View;
+import android.view.ViewGroup;
 import android.view.accessibility.AccessibilityNodeInfo;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
@@ -189,6 +191,27 @@ public final class MaiFfplayPlaybackInstrumentedTest {
             MotionEvent.ACTION_UP, to, y, 0));
     }
 
+    private static View findDescription(View root, String description) {
+        if (root.getContentDescription() != null &&
+            description.contentEquals(root.getContentDescription())) return root;
+        if (root instanceof ViewGroup)
+            for (int i = 0; i < ((ViewGroup) root).getChildCount(); i++) {
+                View found = findDescription(((ViewGroup) root).getChildAt(i), description);
+                if (found != null) return found;
+            }
+        return null;
+    }
+
+    private static void captureScreen(Context context, String name) throws Exception {
+        Bitmap screenshot = InstrumentationRegistry.getInstrumentation()
+            .getUiAutomation().takeScreenshot();
+        assertNotNull(screenshot);
+        File target = new File(context.getExternalFilesDir(null), name);
+        try (FileOutputStream stream = new FileOutputStream(target)) {
+            assertTrue(screenshot.compress(Bitmap.CompressFormat.PNG, 100, stream));
+        } finally { screenshot.recycle(); }
+    }
+
     @Test public void agentOpensControlsAndClosesGraphicsVideo() throws Exception {
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         Activity activity = InstrumentationRegistry.getInstrumentation().startActivitySync(
@@ -216,6 +239,31 @@ public final class MaiFfplayPlaybackInstrumentedTest {
             } while (SystemClock.uptimeMillis() < deadline);
             assertNotNull("FFplay video view was not created", view);
             assertTrue("FFmpeg frame did not reach Graphics", view.hasPresentedFrame());
+            MaiFfplayVideoView player = view;
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                View speedButton = findDescription(player, "播放倍速");
+                assertNotNull(speedButton);
+                assertTrue(speedButton.performClick());
+                View faster = findDescription(player, "播放倍速 1.5×");
+                assertNotNull(faster);
+                assertEquals(View.VISIBLE, faster.getVisibility());
+            });
+            SystemClock.sleep(1000);
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                View faster = findDescription(player, "播放倍速 1.5×");
+                android.graphics.Rect bounds = new android.graphics.Rect();
+                assertTrue(faster.getGlobalVisibleRect(bounds));
+                assertTrue(bounds.width() > 0 && bounds.height() > 0);
+            });
+            captureScreen(context, "android-video-speed-menu.png");
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                View faster = findDescription(player, "播放倍速 1.5×");
+                assertTrue(faster.performClick());
+                assertEquals(View.GONE, faster.getParent() instanceof View
+                    ? ((View) faster.getParent()).getVisibility() : View.VISIBLE);
+            });
+            SystemClock.sleep(300);
+            captureScreen(context, "android-video-player-parity.png");
             assertEquals(true, tools.execute("maichat_video_command",
                 new JSONObject().put("action", "pause")).getBoolean("accepted"));
             assertEquals(true, tools.execute("maichat_video_command",

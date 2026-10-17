@@ -28,6 +28,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <variant>
 
 #include "agent/AgentChatPanel.h"
 #include "agent/AgentController.h"
@@ -122,6 +123,25 @@ public:
             }
         } else if (sink.onText) {
             sink.onText("Video delivered");
+        }
+        return {};
+    }
+    MaiWireApi wireApi() const override { return MaiWireApi::ChatCompletions; }
+
+private:
+    std::atomic<int> calls_{0};
+};
+
+class AudioDeliveringModel final : public MaiModelClient {
+public:
+    MaiError stream(const MaiModelRequest&, const MaiStreamSink& sink,
+                    const std::atomic<bool>&) override {
+        if (calls_++ == 0) {
+            if (sink.onToolCall) sink.onToolCall(MaiToolInvocation{
+                "audio-call", "agent_send_media",
+                R"({"file_path":"sample.wav","type":"audio"})"});
+        } else if (sink.onText) {
+            sink.onText("Audio delivered");
         }
         return {};
     }
@@ -276,6 +296,8 @@ private slots:
     void inlineMediaBubblesRespectMessageBoundary();
     void completedPdfToolShowsPreviewCardAfterRestore();
     void videoArtifactUsesCompactPlayBadge();
+    void audioArtifactUsesCompactPlaybackCard();
+    void quotedMessageIsSentAndShownInTheComposer();
 };
 
 namespace {
@@ -394,11 +416,72 @@ void AgentPanelSessionTest::videoArtifactUsesCompactPlayBadge() {
              QFileInfo(workspace.filePath(QStringLiteral("sample.mp4"))).canonicalFilePath());
     QVERIFY(videoPlaylist.contains(openedVideo));
     QCOMPARE(videoPlaylist.size(), 2);
-    auto* toolSummary = panel.findChild<QPushButton*>(QStringLiteral("agentToolGroupDisclosure"));
-    QVERIFY(toolSummary != nullptr);
-    QVERIFY(toolSummary->text().contains(QStringLiteral("工具调用 2 次")));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        panel.findChild<QPushButton*>(QStringLiteral("agentToolGroupDisclosure")) == nullptr, 5000);
     const QString capturePath = qEnvironmentVariable("MAICHAT_AGENT_VIDEO_CAPTURE");
     if (!capturePath.isEmpty()) QVERIFY(panel.grab().save(capturePath));
+}
+
+void AgentPanelSessionTest::audioArtifactUsesCompactPlaybackCard() {
+    QTemporaryDir workspace;
+    QVERIFY(workspace.isValid());
+    QVERIFY(QFile::copy(QStringLiteral(MAICHAT_AGENT_AUDIO_FIXTURE),
+                        workspace.filePath(QStringLiteral("sample.wav"))));
+    AgentController controller(std::make_unique<AudioDeliveringModel>(), QString());
+    AgentChatPanel panel(controller);
+    panel.resize(700, 500);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    const QString session = controller.createSession(workspace.path());
+    panel.openSession(session);
+    QVERIFY(controller.sendPrompt(session, QStringLiteral("Show the audio")));
+    controller.agent().waitIdle();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        panel.findChild<QPushButton*>(QStringLiteral("agentMediaAudioPlay")) != nullptr, 5000);
+    auto* play = panel.findChild<QPushButton*>(QStringLiteral("agentMediaAudioPlay"));
+    QCOMPARE(play->size(), QSize(240, 58));
+    QCOMPARE(play->accessibleName(), QStringLiteral("播放音频"));
+    QVERIFY(panel.findChild<QLabel*>(QStringLiteral("agentMediaAudioDuration")) != nullptr);
+    const QString capturePath = qEnvironmentVariable("MAICHAT_AGENT_AUDIO_CAPTURE");
+    if (!capturePath.isEmpty()) QVERIFY(panel.grab().save(capturePath));
+}
+
+void AgentPanelSessionTest::quotedMessageIsSentAndShownInTheComposer() {
+    AgentController controller(std::make_unique<CapturingModel>(), QString());
+    AgentChatPanel panel(controller);
+    panel.resize(800, 600);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    const QString session = controller.createSession(QDir::currentPath());
+    panel.openSession(session);
+    auto* editor = panel.findChild<QTextEdit*>(QStringLiteral("agentPromptEditor"));
+    auto* send = panel.findChild<QPushButton*>(QStringLiteral("agentSendButton"));
+    QVERIFY(editor != nullptr && send != nullptr);
+    editor->setPlainText(QStringLiteral("first"));
+    send->click();
+    controller.agent().waitIdle();
+    QTRY_COMPARE(send->toolTip(), QStringLiteral("发送消息"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !panel.findChildren<QPushButton*>(QStringLiteral("agentQuoteAction")).isEmpty(), 3000);
+    auto* quote = panel.findChildren<QPushButton*>(QStringLiteral("agentQuoteAction")).first();
+    const QString quotedId = quote->property("messageId").toString();
+    QVERIFY(!quotedId.isEmpty());
+    quote->click();
+    auto* strip = panel.findChild<QWidget*>(QStringLiteral("agentQuoteStrip"));
+    QVERIFY(strip != nullptr && strip->isVisible());
+    const QString capturePath = qEnvironmentVariable("MAICHAT_AGENT_QUOTE_CAPTURE");
+    if (!capturePath.isEmpty()) QVERIFY(panel.grab().save(capturePath));
+    editor->setPlainText(QStringLiteral("second"));
+    send->click();
+    controller.agent().waitIdle();
+    QTRY_VERIFY(!strip->isVisible());
+    bool saved = false;
+    for (const MaiMessage& message : controller.agent().listMessages(session.toStdString()))
+        if (message.role == MaiRole::User)
+            for (const MaiMessagePart& part : message.parts)
+                if (const auto* quoted = std::get_if<MaiQuotePart>(&part.body))
+                    saved |= QString::fromStdString(quoted->messageId) == quotedId;
+    QVERIFY(saved);
 }
 
 void AgentPanelSessionTest::newSessionAvoidsFilesystemRoot() {

@@ -655,11 +655,15 @@ public final class AIAssistantController {
         });
     }
     void send(String text, java.util.List<ImportedFile> attachments, Consumer<Boolean> completion) {
-        send(state.selected, text, attachments, completion);
+        send(state.selected, text, attachments, "", completion);
     }
     // 发送目标由可见输入栏决定，不再重读可能先于面板更新的控制器选中状态。
     void send(String intendedSession, String text, java.util.List<ImportedFile> attachments,
               Consumer<Boolean> completion) {
+        send(intendedSession, text, attachments, "", completion);
+    }
+    void send(String intendedSession, String text, java.util.List<ImportedFile> attachments,
+              String quotedMessageId, Consumer<Boolean> completion) {
         java.util.List<ImportedFile> intendedAttachments = new java.util.ArrayList<>(attachments);
         worker.post(() -> {
             boolean success = false;
@@ -681,7 +685,8 @@ public final class AIAssistantController {
                         .put("mimeType", file.mimeType));
                 }
                 invokeNativeAgent(makeOperationRequest("send").put("session", target).put("text", text)
-                    .put("images", images).put("videos", videos));
+                    .put("images", images).put("videos", videos)
+                    .put("quoteMessageId", quotedMessageId));
                 error = "";
                 success = true;
                 refresh(true);

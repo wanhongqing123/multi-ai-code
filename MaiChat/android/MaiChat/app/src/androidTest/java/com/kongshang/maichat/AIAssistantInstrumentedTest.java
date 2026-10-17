@@ -25,6 +25,8 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -168,6 +170,180 @@ public class AIAssistantInstrumentedTest {
                     return result;
             }
         return null;
+    }
+
+    private boolean hasQuotePart(AIAssistantController.State state) {
+        org.json.JSONArray messages = state.data.optJSONArray("messages");
+        if (messages == null) return false;
+        for (int i = 0; i < messages.length(); i++) {
+            JSONObject message = messages.optJSONObject(i);
+            if (message == null || !message.optString("role").equals("user")) continue;
+            org.json.JSONArray parts = message.optJSONArray("parts");
+            if (parts == null) continue;
+            for (int j = 0; j < parts.length(); j++) {
+                JSONObject part = parts.optJSONObject(j);
+                if (part != null && part.optString("kind").equals("quote")) return true;
+            }
+        }
+        return false;
+    }
+
+    private static void writeSilentWav(File file) throws Exception {
+        int dataBytes = 16000 * 2 * 3;
+        ByteBuffer header = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN);
+        header.put("RIFF".getBytes(StandardCharsets.US_ASCII)).putInt(36 + dataBytes);
+        header.put("WAVEfmt ".getBytes(StandardCharsets.US_ASCII)).putInt(16);
+        header.putShort((short) 1).putShort((short) 1);
+        header.putInt(16000).putInt(32000).putShort((short) 2).putShort((short) 16);
+        header.put("data".getBytes(StandardCharsets.US_ASCII)).putInt(dataBytes);
+        try (FileOutputStream output = new FileOutputStream(file)) {
+            output.write(header.array());
+            output.write(new byte[dataBytes]);
+        }
+    }
+
+    @Test
+    public void audioArtifactUsesIosStyleCardAndPlays() throws Exception {
+        Context app = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Intent launch = new Intent(app, AIAssistantTestActivity.class)
+            .putExtra("model_url", "http://127.0.0.1:18190");
+        try (ActivityScenario<AIAssistantTestActivity> scenario = ActivityScenario.launch(launch)) {
+            await(scenario, panel -> panel.controller.state.ready);
+            java.util.concurrent.atomic.AtomicReference<File> path =
+                new java.util.concurrent.atomic.AtomicReference<>();
+            scenario.onActivity(activity ->
+                path.set(activity.panel.controller.workspaceFile("parity-audio.wav")));
+            assertNotNull(path.get());
+            try {
+                writeSilentWav(path.get());
+                scenario.onActivity(activity -> {
+                    activity.panel.composer.setText("audio card");
+                    assertTrue(activity.panel.send.performClick());
+                });
+                await(scenario, panel -> !panel.controller.state.busy() &&
+                    findDescription(panel, "播放音频") != null && visibleText(panel, "0:03"));
+                scenario.onActivity(activity -> {
+                    View card = findDescription(activity.panel, "播放音频");
+                    assertNotNull(card);
+                    assertEquals(Math.round(240 * activity.getResources().getDisplayMetrics().density),
+                        card.getLayoutParams().width);
+                });
+                Bitmap screenshot = InstrumentationRegistry.getInstrumentation()
+                    .getUiAutomation().takeScreenshot();
+                assertNotNull(screenshot);
+                File output = new File(app.getExternalFilesDir(null), "android-agent-audio.png");
+                try (FileOutputStream stream = new FileOutputStream(output)) {
+                    assertTrue(screenshot.compress(Bitmap.CompressFormat.PNG, 100, stream));
+                } finally { screenshot.recycle(); }
+                scenario.onActivity(activity ->
+                    assertTrue(findDescription(activity.panel, "播放音频").performClick()));
+                await(scenario, panel -> findDescription(panel, "暂停音频") != null);
+            } finally { Files.deleteIfExists(path.get().toPath()); }
+        }
+    }
+
+    @Test
+    public void quotedMessageAppearsInComposerAndSentHistory() throws Exception {
+        Context app = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Intent launch = new Intent(app, AIAssistantTestActivity.class)
+            .putExtra("model_url", "http://127.0.0.1:18190");
+        try (ActivityScenario<AIAssistantTestActivity> scenario = ActivityScenario.launch(launch)) {
+            await(scenario, panel -> panel.controller.state.ready);
+            scenario.onActivity(activity -> {
+                activity.panel.composer.setText("first");
+                assertTrue(activity.panel.send.performClick());
+            });
+            await(scenario, panel -> !panel.controller.state.busy() &&
+                visibleText(panel, "Mobile response ready"));
+            scenario.onActivity(activity -> {
+                View quote = findDescription(activity.panel, "引用这条消息");
+                assertNotNull(quote);
+                assertTrue(quote.performClick());
+            });
+            await(scenario, panel -> {
+                View cancel = findDescription(panel, "取消引用");
+                return cancel != null && cancel.isShown() &&
+                    (visibleText(panel, "引用你的消息") || visibleText(panel, "引用 AI 消息"));
+            });
+            Bitmap screenshot = InstrumentationRegistry.getInstrumentation()
+                .getUiAutomation().takeScreenshot();
+            assertNotNull(screenshot);
+            File output = new File(app.getExternalFilesDir(null), "android-agent-quote.png");
+            try (FileOutputStream stream = new FileOutputStream(output)) {
+                assertTrue(screenshot.compress(Bitmap.CompressFormat.PNG, 100, stream));
+            } finally { screenshot.recycle(); }
+            scenario.onActivity(activity -> {
+                activity.panel.composer.setText("second");
+                assertTrue(activity.panel.send.performClick());
+            });
+            await(scenario, panel -> hasQuotePart(panel.controller.state));
+            await(scenario, panel -> visibleText(panel, "↩  first"));
+            scenario.onActivity(activity -> {
+                View cancel = findDescription(activity.panel, "取消引用");
+                assertNotNull(cancel);
+                assertEquals(View.GONE, cancel.getParent() instanceof View
+                    ? ((View) cancel.getParent()).getVisibility() : View.VISIBLE);
+            });
+        }
+    }
+
+    @Test
+    public void mediaToolsCollapseToOneLineAndVideoCardsMatchIos() throws Exception {
+        Context app = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Context tests = InstrumentationRegistry.getInstrumentation().getContext();
+        Intent launch = new Intent(app, AIAssistantTestActivity.class)
+            .putExtra("model_url", "http://127.0.0.1:18190");
+        try (ActivityScenario<AIAssistantTestActivity> scenario = ActivityScenario.launch(launch)) {
+            await(scenario, panel -> panel.controller.state.ready);
+            File first = null, second = null;
+            try {
+                java.util.concurrent.atomic.AtomicReference<File> firstPath =
+                    new java.util.concurrent.atomic.AtomicReference<>();
+                java.util.concurrent.atomic.AtomicReference<File> secondPath =
+                    new java.util.concurrent.atomic.AtomicReference<>();
+                scenario.onActivity(activity -> {
+                    firstPath.set(activity.panel.controller.workspaceFile("parity-one.mp4"));
+                    secondPath.set(activity.panel.controller.workspaceFile("parity-two.mp4"));
+                });
+                first = firstPath.get(); second = secondPath.get();
+                assertNotNull(first); assertNotNull(second);
+                for (File target : new File[] {first, second})
+                    try (InputStream source = tests.getAssets().open("gallery-sample.mp4")) {
+                        Files.copy(source, target.toPath());
+                    }
+                scenario.onActivity(activity -> {
+                    activity.panel.composer.setText("media cards");
+                    assertTrue(activity.panel.send.performClick());
+                });
+                await(scenario, panel -> !panel.controller.state.busy() &&
+                    panel.controller.state.data.toString().contains("parity-two.mp4"));
+                scenario.onActivity(activity -> {
+                    android.widget.ListView list = (android.widget.ListView) findList(activity.panel);
+                    assertNotNull(list);
+                    list.setSelection(0);
+                });
+                await(scenario, panel -> findDescription(panel,
+                    "工具调用 1 次，已完成 · system_resources ×1") != null);
+                scenario.onActivity(activity -> {
+                    View group = findDescription(activity.panel,
+                        "工具调用 1 次，已完成 · system_resources ×1");
+                    assertTrue(group instanceof TextView);
+                    assertEquals(1, ((TextView) group).getMaxLines());
+                    assertNotNull(findDescription(activity.panel, "播放视频 parity-one.mp4"));
+                    assertNotNull(findDescription(activity.panel, "播放视频 parity-two.mp4"));
+                });
+                Bitmap screenshot = InstrumentationRegistry.getInstrumentation()
+                    .getUiAutomation().takeScreenshot();
+                assertNotNull(screenshot);
+                File output = new File(app.getExternalFilesDir(null), "android-agent-parity.png");
+                try (FileOutputStream stream = new FileOutputStream(output)) {
+                    assertTrue(screenshot.compress(Bitmap.CompressFormat.PNG, 100, stream));
+                } finally { screenshot.recycle(); }
+            } finally {
+                if (first != null) Files.deleteIfExists(first.toPath());
+                if (second != null) Files.deleteIfExists(second.toPath());
+            }
+        }
     }
     @Test
     // 验证混合媒体先留在草稿、可移除，且切换会话不会丢失说明和附件。

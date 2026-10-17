@@ -3618,6 +3618,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
         MaiFfplayVideoView video = new MaiFfplayVideoView(this);
+        video.setControlsBottomInset(72);
         video.setVideoPath(path, startPositionUs);
         TextView mediaName = MaiChatTheme.text(this, "", 12, Color.WHITE);
         mediaName.setGravity(Gravity.CENTER);
@@ -3684,17 +3685,13 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         LinearLayout.LayoutParams actionSpacing = new LinearLayout.LayoutParams(dp(50), dp(50));
         actionSpacing.leftMargin = dp(12);
         actions.addView(save, actionSpacing);
-        TextView more = videoAction("⋯", "更多操作");
-        more.setOnClickListener(view -> new AlertDialog.Builder(this)
-            .setTitle(new File(currentPath[0]).getName())
-            .setItems(new String[]{"复制文件路径"},
-                (whichDialog, which) -> copyToClipboard(currentPath[0]))
-            .setNegativeButton("取消", null).show());
-        LinearLayout.LayoutParams moreSpacing = new LinearLayout.LayoutParams(dp(50), dp(50));
-        moreSpacing.leftMargin = dp(12);
-        actions.addView(more, moreSpacing);
-        rootView.addView(actions, new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(72)));
+        TextView copyPath = videoAction("⧉", "复制文件路径");
+        copyPath.setOnClickListener(view -> copyToClipboard(currentPath[0]));
+        LinearLayout.LayoutParams copySpacing = new LinearLayout.LayoutParams(dp(50), dp(50));
+        copySpacing.leftMargin = dp(12);
+        actions.addView(copyPath, copySpacing);
+        frame.addView(actions, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(72), Gravity.BOTTOM));
 
         dialog.setOnDismissListener(d -> {
             video.stop();

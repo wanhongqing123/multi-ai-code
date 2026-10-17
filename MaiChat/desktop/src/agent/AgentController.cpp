@@ -472,6 +472,11 @@ bool AgentController::sendPrompt(const QString& sessionId, const QString& text) 
 }
 
 bool AgentController::sendPrompt(const QString& sessionId, const QString& text, const QStringList& imagePaths) {
+    return sendPrompt(sessionId, text, imagePaths, QString());
+}
+
+bool AgentController::sendPrompt(const QString& sessionId, const QString& text,
+                                 const QStringList& imagePaths, const QString& quotedMessageId) {
     if (imagePaths.size() > 10) {
         runtime_->lastError = QStringLiteral("一次最多添加 10 张图片。");
         return false;
@@ -490,7 +495,8 @@ bool AgentController::sendPrompt(const QString& sessionId, const QString& text, 
     }
     if (!runtime_->modelName.isEmpty() && !setModel(sessionId, runtime_->modelName)) return false;
     MaiResult<std::string> sent =
-        runtime_->agent->submit(MaiSendPrompt{toUtf8(sessionId), toUtf8(text), std::move(images)});
+        runtime_->agent->submit(MaiSendPrompt{toUtf8(sessionId), toUtf8(text), std::move(images),
+                                             {}, toUtf8(quotedMessageId)});
     if (!sent) {
         runtime_->lastError = fromUtf8(sent.error().message());
         return false;

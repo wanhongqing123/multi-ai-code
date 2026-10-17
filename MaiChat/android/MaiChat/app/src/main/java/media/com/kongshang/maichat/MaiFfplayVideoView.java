@@ -3,7 +3,6 @@
 // 主要入口：nativeCommand、nativeSeekPercent、nativeSeekAbsoluteUs、nativePlaybackStatus。
 package com.kongshang.maichat;
 
-import android.app.AlertDialog;
 import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -14,6 +13,8 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.ImageButton;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.SeekBar;
 import android.widget.TextView;
@@ -39,8 +40,11 @@ public final class MaiFfplayVideoView extends FrameLayout {
 
     private final MaiGraphicsTextureView surface;
     private final TextView errorLabel;
-    private final Button playButton;
+    private final ImageButton playButton;
     private final Button speedButton;
+    private final LinearLayout speedChoices;
+    private final FrameLayout.LayoutParams controlsLayout;
+    private final FrameLayout.LayoutParams speedChoicesLayout;
     private final SeekBar seekBar;
     private final TextView timeLabel;
     private boolean seeking;
@@ -53,7 +57,8 @@ public final class MaiFfplayVideoView extends FrameLayout {
                 if (!seeking) seekBar.setProgress((int) (position * 1000 / status[1]));
                 timeLabel.setText(timestamp(position) + " / " + timestamp(status[1]));
                 playing = status[3] == 0;
-                playButton.setText(playing ? "Ⅱ" : "▶");
+                playButton.setImageResource(playing ? android.R.drawable.ic_media_pause
+                    : android.R.drawable.ic_media_play);
                 playButton.setContentDescription(playing ? "暂停视频" : "播放视频");
                 if (status.length >= 5) {
                     speed = status[4] / 100.0;
@@ -116,16 +121,15 @@ public final class MaiFfplayVideoView extends FrameLayout {
         controls.setOrientation(LinearLayout.HORIZONTAL);
         controls.setGravity(Gravity.CENTER_VERTICAL);
         controls.setPadding(dp(12), dp(4), dp(12), dp(4));
-        controls.setBackgroundColor(Color.argb(125, 0, 0, 0));
-        playButton = new Button(context);
-        playButton.setText("Ⅱ");
-        playButton.setTextSize(27);
-        playButton.setTextColor(Color.WHITE);
+        controls.setBackground(MaiChatTheme.rounded(Color.argb(190, 9, 15, 25), 16, context));
+        playButton = new ImageButton(context);
+        playButton.setImageResource(android.R.drawable.ic_media_pause);
+        playButton.setImageTintList(ColorStateList.valueOf(Color.WHITE));
+        playButton.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         playButton.setBackgroundColor(Color.TRANSPARENT);
         playButton.setContentDescription("暂停视频");
-        playButton.setMinWidth(0);
         playButton.setMinimumWidth(0);
-        playButton.setPadding(0, dp(18), 0, 0);
+        playButton.setPadding(dp(15), dp(15), dp(15), dp(15));
         playButton.setOnClickListener(view -> command(playing ? "pause" : "play"));
         controls.addView(playButton, new LinearLayout.LayoutParams(dp(56), dp(58)));
         LinearLayout timeline = new LinearLayout(context);
@@ -155,18 +159,51 @@ public final class MaiFfplayVideoView extends FrameLayout {
         speedButton.setText("1×");
         speedButton.setTextSize(14);
         speedButton.setTextColor(Color.WHITE);
-        speedButton.setBackgroundColor(Color.TRANSPARENT);
+        speedButton.setBackground(MaiChatTheme.rounded(
+            Color.argb(45, 255, 255, 255), 24, context));
         speedButton.setContentDescription("播放倍速");
-        speedButton.setOnClickListener(view -> {
-            final double[] rates = {0.25, 0.5, 1.0, 1.5, 2.0};
-            final String[] choices = {"0.25×", "0.5×", "1×", "1.5×", "2×"};
-            new AlertDialog.Builder(getContext()).setTitle("播放倍速")
-                .setItems(choices, (dialog, selected) -> setSpeed(rates[selected]))
-                .show();
-        });
         controls.addView(speedButton, new LinearLayout.LayoutParams(dp(64), dp(58)));
-        addView(controls, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT,
-            Gravity.BOTTOM));
+        controlsLayout = new LayoutParams(LayoutParams.MATCH_PARENT,
+            LayoutParams.WRAP_CONTENT, Gravity.BOTTOM);
+        controlsLayout.setMargins(dp(16), 0, dp(16), dp(4));
+        addView(controls, controlsLayout);
+
+        speedChoices = new LinearLayout(context);
+        speedButton.setOnClickListener(view -> speedChoices.setVisibility(
+            speedChoices.getVisibility() == VISIBLE ? GONE : VISIBLE));
+        speedChoices.setGravity(Gravity.CENTER_VERTICAL);
+        speedChoices.setPadding(dp(6), dp(5), dp(6), dp(5));
+        speedChoices.setBackground(MaiChatTheme.rounded(
+            Color.argb(220, 9, 15, 25), 16, context));
+        final double[] rates = {0.25, 0.5, 1.0, 1.5, 2.0};
+        for (double rate : rates) {
+            Button choice = new Button(context);
+            choice.setText(formatSpeed(rate));
+            choice.setAllCaps(false);
+            choice.setTextSize(14);
+            choice.setTextColor(Color.WHITE);
+            choice.setBackgroundColor(Color.TRANSPARENT);
+            choice.setContentDescription("播放倍速 " + formatSpeed(rate));
+            choice.setOnClickListener(view -> {
+                speedChoices.setVisibility(GONE);
+                if (!setSpeed(rate)) {
+                    errorLabel.setText("倍速切换失败");
+                    errorLabel.setVisibility(VISIBLE);
+                }
+            });
+            speedChoices.addView(choice, new LinearLayout.LayoutParams(0, dp(44), 1));
+        }
+        speedChoices.setVisibility(GONE);
+        speedChoicesLayout = new LayoutParams(LayoutParams.MATCH_PARENT,
+            LayoutParams.WRAP_CONTENT, Gravity.BOTTOM);
+        speedChoicesLayout.setMargins(dp(16), 0, dp(16), dp(74));
+        addView(speedChoices, speedChoicesLayout);
+    }
+
+    public void setControlsBottomInset(int bottomDp) {
+        controlsLayout.bottomMargin = dp(Math.max(0, bottomDp) + 4);
+        speedChoicesLayout.bottomMargin = dp(Math.max(0, bottomDp) + 74);
+        requestLayout();
     }
 
     private static String timestamp(long microseconds) {
@@ -225,7 +262,7 @@ public final class MaiFfplayVideoView extends FrameLayout {
         active = new WeakReference<>(this);
         presented = false;
         playing = true;
-        playButton.setText("Ⅱ");
+        playButton.setImageResource(android.R.drawable.ic_media_pause);
         playButton.setContentDescription("暂停视频");
         seekBar.setProgress(0);
         timeLabel.setText("0:00 / 0:00");
@@ -250,7 +287,8 @@ public final class MaiFfplayVideoView extends FrameLayout {
         boolean accepted = nativeCommand(playbackHandle, action);
         if (accepted && action.equals("pause")) {
             playing = !playing;
-            playButton.setText(playing ? "Ⅱ" : "▶");
+            playButton.setImageResource(playing ? android.R.drawable.ic_media_pause
+                : android.R.drawable.ic_media_play);
             playButton.setContentDescription(playing ? "暂停视频" : "播放视频");
         }
         return accepted;
@@ -278,7 +316,7 @@ public final class MaiFfplayVideoView extends FrameLayout {
         playbackHandle = nativeCreate(graphicsViewId, videoPath, speed, 0);
         if (playbackHandle == 0) return false;
         playing = true;
-        playButton.setText("Ⅱ");
+        playButton.setImageResource(android.R.drawable.ic_media_pause);
         playButton.setContentDescription("暂停视频");
         seekBar.setProgress(0);
         return true;

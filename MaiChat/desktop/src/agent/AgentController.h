@@ -117,6 +117,8 @@ public:
   bool sendPrompt(const QString &sessionId, const QString &text);
   bool sendPrompt(const QString &sessionId, const QString &text,
                   const QStringList &imagePaths);
+  bool sendPrompt(const QString &sessionId, const QString &text,
+                  const QStringList &imagePaths, const QString &quotedMessageId);
   bool setModel(const QString &sessionId, const QString &model);
   bool setDefaultModel(const QString &model);
   bool interrupt(const QString &sessionId);

@@ -12,7 +12,9 @@ public final class AIAssistantTestActivity extends Activity {
     @Override
     public void onCreate(Bundle saved) {
         super.onCreate(saved);
-        panel = new AIAssistantPanel(this, new AIAssistantController(this, "http://127.0.0.1:18189"));
+        String endpoint = getIntent().getStringExtra("model_url");
+        if (endpoint == null || endpoint.isEmpty()) endpoint = "http://127.0.0.1:18189";
+        panel = new AIAssistantPanel(this, new AIAssistantController(this, endpoint));
         setContentView(panel);
     }
     @Override

@@ -13,6 +13,10 @@ if (asrPropsFile.exists()) {
     asrPropsFile.withInputStream { asrProps.load(it) }
 }
 def asrValue = { String key -> (asrProps.getProperty(key) ?: "").trim() }
+def releaseStorePath = System.getenv("MAICHAT_ANDROID_KEYSTORE")
+def releaseStorePassword = System.getenv("MAICHAT_ANDROID_STORE_PASSWORD")
+def releaseKeyAlias = System.getenv("MAICHAT_ANDROID_KEY_ALIAS")
+def releaseKeyPassword = System.getenv("MAICHAT_ANDROID_KEY_PASSWORD")
 
 // RVM 原生推理库统一由仓库内 ONNX Runtime 源码构建，不从 Maven 下载预编译包。
 // 首次运行 MaiAgent/scripts/build-onnxruntime-android-jni.sh 生成这两个 ABI 的库。
@@ -50,6 +54,17 @@ android {
         }
     }
 
+    signingConfigs {
+        release {
+            if (releaseStorePath && releaseStorePassword && releaseKeyAlias && releaseKeyPassword) {
+                storeFile file(releaseStorePath)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
+
     // 本机假账号服务必须由调试构建显式启用；发布包不包含该开关。
     buildTypes {
         debug {
@@ -58,6 +73,7 @@ android {
         }
         release {
             buildConfigField "boolean", "USE_LOCAL_UI_AUTH", "false"
+            signingConfig signingConfigs.release
         }
     }
 

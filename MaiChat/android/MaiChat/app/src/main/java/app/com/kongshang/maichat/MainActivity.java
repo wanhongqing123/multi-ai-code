@@ -25,7 +25,9 @@ import android.content.res.Configuration;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.media.MediaScannerConnection;
@@ -3638,8 +3640,9 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         ImageView image = new ImageView(this);
         image.setScaleType(ImageView.ScaleType.CENTER_CROP);
         image.setBackgroundColor(MaiChatTheme.PAGE);
+        image.setContentDescription("预览图片");
         image.setOnClickListener(view -> showFullScreenImage(
-            attachment.localPath(), imMediaPlaylist(activeChatUserId)));
+            attachment.localPath(), imMediaPlaylist(activeChatUserId), view));
         TextView imageMissing = MaiChatTheme.text(this, "图片暂不可预览", 14, MaiChatTheme.SECONDARY);
         imageMissing.setVisibility(View.GONE);
         MessageImageLoader.load(attachment.localPath(), dp(260), dp(190), image, () -> {
@@ -4276,12 +4279,26 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         showFullScreenImage(path, candidates, 0);
     }
 
+    private void showFullScreenImage(String path, List<GalleryItem> candidates, View source) {
+        showFullScreenImage(path, candidates, 0, source);
+    }
+
     @SuppressLint("ClickableViewAccessibility")
     // 将选中的图片放入全屏媒体序列，接收左右滑动以导航相邻图片或视频。
     // 封面、来源路径和序列索引在进入前确定，避免滑动时拿错文件。
     private void showFullScreenImage(String path, List<GalleryItem> candidates,
                                      int entryDirection) {
+        showFullScreenImage(path, candidates, entryDirection, null);
+    }
+
+    private void showFullScreenImage(String path, List<GalleryItem> candidates,
+                                     int entryDirection, View source) {
         boolean reuseDialog = imageDialog != null && imageDialog.isShowing();
+        Rect sourceBounds = new Rect();
+        Bitmap sourceBitmap = !reuseDialog && videoDialog == null && source != null
+            && source.getGlobalVisibleRect(sourceBounds)
+            ? snapshotPreviewSource(source) : null;
+        boolean bubbleEntry = sourceBitmap != null && !sourceBounds.isEmpty();
         String previousPath = galleryImagePath;
         Bitmap previousFrame = reuseDialog && entryDirection != 0 && galleryImageView != null
             ? galleryImageView.snapshot() : null;
@@ -4295,11 +4312,15 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         Dialog dialog = reuseDialog ? imageDialog :
             new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
         FrameLayout frame = new FrameLayout(this);
-        frame.setBackgroundColor(Color.BLACK);
+        frame.setBackgroundColor(bubbleEntry ? Color.TRANSPARENT : Color.BLACK);
+        View dim = new View(this);
+        dim.setBackgroundColor(Color.BLACK);
+        dim.setAlpha(bubbleEntry ? 0.68f : 1f);
+        frame.addView(dim, new FrameLayout.LayoutParams(-1, -1));
         // 同一入口供 IM 与 AI 助手共用：背景铺满屏幕，前景仍完整显示原图。
         MaiGraphicsImageView backdrop = new MaiGraphicsImageView(this);
         backdrop.showImage(path, true, () -> { });
-        backdrop.setAlpha(0.48f);
+        backdrop.setAlpha(bubbleEntry ? 0f : 0.48f);
         if (Build.VERSION.SDK_INT >= 31) {
             backdrop.setRenderEffect(android.graphics.RenderEffect.createBlurEffect(
                 dp(24), dp(24), android.graphics.Shader.TileMode.CLAMP));
@@ -4308,13 +4329,29 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         View previousPreview = previousFrame == null ? null : gallerySnapshot(previousFrame);
         MaiGraphicsImageView image = new MaiGraphicsImageView(this);
+        if (bubbleEntry) image.setAlpha(0f);
+        final ImageView[] entryOverlay = {null};
+        List<View> entryChrome = new ArrayList<>();
         final boolean[] transitioned = {false};
         image.setPresentationListener(success -> {
             if (imageDialog != dialog || galleryImageView != image || transitioned[0]) return;
             // 图片解码完成后才让实际画面滑入，避免只动了加载中的黑底。
             if (success) {
                 transitioned[0] = true;
-                animateGalleryEntry(image, entryDirection);
+                if (bubbleEntry) {
+                    dim.animate().alpha(1f).setDuration(260).start();
+                    backdrop.animate().alpha(0.48f).setStartDelay(100)
+                        .setDuration(160).start();
+                    image.animate().alpha(1f).setDuration(260).start();
+                    for (View chrome : entryChrome)
+                        chrome.animate().alpha(1f).setDuration(260).start();
+                    if (entryOverlay[0] != null) {
+                        ImageView snapshot = entryOverlay[0];
+                        snapshot.animate().scaleX(1f).scaleY(1f)
+                            .translationX(0f).translationY(0f).alpha(0f)
+                            .setDuration(260).withEndAction(() -> frame.removeView(snapshot)).start();
+                    }
+                } else animateGalleryEntry(image, entryDirection);
                 if (previousPreview != null) {
                     previousPreview.animate().translationX(-entryDirection * dp(48))
                         .alpha(0).setDuration(220)
@@ -4404,10 +4441,25 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT);
         }
+        android.util.DisplayMetrics display = getResources().getDisplayMetrics();
+        int targetWidth = imageParams.width > 0 ? imageParams.width : display.widthPixels;
+        int targetHeight = imageParams.height > 0 ? imageParams.height : display.heightPixels;
         frame.addView(image, imageParams);
         if (previousPreview != null)
             frame.addView(previousPreview, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        if (bubbleEntry) {
+            ImageView snapshot = new ImageView(this);
+            snapshot.setImageBitmap(sourceBitmap);
+            snapshot.setScaleType(ImageView.ScaleType.FIT_XY);
+            frame.addView(snapshot, new FrameLayout.LayoutParams(
+                targetWidth, targetHeight, Gravity.CENTER));
+            snapshot.setScaleX((float) sourceBounds.width() / targetWidth);
+            snapshot.setScaleY((float) sourceBounds.height() / targetHeight);
+            snapshot.setTranslationX(sourceBounds.exactCenterX() - display.widthPixels / 2f);
+            snapshot.setTranslationY(sourceBounds.exactCenterY() - display.heightPixels / 2f);
+            entryOverlay[0] = snapshot;
+        }
         if (playlist.size() > 1) {
             TextView mediaName = MaiChatTheme.text(this,
                 (selected + 1) + "/" + playlist.size() + " · " + new File(path).getName(),
@@ -4420,14 +4472,47 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(32), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
             nameParams.setMargins(dp(80), dp(20), dp(80), 0);
             frame.addView(mediaName, nameParams);
+            if (bubbleEntry) { mediaName.setAlpha(0f); entryChrome.add(mediaName); }
         }
         TextView close = iconButton("×", 26, Color.WHITE);
         close.setContentDescription("关闭图片预览");
         close.setBackground(MaiChatTheme.rounded(Color.argb(160, 0, 0, 0), 20, this));
-        close.setOnClickListener(view -> dialog.dismiss());
+        final boolean[] closing = {false};
+        close.setOnClickListener(view -> {
+            if (!bubbleEntry || !transitioned[0] || source == null || !source.isAttachedToWindow()
+                || imageDialog != dialog || galleryImageView != image) {
+                dialog.dismiss();
+                return;
+            }
+            Rect destination = new Rect();
+            if (closing[0] || !source.getGlobalVisibleRect(destination)) {
+                if (!closing[0]) dialog.dismiss();
+                return;
+            }
+            Bitmap current = image.snapshot();
+            if (current == null) current = sourceBitmap;
+            if (current == null) { dialog.dismiss(); return; }
+            closing[0] = true;
+            ImageView shrink = new ImageView(this);
+            shrink.setImageBitmap(current);
+            shrink.setScaleType(ImageView.ScaleType.FIT_XY);
+            frame.addView(shrink, new FrameLayout.LayoutParams(
+                targetWidth, targetHeight, Gravity.CENTER));
+            image.setAlpha(0f);
+            dim.animate().alpha(0f).setDuration(220).start();
+            backdrop.animate().alpha(0f).setDuration(220).start();
+            for (View chrome : entryChrome) chrome.animate().alpha(0f).setDuration(160).start();
+            shrink.animate()
+                .scaleX((float) destination.width() / targetWidth)
+                .scaleY((float) destination.height() / targetHeight)
+                .translationX(destination.exactCenterX() - display.widthPixels / 2f)
+                .translationY(destination.exactCenterY() - display.heightPixels / 2f)
+                .setDuration(220).withEndAction(dialog::dismiss).start();
+        });
         FrameLayout.LayoutParams closeParams = new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP | Gravity.START);
         closeParams.setMargins(dp(20), dp(18), 0, 0);
         frame.addView(close, closeParams);
+        if (bubbleEntry) { close.setAlpha(0f); entryChrome.add(close); }
         LinearLayout actions = new LinearLayout(this);
         actions.setGravity(Gravity.CENTER_VERTICAL);
         actions.setPadding(dp(6), 0, dp(6), 0);
@@ -4444,7 +4529,19 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             ViewGroup.LayoutParams.WRAP_CONTENT, dp(52), Gravity.BOTTOM | Gravity.END);
         actionParams.setMargins(0, 0, dp(20), dp(54));
         frame.addView(actions, actionParams);
+        if (bubbleEntry) { actions.setAlpha(0f); entryChrome.add(actions); }
         dialog.setContentView(frame);
+        if (bubbleEntry && dialog.getWindow() != null) {
+            dialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            dialog.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+        }
+        if (bubbleEntry)
+            dialog.setOnKeyListener((ignored, key, event) -> {
+                if (key != KeyEvent.KEYCODE_BACK) return false;
+                if (event.getAction() == KeyEvent.ACTION_UP) close.performClick();
+                return true;
+            });
+        else dialog.setOnKeyListener(null);
         dialog.setOnDismissListener(ignored -> {
             if (imageDialog == dialog) {
                 imageDialog = null;
@@ -4457,6 +4554,14 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         galleryImageView = image;
         galleryImagePath = path;
         if (!reuseDialog) dialog.show();
+    }
+
+    private Bitmap snapshotPreviewSource(View source) {
+        if (source.getWidth() <= 0 || source.getHeight() <= 0) return null;
+        Bitmap bitmap = Bitmap.createBitmap(
+            source.getWidth(), source.getHeight(), Bitmap.Config.ARGB_8888);
+        source.draw(new Canvas(bitmap));
+        return bitmap;
     }
 
     private View gallerySnapshot(Bitmap bitmap) {

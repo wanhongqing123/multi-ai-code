@@ -5,13 +5,16 @@ package com.kongshang.maichat;
 
 import android.content.Context;
 import android.app.UiAutomation;
+import android.app.Dialog;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
+import android.graphics.Color;
 import android.os.SystemClock;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.TextView;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
@@ -77,6 +80,79 @@ public class ChatInteractionInstrumentedTest {
             Thread.sleep(30);
         }
         assertTrue("UI condition timed out", done.get());
+    }
+    @Test public void imImageBubbleOpensExpandedPreviewAndReturnsToChat() throws Exception {
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+            AtomicReference<File> source = new AtomicReference<>();
+            scenario.onActivity(activity -> {
+                try {
+                    ((RemoteIMSessionController) get(activity, "session")).destroy();
+                    File directory = new File(activity.getCacheDir(), "image-preview-" + System.nanoTime());
+                    directory.mkdirs();
+                    RemoteIMSessionController session = new RemoteIMSessionController(
+                        new LocalSettingsStore(new File(directory, "settings")),
+                        new LocalChatHistoryStore(new File(directory, "history")));
+                    session.login("image-owner");
+                    session.addContact("image-peer");
+                    File file = new File(directory, "photo.png");
+                    Bitmap bitmap = Bitmap.createBitmap(320, 500, Bitmap.Config.ARGB_8888);
+                    bitmap.eraseColor(Color.RED);
+                    try (FileOutputStream output = new FileOutputStream(file)) {
+                        assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output));
+                    } finally { bitmap.recycle(); }
+                    source.set(file);
+                    session.chatState().queueOutgoingImageTo("image-peer", file.getAbsolutePath(),
+                        320, 500, file.length());
+                    set(activity, "session", session);
+                    set(activity, "showInitialLogin", false);
+                    call(activity, "render", new Class<?>[0]);
+                    call(activity, "openChat", new Class<?>[]{String.class}, "image-peer");
+                } catch (Exception error) { throw new AssertionError(error); }
+            });
+            await(scenario, activity -> {
+                View sourceView = findDescription(activity.getWindow().getDecorView(), "预览图片");
+                return sourceView instanceof ImageView && sourceView.getWidth() > 0 &&
+                    ((ImageView) sourceView).getDrawable() != null;
+            });
+            SystemClock.sleep(500);
+            scenario.onActivity(activity -> {
+                View sourceView = findDescription(activity.getWindow().getDecorView(), "预览图片");
+                assertNotNull(sourceView);
+                assertTrue(sourceView.performClick());
+            });
+            await(scenario, activity -> {
+                Dialog preview = (Dialog) get(activity, "imageDialog");
+                return preview != null && preview.isShowing() &&
+                    get(activity, "galleryImageView") != null;
+            });
+            long deadline = SystemClock.uptimeMillis() + 10000;
+            boolean red = false;
+            while (SystemClock.uptimeMillis() < deadline) {
+                Bitmap screen = InstrumentationRegistry.getInstrumentation()
+                    .getUiAutomation().takeScreenshot();
+                if (screen != null) {
+                    int color = screen.getPixel(screen.getWidth() / 2, screen.getHeight() / 2);
+                    red = Color.red(color) > 180 && Color.blue(color) < 80;
+                    screen.recycle();
+                    if (red) break;
+                }
+                SystemClock.sleep(50);
+            }
+            assertTrue("Expanded Graphics image did not appear", red);
+            SystemClock.sleep(600);
+            scenario.onActivity(activity -> {
+                try {
+                    Dialog preview = (Dialog) get(activity, "imageDialog");
+                    View close = findDescription(preview.getWindow().getDecorView(), "关闭图片预览");
+                    assertNotNull(close);
+                    assertTrue(close.performClick());
+                } catch (Exception error) { throw new AssertionError(error); }
+            });
+            await(scenario, activity -> get(activity, "imageDialog") == null &&
+                "image-peer".equals(get(activity, "activeChatUserId")));
+            SystemClock.sleep(500);
+            if (source.get() != null) source.get().delete();
+        }
     }
     @Test public void landscapeShowsConversationBesideChatAndKeepsDraftOnRotation() throws Exception {
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {

@@ -20,6 +20,7 @@
 #include <QMenu>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QScreen>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QSignalSpy>
@@ -3459,10 +3460,18 @@ void MainWindowLayoutTest::maximizedImageBubbleOpensOnlyOnePreview() {
     // 连续到达的点击事件也只能复用当前预览，不能叠出多个预览窗口。
     QTest::mouseClick(imageLabel, Qt::LeftButton);
     QTest::mouseClick(imageLabel, Qt::LeftButton);
+    QVERIFY(window.findChild<QLabel*>(QStringLiteral("imagePreviewTransitionSnapshot")) != nullptr);
+    const QByteArray capture = qgetenv("MAICHAT_TEST_CAPTURE_PATH");
+    if (!capture.isEmpty()) {
+        QTest::qWait(100);
+        QVERIFY(window.screen()->grabWindow(0, window.x(), window.y(),
+                                            window.width(), window.height())
+                    .save(QString::fromUtf8(capture)));
+    }
     QTRY_COMPARE(window.findChildren<ImagePreviewDialog*>().size(), 1);
     auto* preview = window.findChild<ImagePreviewDialog*>(QStringLiteral("imagePreviewDialog"));
     QVERIFY(preview != nullptr);
-    QVERIFY(preview->isVisible());
+    QTRY_VERIFY(preview->isVisible());
     QVERIFY(!(preview->windowState() & Qt::WindowFullScreen));
     QVERIFY(!preview->windowFlags().testFlag(Qt::FramelessWindowHint));
     QCOMPARE(preview->size(), originalSize);
@@ -3471,8 +3480,24 @@ void MainWindowLayoutTest::maximizedImageBubbleOpensOnlyOnePreview() {
     preview->resize(resizedPreview);
     QTRY_COMPARE(preview->size(), resizedPreview);
 
-    preview->accept();
+    QTest::mouseClick(preview, Qt::LeftButton);
+    QVERIFY(window.findChild<QLabel*>(QStringLiteral("imagePreviewTransitionSnapshot")) != nullptr);
+    if (!capture.isEmpty()) {
+        QTest::qWait(100);
+        QVERIFY(window.screen()->grabWindow(0, window.x(), window.y(),
+                                            window.width(), window.height())
+                    .save(QString::fromUtf8(capture) + QStringLiteral(".close.png")));
+    }
     QTRY_VERIFY(window.findChildren<ImagePreviewDialog*>().isEmpty());
+    QTRY_VERIFY(imageLabel->graphicsEffect() == nullptr);
+    QVERIFY(imageLabel->isVisible());
+    QTest::mouseClick(imageLabel, Qt::LeftButton);
+    auto* reopened = window.findChild<ImagePreviewDialog*>(QStringLiteral("imagePreviewDialog"));
+    QVERIFY(reopened);
+    QTRY_VERIFY(reopened->isVisible());
+    reopened->close();
+    QTRY_VERIFY(window.findChildren<ImagePreviewDialog*>().isEmpty());
+    QTRY_VERIFY(imageLabel->graphicsEffect() == nullptr);
 }
 
 void MainWindowLayoutTest::copyAttachmentToPathCopiesOverwritesAndReportsErrors() {

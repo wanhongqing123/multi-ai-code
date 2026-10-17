@@ -41,6 +41,7 @@
 #include <QFont>
 #include <QFontInfo>
 #include <QFontMetrics>
+#include <QGraphicsOpacityEffect>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QHash>
@@ -66,6 +67,7 @@
 #include <QPixmap>
 #include <QPointer>
 #include <QPolygon>
+#include <QPropertyAnimation>
 #include <QResizeEvent>
 #include <QScrollBar>
 #include <QSet>
@@ -867,7 +869,7 @@ private:
 class ClickableImageLabel final : public QLabel {
 public:
   explicit ClickableImageLabel(QString imagePath,
-                               std::function<void(const QString &)> onClick,
+                               std::function<void(const QString &, QWidget *)> onClick,
                                QWidget *parent = nullptr)
       : QLabel(parent), imagePath_(std::move(imagePath)),
         onClick_(std::move(onClick)) {
@@ -877,7 +879,7 @@ public:
 protected:
   void mouseReleaseEvent(QMouseEvent *event) override {
     if (event->button() == Qt::LeftButton && onClick_) {
-      onClick_(imagePath_);
+      onClick_(imagePath_, this);
       event->accept();
       return;
     }
@@ -886,7 +888,7 @@ protected:
 
 private:
   QString imagePath_;
-  std::function<void(const QString &)> onClick_;
+  std::function<void(const QString &, QWidget *)> onClick_;
 };
 
 enum class LineIconKind {
@@ -5066,10 +5068,12 @@ void MainWindow::forwardLocalVideo(const QString &path) {
   app_.sendVideo(path);
 }
 
-void MainWindow::openImagePreview(const QString &imagePath) {
+void MainWindow::openImagePreview(const QString &imagePath, QWidget *source) {
   if (imagePreviewDialog_) {
-    imagePreviewDialog_->raise();
-    imagePreviewDialog_->activateWindow();
+    if (imagePreviewDialog_->isVisible()) {
+      imagePreviewDialog_->raise();
+      imagePreviewDialog_->activateWindow();
+    }
     return;
   }
 
@@ -5082,9 +5086,154 @@ void MainWindow::openImagePreview(const QString &imagePath) {
     if (imagePreviewDialog_ == dialog)
       imagePreviewDialog_ = nullptr;
   });
+  auto sourceOpacity = std::make_shared<QPointer<QGraphicsOpacityEffect>>();
+  QPointer<QWidget> sourceForRestore(source);
+  connect(dialog, &QObject::destroyed, this, [sourceOpacity, sourceForRestore] {
+    if (sourceForRestore && *sourceOpacity &&
+        sourceForRestore->graphicsEffect() == sourceOpacity->data())
+      sourceForRestore->setGraphicsEffect(nullptr);
+  });
 
-  // 普通可缩放窗口只 show 一次。避免 macOS 最大化主窗口时进入原生全屏
-  // Space，也避免 showFullScreen() + exec() 组合造成预览反复闪现。
+  if (source) {
+    QPointer<QWidget> sourceGuard(source);
+    auto closing = std::make_shared<bool>(false);
+    dialog->setCloseHandler([this, dialog, sourceGuard, sourceOpacity, closing] {
+      if (*closing) return true;
+      if (!sourceGuard || !sourceGuard->isVisible() || dialog->sourceImage().isNull())
+        return false;
+      QRect destination(mapFromGlobal(sourceGuard->mapToGlobal(QPoint(0, 0))),
+                        sourceGuard->size());
+      if (auto *label = qobject_cast<QLabel *>(sourceGuard.data()); label &&
+          label->pixmap() && !label->pixmap()->isNull()) {
+        QSize fitted = (QSizeF(label->pixmap()->size()) /
+                        label->pixmap()->devicePixelRatioF()).toSize();
+        fitted.scale(sourceGuard->size(), Qt::KeepAspectRatio);
+        const QPoint inset((sourceGuard->width() - fitted.width()) / 2,
+                           (sourceGuard->height() - fitted.height()) / 2);
+        destination = QRect(mapFromGlobal(sourceGuard->mapToGlobal(inset)), fitted);
+      }
+      if (!rect().intersects(destination)) return false;
+      *closing = true;
+      QSize visibleImage = (QSizeF(dialog->sourceImage().size()) /
+                            dialog->sourceImage().devicePixelRatioF()).toSize();
+      visibleImage.scale(dialog->size(), Qt::KeepAspectRatio);
+      const QPoint imageInset((dialog->width() - visibleImage.width()) / 2,
+                              (dialog->height() - visibleImage.height()) / 2);
+      const QRect start(mapFromGlobal(dialog->mapToGlobal(imageInset)), visibleImage);
+      auto *scrim = new QWidget(this);
+      scrim->setObjectName(QStringLiteral("imagePreviewTransitionScrim"));
+      scrim->setGeometry(rect());
+      scrim->setStyleSheet(QStringLiteral("background:#08090b;"));
+      auto *opacity = new QGraphicsOpacityEffect(scrim);
+      opacity->setOpacity(0.62);
+      scrim->setGraphicsEffect(opacity);
+      scrim->show();
+      scrim->raise();
+      auto *snapshot = new QLabel(this);
+      snapshot->setObjectName(QStringLiteral("imagePreviewTransitionSnapshot"));
+      snapshot->setPixmap(dialog->sourceImage());
+      snapshot->setScaledContents(true);
+      snapshot->setGeometry(start);
+      snapshot->show();
+      snapshot->raise();
+      dialog->setWindowOpacity(0.0);
+      dialog->hide();
+      auto *fade = new QPropertyAnimation(opacity, "opacity", scrim);
+      fade->setDuration(220);
+      fade->setStartValue(0.62);
+      fade->setEndValue(0.0);
+      auto *shrink = new QPropertyAnimation(snapshot, "geometry", snapshot);
+      shrink->setDuration(220);
+      shrink->setEasingCurve(QEasingCurve::OutCubic);
+      shrink->setStartValue(start);
+      shrink->setEndValue(destination);
+      QPointer<ImagePreviewDialog> previewGuard(dialog);
+      connect(shrink, &QPropertyAnimation::finished, this,
+              [previewGuard, sourceOpacity, scrim, snapshot] {
+                scrim->deleteLater();
+                snapshot->deleteLater();
+                if (*sourceOpacity) (*sourceOpacity)->setOpacity(1.0);
+                if (previewGuard) {
+                  previewGuard->setCloseHandler({});
+                  previewGuard->accept();
+                }
+              });
+      QTimer::singleShot(50, this, [fade, shrink] {
+        fade->start(QAbstractAnimation::DeleteWhenStopped);
+        shrink->start(QAbstractAnimation::DeleteWhenStopped);
+      });
+      return true;
+    });
+  }
+
+  // 保留普通可缩放窗口；气泡点击时在主窗口里用原缩略图过渡到预览位置。
+  if (source && source->isVisible() && !source->size().isEmpty()) {
+    QPixmap thumbnail;
+    QRect start;
+    if (auto *label = qobject_cast<QLabel *>(source); label &&
+        label->pixmap() && !label->pixmap()->isNull()) {
+      thumbnail = *label->pixmap();
+      QSize imageSize = (QSizeF(thumbnail.size()) / thumbnail.devicePixelRatioF()).toSize();
+      imageSize.scale(source->size(), Qt::KeepAspectRatio);
+      const QPoint inset((source->width() - imageSize.width()) / 2,
+                         (source->height() - imageSize.height()) / 2);
+      start = QRect(mapFromGlobal(source->mapToGlobal(inset)), imageSize);
+    } else {
+      thumbnail = source->grab();
+      start = QRect(mapFromGlobal(source->mapToGlobal(QPoint(0, 0))), source->size());
+    }
+    if (!thumbnail.isNull()) {
+      const QRect target(rect().center().x() - dialog->width() / 2,
+                         rect().center().y() - dialog->height() / 2,
+                         dialog->width(), dialog->height());
+      dialog->move(mapToGlobal(target.topLeft()));
+      auto *scrim = new QWidget(this);
+      scrim->setObjectName(QStringLiteral("imagePreviewTransitionScrim"));
+      scrim->setGeometry(rect());
+      scrim->setStyleSheet(QStringLiteral("background:#08090b;"));
+      auto *opacity = new QGraphicsOpacityEffect(scrim);
+      opacity->setOpacity(0);
+      scrim->setGraphicsEffect(opacity);
+      scrim->show();
+      scrim->raise();
+      auto *snapshot = new QLabel(this);
+      snapshot->setObjectName(QStringLiteral("imagePreviewTransitionSnapshot"));
+      snapshot->setPixmap(thumbnail);
+      snapshot->setScaledContents(true);
+      snapshot->setGeometry(start);
+      snapshot->show();
+      snapshot->raise();
+      auto *effect = new QGraphicsOpacityEffect(source);
+      effect->setOpacity(0.0);
+      source->setGraphicsEffect(effect);
+      *sourceOpacity = effect;
+      auto *fade = new QPropertyAnimation(opacity, "opacity", scrim);
+      fade->setDuration(220);
+      fade->setStartValue(0.0);
+      fade->setEndValue(0.62);
+      fade->start(QAbstractAnimation::DeleteWhenStopped);
+      auto *expand = new QPropertyAnimation(snapshot, "geometry", snapshot);
+      expand->setDuration(220);
+      expand->setEasingCurve(QEasingCurve::OutCubic);
+      expand->setStartValue(start);
+      expand->setEndValue(target);
+      connect(expand, &QPropertyAnimation::finished, this,
+              [this, dialog, scrim, snapshot] {
+                if (imagePreviewDialog_ == dialog) {
+                  dialog->show();
+                  dialog->raise();
+                  dialog->activateWindow();
+                }
+                QTimer::singleShot(100, this, [scrim, snapshot] {
+                  scrim->deleteLater();
+                  snapshot->deleteLater();
+                });
+              });
+      expand->start(QAbstractAnimation::DeleteWhenStopped);
+      return;
+    }
+  }
+  // 无可见源气泡时直接显示，避免对缓存失效或右键打开制造空过渡。
   dialog->show();
   dialog->raise();
   dialog->activateWindow();
@@ -5477,7 +5626,7 @@ QWidget *MainWindow::createMessageBubble(const RemoteIMMessage &message) {
     {
       auto *imageLabel = new ClickableImageLabel(
           message.image.localPath,
-          [this](const QString &path) { openImagePreview(path); }, bubble);
+          [this](const QString &path, QWidget *source) { openImagePreview(path, source); }, bubble);
       imageLabel->setObjectName(QStringLiteral("messageImageLabel"));
       // 高分屏（DPR>1）按物理分辨率解码并声明
       // DPR，否则缩略图被绘制层二次放大而发虚； 控件尺寸用逻辑值（物理尺寸 /
@@ -5539,7 +5688,7 @@ QWidget *MainWindow::createMessageBubble(const RemoteIMMessage &message) {
                   mimeData->setUrls({QUrl::fromLocalFile(image.localPath)});
                   QApplication::clipboard()->setMimeData(mimeData);
                 } else if (chosen == previewAction) {
-                  openImagePreview(image.localPath);
+                  openImagePreview(image.localPath, imageLabel);
                 } else if (chosen == saveAction) {
                   saveFileAttachmentToLocal(RemoteIMFileAttachment{
                       image.localPath, QFileInfo(image.localPath).fileName(),

@@ -4,12 +4,14 @@
 #include "ui/ImagePreviewDialog.h"
 
 #include <QGuiApplication>
+#include <QCloseEvent>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QScreen>
 #include <QSizePolicy>
 #include <QVBoxLayout>
 #include <QWindow>
+#include <utility>
 
 ImagePreviewDialog::ImagePreviewDialog(const QString& imagePath, QWidget* parent)
     : ImagePreviewDialog(QPixmap(imagePath), parent) {}
@@ -49,8 +51,13 @@ ImagePreviewDialog::ImagePreviewDialog(const QPixmap& image, QWidget* parent)
     updateImage();
 }
 
+void ImagePreviewDialog::setCloseHandler(std::function<bool()> handler) {
+    closeHandler_ = std::move(handler);
+}
+
 void ImagePreviewDialog::keyPressEvent(QKeyEvent* event) {
     if (event->key() == Qt::Key_Escape || event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
+        if (closeHandler_ && closeHandler_()) return;
         accept();
         return;
     }
@@ -59,10 +66,19 @@ void ImagePreviewDialog::keyPressEvent(QKeyEvent* event) {
 
 void ImagePreviewDialog::mousePressEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton) {
+        if (closeHandler_ && closeHandler_()) return;
         accept();
         return;
     }
     QDialog::mousePressEvent(event);
+}
+
+void ImagePreviewDialog::closeEvent(QCloseEvent* event) {
+    if (closeHandler_ && closeHandler_()) {
+        event->ignore();
+        return;
+    }
+    QDialog::closeEvent(event);
 }
 
 void ImagePreviewDialog::resizeEvent(QResizeEvent* event) {

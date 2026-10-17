@@ -197,7 +197,7 @@ private:
     QString composerPeerId_;
     QWidget* pendingReplyBar_ = nullptr;
     QLabel* pendingReplyLabel_ = nullptr;
-    void openImagePreview(const QString& imagePath);
+    void openImagePreview(const QString& imagePath, QWidget* source = nullptr);
     void openFilePreview(const RemoteIMFileAttachment& attachment);
     void openVideoPreview(const RemoteIMVideoAttachment& attachment);
     void syncVideoDock();

@@ -318,6 +318,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     void setForeground(boolean value) {
         visibleToUser = value;
         if (!value && voiceRecording) finishVoice(true);
+        if (!value) updateHostVoiceOverlay(false, "");
         removeCallbacks(elapsed);
         if (value)
             controller.setListener(this);
@@ -889,6 +890,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             cancelVoice = event.getY() < -dp(60);
             voiceHoldButton.setText(cancelVoice ? "松开取消"
                 : voicePartialText.isEmpty() ? "正在听，请说话…" : voicePartialText);
+            updateHostVoiceOverlay(true, cancelVoice ? "松开取消" : voicePartialText);
             return true;
         }
         if (event.getActionMasked() == MotionEvent.ACTION_UP
@@ -906,6 +908,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 if (voiceRecording && generation == voiceGeneration) {
                     voicePartialText = text == null ? "" : text.trim();
                     composer.setText(voicePartialText);
+                    updateHostVoiceOverlay(true, voicePartialText);
                     if (!cancelVoice)
                         voiceHoldButton.setText(voicePartialText.isEmpty()
                             ? "正在听，请说话…" : voicePartialText);
@@ -943,6 +946,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 }
             }
             @Override public void failed() {
+                updateHostVoiceOverlay(false, "");
                 if (generation == voiceGeneration)
                     Toast.makeText(activity, "语音转文字失败", Toast.LENGTH_LONG).show();
             }
@@ -953,16 +957,22 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         }
         voiceRecording = true; cancelVoice = false; voicePartialText = "";
         voiceHoldButton.setText("正在听，请说话…");
+        updateHostVoiceOverlay(true, "");
     }
     private void finishVoice(boolean cancel) {
         if (!voiceRecording) return;
         voiceRecording = false; cancelVoice = false; voicePartialText = "";
         voiceHoldButton.setText("按住转文字");
+        updateHostVoiceOverlay(false, "");
         if (cancel) {
             voiceGeneration++;
             composer.setText("");
         }
         voiceRecorder.finish(cancel);
+    }
+    private void updateHostVoiceOverlay(boolean active, String text) {
+        if (activity instanceof MainActivity)
+            ((MainActivity) activity).setAssistantVoiceTranscript(active, text);
     }
     private JSONObject value(String... pairs) {
         JSONObject value = new JSONObject();

@@ -156,6 +156,20 @@ public class ChatInteractionInstrumentedTest {
                         video.hasPresentedFrame() && retainedChat.get() == get(activity, "currentMessageList") &&
                         "横屏草稿".equals(((EditText) get(activity, "messageInput")).getText().toString());
                 });
+                scenario.onActivity(activity -> {
+                    try {
+                        set(activity, "holdingVoice", true);
+                        set(activity, "speechText", "测试实时语音转写");
+                        call(activity, "updateSpeechPreview", new Class<?>[0]);
+                    } catch (Exception error) { throw new AssertionError(error); }
+                });
+                await(scenario, activity -> {
+                    TextView overlay = (TextView) get(activity, "videoTranscriptOverlay");
+                    TextView inline = (TextView) get(activity, "speechPreview");
+                    return overlay != null && overlay.isShown() &&
+                        inline != null && inline.getVisibility() == View.GONE &&
+                        overlay.getText().toString().contains("测试实时语音转写");
+                });
                 InstrumentationRegistry.getInstrumentation().waitForIdleSync();
                 SystemClock.sleep(200);
                 Bitmap dockScreenshot = automation.takeScreenshot();
@@ -165,6 +179,20 @@ public class ChatInteractionInstrumentedTest {
                 try (FileOutputStream output = new FileOutputStream(dockTarget)) {
                     assertTrue(dockScreenshot.compress(Bitmap.CompressFormat.PNG, 100, output));
                 } finally { dockScreenshot.recycle(); }
+                scenario.onActivity(activity -> {
+                    try {
+                        set(activity, "holdingVoice", false);
+                        call(activity, "updateSpeechPreview", new Class<?>[0]);
+                    } catch (Exception error) { throw new AssertionError(error); }
+                });
+                scenario.onActivity(activity ->
+                    activity.setAssistantVoiceTranscript(true, "创作中心语音转写"));
+                await(scenario, activity -> {
+                    TextView overlay = (TextView) get(activity, "videoTranscriptOverlay");
+                    return overlay != null && overlay.isShown() &&
+                        overlay.getText().toString().contains("创作中心语音转写");
+                });
+                scenario.onActivity(activity -> activity.setAssistantVoiceTranscript(false, ""));
                 scenario.onActivity(activity -> assertTrue(activity.commandAgentVideo("close", 0, 0, 0)));
                 await(scenario, activity -> ((View) get(activity, "landscapeConversationPane"))
                     .getVisibility() == View.VISIBLE && retainedChat.get() == get(activity, "currentMessageList"));

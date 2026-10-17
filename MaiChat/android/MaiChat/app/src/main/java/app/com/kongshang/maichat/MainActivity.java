@@ -134,6 +134,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private RemoteIMMediaStore mediaStore;
     private AIAssistantPanel aiAssistant;
     private Dialog videoDialog;
+    private TextView videoTranscriptOverlay;
     private boolean videoExpanded;
     private Dialog imageDialog;
     private MaiGraphicsImageView galleryImageView;
@@ -189,6 +190,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private long voiceUiGeneration;
     private String speechText = "";
     private TextView speechPreview;
+    private boolean assistantVoiceActive;
+    private String assistantVoiceText = "";
     private VoiceRecordingController voiceRecorder;
     private final ExecutorService mediaExecutor = Executors.newSingleThreadExecutor();
     private SendTarget pendingAttachmentTarget;
@@ -708,6 +711,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         String owner = session.requiresLogin() ? "" : session.settings().loginUserId();
         if (!owner.equals(displayedOwner)) {
             if (videoDialog != null) videoDialog.dismiss();
+            assistantVoiceActive = false;
+            assistantVoiceText = "";
             if (aiAssistant != null) {
                 aiAssistant.setForeground(false);
                 aiAssistant = null;
@@ -3282,9 +3287,23 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         }
     }
     private void updateSpeechPreview() {
-        if (speechPreview == null) return;
-        speechPreview.setText(speechText);
-        speechPreview.setVisibility(holdingVoice ? View.VISIBLE : View.GONE);
+        if (speechPreview != null) {
+            speechPreview.setText(speechText);
+            speechPreview.setVisibility(holdingVoice && videoDialog == null
+                ? View.VISIBLE : View.GONE);
+        }
+        if (videoTranscriptOverlay != null) {
+            String text = assistantVoiceActive ? assistantVoiceText : speechText;
+            videoTranscriptOverlay.setText(text.isEmpty() ? "正在听，请说话…" : text);
+            videoTranscriptOverlay.setVisibility(holdingVoice || assistantVoiceActive
+                ? View.VISIBLE : View.GONE);
+        }
+    }
+
+    void setAssistantVoiceTranscript(boolean active, String text) {
+        assistantVoiceActive = active;
+        assistantVoiceText = text == null ? "" : text;
+        updateSpeechPreview();
     }
     private void startVoiceRecording() {
         SendTarget target = sendTarget();
@@ -3809,6 +3828,21 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         nameParams.setMargins(dp(80), dp(20), dp(80), 0);
         frame.addView(mediaName, nameParams);
 
+        TextView transcript = MaiChatTheme.text(this, speechText, 19, Color.WHITE);
+        transcript.setContentDescription("实时语音转写");
+        transcript.setMaxLines(3);
+        transcript.setEllipsize(TextUtils.TruncateAt.START);
+        transcript.setPadding(dp(16), dp(12), dp(16), dp(12));
+        transcript.setBackground(MaiChatTheme.rounded(MaiChatTheme.BLUE_DARK, 18, this));
+        transcript.setVisibility(holdingVoice || assistantVoiceActive
+            ? View.VISIBLE : View.GONE);
+        FrameLayout.LayoutParams transcriptParams = new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+            Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        transcriptParams.setMargins(dp(24), dp(72), dp(24), 0);
+        frame.addView(transcript, transcriptParams);
+        videoTranscriptOverlay = transcript;
+
         TextView close = iconButton("×", 26, Color.WHITE);
         close.setContentDescription("关闭视频");
         close.setBackground(MaiChatTheme.rounded(Color.argb(175, 55, 55, 55), 25, this));
@@ -3855,7 +3889,9 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             video.stop();
             if (videoDialog == dialog) {
                 videoDialog = null;
+                videoTranscriptOverlay = null;
                 videoExpanded = false;
+                updateSpeechPreview();
                 updateVideoDockLayout();
             }
         });
@@ -3864,6 +3900,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         videoExpanded = false;
         videoDialog = dialog;
         dialog.show();
+        updateSpeechPreview();
         Window window = dialog.getWindow();
         if (window != null) {
             window.setBackgroundDrawable(new ColorDrawable(Color.BLACK));

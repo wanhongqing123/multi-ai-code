@@ -107,6 +107,30 @@ private:
     std::atomic<int> calls_{0};
 };
 
+class MediaDeliveringModel final : public MaiModelClient {
+public:
+    MaiError stream(const MaiModelRequest&, const MaiStreamSink& sink,
+                    const std::atomic<bool>&) override {
+        if (calls_++ == 0) {
+            if (sink.onToolCall) {
+                sink.onToolCall(MaiToolInvocation{
+                    "media-call-1", "agent_send_media",
+                    R"({"file_path":"sample.mp4","type":"video"})"});
+                sink.onToolCall(MaiToolInvocation{
+                    "media-call-2", "agent_send_media",
+                    R"({"file_path":"second.mp4","type":"video"})"});
+            }
+        } else if (sink.onText) {
+            sink.onText("Video delivered");
+        }
+        return {};
+    }
+    MaiWireApi wireApi() const override { return MaiWireApi::ChatCompletions; }
+
+private:
+    std::atomic<int> calls_{0};
+};
+
 class DelayedFirstChunkModel final : public MaiModelClient {
 public:
     explicit DelayedFirstChunkModel(bool reasoning, int warmupCalls = 0)
@@ -251,6 +275,7 @@ private slots:
     void switchingSessionsShowsLatestMessage();
     void inlineMediaBubblesRespectMessageBoundary();
     void completedPdfToolShowsPreviewCardAfterRestore();
+    void videoArtifactUsesCompactPlayBadge();
 };
 
 namespace {
@@ -317,12 +342,63 @@ void AgentPanelSessionTest::completedPdfToolShowsPreviewCardAfterRestore() {
     QTRY_VERIFY_WITH_TIMEOUT(
         panel.findChild<QPushButton*>(QStringLiteral("agentPdfPreviewButton")) != nullptr,
         5000);
+    auto* toolSummary = panel.findChild<QPushButton*>(QStringLiteral("agentToolGroupDisclosure"));
+    QVERIFY(toolSummary != nullptr);
+    QVERIFY(toolSummary->text().contains(QStringLiteral("工具调用 1 次")));
+    const QString capturePath = qEnvironmentVariable("MAICHAT_AGENT_TOOL_CAPTURE");
+    if (!capturePath.isEmpty()) QVERIFY(panel.grab().save(capturePath));
+    for (QWidget* card : panel.findChildren<QWidget*>(QStringLiteral("agentToolCard")))
+        QVERIFY(!card->isVisible());
+    toolSummary->click();
+    QTRY_VERIFY(!panel.findChildren<QWidget*>(QStringLiteral("agentToolCard")).isEmpty());
     QVERIFY(QFile::exists(workspace.filePath(QStringLiteral("preview.pdf"))));
 
     panel.openSession(session);
     QTRY_VERIFY_WITH_TIMEOUT(
         panel.findChild<QPushButton*>(QStringLiteral("agentPdfPreviewButton")) != nullptr,
         5000);
+}
+
+void AgentPanelSessionTest::videoArtifactUsesCompactPlayBadge() {
+    QTemporaryDir workspace;
+    QVERIFY(workspace.isValid());
+    QVERIFY(QFile::copy(QStringLiteral(MAICHAT_AGENT_VIDEO_FIXTURE),
+                        workspace.filePath(QStringLiteral("sample.mp4"))));
+    QVERIFY(QFile::copy(QStringLiteral(MAICHAT_AGENT_VIDEO_FIXTURE),
+                        workspace.filePath(QStringLiteral("second.mp4"))));
+    AgentController controller(std::make_unique<MediaDeliveringModel>(), QString());
+    AgentChatPanel panel(controller);
+    panel.resize(700, 550);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    QString openedVideo;
+    QStringList videoPlaylist;
+    panel.setOpenVideoCallback([&](const QString& path, const QStringList& paths) {
+        openedVideo = path;
+        videoPlaylist = paths;
+    });
+    const QString session = controller.createSession(workspace.path());
+    panel.openSession(session);
+    QVERIFY(controller.sendPrompt(session, QStringLiteral("Show the video")));
+    controller.agent().waitIdle();
+    QTRY_COMPARE_WITH_TIMEOUT(
+        panel.findChildren<QPushButton*>(QStringLiteral("agentMediaVideoPlay")).size(), 2, 5000);
+    auto* play = panel.findChildren<QPushButton*>(QStringLiteral("agentMediaVideoPlay")).first();
+    QCOMPARE(play->size(), QSize(48, 48));
+    QVERIFY(play->styleSheet().contains(QStringLiteral("border-radius:24px")));
+    auto* cover = panel.findChild<QLabel*>(QStringLiteral("agentMediaVideoCover"));
+    QVERIFY(cover != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(!cover->pixmap(Qt::ReturnByValue).isNull(), 5000);
+    play->click();
+    QCOMPARE(QFileInfo(openedVideo).canonicalFilePath(),
+             QFileInfo(workspace.filePath(QStringLiteral("sample.mp4"))).canonicalFilePath());
+    QVERIFY(videoPlaylist.contains(openedVideo));
+    QCOMPARE(videoPlaylist.size(), 2);
+    auto* toolSummary = panel.findChild<QPushButton*>(QStringLiteral("agentToolGroupDisclosure"));
+    QVERIFY(toolSummary != nullptr);
+    QVERIFY(toolSummary->text().contains(QStringLiteral("工具调用 2 次")));
+    const QString capturePath = qEnvironmentVariable("MAICHAT_AGENT_VIDEO_CAPTURE");
+    if (!capturePath.isEmpty()) QVERIFY(panel.grab().save(capturePath));
 }
 
 void AgentPanelSessionTest::newSessionAvoidsFilesystemRoot() {
@@ -421,7 +497,11 @@ void AgentPanelSessionTest::inlineMediaBubblesRespectMessageBoundary() {
     panel.show();
     QVERIFY(QTest::qWaitForWindowExposed(&panel));
     QString openedVideo;
-    panel.setOpenVideoCallback([&openedVideo](const QString& path) { openedVideo = path; });
+    QStringList videoPlaylist;
+    panel.setOpenVideoCallback([&](const QString& path, const QStringList& paths) {
+        openedVideo = path;
+        videoPlaylist = paths;
+    });
     const QString session = controller.createSession(directory.path());
     panel.openSession(session);
     QVERIFY(controller.sendPrompt(session, QStringLiteral("first")));
@@ -435,6 +515,7 @@ void AgentPanelSessionTest::inlineMediaBubblesRespectMessageBoundary() {
     }
     QCOMPARE(QDir::fromNativeSeparators(openedVideo),
              QDir::fromNativeSeparators(directory.filePath(QStringLiteral("clip.mp4"))));
+    QVERIFY(videoPlaylist.contains(openedVideo));
     QVERIFY(controller.sendPrompt(session, QStringLiteral("second")));
     controller.agent().waitIdle();
     QTRY_COMPARE(panel.findChildren<QPushButton*>(

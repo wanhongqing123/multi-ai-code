@@ -88,12 +88,14 @@ public:
                "FFmpeg atempo. Changing speed briefly restarts the same popup at its source "
                "position without creating a new media file. seek_seconds jumps to an absolute "
                "source-media time; seek_percent and the existing play, pause, step, relative "
-               "or chapter seek, stream/filter cycling, mute, volume, fullscreen, and close "
+               "or chapter seek, replay, previous_item, next_item, stream/filter cycling, "
+               "mute, volume, fullscreen, and close "
                "actions remain available.";
     }
     std::string parametersSchema() const override {
         return R"({"type":"object","properties":{"action":{"type":"string","enum":["play","pause","toggle_pause",)"
-            R"("step","seek_forward","seek_backward","seek_minute_forward","seek_minute_backward","next_chapter",)"
+            R"("step","replay","previous_item","next_item","seek_forward","seek_backward",)"
+            R"("seek_minute_forward","seek_minute_backward","next_chapter",)"
             R"("previous_chapter","seek_percent","seek_seconds","set_speed","next_audio","next_video","next_subtitle",)"
             R"("next_program","next_filter","mute","volume_up","volume_down","fullscreen","close"]},)"
             R"("percent":{"type":"number","minimum":0,"maximum":100},"seconds":{"type":"number","minimum":0},)"
@@ -123,6 +125,12 @@ public:
             } else if (action == QStringLiteral("set_speed")) {
                 const auto value = arguments.value(QStringLiteral("speed"));
                 if (value.isDouble()) accepted = dialog->setSpeed(value.toDouble());
+            } else if (action == QStringLiteral("replay")) {
+                accepted = dialog->replay();
+            } else if (action == QStringLiteral("previous_item")) {
+                accepted = dialog->navigateVideo(-1);
+            } else if (action == QStringLiteral("next_item")) {
+                accepted = dialog->navigateVideo(1);
             } else if (action == QStringLiteral("close")) {
                 dialog->close();
                 accepted = true;

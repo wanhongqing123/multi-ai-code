@@ -63,7 +63,7 @@ void MaiFfplayVideoDialogTest::exposesSaveAndForwardActions() {
     QVERIFY(forward != nullptr);
     QVERIFY(save != nullptr);
     bool forwarded = false;
-    dialog.setForwardAction([&forwarded] { forwarded = true; });
+    dialog.setForwardAction([&forwarded](const QString&) { forwarded = true; });
     forward->click();
     QVERIFY(forwarded);
 }
@@ -89,6 +89,8 @@ void MaiFfplayVideoDialogTest::opensControlsAndClosesVideoPopup() {
     QVERIFY(commandTool != nullptr);
     QVERIFY(QString::fromStdString(commandTool->parametersSchema()).contains(
         QStringLiteral("set_speed")));
+    QVERIFY(QString::fromStdString(commandTool->parametersSchema()).contains(
+        QStringLiteral("replay")));
     MaiToolContext context;
     const QFileInfo fixture(fixturePath);
     context.root = fixture.dir().absolutePath().toStdString();
@@ -146,6 +148,8 @@ void MaiFfplayVideoDialogTest::opensControlsAndClosesVideoPopup() {
     QVERIFY(!commandTool->execute(R"({"action":"seek_percent","percent":50})", context)
                  .hasError());
     QTRY_VERIFY_WITH_TIMEOUT(sSawFiniteSeek.load(), 1500);
+    QVERIFY(!commandTool->execute(R"({"action":"replay"})", context).hasError());
+    QVERIFY(dialog->isStarted());
     QElapsedTimer timer;
     timer.start();
     QVERIFY(!commandTool->execute(R"({"action":"close"})", context).hasError());
@@ -203,7 +207,9 @@ void MaiFfplayVideoDialogTest::slowedPlaybackExtendsAudibleOutput() {
 void MaiFfplayVideoDialogTest::localVideoShowsPixels() {
     const QString path = qEnvironmentVariable("MAICHAT_FFPLAY_LOCAL_VIDEO");
     if (!QFileInfo(path).isFile()) QSKIP("No local video fixture");
+    const QString nextPath = qEnvironmentVariable("MAICHAT_FFPLAY_NEXT_VIDEO");
     MaiFfplayVideoDialog dialog(path);
+    if (QFileInfo(nextPath).isFile()) dialog.setPlaylist({path, nextPath});
     dialog.resize(1280, 900);
     dialog.show();
     QVERIFY(QTest::qWaitForWindowExposed(&dialog));
@@ -217,6 +223,12 @@ void MaiFfplayVideoDialogTest::localVideoShowsPixels() {
         0, topLeft.x(), topLeft.y(), surface->width(), surface->height()).toImage();
     const QString capturePath = qEnvironmentVariable("MAICHAT_FFPLAY_CAPTURE");
     if (!capturePath.isEmpty()) QVERIFY(pixels.save(capturePath));
+    const QString windowCapture = qEnvironmentVariable("MAICHAT_FFPLAY_WINDOW_CAPTURE");
+    if (!windowCapture.isEmpty()) {
+        const QRect frame = dialog.frameGeometry();
+        QVERIFY(dialog.screen()->grabWindow(0, frame.x(), frame.y(),
+                                            frame.width(), frame.height()).save(windowCapture));
+    }
     int minimumValue = 255;
     int maximumValue = 0;
     for (int y = 0; y < pixels.height(); y += 8)
@@ -228,6 +240,38 @@ void MaiFfplayVideoDialogTest::localVideoShowsPixels() {
         }
     qInfo() << "local video pixels" << pixels.size() << minimumValue << maximumValue;
     QVERIFY(maximumValue - minimumValue > 32);
+    auto* pauseButton = dialog.findChild<QPushButton*>(QStringLiteral("ffplayPauseButton"));
+    QVERIFY(pauseButton != nullptr && pauseButton->isVisible());
+    QTest::mouseClick(pauseButton, Qt::LeftButton);
+    MaiFfplayPlaybackStatus playback{};
+    QTRY_VERIFY_WITH_TIMEOUT(maiFfplayGetPlaybackStatus(&playback) && playback.paused != 0, 2000);
+    QTest::mouseClick(pauseButton, Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(maiFfplayGetPlaybackStatus(&playback) && playback.paused == 0, 2000);
+    auto* speedSelector = dialog.findChild<QComboBox*>(QStringLiteral("ffplaySpeedSelector"));
+    QVERIFY(speedSelector != nullptr && speedSelector->isVisible());
+    speedSelector->setCurrentIndex(3);
+    QTRY_VERIFY_WITH_TIMEOUT(maiFfplayGetPlaybackStatus(&playback) &&
+                             playback.speed_percent == 150, 3000);
+    if (QFileInfo(nextPath).isFile()) {
+        QString forwardedPath;
+        dialog.setForwardAction([&](const QString& currentPath) { forwardedPath = currentPath; });
+        auto* nextButton = dialog.findChild<QPushButton*>(QStringLiteral("ffplayNextItemButton"));
+        QVERIFY(nextButton != nullptr);
+        QVERIFY(nextButton->isVisible() && nextButton->isEnabled());
+        nextButton->click();
+        QTRY_COMPARE_WITH_TIMEOUT(dialog.windowTitle(), QFileInfo(nextPath).fileName(), 3000);
+        QTRY_VERIFY_WITH_TIMEOUT(dialog.presentedFrames() > 0, 5000);
+        auto* forwardButton = dialog.findChild<QPushButton*>(QStringLiteral("videoForwardButton"));
+        QVERIFY(forwardButton != nullptr);
+        forwardButton->click();
+        QCOMPARE(QFileInfo(forwardedPath).canonicalFilePath(), QFileInfo(nextPath).canonicalFilePath());
+        QCOMPARE(dialog.speed(), 1.5);
+        QTRY_VERIFY_WITH_TIMEOUT(maiFfplayGetPlaybackStatus(&playback) &&
+                                 playback.speed_percent == 150, 3000);
+        QVERIFY(!dialog.navigateVideo(1));
+        QVERIFY(dialog.navigateVideo(-1));
+        QTRY_COMPARE_WITH_TIMEOUT(dialog.windowTitle(), QFileInfo(path).fileName(), 3000);
+    }
     dialog.close();
 }
 

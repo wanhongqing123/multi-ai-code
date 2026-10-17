@@ -841,6 +841,87 @@ private:
     bool rememberOnApproval_ = false;
 };
 
+class AgentChatPanel::ToolGroupCard final : public QFrame {
+public:
+    explicit ToolGroupCard(QWidget* parent = nullptr) : QFrame(parent) {
+        setObjectName(QStringLiteral("agentToolGroup"));
+        setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
+        auto* column = new QVBoxLayout(this);
+        column->setContentsMargins(0, 0, 0, 0);
+        column->setSpacing(UiZoom::s(4));
+        summary_ = new QPushButton(this);
+        summary_->setObjectName(QStringLiteral("agentToolGroupDisclosure"));
+        summary_->setCursor(Qt::PointingHandCursor);
+        summary_->setStyleSheet(UiZoom::scaleQss(QStringLiteral(
+            "QPushButton#agentToolGroupDisclosure{background:transparent;border:none;"
+            "color:#667085;font-size:12px;text-align:left;padding:3px 0;}"
+            "QPushButton#agentToolGroupDisclosure:hover{color:#0b67b7;}")));
+        column->addWidget(summary_);
+        details_ = new QWidget(this);
+        detailsLayout_ = new QVBoxLayout(details_);
+        detailsLayout_->setContentsMargins(UiZoom::s(12), 0, 0, 0);
+        detailsLayout_->setSpacing(UiZoom::s(2));
+        details_->hide();
+        column->addWidget(details_);
+        QObject::connect(summary_, &QPushButton::clicked, this, [this] {
+            autoExpanded_ = false;
+            setExpanded(!details_->isVisible());
+        });
+    }
+
+    void addCard(ToolCard* card) { detailsLayout_->addWidget(card); }
+
+    void setExpanded(bool expanded) {
+        details_->setVisible(expanded);
+        refreshTitle();
+    }
+
+    void showApproval() {
+        autoExpanded_ = true;
+        setExpanded(true);
+    }
+
+    void setSummary(const MaiMessage& message) {
+        int count = 0;
+        bool running = false;
+        bool pending = false;
+        bool failed = false;
+        bool canceled = false;
+        for (const MaiMessagePart& part : message.parts) {
+            const auto* tool = std::get_if<MaiToolPart>(&part.body);
+            if (!tool) continue;
+            ++count;
+            running |= tool->state == MaiToolState::Running;
+            pending |= tool->state == MaiToolState::Pending;
+            failed |= tool->state == MaiToolState::Error;
+            canceled |= tool->state == MaiToolState::Canceled;
+        }
+        const QString state = running ? QStringLiteral("运行中")
+                              : pending ? QStringLiteral("等待授权")
+                              : failed ? QStringLiteral("有失败")
+                              : canceled ? QStringLiteral("部分取消")
+                                         : QStringLiteral("已完成");
+        title_ = QStringLiteral("工具调用 %1 次 · %2").arg(count).arg(state);
+        if (!running && !pending && autoExpanded_) {
+            autoExpanded_ = false;
+            setExpanded(false);
+        }
+        refreshTitle();
+    }
+
+private:
+    void refreshTitle() {
+        summary_->setText(QStringLiteral("⌘  %1  %2")
+                              .arg(title_, details_->isVisible() ? QStringLiteral("⌄") : QStringLiteral("›")));
+    }
+
+    QPushButton* summary_ = nullptr;
+    QWidget* details_ = nullptr;
+    QVBoxLayout* detailsLayout_ = nullptr;
+    QString title_;
+    bool autoExpanded_ = false;
+};
+
 struct AgentChatPanel::Runtime {
     AgentController* controller = nullptr;
     QString sessionId;
@@ -868,6 +949,7 @@ struct AgentChatPanel::Runtime {
     ThinkingLine* pendingThinking = nullptr;
     QString pendingThinkingItemId;
     QHash<QString, ToolCard*> toolCards;
+    QHash<QString, ToolGroupCard*> toolGroups;
     // 子会话 id -> 那张子任务卡。
     QHash<QString, SubAgentCard*> subAgentCards;
 
@@ -1283,7 +1365,27 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
             });
     connect(&controller, &AgentController::toolPartChanged, this,
             [this](const QString& sessionId, const QString& messageId, const QString& partId) {
-                if (!isCurrentSession(sessionId)) return;
+                if (!isCurrentSession(sessionId)) {
+                    if (!runtime_->controller->isChildOf(sessionId, runtime_->sessionId)) return;
+                    ToolCard* card = runtime_->toolCards.value(partId, nullptr);
+                    ToolGroupCard* group = runtime_->toolGroups.value(messageId, nullptr);
+                    if (!card || !group) return;
+                    for (const MaiMessage& message : runtime_->controller->agent().listMessages(toUtf8(sessionId))) {
+                        if (fromUtf8(message.id) != messageId) continue;
+                        for (const MaiMessagePart& part : message.parts) {
+                            if (fromUtf8(part.id) != partId) continue;
+                            const auto* tool = std::get_if<MaiToolPart>(&part.body);
+                            if (!tool) return;
+                            card->apply(tool->state, card->isWaitingForUser() &&
+                                                     tool->state == MaiToolState::Pending);
+                            card->setDetail(tool->state == MaiToolState::Error ? fromUtf8(tool->error)
+                                                                               : fromUtf8(tool->output));
+                            group->setSummary(message);
+                            return;
+                        }
+                    }
+                    return;
+                }
                 clearPendingThinking();
                 refreshToolCard(messageId, partId);
             });
@@ -1377,8 +1479,33 @@ bool AgentChatPanel::applySelectedModel(const QString& model) {
     return true;
 }
 
-void AgentChatPanel::setOpenVideoCallback(std::function<void(const QString&)> callback) {
+void AgentChatPanel::setOpenVideoCallback(std::function<void(const QString&, const QStringList&)> callback) {
     openVideo_ = std::move(callback);
+}
+
+QStringList AgentChatPanel::currentVideoPaths() const {
+    MaiSession session;
+    if (!runtime_->controller->agent().getSession(toUtf8(runtime_->sessionId), session)) return {};
+    const QString workspace = fromUtf8(session.directory);
+    QStringList paths;
+    for (const MaiMessage& message : runtime_->controller->agent().listMessages(toUtf8(runtime_->sessionId))) {
+        if (message.role != MaiRole::Assistant) continue;
+        for (const MaiMessagePart& part : message.parts) {
+            const auto* tool = std::get_if<MaiToolPart>(&part.body);
+            if (!tool || tool->tool != "agent_send_media" || tool->state != MaiToolState::Completed) continue;
+            const QJsonObject artifact = QJsonDocument::fromJson(fromUtf8(tool->output).toUtf8()).object();
+            if (artifact.value(QStringLiteral("delivery")).toString() != QStringLiteral("current_ai_session") ||
+                artifact.value(QStringLiteral("type")).toString() != QStringLiteral("video")) continue;
+            const QString path = fromUtf8(maiResolvePathWithinRoot(
+                toUtf8(workspace), toUtf8(artifact.value(QStringLiteral("path")).toString())));
+            if (QFileInfo(path).isFile() && !paths.contains(path)) paths.append(path);
+        }
+        for (const LocalMediaMention& mention : localMediaMentions(fromUtf8(message.text()), workspace)) {
+            if (mention.video && QFileInfo(mention.path).isFile() && !paths.contains(mention.path))
+                paths.append(mention.path);
+        }
+    }
+    return paths;
 }
 
 void AgentChatPanel::setForwardMediaCallback(std::function<void(const QString&, const QString&)> callback) {
@@ -1517,6 +1644,7 @@ void AgentChatPanel::reloadFromStore() {
     runtime_->answers.clear();
     runtime_->dirtyAnswers.clear();
     runtime_->toolCards.clear();
+    runtime_->toolGroups.clear();
     runtime_->subAgentCards.clear();
     runtime_->pendingQuestionId.clear();
     runtime_->editor->setPlaceholderText(QStringLiteral("交给它做点什么…"));
@@ -1567,14 +1695,13 @@ void AgentChatPanel::reloadFromStore() {
                 if (message.completed == 0 &&
                     (tool->state == MaiToolState::Pending || tool->state == MaiToolState::Running))
                     activeAssistantHasVisibleActivity = true;
-                if (tool->tool == "agent_send_media" && tool->state == MaiToolState::Completed) {
-                    if (appendAgentMediaCard(partId, fromUtf8(tool->output), fromUtf8(selectedSession.directory)))
-                        continue;
-                }
-                ToolCard* card = toolCardFor(partId);
+                ToolCard* card = toolCardFor(partId, fromUtf8(message.id));
                 card->setCall(fromUtf8(tool->tool), fromUtf8(tool->input));
                 card->apply(tool->state, false);
                 card->setDetail(tool->state == MaiToolState::Error ? fromUtf8(tool->error) : fromUtf8(tool->output));
+                runtime_->toolGroups.value(fromUtf8(message.id))->setSummary(message);
+                if (tool->tool == "agent_send_media" && tool->state == MaiToolState::Completed)
+                    appendAgentMediaCard(partId, fromUtf8(tool->output), fromUtf8(selectedSession.directory));
                 if (tool->state == MaiToolState::Completed && tool->tool == "generate_pdf")
                     appendPdfPreview(partId, fromUtf8(tool->output), fromUtf8(selectedSession.directory));
             }
@@ -1668,15 +1795,23 @@ void AgentChatPanel::clearPendingThinking() {
     runtime_->pendingThinkingItemId.clear();
 }
 
-AgentChatPanel::ToolCard* AgentChatPanel::toolCardFor(const QString& partId) {
+AgentChatPanel::ToolGroupCard* AgentChatPanel::toolGroupFor(const QString& messageId) {
+    auto found = runtime_->toolGroups.constFind(messageId);
+    if (found != runtime_->toolGroups.constEnd()) return found.value();
+    auto* group = new ToolGroupCard;
+    runtime_->view->addWidget(QStringLiteral("tool-group-") + messageId, group);
+    runtime_->toolGroups.insert(messageId, group);
+    return group;
+}
+
+AgentChatPanel::ToolCard* AgentChatPanel::toolCardFor(const QString& partId, const QString& messageId) {
     auto found = runtime_->toolCards.constFind(partId);
     if (found != runtime_->toolCards.constEnd()) return found.value();
 
-    auto* card = new ToolCard;
-    // 不撑满整列：它是一条注记，不是正文。撑满会让它看起来比回答还重要。
-    // MarkdownView 认这个策略，按 sizeHint 给宽度并靠左摆。
+    ToolGroupCard* group = toolGroupFor(messageId);
+    auto* card = new ToolCard(group);
     card->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
-    runtime_->view->addWidget(partId, card);
+    group->addCard(card);
     runtime_->toolCards.insert(partId, card);
 
     connect(card->allowButton(), &QPushButton::clicked, this, [this, partId] { replyForPart(partId, false, true); });
@@ -1709,17 +1844,7 @@ void AgentChatPanel::refreshToolCard(const QString& messageId, const QString& pa
             const auto* tool = std::get_if<MaiToolPart>(&part.body);
             if (tool == nullptr) return;
 
-            if (tool->tool == "agent_send_media" && tool->state == MaiToolState::Completed) {
-                MaiSession session;
-                if (runtime_->controller->agent().getSession(toUtf8(runtime_->sessionId), session))
-                    if (appendAgentMediaCard(partId, fromUtf8(tool->output), fromUtf8(session.directory))) {
-                        runtime_->toolCards.remove(partId);
-                        runtime_->view->removeItem(partId);
-                        return;
-                    }
-            }
-
-            ToolCard* card = toolCardFor(partId);
+            ToolCard* card = toolCardFor(partId, messageId);
             card->setCall(fromUtf8(tool->tool), fromUtf8(tool->input));
             // 还在等人点头的话，卡片保持授权态——那个状态由 permissionAsked 打开，
             // 这里不要把它关掉。
@@ -1734,6 +1859,12 @@ void AgentChatPanel::refreshToolCard(const QString& messageId, const QString& pa
                 }
             } else if (tool->state == MaiToolState::Error || tool->state == MaiToolState::Canceled) {
                 card->setDetail(fromUtf8(tool->error));
+            }
+            runtime_->toolGroups.value(messageId)->setSummary(message);
+            if (tool->tool == "agent_send_media" && tool->state == MaiToolState::Completed) {
+                MaiSession session;
+                if (runtime_->controller->agent().getSession(toUtf8(runtime_->sessionId), session))
+                    appendAgentMediaCard(partId, fromUtf8(tool->output), fromUtf8(session.directory));
             }
             scrollToBottom();
             return;
@@ -1793,18 +1924,27 @@ bool AgentChatPanel::appendAgentMediaCard(const QString& partId, const QString& 
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(6);
     if (type == QStringLiteral("image") || type == QStringLiteral("video")) {
+        const bool video = type == QStringLiteral("video");
+        const QSize previewSize = video ? QSize(240, 135) : QSize(220, 180);
         auto* preview = new QFrame(card);
-        preview->setFixedSize(220, 180);
+        preview->setFixedSize(previewSize);
         auto* cover = new QLabel(preview);
-        cover->setGeometry(0, 0, 220, 180);
+        if (video) {
+            cover->setObjectName(QStringLiteral("agentMediaVideoCover"));
+            cover->setStyleSheet(QStringLiteral("background:#111827;"));
+        }
+        cover->setGeometry(QRect(QPoint(0, 0), previewSize));
         cover->setAlignment(Qt::AlignCenter);
-        MessageImageLoader::instance().load(path, QSize(660, 540), cover, [cover](const QPixmap& pixels) {
-            cover->setPixmap(pixels.scaled(220, 180, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        MessageImageLoader::instance().load(path, previewSize * 3, cover,
+            [cover, previewSize, video](const QPixmap& pixels) {
+            cover->setPixmap(pixels.scaled(previewSize,
+                video ? Qt::KeepAspectRatioByExpanding : Qt::KeepAspectRatio,
+                Qt::SmoothTransformation));
         });
         if (type == QStringLiteral("image")) {
             auto* open = new QPushButton(preview);
             open->setObjectName(QStringLiteral("agentMediaImageOpen"));
-            open->setGeometry(0, 0, 220, 180);
+            open->setGeometry(QRect(QPoint(0, 0), previewSize));
             open->setCursor(Qt::PointingHandCursor);
             open->setStyleSheet(QStringLiteral("background:transparent;border:0"));
             connect(open, &QPushButton::clicked, this, [this, card, path] {
@@ -1820,15 +1960,21 @@ bool AgentChatPanel::appendAgentMediaCard(const QString& partId, const QString& 
         } else {
             auto* play = new QPushButton(QStringLiteral("▶"), preview);
             play->setObjectName(QStringLiteral("agentMediaVideoPlay"));
-            play->setGeometry(85, 65, 50, 50);
+            play->setGeometry(96, 52, 48, 48);
             play->setCursor(Qt::PointingHandCursor);
+            play->setToolTip(QStringLiteral("播放视频"));
+            play->setStyleSheet(QStringLiteral(
+                "QPushButton#agentMediaVideoPlay{background:rgba(10,16,27,195);"
+                "border:1px solid rgba(255,255,255,125);border-radius:24px;"
+                "color:white;font-size:20px;padding-left:3px;}"
+                "QPushButton#agentMediaVideoPlay:hover{background:rgba(10,16,27,230);}"));
             connect(play, &QPushButton::clicked, this, [this, path] {
-                if (openVideo_) openVideo_(path);
+                if (openVideo_) openVideo_(path, currentVideoPaths());
             });
             auto* duration = new QLabel(QStringLiteral("0:00"), preview);
             duration->setAlignment(Qt::AlignCenter);
-            duration->setGeometry(166, 152, 46, 22);
-            duration->setStyleSheet(QStringLiteral("color:white;background:rgba(0,0,0,160);border-radius:8px;"));
+            duration->setGeometry(186, 107, 46, 22);
+            duration->setStyleSheet(QStringLiteral("color:white;background:rgba(0,0,0,175);border-radius:7px;"));
             auto* metadata = new QMediaPlayer(preview);
             connect(metadata, &QMediaPlayer::durationChanged, duration, [duration](qint64 milliseconds) {
                 const qint64 seconds = qMax<qint64>(0, milliseconds / 1000);
@@ -1922,7 +2068,7 @@ void AgentChatPanel::appendTextMediaCards(const QString& messageId, const QStrin
         if (mention.video) {
             connect(button, &QPushButton::clicked, this, [this, path = mention.path] {
                 if (QFileInfo(path).isFile() && openVideo_)
-                    openVideo_(path);
+                    openVideo_(path, currentVideoPaths());
                 else
                     appendNotice(QStringLiteral("文件已被移动或删除。"), true);
             });
@@ -2018,7 +2164,8 @@ void AgentChatPanel::showApproval(const QString& permissionId) {
         if (fromUtf8(pending.id) != permissionId) continue;
         const QString owner = fromUtf8(pending.sessionId);
         if (owner != runtime_->sessionId && !runtime_->controller->isChildOf(owner, runtime_->sessionId)) return;
-        ToolCard* card = toolCardFor(fromUtf8(pending.partId));
+        const QString messageId = fromUtf8(pending.messageId);
+        ToolCard* card = toolCardFor(fromUtf8(pending.partId), messageId);
         card->setCall(fromUtf8(pending.toolName), fromUtf8(pending.arguments));
         const int fileCount = !pending.approvalKeys.empty() && pending.approvalKeys.front().rfind("file:", 0) == 0
                                   ? static_cast<int>(pending.approvalKeys.size())
@@ -2026,6 +2173,14 @@ void AgentChatPanel::showApproval(const QString& permissionId) {
         card->setApprovalBehavior(pending.allowForSession, pending.rememberOnApproval, fileCount);
         card->setDetail(QString());
         card->apply(MaiToolState::Pending, true);
+        ToolGroupCard* group = runtime_->toolGroups.value(messageId);
+        for (const MaiMessage& message : runtime_->controller->agent().listMessages(pending.sessionId)) {
+            if (fromUtf8(message.id) == messageId) {
+                group->setSummary(message);
+                break;
+            }
+        }
+        group->showApproval();
         scrollToBottom();
         return;
     }

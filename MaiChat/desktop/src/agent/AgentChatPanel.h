@@ -67,7 +67,7 @@ public:
     void setModelLabel(const QString& model, bool configured = true);
     // 账号凭据确认可用后，原位更新当前会话模型；不重建消息、编辑器或滚动视图。
     bool applySelectedModel(const QString& model);
-    void setOpenVideoCallback(std::function<void(const QString&)> callback);
+    void setOpenVideoCallback(std::function<void(const QString&, const QStringList&)> callback);
     void setForwardMediaCallback(
         std::function<void(const QString&, const QString&)> callback);
 
@@ -85,6 +85,7 @@ private:
     // 它们要能点（展开、授权），画不出来，所以嵌进 MarkdownView 里当部件用。
     class ThinkingLine;
     class ToolCard;
+    class ToolGroupCard;
     class SubAgentCard;
 
     // 把整个对话从存储里重画一遍。用在打开会话和清空之后——
@@ -122,7 +123,8 @@ private:
     // 流式期间按 partId 找（或建）对应的部件，只追加不重画。
     void startPendingThinking();
     void clearPendingThinking();
-    ToolCard* toolCardFor(const QString& partId);
+    ToolCard* toolCardFor(const QString& partId, const QString& messageId);
+    ToolGroupCard* toolGroupFor(const QString& messageId);
     void refreshToolCard(const QString& messageId, const QString& partId);
     void appendPdfPreview(const QString& partId, const QString& output,
                           const QString& workspace);
@@ -130,6 +132,7 @@ private:
                               const QString& workspace);
     void appendTextMediaCards(const QString& messageId, const QString& text,
                               const QString& workspace);
+    QStringList currentVideoPaths() const;
     void showApproval(const QString& permissionId);
 
     // 模型中途问了一句。
@@ -154,6 +157,6 @@ private:
 
     struct Runtime;
     std::unique_ptr<Runtime> runtime_;
-    std::function<void(const QString&)> openVideo_;
+    std::function<void(const QString&, const QStringList&)> openVideo_;
     std::function<void(const QString&, const QString&)> forwardMedia_;
 };

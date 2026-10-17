@@ -8,6 +8,7 @@
 #include <QDialog>
 #include <QPointer>
 #include <QString>
+#include <QStringList>
 
 #include <thread>
 #include <atomic>
@@ -21,6 +22,7 @@ class QSlider;
 class QLabel;
 class QTimer;
 class QWidget;
+class QEvent;
 
 class MaiFfplayVideoDialog final : public QDialog {
     Q_OBJECT
@@ -34,17 +36,21 @@ public:
     bool seekPercent(double fraction);
     bool seekSeconds(double seconds);
     bool setSpeed(double speed);
+    bool replay();
+    void setPlaylist(const QStringList& paths);
+    bool navigateVideo(int direction);
     double speed() const { return playbackSpeed_; }
     bool isStarted() const { return started_; }
     bool isPlaying() const { return playing_; }
     uint64_t presentedFrames() const;
-    void setForwardAction(std::function<void()> action);
+    void setForwardAction(std::function<void(const QString&)> action);
 
 protected:
     void showEvent(QShowEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     static bool presentVideo(void* userData, const MaiVideoFrame* frame,
@@ -62,8 +68,13 @@ private:
     void forwardVideo();
 
     QString path_;
+    QStringList playlist_;
+    int playlistIndex_ = 0;
     QWidget* surface_ = nullptr;
+    QWidget* overlay_ = nullptr;
     QPushButton* pauseButton_ = nullptr;
+    QPushButton* previousButton_ = nullptr;
+    QPushButton* nextButton_ = nullptr;
     QComboBox* speedSelector_ = nullptr;
     QSlider* seekSlider_ = nullptr;
     QLabel* timeLabel_ = nullptr;
@@ -78,5 +89,5 @@ private:
     double playbackSpeed_ = 1.0;
     int64_t startPositionUs_ = 0;
     std::atomic<bool> playbackFinished_{false};
-    std::function<void()> forwardAction_;
+    std::function<void(const QString&)> forwardAction_;
 };

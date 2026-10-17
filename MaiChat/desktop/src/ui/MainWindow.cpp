@@ -3791,9 +3791,10 @@ void MainWindow::rebuildAgentPage() {
   agentSessions_ = new AgentSessionList(*agentController_, agentSplitter);
   agentPanel_ = new AgentChatPanel(*agentController_, agentSplitter);
 #if defined(MAICHAT_HAS_FFPLAY)
-  agentPanel_->setOpenVideoCallback([this](const QString &path) {
+  agentPanel_->setOpenVideoCallback([this](const QString &path, const QStringList &paths) {
     auto *dialog = new MaiFfplayVideoDialog(path, this);
-    dialog->setForwardAction([this, path] { forwardLocalVideo(path); });
+    dialog->setPlaylist(paths);
+    dialog->setForwardAction([this](const QString &currentPath) { forwardLocalVideo(currentPath); });
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->show();
     if (!dialog->isStarted())
@@ -4944,7 +4945,11 @@ void MainWindow::openVideoPreview(const RemoteIMVideoAttachment &attachment) {
 #else
   auto *dialog = new VideoPreviewDialog(path, title, this);
 #endif
+#if defined(MAICHAT_HAS_FFPLAY)
+  dialog->setForwardAction([this](const QString &currentPath) { forwardLocalVideo(currentPath); });
+#else
   dialog->setForwardAction([this, path] { forwardLocalVideo(path); });
+#endif
   dialog->setAttribute(Qt::WA_DeleteOnClose);
   dialog->show();
 #if defined(MAICHAT_HAS_FFPLAY)

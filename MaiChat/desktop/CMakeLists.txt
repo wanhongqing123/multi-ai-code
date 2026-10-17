@@ -877,6 +877,8 @@ if(WIN32 AND MAICHAT_RVM_WINDOWS_ASSETS_AVAILABLE)
 endif()
 
 add_executable(agent_panel_session_test tests/AgentPanelSessionTest.cpp)
+target_compile_definitions(agent_panel_session_test PRIVATE
+  MAICHAT_AGENT_VIDEO_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/Graphics/tests/fixtures/tiny-red.mp4")
 # UiZoom 在 remote_im_desktop_ui 里，而 AgentChatPanel 用它做缩放，所以要一起链。
 target_link_libraries(agent_panel_session_test PRIVATE remote_im_desktop_ui remote_im_desktop_app
   remote_im_core maichat_agent maichat_markdown Qt5::Widgets Qt5::Test)

@@ -32,3 +32,28 @@ extern "C" void maiGraphicsRetainMacLayer(void *nativeLayer) {
 extern "C" void maiGraphicsReleaseMacLayer(void *nativeLayer) {
   [static_cast<CAMetalLayer *>(nativeLayer) release];
 }
+
+extern "C" void maiGraphicsStyleMacVideoWindow(QWidget *widget) {
+  if (!widget)
+    return;
+  NSView *view = reinterpret_cast<NSView *>(widget->winId());
+  NSWindow *window = view.window;
+  if (!window)
+    return;
+  window.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
+  window.titlebarAppearsTransparent = YES;
+  window.backgroundColor = [NSColor colorWithCalibratedRed:0.03 green:0.05 blue:0.08 alpha:1.0];
+}
+
+extern "C" void maiGraphicsShareMacVideo(QWidget *anchor, const char *utf8Path) {
+  if (!anchor || !utf8Path || !*utf8Path)
+    return;
+  NSView *view = reinterpret_cast<NSView *>(anchor->winId());
+  NSString *path = [NSString stringWithUTF8String:utf8Path];
+  if (!view.window || !path)
+    return;
+  NSURL *url = [NSURL fileURLWithPath:path];
+  NSSharingServicePicker *picker = [[NSSharingServicePicker alloc] initWithItems:@[ url ]];
+  [picker showRelativeToRect:view.bounds ofView:view preferredEdge:NSRectEdgeMinY];
+  [picker release];
+}

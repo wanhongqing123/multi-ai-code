@@ -123,6 +123,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private static final int REQUEST_POST_NOTIFICATIONS = 1006;
     private static final int REQUEST_GALLERY_ACCESS = 1008;
     private static final int REQUEST_SAVE_VIDEO_PERMISSION = 1009;
+    private static final int REQUEST_SAVE_IMAGE_PERMISSION = 1010;
     private static final String TAG = "MaiChat.notify";
     private static final String MESSAGE_CHANNEL_ID = "maichat-new-messages";
     private static final String MESSAGE_GROUP_KEY = "maichat-private-messages";
@@ -136,6 +137,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private boolean videoExpanded;
     private Dialog imageDialog;
     private String pendingVideoSavePath;
+    private String pendingImageSavePath;
     private Runnable pendingGalleryAction;
     private RemoteIMTab activeTab = RemoteIMTab.MESSAGES;
     private LinearLayout root;
@@ -496,6 +498,13 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             pendingVideoSavePath = null;
             if (granted && path != null) savePreviewVideo(path);
             else if (!granted) toast("没有存储权限，无法保存视频");
+            return;
+        }
+        if (requestCode == REQUEST_SAVE_IMAGE_PERMISSION) {
+            String path = pendingImageSavePath;
+            pendingImageSavePath = null;
+            if (granted && path != null) savePreviewImage(path);
+            else if (!granted) toast("没有存储权限，无法保存图片");
             return;
         }
         if (requestCode == REQUEST_RECORD_AUDIO) {
@@ -3893,6 +3902,114 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         });
     }
 
+    private String previewImageExtension(File source) {
+        String name = source.getName().toLowerCase(Locale.US);
+        for (String extension : new String[]{".jpeg", ".jpg", ".png", ".webp", ".gif", ".heic"})
+            if (name.endsWith(extension)) return extension;
+        return ".png";
+    }
+
+    private String previewImageMime(String extension) {
+        if (extension.equals(".jpeg") || extension.equals(".jpg")) return "image/jpeg";
+        if (extension.equals(".webp")) return "image/webp";
+        if (extension.equals(".gif")) return "image/gif";
+        if (extension.equals(".heic")) return "image/heic";
+        return "image/png";
+    }
+
+    private void sharePreviewImage(String path) {
+        File source = new File(path);
+        if (!source.isFile()) { toast("图片文件已丢失"); return; }
+        try {
+            Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".files", source);
+            Intent share = new Intent(Intent.ACTION_SEND);
+            share.setType(previewImageMime(previewImageExtension(source)));
+            share.putExtra(Intent.EXTRA_STREAM, uri);
+            share.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(Intent.createChooser(share, "转发或分享图片"));
+        } catch (Exception error) {
+            toast("无法分享图片");
+        }
+    }
+
+    private void savePreviewImage(String path) {
+        File source = new File(path);
+        if (!source.isFile()) { toast("图片文件已丢失"); return; }
+        if (Build.VERSION.SDK_INT < 29) {
+            if (checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                != PackageManager.PERMISSION_GRANTED) {
+                pendingImageSavePath = path;
+                requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},
+                    REQUEST_SAVE_IMAGE_PERMISSION);
+                return;
+            }
+            saveLegacyPreviewImage(source);
+            return;
+        }
+        mediaExecutor.execute(() -> {
+            Uri target = null;
+            try {
+                String extension = previewImageExtension(source);
+                ContentValues values = new ContentValues();
+                values.put(MediaStore.MediaColumns.DISPLAY_NAME, "MaiChat-"
+                    + new SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.US).format(new Date())
+                    + extension);
+                values.put(MediaStore.MediaColumns.MIME_TYPE, previewImageMime(extension));
+                values.put(MediaStore.MediaColumns.RELATIVE_PATH,
+                    Environment.DIRECTORY_PICTURES + "/MaiChat");
+                values.put(MediaStore.Images.Media.DATE_TAKEN, System.currentTimeMillis());
+                values.put(MediaStore.MediaColumns.IS_PENDING, 1);
+                target = getContentResolver().insert(
+                    MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values);
+                if (target == null) throw new IOException("Cannot create gallery image");
+                try (InputStream input = new FileInputStream(source);
+                     OutputStream output = getContentResolver().openOutputStream(target)) {
+                    if (output == null) throw new IOException("Cannot write gallery image");
+                    byte[] buffer = new byte[64 * 1024];
+                    int count;
+                    while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+                }
+                values.clear();
+                values.put(MediaStore.MediaColumns.IS_PENDING, 0);
+                getContentResolver().update(target, values, null, null);
+                runOnUiThread(() -> toast("已保存到相册"));
+            } catch (Exception error) {
+                if (target != null) getContentResolver().delete(target, null, null);
+                runOnUiThread(() -> toast("保存图片失败"));
+            }
+        });
+    }
+
+    private void saveLegacyPreviewImage(File source) {
+        mediaExecutor.execute(() -> {
+            File destination = null;
+            try {
+                File directory = new File(Environment.getExternalStoragePublicDirectory(
+                    Environment.DIRECTORY_PICTURES), "MaiChat");
+                if (!directory.isDirectory() && !directory.mkdirs())
+                    throw new IOException("Cannot create gallery directory");
+                String extension = previewImageExtension(source);
+                destination = new File(directory, "MaiChat-"
+                    + new SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.US).format(new Date())
+                    + extension);
+                try (InputStream input = new FileInputStream(source);
+                     OutputStream output = new FileOutputStream(destination)) {
+                    byte[] buffer = new byte[64 * 1024];
+                    int count;
+                    while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+                }
+                destination.setLastModified(System.currentTimeMillis());
+                MediaScannerConnection.scanFile(this,
+                    new String[]{destination.getAbsolutePath()},
+                    new String[]{previewImageMime(extension)}, null);
+                runOnUiThread(() -> toast("已保存到相册"));
+            } catch (Exception error) {
+                if (destination != null) destination.delete();
+                runOnUiThread(() -> toast("保存图片失败"));
+            }
+        });
+    }
+
     public boolean openAgentVideo(String path) {
         return openAgentVideo(path, 0);
     }
@@ -4085,11 +4202,28 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             frame.addView(mediaName, nameParams);
         }
         TextView close = iconButton("×", 26, Color.WHITE);
+        close.setContentDescription("关闭图片预览");
         close.setBackground(MaiChatTheme.rounded(Color.argb(160, 0, 0, 0), 20, this));
         close.setOnClickListener(view -> dialog.dismiss());
-        FrameLayout.LayoutParams closeParams = new FrameLayout.LayoutParams(dp(44), dp(44), Gravity.TOP | Gravity.END);
-        closeParams.setMargins(0, dp(14), dp(14), 0);
+        FrameLayout.LayoutParams closeParams = new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP | Gravity.START);
+        closeParams.setMargins(dp(20), dp(18), 0, 0);
         frame.addView(close, closeParams);
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(Gravity.CENTER_VERTICAL);
+        actions.setPadding(dp(6), 0, dp(6), 0);
+        actions.setBackground(MaiChatTheme.rounded(Color.argb(170, 0, 0, 0), 26, this));
+        TextView share = iconButton("↗", 23, Color.WHITE);
+        share.setContentDescription("分享图片");
+        share.setOnClickListener(view -> sharePreviewImage(path));
+        actions.addView(share, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        TextView save = iconButton("↓", 25, Color.WHITE);
+        save.setContentDescription("保存图片");
+        save.setOnClickListener(view -> savePreviewImage(path));
+        actions.addView(save, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        FrameLayout.LayoutParams actionParams = new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, dp(52), Gravity.BOTTOM | Gravity.END);
+        actionParams.setMargins(0, 0, dp(20), dp(54));
+        frame.addView(actions, actionParams);
         dialog.setContentView(frame);
         dialog.setOnDismissListener(ignored -> {
             if (imageDialog == dialog) imageDialog = null;

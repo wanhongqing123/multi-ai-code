@@ -17,9 +17,11 @@ import android.app.UiAutomation;
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.Configuration;
+import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.os.SystemClock;
+import android.provider.MediaStore;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -88,6 +90,85 @@ public final class MaiFfplayPlaybackInstrumentedTest {
         try (FileOutputStream output = new FileOutputStream(file)) {
             assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output));
         } finally { bitmap.recycle(); }
+    }
+
+    @Test public void imagePreviewOffersIosActionsAndSavesToGallery() throws Exception {
+        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Activity activity = InstrumentationRegistry.getInstrumentation().startActivitySync(
+            new Intent(context, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        File image = AIAssistantController.shared(activity).workspaceFile("gallery-actions.png");
+        assertNotNull(image);
+        try {
+            writeImage(image, Color.GREEN);
+            int before = savedImageCount(context);
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() ->
+                ((MainActivity) activity).openAgentMedia(image.getAbsolutePath(), false,
+                    Arrays.asList(new MainActivity.GalleryItem(image.getAbsolutePath(), false))));
+            assertNotNull(awaitAccessibilityDescription("分享图片"));
+            AccessibilityNodeInfo save = awaitAccessibilityDescription("保存图片");
+            assertNotNull(save);
+            long imageDeadline = SystemClock.uptimeMillis() + 10000;
+            boolean presented = false;
+            while (SystemClock.uptimeMillis() < imageDeadline) {
+                Bitmap screen = InstrumentationRegistry.getInstrumentation()
+                    .getUiAutomation().takeScreenshot();
+                if (screen != null) {
+                    int color = screen.getPixel(screen.getWidth() / 2, screen.getHeight() / 2);
+                    presented = Color.green(color) > 150 && Color.red(color) < 100;
+                    screen.recycle();
+                    if (presented) break;
+                }
+                SystemClock.sleep(50);
+            }
+            assertTrue("Image preview did not present the decoded pixels", presented);
+            captureScreen(context, "android-image-gallery-actions.png");
+            assertTrue(save.performAction(AccessibilityNodeInfo.ACTION_CLICK));
+            long deadline = SystemClock.uptimeMillis() + 10000;
+            while (savedImageCount(context) <= before && SystemClock.uptimeMillis() < deadline)
+                SystemClock.sleep(50);
+            assertTrue("Image was not saved to the gallery", savedImageCount(context) > before);
+        } finally {
+            image.delete();
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(activity::finish);
+        }
+    }
+
+    private static AccessibilityNodeInfo findAccessibilityDescription(
+            AccessibilityNodeInfo node, String description) {
+        if (node.getContentDescription() != null &&
+            description.contentEquals(node.getContentDescription())) return node;
+        for (int i = 0; i < node.getChildCount(); i++) {
+            AccessibilityNodeInfo child = node.getChild(i);
+            if (child == null) continue;
+            AccessibilityNodeInfo found = findAccessibilityDescription(child, description);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    private static AccessibilityNodeInfo awaitAccessibilityDescription(String description) {
+        long deadline = SystemClock.uptimeMillis() + 10000;
+        while (SystemClock.uptimeMillis() < deadline) {
+            AccessibilityNodeInfo root = InstrumentationRegistry.getInstrumentation()
+                .getUiAutomation().getRootInActiveWindow();
+            if (root != null) {
+                AccessibilityNodeInfo found = findAccessibilityDescription(root, description);
+                if (found != null) return found;
+            }
+            SystemClock.sleep(50);
+        }
+        return null;
+    }
+
+    private static int savedImageCount(Context context) {
+        if (android.os.Build.VERSION.SDK_INT < 29) return 0;
+        try (Cursor cursor = context.getContentResolver().query(
+                MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
+                new String[]{MediaStore.Images.Media._ID},
+                MediaStore.Images.Media.RELATIVE_PATH + "=?",
+                new String[]{"Pictures/MaiChat/"}, null)) {
+            return cursor == null ? 0 : cursor.getCount();
+        }
     }
 
     private static void awaitGalleryName(String name) {

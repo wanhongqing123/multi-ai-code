@@ -71,10 +71,12 @@ public final class MaiFfplayPlaybackInstrumentedTest {
             InstrumentationRegistry.getInstrumentation().runOnMainSync(() ->
                 ((MainActivity) activity).openAgentMedia(first.getAbsolutePath(), false, gallery));
             awaitGalleryName("swipe-image-first.png");
+            awaitCenterColor(Color.RED);
             swipeScreen(true);
             awaitVideo(video.getAbsolutePath());
             swipeActiveVideo(true);
             awaitGalleryName("swipe-image-second.png");
+            awaitCenterColor(Color.BLUE);
             swipeScreen(false);
             awaitVideo(video.getAbsolutePath());
         } finally {

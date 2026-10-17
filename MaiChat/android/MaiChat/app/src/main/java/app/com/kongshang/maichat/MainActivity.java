@@ -3627,10 +3627,13 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     }
 
     // 打开指定视频及会话媒体序列，并把初始播放位置交给播放器。
-    // 旧图片或视频预览在这里被关闭；切换动画和播放状态需从实际页面继续核查。
+    // 图片交给视频时保留旧帧，待新播放器首帧呈现后再移除。
     private void openVideoPlayer(String path, long startPositionUs,
                                  List<GalleryItem> candidates, int entryDirection) {
         if (videoDialog != null) videoDialog.dismiss();
+        String previousImagePath = galleryImagePath;
+        Bitmap handoffFrame = entryDirection != 0 && galleryImageView != null
+            ? galleryImageView.snapshot() : null;
         if (imageDialog != null) imageDialog.dismiss();
         List<GalleryItem> playlist = normalizeGallery(path, true, candidates);
         final int[] selected = {galleryIndex(playlist, path, true)};
@@ -3686,6 +3689,9 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             Gravity.CENTER
         );
         frame.addView(video, videoParams);
+        View handoffPreview = handoffFrame == null ? null : gallerySnapshot(handoffFrame);
+        if (handoffPreview != null)
+            frame.addView(handoffPreview, new FrameLayout.LayoutParams(-1, -1));
         FrameLayout.LayoutParams nameParams = new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(32), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
         nameParams.setMargins(dp(80), dp(20), dp(80), 0);
@@ -3755,6 +3761,28 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                 | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN);
         }
         updateVideoDockLayout();
+        if (handoffPreview != null) {
+            Handler handler = new Handler(Looper.getMainLooper());
+            long deadline = SystemClock.uptimeMillis() + 8000;
+            Runnable[] check = new Runnable[1];
+            check[0] = () -> {
+                if (videoDialog != dialog || !dialog.isShowing()) return;
+                if (video.hasPresentedFrame()) {
+                    handoffPreview.animate().alpha(0).setDuration(180)
+                        .withEndAction(() -> frame.removeView(handoffPreview)).start();
+                } else if (SystemClock.uptimeMillis() >= deadline) {
+                    if (previousImagePath != null && new File(previousImagePath).isFile()) {
+                        dialog.dismiss();
+                        showFullScreenImage(previousImagePath, playlist, 0);
+                        toast("视频暂不可播放");
+                    } else {
+                        handoffPreview.animate().alpha(0).setDuration(180)
+                            .withEndAction(() -> frame.removeView(handoffPreview)).start();
+                    }
+                } else handler.postDelayed(check[0], 40);
+            };
+            handler.post(check[0]);
+        }
         animateGalleryEntry(rootView, entryDirection);
     }
 
@@ -4092,6 +4120,10 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         String previousPath = galleryImagePath;
         Bitmap previousFrame = reuseDialog && entryDirection != 0 && galleryImageView != null
             ? galleryImageView.snapshot() : null;
+        if (previousFrame == null && entryDirection != 0 && videoDialog != null) {
+            MaiFfplayVideoView previousVideo = MaiFfplayVideoView.activeView();
+            if (previousVideo != null) previousFrame = previousVideo.snapshot();
+        }
         if (videoDialog != null) videoDialog.dismiss();
         List<GalleryItem> playlist = normalizeGallery(path, false, candidates);
         int selected = galleryIndex(playlist, path, false);

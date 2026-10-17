@@ -5,6 +5,7 @@ package com.kongshang.maichat;
 
 import android.content.Context;
 import android.graphics.Color;
+import android.graphics.Bitmap;
 import android.graphics.Typeface;
 import android.content.res.ColorStateList;
 import android.os.Handler;
@@ -221,6 +222,9 @@ public final class MaiFfplayVideoView extends FrameLayout {
 
     public static MaiFfplayVideoView activeView() { return active.get(); }
     public boolean hasPresentedFrame() { return presented; }
+    public Bitmap snapshot() {
+        return presented && surface.isAvailable() ? surface.getBitmap() : null;
+    }
     public String currentVideoPath() { return videoPath; }
     public void setOnVideoSwipeListener(OnVideoSwipeListener listener) {
         swipeListener = listener;

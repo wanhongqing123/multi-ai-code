@@ -144,6 +144,9 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private RemoteIMTab activeTab = RemoteIMTab.MESSAGES;
     private LinearLayout root;
     private LinearLayout content;
+    private LinearLayout landscapeConversationPane;
+    private View landscapeConversationDivider;
+    private boolean renderedLandscapeIm;
     private View chatBackdrop;
     private RemoteIMTab returnTab = RemoteIMTab.MESSAGES;
     private ChatSwipeBack swipeBack;
@@ -259,6 +262,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private static final String PRIVACY_URL = "https://ichat.life/legal/privacy.html";
     private static final String CHILDREN_URL = "https://ichat.life/legal/children.html";
     private LinearLayout currentConversationRows;
+    private long renderedConversationFingerprint;
     private String pendingNotificationPeerUserId = "";
     private volatile boolean activityInForeground;
     private final Set<String> collapsedContactGroups = new HashSet<>();
@@ -315,6 +319,15 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     @Override
     public void onConfigurationChanged(Configuration configuration) {
         super.onConfigurationChanged(configuration);
+        if (session != null && !destroyed) {
+            ChatMessageList previous = currentMessageList;
+            String anchor = previous == null ? null : previous.firstVisibleMessageId();
+            int offset = previous == null ? 0 : previous.firstVisibleOffset();
+            rememberDraft();
+            render();
+            if (previous != currentMessageList && currentMessageList != null && anchor != null)
+                currentMessageList.restoreMessage(anchor, offset);
+        }
         if (insetsHost != null) insetsHost.post(this::updateVideoDockLayout);
     }
 
@@ -376,7 +389,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             return;
         }
         if (activeChatUserId != null) {
-            if (swipeBack != null) swipeBack.goBack();
+            if (renderedLandscapeIm) finishChatBack();
+            else if (swipeBack != null) swipeBack.goBack();
             return;
         }
         if (activeTab == RemoteIMTab.REMOTE && session.remoteDesktop().isActive()) {
@@ -660,10 +674,33 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         attachmentButton.setVisibility(canSend ? View.GONE : View.VISIBLE);
     }
 
+    private boolean useLandscapeImLayout() {
+        Configuration configuration = getResources().getConfiguration();
+        return configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+            && configuration.screenWidthDp >= 700 && activeTab == RemoteIMTab.MESSAGES
+            && !showInitialLogin && session != null && !session.requiresLogin();
+    }
+
+    private View createPortraitConversationBackdrop() {
+        LinearLayout previousContent = content;
+        LinearLayout backdrop = new LinearLayout(this);
+        backdrop.setOrientation(LinearLayout.VERTICAL);
+        backdrop.setBackgroundColor(MaiChatTheme.PAGE);
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        backdrop.addView(list, new LinearLayout.LayoutParams(-1, 0, 1));
+        content = list;
+        renderConversationList();
+        content = previousContent;
+        backdrop.addView(bottomTabBar(), match(dp(72)));
+        return backdrop;
+    }
+
     // 作用：根据账号、当前页签和正在打开的聊天状态更新 Android 主页面。
     // 切换页面时同步 Agent 前后台状态与输入草稿，避免重建页面时丢失原有会话内容。
     private void render() {
         if (destroyed) return;
+        boolean landscapeIm = useLandscapeImLayout();
         // Agent 页只在当前页签可见时消费实时事件；换账号先撤销旧页状态，再配置新工作区。
         boolean showingAssistant = activityInForeground && activeTab == RemoteIMTab.ASSISTANT
             && activeChatUserId == null && !showInitialLogin && !session.requiresLogin();
@@ -688,10 +725,18 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         if (activeChatUserId != null && contact(activeChatUserId) == null) {
             activeChatUserId = null; chatBackdrop = null;
         }
-        if (activeChatUserId != null && activeChatUserId.equals(renderedChatUserId)
+        if (activeChatUserId != null && landscapeIm == renderedLandscapeIm
+            && activeChatUserId.equals(renderedChatUserId)
             && currentMessageList != null && !showInitialLogin && !session.requiresLogin()) {
             // 同一会话的消息更新保留原列表实例、滚动位置和输入草稿。
             refreshChatMessages();
+            if (landscapeIm && currentConversationRows != null) {
+                long fingerprint = conversationFingerprint();
+                if (fingerprint != renderedConversationFingerprint) {
+                    renderConversationRows(currentConversationRows, "", Collections.emptyList(), false);
+                    renderedConversationFingerprint = fingerprint;
+                }
+            }
             if (renderedVoiceMode != voiceMode || !java.util.Objects.equals(renderedQuote, pendingQuote)) {
                 content.removeView(chatComposer);
                 session.stopHumanTyping();
@@ -711,8 +756,12 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(MaiChatTheme.PAGE);
+        landscapeConversationPane = null;
+        landscapeConversationDivider = null;
         if (swipeBack != null) swipeBack.dispose();
         FrameLayout navigation = new FrameLayout(this);
+        if (!landscapeIm && activeChatUserId != null && chatBackdrop == null)
+            chatBackdrop = createPortraitConversationBackdrop();
         if (activeChatUserId != null && chatBackdrop != null) {
             if (chatBackdrop.getParent() instanceof ViewGroup)
                 ((ViewGroup) chatBackdrop.getParent()).removeView(chatBackdrop);
@@ -720,10 +769,13 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         }
         navigation.addView(root, new FrameLayout.LayoutParams(-1, -1));
         setContentView(navigation);
+        renderedLandscapeIm = landscapeIm;
         navigation.post(this::updateVideoDockLayout);
         swipeBack = new ChatSwipeBack(new ChatSwipeBack.Host() {
             @Override public View page() { return root; }
-            @Override public boolean canGoBack() { return !destroyed && activeChatUserId != null; }
+            @Override public boolean canGoBack() {
+                return !destroyed && activeChatUserId != null && !renderedLandscapeIm;
+            }
             @Override public boolean keyboardVisible() { return keyboardVisible; }
             @Override public void began() {
                 session.stopHumanTyping(); cancelVoiceRecording();
@@ -803,6 +855,10 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             return;
         }
 
+        if (landscapeIm) {
+            renderLandscapeIm();
+            return;
+        }
         if (activeChatUserId != null) {
             // 页面容器建好以后再选择具体内容；聊天页不显示底部主导航。
             renderChatDetail(activeChatUserId);
@@ -1514,6 +1570,52 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             1
         ));
         renderConversationRows(rows, "", Collections.emptyList(), false);
+        renderedConversationFingerprint = conversationFingerprint();
+    }
+
+    private long conversationFingerprint() {
+        long hash = 1;
+        for (RemoteIMContact contact : session.chatState().contacts()) {
+            hash = hash * 31 + contact.userId().hashCode();
+            hash = hash * 31 + contact.displayName().hashCode();
+            RemoteIMMessage latest = latestMessage(contact.userId());
+            if (latest != null) {
+                hash = hash * 31 + latest.id().hashCode();
+                hash = hash * 31 + latest.text().hashCode();
+            }
+            hash = hash * 31 + session.unreadCount(contact.userId());
+        }
+        return hash * 31 + session.mediaRevision();
+    }
+
+    private void renderLandscapeIm() {
+        LinearLayout columns = new LinearLayout(this);
+        columns.setOrientation(LinearLayout.HORIZONTAL);
+        content.addView(columns, matchMatch());
+
+        LinearLayout sidebar = new LinearLayout(this);
+        sidebar.setOrientation(LinearLayout.VERTICAL);
+        sidebar.setBackgroundColor(MaiChatTheme.PAGE);
+        int widthDp = getResources().getConfiguration().screenWidthDp;
+        int sidebarDp = Math.min(Math.max((int) (widthDp * 0.32f), 280), 360);
+        columns.addView(sidebar, new LinearLayout.LayoutParams(dp(sidebarDp), -1));
+        View divider = new View(this);
+        divider.setBackgroundColor(MaiChatTheme.BORDER);
+        columns.addView(divider, new LinearLayout.LayoutParams(dp(1), -1));
+        LinearLayout detail = new LinearLayout(this);
+        detail.setOrientation(LinearLayout.VERTICAL);
+        detail.setBackgroundColor(Color.WHITE);
+        columns.addView(detail, new LinearLayout.LayoutParams(0, -1, 1));
+        landscapeConversationPane = sidebar;
+        landscapeConversationDivider = divider;
+
+        content = sidebar;
+        renderConversationList();
+        sidebar.addView(bottomTabBar(), match(dp(72)));
+        content = detail;
+        if (activeChatUserId != null) renderChatDetail(activeChatUserId);
+        else detail.addView(emptyState("◇", "选择一个对话", "从左侧选择联系人开始聊天。"), matchMatch());
+        columns.post(this::updateVideoDockLayout);
     }
 
     // 用当前搜索条件生成会话列表行；搜索命中消息时保留其所属会话，避免打开错误联系人。
@@ -1631,7 +1733,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(16), 0, dp(16), 0);
-        row.setBackgroundColor(Color.WHITE);
+        row.setBackgroundColor(renderedLandscapeIm && contact.userId().equals(activeChatUserId)
+            ? MaiChatTheme.NAV_MESSAGES_SOFT : Color.WHITE);
         row.addView(avatar(contact, true, 42), new LinearLayout.LayoutParams(dp(42), dp(42)));
 
         LinearLayout text = new LinearLayout(this);
@@ -1676,7 +1779,10 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         allowKeyboardLocation = true;
         rememberDraft();
         draftText = draftsByPeer.getOrDefault(displayedOwner + "\0" + userId, "");
-        if (activeChatUserId == null) { chatBackdrop = root; returnTab = activeTab; }
+        if (activeChatUserId == null) {
+            chatBackdrop = renderedLandscapeIm ? null : root;
+            returnTab = activeTab;
+        }
         session.selectContact(userId);
         session.setConversationVisible(userId, true);
         session.loadInitialMessages(userId);
@@ -1693,7 +1799,10 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private void openMessageSearchHit(RemoteIMMessageSearchHit hit) {
         rememberDraft();
         draftText = draftsByPeer.getOrDefault(displayedOwner + "\0" + hit.peerUserId(), "");
-        if (activeChatUserId == null) { chatBackdrop = root; returnTab = activeTab; }
+        if (activeChatUserId == null) {
+            chatBackdrop = renderedLandscapeIm ? null : root;
+            returnTab = activeTab;
+        }
         RemoteIMContact opened = session.openMessageSearchHit(hit);
         if (opened == null) return;
         session.setConversationVisible(opened.userId(), true);
@@ -1816,7 +1925,10 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             0
         );
         back.setContentDescription("返回会话列表");
-        back.setOnClickListener(view -> { if (swipeBack != null) swipeBack.goBack(); });
+        back.setOnClickListener(view -> {
+            if (renderedLandscapeIm) finishChatBack();
+            else if (swipeBack != null) swipeBack.goBack();
+        });
         header.addView(back, new LinearLayout.LayoutParams(dp(38), dp(42)));
 
         TextView title = MaiChatTheme.label(this, contact.displayName(), 18, MaiChatTheme.TEXT);
@@ -3800,6 +3912,22 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         int dockWidth = docked && landscape
             ? Math.min((int) (width * (keyboardVisible ? 0.42f : 0.52f)), width - dp(340))
             : 0;
+        if (landscapeConversationPane != null) {
+            int availableWidth = width - dockWidth;
+            boolean showSidebar = activeChatUserId == null || availableWidth >= dp(700);
+            landscapeConversationPane.setVisibility(showSidebar ? View.VISIBLE : View.GONE);
+            if (landscapeConversationDivider != null)
+                landscapeConversationDivider.setVisibility(showSidebar ? View.VISIBLE : View.GONE);
+            if (showSidebar) {
+                int paneDp = Math.min(Math.max((int) (availableWidth /
+                    getResources().getDisplayMetrics().density * 0.32f), 280), 360);
+                ViewGroup.LayoutParams paneParams = landscapeConversationPane.getLayoutParams();
+                if (paneParams != null && paneParams.width != dp(paneDp)) {
+                    paneParams.width = dp(paneDp);
+                    landscapeConversationPane.setLayoutParams(paneParams);
+                }
+            }
+        }
         FrameLayout.LayoutParams contentParams = (FrameLayout.LayoutParams) root.getLayoutParams();
         if (contentParams != null && (contentParams.topMargin != dockHeight
                 || contentParams.leftMargin != dockWidth)) {

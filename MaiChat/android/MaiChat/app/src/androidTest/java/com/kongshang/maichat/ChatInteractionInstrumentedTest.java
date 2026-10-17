@@ -4,10 +4,15 @@
 package com.kongshang.maichat;
 
 import android.content.Context;
+import android.app.UiAutomation;
+import android.content.res.Configuration;
 import android.graphics.Bitmap;
+import android.os.SystemClock;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
+import android.widget.TextView;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
@@ -15,6 +20,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -35,6 +41,28 @@ public class ChatInteractionInstrumentedTest {
         method.invoke(object, args);
     }
     private interface Check { boolean check(MainActivity activity) throws Exception; }
+    private static View findDescription(View root, String description) {
+        if (root.getContentDescription() != null &&
+            description.contentEquals(root.getContentDescription())) return root;
+        if (root instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) root;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                View found = findDescription(group.getChildAt(i), description);
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+    private static boolean containsText(View root, String text) {
+        if (root instanceof TextView && ((TextView) root).getText().toString().contains(text))
+            return true;
+        if (root instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) root;
+            for (int i = 0; i < group.getChildCount(); i++)
+                if (containsText(group.getChildAt(i), text)) return true;
+        }
+        return false;
+    }
     private void await(ActivityScenario<MainActivity> scenario, Check check) throws Exception {
         long deadline = System.currentTimeMillis() + 8000;
         AtomicBoolean done = new AtomicBoolean();
@@ -49,6 +77,132 @@ public class ChatInteractionInstrumentedTest {
             Thread.sleep(30);
         }
         assertTrue("UI condition timed out", done.get());
+    }
+    @Test public void landscapeShowsConversationBesideChatAndKeepsDraftOnRotation() throws Exception {
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+            UiAutomation automation = InstrumentationRegistry.getInstrumentation().getUiAutomation();
+            try {
+                scenario.onActivity(activity -> {
+                    try {
+                        ((RemoteIMSessionController) get(activity, "session")).destroy();
+                        File directory = new File(activity.getCacheDir(), "landscape-fixture-" + System.nanoTime());
+                        directory.mkdirs();
+                        RemoteIMSessionController session = new RemoteIMSessionController(
+                            new LocalSettingsStore(new File(directory, "settings")),
+                            new LocalChatHistoryStore(new File(directory, "history")));
+                        session.login("landscape-owner");
+                        session.addContact("landscape-peer");
+                        session.addContact("landscape-other");
+                        session.chatState().receiveText("横屏消息", "landscape-peer");
+                        set(activity, "session", session);
+                        set(activity, "showInitialLogin", false);
+                        call(activity, "render", new Class<?>[0]);
+                        call(activity, "openChat", new Class<?>[]{String.class}, "landscape-peer");
+                        ((EditText) get(activity, "messageInput")).setText("横屏草稿");
+                    } catch (Exception error) { throw new AssertionError(error); }
+                });
+                automation.setRotation(UiAutomation.ROTATION_FREEZE_90);
+                await(scenario, activity -> {
+                    if (activity.getResources().getConfiguration().orientation
+                            != Configuration.ORIENTATION_LANDSCAPE ||
+                        !(boolean) get(activity, "renderedLandscapeIm")) return false;
+                    View sidebar = (View) get(activity, "landscapeConversationPane");
+                    View chat = (View) get(activity, "currentMessageList");
+                    EditText input = (EditText) get(activity, "messageInput");
+                    if (sidebar == null || chat == null || sidebar.getWidth() == 0 ||
+                        !"横屏草稿".equals(input.getText().toString())) return false;
+                    int[] left = new int[2], right = new int[2];
+                    sidebar.getLocationOnScreen(left);
+                    chat.getLocationOnScreen(right);
+                    return sidebar.isShown() && right[0] >= left[0] + sidebar.getWidth();
+                });
+                InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+                SystemClock.sleep(500);
+                Bitmap screenshot = automation.takeScreenshot();
+                assertNotNull(screenshot);
+                File target = new File(InstrumentationRegistry.getInstrumentation()
+                    .getTargetContext().getExternalFilesDir(null), "android-im-landscape.png");
+                try (FileOutputStream output = new FileOutputStream(target)) {
+                    assertTrue(screenshot.compress(Bitmap.CompressFormat.PNG, 100, output));
+                } finally { screenshot.recycle(); }
+                scenario.onActivity(activity -> {
+                    try {
+                        ((RemoteIMSessionController) get(activity, "session"))
+                            .chatState().receiveText("横屏新消息", "landscape-peer");
+                        activity.onStateChanged();
+                    } catch (Exception error) { throw new AssertionError(error); }
+                });
+                await(scenario, activity -> containsText(
+                    (View) get(activity, "currentConversationRows"), "横屏新消息"));
+                AtomicReference<ChatMessageList> retainedChat = new AtomicReference<>();
+                scenario.onActivity(activity -> {
+                    try {
+                        retainedChat.set((ChatMessageList) get(activity, "currentMessageList"));
+                        File sample = new File(activity.getCacheDir(), "landscape-dock.mp4");
+                        try (InputStream input = InstrumentationRegistry.getInstrumentation()
+                                .getContext().getAssets().open("gallery-sample.mp4");
+                             FileOutputStream output = new FileOutputStream(sample)) {
+                            byte[] buffer = new byte[8192];
+                            int count;
+                            while ((count = input.read(buffer)) >= 0) output.write(buffer, 0, count);
+                        }
+                        assertTrue(activity.openAgentVideo(sample.getAbsolutePath()));
+                    } catch (Exception error) { throw new AssertionError(error); }
+                });
+                await(scenario, activity -> {
+                    View sidebar = (View) get(activity, "landscapeConversationPane");
+                    MaiFfplayVideoView video = MaiFfplayVideoView.activeView();
+                    return sidebar.getVisibility() == View.GONE && video != null &&
+                        video.hasPresentedFrame() && retainedChat.get() == get(activity, "currentMessageList") &&
+                        "横屏草稿".equals(((EditText) get(activity, "messageInput")).getText().toString());
+                });
+                InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+                SystemClock.sleep(200);
+                Bitmap dockScreenshot = automation.takeScreenshot();
+                assertNotNull(dockScreenshot);
+                File dockTarget = new File(InstrumentationRegistry.getInstrumentation()
+                    .getTargetContext().getExternalFilesDir(null), "android-im-landscape-video-dock.png");
+                try (FileOutputStream output = new FileOutputStream(dockTarget)) {
+                    assertTrue(dockScreenshot.compress(Bitmap.CompressFormat.PNG, 100, output));
+                } finally { dockScreenshot.recycle(); }
+                scenario.onActivity(activity -> assertTrue(activity.commandAgentVideo("close", 0, 0, 0)));
+                await(scenario, activity -> ((View) get(activity, "landscapeConversationPane"))
+                    .getVisibility() == View.VISIBLE && retainedChat.get() == get(activity, "currentMessageList"));
+                scenario.onActivity(activity -> {
+                    try { call(activity, "openChat", new Class<?>[]{String.class}, "landscape-other"); }
+                    catch (Exception error) { throw new AssertionError(error); }
+                });
+                await(scenario, activity -> "landscape-other".equals(get(activity, "activeChatUserId")) &&
+                    ((EditText) get(activity, "messageInput")).getText().length() == 0 &&
+                    ((View) get(activity, "landscapeConversationPane")).isShown());
+                scenario.onActivity(activity -> {
+                    try { call(activity, "openChat", new Class<?>[]{String.class}, "landscape-peer"); }
+                    catch (Exception error) { throw new AssertionError(error); }
+                });
+                await(scenario, activity -> "landscape-peer".equals(get(activity, "activeChatUserId")) &&
+                    "横屏草稿".equals(((EditText) get(activity, "messageInput")).getText().toString()));
+                scenario.onActivity(activity -> {
+                    View back = findDescription(activity.getWindow().getDecorView(), "返回会话列表");
+                    assertNotNull(back);
+                    assertTrue(back.performClick());
+                });
+                await(scenario, activity -> get(activity, "activeChatUserId") == null &&
+                    (boolean) get(activity, "renderedLandscapeIm"));
+                scenario.onActivity(activity -> {
+                    try { call(activity, "openChat", new Class<?>[]{String.class}, "landscape-peer"); }
+                    catch (Exception error) { throw new AssertionError(error); }
+                });
+                await(scenario, activity -> "landscape-peer".equals(get(activity, "activeChatUserId")) &&
+                    "横屏草稿".equals(((EditText) get(activity, "messageInput")).getText().toString()));
+                automation.setRotation(UiAutomation.ROTATION_FREEZE_0);
+                await(scenario, activity ->
+                    !(boolean) get(activity, "renderedLandscapeIm") &&
+                    "landscape-peer".equals(get(activity, "activeChatUserId")) &&
+                    "横屏草稿".equals(((EditText) get(activity, "messageInput")).getText().toString()));
+            } finally {
+                automation.setRotation(UiAutomation.ROTATION_FREEZE_0);
+            }
+        }
     }
     // 作用：验证接收新消息和打开键盘时草稿与最新消息位置不丢失。
     // 按真实调用顺序检查输入和可观察结果，失败时保留定位所需的上下文。

@@ -8,4 +8,5 @@
 - 修复源码提交：`eb038ed5ea7d27468bf37299cbb26aa41003c08b`。
 - 同一快照复测：96 条消息的会话连续两次打开分别耗时 209 ms、186 ms；较短会话约 5–241 ms。此结果证明面板恢复阶段的卡顿显著降低，不代表当前已安装版本已经更新。
 - 验证：macOS Release 构建 `maichat`、`agent_controller_test`、`agent_panel_session_test`、`markdown_view_test`、`main_window_layout_test` 通过；相关 CTest 4/4 通过；构建产物 `--smoke` 退出 0。测试覆盖新会话默认目录、只迁移根目录会话、保留自选目录及批量排版与逐条排版的几何一致性。`agent_page_visual_probe` 生成的实际 Qt 窗口截图已检查，消息、工具卡、输入区与列表布局正常。未触发付费模型请求。
+- 候选产物：`MaiChat/desktop/dist-switch-fix-122a735a/MaiChat-macos-arm64/MaiChat.app`，bundle 版本 2.1.2，可执行文件 SHA-256 `1d8bb21ff3ab4f795f4d25ebf984075adb71173f43b28dc24ea3b985625a8dba`。打包脚本完成依赖封装和临时签名，`codesign --verify --deep --strict` 与候选 App 的 `--smoke` 均通过；路径与现场运行进程不同。
 - 未验证边界：当前运行中的 `/Applications/MaiChat.app` 未停止或替换；尚未在该安装版内验证修复后的会话切换。Windows 和 iOS 未运行本次变更。

@@ -292,6 +292,7 @@ private slots:
     void conversationUsesAvailableWidth();
     void pastedImageUsesTheSharedComposerAndReachesTheModel();
     void pastedVideoDraftSurvivesSessionSwitchAndReachesModel();
+    void videoImportFinishesInItsOriginalSession();
     void actionPanelMatchesMobileModelAndPolicyFlow();
     void newAgentOutputDoesNotInterruptReadingHistory();
     void switchingSessionsShowsLatestMessage();
@@ -1113,6 +1114,7 @@ void AgentPanelSessionTest::pastedImageUsesTheSharedComposerAndReachesTheModel()
     editor->setFocus();
     QTest::keyClick(editor, Qt::Key_V, Qt::ControlModifier);
     QTRY_VERIFY(editor->toPlainText().contains(QChar(0xFFFC)));
+    QVERIFY(QFile::remove(imagePath));
     const QString otherSession = controller.createSession(directory.path());
     panel.openSession(otherSession);
     QVERIFY(!editor->toPlainText().contains(QChar(0xFFFC)));
@@ -1129,7 +1131,10 @@ void AgentPanelSessionTest::pastedImageUsesTheSharedComposerAndReachesTheModel()
     const MaiModelRequest request = captured->request();
     QVERIFY(!request.messages.empty());
     QCOMPARE(request.messages.back().images.size(), std::size_t(1));
-    QCOMPARE(QString::fromStdString(request.messages.back().images.front().path), imagePath);
+    const QString importedPath = QString::fromStdString(request.messages.back().images.front().path);
+    QVERIFY(importedPath != imagePath);
+    QVERIFY(importedPath.startsWith(directory.path() + QStringLiteral("/ComposerMedia/")));
+    QVERIFY(QFileInfo(importedPath).isFile());
     // 思考正文不再占用消息条目；附件与回复仍须可见。
     QVERIFY(panel.findChild<MarkdownView*>()->itemCount() >= 2);
     panel.openSession(sessionId);
@@ -1179,15 +1184,19 @@ void AgentPanelSessionTest::pastedVideoDraftSurvivesSessionSwitchAndReachesModel
     auto* preview = tray->findChild<QPushButton*>(QStringLiteral("agentDraftVideoPreview"));
     QVERIFY(preview);
     QTest::mouseClick(preview, Qt::LeftButton);
-    QCOMPARE(previewed, videoPath);
+    QVERIFY(previewed != videoPath);
+    QVERIFY(QFileInfo(previewed).isFile());
     auto* remove = tray->findChild<QPushButton*>(QStringLiteral("agentRemoveDraftMedia"));
     QVERIFY(remove);
     QTest::mouseClick(remove, Qt::LeftButton);
     QTRY_VERIFY(!tray->isVisible());
     QVERIFY(!editor->toPlainText().contains(QChar(0xFFFC)));
+    QTRY_VERIFY(!QFileInfo(previewed).exists());
     editor->setFocus();
     QTest::keyClick(editor, Qt::Key_V, Qt::ControlModifier);
     QTRY_VERIFY(tray->isVisible());
+    QTRY_VERIFY(editor->toPlainText().contains(QChar(0xFFFC)));
+    QVERIFY(QFile::remove(videoPath));
     const QByteArray capture = qgetenv("MAICHAT_TEST_CAPTURE_PATH");
     if (!capture.isEmpty()) {
         QTest::qWait(700);
@@ -1200,23 +1209,28 @@ void AgentPanelSessionTest::pastedVideoDraftSurvivesSessionSwitchAndReachesModel
     QVERIFY(finished.wait(15000));
     const MaiModelRequest request = captured->request();
     QVERIFY(!request.messages.empty());
-    QVERIFY(QString::fromStdString(request.messages.back().content).contains(videoPath));
     QVERIFY(QString::fromStdString(request.messages.back().content).contains(
         QStringLiteral("请处理这个视频")));
     const auto messages = controller.agent().listMessages(sessionId.toStdString());
-    bool storedVideo = false;
+    QString storedPath;
     for (const MaiMessage& message : messages)
         for (const MaiMessagePart& part : message.parts)
             if (const auto* video = std::get_if<MaiVideoPart>(&part.body))
-                storedVideo |= QString::fromStdString(video->path) == videoPath;
-    QVERIFY(storedVideo);
+                storedPath = QString::fromStdString(video->path);
+    QVERIFY(!storedPath.isEmpty());
+    QVERIFY(storedPath != videoPath);
+    QVERIFY(storedPath.startsWith(directory.path() + QStringLiteral("/ComposerMedia/")));
+    QVERIFY(QFileInfo(storedPath).isFile());
+    QVERIFY(QString::fromStdString(request.messages.back().content).contains(storedPath));
     QVERIFY(panel.findChild<QPushButton*>(QStringLiteral("agentUserVideoPlay")));
     panel.openSession(sessionId);
     QVERIFY(panel.findChild<QPushButton*>(QStringLiteral("agentUserVideoPlay")));
     panel.openSession(other);
+    QVERIFY(QFile::copy(QStringLiteral(MAICHAT_AGENT_VIDEO_FIXTURE), videoPath));
     editor->setFocus();
     QTest::keyClick(editor, Qt::Key_V, Qt::ControlModifier);
     QTRY_VERIFY(tray->isVisible());
+    QTRY_VERIFY(editor->toPlainText().contains(QChar(0xFFFC)));
     QSignalSpy mediaOnlyFinished(&controller, &AgentController::turnFinished);
     QTest::mouseClick(send, Qt::LeftButton);
     QVERIFY(mediaOnlyFinished.wait(15000));
@@ -1227,6 +1241,44 @@ void AgentPanelSessionTest::pastedVideoDraftSurvivesSessionSwitchAndReachesModel
             if (std::get_if<MaiVideoPart>(&part.body)) mediaOnly = true;
     }
     QVERIFY(mediaOnly);
+}
+
+void AgentPanelSessionTest::videoImportFinishesInItsOriginalSession() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString videoPath = directory.filePath(QStringLiteral("large-video.mp4"));
+    QVERIFY(QFile::copy(QStringLiteral(MAICHAT_AGENT_VIDEO_FIXTURE), videoPath));
+    QFile large(videoPath);
+    QVERIFY(large.open(QIODevice::ReadWrite));
+    QVERIFY(large.resize(32 * 1024 * 1024));
+    large.close();
+    AgentController controller(std::make_unique<SilentModel>(), QString());
+    AgentChatPanel panel(controller);
+    panel.resize(900, 700);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    const QString first = controller.createSession(directory.path());
+    const QString second = controller.createSession(directory.path());
+    panel.openSession(first);
+    auto* editor = panel.findChild<QTextEdit*>(QStringLiteral("agentPromptEditor"));
+    QVERIFY(editor);
+    auto* mime = new QMimeData;
+    mime->setUrls({QUrl::fromLocalFile(videoPath)});
+    QApplication::clipboard()->setMimeData(mime);
+    QElapsedTimer elapsed;
+    elapsed.start();
+    editor->setFocus();
+    QTest::keyClick(editor, Qt::Key_V, Qt::ControlModifier);
+    QVERIFY2(elapsed.elapsed() < 1000, "Import must not copy a large video on the UI thread");
+    panel.openSession(second);
+    QCOMPARE(panel.sessionId(), second);
+    QVERIFY(!editor->toPlainText().contains(QChar(0xFFFC)));
+    QTRY_VERIFY_WITH_TIMEOUT(QDir(directory.filePath(QStringLiteral("ComposerMedia")))
+        .entryList(QDir::Dirs | QDir::NoDotAndDotDot).size() == 1, 15000);
+    QTest::qWait(100);
+    panel.openSession(first);
+    QTRY_VERIFY_WITH_TIMEOUT(editor->toPlainText().contains(QChar(0xFFFC)), 15000);
+    QVERIFY(!panel.findChild<QScrollArea*>(QStringLiteral("agentMediaDraftTray"))->isHidden());
 }
 
 void AgentPanelSessionTest::unconfiguredModelOpensConfigurationInsteadOfFailingTurn() {

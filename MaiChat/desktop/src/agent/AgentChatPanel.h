@@ -114,6 +114,9 @@ private:
     void insertComposerImage(const QImage& image);
     void insertComposerImageFile(const QString& path);
     void insertComposerVideoFile(const QString& path);
+    void importComposerMediaFile(const QString& path, bool video, bool removeSourceAfterCopy = false);
+    void insertComposerMediaMarker(const QString& path, bool video, const QString& sessionId);
+    QString composerMediaDirectory() const;
     QStringList composerImagePaths() const;
     QStringList composerVideoPaths() const;
     void refreshComposerMediaTray();

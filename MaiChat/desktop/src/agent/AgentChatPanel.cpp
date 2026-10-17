@@ -52,9 +52,11 @@
 #include <QTextImageFormat>
 #include <QTimer>
 #include <QUrl>
+#include <QUuid>
 #include <QVBoxLayout>
 #include <QtConcurrent/QtConcurrent>
 #include <algorithm>
+#include <atomic>
 #include <functional>
 #include <variant>
 
@@ -1018,6 +1020,13 @@ struct AgentChatPanel::Runtime {
     QScrollArea* mediaTray = nullptr;
     QHBoxLayout* mediaTrayLayout = nullptr;
     QStringList visibleDraftMedia;
+    QString visibleDraftSession;
+    QSet<QString> unsentImportedPaths;
+    QSet<QString> pendingImportDestinations;
+    std::shared_ptr<std::atomic<bool>> importCanceled =
+        std::make_shared<std::atomic<bool>>(false);
+    QHash<QString, int> pendingMediaImports;
+    int visiblePendingImports = -1;
     QPushButton* send = nullptr;
     QPushButton* hint = nullptr;
     QPushButton* chooseWorkspace = nullptr;
@@ -1595,7 +1604,15 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
             });
 }
 
-AgentChatPanel::~AgentChatPanel() = default;
+AgentChatPanel::~AgentChatPanel() {
+    runtime_->importCanceled->store(true);
+    for (const QString& path : runtime_->pendingImportDestinations)
+        QtConcurrent::run([path] { QDir(QFileInfo(path).absolutePath()).removeRecursively(); });
+    for (const QString& path : runtime_->unsentImportedPaths) {
+        QFile::remove(path);
+        QDir().rmdir(QFileInfo(path).absolutePath());
+    }
+}
 
 bool AgentChatPanel::isCurrentSession(const QString& sessionId) const {
     return sessionId == runtime_->sessionId;
@@ -2490,47 +2507,128 @@ void AgentChatPanel::insertComposerImage(const QImage& image) {
     const QString path =
         QDir(directory).filePath(QStringLiteral("paste-%1.png").arg(QDateTime::currentMSecsSinceEpoch()));
     if (!image.save(path, "PNG")) return;
-    insertComposerImageFile(path);
+    importComposerMediaFile(path, false, true);
 }
 
 void AgentChatPanel::insertComposerImageFile(const QString& path) {
-    QImageReader reader(path);
-    const QSize size = reader.size();
-    if (!size.isValid() || size.isEmpty()) {
-        appendNotice(QStringLiteral("图片无法读取：%1").arg(QFileInfo(path).fileName()), true);
-        return;
-    }
-    QTextImageFormat format;
-    format.setName(QFileInfo(path).absoluteFilePath());
-    format.setWidth(1);
-    format.setHeight(1);
-    QTextCursor cursor = runtime_->editor->textCursor();
-    cursor.insertImage(format);
-    runtime_->editor->setTextCursor(cursor);
-    runtime_->editor->setFocus();
-    refreshComposerMediaTray();
+    importComposerMediaFile(path, false);
 }
 
 void AgentChatPanel::insertComposerVideoFile(const QString& path) {
-    const QFileInfo file(path);
-    if (!file.isFile() || videoMimeType(path).isEmpty()) {
-        appendNotice(QStringLiteral("视频无法读取：%1").arg(file.fileName()), true);
-        return;
+    importComposerMediaFile(path, true);
+}
+
+QString AgentChatPanel::composerMediaDirectory() const {
+    QString root;
+    if (!defaultWorkspaceDirectory_.isEmpty()) {
+        root = QFileInfo(defaultWorkspaceDirectory_).absolutePath();
+    } else {
+        MaiSession session;
+        if (runtime_->controller->agent().getSession(toUtf8(runtime_->sessionId), session))
+            root = fromUtf8(session.directory);
     }
+    if (root.isEmpty() || QDir(root).isRoot()) return {};
+    return QDir(root).filePath(QStringLiteral("ComposerMedia"));
+}
+
+void AgentChatPanel::insertComposerMediaMarker(const QString& path, bool video,
+                                                const QString& sessionId) {
     QTextImageFormat format;
-    format.setName(videoResourceName(file.absoluteFilePath()));
+    format.setName(video ? videoResourceName(path) : path);
     format.setWidth(1);
     format.setHeight(1);
-    format.setToolTip(QStringLiteral("双击播放；选中后按退格移除 · %1").arg(file.fileName()));
-    QImage marker(1, 1, QImage::Format_ARGB32_Premultiplied);
-    marker.fill(Qt::transparent);
-    runtime_->editor->document()->addResource(QTextDocument::ImageResource,
-                                               QUrl(format.name()), marker);
-    QTextCursor cursor = runtime_->editor->textCursor();
-    cursor.insertImage(format);
-    runtime_->editor->setTextCursor(cursor);
-    runtime_->editor->setFocus();
+    if (sessionId == runtime_->sessionId) {
+        if (video) {
+            QImage marker(1, 1, QImage::Format_ARGB32_Premultiplied);
+            marker.fill(Qt::transparent);
+            runtime_->editor->document()->addResource(QTextDocument::ImageResource,
+                                                       QUrl(format.name()), marker);
+        }
+        QTextCursor oldCursor = runtime_->editor->textCursor();
+        QTextCursor cursor(runtime_->editor->document());
+        cursor.movePosition(QTextCursor::End);
+        cursor.insertImage(format);
+        runtime_->editor->setTextCursor(oldCursor);
+        refreshComposerMediaTray();
+    } else {
+        QTextDocument document;
+        QTextCursor cursor(&document);
+        if (runtime_->composerDrafts.contains(sessionId))
+            cursor.insertFragment(runtime_->composerDrafts.value(sessionId));
+        cursor.movePosition(QTextCursor::End);
+        cursor.insertImage(format);
+        runtime_->composerDrafts.insert(sessionId, QTextDocumentFragment(&document));
+    }
+}
+
+void AgentChatPanel::importComposerMediaFile(const QString& path, bool video,
+                                              bool removeSourceAfterCopy) {
+    const QFileInfo file(path);
+    if (!file.isFile() || (video ? videoMimeType(path).isEmpty()
+                                  : !QImageReader(path).size().isValid())) {
+        appendNotice(QStringLiteral("%1无法读取：%2")
+            .arg(video ? QStringLiteral("视频") : QStringLiteral("图片"), file.fileName()), true);
+        return;
+    }
+    if (runtime_->sessionId.isEmpty()) openSession();
+    const QString targetSession = runtime_->sessionId;
+    if (targetSession.isEmpty()) return;
+    const int existing = composerImagePaths().size() + composerVideoPaths().size();
+    if (existing + runtime_->pendingMediaImports.value(targetSession) >= 10) {
+        appendNotice(QStringLiteral("每条消息最多添加 10 项图片或视频。"), true);
+        return;
+    }
+    const QString storage = composerMediaDirectory();
+    if (storage.isEmpty()) {
+        appendNotice(QStringLiteral("无法创建创作中心媒体工作目录。"), true);
+        return;
+    }
+    const QString directory = QDir(storage).filePath(
+        QUuid::createUuid().toString(QUuid::WithoutBraces));
+    const QString destination = QDir(directory).filePath(file.fileName());
+    runtime_->pendingMediaImports[targetSession] += 1;
+    runtime_->pendingImportDestinations.insert(destination);
     refreshComposerMediaTray();
+    auto* watcher = new QFutureWatcher<QString>(this);
+    connect(watcher, &QFutureWatcher<QString>::finished, this,
+        [this, watcher, targetSession, video, destination, fileName = file.fileName()] {
+            const QString imported = watcher->result();
+            watcher->deleteLater();
+            runtime_->pendingImportDestinations.remove(destination);
+            const int remaining = runtime_->pendingMediaImports.value(targetSession) - 1;
+            if (remaining > 0) runtime_->pendingMediaImports[targetSession] = remaining;
+            else runtime_->pendingMediaImports.remove(targetSession);
+            MaiSession session;
+            if (!runtime_->controller->agent().getSession(toUtf8(targetSession), session)) {
+                if (!imported.isEmpty()) QDir(QFileInfo(imported).absolutePath()).removeRecursively();
+            } else if (imported.isEmpty()) {
+                if (targetSession == runtime_->sessionId)
+                    appendNotice(QStringLiteral("媒体导入失败：%1").arg(fileName), true);
+            } else {
+                runtime_->unsentImportedPaths.insert(imported);
+                insertComposerMediaMarker(imported, video, targetSession);
+            }
+            if (targetSession == runtime_->sessionId) refreshComposerMediaTray();
+        });
+    watcher->setFuture(QtConcurrent::run([source = file.absoluteFilePath(),
+                                          directory, destination, removeSourceAfterCopy,
+                                          canceled = runtime_->importCanceled] {
+        if (!QDir().mkpath(directory)) {
+            if (removeSourceAfterCopy) QFile::remove(source);
+            return QString();
+        }
+        if (!QFile::copy(source, destination)) {
+            QDir(directory).removeRecursively();
+            if (removeSourceAfterCopy) QFile::remove(source);
+            return QString();
+        }
+        if (removeSourceAfterCopy) QFile::remove(source);
+        if (canceled->load()) {
+            QDir(directory).removeRecursively();
+            return QString();
+        }
+        return destination;
+    }));
 }
 
 QStringList AgentChatPanel::composerImagePaths() const {
@@ -2591,8 +2689,19 @@ void AgentChatPanel::refreshComposerMediaTray() {
             if (QFileInfo(path).isFile() && !resources.contains(name)) resources.push_back(name);
         }
     }
-    if (resources != runtime_->visibleDraftMedia) {
+    if (runtime_->visibleDraftSession == runtime_->sessionId) {
+        for (const QString& old : runtime_->visibleDraftMedia) {
+            if (resources.contains(old)) continue;
+            const QString path = old.startsWith(kComposerVideoPrefix) ? videoPathFromResource(old) : old;
+            if (!runtime_->unsentImportedPaths.remove(path)) continue;
+            QtConcurrent::run([path] { QDir(QFileInfo(path).absolutePath()).removeRecursively(); });
+        }
+    }
+    runtime_->visibleDraftSession = runtime_->sessionId;
+    const int pending = runtime_->pendingMediaImports.value(runtime_->sessionId);
+    if (resources != runtime_->visibleDraftMedia || pending != runtime_->visiblePendingImports) {
         runtime_->visibleDraftMedia = resources;
+        runtime_->visiblePendingImports = pending;
         QHBoxLayout* row = runtime_->mediaTrayLayout;
         while (QLayoutItem* item = row->takeAt(0)) {
             if (QWidget* widget = item->widget()) {
@@ -2662,11 +2771,20 @@ void AgentChatPanel::refreshComposerMediaTray() {
             label->setStyleSheet(QStringLiteral("color:#172033;background:transparent;font-size:11px;"));
             row->addWidget(card);
         }
+        if (pending > 0) {
+            auto* loading = new QLabel(QStringLiteral("正在导入媒体（%1）…").arg(pending),
+                                       runtime_->mediaTray);
+            loading->setFixedSize(UiZoom::s(160), UiZoom::s(90));
+            loading->setAlignment(Qt::AlignCenter);
+            loading->setStyleSheet(QStringLiteral(
+                "QLabel{color:#667085;background:#f3f7fb;border-radius:8px;font-size:12px;}"));
+            row->addWidget(loading);
+        }
         row->addStretch(1);
     }
-    runtime_->mediaTray->setVisible(!resources.isEmpty());
+    runtime_->mediaTray->setVisible(!resources.isEmpty() || pending > 0);
     if (runtime_->composerHost && runtime_->composerSplitter) {
-        const bool hasMedia = !resources.isEmpty();
+        const bool hasMedia = !resources.isEmpty() || pending > 0;
         const int expanded = UiZoom::s(250) +
             (runtime_->quoteStrip->isVisible() ? UiZoom::s(42) : 0);
         const QList<int> sizes = runtime_->composerSplitter->sizes();
@@ -2696,6 +2814,7 @@ void AgentChatPanel::refreshComposerMediaTray() {
 void AgentChatPanel::updateComposerPlaceholder() {
     if (!runtime_->pendingQuestionId.isEmpty()) return;
     runtime_->editor->setPlaceholderText(composerImagePaths().isEmpty() && composerVideoPaths().isEmpty()
+        && runtime_->pendingMediaImports.value(runtime_->sessionId) == 0
         ? QStringLiteral("交给它做点什么…") : QStringLiteral("添加说明（可选）"));
 }
 
@@ -2778,6 +2897,10 @@ void AgentChatPanel::onSend() {
         runtime_->controller->interrupt(runtime_->sessionId);
         return;
     }
+    if (runtime_->pendingMediaImports.value(runtime_->sessionId) > 0) {
+        appendNotice(QStringLiteral("媒体还在导入，请稍候再发送。"), false);
+        return;
+    }
     QString text = runtime_->editor->toPlainText();
     text.remove(QChar(0xFFFC));
     text = text.trimmed();
@@ -2801,6 +2924,8 @@ void AgentChatPanel::onSend() {
         appendNotice(runtime_->controller->lastError(), true);
         return;
     }
+    for (const QString& path : imagePaths) runtime_->unsentImportedPaths.remove(path);
+    for (const QString& path : videoPaths) runtime_->unsentImportedPaths.remove(path);
     clearQuote();
     runtime_->editor->clear();
     updateComposerPlaceholder();

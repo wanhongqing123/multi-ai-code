@@ -27,6 +27,8 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QMimeDatabase>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPixmap>
 #include <QPolygonF>
@@ -34,6 +36,7 @@
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QScreen>
+#include <QScrollArea>
 #include <QSet>
 #include <QSettings>
 #include <QSplitter>
@@ -43,6 +46,7 @@
 #include <QTextCursor>
 #include <QTextDocument>
 #include <QTextDocumentFragment>
+#include <QTextDocument>
 #include <QTextEdit>
 #include <QTextFragment>
 #include <QTextImageFormat>
@@ -74,6 +78,49 @@ const char* const kLine = "#e2e8f0";
 const char* const kLineSoft = "#f1f5f9";
 const char* const kAccent = "#0b67b7";
 const char* const kDanger = "#b42318";
+const QString kComposerVideoPrefix = QStringLiteral("maichat-video:");
+
+QString videoResourceName(const QString& path) {
+    return kComposerVideoPrefix + QUrl::fromLocalFile(QFileInfo(path).absoluteFilePath())
+        .toString(QUrl::FullyEncoded);
+}
+
+QString videoPathFromResource(const QString& name) {
+    return name.startsWith(kComposerVideoPrefix)
+        ? QUrl(name.mid(kComposerVideoPrefix.size())).toLocalFile() : QString();
+}
+
+QString videoMimeType(const QString& path) {
+    const QString suffix = QFileInfo(path).suffix().toLower();
+    if (suffix == QStringLiteral("mp4")) return QStringLiteral("video/mp4");
+    if (suffix == QStringLiteral("mov")) return QStringLiteral("video/quicktime");
+    if (suffix == QStringLiteral("webm")) return QStringLiteral("video/webm");
+    const QString detected = QMimeDatabase().mimeTypeForFile(path).name().toLower();
+    return detected.startsWith(QStringLiteral("video/")) ? detected : QString();
+}
+
+QImage videoDraftImage(const QImage& source) {
+    QImage preview(480, 270, QImage::Format_ARGB32_Premultiplied);
+    preview.fill(QColor(QStringLiteral("#111827")));
+    QPainter painter(&preview);
+    painter.setRenderHint(QPainter::Antialiasing);
+    if (!source.isNull()) {
+        const QImage fitted = source.scaled(preview.size(), Qt::KeepAspectRatioByExpanding,
+                                            Qt::SmoothTransformation);
+        painter.drawImage(QRect(QPoint(0, 0), preview.size()), fitted,
+                          QRect((fitted.width() - preview.width()) / 2,
+                                (fitted.height() - preview.height()) / 2,
+                                preview.width(), preview.height()));
+    }
+    painter.setBrush(QColor(0, 0, 0, 160));
+    painter.setPen(Qt::NoPen);
+    painter.drawEllipse(QPointF(240, 120), 30, 30);
+    painter.setBrush(Qt::white);
+    QPolygonF triangle;
+    triangle << QPointF(231, 104) << QPointF(231, 136) << QPointF(258, 120);
+    painter.drawPolygon(triangle);
+    return preview;
+}
 
 std::string toUtf8(const QString& text) {
     const QByteArray bytes = text.toUtf8();
@@ -445,8 +492,18 @@ class PromptEdit final : public ComposerTextEdit {
 public:
     explicit PromptEdit(QWidget* parent = nullptr) : ComposerTextEdit(parent) {}
     std::function<void()> onSubmit;
+    std::function<void(const QString&)> onOpenVideo;
 
 protected:
+    void mouseDoubleClickEvent(QMouseEvent* event) override {
+        const QTextCursor clicked = cursorForPosition(event->pos());
+        const QString path = videoPathFromResource(clicked.charFormat().toImageFormat().name());
+        if (!path.isEmpty() && onOpenVideo) {
+            onOpenVideo(path);
+            return;
+        }
+        ComposerTextEdit::mouseDoubleClickEvent(event);
+    }
     void keyPressEvent(QKeyEvent* event) override {
         const bool isEnter = event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter;
         if (isEnter && !(event->modifiers() & Qt::ShiftModifier)) {
@@ -954,6 +1011,13 @@ struct AgentChatPanel::Runtime {
     QList<QPushButton*> policyOptionButtons;
     MarkdownView* view = nullptr;
     PromptEdit* editor = nullptr;
+    QWidget* composerHost = nullptr;
+    ComposerResizeSplitter* composerSplitter = nullptr;
+    int composerSizeBeforeMedia = 0;
+    bool mediaAutoExpanded = false;
+    QScrollArea* mediaTray = nullptr;
+    QHBoxLayout* mediaTrayLayout = nullptr;
+    QStringList visibleDraftMedia;
     QPushButton* send = nullptr;
     QPushButton* hint = nullptr;
     QPushButton* chooseWorkspace = nullptr;
@@ -1055,6 +1119,7 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
 
     // ---- 输入区：与普通 IM 共用同一个 ComposerTextEdit 形状 ----
     auto* composerHost = new QWidget(this);
+    runtime_->composerHost = composerHost;
     composerHost->setObjectName(QStringLiteral("agentComposerPanel"));
     // 用户把分隔条拖到最低时仍保留一行可见文字；编辑器底部还要给发送按钮留一行。
     composerHost->setMinimumHeight(UiZoom::s(112));
@@ -1082,6 +1147,22 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     runtime_->quoteStrip->hide();
     composerLayout->addWidget(runtime_->quoteStrip);
 
+    runtime_->mediaTray = new QScrollArea(composerHost);
+    runtime_->mediaTray->setObjectName(QStringLiteral("agentMediaDraftTray"));
+    runtime_->mediaTray->setFixedHeight(UiZoom::s(106));
+    runtime_->mediaTray->setFrameShape(QFrame::NoFrame);
+    runtime_->mediaTray->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    runtime_->mediaTray->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    runtime_->mediaTray->setWidgetResizable(true);
+    auto* trayContent = new QWidget(runtime_->mediaTray);
+    runtime_->mediaTrayLayout = new QHBoxLayout(trayContent);
+    runtime_->mediaTrayLayout->setContentsMargins(UiZoom::s(12), UiZoom::s(5),
+                                                   UiZoom::s(12), UiZoom::s(5));
+    runtime_->mediaTrayLayout->setSpacing(UiZoom::s(8));
+    runtime_->mediaTray->setWidget(trayContent);
+    runtime_->mediaTray->hide();
+    composerLayout->addWidget(runtime_->mediaTray);
+
     runtime_->editor = new PromptEdit(composerHost);
     runtime_->editor->setObjectName(QStringLiteral("agentPromptEditor"));
     runtime_->editor->setPlaceholderText(QStringLiteral("交给它做点什么…"));
@@ -1103,6 +1184,31 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     runtime_->editor->setFont(editorFont);
     runtime_->editor->onSubmit = [this] { onSend(); };
     runtime_->editor->setMimeHandler([this](const QMimeData* mime) { return insertComposerMimeData(mime); });
+    connect(runtime_->editor, &QTextEdit::textChanged, this, &AgentChatPanel::refreshComposerMediaTray);
+    runtime_->editor->onOpenVideo = [this](const QString& path) {
+        if (openVideo_ && QFileInfo(path).isFile()) openVideo_(path, composerVideoPaths());
+    };
+    auto* attachMedia = new QPushButton(QStringLiteral("+"), runtime_->editor);
+    attachMedia->setObjectName(QStringLiteral("agentAttachMediaButton"));
+    attachMedia->setAccessibleName(QStringLiteral("添加图片或视频"));
+    attachMedia->setToolTip(QStringLiteral("添加图片或视频"));
+    attachMedia->setCursor(Qt::PointingHandCursor);
+    attachMedia->setFixedSize(UiZoom::s(36), UiZoom::s(36));
+    attachMedia->setStyleSheet(QStringLiteral(
+        "QPushButton{border:0;border-radius:18px;background:#eef6ff;color:#0b67b7;font-size:24px;}"
+        "QPushButton:hover{background:#dceeff;}"));
+    runtime_->editor->setLeadingAction(attachMedia);
+    connect(attachMedia, &QPushButton::clicked, this, [this] {
+        const QStringList paths = QFileDialog::getOpenFileNames(
+            this, QStringLiteral("添加图片或视频"),
+            QStandardPaths::writableLocation(QStandardPaths::PicturesLocation),
+            QStringLiteral("媒体文件 (*.png *.jpg *.jpeg *.webp *.gif *.mp4 *.mov *.webm)"));
+        for (const QString& path : paths) {
+            if (!videoMimeType(path).isEmpty())
+                insertComposerVideoFile(path);
+            else insertComposerImageFile(path);
+        }
+    });
     composerLayout->addWidget(runtime_->editor, 1);
 
     runtime_->modelChip = new QPushButton(head);
@@ -1370,6 +1476,7 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     });
 
     auto* messageComposerSplitter = new ComposerResizeSplitter(this);
+    runtime_->composerSplitter = messageComposerSplitter;
     messageComposerSplitter->setObjectName(QStringLiteral("agentMessageComposerSplitter"));
     messageComposerSplitter->setChildrenCollapsible(false);
     messageComposerSplitter->setStyleSheet(
@@ -1644,6 +1751,7 @@ void AgentChatPanel::openSession(const QString& sessionId) {
             QStringLiteral("当前工作目录：%1\n点击选择目录并新建对话").arg(directory));
     }
     reloadFromStore();
+    refreshComposerMediaTray();
     emit sessionListChanged();
 }
 
@@ -1700,13 +1808,19 @@ void AgentChatPanel::reloadFromStore() {
             // 历史里的气泡用消息 id：重开会话再画一遍时 id 要稳定，
             // 不然同一条消息会被当成两条。
             QStringList images;
+            QStringList videos;
             for (const MaiMessagePart& part : message.parts) {
-                const auto* image = std::get_if<MaiImagePart>(&part.body);
-                if (!image) continue;
-                const QString stored = fromUtf8(image->path);
-                images.push_back(QFileInfo(stored).isAbsolute()
-                                     ? stored
-                                     : QDir(fromUtf8(selectedSession.directory)).filePath(stored));
+                if (const auto* image = std::get_if<MaiImagePart>(&part.body)) {
+                    const QString stored = fromUtf8(image->path);
+                    images.push_back(QFileInfo(stored).isAbsolute()
+                                         ? stored
+                                         : QDir(fromUtf8(selectedSession.directory)).filePath(stored));
+                } else if (const auto* video = std::get_if<MaiVideoPart>(&part.body)) {
+                    const QString stored = fromUtf8(video->path);
+                    videos.push_back(QFileInfo(stored).isAbsolute()
+                                         ? stored
+                                         : QDir(fromUtf8(selectedSession.directory)).filePath(stored));
+                }
             }
             const QString sourceText = fromUtf8(message.text());
             QString userText = sourceText;
@@ -1718,6 +1832,7 @@ void AgentChatPanel::reloadFromStore() {
             if (!userText.isEmpty())
                 runtime_->view->addItem(fromUtf8(message.id), MarkdownView::Style::Bubble, userText);
             appendUserImages(images);
+            appendUserVideos(videos);
             appendTextMediaCards(fromUtf8(message.id), sourceText, fromUtf8(selectedSession.directory));
             appendQuoteAction(fromUtf8(message.id));
             continue;
@@ -2350,8 +2465,10 @@ bool AgentChatPanel::insertComposerMimeData(const QMimeData* mime) {
         for (const QUrl& url : mime->urls()) {
             if (!url.isLocalFile()) continue;
             const QString path = url.toLocalFile();
-            if (!QFileInfo(path).isFile() || QImageReader::imageFormat(path).isEmpty()) continue;
-            insertComposerImageFile(path);
+            if (!QFileInfo(path).isFile()) continue;
+            if (!videoMimeType(path).isEmpty()) insertComposerVideoFile(path);
+            else if (!QImageReader::imageFormat(path).isEmpty()) insertComposerImageFile(path);
+            else continue;
             inserted = true;
         }
         if (inserted) return true;
@@ -2385,19 +2502,35 @@ void AgentChatPanel::insertComposerImageFile(const QString& path) {
     }
     QTextImageFormat format;
     format.setName(QFileInfo(path).absoluteFilePath());
-    int width = size.width();
-    int height = size.height();
-    constexpr int kMaxWidth = 240;
-    if (width > kMaxWidth && width > 0) {
-        height = height * kMaxWidth / width;
-        width = kMaxWidth;
-    }
-    format.setWidth(width);
-    format.setHeight(height);
+    format.setWidth(1);
+    format.setHeight(1);
     QTextCursor cursor = runtime_->editor->textCursor();
     cursor.insertImage(format);
     runtime_->editor->setTextCursor(cursor);
     runtime_->editor->setFocus();
+    refreshComposerMediaTray();
+}
+
+void AgentChatPanel::insertComposerVideoFile(const QString& path) {
+    const QFileInfo file(path);
+    if (!file.isFile() || videoMimeType(path).isEmpty()) {
+        appendNotice(QStringLiteral("视频无法读取：%1").arg(file.fileName()), true);
+        return;
+    }
+    QTextImageFormat format;
+    format.setName(videoResourceName(file.absoluteFilePath()));
+    format.setWidth(1);
+    format.setHeight(1);
+    format.setToolTip(QStringLiteral("双击播放；选中后按退格移除 · %1").arg(file.fileName()));
+    QImage marker(1, 1, QImage::Format_ARGB32_Premultiplied);
+    marker.fill(Qt::transparent);
+    runtime_->editor->document()->addResource(QTextDocument::ImageResource,
+                                               QUrl(format.name()), marker);
+    QTextCursor cursor = runtime_->editor->textCursor();
+    cursor.insertImage(format);
+    runtime_->editor->setTextCursor(cursor);
+    runtime_->editor->setFocus();
+    refreshComposerMediaTray();
 }
 
 QStringList AgentChatPanel::composerImagePaths() const {
@@ -2408,10 +2541,162 @@ QStringList AgentChatPanel::composerImagePaths() const {
             const QTextFragment fragment = it.fragment();
             if (!fragment.isValid() || !fragment.charFormat().isImageFormat()) continue;
             const QString path = fragment.charFormat().toImageFormat().name();
+            if (path.startsWith(kComposerVideoPrefix)) continue;
             if (QFileInfo(path).isFile() && !paths.contains(path)) paths.push_back(path);
         }
     }
     return paths;
+}
+
+QStringList AgentChatPanel::composerVideoPaths() const {
+    QStringList paths;
+    const QTextDocument* document = runtime_->editor->document();
+    for (QTextBlock block = document->begin(); block.isValid(); block = block.next()) {
+        for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+            const QTextFragment fragment = it.fragment();
+            if (!fragment.isValid() || !fragment.charFormat().isImageFormat()) continue;
+            const QString path = videoPathFromResource(fragment.charFormat().toImageFormat().name());
+            if (QFileInfo(path).isFile() && !paths.contains(path)) paths.push_back(path);
+        }
+    }
+    return paths;
+}
+
+void AgentChatPanel::removeComposerMedia(const QString& resourceName) {
+    QTextDocument* document = runtime_->editor->document();
+    for (QTextBlock block = document->begin(); block.isValid(); block = block.next()) {
+        for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+            const QTextFragment fragment = it.fragment();
+            if (!fragment.isValid() || !fragment.charFormat().isImageFormat() ||
+                fragment.charFormat().toImageFormat().name() != resourceName) continue;
+            QTextCursor cursor(document);
+            cursor.setPosition(fragment.position());
+            cursor.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor);
+            cursor.removeSelectedText();
+            refreshComposerMediaTray();
+            return;
+        }
+    }
+}
+
+void AgentChatPanel::refreshComposerMediaTray() {
+    QStringList resources;
+    QTextDocument* document = runtime_->editor->document();
+    for (QTextBlock block = document->begin(); block.isValid(); block = block.next()) {
+        for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+            const QTextFragment fragment = it.fragment();
+            if (!fragment.isValid() || !fragment.charFormat().isImageFormat()) continue;
+            const QString name = fragment.charFormat().toImageFormat().name();
+            const QString path = name.startsWith(kComposerVideoPrefix) ? videoPathFromResource(name) : name;
+            if (QFileInfo(path).isFile() && !resources.contains(name)) resources.push_back(name);
+        }
+    }
+    if (resources != runtime_->visibleDraftMedia) {
+        runtime_->visibleDraftMedia = resources;
+        QHBoxLayout* row = runtime_->mediaTrayLayout;
+        while (QLayoutItem* item = row->takeAt(0)) {
+            if (QWidget* widget = item->widget()) {
+                widget->hide();
+                widget->deleteLater();
+            }
+            delete item;
+        }
+        for (const QString& name : resources) {
+            const bool video = name.startsWith(kComposerVideoPrefix);
+            const QString path = video ? videoPathFromResource(name) : name;
+            auto* card = new QWidget(runtime_->mediaTray);
+            card->setObjectName(video ? QStringLiteral("agentVideoDraftCard") :
+                                        QStringLiteral("agentImageDraftCard"));
+            card->setFixedSize(UiZoom::s(136), UiZoom::s(90));
+            card->setStyleSheet(QStringLiteral("background:#f3f7fb;border-radius:8px;"));
+            auto* cover = new QLabel(card);
+            cover->setGeometry(0, 0, UiZoom::s(136), UiZoom::s(70));
+            cover->setScaledContents(true);
+            if (video) {
+                QImage marker(1, 1, QImage::Format_ARGB32_Premultiplied);
+                marker.fill(Qt::transparent);
+                document->addResource(QTextDocument::ImageResource, QUrl(name), marker);
+                cover->setPixmap(QPixmap::fromImage(videoDraftImage({})));
+                MessageImageLoader::instance().load(path, QSize(480, 270), cover,
+                    [cover, path](const QPixmap& pixels) {
+                        cover->setPixmap(QPixmap::fromImage(
+                            videoDraftImage(pixels.toImage())));
+                    });
+            } else {
+                MessageImageLoader::instance().loadInto(path, QSize(272, 140), cover);
+            }
+            auto* open = new QPushButton(card);
+            open->setObjectName(video ? QStringLiteral("agentDraftVideoPreview") :
+                                        QStringLiteral("agentDraftImagePreview"));
+            open->setAccessibleName(QStringLiteral("预览%1 %2")
+                .arg(video ? QStringLiteral("视频") : QStringLiteral("图片"), QFileInfo(path).fileName()));
+            open->setGeometry(0, 0, UiZoom::s(136), UiZoom::s(70));
+            open->setCursor(Qt::PointingHandCursor);
+            open->setStyleSheet(QStringLiteral("QPushButton{background:transparent;border:0;}"));
+            connect(open, &QPushButton::clicked, this, [this, video, path, card] {
+                if (video) {
+                    if (openVideo_) openVideo_(path, composerVideoPaths());
+                } else {
+                    const QScreen* screen = QGuiApplication::primaryScreen();
+                    const QSize size = screen ? screen->availableGeometry().size() : QSize(1200, 900);
+                    MessageImageLoader::instance().load(path, size, card,
+                        [this](const QPixmap& pixels) {
+                            ImagePreviewDialog dialog(pixels, this);
+                            dialog.exec();
+                        });
+                }
+            });
+            auto* remove = new QPushButton(QStringLiteral("×"), card);
+            remove->setObjectName(QStringLiteral("agentRemoveDraftMedia"));
+            remove->setAccessibleName(QStringLiteral("移除%1 %2")
+                .arg(video ? QStringLiteral("视频") : QStringLiteral("图片"), QFileInfo(path).fileName()));
+            remove->setGeometry(UiZoom::s(109), UiZoom::s(2), UiZoom::s(25), UiZoom::s(25));
+            remove->setCursor(Qt::PointingHandCursor);
+            remove->setStyleSheet(QStringLiteral(
+                "QPushButton{background:rgba(0,0,0,180);border:0;border-radius:12px;color:white;}"));
+            connect(remove, &QPushButton::clicked, this,
+                    [this, name] { removeComposerMedia(name); });
+            auto* label = new QLabel(QFileInfo(path).fileName(), card);
+            label->setGeometry(UiZoom::s(4), UiZoom::s(72), UiZoom::s(128), UiZoom::s(16));
+            label->setText(label->fontMetrics().elidedText(label->text(), Qt::ElideMiddle, UiZoom::s(124)));
+            label->setStyleSheet(QStringLiteral("color:#172033;background:transparent;font-size:11px;"));
+            row->addWidget(card);
+        }
+        row->addStretch(1);
+    }
+    runtime_->mediaTray->setVisible(!resources.isEmpty());
+    if (runtime_->composerHost && runtime_->composerSplitter) {
+        const bool hasMedia = !resources.isEmpty();
+        const int expanded = UiZoom::s(250) +
+            (runtime_->quoteStrip->isVisible() ? UiZoom::s(42) : 0);
+        const QList<int> sizes = runtime_->composerSplitter->sizes();
+        const int current = sizes.size() > 1 ? sizes.at(1) : 0;
+        if (hasMedia && !runtime_->mediaAutoExpanded && current < expanded) {
+            runtime_->mediaAutoExpanded = true;
+            runtime_->composerSizeBeforeMedia = current;
+        }
+        runtime_->composerHost->setMinimumHeight(hasMedia ? expanded : UiZoom::s(112));
+        if (hasMedia && current < expanded) {
+            const int available = runtime_->composerSplitter->height() -
+                runtime_->composerSplitter->handleWidth();
+            runtime_->composerSplitter->setSizes(QList<int>() << qMax(0, available - expanded) << expanded);
+        } else if (!hasMedia && runtime_->mediaAutoExpanded) {
+            runtime_->mediaAutoExpanded = false;
+            if (current <= expanded + UiZoom::s(10)) {
+                const int previous = qMax(runtime_->composerSizeBeforeMedia, UiZoom::s(112));
+                const int available = runtime_->composerSplitter->height() -
+                    runtime_->composerSplitter->handleWidth();
+                runtime_->composerSplitter->setSizes(QList<int>() << qMax(0, available - previous) << previous);
+            }
+        }
+    }
+    updateComposerPlaceholder();
+}
+
+void AgentChatPanel::updateComposerPlaceholder() {
+    if (!runtime_->pendingQuestionId.isEmpty()) return;
+    runtime_->editor->setPlaceholderText(composerImagePaths().isEmpty() && composerVideoPaths().isEmpty()
+        ? QStringLiteral("交给它做点什么…") : QStringLiteral("添加说明（可选）"));
 }
 
 void AgentChatPanel::appendUserImages(const QStringList& paths) {
@@ -2425,6 +2710,47 @@ void AgentChatPanel::appendUserImages(const QStringList& paths) {
         preview->setStyleSheet(QStringLiteral("background:transparent;border:none;"));
         preview->setToolTip(QFileInfo(path).fileName());
         runtime_->view->addWidget(QStringLiteral("local-image-%1").arg(++runtime_->noticeSerial), preview);
+    }
+}
+
+void AgentChatPanel::appendUserVideos(const QStringList& paths) {
+    for (const QString& path : paths) {
+        if (!QFileInfo(path).isFile()) continue;
+        auto* card = new QWidget;
+        card->setFixedWidth(240);
+        auto* layout = new QVBoxLayout(card);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(7);
+        auto* preview = new QWidget(card);
+        preview->setFixedSize(240, 135);
+        auto* cover = new QLabel(preview);
+        cover->setGeometry(0, 0, 240, 135);
+        cover->setPixmap(QPixmap::fromImage(videoDraftImage({}))
+                             .scaled(240, 135, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
+        MessageImageLoader::instance().load(path, QSize(480, 270), cover,
+            [cover, path](const QPixmap& pixels) {
+                cover->setPixmap(QPixmap::fromImage(
+                    videoDraftImage(pixels.toImage()))
+                    .scaled(240, 135, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
+            });
+        auto* play = new QPushButton(preview);
+        play->setObjectName(QStringLiteral("agentUserVideoPlay"));
+        play->setAccessibleName(QStringLiteral("播放视频 %1").arg(QFileInfo(path).fileName()));
+        play->setGeometry(96, 43, 48, 48);
+        play->setCursor(Qt::PointingHandCursor);
+        play->setStyleSheet(QStringLiteral(
+            "QPushButton{background:transparent;border:0;}"
+            "QPushButton:hover{background:rgba(255,255,255,45);border-radius:24px;}"));
+        connect(play, &QPushButton::clicked, this, [this, path, paths] {
+            if (openVideo_) openVideo_(path, paths);
+        });
+        layout->addWidget(preview);
+        auto* name = new QLabel(QFileInfo(path).fileName(), card);
+        name->setStyleSheet(QStringLiteral("color:#172033;background:transparent;border:0;font-size:12px;"));
+        name->setText(name->fontMetrics().elidedText(name->text(), Qt::ElideMiddle, 238));
+        name->setToolTip(path);
+        layout->addWidget(name);
+        runtime_->view->addWidget(QStringLiteral("local-video-%1").arg(++runtime_->noticeSerial), card);
     }
 }
 
@@ -2456,7 +2782,8 @@ void AgentChatPanel::onSend() {
     text.remove(QChar(0xFFFC));
     text = text.trimmed();
     const QStringList imagePaths = composerImagePaths();
-    if (text.isEmpty() && imagePaths.isEmpty()) return;
+    const QStringList videoPaths = composerVideoPaths();
+    if (text.isEmpty() && imagePaths.isEmpty() && videoPaths.isEmpty()) return;
     if (!runtime_->modelConfigured) {
         emit modelConfigurationRequested();
         return;
@@ -2469,14 +2796,17 @@ void AgentChatPanel::onSend() {
 
     const QString quotedMessageId = runtime_->quotedMessageId;
     const QString quotedPreview = runtime_->quotedPreview;
-    if (!runtime_->controller->sendPrompt(runtime_->sessionId, text, imagePaths, quotedMessageId)) {
+    if (!runtime_->controller->sendPrompt(runtime_->sessionId, text, imagePaths,
+                                          videoPaths, quotedMessageId)) {
         appendNotice(runtime_->controller->lastError(), true);
         return;
     }
     clearQuote();
     runtime_->editor->clear();
+    updateComposerPlaceholder();
     if (!text.isEmpty() || !quotedPreview.isEmpty()) appendUserBubble(text, quotedPreview);
     appendUserImages(imagePaths);
+    appendUserVideos(videoPaths);
     const auto messages = runtime_->controller->agent().listMessages(toUtf8(runtime_->sessionId));
     for (auto it = messages.rbegin(); it != messages.rend(); ++it)
         if (it->role == MaiRole::User) {

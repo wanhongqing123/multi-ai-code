@@ -477,8 +477,14 @@ bool AgentController::sendPrompt(const QString& sessionId, const QString& text, 
 
 bool AgentController::sendPrompt(const QString& sessionId, const QString& text,
                                  const QStringList& imagePaths, const QString& quotedMessageId) {
-    if (imagePaths.size() > 10) {
-        runtime_->lastError = QStringLiteral("一次最多添加 10 张图片。");
+    return sendPrompt(sessionId, text, imagePaths, {}, quotedMessageId);
+}
+
+bool AgentController::sendPrompt(const QString& sessionId, const QString& text,
+                                 const QStringList& imagePaths, const QStringList& videoPaths,
+                                 const QString& quotedMessageId) {
+    if (imagePaths.size() + videoPaths.size() > 10) {
+        runtime_->lastError = QStringLiteral("每条消息最多添加 10 项图片或视频。");
         return false;
     }
     std::vector<MaiModelImage> images;
@@ -493,10 +499,29 @@ bool AgentController::sendPrompt(const QString& sessionId, const QString& text,
         }
         images.push_back({toUtf8(path), toUtf8(mimeType)});
     }
+    std::vector<MaiVideoPart> videos;
+    videos.reserve(static_cast<std::size_t>(videoPaths.size()));
+    for (const QString& path : videoPaths) {
+        const QFileInfo file(path);
+        if (!file.isFile()) {
+            runtime_->lastError = QStringLiteral("视频文件不存在：%1").arg(file.fileName());
+            return false;
+        }
+        QString mimeType = mimeDatabase.mimeTypeForFile(path).name().toLower();
+        const QString suffix = file.suffix().toLower();
+        if (suffix == QStringLiteral("mp4")) mimeType = QStringLiteral("video/mp4");
+        else if (suffix == QStringLiteral("mov")) mimeType = QStringLiteral("video/quicktime");
+        else if (suffix == QStringLiteral("webm")) mimeType = QStringLiteral("video/webm");
+        if (!mimeType.startsWith(QStringLiteral("video/"))) {
+            runtime_->lastError = QStringLiteral("暂不支持这种视频格式：%1").arg(mimeType);
+            return false;
+        }
+        videos.push_back({toUtf8(file.absoluteFilePath()), toUtf8(mimeType)});
+    }
     if (!runtime_->modelName.isEmpty() && !setModel(sessionId, runtime_->modelName)) return false;
     MaiResult<std::string> sent =
         runtime_->agent->submit(MaiSendPrompt{toUtf8(sessionId), toUtf8(text), std::move(images),
-                                             {}, toUtf8(quotedMessageId)});
+                                             std::move(videos), toUtf8(quotedMessageId)});
     if (!sent) {
         runtime_->lastError = fromUtf8(sent.error().message());
         return false;

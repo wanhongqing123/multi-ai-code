@@ -113,8 +113,14 @@ private:
     bool insertComposerMimeData(const QMimeData* mime);
     void insertComposerImage(const QImage& image);
     void insertComposerImageFile(const QString& path);
+    void insertComposerVideoFile(const QString& path);
     QStringList composerImagePaths() const;
+    QStringList composerVideoPaths() const;
+    void refreshComposerMediaTray();
+    void removeComposerMedia(const QString& resourceName);
+    void updateComposerPlaceholder();
     void appendUserImages(const QStringList& paths);
+    void appendUserVideos(const QStringList& paths);
 
     // 流式期间往某条回答后面追加。攒一小会儿再刷进视图，
     // 每个 delta 都重排是 O(n^2)。

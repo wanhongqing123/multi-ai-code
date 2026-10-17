@@ -13,12 +13,14 @@
 #include <QPushButton>
 #include <QSemaphore>
 #include <QScrollBar>
+#include <QScrollArea>
 #include <QSignalSpy>
 #include <QSplitter>
 #include <QSplitterHandle>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTextEdit>
+#include <QTextCursor>
 #include <QUrl>
 #include <QtTest>
 
@@ -289,6 +291,7 @@ private slots:
     void composerPlaceholderFitsAtMinimumHeight();
     void conversationUsesAvailableWidth();
     void pastedImageUsesTheSharedComposerAndReachesTheModel();
+    void pastedVideoDraftSurvivesSessionSwitchAndReachesModel();
     void actionPanelMatchesMobileModelAndPolicyFlow();
     void newAgentOutputDoesNotInterruptReadingHistory();
     void switchingSessionsShowsLatestMessage();
@@ -1131,6 +1134,99 @@ void AgentPanelSessionTest::pastedImageUsesTheSharedComposerAndReachesTheModel()
     QVERIFY(panel.findChild<MarkdownView*>()->itemCount() >= 2);
     panel.openSession(sessionId);
     QVERIFY(panel.findChild<MarkdownView*>()->itemCount() >= 2);
+}
+
+void AgentPanelSessionTest::pastedVideoDraftSurvivesSessionSwitchAndReachesModel() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString videoPath = directory.filePath(QStringLiteral("clip sample.mp4"));
+    QVERIFY(QFile::copy(QStringLiteral(MAICHAT_AGENT_VIDEO_FIXTURE), videoPath));
+    auto model = std::make_unique<CapturingModel>();
+    CapturingModel* captured = model.get();
+    AgentController controller(std::move(model), QString());
+    AgentChatPanel panel(controller);
+    panel.resize(900, 700);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    const QString sessionId = controller.createSession(directory.path());
+    panel.openSession(sessionId);
+    auto* editor = panel.findChild<QTextEdit*>(QStringLiteral("agentPromptEditor"));
+    QVERIFY(editor);
+    QVERIFY(panel.findChild<QPushButton*>(QStringLiteral("agentAttachMediaButton")));
+    auto* mime = new QMimeData;
+    mime->setUrls({QUrl::fromLocalFile(videoPath)});
+    QApplication::clipboard()->setMimeData(mime);
+    editor->setFocus();
+    QTest::keyClick(editor, Qt::Key_V, Qt::ControlModifier);
+    QTRY_VERIFY(editor->toPlainText().contains(QChar(0xFFFC)));
+    QCOMPARE(editor->placeholderText(), QStringLiteral("添加说明（可选）"));
+    editor->moveCursor(QTextCursor::End);
+    editor->insertPlainText(QStringLiteral("\n请处理这个视频"));
+    const QString other = controller.createSession(directory.path());
+    panel.openSession(other);
+    QVERIFY(!editor->toPlainText().contains(QChar(0xFFFC)));
+    panel.openSession(sessionId);
+    QVERIFY(editor->toPlainText().contains(QChar(0xFFFC)));
+    QVERIFY(editor->toPlainText().contains(QStringLiteral("请处理这个视频")));
+    auto* tray = panel.findChild<QScrollArea*>(QStringLiteral("agentMediaDraftTray"));
+    QVERIFY(tray);
+    QTRY_VERIFY(tray->isVisible());
+    QTRY_VERIFY(editor->mapTo(&panel, QPoint(0, editor->height())).y() <= panel.height());
+    QString previewed;
+    panel.setOpenVideoCallback([&previewed](const QString& path, const QStringList&) {
+        previewed = path;
+    });
+    auto* preview = tray->findChild<QPushButton*>(QStringLiteral("agentDraftVideoPreview"));
+    QVERIFY(preview);
+    QTest::mouseClick(preview, Qt::LeftButton);
+    QCOMPARE(previewed, videoPath);
+    auto* remove = tray->findChild<QPushButton*>(QStringLiteral("agentRemoveDraftMedia"));
+    QVERIFY(remove);
+    QTest::mouseClick(remove, Qt::LeftButton);
+    QTRY_VERIFY(!tray->isVisible());
+    QVERIFY(!editor->toPlainText().contains(QChar(0xFFFC)));
+    editor->setFocus();
+    QTest::keyClick(editor, Qt::Key_V, Qt::ControlModifier);
+    QTRY_VERIFY(tray->isVisible());
+    const QByteArray capture = qgetenv("MAICHAT_TEST_CAPTURE_PATH");
+    if (!capture.isEmpty()) {
+        QTest::qWait(700);
+        QVERIFY(panel.grab().save(QString::fromUtf8(capture)));
+    }
+    auto* send = panel.findChild<QPushButton*>(QStringLiteral("agentSendButton"));
+    QVERIFY(send);
+    QSignalSpy finished(&controller, &AgentController::turnFinished);
+    QTest::mouseClick(send, Qt::LeftButton);
+    QVERIFY(finished.wait(15000));
+    const MaiModelRequest request = captured->request();
+    QVERIFY(!request.messages.empty());
+    QVERIFY(QString::fromStdString(request.messages.back().content).contains(videoPath));
+    QVERIFY(QString::fromStdString(request.messages.back().content).contains(
+        QStringLiteral("请处理这个视频")));
+    const auto messages = controller.agent().listMessages(sessionId.toStdString());
+    bool storedVideo = false;
+    for (const MaiMessage& message : messages)
+        for (const MaiMessagePart& part : message.parts)
+            if (const auto* video = std::get_if<MaiVideoPart>(&part.body))
+                storedVideo |= QString::fromStdString(video->path) == videoPath;
+    QVERIFY(storedVideo);
+    QVERIFY(panel.findChild<QPushButton*>(QStringLiteral("agentUserVideoPlay")));
+    panel.openSession(sessionId);
+    QVERIFY(panel.findChild<QPushButton*>(QStringLiteral("agentUserVideoPlay")));
+    panel.openSession(other);
+    editor->setFocus();
+    QTest::keyClick(editor, Qt::Key_V, Qt::ControlModifier);
+    QTRY_VERIFY(tray->isVisible());
+    QSignalSpy mediaOnlyFinished(&controller, &AgentController::turnFinished);
+    QTest::mouseClick(send, Qt::LeftButton);
+    QVERIFY(mediaOnlyFinished.wait(15000));
+    bool mediaOnly = false;
+    for (const MaiMessage& message : controller.agent().listMessages(other.toStdString())) {
+        if (message.role != MaiRole::User || !message.text().empty()) continue;
+        for (const MaiMessagePart& part : message.parts)
+            if (std::get_if<MaiVideoPart>(&part.body)) mediaOnly = true;
+    }
+    QVERIFY(mediaOnly);
 }
 
 void AgentPanelSessionTest::unconfiguredModelOpensConfigurationInsteadOfFailingTurn() {

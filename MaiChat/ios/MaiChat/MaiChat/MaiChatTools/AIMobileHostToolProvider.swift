@@ -59,18 +59,10 @@ final class AIMobileHostToolProvider {
         case "mobile_ssh_password": return await requestSSHPassword(arguments)
         case "mobile_ssh_trust_host": return await trustSSHHost(arguments)
         case "mobile_ark_service_config":
-            // 宿主只提供私有服务配置。
-            // Ark 资产登记、OSS 签名及文件上传由共享 C++ 工具执行。
-            guard let endpoint = privateServiceEndpoint("ark-assets"),
-                  var parts = URLComponents(url: endpoint.url, resolvingAgainstBaseURL: false),
-                  parts.path.hasSuffix("/ark-assets") else {
-                return .failure(code: "not_configured", message: "Ark Assets service is not configured")
-            }
-            parts.path = String(parts.path.dropLast("/ark-assets".count))
-            guard let base = parts.url else {
-                return .failure(code: "not_configured", message: "Ark Assets service URL is invalid")
-            }
-            return Self.jsonSuccess(["base_url": base.absoluteString, "token": endpoint.token])
+            // Ark 资产登记和上传签名使用当前账号会话，素材字节仍由 C++ 直传 OSS。
+            guard let access = try? await MaiChatAuthClient.shared.mediaServiceAccessIfAvailable()
+            else { return .failure(code: "not_configured", message: "Account login is required") }
+            return Self.jsonSuccess(["base_url": access.baseURL, "token": access.accountToken])
         case "mobile_gpu_info": return gpuInfo()
         case "mobile_transform_image": return await transformImage(arguments)
         case "mobile_beautify_image":
@@ -219,26 +211,6 @@ final class AIMobileHostToolProvider {
             output["recommended_working_set_bytes"] = device.recommendedMaxWorkingSetSize
         }
         return Self.jsonSuccess(output)
-    }
-
-    private func privateServiceEndpoint(_ action: String) -> (url: URL, token: String)? {
-        let rawURL = UserDefaults.standard.string(forKey: "oss-media-signer-url") ?? ""
-        let token = KeychainSecretStore(account: "oss-media-signer-token").readSecretKey()
-        guard token.count >= 32, var components = URLComponents(string: rawURL),
-              components.scheme == "https", components.host?.isEmpty == false,
-              components.user == nil, components.password == nil,
-              components.query == nil, components.fragment == nil else {
-            return nil
-        }
-        // 用户设置中仍可能保存旧的 sign-upload 地址，先恢复服务根路径再拼正式 Ark 入口。
-        if components.path.hasSuffix("/sign-upload") {
-            components.path = String(components.path.dropLast("sign-upload".count))
-        } else if !components.path.hasSuffix("/") {
-            components.path += "/"
-        }
-        components.path += action
-        guard let url = components.url else { return nil }
-        return (url, token)
     }
 
     static func jsonSuccess(_ object: [String: Any]) -> AIMaiChatHostToolExecution {

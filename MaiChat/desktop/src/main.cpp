@@ -9,11 +9,13 @@
 #include <QHash>
 #include <QSslSocket>
 #include <QStandardPaths>
+#include <QSettings>
 #include <QTimer>
 #include <memory>
 
 #include "app/RemoteIMApplication.h"
 #include "auth/DesktopAuthClient.h"
+#include "auth/SecureRefreshTokenStore.h"
 #include "logging/AppLog.h"
 #include "platform/DesktopRemoteIMClientFactory.h"
 #include "storage/LocalMessageDatabase.h"
@@ -87,6 +89,13 @@ int main(int argc, char* argv[]) {
     // 与其它应用的数据树分开。
     QApplication::setApplicationName(QStringLiteral("Desktop IM"));
     QApplication::setOrganizationName(QStringLiteral("MaiChat"));
+    QSettings settings;
+    for (const char* key : {"agent/cloudServiceUrl", "agent/cloudServiceToken",
+                            "agent/cloudServiceTokenMigrationFailed"})
+        settings.remove(QLatin1String(key));
+    settings.sync();
+    SecureRefreshTokenStore(QStringLiteral("com.maichat.desktop.model"),
+                            QStringLiteral("cloud_service_token")).remove();
 #ifdef MAICHAT_VERSION
     QApplication::setApplicationVersion(QStringLiteral(MAICHAT_VERSION));
 #endif
@@ -182,6 +191,7 @@ int main(int argc, char* argv[]) {
         const DesktopImCredential current = auth.imCredential();
         return current.isValid() && current.userId == userId ? current.userSig : QString();
     }, auth.arkApiKeyProvider(), auth.bailianCredentialProvider());
+    window.setMediaServiceAccessProvider(auth.mediaServiceAccessProvider());
     bool invalidatingSession = false;
     auth.setCredentialUpdatedHandler([&](const DesktopImCredential& renewed) {
         if (invalidatingSession || renewed.userId != credential.userId) return;
@@ -241,18 +251,18 @@ int main(int argc, char* argv[]) {
         });
     });
     bool modelKeysInFlight = false;
-    const auto refreshMainModelKeys = [&] {
+    const auto refreshAccountModelKeys = [&] {
         if (invalidatingSession || modelKeysInFlight) return;
         modelKeysInFlight = true;
-        auth.fetchMainModelKeys([&](const QHash<QString, QString>& keys,
+        auth.fetchAccountModelKeys([&](const QHash<QString, QString>& keys,
                                    const QString& error) {
             modelKeysInFlight = false;
-            if (!invalidatingSession) window.setMainModelKeys(keys, error);
+            if (!invalidatingSession) window.setAccountModelKeys(keys, error);
         });
     };
-    window.setModelKeyRefreshHandler(refreshMainModelKeys);
+    window.setModelKeyRefreshHandler(refreshAccountModelKeys);
     window.show();
-    if (!smokeMode) refreshMainModelKeys();
+    if (!smokeMode) refreshAccountModelKeys();
     remoteIM.connectToService(credential.sdkAppId, credential.userSig);
     auth.startSessionMonitoring();
     auth.startModelCredentialMonitoring();

@@ -2,7 +2,7 @@
 
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { signArkRequest, callArk } = require('./ark-sign');
+const { signArkRequest, callArk } = require('../shared/ark-sign');
 
 test('matches the official SDK signing result for a fixed Ark request', () => {
   const body = JSON.stringify({ Name: 'figure', GroupType: 'AIGC', ProjectName: 'default' });

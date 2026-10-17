@@ -165,6 +165,11 @@ bool DesktopAuthClient::adoptSession(const QJsonObject& body, QString* error) {
     if (!userId_.isEmpty() && userId_ != userId) clearModelCredentials();
     userId_ = userId;
     accessExpiresAt_ = QDateTime::currentDateTimeUtc().addSecs(expiresIn);
+    {
+        QMutexLocker lock(&accountAccess_->mutex);
+        accountAccess_->token = access;
+        accountAccess_->expiresAt = accessExpiresAt_.toSecsSinceEpoch();
+    }
     if (!loggingOut_ && useSecureStore_ && !secureStore_.write(refreshToken_)) {
         secureStore_.remove();
         qWarning("[auth] secure refresh token store unavailable; next launch requires QR login");
@@ -200,6 +205,11 @@ void DesktopAuthClient::clearLocalSession() {
     monitoringModelCredentials_ = false;
     if (useSecureStore_) secureStore_.remove();
     accessToken_.clear();
+    {
+        QMutexLocker lock(&accountAccess_->mutex);
+        accountAccess_->token.clear();
+        accountAccess_->expiresAt = 0;
+    }
     refreshToken_.clear();
     userId_.clear();
     imCredential_ = {};
@@ -234,6 +244,22 @@ DesktopAuthClient::bailianCredentialProvider() const {
         if (cache->bailianExpiresAt <= QDateTime::currentSecsSinceEpoch() + 30)
             return QPair<QString, QString>();
         return qMakePair(cache->bailianKey, cache->wanWorkspaceId);
+    };
+}
+
+std::function<QPair<QString, QString>()>
+DesktopAuthClient::mediaServiceAccessProvider() const {
+    QUrl mediaUrl = baseUrl_;
+    mediaUrl.setPath(QStringLiteral("/maichat"));
+    mediaUrl.setQuery(QString());
+    mediaUrl.setFragment(QString());
+    const QString base = mediaUrl.toString(QUrl::FullyEncoded);
+    const auto cache = accountAccess_;
+    return [base, cache] {
+        QMutexLocker lock(&cache->mutex);
+        if (cache->expiresAt <= QDateTime::currentSecsSinceEpoch() + 30)
+            return QPair<QString, QString>();
+        return qMakePair(base, cache->token);
     };
 }
 
@@ -611,11 +637,11 @@ void DesktopAuthClient::fetchImCredential(Completion completion) {
     fetchImCredentialImpl(std::move(completion), true);
 }
 
-void DesktopAuthClient::fetchMainModelKeys(MainModelKeysCompletion completion) {
-    fetchMainModelKeysImpl(std::move(completion), true);
+void DesktopAuthClient::fetchAccountModelKeys(AccountModelKeysCompletion completion) {
+    fetchAccountModelKeysImpl(std::move(completion), true);
 }
 
-void DesktopAuthClient::fetchMainModelKeysImpl(MainModelKeysCompletion completion,
+void DesktopAuthClient::fetchAccountModelKeysImpl(AccountModelKeysCompletion completion,
                                                bool retryAfterUnauthorized) {
     if (loggingOut_ || userId_.isEmpty()) {
         if (completion) completion({}, QStringLiteral("请先登录 MaiChat"));
@@ -624,7 +650,7 @@ void DesktopAuthClient::fetchMainModelKeysImpl(MainModelKeysCompletion completio
     if (accessToken_.isEmpty() ||
         accessExpiresAt_ <= QDateTime::currentDateTimeUtc().addSecs(60)) {
         refresh([this, completion, retryAfterUnauthorized](bool ok, const QString& error) {
-            if (ok) fetchMainModelKeysImpl(completion, retryAfterUnauthorized);
+            if (ok) fetchAccountModelKeysImpl(completion, retryAfterUnauthorized);
             else if (completion) completion({}, error);
         });
         return;
@@ -637,7 +663,7 @@ void DesktopAuthClient::fetchMainModelKeysImpl(MainModelKeysCompletion completio
         }
         if (result.status == 401 && retryAfterUnauthorized) {
             refresh([this, completion](bool ok, const QString& error) {
-                if (ok) fetchMainModelKeysImpl(completion, false);
+                if (ok) fetchAccountModelKeysImpl(completion, false);
                 else if (completion) completion({}, error);
             });
             return;
@@ -651,16 +677,20 @@ void DesktopAuthClient::fetchMainModelKeysImpl(MainModelKeysCompletion completio
         }
         const QJsonObject keys = result.body.value(QStringLiteral("api_keys")).toObject();
         if (!keys.value(QStringLiteral("glm")).isString() ||
-            !keys.value(QStringLiteral("deepseek")).isString()) {
+            !keys.value(QStringLiteral("deepseek")).isString() ||
+            (keys.contains(QStringLiteral("minimax")) &&
+             !keys.value(QStringLiteral("minimax")).isString())) {
             if (completion)
                 completion({}, QStringLiteral("账号服务返回的模型凭据无效"));
             return;
         }
         const QString glm = keys.value(QStringLiteral("glm")).toString();
         const QString deepseek = keys.value(QStringLiteral("deepseek")).toString();
+        const QString minimax = keys.value(QStringLiteral("minimax")).toString();
         if ((!glm.isEmpty() && !validModelApiKey(glm)) ||
             (!deepseek.isEmpty() && !validModelApiKey(deepseek)) ||
-            (glm.isEmpty() && deepseek.isEmpty())) {
+            (!minimax.isEmpty() && !validModelApiKey(minimax)) ||
+            (glm.isEmpty() && deepseek.isEmpty() && minimax.isEmpty())) {
             if (completion)
                 completion({}, QStringLiteral("账号服务返回的模型凭据无效"));
             return;
@@ -668,6 +698,7 @@ void DesktopAuthClient::fetchMainModelKeysImpl(MainModelKeysCompletion completio
         QHash<QString, QString> available;
         if (!glm.isEmpty()) available.insert(QStringLiteral("glm"), glm);
         if (!deepseek.isEmpty()) available.insert(QStringLiteral("deepseek"), deepseek);
+        if (!minimax.isEmpty()) available.insert(QStringLiteral("minimax"), minimax);
         if (completion) completion(available, {});
     });
 }

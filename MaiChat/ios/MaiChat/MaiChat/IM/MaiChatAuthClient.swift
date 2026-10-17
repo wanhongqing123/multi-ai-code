@@ -100,8 +100,13 @@ struct MaiChatBailianCredential: Decodable, Sendable {
     let wanWorkspaceId: String
 }
 
-struct MaiChatMainModelKeys: Decodable, Sendable {
+struct MaiChatAccountModelKeys: Decodable, Sendable {
     let apiKeys: [String: String]
+}
+
+struct MaiChatMediaServiceAccess: Sendable {
+    let baseURL: String
+    let accountToken: String
 }
 
 private struct MaiChatAuthServerError: Decodable {
@@ -425,11 +430,11 @@ actor MaiChatAuthClient {
         }
     }
 
-    func mainModelKeysIfAvailable() async throws -> MaiChatMainModelKeys? {
+    func accountModelKeysIfAvailable() async throws -> MaiChatAccountModelKeys? {
         guard accessToken != nil || !refreshStore.readSecretKey().isEmpty else { return nil }
         let expectedSessionVersion = sessionVersion
         let token = try await currentAccessToken()
-        let issued: MaiChatMainModelKeys
+        let issued: MaiChatAccountModelKeys
         do {
             issued = try await request("model/api-keys", method: "GET", bearer: token)
         } catch MaiChatAuthError.requestFailed("Authentication required") {
@@ -441,6 +446,20 @@ actor MaiChatAuthClient {
             throw MaiChatAuthError.sessionExpired
         }
         return issued
+    }
+
+    func mediaServiceAccessIfAvailable() async throws -> MaiChatMediaServiceAccess? {
+        guard accessToken != nil || !refreshStore.readSecretKey().isEmpty else { return nil }
+        let expectedSessionVersion = sessionVersion
+        let token = try await currentAccessToken()
+        guard sessionVersion == expectedSessionVersion,
+              var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        else { throw MaiChatAuthError.sessionExpired }
+        components.path = "/maichat"
+        components.query = nil
+        components.fragment = nil
+        guard let url = components.url else { throw MaiChatAuthError.invalidServerResponse }
+        return MaiChatMediaServiceAccess(baseURL: url.absoluteString, accountToken: token)
     }
 
     /// 先撤销本机登录，保证 App 在切换过程中被系统结束时不会恢复旧账号。

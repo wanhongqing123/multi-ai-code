@@ -1,6 +1,8 @@
+// 文件作用：校验登录账号的素材权限，签发 OSS 上传链接并登记 Ark 素材。
+// 本进程不下发模型 Key，也不处理模型生成请求或素材文件字节。
 'use strict';
 
-const { randomUUID, timingSafeEqual } = require('node:crypto');
+const { randomUUID } = require('node:crypto');
 const path = require('node:path');
 
 const MAX_VIDEO_BYTES = 200_000_000;
@@ -62,14 +64,6 @@ function headerValue(headers, name) {
   return typeof entry?.[1] === 'string' ? entry[1] : '';
 }
 
-function hasBearerToken(headers, expected) {
-  const actual = headerValue(headers, 'authorization');
-  const expectedHeader = `Bearer ${expected}`;
-  const left = Buffer.from(actual);
-  const right = Buffer.from(expectedHeader);
-  return left.length === right.length && timingSafeEqual(left, right);
-}
-
 function requestBody(event) {
   let body = event.body || '';
   if (event.isBase64Encoded) body = Buffer.from(body, 'base64').toString('utf8');
@@ -85,8 +79,21 @@ function createHandler(options = {}) {
   });
   const newID = options.newID || randomUUID;
   const currentTime = options.currentTime || (() => new Date());
-  const callArk = options.callArk || require('./ark-sign').callArk;
+  const callArk = options.callArk || require('../shared/ark-sign').callArk;
   const fetcher = options.fetcher || fetch;
+  const authorizeMediaRequest = options.authorizeMediaRequest || (async headers => {
+    const bearer = headerValue(headers, 'authorization');
+    const port = Number(env.MAICHAT_AUTH_PORT || 9100);
+    if (!/^Bearer [A-Za-z0-9_-]{32,256}$/.test(bearer) ||
+        !Number.isInteger(port) || port < 1 || port > 65535) return false;
+    try {
+      const response = await fetcher(`http://127.0.0.1:${port}/v1/media/authorize`, {
+        method: 'GET', redirect: 'error',
+        headers: { Authorization: bearer }, signal: AbortSignal.timeout(5000)
+      });
+      return response.status === 200;
+    } catch { return false; }
+  });
   let client;
 
   return async function handle(eventInput) {
@@ -101,133 +108,14 @@ function createHandler(options = {}) {
     const route = event?.rawPath || event?.path || '/sign-upload';
     if (method === 'GET' && route === '/portrait-auth-callback')
       return portraitCallbackResponse();
-    if (method !== 'POST' || (!route.endsWith('/sign-upload') &&
-        !route.endsWith('/ark-assets') && route !== '/credentials' &&
-        route !== '/temporary-credentials' && route !== '/account-model-keys'))
+    const mediaRoute = route.endsWith('/sign-upload') || route.endsWith('/ark-assets');
+    if (method !== 'POST' || !mediaRoute)
       return jsonResponse(404, { error: 'Not found' });
 
-    // 登录服务专用令牌绝不发给 App；其他旧接口仍使用原签名服务令牌。
-    const token = route === '/temporary-credentials' || route === '/account-model-keys'
-      ? env.MAICHAT_AUTH_SERVICE_TOKEN || ''
-      : env.MAICHAT_MEDIA_SERVICE_TOKEN || env.MAICHAT_OSS_SIGNER_TOKEN || '';
-    if (token.length < 32) return jsonResponse(503, { error: 'Service token is not configured' });
-    if (!hasBearerToken(event.headers, token))
-      return jsonResponse(401, { error: 'Unauthorized' });
+    if (!await authorizeMediaRequest(event.headers))
+      return jsonResponse(401, { error: 'Account media access is required' });
 
     const body = requestBody(event);
-    if (route === '/account-model-keys') {
-      if (body?.action !== 'main_chat')
-        return jsonResponse(400, { error: 'Invalid model key request' });
-      const glm = env.MAICHAT_GLM_API_KEY || '';
-      const deepseek = env.MAICHAT_DEEPSEEK_API_KEY || '';
-      if (!glm && !deepseek)
-        return jsonResponse(503, { error: 'Main chat models are not configured' });
-      return jsonResponse(200, { api_keys: { glm, deepseek } });
-    }
-    if (route === '/temporary-credentials') {
-      if (body?.action === 'bailian_video') {
-        const permanentKey = env.MAICHAT_WAN_API_KEY || '';
-        const workspace = env.MAICHAT_WAN_WORKSPACE_ID || '';
-        if (!permanentKey || !/^(?:ws|llm)-[A-Za-z0-9_-]{1,120}$/.test(workspace))
-          return jsonResponse(503, { error: 'Bailian temporary credentials are not configured' });
-        // 百炼临时 Key 继承主 Key 的权限，主 Key 始终只留在服务端。
-        let response;
-        try {
-          response = await fetcher(
-            'https://dashscope.aliyuncs.com/api/v1/tokens?expire_in_seconds=300', {
-              method: 'POST', redirect: 'error',
-              headers: { Authorization: `Bearer ${permanentKey}` },
-              signal: AbortSignal.timeout(8000)
-            });
-        } catch {
-          return jsonResponse(502, { error: 'Bailian credential issuer is unavailable' });
-        }
-        if (!response.ok)
-          return jsonResponse(502, { error: 'Bailian credential issuer rejected the request' });
-        let issued;
-        try {
-          const raw = await response.text();
-          if (Buffer.byteLength(raw) > 2048) throw new Error('Oversized response');
-          issued = JSON.parse(raw);
-        } catch {
-          return jsonResponse(502, { error: 'Bailian credential response is invalid' });
-        }
-        const nowSeconds = Math.floor(currentTime().getTime() / 1000);
-        if (typeof issued.token !== 'string' ||
-            !/^st-[A-Za-z0-9._~+/-]{8,4093}={0,2}$/.test(issued.token) ||
-            !Number.isSafeInteger(issued.expires_at) ||
-            issued.expires_at <= nowSeconds || issued.expires_at > nowSeconds + 360)
-          return jsonResponse(502, { error: 'Bailian returned an invalid temporary credential' });
-        return jsonResponse(200, { api_key: issued.token, expires_at: issued.expires_at,
-          wan_workspace_id: workspace });
-      }
-      if (body?.action !== 'ark_seedance')
-        return jsonResponse(400, { error: 'Invalid temporary credential request' });
-      const models = (env.MAICHAT_ARK_MODEL_IDS ||
-        env.MAICHAT_SEEDANCE_MODEL_IDS || '').split(',').map(v => v.trim())
-        .filter(Boolean);
-      if (!models.length || models.length > 10 ||
-          !models.every(v => /^doubao-(?:seedance|seedream)-[a-z0-9-]{1,70}$/.test(v)) ||
-          new Set(models).size !== models.length ||
-          !env.VOLC_ACCESS_KEY_ID || !env.VOLC_SECRET_ACCESS_KEY)
-        return jsonResponse(503, { error: 'Ark media temporary credentials are not configured' });
-      const issued = await callArk('GetApiKey', {
-        DurationSeconds: 300, ResourceType: 'presetendpoint', ResourceIds: models,
-        ProjectName: env.VOLC_ARK_PROJECT_NAME || 'default'
-      }, { accessKeyId: env.VOLC_ACCESS_KEY_ID,
-           secretKey: env.VOLC_SECRET_ACCESS_KEY });
-      const result = issued?.Result || {};
-      const nowSeconds = Math.floor(currentTime().getTime() / 1000);
-      if (typeof result.ApiKey !== 'string' || result.ApiKey.length < 16 ||
-          !Number.isSafeInteger(result.ExpiredTime) ||
-          result.ExpiredTime <= nowSeconds || result.ExpiredTime > nowSeconds + 360)
-        return jsonResponse(502, { error: 'Ark returned an invalid temporary credential' });
-      return jsonResponse(200, { api_key: result.ApiKey,
-        expires_at: result.ExpiredTime });
-    }
-    if (route === '/credentials') {
-      const keys = {
-        // 旧客户端请求 ark 时返回空值，不再下发可长期使用的主 Key。
-        ark: '',
-        glm: env.MAICHAT_GLM_API_KEY || '',
-        glm_video: env.MAICHAT_GLM_API_KEY || '',
-        deepseek: env.MAICHAT_DEEPSEEK_API_KEY || '',
-        // 百炼万相和可灵只经账号服务领取短期 Key；旧共享令牌不能取回长期 Key。
-        wan: '',
-        kling: '',
-        minimax: env.MAICHAT_MINIMAX_API_KEY || ''
-      };
-      if (body?.action === 'status') {
-        const configured = Object.keys(keys).filter((name) =>
-          name !== 'glm_video' && !!keys[name]);
-        if (env.MAICHAT_WAN_API_KEY &&
-            /^(?:ws|llm)-[A-Za-z0-9_-]{1,120}$/.test(env.MAICHAT_WAN_WORKSPACE_ID || '')) {
-          const miniMaxIndex = configured.indexOf('minimax');
-          configured.splice(miniMaxIndex < 0 ? configured.length : miniMaxIndex,
-            0, 'wan', 'kling');
-        }
-        return jsonResponse(200, {
-          configured,
-          assets_configured: !!(env.VOLC_ACCESS_KEY_ID && env.VOLC_SECRET_ACCESS_KEY),
-          storage_configured: !!(env.MAICHAT_OSS_BUCKET &&
-            /^oss-[a-z0-9-]+$/.test(env.MAICHAT_OSS_REGION || '') &&
-            env.ALIBABA_CLOUD_ACCESS_KEY_ID && env.ALIBABA_CLOUD_ACCESS_KEY_SECRET)
-        });
-      }
-      if (body?.action !== 'fetch' || !Array.isArray(body.providers) ||
-          body.providers.length < 1 || body.providers.length > Object.keys(keys).length ||
-          new Set(body.providers).size !== body.providers.length ||
-          !body.providers.every((name) => typeof name === 'string' &&
-            Object.hasOwn(keys, name)))
-        return jsonResponse(400, { error: 'Choose valid provider names' });
-      const selected = {};
-      for (const name of body.providers) {
-        if (keys[name]) selected[name] = keys[name];
-      }
-      return jsonResponse(200, { api_keys: selected,
-        wan_workspace_id: body.providers.includes('wan')
-          ? env.MAICHAT_WAN_WORKSPACE_ID || '' : '' });
-    }
     if (route.endsWith('/ark-assets')) {
       const accessKeyId = env.VOLC_ACCESS_KEY_ID || '';
       const secretKey = env.VOLC_SECRET_ACCESS_KEY || '';

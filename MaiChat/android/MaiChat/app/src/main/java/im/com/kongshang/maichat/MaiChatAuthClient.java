@@ -97,13 +97,25 @@ public final class MaiChatAuthClient {
         }
     }
 
-    public static final class MainModelKeys {
+    public static final class AccountModelKeys {
         public final String glm;
         public final String deepseek;
+        public final String minimax;
 
-        MainModelKeys(String glm, String deepseek) {
+        AccountModelKeys(String glm, String deepseek, String minimax) {
             this.glm = glm;
             this.deepseek = deepseek;
+            this.minimax = minimax;
+        }
+    }
+
+    public static final class MediaServiceAccess {
+        public final String baseUrl;
+        public final String accountToken;
+
+        MediaServiceAccess(String baseUrl, String accountToken) {
+            this.baseUrl = baseUrl;
+            this.accountToken = accountToken;
         }
     }
 
@@ -343,16 +355,24 @@ public final class MaiChatAuthClient {
         return result;
     }
 
-    public synchronized MainModelKeys mainModelKeys() throws Exception {
+    public synchronized AccountModelKeys accountModelKeys() throws Exception {
         if (!hasSession()) return null;
         JSONObject keys = authenticatedRequest("model/api-keys", "GET", null)
             .getJSONObject("api_keys");
         String glm = keys.getString("glm");
         String deepseek = keys.getString("deepseek");
-        if ((glm.isEmpty() && deepseek.isEmpty()) || !validModelKey(glm) ||
-            !validModelKey(deepseek))
+        String minimax = keys.optString("minimax", "");
+        if ((glm.isEmpty() && deepseek.isEmpty() && minimax.isEmpty()) ||
+            !validModelKey(glm) || !validModelKey(deepseek) || !validModelKey(minimax))
             throw new IOException("主聊天模型凭据无效");
-        return new MainModelKeys(glm, deepseek);
+        return new AccountModelKeys(glm, deepseek, minimax);
+    }
+
+    public synchronized MediaServiceAccess mediaServiceAccess() throws Exception {
+        if (!hasSession()) return null;
+        String token = currentAccessToken();
+        String baseUrl = new URL(new URL(BASE_URL), "/maichat").toString();
+        return new MediaServiceAccess(baseUrl, token);
     }
 
     private static boolean validModelKey(String key) {

@@ -1,9 +1,9 @@
 'use strict';
 
-// 账号服务只通过本机回环访问素材服务，转发的是一枚短期凭据，不承载模型请求或媒体字节。
+// 账号服务只通过本机回环访问模型凭据服务，转发的是一枚短期凭据，不承载模型请求或媒体字节。
 function createArkCredentialIssuer(env, fetcher = fetch) {
   const token = env.MAICHAT_AUTH_SERVICE_TOKEN || '';
-  const port = Number(env.MAICHAT_MEDIA_PORT || 9000);
+  const port = Number(env.MAICHAT_MODEL_CREDENTIAL_PORT || 9200);
   return async function issueArkCredential() {
     if (token.length < 32 || !Number.isInteger(port) || port < 1 || port > 65535)
       throw new Error('Ark credential issuer is not configured');

@@ -2,17 +2,23 @@
 
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { createHandler } = require('./index');
+const { createHandler: createProductionHandler } = require('./index');
 
+const accountToken = 'a'.repeat(43);
 const env = {
-  MAICHAT_OSS_SIGNER_TOKEN: '0123456789abcdef0123456789abcdef',
   MAICHAT_OSS_BUCKET: 'example-private-bucket',
   MAICHAT_OSS_REGION: 'oss-cn-hangzhou',
   ALIBABA_CLOUD_ACCESS_KEY_ID: 'test-id',
   ALIBABA_CLOUD_ACCESS_KEY_SECRET: 'test-secret'
 };
 
-function request(body, token = env.MAICHAT_OSS_SIGNER_TOKEN) {
+function createHandler(options) {
+  return createProductionHandler({ ...options,
+    authorizeMediaRequest: options.authorizeMediaRequest || (async headers =>
+      headers.Authorization === `Bearer ${accountToken}`) });
+}
+
+function request(body, token = accountToken) {
   return {
     rawPath: '/sign-upload',
     requestContext: { http: { method: 'POST' } },
@@ -66,57 +72,24 @@ test('rejects unauthorized and oversized requests before signing', async () => {
   assert.equal(created, false);
 });
 
-test('mints a bounded Bailian key only for the account service', async () => {
-  const now = new Date('2026-10-08T00:00:00Z');
-  const internalToken = 'fedcba9876543210fedcba9876543210';
-  const configured = { ...env, MAICHAT_AUTH_SERVICE_TOKEN: internalToken,
-    MAICHAT_WAN_API_KEY: 'permanent-bailian-key', MAICHAT_WAN_WORKSPACE_ID: 'ws-test' };
-  let calls = 0;
-  const handle = createHandler({ env: configured, currentTime: () => now,
+test('media signing checks the account bearer with the auth service', async () => {
+  const accountToken = 'a'.repeat(43);
+  let checks = 0;
+  const handle = createProductionHandler({ env, newID: () => 'account-file',
+    currentTime: () => new Date('2026-10-08T00:00:00Z'),
     fetcher: async (url, options) => {
-      ++calls;
-      assert.equal(url, 'https://dashscope.aliyuncs.com/api/v1/tokens?expire_in_seconds=300');
-      assert.equal(options.method, 'POST');
-      assert.equal(options.headers.Authorization, 'Bearer permanent-bailian-key');
-      return { ok: true, async text() { return JSON.stringify({
-        token: 'st-temporary-bailian-key',
-        expires_at: Math.floor(now.getTime() / 1000) + 300
-      }); } };
-    } });
-  const issue = token => ({ ...request({ action: 'bailian_video' }, token),
-    rawPath: '/temporary-credentials' });
-  assert.equal((await handle(issue(env.MAICHAT_OSS_SIGNER_TOKEN))).statusCode, 401);
-  assert.equal(calls, 0);
-  const result = await handle(issue(internalToken));
-  assert.equal(result.statusCode, 200);
-  assert.deepEqual(JSON.parse(result.body), {
-    api_key: 'st-temporary-bailian-key',
-    expires_at: Math.floor(now.getTime() / 1000) + 300,
-    wan_workspace_id: 'ws-test'
-  });
-  assert.ok(!result.body.includes('permanent-bailian-key'));
-  const legacy = await handle({ ...request({ action: 'fetch',
-    providers: ['wan', 'kling'] }), rawPath: '/credentials' });
-  assert.deepEqual(JSON.parse(legacy.body).api_keys, {});
-  assert.equal(calls, 1);
-});
-
-test('does not forward an expired or malformed Bailian response', async () => {
-  const now = new Date('2026-10-08T00:00:00Z');
-  const configured = { ...env,
-    MAICHAT_AUTH_SERVICE_TOKEN: 'fedcba9876543210fedcba9876543210',
-    MAICHAT_WAN_API_KEY: 'permanent-bailian-key', MAICHAT_WAN_WORKSPACE_ID: 'ws-test' };
-  const body = { action: 'bailian_video' };
-  const requestFor = () => ({ ...request(body, configured.MAICHAT_AUTH_SERVICE_TOKEN),
-    rawPath: '/temporary-credentials' });
-  for (const issued of [
-    { token: 'st-temporary-bailian-key', expires_at: Math.floor(now.getTime() / 1000) - 1 },
-    { token: 'permanent-bailian-key', expires_at: Math.floor(now.getTime() / 1000) + 300 }
-  ]) {
-    const handle = createHandler({ env: configured, currentTime: () => now,
-      fetcher: async () => ({ ok: true, async text() { return JSON.stringify(issued); } }) });
-    assert.equal((await handle(requestFor())).statusCode, 502);
-  }
+      ++checks;
+      assert.equal(url, 'http://127.0.0.1:9100/v1/media/authorize');
+      assert.equal(options.headers.Authorization, `Bearer ${accountToken}`);
+      return { status: 200 };
+    },
+    makeClient: () => ({ signatureUrlV4: async () => 'https://example.com/signed' }) });
+  const body = { filename: 'photo.jpg', size_bytes: 100,
+    purpose: 'ark_asset_input' };
+  assert.equal((await handle(request(body, 'wrong'))).statusCode, 401);
+  assert.equal(checks, 0);
+  assert.equal((await handle(request(body, accountToken))).statusCode, 200);
+  assert.equal(checks, 1);
 });
 
 test('signs direct JPEG uploads for private Ark input storage', async () => {
@@ -264,7 +237,7 @@ test('uses the Ark signing key only for validated asset actions', async () => {
   assert.equal(calls.length, 3);
 });
 
-test('forwards only supported Ark asset types and defaults old clients to Image', async () => {
+test('forwards only supported Ark asset types and defaults omitted type to Image', async () => {
   const assetEnv = { ...env, VOLC_ACCESS_KEY_ID: 'ark-ak',
     VOLC_SECRET_ACCESS_KEY: 'ark-sk' };
   const calls = [];
@@ -387,7 +360,6 @@ test('does not create an Ark asset when the group lookup fails', async () => {
 
 test('Ark Assets works without OSS configuration', async () => {
   const assetEnv = {
-    MAICHAT_MEDIA_SERVICE_TOKEN: 'abcdef0123456789abcdef0123456789',
     VOLC_ACCESS_KEY_ID: 'ark-ak', VOLC_SECRET_ACCESS_KEY: 'ark-sk'
   };
   const handle = createHandler({ env: assetEnv, callArk: async (action, payload) => {
@@ -396,19 +368,12 @@ test('Ark Assets works without OSS configuration', async () => {
     return { Result: { Id: 'asset-1234567890' } };
   } });
   const create = { rawPath: '/ark-assets', requestContext: { http: { method: 'POST' } },
-    headers: { Authorization: `Bearer ${assetEnv.MAICHAT_MEDIA_SERVICE_TOKEN}` },
+    headers: { Authorization: `Bearer ${accountToken}` },
     body: JSON.stringify({ action: 'create_asset', group_id: 'group-1234567890',
       url: 'https://images.example.com/portrait.png' }) };
   assert.equal((await handle(create)).statusCode, 200);
   assert.equal((await handle({ ...create, rawPath: '/sign-upload' })).statusCode, 503);
-  const status = await handle({ ...create, rawPath: '/credentials',
-    body: JSON.stringify({ action: 'status' }) });
-  assert.deepEqual(JSON.parse(status.body), {
-    configured: [], assets_configured: true, storage_configured: false
-  });
-  const fetched = await handle({ ...create, rawPath: '/credentials',
-    body: JSON.stringify({ action: 'fetch', providers: ['ark'] }) });
-  assert.deepEqual(JSON.parse(fetched.body).api_keys, {});
+  assert.equal((await handle({ ...create, rawPath: '/credentials' })).statusCode, 404);
 });
 
 test('reports Ark upstream status, code, and request id without exposing credentials', async () => {
@@ -459,89 +424,8 @@ test('creates a real-portrait H5 link and resolves its verified group', async ()
   assert.equal(invalid.statusCode, 400);
 });
 
-test('synchronizes only requested model keys and never returns AccessKeys', async () => {
-  const configured = { ...env,
-    MAICHAT_ARK_API_KEY: 'ark-project-key', MAICHAT_GLM_API_KEY: 'glm-key',
-    MAICHAT_DEEPSEEK_API_KEY: 'deepseek-key', MAICHAT_WAN_API_KEY: 'wan-key',
-    MAICHAT_WAN_WORKSPACE_ID: 'ws-example', MAICHAT_KLING_API_KEY: 'kling-key',
-    MAICHAT_MINIMAX_API_KEY: 'minimax-key',
-    VOLC_ACCESS_KEY_ID: 'volc-ak', VOLC_SECRET_ACCESS_KEY: 'volc-sk' };
-  const handle = createHandler({ env: configured });
-  const credentials = body => ({ ...request(body), rawPath: '/credentials' });
-  const status = await handle(credentials({ action: 'status' }));
-  assert.deepEqual(JSON.parse(status.body).configured,
-    ['glm', 'deepseek', 'wan', 'kling', 'minimax']);
-  const fetched = await handle(credentials({ action: 'fetch',
-    providers: ['ark', 'glm', 'glm_video', 'wan', 'kling'] }));
-  assert.deepEqual(JSON.parse(fetched.body), {
-    api_keys: { glm: 'glm-key', glm_video: 'glm-key' },
-    wan_workspace_id: 'ws-example'
-  });
-  assert.equal(fetched.headers['Cache-Control'], 'no-store');
-  assert.equal(fetched.headers.Pragma, 'no-cache');
-  assert.ok(!fetched.body.includes('volc-sk'));
-  assert.ok(!fetched.body.includes('ark-project-key'));
-  assert.ok(!fetched.body.includes('deepseek-key'));
-  assert.equal((await handle(credentials({ action: 'fetch',
-    providers: ['volc_access'] }))).statusCode, 400);
-  assert.equal((await handle(credentials({ action: 'fetch',
-    providers: ['ark', 'ark'] }))).statusCode, 400);
-  assert.equal((await handle({ ...credentials({ action: 'fetch', providers: ['ark'] }),
-    headers: { Authorization: 'Bearer wrong' } })).statusCode, 401);
-});
-
-test('account-only main model key route never accepts the client service token', async () => {
-  const authToken = 'fedcba9876543210fedcba9876543210';
-  const configured = { ...env, MAICHAT_AUTH_SERVICE_TOKEN: authToken,
-    MAICHAT_GLM_API_KEY: 'glm-model-key', MAICHAT_DEEPSEEK_API_KEY: 'deepseek-model-key' };
-  const handle = createHandler({ env: configured });
-  const requestKeys = token => ({ ...request({ action: 'main_chat' }, token),
-    rawPath: '/account-model-keys' });
-  assert.equal((await handle(requestKeys(env.MAICHAT_OSS_SIGNER_TOKEN))).statusCode, 401);
-  const issued = await handle(requestKeys(authToken));
-  assert.equal(issued.statusCode, 200);
-  assert.deepEqual(JSON.parse(issued.body), {
-    api_keys: { glm: 'glm-model-key', deepseek: 'deepseek-model-key' }
-  });
-  assert.ok(!issued.body.includes('fedcba9876543210'));
-  assert.equal((await handle({ ...requestKeys(authToken),
-    body: JSON.stringify({ action: 'fetch' }) })).statusCode, 400);
-});
-
-test('issues a five-minute Seedance and Seedream key only to the account service', async () => {
-  const now = new Date('2026-10-08T00:00:00Z');
-  const internalToken = 'fedcba9876543210fedcba9876543210';
-  const models = ['doubao-seedance-2-0-mini-260615',
-    'doubao-seedream-5-0-flash-260915'];
-  const configured = { ...env,
-    MAICHAT_AUTH_SERVICE_TOKEN: internalToken,
-    MAICHAT_ARK_MODEL_IDS: models.join(','),
-    VOLC_ACCESS_KEY_ID: 'test-volc-id',
-    VOLC_SECRET_ACCESS_KEY: 'test-volc-secret'
-  };
-  let calls = 0;
-  const handle = createHandler({ env: configured, currentTime: () => now,
-    callArk: async (action, payload, credentials) => {
-      ++calls;
-      assert.equal(action, 'GetApiKey');
-      assert.deepEqual(payload, { DurationSeconds: 300, ResourceType: 'presetendpoint',
-        ResourceIds: models, ProjectName: 'default' });
-      assert.equal(credentials.accessKeyId, configured.VOLC_ACCESS_KEY_ID);
-      return { Result: { ApiKey: 'temporary-ark-model-key',
-        ExpiredTime: Math.floor(now.getTime() / 1000) + 300 } };
-    } });
-  const issue = token => ({ ...request({ action: 'ark_seedance' }, token),
-    rawPath: '/temporary-credentials' });
-  assert.equal((await handle(issue(env.MAICHAT_OSS_SIGNER_TOKEN))).statusCode, 401);
-  assert.equal(calls, 0);
-  const result = await handle(issue(internalToken));
-  assert.equal(result.statusCode, 200);
-  assert.deepEqual(JSON.parse(result.body), { api_key: 'temporary-ark-model-key',
-    expires_at: Math.floor(now.getTime() / 1000) + 300 });
-  assert.equal(calls, 1);
-  assert.ok(!result.body.includes(configured.VOLC_SECRET_ACCESS_KEY));
-  const unrelated = createHandler({ env: { ...configured,
-    MAICHAT_ARK_MODEL_IDS: 'doubao-seed-2-0-pro-260215' },
-    callArk: async () => { throw new Error('must not issue'); } });
-  assert.equal((await unrelated(issue(internalToken))).statusCode, 503);
+test('removed shared credential route is unavailable', async () => {
+  const handle = createHandler({ env });
+  assert.equal((await handle({ ...request({ action: 'fetch', providers: ['glm'] }),
+    rawPath: '/credentials' })).statusCode, 404);
 });

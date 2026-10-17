@@ -88,19 +88,12 @@ final class AICloudCredentialStore: @unchecked Sendable {
     private var bailianExpiresAt = Date.distantPast
     private var bailianWorkspaceId = ""
 
-    func replaceMainChatKeys(_ next: [String: String]) {
+    func replaceAccountModelKeys(_ next: [String: String]) {
         lock.lock()
-        for provider in ["glm", "deepseek"] {
+        for provider in ["glm", "deepseek", "minimax"] {
             if let key = next[provider], !key.isEmpty { values[provider] = key }
             else { values.removeValue(forKey: provider) }
         }
-        lock.unlock()
-    }
-
-    func setLegacyMediaKey(_ key: String) {
-        lock.lock()
-        if key.isEmpty { values.removeValue(forKey: "minimax") }
-        else { values["minimax"] = key }
         lock.unlock()
     }
 
@@ -186,11 +179,11 @@ enum AICloudCredentialSync {
         AICloudCredentialStore.shared.clearAll()
     }
 
-    static func refreshMainModelKeysIfAvailable() async throws -> Bool {
-        guard let issued = try await MaiChatAuthClient.shared.mainModelKeysIfAvailable()
+    static func refreshAccountModelKeysIfAvailable() async throws -> Bool {
+        guard let issued = try await MaiChatAuthClient.shared.accountModelKeysIfAvailable()
         else { return false }
         var valid: [String: String] = [:]
-        for provider in ["glm", "deepseek"] {
+        for provider in ["glm", "deepseek", "minimax"] {
             guard let key = issued.apiKeys[provider], !key.isEmpty,
                   key.utf8.count <= 4_096,
                   key.unicodeScalars.allSatisfy({
@@ -201,7 +194,7 @@ enum AICloudCredentialSync {
         guard !valid.isEmpty else {
             throw AIBackendError(message: "当前账号没有可用的主聊天模型")
         }
-        AICloudCredentialStore.shared.replaceMainChatKeys(valid)
+        AICloudCredentialStore.shared.replaceAccountModelKeys(valid)
         return true
     }
 
@@ -255,58 +248,6 @@ enum AICloudCredentialSync {
         try await task.value
     }
 
-    static func serviceEndpoint() -> (url: URL, token: String)? {
-        let address = UserDefaults.standard.string(forKey: "oss-media-signer-url") ?? ""
-        let token = KeychainSecretStore(account: "oss-media-signer-token").readSecretKey()
-        return credentialEndpoint(address: address, token: token)
-    }
-
-    static func credentialEndpoint(address: String, token: String) -> (url: URL, token: String)? {
-        // 只允许无用户信息、查询串和片段的 HTTPS 地址，服务令牌仍从 Keychain 读取。
-        guard token.count >= 32, var parts = URLComponents(string: address),
-              parts.scheme == "https", parts.host?.isEmpty == false,
-              parts.user == nil, parts.password == nil,
-              parts.query == nil, parts.fragment == nil else { return nil }
-        var basePath = parts.path
-        if basePath.hasSuffix("/sign-upload") {
-            basePath = String(basePath.dropLast("sign-upload".count))
-        } else if !basePath.hasSuffix("/") {
-            basePath += "/"
-        }
-        parts.path = basePath + "credentials"
-        guard let url = parts.url else { return nil }
-        return (url, token)
-    }
-
-    static func syncLegacyMediaKeyIfConfigured() async throws -> Bool {
-        // MiniMax 媒体工具仍使用旧素材服务设置；GLM/DeepSeek 主聊天由账号自动领取。
-        guard let service = serviceEndpoint() else { return false }
-        let requestBody = try JSONSerialization.data(withJSONObject: [
-            "action": "fetch", "providers": ["minimax"]
-        ])
-        let response = try await MaiChatHttpClient.request(
-            url: service.url, method: "POST", bearer: service.token,
-            contentType: "application/json", body: requestBody,
-            maximumResponseBytes: 16_384, timeoutMilliseconds: 30_000
-        )
-        let data = response.body
-        guard response.statusCode == 200,
-              data.count <= 16_384,
-              let body = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let keys = body["api_keys"] as? [String: String] else {
-            throw AIBackendError(message: "云端密钥服务暂时不可用")
-        }
-        let key = keys["minimax"] ?? ""
-        guard key.utf8.count <= 4_096,
-              key.unicodeScalars.allSatisfy({
-                  !CharacterSet.controlCharacters.contains($0)
-              }) else { throw AIBackendError(message: "素材服务返回的凭据无效") }
-        AICloudCredentialStore.shared.setLegacyMediaKey(key)
-        UserDefaults.standard.set(Date(), forKey: "cloud-credentials-last-sync")
-        UserDefaults.standard.set(key.isEmpty ? [] : ["minimax"],
-                                  forKey: "cloud-credentials-synced-providers")
-        return true
-    }
 }
 struct AISession: Codable, Identifiable, Sendable, Equatable {
     let id: String
@@ -513,8 +454,7 @@ actor AIAssistantBackend {
             settings.model = "glm-5.3"
         }
         settings.selectModel(settings.model)
-        _ = try? await AICloudCredentialSync.refreshMainModelKeysIfAvailable()
-        _ = try? await AICloudCredentialSync.syncLegacyMediaKeyIfConfigured()
+        _ = try? await AICloudCredentialSync.refreshAccountModelKeysIfAvailable()
         try? await AICloudCredentialSync.refreshSeedanceIfNeeded(force: true)
         try? await AICloudCredentialSync.refreshBailianIfNeeded(force: true)
         var key = storedKey(for: settings.model)
@@ -734,7 +674,6 @@ final class AIAssistantModel: ObservableObject {
     @Published private(set) var visibleMessageLimit = AIAssistantModel.recentMessageCount
     @Published var isSubmitting = false
     @Published private(set) var isCreatingConversation = false
-    @Published var showSettings = false
     @Published var scrollRequest = 0
     @Published private(set) var workspacePath = ""
     @Published var previewImage: AIImagePreview?
@@ -906,7 +845,6 @@ final class AIAssistantModel: ObservableObject {
     }
 
     func prepareFirstPage() async {
-        importPendingCloudService()
         if historyLoaded {
             logAIHistoryEvent("prepare skip selected=\(selected) count=\(messages.count)")
             return
@@ -943,25 +881,6 @@ final class AIAssistantModel: ObservableObject {
         initialPreparation = task
         await task.value
         initialPreparation = nil
-    }
-
-    private func importPendingCloudService() {
-        guard let documents = FileManager.default.urls(for: .documentDirectory,
-                                                        in: .userDomainMask).first else { return }
-        let source = documents.appendingPathComponent("cloud-service-setup.json")
-        guard let data = try? Data(contentsOf: source) else { return }
-        defer { try? FileManager.default.removeItem(at: source) }
-        guard let body = try? JSONSerialization.jsonObject(with: data) as? [String: String],
-              let url = body["url"], let token = body["token"],
-              AICloudCredentialSync.credentialEndpoint(address: url, token: token) != nil else {
-            return
-        }
-        do {
-            try KeychainSecretStore(account: "oss-media-signer-token").saveSecretKey(token)
-            UserDefaults.standard.set(url, forKey: "oss-media-signer-url")
-        } catch {
-            showTransientError("云端服务配置导入失败")
-        }
     }
 
     func appear() {
@@ -1248,7 +1167,10 @@ final class AIAssistantModel: ObservableObject {
     /// 提交文本及附件，并在核心落库后合并新快照、请求界面定位最新消息。
     /// 输入不合法或任务忙碌时不改动草稿；新建会话也必须保持一个可见的加载状态。
     func sendMessage(_ text: String, expectedSession: String? = nil) async -> Bool {
-        guard configured else { showSettings = true; return false }
+        guard configured else {
+            error = "请先登录已开通模型服务的账号"
+            return false
+        }
         let draftSession = selected
         let quoteMessageId = quotedMessage?.id ?? ""
         guard expectedSession == nil || expectedSession == draftSession else { return false }

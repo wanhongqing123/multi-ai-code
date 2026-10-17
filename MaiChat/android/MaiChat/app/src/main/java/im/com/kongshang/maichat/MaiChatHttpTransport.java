@@ -1,5 +1,5 @@
 // 文件作用：为 Android 自有的一次性 HTTP 请求提供统一的 libcurl/OpenSSL 传输入口。
-// 账号、头像及旧云凭据调用方各自校验业务地址；本类只负责传输、大小限制、系统证书与代理。
+// 账号与头像调用方各自校验业务地址；本类只负责传输、大小限制、系统证书与代理。
 package com.kongshang.maichat;
 
 import android.util.Log;
@@ -56,18 +56,6 @@ final class MaiChatHttpTransport {
             current = resolveAvatarRedirect(current, response.redirectLocation);
         }
         throw new IOException("头像地址跳转次数过多");
-    }
-
-    // 作用：从用户配置的 HTTPS 云服务取得短响应；禁重定向，Bearer 不转发到另一主机。
-    static Result postCloudCredentials(URL url, byte[] body, String bearer) throws IOException {
-        if (!"https".equals(url.getProtocol())) throw new IOException("云端密钥服务地址必须使用 HTTPS");
-        try {
-            return perform(url, "POST", body, bearer, 16_384, 10_000, 30_000, 20);
-        } catch (IOException failure) {
-            if ("服务端响应过大".equals(failure.getMessage()))
-                throw new IOException("云端密钥响应过大", failure);
-            throw failure;
-        }
     }
 
     private static boolean isRedirect(int status) {

@@ -20,7 +20,7 @@ test('account service fetches a bounded Bailian key from loopback', async () => 
     api_key: 'st-temporary-bailian-key', expires_at: issued,
     wan_workspace_id: 'ws-test'
   });
-  assert.equal(requests[0].url, 'http://127.0.0.1:9000/temporary-credentials');
+  assert.equal(requests[0].url, 'http://127.0.0.1:9200/temporary-credentials');
   assert.equal(requests[0].options.headers.Authorization, `Bearer ${token}`);
   assert.deepEqual(JSON.parse(requests[0].options.body), { action: 'bailian_video' });
   await assert.rejects(createBailianCredentialIssuer({})());

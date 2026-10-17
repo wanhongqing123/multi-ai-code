@@ -4,24 +4,26 @@
 
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { createMainModelKeyIssuer } = require('./main-model-keys');
+const { createAccountModelKeyIssuer } = require('./account-model-keys');
 
 test('account service reads only main chat keys over authenticated loopback', async () => {
   const token = 'abcdef0123456789abcdef0123456789';
   let requests = 0;
-  const issue = createMainModelKeyIssuer({ MAICHAT_AUTH_SERVICE_TOKEN: token },
+  const issue = createAccountModelKeyIssuer({ MAICHAT_AUTH_SERVICE_TOKEN: token },
     async (url, options) => {
       ++requests;
-      assert.equal(url, 'http://127.0.0.1:9000/account-model-keys');
+      assert.equal(url, 'http://127.0.0.1:9200/account-model-keys');
       assert.equal(options.headers.Authorization, `Bearer ${token}`);
-      assert.deepEqual(JSON.parse(options.body), { action: 'main_chat' });
+      assert.deepEqual(JSON.parse(options.body), { action: 'account_models' });
       return { ok: true, async text() { return JSON.stringify({
-        api_keys: { glm: 'glm-model-key', deepseek: 'deepseek-model-key' }
+        api_keys: { glm: 'glm-model-key', deepseek: 'deepseek-model-key',
+          minimax: 'minimax-model-key' }
       }); } };
     });
   assert.deepEqual(await issue(), {
-    api_keys: { glm: 'glm-model-key', deepseek: 'deepseek-model-key' }
+    api_keys: { glm: 'glm-model-key', deepseek: 'deepseek-model-key',
+      minimax: 'minimax-model-key' }
   });
   assert.equal(requests, 1);
-  await assert.rejects(createMainModelKeyIssuer({})());
+  await assert.rejects(createAccountModelKeyIssuer({})());
 });

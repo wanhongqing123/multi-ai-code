@@ -1,9 +1,9 @@
 'use strict';
 
-// 账号服务只从本机素材服务取得短期 Key，不转发模型请求或媒体文件。
+// 账号服务只从本机模型凭据服务取得短期 Key，不转发模型请求或媒体文件。
 function createBailianCredentialIssuer(env, fetcher = fetch) {
   const token = env.MAICHAT_AUTH_SERVICE_TOKEN || '';
-  const port = Number(env.MAICHAT_MEDIA_PORT || 9000);
+  const port = Number(env.MAICHAT_MODEL_CREDENTIAL_PORT || 9200);
   return async function issueBailianCredential() {
     if (token.length < 32 || !Number.isInteger(port) || port < 1 || port > 65535)
       throw new Error('Bailian credential issuer is not configured');

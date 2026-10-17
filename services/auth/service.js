@@ -1,3 +1,5 @@
+// 文件作用：处理 MaiChat 账号登录、会话、设备名额与受会话保护的凭据领取权限。
+// 供应商密钥由独立凭据进程保管，本进程不转发模型请求。
 'use strict';
 
 const { createHash, createHmac, randomBytes, randomInt, randomUUID, timingSafeEqual } =
@@ -51,7 +53,7 @@ function mobileDevice(body, requireDeviceSlot = false) {
 
 function createAuthService(options) {
   const { db, sms, secret, imSecret, sdkAppId, issueArkCredential,
-    issueBailianCredential, issueMainModelKeys } = options;
+    issueBailianCredential, issueAccountModelKeys } = options;
   if (!db || !sms || typeof sms.send !== 'function' ||
       typeof secret !== 'string' || secret.length < 32 ||
       typeof imSecret !== 'string' || imSecret.length < 32 ||
@@ -679,6 +681,7 @@ function createAuthService(options) {
         '/v1/auth/desktop/deny', '/v1/auth/password/set',
         '/v1/auth/logout'].includes(path)) ||
       (method === 'GET' && ['/v1/auth/me', '/v1/im/credential',
+        '/v1/media/authorize',
         '/v1/model/seedance-credential', '/v1/model/bailian-credential',
         '/v1/model/api-keys'].includes(path));
     if (protectedRoute && !session) return authenticationFailure(headers);
@@ -709,13 +712,19 @@ function createAuthService(options) {
         user_sig: createUserSig(sdkAppId, session.im_user_id, imSecret, issuedAt),
         expires_at: issuedAt + 7 * 24 * 60 * 60 });
     }
+    if (method === 'GET' && path === '/v1/media/authorize') {
+      if (!session) return json(401, { error: 'Authentication required' });
+      if (!modelAllowedPhones.has(session.phone_e164))
+        return json(403, { error: 'Media access is not enabled for this account' });
+      return json(200, { allowed: true });
+    }
     if (method === 'GET' && path === '/v1/model/api-keys') {
       if (!session) return json(401, { error: 'Authentication required' });
       if (!modelAllowedPhones.has(session.phone_e164))
         return json(403, { error: 'Model access is not enabled for this account' });
-      if (typeof issueMainModelKeys !== 'function')
+      if (typeof issueAccountModelKeys !== 'function')
         return json(503, { error: 'Main chat model keys are unavailable' });
-      try { return json(200, await issueMainModelKeys()); }
+      try { return json(200, await issueAccountModelKeys()); }
       catch { return json(503, { error: 'Main chat model keys are unavailable' }); }
     }
     if (method === 'GET' && path === '/v1/model/seedance-credential') {

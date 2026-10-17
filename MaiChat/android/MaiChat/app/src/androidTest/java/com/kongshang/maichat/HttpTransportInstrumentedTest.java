@@ -136,12 +136,6 @@ public final class HttpTransportInstrumentedTest {
         }
     }
 
-    @Test
-    public void credentialRequestRejectsCleartextBeforeConnecting() throws Exception {
-        assertThrows(IOException.class, () -> MaiChatHttpTransport.postCloudCredentials(
-            new URL("http://127.0.0.1/credentials"), new byte[] {1}, "example-token"));
-    }
-
     private static void send(OutputStream output, int status, String contentType, byte[] body)
         throws IOException {
         output.write(("HTTP/1.1 " + status + " OK\r\nContent-Type: " + contentType

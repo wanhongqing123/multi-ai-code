@@ -18,7 +18,7 @@ test('account service fetches only a short-lived key from loopback media service
   assert.deepEqual(await issue(), {
     api_key: 'temporary-key-for-seedance', expires_at: issued
   });
-  assert.equal(requests[0].url, 'http://127.0.0.1:9000/temporary-credentials');
+  assert.equal(requests[0].url, 'http://127.0.0.1:9200/temporary-credentials');
   assert.equal(requests[0].options.headers.Authorization, `Bearer ${token}`);
   assert.deepEqual(JSON.parse(requests[0].options.body), { action: 'ark_seedance' });
   await assert.rejects(createArkCredentialIssuer({})(/* no credentials */));

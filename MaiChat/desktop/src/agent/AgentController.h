@@ -69,8 +69,7 @@ public:
     // 短期 Ark/百炼凭据由账号会话提供；工具执行时实时读取，不捕获构造时的旧密钥。
     std::function<QString()> arkApiKeyProvider;
     std::function<QPair<QString, QString>()> wanCredentialsProvider;
-    QString cloudServiceUrl;
-    QString cloudServiceToken;
+    std::function<QPair<QString, QString>()> mediaServiceAccessProvider;
     QString modelName = QStringLiteral("glm-5.3");
     MaiWireApi wire = MaiWireApi::Responses;
     MaiApprovalPolicy approvalPolicy = MaiApprovalPolicy::OnRequest;

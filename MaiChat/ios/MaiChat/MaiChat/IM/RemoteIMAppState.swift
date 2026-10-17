@@ -616,7 +616,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             ])
         }
         // 账号已经落地后领取主聊天 Key；失败不撤销 IM 登录，进入创作中心时可重试。
-        _ = try? await AICloudCredentialSync.refreshMainModelKeysIfAvailable()
+        _ = try? await AICloudCredentialSync.refreshAccountModelKeysIfAvailable()
         if wasConnected && previousUserID == session.user.imUserId {
             return
         }

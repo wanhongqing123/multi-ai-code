@@ -1,5 +1,5 @@
 [Unit]
-Description=MaiChat media signing and Ark Assets service
+Description=MaiChat media asset registration and upload signing service
 After=network-online.target
 Wants=network-online.target
 

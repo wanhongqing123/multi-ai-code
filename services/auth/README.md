@@ -1,6 +1,6 @@
 # MaiChat 统一账号服务
 
-本服务与现有 `oss-media-signer` 分进程部署在同一台 ECS。Nginx 负责公网 TLS；
+本服务与模型凭据服务、素材服务分进程部署在同一台 ECS。Nginx 负责公网 TLS；
 Node 服务只监听 `127.0.0.1:9100`。验证码、密码哈希、登录会话与腾讯 IM UserSig
 均在服务端处理。客户端只获得自己的短期会话凭据和 UserSig，不获得 IM 签名密钥。
 
@@ -28,7 +28,8 @@ Node 服务只监听 `127.0.0.1:9100`。验证码、密码哈希、登录会话�
 | `GET /v1/im/credential` | Bearer 会话；只为当前账号签发 Tencent UserSig |
 | `GET /v1/model/seedance-credential` | Bearer 会话且手机号在模型白名单；返回 5 分钟、限定 Seedance 与 Seedream 的临时方舟 Key；路径保留旧名称兼容 App |
 | `GET /v1/model/bailian-credential` | Bearer 会话且手机号在模型白名单；返回 5 分钟百炼临时 Key 和万相 Workspace ID，供万相与百炼可灵共用 |
-| `GET /v1/model/api-keys` | Bearer 会话且手机号在模型白名单；返回主聊天 GLM/DeepSeek Key，客户端直接调用供应商 |
+| `GET /v1/model/api-keys` | Bearer 会话且手机号在模型白名单；返回 GLM、DeepSeek、MiniMax Key，客户端直接调用供应商 |
+| `GET /v1/media/authorize` | Bearer 会话且手机号在模型白名单；供素材服务核验该账号可否登记素材或取得 OSS 上传签名，不返回密钥 |
 
 接口经 Nginx 对外使用 `/api/v1/...`；服务内部路由仍为 `/v1/...`。
 用户主键和腾讯 IM UserID 与手机号分离，换号不改变 IM 身份。首次登录前如需
@@ -132,10 +133,9 @@ AppKey 必须只保存在服务端。
   重放旧刷新令牌会撤销对应会话。客户端应在 Keychain/Keystore/系统凭据库
   保存刷新令牌，访问令牌只在内存使用。
 - 账号服务不代理大模型或媒体字节。Seedance 与百炼临时 Key 都由账号服务经本机回环
-  请求素材服务签发，火山 AK/SK、百炼永久 API Key 不下发。百炼临时 Key 继承
+  请求模型凭据服务签发，火山 AK/SK、百炼永久 API Key 不下发。百炼临时 Key 继承
   主 Key 的模型权限，5 分钟内如泄漏仍可使用；业务配额仍须在百炼控制台限制。
-  旧共享令牌的 `/credentials` 不再返回方舟、万相与百炼可灵长期 Key；其他模型
-  中的主聊天 GLM/DeepSeek 可由账号服务按登录会话下发。它们目前是供应商长期 Key，
+  GLM、DeepSeek、MiniMax 由账号服务按登录会话下发。它们目前是供应商长期 Key，
   会进入客户端进程；退出登录无法撤销已被复制的 Key，密钥保护方式留待后续方案。
   服务端只下发凭据，绝不转发模型请求或流式响应。
 - 桌面端和已发布的旧版移动客户端仍可能持有旧 IM 签名密钥。完成迁移后需轮换
@@ -152,7 +152,7 @@ npm test
 `/etc/maichat/auth.env`（权限 `0600`）。`MAICHAT_SMS_ACCESS_KEY_ID` / Secret
 需要具备短信发送权限；签名和验证码模板必须已经审核可用。数据库放
 `/var/lib/maichat-auth/`，目录仅授权服务账号，定期备份 SQLite 数据库与 WAL。
-部署时使用示例 systemd 服务及 Nginx 路由，并保留现有素材签发服务。
+部署时使用示例 systemd 服务及 Nginx 路由，并独立启动模型凭据与素材服务。
 
 设备名额上线顺序：
 

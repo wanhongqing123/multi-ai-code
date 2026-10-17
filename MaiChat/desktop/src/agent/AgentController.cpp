@@ -251,11 +251,13 @@ buildAgent(std::unique_ptr<MaiModelClient> model, std::unique_ptr<MaiSessionStor
     const auto arkKey = [provider = credentials.arkApiKeyProvider, key = toUtf8(credentials.arkApiKey)] {
         return provider ? toUtf8(provider()) : key;
     };
-    const auto assetSettings = [base = toUtf8(credentials.cloudServiceUrl),
-                                token =
-                                    toUtf8(credentials.cloudServiceToken)]() -> MaiResult<MaiArkAssetServiceSettings> {
-        if (base.empty() || token.empty()) return {MaiErrorCode::NotConfigured, "Ark Assets service is not configured"};
-        return MaiArkAssetServiceSettings{base, token};
+    const auto assetSettings = [provider = credentials.mediaServiceAccessProvider]()
+        -> MaiResult<MaiArkAssetServiceSettings> {
+        if (!provider) return {MaiErrorCode::NotConfigured, "Account login is required"};
+        const auto access = provider();
+        if (access.first.isEmpty() || access.second.isEmpty())
+            return {MaiErrorCode::NotConfigured, "Account login is required"};
+        return MaiArkAssetServiceSettings{toUtf8(access.first), toUtf8(access.second)};
     };
     // 桌面端与手机端使用同一 C++ OSS 上传实现，每个模型写入自己的明确目录。
     const bool assetsConfigured = static_cast<bool>(assetSettings());

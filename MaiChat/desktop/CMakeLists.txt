@@ -2,7 +2,7 @@
 # 平台 SDK 和可选媒体能力由配置阶段检查；真实编译命令可导出给 clangd。
 cmake_minimum_required(VERSION 3.21)
 # C 用于 MaiAgent/third_party/md4c（Markdown 解析，纯 C 实现）。
-project(MaiChatDesktop VERSION 2.1.1 LANGUAGES C CXX)
+project(MaiChatDesktop VERSION 2.1.2 LANGUAGES C CXX)
 if(MSVC AND CMAKE_CL_SHOWINCLUDES_PREFIX MATCHES "^娉")
   # Some CMake/VS2019 locale combinations double-decode /showIncludes. Ninja then
   # records no header dependencies, so changing a public header leaves stale objects.
@@ -446,8 +446,6 @@ add_library(remote_im_desktop_app
   src/auth/DesktopCurlAuthTransport.h
   src/auth/DesktopCurlAuthTransport.cpp
   src/auth/AuthCertificates.qrc
-  src/auth/ModelServiceTokenStore.h
-  src/auth/ModelServiceTokenStore.cpp
   src/auth/SecureRefreshTokenStore.h
   src/auth/SecureRefreshTokenStore.cpp
   src/diagnostics/RemoteDiagnosticsController.h
@@ -1181,18 +1179,6 @@ elseif(WIN32)
   target_link_libraries(secure_refresh_token_store_test PRIVATE Advapi32)
 endif()
 
-add_executable(model_service_token_store_test
-  tests/ModelServiceTokenStoreTest.cpp
-  src/auth/ModelServiceTokenStore.cpp
-  src/auth/SecureRefreshTokenStore.cpp)
-target_include_directories(model_service_token_store_test PRIVATE src)
-target_link_libraries(model_service_token_store_test PRIVATE Qt5::Core Qt5::Test)
-if(APPLE)
-  target_link_libraries(model_service_token_store_test PRIVATE
-    "-framework Security" "-framework CoreFoundation")
-elseif(WIN32)
-  target_link_libraries(model_service_token_store_test PRIVATE Advapi32)
-endif()
 
 add_executable(app_message_dialog_test tests/AppMessageDialogTest.cpp)
 target_link_libraries(app_message_dialog_test PRIVATE remote_im_desktop_ui remote_im_core Qt5::Widgets Qt5::Test)
@@ -1353,7 +1339,6 @@ add_test(NAME remote_im_application_test COMMAND remote_im_application_test)
 add_test(NAME maichat_host_tools_test COMMAND maichat_host_tools_test)
 add_test(NAME login_dialog_test COMMAND login_dialog_test)
 add_test(NAME secure_refresh_token_store_test COMMAND secure_refresh_token_store_test)
-add_test(NAME model_service_token_store_test COMMAND model_service_token_store_test)
 add_test(NAME app_message_dialog_test COMMAND app_message_dialog_test)
 add_test(NAME app_text_input_dialog_test COMMAND app_text_input_dialog_test)
 add_test(NAME file_preview_dialog_test COMMAND file_preview_dialog_test)

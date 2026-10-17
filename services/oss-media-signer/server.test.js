@@ -7,10 +7,13 @@ const { createHandler } = require('./index');
 
 test('HTTP adapter keeps the service on an authenticated route', async () => {
   const env = {
-    MAICHAT_MEDIA_SERVICE_TOKEN: '0123456789abcdef0123456789abcdef',
     VOLC_ACCESS_KEY_ID: 'test-ak', VOLC_SECRET_ACCESS_KEY: 'test-sk'
   };
-  const server = createServer(createHandler({ env, callArk: async () => ({
+  const accountToken = 'a'.repeat(43);
+  const server = createServer(createHandler({ env,
+    authorizeMediaRequest: async headers =>
+      headers.authorization === `Bearer ${accountToken}`,
+    callArk: async () => ({
     Result: { Id: 'group-1234567890' }
   }) }));
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -20,13 +23,13 @@ test('HTTP adapter keeps the service on an authenticated route', async () => {
       headers: { 'Content-Type': 'application/json' } });
     assert.equal(unauthorized.status, 401);
     const authorized = await fetch(address, { method: 'POST',
-      headers: { Authorization: `Bearer ${env.MAICHAT_MEDIA_SERVICE_TOKEN}`,
+      headers: { Authorization: `Bearer ${accountToken}`,
         'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'create_group', name: 'avatar' }) });
     assert.equal(authorized.status, 200);
     assert.equal((await authorized.json()).result.Id, 'group-1234567890');
     const oversized = await fetch(address, { method: 'POST',
-      headers: { Authorization: `Bearer ${env.MAICHAT_MEDIA_SERVICE_TOKEN}` },
+      headers: { Authorization: `Bearer ${accountToken}` },
       body: 'x'.repeat(5000) });
     assert.equal(oversized.status, 413);
     const callback = await fetch(`http://127.0.0.1:${server.address().port}` +

@@ -194,7 +194,8 @@ public:
                                     QString(40, QLatin1Char('G')))},
                             {QStringLiteral("deepseek"), invalidMainModelKey ?
                                 QStringLiteral("bad\nkey") :
-                                QString(40, QLatin1Char('D'))}}}};
+                                QString(40, QLatin1Char('D'))},
+                            {QStringLiteral("minimax"), QString(40, QLatin1Char('M'))}}}};
                     }
                 } else if (headers.startsWith("get /v1/model/bailian-credential ")) {
                     ++bailianCredentialRequestCount;
@@ -317,7 +318,7 @@ private slots:
     void logoutRevokesServerSessionAndClearsMemory();
     void refusesOversizedQrResponseAndAuthRedirect();
     void refreshesTemporaryModelCredentialsThroughLiveProviders();
-    void fetchesMainModelKeysThroughAccountSession();
+    void fetchesAccountModelKeysThroughAccountSession();
     void refusesMalformedTemporaryModelCredentials();
     void retriesStoredSessionAfterTransientRestoreFailure();
     void revokesLateApprovedClaimBeforeReplacingQr();
@@ -678,7 +679,7 @@ void LoginDialogTest::liveProductionMainModelKeyGate() {
     QVERIFY(!result.body.isEmpty());
 }
 
-void LoginDialogTest::fetchesMainModelKeysThroughAccountSession() {
+void LoginDialogTest::fetchesAccountModelKeysThroughAccountSession() {
     FakeQrServer server;
     server.claimStatus = 200;
     DesktopAuthClient auth(nullptr, server.url(), false);
@@ -691,7 +692,7 @@ void LoginDialogTest::fetchesMainModelKeysThroughAccountSession() {
     bool finished = false;
     QHash<QString, QString> keys;
     QString error;
-    auth.fetchMainModelKeys([&](const QHash<QString, QString>& received,
+    auth.fetchAccountModelKeys([&](const QHash<QString, QString>& received,
                                 const QString& failure) {
         keys = received;
         error = failure;
@@ -703,10 +704,16 @@ void LoginDialogTest::fetchesMainModelKeysThroughAccountSession() {
     QCOMPARE(server.mainModelRequestCount, 1);
     QCOMPARE(keys.value(QStringLiteral("glm")), QString(40, QLatin1Char('G')));
     QCOMPARE(keys.value(QStringLiteral("deepseek")), QString(40, QLatin1Char('D')));
+    QCOMPARE(keys.value(QStringLiteral("minimax")), QString(40, QLatin1Char('M')));
+    const auto mediaAccess = auth.mediaServiceAccessProvider()();
+    QUrl expectedMediaUrl = server.url();
+    expectedMediaUrl.setPath(QStringLiteral("/maichat"));
+    QCOMPARE(mediaAccess.first, expectedMediaUrl.toString(QUrl::FullyEncoded));
+    QCOMPARE(mediaAccess.second.size(), 43);
 
     server.modelAccessDenied = true;
     finished = false;
-    auth.fetchMainModelKeys([&](const QHash<QString, QString>& received,
+    auth.fetchAccountModelKeys([&](const QHash<QString, QString>& received,
                                 const QString& failure) {
         keys = received;
         error = failure;
@@ -720,7 +727,7 @@ void LoginDialogTest::fetchesMainModelKeysThroughAccountSession() {
     server.modelAccessDenied = false;
     server.invalidMainModelKey = true;
     finished = false;
-    auth.fetchMainModelKeys([&](const QHash<QString, QString>& received,
+    auth.fetchAccountModelKeys([&](const QHash<QString, QString>& received,
                                 const QString& failure) {
         keys = received;
         error = failure;
@@ -734,7 +741,7 @@ void LoginDialogTest::fetchesMainModelKeysThroughAccountSession() {
     server.invalidMainModelKey = false;
     server.missingGlmKey = true;
     finished = false;
-    auth.fetchMainModelKeys([&](const QHash<QString, QString>& received,
+    auth.fetchAccountModelKeys([&](const QHash<QString, QString>& received,
                                 const QString& failure) {
         keys = received;
         error = failure;
@@ -749,7 +756,7 @@ void LoginDialogTest::fetchesMainModelKeysThroughAccountSession() {
     server.missingGlmKey = false;
     server.invalidMainModelShape = true;
     finished = false;
-    auth.fetchMainModelKeys([&](const QHash<QString, QString>& received,
+    auth.fetchAccountModelKeys([&](const QHash<QString, QString>& received,
                                 const QString& failure) {
         keys = received;
         error = failure;

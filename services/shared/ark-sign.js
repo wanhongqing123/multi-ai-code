@@ -1,3 +1,5 @@
+// 文件作用：提供火山 Ark 控制接口共用的签名与 HTTP 请求实现。
+// 素材服务和模型凭据服务各自调用此模块，不在这里判断账号或处理媒体字节。
 'use strict';
 
 const { createHash, createHmac } = require('node:crypto');

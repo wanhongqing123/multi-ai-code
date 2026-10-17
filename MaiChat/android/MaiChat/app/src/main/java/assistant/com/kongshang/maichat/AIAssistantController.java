@@ -14,8 +14,6 @@ import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
 import android.provider.OpenableColumns;
-import android.security.keystore.KeyGenParameterSpec;
-import android.security.keystore.KeyProperties;
 import android.util.Base64;
 import android.util.Log;
 import java.io.File;
@@ -37,10 +35,6 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.function.Consumer;
-import javax.crypto.Cipher;
-import javax.crypto.KeyGenerator;
-import javax.crypto.SecretKey;
-import javax.crypto.spec.GCMParameterSpec;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -173,7 +167,6 @@ public final class AIAssistantController {
     private long nextWanRefreshAt;
     private volatile String wanWorkspaceId = "";
     private volatile String miniMaxApiKey = "";
-    private volatile String cloudServiceUrl = "";
     private JSONObject data = new JSONObject();
     private final Map<String, JSONArray> mediaMentionCache = new HashMap<>();
     private boolean ready, closed;
@@ -250,21 +243,12 @@ public final class AIAssistantController {
         }
         if (tool.equals("mobile_ark_service_config")) {
             try {
-                String token = readEncryptedKey("cloud-service-token.enc");
-                java.net.URI source = new java.net.URI(cloudServiceUrl);
-                if (!"https".equals(source.getScheme()) || source.getHost() == null ||
-                    source.getRawUserInfo() != null || source.getRawQuery() != null ||
-                    source.getRawFragment() != null || token.length() < 32)
-                    return hostToolFailure("Ark Assets service is not configured", "not_configured");
-                String path = source.getPath() == null ? "" : source.getPath();
-                if (path.endsWith("/sign-upload"))
-                    path = path.substring(0, path.length() - "/sign-upload".length());
-                while (path.endsWith("/")) path = path.substring(0, path.length() - 1);
-                java.net.URI base = new java.net.URI("https", null, source.getHost(),
-                    source.getPort(), path, null, null);
+                MaiChatAuthClient.MediaServiceAccess access = accountAuth.mediaServiceAccess();
+                if (access == null)
+                    return hostToolFailure("Account login is required", "not_configured");
                 return new JSONObject().put("ok", true)
-                    .put("output", new JSONObject().put("base_url", base.toString())
-                        .put("token", token))
+                    .put("output", new JSONObject().put("base_url", access.baseUrl)
+                        .put("token", access.accountToken))
                     .toString().getBytes(StandardCharsets.UTF_8);
             } catch (Exception failure) {
                 return hostToolFailure("Ark Assets service is not configured", "not_configured");
@@ -393,24 +377,11 @@ public final class AIAssistantController {
             wire = "responses";
             if (model.equals("deepseek-flash")) baseUrl = DEEPSEEK_URL;
             else baseUrl = GLM_RESPONSES_URL;
-            File cloudUrlFile = new File(root, "cloud-service-url.txt");
-            if (cloudUrlFile.isFile())
-                cloudServiceUrl = new String(Files.readAllBytes(cloudUrlFile.toPath()),
-                    StandardCharsets.UTF_8).trim();
             if (testEndpoint == null) {
                 try {
-                    refreshMainModelKeys();
+                    refreshAccountModelKeys();
                 } catch (Exception failure) {
                     Log.w("MaiChatAgent", "Account model keys are unavailable");
-                }
-            }
-            if (testEndpoint == null && !cloudServiceUrl.isEmpty()) {
-                try {
-                    String token = readEncryptedKey("cloud-service-token.enc");
-                    if (!token.isEmpty())
-                        applyLegacyMediaKey(fetchCloudCredentials(cloudServiceUrl, token));
-                } catch (Exception failure) {
-                    Log.w("MaiChatAgent", "Legacy media credential is unavailable");
                 }
             }
             refreshSeedanceCredential(true);
@@ -767,7 +738,7 @@ public final class AIAssistantController {
                 String effectiveUrl = selectedName.equals("deepseek-flash")
                     ? DEEPSEEK_URL : GLM_RESPONSES_URL;
                 if (testEndpoint == null && (glmApiKey.isEmpty() || deepseekApiKey.isEmpty()))
-                    refreshMainModelKeys();
+                    refreshAccountModelKeys();
                 String key = selectedName.equals("deepseek-flash") ? deepseekApiKey : glmApiKey;
                 if (testEndpoint == null && key.isEmpty())
                     throw new IOException("请先登录已开通模型服务的账号");
@@ -810,79 +781,12 @@ public final class AIAssistantController {
         if (selectedWire.equals("responses")) return GLM_RESPONSES_URL;
         return url.equals(GLM_RESPONSES_URL) ? chatUrl : url;
     }
-    String cloudServiceUrl() { return cloudServiceUrl; }
-    void saveCloudService(String address, String newToken, Consumer<Boolean> completion) {
-        worker.post(() -> {
-            boolean success = false;
-            try {
-                String nextUrl = address.trim();
-                if (nextUrl.isEmpty() && newToken.trim().isEmpty()) {
-                    success = true;
-                } else {
-                    String token = newToken.trim().isEmpty()
-                        ? readEncryptedKey("cloud-service-token.enc") : newToken.trim();
-                    JSONObject response = fetchCloudCredentials(nextUrl, token);
-                    applyLegacyMediaKey(response);
-                    if (!newToken.trim().isEmpty())
-                        writeEncryptedKey("cloud-service-token.enc", token);
-                    android.util.AtomicFile file =
-                        new android.util.AtomicFile(new File(root, "cloud-service-url.txt"));
-                    FileOutputStream out = file.startWrite();
-                    try {
-                        out.write(nextUrl.getBytes(StandardCharsets.UTF_8));
-                        file.finishWrite(out);
-                    } catch (Exception failure) {
-                        file.failWrite(out);
-                        throw failure;
-                    }
-                    cloudServiceUrl = nextUrl;
-                    success = true;
-                }
-                error = "";
-            } catch (Exception failure) {
-                error = safeMessage(failure);
-                publishState();
-            }
-            boolean result = success;
-            main.post(() -> completion.accept(result));
-        });
-    }
-    private JSONObject fetchCloudCredentials(String address, String token) throws Exception {
-        java.net.URI source = new java.net.URI(address);
-        if (!"https".equals(source.getScheme()) || source.getHost() == null ||
-            source.getRawUserInfo() != null || source.getRawQuery() != null ||
-            source.getRawFragment() != null || token.length() < 32 ||
-            token.contains("\r") || token.contains("\n"))
-            throw new IllegalArgumentException("请填写有效的云端服务 HTTPS 地址和令牌");
-        String basePath = source.getPath() == null ? "" : source.getPath();
-        if (basePath.endsWith("/sign-upload"))
-            basePath = basePath.substring(0, basePath.length() - "sign-upload".length());
-        else if (!basePath.endsWith("/")) basePath += "/";
-        java.net.URI endpoint = new java.net.URI("https", null, source.getHost(), source.getPort(),
-            basePath + "credentials", null, null);
-        byte[] body = new JSONObject().put("action", "fetch")
-            .put("providers", new JSONArray().put("minimax"))
-            .toString().getBytes(StandardCharsets.UTF_8);
-        MaiChatHttpTransport.Result response =
-            MaiChatHttpTransport.postCloudCredentials(endpoint.toURL(), body, token);
-        if (response.status != 200)
-            throw new IOException(response.status == 401
-                ? "云端服务令牌不匹配" : "云端密钥服务暂时不可用");
-        return new JSONObject(new String(response.body, StandardCharsets.UTF_8));
-    }
-    private void refreshMainModelKeys() throws Exception {
-        MaiChatAuthClient.MainModelKeys keys = accountAuth.mainModelKeys();
+    private void refreshAccountModelKeys() throws Exception {
+        MaiChatAuthClient.AccountModelKeys keys = accountAuth.accountModelKeys();
         if (keys == null) return;
         glmApiKey = keys.glm;
         deepseekApiKey = keys.deepseek;
-    }
-    private void applyLegacyMediaKey(JSONObject response) throws Exception {
-        JSONObject keys = response.optJSONObject("api_keys");
-        if (keys == null) throw new IOException("云端密钥响应无效");
-        String value = keys.optString("minimax", "");
-        if (value.length() > 4096 || value.indexOf('\r') >= 0 ||
-            value.indexOf('\n') >= 0) throw new IOException("素材服务凭据无效");
-        miniMaxApiKey = value;
+        miniMaxApiKey = keys.minimax;
         apiKey = model.equals("deepseek-flash") ? deepseekApiKey : glmApiKey;
     }
 
@@ -1262,59 +1166,24 @@ public final class AIAssistantController {
         }
         return new ImportedFile(name, mime, image);
     }
-    private SecretKey encryptionKey() throws Exception {
-        KeyStore store = KeyStore.getInstance("AndroidKeyStore");
-        store.load(null);
-        String alias = "MaiChat.AIAssistant.APIKey";
-        if (store.containsAlias(alias))
-            return ((KeyStore.SecretKeyEntry) store.getEntry(alias, null)).getSecretKey();
-        KeyGenerator generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore");
-        generator.init(new KeyGenParameterSpec
-                .Builder(alias, KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .build());
-        return generator.generateKey();
-    }
     private void clearLegacyModelKeyFiles() {
         for (String name : new String[] {"api-key.enc", "ark-api-key.enc",
                 "glm-main-api-key.enc", "glm-video-api-key.enc",
                 "deepseek-main-api-key.enc", "wan-api-key.enc",
-                "kling-api-key.enc", "minimax-api-key.enc"}) {
+                "kling-api-key.enc", "minimax-api-key.enc",
+                "cloud-service-token.enc", "cloud-service-url.txt"}) {
             new File(root, name).delete();
             new File(root, name + ".bak").delete();
             new File(root, name + ".new").delete();
         }
-    }
-    private void writeEncryptedKey(String name, String key) throws Exception {
-        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-        cipher.init(Cipher.ENCRYPT_MODE, encryptionKey());
-        JSONObject value = new JSONObject()
-                               .put("iv", Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP))
-                               .put("data",
-                                   Base64.encodeToString(
-                                       cipher.doFinal(key.getBytes(StandardCharsets.UTF_8)), Base64.NO_WRAP));
-        android.util.AtomicFile file = new android.util.AtomicFile(new File(root, name));
-        FileOutputStream out = file.startWrite();
         try {
-            out.write(value.toString().getBytes(StandardCharsets.UTF_8));
-            file.finishWrite(out);
-        } catch (Exception e) {
-            file.failWrite(out);
-            throw e;
+            KeyStore store = KeyStore.getInstance("AndroidKeyStore");
+            store.load(null);
+            if (store.containsAlias("MaiChat.AIAssistant.APIKey"))
+                store.deleteEntry("MaiChat.AIAssistant.APIKey");
+        } catch (Exception failure) {
+            Log.w("MaiChatAgent", "Stored service token cleanup failed", failure);
         }
-    }
-    private String readEncryptedKey(String name) throws Exception {
-        File file = new File(root, name);
-        if (!file.isFile())
-            return "";
-        JSONObject value =
-            new JSONObject(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8));
-        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-        cipher.init(Cipher.DECRYPT_MODE, encryptionKey(),
-            new GCMParameterSpec(128, Base64.decode(value.getString("iv"), Base64.NO_WRAP)));
-        return new String(
-            cipher.doFinal(Base64.decode(value.getString("data"), Base64.NO_WRAP)), StandardCharsets.UTF_8);
     }
     private void exportSystemCertificates() throws Exception {
         SystemCertificateBundle.writeCurrentPem(new File(root, "trusted-roots.pem"));

@@ -464,7 +464,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         }
         if (pendingMediaImports.getOrDefault(selected, 0) > 0) return;
         if (!state.data.optBoolean("configured")) {
-            settings();
+            retryMainModelConnection();
             return;
         }
         String source = composer.getText().toString(), origin = selected;
@@ -1261,12 +1261,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         panel.addView(actionPanelDivider(), new LayoutParams(LayoutParams.MATCH_PARENT, dp(1)));
         panel.addView(actionPanelRow("操作权限", policyTitle(state.policy), MaiChatTheme.TEXT, v -> {
             popup.dismiss();
-            if (state.data.optBoolean("configured")) policyMenu(); else settings();
-        }), matchWrap());
-        panel.addView(actionPanelDivider(), new LayoutParams(LayoutParams.MATCH_PARENT, dp(1)));
-        panel.addView(actionPanelRow("高级媒体服务", "", MaiChatTheme.TEXT, v -> {
-            popup.dismiss();
-            settings();
+            policyMenu();
         }), matchWrap());
         panel.addView(actionPanelDivider(), new LayoutParams(LayoutParams.MATCH_PARENT, dp(1)));
         View clear = actionPanelRow("清空当前对话", "",
@@ -1304,85 +1299,13 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             updateSend();
         }
     }
-    // 作用：展示创作中心的模型或权限设置入口。
-    private void settings() {
+    // 作用：在账号会话建立后重新领取所选模型凭据，不改变当前会话和输入草稿。
+    private void retryMainModelConnection() {
         if (state == null || !state.ready) return;
-        LinearLayout form = column();
-        form.setPadding(dp(18), dp(8), dp(18), dp(8));
-        form.addView(text("主聊天模型随账号自动连接", 14, MaiChatTheme.TEXT), matchWrap());
-        EditText cloudUrl = field("素材服务地址", controller.cloudServiceUrl());
-        EditText cloudToken = field("素材服务令牌（留空保留）", "");
-        cloudToken.setInputType(android.text.InputType.TYPE_CLASS_TEXT |
-            android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        Spinner policy = new Spinner(activity);
-        policy.setAdapter(new ArrayAdapter<>(activity,
-            android.R.layout.simple_spinner_dropdown_item,
-            new String[] {"请求批准", "帮我批准", "完全访问"}));
-        policy.setSelection(state.policy.equals("never") ? 2
-            : state.policy.equals("unless-trusted") ? 1 : 0);
-        form.addView(policy, matchWrap());
-        Button advancedToggle = new Button(activity);
-        advancedToggle.setText("高级媒体服务 ▾");
-        form.addView(advancedToggle, matchWrap());
-        LinearLayout mediaFields = column();
-        mediaFields.setVisibility(View.GONE);
-        mediaFields.addView(text("仅供旧媒体工具和上传签名使用", 12,
-            MaiChatTheme.SECONDARY), matchWrap());
-        mediaFields.addView(cloudUrl, matchWrap());
-        mediaFields.addView(cloudToken, matchWrap());
-        form.addView(mediaFields, matchWrap());
-        advancedToggle.setOnClickListener(view -> {
-            boolean expanded = mediaFields.getVisibility() != View.VISIBLE;
-            mediaFields.setVisibility(expanded ? View.VISIBLE : View.GONE);
-            advancedToggle.setText(expanded ? "高级媒体服务 ▴" : "高级媒体服务 ▾");
+        controller.save(state.model, state.policy, success -> {
+            if (!success) Toast.makeText(activity, controller.state.error,
+                Toast.LENGTH_LONG).show();
         });
-        TextView validation = text("", 12, Color.RED);
-        form.addView(validation, matchWrap());
-        AlertDialog dialog = new AlertDialog.Builder(activity)
-            .setTitle("创作设置")
-            .setView(form)
-            .setNegativeButton("取消", null)
-            .setPositiveButton("保存", null)
-            .create();
-        dialog.setOnShowListener(v -> dialog.getButton(AlertDialog.BUTTON_POSITIVE)
-            .setOnClickListener(button -> {
-                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
-                Runnable savePolicy = () -> controller.save(state.model,
-                    new String[] {"on-request", "unless-trusted", "never"}[
-                        policy.getSelectedItemPosition()], success -> {
-                        if (success) dialog.dismiss();
-                        else {
-                            validation.setText(controller.state.error);
-                            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
-                        }
-                    });
-                if (mediaFields.getVisibility() != View.VISIBLE) {
-                    savePolicy.run();
-                    return;
-                }
-                if (cloudUrl.getText().toString().trim().isEmpty()) {
-                    validation.setText("请先填写素材服务地址");
-                    dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
-                    return;
-                }
-                controller.saveCloudService(cloudUrl.getText().toString(),
-                    cloudToken.getText().toString(), cloudSaved -> {
-                        if (cloudSaved) savePolicy.run();
-                        else {
-                            validation.setText(controller.state.error);
-                            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
-                        }
-                    });
-            }));
-        dialog.show();
-    }
-    private EditText field(String hint, String initial) {
-        EditText view = new EditText(activity);
-        view.setTextSize(14);
-        view.setSingleLine(true);
-        view.setHint(hint);
-        view.setText(initial);
-        return view;
     }
     private void details(String title, String source) {
         TextView view = text(source, 12, MaiChatTheme.TEXT);
@@ -1477,11 +1400,8 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                         LayoutParams hintParams = matchWrap();
                         hintParams.setMargins(0, dp(14), 0, 0);
                         welcome.addView(accountHint, hintParams);
-                        Button retry = button("重试连接", "重试连接", v ->
-                            controller.save(state.model, state.policy, success -> {
-                                if (!success) Toast.makeText(activity, controller.state.error,
-                                    Toast.LENGTH_LONG).show();
-                            }));
+                        Button retry = button("重试连接", "重试连接",
+                            v -> retryMainModelConnection());
                         retry.setTextColor(Color.WHITE);
                         retry.setTextSize(14);
                         retry.setTypeface(MaiChatTypography.semibold());

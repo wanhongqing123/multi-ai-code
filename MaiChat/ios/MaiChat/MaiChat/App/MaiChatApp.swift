@@ -231,8 +231,17 @@ struct MaiChatApp: App {
     init() {
         AppDiagnosticLog.shared.install()
         Task.detached(priority: .utility) {
-            _ = try? await AICloudCredentialSync.refreshMainModelKeysIfAvailable()
-            _ = try? await AICloudCredentialSync.syncLegacyMediaKeyIfConfigured()
+            // 账号会话已取代手填共享令牌；启动时删除此前保存的连接信息。
+            UserDefaults.standard.removeObject(forKey: "oss-media-signer-url")
+            UserDefaults.standard.removeObject(forKey: "cloud-credentials-last-sync")
+            UserDefaults.standard.removeObject(forKey: "cloud-credentials-synced-providers")
+            try? KeychainSecretStore(account: "oss-media-signer-token").saveSecretKey("")
+            if let documents = FileManager.default.urls(for: .documentDirectory,
+                                                         in: .userDomainMask).first {
+                try? FileManager.default.removeItem(
+                    at: documents.appendingPathComponent("cloud-service-setup.json"))
+            }
+            _ = try? await AICloudCredentialSync.refreshAccountModelKeysIfAvailable()
             try? await AICloudCredentialSync.refreshSeedanceIfNeeded()
             try? await AICloudCredentialSync.refreshBailianIfNeeded()
         }

@@ -142,23 +142,20 @@ struct AIAssistantView: View {
                 .background(Color(uiColor: .systemBackground))
             }
             if showActions {
-                // 右上角操作面板处理模型、权限、旧媒体设置与会话清理；
+                // 右上角操作面板只处理模型、权限与会话清理；
                 // 关闭时保留当前会话、消息和输入草稿。
                 Color.black.opacity(0.001).ignoresSafeArea().contentShape(Rectangle())
                     .onTapGesture { showActions = false }
                 AIActionPanel(
                     selectedModel: model.settings.model,
                     selectedPolicy: model.settings.policy,
-                    canChangeSettings: !model.busy && !model.isSubmitting,
+                    canChangeSettings: model.configured && !model.busy && !model.isSubmitting,
                     canClear: !model.busy && !model.selected.isEmpty,
-                    openMediaSettings: { showActions = false; model.showSettings = true },
                     selectModel: { selected in
                         guard selected != model.settings.model else { return }
                         var next = model.settings
                         next.selectModel(selected)
-                        Task {
-                            if !(await model.save(next)) { model.showSettings = true }
-                        }
+                        Task { _ = await model.save(next) }
                     },
                     selectPolicy: { policy in
                         guard policy != model.settings.policy else { return }
@@ -220,9 +217,6 @@ struct AIAssistantView: View {
         }
         .confirmationDialog("清空当前对话的所有消息？", isPresented: $confirmClear, titleVisibility: .visible) {
             Button("清空消息", role: .destructive) { Task { await model.action("clear") } }
-        }
-        .sheet(isPresented: $model.showSettings) {
-            AISettingsView(model: model) { model.showSettings = false }
         }
         .onAppear {
             logAIHistoryEvent("page-appeared session=\(model.selected) active=\(isActive)")
@@ -725,7 +719,7 @@ private struct AIAssistantMessageList: View {
                     .font(.footnote).foregroundStyle(.secondary)
                 Button("重试连接") {
                     Task {
-                        _ = try? await AICloudCredentialSync.refreshMainModelKeysIfAvailable()
+                        _ = try? await AICloudCredentialSync.refreshAccountModelKeysIfAvailable()
                         _ = await model.save(model.settings)
                     }
                 }
@@ -778,7 +772,6 @@ private struct AIActionPanel: View {
     let selectedPolicy: String
     let canChangeSettings: Bool
     let canClear: Bool
-    let openMediaSettings: () -> Void
     let selectModel: (String) -> Void
     let selectPolicy: (String) -> Void
     let clear: () -> Void
@@ -818,8 +811,6 @@ private struct AIActionPanel: View {
                     policyOption("完全访问", value: "never")
                 }
             }
-            Divider().padding(.leading, 42)
-            action("高级媒体服务", "slider.horizontal.3", Color.primary, openMediaSettings)
             Divider().padding(.leading, 42)
             action("清空当前对话", "trash", canClear ? Color.red : Color.secondary, clear)
                 .disabled(!canClear)
@@ -3439,154 +3430,5 @@ private struct AIQuestionCard: View {
     }
     private func reply(_ text: String) {
         Task { await model.action("answer", values: ["id": question.id, "text": text]) }
-    }
-}
-private struct AISettingsView: View {
-    @ObservedObject var model: AIAssistantModel
-    let close: () -> Void
-    @State private var serviceURL = ""
-    @State private var serviceToken = ""
-    @State private var serviceConfigured = false
-    @State private var message = ""
-    @State private var saving = false
-    @State private var showAdvancedMedia = false
-    @State private var selectedDetent: PresentationDetent = .height(220)
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Button(action: close) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 14, weight: .bold))
-                        .frame(width: 36, height: 36)
-                        .background(Color.white, in: Circle())
-                }
-                .buttonStyle(.plain)
-                .disabled(saving)
-                .accessibilityLabel("关闭模型配置")
-                Spacer()
-                Text("创作设置").font(.system(size: 18, weight: .bold))
-                Spacer()
-                Color.clear.frame(width: 36, height: 36)
-            }
-            .padding(.horizontal, 18)
-            .frame(height: 64)
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    Label("主聊天模型随账号自动连接", systemImage: "checkmark.shield")
-                        .font(.subheadline)
-                        .foregroundStyle(RemoteIMStyle.textSecondary)
-                    DisclosureGroup(isExpanded: $showAdvancedMedia) {
-                        VStack(alignment: .leading, spacing: 18) {
-                            Text("仅供旧媒体工具和上传签名使用")
-                                .font(.footnote)
-                                .foregroundStyle(RemoteIMStyle.textSecondary)
-                            settingsField("素材服务地址", systemImage: "externaldrive") {
-                                TextField("https://ichat.life/maichat", text: $serviceURL)
-                                    .keyboardType(.URL)
-                                    .textInputAutocapitalization(.never)
-                                    .autocorrectionDisabled()
-                                    .accessibilityIdentifier("ai-cloud-service-url")
-                            }
-                            settingsField("素材服务令牌", systemImage: "key.horizontal") {
-                                SecureField(serviceConfigured ? "已保存（留空保留）" : "服务令牌",
-                                            text: $serviceToken)
-                            }
-                            if !message.isEmpty {
-                                Text(message).font(.system(size: 12)).foregroundStyle(.secondary)
-                            }
-                            Button {
-                                saving = true
-                                Task {
-                                    guard saveService() else { saving = false; return }
-                                    do {
-                                        _ = try await AICloudCredentialSync.syncLegacyMediaKeyIfConfigured()
-                                    } catch {
-                                        message = "素材服务连接失败：\(error.localizedDescription)"
-                                        saving = false
-                                        return
-                                    }
-                                    if await model.save(model.settings) { close() }
-                                    saving = false
-                                }
-                            } label: {
-                                HStack(spacing: 8) {
-                                    if saving { ProgressView().tint(.white) }
-                                    Text(saving ? "保存中" : "保存素材服务")
-                                        .font(.system(size: 15, weight: .bold))
-                                }
-                                .foregroundStyle(Color.white)
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 48)
-                                .background(Color.blue, in: RoundedRectangle(cornerRadius: 14))
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(saving || model.sessions.contains(where: \.busy))
-                        }
-                        .padding(.top, 14)
-                    } label: {
-                        Text("高级媒体服务")
-                            .font(.subheadline.weight(.semibold))
-                    }
-                    if !model.error.isEmpty {
-                        Text(model.error).foregroundStyle(.red).font(.system(size: 12))
-                    }
-                }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 28)
-            }
-        }
-        .background(Color(red: 0.97, green: 0.98, blue: 1.0).ignoresSafeArea())
-        .presentationDetents([.height(220), .large], selection: $selectedDetent)
-        .presentationDragIndicator(.visible)
-        .onChange(of: showAdvancedMedia) { expanded in
-            selectedDetent = expanded ? .large : .height(220)
-        }
-        .onAppear {
-            serviceURL = UserDefaults.standard.string(forKey: "oss-media-signer-url") ?? ""
-            serviceConfigured = AICloudCredentialSync.serviceEndpoint() != nil
-        }
-        .accessibilityIdentifier("ai-model-settings")
-    }
-
-    private func saveService() -> Bool {
-        let address = serviceURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        let entered = serviceToken.trimmingCharacters(in: .whitespacesAndNewlines)
-        let token = entered.isEmpty
-            ? KeychainSecretStore(account: "oss-media-signer-token").readSecretKey() : entered
-        guard AICloudCredentialSync.credentialEndpoint(address: address, token: token) != nil else {
-            message = "请填写有效的素材服务地址和令牌"
-            return false
-        }
-        do {
-            if !entered.isEmpty {
-                try KeychainSecretStore(account: "oss-media-signer-token").saveSecretKey(entered)
-            }
-            UserDefaults.standard.set(address, forKey: "oss-media-signer-url")
-            serviceURL = address
-            serviceToken = ""
-            serviceConfigured = true
-            return true
-        } catch {
-            message = error.localizedDescription
-            return false
-        }
-    }
-
-    private func settingsField<Content: View>(
-        _ title: String, systemImage: String, @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label(title, systemImage: systemImage)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Color.secondary)
-            content()
-                .font(.system(size: 15))
-                .padding(.horizontal, 14)
-                .frame(minHeight: 48)
-                .background(Color.white, in: RoundedRectangle(cornerRadius: 13))
-                .overlay(RoundedRectangle(cornerRadius: 13).stroke(Color.black.opacity(0.08)))
-        }
     }
 }

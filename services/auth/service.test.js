@@ -11,6 +11,7 @@ const { generatePngQrCode } = require('@juit/qrcode');
 const Database = require('better-sqlite3');
 const { openStore } = require('./store');
 const { createAuthService } = require('./service');
+const { createHandler: createMediaHandler } = require('../oss-media-signer/index');
 const { bindLegacy } = require('./bind-legacy');
 
 function fixture(modelAllowedPhones = ['+8613900000001'], extra = {}) {
@@ -151,9 +152,10 @@ test('only an allowed signed-in account receives short-lived Seedance credential
 
 test('main chat keys require an allowed signed-in account', async () => {
   let issued = 0;
-  const setup = fixture(undefined, { issueMainModelKeys: async () => {
+  const setup = fixture(undefined, { issueAccountModelKeys: async () => {
     ++issued;
-    return { api_keys: { glm: 'glm-model-key', deepseek: 'deepseek-model-key' } };
+    return { api_keys: { glm: 'glm-model-key', deepseek: 'deepseek-model-key',
+      minimax: 'minimax-model-key' } };
   } });
   const path = '/v1/model/api-keys';
   assert.equal((await setup.call('GET', path)).statusCode, 401);
@@ -161,17 +163,60 @@ test('main chat keys require an allowed signed-in account', async () => {
   const response = await setup.call('GET', path, {}, allowed.body.access_token);
   assert.equal(response.statusCode, 200);
   assert.deepEqual(response.body, {
-    api_keys: { glm: 'glm-model-key', deepseek: 'deepseek-model-key' }
+    api_keys: { glm: 'glm-model-key', deepseek: 'deepseek-model-key',
+      minimax: 'minimax-model-key' }
   });
   assert.equal(issued, 1);
   setup.db.close();
 
-  const denied = fixture(['+8613900000002'], { issueMainModelKeys: async () => {
+  const denied = fixture(['+8613900000002'], { issueAccountModelKeys: async () => {
     throw new Error('must not issue');
   } });
   const other = await signInWithSms(denied);
   assert.equal((await denied.call('GET', path, {}, other.body.access_token)).statusCode, 403);
   denied.db.close();
+});
+
+test('media signing requires an allowed signed-in account', async () => {
+  const allowed = fixture();
+  const path = '/v1/media/authorize';
+  assert.equal((await allowed.call('GET', path)).statusCode, 401);
+  const signedIn = await signInWithSms(allowed);
+  assert.deepEqual((await allowed.call('GET', path, {}, signedIn.body.access_token)).body,
+    { allowed: true });
+  allowed.db.close();
+
+  const denied = fixture(['+8613900000002']);
+  const other = await signInWithSms(denied);
+  assert.equal((await denied.call('GET', path, {}, other.body.access_token)).statusCode, 403);
+  denied.db.close();
+});
+
+test('account bearer authorizes OSS signing without a shared client token', async () => {
+  const setup = fixture();
+  const signedIn = await signInWithSms(setup);
+  const token = signedIn.body.access_token;
+  const media = createMediaHandler({
+    env: { MAICHAT_OSS_BUCKET: 'private-test', MAICHAT_OSS_REGION: 'oss-cn-guangzhou',
+      ALIBABA_CLOUD_ACCESS_KEY_ID: 'test-id',
+      ALIBABA_CLOUD_ACCESS_KEY_SECRET: 'test-secret' },
+    newID: () => 'account-test',
+    makeClient: () => ({ signatureUrlV4: async () => 'https://example.test/signed' }),
+    fetcher: async (url, options) => {
+      assert.equal(url, 'http://127.0.0.1:9100/v1/media/authorize');
+      const bearer = options.headers.Authorization.slice('Bearer '.length);
+      const result = await setup.call('GET', '/v1/media/authorize', {}, bearer);
+      return { status: result.statusCode };
+    }
+  });
+  const event = bearer => ({ rawPath: '/sign-upload', httpMethod: 'POST',
+    headers: { Authorization: `Bearer ${bearer}` },
+    body: JSON.stringify({ filename: 'clip.mp4', size_bytes: 1024,
+      purpose: 'ark_asset_input' }) });
+  assert.equal((await media(event(token))).statusCode, 200);
+  await setup.call('POST', '/v1/auth/logout', {}, token);
+  assert.equal((await media(event(token))).statusCode, 401);
+  setup.db.close();
 });
 
 test('only a signed-in model account receives cached short-lived Bailian credentials', async () => {

@@ -68,9 +68,9 @@ public:
     void adoptApprovedSession(const QJsonObject& session, Completion completion);
     void fetchImCredential(Completion completion);
     // 账号鉴权 GET：仅把 GLM/DeepSeek Key 交给调用方内存，不写本机存储。
-    using MainModelKeysCompletion =
+    using AccountModelKeysCompletion =
         std::function<void(const QHash<QString, QString>&, const QString&)>;
-    void fetchMainModelKeys(MainModelKeysCompletion completion);
+    void fetchAccountModelKeys(AccountModelKeysCompletion completion);
     void startSessionMonitoring();
     void checkSessionNow();
     void logout(Completion completion);
@@ -78,6 +78,7 @@ public:
     void refreshModelCredentialsNow(bool force = false);
     std::function<QString()> arkApiKeyProvider() const;
     std::function<QPair<QString, QString>()> bailianCredentialProvider() const;
+    std::function<QPair<QString, QString>()> mediaServiceAccessProvider() const;
     DesktopImCredential imCredential() const { return imCredential_; }
     QString authenticatedUserId() const { return userId_; }
     void setCredentialUpdatedHandler(std::function<void(const DesktopImCredential&)> handler);
@@ -93,7 +94,7 @@ private:
                  const QString& bearer, std::function<void(const HttpResult&)> completion);
     void refresh(Completion completion);
     void fetchImCredentialImpl(Completion completion, bool retryAfterUnauthorized);
-    void fetchMainModelKeysImpl(MainModelKeysCompletion completion,
+    void fetchAccountModelKeysImpl(AccountModelKeysCompletion completion,
                                 bool retryAfterUnauthorized);
     bool adoptSession(const QJsonObject& body, QString* error);
     void scheduleRefresh();
@@ -137,6 +138,13 @@ private:
     };
     std::shared_ptr<ModelCredentialCache> modelCredentials_ =
         std::make_shared<ModelCredentialCache>();
+    struct AccountAccessCache {
+        QMutex mutex;
+        QString token;
+        qint64 expiresAt = 0;
+    };
+    std::shared_ptr<AccountAccessCache> accountAccess_ =
+        std::make_shared<AccountAccessCache>();
     std::vector<Completion> refreshCallbacks_;
     std::function<void(const DesktopImCredential&)> credentialUpdated_;
     std::function<void(const QString&)> sessionInvalidated_;

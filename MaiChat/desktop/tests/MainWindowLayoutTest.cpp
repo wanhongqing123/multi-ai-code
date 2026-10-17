@@ -51,7 +51,6 @@
 #endif
 
 #include "agent/ReplySuggestionController.h"
-#include "auth/SecureRefreshTokenStore.h"
 #include "app/RemoteIMApplication.h"
 #include "im/FakeRemoteIMClient.h"
 #include "markdown/MarkdownDocument.h"
@@ -125,10 +124,9 @@ private slots:
     void agentAccountKeysUpdateModelWithoutSavingSecrets();
     void agentPartialKeysRequireExplicitModelSelection();
     void agentModelFailureOffersAccountRetry();
-    void agentSettingsMigratesLegacyTokenOutOfQSettings();
+    void agentSettingsDeletesSharedTokenFromSettings();
     void agentSettingsIgnoresLegacyTokenStoreFailure();
     void agentSettingsSavesOnlyModelChoice();
-    void agentAdvancedMediaSettingsRejectInsecureAddress();
     void agentSettingsDialogUsesMaiChatVisualStyle();
     void leftNavigationRailIsResizableAndWider();
     void navigationIconsSitNearTopEdge();
@@ -1998,31 +1996,24 @@ void MainWindowLayoutTest::agentSettingsDialogSelectsModelWithoutServiceSecrets(
     QVERIFY(button != nullptr);
 
     bool sawDialog = false;
-    bool mediaFieldsAreAdvanced = false;
+    bool hasOnlyModelSelection = false;
     QTimer::singleShot(100, [&] {
         auto* dialog = window.findChild<QDialog*>(QStringLiteral("agentModelDialog"));
         if (dialog == nullptr) return;
         sawDialog = true;
         auto* model = dialog->findChild<QComboBox*>(QStringLiteral("agentModelName"));
-        auto* media = dialog->findChild<QPushButton*>(QStringLiteral("agentMediaAdvancedToggle"));
-        auto* url = dialog->findChild<QLineEdit*>(QStringLiteral("agentCloudServiceUrl"));
-        auto* token = dialog->findChild<QLineEdit*>(QStringLiteral("agentCloudServiceToken"));
-        mediaFieldsAreAdvanced = model != nullptr && model->count() == 3 &&
-                                 media != nullptr && url != nullptr && token != nullptr &&
-                                 !url->isVisible() && !token->isVisible();
+        hasOnlyModelSelection = model != nullptr && model->count() == 3 &&
+            dialog->findChild<QPushButton*>(QStringLiteral("agentMediaAdvancedToggle")) == nullptr &&
+            dialog->findChild<QLineEdit*>(QStringLiteral("agentCloudServiceUrl")) == nullptr &&
+            dialog->findChild<QLineEdit*>(QStringLiteral("agentCloudServiceToken")) == nullptr;
         if (qEnvironmentVariableIsSet("MAICHAT_CAPTURE_MODEL_DIALOG"))
             dialog->grab().save(qEnvironmentVariable("MAICHAT_CAPTURE_MODEL_DIALOG"));
-        if (media) media->click();
-        mediaFieldsAreAdvanced = mediaFieldsAreAdvanced && url->isVisible() &&
-                                 token->isVisible() && token->echoMode() == QLineEdit::Password;
-        if (qEnvironmentVariableIsSet("MAICHAT_CAPTURE_MEDIA_SETTINGS"))
-            dialog->grab().save(qEnvironmentVariable("MAICHAT_CAPTURE_MEDIA_SETTINGS"));
         dialog->reject();
     });
     button->click();
 
     QVERIFY(sawDialog);
-    QVERIFY(mediaFieldsAreAdvanced);
+    QVERIFY(hasOnlyModelSelection);
 }
 
 void MainWindowLayoutTest::agentAccountKeysUpdateModelWithoutSavingSecrets() {
@@ -2041,7 +2032,7 @@ void MainWindowLayoutTest::agentAccountKeysUpdateModelWithoutSavingSecrets() {
     const QHash<QString, QString> accountKeys = {
         {QStringLiteral("glm"), QString(40, QLatin1Char('G'))},
         {QStringLiteral("deepseek"), QString(40, QLatin1Char('D'))}};
-    window.setMainModelKeys(accountKeys);
+    window.setAccountModelKeys(accountKeys);
     QCOMPARE(status->text(), QStringLiteral("glm-5.3 · 已配置"));
     auto* chip = window.findChild<QPushButton*>(QStringLiteral("agentModelChip"));
     QVERIFY(chip != nullptr);
@@ -2049,7 +2040,7 @@ void MainWindowLayoutTest::agentAccountKeysUpdateModelWithoutSavingSecrets() {
     auto* draft = window.findChild<QTextEdit*>(QStringLiteral("agentPromptEditor"));
     QVERIFY(draft != nullptr);
     draft->setPlainText(QStringLiteral("正在编辑的草稿"));
-    window.setMainModelKeys(accountKeys);
+    window.setAccountModelKeys(accountKeys);
     draft = window.findChild<QTextEdit*>(QStringLiteral("agentPromptEditor"));
     QVERIFY(draft != nullptr);
     QCOMPARE(draft->toPlainText(), QStringLiteral("正在编辑的草稿"));
@@ -2058,7 +2049,7 @@ void MainWindowLayoutTest::agentAccountKeysUpdateModelWithoutSavingSecrets() {
     QVERIFY(!settings.contains(QStringLiteral("agent/deepseekApiKey")));
     QVERIFY(!settings.contains(QStringLiteral("agent/cloudServiceToken")));
 
-    window.setMainModelKeys({}, QStringLiteral("连接暂时失败"));
+    window.setAccountModelKeys({}, QStringLiteral("连接暂时失败"));
     QVERIFY(status->text().contains(QStringLiteral("连接暂时失败")));
     chip = window.findChild<QPushButton*>(QStringLiteral("agentModelChip"));
     QVERIFY(chip != nullptr);
@@ -2079,7 +2070,7 @@ void MainWindowLayoutTest::agentPartialKeysRequireExplicitModelSelection() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
     MainWindow window(app);
-    window.setMainModelKeys({{QStringLiteral("deepseek"),
+    window.setAccountModelKeys({{QStringLiteral("deepseek"),
                              QString(40, QLatin1Char('D'))}});
     auto* status = window.findChild<QLabel*>(QStringLiteral("settingsAgentModelValue"));
     auto* chip = window.findChild<QPushButton*>(QStringLiteral("agentModelChip"));
@@ -2121,7 +2112,7 @@ void MainWindowLayoutTest::agentModelFailureOffersAccountRetry() {
     auto* draft = window.findChild<QTextEdit*>(QStringLiteral("agentPromptEditor"));
     QVERIFY(draft != nullptr);
     draft->setPlainText(QStringLiteral("尚未发送的草稿"));
-    window.setMainModelKeys({}, QStringLiteral("连接暂时失败"));
+    window.setAccountModelKeys({}, QStringLiteral("连接暂时失败"));
     draft = window.findChild<QTextEdit*>(QStringLiteral("agentPromptEditor"));
     QVERIFY(draft != nullptr);
     QCOMPARE(draft->toPlainText(), QStringLiteral("尚未发送的草稿"));
@@ -2140,7 +2131,7 @@ void MainWindowLayoutTest::agentModelFailureOffersAccountRetry() {
     QCOMPARE(retries, 1);
 }
 
-void MainWindowLayoutTest::agentSettingsMigratesLegacyTokenOutOfQSettings() {
+void MainWindowLayoutTest::agentSettingsDeletesSharedTokenFromSettings() {
     const QString originalOrganization = QCoreApplication::organizationName();
     const QString originalApplication = QCoreApplication::applicationName();
     struct RestoreIdentity {
@@ -2159,26 +2150,20 @@ void MainWindowLayoutTest::agentSettingsMigratesLegacyTokenOutOfQSettings() {
     const QString dummyToken(43, QLatin1Char('M'));
     settings.setValue(QStringLiteral("agent/cloudServiceToken"), dummyToken);
     settings.sync();
-    SecureRefreshTokenStore secureStore(
-        QStringLiteral("com.maichat.desktop.model.test.MaiChatTests.AgentTokenMigration"),
-        QStringLiteral("cloud_service_token"));
-    secureStore.remove();
     struct Cleanup {
-        SecureRefreshTokenStore& store;
         QSettings& settings;
         ~Cleanup() {
             settings.clear();
             settings.sync();
-            store.remove();
         }
-    } cleanup{secureStore, settings};
+    } cleanup{settings};
 
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
     MainWindow window(app);
     settings.sync();
     QVERIFY(!settings.contains(QStringLiteral("agent/cloudServiceToken")));
-    QCOMPARE(secureStore.read(), dummyToken);
+    QVERIFY(!settings.contains(QStringLiteral("agent/cloudServiceUrl")));
 }
 
 void MainWindowLayoutTest::agentSettingsIgnoresLegacyTokenStoreFailure() {
@@ -2207,7 +2192,7 @@ void MainWindowLayoutTest::agentSettingsIgnoresLegacyTokenStoreFailure() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
     MainWindow window(app);
-    window.setMainModelKeys({{QStringLiteral("glm"), QString(40, QLatin1Char('G'))},
+    window.setAccountModelKeys({{QStringLiteral("glm"), QString(40, QLatin1Char('G'))},
                              {QStringLiteral("deepseek"), QString(40, QLatin1Char('D'))}});
     auto* value = window.findChild<QLabel*>(QStringLiteral("settingsAgentModelValue"));
     auto* button = window.findChild<QPushButton*>(QStringLiteral("settingsAgentModelButton"));
@@ -2215,20 +2200,18 @@ void MainWindowLayoutTest::agentSettingsIgnoresLegacyTokenStoreFailure() {
     QVERIFY(button != nullptr);
     QCOMPARE(value->text(), QStringLiteral("glm-5.3 · 已配置"));
 
-    bool showedFailure = false;
+    bool ignoredLegacyFailure = false;
     QTimer::singleShot(0, &window, [&] {
         auto* dialog = window.findChild<QDialog*>(QStringLiteral("agentModelDialog"));
         auto* error = dialog ? dialog->findChild<QLabel*>(
             QStringLiteral("agentModelError")) : nullptr;
-        auto* advanced = dialog ? dialog->findChild<QPushButton*>(
-            QStringLiteral("agentMediaAdvancedToggle")) : nullptr;
-        if (advanced) advanced->click();
-        showedFailure = error && error->isVisible() &&
-                        error->text().contains(QStringLiteral("旧素材服务令牌"));
+        ignoredLegacyFailure = dialog && error && !error->isVisible() &&
+            dialog->findChild<QPushButton*>(
+                QStringLiteral("agentMediaAdvancedToggle")) == nullptr;
         if (dialog) dialog->reject();
     });
     button->click();
-    QVERIFY(showedFailure);
+    QVERIFY(ignoredLegacyFailure);
 }
 
 void MainWindowLayoutTest::agentSettingsSavesOnlyModelChoice() {
@@ -2244,7 +2227,7 @@ void MainWindowLayoutTest::agentSettingsSavesOnlyModelChoice() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
     MainWindow window(app);
-    window.setMainModelKeys({{QStringLiteral("glm"), QString(40, QLatin1Char('G'))},
+    window.setAccountModelKeys({{QStringLiteral("glm"), QString(40, QLatin1Char('G'))},
                              {QStringLiteral("deepseek"), QString(40, QLatin1Char('D'))}});
     auto* button =
         window.findChild<QPushButton*>(QStringLiteral("settingsAgentModelButton"));
@@ -2257,12 +2240,11 @@ void MainWindowLayoutTest::agentSettingsSavesOnlyModelChoice() {
     QTimer::singleShot(100, [&] {
         auto* dialog = window.findChild<QDialog*>(QStringLiteral("agentModelDialog"));
         if (dialog == nullptr) return;
-        auto* serviceUrl = dialog->findChild<QLineEdit*>(QStringLiteral("agentCloudServiceUrl"));
-        auto* serviceToken = dialog->findChild<QLineEdit*>(QStringLiteral("agentCloudServiceToken"));
         auto* model = dialog->findChild<QComboBox*>(QStringLiteral("agentModelName"));
         auto* save = dialog->findChild<QPushButton*>(QStringLiteral("agentModelSave"));
-        if (!serviceUrl || !serviceToken || !model || !save ||
-            serviceUrl->isVisible() || serviceToken->isVisible()) return;
+        if (!model || !save ||
+            dialog->findChild<QLineEdit*>(QStringLiteral("agentCloudServiceUrl")) ||
+            dialog->findChild<QLineEdit*>(QStringLiteral("agentCloudServiceToken"))) return;
         model->setCurrentText(QStringLiteral("deepseek-flash"));
         save->click();
         saved = !dialog->isVisible();
@@ -2277,46 +2259,6 @@ void MainWindowLayoutTest::agentSettingsSavesOnlyModelChoice() {
     QVERIFY(!settings.contains(QStringLiteral("agent/apiKey")));
     QVERIFY(!settings.contains(QStringLiteral("agent/deepseekApiKey")));
 
-    settings.clear();
-    QCoreApplication::setOrganizationName(originalOrganization);
-    QCoreApplication::setApplicationName(originalApplication);
-}
-
-void MainWindowLayoutTest::agentAdvancedMediaSettingsRejectInsecureAddress() {
-    const QString originalOrganization = QCoreApplication::organizationName();
-    const QString originalApplication = QCoreApplication::applicationName();
-    QCoreApplication::setOrganizationName(QStringLiteral("MaiChatTests"));
-    QCoreApplication::setApplicationName(QStringLiteral("AgentMediaSettings"));
-    QSettings settings;
-    settings.clear();
-    auto client = std::make_unique<FakeRemoteIMClient>();
-    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
-    MainWindow window(app);
-    auto* button = window.findChild<QPushButton*>(QStringLiteral("settingsAgentModelButton"));
-    QVERIFY(button != nullptr);
-    bool rejected = false;
-    QTimer::singleShot(100, [&] {
-        auto* dialog = window.findChild<QDialog*>(QStringLiteral("agentModelDialog"));
-        if (!dialog) return;
-        auto* advanced = dialog->findChild<QPushButton*>(
-            QStringLiteral("agentMediaAdvancedToggle"));
-        auto* address = dialog->findChild<QLineEdit*>(QStringLiteral("agentCloudServiceUrl"));
-        auto* token = dialog->findChild<QLineEdit*>(QStringLiteral("agentCloudServiceToken"));
-        auto* error = dialog->findChild<QLabel*>(QStringLiteral("agentModelError"));
-        auto* save = dialog->findChild<QPushButton*>(QStringLiteral("agentModelSave"));
-        if (!advanced || !address || !token || !error || !save) return;
-        advanced->click();
-        address->setText(QStringLiteral("http://example.test"));
-        token->setText(QString(40, QLatin1Char('T')));
-        advanced->click();
-        save->click();
-        rejected = dialog->isVisible() && advanced->isChecked() && error->isVisible();
-        dialog->reject();
-    });
-    button->click();
-    QVERIFY(rejected);
-    settings.sync();
-    QVERIFY(!settings.contains(QStringLiteral("agent/cloudServiceUrl")));
     settings.clear();
     QCoreApplication::setOrganizationName(originalOrganization);
     QCoreApplication::setApplicationName(originalApplication);

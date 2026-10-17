@@ -833,6 +833,14 @@ struct AgentChatPanel::Runtime {
     QLabel* title = nullptr;
     QLabel* contextSize = nullptr;
     QPushButton* modelChip = nullptr;
+    QPushButton* modelSection = nullptr;
+    QPushButton* policySection = nullptr;
+    QPushButton* moreButton = nullptr;
+    QWidget* actionPanel = nullptr;
+    QWidget* modelOptions = nullptr;
+    QWidget* policyOptions = nullptr;
+    QList<QPushButton*> modelOptionButtons;
+    QList<QPushButton*> policyOptionButtons;
     MarkdownView* view = nullptr;
     PromptEdit* editor = nullptr;
     QPushButton* send = nullptr;
@@ -877,38 +885,39 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
 
-    // ---- 头部：标题 + 模型/权限 + 上下文 + 更多 ----
-    // 模型、权限和低频配置属于页面级设置，不应挤在消息编辑框里。
+    // 顶栏只展示固定页标题和更多；模型与权限在更多面板内原位展开。
     auto* head = new QWidget(this);
     head->setObjectName(QStringLiteral("agentHeader"));
     head->setStyleSheet(UiZoom::scaleQss(
         QStringLiteral("QWidget#agentHeader{background:#ffffff;border-bottom:1px solid %1;}").arg(kLine)));
     auto* headRow = new QHBoxLayout(head);
-    headRow->setContentsMargins(UiZoom::s(20), UiZoom::s(10), UiZoom::s(20), UiZoom::s(10));
-    headRow->setSpacing(UiZoom::s(12));
-    runtime_->title = makeLabel(QStringLiteral("创作中心"), 14, kInk, true);
+    head->setFixedHeight(UiZoom::s(54));
+    headRow->setContentsMargins(UiZoom::s(16), UiZoom::s(8), UiZoom::s(16), UiZoom::s(8));
+    headRow->setSpacing(UiZoom::s(8));
+    auto* leftBalance = new QWidget(head);
+    leftBalance->setFixedSize(UiZoom::s(34), UiZoom::s(34));
+    headRow->addWidget(leftBalance);
+    runtime_->title = makeLabel(QStringLiteral("创作中心"), 18, kInk, true);
+    runtime_->title->setObjectName(QStringLiteral("agentHeaderTitle"));
+    runtime_->title->setAlignment(Qt::AlignCenter);
     runtime_->title->setWordWrap(false);
     headRow->addWidget(runtime_->title, 1);
 
-    // 把"攒了多少字"摆出来是有理由的：协议是无状态的，历史每一轮都要全量重发，
-    // 聊得越久每句话越贵越慢。藏进菜单的话用户不会主动去点——
-    // 他感觉不到自己在为一个月前的对话付钱。
+    // 历史字数仍留在内部状态，不占用顶栏空间。
     runtime_->contextSize = makeLabel(QString(), 11, kInkFaint);
     runtime_->contextSize->setWordWrap(false);
-    headRow->addWidget(runtime_->contextSize);
-    auto* moreButton = new QPushButton(QStringLiteral("•••"));
+    runtime_->contextSize->setParent(head);
+    runtime_->contextSize->hide();
+    auto* moreButton = new QPushButton(QStringLiteral("⋯"));
+    runtime_->moreButton = moreButton;
     moreButton->setObjectName(QStringLiteral("agentMoreActions"));
     moreButton->setAccessibleName(QStringLiteral("更多"));
     moreButton->setCursor(Qt::PointingHandCursor);
+    moreButton->setFixedSize(UiZoom::s(34), UiZoom::s(34));
     moreButton->setStyleSheet(
         UiZoom::scaleQss(QStringLiteral("QPushButton{background:#f5f7fa;border:none;border-radius:8px;"
                                         "color:%1;padding:5px 9px;}QPushButton:hover{background:#eef2f6;}")
                              .arg(kInkSoft)));
-    auto* moreMenu = new QMenu(moreButton);
-    applyAgentMenuStyle(moreMenu);
-    QAction* configureAction = moreMenu->addAction(QStringLiteral("模型配置"));
-    QAction* clearAction = moreMenu->addAction(QStringLiteral("清空当前对话"));
-    moreButton->setMenu(moreMenu);
     headRow->addWidget(moreButton);
     root->addWidget(head);
 
@@ -961,7 +970,7 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     runtime_->editor->setMimeHandler([this](const QMimeData* mime) { return insertComposerMimeData(mime); });
     composerLayout->addWidget(runtime_->editor, 1);
 
-    runtime_->modelChip = new QPushButton;
+    runtime_->modelChip = new QPushButton(head);
     runtime_->modelChip->setObjectName(QStringLiteral("agentModelChip"));
     runtime_->modelChip->setCursor(Qt::PointingHandCursor);
     runtime_->modelChip->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
@@ -1002,18 +1011,12 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
         }
     });
     connect(modelMenu, &QMenu::triggered, this, [this](QAction* action) {
-        const QString selected = action->data().toString();
-        if (!runtime_->controller->setModel(runtime_->sessionId, selected)) {
-            appendNotice(runtime_->controller->lastError(), true);
-            return;
-        }
-        setModelLabel(selected);
-        emit modelSelected(selected);
+        emit modelChangeRequested(action->data().toString());
     });
     runtime_->modelChip->setMenu(modelMenu);
-    headRow->insertWidget(1, runtime_->modelChip);
+    runtime_->modelChip->hide();
     // 这句常驻。它是这套东西最重要的一句承诺，写在文档里没人看。
-    runtime_->hint = new QPushButton;
+    runtime_->hint = new QPushButton(head);
     runtime_->hint->setObjectName(QStringLiteral("agentApprovalPolicy"));
     runtime_->hint->setCursor(Qt::PointingHandCursor);
     runtime_->hint->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
@@ -1060,7 +1063,139 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     connect(policyMenu, &QMenu::triggered, this,
             [this](QAction* action) { selectApprovalPolicy(static_cast<MaiApprovalPolicy>(action->data().toInt())); });
     updateApprovalPolicyUi();
-    headRow->insertWidget(2, runtime_->hint);
+    runtime_->hint->hide();
+
+    // 与 iOS 操作面板同层展开：顶栏只保留标题和更多，模型/权限不另开设置弹窗。
+    auto* actionPanel = new QFrame(this, Qt::Popup | Qt::FramelessWindowHint);
+    runtime_->actionPanel = actionPanel;
+    actionPanel->setObjectName(QStringLiteral("agentActionPanel"));
+    actionPanel->setFixedWidth(UiZoom::s(264));
+    actionPanel->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
+        QFrame#agentActionPanel { background:#ffffff; border:1px solid #dbe5f0; border-radius:14px; }
+        QPushButton { background:transparent; border:0; color:#172033; text-align:left;
+                      padding:0 14px; font-size:13px; }
+        QPushButton:hover { background:#eef6ff; }
+        QPushButton:disabled { color:#98a2b3; }
+    )")));
+    auto* actionLayout = new QVBoxLayout(actionPanel);
+    actionLayout->setContentsMargins(0, UiZoom::s(5), 0, UiZoom::s(5));
+    actionLayout->setSpacing(0);
+    auto* modelSection = new QPushButton(QStringLiteral("模型\n未配置"), actionPanel);
+    runtime_->modelSection = modelSection;
+    modelSection->setObjectName(QStringLiteral("agentModelSection"));
+    modelSection->setFixedHeight(UiZoom::s(52));
+    actionLayout->addWidget(modelSection);
+    auto* modelOptions = new QWidget(actionPanel);
+    runtime_->modelOptions = modelOptions;
+    modelOptions->setStyleSheet(QStringLiteral("background:#f5f7fa;"));
+    auto* modelOptionsLayout = new QVBoxLayout(modelOptions);
+    modelOptionsLayout->setContentsMargins(0, UiZoom::s(4), 0, UiZoom::s(4));
+    modelOptionsLayout->setSpacing(0);
+    for (const QString& name : {QStringLiteral("glm-5.3"),
+                                QStringLiteral("glm-5.3-flash"),
+                                QStringLiteral("deepseek-flash")}) {
+        auto* option = new QPushButton(name, modelOptions);
+        option->setObjectName(QStringLiteral("agentModelOption-") + name);
+        option->setProperty("modelName", name);
+        option->setFixedHeight(UiZoom::s(38));
+        option->setStyleSheet(UiZoom::scaleQss(QStringLiteral(
+            "QPushButton{padding-left:44px;text-align:left;background:#f5f7fa;}"
+            "QPushButton:hover{background:#e8f2fc;}")));
+        modelOptionsLayout->addWidget(option);
+        runtime_->modelOptionButtons.append(option);
+        connect(option, &QPushButton::clicked, this, [this, actionPanel, name] {
+            actionPanel->hide();
+            emit modelChangeRequested(name);
+        });
+    }
+    actionLayout->addWidget(modelOptions);
+    modelOptions->hide();
+
+    auto* policySection = new QPushButton(QStringLiteral("操作权限\n请求批准"), actionPanel);
+    runtime_->policySection = policySection;
+    policySection->setObjectName(QStringLiteral("agentPolicySection"));
+    policySection->setFixedHeight(UiZoom::s(52));
+    actionLayout->addWidget(policySection);
+    auto* policyOptions = new QWidget(actionPanel);
+    runtime_->policyOptions = policyOptions;
+    policyOptions->setStyleSheet(QStringLiteral("background:#f5f7fa;"));
+    auto* policyOptionsLayout = new QVBoxLayout(policyOptions);
+    policyOptionsLayout->setContentsMargins(0, UiZoom::s(4), 0, UiZoom::s(4));
+    policyOptionsLayout->setSpacing(0);
+    const QList<QPair<QString, MaiApprovalPolicy>> policies = {
+        {QStringLiteral("请求批准"), MaiApprovalPolicy::OnRequest},
+        {QStringLiteral("帮我批准"), MaiApprovalPolicy::UnlessTrusted},
+        {QStringLiteral("完全访问"), MaiApprovalPolicy::Never}};
+    for (const auto& choice : policies) {
+        auto* option = new QPushButton(choice.first, policyOptions);
+        option->setObjectName(QStringLiteral("agentPolicyOption-") + choice.first);
+        option->setProperty("policyValue", static_cast<int>(choice.second));
+        option->setFixedHeight(UiZoom::s(38));
+        option->setStyleSheet(UiZoom::scaleQss(QStringLiteral(
+            "QPushButton{padding-left:44px;text-align:left;background:#f5f7fa;}"
+            "QPushButton:hover{background:#e8f2fc;}")));
+        policyOptionsLayout->addWidget(option);
+        runtime_->policyOptionButtons.append(option);
+        connect(option, &QPushButton::clicked, this, [this, actionPanel, choice] {
+            actionPanel->hide();
+            selectApprovalPolicy(choice.second);
+        });
+    }
+    actionLayout->addWidget(policyOptions);
+    policyOptions->hide();
+    auto* divider = new QFrame(actionPanel);
+    divider->setFrameShape(QFrame::HLine);
+    divider->setStyleSheet(QStringLiteral("color:#e2e8f0;"));
+    actionLayout->addWidget(divider);
+    auto* clearButton = new QPushButton(QStringLiteral("清空当前对话"), actionPanel);
+    clearButton->setObjectName(QStringLiteral("agentClearConversation"));
+    clearButton->setFixedHeight(UiZoom::s(44));
+    actionLayout->addWidget(clearButton);
+    connect(clearButton, &QPushButton::clicked, this, [this, actionPanel] {
+        actionPanel->hide();
+        onClear();
+    });
+    const auto positionPopup = [actionPanel, moreButton] {
+        actionPanel->adjustSize();
+        QPoint position = moreButton->mapToGlobal(
+            QPoint(moreButton->width() - actionPanel->width(),
+                   moreButton->height() + UiZoom::s(6)));
+        QScreen* screen = QGuiApplication::screenAt(position);
+        if (!screen) screen = QGuiApplication::primaryScreen();
+        if (screen) {
+            const QRect available = screen->availableGeometry();
+            position.setX(qBound(available.left(), position.x(),
+                                 available.right() - actionPanel->width() + 1));
+            if (position.y() + actionPanel->height() > available.bottom())
+                position.setY(moreButton->mapToGlobal(QPoint(0, 0)).y() -
+                              actionPanel->height() - UiZoom::s(6));
+        }
+        actionPanel->move(position);
+    };
+    connect(modelSection, &QPushButton::clicked, this,
+            [modelOptions, policyOptions, positionPopup] {
+        const bool expand = !modelOptions->isVisible();
+        policyOptions->hide();
+        modelOptions->setVisible(expand);
+        positionPopup();
+    });
+    connect(policySection, &QPushButton::clicked, this,
+            [modelOptions, policyOptions, positionPopup] {
+        const bool expand = !policyOptions->isVisible();
+        modelOptions->hide();
+        policyOptions->setVisible(expand);
+        positionPopup();
+    });
+    connect(moreButton, &QPushButton::clicked, this,
+            [actionPanel, positionPopup] {
+        if (actionPanel->isVisible()) actionPanel->hide();
+        else {
+            positionPopup();
+            actionPanel->show();
+            actionPanel->raise();
+        }
+    });
+    updateApprovalPolicyUi();
     runtime_->send = new QPushButton(runtime_->editor);
     runtime_->send->setObjectName(QStringLiteral("agentSendButton"));
     runtime_->send->setCursor(Qt::PointingHandCursor);
@@ -1111,8 +1246,6 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
 
     setRunning(false);
     connect(runtime_->send, &QPushButton::clicked, this, &AgentChatPanel::onSend);
-    connect(configureAction, &QAction::triggered, this, [this] { emit modelConfigurationRequested(); });
-    connect(clearAction, &QAction::triggered, this, &AgentChatPanel::onClear);
 
     // ---- 接事件 ----
     // 这些信号全部已经在主线程上了（AgentController
@@ -1187,9 +1320,8 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
         appendNotice(message, true);
     });
     connect(&controller, &AgentController::sessionTitleChanged, this,
-            [this](const QString& sessionId, const QString& title) {
+            [this](const QString& sessionId, const QString&) {
                 if (!isCurrentSession(sessionId)) return;
-                runtime_->title->setText(title.isEmpty() ? QStringLiteral("创作中心") : title);
                 emit sessionListChanged();
             });
 }
@@ -1209,6 +1341,25 @@ void AgentChatPanel::setModelLabel(const QString& model, bool configured) {
     runtime_->modelConfigured = configured &&
         model != QStringLiteral("未配置模型") && !model.trimmed().isEmpty();
     runtime_->modelChip->setEnabled(runtime_->modelConfigured && !runtime_->running);
+    if (runtime_->modelSection)
+        runtime_->modelSection->setText(QStringLiteral("模型\n%1").arg(model));
+    for (QPushButton* option : runtime_->modelOptionButtons) {
+        const QString name = option->property("modelName").toString();
+        option->setText(name + (name == model ? QStringLiteral("  ✓") : QString()));
+    }
+}
+
+bool AgentChatPanel::applySelectedModel(const QString& model) {
+    const QString selected = model.trimmed();
+    const bool applied = runtime_->sessionId.isEmpty() ?
+        runtime_->controller->setDefaultModel(selected) :
+        runtime_->controller->setModel(runtime_->sessionId, selected);
+    if (!applied) {
+        appendNotice(runtime_->controller->lastError(), true);
+        return false;
+    }
+    setModelLabel(selected);
+    return true;
 }
 
 void AgentChatPanel::setOpenVideoCallback(std::function<void(const QString&)> callback) {
@@ -1249,6 +1400,15 @@ void AgentChatPanel::updateApprovalPolicyUi() {
         runtime_->hint->setText(QStringLiteral("请求批准"));
         runtime_->hint->setToolTip(QStringLiteral("文件变更、访问网络或执行高风险命令前会询问；可单独授权文件。"));
     }
+    if (runtime_->policySection)
+        runtime_->policySection->setText(
+            QStringLiteral("操作权限\n%1").arg(runtime_->hint->text()));
+    for (QPushButton* option : runtime_->policyOptionButtons) {
+        const bool selected = option->property("policyValue").toInt() ==
+                              static_cast<int>(policy);
+        const QString title = option->objectName().mid(QStringLiteral("agentPolicyOption-").size());
+        option->setText(title + (selected ? QStringLiteral("  ✓") : QString()));
+    }
 }
 
 void AgentChatPanel::openSession(const QString& sessionId) {
@@ -1283,7 +1443,7 @@ void AgentChatPanel::openSession(const QString& sessionId) {
     if (runtime_->controller->agent().getSession(toUtf8(runtime_->sessionId), session)) {
         // 用 isUntitled() 而不是 title.isEmpty()：核心给新会话填的是一个占位标题
         // （"New session"），不是空串。判空的话那串占位符会直接显示在头部。
-        runtime_->title->setText(session.isUntitled() ? QStringLiteral("创作中心") : fromUtf8(session.title));
+        runtime_->title->setText(QStringLiteral("创作中心"));
         const QString directory = QDir::toNativeSeparators(fromUtf8(session.directory));
         QString name = QFileInfo(directory).fileName();
         if (name.isEmpty()) name = directory;
@@ -1307,6 +1467,13 @@ void AgentChatPanel::openSessionInDirectory(const QString& directory) {
     if (sessionId.isEmpty()) {
         appendNotice(runtime_->controller->lastError(), true);
         return;
+    }
+    const QString preferredModel = runtime_->modelChip->text();
+    if (preferredModel == QStringLiteral("glm-5.3") ||
+        preferredModel == QStringLiteral("glm-5.3-flash") ||
+        preferredModel == QStringLiteral("deepseek-flash")) {
+        if (!runtime_->controller->setModel(sessionId, preferredModel))
+            appendNotice(runtime_->controller->lastError(), true);
     }
     openSession(sessionId);
 }
@@ -2006,6 +2173,8 @@ void AgentChatPanel::setRunning(bool running) {
                                        .arg(kAccent)));
     runtime_->hint->setEnabled(!running);
     runtime_->modelChip->setEnabled(!running && runtime_->modelConfigured);
+    if (runtime_->moreButton) runtime_->moreButton->setEnabled(!running);
+    if (running && runtime_->actionPanel) runtime_->actionPanel->hide();
     if (running) {
         runtime_->hint->setText(QStringLiteral("正在执行"));
     } else {

@@ -65,6 +65,8 @@ public:
     //（那表示「用 MaiAgent::Options 里的默认值」），而面板看不见那个默认值。
     // 自己编一个名字显示出去，用户看到的就可能不是实际在跑的那个。
     void setModelLabel(const QString& model, bool configured = true);
+    // 账号凭据确认可用后，原位更新当前会话模型；不重建消息、编辑器或滚动视图。
+    bool applySelectedModel(const QString& model);
     void setOpenVideoCallback(std::function<void(const QString&)> callback);
     void setForwardMediaCallback(
         std::function<void(const QString&, const QString&)> callback);
@@ -76,7 +78,7 @@ signals:
     // 一轮跑完（updated 变了，列表按它排序，位置会动）。
     void sessionListChanged();
     void modelConfigurationRequested();
-    void modelSelected(const QString& model);
+    void modelChangeRequested(const QString& model);
 
 private:
     // 这两个是这个面板专用的部件，别处用不上，所以做成嵌套私有类、定义在 .cpp 里。

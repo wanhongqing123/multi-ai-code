@@ -719,6 +719,8 @@ add_library(maichat_agent
   src/ui/ComposerTextEdit.cpp
   src/agent/AgentController.h
   src/agent/AgentController.cpp
+  src/agent/DesktopAccountModelClient.h
+  src/agent/DesktopAccountModelClient.cpp
   src/MaiChatTools/DesktopPdfRenderer.h
   src/MaiChatTools/DesktopPdfRenderer.cpp
   src/agent/AgentChatPanel.h
@@ -862,6 +864,8 @@ add_executable(markdown_label_test tests/MarkdownLabelTest.cpp)
 target_link_libraries(markdown_label_test PRIVATE maichat_markdown Qt5::Widgets Qt5::Test)
 
 add_executable(agent_controller_test tests/AgentControllerTest.cpp)
+target_include_directories(agent_controller_test PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/httplib)
 target_link_libraries(agent_controller_test PRIVATE remote_im_desktop_ui remote_im_desktop_app
   remote_im_core maichat_agent maichat_markdown Qt5::Widgets Qt5::Test)
 if(TARGET maiagent_cv_video_analysis)

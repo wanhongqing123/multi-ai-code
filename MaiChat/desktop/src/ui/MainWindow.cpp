@@ -55,6 +55,7 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QMouseEvent>
+#include <QMutexLocker>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
@@ -2501,16 +2502,7 @@ void MainWindow::buildUi() {
       QStringLiteral("由账号服务签发，仅在运行期间使用。")));
   auto *agentSettingsRow = createSettingsRow(
       QStringLiteral("创作中心模型"), settingsAgentModelValue_,
-      QStringLiteral("登录后自动领取主模型凭据；旧媒体服务单独设置。"));
-  auto *agentSettingsButton =
-      new QPushButton(QStringLiteral("选择"), agentSettingsRow);
-  agentSettingsButton->setObjectName(
-      QStringLiteral("settingsAgentModelButton"));
-  agentSettingsButton->setProperty("settingsRowButton", true);
-  qobject_cast<QHBoxLayout *>(agentSettingsRow->layout())
-      ->addWidget(agentSettingsButton);
-  connect(agentSettingsButton, &QPushButton::clicked, this,
-          &MainWindow::editAgentModelSettings);
+      QStringLiteral("在创作中心右上角的更多菜单切换，凭据由账号自动更新。"));
   settingsPanelLayout->addWidget(agentSettingsRow);
   auto *logoutValue = new QLabel(QStringLiteral("当前电脑"), settingsPanel);
   auto *logoutRow = createSettingsRow(
@@ -3617,17 +3609,51 @@ void MainWindow::refreshSettings() {
 
 void MainWindow::setAccountModelKeys(QHash<QString, QString> keys,
                                   const QString& error) {
-  const bool keysChanged = keys != modelApiKeys_;
   modelApiKeys_ = std::move(keys);
   modelKeyError_ = error;
-  if (keysChanged) {
-    rebuildAgentPage();
-  } else if (agentPanel_ && modelApiKeys_.isEmpty()) {
-    const QString label = modelKeyError_.isEmpty() ?
-        QStringLiteral("正在连接模型") :
-        modelKeyError_.contains(QStringLiteral("未开通")) ?
-            QStringLiteral("模型未开通") : QStringLiteral("模型连接失败");
-    agentPanel_->setModelLabel(label, false);
+  {
+    QMutexLocker lock(&modelKeyState_->mutex);
+    modelKeyState_->keys = modelApiKeys_;
+  }
+  const QString requested = std::exchange(pendingModelSelection_, QString());
+  if (!requested.isEmpty()) {
+    const QString provider = requested == QStringLiteral("deepseek-flash") ?
+        QStringLiteral("deepseek") : QStringLiteral("glm");
+    if (modelApiKeys_.value(provider).isEmpty()) {
+      showToast(modelKeyError_.isEmpty() ?
+          QStringLiteral("当前账号暂不可用所选模型") : modelKeyError_, 13, 2500);
+    } else if (agentPanel_) {
+      QSettings settings;
+      const QVariant oldModel = settings.value(QStringLiteral("agent/model"));
+      settings.setValue(QStringLiteral("agent/model"), requested);
+      settings.sync();
+      if (settings.status() != QSettings::NoError ||
+          !agentPanel_->applySelectedModel(requested)) {
+        if (oldModel.isValid()) settings.setValue(QStringLiteral("agent/model"), oldModel);
+        else settings.remove(QStringLiteral("agent/model"));
+        settings.sync();
+        showToast(QStringLiteral("模型切换失败，已保留原模型"), 13, 2500);
+      }
+    }
+  }
+  if (agentPanel_) {
+    const AgentController::ModelConfig selected = loadAgentModelConfig(modelApiKeys_);
+    const bool ready = !selected.apiKey.isEmpty();
+    const QString label = ready ? selected.modelName :
+        !modelKeyError_.isEmpty() ?
+            (modelKeyError_.contains(QStringLiteral("未开通")) ?
+                QStringLiteral("模型未开通") : QStringLiteral("模型连接失败")) :
+        !modelApiKeys_.isEmpty() ? QStringLiteral("模型未开通") :
+                                   QStringLiteral("正在连接模型");
+    agentPanel_->setModelLabel(label, ready);
+  }
+  if (replySuggestionController_) {
+    const AgentController::ModelConfig selected = loadAgentModelConfig(modelApiKeys_);
+    ReplySuggestionController::Config reply;
+    reply.baseUrl = selected.baseUrl;
+    reply.apiKey = selected.apiKey;
+    reply.modelName = selected.modelName;
+    replySuggestionController_->setConfig(reply);
   }
   refreshSettings();
 }
@@ -3662,6 +3688,21 @@ void MainWindow::rebuildAgentPage() {
   agentController_ = nullptr;
 
   AgentController::ModelConfig modelConfig = loadAgentModelConfig(modelApiKeys_);
+  const auto keyState = modelKeyState_;
+  modelConfig.accountModelKeyProvider = [keyState](const QString& provider) {
+    QMutexLocker lock(&keyState->mutex);
+    return keyState->keys.value(provider);
+  };
+  modelConfig.glmApiKeyProvider = [keyState] {
+    QMutexLocker lock(&keyState->mutex);
+    return keyState->keys.value(QStringLiteral("glm"));
+  };
+  modelConfig.miniMaxApiKeyProvider = [keyState] {
+    QMutexLocker lock(&keyState->mutex);
+    return keyState->keys.value(QStringLiteral("minimax"));
+  };
+  modelConfig.glmBaseUrl = QStringLiteral("https://open.bigmodel.cn/api/v1");
+  modelConfig.deepseekBaseUrl = QStringLiteral("https://api.deepseek.com");
   modelConfig.arkApiKeyProvider = arkApiKeyProvider_;
   modelConfig.wanCredentialsProvider = wanCredentialsProvider_;
   modelConfig.mediaServiceAccessProvider = mediaServiceAccessProvider_;
@@ -3809,131 +3850,23 @@ void MainWindow::rebuildAgentPage() {
             agentSessions_->setCurrent(agentPanel_->sessionId());
           });
   connect(agentPanel_, &AgentChatPanel::modelConfigurationRequested, this,
-          &MainWindow::editAgentModelSettings);
-  connect(agentPanel_, &AgentChatPanel::modelSelected, this,
-          [this](const QString &model) {
-            const QString selected = model.trimmed();
-            if (selected.isEmpty() ||
-                selected == loadAgentModelConfig(modelApiKeys_).modelName)
-              return;
-            QSettings settings;
-            settings.setValue(QStringLiteral("agent/model"), selected);
-            QTimer::singleShot(0, this, [this] {
-              rebuildAgentPage();
-              refreshSettings();
-            });
+          [this] {
+            if (modelKeyRefreshHandler_) modelKeyRefreshHandler_();
+            showToast(QStringLiteral("正在从账号服务更新模型凭据"), 13, 2500);
           });
+  connect(agentPanel_, &AgentChatPanel::modelChangeRequested, this,
+          &MainWindow::requestAgentModelChange);
   if (!sessionToRestore.isEmpty())
     agentPanel_->openSession(sessionToRestore);
 }
 
-void MainWindow::editAgentModelSettings() {
-  if (agentController_ != nullptr) {
-    const std::vector<MaiSession> sessions =
-        agentController_->agent().listSessions();
-    const bool busy = std::any_of(
-        sessions.cbegin(), sessions.cend(), [this](const MaiSession &session) {
-          return agentController_->agent().isBusy(session.id);
-        });
-    if (busy) {
-      AppMessageDialog::show(
-          this, AppMessageDialog::Kind::Warning,
-          QStringLiteral("创作中心正在执行"),
-          QStringLiteral("请等待当前任务结束或先中断任务，再修改模型配置。"));
-      return;
-    }
-  }
-
-  QSettings settings;
-  const AgentController::ModelConfig current = loadAgentModelConfig(modelApiKeys_);
-  QDialog dialog(this);
-  dialog.setObjectName(QStringLiteral("agentModelDialog"));
-  dialog.setWindowTitle(QStringLiteral("选择创作中心模型"));
-  dialog.setModal(true);
-  dialog.setMinimumWidth(UiZoom::s(380));
-  auto *content = new QVBoxLayout(&dialog);
-  content->setContentsMargins(UiZoom::s(24), UiZoom::s(22), UiZoom::s(24),
-                              UiZoom::s(22));
-  content->setSpacing(UiZoom::s(12));
-
-  content->addWidget(new QLabel(QStringLiteral("主聊天模型"), &dialog));
-  auto *model = new QComboBox(&dialog);
-  model->setObjectName(QStringLiteral("agentModelName"));
-  model->addItems({QStringLiteral("glm-5.3"),
-                   QStringLiteral("glm-5.3-flash"),
-                   QStringLiteral("deepseek-flash")});
-  model->setCurrentText(current.modelName);
-  content->addWidget(model);
-  auto *accountStatus = new QLabel(&dialog);
-  accountStatus->setWordWrap(true);
-  content->addWidget(accountStatus);
-  const auto updateAccountStatus = [this, model, accountStatus] {
-    if (!modelKeyError_.isEmpty()) {
-      accountStatus->setText(modelKeyError_);
-      return;
-    }
-    if (modelApiKeys_.isEmpty()) {
-      accountStatus->setText(QStringLiteral("登录后自动获取主模型凭据"));
-      return;
-    }
-    const QString provider = model->currentText() == QStringLiteral("deepseek-flash") ?
-        QStringLiteral("deepseek") : QStringLiteral("glm");
-    accountStatus->setText(modelApiKeys_.value(provider).isEmpty() ?
-        QStringLiteral("此账号暂不可用所选模型") :
-        QStringLiteral("当前账号可使用此模型"));
-  };
-  connect(model, &QComboBox::currentTextChanged, &dialog,
-          [updateAccountStatus](const QString&) { updateAccountStatus(); });
-  updateAccountStatus();
-
-  auto *retry = new QPushButton(
-      modelApiKeys_.isEmpty() ? QStringLiteral("重试获取") :
-                                QStringLiteral("更新凭据"), &dialog);
-  retry->setObjectName(QStringLiteral("agentModelRetry"));
-  retry->setVisible(bool(modelKeyRefreshHandler_));
-  content->addWidget(retry);
-  connect(retry, &QPushButton::clicked, &dialog, [this, &dialog] {
-    if (modelKeyRefreshHandler_) modelKeyRefreshHandler_();
-    dialog.reject();
-    showToast(QStringLiteral("正在连接模型"), 13, 1800);
-  });
-
-  auto *error = new QLabel(&dialog);
-  error->setObjectName(QStringLiteral("agentModelError"));
-  error->setWordWrap(true);
-  error->hide();
-  content->addWidget(error);
-
-  auto *actions = new QHBoxLayout;
-  actions->addStretch(1);
-  auto *cancel = new QPushButton(QStringLiteral("取消"), &dialog);
-  cancel->setObjectName(QStringLiteral("agentModelCancel"));
-  actions->addWidget(cancel);
-  auto *save = new QPushButton(QStringLiteral("保存"), &dialog);
-  save->setObjectName(QStringLiteral("agentModelSave"));
-  save->setDefault(true);
-  actions->addWidget(save);
-  content->addLayout(actions);
-  connect(cancel, &QPushButton::clicked, &dialog, &QDialog::reject);
-  connect(save, &QPushButton::clicked, &dialog, [&] {
-    settings.setValue(QStringLiteral("agent/model"), model->currentText());
-    for (const char *obsolete :
-         {"agent/apiKey", "agent/deepseekApiKey", "agent/baseUrl",
-          "agent/deepseekBaseUrl", "agent/wire", "agent/deepseekWire",
-          "agent/glmChatBaseUrl"})
-      settings.remove(QLatin1String(obsolete));
-    settings.sync();
-    if (settings.status() != QSettings::NoError) {
-      error->setText(QStringLiteral("模型选择保存失败，请检查设置目录权限。"));
-      error->show();
-      return;
-    }
-    dialog.accept();
-  });
-  if (dialog.exec() != QDialog::Accepted) return;
-  rebuildAgentPage();
-  refreshSettings();
-  showToast(QStringLiteral("主模型已选择"), 13, 1800);
+void MainWindow::requestAgentModelChange(const QString& model) {
+  const QString selected = model.trimmed();
+  if (selected.isEmpty() ||
+      selected == loadAgentModelConfig(modelApiKeys_).modelName) return;
+  pendingModelSelection_ = selected;
+  if (modelKeyRefreshHandler_) modelKeyRefreshHandler_();
+  else setAccountModelKeys(modelApiKeys_, modelKeyError_);
 }
 
 void MainWindow::setUpMessageNotifications() {

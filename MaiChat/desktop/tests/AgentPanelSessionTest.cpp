@@ -227,6 +227,7 @@ private slots:
     void answerFromAnotherSessionDoesNotLeakIn();
     void anotherSessionFailingDoesNotShowAnError();
     void anotherSessionTitleDoesNotRenameTheHeader();
+    void currentSessionTitleStaysInTheSessionList();
     void approvalFromAnotherSessionIsStillShown();
     void pendingApprovalIsRestoredAfterSessionSwitch();
     void pendingQuestionIsRestoredOnlyInItsSession();
@@ -244,7 +245,7 @@ private slots:
     void composerPlaceholderFitsAtMinimumHeight();
     void conversationUsesAvailableWidth();
     void pastedImageUsesTheSharedComposerAndReachesTheModel();
-    void modelChipOffersTheTextAndVisionModels();
+    void actionPanelMatchesMobileModelAndPolicyFlow();
     void newAgentOutputDoesNotInterruptReadingHistory();
     void switchingSessionsShowsLatestMessage();
     void inlineMediaBubblesRespectMessageBoundary();
@@ -462,22 +463,41 @@ void AgentPanelSessionTest::answerFromAnotherSessionDoesNotLeakIn() {
     QVERIFY(!view->selectedText().contains(QStringLiteral("子 Agent 说的话")));
 }
 
-void AgentPanelSessionTest::modelChipOffersTheTextAndVisionModels() {
+void AgentPanelSessionTest::actionPanelMatchesMobileModelAndPolicyFlow() {
     Harness harness;
     harness.panel->setModelLabel(QStringLiteral("glm-5.3"));
+    QVERIFY(QTest::qWaitForWindowExposed(harness.panel.get()));
     QPushButton* chip = harness.panel->findChild<QPushButton*>(QStringLiteral("agentModelChip"));
+    QPushButton* policy = harness.panel->findChild<QPushButton*>(QStringLiteral("agentApprovalPolicy"));
+    QPushButton* more = harness.panel->findChild<QPushButton*>(QStringLiteral("agentMoreActions"));
+    auto* title = harness.panel->findChild<QLabel*>(QStringLiteral("agentHeaderTitle"));
     QVERIFY(chip != nullptr);
-    QVERIFY(chip->menu() != nullptr);
-    QCOMPARE(chip->menu()->actions().size(), 3);
-    QCOMPARE(chip->menu()->actions()[0]->text(), QStringLiteral("glm-5.3"));
-    QCOMPARE(chip->menu()->actions()[1]->text(), QStringLiteral("glm-5.3-flash"));
-    QCOMPARE(chip->menu()->actions()[2]->text(), QStringLiteral("deepseek-flash"));
-
-    QSignalSpy selected(harness.panel.get(), &AgentChatPanel::modelSelected);
-    chip->menu()->actions()[1]->trigger();
+    QVERIFY(policy && more && title);
+    QVERIFY(!chip->isVisible());
+    QVERIFY(!policy->isVisible());
+    QCOMPARE(title->text(), QStringLiteral("创作中心"));
+    QTest::mouseClick(more, Qt::LeftButton);
+    auto* actions = harness.panel->findChild<QWidget*>(QStringLiteral("agentActionPanel"));
+    QVERIFY(actions && actions->isVisible());
+    auto* modelSection = actions->findChild<QPushButton*>(QStringLiteral("agentModelSection"));
+    QVERIFY(modelSection);
+    QTest::mouseClick(modelSection, Qt::LeftButton);
+    const QString capturePath = qEnvironmentVariable("MAICHAT_AGENT_UI_CAPTURE");
+    if (!capturePath.isEmpty()) {
+        QVERIFY(harness.panel->grab().save(capturePath));
+        QVERIFY(actions->grab().save(capturePath + QStringLiteral(".popup.png")));
+    }
+    auto* option = actions->findChild<QPushButton*>(
+        QStringLiteral("agentModelOption-glm-5.3-flash"));
+    QVERIFY(option && option->isVisible());
+    QSignalSpy selected(harness.panel.get(), &AgentChatPanel::modelChangeRequested);
+    QTest::mouseClick(option, Qt::LeftButton);
     QCOMPARE(selected.count(), 1);
     QCOMPARE(selected.first().first().toString(), QStringLiteral("glm-5.3-flash"));
     MaiSession session;
+    QVERIFY(harness.controller->agent().getSession(harness.mine.toStdString(), session));
+    QVERIFY(session.model.empty());
+    QVERIFY(harness.panel->applySelectedModel(QStringLiteral("glm-5.3-flash")));
     QVERIFY(harness.controller->agent().getSession(harness.mine.toStdString(), session));
     QCOMPARE(QString::fromStdString(session.model), QStringLiteral("glm-5.3-flash"));
 }
@@ -510,6 +530,17 @@ void AgentPanelSessionTest::anotherSessionTitleDoesNotRenameTheHeader() {
     QVERIFY(title != nullptr);
 
     harness.publishFromOther(MaiEventType::SessionUpdated, QStringLiteral("子任务的名字"));
+    QCOMPARE(title->text(), QStringLiteral("创作中心"));
+}
+
+void AgentPanelSessionTest::currentSessionTitleStaysInTheSessionList() {
+    Harness harness;
+    const QString titled = harness.controller->createSession(
+        QDir::currentPath(), QStringLiteral("A named conversation"));
+    QVERIFY(!titled.isEmpty());
+    harness.panel->openSession(titled);
+    auto* title = harness.panel->findChild<QLabel*>(QStringLiteral("agentHeaderTitle"));
+    QVERIFY(title);
     QCOMPARE(title->text(), QStringLiteral("创作中心"));
 }
 
@@ -567,7 +598,8 @@ void AgentPanelSessionTest::newSessionOffersWorkspaceChoice() {
     QVERIFY(more != nullptr);
     QVERIFY(editor != nullptr);
     QVERIFY(workspace != nullptr);
-    QVERIFY(more->menu() != nullptr);
+    QVERIFY(more->menu() == nullptr);
+    QVERIFY(harness.panel->findChild<QWidget*>(QStringLiteral("agentActionPanel")) != nullptr);
     QCOMPARE(workspace->parentWidget(), editor);
     QVERIFY(editor->rect().contains(workspace->geometry().topLeft()));
     QVERIFY(editor->rect().contains(workspace->geometry().bottomRight()));
@@ -577,9 +609,6 @@ void AgentPanelSessionTest::newSessionOffersWorkspaceChoice() {
     QVERIFY(harness.controller->agent().getSession(harness.mine.toStdString(), session));
     QVERIFY(workspace->toolTip().contains(
         QDir::toNativeSeparators(QString::fromStdString(session.directory))));
-    for (QAction* action : more->menu()->actions()) {
-        QVERIFY(action->text() != QStringLiteral("选择工作目录并新建对话…"));
-    }
 }
 
 void AgentPanelSessionTest::chosenWorkspaceCreatesIndependentSession() {
@@ -997,10 +1026,14 @@ void AgentPanelSessionTest::composerMatchesImLayoutAndUsesEmbeddedSendAction() {
     QVERIFY(editor->styleSheet().contains(QStringLiteral("border:1px solid")));
     QVERIFY(!editor->isAncestorOf(model));
     QVERIFY(!editor->isAncestorOf(policy));
-    QVERIFY(more->menu() != nullptr);
-    QVERIFY(more->menu()->actions().size() >= 2);
-    QCOMPARE(more->menu()->actions()[0]->text(), QStringLiteral("模型配置"));
-    QCOMPARE(more->menu()->actions()[1]->text(), QStringLiteral("清空当前对话"));
+    QVERIFY(more->menu() == nullptr);
+    QVERIFY(!model->isVisible());
+    QVERIFY(!policy->isVisible());
+    auto* actions = harness.panel->findChild<QWidget*>(QStringLiteral("agentActionPanel"));
+    QVERIFY(actions != nullptr);
+    QVERIFY(actions->findChild<QPushButton*>(QStringLiteral("agentModelSection")) != nullptr);
+    QVERIFY(actions->findChild<QPushButton*>(QStringLiteral("agentPolicySection")) != nullptr);
+    QVERIFY(actions->findChild<QPushButton*>(QStringLiteral("agentClearConversation")) != nullptr);
     QVERIFY(policy->menu() != nullptr);
     QVERIFY(policy->menu()->styleSheet().contains(QStringLiteral("QMenu::item:selected")));
     QCOMPARE(policy->menu()->actions().size(), 3);

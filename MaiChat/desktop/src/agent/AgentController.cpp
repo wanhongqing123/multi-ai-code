@@ -2,6 +2,7 @@
 // 主要入口：openError、lastError、agent、createSession。
 // 直接依赖：MaiAgentSendMediaTool.h、MaiAppStorageTool.h、MaiArkAssetTools.h、MaiArkMediaTools.h；实现与这些接口协作。
 #include "agent/AgentController.h"
+#include "agent/DesktopAccountModelClient.h"
 #include "MaiAgentSendMediaTool.h"
 #include "MaiAppStorageTool.h"
 #include "MaiArkAssetTools.h"
@@ -277,9 +278,15 @@ buildAgent(std::unique_ptr<MaiModelClient> model, std::unique_ptr<MaiSessionStor
     else
         tools->add(makeMaiArkAssetTool());
     tools->add(makeMaiSeedreamImageTool(arkKey, {}, seedreamUploadMedia));
-    const auto glmKey = [key = toUtf8(credentials.glmApiKey)] { return key; };
+    const auto glmKey = [provider = credentials.glmApiKeyProvider,
+                         key = toUtf8(credentials.glmApiKey)] {
+        return provider ? toUtf8(provider()) : key;
+    };
     tools->add(makeMaiGlmImageTool(glmKey));
-    const auto miniMaxKey = [key = toUtf8(credentials.miniMaxApiKey)] { return key; };
+    const auto miniMaxKey = [provider = credentials.miniMaxApiKeyProvider,
+                             key = toUtf8(credentials.miniMaxApiKey)] {
+        return provider ? toUtf8(provider()) : key;
+    };
     tools->add(makeMaiMiniMaxVideoTool(miniMaxKey, {}, miniMaxUploadMedia));
     tools->add(makeMaiMiniMaxImageTool(miniMaxKey, {}, miniMaxUploadMedia));
     const auto wanCredentials = [provider = credentials.wanCredentialsProvider, key = toUtf8(credentials.wanApiKey),
@@ -390,7 +397,19 @@ AgentController::AgentController(const ModelConfig& model, const QString& databa
 
     // baseUrl 为空 = 空转。建会话、翻历史照常，发消息会以 NotConfigured 收场。
     std::unique_ptr<MaiModelClient> client;
-    if (!model.baseUrl.isEmpty()) {
+    if (model.accountModelKeyProvider) {
+        DesktopAccountModelClient::Config config;
+        config.glmBaseUrl = model.glmBaseUrl;
+        config.deepseekBaseUrl = model.deepseekBaseUrl;
+        config.keyProvider = model.accountModelKeyProvider;
+#if defined(MAICHAT_EMBEDDED_FFMPEG)
+        MaiFfmpegEngine ffmpegEngine{mai_ffmpeg_execute,       mai_ffmpeg_set_cancel_check,
+                                     mai_ffprobe_execute,      mai_ffprobe_set_cancel_check,
+                                     mai_fftools_set_log_sink, mai_fftools_error_string};
+        config.prepareImage = makeMaiFfmpegModelImagePreparer(ffmpegEngine);
+#endif
+        client = std::make_unique<DesktopAccountModelClient>(std::move(config));
+    } else if (!model.baseUrl.isEmpty()) {
         MaiModelConfig config;
         config.baseUrl = toUtf8(model.baseUrl);
         config.apiKey = toUtf8(model.apiKey);
@@ -491,6 +510,16 @@ bool AgentController::setModel(const QString& sessionId, const QString& model) {
         runtime_->agent->submit(MaiUpdateSession{toUtf8(sessionId), "", toUtf8(selected), "", ""});
     if (!updated) {
         runtime_->lastError = fromUtf8(updated.error().message());
+        return false;
+    }
+    runtime_->modelName = selected;
+    return true;
+}
+
+bool AgentController::setDefaultModel(const QString& model) {
+    const QString selected = model.trimmed();
+    if (selected.isEmpty()) {
+        runtime_->lastError = QStringLiteral("模型名称不能为空。");
         return false;
     }
     runtime_->modelName = selected;

@@ -4,15 +4,18 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QtTest>
+#include <httplib.h>
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -21,6 +24,7 @@
 #include <vector>
 
 #include "agent/AgentController.h"
+#include "agent/DesktopAccountModelClient.h"
 #include "MaiScreenshot.h"
 #include "MaiScreenshotTool.h"
 
@@ -183,7 +187,88 @@ private slots:
     void finishingAnotherSessionDoesNotReclassifyReasoning();
     void desktopReadsOutsideSessionWorkingDirectory();
     void desktopWriteOutsideWaitsForApproval();
+    void accountModelClientRoutesBySelectedModelAndFreshKey();
 };
+
+void AgentControllerTest::accountModelClientRoutesBySelectedModelAndFreshKey() {
+    struct Probe {
+        httplib::Server server;
+        std::thread thread;
+        std::mutex mutex;
+        std::string authorization;
+        int requestCount = 0;
+        int port = 0;
+        Probe() {
+            server.Post("/responses", [this](const httplib::Request& request,
+                                              httplib::Response& response) {
+                {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    authorization = request.get_header_value("Authorization");
+                    ++requestCount;
+                }
+                response.set_content(
+                    "data: {\"type\":\"response.completed\",\"response\":"
+                    "{\"status\":\"completed\",\"output\":[]}}\n\n",
+                    "text/event-stream");
+            });
+            port = server.bind_to_any_port("127.0.0.1");
+            thread = std::thread([this] { server.listen_after_bind(); });
+            for (int i = 0; i < 200 && !server.is_running(); ++i)
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        ~Probe() {
+            server.stop();
+            if (thread.joinable()) thread.join();
+        }
+        QString baseUrl() const {
+            return QStringLiteral("http://127.0.0.1:%1").arg(port);
+        }
+    } glm, deepseek;
+    QVERIFY(glm.port > 0 && deepseek.port > 0);
+    QHash<QString, QString> keys = {
+        {QStringLiteral("glm"), QStringLiteral("glm-account-key")},
+        {QStringLiteral("deepseek"), QStringLiteral("deepseek-account-key")}};
+    DesktopAccountModelClient::Config config;
+    config.glmBaseUrl = glm.baseUrl();
+    config.deepseekBaseUrl = deepseek.baseUrl();
+    config.keyProvider = [&keys](const QString& provider) { return keys.value(provider); };
+    DesktopAccountModelClient client(config);
+    QCOMPARE(client.wireApi(), MaiWireApi::Responses);
+    MaiModelRequest request;
+    request.messages.push_back(MaiModelMessage{MaiModelRole::User, "Hello"});
+    MaiStreamSink sink;
+    const std::atomic<bool> cancel{false};
+    request.model = "glm-5.3";
+    QVERIFY(!client.stream(request, sink, cancel));
+    request.model = "deepseek-flash";
+    QVERIFY(!client.stream(request, sink, cancel));
+    {
+        std::lock_guard<std::mutex> lock(glm.mutex);
+        QCOMPARE(glm.requestCount, 1);
+        QCOMPARE(QString::fromStdString(glm.authorization),
+                 QStringLiteral("Bearer glm-account-key"));
+    }
+    {
+        std::lock_guard<std::mutex> lock(deepseek.mutex);
+        QCOMPARE(deepseek.requestCount, 1);
+        QCOMPARE(QString::fromStdString(deepseek.authorization),
+                 QStringLiteral("Bearer deepseek-account-key"));
+    }
+    keys.insert(QStringLiteral("deepseek"), QStringLiteral("rotated-account-key"));
+    QVERIFY(!client.stream(request, sink, cancel));
+    {
+        std::lock_guard<std::mutex> lock(deepseek.mutex);
+        QCOMPARE(deepseek.requestCount, 2);
+        QCOMPARE(QString::fromStdString(deepseek.authorization),
+                 QStringLiteral("Bearer rotated-account-key"));
+    }
+    keys.remove(QStringLiteral("deepseek"));
+    QCOMPARE(client.stream(request, sink, cancel).code(), MaiErrorCode::NotConfigured);
+    {
+        std::lock_guard<std::mutex> lock(deepseek.mutex);
+        QCOMPARE(deepseek.requestCount, 2);
+    }
+}
 
 void AgentControllerTest::desktopReadsOutsideSessionWorkingDirectory() {
     QTemporaryDir workspace;

@@ -10,6 +10,7 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QMainWindow>
+#include <QMutex>
 #include <QPair>
 #include <QPushButton>
 #include <QScrollArea>
@@ -147,7 +148,7 @@ private:
     void showRemotePage();
     void showAgentPage();
     void rebuildAgentPage();
-    void editAgentModelSettings();
+    void requestAgentModelChange(const QString& model);
     void syncNavigationSelection();
     void updateNavigationSelection(QPushButton* selectedButton);
     void openAddContactDialog();
@@ -274,7 +275,13 @@ private:
     std::function<QPair<QString, QString>()> wanCredentialsProvider_;
     std::function<QPair<QString, QString>()> mediaServiceAccessProvider_;
     QHash<QString, QString> modelApiKeys_;
+    struct ModelKeyState {
+        QMutex mutex;
+        QHash<QString, QString> keys;
+    };
+    std::shared_ptr<ModelKeyState> modelKeyState_ = std::make_shared<ModelKeyState>();
     QString modelKeyError_;
+    QString pendingModelSelection_;
     std::function<void()> modelKeyRefreshHandler_;
     std::function<void()> logoutHandler_;
     RemoteDiagnosticsController* diagnostics_ = nullptr;

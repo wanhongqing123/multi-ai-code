@@ -62,8 +62,15 @@ public:
     QString apiKey;
 // 即使主模型选 DeepSeek，媒体专用模型仍使用 GLM 凭据。
     QString glmApiKey;
+    QString deepseekApiKey;
     QString arkApiKey;
     QString miniMaxApiKey;
+    // 模型工作线程在每次请求前读取当前账号 Key；由宿主保证线程安全。
+    std::function<QString(const QString&)> accountModelKeyProvider;
+    std::function<QString()> glmApiKeyProvider;
+    std::function<QString()> miniMaxApiKeyProvider;
+    QString glmBaseUrl;
+    QString deepseekBaseUrl;
     QString wanApiKey;
     QString wanWorkspaceId;
     // 短期 Ark/百炼凭据由账号会话提供；工具执行时实时读取，不捕获构造时的旧密钥。
@@ -111,6 +118,7 @@ public:
   bool sendPrompt(const QString &sessionId, const QString &text,
                   const QStringList &imagePaths);
   bool setModel(const QString &sessionId, const QString &model);
+  bool setDefaultModel(const QString &model);
   bool interrupt(const QString &sessionId);
   bool setApprovalPolicy(MaiApprovalPolicy policy);
   MaiApprovalPolicy approvalPolicy() const;

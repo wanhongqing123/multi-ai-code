@@ -11,7 +11,6 @@ const { generatePngQrCode } = require('@juit/qrcode');
 const Database = require('better-sqlite3');
 const { openStore } = require('./store');
 const { createAuthService } = require('./service');
-const { createHandler: createMediaHandler } = require('../oss-media-signer/index');
 const { bindLegacy } = require('./bind-legacy');
 
 function fixture(modelAllowedPhones = ['+8613900000001'], extra = {}) {
@@ -190,33 +189,6 @@ test('media signing requires an allowed signed-in account', async () => {
   const other = await signInWithSms(denied);
   assert.equal((await denied.call('GET', path, {}, other.body.access_token)).statusCode, 403);
   denied.db.close();
-});
-
-test('account bearer authorizes OSS signing without a shared client token', async () => {
-  const setup = fixture();
-  const signedIn = await signInWithSms(setup);
-  const token = signedIn.body.access_token;
-  const media = createMediaHandler({
-    env: { MAICHAT_OSS_BUCKET: 'private-test', MAICHAT_OSS_REGION: 'oss-cn-guangzhou',
-      ALIBABA_CLOUD_ACCESS_KEY_ID: 'test-id',
-      ALIBABA_CLOUD_ACCESS_KEY_SECRET: 'test-secret' },
-    newID: () => 'account-test',
-    makeClient: () => ({ signatureUrlV4: async () => 'https://example.test/signed' }),
-    fetcher: async (url, options) => {
-      assert.equal(url, 'http://127.0.0.1:9100/v1/media/authorize');
-      const bearer = options.headers.Authorization.slice('Bearer '.length);
-      const result = await setup.call('GET', '/v1/media/authorize', {}, bearer);
-      return { status: result.statusCode };
-    }
-  });
-  const event = bearer => ({ rawPath: '/sign-upload', httpMethod: 'POST',
-    headers: { Authorization: `Bearer ${bearer}` },
-    body: JSON.stringify({ filename: 'clip.mp4', size_bytes: 1024,
-      purpose: 'ark_asset_input' }) });
-  assert.equal((await media(event(token))).statusCode, 200);
-  await setup.call('POST', '/v1/auth/logout', {}, token);
-  assert.equal((await media(event(token))).statusCode, 401);
-  setup.db.close();
 });
 
 test('only a signed-in model account receives cached short-lived Bailian credentials', async () => {

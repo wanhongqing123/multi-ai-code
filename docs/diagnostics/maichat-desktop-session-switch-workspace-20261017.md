@@ -5,6 +5,8 @@
 - 复现步骤：用只读 SQLite 备份取得现场会话快照，在独立测试进程中用真实 `AgentController`、`AgentChatPanel`、`MarkdownView` 依次打开快照中的会话，不连接模型、不发送消息、不修改运行中的 App。含 96 条消息、347 个内容片段的会话，连续两次打开分别耗时 6642 ms、6664 ms；短会话约 13–388 ms。快照中 6 个会话有 2 个保存的工作目录为 `/`。
 - 根因证据：`AgentChatPanel::openSession()` 同步执行 `reloadFromStore()`；恢复历史时逐条调用 `MarkdownView::addItem()` 或 `addWidget()`。这些方法每次调用都会执行 `relayoutAll()`，重新排版此前全部内容。会话越长，重复工作按条目数平方增长。工作目录 `/` 来自已持久化的会话字段；本次源码中新会话默认位置原为 Documents，打开旧会话时仍显示其持久化目录。
 - 修复：历史恢复期间合并 MarkdownView 更新，全部条目加入后只排版一次；新会话默认创建在 Documents 下的 `MaiChat Workspace` 可写文件夹，Documents 不可用时才退到 App 数据目录，不再使用进程目录或系统根目录。已保存为根目录 `/` 的空闲会话在打开时迁入该文件夹；正在执行任务的会话不在中途改目录，其他自选工作目录不变。
+- 后续调整（2026-10-17，`1733a9cce503e58f1d51fc9a4339afae479428f8`）：新会话默认目录改为 `QStandardPaths::AppLocalDataLocation/Workspace`，Windows 对应当前用户的 `%LOCALAPPDATA%` 应用目录，Mac 对应 `~/Library/Application Support` 应用目录；Documents 只在本机数据目录不可用时作为回退。旧会话保存的非根目录不迁移，原有素材继续留在原处。输入框常驻目录按钮移入右上角菜单，并提供“打开当前工作目录”。
+- 范围：Desktop 的 `agentDatabasePath()` 目前仍使用应用级 `agent.db`，此次默认目录调整不等于账号级隔离；旧数据库和会话归属未迁移。
 - 修复源码提交：`eb038ed5ea7d27468bf37299cbb26aa41003c08b`。
 - 同一快照复测：96 条消息的会话连续两次打开分别耗时 209 ms、186 ms；较短会话约 5–241 ms。此结果证明面板恢复阶段的卡顿显著降低，不代表当前已安装版本已经更新。
 - 验证：macOS Release 构建 `maichat`、`agent_controller_test`、`agent_panel_session_test`、`markdown_view_test`、`main_window_layout_test` 通过；相关 CTest 4/4 通过；构建产物 `--smoke` 退出 0。测试覆盖新会话默认目录、只迁移根目录会话、保留自选目录及批量排版与逐条排版的几何一致性。`agent_page_visual_probe` 生成的实际 Qt 窗口截图已检查，消息、工具卡、输入区与列表布局正常。未触发付费模型请求。

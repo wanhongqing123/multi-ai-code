@@ -4509,7 +4509,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                 .translationY(destination.exactCenterY() - display.heightPixels / 2f)
                 .setDuration(220).withEndAction(dialog::dismiss).start();
         });
-        FrameLayout.LayoutParams closeParams = new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP | Gravity.START);
+        FrameLayout.LayoutParams closeParams = new FrameLayout.LayoutParams(
+            dp(48), dp(48), Gravity.TOP | Gravity.START);
         closeParams.setMargins(dp(20), dp(18), 0, 0);
         frame.addView(close, closeParams);
         if (bubbleEntry) { close.setAlpha(0f); entryChrome.add(close); }

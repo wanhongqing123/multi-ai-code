@@ -667,7 +667,9 @@ void AgentPanelSessionTest::newSessionUsesAppWorkspaceInsteadOfProcessDirectory(
     const auto sessions = controller.agent().listSessions();
     QCOMPARE(sessions.size(), std::size_t(1));
     const QString workspace = QString::fromStdString(sessions.front().directory);
-    QVERIFY(workspace.endsWith(QStringLiteral("MaiChat Workspace")));
+    QVERIFY(workspace.endsWith(QStringLiteral("Workspace")));
+    QVERIFY(workspace.startsWith(
+        QDir(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation)).canonicalPath()));
     QVERIFY(QFileInfo(workspace).isWritable());
     QVERIFY(!QDir(workspace).isRoot());
     QVERIFY(QDir(workspace).canonicalPath() != processDirectory.path());
@@ -701,16 +703,22 @@ void AgentPanelSessionTest::newSessionOffersWorkspaceChoice() {
     auto* more = harness.panel->findChild<QPushButton*>(QStringLiteral("agentMoreActions"));
     auto* editor = harness.panel->findChild<ComposerTextEdit*>();
     auto* workspace = harness.panel->findChild<QPushButton*>(QStringLiteral("agentChooseWorkspaceButton"));
+    auto* openWorkspace = harness.panel->findChild<QPushButton*>(QStringLiteral("agentOpenWorkspaceButton"));
     QVERIFY(more != nullptr);
     QVERIFY(editor != nullptr);
     QVERIFY(workspace != nullptr);
+    QVERIFY(openWorkspace != nullptr);
     QVERIFY(more->menu() == nullptr);
-    QVERIFY(harness.panel->findChild<QWidget*>(QStringLiteral("agentActionPanel")) != nullptr);
-    QCOMPARE(workspace->parentWidget(), editor);
-    QVERIFY(editor->rect().contains(workspace->geometry().topLeft()));
-    QVERIFY(editor->rect().contains(workspace->geometry().bottomRight()));
-    QVERIFY(workspace->x() < editor->width() / 3);
-    QVERIFY(workspace->y() > editor->height() / 2);
+    auto* actionPanel = harness.panel->findChild<QWidget*>(QStringLiteral("agentActionPanel"));
+    QVERIFY(actionPanel != nullptr);
+    QCOMPARE(workspace->parentWidget(), actionPanel);
+    QCOMPARE(openWorkspace->parentWidget(), actionPanel);
+    QVERIFY(!workspace->isVisible());
+    more->click();
+    QTRY_VERIFY(workspace->isVisible());
+    QVERIFY(openWorkspace->isVisible());
+    const QString capturePath = qEnvironmentVariable("MAICHAT_WORKSPACE_MENU_CAPTURE");
+    if (!capturePath.isEmpty()) QVERIFY(actionPanel->grab().save(capturePath));
     MaiSession session;
     QVERIFY(harness.controller->agent().getSession(harness.mine.toStdString(), session));
     QVERIFY(workspace->toolTip().contains(

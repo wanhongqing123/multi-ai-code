@@ -86,13 +86,14 @@ QString fromUtf8(const std::string& text) {
 
 QString defaultWorkspaceDirectory() {
     const QStringList roots = {
+        QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation),
         QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation),
         QStandardPaths::writableLocation(QStandardPaths::AppDataLocation),
         QDir::homePath(),
     };
     for (const QString& root : roots) {
         if (root.isEmpty() || QDir(root).isRoot()) continue;
-        const QString workspace = QDir(root).filePath(QStringLiteral("MaiChat Workspace"));
+        const QString workspace = QDir(root).filePath(QStringLiteral("Workspace"));
         if (!QDir().mkpath(workspace) || !QFileInfo(workspace).isWritable()) continue;
         return QDir(workspace).canonicalPath();
     }
@@ -1300,24 +1301,17 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     runtime_->send->setIconSize(QSize(UiZoom::s(18), UiZoom::s(18)));
     runtime_->editor->setCornerAction(runtime_->send);
 
-    runtime_->chooseWorkspace = new QPushButton(QStringLiteral("选择工作目录"), runtime_->editor);
+    runtime_->chooseWorkspace = new QPushButton(QStringLiteral("选择工作目录"), actionPanel);
     runtime_->chooseWorkspace->setObjectName(QStringLiteral("agentChooseWorkspaceButton"));
     runtime_->chooseWorkspace->setAccessibleName(QStringLiteral("选择工作目录并新建对话"));
     runtime_->chooseWorkspace->setCursor(Qt::PointingHandCursor);
     runtime_->chooseWorkspace->setIcon(style()->standardIcon(QStyle::SP_DirIcon));
     runtime_->chooseWorkspace->setIconSize(QSize(UiZoom::s(16), UiZoom::s(16)));
-    runtime_->chooseWorkspace->setFixedSize(UiZoom::s(154), UiZoom::s(30));
+    runtime_->chooseWorkspace->setFixedSize(UiZoom::s(244), UiZoom::s(44));
     runtime_->chooseWorkspace->setToolTip(QStringLiteral("选择工作目录并新建对话"));
-    runtime_->chooseWorkspace->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
-        QPushButton#agentChooseWorkspaceButton {
-            background:#f5f7fa;border:1px solid #e2e8f0;border-radius:8px;
-            color:#344054;font-size:12px;padding:0 8px;text-align:left;
-        }
-        QPushButton#agentChooseWorkspaceButton:hover { background:#eef2f6; }
-        QPushButton#agentChooseWorkspaceButton:pressed { background:#e5eaf0; }
-    )")));
-    runtime_->editor->setLeadingAction(runtime_->chooseWorkspace);
+    actionLayout->insertWidget(actionLayout->indexOf(divider), runtime_->chooseWorkspace);
     connect(runtime_->chooseWorkspace, &QPushButton::clicked, this, [this] {
+        runtime_->actionPanel->hide();
         MaiSession session;
         QString initial = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
         if (runtime_->controller->agent().getSession(toUtf8(runtime_->sessionId), session))
@@ -1325,6 +1319,17 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
         const QString selected = QFileDialog::getExistingDirectory(this, QStringLiteral("选择创作中心工作目录"),
                                                                    initial, QFileDialog::ShowDirsOnly);
         if (!selected.isEmpty()) openSessionInDirectory(selected);
+    });
+    auto* openWorkspace = new QPushButton(QStringLiteral("打开当前工作目录"), actionPanel);
+    openWorkspace->setObjectName(QStringLiteral("agentOpenWorkspaceButton"));
+    openWorkspace->setCursor(Qt::PointingHandCursor);
+    openWorkspace->setFixedSize(UiZoom::s(244), UiZoom::s(44));
+    actionLayout->insertWidget(actionLayout->indexOf(divider), openWorkspace);
+    connect(openWorkspace, &QPushButton::clicked, this, [this] {
+        runtime_->actionPanel->hide();
+        MaiSession session;
+        if (!runtime_->controller->agent().getSession(toUtf8(runtime_->sessionId), session)) return;
+        QDesktopServices::openUrl(QUrl::fromLocalFile(fromUtf8(session.directory)));
     });
 
     auto* messageComposerSplitter = new ComposerResizeSplitter(this);

@@ -23,9 +23,12 @@ import android.provider.MediaStore;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.view.ViewGroup;
+import android.view.inputmethod.EditorInfo;
 import android.widget.*;
 import androidx.core.content.FileProvider;
 import java.io.File;
@@ -115,6 +118,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         this.voiceRecorder = voiceRecorder;
         this.speechRecognizer = speechRecognizer;
         setOrientation(VERTICAL);
+        setFocusableInTouchMode(true);
         setBackgroundColor(Color.WHITE);
         MarkdownRenderer.initialize(activity);
         FrameLayout header = new FrameLayout(activity);
@@ -238,6 +242,14 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         composer.setInputType(android.text.InputType.TYPE_CLASS_TEXT
             | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
             | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        composer.setImeOptions(EditorInfo.IME_ACTION_SEND);
+        composer.setOnEditorActionListener((view, action, event) -> {
+            boolean enter = event != null && event.getKeyCode() == KeyEvent.KEYCODE_ENTER
+                && event.getAction() == KeyEvent.ACTION_DOWN && !event.isShiftPressed();
+            if (action != EditorInfo.IME_ACTION_SEND && !enter) return false;
+            send();
+            return true;
+        });
         composer.addTextChangedListener(new TextWatcher() {
             @Override
             public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
@@ -254,6 +266,32 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 following = true;
                 locateLatest();
             }
+        });
+        int tapSlop = ViewConfiguration.get(activity).getScaledTouchSlop();
+        float[] touchDown = new float[2];
+        boolean[] singleTap = new boolean[1];
+        list.setOnTouchListener((view, event) -> {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    touchDown[0] = event.getX(); touchDown[1] = event.getY();
+                    singleTap[0] = true;
+                    break;
+                case MotionEvent.ACTION_MOVE:
+                    if (Math.abs(event.getX() - touchDown[0]) > tapSlop ||
+                        Math.abs(event.getY() - touchDown[1]) > tapSlop) singleTap[0] = false;
+                    break;
+                case MotionEvent.ACTION_POINTER_DOWN:
+                case MotionEvent.ACTION_CANCEL:
+                    singleTap[0] = false;
+                    break;
+                case MotionEvent.ACTION_UP:
+                    if (singleTap[0] && composer.hasFocus()) hideKeyboard();
+                    singleTap[0] = false;
+                    break;
+                default:
+                    break;
+            }
+            return false;
         });
         inputSurface.addView(composer, new FrameLayout.LayoutParams(
             LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
@@ -485,6 +523,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         ((android.view.inputmethod.InputMethodManager) activity.getSystemService(
              Context.INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(getWindowToken(), 0);
         composer.clearFocus();
+        requestFocus();
     }
     private void send() {
         if (state == null || submitting || navigationPending)

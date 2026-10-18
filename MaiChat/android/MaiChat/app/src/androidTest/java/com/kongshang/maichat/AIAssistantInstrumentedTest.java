@@ -172,6 +172,51 @@ public class AIAssistantInstrumentedTest {
         return null;
     }
 
+    @Test public void tappingConversationDismissesComposerFocusAndKeepsDraft() {
+        Context app = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Intent launch = new Intent(app, AIAssistantTestActivity.class)
+            .putExtra("model_url", "http://127.0.0.1:18190");
+        try (ActivityScenario<AIAssistantTestActivity> scenario = ActivityScenario.launch(launch)) {
+            scenario.onActivity(activity -> {
+                AIAssistantPanel panel = activity.panel;
+                panel.composer.setText("draft stays");
+                panel.composer.requestFocus();
+                assertTrue(panel.composer.hasFocus());
+                View history = findList(panel);
+                assertNotNull(history);
+                assertTrue(history.getHeight() > 0);
+                float x = history.getWidth() / 2f, y = history.getHeight() / 2f;
+                long now = android.os.SystemClock.uptimeMillis();
+                android.view.MotionEvent down = android.view.MotionEvent.obtain(now, now,
+                    android.view.MotionEvent.ACTION_DOWN, x, y, 0);
+                android.view.MotionEvent up = android.view.MotionEvent.obtain(now, now + 40,
+                    android.view.MotionEvent.ACTION_UP, x, y, 0);
+                try {
+                    history.dispatchTouchEvent(down);
+                    history.dispatchTouchEvent(up);
+                } finally { down.recycle(); up.recycle(); }
+                assertFalse("Blank conversation tap must release keyboard focus", panel.composer.hasFocus());
+                assertEquals("draft stays", panel.composer.getText().toString());
+            });
+        }
+    }
+
+    @Test public void keyboardSendActionSubmitsTheDraft() throws Exception {
+        Context app = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Intent launch = new Intent(app, AIAssistantTestActivity.class)
+            .putExtra("model_url", "http://127.0.0.1:18190");
+        try (ActivityScenario<AIAssistantTestActivity> scenario = ActivityScenario.launch(launch)) {
+            await(scenario, panel -> panel.controller.state.ready);
+            scenario.onActivity(activity -> {
+                activity.panel.composer.setText("keyboard send check");
+                activity.panel.composer.onEditorAction(
+                    android.view.inputmethod.EditorInfo.IME_ACTION_SEND);
+            });
+            await(scenario, panel -> visibleText(panel, "keyboard send check") &&
+                panel.composer.getText().length() == 0);
+        }
+    }
+
     private boolean hasQuotePart(AIAssistantController.State state) {
         org.json.JSONArray messages = state.data.optJSONArray("messages");
         if (messages == null) return false;

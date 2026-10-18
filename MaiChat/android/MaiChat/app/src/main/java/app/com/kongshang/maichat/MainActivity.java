@@ -693,7 +693,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         content = list;
         renderConversationList();
         content = previousContent;
-        backdrop.addView(bottomTabBar(), match(dp(72)));
+        backdrop.addView(bottomTabBar(), match(dp(64)));
         return backdrop;
     }
 
@@ -891,7 +891,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
 
         boolean hideTabs = activeChatUserId != null
             || (activeTab == RemoteIMTab.REMOTE && session.remoteDesktop().isActive());
-        if (!hideTabs) root.addView(bottomTabBar(), match(dp(72)));
+        if (!hideTabs) root.addView(bottomTabBar(), match(dp(64)));
     }
 
     private void applyChatInsets(FrameLayout target, androidx.core.view.WindowInsetsCompat insets) {
@@ -1465,24 +1465,20 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
 
     private View bottomTabBar() {
         LinearLayout outside = new LinearLayout(this);
-        outside.setPadding(dp(16), dp(9), dp(16), dp(10));
+        outside.setOrientation(LinearLayout.VERTICAL);
         outside.setBackgroundColor(Color.WHITE);
+        View divider = new View(this);
+        divider.setBackgroundColor(MaiChatTheme.BORDER);
+        outside.addView(divider, match(dp(1)));
 
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
         bar.setGravity(Gravity.CENTER);
-        bar.setPadding(dp(6), dp(6), dp(6), dp(6));
-        bar.setBackground(MaiChatTheme.bordered(
-            Color.rgb(245, 247, 250),
-            MaiChatTheme.BORDER,
-            14,
-            this
-        ));
-        outside.addView(bar, matchMatch());
+        bar.setPadding(dp(16), dp(10), dp(16), dp(12));
+        outside.addView(bar, new LinearLayout.LayoutParams(-1, 0, 1));
         bar.addView(tabButton(RemoteIMTab.MESSAGES), weightMatch());
         bar.addView(tabButton(RemoteIMTab.ASSISTANT), weightMatch());
         bar.addView(tabButton(RemoteIMTab.CONTACTS), weightMatch());
-        bar.addView(tabButton(RemoteIMTab.REMOTE), weightMatch());
         bar.addView(tabButton(RemoteIMTab.ME), weightMatch());
         return outside;
     }
@@ -1494,19 +1490,11 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         button.setClickable(true);
         button.setFocusable(true);
 
-        FrameLayout selection = new FrameLayout(this);
-        selection.setBackground(selected
-            ? MaiChatTheme.rounded(tabSoftColor(tab), 18, this)
-            : new ColorDrawable(Color.TRANSPARENT));
         ImageView icon = new ImageView(this);
         icon.setImageResource(tabIconResource(tab));
         icon.setColorFilter(selected ? tabAccentColor(tab) : MaiChatTheme.SECONDARY);
-        FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER);
-        selection.addView(icon, iconParams);
-        FrameLayout.LayoutParams selectionParams = new FrameLayout.LayoutParams(
-            dp(54), dp(36), Gravity.CENTER
-        );
-        button.addView(selection, selectionParams);
+        FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(dp(23), dp(23), Gravity.CENTER);
+        button.addView(icon, iconParams);
 
         if (tab == RemoteIMTab.MESSAGES && session.totalUnreadCount() > 0) {
             View badge = new View(this);
@@ -1546,17 +1534,6 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             case ME: return MaiChatTheme.NAV_PROFILE;
         }
         return MaiChatTheme.NAV_MESSAGES;
-    }
-
-    private int tabSoftColor(RemoteIMTab tab) {
-        switch (tab) {
-            case MESSAGES: return MaiChatTheme.NAV_MESSAGES_SOFT;
-            case ASSISTANT: return MaiChatTheme.NAV_ASSISTANT_SOFT;
-            case CONTACTS: return MaiChatTheme.NAV_CONTACTS_SOFT;
-            case REMOTE: return MaiChatTheme.NAV_REMOTE_SOFT;
-            case ME: return MaiChatTheme.NAV_PROFILE_SOFT;
-        }
-        return MaiChatTheme.NAV_MESSAGES_SOFT;
     }
 
     private void renderConversationList() {
@@ -1614,7 +1591,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
 
         content = sidebar;
         renderConversationList();
-        sidebar.addView(bottomTabBar(), match(dp(72)));
+        sidebar.addView(bottomTabBar(), match(dp(64)));
         content = detail;
         if (activeChatUserId != null) renderChatDetail(activeChatUserId);
         else detail.addView(emptyState("◇", "选择一个对话", "从左侧选择联系人开始聊天。"), matchMatch());

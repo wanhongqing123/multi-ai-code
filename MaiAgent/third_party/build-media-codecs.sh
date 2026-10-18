@@ -17,13 +17,11 @@ build_root="$(cd "$build_root" && pwd -P)"
 install_root="$(cd "$install_root" && pwd -P)"
 meson_cross=""
 meson_prefix="$install_root"
-meson_install_options=()
 meson_compiler="$compiler"
 meson_ar="$archive_tool"
 if [[ "$platform" == Android && "$(uname -s)" == MINGW* ]]; then
   # Meson uses target POSIX paths for Android even when built on Windows.
   meson_prefix=/
-  meson_install_options=(--destdir "$install_root")
   meson_compiler="$compiler.cmd"
   meson_ar="$archive_tool.exe"
 fi
@@ -101,10 +99,12 @@ else
     > "$build_root/dav1d-config.log" 2>&1
 fi
 meson compile -C "$build_root/dav1d" -j6 > "$build_root/dav1d-build.log" 2>&1
-meson install -C "$build_root/dav1d" "${meson_install_options[@]}" \
-  > "$build_root/dav1d-install.log" 2>&1
 if [[ "$platform" == Android && "$(uname -s)" == MINGW* ]]; then
+  meson install -C "$build_root/dav1d" --destdir "$install_root" \
+    > "$build_root/dav1d-install.log" 2>&1
   sed -i "s|^prefix=/$|prefix=$install_root|" "$install_root/lib/pkgconfig/dav1d.pc"
+else
+  meson install -C "$build_root/dav1d" > "$build_root/dav1d-install.log" 2>&1
 fi
 
 mkdir -p "$build_root/x264"

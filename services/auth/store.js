@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const Database = require('better-sqlite3');
+const { newAccountId } = require('./account-id');
 
 function openStore(filename) {
   if (filename !== ':memory:') {
@@ -15,7 +16,8 @@ function openStore(filename) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
-      phone_e164 TEXT NOT NULL UNIQUE,
+      account_id TEXT UNIQUE,
+      phone_e164 TEXT UNIQUE,
       im_user_id TEXT NOT NULL UNIQUE,
       password_hash TEXT,
       created_at INTEGER NOT NULL,
@@ -133,7 +135,88 @@ function openStore(filename) {
       im_friend_count INTEGER NOT NULL,
       mirrored_count INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS friend_requests (
+      id TEXT PRIMARY KEY,
+      from_user_id TEXT NOT NULL REFERENCES users(id),
+      to_user_id TEXT NOT NULL REFERENCES users(id),
+      status TEXT NOT NULL CHECK(status IN ('pending','accepted','rejected')),
+      created_at INTEGER NOT NULL,
+      decided_at INTEGER,
+      CHECK(from_user_id <> to_user_id)
+    );
+    CREATE INDEX IF NOT EXISTS friend_requests_to_status
+      ON friend_requests(to_user_id,status,created_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS friend_requests_open
+      ON friend_requests(from_user_id,to_user_id) WHERE status='pending';
+    CREATE TABLE IF NOT EXISTS friendships (
+      left_user_id TEXT NOT NULL REFERENCES users(id),
+      right_user_id TEXT NOT NULL REFERENCES users(id),
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY(left_user_id,right_user_id),
+      CHECK(left_user_id < right_user_id)
+    );
+    CREATE TABLE IF NOT EXISTS friend_im_sync (
+      left_user_id TEXT NOT NULL REFERENCES users(id),
+      right_user_id TEXT NOT NULL REFERENCES users(id),
+      desired TEXT NOT NULL CHECK(desired IN ('add','delete')),
+      updated_at INTEGER NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT,
+      revision INTEGER NOT NULL DEFAULT 1,
+      PRIMARY KEY(left_user_id,right_user_id),
+      CHECK(left_user_id < right_user_id)
+    );
+    CREATE TABLE IF NOT EXISTS admin_audit (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      action TEXT NOT NULL,
+      target_user_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS account_migrations (
+      name TEXT PRIMARY KEY,
+      applied_at INTEGER NOT NULL
+    );
   `);
+  const phoneColumn = db.prepare('PRAGMA table_info(users)').all()
+    .find(column => column.name === 'phone_e164');
+  if (phoneColumn?.notnull) {
+    db.pragma('foreign_keys = OFF');
+    try {
+      db.transaction(() => {
+        db.exec(`CREATE TABLE users_nullable_phone (
+          id TEXT PRIMARY KEY,
+          account_id TEXT UNIQUE,
+          phone_e164 TEXT UNIQUE,
+          im_user_id TEXT NOT NULL UNIQUE,
+          password_hash TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          disabled_at INTEGER
+        );
+        INSERT INTO users_nullable_phone SELECT id,NULL,phone_e164,im_user_id,
+          password_hash,created_at,updated_at,disabled_at FROM users;
+        DROP TABLE users;
+        ALTER TABLE users_nullable_phone RENAME TO users;`);
+      })();
+    } finally {
+      db.pragma('foreign_keys = ON');
+    }
+    if (db.pragma('foreign_key_check').length)
+      throw new Error('User table migration failed foreign key validation');
+  }
+  const userColumns = new Set(db.pragma('table_info(users)').map(column => column.name));
+  if (!userColumns.has('account_id')) db.exec('ALTER TABLE users ADD COLUMN account_id TEXT');
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_account_id ON users(account_id)');
+  db.transaction(() => {
+    const legacy = db.prepare('SELECT id FROM users WHERE account_id IS NULL').all();
+    for (const row of legacy)
+      db.prepare('UPDATE users SET account_id=? WHERE id=?')
+        .run(newAccountId(db), row.id);
+  })();
+  const syncColumns = new Set(db.pragma('table_info(friend_im_sync)')
+    .map(column => column.name));
+  if (!syncColumns.has('revision'))
+    db.exec('ALTER TABLE friend_im_sync ADD COLUMN revision INTEGER NOT NULL DEFAULT 1');
   const sessionColumns = new Set(db.prepare('PRAGMA table_info(sessions)')
     .all().map(column => column.name));
   if (!sessionColumns.has('revoked_reason'))

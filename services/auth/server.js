@@ -9,6 +9,9 @@ const { createBailianCredentialIssuer } = require('./bailian-credential');
 const { createSocialVerifiers } = require('./social-providers');
 const { createAccountModelKeyIssuer } = require('./account-model-keys');
 const { createAsrRealtimeUrlIssuer } = require('./asr-realtime-url');
+const { createAdminServer } = require('./admin-server');
+const { createTencentFriendWriter, syncPendingFriendActions } = require('./tim-friend-sync');
+const { createTencentAccountProvisioner } = require('./tim-account-provision');
 
 const MAX_BODY_BYTES = 4096;
 
@@ -78,7 +81,18 @@ function start(env = process.env) {
     issueAsrRealtimeUrl: createAsrRealtimeUrlIssuer(env),
     socialVerifiers: createSocialVerifiers(env),
     sdkAppId: Number(env.MAICHAT_IM_SDK_APP_ID),
+    provisionTestImAccount: createTencentAccountProvisioner({
+      sdkAppId: Number(env.MAICHAT_IM_SDK_APP_ID),
+      imSecret: env.MAICHAT_IM_SECRET_KEY,
+      adminUser: env.MAICHAT_IM_ADMIN_USER || 'administrator',
+      origin: env.MAICHAT_IM_REST_ORIGIN || 'https://console.tim.qq.com'
+    }),
     requireDeviceSlot
+  });
+  const friendWriter = createTencentFriendWriter({
+    sdkAppId: Number(env.MAICHAT_IM_SDK_APP_ID), imSecret: env.MAICHAT_IM_SECRET_KEY,
+    adminUser: env.MAICHAT_IM_ADMIN_USER || 'administrator',
+    origin: env.MAICHAT_IM_REST_ORIGIN || 'https://console.tim.qq.com'
   });
   const port = Number(env.MAICHAT_AUTH_PORT || 9100);
   if (!Number.isInteger(port) || port < 1 || port > 65535)
@@ -88,9 +102,27 @@ function start(env = process.env) {
   const maintenance = setInterval(() => service.cleanupExpiredRecords(),
     24 * 60 * 60 * 1000);
   maintenance.unref();
+  let friendSyncRunning = false;
+  const friendSync = setInterval(async () => {
+    if (friendSyncRunning) return;
+    friendSyncRunning = true;
+    try { await syncPendingFriendActions(db, friendWriter); }
+    catch { process.stderr.write('MaiChat friend IM sync failed\n'); }
+    finally { friendSyncRunning = false; }
+  }, 5_000);
+  friendSync.unref();
   const server = createServer(service);
-  server.on('close', () => clearInterval(maintenance));
+  server.on('close', () => { clearInterval(maintenance); clearInterval(friendSync); });
   server.listen(port, '127.0.0.1');
+  if (env.MAICHAT_AUTH_ADMIN_SECRET) {
+    const adminPort = Number(env.MAICHAT_AUTH_ADMIN_PORT || 9101);
+    if (!Number.isInteger(adminPort) || adminPort < 1 || adminPort > 65535 || adminPort === port)
+      throw new Error('Invalid admin port');
+    const adminServer = createAdminServer({ db, service,
+      secret: env.MAICHAT_AUTH_ADMIN_SECRET });
+    adminServer.listen(adminPort, '127.0.0.1');
+    server.on('close', () => adminServer.close());
+  }
   return server;
 }
 

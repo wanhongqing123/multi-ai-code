@@ -7,6 +7,8 @@ const { createHash, createHmac, randomBytes, randomInt, randomUUID, timingSafeEq
 const { generatePngQrCode } = require('@juit/qrcode');
 const { createUserSig } = require('./usersig');
 const { hashPassword, validPassword, verifyPassword } = require('./password');
+const { createFriendService } = require('./friends');
+const { validAccountId, newAccountId } = require('./account-id');
 
 const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
@@ -51,14 +53,26 @@ function mobileDevice(body, requireDeviceSlot = false) {
   return { device_slot: body.device_slot, device_platform: platform };
 }
 
+function passwordDevice(body, requireDeviceSlot = false) {
+  if (['mac', 'windows'].includes(body?.device_slot)) {
+    if (body.device_platform !== undefined && body.device_platform !== body.device_slot)
+      return null;
+    return { device_slot: body.device_slot, device_platform: body.device_slot };
+  }
+  return mobileDevice(body, requireDeviceSlot);
+}
+
 function createAuthService(options) {
   const { db, sms, secret, imSecret, sdkAppId, issueArkCredential,
-    issueBailianCredential, issueAccountModelKeys, issueAsrRealtimeUrl } = options;
+    issueBailianCredential, issueAccountModelKeys, issueAsrRealtimeUrl,
+    provisionTestImAccount } = options;
   if (!db || !sms || typeof sms.send !== 'function' ||
       typeof secret !== 'string' || secret.length < 32 ||
       typeof imSecret !== 'string' || imSecret.length < 32 ||
       !Number.isSafeInteger(sdkAppId) || sdkAppId <= 0)
     throw new Error('Auth service configuration is incomplete');
+  if (provisionTestImAccount !== undefined && typeof provisionTestImAccount !== 'function')
+    throw new Error('Invalid test IM account provisioner');
   const now = options.now || Date.now;
   if (options.requireDeviceSlot !== undefined &&
       typeof options.requireDeviceSlot !== 'boolean')
@@ -83,6 +97,8 @@ function createAuthService(options) {
     keyedHash(`social:${provider}:${JSON.stringify([appId, subject])}`);
   const randomToken = () => randomBytes(32).toString('base64url');
   const dummyHash = hashPassword('unregistered-account-dummy-password');
+  const friends = createFriendService({ db, now, normalizePhone,
+    lookupTimes: friendLookupTimes });
   let nextCleanupAt = 0;
 
   function deviceSlotRequiredError(statusCode) {
@@ -157,7 +173,7 @@ function createAuthService(options) {
       expires_in: ACCESS_LIFETIME / 1000,
       device_slot: device.device_slot,
       device_platform: device.device_platform,
-      user: { id: user.id, im_user_id: user.im_user_id }
+      user: { id: user.account_id, im_user_id: user.im_user_id }
     };
   }
 
@@ -165,7 +181,7 @@ function createAuthService(options) {
     const raw = headers?.authorization || headers?.Authorization || '';
     if (!/^Bearer [A-Za-z0-9_-]{43}$/.test(raw)) return null;
     const token = raw.slice(7);
-    const row = db.prepare(`SELECT sessions.*,users.phone_e164,users.im_user_id,
+    const row = db.prepare(`SELECT sessions.*,users.account_id,users.phone_e164,users.im_user_id,
       users.disabled_at FROM sessions JOIN users ON users.id=sessions.user_id
       WHERE access_hash=?`).get(digest(token));
     if (rejectLegacySession(row)) return null;
@@ -416,12 +432,12 @@ function createAuthService(options) {
     let user = db.prepare('SELECT * FROM users WHERE phone_e164=?').get(phone);
     if (user) return user;
     const createdAt = now();
-    const id = randomUUID();
+    const id = newAccountId(db);
     const binding = db.prepare('SELECT im_user_id FROM legacy_im_bindings WHERE phone_e164=?')
       .get(phone);
     const imUserId = binding?.im_user_id || `u${randomBytes(12).toString('hex')}`;
-    db.prepare(`INSERT INTO users(id,phone_e164,im_user_id,created_at,updated_at)
-      VALUES(?,?,?,?,?)`).run(id, phone, imUserId, createdAt, createdAt);
+    db.prepare(`INSERT INTO users(id,account_id,phone_e164,im_user_id,created_at,updated_at)
+      VALUES(?,?,?,?,?,?)`).run(id, id, phone, imUserId, createdAt, createdAt);
     if (binding)
       db.prepare('UPDATE legacy_im_bindings SET used_at=? WHERE phone_e164=?')
         .run(createdAt, phone);
@@ -544,30 +560,93 @@ function createAuthService(options) {
 
   async function loginWithPassword(body, ip) {
     const phone = normalizePhone(body?.phone);
-    if (!phone || typeof body?.password !== 'string')
+    const accountId = body?.account_id;
+    const legacyId = typeof accountId === 'string' && /^[0-9a-f-]{36}$/.test(accountId);
+    if ((!phone && !validAccountId(accountId) && !legacyId) ||
+        typeof body?.password !== 'string')
       return json(400, { error: 'Invalid login request' });
     if (body?.age_confirmed_14_plus !== true)
       return json(403, { error: 'Minimum age confirmation required' });
-    const device = mobileDevice(body, requireDeviceSlot);
+    const device = passwordDevice(body, requireDeviceSlot);
     if (!device) return mobileDeviceError(body);
+    const identity = phone || accountId;
+    const identityHash = keyedHash(`password-login:${identity}`);
     const failures = db.prepare(`SELECT COUNT(*) AS count FROM password_failures
       WHERE (phone_hash=? OR ip_hash=?) AND created_at>?`).get(
-      phoneHash(phone), ipHash(ip), now() - 15 * MINUTE).count;
+      identityHash, ipHash(ip), now() - 15 * MINUTE).count;
     if (failures >= 5) return json(429, { error: 'Please wait before trying again' });
-    const user = db.prepare('SELECT * FROM users WHERE phone_e164=?').get(phone);
+    const user = phone ? db.prepare('SELECT * FROM users WHERE phone_e164=?').get(phone) :
+      db.prepare('SELECT * FROM users WHERE account_id=? OR id=?').get(accountId, accountId);
     const encoded = user?.password_hash || await dummyHash;
     const valid = await verifyPassword(body.password, encoded);
     if (!valid || !user || user.disabled_at) {
       db.prepare('INSERT INTO password_failures(phone_hash,ip_hash,created_at) VALUES(?,?,?)')
-        .run(phoneHash(phone), ipHash(ip), now());
-      return json(401, { error: 'Phone or password is incorrect' });
+        .run(identityHash, ipHash(ip), now());
+      return json(401, { error: 'Account or password is incorrect' });
     }
     return db.transaction(() => {
       const currentUser = db.prepare('SELECT * FROM users WHERE id=?').get(user.id);
       if (!currentUser || currentUser.disabled_at || currentUser.password_hash !== encoded)
-        return json(401, { error: 'Phone or password is incorrect' });
-      db.prepare('DELETE FROM password_failures WHERE phone_hash=?').run(phoneHash(phone));
+        return json(401, { error: 'Account or password is incorrect' });
+      db.prepare('DELETE FROM password_failures WHERE phone_hash=?').run(identityHash);
       return json(200, issueSession(currentUser, device));
+    })();
+  }
+
+  async function createTestAccount(accountId, password) {
+    if (!validAccountId(accountId) || !validPassword(password))
+      return json(400, { error: 'Invalid account ID or password' });
+    if (db.prepare('SELECT 1 FROM users WHERE id=? OR account_id=? OR im_user_id=?')
+      .get(accountId, accountId, accountId))
+      return json(409, { error: 'Account ID already exists' });
+    if (provisionTestImAccount) {
+      try {
+        if (!await provisionTestImAccount(accountId))
+          return json(409, { error: 'IM account ID already exists' });
+      } catch {
+        return json(503, { error: 'Could not verify the IM account ID' });
+      }
+    }
+    const encoded = await hashPassword(password);
+    return db.transaction(() => {
+      if (db.prepare('SELECT 1 FROM users WHERE id=? OR account_id=? OR im_user_id=?')
+        .get(accountId, accountId, accountId))
+        return json(409, { error: 'Account ID already exists' });
+      db.prepare(`INSERT INTO users(id,account_id,phone_e164,im_user_id,password_hash,
+        created_at,updated_at) VALUES(?,?,NULL,?,?,?,?)`)
+        .run(accountId, accountId, accountId, encoded, now(), now());
+      db.prepare('INSERT INTO admin_audit(action,target_user_id,created_at) VALUES(?,?,?)')
+        .run('create_test_account', accountId, now());
+      return json(201, { id: accountId, im_user_id: accountId });
+    })();
+  }
+
+  function disableTestAccount(accountId) {
+    return db.transaction(() => {
+      const row = db.prepare('SELECT id FROM users WHERE account_id=? AND phone_e164 IS NULL')
+        .get(accountId);
+      if (!row) return json(404, { error: 'Test account not found' });
+      db.prepare('UPDATE users SET disabled_at=?,updated_at=? WHERE id=?')
+        .run(now(), now(), row.id);
+      db.prepare(`UPDATE sessions SET revoked_at=?,revoked_reason='account_disabled'
+        WHERE user_id=? AND revoked_at IS NULL`).run(now(), row.id);
+      db.prepare(`UPDATE friend_requests SET status='rejected',decided_at=?
+        WHERE status='pending' AND (from_user_id=? OR to_user_id=?)`)
+        .run(now(), row.id, row.id);
+      const relationships = db.prepare(`SELECT left_user_id,right_user_id FROM friendships
+        WHERE left_user_id=? OR right_user_id=?`).all(row.id, row.id);
+      for (const relation of relationships) {
+        db.prepare(`DELETE FROM friendships WHERE left_user_id=? AND right_user_id=?`)
+          .run(relation.left_user_id, relation.right_user_id);
+        db.prepare(`INSERT INTO friend_im_sync(left_user_id,right_user_id,desired,updated_at)
+          VALUES(?,?,'delete',?) ON CONFLICT(left_user_id,right_user_id) DO UPDATE SET
+          desired='delete',updated_at=excluded.updated_at,attempts=0,last_error=NULL,
+          revision=friend_im_sync.revision+1`)
+          .run(relation.left_user_id, relation.right_user_id, now());
+      }
+      db.prepare('INSERT INTO admin_audit(action,target_user_id,created_at) VALUES(?,?,?)')
+        .run('disable_test_account', accountId, now());
+      return json(200, { disabled: true });
     })();
   }
 
@@ -638,7 +717,7 @@ function createAuthService(options) {
           WHERE id=?`).run(now(), previous.id);
         return json(401, { error: 'Invalid session' });
       }
-      const row = db.prepare(`SELECT sessions.*,users.im_user_id,users.disabled_at
+      const row = db.prepare(`SELECT sessions.*,users.account_id,users.im_user_id,users.disabled_at
         FROM sessions JOIN users ON users.id=sessions.user_id WHERE refresh_hash=?`).get(hash);
       if (rejectLegacySession(row)) return deviceSlotRequiredError(401);
       if (row?.revoked_reason === 'replaced')
@@ -654,7 +733,7 @@ function createAuthService(options) {
       return json(200, { access_token: accessToken, refresh_token: refreshToken,
         expires_in: ACCESS_LIFETIME / 1000, device_slot: row.device_slot,
         device_platform: row.device_platform,
-        user: { id: row.user_id, im_user_id: row.im_user_id } });
+        user: { id: row.account_id, im_user_id: row.im_user_id } });
     })();
   }
 
@@ -682,6 +761,11 @@ function createAuthService(options) {
     if (method === 'POST' && path === '/v1/auth/desktop/claim')
       return claimDesktopRequest(request);
     const session = authenticate(headers);
+    if (path.startsWith('/v1/friends')) {
+      if (!session) return authenticationFailure(headers);
+      return friends.handle(method, path, request, session) ||
+        json(404, { error: 'Not found' });
+    }
     const protectedRoute =
       (method === 'GET' && path.startsWith('/v1/auth/desktop/request/')) ||
       (method === 'POST' && ['/v1/auth/desktop/approve',
@@ -708,17 +792,18 @@ function createAuthService(options) {
     }
     if (method === 'GET' && path === '/v1/auth/me') {
       if (!session) return json(401, { error: 'Authentication required' });
-      return json(200, { user: { id: session.user_id, im_user_id: session.im_user_id,
-        phone_masked: `${session.phone_e164.slice(0, 5)}****${session.phone_e164.slice(-4)}` },
+      return json(200, { user: { id: session.account_id, im_user_id: session.im_user_id,
+        phone_masked: session.phone_e164 ?
+          `${session.phone_e164.slice(0, 5)}****${session.phone_e164.slice(-4)}` : null },
         device_slot: session.device_slot, device_platform: session.device_platform });
     }
     if (method === 'GET' && path === '/v1/friend/my-qr') {
       if (!session) return json(401, { error: 'Authentication required' });
-      if (!/^[A-Za-z0-9_-]{1,128}$/.test(session.im_user_id))
+      if (!/^[A-Za-z0-9_-]{1,32}$/.test(session.account_id))
         return json(503, { error: 'Friend account ID is unavailable' });
-      const uri = `maichat://friend/add?user_id=${session.im_user_id}`;
+      const uri = `maichat://friend/add?user_id=${session.account_id}`;
       const png = Buffer.from(await generatePngQrCode(uri, { scale: 5, margin: 4 }));
-      return json(200, { user_id: session.im_user_id,
+      return json(200, { user_id: session.account_id,
         qr_png_base64: png.toString('base64') });
     }
     if (method === 'POST' && path === '/v1/friend/resolve') {
@@ -835,7 +920,8 @@ function createAuthService(options) {
     return json(404, { error: 'Not found' });
   }
 
-  return { handle, normalizePhone, authenticate, cleanupExpiredRecords };
+  return { handle, normalizePhone, authenticate, cleanupExpiredRecords,
+    createTestAccount, disableTestAccount };
 }
 
 module.exports = { createAuthService, normalizePhone };

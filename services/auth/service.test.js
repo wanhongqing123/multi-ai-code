@@ -224,7 +224,7 @@ test('friend QR requires login and contains no account credential', async () => 
   const signedIn = await signInWithSms(setup, '13900000002');
   const response = await setup.call('GET', path, {}, signedIn.body.access_token);
   assert.equal(response.statusCode, 200);
-  assert.equal(response.body.user_id, signedIn.body.user.im_user_id);
+  assert.equal(response.body.user_id, signedIn.body.user.id);
   assert.equal(Buffer.from(response.body.qr_png_base64, 'base64')
     .subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
   assert.ok(!JSON.stringify(response.body).includes(signedIn.body.access_token));
@@ -1093,6 +1093,12 @@ test('existing SQLite session and QR tables migrate without losing rows', () => 
         NULL,NULL,NULL,NULL);`);
     old.close();
     const migrated = openStore(filename);
+    assert.equal(migrated.pragma('table_info(users)')
+      .find(column => column.name === 'phone_e164').notnull, 0);
+    const migratedUser = migrated.prepare('SELECT id,account_id FROM users WHERE id=?')
+      .get('user');
+    assert.equal(migratedUser.id, 'user');
+    assert.match(migratedUser.account_id, /^m[0-9a-z]{20}$/);
     const row = migrated.prepare('SELECT * FROM sessions WHERE id=?').get('old');
     assert.equal(row.device_slot, null);
     assert.equal(row.revoked_reason, null);

@@ -10,7 +10,7 @@ Node 服务只监听 `127.0.0.1:9100`。验证码、密码哈希、登录会话�
 |---|---|
 | `POST /v1/auth/sms/challenge` | `{phone,purpose?,age_confirmed_14_plus:true}`；发送验证码，返回挑战 ID；`purpose` 为 `login`、`reset` 或 `social_bind` |
 | `POST /v1/auth/sms/verify` | `{phone,challenge_id,code,age_confirmed_14_plus:true,device_slot,device_platform?}`；首次验证手机号自动创建账号，返回会话 |
-| `POST /v1/auth/password/login` | `{phone,password,age_confirmed_14_plus:true,device_slot,device_platform?}`；已设置密码的账号登录 |
+| `POST /v1/auth/password/login` | `{account_id,password,age_confirmed_14_plus:true,device_slot,device_platform?}`；用 MaiChat ID 在手机、平板或桌面登录。旧手机号密码请求仍接受 `{phone,password,...}` |
 | `POST /v1/auth/password/set` | Bearer 会话 + `{new_password}`；近期登录后设置/修改密码 |
 | `POST /v1/auth/password/reset` | `{phone,challenge_id,code,new_password,age_confirmed_14_plus:true,device_slot,device_platform?}`；短信验证后重置密码并撤销旧会话 |
 | `POST /v1/auth/social/wechat/login` | `{code,device_slot,device_platform?,age_confirmed_14_plus:true}`；服务端向微信兑换 code；已绑定返回会话，未绑定返回 202 手机绑定票据 |
@@ -31,26 +31,58 @@ Node 服务只监听 `127.0.0.1:9100`。验证码、密码哈希、登录会话�
 | `GET /v1/model/api-keys` | 有效 Bearer 会话；返回 GLM、DeepSeek、MiniMax Key，客户端直接调用供应商 |
 | `GET /v1/media/authorize` | 有效 Bearer 会话；供素材服务核验该账号可否登记素材或取得 OSS 上传签名，不返回密钥 |
 | `POST /v1/asr/realtime-url` | 有效 Bearer 会话且空 JSON 请求体；返回一次性 `voice_id`、5 分钟有效的腾讯实时语音识别 `url` 与 Unix 秒 `expires_at`。每账号每分钟最多签发 10 次，未配置返回 503，超过频率返回 429；音频由 App 直连腾讯，不经过账号服务。 |
-| `GET /v1/friend/my-qr` | 有效 Bearer 会话；仅将该账号可分享的 IM `user_id` 编入好友二维码，返回 `qr_png_base64`；二维码不含手机号、访问令牌或供应商密钥。 |
-| `POST /v1/friend/resolve` | 有效 Bearer 会话，传 `{phone}` 精确查找已注册手机号；只返回对应 IM `user_id`，不回传手机号。不能查自己；每账号每小时最多 20 次，超限返回 429。 |
+| `GET /v1/friend/my-qr` | 有效 Bearer 会话；将 MaiChat `account_id` 编入好友二维码，不含手机号或凭据。 |
+| `POST /v1/friends/resolve` | 有效 Bearer 会话，传 `{account}`（MaiChat ID 或精确手机号）；返回 MaiChat `account_id` 与当前 `im_user_id`；每账号每小时最多 20 次。 |
+| `POST /v1/friends/requests` | 有效 Bearer 会话，传 `{account}`；创建待确认的 MaiChat 好友申请，同一发起人每小时最多 20 次。 |
+| `GET /v1/friends/requests` | 有效 Bearer 会话；返回待处理的 `incoming` 与 `outgoing`。 |
+| `POST /v1/friends/requests/{id}/accept`、`/reject` | 接收方同意或拒绝申请；同意后 MaiChat 关系立即生效，腾讯 IM 同步排队。 |
+| `GET /v1/friends` | 有效 Bearer 会话；返回 MaiChat 已接受好友及当前 IM 映射，不从腾讯列表构建。 |
+| `POST /v1/friends/remove` | 有效 Bearer 会话，传 `{account}`；删除 MaiChat 好友关系，异步删除腾讯双向关系。聊天历史不删除。 |
+| `POST /v1/friend/resolve` | 旧客户端过渡接口，仅按手机号返回 IM ID；新客户端不得使用。 |
 
 接口经 Nginx 对外使用 `/api/v1/...`；服务内部路由仍为 `/v1/...`。
 
-## 好友关系迁移镜像
+## 好友关系主记录与旧镜像导入
+
+`friend_requests` 和 `friendships` 是 MaiChat 的申请及好友主记录，好友以用户内部主键关联；
+对外使用短 `account_id`。接受或删除时写入 `friend_im_sync`，服务端每 5 秒把期望状态
+通过管理员 REST API 同步到腾讯 IM；失败保留队列并重试。腾讯 IM 是当前通信服务的
+关系投影，客户端通讯录以 MaiChat 列表为准。旧用户的内部 UUID 保留为数据库关联键，
+迁移时为其补发短 `account_id`，现有会话与手机号绑定不改；新用户内部键和短账号相同。
+
+上线前先运行旧只读镜像 `friend-mirror.js --run`，再用
+`node import-friend-mirror.js --dry-run` 查看互为好友的关系数；备份数据库后运行
+`node import-friend-mirror.js --run` 一次性导入互为好友的已注册账号。单向关系不会
+自动升级为双向好友。导入后停用旧的 `maichat-friend-mirror.timer`，后续不再让腾讯列表
+覆盖 MaiChat 主记录。导入有不可重复标记，删除好友后不会从旧镜像重新出现。
+
+### 原有镜像的范围
 
 账号服务的 `friend_mirror` 用 MaiChat 内部 `users.id` 记录已注册账号间的有向好友关系，
 `friend_mirror_sync` 记录每个账号最近一次成功同步时间和腾讯 IM 好友数量。手机号和
-腾讯 IM ID 不进入关系主键。镜像仅供备份与未来迁移，不参与当前好友申请、消息发送或权限判断。
+腾讯 IM ID 不进入关系主键。镜像只作为旧数据导入来源，不参与新好友申请、消息发送或权限判断。
 
 `node friend-mirror.js --dry-run` 用现有 IM SDKAppID/密钥生成管理员 UserSig，调用腾讯
 `friend_get` 分页读取全量好友，**不写数据库**；`--run` 在每个账号完整拉取成功后
 原子替换该账号镜像。单个账号拉取失败会保留该账号上次成功的快照，进程报错供
 systemd 监控。只映射账号库中已存在的好友，未注册的外部 IM ID 不写入镜像。
-生产定时任务示例见 `deploy/maichat-friend-mirror.service.example` 与 `.timer.example`，
-按小时重建；迁移前可手动执行一次 `--run` 并核对摘要。任务只读腾讯 IM，不调用
+旧定时任务示例见 `deploy/maichat-friend-mirror.service.example` 与 `.timer.example`；
+迁移前手动执行一次 `--run` 并核对摘要，迁移后停用 timer。任务只读腾讯 IM，不调用
 添加、删除好友接口，不需要修改腾讯控制台的全局回调配置。默认管理员账号为
 `administrator`、REST 域名为 `https://console.tim.qq.com`，如应用不在中国区可通过
 `MAICHAT_IM_ADMIN_USER`、`MAICHAT_IM_REST_ORIGIN` 覆盖。
+
+## 测试账号管理员界面
+
+在服务器的 `/etc/maichat/auth.env` 设置独立的 `MAICHAT_AUTH_ADMIN_SECRET`（至少 32 字符）
+后，服务另外只监听 `127.0.0.1:9101`。管理员通过 SSH 端口转发访问这个本机页面，
+用 HTTP Basic 的用户名 `admin` 和该独立密钥登录。页面可填写测试账号的 MaiChat ID 与
+密码、查看状态并停用；不显示已保存的密码。测试账号无手机号，内部 ID、对外
+`account_id` 和当前腾讯 IM ID 使用管理员填写的同一个值。账号 ID 限 3～32 字符，
+首字符小写字母，其余为小写字母、数字、下划线或连字符；密码沿用 15～128 字符的
+scrypt 策略。创建前服务端通过腾讯 `account_check` 确认该 IM ID 尚未被其他人占用，
+再用 `account_import` 建立 IM 账号；腾讯不可用时拒绝创建，不接管已有 IM ID。
+页面不经 Nginx 对公网提供，创建和停用留 `admin_audit` 记录。
 
 用户主键和腾讯 IM UserID 与手机号分离，换号不改变 IM 身份。首次登录前如需
 沿用旧 IM UserID，必须由管理员**独立核实归属**后在服务器上执行
@@ -147,7 +179,8 @@ AppKey 必须只保存在服务端。
   对并发请求乱序完成，较早请求不会覆盖较新已送达的验证码。
 - 验证码校验记录和失败登录记录在安全追溯窗口后按天清理；失效或撤销的
   会话记录同样按天清理。服务启动时会先补做一次清理。
-- 密码是可选登录方式，首次账号创建必须先验证手机号。密码至少 15 个字符，
+- 普通用户通过验证手机号创建账号，密码是可选登录方式；管理员可创建无手机号
+  的测试账号并填写密码。密码至少 15 个字符，
   服务端用独立盐与 scrypt 慢哈希保存，App 不保存明文密码。
 - 访问令牌 15 分钟、轮换刷新令牌 30 天；只存令牌哈希。退出、密码重置和
   重放旧刷新令牌会撤销对应会话。客户端应在 Keychain/Keystore/系统凭据库

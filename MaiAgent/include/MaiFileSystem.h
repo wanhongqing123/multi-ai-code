@@ -73,6 +73,8 @@ public:
 
     // 将完整临时文件交付到同一文件系统内的新路径，不替换现有目标。
     // 失败时源路径仍由调用方持有；目标父目录必须已存在。本操作会阻塞线程。
+    // Android 宿主通过 Java 文件接口完成此操作，适用于 App 私有工作区内、
+    // 所有发布者都使用同一宿主桥接的场景；不保证与绕过桥接的写入者跨进程无覆盖竞争。
     static MaiError publishNewFile(const MaiFilePath& source, const MaiFilePath& destination);
 
     // ── 目录 ────────────────────────────────────────────────────

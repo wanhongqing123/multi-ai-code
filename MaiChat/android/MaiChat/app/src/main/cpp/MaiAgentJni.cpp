@@ -2,6 +2,7 @@
 // 直接依赖：MaiMobileAgent.h、MaiImageFilter.h；实现与这些接口协作。
 #include "MaiMobileAgent.h"
 #include "MaiImageFilter.h"
+#include "MaiAndroidFileOperations.h"
 #ifndef NDEBUG
 #include "MaiDownloadFileTool.h"
 #include "MaiFilePath.h"
@@ -9,12 +10,61 @@
 #include "MaiTool.h"
 #endif
 #include <android/bitmap.h>
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <jni.h>
 #include <string>
 
 namespace {
+
+JavaVM* sFileJavaVm = nullptr;
+jclass sFileOperationsClass = nullptr;
+jmethodID sPublishNewFileMethod = nullptr;
+
+int publishNewFileInJava(const char* source, const char* destination) {
+    JNIEnv* env = nullptr;
+    bool detachAfter = false;
+    if (sFileJavaVm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) == JNI_EDETACHED) {
+        if (sFileJavaVm->AttachCurrentThread(&env, nullptr) != JNI_OK) return EIO;
+        detachAfter = true;
+    }
+    if (env == nullptr) return EIO;
+
+    const auto makeBytes = [env](const char* value) {
+        const jsize length = static_cast<jsize>(std::strlen(value));
+        jbyteArray bytes = env->NewByteArray(length);
+        if (bytes != nullptr) env->SetByteArrayRegion(bytes, 0, length, reinterpret_cast<const jbyte*>(value));
+        return bytes;
+    };
+    jbyteArray sourceBytes = makeBytes(source);
+    jbyteArray destinationBytes = sourceBytes != nullptr ? makeBytes(destination) : nullptr;
+    int status = ENOMEM;
+    bool calledJava = false;
+    if (sourceBytes != nullptr && destinationBytes != nullptr && !env->ExceptionCheck()) {
+        calledJava = true;
+        const jint result =
+            env->CallStaticIntMethod(sFileOperationsClass, sPublishNewFileMethod, sourceBytes, destinationBytes);
+        if (!env->ExceptionCheck()) {
+            switch (result) {
+                case 0: status = 0; break;
+                case 1: status = EEXIST; break;
+                case 2: status = ENOENT; break;
+                case 3: status = EACCES; break;
+                case 4: status = EINVAL; break;
+                default: status = EIO; break;
+            }
+        }
+    }
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        status = calledJava ? EIO : ENOMEM;
+    }
+    if (sourceBytes != nullptr) env->DeleteLocalRef(sourceBytes);
+    if (destinationBytes != nullptr) env->DeleteLocalRef(destinationBytes);
+    if (detachAfter) sFileJavaVm->DetachCurrentThread();
+    return status;
+}
 
 struct JniHostToolContext {
   JavaVM *vm = nullptr;
@@ -92,6 +142,25 @@ void hostToolContextRelease(void *opaque) {
 }
 
 } // namespace
+
+extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void*) {
+    JNIEnv* env = nullptr;
+    if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) return JNI_ERR;
+    jclass local = env->FindClass("com/kongshang/maichat/AndroidFileOperations");
+    if (local == nullptr) return JNI_ERR;
+    sFileOperationsClass = static_cast<jclass>(env->NewGlobalRef(local));
+    env->DeleteLocalRef(local);
+    if (sFileOperationsClass == nullptr) return JNI_ERR;
+    sPublishNewFileMethod = env->GetStaticMethodID(sFileOperationsClass, "publishNewFile", "([B[B)I");
+    if (sPublishNewFileMethod == nullptr) {
+        env->DeleteGlobalRef(sFileOperationsClass);
+        sFileOperationsClass = nullptr;
+        return JNI_ERR;
+    }
+    sFileJavaVm = vm;
+    maiSetAndroidPublishNewFileCallback(publishNewFileInJava);
+    return JNI_VERSION_1_6;
+}
 
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_kongshang_maichat_AIAssistantController_nativeCreate(JNIEnv *,

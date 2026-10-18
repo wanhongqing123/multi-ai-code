@@ -12,12 +12,13 @@
 #include <sys/types.h>
 #include <unistd.h>
 #if defined(__ANDROID__)
-#include <linux/fs.h>
-#include <sys/syscall.h>
+#include <atomic>
 #endif
-
 #include <vector>
 
+#if defined(__ANDROID__)
+#include "MaiAndroidFileOperations.h"
+#endif
 #include "MaiFilePath.h"
 #include "MaiFileSystem.h"
 #include "MaiBlockingCheck.h"
@@ -33,6 +34,10 @@
 // 擅自做编码转换反而会改写文件名。这正是内部不统一用 UTF-8 的理由（见 MaiFilePath.h）。
 
 namespace {
+
+#if defined(__ANDROID__)
+std::atomic<MaiAndroidPublishNewFileCallback> sAndroidPublishNewFile{nullptr};
+#endif
 
 MaiErrorCode toErrorCode(int savedErrno) {
     switch (savedErrno) {
@@ -56,6 +61,17 @@ bool statOf(const MaiFilePath& path, struct stat& out) {
 }
 
 }  // namespace
+
+#if defined(__ANDROID__)
+void maiSetAndroidPublishNewFileCallback(MaiAndroidPublishNewFileCallback callback) {
+    sAndroidPublishNewFile.store(callback, std::memory_order_release);
+}
+
+int maiAndroidPublishNewFile(const char* source, const char* destination) {
+    const auto callback = sAndroidPublishNewFile.load(std::memory_order_acquire);
+    return callback != nullptr ? callback(source, destination) : ENOSYS;
+}
+#endif
 
 // ── MaiFilePath 的边界转换 ──────────────────────────────────────
 // POSIX 上文件名就是字节，原样进出。
@@ -198,14 +214,12 @@ MaiError MaiFileSystem::publishNewFile(const MaiFilePath& source, const MaiFileP
         return MaiError::make(MaiErrorCode::InvalidInput, "empty publish path");
     maiAssertBlockingAllowed("MaiFileSystem::publishNewFile");
 #if defined(__ANDROID__)
-    // Android 应用数据目录可能拒绝硬链接。无覆盖重命名既保持原子性，
-    // 也不会替换已经存在的目标文件；旧内核不支持时沿用原来的流程。
-    if (::syscall(SYS_renameat2, AT_FDCWD, source.value().c_str(), AT_FDCWD,
-                  destination.value().c_str(), RENAME_NOREPLACE) == 0)
-        return {};
-    if (errno != ENOSYS && errno != EINVAL && errno != EOPNOTSUPP)
-        return errnoAs("cannot publish file");
-#endif
+    const int status =
+        maiAndroidPublishNewFile(source.value().c_str(), destination.value().c_str());
+    if (status == 0) return {};
+    errno = status;
+    return errnoAs("cannot publish file");
+#else
     if (::link(source.value().c_str(), destination.value().c_str()) != 0)
         return errnoAs("cannot publish file");
     if (::unlink(source.value().c_str()) == 0) return {};
@@ -213,6 +227,7 @@ MaiError MaiFileSystem::publishNewFile(const MaiFilePath& source, const MaiFileP
     ::unlink(destination.value().c_str());
     errno = saved;
     return errnoAs("cannot remove published temporary file");
+#endif
 }
 
 MaiError MaiFileSystem::createDirectories(const MaiFilePath& path) {

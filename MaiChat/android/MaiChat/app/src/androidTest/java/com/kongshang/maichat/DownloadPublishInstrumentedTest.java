@@ -34,12 +34,15 @@ public final class DownloadPublishInstrumentedTest {
     @Test public void localDownloadPublishesInAppPrivateWorkspaceWithoutOverwrite() throws Exception {
         File workspace = privateWorkspace();
         File output = new File(workspace, "clip.bin");
+        int previousJavaPublishes = AndroidFileOperations.publishCallsForTest;
         byte[] expected = new byte[] {0, 1, 2, 3, (byte) 0xFF};
         try (LocalFixture fixture = new LocalFixture(expected, 2)) {
             JSONObject request = new JSONObject().put("url", fixture.url())
                 .put("output_path", "clip.bin");
             JSONObject first = download(request, workspace);
             assertTrue(first.toString(), first.getBoolean("ok"));
+            assertTrue("native download did not call Android Java file operations",
+                AndroidFileOperations.publishCallsForTest > previousJavaPublishes);
             assertEquals(output.getCanonicalPath(),
                 new File(new JSONObject(first.getString("output")).getString("path"))
                     .getCanonicalPath());
@@ -61,11 +64,14 @@ public final class DownloadPublishInstrumentedTest {
         File workspace = privateWorkspace();
         File source = new File(workspace, "source.bin");
         File target = new File(workspace, "target.bin");
+        int previousJavaPublishes = AndroidFileOperations.publishCallsForTest;
         byte[] original = new byte[] {7, 8, 9};
         try {
             Files.write(source.toPath(), original);
             assertTrue(nativePublishNewFile(bytes(source.getAbsolutePath()),
                 bytes(target.getAbsolutePath())));
+            assertTrue("MaiFileSystem did not call Android Java file operations",
+                AndroidFileOperations.publishCallsForTest > previousJavaPublishes);
             assertFalse(source.exists());
             assertArrayEquals(original, Files.readAllBytes(target.toPath()));
 

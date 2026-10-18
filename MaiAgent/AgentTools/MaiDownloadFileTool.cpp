@@ -20,12 +20,11 @@
 #else
 #include <fcntl.h>
 #include <unistd.h>
-#if defined(__ANDROID__)
-#include <linux/fs.h>
-#include <sys/syscall.h>
-#endif
 #endif
 
+#if defined(__ANDROID__)
+#include "MaiAndroidFileOperations.h"
+#endif
 #include "MaiBlockingCheck.h"
 #include "MaiFilePath.h"
 #include "MaiFileSystem.h"
@@ -211,16 +210,9 @@ public:
             mDiskFull = mPublishError == ERROR_DISK_FULL || mPublishError == ERROR_HANDLE_DISK_FULL;
         }
 #elif defined(__ANDROID__)
-        // Android 应用数据目录可能拒绝硬链接。无覆盖重命名保持原子发布，
-        // 并保留已经存在的目标文件。
-        bool moved = ::syscall(SYS_renameat2, AT_FDCWD, mPath.value().c_str(), AT_FDCWD,
-                               destination.value().c_str(), RENAME_NOREPLACE) == 0;
-        int error = moved ? 0 : errno;
-        if (!moved && (error == ENOSYS || error == EINVAL || error == EOPNOTSUPP)) {
-            moved = ::link(mPath.value().c_str(), destination.value().c_str()) == 0 &&
-                    ::unlink(mPath.value().c_str()) == 0;
-            error = moved ? 0 : errno;
-        }
+        const int error =
+            maiAndroidPublishNewFile(mPath.value().c_str(), destination.value().c_str());
+        const bool moved = error == 0;
         if (!moved) {
             mPublishError = error;
             mDiskFull = error == ENOSPC;

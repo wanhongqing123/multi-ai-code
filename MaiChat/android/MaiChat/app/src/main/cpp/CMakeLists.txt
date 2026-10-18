@@ -9,7 +9,8 @@ add_library(maichat_agent SHARED MaiAgentJni.cpp MaiChatAuthJni.cpp MaiGraphicsV
   media/MaiImageDecodeJni.cpp media/MaiFfplayJni.cpp
   media/TencentRealtimeSpeechWebSocketJni.cpp)
 target_include_directories(maichat_agent PRIVATE
-  ../../../../../../Media/FfplayCompat)
+  ../../../../../../Media/FfplayCompat
+  ../../../../../../../MaiAgent/include)
 target_link_libraries(maichat_agent PRIVATE maichat_mobile CURL::libcurl maichat_ffplay_hosted
   jnigraphics android log)
 if(TARGET maiagent_obs_gles)

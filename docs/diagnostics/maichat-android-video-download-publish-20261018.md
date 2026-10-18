@@ -22,3 +22,10 @@
 - Android App 私有目录验证提交 `d35d62cd8827f82d93d3ae3e3aa4e2b847fccacd`：在 Mac ARM Android 模拟器的 MaiChat Debug App 中，用仅绑定 `127.0.0.1` 的无付费 HTTP fixture 测试 `curl_download`。首次发布字节正确；再次下载同名文件返回 `file_exists` 且原文件保持不变。相同 App 私有目录中，通用 `MaiFileSystem::publishNewFile` 新建成功、目标已存在时拒绝覆盖且源文件保留。同进程 instrumentation 2/2 通过，测试文件已清理。路径比较使用 canonical path，因为 Android 的 `/data/user/0` 与 `/data/data` 是同一私有目录的别名。
 - 从 `d35d62cd` 构建的 Android 签名 Release 2.2.2（222）通过；测试 JNI 入口只在 Debug 编译，经 APK 内 arm64 原生库符号核对未进入 Release。Mac `MaiDownloadFileTests` 与 `MaiFilePathTests` 2/2、Desktop 隔离 `--smoke` 通过。
 - 待完成：OPPO Release App 私有 F2FS 目录的实际下载与供应商任务终态尚未验证。当前 OPPO 保持 2.2.1，不能宣称其用户现场已经修复，也不能凭本地发布错误判断视频生成失败。
+
+## Android Java/JNI 文件发布调整（同日）
+
+- 用户要求 Android 的文件发布操作由 Java 系统文件接口实现，并通过 JNI 供 MaiAgent 的 C++ 文件接口调用。临时下载文件与最终文件都在当前账号的 App 私有工作区内；普通写入已成功，失败发生在旧硬链接发布步骤。
+- 调整只覆盖 Android 的“完整临时文件 → 新目标文件”发布：`AndroidFileOperations.publishNewFile` 调用 `Files.move(source, target)`，JNI 在原生工作线程上附着 JVM 并调用该方法。`MaiFileSystem::publishNewFile` 和 `curl_download` 共用此回调；iOS/macOS/Windows 的文件操作分支未改。
+- Java 方法串行化本进程经桥接进入的发布调用，目标已存在时返回明确错误并保留源文件；严格 UTF-8 解码避免默默改写路径。Java 的无选项 `Files.move` 文档不保证与原 `RENAME_NOREPLACE` 同等的原子无覆盖语义：若另一进程或绕过此桥接的同进程写入者恰在存在性检查后创建目标，仍可能被重命名覆盖。因此此实现限定 MaiChat 单进程 App 私有工作区，不作为外部共享目录或任意并发写入者的通用替代。
+- 新 Java 单测先因缺少实现而编译失败，添加实现后通过首次发布、重复目标、非法字节路径、Unicode 路径和本进程并发发布；Android 整组本地 Java 单测、Debug/Release Java 编译及 instrumentation Java 编译通过，arm64/armv7 相关三处 C++ 文件的 Debug/Release 语法编译通过。Windows MaiAgent 增量构建、CTest 38/38 和假模型控制台端到端检查通过。Android instrumentation 已补断言，要求实际原生下载和通用发布都进入 Java 方法；当前 Windows 无完整 Android ONNX/OpenSSL 源构建产物，尚未运行此 instrumentation，OPPO 已安装 2.2.1 未替换。

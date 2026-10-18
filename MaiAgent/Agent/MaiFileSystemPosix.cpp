@@ -11,6 +11,10 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#if defined(__ANDROID__)
+#include <linux/fs.h>
+#include <sys/syscall.h>
+#endif
 
 #include <vector>
 
@@ -71,24 +75,24 @@ std::string MaiFilePath::toGenericUtf8() const {
 // ── MaiFileSystem ───────────────────────────────────────────────
 
 bool MaiFileSystem::exists(const MaiFilePath& path) {
-    struct stat info{};
+    struct stat info {};
     return statOf(path, info);
 }
 
 bool MaiFileSystem::isDirectory(const MaiFilePath& path) {
-    struct stat info{};
+    struct stat info {};
     if (!statOf(path, info)) return false;
     return S_ISDIR(info.st_mode);
 }
 
 bool MaiFileSystem::isSymbolicLink(const MaiFilePath& path) {
     if (path.isEmpty()) return false;
-    struct stat info{};
+    struct stat info {};
     return ::lstat(path.value().c_str(), &info) == 0 && S_ISLNK(info.st_mode);
 }
 
 bool MaiFileSystem::fileSize(const MaiFilePath& path, std::uint64_t& size) {
-    struct stat info{};
+    struct stat info {};
     if (!statOf(path, info)) return false;
     if (S_ISDIR(info.st_mode)) return false;
     size = static_cast<std::uint64_t>(info.st_size);
@@ -97,7 +101,7 @@ bool MaiFileSystem::fileSize(const MaiFilePath& path, std::uint64_t& size) {
 
 bool MaiFileSystem::modifiedTime(const MaiFilePath& path, std::int64_t& seconds) {
     if (path.isEmpty()) return false;
-    struct stat info{};
+    struct stat info {};
     if (::lstat(path.value().c_str(), &info) != 0) return false;
     seconds = static_cast<std::int64_t>(info.st_mtime);
     return true;
@@ -113,7 +117,7 @@ MaiError MaiFileSystem::readFile(const MaiFilePath& path, std::string& contents,
     const int fd = ::open(path.value().c_str(), O_RDONLY | O_CLOEXEC);
     if (fd < 0) return errnoAs("cannot open file for reading");
 
-    struct stat info{};
+    struct stat info {};
     if (::fstat(fd, &info) != 0) {
         const MaiError error = errnoAs("cannot stat file");
         ::close(fd);
@@ -193,6 +197,15 @@ MaiError MaiFileSystem::publishNewFile(const MaiFilePath& source, const MaiFileP
     if (source.isEmpty() || destination.isEmpty())
         return MaiError::make(MaiErrorCode::InvalidInput, "empty publish path");
     maiAssertBlockingAllowed("MaiFileSystem::publishNewFile");
+#if defined(__ANDROID__)
+    // Android 应用数据目录可能拒绝硬链接。无覆盖重命名既保持原子性，
+    // 也不会替换已经存在的目标文件；旧内核不支持时沿用原来的流程。
+    if (::syscall(SYS_renameat2, AT_FDCWD, source.value().c_str(), AT_FDCWD,
+                  destination.value().c_str(), RENAME_NOREPLACE) == 0)
+        return {};
+    if (errno != ENOSYS && errno != EINVAL && errno != EOPNOTSUPP)
+        return errnoAs("cannot publish file");
+#endif
     if (::link(source.value().c_str(), destination.value().c_str()) != 0)
         return errnoAs("cannot publish file");
     if (::unlink(source.value().c_str()) == 0) return {};
@@ -241,7 +254,7 @@ void MaiFileSystem::walk(const MaiFilePath& root,
 
             // lstat 不是 stat：要看的是这一项**自身**是不是符号链接，而不是它指向的东西。
             // 用 stat 的话符号链接会被当成它的目标，于是指回上级的链接会让遍历无限转下去。
-            struct stat info{};
+            struct stat info {};
             if (::lstat(entry.path.value().c_str(), &info) != 0) continue;
             const bool isSymlink = S_ISLNK(info.st_mode);
             entry.isDirectory = S_ISDIR(info.st_mode);

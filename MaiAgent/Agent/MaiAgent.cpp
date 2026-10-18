@@ -238,10 +238,9 @@ struct MaiAgent::Runtime {
     }
 
     void markWorkerFinished() {
-        {
-            std::lock_guard<std::mutex> lock(mutex);
-            --liveWorkers;
-        }
+        std::lock_guard<std::mutex> lock(mutex);
+        --liveWorkers;
+        // 析构方看到零后就能释放 Runtime；通知必须在解锁前完成。
         workersFinished.notify_all();
     }
 

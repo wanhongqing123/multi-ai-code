@@ -2,6 +2,12 @@
 // 直接依赖：MaiMobileAgent.h、MaiImageFilter.h；实现与这些接口协作。
 #include "MaiMobileAgent.h"
 #include "MaiImageFilter.h"
+#ifndef NDEBUG
+#include "MaiDownloadFileTool.h"
+#include "MaiFilePath.h"
+#include "MaiFileSystem.h"
+#include "MaiTool.h"
+#endif
 #include <android/bitmap.h>
 #include <cstdlib>
 #include <cstring>
@@ -185,6 +191,50 @@ Java_com_kongshang_maichat_AIAssistantController_nativeMatteVideo(
   maiMobileAgentFree(response);
   return bytes;
 }
+
+#ifndef NDEBUG
+// Debug instrumentation calls the same download tool with an App-private workspace and local HTTP fixture.
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_kongshang_maichat_DownloadPublishInstrumentedTest_nativeDownload(
+    JNIEnv *env, jclass, jbyteArray arguments, jbyteArray workspace) {
+  if (arguments == nullptr || workspace == nullptr) return nullptr;
+  const auto read = [env](jbyteArray value) {
+    const jsize size = env->GetArrayLength(value);
+    std::string result(static_cast<std::size_t>(size), '\0');
+    if (size > 0)
+      env->GetByteArrayRegion(value, 0, size,
+                              reinterpret_cast<jbyte *>(&result[0]));
+    return result;
+  };
+  MaiToolContext context;
+  context.root = read(workspace);
+  const MaiToolResult result = makeMaiDownloadFileTool()->execute(read(arguments), context);
+  const std::string response = result.hasError()
+      ? "ERR\n" + result.error().message() : "OK\n" + result.output();
+  jbyteArray bytes = env->NewByteArray(static_cast<jsize>(response.size()));
+  if (bytes != nullptr)
+    env->SetByteArrayRegion(bytes, 0, static_cast<jsize>(response.size()),
+                            reinterpret_cast<const jbyte *>(response.data()));
+  return bytes;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_kongshang_maichat_DownloadPublishInstrumentedTest_nativePublishNewFile(
+    JNIEnv *env, jclass, jbyteArray source, jbyteArray destination) {
+  if (source == nullptr || destination == nullptr) return JNI_FALSE;
+  const auto read = [env](jbyteArray value) {
+    const jsize size = env->GetArrayLength(value);
+    std::string result(static_cast<std::size_t>(size), '\0');
+    if (size > 0)
+      env->GetByteArrayRegion(value, 0, size,
+                              reinterpret_cast<jbyte *>(&result[0]));
+    return result;
+  };
+  return MaiFileSystem::publishNewFile(MaiFilePath::fromUtf8(read(source)),
+                                        MaiFilePath::fromUtf8(read(destination)))
+      ? JNI_FALSE : JNI_TRUE;
+}
+#endif
 
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_kongshang_maichat_AIAssistantController_nativeFilterBitmap(

@@ -188,6 +188,8 @@ struct MaiAgent::Runtime {
 
     mutable std::mutex mutex;
     std::condition_variable turnFinished;
+    std::condition_variable workersFinished;
+    size_t liveWorkers = 0;
     std::unordered_map<std::string, std::shared_ptr<ActiveTurn>> active;
     // 被 close_agent 收掉的子 Agent。只是不再占名额，消息一条不删。
     std::set<std::string> closedSubAgents;
@@ -200,7 +202,12 @@ struct MaiAgent::Runtime {
     std::unordered_map<std::string, int> specialistStatusFailures;
 
     ~Runtime() {
-        // 析构时把所有在跑的轮次叫停并等它们退出，否则工作线程会访问已经销毁的 store/emitter。
+        stopActiveTurns();
+    }
+
+    void stopActiveTurns() {
+        // unique_ptr 析构会先清空 MaiAgent::mRuntime，再执行 Runtime 析构。
+        // 因此 MaiAgent 析构体里也要先调用这里，让工作线程仍能安全访问 mRuntime。
         std::vector<std::shared_ptr<ActiveTurn>> pending;
         {
             std::lock_guard<std::mutex> lock(mutex);
@@ -216,9 +223,26 @@ struct MaiAgent::Runtime {
             for (const auto& request : permissions->listPending())
                 permissions->cancelSession(request.sessionId);
         }
-        for (auto& turn : pending) {
-            if (turn->worker.joinable()) turn->worker.join();
+        if (questions) {
+            for (const auto& request : questions->listPending())
+                questions->cancelSession(request.sessionId);
         }
+        // retire 会先 detach+erase，然后才发完通知。只等 active 会漏掉这段尾声。
+        std::unique_lock<std::mutex> lock(mutex);
+        workersFinished.wait(lock, [this] { return liveWorkers == 0; });
+    }
+
+    void markWorkerStarted() {
+        std::lock_guard<std::mutex> lock(mutex);
+        ++liveWorkers;
+    }
+
+    void markWorkerFinished() {
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            --liveWorkers;
+        }
+        workersFinished.notify_all();
     }
 
     MaiTurnRunner::Dependencies dependencies() {
@@ -250,7 +274,7 @@ struct MaiAgent::Runtime {
             // 只有还是自己这一轮时才移除：可能已经有新的一轮顶上来了。
             if (it != active.end() && it->second == turn) {
                 // 正在执行的就是这个线程，不能 join 自己。
-                it->second->worker.detach();
+                if (it->second->worker.joinable()) it->second->worker.detach();
                 active.erase(it);
             }
         }
@@ -303,6 +327,7 @@ MaiAgent::~MaiAgent() {
     mRuntime->stopSpecialists.store(true, std::memory_order_relaxed);
     mRuntime->specialistWake.notify_all();
     if (mRuntime->specialistWorker.joinable()) mRuntime->specialistWorker.join();
+    mRuntime->stopActiveTurns();
 }
 
 void MaiAgent::pollSpecialistTasks() {
@@ -542,7 +567,9 @@ void MaiAgent::forwardSpecialistReply(const MaiSpecialistTask& task) {
                 }
             }
             mRuntime->retire(task.ownerSessionId, turn);
+            mRuntime->markWorkerFinished();
         });
+        mRuntime->markWorkerStarted();
         turn->signalReady();
     } catch (...) {
         mRuntime->retire(task.ownerSessionId, turn);
@@ -919,7 +946,9 @@ MaiResult<std::string> MaiAgent::submit(const MaiOperation& operation) {
                     MaiTurnRunner runner(dependencies, sessionId, assistant);
                     runner.run(turn->cancel);
                     mRuntime->retire(sessionId, turn);
+                    mRuntime->markWorkerFinished();
                 });
+                mRuntime->markWorkerStarted();
                 turn->signalReady();
                 return assistant.id;
 

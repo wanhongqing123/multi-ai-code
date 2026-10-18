@@ -217,6 +217,34 @@ test('a valid unlisted account can use all model and media credential routes', a
   setup.db.close();
 });
 
+test('ASR URL issuance requires a session and limits each account', async () => {
+  let serial = 0;
+  const setup = fixture({ issueAsrRealtimeUrl: () => ({
+    voice_id: `00000000-0000-4000-8000-${String(++serial).padStart(12, '0')}`,
+    url: 'wss://asr.cloud.tencent.com/asr/v2/1234567890?signed=test',
+    expires_at: 1_780_000_300
+  }) });
+  const path = '/v1/asr/realtime-url';
+  assert.equal((await setup.call('POST', path)).statusCode, 401);
+  const token = (await signInWithSms(setup, '13900000002')).body.access_token;
+  assert.equal((await setup.call('POST', path, { engine_model_type: 'paid' }, token))
+    .statusCode, 400);
+  for (let index = 0; index < 10; index++) {
+    const response = await setup.call('POST', path, {}, token);
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body.expires_at, 1_780_000_300);
+  }
+  assert.equal((await setup.call('POST', path, {}, token)).statusCode, 429);
+  setup.advance(60_001);
+  assert.equal((await setup.call('POST', path, {}, token)).statusCode, 200);
+  setup.db.close();
+
+  const unavailable = fixture();
+  const other = (await signInWithSms(unavailable)).body.access_token;
+  assert.equal((await unavailable.call('POST', path, {}, other)).statusCode, 503);
+  unavailable.db.close();
+});
+
 test('one SMS login creates a stable account and a server-signed IM identity', async () => {
   const setup = fixture();
   const sent = await setup.call('POST', '/v1/auth/sms/challenge',

@@ -53,7 +53,7 @@ function mobileDevice(body, requireDeviceSlot = false) {
 
 function createAuthService(options) {
   const { db, sms, secret, imSecret, sdkAppId, issueArkCredential,
-    issueBailianCredential, issueAccountModelKeys } = options;
+    issueBailianCredential, issueAccountModelKeys, issueAsrRealtimeUrl } = options;
   if (!db || !sms || typeof sms.send !== 'function' ||
       typeof secret !== 'string' || secret.length < 32 ||
       typeof imSecret !== 'string' || imSecret.length < 32 ||
@@ -73,6 +73,7 @@ function createAuthService(options) {
   const arkIssuanceInFlight = new Map();
   const bailianCredentials = new Map();
   const bailianIssuanceInFlight = new Map();
+  const asrIssuanceTimes = new Map();
   const keyedHash = text => createHmac('sha256', secret).update(text).digest('hex');
   const phoneHash = phone => keyedHash(`phone:${phone}`);
   const ipHash = ip => keyedHash(`ip:${ip || 'unknown'}`);
@@ -125,6 +126,9 @@ function createAuthService(options) {
       db.prepare('DELETE FROM sessions WHERE (revoked_at IS NOT NULL AND revoked_at<?) OR refresh_expires_at<?')
         .run(current - 29 * DAY, current - 29 * DAY);
     })();
+    for (const [userId, times] of asrIssuanceTimes) {
+      if (times.at(-1) < current - MINUTE) asrIssuanceTimes.delete(userId);
+    }
     nextCleanupAt = current + DAY;
   }
 
@@ -721,6 +725,28 @@ function createAuthService(options) {
         return json(503, { error: 'Main chat model keys are unavailable' });
       try { return json(200, await issueAccountModelKeys()); }
       catch { return json(503, { error: 'Main chat model keys are unavailable' }); }
+    }
+    if (method === 'POST' && path === '/v1/asr/realtime-url') {
+      if (!session) return json(401, { error: 'Authentication required' });
+      if (Object.keys(request).length)
+        return json(400, { error: 'ASR request parameters are not accepted' });
+      if (typeof issueAsrRealtimeUrl !== 'function')
+        return json(503, { error: 'Speech recognition is unavailable' });
+      const recent = (asrIssuanceTimes.get(session.user_id) || [])
+        .filter(time => time > now() - MINUTE);
+      if (recent.length >= 10)
+        return json(429, { error: 'Speech recognition requests are too frequent' });
+      try {
+        const issued = issueAsrRealtimeUrl();
+        if (!issued || !/^[a-f0-9-]{36}$/.test(issued.voice_id) ||
+            typeof issued.url !== 'string' ||
+            !issued.url.startsWith('wss://asr.cloud.tencent.com/asr/v2/') ||
+            !Number.isSafeInteger(issued.expires_at))
+          throw new Error('Invalid ASR URL');
+        recent.push(now());
+        asrIssuanceTimes.set(session.user_id, recent);
+        return json(200, issued);
+      } catch { return json(503, { error: 'Speech recognition is unavailable' }); }
     }
     if (method === 'GET' && path === '/v1/model/seedance-credential') {
       if (!session) return json(401, { error: 'Authentication required' });

@@ -8,6 +8,7 @@ const { createArkCredentialIssuer } = require('./ark-credential');
 const { createBailianCredentialIssuer } = require('./bailian-credential');
 const { createSocialVerifiers } = require('./social-providers');
 const { createAccountModelKeyIssuer } = require('./account-model-keys');
+const { createAsrRealtimeUrlIssuer } = require('./asr-realtime-url');
 
 const MAX_BODY_BYTES = 4096;
 
@@ -74,6 +75,7 @@ function start(env = process.env) {
     issueArkCredential: createArkCredentialIssuer(env),
     issueBailianCredential: createBailianCredentialIssuer(env),
     issueAccountModelKeys: createAccountModelKeyIssuer(env),
+    issueAsrRealtimeUrl: createAsrRealtimeUrlIssuer(env),
     socialVerifiers: createSocialVerifiers(env),
     sdkAppId: Number(env.MAICHAT_IM_SDK_APP_ID),
     requireDeviceSlot

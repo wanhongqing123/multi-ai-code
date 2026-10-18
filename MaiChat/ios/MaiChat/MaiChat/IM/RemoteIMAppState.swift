@@ -6,6 +6,76 @@ import MaiChatCore
 import UIKit
 import UniformTypeIdentifiers
 
+private struct MaiChatSignedAvatarUpload: Decodable, Sendable {
+    let uploadUrl: String
+    let uploadHeaders: [String: String]
+    let avatarUrl: String
+}
+
+private enum MaiChatAvatarUploadError: LocalizedError {
+    case accountRequired
+    case tooLarge
+    case invalidResponse
+    case uploadFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .accountRequired: return "请先登录 MaiChat 账号"
+        case .tooLarge: return "头像图片不能超过 2 MB"
+        case .invalidResponse: return "头像上传地址无效"
+        case .uploadFailed: return "头像上传失败，请稍后重试"
+        }
+    }
+}
+
+private func uploadAvatarToOss(fileURL: URL) async throws -> (url: String, data: Data) {
+    let data = try Data(contentsOf: fileURL)
+    guard !data.isEmpty, data.count <= 2_000_000 else {
+        throw MaiChatAvatarUploadError.tooLarge
+    }
+    guard let access = try await MaiChatAuthClient.shared.mediaServiceAccessIfAvailable(),
+          let signURL = URL(string: access.baseURL + "/sign-upload") else {
+        throw MaiChatAvatarUploadError.accountRequired
+    }
+    let contentType = fileURL.pathExtension.lowercased() == "png" ? "image/png" : "image/jpeg"
+    let requestBody = try JSONSerialization.data(withJSONObject: [
+        "filename": fileURL.lastPathComponent,
+        "size_bytes": data.count,
+        "purpose": "im_avatar"
+    ])
+    let signedResponse = try await MaiChatHttpClient.request(
+        url: signURL, method: "POST", bearer: access.accountToken,
+        contentType: "application/json", body: requestBody,
+        maximumResponseBytes: 8 * 1024
+    )
+    guard signedResponse.statusCode == 200 else {
+        throw MaiChatAvatarUploadError.uploadFailed
+    }
+    let decoder = JSONDecoder()
+    decoder.keyDecodingStrategy = .convertFromSnakeCase
+    let signed = try decoder.decode(MaiChatSignedAvatarUpload.self, from: signedResponse.body)
+    guard let uploadURL = URL(string: signed.uploadUrl),
+          let upload = URLComponents(url: uploadURL, resolvingAgainstBaseURL: false),
+          upload.scheme == "https", upload.host?.hasSuffix(".aliyuncs.com") == true,
+          upload.user == nil, upload.password == nil, upload.fragment == nil,
+          let avatarURL = URL(string: signed.avatarUrl),
+          avatarURL.scheme == "https", avatarURL.host == "ichat.life",
+          avatarURL.path.hasPrefix("/maichat/avatars/"),
+          upload.path == String(avatarURL.path.dropFirst("/maichat".count)),
+          signed.uploadHeaders["Content-Type"] == contentType else {
+        throw MaiChatAvatarUploadError.invalidResponse
+    }
+    let uploadResponse = try await MaiChatHttpClient.request(
+        url: uploadURL, method: "PUT", contentType: contentType,
+        body: data, maximumResponseBytes: 8 * 1024,
+        timeoutMilliseconds: 60_000
+    )
+    guard (200..<300).contains(uploadResponse.statusCode) else {
+        throw MaiChatAvatarUploadError.uploadFailed
+    }
+    return (signed.avatarUrl, data)
+}
+
 nonisolated func makeRemoteIMImageFile(
     data: Data,
     contentTypes: [UTType],
@@ -301,7 +371,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         guard let parsed = URL(string: cleanURL),
               ["https", "http"].contains(parsed.scheme?.lowercased() ?? ""),
               parsed.host != nil else {
-            showTransientError("IM 返回的头像地址无效")
+            showTransientError("头像地址无效")
             return false
         }
         guard connectionState == .connected else {
@@ -332,12 +402,10 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         }
         let identity = remoteDiagnosticsIdentity
         do {
-            let url = try await client.uploadAvatar(fileURL: fileURL)
+            let uploaded = try await uploadAvatarToOss(fileURL: fileURL)
             guard remoteDiagnosticsIdentity == identity else { return false }
-            if let data = try? Data(contentsOf: fileURL) {
-                RemoteIMAvatarImageStore.shared.store(data, for: url)
-            }
-            return await setSelfAvatar(url: url)
+            RemoteIMAvatarImageStore.shared.store(uploaded.data, for: uploaded.url)
+            return await setSelfAvatar(url: uploaded.url)
         } catch {
             guard remoteDiagnosticsIdentity == identity else { return false }
             showTransientError(error.localizedDescription)

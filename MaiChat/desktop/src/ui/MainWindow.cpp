@@ -96,9 +96,12 @@
 #include <algorithm>
 #include <functional>
 #include <limits>
+#include <mutex>
 #include <utility>
 
 #ifdef Q_OS_WIN
+#include <QtConcurrent/QtConcurrentRun>
+#include <curl/curl.h>
 #include <qt_windows.h>
 #endif
 
@@ -493,6 +496,67 @@ QSet<QString> &failedAvatarUrls() {
   return urls;
 }
 
+void finishAvatarPixmap(const QString &url, const QByteArray &data) {
+  QPixmap source;
+  if (data.size() <= 4 * 1024 * 1024) {
+    source.loadFromData(data);
+    if (!source.isNull() && (source.width() > 320 || source.height() > 320))
+      source = source.scaled(320, 320, Qt::KeepAspectRatio,
+                             Qt::SmoothTransformation);
+  }
+  pendingAvatarUrls().remove(url);
+  if (source.isNull()) {
+    failedAvatarUrls().insert(url);
+  } else {
+    avatarPixmapCache().insert(url, source);
+  }
+  const QList<QPointer<QWidget>> targets = avatarRepaintWaiters().take(url);
+  for (const QPointer<QWidget> &target : targets) {
+    if (!target.isNull()) target->update();
+  }
+}
+
+#ifdef Q_OS_WIN
+size_t receiveSignedAvatar(char *bytes, size_t size, size_t count, void *context) {
+  auto *result = static_cast<QByteArray *>(context);
+  if (size != 0 && count > SIZE_MAX / size) return 0;
+  const size_t length = size * count;
+  if (length > size_t(4 * 1024 * 1024 - result->size())) return 0;
+  result->append(bytes, int(length));
+  return length;
+}
+
+QByteArray downloadSignedAvatar(const QUrl &url) {
+  static std::once_flag initialization;
+  static CURLcode initializationCode = CURLE_FAILED_INIT;
+  std::call_once(initialization, [] { initializationCode = curl_global_init(CURL_GLOBAL_DEFAULT); });
+  if (initializationCode != CURLE_OK) return {};
+  CURL *curl = curl_easy_init();
+  if (!curl) return {};
+  QByteArray data;
+  const QByteArray encoded = url.toString(QUrl::FullyEncoded).toUtf8();
+  curl_easy_setopt(curl, CURLOPT_URL, encoded.constData());
+  curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "https");
+  curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, "https");
+  curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+  curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 3L);
+  curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 10000L);
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 20000L);
+  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+  curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, long(CURLSSLOPT_NATIVE_CA));
+  curl_easy_setopt(curl, CURLOPT_MAXFILESIZE_LARGE, curl_off_t(4 * 1024 * 1024));
+  curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, receiveSignedAvatar);
+  curl_easy_setopt(curl, CURLOPT_WRITEDATA, &data);
+  const CURLcode transferred = curl_easy_perform(curl);
+  long status = 0;
+  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+  curl_easy_cleanup(curl);
+  return transferred == CURLE_OK && status == 200 ? data : QByteArray{};
+}
+#endif
+
 // 作用：异步读取头像并在目标控件仍有效时请求重绘。
 void requestAvatarPixmap(const QString &avatarUrl, QWidget *repaintTarget) {
   const QString url = avatarUrl.trimmed();
@@ -517,34 +581,34 @@ void requestAvatarPixmap(const QString &avatarUrl, QWidget *repaintTarget) {
     return;
   pendingAvatarUrls().insert(url);
 
+#ifdef Q_OS_WIN
+  const QUrl avatarLocation(url);
+  if (avatarLocation.scheme() == QStringLiteral("https") &&
+      avatarLocation.host() == QStringLiteral("ichat.life") &&
+      avatarLocation.path().startsWith(QStringLiteral("/maichat/avatars/"))) {
+    QPointer<QApplication> application(qApp);
+    QtConcurrent::run([avatarLocation, application, url] {
+      const QByteArray data = downloadSignedAvatar(avatarLocation);
+      if (application) {
+        QMetaObject::invokeMethod(application.data(), [url, data] {
+          finishAvatarPixmap(url, data);
+        }, Qt::QueuedConnection);
+      }
+    });
+    return;
+  }
+#endif
+
   static QNetworkAccessManager *network = new QNetworkAccessManager(qApp);
   QNetworkRequest request{QUrl(url)};
   request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                        QNetworkRequest::NoLessSafeRedirectPolicy);
   QNetworkReply *reply = network->get(request);
   QObject::connect(reply, &QNetworkReply::finished, qApp, [reply, url] {
-    QPixmap source;
-    if (reply->error() == QNetworkReply::NoError) {
-      const QByteArray data = reply->readAll();
-      if (data.size() <= 4 * 1024 * 1024)
-        source.loadFromData(data);
-      if (!source.isNull() && (source.width() > 320 || source.height() > 320))
-        source = source.scaled(320, 320, Qt::KeepAspectRatio,
-                               Qt::SmoothTransformation);
-    }
+    const QByteArray data = reply->error() == QNetworkReply::NoError ?
+                                reply->readAll() : QByteArray{};
     reply->deleteLater();
-
-    pendingAvatarUrls().remove(url);
-    if (source.isNull()) {
-      failedAvatarUrls().insert(url);
-    } else {
-      avatarPixmapCache().insert(url, source);
-    }
-    const QList<QPointer<QWidget>> targets = avatarRepaintWaiters().take(url);
-    for (const QPointer<QWidget> &target : targets) {
-      if (!target.isNull())
-        target->update();
-    }
+    finishAvatarPixmap(url, data);
   });
 }
 

@@ -23,6 +23,7 @@ namespace {
 
 constexpr size_t kMaximumUrlBytes = 4096;
 constexpr size_t kMaximumJsonRequestBytes = 32 * 1024;
+constexpr size_t kMaximumAvatarRequestBytes = 2 * 1000 * 1000;
 constexpr size_t kMaximumSupportedResponseBytes = 4 * 1024 * 1024;
 constexpr size_t kMaximumHeaderBytes = 16 * 1024;
 constexpr size_t kMaximumRedirectLocationBytes = 4096;
@@ -157,10 +158,15 @@ bool validateRequest(const char* url, const char* method, const char* bearer, co
         return false;
     const bool get = std::strcmp(method, "GET") == 0;
     const bool post = std::strcmp(method, "POST") == 0;
-    if (!get && !post) return false;
+    const bool put = std::strcmp(method, "PUT") == 0;
+    if (!get && !post && !put) return false;
     // 历史头像可以使用公开 HTTP 地址；任何凭据或 JSON 写入都必须使用 HTTPS。
     if (!secure && (!get || bearer[0] != '\0')) return false;
     if (get) return requestLength == 0 && contentType[0] == '\0';
+    if (put) return bearer[0] == '\0' && requestBody != nullptr &&
+        requestLength > 0 && requestLength <= kMaximumAvatarRequestBytes &&
+        (std::strcmp(contentType, "image/jpeg") == 0 ||
+         std::strcmp(contentType, "image/png") == 0);
     return requestLength <= kMaximumJsonRequestBytes &&
            (requestLength == 0 || requestBody != nullptr) &&
            std::strcmp(contentType, "application/json") == 0;
@@ -212,6 +218,10 @@ bool configureCurl(CURL* curl, const char* url, const char* method, const char* 
     if (std::strcmp(method, "POST") == 0) {
         set(CURLOPT_POST, 1L);
         set(CURLOPT_POSTFIELDS, requestLength == 0 ? static_cast<const void*>("") : requestBody);
+        set(CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(requestLength));
+    } else if (std::strcmp(method, "PUT") == 0) {
+        set(CURLOPT_CUSTOMREQUEST, "PUT");
+        set(CURLOPT_POSTFIELDS, requestBody);
         set(CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(requestLength));
     } else {
         set(CURLOPT_HTTPGET, 1L);

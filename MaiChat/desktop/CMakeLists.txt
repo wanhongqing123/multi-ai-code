@@ -513,6 +513,9 @@ target_include_directories(remote_im_desktop_ui PUBLIC src)
 target_link_libraries(remote_im_desktop_ui PUBLIC remote_im_desktop_app remote_im_core
   maichat_agent Qt5::Widgets Qt5::Svg Qt5::Multimedia Qt5::MultimediaWidgets
   maichat_pdf_preview)
+if(WIN32)
+  target_link_libraries(remote_im_desktop_ui PRIVATE Qt5::Concurrent CURL::libcurl)
+endif()
 if(APPLE AND TARGET maiagent_embedded_fftools)
   target_sources(remote_im_desktop_ui PRIVATE
     ../Media/MaiImageDecode.cpp ../Media/MaiImageEncode.cpp)

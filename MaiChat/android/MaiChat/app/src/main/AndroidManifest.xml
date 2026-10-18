@@ -38,6 +38,9 @@
             </intent-filter>
         </activity>
         <activity
+            android:name=".FriendQrScanActivity"
+            android:exported="false" />
+        <activity
             android:name=".DesktopLoginApprovalActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="false" />

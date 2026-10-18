@@ -3,8 +3,10 @@
 // 对外边界：本文件给出 AddContactDialog 的类型和函数声明；参数、返回值和对象生命周期以此为准。
 #pragma once
 
+#include <QByteArray>
 #include <QDialog>
 #include <QLineEdit>
+#include <QLabel>
 #include <QPushButton>
 
 class AddContactDialog final : public QDialog {
@@ -15,6 +17,7 @@ public:
 
     QString userId() const;
     void setUserId(const QString& userId);
+    void setOwnQr(const QString& userId, const QByteArray& png, const QString& error);
 
 private:
     void buildUi();
@@ -23,4 +26,8 @@ private:
 
     QLineEdit* userIdInput_ = nullptr;
     QPushButton* confirmButton_ = nullptr;
+    QPushButton* showQrButton_ = nullptr;
+    QLabel* qrLabel_ = nullptr;
+    QLabel* ownAccountLabel_ = nullptr;
+    bool qrVisible_ = false;
 };

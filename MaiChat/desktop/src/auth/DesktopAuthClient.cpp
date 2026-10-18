@@ -641,6 +641,55 @@ void DesktopAuthClient::fetchAccountModelKeys(AccountModelKeysCompletion complet
     fetchAccountModelKeysImpl(std::move(completion), true);
 }
 
+void DesktopAuthClient::fetchFriendQr(FriendQrCompletion completion) {
+    fetchFriendQrImpl(std::move(completion), true);
+}
+
+void DesktopAuthClient::fetchFriendQrImpl(FriendQrCompletion completion,
+                                          bool retryAfterUnauthorized) {
+    if (loggingOut_ || userId_.isEmpty()) {
+        if (completion) completion({}, {}, QStringLiteral("请先登录 MaiChat"));
+        return;
+    }
+    if (accessToken_.isEmpty() ||
+        accessExpiresAt_ <= QDateTime::currentDateTimeUtc().addSecs(60)) {
+        refresh([this, completion, retryAfterUnauthorized](bool ok, const QString& error) {
+            if (ok) fetchFriendQrImpl(completion, retryAfterUnauthorized);
+            else if (completion) completion({}, {}, error);
+        });
+        return;
+    }
+    request(QStringLiteral("friend/my-qr"), "GET", {}, accessToken_,
+            [this, completion, retryAfterUnauthorized](const HttpResult& result) {
+        if (loggingOut_ || userId_.isEmpty()) {
+            if (completion) completion({}, {}, QStringLiteral("本次登录已取消"));
+            return;
+        }
+        if (result.status == 401 && retryAfterUnauthorized) {
+            refresh([this, completion](bool ok, const QString& error) {
+                if (ok) fetchFriendQrImpl(completion, false);
+                else if (completion) completion({}, {}, error);
+            });
+            return;
+        }
+        if (result.status != 200) {
+            const QString error = responseError(result);
+            if (result.status == 401) invalidateSession(error);
+            if (completion) completion({}, {}, error);
+            return;
+        }
+        const QString account = result.body.value(QStringLiteral("user_id")).toString();
+        const QByteArray png = QByteArray::fromBase64(
+            result.body.value(QStringLiteral("qr_png_base64")).toString().toLatin1());
+        if (account != userId_ || png.size() < 8 ||
+            !png.startsWith(QByteArray::fromHex("89504e470d0a1a0a"))) {
+            if (completion) completion({}, {}, QStringLiteral("好友二维码数据无效"));
+            return;
+        }
+        if (completion) completion(account, png, {});
+    });
+}
+
 void DesktopAuthClient::fetchAccountModelKeysImpl(AccountModelKeysCompletion completion,
                                                bool retryAfterUnauthorized) {
     if (loggingOut_ || userId_.isEmpty()) {

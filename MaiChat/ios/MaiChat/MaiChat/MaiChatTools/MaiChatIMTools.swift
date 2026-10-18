@@ -16,6 +16,20 @@ import Vision
 
 @MainActor
 extension AIMobileHostToolProvider {
+    func requestFriend(
+        appState: RemoteIMAppState,
+        arguments: [String: Any]
+    ) async -> AIMaiChatHostToolExecution {
+        let userID = Self.string(arguments, key: "user_id")
+        guard !userID.isEmpty else {
+            return .failure(code: "invalid_input", message: "user_id is required")
+        }
+        guard await appState.requestFriend(userID: userID) else {
+            return .failure(code: "internal", message: appState.errorMessage ?? "Friend request failed")
+        }
+        return Self.jsonSuccess(["requested": true, "user_id": userID])
+    }
+
     static func listContacts(
         appState: RemoteIMAppState,
         arguments: [String: Any]

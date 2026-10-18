@@ -5,6 +5,9 @@
 package com.kongshang.maichat;
 
 import com.kongshang.maichat.tools.MaiChatHostTools;
+import com.google.zxing.BarcodeFormat;
+import com.google.zxing.qrcode.QRCodeWriter;
+import com.google.zxing.common.BitMatrix;
 
 import android.annotation.SuppressLint;
 import android.Manifest;
@@ -126,6 +129,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private static final int REQUEST_GALLERY_ACCESS = 1008;
     private static final int REQUEST_SAVE_VIDEO_PERMISSION = 1009;
     private static final int REQUEST_SAVE_IMAGE_PERMISSION = 1010;
+    private static final int REQUEST_FRIEND_SCAN = 1011;
     private static final String TAG = "MaiChat.notify";
     private static final String MESSAGE_CHANNEL_ID = "maichat-new-messages";
     private static final String MESSAGE_GROUP_KEY = "maichat-private-messages";
@@ -482,6 +486,17 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         super.onActivityResult(requestCode, resultCode, data);
         if (resultCode != RESULT_OK) {
             if (aiAssistant != null) aiAssistant.handleActivityCancelled(requestCode);
+            return;
+        }
+        if (requestCode == REQUEST_FRIEND_SCAN) {
+            String userId = data == null ? "" : data.getStringExtra("friend_user_id");
+            if (userId != null && !userId.isEmpty()) {
+                session.addContact(userId, added -> {
+                    if (added) {
+                        toast("好友申请已发送");
+                    }
+                });
+            }
             return;
         }
         if (aiAssistant != null && aiAssistant.handleActivityResult(requestCode, data)) return;
@@ -1510,6 +1525,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             activeTab = tab;
             activeChatUserId = null;
             render();
+            if (tab == RemoteIMTab.CONTACTS) session.refreshAcceptedFriends();
         });
         return button;
     }
@@ -2602,6 +2618,10 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         toolbar.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
         toolbar.setPadding(dp(12), dp(4), dp(12), dp(4));
         toolbar.setBackgroundColor(Color.WHITE);
+        TextView requests = iconButton("申请", 15, MaiChatTheme.BLUE_DARK);
+        requests.setContentDescription("查看好友申请");
+        requests.setOnClickListener(view -> showFriendRequestsDialog());
+        toolbar.addView(requests, new LinearLayout.LayoutParams(dp(52), dp(42)));
         TextView plus = iconButton("＋", 24, MaiChatTheme.BLUE_DARK);
         plus.setContentDescription("添加好友");
         plus.setOnClickListener(view -> showAddContactDialog());
@@ -2763,13 +2783,30 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         input.setBackground(MaiChatTheme.bordered(MaiChatTheme.PAGE, MaiChatTheme.BORDER, 9, this));
         card.addView(input, match(dp(44)));
 
+        LinearLayout qrActions = new LinearLayout(this);
+        qrActions.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams qrParams = match(dp(46));
+        qrParams.setMargins(0, dp(8), 0, 0);
+        card.addView(qrActions, qrParams);
+        Button scanFriend = secondaryButton("扫一扫");
+        Button myCode = secondaryButton("我的二维码");
+        qrActions.addView(scanFriend, new LinearLayout.LayoutParams(0, dp(40), 1));
+        LinearLayout.LayoutParams myCodeParams = new LinearLayout.LayoutParams(0, dp(40), 1);
+        myCodeParams.setMargins(dp(10), 0, 0, 0);
+        qrActions.addView(myCode, myCodeParams);
+        scanFriend.setOnClickListener(view -> {
+            dialog.dismiss();
+            startActivityForResult(new Intent(this, FriendQrScanActivity.class), REQUEST_FRIEND_SCAN);
+        });
+        myCode.setOnClickListener(view -> showMyFriendCodeDialog());
+
         LinearLayout actions = new LinearLayout(this);
         actions.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams actionsParams = match(dp(46));
         actionsParams.setMargins(0, dp(16), 0, 0);
         card.addView(actions, actionsParams);
         Button cancel = secondaryButton("取消");
-        Button add = primaryButton("添加");
+        Button add = primaryButton("发送申请");
         LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(0, dp(42), 1);
         actions.addView(cancel, buttonParams);
         LinearLayout.LayoutParams addParams = new LinearLayout.LayoutParams(0, dp(42), 1);
@@ -2779,9 +2816,14 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         View.OnClickListener submit = view -> {
             String userId = input.getText().toString().trim();
             if (userId.isEmpty()) return;
-            session.addContact(userId);
-            dialog.dismiss();
-            openChat(userId);
+            add.setEnabled(false);
+            session.addContact(userId, added -> {
+                add.setEnabled(true);
+                if (added) {
+                    dialog.dismiss();
+                    toast("好友申请已发送");
+                }
+            });
         };
         add.setOnClickListener(submit);
         input.setOnEditorActionListener((view, actionId, event) -> {
@@ -2808,6 +2850,83 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             .showSoftInput(input, InputMethodManager.SHOW_IMPLICIT));
     }
 
+    private void showMyFriendCodeDialog() {
+        String userId = session.settings().loginUserId();
+        String link = FriendQrPolicy.link(userId);
+        if (link.isEmpty()) { toast("请先登录账号"); return; }
+        try {
+            int size = 600;
+            BitMatrix bits = new QRCodeWriter().encode(link, BarcodeFormat.QR_CODE, size, size);
+            Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+            for (int y = 0; y < size; y++)
+                for (int x = 0; x < size; x++)
+                    bitmap.setPixel(x, y, bits.get(x, y) ? Color.BLACK : Color.WHITE);
+            LinearLayout content = new LinearLayout(this);
+            content.setOrientation(LinearLayout.VERTICAL);
+            content.setGravity(Gravity.CENTER_HORIZONTAL);
+            content.setPadding(dp(20), dp(12), dp(20), dp(8));
+            ImageView image = new ImageView(this);
+            image.setImageBitmap(bitmap);
+            content.addView(image, match(dp(248)));
+            TextView account = MaiChatTheme.text(this, userId, 13, MaiChatTheme.SECONDARY);
+            account.setGravity(Gravity.CENTER);
+            account.setTextIsSelectable(true);
+            content.addView(account, match(dp(45)));
+            new AlertDialog.Builder(this).setTitle("我的好友二维码")
+                .setMessage("让对方扫一扫，或复制下方账号 ID 添加你")
+                .setView(content)
+                .setPositiveButton("完成", null).show();
+        } catch (Exception failure) { toast("无法生成好友二维码"); }
+    }
+
+    private void showFriendRequestsDialog() {
+        session.friendRequests(requests -> {
+            if (destroyed) return;
+            if (requests.isEmpty()) {
+                new AlertDialog.Builder(this).setTitle("好友申请")
+                    .setMessage("暂无待处理的好友申请")
+                    .setPositiveButton("完成", null).show();
+                return;
+            }
+            ScrollView scroll = new ScrollView(this);
+            LinearLayout list = new LinearLayout(this);
+            list.setOrientation(LinearLayout.VERTICAL);
+            list.setPadding(dp(18), dp(8), dp(18), dp(8));
+            scroll.addView(list);
+            AlertDialog dialog = new AlertDialog.Builder(this).setTitle("好友申请")
+                .setView(scroll).setNegativeButton("关闭", null).create();
+            for (RemoteIMFriendRequest request : requests) {
+                LinearLayout row = new LinearLayout(this);
+                row.setOrientation(LinearLayout.VERTICAL);
+                row.setPadding(0, dp(8), 0, dp(12));
+                list.addView(row, matchWrap());
+                row.addView(MaiChatTheme.label(this, request.displayName, 16, MaiChatTheme.TEXT));
+                row.addView(MaiChatTheme.text(this,
+                    request.message == null || request.message.isEmpty()
+                        ? "请求添加你为好友" : request.message, 13, MaiChatTheme.SECONDARY));
+                LinearLayout actions = new LinearLayout(this);
+                actions.setGravity(Gravity.END);
+                row.addView(actions, match(dp(44)));
+                Button refuse = secondaryButton("拒绝");
+                Button accept = primaryButton("同意");
+                actions.addView(refuse, new LinearLayout.LayoutParams(dp(76), dp(38)));
+                LinearLayout.LayoutParams acceptParams =
+                    new LinearLayout.LayoutParams(dp(76), dp(38));
+                acceptParams.setMargins(dp(8), 0, 0, 0);
+                actions.addView(accept, acceptParams);
+                refuse.setOnClickListener(view -> session.decideFriendRequest(
+                    request.userId, false, done -> {
+                        if (done) { dialog.dismiss(); showFriendRequestsDialog(); }
+                    }));
+                accept.setOnClickListener(view -> session.decideFriendRequest(
+                    request.userId, true, done -> {
+                        if (done) { dialog.dismiss(); showFriendRequestsDialog(); }
+                    }));
+            }
+            dialog.show();
+        });
+    }
+
     private void renderSettings() {
         ScrollView scroll = new ScrollView(this);
         LinearLayout page = new LinearLayout(this);
@@ -2829,6 +2948,11 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             clipboard.setPrimaryClip(ClipData.newPlainText("MaiChat account ID", accountId));
             toast("完整账号 ID 已复制");
         });
+        Button friendCode = secondaryButton("我的好友二维码");
+        LinearLayout.LayoutParams friendCodeParams = match(dp(48));
+        friendCodeParams.setMargins(0, dp(14), 0, 0);
+        page.addView(friendCode, friendCodeParams);
+        friendCode.setOnClickListener(view -> showMyFriendCodeDialog());
         Button scanDesktopLogin = secondaryButton("扫码登录桌面端");
         LinearLayout.LayoutParams scanParams = match(dp(48));
         scanParams.setMargins(0, dp(18), 0, 0);

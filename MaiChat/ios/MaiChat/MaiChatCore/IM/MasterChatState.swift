@@ -3,6 +3,33 @@
 // 合并消息按稳定标识去重；界面分页从该状态读取而不修改历史。
 import Foundation
 
+public enum MaiChatFriendLink {
+    public static func url(for userID: String) -> URL? {
+        guard validUserID(userID) else { return nil }
+        var components = URLComponents()
+        components.scheme = "maichat"
+        components.host = "friend"
+        components.path = "/add"
+        components.queryItems = [URLQueryItem(name: "user_id", value: userID)]
+        return components.url
+    }
+
+    public static func userID(from text: String) -> String? {
+        guard let components = URLComponents(string: text),
+              components.scheme?.lowercased() == "maichat",
+              components.host?.lowercased() == "friend",
+              components.path == "/add",
+              let items = components.queryItems, items.count == 1,
+              items[0].name == "user_id", let value = items[0].value,
+              validUserID(value) else { return nil }
+        return value
+    }
+
+    private static func validUserID(_ value: String) -> Bool {
+        value.range(of: "^[A-Za-z0-9_-]{1,128}$", options: .regularExpression) != nil
+    }
+}
+
 public enum MasterChatStateError: Error, Equatable, LocalizedError {
     case blankUserID
     case selfContactNotAllowed

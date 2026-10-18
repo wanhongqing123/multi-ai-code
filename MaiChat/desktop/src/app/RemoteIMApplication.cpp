@@ -257,6 +257,57 @@ void RemoteIMApplication::addContact(const QString& userId, const QString& displ
     emit stateChanged();
 }
 
+void RemoteIMApplication::requestFriend(const QString& userId, const QString& displayName) {
+    Q_UNUSED(displayName);
+    QPointer<RemoteIMApplication> self(this);
+    client_->requestFriend(userId, [self](bool ok, const QString& error) {
+        if (!self) return;
+        QMetaObject::invokeMethod(self, [self, ok, error] {
+            if (!self) return;
+            if (!ok) {
+                emit self->errorMessage(error.isEmpty() ? QStringLiteral("发送好友申请失败") : error);
+                return;
+            }
+            emit self->friendRequestSent();
+        }, Qt::AutoConnection);
+    });
+}
+
+void RemoteIMApplication::refreshFriendList() {
+    client_->refreshFriendList();
+}
+
+void RemoteIMApplication::friendRequests(RemoteIMFriendRequestsCompletion completion) {
+    QPointer<RemoteIMApplication> self(this);
+    client_->friendRequests([self, completion = std::move(completion)](
+                                bool ok, const QString& error,
+                                const QList<RemoteIMFriendRequest>& requests) {
+        if (!self) return;
+        QMetaObject::invokeMethod(self, [self, completion, ok, error, requests] {
+            if (self && completion) completion(ok, error, requests);
+        }, Qt::AutoConnection);
+    });
+}
+
+void RemoteIMApplication::decideFriendRequest(const QString& userId, bool accept,
+                                              RemoteIMCompletion completion) {
+    QPointer<RemoteIMApplication> self(this);
+    client_->decideFriendRequest(userId, accept,
+                                 [self, userId, accept, completion = std::move(completion)](
+                                     bool ok, const QString& error) {
+        if (!self) return;
+        QMetaObject::invokeMethod(self, [self, userId, accept, completion, ok, error] {
+            if (!self) return;
+            if (ok && accept) {
+                self->state_.upsertContact(RemoteIMContact{userId, userId});
+                if (self->database_) self->database_->upsertContact(RemoteIMContact{userId, userId});
+                emit self->stateChanged();
+            }
+            if (completion) completion(ok, error);
+        }, Qt::AutoConnection);
+    });
+}
+
 void RemoteIMApplication::deleteContact(const QString& userId) {
     const QString cleanUserId = userId.trimmed();
     if (cleanUserId.isEmpty()) return;

@@ -31,13 +31,14 @@ void MaiChatHostToolsTest::registersMaiChatReadAndWriteTools() {
   registerMaiChatHostTools(registry, app);
 
   for (const char *name :
-       {"maichat_list_contacts", "maichat_list_conversations",
+       {"maichat_list_contacts", "maichat_request_friend", "maichat_list_conversations",
         "maichat_get_messages", "maichat_search_messages",
         "maichat_get_unread_summary", "maichat_send_text", "maichat_send_media",
         "maichat_reply_message", "maichat_broadcast_text"}) {
     QVERIFY2(registry.find(name) != nullptr, name);
   }
   QVERIFY(!registry.find("maichat_list_contacts")->requiresApproval("{}"));
+  QVERIFY(registry.find("maichat_request_friend")->requiresApproval("{}"));
   QVERIFY(registry.find("maichat_send_text")->requiresApproval("{}"));
   QVERIFY(registry.find("maichat_send_media")->requiresApproval("{}"));
   QVERIFY(registry.find("maichat_reply_message")->requiresApproval("{}"));

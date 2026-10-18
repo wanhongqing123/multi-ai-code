@@ -12,6 +12,7 @@
 #include <QImageReader>
 #include <QMetaObject>
 #include <QPointer>
+#include <QRegularExpression>
 #include <QSaveFile>
 #include <QSet>
 #include <QStandardPaths>
@@ -32,6 +33,7 @@ namespace {
 
 enum class HostToolKind {
   ListContacts,
+  RequestFriend,
   ListConversations,
   GetMessages,
   SearchMessages,
@@ -169,6 +171,8 @@ public:
       switch (mKind) {
       case HostToolKind::ListContacts:
         return listContacts(app, arguments);
+      case HostToolKind::RequestFriend:
+        return requestFriend(app, arguments);
       case HostToolKind::ListConversations:
         return listConversations(app, arguments);
       case HostToolKind::GetMessages:
@@ -192,6 +196,19 @@ public:
   }
 
 private:
+  MaiToolResult requestFriend(RemoteIMApplication &app,
+                              const QJsonObject &arguments) const {
+    const QString userId = arguments.value(QStringLiteral("user_id")).toString().trimmed();
+    static const QRegularExpression accountId(QStringLiteral("^[A-Za-z0-9_-]{1,128}$"));
+    if (!accountId.match(userId).hasMatch() || userId == app.chatState().ownerUserId())
+      return invalidInput(QStringLiteral("user_id must be another MaiChat account"));
+    if (!app.isConnected())
+      return MaiToolResult::failure(MaiErrorCode::NotConfigured, "MaiChat IM is disconnected");
+    app.requestFriend(userId, userId);
+    return jsonResult(QJsonObject{{QStringLiteral("queued"), true},
+                                  {QStringLiteral("user_id"), userId}});
+  }
+
   // 校验联系人、媒体类型与本地文件，再通过宿主 IM 发送对应附件。
   // 只将真实发送结果回给 Agent，不能把文件存在等同于消息已交付。
   MaiToolResult sendMedia(const QJsonObject &arguments,
@@ -517,6 +534,11 @@ void registerMaiChatHostTools(MaiToolRegistry &registry,
       R"({"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":200})"
           R"(}})",
       app);
+  addTool(registry, HostToolKind::RequestFriend, "maichat_request_friend",
+          "Send a MaiChat friend request to a user ID. Requires user approval. "
+          "The recipient must accept.",
+          R"({"type":"object","properties":{"user_id":{"type":"string"}},"required":["user_id"]})",
+          app, true);
   addTool(
       registry, HostToolKind::ListConversations, "maichat_list_conversations",
       "List MaiChat conversations ordered by latest message, including unread "

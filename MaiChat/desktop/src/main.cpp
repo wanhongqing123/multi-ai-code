@@ -12,6 +12,7 @@
 #include <QSettings>
 #include <QTimer>
 #include <memory>
+#include <utility>
 
 #include "app/RemoteIMApplication.h"
 #include "auth/DesktopAuthClient.h"
@@ -192,6 +193,9 @@ int main(int argc, char* argv[]) {
         return current.isValid() && current.userId == userId ? current.userSig : QString();
     }, auth.arkApiKeyProvider(), auth.bailianCredentialProvider());
     window.setMediaServiceAccessProvider(auth.mediaServiceAccessProvider());
+    window.setFriendQrProvider([&auth](MainWindow::FriendQrCompletion completion) {
+        auth.fetchFriendQr(std::move(completion));
+    });
     bool invalidatingSession = false;
     auth.setCredentialUpdatedHandler([&](const DesktopImCredential& renewed) {
         if (invalidatingSession || renewed.userId != credential.userId) return;

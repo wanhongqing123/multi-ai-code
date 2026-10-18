@@ -15,6 +15,7 @@ class RemoteIMApplicationTest : public QObject {
     Q_OBJECT
 
 private slots:
+    void friendRequestWaitsForRemoteAcceptance();
     void activityIsIndependentFromContentAndExplicitStopClosesIt();
     void sendsTextThroughClientAndMarksSent();
     void sendsTextToExplicitPeerWithoutChangingSelection();
@@ -42,6 +43,18 @@ private slots:
     void rejectsUnsupportedVoiceBeforeQueueing();
     void disconnectsActiveImOnAccountExit();
 };
+
+void RemoteIMApplicationTest::friendRequestWaitsForRemoteAcceptance() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fake = client.get();
+    RemoteIMApplication app(QStringLiteral("owner"), std::move(client));
+    QSignalSpy sent(&app, &RemoteIMApplication::friendRequestSent);
+    app.requestFriend(QStringLiteral("peer"), QStringLiteral("Peer"));
+    QTRY_COMPARE(sent.size(), 1);
+    QVERIFY(app.chatState().contacts().isEmpty());
+    emit fake->contactsReceived({RemoteIMContact{QStringLiteral("peer"), QStringLiteral("Peer")}});
+    QTRY_COMPARE(app.chatState().contacts().size(), 1);
+}
 
 void RemoteIMApplicationTest::activityIsIndependentFromContentAndExplicitStopClosesIt() {
     auto client = std::make_unique<FakeRemoteIMClient>();

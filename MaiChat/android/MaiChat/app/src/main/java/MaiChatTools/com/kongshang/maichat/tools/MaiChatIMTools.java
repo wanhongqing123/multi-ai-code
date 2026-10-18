@@ -47,6 +47,7 @@ final class MaiChatIMTools {
             throw new IllegalStateException("MaiChat 尚未登录");
         switch (tool) {
             case "maichat_list_contacts": return hostListContacts(arguments);
+            case "maichat_request_friend": return hostRequestFriend(arguments);
             case "maichat_list_conversations": return hostListConversations(arguments);
             case "maichat_get_messages": return hostGetMessages(arguments);
             case "maichat_search_messages": return hostSearchMessages(arguments);
@@ -74,6 +75,15 @@ final class MaiChatIMTools {
             if (values.length() >= limit) break;
         }
         return new JSONObject().put("contacts", values).put("count", values.length());
+    }
+
+    private JSONObject hostRequestFriend(JSONObject arguments) throws JSONException {
+        String userId = arguments.optString("user_id").trim();
+        if (!userId.matches("[A-Za-z0-9_-]{1,128}") ||
+            userId.equals(session.chatState().ownerUserId()))
+            throw new IllegalArgumentException("user_id 必须是其他 MaiChat 账号");
+        session.addContact(userId);
+        return new JSONObject().put("queued", true).put("user_id", userId);
     }
 
     private JSONObject hostListConversations(JSONObject arguments) throws JSONException {

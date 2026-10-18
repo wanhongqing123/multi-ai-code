@@ -23,6 +23,12 @@ void FakeRemoteIMClient::deleteContact(const QString& userId, RemoteIMCompletion
     complete(std::move(completion));
 }
 
+void FakeRemoteIMClient::requestFriend(const QString& userId,
+                                       RemoteIMCompletion completion) {
+    Q_UNUSED(userId);
+    complete(std::move(completion));
+}
+
 void FakeRemoteIMClient::sendText(const QString& peerId, const QString& text, RemoteIMSendCompletion completion) {
     lastTextPeerId_ = peerId.trimmed();
     lastText_ = text.trimmed();

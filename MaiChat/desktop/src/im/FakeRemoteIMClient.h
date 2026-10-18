@@ -17,6 +17,7 @@ public:
                           RemoteIMCompletion completion) override;
     void disconnectFromService(RemoteIMCompletion completion) override;
     void deleteContact(const QString& userId, RemoteIMCompletion completion) override;
+    void requestFriend(const QString& userId, RemoteIMCompletion completion) override;
     void sendText(const QString& peerId, const QString& text, RemoteIMSendCompletion completion) override;
     void sendApprovalDecision(const QString& peerId,
                               const QString& token,

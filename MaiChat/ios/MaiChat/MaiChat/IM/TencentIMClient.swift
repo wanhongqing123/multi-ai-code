@@ -112,6 +112,13 @@ final class TencentIMClient:
                             event: "login-finished",
                             fields: ["result": "ok", "peer": Self.peerTag(userID), "account": diagnosticAccount]
                         )
+                        let profile = V2TIMUserFullInfo()
+                        profile.allowType = V2TIMFriendAllowType(rawValue: 1)!
+                        V2TIMManager.sharedInstance().setSelfInfo(info: profile, succ: {},
+                            fail: { code, _ in
+                                Self.logSDK(level: .warning, event: "friend-verification-update-failed",
+                                            fields: ["code": String(code)])
+                            })
                         V2TIMManager.sharedInstance().getTotalUnreadMessageCount(
                             succ: { count in
                                 Self.logSDK(
@@ -491,6 +498,148 @@ final class TencentIMClient:
             ],
             failureDescription: "send file failed"
         )
+    }
+
+    func requestFriend(userID: String) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            Self.sdkQueue.async {
+                let application = V2TIMFriendAddApplication()
+                application.userID = userID
+                application.addType = V2TIMFriendType(rawValue: 2)!
+                application.addSource = "AddSource_Type_MaiChat"
+                application.addWording = "请求添加为好友"
+                V2TIMManager.sharedInstance().addFriend(application: application, succ: { result in
+                    if let result, result.resultCode != 0 && result.resultCode != 30539 {
+                        continuation.resume(throwing: RemoteIMClientError.operationFailed(
+                            code: Int32(result.resultCode),
+                            description: result.resultInfo ?? "add friend failed"
+                        ))
+                    } else {
+                        continuation.resume()
+                    }
+                }, fail: { code, description in
+                    if code == 30539 { continuation.resume() }
+                    else {
+                        continuation.resume(throwing: RemoteIMClientError.operationFailed(
+                            code: code, description: description ?? "add friend failed"
+                        ))
+                    }
+                })
+            }
+        }
+    }
+
+    func friendUserIDs() async throws -> [String] {
+        try await withCheckedThrowingContinuation { continuation in
+            Self.sdkQueue.async {
+                V2TIMManager.sharedInstance().getFriendList(succ: { friends in
+                    continuation.resume(returning: friends?.compactMap { $0.userID } ?? [])
+                }, fail: { code, description in
+                    continuation.resume(throwing: RemoteIMClientError.operationFailed(
+                        code: code, description: description ?? "get friend list failed"
+                    ))
+                })
+            }
+        }
+    }
+
+    func pendingFriendRequests() async throws -> [RemoteIMFriendRequest] {
+        try await withCheckedThrowingContinuation { continuation in
+            Self.sdkQueue.async {
+                V2TIMManager.sharedInstance().getFriendApplicationList(succ: { result in
+                    let requests = result?.applicationList.compactMap { raw -> RemoteIMFriendRequest? in
+                        guard let application = raw as? V2TIMFriendApplication,
+                              application.type.rawValue == 1,
+                              let userID = application.userID, !userID.isEmpty else { return nil }
+                        return RemoteIMFriendRequest(
+                            userID: userID,
+                            displayName: application.nickName?.isEmpty == false
+                                ? application.nickName! : userID,
+                            avatarURL: application.faceUrl,
+                            message: application.addWording ?? ""
+                        )
+                    } ?? []
+                    continuation.resume(returning: requests)
+                }, fail: { code, description in
+                    continuation.resume(throwing: RemoteIMClientError.operationFailed(
+                        code: code, description: description ?? "get friend requests failed"
+                    ))
+                })
+            }
+        }
+    }
+
+    func acceptFriendRequest(userID: String) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            Self.sdkQueue.async {
+                V2TIMManager.sharedInstance().getFriendApplicationList(succ: { list in
+                    guard let application = list?.applicationList.first(where: { raw in
+                        guard let request = raw as? V2TIMFriendApplication else { return false }
+                        return request.type.rawValue == 1 && request.userID == userID
+                    }) as? V2TIMFriendApplication else {
+                        continuation.resume(throwing: RemoteIMClientError.operationFailed(
+                            code: -1, description: "Friend request no longer exists"
+                        ))
+                        return
+                    }
+                    V2TIMManager.sharedInstance().acceptFriendApplication(
+                        application: application, acceptType: V2TIMFriendAcceptType(rawValue: 1)!,
+                        succ: { result in
+                            if let result, result.resultCode != 0 {
+                                continuation.resume(throwing: RemoteIMClientError.operationFailed(
+                                    code: Int32(result.resultCode),
+                                    description: result.resultInfo ?? "accept friend failed"
+                                ))
+                            } else { continuation.resume() }
+                        }, fail: { code, description in
+                            continuation.resume(throwing: RemoteIMClientError.operationFailed(
+                                code: code, description: description ?? "accept friend failed"
+                            ))
+                        }
+                    )
+                }, fail: { code, description in
+                    continuation.resume(throwing: RemoteIMClientError.operationFailed(
+                        code: code, description: description ?? "get friend requests failed"
+                    ))
+                })
+            }
+        }
+    }
+
+    func refuseFriendRequest(userID: String) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            Self.sdkQueue.async {
+                V2TIMManager.sharedInstance().getFriendApplicationList(succ: { list in
+                    guard let application = list?.applicationList.first(where: { raw in
+                        guard let request = raw as? V2TIMFriendApplication else { return false }
+                        return request.type.rawValue == 1 && request.userID == userID
+                    }) as? V2TIMFriendApplication else {
+                        continuation.resume(throwing: RemoteIMClientError.operationFailed(
+                            code: -1, description: "Friend request no longer exists"
+                        ))
+                        return
+                    }
+                    V2TIMManager.sharedInstance().refuseFriendApplication(
+                        application: application, succ: { result in
+                            if let result, result.resultCode != 0 {
+                                continuation.resume(throwing: RemoteIMClientError.operationFailed(
+                                    code: Int32(result.resultCode),
+                                    description: result.resultInfo ?? "refuse friend failed"
+                                ))
+                            } else { continuation.resume() }
+                        }, fail: { code, description in
+                            continuation.resume(throwing: RemoteIMClientError.operationFailed(
+                                code: code, description: description ?? "refuse friend failed"
+                            ))
+                        }
+                    )
+                }, fail: { code, description in
+                    continuation.resume(throwing: RemoteIMClientError.operationFailed(
+                        code: code, description: description ?? "get friend requests failed"
+                    ))
+                })
+            }
+        }
     }
 
     func deleteContact(userID: String) async throws {

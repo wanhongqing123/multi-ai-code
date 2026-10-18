@@ -30,10 +30,30 @@ public:
         if (completion) completion(-1, QStringLiteral("User profile API unavailable"), {});
         return -1;
     }
+    virtual int modifySelfProfile(const QString& request, TimSdkCompletion completion) {
+        Q_UNUSED(request);
+        if (completion) completion(-1, QStringLiteral("Self profile API unavailable"), {});
+        return -1;
+    }
     virtual void setSelfInfoUpdatedCallback(TimSdkReceiveMessagesCallback callback) {
         Q_UNUSED(callback);
     }
     virtual int deleteFriend(const QString& jsonRequest, TimSdkCompletion completion) = 0;
+    virtual int addFriend(const QString& jsonRequest, TimSdkCompletion completion) {
+        Q_UNUSED(jsonRequest);
+        if (completion) completion(-1, QStringLiteral("Friend request API unavailable"), {});
+        return -1;
+    }
+    virtual int getFriendApplications(const QString& jsonRequest, TimSdkCompletion completion) {
+        Q_UNUSED(jsonRequest);
+        if (completion) completion(-1, QStringLiteral("Friend request API unavailable"), {});
+        return -1;
+    }
+    virtual int decideFriendApplication(const QString& jsonRequest, TimSdkCompletion completion) {
+        Q_UNUSED(jsonRequest);
+        if (completion) completion(-1, QStringLiteral("Friend request API unavailable"), {});
+        return -1;
+    }
     virtual int deleteConversation(const QString& conversationId,
                                    int conversationType,
                                    TimSdkCompletion completion) = 0;

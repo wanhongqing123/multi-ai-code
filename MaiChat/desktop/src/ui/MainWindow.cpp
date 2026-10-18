@@ -2143,7 +2143,14 @@ void MainWindow::buildUi() {
   addContactButton_->setIconSize(QSize(kNavIconPixels, kNavIconPixels));
   addContactButton_->setToolTip(QStringLiteral("添加联系人"));
   addContactButton_->setCursor(Qt::PointingHandCursor);
+  friendRequestsButton_ = new QPushButton(QStringLiteral("申请"), conversationPane);
+  friendRequestsButton_->setObjectName(QStringLiteral("friendRequestsButton"));
+  friendRequestsButton_->setToolTip(QStringLiteral("查看好友申请"));
+  friendRequestsButton_->setCursor(Qt::PointingHandCursor);
+  friendRequestsButton_->setStyleSheet(QStringLiteral(
+      "QPushButton#friendRequestsButton { color: #2688c9; border: 0; background: transparent; }"));
   conversationHeader->addStretch(1);
+  conversationHeader->addWidget(friendRequestsButton_, 0);
   conversationHeader->addWidget(addContactButton_, 0);
 
   conversationList_ = new QListWidget(conversationPane);
@@ -3077,8 +3084,13 @@ void MainWindow::bindSignals() {
         AppMessageDialog::show(this, AppMessageDialog::Kind::Warning,
                                QStringLiteral("IM"), message);
       });
+  connect(&app_, &RemoteIMApplication::friendRequestSent, this, [this] {
+    showToast(QStringLiteral("好友申请已发送，等待对方同意"), 14, 3000);
+  });
   connect(addContactButton_, &QPushButton::clicked, this,
           [this] { openAddContactDialog(); });
+  connect(friendRequestsButton_, &QPushButton::clicked, this,
+          [this] { openFriendRequestsDialog(); });
   // 搜索一次要扫所有会话的消息，绝不能挂在每次按键上跑：会话上千条时输入会发涩。
   // 与命令提示条同一套做法——停顿 150ms 才真正执行，输入法组词期间一律不跑。
   globalSearchUpdateTimer_ = new QTimer(this);
@@ -3766,6 +3778,10 @@ void MainWindow::setMediaServiceAccessProvider(
   rebuildAgentPage();
 }
 
+void MainWindow::setFriendQrProvider(std::function<void(FriendQrCompletion)> provider) {
+  friendQrProvider_ = std::move(provider);
+}
+
 void MainWindow::rebuildAgentPage() {
   if (agentPage_ == nullptr)
     return;
@@ -4072,6 +4088,7 @@ void MainWindow::showMessagesPage() {
 }
 
 void MainWindow::showContactsPage() {
+  app_.refreshFriendList();
   refreshContactDirectory();
   contentStack_->setCurrentWidget(contactsPage_);
   syncNavigationSelection();
@@ -4807,12 +4824,76 @@ void MainWindow::scrollMessagesToBottom() {
 
 void MainWindow::openAddContactDialog() {
   AddContactDialog dialog(this);
+  QPointer<AddContactDialog> target(&dialog);
+  if (friendQrProvider_) {
+    friendQrProvider_([target](const QString& userId, const QByteArray& png,
+                               const QString& error) {
+      if (target) target->setOwnQr(userId, png, error);
+    });
+  }
   if (dialog.exec() != QDialog::Accepted)
     return;
   const QString userId = dialog.userId();
   if (userId.isEmpty())
     return;
-  app_.addContact(userId, userId);
+  app_.requestFriend(userId, userId);
+}
+
+void MainWindow::openFriendRequestsDialog() {
+  auto* dialog = new QDialog(this);
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  dialog->setWindowTitle(QStringLiteral("好友申请"));
+  dialog->resize(UiZoom::s(500), UiZoom::s(420));
+  auto* layout = new QVBoxLayout(dialog);
+  auto* status = new QLabel(QStringLiteral("正在获取好友申请…"), dialog);
+  layout->addWidget(status);
+  auto* scroll = new QScrollArea(dialog);
+  scroll->setWidgetResizable(true);
+  auto* content = new QWidget(scroll);
+  auto* rows = new QVBoxLayout(content);
+  rows->setAlignment(Qt::AlignTop);
+  scroll->setWidget(content);
+  layout->addWidget(scroll);
+  QPointer<QDialog> target(dialog);
+  QPointer<MainWindow> self(this);
+  app_.friendRequests([self, target, rows, status](bool ok, const QString& error,
+                                                   const QList<RemoteIMFriendRequest>& requests) {
+    if (!self || !target) return;
+    if (!ok || requests.isEmpty()) {
+      status->setText(ok ? QStringLiteral("暂无待处理的好友申请") :
+                           (error.isEmpty() ? QStringLiteral("获取好友申请失败") : error));
+      return;
+    }
+    status->setText(QStringLiteral("等待你处理的好友申请"));
+    for (const RemoteIMFriendRequest& request : requests) {
+      auto* row = new QFrame(target);
+      auto* rowLayout = new QHBoxLayout(row);
+      auto* description = new QLabel(
+          QStringLiteral("%1\n%2").arg(request.displayName,
+                                       request.message.isEmpty() ?
+                                           QStringLiteral("请求添加你为好友") : request.message), row);
+      description->setWordWrap(true);
+      rowLayout->addWidget(description, 1);
+      auto* refuse = new QPushButton(QStringLiteral("拒绝"), row);
+      auto* accept = new QPushButton(QStringLiteral("同意"), row);
+      rowLayout->addWidget(refuse);
+      rowLayout->addWidget(accept);
+      auto decide = [self, target, row, request](bool allow) {
+        if (!self || !target) return;
+        self->app_.decideFriendRequest(request.userId, allow,
+                                       [self, target, row](bool success, const QString& error) {
+          if (!self || !target) return;
+          if (success) row->hide();
+          else AppMessageDialog::show(self.data(), AppMessageDialog::Kind::Warning,
+                                      QStringLiteral("好友申请"), error);
+        });
+      };
+      connect(refuse, &QPushButton::clicked, row, [decide] { decide(false); });
+      connect(accept, &QPushButton::clicked, row, [decide] { decide(true); });
+      rows->addWidget(row);
+    }
+  });
+  dialog->show();
 }
 
 bool MainWindow::handleComposerPaste() {

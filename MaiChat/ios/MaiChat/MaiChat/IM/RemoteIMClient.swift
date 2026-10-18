@@ -117,6 +117,15 @@ struct RemoteIMUserProfile: Equatable {
     let avatarURL: String?
 }
 
+struct RemoteIMFriendRequest: Identifiable, Sendable {
+    let userID: String
+    let displayName: String
+    let avatarURL: String?
+    let message: String
+
+    var id: String { userID }
+}
+
 enum RemoteIMClientError: Error, LocalizedError {
     case sdkNotIntegrated
     case sdkInitializationFailed
@@ -173,12 +182,34 @@ protocol RemoteIMClient: AnyObject {
     func clearHistory(userID: String) async throws
     func refreshUserProfiles(userIDs: [String]) async throws -> [RemoteIMUserProfile]
     func setSelfAvatar(url: String) async throws
+    func requestFriend(userID: String) async throws
+    func friendUserIDs() async throws -> [String]
+    func pendingFriendRequests() async throws -> [RemoteIMFriendRequest]
+    func acceptFriendRequest(userID: String) async throws
+    func refuseFriendRequest(userID: String) async throws
     func refreshPresenceStatuses(userIDs: [String]) async throws -> [String: RemoteIMPresenceStatus]
     func subscribePresenceStatuses(userIDs: [String]) async throws
     func updateApplicationBadgeCount(_ count: Int)
 }
 
 extension RemoteIMClient {
+    func friendUserIDs() async throws -> [String] { [] }
+    func requestFriend(userID: String) async throws {
+        throw RemoteIMClientError.sdkNotIntegrated
+    }
+
+    func pendingFriendRequests() async throws -> [RemoteIMFriendRequest] {
+        throw RemoteIMClientError.sdkNotIntegrated
+    }
+
+    func acceptFriendRequest(userID: String) async throws {
+        throw RemoteIMClientError.sdkNotIntegrated
+    }
+
+    func refuseFriendRequest(userID: String) async throws {
+        throw RemoteIMClientError.sdkNotIntegrated
+    }
+
     func setSelfAvatar(url: String) async throws {
         throw RemoteIMClientError.sdkNotIntegrated
     }

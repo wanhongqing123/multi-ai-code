@@ -166,7 +166,7 @@ struct DesktopLoginScanView: View {
                     .fill(Color(red: 0.08, green: 0.12, blue: 0.19))
                 switch cameraAccess {
                 case .authorized:
-                    DesktopQRCodeCameraView(
+                    MaiChatQRCodeCameraView(
                         isActive: isScanning && scenePhase == .active,
                         onCode: { receiveQRCode($0) },
                         onUnavailable: { cameraAccess = .unavailable }
@@ -459,7 +459,7 @@ struct DesktopLoginScanView: View {
     }
 }
 
-private final class DesktopQRCodePreview: UIView {
+final class MaiChatQRCodePreview: UIView {
     override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
 
     var previewLayer: AVCaptureVideoPreviewLayer {
@@ -467,7 +467,7 @@ private final class DesktopQRCodePreview: UIView {
     }
 }
 
-private struct DesktopQRCodeCameraView: UIViewRepresentable {
+struct MaiChatQRCodeCameraView: UIViewRepresentable {
     let isActive: Bool
     let onCode: @MainActor @Sendable (String) -> Void
     let onUnavailable: @MainActor @Sendable () -> Void
@@ -476,19 +476,19 @@ private struct DesktopQRCodeCameraView: UIViewRepresentable {
         Coordinator(onCode: onCode, onUnavailable: onUnavailable)
     }
 
-    func makeUIView(context: Context) -> DesktopQRCodePreview {
-        let view = DesktopQRCodePreview()
+    func makeUIView(context: Context) -> MaiChatQRCodePreview {
+        let view = MaiChatQRCodePreview()
         view.previewLayer.session = context.coordinator.session
         view.previewLayer.videoGravity = .resizeAspectFill
         context.coordinator.setRunning(isActive)
         return view
     }
 
-    func updateUIView(_ view: DesktopQRCodePreview, context: Context) {
+    func updateUIView(_ view: MaiChatQRCodePreview, context: Context) {
         context.coordinator.setRunning(isActive)
     }
 
-    static func dismantleUIView(_ view: DesktopQRCodePreview, coordinator: Coordinator) {
+    static func dismantleUIView(_ view: MaiChatQRCodePreview, coordinator: Coordinator) {
         coordinator.stopAndDetachPreview(view)
     }
 
@@ -496,7 +496,7 @@ private struct DesktopQRCodeCameraView: UIViewRepresentable {
     final class Coordinator: NSObject, AVCaptureMetadataOutputObjectsDelegate,
                              @unchecked Sendable {
         let session = AVCaptureSession()
-        private let queue = DispatchQueue(label: "maichat.desktop-qr.camera")
+        private let queue = DispatchQueue(label: "maichat.qr.camera")
         private let onCode: @MainActor @Sendable (String) -> Void
         private let onUnavailable: @MainActor @Sendable () -> Void
         private var requestedRunning = false
@@ -532,7 +532,7 @@ private struct DesktopQRCodeCameraView: UIViewRepresentable {
         // 扫码后 SwiftUI 会立即拆掉取景视图。预览层的 session setter 内部也会
         // 提交采集配置，不能在主线程解绑的同时从采集队列调用 stopRunning。
         // 保留视图到停止完成，再回主线程解绑；队列顺序还保证先前的启动已结束。
-        func stopAndDetachPreview(_ view: DesktopQRCodePreview) {
+        func stopAndDetachPreview(_ view: MaiChatQRCodePreview) {
             requestedRunning = false
             queue.async { [self, view] in
                 if session.isRunning { session.stopRunning() }

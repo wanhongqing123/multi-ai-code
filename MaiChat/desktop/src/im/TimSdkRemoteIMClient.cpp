@@ -567,7 +567,16 @@ void TimSdkRemoteIMClient::connectToService(int sdkAppId, const QString& userId,
                 api_->setSelfInfoUpdatedCallback({});
                 api_->removeReceiveMessageCallback();
             }
-            if (connected_) syncInitialData();
+            if (connected_) {
+                QJsonObject profile;
+                profile[QStringLiteral("user_profile_item_add_permission")] = 2;
+                api_->modifySelfProfile(compactJson(profile),
+                                        [](int profileCode, const QString&, const QString&) {
+                    if (profileCode != 0)
+                        qWarning() << "[im] friend verification update failed:" << profileCode;
+                });
+                syncInitialData();
+            }
             complete(std::move(completion), code, description);
         });
 }
@@ -618,6 +627,95 @@ void TimSdkRemoteIMClient::deleteContact(const QString& userId, RemoteIMCompleti
                                                                       const QString&) mutable {
             complete(std::move(completion), conversationCode, conversationDescription);
         });
+    });
+}
+
+void TimSdkRemoteIMClient::requestFriend(const QString& userId, RemoteIMCompletion completion) {
+    const QString cleanUserId = userId.trimmed();
+    static const QRegularExpression accountId(QStringLiteral("^[A-Za-z0-9_-]{1,128}$"));
+    if (!accountId.match(cleanUserId).hasMatch() || cleanUserId == currentUserId_) {
+        if (completion) completion(false, QStringLiteral("好友账号无效或不能添加自己"));
+        return;
+    }
+    if (!connected_ || !api_) {
+        if (completion) completion(false, QStringLiteral("IM 未连接，无法发送好友申请"));
+        return;
+    }
+    QJsonObject request;
+    request[QStringLiteral("friendship_add_friend_param_identifier")] = cleanUserId;
+    request[QStringLiteral("friendship_add_friend_param_friend_type")] = kFriendTypeBoth;
+    request[QStringLiteral("friendship_add_friend_param_add_source")] = QStringLiteral("MaiChat");
+    request[QStringLiteral("friendship_add_friend_param_add_wording")] =
+        QStringLiteral("请求添加为好友");
+    api_->addFriend(compactJson(request), [completion = std::move(completion)](
+                                               int code, const QString& description,
+                                               const QString&) mutable {
+        if (code == 30539) {
+            if (completion) completion(true, {});
+            return;
+        }
+        complete(std::move(completion), code, description);
+    });
+}
+
+void TimSdkRemoteIMClient::refreshFriendList() {
+    if (connected_ && api_) fetchFriendList();
+}
+
+void TimSdkRemoteIMClient::friendRequests(RemoteIMFriendRequestsCompletion completion) {
+    if (!connected_ || !api_) {
+        if (completion) completion(false, QStringLiteral("IM 未连接"), {});
+        return;
+    }
+    QJsonObject request;
+    request[QStringLiteral("friendship_get_pendency_list_param_type")] = 0;
+    request[QStringLiteral("friendship_get_pendency_list_param_start_seq")] = 0;
+    api_->getFriendApplications(compactJson(request),
+                                [completion = std::move(completion)](
+                                    int code, const QString& description,
+                                    const QString& payload) mutable {
+        if (!completion) return;
+        if (code != 0) { completion(false, description, {}); return; }
+        const QJsonDocument document = QJsonDocument::fromJson(payload.toUtf8());
+        if (!document.isObject()) {
+            completion(false, QStringLiteral("好友申请数据无效"), {});
+            return;
+        }
+        QList<RemoteIMFriendRequest> requests;
+        const QJsonArray entries = document.object()
+            .value(QStringLiteral("pendency_page_pendency_info_array")).toArray();
+        for (const QJsonValue& value : entries) {
+            const QJsonObject item = value.toObject();
+            if (item.value(QStringLiteral("friend_add_pendency_info_type")).toInt(-1) != 0) continue;
+            const QString userId = item.value(QStringLiteral("friend_add_pendency_info_identifier"))
+                                       .toString().trimmed();
+            if (userId.isEmpty()) continue;
+            const QString nickname = item.value(QStringLiteral("friend_add_pendency_info_nick_name"))
+                                         .toString().trimmed();
+            requests.append(RemoteIMFriendRequest{
+                userId, nickname.isEmpty() ? userId : nickname,
+                item.value(QStringLiteral("friend_add_pendency_info_face_url")).toString(),
+                item.value(QStringLiteral("friend_add_pendency_info_add_wording")).toString()
+            });
+        }
+        completion(true, {}, requests);
+    });
+}
+
+void TimSdkRemoteIMClient::decideFriendRequest(const QString& userId, bool accept,
+                                               RemoteIMCompletion completion) {
+    if (!connected_ || !api_) {
+        if (completion) completion(false, QStringLiteral("IM 未连接"));
+        return;
+    }
+    QJsonObject request;
+    request[QStringLiteral("friend_response_identifier")] = userId.trimmed();
+    request[QStringLiteral("friend_response_action")] = accept ? 1 : 2;
+    api_->decideFriendApplication(compactJson(request),
+                                  [completion = std::move(completion)](
+                                      int code, const QString& description,
+                                      const QString&) mutable {
+        complete(std::move(completion), code, description);
     });
 }
 

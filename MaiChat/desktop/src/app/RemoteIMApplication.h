@@ -43,6 +43,10 @@ public:
     void connectToService(int sdkAppId, const QString& userSig);
     void disconnectFromService(RemoteIMCompletion completion = {});
     void addContact(const QString& userId, const QString& displayName);
+    void requestFriend(const QString& userId, const QString& displayName);
+    void refreshFriendList();
+    void friendRequests(RemoteIMFriendRequestsCompletion completion);
+    void decideFriendRequest(const QString& userId, bool accept, RemoteIMCompletion completion);
     void deleteContact(const QString& userId);
 
     // ---- 联系人分组 ----
@@ -108,6 +112,7 @@ signals:
     void selectionChanged(const QString& peerId);
     void connectionChanged(bool connected);
     void errorMessage(const QString& message);
+    void friendRequestSent();
     // 远程桌面信令：借道 IM 文本通道，但不入库、不进消息列表、不计未读。
     // 由 UI 层转交给 RemoteDesktopController 处理。
     void remoteDesktopSignalReceived(const QString& fromUserId, const QString& text);

@@ -64,11 +64,18 @@ public:
         return 0;
     }
 
+    int modifySelfProfile(const QString& request, TimSdkCompletion completion) override {
+        selfProfileRequest = request;
+        if (completion) completion(0, {}, {});
+        return 0;
+    }
+
     void setSelfInfoUpdatedCallback(TimSdkReceiveMessagesCallback callback) override {
         selfInfoCallback = std::move(callback);
     }
 
     QString profileRequest;
+    QString selfProfileRequest;
     QString profilePayload;
     TimSdkReceiveMessagesCallback selfInfoCallback;
 
@@ -79,6 +86,24 @@ public:
                                    deleteFriendCode == 0 ? QString() : QStringLiteral("delete friend failed"),
                                    QString());
         return deleteFriendCode;
+    }
+
+    int addFriend(const QString& jsonRequest, TimSdkCompletion completion) override {
+        addFriendRequest = jsonRequest;
+        if (completion) completion(addFriendCode, {}, {});
+        return 0;
+    }
+
+    int getFriendApplications(const QString& jsonRequest, TimSdkCompletion completion) override {
+        getApplicationsRequest = jsonRequest;
+        if (completion) completion(0, {}, applicationPayload);
+        return 0;
+    }
+
+    int decideFriendApplication(const QString& jsonRequest, TimSdkCompletion completion) override {
+        decideApplicationRequest = jsonRequest;
+        if (completion) completion(0, {}, {});
+        return 0;
     }
 
     int deleteConversation(const QString& conversationId,
@@ -120,6 +145,7 @@ public:
     int initResult = 0;
     int loginResult = 0;
     int loginCode = 0;
+    int addFriendCode = 0;
     int sendResult = 0;
     int sendCode = 0;
     quint64 initializedSdkAppId = 0;
@@ -135,6 +161,10 @@ public:
     int deleteFriendCode = 0;
     int deleteConversationCode = 0;
     QString deleteFriendRequest;
+    QString addFriendRequest;
+    QString getApplicationsRequest;
+    QString decideApplicationRequest;
+    QString applicationPayload;
     QString deletedConversationId;
     int deletedConversationType = 0;
     QStringList operations;
@@ -176,6 +206,7 @@ private slots:
     void sendsVideoWithTextAsSingleMultiElemMessage();
     void refusesVideoWithoutDurationOrCover();
     void deletesFriendAndConversationThroughSdk();
+    void requestsAndAcceptsFriendThroughSdk();
     void fetchesContactsConversationsAndHistoryAfterLogin();
     void emitsIncomingTextAndImageFromSdkMessages();
     void emitsIncomingApprovalRequestFromV2CloudMetadata();
@@ -444,7 +475,6 @@ void TimSdkRemoteIMClientTest::sendsVideoWithEverySdkRequiredField() {
     auto* fake = api.get();
     TimSdkRemoteIMClient client(std::move(api));
     client.connectToService(123456, QStringLiteral("desktop-user"), QStringLiteral("sig-value"), nullptr);
-
     bool sent = false;
     client.sendVideo(QStringLiteral("phone-user"), samplePayload(),
                      [&](bool ok, const QString&, const RemoteIMSendReceipt&) { sent = ok; });
@@ -536,6 +566,48 @@ void TimSdkRemoteIMClientTest::deletesFriendAndConversationThroughSdk() {
              QJsonArray({QStringLiteral("phone-user")}));
     QCOMPARE(fake->deletedConversationId, QStringLiteral("phone-user"));
     QCOMPARE(fake->deletedConversationType, 1);
+}
+
+void TimSdkRemoteIMClientTest::requestsAndAcceptsFriendThroughSdk() {
+    auto api = std::make_unique<FakeTimSdkApi>();
+    auto* fake = api.get();
+    fake->applicationPayload = QString::fromUtf8(QJsonDocument(QJsonObject{
+        {QStringLiteral("pendency_page_pendency_info_array"), QJsonArray{
+            QJsonObject{
+                {QStringLiteral("friend_add_pendency_info_type"), 0},
+                {QStringLiteral("friend_add_pendency_info_identifier"), QStringLiteral("u-friend")},
+                {QStringLiteral("friend_add_pendency_info_nick_name"), QStringLiteral("好友")},
+                {QStringLiteral("friend_add_pendency_info_add_wording"), QStringLiteral("你好")}
+            }
+        }}
+    }).toJson(QJsonDocument::Compact));
+    TimSdkRemoteIMClient client(std::move(api));
+    client.connectToService(123456, QStringLiteral("desktop-user"), QStringLiteral("sig-value"), nullptr);
+    const QJsonObject profile = QJsonDocument::fromJson(fake->selfProfileRequest.toUtf8()).object();
+    QCOMPARE(profile.value(QStringLiteral("user_profile_item_add_permission")).toInt(), 2);
+    fake->addFriendCode = 30539;
+    bool sent = false;
+    client.requestFriend(QStringLiteral("u-friend"), [&](bool ok, const QString&) { sent = ok; });
+    QVERIFY(sent);
+    const QJsonObject add = QJsonDocument::fromJson(fake->addFriendRequest.toUtf8()).object();
+    QCOMPARE(add.value(QStringLiteral("friendship_add_friend_param_identifier")).toString(),
+             QStringLiteral("u-friend"));
+    QCOMPARE(add.value(QStringLiteral("friendship_add_friend_param_friend_type")).toInt(), 1);
+    QList<RemoteIMFriendRequest> requests;
+    client.friendRequests([&](bool ok, const QString&, const QList<RemoteIMFriendRequest>& found) {
+        QVERIFY(ok);
+        requests = found;
+    });
+    QCOMPARE(requests.size(), 1);
+    QCOMPARE(requests.front().userId, QStringLiteral("u-friend"));
+    bool accepted = false;
+    client.decideFriendRequest(QStringLiteral("u-friend"), true,
+                               [&](bool ok, const QString&) { accepted = ok; });
+    QVERIFY(accepted);
+    const QJsonObject decision = QJsonDocument::fromJson(fake->decideApplicationRequest.toUtf8()).object();
+    QCOMPARE(decision.value(QStringLiteral("friend_response_identifier")).toString(),
+             QStringLiteral("u-friend"));
+    QCOMPARE(decision.value(QStringLiteral("friend_response_action")).toInt(), 1);
 }
 
 // 登录后联系人、会话和历史分别由 SDK 回灌；重复或异步回执不得改变当前账号归属。

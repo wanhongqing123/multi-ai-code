@@ -2,7 +2,24 @@
 // 展示联系人、分组、搜索和添加入口，并将选择结果交给主导航。
 // 关系状态与资料更新来自 IM 状态层，本文件负责列表交互。
 import MaiChatCore
+import AVFoundation
+import CoreImage.CIFilterBuiltins
 import SwiftUI
+import UIKit
+
+private enum FriendQRImage {
+    static func image(for url: URL) -> UIImage? {
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(url.absoluteString.utf8)
+        filter.correctionLevel = "M"
+        guard let output = filter.outputImage,
+              let bitmap = CIContext().createCGImage(
+                output.transformed(by: CGAffineTransform(scaleX: 12, y: 12)),
+                from: output.extent.applying(CGAffineTransform(scaleX: 12, y: 12))
+              ) else { return nil }
+        return UIImage(cgImage: bitmap)
+    }
+}
 
 struct ContactsView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
@@ -33,15 +50,26 @@ struct ContactsView: View {
                 }
                 .toolbarBackground(RemoteIMStyle.panelBackground, for: .navigationBar)
                 .toolbarBackground(.visible, for: .navigationBar)
+                .task {
+                    await appState.refreshAcceptedFriends()
+                    await appState.refreshFriendRequests()
+                }
             }
         }
     }
+}
+
+private enum FriendQRDestination: String, Identifiable {
+    case scan, mine
+    var id: String { rawValue }
 }
 
 struct AddContactDialog: View {
     @EnvironmentObject private var appState: RemoteIMAppState
     @Binding var isPresented: Bool
     @FocusState private var isAccountFocused: Bool
+    @State private var isSubmitting = false
+    @State private var qrDestination: FriendQRDestination?
 
     var body: some View {
         ZStack {
@@ -81,6 +109,23 @@ struct AddContactDialog: View {
                     )
                     .onSubmit(addContact)
 
+                HStack(spacing: 14) {
+                    Button {
+                        isAccountFocused = false
+                        qrDestination = .scan
+                    } label: {
+                        Label("扫一扫", systemImage: "qrcode.viewfinder")
+                    }
+                    Button {
+                        isAccountFocused = false
+                        qrDestination = .mine
+                    } label: {
+                        Label("我的二维码", systemImage: "qrcode")
+                    }
+                }
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(RemoteIMStyle.blue)
+
                 HStack(spacing: 10) {
                     Button("取消", action: cancel)
                         .buttonStyle(.plain)
@@ -93,7 +138,7 @@ struct AddContactDialog: View {
                             in: RoundedRectangle(cornerRadius: 9, style: .continuous)
                         )
 
-                    Button("添加", action: addContact)
+                    Button(isSubmitting ? "发送中" : "发送申请", action: addContact)
                         .buttonStyle(.plain)
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(canAdd ? Color.white : RemoteIMStyle.textSecondary)
@@ -103,7 +148,7 @@ struct AddContactDialog: View {
                             canAdd ? RemoteIMStyle.blue : Color(.secondarySystemBackground),
                             in: RoundedRectangle(cornerRadius: 9, style: .continuous)
                         )
-                        .disabled(!canAdd)
+                        .disabled(!canAdd || isSubmitting)
                 }
             }
             .padding(20)
@@ -124,6 +169,20 @@ struct AddContactDialog: View {
                 isAccountFocused = true
             }
         }
+        .sheet(item: $qrDestination) { destination in
+            NavigationStack {
+                switch destination {
+                case .mine:
+                    FriendQRShareView(userID: appState.masterUserID)
+                case .scan:
+                    FriendQRScanView { userID in
+                        qrDestination = nil
+                        appState.newContactUserID = userID
+                        addContact()
+                    }
+                }
+            }
+        }
     }
 
     private var canAdd: Bool {
@@ -133,16 +192,120 @@ struct AddContactDialog: View {
     }
 
     private func addContact() {
-        guard canAdd else { return }
-        appState.addContact()
-        if appState.newContactUserID.isEmpty {
-            isPresented = false
+        guard canAdd && !isSubmitting else { return }
+        isSubmitting = true
+        Task {
+            let added = await appState.addContact()
+            isSubmitting = false
+            if added { isPresented = false }
         }
     }
 
     private func cancel() {
         appState.newContactUserID = ""
         isPresented = false
+    }
+}
+
+struct FriendQRShareView: View {
+    let userID: String
+
+    var body: some View {
+        VStack(spacing: 22) {
+            Text("让对方扫一扫添加你为好友")
+                .font(.headline)
+            if let url = MaiChatFriendLink.url(for: userID),
+               let image = FriendQRImage.image(for: url) {
+                Image(uiImage: image)
+                    .interpolation(.none)
+                    .resizable()
+                    .frame(width: 240, height: 240)
+                    .padding(16)
+                    .background(.white, in: RoundedRectangle(cornerRadius: 16))
+            } else {
+                Label("账号尚未就绪", systemImage: "qrcode")
+                    .foregroundStyle(RemoteIMStyle.textSecondary)
+            }
+            Text(userID)
+                .font(.system(.footnote, design: .monospaced))
+                .textSelection(.enabled)
+            Button("复制账号 ID") { UIPasteboard.general.string = userID }
+                .buttonStyle(.bordered)
+            Spacer(minLength: 0)
+        }
+        .padding(.top, 28)
+        .padding(.horizontal, 20)
+        .navigationTitle("我的好友二维码")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+private struct FriendQRScanView: View {
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var cameraAuthorized = false
+    @State private var cameraDenied = false
+    @State private var errorMessage: String?
+    @State private var scanGeneration = 0
+    let onUserID: (String) -> Void
+
+    var body: some View {
+        VStack(spacing: 18) {
+            Text("扫描对方的 MaiChat 好友二维码")
+                .foregroundStyle(RemoteIMStyle.textSecondary)
+            ZStack {
+                RoundedRectangle(cornerRadius: 18)
+                    .fill(Color(red: 0.08, green: 0.12, blue: 0.19))
+                if cameraAuthorized {
+                    MaiChatQRCodeCameraView(
+                        isActive: scenePhase == .active && errorMessage == nil,
+                        onCode: { text in
+                            guard let userID = MaiChatFriendLink.userID(from: text) else {
+                                errorMessage = "这不是 MaiChat 好友二维码"
+                                return
+                            }
+                            onUserID(userID)
+                        },
+                        onUnavailable: { errorMessage = "相机不可用" }
+                    )
+                    .id(scanGeneration)
+                    .clipShape(RoundedRectangle(cornerRadius: 18))
+                } else if cameraDenied {
+                    Text("请在系统设置中允许 MaiChat 使用相机")
+                        .foregroundStyle(.white)
+                } else {
+                    ProgressView("正在打开相机").tint(.white)
+                }
+                RoundedRectangle(cornerRadius: 14)
+                    .strokeBorder(.white.opacity(0.8), lineWidth: 3)
+                    .frame(width: 220, height: 220)
+                    .allowsHitTesting(false)
+            }
+            .frame(height: 340)
+            if let errorMessage {
+                Text(errorMessage).foregroundStyle(.red)
+                Button("重新扫描") {
+                    self.errorMessage = nil
+                    scanGeneration += 1
+                }
+                .buttonStyle(.bordered)
+            }
+            if cameraDenied {
+                Link("打开系统设置", destination: URL(string: UIApplication.openSettingsURLString)!)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(20)
+        .navigationTitle("扫一扫")
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            switch AVCaptureDevice.authorizationStatus(for: .video) {
+            case .authorized: cameraAuthorized = true
+            case .notDetermined:
+                cameraAuthorized = await AVCaptureDevice.requestAccess(for: .video)
+                cameraDenied = !cameraAuthorized
+            default: cameraDenied = true
+            }
+        }
     }
 }
 
@@ -157,6 +320,37 @@ private struct ContactList: View {
     var body: some View {
         VStack(spacing: 0) {
             List {
+                if !appState.pendingFriendRequests.isEmpty {
+                    Section("好友申请") {
+                        ForEach(appState.pendingFriendRequests) { request in
+                            HStack(spacing: 12) {
+                                RemoteIMContactAvatar(
+                                    contact: RemoteIMContact(
+                                        userID: request.userID,
+                                        displayName: request.displayName,
+                                        avatarURL: request.avatarURL
+                                    ), isSelected: false,
+                                    presenceStatus: .unknown, size: 38
+                                )
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(request.displayName).font(.subheadline.weight(.semibold))
+                                    Text(request.message.isEmpty ? "请求添加你为好友" : request.message)
+                                        .font(.caption)
+                                        .foregroundStyle(RemoteIMStyle.textSecondary)
+                                }
+                                Spacer()
+                                Button("同意") {
+                                    Task { await appState.acceptFriendRequest(userID: request.userID) }
+                                }
+                                .buttonStyle(.borderedProminent)
+                                Button("拒绝") {
+                                    Task { await appState.refuseFriendRequest(userID: request.userID) }
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        }
+                    }
+                }
                 if appState.chatState.contacts.isEmpty && appState.chatState.contactGroups.isEmpty {
                     EmptyContacts()
                         .padding(.top, 76)
@@ -175,6 +369,10 @@ private struct ContactList: View {
                 }
             }
             .listStyle(.plain)
+            .refreshable {
+                await appState.refreshAcceptedFriends()
+                await appState.refreshFriendRequests()
+            }
             .scrollContentBackground(.hidden)
             .scrollDismissesKeyboard(.immediately)
             .background(RemoteIMStyle.panelBackground)

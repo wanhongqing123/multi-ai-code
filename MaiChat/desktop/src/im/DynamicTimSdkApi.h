@@ -30,8 +30,12 @@ public:
     int getConversationList(TimSdkCompletion completion) override;
     int getFriendList(TimSdkCompletion completion) override;
     int getUserProfiles(const QString& request, TimSdkCompletion completion) override;
+    int modifySelfProfile(const QString& request, TimSdkCompletion completion) override;
     void setSelfInfoUpdatedCallback(TimSdkReceiveMessagesCallback callback) override;
     int deleteFriend(const QString& jsonRequest, TimSdkCompletion completion) override;
+    int addFriend(const QString& jsonRequest, TimSdkCompletion completion) override;
+    int getFriendApplications(const QString& jsonRequest, TimSdkCompletion completion) override;
+    int decideFriendApplication(const QString& jsonRequest, TimSdkCompletion completion) override;
     int deleteConversation(const QString& conversationId,
                            int conversationType,
                            TimSdkCompletion completion) override;
@@ -60,6 +64,8 @@ private:
     using GetUserProfilesFn = int (*)(const char* request, NativeCompletion completion, const void* userData);
     using SetSelfInfoUpdatedFn = void (*)(NativeReceiveMessages callback, const void* userData);
     using DeleteFriendFn = int (*)(const char* jsonRequest, NativeCompletion completion, const void* userData);
+    using FriendOperationFn = int (*)(const char* jsonRequest, NativeCompletion completion,
+                                     const void* userData);
     using DeleteConversationFn = int (*)(const char* conversationId,
                                          int conversationType,
                                          NativeCompletion completion,
@@ -79,6 +85,8 @@ private:
     static void receiveMessages(const char* jsonMessages, const void* userData);
     static void selfInfoUpdated(const char* profile, const void* userData);
     int completeIfImmediateFailure(int result, TimSdkCompletion completion);
+    int callFriendApi(FriendOperationFn function, const QString& jsonRequest,
+                      TimSdkCompletion completion);
 
     QLibrary library_;
     QString diagnosticError_;
@@ -90,8 +98,12 @@ private:
     GetConversationListFn getConversationList_ = nullptr;
     GetFriendListFn getFriendList_ = nullptr;
     GetUserProfilesFn getUserProfiles_ = nullptr;
+    FriendOperationFn modifySelfProfile_ = nullptr;
     SetSelfInfoUpdatedFn setSelfInfoUpdated_ = nullptr;
     DeleteFriendFn deleteFriend_ = nullptr;
+    FriendOperationFn addFriend_ = nullptr;
+    FriendOperationFn getFriendApplications_ = nullptr;
+    FriendOperationFn decideFriendApplication_ = nullptr;
     DeleteConversationFn deleteConversation_ = nullptr;
     GetMessageListFn getMessageList_ = nullptr;
     AddReceiveMessagesFn addReceiveMessages_ = nullptr;

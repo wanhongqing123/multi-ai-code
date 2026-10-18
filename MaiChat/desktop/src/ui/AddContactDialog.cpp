@@ -7,6 +7,7 @@
 #include <QGraphicsDropShadowEffect>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QPixmap>
 #include <QVBoxLayout>
 
 namespace {
@@ -34,6 +35,21 @@ void AddContactDialog::setUserId(const QString& userId) {
     updateConfirmButton();
 }
 
+void AddContactDialog::setOwnQr(const QString& userId, const QByteArray& png,
+                                const QString& error) {
+    QPixmap image;
+    if (!error.isEmpty() || !image.loadFromData(png, "PNG") || userId.isEmpty()) {
+        showQrButton_->setText(error.isEmpty() ? QStringLiteral("二维码暂不可用") : error);
+        showQrButton_->setEnabled(false);
+        return;
+    }
+    qrLabel_->setPixmap(image.scaled(qrLabel_->size(), Qt::KeepAspectRatio,
+                                    Qt::FastTransformation));
+    ownAccountLabel_->setText(QStringLiteral("我的账号 ID：%1").arg(userId));
+    showQrButton_->setText(QStringLiteral("我的好友二维码"));
+    showQrButton_->setEnabled(true);
+}
+
 // 作用：建立对话框或会话卡片的控件层级及信号连接。
 void AddContactDialog::buildUi() {
     setObjectName(QStringLiteral("addContactDialog"));
@@ -41,7 +57,7 @@ void AddContactDialog::buildUi() {
     setModal(true);
     setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);
     setAttribute(Qt::WA_TranslucentBackground, true);
-    setFixedSize(520, 320);
+    setFixedSize(520, 340);
 
     auto* rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(18, 18, 18, 18);
@@ -60,7 +76,7 @@ void AddContactDialog::buildUi() {
     panelLayout->setSpacing(0);
 
     auto* title = makeLabel(QStringLiteral("添加联系人"), QStringLiteral("addContactTitle"), panel);
-    auto* subtitle = makeLabel(QStringLiteral("输入对方 IM 账号 ID，添加后会自动打开会话。"),
+    auto* subtitle = makeLabel(QStringLiteral("输入对方账号 ID，发送好友申请。"),
                                QStringLiteral("addContactSubtitle"), panel);
     panelLayout->addWidget(title);
     panelLayout->addSpacing(8);
@@ -76,7 +92,27 @@ void AddContactDialog::buildUi() {
     panelLayout->addWidget(fieldLabel);
     panelLayout->addSpacing(10);
     panelLayout->addWidget(userIdInput_);
-    panelLayout->addSpacing(24);
+    panelLayout->addSpacing(10);
+    showQrButton_ = new QPushButton(QStringLiteral("正在获取我的二维码…"), panel);
+    showQrButton_->setObjectName(QStringLiteral("showOwnFriendQrButton"));
+    showQrButton_->setEnabled(false);
+    panelLayout->addWidget(showQrButton_);
+    qrLabel_ = makeLabel({}, QStringLiteral("ownFriendQr"), panel);
+    qrLabel_->setFixedSize(220, 220);
+    qrLabel_->setAlignment(Qt::AlignCenter);
+    qrLabel_->hide();
+    panelLayout->addWidget(qrLabel_, 0, Qt::AlignHCenter);
+    ownAccountLabel_ = makeLabel({}, QStringLiteral("ownFriendAccount"), panel);
+    ownAccountLabel_->setAlignment(Qt::AlignCenter);
+    ownAccountLabel_->hide();
+    panelLayout->addWidget(ownAccountLabel_);
+    connect(showQrButton_, &QPushButton::clicked, this, [this] {
+        qrVisible_ = !qrVisible_;
+        qrLabel_->setVisible(qrVisible_);
+        ownAccountLabel_->setVisible(qrVisible_);
+        setFixedSize(520, qrVisible_ ? 590 : 340);
+    });
+    panelLayout->addSpacing(14);
 
     auto* actionLayout = new QHBoxLayout();
     actionLayout->setContentsMargins(0, 0, 0, 0);
@@ -86,7 +122,7 @@ void AddContactDialog::buildUi() {
     auto* cancelButton = new QPushButton(QStringLiteral("取消"), panel);
     cancelButton->setObjectName(QStringLiteral("addContactCancelButton"));
     cancelButton->setCursor(Qt::PointingHandCursor);
-    confirmButton_ = new QPushButton(QStringLiteral("添加"), panel);
+    confirmButton_ = new QPushButton(QStringLiteral("发送申请"), panel);
     confirmButton_->setObjectName(QStringLiteral("addContactConfirmButton"));
     confirmButton_->setCursor(Qt::PointingHandCursor);
 
@@ -144,6 +180,16 @@ void AddContactDialog::applyStyle() {
             border-color: #42b8ff;
             background: #ffffff;
         }
+        #showOwnFriendQrButton {
+            color: #0f8dde;
+            background: transparent;
+            border: 0;
+            text-align: left;
+            font-size: 14px;
+        }
+        #showOwnFriendQrButton:disabled { color: #90a2b8; }
+        #ownFriendQr { background: #ffffff; border: 0; }
+        #ownFriendAccount { color: #66758c; font-size: 13px; }
         #addContactCancelButton,
         #addContactConfirmButton {
             min-width: 96px;

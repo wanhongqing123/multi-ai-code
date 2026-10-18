@@ -10,6 +10,9 @@ import com.tencent.imsdk.v2.V2TIMCallback;
 import com.tencent.imsdk.v2.V2TIMDownloadCallback;
 import com.tencent.imsdk.v2.V2TIMElem;
 import com.tencent.imsdk.v2.V2TIMFileElem;
+import com.tencent.imsdk.v2.V2TIMFriendAddApplication;
+import com.tencent.imsdk.v2.V2TIMFriendApplication;
+import com.tencent.imsdk.v2.V2TIMFriendApplicationResult;
 import com.tencent.imsdk.v2.V2TIMFriendInfo;
 import com.tencent.imsdk.v2.V2TIMFriendOperationResult;
 import com.tencent.imsdk.v2.V2TIMImageElem;
@@ -67,6 +70,16 @@ public final class TencentIMClient {
 
     public interface OperationCompletion {
         void onSuccess();
+        void onError(int code, String message);
+    }
+
+    public interface FriendRequestsCompletion {
+        void onSuccess(List<RemoteIMFriendRequest> requests);
+        void onError(int code, String message);
+    }
+
+    public interface FriendListCompletion {
+        void onSuccess(List<String> userIds);
         void onError(int code, String message);
     }
 
@@ -172,6 +185,14 @@ public final class TencentIMClient {
             @Override
             public void onSuccess() {
                 Log.i(TAG, "login ok: " + cleanUserId);
+                V2TIMUserFullInfo profile = new V2TIMUserFullInfo();
+                profile.setAllowType(V2TIMUserFullInfo.V2TIM_FRIEND_NEED_CONFIRM);
+                V2TIMManager.getInstance().setSelfInfo(profile, new V2TIMCallback() {
+                    @Override public void onSuccess() { }
+                    @Override public void onError(int code, String message) {
+                        Log.w(TAG, "friend verification update failed: " + code);
+                    }
+                });
                 listener.onConnectionStateChanged(ConnectionState.CONNECTED, "已连接");
             }
 
@@ -340,6 +361,122 @@ public final class TencentIMClient {
             sdkHandler.post(() -> clearHistory(peerId, completion)); return;
         }
         V2TIMManager.getMessageManager().clearC2CHistoryMessage(peerId, callback(completion));
+    }
+
+    public void requestFriend(String peerId, OperationCompletion completion) {
+        if (closed) return;
+        if (android.os.Looper.myLooper() != sdkThread.getLooper()) {
+            sdkHandler.post(() -> requestFriend(peerId, completion)); return;
+        }
+        V2TIMFriendAddApplication application = new V2TIMFriendAddApplication(peerId);
+        application.setAddType(V2TIMFriendInfo.V2TIM_FRIEND_TYPE_BOTH);
+        application.setAddSource("AddSource_Type_MaiChat");
+        application.setAddWording("请求添加为好友");
+        V2TIMManager.getFriendshipManager().addFriend(application,
+            new V2TIMValueCallback<V2TIMFriendOperationResult>() {
+                @Override public void onSuccess(V2TIMFriendOperationResult result) {
+                    if (result == null || result.getResultCode() == 0 ||
+                        result.getResultCode() == 30539) completion.onSuccess();
+                    else completion.onError(result.getResultCode(), result.getResultInfo());
+                }
+                @Override public void onError(int code, String message) {
+                    if (code == 30539) completion.onSuccess();
+                    else completion.onError(code, message);
+                }
+            });
+    }
+
+    public void friendRequests(FriendRequestsCompletion completion) {
+        if (closed) return;
+        if (android.os.Looper.myLooper() != sdkThread.getLooper()) {
+            sdkHandler.post(() -> friendRequests(completion)); return;
+        }
+        V2TIMManager.getFriendshipManager().getFriendApplicationList(
+            new V2TIMValueCallback<V2TIMFriendApplicationResult>() {
+                @Override public void onSuccess(V2TIMFriendApplicationResult result) {
+                    List<RemoteIMFriendRequest> requests = new ArrayList<>();
+                    if (result != null && result.getFriendApplicationList() != null) {
+                        for (V2TIMFriendApplication application : result.getFriendApplicationList()) {
+                            if (application.getType() != V2TIMFriendApplication.V2TIM_FRIEND_APPLICATION_COME_IN)
+                                continue;
+                            String userId = application.getUserID();
+                            if (userId == null || userId.isEmpty()) continue;
+                            String name = application.getNickname();
+                            requests.add(new RemoteIMFriendRequest(userId,
+                                name == null || name.isEmpty() ? userId : name,
+                                application.getFaceUrl(), application.getAddWording()));
+                        }
+                    }
+                    completion.onSuccess(requests);
+                }
+                @Override public void onError(int code, String message) {
+                    completion.onError(code, message);
+                }
+            });
+    }
+
+    public void friendUserIds(FriendListCompletion completion) {
+        if (closed) return;
+        if (android.os.Looper.myLooper() != sdkThread.getLooper()) {
+            sdkHandler.post(() -> friendUserIds(completion)); return;
+        }
+        V2TIMManager.getFriendshipManager().getFriendList(
+            new V2TIMValueCallback<List<V2TIMFriendInfo>>() {
+                @Override public void onSuccess(List<V2TIMFriendInfo> friends) {
+                    List<String> userIds = new ArrayList<>();
+                    if (friends != null) for (V2TIMFriendInfo friend : friends) {
+                        if (friend.getUserID() != null) userIds.add(friend.getUserID());
+                    }
+                    completion.onSuccess(userIds);
+                }
+                @Override public void onError(int code, String message) {
+                    completion.onError(code, message);
+                }
+            });
+    }
+
+    public void decideFriendRequest(String userId, boolean accept, OperationCompletion completion) {
+        if (closed) return;
+        if (android.os.Looper.myLooper() != sdkThread.getLooper()) {
+            sdkHandler.post(() -> decideFriendRequest(userId, accept, completion)); return;
+        }
+        V2TIMManager.getFriendshipManager().getFriendApplicationList(
+            new V2TIMValueCallback<V2TIMFriendApplicationResult>() {
+                @Override public void onSuccess(V2TIMFriendApplicationResult result) {
+                    V2TIMFriendApplication match = null;
+                    if (result != null && result.getFriendApplicationList() != null) {
+                        for (V2TIMFriendApplication application : result.getFriendApplicationList()) {
+                            if (application.getType() == V2TIMFriendApplication.V2TIM_FRIEND_APPLICATION_COME_IN
+                                && userId.equals(application.getUserID())) { match = application; break; }
+                        }
+                    }
+                    if (match == null) { completion.onError(-1, "Friend request no longer exists"); return; }
+                    if (accept) {
+                        V2TIMManager.getFriendshipManager().acceptFriendApplication(match,
+                            V2TIMFriendApplication.V2TIM_FRIEND_ACCEPT_AGREE_AND_ADD,
+                            friendOperation(completion));
+                    } else {
+                        V2TIMManager.getFriendshipManager().refuseFriendApplication(match,
+                            friendOperation(completion));
+                    }
+                }
+                @Override public void onError(int code, String message) {
+                    completion.onError(code, message);
+                }
+            });
+    }
+
+    private V2TIMValueCallback<V2TIMFriendOperationResult> friendOperation(OperationCompletion completion) {
+        return new V2TIMValueCallback<V2TIMFriendOperationResult>() {
+            @Override public void onSuccess(V2TIMFriendOperationResult result) {
+                if (result != null && result.getResultCode() != 0) {
+                    completion.onError(result.getResultCode(), result.getResultInfo());
+                } else { completion.onSuccess(); }
+            }
+            @Override public void onError(int code, String message) {
+                completion.onError(code, message);
+            }
+        };
     }
 
     public void deleteContact(String peerId, OperationCompletion completion) {

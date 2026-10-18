@@ -5,6 +5,7 @@
 // remote/RemoteDesktopController.h；实现与这些接口协作。
 #pragma once
 
+#include <QByteArray>
 #include <QHash>
 #include <QSet>
 #include <QLabel>
@@ -55,6 +56,7 @@ class ImagePreviewDialog;
 
 class MainWindow final : public QMainWindow {
 public:
+    using FriendQrCompletion = std::function<void(const QString&, const QByteArray&, const QString&)>;
     explicit MainWindow(RemoteIMApplication& app, QWidget* parent = nullptr);
     MainWindow(RemoteIMApplication& app, int imSdkAppId,
                std::function<QString(const QString&)> userSigProvider,
@@ -78,6 +80,7 @@ public:
     void setAccountModelKeys(QHash<QString, QString> keys, const QString& error = {});
     void setModelKeyRefreshHandler(std::function<void()> handler);
     void setMediaServiceAccessProvider(std::function<QPair<QString, QString>()> provider);
+    void setFriendQrProvider(std::function<void(FriendQrCompletion)> provider);
     bool openDockedVideo(const QString& path, const QStringList& playlist = {});
 
     // 把 IM 收/发的文件附件从本地缓存拷贝到 targetPath（存在则覆盖）。
@@ -154,6 +157,7 @@ private:
     void syncNavigationSelection();
     void updateNavigationSelection(QPushButton* selectedButton);
     void openAddContactDialog();
+    void openFriendRequestsDialog();
     // 处理消息框里的 Ctrl+V：把剪贴板里的图片/文件作为内联对象插入到输入框中（不立即发送），
     // 返回 true 表示已消费；否则返回 false 交给 QTextEdit 默认粘贴文本。
     bool handleComposerPaste();
@@ -277,6 +281,7 @@ private:
     std::function<QString()> arkApiKeyProvider_;
     std::function<QPair<QString, QString>()> wanCredentialsProvider_;
     std::function<QPair<QString, QString>()> mediaServiceAccessProvider_;
+    std::function<void(FriendQrCompletion)> friendQrProvider_;
     QHash<QString, QString> modelApiKeys_;
     struct ModelKeyState {
         QMutex mutex;
@@ -394,6 +399,7 @@ private:
     QString messageSearchHighlightedId_;
     bool renderedEmptyView_ = false;
     QPushButton* addContactButton_ = nullptr;
+    QPushButton* friendRequestsButton_ = nullptr;
     QPushButton* sendButton_ = nullptr;
     QPushButton* aiReplyButton_ = nullptr;
     QLabel* aiReplyHint_ = nullptr;

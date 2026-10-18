@@ -16,6 +16,14 @@
 #include "diagnostics/RemoteDiagnosticsEvidence.h"
 
 using RemoteIMCompletion = std::function<void(bool ok, const QString& error)>;
+struct RemoteIMFriendRequest {
+    QString userId;
+    QString displayName;
+    QString avatarUrl;
+    QString message;
+};
+using RemoteIMFriendRequestsCompletion =
+    std::function<void(bool ok, const QString& error, const QList<RemoteIMFriendRequest>& requests)>;
 struct RemoteIMSendReceipt {
     QString remoteMessageId;
     qint64 createdAtMillis = 0;
@@ -62,6 +70,20 @@ public:
                                   RemoteIMCompletion completion) = 0;
     virtual void disconnectFromService(RemoteIMCompletion completion) = 0;
     virtual void deleteContact(const QString& userId, RemoteIMCompletion completion) = 0;
+    virtual void requestFriend(const QString& userId, RemoteIMCompletion completion) {
+        Q_UNUSED(userId);
+        if (completion) completion(false, QStringLiteral("当前 IM 客户端不支持好友申请"));
+    }
+    virtual void refreshFriendList() {}
+    virtual void friendRequests(RemoteIMFriendRequestsCompletion completion) {
+        if (completion) completion(false, QStringLiteral("当前 IM 客户端不支持好友申请"), {});
+    }
+    virtual void decideFriendRequest(const QString& userId, bool accept,
+                                     RemoteIMCompletion completion) {
+        Q_UNUSED(userId);
+        Q_UNUSED(accept);
+        if (completion) completion(false, QStringLiteral("当前 IM 客户端不支持好友申请"));
+    }
     virtual void sendText(const QString& peerId, const QString& text, RemoteIMSendCompletion completion) = 0;
     virtual void sendActivity(const QString& peerId, const RemoteIMActivitySignal& signal,
                               RemoteIMCompletion completion) {

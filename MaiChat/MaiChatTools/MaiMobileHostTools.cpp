@@ -196,6 +196,10 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
         // query 按用户 ID 或显示名筛选；limit 限本次最多返回 200 人。
         R"({"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","minimum":1,)"
             R"("maximum":200}}})");
+    add("maichat_request_friend",
+        "Send a MaiChat friend request to a user ID. Requires user approval. The recipient must accept.",
+        R"({"type":"object","properties":{"user_id":{"type":"string"}},"required":["user_id"]})",
+        true);
     add("maichat_list_conversations",
         "List MaiChat conversations ordered by latest message, including unread counts.",
         // 会话按最新消息排序；limit 只限制返回条数，未读数来自会话记录。

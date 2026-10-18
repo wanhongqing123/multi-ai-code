@@ -86,6 +86,11 @@ private struct PersonalProfileView: View {
                 .disabled(isSaving || appState.connectionState != .connected)
                 LabeledContent("名字", value: appState.profile(for: appState.masterUserID).displayName)
                 LabeledContent("账号", value: appState.masterUserID)
+                NavigationLink {
+                    FriendQRShareView(userID: appState.masterUserID)
+                } label: {
+                    Label("我的好友二维码", systemImage: "qrcode")
+                }
             }
         }
         .listStyle(.plain)

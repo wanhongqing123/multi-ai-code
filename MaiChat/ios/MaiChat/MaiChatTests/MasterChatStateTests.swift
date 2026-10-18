@@ -5,6 +5,16 @@ import XCTest
 @testable import MaiChatCore
 
 final class MasterChatStateTests: XCTestCase {
+    func testFriendLinkCarriesOnlyAccountIDAndRejectsOtherQRTypes() throws {
+        let userID = "u0123456789abcdef01234567"
+        let url = try XCTUnwrap(MaiChatFriendLink.url(for: userID))
+        XCTAssertEqual(MaiChatFriendLink.userID(from: url.absoluteString), userID)
+        XCTAssertNil(MaiChatFriendLink.userID(
+            from: "maichat://auth/desktop?request_id=123e4567-e89b-42d3-a456-426614174000"))
+        XCTAssertNil(MaiChatFriendLink.userID(from: url.absoluteString + "&token=secret"))
+        XCTAssertNil(MaiChatFriendLink.url(for: "invalid id"))
+    }
+
     func testActivitySignalRoundTripsAndClampsTTL() throws {
         let signal = try XCTUnwrap(RemoteIMActivitySignal(
             activityID: "turn:task-1",

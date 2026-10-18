@@ -19,4 +19,6 @@
 - 下载 sink 修复提交：`d0dbf238bf885c067c2b692e9fc15b323dd35f14`；本记录所属后续提交同时修正通用 `MaiFileSystem::publishNewFile`。两处 Android 路径改用原子、无覆盖的 `renameat2(RENAME_NOREPLACE)`，不支持该操作的旧内核/文件系统才回退原硬链接流程。Windows/Mac 正常路径不变。
 - 发布失败的工具结果新增 `stage=publish` 和数值 `os_error`，不暴露签名 URL、文件路径或账号凭据。
 - Android NDK arm64 与 armv7（API 26）的两处源码语法编译通过；Windows `MaiDownloadFileTests` 与 `MaiFilePathTests` 各 1/1 通过，仓库行宽检查通过。OPPO 的同分区系统调用探针通过无覆盖与目标文件保护检查。
-- 待完成：在 Android App 私有工作区以本地无付费 HTTP fixture 跑 `curl_download` 完整链路，并在视频任务有明确终态后安装新签名包做真机验收。当前 OPPO 保持 2.2.1，不能宣称产品故障已经实机修复。
+- Android App 私有目录验证提交 `d35d62cd8827f82d93d3ae3e3aa4e2b847fccacd`：在 Mac ARM Android 模拟器的 MaiChat Debug App 中，用仅绑定 `127.0.0.1` 的无付费 HTTP fixture 测试 `curl_download`。首次发布字节正确；再次下载同名文件返回 `file_exists` 且原文件保持不变。相同 App 私有目录中，通用 `MaiFileSystem::publishNewFile` 新建成功、目标已存在时拒绝覆盖且源文件保留。同进程 instrumentation 2/2 通过，测试文件已清理。路径比较使用 canonical path，因为 Android 的 `/data/user/0` 与 `/data/data` 是同一私有目录的别名。
+- 从 `d35d62cd` 构建的 Android 签名 Release 2.2.2（222）通过；测试 JNI 入口只在 Debug 编译，经 APK 内 arm64 原生库符号核对未进入 Release。Mac `MaiDownloadFileTests` 与 `MaiFilePathTests` 2/2、Desktop 隔离 `--smoke` 通过。
+- 待完成：OPPO Release App 私有 F2FS 目录的实际下载与供应商任务终态尚未验证。当前 OPPO 保持 2.2.1，不能宣称其用户现场已经修复，也不能凭本地发布错误判断视频生成失败。

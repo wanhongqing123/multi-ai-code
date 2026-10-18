@@ -26,10 +26,10 @@ Node 服务只监听 `127.0.0.1:9100`。验证码、密码哈希、登录会话�
 | `POST /v1/auth/desktop/cancel` | 桌面端提交 `{request_id,verifier}`；更换二维码或关闭登录时取消请求，也可撤销响应丢失时已领取的会话 |
 | `POST /v1/auth/desktop/claim` | 桌面端提交 `{request_id,verifier}`；等待批准返回 202，批准后一次性返回会话 |
 | `GET /v1/im/credential` | Bearer 会话；只为当前账号签发 Tencent UserSig |
-| `GET /v1/model/seedance-credential` | Bearer 会话且手机号在模型白名单；返回 5 分钟、限定 Seedance 与 Seedream 的临时方舟 Key；路径保留旧名称兼容 App |
-| `GET /v1/model/bailian-credential` | Bearer 会话且手机号在模型白名单；返回 5 分钟百炼临时 Key 和万相 Workspace ID，供万相与百炼可灵共用 |
-| `GET /v1/model/api-keys` | Bearer 会话且手机号在模型白名单；返回 GLM、DeepSeek、MiniMax Key，客户端直接调用供应商 |
-| `GET /v1/media/authorize` | Bearer 会话且手机号在模型白名单；供素材服务核验该账号可否登记素材或取得 OSS 上传签名，不返回密钥 |
+| `GET /v1/model/seedance-credential` | 有效 Bearer 会话；返回 5 分钟、限定 Seedance 与 Seedream 的临时方舟 Key；路径保留旧名称兼容 App |
+| `GET /v1/model/bailian-credential` | 有效 Bearer 会话；返回 5 分钟百炼临时 Key 和万相 Workspace ID，供万相与百炼可灵共用 |
+| `GET /v1/model/api-keys` | 有效 Bearer 会话；返回 GLM、DeepSeek、MiniMax Key，客户端直接调用供应商 |
+| `GET /v1/media/authorize` | 有效 Bearer 会话；供素材服务核验该账号可否登记素材或取得 OSS 上传签名，不返回密钥 |
 
 接口经 Nginx 对外使用 `/api/v1/...`；服务内部路由仍为 `/v1/...`。
 用户主键和腾讯 IM UserID 与手机号分离，换号不改变 IM 身份。首次登录前如需

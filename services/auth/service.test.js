@@ -13,7 +13,7 @@ const { openStore } = require('./store');
 const { createAuthService } = require('./service');
 const { bindLegacy } = require('./bind-legacy');
 
-function fixture(modelAllowedPhones = ['+8613900000001'], extra = {}) {
+function fixture(extra = {}) {
   const db = openStore(':memory:');
   let current = 1_780_000_000_000;
   const messages = [];
@@ -23,7 +23,6 @@ function fixture(modelAllowedPhones = ['+8613900000001'], extra = {}) {
     secret: 'test-only-auth-hmac-key-keep-on-server-123456',
     imSecret: 'test-only-tencent-im-key-keep-on-server-123456',
     sdkAppId: 123456789,
-    modelAllowedPhones,
     now: () => current,
     ...extra
   });
@@ -108,9 +107,9 @@ test('phone verification never sends SMS or logs in without the age confirmation
   setup.db.close();
 });
 
-test('only an allowed signed-in account receives short-lived Seedance credentials', async () => {
+test('signed-in accounts receive short-lived Seedance credentials', async () => {
   let issued = 0;
-  const setup = fixture(undefined, { issueArkCredential: async () => ({
+  const setup = fixture({ issueArkCredential: async () => ({
     api_key: `temporary-key-for-test-${++issued}`,
     expires_at: 1_780_000_000 + issued * 300
   }) });
@@ -137,21 +136,11 @@ test('only an allowed signed-in account receives short-lived Seedance credential
   assert.equal(issued, 2);
   setup.db.close();
 
-  const denied = fixture(undefined, { modelAllowedPhones: ['+8613900000002'],
-    issueArkCredential: async () => { throw new Error('must not issue'); } });
-  const request = await denied.call('POST', '/v1/auth/sms/challenge',
-    { phone: '13900000001' });
-  const account = await denied.call('POST', '/v1/auth/sms/verify', {
-    phone: '13900000001', challenge_id: request.body.challenge_id,
-    code: denied.messages[0].code
-  });
-  assert.equal((await denied.call('GET', path, {}, account.body.access_token)).statusCode, 403);
-  denied.db.close();
 });
 
-test('main chat keys require an allowed signed-in account', async () => {
+test('main chat keys require a signed-in account', async () => {
   let issued = 0;
-  const setup = fixture(undefined, { issueAccountModelKeys: async () => {
+  const setup = fixture({ issueAccountModelKeys: async () => {
     ++issued;
     return { api_keys: { glm: 'glm-model-key', deepseek: 'deepseek-model-key',
       minimax: 'minimax-model-key' } };
@@ -168,15 +157,9 @@ test('main chat keys require an allowed signed-in account', async () => {
   assert.equal(issued, 1);
   setup.db.close();
 
-  const denied = fixture(['+8613900000002'], { issueAccountModelKeys: async () => {
-    throw new Error('must not issue');
-  } });
-  const other = await signInWithSms(denied);
-  assert.equal((await denied.call('GET', path, {}, other.body.access_token)).statusCode, 403);
-  denied.db.close();
 });
 
-test('media signing requires an allowed signed-in account', async () => {
+test('media signing requires a signed-in account', async () => {
   const allowed = fixture();
   const path = '/v1/media/authorize';
   assert.equal((await allowed.call('GET', path)).statusCode, 401);
@@ -185,15 +168,11 @@ test('media signing requires an allowed signed-in account', async () => {
     { allowed: true });
   allowed.db.close();
 
-  const denied = fixture(['+8613900000002']);
-  const other = await signInWithSms(denied);
-  assert.equal((await denied.call('GET', path, {}, other.body.access_token)).statusCode, 403);
-  denied.db.close();
 });
 
 test('only a signed-in model account receives cached short-lived Bailian credentials', async () => {
   let issued = 0;
-  const setup = fixture(undefined, { issueBailianCredential: async () => ({
+  const setup = fixture({ issueBailianCredential: async () => ({
     api_key: `st-temporary-key-${++issued}`, expires_at: 1_780_000_000 + issued * 300,
     wan_workspace_id: 'ws-test'
   }) });
@@ -217,16 +196,25 @@ test('only a signed-in model account receives cached short-lived Bailian credent
   assert.equal((await setup.call('GET', path, {}, login.body.access_token)).statusCode, 200);
   assert.equal(issued, 2);
   setup.db.close();
-  const denied = fixture(undefined, { modelAllowedPhones: [],
-    issueBailianCredential: async () => { throw new Error('must not issue'); } });
-  const deniedChallenge = await denied.call('POST', '/v1/auth/sms/challenge',
-    { phone: '13900000001' });
-  const account = await denied.call('POST', '/v1/auth/sms/verify', {
-    phone: '13900000001', challenge_id: deniedChallenge.body.challenge_id,
-    code: denied.messages[0].code
+});
+
+test('a valid unlisted account can use all model and media credential routes', async () => {
+  const setup = fixture({
+    issueAccountModelKeys: async () => ({ api_keys: {
+      glm: 'glm-key', deepseek: 'deepseek-key', minimax: '' } }),
+    issueArkCredential: async () => ({
+      api_key: 'temporary-seedance-key', expires_at: 1_780_000_300 }),
+    issueBailianCredential: async () => ({
+      api_key: 'st-temporary-bailian-key', expires_at: 1_780_000_300,
+      wan_workspace_id: 'ws-test' })
   });
-  assert.equal((await denied.call('GET', path, {}, account.body.access_token)).statusCode, 403);
-  denied.db.close();
+  const token = (await signInWithSms(setup, '13900000002')).body.access_token;
+  for (const path of ['/v1/model/api-keys', '/v1/model/seedance-credential',
+    '/v1/model/bailian-credential', '/v1/media/authorize']) {
+    assert.equal((await setup.call('GET', path)).statusCode, 401, path);
+    assert.equal((await setup.call('GET', path, {}, token)).statusCode, 200, path);
+  }
+  setup.db.close();
 });
 
 test('one SMS login creates a stable account and a server-signed IM identity', async () => {
@@ -492,7 +480,7 @@ test('mobile slot is validated before consuming a code and legacy sessions canno
 });
 
 test('device slot cutover requires mobile slots on every login path', async () => {
-  const setup = fixture(undefined, { requireDeviceSlot: true });
+  const setup = fixture({ requireDeviceSlot: true });
   const sent = await setup.call('POST', '/v1/auth/sms/challenge',
     { phone: '13900000001' });
   const verify = { phone: '13900000001', challenge_id: sent.body.challenge_id,
@@ -603,7 +591,7 @@ test('unconfigured or invalid social credentials cannot create accounts', async 
 });
 
 test('WeChat and QQ bind through SMS to the same phone account and IM identity', async () => {
-  const setup = fixture(undefined, { socialVerifiers: {
+  const setup = fixture({ socialVerifiers: {
     wechat: async code => code.startsWith('wechat-ok') ?
       { appId: 'wx-app', subject: 'verified-wechat-openid' } : null,
     qq: async token => token.startsWith('qq-ok') ?
@@ -679,7 +667,7 @@ test('WeChat and QQ bind through SMS to the same phone account and IM identity',
 });
 
 test('social binding cannot move an identity to another phone or replace another provider ID', async () => {
-  const setup = fixture(undefined, { socialVerifiers: {
+  const setup = fixture({ socialVerifiers: {
     qq: async token => ({ appId: 'qq-app',
       subject: token === 'first-token' ? 'first-qq-id' : 'second-qq-id' })
   } });
@@ -727,7 +715,7 @@ test('social binding cannot move an identity to another phone or replace another
 
 test('invalid provider proof, expired binding and repeated verification fail closed', async () => {
   let verifications = 0;
-  const setup = fixture(undefined, { socialVerifiers: {
+  const setup = fixture({ socialVerifiers: {
     wechat: async code => {
       ++verifications;
       if (code === 'invalid') return null;
@@ -978,7 +966,7 @@ test('desktop denial, revoked approval, expiry and request rate limit block clai
 
 test('late SMS completion cannot supersede a newer delivered code', async () => {
   const pending = [];
-  const setup = fixture(undefined, { sms: { send(phone, code) {
+  const setup = fixture({ sms: { send(phone, code) {
     return new Promise(resolve => pending.push({ phone, code, resolve }));
   } } });
   const first = setup.call('POST', '/v1/auth/sms/challenge',

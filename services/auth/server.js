@@ -2,7 +2,7 @@
 
 const http = require('node:http');
 const { openStore } = require('./store');
-const { createAuthService, normalizePhone } = require('./service');
+const { createAuthService } = require('./service');
 const { createAliyunSmsSender } = require('./sms');
 const { createArkCredentialIssuer } = require('./ark-credential');
 const { createBailianCredentialIssuer } = require('./bailian-credential');
@@ -63,8 +63,6 @@ function createServer(service) {
 
 function start(env = process.env) {
   const requireDeviceSlot = requireDeviceSlotFromEnv(env.MAICHAT_AUTH_REQUIRE_DEVICE_SLOT);
-  const modelAllowedPhones = (env.MAICHAT_MODEL_ALLOWED_PHONES || '').split(',')
-    .map(normalizePhone).filter(Boolean);
   if (!env.MAICHAT_AUTH_DB_PATH || !env.MAICHAT_AUTH_HMAC_KEY ||
       !env.MAICHAT_IM_SECRET_KEY || !env.MAICHAT_IM_SDK_APP_ID)
     throw new Error('Auth database or server signing secrets are missing');
@@ -77,7 +75,7 @@ function start(env = process.env) {
     issueBailianCredential: createBailianCredentialIssuer(env),
     issueAccountModelKeys: createAccountModelKeyIssuer(env),
     socialVerifiers: createSocialVerifiers(env),
-    sdkAppId: Number(env.MAICHAT_IM_SDK_APP_ID), modelAllowedPhones,
+    sdkAppId: Number(env.MAICHAT_IM_SDK_APP_ID),
     requireDeviceSlot
   });
   const port = Number(env.MAICHAT_AUTH_PORT || 9100);

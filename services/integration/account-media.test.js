@@ -15,7 +15,7 @@ test('account bearer authorizes OSS signing and logout revokes it', async () => 
     sms: { async send(_phone, code) { sentCode = code; } },
     secret: 'test-only-auth-hmac-key-keep-on-server-123456',
     imSecret: 'test-only-tencent-im-key-keep-on-server-123456',
-    modelAllowedPhones: ['+8613900000001'], now: () => 1_780_000_000_000 });
+    now: () => 1_780_000_000_000 });
   const call = (method, path, body = {}, token = '') => auth.handle({
     method, path, body, ip: '192.0.2.1',
     headers: token ? { authorization: `Bearer ${token}` } : {}

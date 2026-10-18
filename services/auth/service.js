@@ -69,7 +69,6 @@ function createAuthService(options) {
       ['wechat', 'qq'].some(provider => socialVerifiers[provider] !== undefined &&
         typeof socialVerifiers[provider] !== 'function'))
     throw new Error('Invalid social verifier configuration');
-  const modelAllowedPhones = new Set(options.modelAllowedPhones || []);
   const arkCredentials = new Map();
   const arkIssuanceInFlight = new Map();
   const bailianCredentials = new Map();
@@ -714,14 +713,10 @@ function createAuthService(options) {
     }
     if (method === 'GET' && path === '/v1/media/authorize') {
       if (!session) return json(401, { error: 'Authentication required' });
-      if (!modelAllowedPhones.has(session.phone_e164))
-        return json(403, { error: 'Media access is not enabled for this account' });
       return json(200, { allowed: true });
     }
     if (method === 'GET' && path === '/v1/model/api-keys') {
       if (!session) return json(401, { error: 'Authentication required' });
-      if (!modelAllowedPhones.has(session.phone_e164))
-        return json(403, { error: 'Model access is not enabled for this account' });
       if (typeof issueAccountModelKeys !== 'function')
         return json(503, { error: 'Main chat model keys are unavailable' });
       try { return json(200, await issueAccountModelKeys()); }
@@ -729,8 +724,6 @@ function createAuthService(options) {
     }
     if (method === 'GET' && path === '/v1/model/seedance-credential') {
       if (!session) return json(401, { error: 'Authentication required' });
-      if (!modelAllowedPhones.has(session.phone_e164))
-        return json(403, { error: 'Model access is not enabled for this account' });
       if (typeof issueArkCredential !== 'function')
         return json(503, { error: 'Temporary model credentials are unavailable' });
       const cached = arkCredentials.get(session.user_id);
@@ -757,8 +750,6 @@ function createAuthService(options) {
     }
     if (method === 'GET' && path === '/v1/model/bailian-credential') {
       if (!session) return json(401, { error: 'Authentication required' });
-      if (!modelAllowedPhones.has(session.phone_e164))
-        return json(403, { error: 'Model access is not enabled for this account' });
       if (typeof issueBailianCredential !== 'function')
         return json(503, { error: 'Temporary model credentials are unavailable' });
       const cached = bailianCredentials.get(session.user_id);

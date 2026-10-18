@@ -24,4 +24,9 @@ public class AuthTerminalErrorTest {
         assertNull(MaiChatAuthClient.terminalSessionError(401, ""));
         assertNull(MaiChatAuthClient.terminalSessionError(403, "DEVICE_SLOT_REQUIRED"));
     }
+
+    @Test public void modelPermissionDenialShowsAccountAccessReason() {
+        assertEquals("当前账号未开通模型使用权限",
+            MaiChatAuthClient.errorText("Model access is not enabled for this account", "", 403));
+    }
 }

@@ -551,7 +551,7 @@ public final class MaiChatAuthClient {
         return null;
     }
 
-    private static String errorText(String error, String code, int status) {
+    static String errorText(String error, String code, int status) {
         if ("MOBILE_SESSION_REQUIRED".equals(code)) return "请重新用手机号登录后扫码";
         if ("SOCIAL_PROVIDER_UNAVAILABLE".equals(code)) return "社交登录暂时不可用，请稍后再试";
         if ("SOCIAL_CREDENTIAL_INVALID".equals(code)) return "授权已失效，请重新授权";
@@ -567,6 +567,8 @@ public final class MaiChatAuthClient {
             case "Please wait before trying again": return "登录尝试过多，请稍后再试";
             case "Authentication required": return "登录已过期，请重新用手机号登录";
             case "Invalid session": return "登录已过期，请重新用手机号登录";
+            case "Model access is not enabled for this account":
+                return "当前账号未开通模型使用权限";
             case "Desktop login request not found":
                 return "未找到桌面登录请求，请在电脑上刷新二维码";
             case "Desktop login request expired": return "二维码已过期，请在电脑上刷新";

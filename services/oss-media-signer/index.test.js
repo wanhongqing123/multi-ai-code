@@ -58,6 +58,40 @@ test('signs a private Ark video PUT and temporary GET for a random object key', 
   assert.ok(!result.body.includes('test-secret'));
 });
 
+test('signs avatar upload and exposes a stable URL that redirects to private OSS', async () => {
+  const id = '123e4567-e89b-42d3-a456-426614174000';
+  const calls = [];
+  const handle = createHandler({ env, newID: () => id,
+    currentTime: () => new Date('2026-10-18T00:00:00Z'),
+    makeClient: () => ({ signatureUrlV4: async (...args) => {
+      calls.push(args);
+      return `https://example.oss-cn-hangzhou.aliyuncs.com/${args[3]}?signed=${args[0]}`;
+    } }) });
+  const signed = await handle(request({ filename: 'avatar.jpg', size_bytes: 512,
+    purpose: 'im_avatar' }));
+  assert.equal(signed.statusCode, 200);
+  const body = JSON.parse(signed.body);
+  assert.equal(body.object_key, `avatars/2026-10-18/${id}.jpg`);
+  assert.equal(body.avatar_url,
+    `https://ichat.life/maichat/avatars/2026-10-18/${id}.jpg`);
+  assert.ok(!body.avatar_url.includes('signed='));
+  const redirect = await handle({ rawPath: `/avatars/2026-10-18/${id}.jpg`,
+    httpMethod: 'GET', headers: {} });
+  assert.equal(redirect.statusCode, 302);
+  assert.match(redirect.headers.Location, /signed=GET$/);
+  assert.deepEqual(calls.at(-1).slice(0, 2), ['GET', 300]);
+  assert.equal((await handle({ rawPath: '/avatars/../wan-inputs/secret.jpg',
+    httpMethod: 'GET' })).statusCode, 404);
+});
+
+test('avatar uploads reject oversized files and non-image purposes', async () => {
+  const handle = createHandler({ env, makeClient: () => { throw new Error('must not sign'); } });
+  assert.equal((await handle(request({ filename: 'avatar.jpg', size_bytes: 2_000_001,
+    purpose: 'im_avatar' }))).statusCode, 400);
+  assert.equal((await handle(request({ filename: 'avatar.mp4', size_bytes: 512,
+    purpose: 'im_avatar' }))).statusCode, 400);
+});
+
 test('rejects unauthorized and oversized requests before signing', async () => {
   let created = false;
   const handle = createHandler({ env, makeClient: () => { created = true; } });

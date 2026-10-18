@@ -24,8 +24,11 @@ const DOCUMENT_TYPES = Object.freeze({
 });
 const UPLOAD_TTL_SECONDS = 15 * 60;
 const READ_TTL_SECONDS = 24 * 60 * 60;
+const AVATAR_READ_TTL_SECONDS = 5 * 60;
+const MAX_AVATAR_BYTES = 2_000_000;
 const UPLOAD_PURPOSES = Object.freeze({
   ark_asset_input: Object.freeze({ prefix: 'ark-asset-inputs', types: ['image', 'video'] }),
+  im_avatar: Object.freeze({ prefix: 'avatars', types: ['image'] }),
   kling_input: Object.freeze({ prefix: 'kling-inputs', types: ['image', 'video'] }),
   minimax_input: Object.freeze({ prefix: 'minimax-inputs', types: ['image', 'video'] }),
   seedream_input: Object.freeze({ prefix: 'seedream-inputs', types: ['image'] }),
@@ -108,6 +111,29 @@ function createHandler(options = {}) {
     const route = event?.rawPath || event?.path || '/sign-upload';
     if (method === 'GET' && route === '/portrait-auth-callback')
       return portraitCallbackResponse();
+    if (method === 'GET' && route.startsWith('/avatars/')) {
+      if (!/^\/avatars\/\d{4}-\d{2}-\d{2}\/[a-f0-9-]{36}\.(jpg|jpeg|png)$/.test(route))
+        return jsonResponse(404, { error: 'Not found' });
+      if (!env.MAICHAT_OSS_BUCKET || !/^oss-[a-z0-9-]+$/.test(env.MAICHAT_OSS_REGION || '') ||
+          !env.ALIBABA_CLOUD_ACCESS_KEY_ID || !env.ALIBABA_CLOUD_ACCESS_KEY_SECRET)
+        return jsonResponse(503, { error: 'Storage signer is not configured' });
+      try {
+        if (!client) client = makeClient({
+          accessKeyId: env.ALIBABA_CLOUD_ACCESS_KEY_ID,
+          accessKeySecret: env.ALIBABA_CLOUD_ACCESS_KEY_SECRET,
+          bucket: env.MAICHAT_OSS_BUCKET,
+          region: env.MAICHAT_OSS_REGION,
+          authorizationV4: true,
+          secure: true
+        });
+        const readUrl = await client.signatureUrlV4(
+          'GET', AVATAR_READ_TTL_SECONDS, { headers: {} }, route.slice(1));
+        if (!readUrl.startsWith('https://')) throw new Error('Invalid OSS URL');
+        return { statusCode: 302, headers: { Location: readUrl,
+          'Cache-Control': 'public, max-age=60', 'Referrer-Policy': 'no-referrer' },
+        body: '' };
+      } catch { return jsonResponse(502, { error: 'Could not read the avatar' }); }
+    }
     const mediaRoute = route.endsWith('/sign-upload') || route.endsWith('/ark-assets');
     if (method !== 'POST' || !mediaRoute)
       return jsonResponse(404, { error: 'Not found' });
@@ -227,6 +253,8 @@ function createHandler(options = {}) {
     if (typeof purpose !== 'string' || !Object.hasOwn(UPLOAD_PURPOSES, purpose) ||
         !UPLOAD_PURPOSES[purpose].types.includes(type))
       return jsonResponse(400, { error: 'Invalid upload purpose for this file type' });
+    if (purpose === 'im_avatar' && size > MAX_AVATAR_BYTES)
+      return jsonResponse(400, { error: 'Avatar is too large' });
     const prefix = UPLOAD_PURPOSES[purpose].prefix;
 
     try {
@@ -238,7 +266,10 @@ function createHandler(options = {}) {
         authorizationV4: true,
         secure: true
       });
-      const objectKey = `${prefix}/${currentTime().toISOString().slice(0, 10)}/${newID()}${extension}`;
+      const objectId = newID();
+      if (purpose === 'im_avatar' && !/^[a-f0-9-]{36}$/.test(objectId))
+        throw new Error('Invalid avatar object ID');
+      const objectKey = `${prefix}/${currentTime().toISOString().slice(0, 10)}/${objectId}${extension}`;
       const contentType = image ? (extension === '.png' ? 'image/png' : 'image/jpeg')
         : video ? (extension === '.mov' ? 'video/quicktime' : 'video/mp4')
           : DOCUMENT_TYPES[extension];
@@ -253,6 +284,8 @@ function createHandler(options = {}) {
         upload_url: uploadUrl,
         upload_headers: uploadHeaders,
         read_url: readUrl,
+        ...(purpose === 'im_avatar' ? {
+          avatar_url: `https://ichat.life/maichat/${objectKey}` } : {}),
         object_key: objectKey,
         upload_expires_in: UPLOAD_TTL_SECONDS,
         read_expires_in: READ_TTL_SECONDS

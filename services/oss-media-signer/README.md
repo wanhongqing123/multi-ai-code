@@ -109,12 +109,22 @@ PPT/PPTX、PDF、TXT、KEY、PAGES、NUMBERS、MD（不超过 100 MB）。
 `wan-inputs/`；`ark_asset_input` 只允许 JPEG/PNG、MP4/MOV，写入
 `ark-asset-inputs/`；`seedream_input` 只允许图片，写入 `seedream-inputs/`；
 `minimax_input` 允许图片和视频，写入 `minimax-inputs/`；`kling_input` 允许图片和
-视频，写入 `kling-inputs/`。
+视频，写入 `kling-inputs/`；`im_avatar` 仅允许不超过 2 MB 的 JPEG/PNG，写入
+`avatars/`。头像不设置到期自动删除规则。
 缺少用途、未知用途或用途与文件类型不符时
 返回 400。对象路径由服务器生成，
 请求中的路径或前缀字段不能覆盖它。上线新客户端前，先为上述五个目录部署 RAM
 权限与生命周期规则，并让全部调用方带上用途字段。
 实际 Bucket 用量与访问权限仍应在阿里云控制台监控。
+
+## IM 头像
+
+已登录账号使用 `purpose=im_avatar` 请求 `/maichat/sign-upload`，将图片直传私有
+OSS。上传成功后，将响应里的 `avatar_url` 写入腾讯 IM 自身资料的 `faceURL`。
+`avatar_url` 是固定的 `https://ichat.life/maichat/avatars/...` 地址，不包含
+临时 OSS 签名；各端读取头像时，该地址返回 302 到 5 分钟有效的 OSS GET 链接，
+图片字节不经过 MaiChat 服务。头像对象名使用随机 UUID，新头像产生新 URL，旧头像
+继续可读，避免影响已同步的 IM 资料与本地缓存。
 
 参考：[OSS 预签名 PUT 上传](https://help.aliyun.com/zh/oss/developer-reference/upload-objects-using-a-signed-url-generated-with-oss-sdk-for-node-js/)、
 [V4 签名 GET/PUT](https://help.aliyun.com/zh/oss/developer-reference/add-signatures-to-urls)、

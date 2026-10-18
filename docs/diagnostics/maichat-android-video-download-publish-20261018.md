@@ -28,4 +28,12 @@
 - 用户要求 Android 的文件发布操作由 Java 系统文件接口实现，并通过 JNI 供 MaiAgent 的 C++ 文件接口调用。临时下载文件与最终文件都在当前账号的 App 私有工作区内；普通写入已成功，失败发生在旧硬链接发布步骤。
 - 调整只覆盖 Android 的“完整临时文件 → 新目标文件”发布：`AndroidFileOperations.publishNewFile` 调用 `Files.move(source, target)`，JNI 在原生工作线程上附着 JVM 并调用该方法。`MaiFileSystem::publishNewFile` 和 `curl_download` 共用此回调；iOS/macOS/Windows 的文件操作分支未改。
 - Java 方法串行化本进程经桥接进入的发布调用，目标已存在时返回明确错误并保留源文件；严格 UTF-8 解码避免默默改写路径。Java 的无选项 `Files.move` 文档不保证与原 `RENAME_NOREPLACE` 同等的原子无覆盖语义：若另一进程或绕过此桥接的同进程写入者恰在存在性检查后创建目标，仍可能被重命名覆盖。因此此实现限定 MaiChat 单进程 App 私有工作区，不作为外部共享目录或任意并发写入者的通用替代。
-- 新 Java 单测先因缺少实现而编译失败，添加实现后通过首次发布、重复目标、非法字节路径、Unicode 路径和本进程并发发布；Android 整组本地 Java 单测、Debug/Release Java 编译及 instrumentation Java 编译通过，arm64/armv7 相关三处 C++ 文件的 Debug/Release 语法编译通过。Windows MaiAgent 增量构建、CTest 38/38 和假模型控制台端到端检查通过。Android instrumentation 已补断言，要求实际原生下载和通用发布都进入 Java 方法；当前 Windows 无完整 Android ONNX/OpenSSL 源构建产物，尚未运行此 instrumentation，OPPO 已安装 2.2.1 未替换。
+- 新 Java 单测先因缺少实现而编译失败，添加实现后通过首次发布、重复目标、非法字节路径、Unicode 路径和本进程并发发布；Android 整组本地 Java 单测、Debug/Release Java 编译及 instrumentation Java 编译通过，arm64/armv7 相关三处 C++ 文件的 Debug/Release 语法编译通过。Windows MaiAgent 增量构建、CTest 38/38 和假模型控制台端到端检查通过。Android instrumentation 已补断言，要求实际原生下载和通用发布都进入 Java 方法；此阶段 Windows 尚无完整 Android ONNX/OpenSSL 源构建产物，OPPO 已安装 2.2.1 未替换。后续真机验收见下一节。
+
+## Windows 本机构建与 OPPO 真机隔离验收（2026-10-19）
+
+- Windows 补齐 Git Bash 下的 Android NDK/OpenSSL、Meson/FFmpeg 源构建路径，arm64 与 armv7 的 Debug 和 Release 原生库均从当前源码完成链接。ONNX Runtime 仅复用已发布 2.2.1 APK 中的两个原生库；该 APK SHA-256 为 `c2d0daacb6e6f464fe12ee37abb48e5f447305f9cd0ab92513ff9ecc61f070f4`，对应依赖源码相对当前提交无变化。
+- `assembleDebug` 完成，`assembleRelease` 在没有发布密钥的 Windows 上生成未签名的 2.2.2 (222) 双 ABI APK，158791349 B，SHA-256 `96435f418838df40de3f57455195c2b4a478a61af6c9de78b5706bfd91f5a43b`。arm64 Release `libmaichat_agent.so` 含 Java 文件操作类名且导出 `JNI_OnLoad`。
+- 另用本机 Debug 证书签了隔离候选：`.cache/android-candidate/MaiChat-Android-v2.2.2-3da73b68-local.apk`，158845288 B，SHA-256 `4bd95418977838bbc0f640ee2cbea0b9ed8f2caf5ac8adfd75321cc18911e320`。证书与 OPPO 已安装 2.2.1 发布证书不同，不能直接覆盖安装并保留数据；此候选尚未安装到原包名。
+- 为避免触碰原版数据，以独立包名 `com.kongshang.maichat.isolated` 在 OPPO PKD130 / Android 15 / 4 KB 页面真机安装 Debug 版。同一 App 私有目录中，`DownloadPublishInstrumentedTest` 的本地 HTTP 下载与通用文件发布 2/2 PASS，并断言 C++ 两条路径确实回调 Java；重复目标未覆盖。隔离版冷启动进入手机号登录页。随后卸载测试 App 与测试包、清理临时 UI dump；原版 `com.kongshang.maichat` 仍是 2.2.1 (221)，数据未清除。
+- 待完成：取得原发布签名密钥后覆盖安装，或获得用户明确允许清除旧版数据后安装本机签名包；之后才可在原账号会话里复测既有供应商视频任务的真实下载。当前真机本地 fixture 通过不等于旧版 App 已修复，也不证明云任务当前状态。

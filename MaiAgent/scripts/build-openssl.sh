@@ -10,6 +10,14 @@ arch="$4"
 sysroot="$5"
 ndk_root="$6"
 archive_tool="${AR:-ar}"
+perl_tool="${PERL:-perl}"
+
+if [[ "$platform" == Android && "$ndk_root" == ?:\\* ||
+      "$platform" == Android && "$ndk_root" == ?:/* ]]; then
+  source_dir="$(cygpath -u "$source_dir")"
+  build_dir="$(cygpath -u "$build_dir")"
+  ndk_root="$(cygpath -u "$ndk_root")"
+fi
 
 mkdir -p "$build_dir"
 if [[ -f "$build_dir/libcrypto.a" && -f "$build_dir/libmai_openssl_cli.a" ]]; then
@@ -57,6 +65,11 @@ elif [[ "$platform" == Android ]]; then
   elif [[ -d "$ndk_root/toolchains/llvm/prebuilt/linux-x86_64/bin" ]]; then
     export PATH="$ndk_root/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
     archive_tool="$ndk_root/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
+  elif [[ -d "$ndk_root/toolchains/llvm/prebuilt/windows-x86_64/bin" ]]; then
+    ndk_bin="$ndk_root/toolchains/llvm/prebuilt/windows-x86_64/bin"
+    export ANDROID_NDK_ROOT="$ndk_root"
+    export PATH="$ndk_bin:$PATH"
+    archive_tool="$ndk_bin/llvm-ar"
   else
     echo "Android NDK compiler toolchain was not found" >&2
     exit 1
@@ -77,7 +90,7 @@ fi
 
 cd "$build_dir"
 if [[ ! -f Makefile ]]; then
-  perl "$source_dir/Configure" "$target" "$min_version" -fPIC -DMAI_OPENSSL_EMBEDDED \
+  "$perl_tool" "$source_dir/Configure" "$target" "$min_version" -fPIC -DMAI_OPENSSL_EMBEDDED \
     no-shared no-tests no-module no-async no-legacy no-comp \
     --prefix="$build_dir/install"
 fi

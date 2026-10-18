@@ -16,6 +16,17 @@ source_root="$(cd "$source_root" && pwd -P)"
 build_root="$(cd "$build_root" && pwd -P)"
 install_root="$(cd "$install_root" && pwd -P)"
 meson_cross=""
+meson_prefix="$install_root"
+meson_install_options=()
+meson_compiler="$compiler"
+meson_ar="$archive_tool"
+if [[ "$platform" == Android && "$(uname -s)" == MINGW* ]]; then
+  # Meson uses target POSIX paths for Android even when built on Windows.
+  meson_prefix=/
+  meson_install_options=(--destdir "$install_root")
+  meson_compiler="$compiler.cmd"
+  meson_ar="$archive_tool.exe"
+fi
 compiler_flags="-O2 -fPIC"
 cc_command="$compiler"
 host=""
@@ -49,8 +60,8 @@ if [[ "$platform" == iOS || "$platform" == Android ]]; then
   cross_file="$build_root/meson-cross.ini"
   {
     printf '[binaries]\n'
-    printf "c = '%s'\n" "$compiler"
-    printf "ar = '%s'\n" "$archive_tool"
+    printf "c = '%s'\n" "$meson_compiler"
+    printf "ar = '%s'\n" "$meson_ar"
     printf '[host_machine]\n'
     printf "system = '%s'\n" "$system"
     printf "cpu_family = '%s'\n" "$cpu_family"
@@ -78,19 +89,23 @@ run_meson_setup() {
 
 if [[ -f "$build_root/dav1d/build.ninja" ]]; then
   run_meson_setup "$build_root/dav1d" "$source_root/dav1d" --reconfigure \
-    --prefix="$install_root" --libdir=lib --default-library=static \
+    --prefix="$meson_prefix" --libdir=lib --default-library=static \
     "-Denable_asm=$codec_asm" -Denable_tools=false -Denable_tests=false \
     -Denable_examples=false -Denable_docs=false \
     > "$build_root/dav1d-config.log" 2>&1
 else
   run_meson_setup "$build_root/dav1d" "$source_root/dav1d" \
-    --prefix="$install_root" --libdir=lib --default-library=static \
+    --prefix="$meson_prefix" --libdir=lib --default-library=static \
     "-Denable_asm=$codec_asm" -Denable_tools=false -Denable_tests=false \
     -Denable_examples=false -Denable_docs=false \
     > "$build_root/dav1d-config.log" 2>&1
 fi
 meson compile -C "$build_root/dav1d" -j6 > "$build_root/dav1d-build.log" 2>&1
-meson install -C "$build_root/dav1d" > "$build_root/dav1d-install.log" 2>&1
+meson install -C "$build_root/dav1d" "${meson_install_options[@]}" \
+  > "$build_root/dav1d-install.log" 2>&1
+if [[ "$platform" == Android && "$(uname -s)" == MINGW* ]]; then
+  sed -i "s|^prefix=/$|prefix=$install_root|" "$install_root/lib/pkgconfig/dav1d.pc"
+fi
 
 mkdir -p "$build_root/x264"
 if [[ "$codec_asm" == true && -f "$build_root/x264/config.mak" ]] &&

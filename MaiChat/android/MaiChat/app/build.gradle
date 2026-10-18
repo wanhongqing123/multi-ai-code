@@ -56,12 +56,15 @@ android {
     // 本机假账号服务必须由调试构建显式启用；发布包不包含该开关。
     buildTypes {
         debug {
+            if (project.findProperty("maichatIsolatedDebug") == "true")
+                applicationIdSuffix ".isolated"
             buildConfigField "boolean", "USE_LOCAL_UI_AUTH",
                 (project.findProperty("maichatLocalUiAuth") == "true").toString()
         }
         release {
             buildConfigField "boolean", "USE_LOCAL_UI_AUTH", "false"
-            signingConfig signingConfigs.release
+            if (releaseStorePath && releaseStorePassword && releaseKeyAlias && releaseKeyPassword)
+                signingConfig signingConfigs.release
         }
     }
 

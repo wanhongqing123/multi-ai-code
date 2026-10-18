@@ -35,6 +35,12 @@ case "$platform" in
   Android)
     options+=(--target-os=android "--arch=$arch" --enable-cross-compile "--sysroot=$sysroot"
       "--extra-cflags=-fvisibility=hidden")
+    if [[ "$(uname -s)" == MINGW* ]]; then
+      host_compiler="${compiler%/*}/clang.exe"
+      options+=("--host-cc=$host_compiler" "--host-ld=$host_compiler"
+        "--host-cflags=--target=x86_64-pc-windows-msvc"
+        "--host-ldflags=--target=x86_64-pc-windows-msvc -fuse-ld=link")
+    fi
     ;;
   iOS)
     options+=(--enable-network --enable-securetransport --enable-videotoolbox
@@ -70,6 +76,9 @@ if [[ "$platform" == iOS ]]; then
 fi
 
 vendor_prefix="$build_dir/vendor-install"
+if [[ "$platform" == Android && "$(uname -s)" == MINGW* ]]; then
+  vendor_prefix="$(cygpath -u "$vendor_prefix")"
+fi
 bash "$source_dir/../build-media-codecs.sh" "$source_dir/.." \
   "$build_dir/vendor-build" "$vendor_prefix" "$platform" "$compiler" \
   "$arch" "$sysroot" "$archive_tool" "$ranlib_tool"

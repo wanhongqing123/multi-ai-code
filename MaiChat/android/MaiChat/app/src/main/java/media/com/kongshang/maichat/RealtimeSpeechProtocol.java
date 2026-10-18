@@ -1,15 +1,9 @@
 // 文件作用：Android 媒体播放、预览和编辑；RealtimeSpeechProtocol 负责协议字段、编码解码及版本兼容，本文件给出其实现。
-// 主要入口：signedUrl。
+// 主要入口：accept、text、complete；签名只由账号服务生成。
 package com.kongshang.maichat;
 
 import org.json.JSONObject;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.util.Base64;
-import java.util.Map;
 import java.util.TreeMap;
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
 
 /** Tencent realtime ASR v1 wire contract; no microphone, socket or UI dependencies. */
 final class RealtimeSpeechProtocol {
@@ -33,25 +27,5 @@ final class RealtimeSpeechProtocol {
         StringBuilder text = new StringBuilder();
         for (String sentence : sentences.values()) text.append(sentence);
         return text.toString().trim();
-    }
-    static String signedUrl(String appId, String secretId, String secretKey, String voiceId, long timestamp, int nonce)
-            throws Exception {
-        if (!appId.matches("[0-9]{5,20}")) throw new IllegalArgumentException("Invalid speech account");
-        TreeMap<String, String> parameters = new TreeMap<>();
-        parameters.put("engine_model_type", "16k_zh"); parameters.put("expired", Long.toString(timestamp + 3600));
-        parameters.put("needvad", "1"); parameters.put("nonce", Integer.toString(nonce));
-        parameters.put("secretid", secretId); parameters.put("timestamp", Long.toString(timestamp));
-        parameters.put("voice_format", "16"); parameters.put("voice_id", voiceId);
-        StringBuilder query = new StringBuilder();
-        for (Map.Entry<String, String> entry : parameters.entrySet()) {
-            if (query.length() > 0) query.append('&');
-            query.append(entry.getKey()).append('=').append(entry.getValue());
-        }
-        String endpoint = "asr.cloud.tencent.com/asr/v2/" + appId;
-        Mac hmac = Mac.getInstance("HmacSHA1");
-        hmac.init(new SecretKeySpec(secretKey.getBytes(StandardCharsets.UTF_8), "HmacSHA1"));
-        String signature = Base64.getEncoder().encodeToString(
-                hmac.doFinal((endpoint + "?" + query).getBytes(StandardCharsets.UTF_8)));
-        return "wss://" + endpoint + "?" + query + "&signature=" + URLEncoder.encode(signature, "UTF-8");
     }
 }

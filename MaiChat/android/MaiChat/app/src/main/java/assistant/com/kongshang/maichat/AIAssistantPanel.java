@@ -903,6 +903,9 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     static final int REQUEST_AUDIO_PERMISSION = 7111;
     private void beginVoice() {
         int generation = ++voiceGeneration;
+        VoiceRecordingController.AsrTicketProvider ticketProvider =
+            activity instanceof MainActivity ?
+                () -> MaiChatAuthClient.shared(activity).realtimeAsrTicket() : null;
         boolean started = voiceRecorder.tryStart(new VoiceRecordingController.Completion() {
             @Override public void partial(String text) {
                 if (voiceRecording && generation == voiceGeneration) {
@@ -950,7 +953,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 if (generation == voiceGeneration)
                     Toast.makeText(activity, "语音转文字失败", Toast.LENGTH_LONG).show();
             }
-        });
+        }, ticketProvider);
         if (!started) {
             Toast.makeText(activity, "麦克风正在被其他录音使用", Toast.LENGTH_LONG).show();
             return;
@@ -1346,7 +1349,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         PopupWindow popup = new PopupWindow(panel, dp(264), LayoutParams.WRAP_CONTENT, true);
         popup.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
         popup.setOutsideTouchable(true);
-        String modelValue = state.data.optBoolean("configured") ? state.model : "未配置";
+        String modelValue = state.model.isEmpty() ? AIAssistantController.DEFAULT_MODEL : state.model;
         panel.addView(actionPanelRow("模型", modelValue, MaiChatTheme.TEXT, v -> {
             popup.dismiss();
             modelMenu();

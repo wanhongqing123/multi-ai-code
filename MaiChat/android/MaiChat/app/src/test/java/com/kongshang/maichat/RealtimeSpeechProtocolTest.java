@@ -24,14 +24,6 @@ public class RealtimeSpeechProtocolTest {
                 "{\"code\":0,\"result\":{\"index\":1,\"slice_type\":2,\"voice_text_str\":\"请准时。\"},\"final\":1}"));
         assertEquals("今天开会。请准时。", result.text()); assertTrue(result.complete());
     }
-    @Test public void signatureMatchesAnIndependentHmacFixtureAndEscapesBase64() throws Exception {
-        String url = RealtimeSpeechProtocol.signedUrl(
-                "123456789", "AKID_TEST_ONLY", "test-secret-key", "test-voice", 1700000000L, 12345);
-        assertTrue(url.endsWith("&signature=KXqGp%2BsgYzdyVAiirIbDGnh9NjM%3D"));
-        assertTrue(url.contains("voice_format=16"));
-        assertTrue(url.contains("expired=1700003600"));
-    }
-
     private byte[] frame() {
         int size = 23;
         byte[] data = new byte[size];

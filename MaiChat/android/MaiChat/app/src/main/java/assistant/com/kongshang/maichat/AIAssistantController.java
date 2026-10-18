@@ -150,8 +150,9 @@ public final class AIAssistantController {
     static final String GLM_CHAT_URL = "https://open.bigmodel.cn/api/coding/paas/v4";
     static final String GLM_RESPONSES_URL = "https://open.bigmodel.cn/api/v1";
     static final String DEEPSEEK_URL = "https://api.deepseek.com";
-    volatile State state = new State(new JSONObject(), "", GLM_RESPONSES_URL,
-        "glm-5.3", "on-request", "", false);
+    static final String DEFAULT_MODEL = "deepseek-flash";
+    volatile State state = new State(new JSONObject(), "", DEEPSEEK_URL,
+        DEFAULT_MODEL, "on-request", "", false);
     private long handle;
     private File root;
     private File rvmModelFile;
@@ -372,8 +373,7 @@ public final class AIAssistantController {
                     }
                 }
             }
-            if (!model.equals("glm-5.3") && !model.equals("glm-5.3-flash") &&
-                !model.equals("deepseek-flash")) model = "glm-5.3";
+            model = supportedModelOrDefault(model);
             wire = "responses";
             if (model.equals("deepseek-flash")) baseUrl = DEEPSEEK_URL;
             else baseUrl = GLM_RESPONSES_URL;
@@ -406,6 +406,10 @@ public final class AIAssistantController {
             error = safeMessage(failure);
             publishState();
         }
+    }
+    static String supportedModelOrDefault(String selected) {
+        return "glm-5.3".equals(selected) || "glm-5.3-flash".equals(selected) ||
+            "deepseek-flash".equals(selected) ? selected : DEFAULT_MODEL;
     }
     private static String safeMessage(Throwable error) {
         String detail = error.getMessage();

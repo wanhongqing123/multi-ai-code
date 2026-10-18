@@ -287,12 +287,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         mediaStore = new RemoteIMMediaStore(RemoteIMMediaPaths.forApp(this));
         voiceRecorder = new VoiceRecordingController(mediaStore, diagnostics::record);
         voicePlayback = new VoicePlaybackController();
-        // 凭证由 Gradle 从 local.properties 注入；没配时 isAvailable() 为 false，
-        // 录音会照旧当语音消息发出去，不会因此报错。
-        speechRecognizer = new TencentSpeechRecognizer(
-                BuildConfig.TENCENT_ASR_APP_ID,
-                BuildConfig.TENCENT_ASR_SECRET_ID,
-                BuildConfig.TENCENT_ASR_SECRET_KEY);
+        // 普通 IM 录音保留语音消息回退；创作中心使用账号签发的实时 ASR 地址。
+        speechRecognizer = null;
         session = new RemoteIMSessionController(this, this);
         maiChatHostTools = new MaiChatHostTools(this, session);
         AIAssistantController.shared(this).setHostToolHandler(maiChatHostTools::execute);

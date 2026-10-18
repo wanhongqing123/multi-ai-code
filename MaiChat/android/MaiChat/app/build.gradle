@@ -4,15 +4,7 @@ plugins {
     id "com.android.application"
 }
 
-// 腾讯云 ASR 凭证从 local.properties 读，绝不进源码。local.properties 已被
-// 两层 .gitignore 忽略，所以提交出去的代码里不含任何密钥；没配时三项为空字符串，
-// 语音识别自动降级为「照旧发语音消息」，构建不会失败。
-def asrProps = new Properties()
-def asrPropsFile = rootProject.file("local.properties")
-if (asrPropsFile.exists()) {
-    asrPropsFile.withInputStream { asrProps.load(it) }
-}
-def asrValue = { String key -> (asrProps.getProperty(key) ?: "").trim() }
+// 实时 ASR 地址由账号服务按登录态签发；所有 APK 均不嵌入腾讯长期密钥。
 def releaseStorePath = System.getenv("MAICHAT_ANDROID_KEYSTORE")
 def releaseStorePassword = System.getenv("MAICHAT_ANDROID_STORE_PASSWORD")
 def releaseKeyAlias = System.getenv("MAICHAT_ANDROID_KEY_ALIAS")
@@ -66,15 +58,9 @@ android {
         debug {
             buildConfigField "boolean", "USE_LOCAL_UI_AUTH",
                 (project.findProperty("maichatLocalUiAuth") == "true").toString()
-            buildConfigField "String", "TENCENT_ASR_APP_ID", "\"${asrValue('tencent.asr.appId')}\""
-            buildConfigField "String", "TENCENT_ASR_SECRET_ID", "\"${asrValue('tencent.asr.secretId')}\""
-            buildConfigField "String", "TENCENT_ASR_SECRET_KEY", "\"${asrValue('tencent.asr.secretKey')}\""
         }
         release {
             buildConfigField "boolean", "USE_LOCAL_UI_AUTH", "false"
-            buildConfigField "String", "TENCENT_ASR_APP_ID", '""'
-            buildConfigField "String", "TENCENT_ASR_SECRET_ID", '""'
-            buildConfigField "String", "TENCENT_ASR_SECRET_KEY", '""'
             signingConfig signingConfigs.release
         }
     }
@@ -164,9 +150,6 @@ dependencies {
     implementation "io.noties.markwon:ext-tasklist:4.6.2"
     implementation "io.noties.markwon:linkify:4.6.2"
 
-    // 腾讯云一句话识别。settings.gradle 是 FAIL_ON_PROJECT_REPOS，模块里不能加
-    // flatDir 仓库，所以用 files() 直接引 vendored 的 aar。
-    implementation files("libs/asr-one-sentence-release.aar")
     implementation "com.google.code.gson:gson:2.8.5"
     implementation "com.tencent.imsdk:imsdk-plus:9.0.7665"
     implementation "com.tencent.liteav:LiteAVSDK_TRTC:13.4.0.20477"

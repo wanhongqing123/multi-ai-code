@@ -13,6 +13,7 @@ import android.util.Base64;
 import org.json.JSONObject;
 
 import java.io.IOException;
+import java.net.URI;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
@@ -106,6 +107,18 @@ public final class MaiChatAuthClient {
             this.glm = glm;
             this.deepseek = deepseek;
             this.minimax = minimax;
+        }
+    }
+
+    public static final class RealtimeAsrTicket {
+        public final String voiceId;
+        public final String url;
+        public final long expiresAt;
+
+        private RealtimeAsrTicket(String voiceId, String url, long expiresAt) {
+            this.voiceId = voiceId;
+            this.url = url;
+            this.expiresAt = expiresAt;
         }
     }
 
@@ -366,6 +379,49 @@ public final class MaiChatAuthClient {
             !validModelKey(glm) || !validModelKey(deepseek) || !validModelKey(minimax))
             throw new IOException("主聊天模型凭据无效");
         return new AccountModelKeys(glm, deepseek, minimax);
+    }
+
+    public synchronized RealtimeAsrTicket realtimeAsrTicket() throws Exception {
+        if (!hasSession()) throw new IOException("请先登录后使用语音转文字");
+        JSONObject issued = authenticatedRequest("asr/realtime-url", "POST", new JSONObject());
+        return parseRealtimeAsrTicket(issued, System.currentTimeMillis() / 1000L);
+    }
+
+    static RealtimeAsrTicket parseRealtimeAsrTicket(JSONObject issued, long now) throws IOException {
+        String voiceId = issued.optString("voice_id", "");
+        String url = issued.optString("url", "");
+        long expiresAt = issued.optLong("expires_at", 0);
+        if (!voiceId.matches("[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}") ||
+            url.length() > 4096 || expiresAt <= now + 10 || expiresAt > now + 360)
+            throw new IOException("语音识别签名无效");
+        try {
+            URI endpoint = new URI(url);
+            String query = endpoint.getRawQuery();
+            if (!"wss".equals(endpoint.getScheme()) ||
+                !"asr.cloud.tencent.com".equals(endpoint.getHost()) ||
+                endpoint.getPort() != -1 || endpoint.getUserInfo() != null ||
+                endpoint.getFragment() != null ||
+                !endpoint.getPath().matches("/asr/v2/[0-9]{5,20}") ||
+                query == null || !voiceId.equals(queryValue(query, "voice_id")) ||
+                !"16k_zh".equals(queryValue(query, "engine_model_type")) ||
+                !"1".equals(queryValue(query, "needvad")) ||
+                !"16".equals(queryValue(query, "voice_format")) ||
+                !Long.toString(expiresAt).equals(queryValue(query, "expired")) ||
+                queryValue(query, "signature").isEmpty())
+                throw new IOException("语音识别签名无效");
+            return new RealtimeAsrTicket(voiceId, url, expiresAt);
+        } catch (java.net.URISyntaxException error) {
+            throw new IOException("语音识别签名无效", error);
+        }
+    }
+
+    private static String queryValue(String query, String key) {
+        for (String item : query.split("&")) {
+            int separator = item.indexOf('=');
+            if (separator > 0 && item.substring(0, separator).equals(key))
+                return item.substring(separator + 1);
+        }
+        return "";
     }
 
     public synchronized MediaServiceAccess mediaServiceAccess() throws Exception {

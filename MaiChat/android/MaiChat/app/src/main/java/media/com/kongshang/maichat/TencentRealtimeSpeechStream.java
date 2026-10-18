@@ -22,7 +22,7 @@ final class TencentRealtimeSpeechStream {
             throws Exception;
     }
     private final ScheduledExecutorService worker = Executors.newSingleThreadScheduledExecutor();
-    private final String voiceId = UUID.randomUUID().toString();
+    private final String voiceId;
     private final RealtimeSpeechProtocol transcript = new RealtimeSpeechProtocol();
     private final Listener listener;
     private final File audio;
@@ -34,24 +34,23 @@ final class TencentRealtimeSpeechStream {
     private long readyAt;
     private String previousText = "";
 
-    TencentRealtimeSpeechStream(File audio, String appId, String secretId, String secretKey, Listener listener) {
-        this(audio, listener, (voiceId, callback) -> {
-            String url = RealtimeSpeechProtocol.signedUrl(appId, secretId, secretKey, voiceId,
-                System.currentTimeMillis() / 1000,
-                new java.security.SecureRandom().nextInt(Integer.MAX_VALUE - 1) + 1);
-            return new CurlRealtimeSpeechWebSocket(url, callback);
-        });
-    }
-
     // 本地 WSS 集成测试的连接入口；不读取付费服务凭据。
     TencentRealtimeSpeechStream(File audio, String url, byte[] caPem, MaiChatAuthTransport.ProxyRoute proxy,
                                 Listener listener) {
-        this(audio, listener, (voiceId, callback) ->
+        this(audio, UUID.randomUUID().toString(), listener, (voiceId, callback) ->
             new CurlRealtimeSpeechWebSocket(url, caPem, proxy, callback));
     }
 
-    private TencentRealtimeSpeechStream(File audio, Listener listener, SocketFactory socketFactory) {
-        this.audio = audio; this.listener = listener; this.socketFactory = socketFactory;
+    TencentRealtimeSpeechStream(File audio, MaiChatAuthClient.RealtimeAsrTicket ticket,
+                                Listener listener) {
+        this(audio, ticket.voiceId, listener, (voiceId, callback) ->
+            new CurlRealtimeSpeechWebSocket(ticket.url, callback));
+    }
+
+    private TencentRealtimeSpeechStream(File audio, String voiceId, Listener listener,
+                                        SocketFactory socketFactory) {
+        this.audio = audio; this.voiceId = voiceId;
+        this.listener = listener; this.socketFactory = socketFactory;
         worker.execute(() -> {
             try {
                 listener.diagnostic("asr-start");

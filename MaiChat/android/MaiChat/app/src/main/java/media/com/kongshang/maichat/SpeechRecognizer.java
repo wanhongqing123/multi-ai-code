@@ -7,9 +7,8 @@ import java.io.File;
 /**
  * 语音转文字。
  *
- * 单独抽一层接口，是为了把「凭证从哪来」挡在调用方之外：现在是 local.properties 注入的
- * 长期密钥（仅够本机联调），将来换成 STS 临时密钥、或改由桌面端代理转发，都只换实现，
- * MainActivity 不用动。
+ * 普通语音消息的可选识别接口。创作中心使用账号签发的实时 ASR；
+ * 当前发布包未配置此可选识别器，普通录音保持发送语音消息的回退行为。
  */
 public interface SpeechRecognizer {
     default void close() { }

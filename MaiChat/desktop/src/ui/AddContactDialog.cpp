@@ -76,17 +76,18 @@ void AddContactDialog::buildUi() {
     panelLayout->setSpacing(0);
 
     auto* title = makeLabel(QStringLiteral("添加联系人"), QStringLiteral("addContactTitle"), panel);
-    auto* subtitle = makeLabel(QStringLiteral("输入对方账号 ID，发送好友申请。"),
+    auto* subtitle = makeLabel(QStringLiteral("输入对方手机号或账号 ID，发送好友申请。"),
                                QStringLiteral("addContactSubtitle"), panel);
     panelLayout->addWidget(title);
     panelLayout->addSpacing(8);
     panelLayout->addWidget(subtitle);
     panelLayout->addSpacing(22);
 
-    auto* fieldLabel = makeLabel(QStringLiteral("账号 ID"), QStringLiteral("addContactFieldLabel"), panel);
+    auto* fieldLabel = makeLabel(QStringLiteral("手机号或账号 ID"),
+                                 QStringLiteral("addContactFieldLabel"), panel);
     userIdInput_ = new QLineEdit(panel);
     userIdInput_->setObjectName(QStringLiteral("contactUserIdInput"));
-    userIdInput_->setPlaceholderText(QStringLiteral("输入联系人账号 ID"));
+    userIdInput_->setPlaceholderText(QStringLiteral("输入手机号或账号 ID"));
     userIdInput_->setClearButtonEnabled(true);
 
     panelLayout->addWidget(fieldLabel);

@@ -78,12 +78,15 @@ final class MaiChatIMTools {
     }
 
     private JSONObject hostRequestFriend(JSONObject arguments) throws JSONException {
-        String userId = arguments.optString("user_id").trim();
-        if (!userId.matches("[A-Za-z0-9_-]{1,128}") ||
-            userId.equals(session.chatState().ownerUserId()))
-            throw new IllegalArgumentException("user_id 必须是其他 MaiChat 账号");
-        session.addContact(userId);
-        return new JSONObject().put("queued", true).put("user_id", userId);
+        String account = arguments.optString("account").trim();
+        String phone = account.replaceAll("[ -]", "");
+        if (!account.matches("[A-Za-z0-9_-]{1,128}") &&
+            !phone.matches("(\\+86)?1[3-9][0-9]{9}"))
+            throw new IllegalArgumentException("account 必须是手机号或 MaiChat 账号 ID");
+        if (account.equals(session.chatState().ownerUserId()))
+            throw new IllegalArgumentException("不能添加自己为好友");
+        session.addContact(account);
+        return new JSONObject().put("queued", true).put("account", account);
     }
 
     private JSONObject hostListConversations(JSONObject arguments) throws JSONException {

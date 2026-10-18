@@ -5,6 +5,7 @@
 
 #include <QSet>
 #include <QPointer>
+#include <QRegularExpression>
 #include <QTimer>
 #include <QUuid>
 #include <memory>
@@ -258,6 +259,35 @@ void RemoteIMApplication::addContact(const QString& userId, const QString& displ
 }
 
 void RemoteIMApplication::requestFriend(const QString& userId, const QString& displayName) {
+    QString phone = userId.trimmed();
+    phone.remove(QRegularExpression(QStringLiteral("[ -]")));
+    static const QRegularExpression phonePattern(QStringLiteral("^(\\+86)?1[3-9][0-9]{9}$"));
+    if (phonePattern.match(phone).hasMatch()) {
+        if (!friendAccountResolver_) {
+            emit errorMessage(QStringLiteral("当前账号无法通过手机号查找好友"));
+            return;
+        }
+        QPointer<RemoteIMApplication> self(this);
+        friendAccountResolver_(phone, [self, displayName](const QString& peerId,
+                                                         const QString& error) {
+            if (!self) return;
+            QMetaObject::invokeMethod(self, [self, peerId, displayName, error] {
+                if (!self) return;
+                if (!error.isEmpty()) { emit self->errorMessage(error); return; }
+                self->requestFriendById(peerId, displayName);
+            }, Qt::AutoConnection);
+        });
+        return;
+    }
+    requestFriendById(userId.trimmed(), displayName);
+}
+
+void RemoteIMApplication::setFriendAccountResolver(FriendAccountResolver resolver) {
+    friendAccountResolver_ = std::move(resolver);
+}
+
+void RemoteIMApplication::requestFriendById(const QString& userId,
+                                            const QString& displayName) {
     Q_UNUSED(displayName);
     QPointer<RemoteIMApplication> self(this);
     client_->requestFriend(userId, [self](bool ok, const QString& error) {

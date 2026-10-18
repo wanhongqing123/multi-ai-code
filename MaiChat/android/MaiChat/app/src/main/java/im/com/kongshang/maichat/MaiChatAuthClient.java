@@ -328,6 +328,15 @@ public final class MaiChatAuthClient {
         return result;
     }
 
+    public synchronized String resolveFriendPhone(String phone) throws Exception {
+        JSONObject response = authenticatedRequest("friend/resolve", "POST",
+            new JSONObject().put("phone", phone));
+        String userId = response.optString("user_id");
+        if (!userId.matches("[A-Za-z0-9_-]{1,128}"))
+            throw new IOException("好友账号资料无效");
+        return userId;
+    }
+
     public synchronized ModelCredential seedanceCredential() throws Exception {
         if (!hasSession()) return null;
         JSONObject response;
@@ -625,6 +634,10 @@ public final class MaiChatAuthClient {
             case "Invalid session": return "登录已过期，请重新用手机号登录";
             case "Model access is not enabled for this account":
                 return "当前账号未开通模型使用权限";
+            case "Invalid friend phone number": return "手机号格式不正确";
+            case "Cannot add your own account": return "不能添加自己为好友";
+            case "MaiChat account not found": return "这个手机号尚未注册 MaiChat";
+            case "Friend lookup requests are too frequent": return "查找好友过于频繁，请稍后再试";
             case "Desktop login request not found":
                 return "未找到桌面登录请求，请在电脑上刷新二维码";
             case "Desktop login request expired": return "二维码已过期，请在电脑上刷新";

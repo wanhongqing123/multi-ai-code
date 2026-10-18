@@ -44,6 +44,10 @@ public:
     void disconnectFromService(RemoteIMCompletion completion = {});
     void addContact(const QString& userId, const QString& displayName);
     void requestFriend(const QString& userId, const QString& displayName);
+    using FriendAccountResolution = std::function<void(const QString&, const QString&)>;
+    using FriendAccountResolver =
+        std::function<void(const QString&, FriendAccountResolution)>;
+    void setFriendAccountResolver(FriendAccountResolver resolver);
     void refreshFriendList();
     void friendRequests(RemoteIMFriendRequestsCompletion completion);
     void decideFriendRequest(const QString& userId, bool accept, RemoteIMCompletion completion);
@@ -119,6 +123,8 @@ signals:
     void activityChanged(const QString& peerId);
 
 private:
+    void requestFriendById(const QString& userId, const QString& displayName);
+    FriendAccountResolver friendAccountResolver_;
     void sendDiagnosticTo(const QString& peerId, const QString& text, const QString& path,
                           std::function<void(bool)> completion);
     void markMessage(const QString& messageId, RemoteIMMessageStatus status);

@@ -20,14 +20,14 @@ extension AIMobileHostToolProvider {
         appState: RemoteIMAppState,
         arguments: [String: Any]
     ) async -> AIMaiChatHostToolExecution {
-        let userID = Self.string(arguments, key: "user_id")
-        guard !userID.isEmpty else {
-            return .failure(code: "invalid_input", message: "user_id is required")
+        let account = Self.string(arguments, key: "account")
+        guard !account.isEmpty else {
+            return .failure(code: "invalid_input", message: "account is required")
         }
-        guard await appState.requestFriend(userID: userID) else {
+        guard await appState.requestFriend(userID: account) else {
             return .failure(code: "internal", message: appState.errorMessage ?? "Friend request failed")
         }
-        return Self.jsonSuccess(["requested": true, "user_id": userID])
+        return Self.jsonSuccess(["requested": true, "account": account])
     }
 
     static func listContacts(

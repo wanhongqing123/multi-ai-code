@@ -73,6 +73,8 @@ public:
     void fetchAccountModelKeys(AccountModelKeysCompletion completion);
     using FriendQrCompletion = std::function<void(const QString&, const QByteArray&, const QString&)>;
     void fetchFriendQr(FriendQrCompletion completion);
+    using FriendResolveCompletion = std::function<void(const QString&, const QString&)>;
+    void resolveFriendPhone(const QString& phone, FriendResolveCompletion completion);
     void startSessionMonitoring();
     void checkSessionNow();
     void logout(Completion completion);
@@ -99,6 +101,8 @@ private:
     void fetchAccountModelKeysImpl(AccountModelKeysCompletion completion,
                                 bool retryAfterUnauthorized);
     void fetchFriendQrImpl(FriendQrCompletion completion, bool retryAfterUnauthorized);
+    void resolveFriendPhoneImpl(const QString& phone, FriendResolveCompletion completion,
+                                bool retryAfterUnauthorized);
     bool adoptSession(const QJsonObject& body, QString* error);
     void scheduleRefresh();
     void scheduleCredentialRefresh();

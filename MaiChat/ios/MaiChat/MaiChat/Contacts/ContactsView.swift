@@ -83,12 +83,12 @@ struct AddContactDialog: View {
                     Text("添加好友")
                         .font(.system(size: 20, weight: .bold))
                         .foregroundStyle(RemoteIMStyle.textPrimary)
-                    Text("请输入要添加的好友账号")
+                    Text("输入手机号或好友账号 ID")
                         .font(.system(size: 13))
                         .foregroundStyle(RemoteIMStyle.textSecondary)
                 }
 
-                TextField("好友账号", text: $appState.newContactUserID)
+                TextField("手机号或账号 ID", text: $appState.newContactUserID)
                     .font(.system(size: 15))
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()

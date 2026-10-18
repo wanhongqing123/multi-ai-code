@@ -2770,14 +2770,15 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         card.setPadding(dp(20), dp(20), dp(20), dp(20));
         card.setBackground(MaiChatTheme.bordered(Color.WHITE, MaiChatTheme.BORDER, 16, this));
         card.addView(MaiChatTheme.label(this, "添加好友", 20, MaiChatTheme.TEXT), match(dp(28)));
-        TextView description = MaiChatTheme.text(this, "请输入要添加的好友账号", 13, MaiChatTheme.SECONDARY);
+        TextView description = MaiChatTheme.text(this, "输入手机号或好友账号 ID", 13,
+            MaiChatTheme.SECONDARY);
         LinearLayout.LayoutParams descriptionParams = match(dp(24));
         descriptionParams.setMargins(0, dp(2), 0, dp(12));
         card.addView(description, descriptionParams);
         EditText input = new EditText(this);
         input.setSingleLine(true);
         input.setTextSize(15);
-        input.setHint("好友账号");
+        input.setHint("手机号或账号 ID");
         input.setImeOptions(EditorInfo.IME_ACTION_DONE);
         input.setPadding(dp(14), 0, dp(14), 0);
         input.setBackground(MaiChatTheme.bordered(MaiChatTheme.PAGE, MaiChatTheme.BORDER, 9, this));

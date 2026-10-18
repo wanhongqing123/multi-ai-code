@@ -995,18 +995,23 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             showTransientError("请先登录并连接 IM")
             return false
         }
-        let addedUserID = userID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard RemoteIMPeerPolicy.isValidPeer(userID: addedUserID, ownerUserID: masterUserID),
-              addedUserID.range(of: "^[A-Za-z0-9_-]{1,128}$", options: .regularExpression) != nil
-        else {
-            showTransientError("好友账号无效或不能添加自己")
-            return false
-        }
+        let account = userID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let phone = account.replacingOccurrences(of: "[ -]", with: "", options: .regularExpression)
+        let isPhone = phone.range(
+            of: "^(\\+86)?1[3-9][0-9]{9}$", options: .regularExpression
+        ) != nil
         let identity = remoteDiagnosticsIdentity
         do {
+            let addedUserID = isPhone ? try await accountAuth.resolveFriendPhone(phone) : account
+            guard RemoteIMPeerPolicy.isValidPeer(userID: addedUserID, ownerUserID: masterUserID),
+                  addedUserID.range(of: "^[A-Za-z0-9_-]{1,128}$", options: .regularExpression) != nil
+            else {
+                showTransientError("好友账号无效或不能添加自己")
+                return false
+            }
             try await client.requestFriend(userID: addedUserID)
             guard remoteDiagnosticsIdentity == identity else { return false }
-            if newContactUserID == addedUserID { newContactUserID = "" }
+            if newContactUserID == account { newContactUserID = "" }
             errorMessage = nil
             return true
         } catch {

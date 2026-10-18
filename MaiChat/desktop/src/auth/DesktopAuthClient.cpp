@@ -645,6 +645,60 @@ void DesktopAuthClient::fetchFriendQr(FriendQrCompletion completion) {
     fetchFriendQrImpl(std::move(completion), true);
 }
 
+void DesktopAuthClient::resolveFriendPhone(const QString& phone,
+                                           FriendResolveCompletion completion) {
+    resolveFriendPhoneImpl(phone, std::move(completion), true);
+}
+
+void DesktopAuthClient::resolveFriendPhoneImpl(const QString& phone,
+                                               FriendResolveCompletion completion,
+                                               bool retryAfterUnauthorized) {
+    if (loggingOut_ || userId_.isEmpty()) {
+        if (completion) completion({}, QStringLiteral("请先登录 MaiChat"));
+        return;
+    }
+    if (accessToken_.isEmpty() ||
+        accessExpiresAt_ <= QDateTime::currentDateTimeUtc().addSecs(60)) {
+        refresh([this, phone, completion, retryAfterUnauthorized](bool ok, const QString& error) {
+            if (ok) resolveFriendPhoneImpl(phone, completion, retryAfterUnauthorized);
+            else if (completion) completion({}, error);
+        });
+        return;
+    }
+    request(QStringLiteral("friend/resolve"), "POST",
+            QJsonObject{{QStringLiteral("phone"), phone}}, accessToken_,
+            [this, phone, completion, retryAfterUnauthorized](const HttpResult& result) {
+        if (loggingOut_ || userId_.isEmpty()) {
+            if (completion) completion({}, QStringLiteral("本次登录已取消"));
+            return;
+        }
+        if (result.status == 401 && retryAfterUnauthorized) {
+            refresh([this, phone, completion](bool ok, const QString& error) {
+                if (ok) resolveFriendPhoneImpl(phone, completion, false);
+                else if (completion) completion({}, error);
+            });
+            return;
+        }
+        if (result.status != 200) {
+            if (result.status == 401) invalidateSession(responseError(result));
+            const QString error = result.status == 404 ?
+                QStringLiteral("这个手机号尚未注册 MaiChat") :
+                result.status == 429 ? QStringLiteral("查找好友过于频繁，请稍后再试") :
+                result.status == 400 ? QStringLiteral("手机号无效或不能添加自己") :
+                responseError(result);
+            if (completion) completion({}, error);
+            return;
+        }
+        const QString peerId = result.body.value(QStringLiteral("user_id")).toString();
+        static const QRegularExpression accountId(QStringLiteral("^[A-Za-z0-9_-]{1,128}$"));
+        if (!accountId.match(peerId).hasMatch()) {
+            if (completion) completion({}, QStringLiteral("好友账号资料无效"));
+            return;
+        }
+        if (completion) completion(peerId, {});
+    });
+}
+
 void DesktopAuthClient::fetchFriendQrImpl(FriendQrCompletion completion,
                                           bool retryAfterUnauthorized) {
     if (loggingOut_ || userId_.isEmpty()) {

@@ -198,15 +198,19 @@ public:
 private:
   MaiToolResult requestFriend(RemoteIMApplication &app,
                               const QJsonObject &arguments) const {
-    const QString userId = arguments.value(QStringLiteral("user_id")).toString().trimmed();
+    const QString account = arguments.value(QStringLiteral("account")).toString().trimmed();
     static const QRegularExpression accountId(QStringLiteral("^[A-Za-z0-9_-]{1,128}$"));
-    if (!accountId.match(userId).hasMatch() || userId == app.chatState().ownerUserId())
-      return invalidInput(QStringLiteral("user_id must be another MaiChat account"));
+    static const QRegularExpression phone(QStringLiteral("^(\\+86)?1[3-9][0-9]{9}$"));
+    QString normalized = account;
+    normalized.remove(QRegularExpression(QStringLiteral("[ -]")));
+    if ((!accountId.match(account).hasMatch() && !phone.match(normalized).hasMatch()) ||
+        account == app.chatState().ownerUserId())
+      return invalidInput(QStringLiteral("account must be a phone or another MaiChat account ID"));
     if (!app.isConnected())
       return MaiToolResult::failure(MaiErrorCode::NotConfigured, "MaiChat IM is disconnected");
-    app.requestFriend(userId, userId);
+    app.requestFriend(account, account);
     return jsonResult(QJsonObject{{QStringLiteral("queued"), true},
-                                  {QStringLiteral("user_id"), userId}});
+                                  {QStringLiteral("account"), account}});
   }
 
   // 校验联系人、媒体类型与本地文件，再通过宿主 IM 发送对应附件。
@@ -535,9 +539,9 @@ void registerMaiChatHostTools(MaiToolRegistry &registry,
           R"(}})",
       app);
   addTool(registry, HostToolKind::RequestFriend, "maichat_request_friend",
-          "Send a MaiChat friend request to a user ID. Requires user approval. "
+          "Send a MaiChat friend request by phone or account ID. Requires user approval. "
           "The recipient must accept.",
-          R"({"type":"object","properties":{"user_id":{"type":"string"}},"required":["user_id"]})",
+          R"({"type":"object","properties":{"account":{"type":"string"}},"required":["account"]})",
           app, true);
   addTool(
       registry, HostToolKind::ListConversations, "maichat_list_conversations",

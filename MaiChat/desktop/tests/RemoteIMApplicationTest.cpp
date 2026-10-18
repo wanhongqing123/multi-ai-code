@@ -48,9 +48,15 @@ void RemoteIMApplicationTest::friendRequestWaitsForRemoteAcceptance() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     auto* fake = client.get();
     RemoteIMApplication app(QStringLiteral("owner"), std::move(client));
+    app.setFriendAccountResolver([](const QString& phone,
+                                    RemoteIMApplication::FriendAccountResolution completion) {
+        QCOMPARE(phone, QStringLiteral("+8613900000002"));
+        completion(QStringLiteral("peer"), {});
+    });
     QSignalSpy sent(&app, &RemoteIMApplication::friendRequestSent);
-    app.requestFriend(QStringLiteral("peer"), QStringLiteral("Peer"));
+    app.requestFriend(QStringLiteral("+86 13900000002"), QStringLiteral("Peer"));
     QTRY_COMPARE(sent.size(), 1);
+    QCOMPARE(fake->lastFriendRequestId(), QStringLiteral("peer"));
     QVERIFY(app.chatState().contacts().isEmpty());
     emit fake->contactsReceived({RemoteIMContact{QStringLiteral("peer"), QStringLiteral("Peer")}});
     QTRY_COMPARE(app.chatState().contacts().size(), 1);

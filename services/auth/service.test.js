@@ -231,6 +231,28 @@ test('friend QR requires login and contains no account credential', async () => 
   setup.db.close();
 });
 
+test('phone lookup resolves one registered account to its IM identity', async () => {
+  const setup = fixture();
+  const path = '/v1/friend/resolve';
+  const alice = await signInWithSms(setup, '13900000001');
+  const bob = await signInWithSms(setup, '13900000002');
+  assert.equal((await setup.call('POST', path, { phone: '13900000002' })).statusCode, 401);
+  const resolved = await setup.call('POST', path, { phone: '+86 13900000002' },
+    alice.body.access_token);
+  assert.equal(resolved.statusCode, 200);
+  assert.deepEqual(resolved.body, { user_id: bob.body.user.im_user_id });
+  assert.equal((await setup.call('POST', path, { phone: '13900000001' },
+    alice.body.access_token)).statusCode, 400);
+  assert.equal((await setup.call('POST', path, { phone: '13900000003' },
+    alice.body.access_token)).statusCode, 404);
+  for (let index = 0; index < 18; index++)
+    assert.equal((await setup.call('POST', path, { phone: '13900000003' },
+      alice.body.access_token)).statusCode, 404);
+  assert.equal((await setup.call('POST', path, { phone: '13900000003' },
+    alice.body.access_token)).statusCode, 429);
+  setup.db.close();
+});
+
 test('ASR URL issuance requires a session and limits each account', async () => {
   let serial = 0;
   const setup = fixture({ issueAsrRealtimeUrl: () => ({

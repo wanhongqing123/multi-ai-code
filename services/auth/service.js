@@ -74,6 +74,7 @@ function createAuthService(options) {
   const bailianCredentials = new Map();
   const bailianIssuanceInFlight = new Map();
   const asrIssuanceTimes = new Map();
+  const friendLookupTimes = new Map();
   const keyedHash = text => createHmac('sha256', secret).update(text).digest('hex');
   const phoneHash = phone => keyedHash(`phone:${phone}`);
   const ipHash = ip => keyedHash(`ip:${ip || 'unknown'}`);
@@ -128,6 +129,9 @@ function createAuthService(options) {
     })();
     for (const [userId, times] of asrIssuanceTimes) {
       if (times.at(-1) < current - MINUTE) asrIssuanceTimes.delete(userId);
+    }
+    for (const [userId, times] of friendLookupTimes) {
+      if (times.at(-1) < current - 60 * MINUTE) friendLookupTimes.delete(userId);
     }
     nextCleanupAt = current + DAY;
   }
@@ -682,7 +686,7 @@ function createAuthService(options) {
       (method === 'GET' && path.startsWith('/v1/auth/desktop/request/')) ||
       (method === 'POST' && ['/v1/auth/desktop/approve',
         '/v1/auth/desktop/deny', '/v1/auth/password/set',
-        '/v1/auth/logout'].includes(path)) ||
+        '/v1/auth/logout', '/v1/friend/resolve'].includes(path)) ||
       (method === 'GET' && ['/v1/auth/me', '/v1/im/credential',
         '/v1/media/authorize',
         '/v1/model/seedance-credential', '/v1/model/bailian-credential',
@@ -716,6 +720,23 @@ function createAuthService(options) {
       const png = Buffer.from(await generatePngQrCode(uri, { scale: 5, margin: 4 }));
       return json(200, { user_id: session.im_user_id,
         qr_png_base64: png.toString('base64') });
+    }
+    if (method === 'POST' && path === '/v1/friend/resolve') {
+      if (!session) return json(401, { error: 'Authentication required' });
+      const phone = normalizePhone(request.phone);
+      if (!phone) return json(400, { error: 'Invalid friend phone number' });
+      if (phone === session.phone_e164)
+        return json(400, { error: 'Cannot add your own account' });
+      const recent = (friendLookupTimes.get(session.user_id) || [])
+        .filter(time => time > now() - 60 * MINUTE);
+      if (recent.length >= 20)
+        return json(429, { error: 'Friend lookup requests are too frequent' });
+      recent.push(now());
+      friendLookupTimes.set(session.user_id, recent);
+      const peer = db.prepare('SELECT im_user_id FROM users WHERE phone_e164=? AND disabled_at IS NULL')
+        .get(phone);
+      if (!peer) return json(404, { error: 'MaiChat account not found' });
+      return json(200, { user_id: peer.im_user_id });
     }
     if (method === 'GET' && path === '/v1/im/credential') {
       if (!session) return json(401, { error: 'Authentication required' });

@@ -33,6 +33,7 @@ public:
 
     QString connectedUserId() const;
     QString lastDeletedContactId() const;
+    QString lastFriendRequestId() const;
     QString lastTextPeerId() const;
     QString lastText() const;
     QString lastApprovalToken() const;
@@ -58,6 +59,7 @@ private:
     QString connectedUserId_;
     quint64 sdkAppId_ = 0;
     QString lastDeletedContactId_;
+    QString lastFriendRequestId_;
     QString lastTextPeerId_;
     QString lastText_;
     QString lastApprovalToken_;

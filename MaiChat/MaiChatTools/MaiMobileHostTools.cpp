@@ -197,8 +197,9 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
         R"({"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","minimum":1,)"
             R"("maximum":200}}})");
     add("maichat_request_friend",
-        "Send a MaiChat friend request to a user ID. Requires user approval. The recipient must accept.",
-        R"({"type":"object","properties":{"user_id":{"type":"string"}},"required":["user_id"]})",
+        "Send a MaiChat friend request by phone number or account ID. Requires user approval. "
+        "The recipient must accept.",
+        R"({"type":"object","properties":{"account":{"type":"string"}},"required":["account"]})",
         true);
     add("maichat_list_conversations",
         "List MaiChat conversations ordered by latest message, including unread counts.",

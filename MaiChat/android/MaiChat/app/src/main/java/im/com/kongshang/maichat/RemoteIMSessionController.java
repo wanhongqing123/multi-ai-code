@@ -500,31 +500,65 @@ public final class RemoteIMSessionController {
     }
 
     public void addContact(String userId, java.util.function.Consumer<Boolean> completion) {
-        String cleanUserId = clean(userId);
-        if (FriendQrPolicy.link(cleanUserId).isEmpty() || requiresLogin() ||
-            cleanUserId.equals(chatState.ownerUserId())) {
+        String cleanAccount = clean(userId);
+        String phone = cleanAccount.replaceAll("[ -]", "");
+        boolean isPhone = phone.matches("(\\+86)?1[3-9][0-9]{9}");
+        if (productionMode) {
+            int generation = accountGeneration;
+            if (isPhone && !requiresLogin()) {
+                ioExecutor.execute(() -> {
+                    try {
+                        String peerId = authClient.resolveFriendPhone(phone);
+                        runOnMain(() -> {
+                            if (generation == accountGeneration && !requiresLogin())
+                                requestFriendById(peerId, generation, completion);
+                        });
+                    } catch (Exception error) {
+                        runOnMain(() -> {
+                            if (generation != accountGeneration) return;
+                            reportError(error.getMessage());
+                            if (completion != null) completion.accept(false);
+                        });
+                    }
+                });
+                return;
+            }
+            requestFriendById(cleanAccount, generation, completion);
+            return;
+        }
+        if (FriendQrPolicy.link(cleanAccount).isEmpty() || requiresLogin() ||
+            cleanAccount.equals(chatState.ownerUserId())) {
             reportError("好友账号无效或不能添加自己");
             if (completion != null) completion.accept(false);
             return;
         }
-        if (productionMode) {
-            int generation = accountGeneration;
-            client.requestFriend(cleanUserId, new TencentIMClient.OperationCompletion() {
-                @Override public void onSuccess() {
-                    runOnMain(() -> {
-                        if (generation != accountGeneration || requiresLogin()) return;
-                        if (completion != null) completion.accept(true);
-                    });
-                }
-                @Override public void onError(int code, String message) {
-                    reportError("发送好友申请失败（" + code + "）");
-                    if (completion != null) runOnMain(() -> completion.accept(false));
-                }
-            });
+        addLocalContact(cleanAccount);
+        if (completion != null) completion.accept(true);
+    }
+
+    private void requestFriendById(String userId, int generation,
+                                   java.util.function.Consumer<Boolean> completion) {
+        if (FriendQrPolicy.link(userId).isEmpty() || requiresLogin() ||
+            userId.equals(chatState.ownerUserId())) {
+            reportError("好友账号无效或不能添加自己");
+            if (completion != null) completion.accept(false);
             return;
         }
-        addLocalContact(cleanUserId);
-        if (completion != null) completion.accept(true);
+        client.requestFriend(userId, new TencentIMClient.OperationCompletion() {
+            @Override public void onSuccess() {
+                runOnMain(() -> {
+                    if (generation != accountGeneration || requiresLogin()) return;
+                    if (completion != null) completion.accept(true);
+                });
+            }
+            @Override public void onError(int code, String message) {
+                runOnMain(() -> {
+                    if (generation != accountGeneration) return;
+                    reportError("发送好友申请失败（" + code + "）");
+                    if (completion != null) completion.accept(false);
+                });
+            }
+        });
     }
 
     private void addLocalContact(String cleanUserId) {

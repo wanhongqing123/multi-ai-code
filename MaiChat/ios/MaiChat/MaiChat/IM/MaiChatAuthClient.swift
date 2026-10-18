@@ -150,6 +150,10 @@ enum MaiChatAuthError: LocalizedError {
                 "Social identity is already bound": "此第三方账号已绑定其他手机号",
                 "Account already has this social provider": "此手机号已绑定另一个同类第三方账号",
                 "Account unavailable": "账号暂不可用",
+                "Invalid friend phone number": "手机号格式不正确",
+                "Cannot add your own account": "不能添加自己为好友",
+                "MaiChat account not found": "这个手机号尚未注册 MaiChat",
+                "Friend lookup requests are too frequent": "查找好友过于频繁，请稍后再试",
             ]
             return translations[message] ?? message
         case .sessionExpired: return "登录已过期，请重新用手机号登录"
@@ -402,6 +406,17 @@ actor MaiChatAuthClient {
         }
         guard credential.userId == expectedUserID else { throw MaiChatAuthError.identityMismatch }
         return credential
+    }
+
+    func resolveFriendPhone(_ phone: String) async throws -> String {
+        let token = try await currentAccessToken()
+        let result: [String: String] = try await request(
+            "friend/resolve", method: "POST", body: ["phone": phone], bearer: token
+        )
+        guard let userID = result["user_id"],
+              userID.range(of: "^[A-Za-z0-9_-]{1,128}$", options: .regularExpression) != nil
+        else { throw MaiChatAuthError.invalidServerResponse }
+        return userID
     }
 
     func seedanceCredentialIfAvailable() async throws -> MaiChatSeedanceCredential? {

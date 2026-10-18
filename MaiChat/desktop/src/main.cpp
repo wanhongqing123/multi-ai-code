@@ -196,6 +196,10 @@ int main(int argc, char* argv[]) {
     window.setFriendQrProvider([&auth](MainWindow::FriendQrCompletion completion) {
         auth.fetchFriendQr(std::move(completion));
     });
+    remoteIM.setFriendAccountResolver([&auth](const QString& phone,
+                                              RemoteIMApplication::FriendAccountResolution completion) {
+        auth.resolveFriendPhone(phone, std::move(completion));
+    });
     bool invalidatingSession = false;
     auth.setCredentialUpdatedHandler([&](const DesktopImCredential& renewed) {
         if (invalidatingSession || renewed.userId != credential.userId) return;

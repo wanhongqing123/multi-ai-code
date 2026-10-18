@@ -117,6 +117,22 @@ function openStore(filename) {
     );
     CREATE INDEX IF NOT EXISTS password_failures_phone_time
       ON password_failures(phone_hash, created_at);
+    CREATE TABLE IF NOT EXISTS friend_mirror (
+      owner_user_id TEXT NOT NULL REFERENCES users(id),
+      friend_user_id TEXT NOT NULL REFERENCES users(id),
+      source TEXT NOT NULL DEFAULT 'tencent_im',
+      observed_at INTEGER NOT NULL,
+      PRIMARY KEY(owner_user_id, friend_user_id),
+      CHECK(owner_user_id <> friend_user_id)
+    );
+    CREATE INDEX IF NOT EXISTS friend_mirror_friend
+      ON friend_mirror(friend_user_id, owner_user_id);
+    CREATE TABLE IF NOT EXISTS friend_mirror_sync (
+      owner_user_id TEXT PRIMARY KEY REFERENCES users(id),
+      synced_at INTEGER NOT NULL,
+      im_friend_count INTEGER NOT NULL,
+      mirrored_count INTEGER NOT NULL
+    );
   `);
   const sessionColumns = new Set(db.prepare('PRAGMA table_info(sessions)')
     .all().map(column => column.name));

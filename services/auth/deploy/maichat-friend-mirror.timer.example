@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly MaiChat friend migration mirror refresh
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=2min
+Unit=maichat-friend-mirror.service
+
+[Install]
+WantedBy=timers.target

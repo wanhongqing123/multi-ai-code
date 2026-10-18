@@ -35,6 +35,23 @@ Node 服务只监听 `127.0.0.1:9100`。验证码、密码哈希、登录会话�
 | `POST /v1/friend/resolve` | 有效 Bearer 会话，传 `{phone}` 精确查找已注册手机号；只返回对应 IM `user_id`，不回传手机号。不能查自己；每账号每小时最多 20 次，超限返回 429。 |
 
 接口经 Nginx 对外使用 `/api/v1/...`；服务内部路由仍为 `/v1/...`。
+
+## 好友关系迁移镜像
+
+账号服务的 `friend_mirror` 用 MaiChat 内部 `users.id` 记录已注册账号间的有向好友关系，
+`friend_mirror_sync` 记录每个账号最近一次成功同步时间和腾讯 IM 好友数量。手机号和
+腾讯 IM ID 不进入关系主键。镜像仅供备份与未来迁移，不参与当前好友申请、消息发送或权限判断。
+
+`node friend-mirror.js --dry-run` 用现有 IM SDKAppID/密钥生成管理员 UserSig，调用腾讯
+`friend_get` 分页读取全量好友，**不写数据库**；`--run` 在每个账号完整拉取成功后
+原子替换该账号镜像。单个账号拉取失败会保留该账号上次成功的快照，进程报错供
+systemd 监控。只映射账号库中已存在的好友，未注册的外部 IM ID 不写入镜像。
+生产定时任务示例见 `deploy/maichat-friend-mirror.service.example` 与 `.timer.example`，
+按小时重建；迁移前可手动执行一次 `--run` 并核对摘要。任务只读腾讯 IM，不调用
+添加、删除好友接口，不需要修改腾讯控制台的全局回调配置。默认管理员账号为
+`administrator`、REST 域名为 `https://console.tim.qq.com`，如应用不在中国区可通过
+`MAICHAT_IM_ADMIN_USER`、`MAICHAT_IM_REST_ORIGIN` 覆盖。
+
 用户主键和腾讯 IM UserID 与手机号分离，换号不改变 IM 身份。首次登录前如需
 沿用旧 IM UserID，必须由管理员**独立核实归属**后在服务器上执行
 `MAICHAT_AUTH_DB_PATH=... node bind-legacy.js`，从 stdin 输入

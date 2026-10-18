@@ -20,6 +20,10 @@
 #else
 #include <fcntl.h>
 #include <unistd.h>
+#if defined(__ANDROID__)
+#include <linux/fs.h>
+#include <sys/syscall.h>
+#endif
 #endif
 
 #include "MaiBlockingCheck.h"
@@ -202,13 +206,32 @@ public:
 #if defined(_WIN32)
         const bool moved = MoveFileExW(mPath.value().c_str(), destination.value().c_str(),
                                        MOVEFILE_WRITE_THROUGH) != 0;
-        if (!moved)
-            mDiskFull =
-                GetLastError() == ERROR_DISK_FULL || GetLastError() == ERROR_HANDLE_DISK_FULL;
+        if (!moved) {
+            mPublishError = static_cast<int>(GetLastError());
+            mDiskFull = mPublishError == ERROR_DISK_FULL || mPublishError == ERROR_HANDLE_DISK_FULL;
+        }
+#elif defined(__ANDROID__)
+        // Android 应用数据目录可能拒绝硬链接。无覆盖重命名保持原子发布，
+        // 并保留已经存在的目标文件。
+        bool moved = ::syscall(SYS_renameat2, AT_FDCWD, mPath.value().c_str(), AT_FDCWD,
+                               destination.value().c_str(), RENAME_NOREPLACE) == 0;
+        int error = moved ? 0 : errno;
+        if (!moved && (error == ENOSYS || error == EINVAL || error == EOPNOTSUPP)) {
+            moved = ::link(mPath.value().c_str(), destination.value().c_str()) == 0 &&
+                    ::unlink(mPath.value().c_str()) == 0;
+            error = moved ? 0 : errno;
+        }
+        if (!moved) {
+            mPublishError = error;
+            mDiskFull = error == ENOSPC;
+        }
 #else
         const bool moved = ::link(mPath.value().c_str(), destination.value().c_str()) == 0 &&
                            ::unlink(mPath.value().c_str()) == 0;
-        if (!moved) mDiskFull = errno == ENOSPC;
+        if (!moved) {
+            mPublishError = errno;
+            mDiskFull = mPublishError == ENOSPC;
+        }
 #endif
         if (moved) mPublished = true;
         return moved;
@@ -216,6 +239,10 @@ public:
 
     bool isDiskFull() const {
         return mDiskFull;
+    }
+
+    int publishError() const {
+        return mPublishError;
     }
 
 private:
@@ -231,6 +258,7 @@ private:
     MaiFilePath mPath;
     bool mPublished = false;
     bool mDiskFull = false;
+    int mPublishError = 0;
 #if defined(_WIN32)
     HANDLE mHandle = INVALID_HANDLE_VALUE;
 #else
@@ -318,9 +346,9 @@ public:
     std::string parametersSchema() const override {
         // url 是下载直链；output_path 可选但必须是新文件，大小和超时可设上限。
         return R"({"type":"object","properties":{"url":{"type":"string"},)"
-            R"("output_path":{"type":"string"},"max_size_mb":{"type":"number","minimum":1,)"
-            R"("maximum":1024},"timeout_s":{"type":"number","minimum":1,"maximum":600}},)"
-            R"("required":["url"],"additionalProperties":false})";
+               R"("output_path":{"type":"string"},"max_size_mb":{"type":"number","minimum":1,)"
+               R"("maximum":1024},"timeout_s":{"type":"number","minimum":1,"maximum":600}},)"
+               R"("required":["url"],"additionalProperties":false})";
     }
     bool requiresApproval(const std::string&) const override {
         return true;
@@ -490,12 +518,17 @@ public:
         const MaiError directoryError = MaiFileSystem::createDirectories(destination.dirName());
         if (directoryError)
             return failure(MaiErrorCode::Internal, "io_error", directoryError.message());
-        if (!sink.publish(destination))
-            return failure(MaiErrorCode::Internal,
-                           MaiFileSystem::exists(destination) ? "file_exists"
-                           : sink.isDiskFull()                ? "disk_full"
-                                                              : "io_error",
-                           "Could not publish the download file");
+        if (!sink.publish(destination)) {
+            const char* code = MaiFileSystem::exists(destination) ? "file_exists"
+                               : sink.isDiskFull()                ? "disk_full"
+                                                                  : "io_error";
+            return MaiToolResult::failure(MaiErrorCode::Internal,
+                                          Json{{"code", code},
+                                               {"stage", "publish"},
+                                               {"os_error", sink.publishError()},
+                                               {"message", "Could not publish the download file"}}
+                                              .dump());
+        }
         return MaiToolResult::success(Json{
             {"path", destinationPath},
             {"bytes", transfer.receivedBytes},

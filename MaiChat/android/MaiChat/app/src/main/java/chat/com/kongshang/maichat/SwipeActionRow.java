@@ -32,7 +32,14 @@ public final class SwipeActionRow extends FrameLayout {
         Runnable actionHandler
     ) {
         super(context);
-        this.content = content;
+        FrameLayout foreground = new FrameLayout(context);
+        View cornerMask = new View(context);
+        cornerMask.setBackgroundColor(MaiChatTheme.PANEL);
+        foreground.addView(cornerMask, new LayoutParams(
+            LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
+        foreground.addView(content, new LayoutParams(
+            LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
+        this.content = foreground;
         actionWidth = MaiChatTheme.dp(context, 92);
         horizontalThreshold = Math.max(
             ViewConfiguration.get(context).getScaledTouchSlop() * 3,
@@ -46,7 +53,8 @@ public final class SwipeActionRow extends FrameLayout {
             actionHandler.run();
         });
         addView(action, new LayoutParams(actionWidth, LayoutParams.MATCH_PARENT, android.view.Gravity.END));
-        addView(content, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
+        addView(foreground, new LayoutParams(
+            LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
         setClipChildren(true);
         setBackgroundColor(MaiChatTheme.PANEL);
     }

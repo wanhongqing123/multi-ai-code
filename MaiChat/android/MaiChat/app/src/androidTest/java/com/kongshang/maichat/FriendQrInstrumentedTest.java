@@ -50,7 +50,7 @@ public class FriendQrInstrumentedTest {
     }
 
     @Test public void generatedAccountCodeScansBackToSameUser() throws Exception {
-        String userId = "u0123456789abcdef01234567";
+        String userId = "mtest_friend_12345";
         BitMatrix matrix = new QRCodeWriter().encode(
             FriendQrPolicy.link(userId), BarcodeFormat.QR_CODE, 600, 600);
         Bitmap bitmap = Bitmap.createBitmap(600, 600, Bitmap.Config.ARGB_8888);

@@ -1,6 +1,6 @@
 // 文件作用：使用项目已有的 OpenSSL 版 libcurl 发送 iOS 账号服务的 GET/POST 请求。
 // 安全边界：HTTPS 只信任 App 随包 CA，校验域名与证书；不跟随跳转，也不重试写入请求。
-// 内存边界：响应最多 64 KiB；请求与响应只在一次调用期间存在，不记录账号令牌。
+// 内存边界：响应最多 1 MiB，容纳分页前的完整好友列表；不记录账号令牌。
 #include "MaiChatAuthTransport.h"
 #include "MaiChatSystemProxy.h"
 
@@ -13,7 +13,7 @@
 
 namespace {
 
-constexpr size_t kMaximumResponseBytes = 64 * 1024;
+constexpr size_t kMaximumResponseBytes = 1024 * 1024;
 constexpr size_t kMaximumHeaderBytes = 16 * 1024;
 constexpr size_t kMaximumRequestBytes = 32 * 1024;
 constexpr long kConnectTimeoutMilliseconds = 10 * 1000;

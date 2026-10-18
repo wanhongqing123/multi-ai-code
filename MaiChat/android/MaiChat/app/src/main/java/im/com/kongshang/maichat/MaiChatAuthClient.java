@@ -11,6 +11,7 @@ import android.security.keystore.KeyProperties;
 import android.util.Base64;
 
 import org.json.JSONObject;
+import org.json.JSONArray;
 
 import java.io.IOException;
 import java.net.URI;
@@ -18,13 +19,15 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
 import java.util.UUID;
+import java.util.ArrayList;
+import java.util.List;
 
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 
-/** 手机号账号协议。刷新令牌只以 Android Keystore 加密形式落盘，UserSig 由后台签发。 */
+/** MaiChat 账号协议。刷新令牌只以 Android Keystore 加密形式落盘，UserSig 由后台签发。 */
 public final class MaiChatAuthClient {
     private static volatile MaiChatAuthClient shared;
 
@@ -73,6 +76,30 @@ public final class MaiChatAuthClient {
             this.userId = userId;
             this.userSig = userSig;
             this.expiresAt = expiresAt;
+        }
+    }
+
+    public static final class FriendInfo {
+        public final String accountId;
+        public final String imUserId;
+        public final boolean pendingImSync;
+
+        FriendInfo(String accountId, String imUserId, boolean pendingImSync) {
+            this.accountId = accountId;
+            this.imUserId = imUserId;
+            this.pendingImSync = pendingImSync;
+        }
+    }
+
+    public static final class FriendRequestInfo {
+        public final String id;
+        public final String accountId;
+        public final String imUserId;
+
+        FriendRequestInfo(String id, String accountId, String imUserId) {
+            this.id = id;
+            this.accountId = accountId;
+            this.imUserId = imUserId;
         }
     }
 
@@ -172,6 +199,7 @@ public final class MaiChatAuthClient {
         ? "http://10.0.2.2:18190/v1/" : "https://ichat.life/api/v1/";
     private static final String KEY_ALIAS = "MaiChat.PhoneAuth.Refresh";
     private static final String STORED_REFRESH = "refresh";
+    private static final String STORED_ACCOUNT_ID = "account_id";
     private final SharedPreferences preferences;
     private String accessToken = "";
     private long accessExpiresAt;
@@ -186,6 +214,18 @@ public final class MaiChatAuthClient {
 
     public void setSessionTerminationListener(SessionTerminationListener listener) {
         terminationListener = listener;
+    }
+
+    public String accountId() {
+        return preferences.getString(STORED_ACCOUNT_ID, "");
+    }
+
+    public synchronized String refreshAccountId() throws Exception {
+        JSONObject response = authenticatedRequest("auth/me", "GET", null);
+        String id = response.getJSONObject("user").getString("id");
+        if (id.isEmpty()) throw new IOException("MaiChat 账号 ID 不可用");
+        preferences.edit().putString(STORED_ACCOUNT_ID, id).apply();
+        return id;
     }
 
     private JSONObject addDevice(JSONObject body) throws Exception {
@@ -223,10 +263,14 @@ public final class MaiChatAuthClient {
     }
 
     public synchronized String loginWithPassword(
-        String phone, String password, boolean ageConfirmed)
+        String account, String password, boolean ageConfirmed)
         throws Exception {
-        JSONObject body = addDevice(new JSONObject().put("phone", phone).put("password", password)
-            .put("age_confirmed_14_plus", ageConfirmed));
+        String cleanAccount = account == null ? "" : account.trim();
+        String phoneCandidate = cleanAccount.replaceAll("[ -]", "");
+        boolean isPhone = phoneCandidate.matches("(?:\\+86)?1[3-9][0-9]{9}");
+        JSONObject body = addDevice(new JSONObject()
+            .put(isPhone ? "phone" : "account_id", isPhone ? phoneCandidate : cleanAccount)
+            .put("password", password).put("age_confirmed_14_plus", ageConfirmed));
         return adopt(request("auth/password/login", "POST", body, ""));
     }
 
@@ -335,6 +379,42 @@ public final class MaiChatAuthClient {
         if (!userId.matches("[A-Za-z0-9_-]{1,128}"))
             throw new IOException("好友账号资料无效");
         return userId;
+    }
+
+    public synchronized List<FriendInfo> friends() throws Exception {
+        JSONArray array = authenticatedRequest("friends", "GET", null).getJSONArray("friends");
+        List<FriendInfo> result = new ArrayList<>();
+        for (int index = 0; index < array.length(); index++) {
+            JSONObject row = array.getJSONObject(index);
+            result.add(new FriendInfo(row.getString("account_id"), row.getString("im_user_id"),
+                "add".equals(row.optString("pending_im_action"))));
+        }
+        return result;
+    }
+
+    public synchronized List<FriendRequestInfo> friendRequests() throws Exception {
+        JSONArray array = authenticatedRequest("friends/requests", "GET", null)
+            .getJSONArray("incoming");
+        List<FriendRequestInfo> result = new ArrayList<>();
+        for (int index = 0; index < array.length(); index++) {
+            JSONObject row = array.getJSONObject(index);
+            result.add(new FriendRequestInfo(row.getString("id"), row.getString("account_id"),
+                row.getString("im_user_id")));
+        }
+        return result;
+    }
+
+    public synchronized void requestFriend(String account) throws Exception {
+        authenticatedRequest("friends/requests", "POST", new JSONObject().put("account", account));
+    }
+
+    public synchronized void decideFriendRequest(String id, boolean accept) throws Exception {
+        String action = accept ? "accept" : "reject";
+        authenticatedRequest("friends/requests/" + id + "/" + action, "POST", new JSONObject());
+    }
+
+    public synchronized void removeFriend(String account) throws Exception {
+        authenticatedRequest("friends/remove", "POST", new JSONObject().put("account", account));
     }
 
     public synchronized ModelCredential seedanceCredential() throws Exception {
@@ -468,19 +548,22 @@ public final class MaiChatAuthClient {
     private void clearLocalSession() {
         accessToken = "";
         accessExpiresAt = 0;
-        preferences.edit().remove(STORED_REFRESH).commit();
+        preferences.edit().remove(STORED_REFRESH).remove(STORED_ACCOUNT_ID).commit();
     }
 
     private String adopt(JSONObject session) throws Exception {
         String refresh = session.getString("refresh_token");
         String access = session.getString("access_token");
-        String userId = session.getJSONObject("user").getString("im_user_id");
-        if (refresh.isEmpty() || access.isEmpty() || userId.isEmpty())
+        JSONObject user = session.getJSONObject("user");
+        String userId = user.getString("im_user_id");
+        String accountId = user.getString("id");
+        if (refresh.isEmpty() || access.isEmpty() || userId.isEmpty() || accountId.isEmpty())
             throw new IOException("登录服务返回的账号数据无效");
         writeRefreshToken(refresh);
         accessToken = access;
         accessExpiresAt = System.currentTimeMillis()
             + Math.max(0, session.getLong("expires_in") - 30) * 1000;
+        preferences.edit().putString(STORED_ACCOUNT_ID, accountId).apply();
         return userId;
     }
 
@@ -488,7 +571,7 @@ public final class MaiChatAuthClient {
         if (!accessToken.isEmpty() && System.currentTimeMillis() < accessExpiresAt)
             return accessToken;
         String refresh = readRefreshToken();
-        if (refresh.isEmpty()) throw new IOException("登录已过期，请重新用手机号登录");
+        if (refresh.isEmpty()) throw new IOException("登录已过期，请重新登录");
         JSONObject response;
         try {
             response = request("auth/refresh", "POST",
@@ -617,7 +700,7 @@ public final class MaiChatAuthClient {
     }
 
     static String errorText(String error, String code, int status) {
-        if ("MOBILE_SESSION_REQUIRED".equals(code)) return "请重新用手机号登录后扫码";
+        if ("MOBILE_SESSION_REQUIRED".equals(code)) return "请在手机上重新登录后扫码";
         if ("SOCIAL_PROVIDER_UNAVAILABLE".equals(code)) return "社交登录暂时不可用，请稍后再试";
         if ("SOCIAL_CREDENTIAL_INVALID".equals(code)) return "授权已失效，请重新授权";
         if ("SOCIAL_BINDING_EXPIRED".equals(code)) return "绑定已过期，请重新授权";
@@ -629,15 +712,23 @@ public final class MaiChatAuthClient {
             case "Verification code could not be sent": return "验证码发送失败，请稍后再试";
             case "Invalid or expired verification code": return "验证码错误或已过期";
             case "Phone or password is incorrect": return "手机号或密码错误";
+            case "Account or password is incorrect": return "账号或密码错误";
+            case "Invalid login request": return "账号或密码格式不正确";
             case "Please wait before trying again": return "登录尝试过多，请稍后再试";
-            case "Authentication required": return "登录已过期，请重新用手机号登录";
-            case "Invalid session": return "登录已过期，请重新用手机号登录";
+            case "Authentication required": return "登录已过期，请重新登录";
+            case "Invalid session": return "登录已过期，请重新登录";
             case "Model access is not enabled for this account":
                 return "当前账号未开通模型使用权限";
             case "Invalid friend phone number": return "手机号格式不正确";
             case "Cannot add your own account": return "不能添加自己为好友";
-            case "MaiChat account not found": return "这个手机号尚未注册 MaiChat";
+            case "MaiChat account not found": return "未找到这个 MaiChat 账号";
             case "Friend lookup requests are too frequent": return "查找好友过于频繁，请稍后再试";
+            case "Friend requests are too frequent": return "发送好友申请过于频繁，请稍后再试";
+            case "Already friends": return "你们已经是好友";
+            case "Accept the existing incoming request": return "请先处理对方发来的好友申请";
+            case "Friend request not found": return "好友申请不存在或已失效";
+            case "Friend request already decided": return "这条好友申请已经处理";
+            case "Friend not found": return "好友关系不存在";
             case "Desktop login request not found":
                 return "未找到桌面登录请求，请在电脑上刷新二维码";
             case "Desktop login request expired": return "二维码已过期，请在电脑上刷新";

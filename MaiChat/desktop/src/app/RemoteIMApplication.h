@@ -7,6 +7,7 @@
 #include <QHash>
 #include <QObject>
 #include <QString>
+#include <QSet>
 #include <memory>
 #include <vector>
 
@@ -20,6 +21,23 @@ class RemoteIMApplication final : public QObject {
     Q_OBJECT
 
 public:
+    struct AccountFriend {
+        QString accountId;
+        QString imUserId;
+    };
+    struct AccountFriendRequest {
+        QString id;
+        QString accountId;
+        QString imUserId;
+    };
+    struct AccountFriendOperations {
+        std::function<void(std::function<void(const QList<AccountFriend>&, const QString&)>)> list;
+        std::function<void(std::function<void(const QList<AccountFriendRequest>&, const QString&)>)>
+            requests;
+        std::function<void(const QString&, RemoteIMCompletion)> send;
+        std::function<void(const QString&, bool, RemoteIMCompletion)> decide;
+        std::function<void(const QString&, RemoteIMCompletion)> remove;
+    };
     // database 可空：不带本地库时行为与从前一致（仅内存 + SDK 漫游）。
     // 带库时构造即加载全部本地历史；收发消息即时落库；SDK 漫游拉取降级为
     // 补充源，按消息 id 去重合并。
@@ -48,6 +66,14 @@ public:
     using FriendAccountResolver =
         std::function<void(const QString&, FriendAccountResolution)>;
     void setFriendAccountResolver(FriendAccountResolver resolver);
+    void setAccountFriendOperations(AccountFriendOperations operations);
+    const QSet<QString>& acceptedFriendIds() const { return acceptedFriendIds_; }
+    bool isAcceptedFriend(const QString& imUserId) const {
+        return !accountFriendOperations_.list || acceptedFriendIds_.contains(imUserId);
+    }
+    QString maiChatAccountForImId(const QString& imUserId) const {
+        return friendAccountByImId_.value(imUserId);
+    }
     void refreshFriendList();
     void friendRequests(RemoteIMFriendRequestsCompletion completion);
     void decideFriendRequest(const QString& userId, bool accept, RemoteIMCompletion completion);
@@ -125,6 +151,10 @@ signals:
 private:
     void requestFriendById(const QString& userId, const QString& displayName);
     FriendAccountResolver friendAccountResolver_;
+    AccountFriendOperations accountFriendOperations_;
+    QSet<QString> acceptedFriendIds_;
+    QHash<QString, QString> friendAccountByImId_;
+    QHash<QString, QString> requestIdByImId_;
     void sendDiagnosticTo(const QString& peerId, const QString& text, const QString& path,
                           std::function<void(bool)> completion);
     void markMessage(const QString& messageId, RemoteIMMessageStatus status);

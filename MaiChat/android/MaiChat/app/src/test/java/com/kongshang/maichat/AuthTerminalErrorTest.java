@@ -30,10 +30,17 @@ public class AuthTerminalErrorTest {
             MaiChatAuthClient.errorText("Model access is not enabled for this account", "", 403));
     }
 
-    @Test public void unknownFriendPhoneHasActionableMessage() {
-        assertEquals("这个手机号尚未注册 MaiChat",
+    @Test public void unknownFriendAccountHasActionableMessage() {
+        assertEquals("未找到这个 MaiChat 账号",
             MaiChatAuthClient.errorText("MaiChat account not found", "", 404));
         assertEquals("查找好友过于频繁，请稍后再试",
             MaiChatAuthClient.errorText("Friend lookup requests are too frequent", "", 429));
+    }
+
+    @Test public void accountPasswordAndFriendshipErrorsAreNotShownAsServiceFailures() {
+        assertEquals("账号或密码错误",
+            MaiChatAuthClient.errorText("Account or password is incorrect", "", 401));
+        assertEquals("你们已经是好友",
+            MaiChatAuthClient.errorText("Already friends", "", 409));
     }
 }

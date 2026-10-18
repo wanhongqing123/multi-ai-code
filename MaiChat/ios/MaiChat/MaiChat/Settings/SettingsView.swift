@@ -1,6 +1,6 @@
 // 文件作用：展示账号、隐私和应用设置，并提供用户可执行的设置操作。
 // 展示账号、通知、远程桌面及应用设置入口。
-// 切换手机号先退出当前账号，再进入手机号登录页。
+// 切换账号先退出当前会话，再进入 MaiChat 登录页。
 import MaiChatCore
 import SwiftUI
 import UIKit
@@ -18,10 +18,10 @@ struct SettingsView: View {
                         HStack(spacing: 18) {
                             SelfProfileAvatar(size: 64)
                             VStack(alignment: .leading, spacing: 6) {
-                                Text(appState.profile(for: appState.masterUserID).displayName)
+                                Text(appState.selfDisplayName())
                                     .font(.title3.weight(.semibold))
                                     .foregroundStyle(RemoteIMStyle.textPrimary)
-                                Text(appState.masterUserID)
+                                Text(appState.maiChatAccountID)
                                     .font(.subheadline)
                                     .foregroundStyle(RemoteIMStyle.textSecondary)
                             }
@@ -84,10 +84,10 @@ private struct PersonalProfileView: View {
                     .padding(.vertical, 4)
                 }
                 .disabled(isSaving || appState.connectionState != .connected)
-                LabeledContent("名字", value: appState.profile(for: appState.masterUserID).displayName)
-                LabeledContent("账号", value: appState.masterUserID)
+                LabeledContent("名字", value: appState.selfDisplayName())
+                LabeledContent("账号", value: appState.maiChatAccountID)
                 NavigationLink {
-                    FriendQRShareView(userID: appState.masterUserID)
+                    FriendQRShareView(userID: appState.maiChatAccountID)
                 } label: {
                     Label("我的好友二维码", systemImage: "qrcode")
                 }
@@ -180,9 +180,9 @@ private struct AccountSettingsView: View {
             Section("账号") {
                 LabeledContent("登录账号") {
                     Text(displayUserID)
-                        .foregroundStyle(appState.masterUserID.isEmpty ? .secondary : .primary)
+                        .foregroundStyle(appState.maiChatAccountID.isEmpty ? .secondary : .primary)
                 }
-                Button("切换手机号") {
+                Button("切换账号") {
                     guard !isSwitchingPhone else { return }
                     isSwitchingPhone = true
                     Task { @MainActor in
@@ -217,7 +217,7 @@ private struct AccountSettingsView: View {
     }
 
     private var displayUserID: String {
-        let userID = appState.masterUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let userID = appState.maiChatAccountID.trimmingCharacters(in: .whitespacesAndNewlines)
         return userID.isEmpty ? "未登录" : userID
     }
 

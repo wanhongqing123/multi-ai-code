@@ -1,7 +1,8 @@
-// 文件作用：验证桌面端扫码登录窗布局和无账号绕过入口。
+// 文件作用：验证桌面端扫码与 MaiChat 账号密码登录及会话安全。
 // 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QLabel>
 #include <QLineEdit>
+#include <QCheckBox>
 #include <QBuffer>
 #include <QCryptographicHash>
 #include <QFile>
@@ -84,7 +85,8 @@ public:
                                 {QStringLiteral("display_code"), QStringLiteral("123456")},
                                 {QStringLiteral("expires_in"), 120}};
                     if (oversizeQrResponse)
-                        response.insert(QStringLiteral("padding"), QString(70 * 1024, QLatin1Char('x')));
+                        response.insert(QStringLiteral("padding"),
+                                        QString(2 * 1024 * 1024, QLatin1Char('x')));
                 } else if (headers.startsWith("post /v1/auth/desktop/claim ")) {
                     const QByteArray verifier = QByteArray::fromBase64(
                         body.value(QStringLiteral("verifier")).toString().toLatin1(),
@@ -111,6 +113,16 @@ public:
                                                QStringLiteral("Desktop login request denied")) :
                             QStringLiteral("test claim failure")}};
                     }
+                } else if (headers.startsWith("post /v1/auth/password/login ")) {
+                    ++passwordLoginCount;
+                    passwordLoginAccount = body.value(QStringLiteral("account_id")).toString();
+                    passwordLoginAgeConfirmed = body.value(
+                        QStringLiteral("age_confirmed_14_plus")).toBool();
+                    status = body.value(QStringLiteral("password")).toString() ==
+                        QStringLiteral("test-account-password-123456") ? 200 : 401;
+                    response = status == 200 ? approvedSession() :
+                        QJsonObject{{QStringLiteral("error"),
+                                     QStringLiteral("Account or password is incorrect")}};
                 } else if (headers.startsWith("post /v1/auth/refresh ")) {
                     ++refreshCount;
                     validRefreshToken = body.value(QStringLiteral("refresh_token")).toString() ==
@@ -122,6 +134,7 @@ public:
                                     {QStringLiteral("expires_in"), 900},
                                     {QStringLiteral("device_slot"), testPlatformName()},
                                     {QStringLiteral("user"), QJsonObject{
+                                        {QStringLiteral("id"), QStringLiteral("m-auth-test")},
                                         {QStringLiteral("im_user_id"), QStringLiteral("im-auth-test")}}}};
                     } else {
                         response = {{QStringLiteral("error"), QStringLiteral("temporary network failure")}};
@@ -149,6 +162,7 @@ public:
                     status = meStatus;
                     if (status == 200) {
                         response = {{QStringLiteral("user"), QJsonObject{
+                                        {QStringLiteral("id"), QStringLiteral("m-auth-test")},
                                         {QStringLiteral("im_user_id"), QStringLiteral("im-auth-test")}}},
                                     {QStringLiteral("device_slot"), testPlatformName()}};
                     } else if (status == 401) {
@@ -241,6 +255,7 @@ public:
                 {QStringLiteral("expires_in"), initialAccessExpiresIn},
                 {QStringLiteral("device_slot"), testPlatformName()},
                 {QStringLiteral("user"), QJsonObject{
+                    {QStringLiteral("id"), QStringLiteral("m-auth-test")},
                     {QStringLiteral("im_user_id"), QStringLiteral("im-auth-test")}}}};
     }
     void approveDeferredClaim() {
@@ -266,6 +281,9 @@ public:
     QTcpSocket* deferredClaimSocket = nullptr;
     int initialAccessExpiresIn = 900;
     int refreshCount = 0;
+    int passwordLoginCount = 0;
+    QString passwordLoginAccount;
+    bool passwordLoginAgeConfirmed = false;
     int refreshStatus = 200;
     bool validRefreshToken = false;
     bool lastCredentialBearer = false;
@@ -302,10 +320,12 @@ class LoginDialogTest : public QObject {
 
 private slots:
     void liveProductionAuthHealthCheck();
+    void liveProductionAccountPasswordLogin();
     void liveProductionMainModelKeyGate();
     void liveProductionQrCreationAndCancellation();
     void usesCompactDesktopSize();
-    void showsQrLoginHierarchyWithoutManualUserId();
+    void showsQrAndMaiChatPasswordLoginHierarchy();
+    void accountPasswordLoginUsesServerSignedCredential();
     void displaysServerQrAndSendsMatchingVerifier();
     void replacingQrCancelsPreviousRequest();
     void approvedQrUsesServerSignedCredential();
@@ -336,6 +356,30 @@ void LoginDialogTest::liveProductionAuthHealthCheck() {
     QVERIFY2(result.error.isEmpty(), qPrintable(result.error));
     QCOMPARE(result.status, 401);
     QVERIFY(!result.body.isEmpty());
+}
+
+void LoginDialogTest::liveProductionAccountPasswordLogin() {
+    const QString accountId = qEnvironmentVariable("MAICHAT_TEST_B_ID");
+    const QString password = qEnvironmentVariable("MAICHAT_TEST_B_PASSWORD");
+    if (accountId.isEmpty() || password.isEmpty()) QSKIP("Temporary account not configured");
+    DesktopAuthClient auth(nullptr, QUrl(QStringLiteral("https://ichat.life/api/v1/")), false);
+    LoginDialog dialog(&auth);
+    auto* account = dialog.findChild<QLineEdit*>(QStringLiteral("accountLoginId"));
+    auto* secret = dialog.findChild<QLineEdit*>(QStringLiteral("accountLoginPassword"));
+    auto* agreement = dialog.findChild<QCheckBox*>(QStringLiteral("accountLoginAgreement"));
+    auto* submit = dialog.findChild<QPushButton*>(QStringLiteral("accountLoginButton"));
+    QVERIFY(account && secret && agreement && submit);
+    account->setText(accountId);
+    secret->setText(password);
+    agreement->setChecked(true);
+    QSignalSpy accepted(&dialog, &QDialog::accepted);
+    submit->click();
+    QTRY_COMPARE_WITH_TIMEOUT(accepted.size(), 1, 30000);
+    QCOMPARE(auth.maiChatAccountId(), accountId);
+    QCOMPARE(auth.imCredential().userId, accountId);
+    bool loggedOut = false;
+    auth.logout([&loggedOut](bool ok, const QString&) { loggedOut = ok; });
+    QTRY_VERIFY_WITH_TIMEOUT(loggedOut, 20000);
 }
 
 // Opt-in production check: create one QR request, validate its PNG, then cancel
@@ -374,13 +418,13 @@ void LoginDialogTest::usesCompactDesktopSize() {
         dialog.grab().save(qEnvironmentVariable("MAICHAT_CAPTURE_LOGIN"));
     }
     QVERIFY2(dialog.width() <= 560, "Login window is wider than the QR flow needs");
-    QVERIFY2(dialog.height() <= 620, "Login window is taller than the QR flow needs");
+    QVERIFY2(dialog.height() <= 760, "Login window exceeds the two login modes");
     auto* cancel = dialog.findChild<QPushButton*>(QStringLiteral("loginCancelButton"));
     QVERIFY(cancel != nullptr);
     QVERIFY(dialog.rect().contains(cancel->mapTo(&dialog, cancel->rect().bottomRight())));
 }
 
-void LoginDialogTest::showsQrLoginHierarchyWithoutManualUserId() {
+void LoginDialogTest::showsQrAndMaiChatPasswordLoginHierarchy() {
     LoginDialog dialog;
 
     auto* loginPanel = dialog.findChild<QWidget*>(QStringLiteral("loginPanel"));
@@ -408,7 +452,34 @@ void LoginDialogTest::showsQrLoginHierarchyWithoutManualUserId() {
     QVERIFY(!status->isVisible());
     QVERIFY(!retryButton->isEnabled());
     QCOMPARE(cancelButton->text(), QStringLiteral("取消"));
-    QVERIFY(dialog.findChild<QLineEdit*>() == nullptr);
+    QVERIFY(dialog.findChild<QLineEdit*>(QStringLiteral("accountLoginId")) != nullptr);
+    QVERIFY(dialog.findChild<QLineEdit*>(QStringLiteral("accountLoginPassword")) != nullptr);
+    QVERIFY(dialog.findChild<QPushButton*>(QStringLiteral("accountLoginButton")) != nullptr);
+}
+
+void LoginDialogTest::accountPasswordLoginUsesServerSignedCredential() {
+    FakeQrServer server;
+    DesktopAuthClient auth(nullptr, server.url(), false);
+    LoginDialog dialog(&auth);
+    dialog.show();
+    auto* account = dialog.findChild<QLineEdit*>(QStringLiteral("accountLoginId"));
+    auto* password = dialog.findChild<QLineEdit*>(QStringLiteral("accountLoginPassword"));
+    auto* agreement = dialog.findChild<QCheckBox*>(QStringLiteral("accountLoginAgreement"));
+    auto* submit = dialog.findChild<QPushButton*>(QStringLiteral("accountLoginButton"));
+    QVERIFY(account && password && agreement && submit);
+    account->setText(QStringLiteral("test_account"));
+    password->setText(QStringLiteral("test-account-password-123456"));
+    QSignalSpy accepted(&dialog, &QDialog::accepted);
+    submit->click();
+    QCOMPARE(server.passwordLoginCount, 0);
+    agreement->setChecked(true);
+    submit->click();
+    QTRY_COMPARE_WITH_TIMEOUT(accepted.size(), 1, 5000);
+    QCOMPARE(server.passwordLoginCount, 1);
+    QCOMPARE(server.passwordLoginAccount, QStringLiteral("test_account"));
+    QVERIFY(server.passwordLoginAgeConfirmed);
+    QCOMPARE(auth.maiChatAccountId(), QStringLiteral("m-auth-test"));
+    QCOMPARE(auth.authenticatedUserId(), QStringLiteral("im-auth-test"));
 }
 
 void LoginDialogTest::displaysServerQrAndSendsMatchingVerifier() {
@@ -803,6 +874,7 @@ void LoginDialogTest::retriesStoredSessionAfterTransientRestoreFailure() {
         {QStringLiteral("expires_in"), 900},
         {QStringLiteral("device_slot"), testPlatformName()},
         {QStringLiteral("user"), QJsonObject{
+            {QStringLiteral("id"), QStringLiteral("m-auth-test")},
             {QStringLiteral("im_user_id"), QStringLiteral("im-auth-test")}}}
     };
     bool adopted = false;

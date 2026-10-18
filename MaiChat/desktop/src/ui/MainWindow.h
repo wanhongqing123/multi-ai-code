@@ -81,6 +81,7 @@ public:
     void setModelKeyRefreshHandler(std::function<void()> handler);
     void setMediaServiceAccessProvider(std::function<QPair<QString, QString>()> provider);
     void setFriendQrProvider(std::function<void(FriendQrCompletion)> provider);
+    void setMaiChatAccountIdProvider(std::function<QString()> provider);
     bool openDockedVideo(const QString& path, const QStringList& playlist = {});
 
     // 把 IM 收/发的文件附件从本地缓存拷贝到 targetPath（存在则覆盖）。
@@ -106,6 +107,7 @@ private:
     void refreshSelectedConversation();
     void refreshContacts();
     void refreshContactDirectory();
+    QList<RemoteIMContact> acceptedContacts() const;
     // 通讯录分组：表头和联系人共用 contactsList_，表头是一种特殊行。
     QListWidgetItem* makeContactItem(const RemoteIMContact& contact);
     void appendContactGroupSection(const QString& groupName,
@@ -282,6 +284,7 @@ private:
     std::function<QPair<QString, QString>()> wanCredentialsProvider_;
     std::function<QPair<QString, QString>()> mediaServiceAccessProvider_;
     std::function<void(FriendQrCompletion)> friendQrProvider_;
+    std::function<QString()> maiChatAccountIdProvider_;
     QHash<QString, QString> modelApiKeys_;
     struct ModelKeyState {
         QMutex mutex;

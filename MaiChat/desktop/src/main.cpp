@@ -196,10 +196,37 @@ int main(int argc, char* argv[]) {
     window.setFriendQrProvider([&auth](MainWindow::FriendQrCompletion completion) {
         auth.fetchFriendQr(std::move(completion));
     });
-    remoteIM.setFriendAccountResolver([&auth](const QString& phone,
-                                              RemoteIMApplication::FriendAccountResolution completion) {
-        auth.resolveFriendPhone(phone, std::move(completion));
-    });
+    window.setMaiChatAccountIdProvider([&auth] { return auth.maiChatAccountId(); });
+    RemoteIMApplication::AccountFriendOperations friendOperations;
+    friendOperations.list = [&auth](auto completion) {
+        auth.fetchFriends([completion](const QList<DesktopFriend>& friends,
+                                       const QString& error) {
+            QList<RemoteIMApplication::AccountFriend> mapped;
+            for (const DesktopFriend& friendAccount : friends)
+                mapped.append({friendAccount.accountId, friendAccount.imUserId});
+            completion(mapped, error);
+        });
+    };
+    friendOperations.requests = [&auth](auto completion) {
+        auth.fetchFriendRequests([completion](const QList<DesktopFriendRequest>& requests,
+                                              const QString& error) {
+            QList<RemoteIMApplication::AccountFriendRequest> mapped;
+            for (const DesktopFriendRequest& request : requests)
+                mapped.append({request.id, request.accountId, request.imUserId});
+            completion(mapped, error);
+        });
+    };
+    friendOperations.send = [&auth](const QString& account, RemoteIMCompletion completion) {
+        auth.requestFriend(account, std::move(completion));
+    };
+    friendOperations.decide = [&auth](const QString& id, bool accept,
+                                      RemoteIMCompletion completion) {
+        auth.decideFriendRequest(id, accept, std::move(completion));
+    };
+    friendOperations.remove = [&auth](const QString& account, RemoteIMCompletion completion) {
+        auth.removeFriend(account, std::move(completion));
+    };
+    remoteIM.setAccountFriendOperations(std::move(friendOperations));
     bool invalidatingSession = false;
     auth.setCredentialUpdatedHandler([&](const DesktopImCredential& renewed) {
         if (invalidatingSession || renewed.userId != credential.userId) return;

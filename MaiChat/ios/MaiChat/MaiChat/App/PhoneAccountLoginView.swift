@@ -42,7 +42,8 @@ struct PhoneAccountLoginView: View {
 
     private var phoneLoginContent: some View {
         GeometryReader { geometry in
-            ScrollView {
+            ScrollViewReader { scrollProxy in
+                ScrollView {
                 VStack(spacing: 0) {
                     HStack {
                         if challengeId != nil || usesPassword {
@@ -60,6 +61,7 @@ struct PhoneAccountLoginView: View {
                         Spacer()
                     }
                     .foregroundStyle(.primary)
+                    .id("account-login-top")
                     Color.clear.frame(height: max(60, geometry.size.height * 0.16))
                     Image(uiImage: Self.applicationIcon)
                         .resizable()
@@ -70,14 +72,16 @@ struct PhoneAccountLoginView: View {
                     Color.clear.frame(height: max(70, geometry.size.height * 0.1))
                     VStack(alignment: .leading, spacing: 20) {
                         HStack(spacing: 14) {
-                            Text("+86")
-                                .font(.system(size: 18, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                            Rectangle().fill(Color.black.opacity(0.08))
-                                .frame(width: 1, height: 24)
-                            TextField("输入手机号", text: $phone)
-                                .keyboardType(.phonePad)
-                                .textContentType(.telephoneNumber)
+                            if !usesPassword {
+                                Text("+86")
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                                Rectangle().fill(Color.black.opacity(0.08))
+                                    .frame(width: 1, height: 24)
+                            }
+                            TextField(usesPassword ? "MaiChat 账号或手机号" : "输入手机号", text: $phone)
+                                .keyboardType(usesPassword ? .asciiCapable : .phonePad)
+                                .textContentType(usesPassword ? .username : .telephoneNumber)
                                 .accessibilityIdentifier("account-phone")
                         }
                         .padding(.horizontal, 18)
@@ -100,7 +104,7 @@ struct PhoneAccountLoginView: View {
                                 .background(Color(.systemGray6), in: Capsule())
                         }
                         HStack {
-                            Text("目前仅支持中国大陆地区号码")
+                            Text(usesPassword ? "测试账号可不绑定手机号" : "目前仅支持中国大陆地区号码")
                                 .foregroundStyle(.secondary)
                             Spacer()
                             if challengeId != nil && !usesPassword {
@@ -184,14 +188,26 @@ struct PhoneAccountLoginView: View {
                 }
                 .frame(maxWidth: .infinity)
                 .frame(minHeight: geometry.size.height)
+                }
+                .scrollDismissesKeyboard(.interactively)
+                .onReceive(NotificationCenter.default.publisher(
+                    for: UIResponder.keyboardWillHideNotification
+                )) { _ in
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            scrollProxy.scrollTo("account-login-top", anchor: .top)
+                        }
+                    }
+                }
             }
-            .scrollDismissesKeyboard(.interactively)
         }
         .background(Color.white.ignoresSafeArea())
     }
 
     private var canSubmit: Bool {
-        phone.filter(\.isNumber).count == 11 && acceptedAgreement && confirmedMinimumAge && !isBusy &&
+        (usesPassword ? !phone.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty :
+            phone.filter(\.isNumber).count == 11) &&
+            acceptedAgreement && confirmedMinimumAge && !isBusy &&
             (!usesPassword || !password.isEmpty) &&
             (challengeId == nil || usesPassword || code.count == 6)
     }
@@ -234,7 +250,7 @@ struct PhoneAccountLoginView: View {
             if usesPassword {
                 guard !password.isEmpty else { errorMessage = "请输入密码"; return }
                 try await appState.loginWithAccountPassword(
-                    phone: phone, password: password, ageConfirmed: confirmedMinimumAge
+                    account: phone, password: password, ageConfirmed: confirmedMinimumAge
                 )
             } else {
                 guard let challengeId, code.count == 6 else {

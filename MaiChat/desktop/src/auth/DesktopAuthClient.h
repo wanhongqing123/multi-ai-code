@@ -8,6 +8,7 @@
 #include <QDateTime>
 #include <QHash>
 #include <QJsonObject>
+#include <QList>
 #include <QObject>
 #include <QMutex>
 #include <QPair>
@@ -39,6 +40,17 @@ struct DesktopImCredential {
     }
 };
 
+struct DesktopFriend {
+    QString accountId;
+    QString imUserId;
+};
+
+struct DesktopFriendRequest {
+    QString id;
+    QString accountId;
+    QString imUserId;
+};
+
 class DesktopAuthClient final : public QObject {
 public:
     enum class ClaimStatus { Pending, Scanned, Denied, ApprovalRevoked, Expired,
@@ -66,6 +78,17 @@ public:
     void revokeUnwantedClaim(const QJsonObject& session,
                              std::function<void()> completion = {});
     void adoptApprovedSession(const QJsonObject& session, Completion completion);
+    void loginWithPassword(const QString& accountId, const QString& password,
+                           Completion completion);
+    using FriendsCompletion =
+        std::function<void(const QList<DesktopFriend>&, const QString&)>;
+    using FriendRequestsCompletion =
+        std::function<void(const QList<DesktopFriendRequest>&, const QString&)>;
+    void fetchFriends(FriendsCompletion completion);
+    void fetchFriendRequests(FriendRequestsCompletion completion);
+    void requestFriend(const QString& account, Completion completion);
+    void decideFriendRequest(const QString& requestId, bool accept, Completion completion);
+    void removeFriend(const QString& account, Completion completion);
     void fetchImCredential(Completion completion);
     // 账号鉴权 GET：仅把 GLM/DeepSeek Key 交给调用方内存，不写本机存储。
     using AccountModelKeysCompletion =
@@ -85,6 +108,7 @@ public:
     std::function<QPair<QString, QString>()> mediaServiceAccessProvider() const;
     DesktopImCredential imCredential() const { return imCredential_; }
     QString authenticatedUserId() const { return userId_; }
+    QString maiChatAccountId() const { return accountId_; }
     void setCredentialUpdatedHandler(std::function<void(const DesktopImCredential&)> handler);
     void setSessionInvalidatedHandler(std::function<void(const QString&)> handler);
 
@@ -96,6 +120,10 @@ private:
     };
     void request(const QString& path, const QByteArray& method, const QJsonObject& body,
                  const QString& bearer, std::function<void(const HttpResult&)> completion);
+    void authorizedRequest(const QString& path, const QByteArray& method,
+                           const QJsonObject& body,
+                           std::function<void(const HttpResult&)> completion,
+                           bool retryAfterUnauthorized = true);
     void refresh(Completion completion);
     void fetchImCredentialImpl(Completion completion, bool retryAfterUnauthorized);
     void fetchAccountModelKeysImpl(AccountModelKeysCompletion completion,
@@ -119,6 +147,7 @@ private:
     QString accessToken_;
     QString refreshToken_;
     QString userId_;
+    QString accountId_;
     QDateTime accessExpiresAt_;
     DesktopImCredential imCredential_;
     QTimer refreshTimer_;

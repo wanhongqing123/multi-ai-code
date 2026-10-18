@@ -26,7 +26,7 @@ public enum MaiChatFriendLink {
     }
 
     private static func validUserID(_ value: String) -> Bool {
-        value.range(of: "^[A-Za-z0-9_-]{1,128}$", options: .regularExpression) != nil
+        value.range(of: "^[a-z][a-z0-9_-]{2,31}$", options: .regularExpression) != nil
     }
 }
 

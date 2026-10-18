@@ -6,7 +6,7 @@ import org.junit.Test;
 
 public class FriendQrPolicyTest {
     @Test public void accountIdRoundTripsWithoutCredentials() {
-        String userId = "u0123456789abcdef01234567";
+        String userId = "mtest_friend_12345";
         String link = FriendQrPolicy.link(userId);
         assertEquals("maichat://friend/add?user_id=" + userId, link);
         assertEquals(userId, FriendQrPolicy.userId(link));

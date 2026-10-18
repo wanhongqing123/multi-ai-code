@@ -490,13 +490,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         }
         if (requestCode == REQUEST_FRIEND_SCAN) {
             String userId = data == null ? "" : data.getStringExtra("friend_user_id");
-            if (userId != null && !userId.isEmpty()) {
-                session.addContact(userId, added -> {
-                    if (added) {
-                        toast("好友申请已发送");
-                    }
-                });
-            }
+            if (userId != null && !userId.isEmpty()) showAddContactDialog(userId);
             return;
         }
         if (aiAssistant != null && aiAssistant.handleActivityResult(requestCode, data)) return;
@@ -954,18 +948,21 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         phoneRow.setGravity(Gravity.CENTER_VERTICAL);
         phoneRow.setPadding(dp(18), 0, dp(18), 0);
         phoneRow.setBackground(MaiChatTheme.rounded(Color.rgb(247, 248, 250), 30, this));
-        TextView prefix = MaiChatTheme.label(this, "+86", 18, MaiChatTheme.SECONDARY);
-        phoneRow.addView(prefix, wrapWrap());
-        View divider = new View(this);
-        divider.setBackgroundColor(MaiChatTheme.BORDER);
-        LinearLayout.LayoutParams dividerParams = new LinearLayout.LayoutParams(dp(1), dp(24));
-        dividerParams.setMargins(dp(15), 0, dp(15), 0);
-        phoneRow.addView(divider, dividerParams);
+        if (!loginUsesPassword) {
+            TextView prefix = MaiChatTheme.label(this, "+86", 18, MaiChatTheme.SECONDARY);
+            phoneRow.addView(prefix, wrapWrap());
+            View divider = new View(this);
+            divider.setBackgroundColor(MaiChatTheme.BORDER);
+            LinearLayout.LayoutParams dividerParams = new LinearLayout.LayoutParams(dp(1), dp(24));
+            dividerParams.setMargins(dp(15), 0, dp(15), 0);
+            phoneRow.addView(divider, dividerParams);
+        }
         EditText account = new EditText(this);
         account.setSingleLine(true);
         account.setTextSize(17);
-        account.setHint("输入手机号");
-        account.setInputType(android.text.InputType.TYPE_CLASS_PHONE);
+        account.setHint(loginUsesPassword ? "MaiChat 账号或手机号" : "输入手机号");
+        account.setInputType(loginUsesPassword ? android.text.InputType.TYPE_CLASS_TEXT :
+            android.text.InputType.TYPE_CLASS_PHONE);
         account.setTextColor(MaiChatTheme.TEXT);
         account.setHintTextColor(Color.rgb(100, 116, 139));
         account.setPadding(0, 0, 0, 0);
@@ -995,7 +992,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             form.addView(challengeInput, inputParams);
         }
 
-        TextView hint = MaiChatTheme.text(this, "目前仅支持中国大陆地区号码", 13,
+        TextView hint = MaiChatTheme.text(this, loginUsesPassword ?
+            "测试账号可不绑定手机号" : "目前仅支持中国大陆地区号码", 13,
             MaiChatTheme.SECONDARY);
         LinearLayout.LayoutParams hintParams = matchWrap();
         hintParams.setMargins(dp(12), dp(14), 0, 0);
@@ -1075,7 +1073,9 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
 
         // 主按钮以手机号、验证码或密码以及两项确认共同决定可用性，避免触发无效请求。
         Runnable updateLoginAppearance = () -> {
-            boolean enabled = !loginSubmitting && loginUserDraft.replaceAll("\\D", "").length() == 11
+            boolean validAccount = loginUsesPassword ? !loginUserDraft.trim().isEmpty() :
+                loginUserDraft.replaceAll("\\D", "").length() == 11;
+            boolean enabled = !loginSubmitting && validAccount
                 && loginAcceptedTerms && loginConfirmedAge
                 && (!loginUsesPassword || !loginPasswordDraft.isEmpty())
                 && (loginUsesPassword || loginChallengeId.isEmpty() || loginCodeDraft.length() == 6);
@@ -1115,15 +1115,16 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         }
         View.OnClickListener submit = view -> {
             // 入队前再次校验，防止键盘提交绕过按钮禁用态；失败后保留用户已输入的内容。
-            String phone = account.getText().toString().trim();
-            if (phone.replaceAll("\\D", "").length() != 11 || loginSubmitting
+            String enteredAccount = account.getText().toString().trim();
+            if ((!loginUsesPassword && enteredAccount.replaceAll("\\D", "").length() != 11)
+                || (loginUsesPassword && enteredAccount.isEmpty()) || loginSubmitting
                 || !loginAcceptedTerms || !loginConfirmedAge) return;
             loginSubmitting = true;
             loginError = "";
             login.setText("请稍候...");
             updateLoginAppearance.run();
             if (loginUsesPassword) {
-                session.loginWithAccountPassword(phone, loginPasswordDraft,
+                session.loginWithAccountPassword(enteredAccount, loginPasswordDraft,
                     loginConfirmedAge, error -> {
                     loginSubmitting = false;
                     loginError = error == null ? "" : error;
@@ -1131,14 +1132,14 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                     render();
                 });
             } else if (loginChallengeId.isEmpty()) {
-                session.requestAccountCode(phone, loginConfirmedAge, (challengeId, error) -> {
+                session.requestAccountCode(enteredAccount, loginConfirmedAge, (challengeId, error) -> {
                     loginSubmitting = false;
                     loginError = error == null ? "" : error;
                     if (error == null) loginChallengeId = challengeId;
                     render();
                 });
             } else {
-                session.loginWithAccountCode(phone, loginChallengeId, loginCodeDraft,
+                session.loginWithAccountCode(enteredAccount, loginChallengeId, loginCodeDraft,
                     loginConfirmedAge, error -> {
                     loginSubmitting = false;
                     loginError = error == null ? "" : error;
@@ -2569,7 +2570,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
 
     private void renderContactRows(LinearLayout rows) {
         rows.removeAllViews();
-        List<RemoteIMContact> contacts = session.chatState().contacts();
+        List<RemoteIMContact> contacts = session.acceptedFriends();
         List<String> groups = session.chatState().contactGroups();
         if (contacts.isEmpty() && groups.isEmpty()) {
             rows.addView(emptyState("◎", "暂无联系人", "添加好友账号后即可开始聊天。"), match(dp(280)));
@@ -2595,21 +2596,21 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             showContactGroupPicker(contact);
             return true;
         });
-            SwipeActionRow row = new SwipeActionRow(
-                this,
-                card,
+        SwipeActionRow row = new SwipeActionRow(
+            this,
+            card,
+            "删除",
+            MaiChatTheme.RED,
+            () -> confirm(
+                "删除好友？",
+                "将从好友列表移除 " + contact.displayName() + "，聊天记录仍会保留。",
                 "删除",
-                MaiChatTheme.RED,
-                () -> confirm(
-                    "删除好友？",
-                    "将删除 " + contact.displayName() + " 及本地聊天记录。",
-                    "删除",
-                    () -> session.deleteContact(contact.userId())
-                )
-            );
-            LinearLayout.LayoutParams params = match(dp(76));
-            params.setMargins(grouped ? dp(14) : 0, 0, 0, dp(8));
-            rows.addView(row, params);
+                () -> session.deleteContact(contact.userId())
+            )
+        );
+        LinearLayout.LayoutParams params = match(dp(76));
+        params.setMargins(grouped ? dp(14) : 0, 0, 0, dp(8));
+        rows.addView(row, params);
     }
 
     private View contactToolbar(LinearLayout rows) {
@@ -2679,7 +2680,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                     return;
                 }
                 int members = 0;
-                for (RemoteIMContact contact : session.chatState().contacts()) {
+                for (RemoteIMContact contact : session.acceptedFriends()) {
                     if (group.equals(contact.groupName())) members += 1;
                 }
                 String detail = members == 0
@@ -2744,18 +2745,26 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         row.addView(avatar(contact, true, 42), new LinearLayout.LayoutParams(dp(42), dp(42)));
         LinearLayout text = new LinearLayout(this);
         text.setOrientation(LinearLayout.VERTICAL);
-        LinearLayout.LayoutParams textParams = new LinearLayout.LayoutParams(0, dp(50), 1);
+        boolean syncPending = session.isFriendSyncPending(contact.userId());
+        LinearLayout.LayoutParams textParams = new LinearLayout.LayoutParams(
+            0, dp(syncPending ? 68 : 50), 1);
         textParams.setMargins(dp(12), 0, dp(8), 0);
         row.addView(text, textParams);
         TextView name = MaiChatTheme.label(this, contact.displayName(), 15, MaiChatTheme.TEXT);
         name.setSingleLine(true);
         name.setEllipsize(TextUtils.TruncateAt.MIDDLE);
         text.addView(name, match(dp(25)));
-        TextView userId = MaiChatTheme.text(this, contact.userId(), 12, MaiChatTheme.SECONDARY);
+        String accountId = session.friendAccountId(contact.userId());
+        TextView userId = MaiChatTheme.text(this, accountId, 12, MaiChatTheme.SECONDARY);
         userId.setTypeface(Typeface.MONOSPACE);
         userId.setSingleLine(true);
         userId.setEllipsize(TextUtils.TruncateAt.MIDDLE);
         text.addView(userId, match(dp(23)));
+        if (syncPending) {
+            TextView pending = MaiChatTheme.text(this, "聊天服务同步中", 11,
+                MaiChatTheme.SECONDARY);
+            text.addView(pending, match(dp(18)));
+        }
         row.addView(presenceBadge(contact.userId()), wrapWrap());
         row.setOnClickListener(view -> openChat(contact.userId()));
         return row;
@@ -2763,6 +2772,10 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
 
     // 作用：展示联系人添加表单并处理提交结果。
     private void showAddContactDialog() {
+        showAddContactDialog("");
+    }
+
+    private void showAddContactDialog(String presetAccount) {
         Dialog dialog = new Dialog(this);
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
         LinearLayout card = new LinearLayout(this);
@@ -2782,6 +2795,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         input.setImeOptions(EditorInfo.IME_ACTION_DONE);
         input.setPadding(dp(14), 0, dp(14), 0);
         input.setBackground(MaiChatTheme.bordered(MaiChatTheme.PAGE, MaiChatTheme.BORDER, 9, this));
+        input.setText(presetAccount);
+        input.setSelection(input.length());
         card.addView(input, match(dp(44)));
 
         LinearLayout qrActions = new LinearLayout(this);
@@ -2852,7 +2867,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     }
 
     private void showMyFriendCodeDialog() {
-        String userId = session.settings().loginUserId();
+        String userId = session.accountId();
         String link = FriendQrPolicy.link(userId);
         if (link.isEmpty()) { toast("请先登录账号"); return; }
         try {
@@ -2881,8 +2896,9 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     }
 
     private void showFriendRequestsDialog() {
-        session.friendRequests(requests -> {
+        session.friendRequests((requests, error) -> {
             if (destroyed) return;
+            if (error != null) { toast(error); return; }
             if (requests.isEmpty()) {
                 new AlertDialog.Builder(this).setTitle("好友申请")
                     .setMessage("暂无待处理的好友申请")
@@ -2936,7 +2952,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         scroll.addView(page, matchWrap());
         content.addView(scroll, matchMatch());
 
-        String accountId = session.settings().loginUserId();
+        String accountId = session.accountId();
         String accountLabel = compactAccountId(accountId);
         LinearLayout accountSection = settingsSection("账号", new String[][]{
             {"登录账号", accountLabel + "  复制"}
@@ -2960,14 +2976,14 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         page.addView(scanDesktopLogin, scanParams);
         scanDesktopLogin.setOnClickListener(view ->
             startActivity(new Intent(this, DesktopLoginApprovalActivity.class)));
-        Button logout = secondaryButton("切换手机号");
+        Button logout = secondaryButton("切换账号");
         logout.setTextColor(MaiChatTheme.RED);
         LinearLayout.LayoutParams logoutParams = match(dp(48));
         logoutParams.setMargins(0, dp(22), 0, 0);
         page.addView(logout, logoutParams);
         logout.setOnClickListener(view -> {
             try {
-                // 先清除旧账号的本机会话，再展示空白手机号登录页。
+                // 先清除旧账号的本机会话，再展示空白 MaiChat 登录页。
                 session.logout();
                 loginAcceptedTerms = false;
                 loginConfirmedAge = false;
@@ -2981,7 +2997,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                 activeChatUserId = null;
                 render();
             } catch (IOException error) {
-                toast("切换手机号失败");
+                toast("切换账号失败");
             }
         });
     }
@@ -4865,7 +4881,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
 
     // 作用：展示消息转发目标并提交选中的转发操作。
     private void showForwardMessageDialog(RemoteIMMessage message) {
-        List<RemoteIMContact> contacts = session.chatState().contacts();
+        List<RemoteIMContact> contacts = session.acceptedFriends();
         if (contacts.isEmpty()) {
             toast("还没有联系人，暂时无法转发");
             return;

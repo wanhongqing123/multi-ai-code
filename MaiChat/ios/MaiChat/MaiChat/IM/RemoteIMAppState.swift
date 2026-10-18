@@ -146,6 +146,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
 
     @Published var sdkAppIDText = ""
     @Published var masterUserID = ""
+    @Published var maiChatAccountID = ""
     @Published var newContactUserID = ""
     @Published var newContactRelation: RemoteIMContactRelation = .friend
     @Published var errorMessage: String?
@@ -158,6 +159,19 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     @Published private(set) var hasUnifiedAccount = false
     @Published var presenceStatusByUserID: [String: RemoteIMPresenceStatus] = [:]
     @Published private(set) var pendingFriendRequests: [RemoteIMFriendRequest] = []
+    @Published private(set) var acceptedFriendIMIDs: Set<String> = []
+    @Published private(set) var pendingFriendSyncIMIDs: Set<String> = []
+    private var friendAccountByIMID: [String: String] = [:]
+    private var friendRequestIDByIMID: [String: String] = [:]
+
+    func maiChatAccountId(forIMUserID userID: String) -> String {
+        friendAccountByIMID[userID] ?? ""
+    }
+
+    func selfDisplayName() -> String {
+        let name = profile(for: masterUserID).displayName
+        return name == masterUserID ? maiChatAccountID : name
+    }
     @Published private(set) var unreadCountByUserID: [String: Int] = [:] {
         didSet {
             client.updateApplicationBadgeCount(
@@ -485,10 +499,10 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     }
 
     func loginWithAccountPassword(
-        phone: String, password: String, ageConfirmed: Bool
+        account: String, password: String, ageConfirmed: Bool
     ) async throws {
         let session = try await accountAuth.loginWithPassword(
-            phone: phone, password: password, ageConfirmed: ageConfirmed
+            account: account, password: password, ageConfirmed: ageConfirmed
         )
         try await finishAccountLogin(session)
     }
@@ -640,6 +654,11 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         AIAssistantModel.resetForAccountSwitch()
         await disconnect()
         masterUserID = ""
+        maiChatAccountID = ""
+        acceptedFriendIMIDs = []
+        pendingFriendSyncIMIDs = []
+        friendAccountByIMID = [:]
+        friendRequestIDByIMID = [:]
         sdkAppIDText = ""
         hasUnifiedAccount = false
         hasCompletedInitialLogin = false
@@ -673,6 +692,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             resetAccountPresentation(userID: session.user.imUserId, saved: saved)
         }
         masterUserID = session.user.imUserId
+        maiChatAccountID = session.user.id
         sdkAppIDText = String(credential.sdkAppId)
         accountInvalidationReason = nil
         errorMessage = nil
@@ -727,7 +747,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     func requestConnection() async {
         guard connectionState != .connecting else { return }
         guard hasUnifiedAccount else {
-            errorMessage = "请使用手机号登录"
+            errorMessage = "请先登录 MaiChat 账号"
             return
         }
         if let validationError = RemoteIMLoginCredentialPolicy.validationError(userID: masterUserID) {
@@ -740,7 +760,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         await connect()
     }
 
-    /// 建立当前手机号账号对应的 IM 连接并恢复会话状态。
+    /// 建立当前 MaiChat 账号对应的 IM 连接并恢复会话状态。
     /// 鉴权、SDK 登录、联系人和历史同步分阶段进行；失败保留本地可读历史。
     func connect() async {
         guard connectionAttemptGate.begin() else {
@@ -991,25 +1011,14 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
 
     @discardableResult
     func requestFriend(userID: String) async -> Bool {
-        guard connectionState == .connected else {
-            showTransientError("请先登录并连接 IM")
+        guard hasUnifiedAccount else {
+            showTransientError("请先登录 MaiChat 账号")
             return false
         }
         let account = userID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let phone = account.replacingOccurrences(of: "[ -]", with: "", options: .regularExpression)
-        let isPhone = phone.range(
-            of: "^(\\+86)?1[3-9][0-9]{9}$", options: .regularExpression
-        ) != nil
         let identity = remoteDiagnosticsIdentity
         do {
-            let addedUserID = isPhone ? try await accountAuth.resolveFriendPhone(phone) : account
-            guard RemoteIMPeerPolicy.isValidPeer(userID: addedUserID, ownerUserID: masterUserID),
-                  addedUserID.range(of: "^[A-Za-z0-9_-]{1,128}$", options: .regularExpression) != nil
-            else {
-                showTransientError("好友账号无效或不能添加自己")
-                return false
-            }
-            try await client.requestFriend(userID: addedUserID)
+            try await accountAuth.requestFriend(account: account)
             guard remoteDiagnosticsIdentity == identity else { return false }
             if newContactUserID == account { newContactUserID = "" }
             errorMessage = nil
@@ -1030,14 +1039,20 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     }
 
     func refreshFriendRequests() async {
-        guard connectionState == .connected else {
+        guard hasUnifiedAccount else {
             pendingFriendRequests = []
             return
         }
         let identity = remoteDiagnosticsIdentity
         do {
-            let requests = try await client.pendingFriendRequests()
-            if remoteDiagnosticsIdentity == identity { pendingFriendRequests = requests }
+            let requests = try await accountAuth.friendRequests()
+            guard remoteDiagnosticsIdentity == identity else { return }
+            friendRequestIDByIMID = Dictionary(uniqueKeysWithValues:
+                requests.map { ($0.imUserId, $0.id) })
+            pendingFriendRequests = requests.map { request in
+                RemoteIMFriendRequest(userID: request.imUserId,
+                    displayName: request.accountId, avatarURL: nil, message: "")
+            }
         } catch {
             if remoteDiagnosticsIdentity == identity {
                 showTransientError("获取好友申请失败，请稍后重试")
@@ -1046,14 +1061,24 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     }
 
     func refreshAcceptedFriends() async {
-        guard connectionState == .connected else { return }
+        guard hasUnifiedAccount else { return }
         let identity = remoteDiagnosticsIdentity
         do {
-            let userIDs = try await client.friendUserIDs()
+            let friends = try await accountAuth.friends()
             guard remoteDiagnosticsIdentity == identity else { return }
+            acceptedFriendIMIDs = Set(friends.map(\.imUserId))
+            pendingFriendSyncIMIDs = Set(friends.filter {
+                $0.pendingImAction == "add"
+            }.map(\.imUserId))
+            friendAccountByIMID = Dictionary(uniqueKeysWithValues:
+                friends.map { ($0.imUserId, $0.accountId) })
             var added: [String] = []
-            for userID in userIDs where !chatState.contacts.contains(where: { $0.userID == userID }) {
-                try chatState.upsertContact(userID: userID, relation: .friend)
+            for friend in friends {
+                let userID = friend.imUserId
+                let existing = chatState.contacts.first(where: { $0.userID == userID })
+                guard existing == nil || existing?.displayName == userID else { continue }
+                try chatState.upsertContact(userID: userID, relation: .friend,
+                    displayName: friend.accountId)
                 added.append(userID)
             }
             if !added.isEmpty {
@@ -1062,17 +1087,21 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             }
         } catch {
             logIM(level: .warning, event: "friend-list-refresh-failed")
+            showTransientError("获取好友列表失败，请稍后重试")
         }
     }
 
     func acceptFriendRequest(userID: String) async {
         let identity = remoteDiagnosticsIdentity
         do {
-            try await client.acceptFriendRequest(userID: userID)
+            guard let id = friendRequestIDByIMID[userID] else { return }
+            try await accountAuth.decideFriendRequest(id: id, accept: true)
             guard remoteDiagnosticsIdentity == identity else { return }
             try chatState.upsertContact(userID: userID, relation: .friend)
             settingsStore.save(currentStoredSettings())
             pendingFriendRequests.removeAll { $0.userID == userID }
+            friendRequestIDByIMID.removeValue(forKey: userID)
+            await refreshAcceptedFriends()
             await refreshProfiles(userIDs: [userID])
         } catch { showTransientError(error.localizedDescription) }
     }
@@ -1080,9 +1109,11 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     func refuseFriendRequest(userID: String) async {
         let identity = remoteDiagnosticsIdentity
         do {
-            try await client.refuseFriendRequest(userID: userID)
+            guard let id = friendRequestIDByIMID[userID] else { return }
+            try await accountAuth.decideFriendRequest(id: id, accept: false)
             guard remoteDiagnosticsIdentity == identity else { return }
             pendingFriendRequests.removeAll { $0.userID == userID }
+            friendRequestIDByIMID.removeValue(forKey: userID)
         } catch { showTransientError(error.localizedDescription) }
     }
 
@@ -1120,40 +1151,18 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
 
     func deleteContact(userID: String) async -> Bool {
         let cleanUserID = userID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleanUserID.isEmpty else { return false }
+        guard let accountID = friendAccountByIMID[cleanUserID] else { return false }
         do {
-            try await client.deleteContact(userID: cleanUserID)
+            try await accountAuth.removeFriend(account: accountID)
         } catch {
             errorMessage = error.localizedDescription
             return false
         }
-        chatState.removeContactAndMessages(userID: cleanUserID)
-        invalidateConversationHistoryLoad(for: cleanUserID)
+        acceptedFriendIMIDs.remove(cleanUserID)
+        pendingFriendSyncIMIDs.remove(cleanUserID)
+        friendAccountByIMID.removeValue(forKey: cleanUserID)
         if newContactUserID.trimmingCharacters(in: .whitespacesAndNewlines) == cleanUserID {
             newContactUserID = ""
-        }
-        enqueueHistoryMutation(.removeConversation(
-            peerUserID: cleanUserID,
-            sdkAppID: chatHistorySDKAppID,
-            ownerUserID: chatState.ownerUserID
-        ))
-        presenceStatusByUserID = RemoteIMPresenceStatusPolicy.merged(
-            current: presenceStatusByUserID,
-            updates: [:],
-            contactUserIDs: chatState.contacts.map(\.userID)
-        )
-        unreadCountByUserID[cleanUserID] = nil
-        if visibleConversationUserID == cleanUserID {
-            visibleConversationUserID = nil
-        }
-        userProfileByUserID[cleanUserID] = nil
-        settingsStore.save(currentStoredSettings())
-        guard await flushHistoryPersistence() else {
-            errorMessage = "删除好友记录已生效，但本地消息清理尚未保存，请稍后重试"
-            return false
-        }
-        Task {
-            await refreshPresenceForCurrentContacts()
         }
         errorMessage = nil
         return true

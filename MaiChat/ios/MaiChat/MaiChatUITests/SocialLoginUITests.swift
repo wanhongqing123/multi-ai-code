@@ -2,6 +2,115 @@
 import XCTest
 
 final class SocialLoginUITests: XCTestCase {
+    @MainActor func testLiveMaiChatAccountPasswordLoginShowsMaiChatId() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let accountId = environment["MAICHAT_TEST_A_ID"],
+              let password = environment["MAICHAT_TEST_A_PASSWORD"] else {
+            throw XCTSkip("需要临时测试账号")
+        }
+        let app = XCUIApplication()
+        app.launch()
+        let field = app.textFields["account-phone"]
+        XCTAssertTrue(field.waitForExistence(timeout: 20))
+        app.buttons["密码登录"].tap()
+        field.tap()
+        field.typeText(accountId)
+        let passwordField = app.secureTextFields["输入登录密码"]
+        passwordField.tap()
+        passwordField.typeText(password)
+        app.buttons["account-minimum-age"].tap()
+        app.buttons["account-agreement"].tap()
+        app.buttons["account-submit"].tap()
+        let me = app.buttons["我"]
+        XCTAssertTrue(me.waitForExistence(timeout: 30))
+        me.tap()
+        XCTAssertTrue(app.staticTexts[accountId].waitForExistence(timeout: 10))
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "maichat-account-login-complete"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    @MainActor func testLiveFriendRequestUsesMaiChatAccountId() throws {
+        guard let friendId = ProcessInfo.processInfo.environment["MAICHAT_TEST_B_ID"] else {
+            throw XCTSkip("需要第二个临时测试账号")
+        }
+        let app = XCUIApplication()
+        app.launch()
+        if app.buttons["以后"].waitForExistence(timeout: 3) {
+            app.buttons["以后"].tap()
+        }
+        let contacts = app.buttons["通讯录"]
+        XCTAssertTrue(contacts.waitForExistence(timeout: 30))
+        contacts.tap()
+        let add = app.buttons["添加好友"]
+        XCTAssertTrue(add.waitForExistence(timeout: 10))
+        add.tap()
+        let input = app.textFields["手机号或账号 ID"]
+        XCTAssertTrue(input.waitForExistence(timeout: 10))
+        input.tap()
+        input.typeText(friendId)
+        app.buttons["发送申请"].tap()
+        XCTAssertFalse(input.waitForExistence(timeout: 3))
+    }
+
+    @MainActor func testLiveFriendListAndDeletion() throws {
+        guard let friendId = ProcessInfo.processInfo.environment["MAICHAT_TEST_B_ID"] else {
+            throw XCTSkip("需要第二个临时测试账号")
+        }
+        let app = XCUIApplication()
+        app.launch()
+        if app.buttons["以后"].waitForExistence(timeout: 3) {
+            app.buttons["以后"].tap()
+        }
+        let contacts = app.buttons["通讯录"]
+        XCTAssertTrue(contacts.waitForExistence(timeout: 30))
+        contacts.tap()
+        let friend = app.staticTexts[friendId].firstMatch
+        XCTAssertTrue(friend.waitForExistence(timeout: 30))
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "maichat-accepted-friend"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        let row = app.cells.containing(.staticText, identifier: friendId).firstMatch
+        XCTAssertTrue(row.exists)
+        row.swipeLeft()
+        app.buttons["删除"].tap()
+        XCTAssertFalse(friend.waitForExistence(timeout: 5))
+    }
+
+    @MainActor func testAccountPasswordModeAcceptsMaiChatId() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = ""
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] = ""
+        app.launch()
+        let field = app.textFields["account-phone"]
+        if !field.waitForExistence(timeout: 5) {
+            let me = app.buttons["我"]
+            XCTAssertTrue(me.waitForExistence(timeout: 10))
+            me.tap()
+            let settings = app.buttons["设置"]
+            XCTAssertTrue(settings.waitForExistence(timeout: 10))
+            settings.tap()
+            app.buttons["切换账号"].tap()
+        }
+        XCTAssertTrue(field.waitForExistence(timeout: 20))
+        app.buttons["密码登录"].tap()
+        field.tap()
+        field.typeText("test_account")
+        let password = app.secureTextFields["输入登录密码"]
+        XCTAssertTrue(password.exists)
+        password.tap()
+        password.typeText("test-account-password-123456")
+        app.buttons["account-minimum-age"].tap()
+        app.buttons["account-agreement"].tap()
+        XCTAssertTrue(app.buttons["account-submit"].isEnabled)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "maichat-account-password-login"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
     @MainActor func testWeChatBindingThenBoundLogin() async throws {
         try requireLocalSocialServer()
         let app = launchSocialApp(provider: "wechat", credential: "wechat-ui-code")
@@ -20,7 +129,7 @@ final class SocialLoginUITests: XCTestCase {
         }
         XCTAssertTrue(settings.waitForExistence(timeout: 10))
         settings.tap()
-        app.buttons["切换手机号"].tap()
+        app.buttons["切换账号"].tap()
         XCTAssertTrue(app.textFields["account-phone"].waitForExistence(timeout: 15))
         app.terminate()
         app.launchEnvironment["MAICHAT_LOCAL_UI_SOCIAL_TEST"] = "1"
@@ -91,7 +200,7 @@ final class SocialLoginUITests: XCTestCase {
             }
             if settings.waitForExistence(timeout: 10) {
                 settings.tap()
-                app.buttons["切换手机号"].tap()
+                app.buttons["切换账号"].tap()
                 _ = app.textFields["account-phone"].waitForExistence(timeout: 15)
             }
         }

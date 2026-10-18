@@ -173,12 +173,12 @@ struct AddContactDialog: View {
             NavigationStack {
                 switch destination {
                 case .mine:
-                    FriendQRShareView(userID: appState.masterUserID)
+                    FriendQRShareView(userID: appState.maiChatAccountID)
                 case .scan:
                     FriendQRScanView { userID in
                         qrDestination = nil
                         appState.newContactUserID = userID
-                        addContact()
+                        isAccountFocused = false
                     }
                 }
             }
@@ -351,7 +351,7 @@ private struct ContactList: View {
                         }
                     }
                 }
-                if appState.chatState.contacts.isEmpty && appState.chatState.contactGroups.isEmpty {
+                if visibleContacts.isEmpty && appState.chatState.contactGroups.isEmpty {
                     EmptyContacts()
                         .padding(.top, 76)
                         .listRowInsets(EdgeInsets())
@@ -383,10 +383,16 @@ private struct ContactList: View {
     private var contactListItems: [RemoteIMContactListItem] {
         RemoteIMContactGroupDisplayPolicy.items(
             groups: appState.chatState.contactGroups,
-            contacts: appState.chatState.contacts,
+            contacts: visibleContacts,
             collapsedGroupNames: collapsedGroups,
             query: ""
         )
+    }
+
+    private var visibleContacts: [RemoteIMContact] {
+        appState.chatState.contacts.filter {
+            appState.acceptedFriendIMIDs.contains($0.userID)
+        }
     }
 
     private func groupHeader(name: String, memberCount: Int) -> some View {
@@ -428,11 +434,20 @@ private struct ContactList: View {
             activeContact = contact
             selectedTab = .messages
         } label: {
-            ContactRow(
-                contact: contact,
-                selected: contact.userID == appState.chatState.selectedPeerID,
-                presenceStatus: appState.presenceStatus(for: contact)
-            )
+            VStack(alignment: .leading, spacing: 1) {
+                ContactRow(
+                    contact: contact,
+                    accountID: appState.maiChatAccountId(forIMUserID: contact.userID),
+                    selected: contact.userID == appState.chatState.selectedPeerID,
+                    presenceStatus: appState.presenceStatus(for: contact)
+                )
+                if appState.pendingFriendSyncIMIDs.contains(contact.userID) {
+                    Text("聊天服务同步中")
+                        .font(.caption2)
+                        .foregroundStyle(RemoteIMStyle.textSecondary)
+                        .padding(.leading, 50)
+                }
+            }
         }
         .buttonStyle(.plain)
         .listRowInsets(EdgeInsets(
@@ -818,6 +833,7 @@ struct MoveContactGroupDialog: View {
 
 private struct ContactRow: View {
     let contact: RemoteIMContact
+    let accountID: String
     let selected: Bool
     let presenceStatus: RemoteIMPresenceStatus
 
@@ -836,7 +852,7 @@ private struct ContactRow: View {
                     .foregroundStyle(RemoteIMStyle.textPrimary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text(contact.userID)
+                Text(accountID)
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundStyle(RemoteIMStyle.textSecondary)
                     .lineLimit(1)

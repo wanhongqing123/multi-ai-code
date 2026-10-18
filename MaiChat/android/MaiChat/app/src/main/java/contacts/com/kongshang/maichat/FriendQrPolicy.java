@@ -1,4 +1,4 @@
-// 文件作用：在好友二维码中只编码可分享的 IM 账号 ID，不包含手机号或登录凭据。
+// 文件作用：在好友二维码中只编码可分享的 MaiChat 账号 ID，不包含手机号或登录凭据。
 package com.kongshang.maichat;
 
 import java.net.URI;
@@ -28,6 +28,6 @@ final class FriendQrPolicy {
     }
 
     private static boolean valid(String value) {
-        return value != null && value.matches("[A-Za-z0-9_-]{1,128}");
+        return value != null && value.matches("[a-z][a-z0-9_-]{2,31}");
     }
 }

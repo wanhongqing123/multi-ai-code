@@ -3630,7 +3630,7 @@ void MainWindow::clearMessageSearchHighlight() {
 void MainWindow::refreshContactDirectory() {
   contactsList_->blockSignals(true);
   contactsList_->clear();
-  const QList<RemoteIMContact> contacts = app_.chatState().contacts();
+  const QList<RemoteIMContact> contacts = acceptedContacts();
   const QStringList groups = app_.chatState().contactGroups();
 
   // 先按分组归拢。联系人本身已按 userId 排好，桶内顺序自然继承。
@@ -3655,6 +3655,14 @@ void MainWindow::refreshContactDirectory() {
   // 列表被重建过，隐藏状态跟着没了；搜索词还在框里，这里补回过滤，
   // 否则来一条消息触发刷新，搜索结果就会突然变回全部联系人。
   applyContactFilter();
+}
+
+QList<RemoteIMContact> MainWindow::acceptedContacts() const {
+  QList<RemoteIMContact> contacts;
+  for (const RemoteIMContact &contact : app_.chatState().contacts()) {
+    if (app_.isAcceptedFriend(contact.userId)) contacts.append(contact);
+  }
+  return contacts;
 }
 
 QListWidgetItem *MainWindow::makeContactItem(const RemoteIMContact &contact) {
@@ -3700,7 +3708,8 @@ void MainWindow::toggleContactGroupCollapsed(const QString &groupName) {
 }
 
 void MainWindow::refreshSettings() {
-  settingsAccountValue_->setText(app_.chatState().ownerUserId());
+  settingsAccountValue_->setText(maiChatAccountIdProvider_ ?
+      maiChatAccountIdProvider_() : app_.chatState().ownerUserId());
   settingsConnectionValue_->setText(
       app_.isConnected() ? QStringLiteral("已连接") : QStringLiteral("未连接"));
   settingsSdkAppIdValue_->setText(
@@ -3780,6 +3789,11 @@ void MainWindow::setMediaServiceAccessProvider(
 
 void MainWindow::setFriendQrProvider(std::function<void(FriendQrCompletion)> provider) {
   friendQrProvider_ = std::move(provider);
+}
+
+void MainWindow::setMaiChatAccountIdProvider(std::function<QString()> provider) {
+  maiChatAccountIdProvider_ = std::move(provider);
+  refreshSettings();
 }
 
 void MainWindow::rebuildAgentPage() {
@@ -3915,7 +3929,7 @@ void MainWindow::rebuildAgentPage() {
 #endif
   agentPanel_->setForwardMediaCallback(
       [this](const QString &path, const QString &type) {
-        const QList<RemoteIMContact> contacts = app_.chatState().contacts();
+        const QList<RemoteIMContact> contacts = acceptedContacts();
         if (contacts.isEmpty())
           return;
         BroadcastDialog dialog(contacts, {}, QString(),
@@ -5201,7 +5215,7 @@ void MainWindow::forwardLocalVideo(const QString &path) {
                            QStringLiteral("视频文件已丢失。"));
     return;
   }
-  const QList<RemoteIMContact> contacts = app_.chatState().contacts();
+  const QList<RemoteIMContact> contacts = acceptedContacts();
   if (contacts.isEmpty())
     return;
   BroadcastDialog dialog(contacts, {}, QString(),
@@ -7605,7 +7619,7 @@ void MainWindow::showContactGroupContextMenu(QListWidget *list,
 }
 
 void MainWindow::openForwardDialog(const RemoteIMMessage &message) {
-  const QList<RemoteIMContact> contacts = app_.chatState().contacts();
+  const QList<RemoteIMContact> contacts = acceptedContacts();
   if (contacts.isEmpty()) {
     AppMessageDialog::show(this, AppMessageDialog::Kind::Info,
                            QStringLiteral("还没有联系人"),
@@ -7703,7 +7717,7 @@ void MainWindow::deleteContactFromItem(QListWidgetItem *item) {
   const QString displayName = item->data(DisplayNameRole).toString().trimmed();
   if (!AppMessageDialog::confirm(
           this, QStringLiteral("删除好友"),
-          QStringLiteral("确定删除好友“%1”及全部聊天历史吗？此操作不可恢复。")
+          QStringLiteral("确定将“%1”移出好友列表吗？聊天历史会保留。")
               .arg(displayName.isEmpty() ? userId : displayName),
           QStringLiteral("删除"), /*destructive=*/true)) {
     return;

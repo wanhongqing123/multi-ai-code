@@ -9,6 +9,7 @@
 #include <QFutureWatcher>
 #include <QGuiApplication>
 #include <QJsonDocument>
+#include <QJsonArray>
 #include <QMutexLocker>
 #include <QRandomGenerator>
 #include <QRegularExpression>
@@ -20,7 +21,7 @@
 
 namespace {
 
-constexpr int kMaxAuthResponseBytes = 64 * 1024;
+constexpr int kMaxAuthResponseBytes = 1024 * 1024;
 constexpr int kSessionCheckIntervalMs = 30 * 1000;
 constexpr int kCredentialRenewBeforeExpirySeconds = 6 * 60 * 60;
 constexpr int kModelCredentialCheckIntervalMs = 30 * 1000;
@@ -153,9 +154,12 @@ bool DesktopAuthClient::adoptSession(const QJsonObject& body, QString* error) {
     const QString refresh = body.value(QStringLiteral("refresh_token")).toString();
     const QString userId = body.value(QStringLiteral("user")).toObject()
                                .value(QStringLiteral("im_user_id")).toString();
+    const QString accountId = body.value(QStringLiteral("user")).toObject()
+                                  .value(QStringLiteral("id")).toString();
     const QString slot = body.value(QStringLiteral("device_slot")).toString();
     const int expiresIn = body.value(QStringLiteral("expires_in")).toInt();
     if (!validToken(access) || !validToken(refresh) || userId.isEmpty() ||
+        accountId.isEmpty() ||
         slot != platformName() || expiresIn <= 0) {
         if (error) *error = QStringLiteral("登录服务返回的账号凭据无效");
         return false;
@@ -164,6 +168,7 @@ bool DesktopAuthClient::adoptSession(const QJsonObject& body, QString* error) {
     refreshToken_ = refresh;
     if (!userId_.isEmpty() && userId_ != userId) clearModelCredentials();
     userId_ = userId;
+    accountId_ = accountId;
     accessExpiresAt_ = QDateTime::currentDateTimeUtc().addSecs(expiresIn);
     {
         QMutexLocker lock(&accountAccess_->mutex);
@@ -212,6 +217,7 @@ void DesktopAuthClient::clearLocalSession() {
     }
     refreshToken_.clear();
     userId_.clear();
+    accountId_.clear();
     imCredential_ = {};
     clearModelCredentials();
 }
@@ -633,6 +639,140 @@ void DesktopAuthClient::adoptApprovedSession(const QJsonObject& session,
     });
 }
 
+void DesktopAuthClient::loginWithPassword(const QString& accountId,
+                                          const QString& password, Completion completion) {
+    const QString cleanAccount = accountId.trimmed();
+    if (cleanAccount.isEmpty() || password.isEmpty()) {
+        completion(false, QStringLiteral("请输入 MaiChat 账号和密码"));
+        return;
+    }
+    QJsonObject body{{QStringLiteral("account_id"), cleanAccount},
+                     {QStringLiteral("password"), password},
+                     {QStringLiteral("age_confirmed_14_plus"), true},
+                     {QStringLiteral("device_slot"), platformName()},
+                     {QStringLiteral("device_platform"), platformName()}};
+    request(QStringLiteral("auth/password/login"), "POST", body, {},
+            [this, completion = std::move(completion)](const HttpResult& result) {
+        if (result.status != 200) {
+            completion(false, result.status == 401 ?
+                QStringLiteral("账号或密码错误") : responseError(result));
+            return;
+        }
+        adoptApprovedSession(result.body, completion);
+    });
+}
+
+void DesktopAuthClient::authorizedRequest(const QString& path, const QByteArray& method,
+    const QJsonObject& body, std::function<void(const HttpResult&)> completion,
+    bool retryAfterUnauthorized) {
+    if (loggingOut_ || userId_.isEmpty()) {
+        HttpResult failed;
+        failed.error = QStringLiteral("请先登录 MaiChat");
+        completion(failed);
+        return;
+    }
+    if (accessToken_.isEmpty() ||
+        accessExpiresAt_ <= QDateTime::currentDateTimeUtc().addSecs(60)) {
+        refresh([this, path, method, body, completion, retryAfterUnauthorized](
+                    bool ok, const QString& error) {
+            if (ok) authorizedRequest(path, method, body, completion, retryAfterUnauthorized);
+            else { HttpResult failed; failed.error = error; completion(failed); }
+        });
+        return;
+    }
+    request(path, method, body, accessToken_,
+            [this, path, method, body, completion, retryAfterUnauthorized](const HttpResult& result) {
+        if (result.status == 401 && retryAfterUnauthorized) {
+            refresh([this, path, method, body, completion](bool ok, const QString& error) {
+                if (ok) authorizedRequest(path, method, body, completion, false);
+                else { HttpResult failed; failed.error = error; completion(failed); }
+            });
+            return;
+        }
+        if (result.status == 401) invalidateSession(responseError(result));
+        completion(result);
+    });
+}
+
+void DesktopAuthClient::fetchFriends(FriendsCompletion completion) {
+    authorizedRequest(QStringLiteral("friends"), "GET", {},
+        [this, completion = std::move(completion)](const HttpResult& result) {
+        if (result.status != 200 || !result.body.value(QStringLiteral("friends")).isArray()) {
+            completion({}, responseError(result));
+            return;
+        }
+        QList<DesktopFriend> friends;
+        for (const QJsonValue& value : result.body.value(QStringLiteral("friends")).toArray()) {
+            const QJsonObject row = value.toObject();
+            DesktopFriend friendAccount{row.value(QStringLiteral("account_id")).toString(),
+                row.value(QStringLiteral("im_user_id")).toString()};
+            if (friendAccount.accountId.isEmpty() || friendAccount.imUserId.isEmpty()) {
+                completion({}, QStringLiteral("好友列表数据无效"));
+                return;
+            }
+            friends.append(friendAccount);
+        }
+        completion(friends, {});
+    });
+}
+
+void DesktopAuthClient::fetchFriendRequests(FriendRequestsCompletion completion) {
+    authorizedRequest(QStringLiteral("friends/requests"), "GET", {},
+        [this, completion = std::move(completion)](const HttpResult& result) {
+        if (result.status != 200 || !result.body.value(QStringLiteral("incoming")).isArray()) {
+            completion({}, responseError(result));
+            return;
+        }
+        QList<DesktopFriendRequest> requests;
+        for (const QJsonValue& value : result.body.value(QStringLiteral("incoming")).toArray()) {
+            const QJsonObject row = value.toObject();
+            DesktopFriendRequest request{row.value(QStringLiteral("id")).toString(),
+                row.value(QStringLiteral("account_id")).toString(),
+                row.value(QStringLiteral("im_user_id")).toString()};
+            if (!validRequestId(request.id) || request.accountId.isEmpty() ||
+                request.imUserId.isEmpty()) {
+                completion({}, QStringLiteral("好友申请数据无效"));
+                return;
+            }
+            requests.append(request);
+        }
+        completion(requests, {});
+    });
+}
+
+void DesktopAuthClient::requestFriend(const QString& account, Completion completion) {
+    authorizedRequest(QStringLiteral("friends/requests"), "POST",
+        QJsonObject{{QStringLiteral("account"), account.trimmed()}},
+        [this, completion = std::move(completion)](const HttpResult& result) {
+        completion(result.status == 200 || result.status == 201,
+                   result.status == 200 || result.status == 201 ? QString() :
+                   result.body.value(QStringLiteral("error")).toString(responseError(result)));
+    });
+}
+
+void DesktopAuthClient::decideFriendRequest(const QString& requestId, bool accept,
+                                            Completion completion) {
+    if (!validRequestId(requestId)) {
+        completion(false, QStringLiteral("好友申请无效"));
+        return;
+    }
+    authorizedRequest(QStringLiteral("friends/requests/%1/%2").arg(
+        requestId, accept ? QStringLiteral("accept") : QStringLiteral("reject")), "POST", {},
+        [this, completion = std::move(completion)](const HttpResult& result) {
+        completion(result.status == 200, result.status == 200 ? QString() :
+                   result.body.value(QStringLiteral("error")).toString(responseError(result)));
+    });
+}
+
+void DesktopAuthClient::removeFriend(const QString& account, Completion completion) {
+    authorizedRequest(QStringLiteral("friends/remove"), "POST",
+        QJsonObject{{QStringLiteral("account"), account}},
+        [this, completion = std::move(completion)](const HttpResult& result) {
+        completion(result.status == 200, result.status == 200 ? QString() :
+                   result.body.value(QStringLiteral("error")).toString(responseError(result)));
+    });
+}
+
 void DesktopAuthClient::fetchImCredential(Completion completion) {
     fetchImCredentialImpl(std::move(completion), true);
 }
@@ -735,7 +875,7 @@ void DesktopAuthClient::fetchFriendQrImpl(FriendQrCompletion completion,
         const QString account = result.body.value(QStringLiteral("user_id")).toString();
         const QByteArray png = QByteArray::fromBase64(
             result.body.value(QStringLiteral("qr_png_base64")).toString().toLatin1());
-        if (account != userId_ || png.size() < 8 ||
+        if (account != accountId_ || png.size() < 8 ||
             !png.startsWith(QByteArray::fromHex("89504e470d0a1a0a"))) {
             if (completion) completion({}, {}, QStringLiteral("好友二维码数据无效"));
             return;

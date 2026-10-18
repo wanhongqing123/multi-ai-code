@@ -16,6 +16,7 @@ class RemoteIMApplicationTest : public QObject {
 
 private slots:
     void friendRequestWaitsForRemoteAcceptance();
+    void maiChatFriendListFiltersHistoryAndDeletionKeepsMessages();
     void activityIsIndependentFromContentAndExplicitStopClosesIt();
     void sendsTextThroughClientAndMarksSent();
     void sendsTextToExplicitPeerWithoutChangingSelection();
@@ -60,6 +61,40 @@ void RemoteIMApplicationTest::friendRequestWaitsForRemoteAcceptance() {
     QVERIFY(app.chatState().contacts().isEmpty());
     emit fake->contactsReceived({RemoteIMContact{QStringLiteral("peer"), QStringLiteral("Peer")}});
     QTRY_COMPARE(app.chatState().contacts().size(), 1);
+}
+
+void RemoteIMApplicationTest::maiChatFriendListFiltersHistoryAndDeletionKeepsMessages() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fake = client.get();
+    RemoteIMApplication app(QStringLiteral("owner"), std::move(client));
+    app.addContact(QStringLiteral("friend-im"), QStringLiteral("Friend"));
+    app.addContact(QStringLiteral("ghost-im"), QStringLiteral("Past chat"));
+    app.selectPeer(QStringLiteral("friend-im"));
+    app.sendText(QStringLiteral("hello"));
+    RemoteIMApplication::AccountFriendOperations operations;
+    operations.list = [](auto completion) {
+        completion({RemoteIMApplication::AccountFriend{
+            QStringLiteral("m_friend"), QStringLiteral("friend-im")}}, {});
+    };
+    QString requestedAccount;
+    operations.send = [&requestedAccount](const QString& account, RemoteIMCompletion completion) {
+        requestedAccount = account;
+        completion(true, {});
+    };
+    operations.remove = [](const QString& account, RemoteIMCompletion completion) {
+        QCOMPARE(account, QStringLiteral("m_friend"));
+        completion(true, {});
+    };
+    app.setAccountFriendOperations(std::move(operations));
+    QTRY_VERIFY(app.isAcceptedFriend(QStringLiteral("friend-im")));
+    QVERIFY(!app.isAcceptedFriend(QStringLiteral("ghost-im")));
+    app.requestFriend(QStringLiteral("m_other"), {});
+    QCOMPARE(requestedAccount, QStringLiteral("m_other"));
+    QVERIFY(fake->lastFriendRequestId().isEmpty());
+    app.deleteContact(QStringLiteral("friend-im"));
+    QVERIFY(!app.isAcceptedFriend(QStringLiteral("friend-im")));
+    QCOMPARE(app.chatState().contacts().size(), 2);
+    QCOMPARE(app.chatState().messagesWith(QStringLiteral("friend-im")).size(), 1);
 }
 
 void RemoteIMApplicationTest::activityIsIndependentFromContentAndExplicitStopClosesIt() {

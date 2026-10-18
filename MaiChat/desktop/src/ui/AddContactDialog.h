@@ -27,7 +27,9 @@ private:
     QLineEdit* userIdInput_ = nullptr;
     QPushButton* confirmButton_ = nullptr;
     QPushButton* showQrButton_ = nullptr;
+    QPushButton* scanQrButton_ = nullptr;
     QLabel* qrLabel_ = nullptr;
     QLabel* ownAccountLabel_ = nullptr;
+    QLabel* scanStatusLabel_ = nullptr;
     bool qrVisible_ = false;
 };

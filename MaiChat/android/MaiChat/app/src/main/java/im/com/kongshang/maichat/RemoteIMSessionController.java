@@ -77,6 +77,10 @@ public final class RemoteIMSessionController {
     private final java.util.Set<String> loadingPeers = new java.util.HashSet<>();
     private final Map<String, Integer> pageRequests = new HashMap<>();
     private final Map<String, Integer> peerEpochs = new HashMap<>();
+    private final java.util.Set<String> acceptedFriendUserIds = new java.util.HashSet<>();
+    private final java.util.Set<String> pendingFriendSyncUserIds = new java.util.HashSet<>();
+    private final Map<String, String> friendAccountByIm = new HashMap<>();
+    private final Map<String, String> friendRequestIdByIm = new HashMap<>();
     private interface IOAction { void run() throws Exception; }
 
     private TencentIMClient.ConnectionState connectionState = TencentIMClient.ConnectionState.DISCONNECTED;
@@ -101,7 +105,7 @@ public final class RemoteIMSessionController {
                     runOnMain(() -> {
                         if (generation != accountGeneration || requiresLogin()) return;
                         switchAccount(RemoteIMSettings.empty());
-                        reportError("登录已过期，请重新用手机号登录");
+                        reportError("登录已过期，请重新登录");
                     });
                 }
             });
@@ -210,6 +214,10 @@ public final class RemoteIMSessionController {
         int generation = ++accountGeneration;
         settings = next;
         imCredential = null;
+        acceptedFriendUserIds.clear();
+        pendingFriendSyncUserIds.clear();
+        friendAccountByIm.clear();
+        friendRequestIdByIm.clear();
         chatState = new ChatState(next.requiresLogin() ? FALLBACK_OWNER_USER_ID : next.loginUserId());
         unreadByUserId.clear(); presenceByUserId.clear(); hasEarlierByUserId.clear();
         oldestLoadedCreatedAtByUserId.clear(); oldestLoadedMessageIdByUserId.clear();
@@ -299,6 +307,26 @@ public final class RemoteIMSessionController {
         return settings;
     }
 
+    public String accountId() {
+        return productionMode ? authClient.accountId() : settings.loginUserId();
+    }
+
+    public String friendAccountId(String imUserId) {
+        return friendAccountByIm.getOrDefault(imUserId, "");
+    }
+
+    public boolean isFriendSyncPending(String imUserId) {
+        return pendingFriendSyncUserIds.contains(imUserId);
+    }
+
+    public List<RemoteIMContact> acceptedFriends() {
+        if (!productionMode) return chatState.contacts();
+        List<RemoteIMContact> result = new ArrayList<>();
+        for (RemoteIMContact contact : chatState.contacts())
+            if (acceptedFriendUserIds.contains(contact.userId())) result.add(contact);
+        return result;
+    }
+
     public ChatState chatState() {
         return chatState;
     }
@@ -386,9 +414,9 @@ public final class RemoteIMSessionController {
     }
 
     public void loginWithAccountPassword(
-        String phone, String password, boolean ageConfirmed, AccountCompletion completion
+        String account, String password, boolean ageConfirmed, AccountCompletion completion
     ) {
-        loginWithAccount(() -> authClient.loginWithPassword(phone, password, ageConfirmed),
+        loginWithAccount(() -> authClient.loginWithPassword(account, password, ageConfirmed),
             completion);
     }
 
@@ -445,7 +473,7 @@ public final class RemoteIMSessionController {
     }
 
     public void login(String loginUserId) throws IOException {
-        if (productionMode) throw new IOException("请使用手机号登录");
+        if (productionMode) throw new IOException("请使用 MaiChat 账号登录");
         saveChatState();
         settings = new RemoteIMSettings(loginUserId);
         settingsStore.save(settings);
@@ -501,29 +529,25 @@ public final class RemoteIMSessionController {
 
     public void addContact(String userId, java.util.function.Consumer<Boolean> completion) {
         String cleanAccount = clean(userId);
-        String phone = cleanAccount.replaceAll("[ -]", "");
-        boolean isPhone = phone.matches("(\\+86)?1[3-9][0-9]{9}");
         if (productionMode) {
             int generation = accountGeneration;
-            if (isPhone && !requiresLogin()) {
-                ioExecutor.execute(() -> {
-                    try {
-                        String peerId = authClient.resolveFriendPhone(phone);
-                        runOnMain(() -> {
-                            if (generation == accountGeneration && !requiresLogin())
-                                requestFriendById(peerId, generation, completion);
-                        });
-                    } catch (Exception error) {
-                        runOnMain(() -> {
-                            if (generation != accountGeneration) return;
-                            reportError(error.getMessage());
-                            if (completion != null) completion.accept(false);
-                        });
-                    }
-                });
+            if (cleanAccount.isEmpty() || requiresLogin()) {
+                if (completion != null) completion.accept(false);
                 return;
             }
-            requestFriendById(cleanAccount, generation, completion);
+            ioExecutor.execute(() -> {
+                boolean sent = false;
+                String error = null;
+                try { authClient.requestFriend(cleanAccount); sent = true; }
+                catch (Exception failure) { error = failure.getMessage(); }
+                boolean result = sent;
+                String message = error;
+                runOnMain(() -> {
+                    if (generation != accountGeneration) return;
+                    if (message != null) reportError(message);
+                    if (completion != null) completion.accept(result);
+                });
+            });
             return;
         }
         if (FriendQrPolicy.link(cleanAccount).isEmpty() || requiresLogin() ||
@@ -534,31 +558,6 @@ public final class RemoteIMSessionController {
         }
         addLocalContact(cleanAccount);
         if (completion != null) completion.accept(true);
-    }
-
-    private void requestFriendById(String userId, int generation,
-                                   java.util.function.Consumer<Boolean> completion) {
-        if (FriendQrPolicy.link(userId).isEmpty() || requiresLogin() ||
-            userId.equals(chatState.ownerUserId())) {
-            reportError("好友账号无效或不能添加自己");
-            if (completion != null) completion.accept(false);
-            return;
-        }
-        client.requestFriend(userId, new TencentIMClient.OperationCompletion() {
-            @Override public void onSuccess() {
-                runOnMain(() -> {
-                    if (generation != accountGeneration || requiresLogin()) return;
-                    if (completion != null) completion.accept(true);
-                });
-            }
-            @Override public void onError(int code, String message) {
-                runOnMain(() -> {
-                    if (generation != accountGeneration) return;
-                    reportError("发送好友申请失败（" + code + "）");
-                    if (completion != null) completion.accept(false);
-                });
-            }
-        });
     }
 
     private void addLocalContact(String cleanUserId) {
@@ -580,46 +579,67 @@ public final class RemoteIMSessionController {
     public void refreshAcceptedFriends() {
         if (requiresLogin() || !productionMode) return;
         int generation = accountGeneration;
-        client.friendUserIds(new TencentIMClient.FriendListCompletion() {
-            @Override public void onSuccess(List<String> userIds) {
+        ioExecutor.execute(() -> {
+            try {
+                List<MaiChatAuthClient.FriendInfo> friends = authClient.friends();
                 runOnMain(() -> {
                     if (generation != accountGeneration || requiresLogin()) return;
                     List<String> added = new ArrayList<>();
-                    for (String userId : userIds) {
+                    acceptedFriendUserIds.clear();
+                    pendingFriendSyncUserIds.clear();
+                    friendAccountByIm.clear();
+                    for (MaiChatAuthClient.FriendInfo friend : friends) {
+                        String userId = friend.imUserId;
                         if (userId == null || userId.isEmpty()) continue;
-                        boolean exists = false;
+                        acceptedFriendUserIds.add(userId);
+                        if (friend.pendingImSync) pendingFriendSyncUserIds.add(userId);
+                        friendAccountByIm.put(userId, friend.accountId);
+                        RemoteIMContact existing = null;
                         for (RemoteIMContact contact : chatState.contacts())
-                            if (userId.equals(contact.userId())) { exists = true; break; }
-                        if (exists) continue;
-                        RemoteIMContact contact = new RemoteIMContact(userId, userId);
+                            if (userId.equals(contact.userId())) { existing = contact; break; }
+                        if (existing != null && !userId.equals(existing.displayName())) continue;
+                        RemoteIMContact contact = new RemoteIMContact(userId, friend.accountId);
                         chatState.upsertContact(contact);
                         persistContact(contact);
                         added.add(userId);
                     }
-                    if (!added.isEmpty()) {
-                        refreshContactMetadata(added);
-                        notifyStateChanged();
-                    }
+                    if (!added.isEmpty()) refreshContactMetadata(added);
+                    notifyStateChanged();
                 });
-            }
-            @Override public void onError(int code, String message) {
-                android.util.Log.w("MaiChat.im", "friend list refresh failed: " + code);
+            } catch (Exception failure) {
+                android.util.Log.w("MaiChat.account", "friend list refresh failed");
+                runOnMain(() -> {
+                    if (generation == accountGeneration && !requiresLogin())
+                        reportError("获取好友列表失败，请稍后重试");
+                });
             }
         });
     }
 
-    public void friendRequests(java.util.function.Consumer<List<RemoteIMFriendRequest>> completion) {
-        if (requiresLogin() || !productionMode) { completion.accept(Collections.emptyList()); return; }
+    public void friendRequests(
+        java.util.function.BiConsumer<List<RemoteIMFriendRequest>, String> completion) {
+        if (requiresLogin() || !productionMode) {
+            completion.accept(Collections.emptyList(), "请先登录 MaiChat 账号");
+            return;
+        }
         int generation = accountGeneration;
-        client.friendRequests(new TencentIMClient.FriendRequestsCompletion() {
-            @Override public void onSuccess(List<RemoteIMFriendRequest> requests) {
+        ioExecutor.execute(() -> {
+            try {
+                List<MaiChatAuthClient.FriendRequestInfo> requests = authClient.friendRequests();
                 runOnMain(() -> {
-                    if (generation == accountGeneration && !requiresLogin()) completion.accept(requests);
+                    if (generation != accountGeneration || requiresLogin()) return;
+                    friendRequestIdByIm.clear();
+                    List<RemoteIMFriendRequest> display = new ArrayList<>();
+                    for (MaiChatAuthClient.FriendRequestInfo request : requests) {
+                        friendRequestIdByIm.put(request.imUserId, request.id);
+                        display.add(new RemoteIMFriendRequest(request.imUserId,
+                            request.accountId, "", ""));
+                    }
+                    completion.accept(display, null);
                 });
-            }
-            @Override public void onError(int code, String message) {
-                reportError("获取好友申请失败（" + code + "）");
-                runOnMain(() -> completion.accept(Collections.emptyList()));
+            } catch (Exception failure) {
+                runOnMain(() -> completion.accept(Collections.emptyList(),
+                    "获取好友申请失败，请稍后重试"));
             }
         });
     }
@@ -628,18 +648,23 @@ public final class RemoteIMSessionController {
                                     java.util.function.Consumer<Boolean> completion) {
         if (requiresLogin() || !productionMode) { completion.accept(false); return; }
         int generation = accountGeneration;
-        client.decideFriendRequest(userId, accept, new TencentIMClient.OperationCompletion() {
-            @Override public void onSuccess() {
-                runOnMain(() -> {
-                    if (generation != accountGeneration || requiresLogin()) return;
-                    if (accept) addLocalContact(userId);
-                    completion.accept(true);
-                });
-            }
-            @Override public void onError(int code, String message) {
-                reportError("处理好友申请失败（" + code + "）");
-                runOnMain(() -> completion.accept(false));
-            }
+        String requestId = friendRequestIdByIm.get(userId);
+        if (requestId == null) { completion.accept(false); return; }
+        ioExecutor.execute(() -> {
+            boolean success = false;
+            String error = null;
+            try { authClient.decideFriendRequest(requestId, accept); success = true; }
+            catch (Exception failure) { error = failure.getMessage(); }
+            boolean decided = success;
+            String message = error;
+            runOnMain(() -> {
+                if (generation != accountGeneration || requiresLogin()) return;
+                if (decided) {
+                    friendRequestIdByIm.remove(userId);
+                    if (accept) refreshAcceptedFriends();
+                } else reportError(message);
+                completion.accept(decided);
+            });
         });
     }
 
@@ -654,33 +679,23 @@ public final class RemoteIMSessionController {
             notifyStateChanged();
             return;
         }
-        String ownerUserId = chatState.ownerUserId();
-        client.deleteContact(cleanUserId, new TencentIMClient.OperationCompletion() {
-            @Override
-            public void onSuccess() {
-                runOnMain(() -> {
-                    if (!ownerUserId.equals(chatState.ownerUserId())) return;
-                    chatState.removeContact(cleanUserId);
-                    peerEpochs.put(cleanUserId, peerEpochs.getOrDefault(cleanUserId, 0) + 1);
-                    pageRequests.put(cleanUserId, pageRequests.getOrDefault(cleanUserId, 0) + 1);
-                    loadingPeers.remove(cleanUserId);
-                    enqueueIO(() -> historyStore.deleteContact(ownerUserId, cleanUserId));
-                    unreadByUserId.remove(cleanUserId);
-                    presenceByUserId.remove(cleanUserId);
-                    hasEarlierByUserId.remove(cleanUserId);
-                    oldestLoadedCreatedAtByUserId.remove(cleanUserId);
-                    oldestLoadedMessageIdByUserId.remove(cleanUserId);
-                    notifyStateChanged();
-                });
-            }
-
-            @Override
-            public void onError(int code, String message) {
-                if (!ownerUserId.equals(chatState.ownerUserId())) return;
-                reportError(message == null || message.trim().isEmpty()
-                    ? "删除好友失败（" + code + "）"
-                    : message);
-            }
+        String accountId = friendAccountByIm.get(cleanUserId);
+        if (accountId == null) { reportError("好友账号尚未同步"); return; }
+        int generation = accountGeneration;
+        ioExecutor.execute(() -> {
+            String error = null;
+            try { authClient.removeFriend(accountId); }
+            catch (Exception failure) { error = failure.getMessage(); }
+            String result = error;
+            runOnMain(() -> {
+                if (generation != accountGeneration) return;
+                if (result != null) { reportError(result); return; }
+                acceptedFriendUserIds.remove(cleanUserId);
+                pendingFriendSyncUserIds.remove(cleanUserId);
+                friendAccountByIm.remove(cleanUserId);
+                // 好友列表立即移除，但历史会话与消息仍保留。
+                notifyStateChanged();
+            });
         });
     }
 
@@ -1354,7 +1369,7 @@ public final class RemoteIMSessionController {
             try {
                 credential = authClient.credential();
                 if (!expectedUser.equals(credential.userId))
-                    throw new IOException("当前手机号账号与本机 IM 账号不一致");
+                    throw new IOException("当前 MaiChat 账号与本机 IM 账号不一致");
             } catch (Exception failure) {
                 error = failure.getMessage();
             }

@@ -28,6 +28,37 @@ struct MaiChatAuthSession: Decodable, Sendable {
     let user: MaiChatAuthUser
 }
 
+struct MaiChatFriend: Decodable, Sendable {
+    let accountId: String
+    let imUserId: String
+    let createdAt: Int64
+    let pendingImAction: String?
+}
+
+struct MaiChatFriendRequest: Decodable, Sendable {
+    let id: String
+    let accountId: String
+    let imUserId: String
+    let createdAt: Int64
+}
+
+private struct MaiChatFriendList: Decodable, Sendable {
+    let friends: [MaiChatFriend]
+}
+
+private struct MaiChatFriendRequests: Decodable, Sendable {
+    let incoming: [MaiChatFriendRequest]
+    let outgoing: [MaiChatFriendRequest]
+}
+
+private struct MaiChatFriendDecision: Decodable, Sendable {
+    let status: String
+}
+
+private struct MaiChatFriendRemoval: Decodable, Sendable {
+    let deleted: Bool
+}
+
 enum MaiChatSocialProvider: String, Sendable {
     case wechat
     case qq
@@ -229,15 +260,24 @@ actor MaiChatAuthClient {
     }
 
     func loginWithPassword(
-        phone: String, password: String, ageConfirmed: Bool
+        account: String, password: String, ageConfirmed: Bool
     ) async throws -> MaiChatAuthSession {
         let device = await mobileDeviceFields()
+        let cleanAccount = account.trimmingCharacters(in: .whitespacesAndNewlines)
+        let phoneCandidate = cleanAccount.replacingOccurrences(
+            of: "[ -]", with: "", options: .regularExpression
+        )
+        let isPhone = phoneCandidate.range(
+            of: "^(\\+86)?1[3-9][0-9]{9}$", options: .regularExpression
+        ) != nil
+        let identity: [String: Any] = isPhone ?
+            ["phone": phoneCandidate] : ["account_id": cleanAccount]
         let session: MaiChatAuthSession = try await request(
             "auth/password/login", method: "POST",
             body: [
-                "phone": phone, "password": password,
+                "password": password,
                 "age_confirmed_14_plus": ageConfirmed
-            ].merging(device) { _, new in new }
+            ].merging(identity) { _, new in new }.merging(device) { _, new in new }
         )
         sessionVersion &+= 1
         try adopt(session)
@@ -417,6 +457,48 @@ actor MaiChatAuthClient {
               userID.range(of: "^[A-Za-z0-9_-]{1,128}$", options: .regularExpression) != nil
         else { throw MaiChatAuthError.invalidServerResponse }
         return userID
+    }
+
+    func friends() async throws -> [MaiChatFriend] {
+        let token = try await currentAccessToken()
+        let result: MaiChatFriendList = try await request(
+            "friends", method: "GET", bearer: token
+        )
+        return result.friends
+    }
+
+    func friendRequests() async throws -> [MaiChatFriendRequest] {
+        let token = try await currentAccessToken()
+        let result: MaiChatFriendRequests = try await request(
+            "friends/requests", method: "GET", bearer: token
+        )
+        return result.incoming
+    }
+
+    func requestFriend(account: String) async throws {
+        let token = try await currentAccessToken()
+        let _: [String: String] = try await request(
+            "friends/requests", method: "POST", body: ["account": account], bearer: token
+        )
+    }
+
+    func decideFriendRequest(id: String, accept: Bool) async throws {
+        let token = try await currentAccessToken()
+        let action = accept ? "accept" : "reject"
+        let result: MaiChatFriendDecision = try await request(
+            "friends/requests/\(id)/\(action)", method: "POST", body: [:], bearer: token
+        )
+        guard result.status == (accept ? "accepted" : "rejected") else {
+            throw MaiChatAuthError.invalidServerResponse
+        }
+    }
+
+    func removeFriend(account: String) async throws {
+        let token = try await currentAccessToken()
+        let result: MaiChatFriendRemoval = try await request(
+            "friends/remove", method: "POST", body: ["account": account], bearer: token
+        )
+        guard result.deleted else { throw MaiChatAuthError.invalidServerResponse }
     }
 
     func seedanceCredentialIfAvailable() async throws -> MaiChatSeedanceCredential? {

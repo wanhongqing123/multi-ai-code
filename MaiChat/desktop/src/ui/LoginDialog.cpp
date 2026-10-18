@@ -5,7 +5,10 @@
 #include "ui/LoginDialog.h"
 
 #include <QLabel>
+#include <QLineEdit>
+#include <QCheckBox>
 #include <QPixmap>
+#include <QPointer>
 #include <QPushButton>
 #include <QVBoxLayout>
 
@@ -35,8 +38,8 @@ LoginDialog::LoginDialog(DesktopAuthClient* auth, QWidget* parent)
 void LoginDialog::buildUi() {
     setWindowTitle(QStringLiteral("MaiChat"));
     setModal(true);
-    setMinimumSize(480, 540);
-    resize(520, 560);
+    setMinimumSize(480, 705);
+    resize(520, 730);
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(24, 24, 24, 24);
     root->addStretch();
@@ -92,6 +95,36 @@ void LoginDialog::buildUi() {
     retryButton_->setFixedHeight(42);
     retryButton_->setCursor(Qt::PointingHandCursor);
     layout->addWidget(retryButton_);
+    layout->addSpacing(14);
+    layout->addWidget(makeLabel(QStringLiteral("或使用 MaiChat 账号密码登录"),
+                                QStringLiteral("accountLoginTitle"), panel));
+    layout->addSpacing(8);
+    accountInput_ = new QLineEdit(panel);
+    accountInput_->setObjectName(QStringLiteral("accountLoginId"));
+    accountInput_->setPlaceholderText(QStringLiteral("MaiChat 账号 ID"));
+    accountInput_->setMaxLength(36);
+    layout->addWidget(accountInput_);
+    layout->addSpacing(7);
+    passwordInput_ = new QLineEdit(panel);
+    passwordInput_->setObjectName(QStringLiteral("accountLoginPassword"));
+    passwordInput_->setPlaceholderText(QStringLiteral("密码"));
+    passwordInput_->setEchoMode(QLineEdit::Password);
+    layout->addWidget(passwordInput_);
+    layout->addSpacing(8);
+    passwordButton_ = new QPushButton(QStringLiteral("账号密码登录"), panel);
+    passwordButton_->setObjectName(QStringLiteral("accountLoginButton"));
+    passwordButton_->setFixedHeight(42);
+    layout->addWidget(passwordButton_);
+    layout->addSpacing(8);
+    agreementCheck_ = new QCheckBox(QStringLiteral("我已年满 14 周岁，并同意下方协议"), panel);
+    agreementCheck_->setObjectName(QStringLiteral("accountLoginAgreement"));
+    layout->addWidget(agreementCheck_);
+    auto* legal = makeLabel(QStringLiteral(
+        "<a href='https://ichat.life/legal/terms.html'>用户协议</a> · "
+        "<a href='https://ichat.life/legal/privacy.html'>隐私政策</a>"),
+        QStringLiteral("accountLoginLegal"), panel);
+    legal->setOpenExternalLinks(true);
+    layout->addWidget(legal);
     layout->addSpacing(6);
     auto* cancelButton = new QPushButton(QStringLiteral("取消"), panel);
     cancelButton->setObjectName(QStringLiteral("loginCancelButton"));
@@ -101,6 +134,8 @@ void LoginDialog::buildUi() {
     root->addWidget(panel, 0, Qt::AlignHCenter);
     root->addStretch();
     connect(retryButton_, &QPushButton::clicked, this, &LoginDialog::retry);
+    connect(passwordButton_, &QPushButton::clicked, this, &LoginDialog::loginWithPassword);
+    connect(passwordInput_, &QLineEdit::returnPressed, this, &LoginDialog::loginWithPassword);
     connect(cancelButton, &QPushButton::clicked, this, &LoginDialog::reject);
 }
 
@@ -115,6 +150,12 @@ void LoginDialog::applyStyle() {
         #loginCode { color: #334155; font-size: 15px; font-weight: 600; }
         #loginStatus { color: #0f172a; font-size: 15px; font-weight: 600; }
         #loginDetail, #loginCountdown { color: #64748b; font-size: 12px; }
+        #accountLoginTitle { color: #64748b; font-size: 13px; }
+        #accountLoginAgreement, #accountLoginLegal { color: #64748b; font-size: 12px; }
+        #accountLoginId, #accountLoginPassword { border: 1px solid #d9e2ed;
+            border-radius: 9px; padding: 8px 12px; min-height: 24px; background: #ffffff; }
+        #accountLoginButton { background: #e8f3ff; color: #0871ba; border: 0;
+            border-radius: 9px; font-size: 14px; font-weight: 600; }
         #loginRetryButton { border: 0; border-radius: 10px; background: #2f81f7;
                             color: #ffffff; font-size: 14px; font-weight: 700; }
         #loginRetryButton:hover { background: #256fe0; }
@@ -219,6 +260,47 @@ void LoginDialog::start() {
         if (ok) accept();
         else if (auth_->hasRestorableSession()) setState(State::RestoreError, error);
         else requestQr();
+    });
+}
+
+void LoginDialog::loginWithPassword() {
+    if (!auth_ || closing_ || passwordInFlight_) return;
+    const QString accountId = accountInput_->text().trimmed();
+    const QString password = passwordInput_->text();
+    if (accountId.isEmpty() || password.isEmpty()) {
+        setState(State::NetworkError, QStringLiteral("请输入 MaiChat 账号和密码"));
+        return;
+    }
+    if (!agreementCheck_->isChecked()) {
+        setState(State::NetworkError, QStringLiteral("请先确认年龄并同意协议"));
+        return;
+    }
+    passwordInFlight_ = true;
+    passwordButton_->setEnabled(false);
+    const quint64 generation = ++generation_;
+    const DesktopLoginRequest previous = request_;
+    request_ = {};
+    countdownTimer_.stop();
+    pollTimer_.stop();
+    cancelRequest(previous);
+    setState(State::Connecting);
+    QPointer<LoginDialog> self(this);
+    DesktopAuthClient* auth = auth_;
+    auth_->loginWithPassword(accountId, password,
+        [self, auth, generation](bool ok, const QString& error) {
+        if (!self) {
+            if (ok) auth->logout({});
+            return;
+        }
+        self->passwordInFlight_ = false;
+        self->passwordInput_->clear();
+        self->passwordButton_->setEnabled(true);
+        if (self->closing_ || generation != self->generation_) {
+            if (ok) auth->logout({});
+            return;
+        }
+        if (ok) self->accept();
+        else self->setState(State::NetworkError, error);
     });
 }
 

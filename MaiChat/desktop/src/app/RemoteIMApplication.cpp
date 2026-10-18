@@ -259,6 +259,17 @@ void RemoteIMApplication::addContact(const QString& userId, const QString& displ
 }
 
 void RemoteIMApplication::requestFriend(const QString& userId, const QString& displayName) {
+    if (accountFriendOperations_.send) {
+        Q_UNUSED(displayName);
+        QPointer<RemoteIMApplication> self(this);
+        accountFriendOperations_.send(userId.trimmed(), [self](bool ok, const QString& error) {
+            if (!self) return;
+            if (ok) emit self->friendRequestSent();
+            else emit self->errorMessage(error.isEmpty() ?
+                QStringLiteral("发送好友申请失败") : error);
+        });
+        return;
+    }
     QString phone = userId.trimmed();
     phone.remove(QRegularExpression(QStringLiteral("[ -]")));
     static const QRegularExpression phonePattern(QStringLiteral("^(\\+86)?1[3-9][0-9]{9}$"));
@@ -286,6 +297,11 @@ void RemoteIMApplication::setFriendAccountResolver(FriendAccountResolver resolve
     friendAccountResolver_ = std::move(resolver);
 }
 
+void RemoteIMApplication::setAccountFriendOperations(AccountFriendOperations operations) {
+    accountFriendOperations_ = std::move(operations);
+    refreshFriendList();
+}
+
 void RemoteIMApplication::requestFriendById(const QString& userId,
                                             const QString& displayName) {
     Q_UNUSED(displayName);
@@ -304,10 +320,68 @@ void RemoteIMApplication::requestFriendById(const QString& userId,
 }
 
 void RemoteIMApplication::refreshFriendList() {
+    if (accountFriendOperations_.list) {
+        QPointer<RemoteIMApplication> self(this);
+        accountFriendOperations_.list([self](const QList<AccountFriend>& friends,
+                                             const QString& error) {
+            if (!self) return;
+            if (!error.isEmpty()) {
+                emit self->errorMessage(QStringLiteral("好友列表加载失败：%1").arg(error));
+                return;
+            }
+            QMetaObject::invokeMethod(self, [self, friends] {
+                if (!self) return;
+                self->acceptedFriendIds_.clear();
+                self->friendAccountByImId_.clear();
+                for (const AccountFriend& friendAccount : friends) {
+                    if (friendAccount.imUserId.isEmpty() || friendAccount.accountId.isEmpty()) continue;
+                    self->acceptedFriendIds_.insert(friendAccount.imUserId);
+                    self->friendAccountByImId_.insert(friendAccount.imUserId,
+                                                     friendAccount.accountId);
+                    bool exists = false;
+                    RemoteIMContact current;
+                    for (const RemoteIMContact& contact : self->state_.contacts()) {
+                        if (contact.userId == friendAccount.imUserId) {
+                            exists = true;
+                            current = contact;
+                            break;
+                        }
+                    }
+                    if (!exists || current.displayName == friendAccount.imUserId) {
+                        if (!exists) current.userId = friendAccount.imUserId;
+                        current.displayName = friendAccount.accountId;
+                        self->state_.upsertContact(current);
+                        if (self->database_) self->database_->upsertContact(current);
+                    }
+                }
+                emit self->stateChanged();
+            }, Qt::AutoConnection);
+        });
+        return;
+    }
     client_->refreshFriendList();
 }
 
 void RemoteIMApplication::friendRequests(RemoteIMFriendRequestsCompletion completion) {
+    if (accountFriendOperations_.requests) {
+        QPointer<RemoteIMApplication> self(this);
+        accountFriendOperations_.requests([self, completion = std::move(completion)](
+            const QList<AccountFriendRequest>& requests, const QString& error) {
+            if (!self) return;
+            QMetaObject::invokeMethod(self, [self, completion, requests, error] {
+                if (!self) return;
+                self->requestIdByImId_.clear();
+                QList<RemoteIMFriendRequest> display;
+                for (const AccountFriendRequest& request : requests) {
+                    self->requestIdByImId_.insert(request.imUserId, request.id);
+                    display.append(RemoteIMFriendRequest{request.imUserId,
+                        request.accountId, {}, {}});
+                }
+                if (completion) completion(error.isEmpty(), error, display);
+            }, Qt::AutoConnection);
+        });
+        return;
+    }
     QPointer<RemoteIMApplication> self(this);
     client_->friendRequests([self, completion = std::move(completion)](
                                 bool ok, const QString& error,
@@ -321,6 +395,25 @@ void RemoteIMApplication::friendRequests(RemoteIMFriendRequestsCompletion comple
 
 void RemoteIMApplication::decideFriendRequest(const QString& userId, bool accept,
                                               RemoteIMCompletion completion) {
+    if (accountFriendOperations_.decide) {
+        const QString requestId = requestIdByImId_.value(userId);
+        if (requestId.isEmpty()) {
+            if (completion) completion(false, QStringLiteral("好友申请已失效，请刷新"));
+            return;
+        }
+        QPointer<RemoteIMApplication> self(this);
+        accountFriendOperations_.decide(requestId, accept,
+            [self, userId, accept, completion = std::move(completion)](
+                bool ok, const QString& error) {
+            if (!self) return;
+            if (ok) {
+                self->requestIdByImId_.remove(userId);
+                if (accept) self->refreshFriendList();
+            }
+            if (completion) completion(ok, error);
+        });
+        return;
+    }
     QPointer<RemoteIMApplication> self(this);
     client_->decideFriendRequest(userId, accept,
                                  [self, userId, accept, completion = std::move(completion)](
@@ -341,6 +434,24 @@ void RemoteIMApplication::decideFriendRequest(const QString& userId, bool accept
 void RemoteIMApplication::deleteContact(const QString& userId) {
     const QString cleanUserId = userId.trimmed();
     if (cleanUserId.isEmpty()) return;
+    if (accountFriendOperations_.remove) {
+        const QString accountId = friendAccountByImId_.value(cleanUserId);
+        if (accountId.isEmpty()) {
+            emit errorMessage(QStringLiteral("好友账号尚未同步"));
+            return;
+        }
+        QPointer<RemoteIMApplication> self(this);
+        accountFriendOperations_.remove(accountId,
+            [self, cleanUserId](bool ok, const QString& error) {
+            if (!self) return;
+            if (!ok) { emit self->errorMessage(error); return; }
+            self->acceptedFriendIds_.remove(cleanUserId);
+            self->friendAccountByImId_.remove(cleanUserId);
+            // 本地会话和历史不属于好友关系，删除好友时保留。
+            emit self->stateChanged();
+        });
+        return;
+    }
     client_->deleteContact(cleanUserId, [this, cleanUserId](bool ok, const QString& error) {
         if (!ok) {
             emit errorMessage(error.isEmpty() ? QStringLiteral("删除好友失败") : error);

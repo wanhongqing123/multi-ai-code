@@ -1,4 +1,4 @@
-// 文件作用：扫描 MaiChat 好友二维码，只返回经过格式校验的 IM 账号 ID。
+// 文件作用：扫描 MaiChat 好友二维码，只返回经过格式校验的 MaiChat 账号 ID。
 package com.kongshang.maichat;
 
 import android.Manifest;

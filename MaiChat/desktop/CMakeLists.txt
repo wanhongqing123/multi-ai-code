@@ -482,6 +482,8 @@ add_library(remote_im_desktop_ui
   src/ui/BroadcastDialog.cpp
   src/ui/AddContactDialog.h
   src/ui/AddContactDialog.cpp
+  src/ui/FriendQrDecoder.h
+  src/ui/FriendQrDecoder.cpp
   src/ui/LoginDialog.h
   src/ui/LoginDialog.cpp
   src/ui/MainWindow.h
@@ -509,6 +511,13 @@ add_library(remote_im_desktop_ui
   src/ui/UiZoom.h
   src/ui/UiZoom.cpp
 )
+set(MAICHAT_QUIRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/quirc")
+target_sources(remote_im_desktop_ui PRIVATE
+  "${MAICHAT_QUIRC_DIR}/identify.c"
+  "${MAICHAT_QUIRC_DIR}/quirc.c"
+  "${MAICHAT_QUIRC_DIR}/decode.c"
+  "${MAICHAT_QUIRC_DIR}/version_db.c")
+target_include_directories(remote_im_desktop_ui PRIVATE "${MAICHAT_QUIRC_DIR}")
 target_include_directories(remote_im_desktop_ui PUBLIC src)
 target_link_libraries(remote_im_desktop_ui PUBLIC remote_im_desktop_app remote_im_core
   maichat_agent Qt5::Widgets Qt5::Svg Qt5::Multimedia Qt5::MultimediaWidgets
@@ -570,6 +579,21 @@ add_executable(maichat
 # 版本号带进运行时：日志第一行就得答出"用户跑的到底是哪个包"，
 # 这个问题每次排障都要问一遍。
 target_compile_definitions(maichat PRIVATE MAICHAT_VERSION="${PROJECT_VERSION}")
+if(WIN32)
+  add_custom_command(TARGET maichat POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+      "$<TARGET_FILE_DIR:maichat>/ThirdPartyLicenses"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${CMAKE_CURRENT_SOURCE_DIR}/third_party/quirc/LICENSE"
+      "$<TARGET_FILE_DIR:maichat>/ThirdPartyLicenses/QUIRC_LICENSE")
+elseif(APPLE)
+  add_custom_command(TARGET maichat POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+      "$<TARGET_BUNDLE_DIR:maichat>/Contents/Resources/ThirdPartyLicenses"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${CMAKE_CURRENT_SOURCE_DIR}/third_party/quirc/LICENSE"
+      "$<TARGET_BUNDLE_DIR:maichat>/Contents/Resources/ThirdPartyLicenses/QUIRC_LICENSE")
+endif()
 if(WIN32)
   # GUI 子系统（/SUBSYSTEM:WINDOWS）：不加时 exe 是控制台程序，双击启动会先弹一个
   # 黑色控制台窗口再出界面。Qt5::Core 会对 WIN32_EXECUTABLE 目标自动链接
@@ -1238,6 +1262,8 @@ target_compile_definitions(video_preview_dialog_test PRIVATE
 
 add_executable(add_contact_dialog_test tests/AddContactDialogTest.cpp)
 target_link_libraries(add_contact_dialog_test PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)
+target_compile_definitions(add_contact_dialog_test PRIVATE
+  MAICHAT_FRIEND_QR_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/maichat-friend-qr.png")
 
 add_executable(main_window_layout_test tests/MainWindowLayoutTest.cpp)
 target_link_libraries(main_window_layout_test PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)

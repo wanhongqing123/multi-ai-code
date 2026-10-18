@@ -15,7 +15,7 @@
 
 namespace {
 
-constexpr size_t kMaxBodyBytes = 64 * 1024;
+constexpr size_t kMaxBodyBytes = 1024 * 1024;
 constexpr size_t kMaxHeaderBytes = 16 * 1024;
 constexpr size_t kMaxRequestBytes = 32 * 1024;
 constexpr size_t kMaxCaBytes = 2 * 1024 * 1024;

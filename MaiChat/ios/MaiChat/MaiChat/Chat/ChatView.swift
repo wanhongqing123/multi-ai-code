@@ -1659,7 +1659,10 @@ private struct ChatDetailView: View {
             if let forwardingMessage {
                 ForwardMessageDialog(
                     message: forwardingMessage,
-                    contacts: appState.chatState.contacts,
+                    contacts: appState.chatState.contacts.filter {
+                        appState.acceptedFriendIMIDs.contains($0.userID)
+                    },
+                    accountIDForIM: { appState.maiChatAccountId(forIMUserID: $0) },
                     cancel: { self.forwardingMessage = nil },
                     forward: { contact in
                         self.forwardingMessage = nil
@@ -3625,6 +3628,7 @@ private struct MessageActionPointer: Shape {
 private struct ForwardMessageDialog: View {
     let message: RemoteIMMessage
     let contacts: [RemoteIMContact]
+    let accountIDForIM: (String) -> String
     let cancel: () -> Void
     let forward: (RemoteIMContact) -> Void
     @State private var searchText = ""
@@ -3634,7 +3638,7 @@ private struct ForwardMessageDialog: View {
         guard !query.isEmpty else { return contacts }
         return contacts.filter {
             $0.displayName.lowercased().contains(query)
-                || $0.userID.lowercased().contains(query)
+                || accountIDForIM($0.userID).lowercased().contains(query)
         }
     }
 
@@ -3699,8 +3703,9 @@ private struct ForwardMessageDialog: View {
                                             .font(.system(size: 15, weight: .semibold))
                                             .foregroundStyle(RemoteIMStyle.textPrimary)
                                             .lineLimit(1)
-                                        if contact.displayName != contact.userID {
-                                            Text(contact.userID)
+                                        let accountID = accountIDForIM(contact.userID)
+                                        if !accountID.isEmpty && contact.displayName != accountID {
+                                            Text(accountID)
                                                 .font(.system(size: 12, design: .monospaced))
                                                 .foregroundStyle(RemoteIMStyle.textSecondary)
                                                 .lineLimit(1)

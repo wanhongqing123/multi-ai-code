@@ -2,12 +2,15 @@
 // 主要入口：userId、setUserId、buildUi、applyStyle。
 // 实现边界：与 AddContactDialog 的公开声明配套，调用方通过相应接口进入。
 #include "ui/AddContactDialog.h"
+#include "ui/FriendQrDecoder.h"
 
+#include <QFileDialog>
 #include <QFrame>
 #include <QGraphicsDropShadowEffect>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPixmap>
+#include <QImageReader>
 #include <QVBoxLayout>
 
 namespace {
@@ -57,7 +60,7 @@ void AddContactDialog::buildUi() {
     setModal(true);
     setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);
     setAttribute(Qt::WA_TranslucentBackground, true);
-    setFixedSize(520, 340);
+    setFixedSize(520, 375);
 
     auto* rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(18, 18, 18, 18);
@@ -97,7 +100,16 @@ void AddContactDialog::buildUi() {
     showQrButton_ = new QPushButton(QStringLiteral("正在获取我的二维码…"), panel);
     showQrButton_->setObjectName(QStringLiteral("showOwnFriendQrButton"));
     showQrButton_->setEnabled(false);
-    panelLayout->addWidget(showQrButton_);
+    scanQrButton_ = new QPushButton(QStringLiteral("从图片扫码"), panel);
+    scanQrButton_->setObjectName(QStringLiteral("scanFriendQrButton"));
+    auto* qrActions = new QHBoxLayout();
+    qrActions->setContentsMargins(0, 0, 0, 0);
+    qrActions->addWidget(showQrButton_);
+    qrActions->addWidget(scanQrButton_);
+    panelLayout->addLayout(qrActions);
+    scanStatusLabel_ = makeLabel({}, QStringLiteral("scanFriendQrStatus"), panel);
+    scanStatusLabel_->hide();
+    panelLayout->addWidget(scanStatusLabel_);
     qrLabel_ = makeLabel({}, QStringLiteral("ownFriendQr"), panel);
     qrLabel_->setFixedSize(220, 220);
     qrLabel_->setAlignment(Qt::AlignCenter);
@@ -111,7 +123,29 @@ void AddContactDialog::buildUi() {
         qrVisible_ = !qrVisible_;
         qrLabel_->setVisible(qrVisible_);
         ownAccountLabel_->setVisible(qrVisible_);
-        setFixedSize(520, qrVisible_ ? 590 : 340);
+        setFixedSize(520, qrVisible_ ? 625 : 375);
+    });
+    connect(scanQrButton_, &QPushButton::clicked, this, [this] {
+        const QString path = QFileDialog::getOpenFileName(
+            this, QStringLiteral("选择好友二维码图片"), {},
+            QStringLiteral("图片 (*.png *.jpg *.jpeg *.webp *.bmp)"));
+        if (path.isEmpty()) return;
+        QImageReader reader(path);
+        reader.setAutoTransform(true);
+        const QSize size = reader.size();
+        if (!size.isValid() || size.width() > 4096 || size.height() > 4096) {
+            scanStatusLabel_->setText(QStringLiteral("图片太大或无法读取"));
+            scanStatusLabel_->show();
+            return;
+        }
+        const QString accountId = maiChatAccountIdFromQrImage(reader.read());
+        if (accountId.isEmpty()) {
+            scanStatusLabel_->setText(QStringLiteral("没有识别到 MaiChat 好友二维码"));
+        } else {
+            setUserId(accountId);
+            scanStatusLabel_->setText(QStringLiteral("已识别好友账号，请确认后发送申请"));
+        }
+        scanStatusLabel_->show();
     });
     panelLayout->addSpacing(14);
 
@@ -181,7 +215,7 @@ void AddContactDialog::applyStyle() {
             border-color: #42b8ff;
             background: #ffffff;
         }
-        #showOwnFriendQrButton {
+        #showOwnFriendQrButton, #scanFriendQrButton {
             color: #0f8dde;
             background: transparent;
             border: 0;
@@ -189,6 +223,7 @@ void AddContactDialog::applyStyle() {
             font-size: 14px;
         }
         #showOwnFriendQrButton:disabled { color: #90a2b8; }
+        #scanFriendQrStatus { color: #66758c; font-size: 12px; }
         #ownFriendQr { background: #ffffff; border: 0; }
         #ownFriendAccount { color: #66758c; font-size: 13px; }
         #addContactCancelButton,

@@ -344,7 +344,7 @@ struct MaiChatApp: App {
                    let appState = bootstrap.appState {
                     do {
                         try await appState.loginWithAccountPassword(
-                            phone: phone, password: password, ageConfirmed: true)
+                            account: phone, password: password, ageConfirmed: true)
                     } catch {
                         AppDiagnosticLog.shared.record(
                             level: .error, category: "local-ui",

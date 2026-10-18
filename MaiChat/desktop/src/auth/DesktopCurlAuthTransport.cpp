@@ -1,6 +1,6 @@
 // 文件作用：用 MaiAgent 同一份 libcurl + OpenSSL 发送桌面账号 GET/POST 请求。
 // 安全边界：校验服务端证书与域名，不跟随重定向、不自动重试或重放 POST。
-// 资源边界：响应正文上限 64 KiB、响应头上限 16 KiB；请求完成即释放连接。
+// 资源边界：响应正文上限 1 MiB、响应头上限 16 KiB；请求完成即释放连接。
 #include "auth/DesktopCurlAuthTransport.h"
 
 #include <QFile>
@@ -13,7 +13,7 @@
 
 namespace {
 
-constexpr int kMaximumResponseBytes = 64 * 1024;
+constexpr int kMaximumResponseBytes = 1024 * 1024;
 constexpr int kMaximumHeaderBytes = 16 * 1024;
 constexpr int kMaximumRequestBytes = 32 * 1024;
 

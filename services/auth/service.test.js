@@ -217,6 +217,20 @@ test('a valid unlisted account can use all model and media credential routes', a
   setup.db.close();
 });
 
+test('friend QR requires login and contains no account credential', async () => {
+  const setup = fixture();
+  const path = '/v1/friend/my-qr';
+  assert.equal((await setup.call('GET', path)).statusCode, 401);
+  const signedIn = await signInWithSms(setup, '13900000002');
+  const response = await setup.call('GET', path, {}, signedIn.body.access_token);
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.user_id, signedIn.body.user.im_user_id);
+  assert.equal(Buffer.from(response.body.qr_png_base64, 'base64')
+    .subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+  assert.ok(!JSON.stringify(response.body).includes(signedIn.body.access_token));
+  setup.db.close();
+});
+
 test('ASR URL issuance requires a session and limits each account', async () => {
   let serial = 0;
   const setup = fixture({ issueAsrRealtimeUrl: () => ({

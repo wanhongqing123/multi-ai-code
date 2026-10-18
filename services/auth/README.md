@@ -31,6 +31,7 @@ Node 服务只监听 `127.0.0.1:9100`。验证码、密码哈希、登录会话�
 | `GET /v1/model/api-keys` | 有效 Bearer 会话；返回 GLM、DeepSeek、MiniMax Key，客户端直接调用供应商 |
 | `GET /v1/media/authorize` | 有效 Bearer 会话；供素材服务核验该账号可否登记素材或取得 OSS 上传签名，不返回密钥 |
 | `POST /v1/asr/realtime-url` | 有效 Bearer 会话且空 JSON 请求体；返回一次性 `voice_id`、5 分钟有效的腾讯实时语音识别 `url` 与 Unix 秒 `expires_at`。每账号每分钟最多签发 10 次，未配置返回 503，超过频率返回 429；音频由 App 直连腾讯，不经过账号服务。 |
+| `GET /v1/friend/my-qr` | 有效 Bearer 会话；仅将该账号可分享的 IM `user_id` 编入好友二维码，返回 `qr_png_base64`；二维码不含手机号、访问令牌或供应商密钥。 |
 
 接口经 Nginx 对外使用 `/api/v1/...`；服务内部路由仍为 `/v1/...`。
 用户主键和腾讯 IM UserID 与手机号分离，换号不改变 IM 身份。首次登录前如需

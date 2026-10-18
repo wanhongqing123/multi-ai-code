@@ -708,6 +708,15 @@ function createAuthService(options) {
         phone_masked: `${session.phone_e164.slice(0, 5)}****${session.phone_e164.slice(-4)}` },
         device_slot: session.device_slot, device_platform: session.device_platform });
     }
+    if (method === 'GET' && path === '/v1/friend/my-qr') {
+      if (!session) return json(401, { error: 'Authentication required' });
+      if (!/^[A-Za-z0-9_-]{1,128}$/.test(session.im_user_id))
+        return json(503, { error: 'Friend account ID is unavailable' });
+      const uri = `maichat://friend/add?user_id=${session.im_user_id}`;
+      const png = Buffer.from(await generatePngQrCode(uri, { scale: 5, margin: 4 }));
+      return json(200, { user_id: session.im_user_id,
+        qr_png_base64: png.toString('base64') });
+    }
     if (method === 'GET' && path === '/v1/im/credential') {
       if (!session) return json(401, { error: 'Authentication required' });
       const issuedAt = Math.floor(now() / 1000);

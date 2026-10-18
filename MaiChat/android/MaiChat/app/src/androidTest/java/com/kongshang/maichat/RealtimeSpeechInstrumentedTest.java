@@ -89,6 +89,7 @@ public class RealtimeSpeechInstrumentedTest {
         } finally {
             issue.countDown();
             recorder.close();
+            if (recording.get() != null) recording.get().delete();
         }
     }
 

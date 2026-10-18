@@ -99,8 +99,9 @@ public:
             return MaiToolResult::failure(
                 MaiErrorCode::InvalidInput,
                 R"({"code":"invalid_input","message":"unsupported media parameter: message"})");
-        return MaiToolResult::success("{\"status\":\"SUCCEEDED\",\"path\":\"" + mPath +
-                                      "\",\"reply\":\"Video ready\"}");
+        return MaiToolResult::success(nlohmann::json{{"status", "SUCCEEDED"},
+                                                      {"path", mPath},
+                                                      {"reply", "Video ready"}}.dump());
     }
 
 private:

@@ -38,7 +38,7 @@
 - iOS 模拟器的正常 App 已从线上账号完成账号密码登录，截图确认“我”页展示 MaiChat 账号 ID。A 从 iOS 界面向 B 的 MaiChat ID 发申请；B 从公开账号接口同意后，双方列表与腾讯同步成功；A 从 iOS 界面删除后，B 的列表同步清空。联系人截图已人工查看。Mac 桌面登录组件使用线上账号获得服务器签发的 IM 凭据并正常退出。
 - Mac 桌面新增从图片识别好友二维码，并保留“发送申请”确认；有效 MaiChat QR 与空白图片解码测试通过。Windows 编译与实际安装、Android 账号好友流程及 iOS 真机仍未验收。
 - 客户端源码 `a848a72b1` 已推 `main`；Mac Desktop 4/4 相关 CTest，Android Debug/Release Java、androidTest Java 编译和 143 项单测通过。Android 账号好友 APK 尚未打包或安装，Windows VS2019 构建待远端交叉复核。
-- iPhone 14 Pro Max 原先安装 2.2.1(89)，已用同 Bundle ID 和 Apple Development 签名原位安装 2.2.2(90)；系统回读版本正确。设备当时锁屏，CoreDevice 以 `Locked` 拒绝启动，需解锁后继续运行与界面验收。
+- iPhone 14 Pro Max 原先安装 2.2.1(89)，已用同 Bundle ID 和 Apple Development 签名原位安装 2.2.2(90)；2026-10-19 再次原位安装，系统回读版本正确，CoreDevice 启动成功且回读到真机进程。此前锁屏导致的启动阻断已解除；真机好友界面的人工查看及双账号流程仍未验收。
 - Android arm64 16 KB 模拟器使用当前 `a848a72b1` 的普通 App Debug 构建成功；隔离包 `com.kongshang.maichat.isolated` 安装、冷启动成功。无手机号测试账号从密码界面登录，A 在通讯录输入 B 的 MaiChat ID 发申请，B 在公开账号接口同意后双方好友列表出现对方；A 在 Android 界面删除，B 列表随即清空。截图人工查看了空列表、申请入口、好友行、删除确认、“我”页和含完整 MaiChat ID 的好友二维码。测试结束已从 App 切换账号，并停用临时账号；生产库只读回查活跃 QA 账号、QA 好友边、同步队列均为 0，完整性 `ok`。
 - 该模拟器启动时系统提示当前 Debug 包内若干第三方 `.so` 不满足 16 KB ELF 对齐，随后在兼容模式继续运行；这不等同 Android 真实 16 KB 设备兼容验收。
 - Android 视频下载发布修复包由 Windows 侧独立构建和安装；账号好友客户端代码已包含在 `a848a72b1`，但这批功能尚未生成并验收正式签名的 Android 安装包。OPPO 的已安装版未因账号好友功能替换。2.2.2 Release 仍是草稿，现有草稿资产早于账号好友客户端提交。

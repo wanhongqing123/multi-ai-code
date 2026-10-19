@@ -380,7 +380,7 @@ actor MaiChatAuthClient {
     }
 
     /// 前台检查本机槽位仍归当前账号；网络失败保留本机状态，稍后重试。
-    func validateCurrentSession(expectedUserID: String) async throws {
+    func validateCurrentSession(expectedUserID: String) async throws -> MaiChatAuthUser {
         let token = try await currentAccessToken()
         let account: MaiChatCurrentAccount
         do {
@@ -394,6 +394,10 @@ actor MaiChatAuthClient {
         guard account.user.imUserId == expectedUserID else {
             throw MaiChatAuthError.identityMismatch
         }
+        guard !account.user.id.isEmpty else {
+            throw MaiChatAuthError.invalidServerResponse
+        }
+        return account.user
     }
 
     func approveDesktopLoginRequest(id: String, code: String) async throws {

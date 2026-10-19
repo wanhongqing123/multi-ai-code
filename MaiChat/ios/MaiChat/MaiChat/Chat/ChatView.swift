@@ -708,7 +708,10 @@ final class RemoteIMAvatarImageStore: ObservableObject {
     }
 
     func image(for rawURL: String) -> UIImage? {
-        images.object(forKey: rawURL.trimmingCharacters(in: .whitespacesAndNewlines) as NSString)
+        let value = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let image = images.object(forKey: value as NSString) { return image }
+        prefetch([value])
+        return nil
     }
 
     func beginConnection() {

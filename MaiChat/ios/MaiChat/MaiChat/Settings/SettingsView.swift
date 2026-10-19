@@ -217,8 +217,9 @@ private struct AccountSettingsView: View {
     }
 
     private var displayUserID: String {
+        guard appState.hasUnifiedAccount else { return "未登录" }
         let userID = appState.maiChatAccountID.trimmingCharacters(in: .whitespacesAndNewlines)
-        return userID.isEmpty ? "未登录" : userID
+        return userID.isEmpty ? "MaiChat ID 待同步" : userID
     }
 
 }

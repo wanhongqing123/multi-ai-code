@@ -7,6 +7,8 @@ import MaiChatCore
 struct StoredRemoteIMSettings: Codable, Equatable, Sendable {
     var sdkAppID: Int?
     var masterUserID: String
+    var maiChatAccountID: String
+    var selfAvatarURL: String?
     var friendUserIDs: [String]
     var slaveUserIDs: [String]
     var contacts: [RemoteIMContact]
@@ -17,6 +19,8 @@ struct StoredRemoteIMSettings: Codable, Equatable, Sendable {
     static let empty = StoredRemoteIMSettings(
         sdkAppID: nil,
         masterUserID: "",
+        maiChatAccountID: "",
+        selfAvatarURL: nil,
         friendUserIDs: [],
         slaveUserIDs: [],
         contacts: [],
@@ -28,6 +32,8 @@ struct StoredRemoteIMSettings: Codable, Equatable, Sendable {
     init(
         sdkAppID: Int?,
         masterUserID: String,
+        maiChatAccountID: String = "",
+        selfAvatarURL: String? = nil,
         friendUserIDs: [String] = [],
         slaveUserIDs: [String] = [],
         contacts: [RemoteIMContact] = [],
@@ -37,6 +43,8 @@ struct StoredRemoteIMSettings: Codable, Equatable, Sendable {
     ) {
         self.sdkAppID = sdkAppID
         self.masterUserID = masterUserID
+        self.maiChatAccountID = maiChatAccountID
+        self.selfAvatarURL = selfAvatarURL
         self.friendUserIDs = friendUserIDs
         self.slaveUserIDs = slaveUserIDs
         self.contacts = contacts
@@ -49,6 +57,10 @@ struct StoredRemoteIMSettings: Codable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.sdkAppID = try container.decodeIfPresent(Int.self, forKey: .sdkAppID)
         self.masterUserID = try container.decodeIfPresent(String.self, forKey: .masterUserID) ?? ""
+        self.maiChatAccountID = try container.decodeIfPresent(
+            String.self, forKey: .maiChatAccountID
+        ) ?? ""
+        self.selfAvatarURL = try container.decodeIfPresent(String.self, forKey: .selfAvatarURL)
         self.friendUserIDs = try container.decodeIfPresent([String].self, forKey: .friendUserIDs) ?? []
         self.slaveUserIDs = try container.decodeIfPresent([String].self, forKey: .slaveUserIDs) ?? []
         self.contacts = try container.decodeIfPresent([RemoteIMContact].self, forKey: .contacts) ?? []

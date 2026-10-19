@@ -170,7 +170,8 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
 
     func selfDisplayName() -> String {
         let name = profile(for: masterUserID).displayName
-        return name == masterUserID ? maiChatAccountID : name
+        guard name == masterUserID else { return name }
+        return maiChatAccountID.isEmpty ? "MaiChat ID 待同步" : maiChatAccountID
     }
     @Published private(set) var unreadCountByUserID: [String: Int] = [:] {
         didSet {
@@ -258,6 +259,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         self.hasUnifiedAccount = hasAccountSession
         self.sdkAppIDText = settings.sdkAppID.map(String.init) ?? ""
         self.masterUserID = settings.masterUserID
+        self.maiChatAccountID = hasAccountSession ? settings.maiChatAccountID : ""
         self.chatHistorySDKAppID = settings.sdkAppID
         if hasAccountSession {
             // 升级时只把旧 AI 数据库归属给当前已验证的手机号账号。
@@ -287,6 +289,14 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 )
             }
         )
+        if hasAccountSession, !settings.masterUserID.isEmpty,
+           let avatarURL = settings.selfAvatarURL, !avatarURL.isEmpty {
+            self.userProfileByUserID[settings.masterUserID] = RemoteIMUserProfile(
+                userID: settings.masterUserID,
+                displayName: settings.masterUserID,
+                avatarURL: avatarURL
+            )
+        }
         self.client.updateApplicationBadgeCount(
             RemoteIMNewMessageNotificationPolicy.systemBadgeCount(
                 totalUnreadCount: self.totalUnreadCount
@@ -402,6 +412,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             userProfileByUserID[userID] = RemoteIMUserProfile(
                 userID: userID, displayName: current.displayName, avatarURL: cleanURL
             )
+            _ = settingsStore.saveImmediately(currentStoredSettings())
             return true
         } catch {
             guard remoteDiagnosticsIdentity == identity else { return false }
@@ -575,7 +586,14 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
               !masterUserID.isEmpty else { return }
         let expectedUserID = masterUserID
         do {
-            try await accountAuth.validateCurrentSession(expectedUserID: expectedUserID)
+            let user = try await accountAuth.validateCurrentSession(
+                expectedUserID: expectedUserID
+            )
+            guard hasUnifiedAccount, masterUserID == expectedUserID else { return }
+            if maiChatAccountID != user.id {
+                maiChatAccountID = user.id
+                _ = settingsStore.saveImmediately(currentStoredSettings())
+            }
         } catch MaiChatAuthError.sessionReplaced, MaiChatAuthError.deviceSlotRequired {
             // 账号客户端已经通知统一的退出流程。
         } catch MaiChatAuthError.sessionExpired {
@@ -591,6 +609,14 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 fields: ["error": error.localizedDescription]
             )
         }
+    }
+
+    func refreshAvatarImagesForCurrentUsers() {
+        RemoteIMAvatarImageStore.shared.beginConnection()
+        RemoteIMAvatarImageStore.shared.prefetch(
+            userProfileByUserID.values.compactMap(\.avatarURL)
+                + chatState.contacts.compactMap(\.avatarURL)
+        )
     }
 
     private func endInvalidAccountSession(
@@ -740,6 +766,11 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 avatarURL: contact.avatarURL
             ))
         })
+        if !userID.isEmpty, let avatarURL = saved?.selfAvatarURL, !avatarURL.isEmpty {
+            userProfileByUserID[userID] = RemoteIMUserProfile(
+                userID: userID, displayName: userID, avatarURL: avatarURL
+            )
+        }
     }
 
     /// 网络连接开始前先记录用户的连接意图。首次登录失败后，即使进程重启也必须可重试；
@@ -2508,6 +2539,8 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         StoredRemoteIMSettings(
             sdkAppID: Int(sdkAppIDText.trimmingCharacters(in: .whitespacesAndNewlines)),
             masterUserID: masterUserID.trimmingCharacters(in: .whitespacesAndNewlines),
+            maiChatAccountID: hasUnifiedAccount ? maiChatAccountID : "",
+            selfAvatarURL: userProfileByUserID[masterUserID]?.avatarURL,
             friendUserIDs: chatState.contacts
                 .map(\.userID),
             slaveUserIDs: [],
@@ -2538,9 +2571,13 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             settings.contacts = []
             settings.contactGroups = []
             settings.unreadCountByUserID = [:]
+            settings.maiChatAccountID = ""
+            settings.selfAvatarURL = nil
         }
         settings.sdkAppID = currentSDKAppID()
         settings.masterUserID = cleanMasterUserID
+        settings.maiChatAccountID = maiChatAccountID
+        settings.selfAvatarURL = userProfileByUserID[cleanMasterUserID]?.avatarURL
         settings.reconnectOnLaunch = value
         settingsStore.save(settings)
     }
@@ -2932,7 +2969,12 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             var nextProfiles = userProfileByUserID
             var nextChatState = chatState
             for profile in profiles {
-                nextProfiles[profile.userID] = profile
+                let cachedSelfAvatar = profile.userID == masterUserID
+                    ? nextProfiles[profile.userID]?.avatarURL : nil
+                nextProfiles[profile.userID] = RemoteIMUserProfile(
+                    userID: profile.userID, displayName: profile.displayName,
+                    avatarURL: profile.avatarURL ?? cachedSelfAvatar
+                )
                 if let contact = nextChatState.contacts.first(where: { $0.userID == profile.userID }) {
                     try nextChatState.upsertContact(
                         userID: profile.userID,
@@ -2945,7 +2987,9 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             if nextProfiles != userProfileByUserID {
                 userProfileByUserID = nextProfiles
             }
-            RemoteIMAvatarImageStore.shared.prefetch(profiles.compactMap(\.avatarURL))
+            RemoteIMAvatarImageStore.shared.prefetch(
+                profiles.compactMap { nextProfiles[$0.userID]?.avatarURL }
+            )
             if nextChatState != chatState {
                 chatState = nextChatState
             }

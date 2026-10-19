@@ -313,6 +313,7 @@ struct RootView: View {
               !appState.shouldShowInitialLogin) {
             guard scenePhase == .active, appState.hasUnifiedAccount,
                   !appState.shouldShowInitialLogin else { return }
+            appState.refreshAvatarImagesForCurrentUsers()
             // 进入前台立即检查；前台每 30 秒复查。切到后台时 SwiftUI 取消该任务。
             while !Task.isCancelled && appState.hasUnifiedAccount &&
                   !appState.shouldShowInitialLogin {

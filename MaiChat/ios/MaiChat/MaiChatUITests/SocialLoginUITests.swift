@@ -23,12 +23,40 @@ final class SocialLoginUITests: XCTestCase {
         app.buttons["account-submit"].tap()
         let me = app.buttons["我"]
         XCTAssertTrue(me.waitForExistence(timeout: 30))
-        me.tap()
-        XCTAssertTrue(app.staticTexts[accountId].waitForExistence(timeout: 10))
+        openAccountSettings(in: app)
+        let accountValue = app.staticTexts.matching(NSPredicate(
+            format: "label CONTAINS %@ AND label CONTAINS %@", "登录账号", accountId
+        )).firstMatch
+        XCTAssertTrue(accountValue.waitForExistence(timeout: 10))
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "maichat-account-login-complete"
         screenshot.lifetime = .keepAlways
         add(screenshot)
+
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(me.waitForExistence(timeout: 30))
+        openAccountSettings(in: app)
+        let restored = XCTAttachment(screenshot: app.screenshot())
+        restored.name = "maichat-account-id-after-relaunch"
+        restored.lifetime = .keepAlways
+        add(restored)
+        XCTAssertTrue(accountValue.waitForExistence(timeout: 15))
+    }
+
+    @MainActor private func openAccountSettings(in app: XCUIApplication) {
+        for _ in 0..<8 {
+            if app.buttons["以后"].isHittable { app.buttons["以后"].tap() }
+            if app.buttons["稍后"].isHittable { app.buttons["稍后"].tap() }
+            if app.staticTexts["登录账号"].exists { return }
+            let settings = app.buttons["设置"]
+            if settings.isHittable {
+                settings.tap()
+            } else {
+                app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.925)).tap()
+            }
+        }
+        XCTAssertTrue(app.staticTexts["登录账号"].waitForExistence(timeout: 10))
     }
 
     @MainActor func testLiveFriendRequestUsesMaiChatAccountId() throws {

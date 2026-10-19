@@ -1750,6 +1750,9 @@ final class AIAssistantModel: ObservableObject {
         } catch {
             if remoteResultByCommandID[id] == nil { throw error }
         }
+        guard pendingRemoteCommands[id] != nil || remoteResultByCommandID[id] != nil else {
+            throw AIBackendError(message: "操作状态未知，请先查看所属设备的会话记录")
+        }
         return id
     }
     /// 提交文本及附件，并在核心落库后合并新快照、请求界面定位最新消息。

@@ -920,9 +920,11 @@ public final class AIAssistantController {
     }
 
     private boolean settleRemoteDelivery(String id, String failure) {
+        boolean stillPending = pendingRemoteCommandIds.contains(id);
         remoteDeliveryPendingIds.remove(id);
         Boolean confirmed = remoteCommandResultsById.remove(id);
         if (confirmed != null) return confirmed;
+        if (!stillPending) return false;
         if (failure.isEmpty()) return true;
         pendingRemoteCommandIds.remove(id);
         pendingRemoteDraftById.remove(id);

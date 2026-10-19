@@ -324,6 +324,16 @@ void DesktopSessionSyncHostTest::remotePanelShowsHistoryAndRoutesTextToOwner() {
     composer->setPlainText(QStringLiteral("快速拒绝也保留"));
     QTest::mouseClick(send, Qt::LeftButton);
     QCOMPARE(composer->toPlainText(), QStringLiteral("快速拒绝也保留"));
+    panel.setCommandHandler([&](const QJsonObject&, const QJsonObject&,
+                                RemoteAgentPanel::Completion completion) {
+        panel.receivePayload(remote, QStringLiteral("event"),
+                             {{QStringLiteral("type"), QStringLiteral("command_result")},
+                              {QStringLiteral("result"), QJsonObject{{QStringLiteral("ok"), true}}}});
+        completion({});
+    });
+    composer->setPlainText(QStringLiteral("快速确认应清空"));
+    QTest::mouseClick(send, Qt::LeftButton);
+    QCOMPARE(composer->toPlainText(), QString());
     if (qEnvironmentVariableIsSet("MAICHAT_REMOTE_PANEL_SCREENSHOT"))
         QVERIFY(panel.grab().save(qEnvironmentVariable("MAICHAT_REMOTE_PANEL_SCREENSHOT")));
 }

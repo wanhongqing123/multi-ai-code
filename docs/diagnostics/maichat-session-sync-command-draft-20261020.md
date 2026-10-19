@@ -21,10 +21,13 @@
   等待超时时恢复原文本。
 - Android 在上一条远端命令未确认期间暂不允许再次提交文字。确认、超时或送达
   未知后才重新开放输入动作，避免回执进入网络线程与页面线程之间时生成新命令 ID。
+- HTTP 送达回调若晚于 30 秒结果超时，不再清空已经恢复的草稿；桌面端还覆盖
+  执行回执早于 HTTP 回调到达的接受和拒绝两种顺序。
 - 同一正常 iOS App 用例红转绿：
   `MaiChatUITests/AIAssistantUITests/testNormalAppReadsAndControlsLocalFakeMacSession`
   读取假 Mac 历史、正常发送消息、再触发拒绝并检查原文仍在输入框。
-  通过结果为 `/tmp/maichat-session-sync-retry-ui-4.xcresult`；已人工查看拒绝态截图。
+  通过结果为 `/tmp/maichat-session-sync-retry-ui-4.xcresult`；超时回调收尾后又由
+  `/tmp/maichat-session-sync-final-ui.xcresult` 复跑通过。已人工查看拒绝态截图。
 - Android Debug/Release/AndroidTest Java 编译和 146 项单测通过；Mac 桌面
   `desktop_session_sync_host_test` 与 `main_window_layout_test` 通过。
 

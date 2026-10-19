@@ -223,8 +223,8 @@ void RemoteAgentPanel::sendAction(const QJsonObject& action, bool clearDraft) {
             updateControls();
             return;
         }
-        if (clearDraft && !runtime_->lastCommandRejected) runtime_->editor->clear();
         if (!runtime_->pendingCommand) return;
+        if (clearDraft && !runtime_->lastCommandRejected) runtime_->editor->clear();
         showStatus(QStringLiteral("已送达所属设备，等待确认执行"));
         runtime_->commandTimeout.start();
     });
@@ -248,6 +248,9 @@ void RemoteAgentPanel::receivePayload(const QJsonObject& remote, const QString& 
         runtime_->commandTimeout.stop();
         const QJsonObject result = payload.value(QStringLiteral("result")).toObject();
         runtime_->lastCommandRejected = !result.value(QStringLiteral("ok")).toBool();
+        if (!runtime_->lastCommandRejected && !runtime_->pendingDraft.isEmpty() &&
+            runtime_->editor->toPlainText() == runtime_->pendingDraft)
+            runtime_->editor->clear();
         if (runtime_->lastCommandRejected && runtime_->editor->toPlainText().isEmpty() &&
             !runtime_->pendingDraft.isEmpty())
             runtime_->editor->setPlainText(runtime_->pendingDraft);

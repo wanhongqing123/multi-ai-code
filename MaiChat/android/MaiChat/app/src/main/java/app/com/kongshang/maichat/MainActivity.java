@@ -168,6 +168,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private final Map<String, String> draftsByPeer = new HashMap<>();
     private String displayedOwner = "";
     private String activeChatUserId;
+    private String activeFriendProfileUserId;
     private String draftText = "";
     private List<String> aiReplySuggestions = new ArrayList<>();
     private boolean aiReplySuggestionsLoading;
@@ -390,6 +391,11 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         }
         if (socialBindingVisible) {
             clearSocialBinding();
+            render();
+            return;
+        }
+        if (activeFriendProfileUserId != null) {
+            activeFriendProfileUserId = null;
             render();
             return;
         }
@@ -729,7 +735,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                 AIAssistantController.shared(this).setHostToolHandler(maiChatHostTools::execute);
             rememberDraft();
             if (!displayedOwner.isEmpty()) {
-                hideKeyboard(); activeChatUserId = null; renderedChatUserId = null;
+                hideKeyboard(); activeChatUserId = null; activeFriendProfileUserId = null;
+                renderedChatUserId = null;
                 chatBackdrop = null; draftText = ""; pendingQuote = null; presentationRequest++;
             }
             displayedOwner = owner;
@@ -737,6 +744,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         if (activeChatUserId != null && contact(activeChatUserId) == null) {
             activeChatUserId = null; chatBackdrop = null;
         }
+        if (activeFriendProfileUserId != null && profileContact(activeFriendProfileUserId) == null)
+            activeFriendProfileUserId = null;
         if (activeChatUserId != null && landscapeIm == renderedLandscapeIm
             && activeChatUserId.equals(renderedChatUserId)
             && currentMessageList != null && !showInitialLogin && !session.requiresLogin()) {
@@ -786,7 +795,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         swipeBack = new ChatSwipeBack(new ChatSwipeBack.Host() {
             @Override public View page() { return root; }
             @Override public boolean canGoBack() {
-                return !destroyed && activeChatUserId != null && !renderedLandscapeIm;
+                return !destroyed && !renderedLandscapeIm
+                    && (activeChatUserId != null || activeFriendProfileUserId != null);
             }
             @Override public boolean keyboardVisible() { return keyboardVisible; }
             @Override public void began() {
@@ -795,7 +805,12 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                 stickToLatestMessage = false;
             }
             @Override public void hideKeyboard() { MainActivity.this.hideKeyboard(); }
-            @Override public void completed() { finishChatBack(); }
+            @Override public void completed() {
+                if (activeFriendProfileUserId != null) {
+                    activeFriendProfileUserId = null;
+                    render();
+                } else finishChatBack();
+            }
             @Override public void cancelled(boolean shown) { keyboardVisible = shown; }
         });
         insetsHost = navigation;
@@ -864,6 +879,11 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         if (showInitialLogin || session.requiresLogin()) {
             if (socialBindingVisible) renderSocialBinding();
             else renderLogin();
+            return;
+        }
+
+        if (activeFriendProfileUserId != null) {
+            renderFriendProfile(activeFriendProfileUserId);
             return;
         }
 
@@ -2766,8 +2786,107 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             text.addView(pending, match(dp(18)));
         }
         row.addView(presenceBadge(contact.userId()), wrapWrap());
-        row.setOnClickListener(view -> openChat(contact.userId()));
+        row.setOnClickListener(view -> openFriendProfile(contact.userId()));
         return row;
+    }
+
+    private RemoteIMContact profileContact(String userId) {
+        for (RemoteIMContact contact : session.acceptedFriends())
+            if (contact.userId().equals(userId)) return contact;
+        return null;
+    }
+
+    private void openFriendProfile(String userId) {
+        if (profileContact(userId) == null) return;
+        hideKeyboard();
+        activeFriendProfileUserId = userId;
+        render();
+    }
+
+    private void renderFriendProfile(String userId) {
+        RemoteIMContact contact = profileContact(userId);
+        if (contact == null) { activeFriendProfileUserId = null; render(); return; }
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        page.setBackgroundColor(MaiChatTheme.PAGE);
+        content.addView(page, matchMatch());
+
+        LinearLayout header = new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding(dp(16), 0, dp(16), 0);
+        TextView back = iconButton("‹", 29, MaiChatTheme.TEXT);
+        back.setContentDescription("返回通讯录");
+        back.setOnClickListener(view -> { activeFriendProfileUserId = null; render(); });
+        header.addView(back, new LinearLayout.LayoutParams(dp(44), dp(52)));
+        TextView title = MaiChatTheme.label(this, "好友资料", 19, MaiChatTheme.TEXT);
+        title.setGravity(Gravity.CENTER);
+        header.addView(title, new LinearLayout.LayoutParams(0, dp(52), 1));
+        header.addView(new View(this), new LinearLayout.LayoutParams(dp(44), dp(52)));
+        page.addView(header, match(dp(60)));
+
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout details = new LinearLayout(this);
+        details.setOrientation(LinearLayout.VERTICAL);
+        details.setPadding(dp(24), dp(38), dp(24), dp(24));
+        scroll.addView(details, matchWrap());
+        page.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+
+        LinearLayout.LayoutParams avatarParams = new LinearLayout.LayoutParams(dp(88), dp(88));
+        avatarParams.gravity = Gravity.CENTER_HORIZONTAL;
+        details.addView(avatar(contact, false, 88), avatarParams);
+        TextView name = MaiChatTheme.label(this, contact.displayName(), 22, MaiChatTheme.TEXT);
+        name.setGravity(Gravity.CENTER);
+        name.setContentDescription("好友昵称 " + contact.displayName());
+        LinearLayout.LayoutParams nameParams = matchWrap();
+        nameParams.topMargin = dp(20);
+        details.addView(name, nameParams);
+
+        LinearLayout accountCard = new LinearLayout(this);
+        accountCard.setOrientation(LinearLayout.VERTICAL);
+        accountCard.setPadding(dp(18), dp(16), dp(18), dp(16));
+        accountCard.setBackground(MaiChatTheme.bordered(Color.WHITE, MaiChatTheme.BORDER, 14, this));
+        LinearLayout.LayoutParams cardParams = matchWrap();
+        cardParams.topMargin = dp(28);
+        details.addView(accountCard, cardParams);
+        accountCard.addView(MaiChatTheme.text(this, "MaiChat ID", 13,
+            MaiChatTheme.SECONDARY), match(dp(24)));
+        LinearLayout accountLine = new LinearLayout(this);
+        accountLine.setGravity(Gravity.CENTER_VERTICAL);
+        accountCard.addView(accountLine, matchWrap());
+        String accountId = session.friendAccountId(userId);
+        TextView id = MaiChatTheme.label(this, accountId.isEmpty() ? "正在读取账号" : accountId,
+            15, MaiChatTheme.TEXT);
+        id.setTypeface(Typeface.MONOSPACE);
+        id.setTextIsSelectable(true);
+        id.setContentDescription("MaiChat ID " + accountId);
+        accountLine.addView(id, new LinearLayout.LayoutParams(0, dp(42), 1));
+        TextView copy = iconButton("复制", 15, MaiChatTheme.BLUE_DARK);
+        copy.setEnabled(!accountId.isEmpty());
+        copy.setOnClickListener(view -> {
+            ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            clipboard.setPrimaryClip(ClipData.newPlainText("MaiChat ID", accountId));
+            toast("MaiChat ID 已复制");
+        });
+        accountLine.addView(copy, wrapWrap());
+
+        Button message = primaryButton("发消息");
+        message.setContentDescription("向 " + contact.displayName() + " 发消息");
+        message.setOnClickListener(view -> {
+            activeFriendProfileUserId = null;
+            openChat(userId);
+        });
+        LinearLayout.LayoutParams messageParams = match(dp(52));
+        messageParams.topMargin = dp(28);
+        details.addView(message, messageParams);
+
+        Button delete = secondaryButton("删除好友");
+        delete.setTextColor(MaiChatTheme.RED);
+        delete.setOnClickListener(view -> confirm("删除好友？",
+            "删除后不再显示在通讯录，已有聊天记录会保留。", "删除好友",
+            () -> session.deleteContact(userId)));
+        LinearLayout.LayoutParams deleteParams = match(dp(52));
+        deleteParams.topMargin = dp(10);
+        details.addView(delete, deleteParams);
     }
 
     // 作用：展示联系人添加表单并处理提交结果。

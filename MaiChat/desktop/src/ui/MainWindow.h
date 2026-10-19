@@ -7,6 +7,7 @@
 
 #include <QByteArray>
 #include <QHash>
+#include <QJsonArray>
 #include <QSet>
 #include <QLabel>
 #include <QListWidget>
@@ -36,6 +37,8 @@ class SharingIndicatorBar;
 class AgentController;
 class AgentChatPanel;
 class AgentSessionList;
+class DesktopSessionSyncCoordinator;
+class RemoteAgentPanel;
 class ReplySuggestionController;
 class RemoteDesktopViewPanel;
 class QButtonGroup;
@@ -87,6 +90,7 @@ public:
     void setMaiChatNicknameUpdater(
         std::function<void(const QString&, RemoteIMCompletion)> updater);
     AgentController* activeAgentController() const { return agentController_; }
+    void setSessionSyncCoordinator(DesktopSessionSyncCoordinator* coordinator);
     bool openDockedVideo(const QString& path, const QStringList& playlist = {});
 
     // 把 IM 收/发的文件附件从本地缓存拷贝到 targetPath（存在则覆盖）。
@@ -105,6 +109,7 @@ protected:
 
 private:
     void updateWindowChromeBackground(bool active);
+    void wireRemoteAgentPanel();
     void buildUi();
     void applyStyle();
     void bindSignals();
@@ -368,7 +373,11 @@ private:
     QPushButton* agentNavButton_ = nullptr;
     AgentController* agentController_ = nullptr;
     AgentChatPanel* agentPanel_ = nullptr;
+    RemoteAgentPanel* agentRemotePanel_ = nullptr;
+    QStackedWidget* agentPanelStack_ = nullptr;
     AgentSessionList* agentSessions_ = nullptr;
+    DesktopSessionSyncCoordinator* sessionSync_ = nullptr;
+    QJsonArray remoteAgentSessions_;
     RemoteDesktopController* remoteDesktop_ = nullptr;
     bool remoteDesktopShutdown_ = false;
     bool remoteDesktopShutdownComplete_ = false;

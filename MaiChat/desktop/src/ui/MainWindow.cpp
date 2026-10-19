@@ -151,6 +151,8 @@
 #include "agent/AgentChatPanel.h"
 #include "agent/AgentController.h"
 #include "agent/AgentSessionList.h"
+#include "agent/DesktopSessionSyncCoordinator.h"
+#include "agent/RemoteAgentPanel.h"
 #include "agent/ReplySuggestionController.h"
 
 namespace {
@@ -4070,6 +4072,57 @@ void MainWindow::setMaiChatNicknameUpdater(
   if (settingsNicknameButton_) settingsNicknameButton_->setEnabled(bool(maiChatNicknameUpdater_));
 }
 
+void MainWindow::setSessionSyncCoordinator(DesktopSessionSyncCoordinator* coordinator) {
+  sessionSync_ = coordinator;
+  if (!sessionSync_) return;
+  QPointer<MainWindow> guard(this);
+  sessionSync_->setCatalogHandler([guard](const QJsonArray& sessions) {
+    if (!guard) return;
+    guard->remoteAgentSessions_ = sessions;
+    if (guard->agentSessions_) guard->agentSessions_->setRemoteSessions(sessions);
+    if (!guard->agentRemotePanel_ || !guard->agentPanelStack_ ||
+        guard->agentPanelStack_->currentWidget() != guard->agentRemotePanel_) return;
+    QJsonObject current = guard->agentRemotePanel_->session();
+    for (const QJsonValue& value : sessions) {
+      const QJsonObject session = value.toObject();
+      if (session.value(QStringLiteral("device_slot")) == current.value(QStringLiteral("device_slot")) &&
+          session.value(QStringLiteral("login_session_id")) == current.value(QStringLiteral("login_session_id")) &&
+          session.value(QStringLiteral("id")) == current.value(QStringLiteral("id"))) {
+        guard->agentRemotePanel_->updateSession(session);
+        return;
+      }
+    }
+    current.insert(QStringLiteral("online"), false);
+    guard->agentRemotePanel_->updateSession(current);
+  });
+  sessionSync_->setPayloadHandler([guard](const QJsonObject& session, const QString& kind,
+                                          const QJsonObject& payload) {
+    if (guard && guard->agentRemotePanel_) guard->agentRemotePanel_->receivePayload(session, kind, payload);
+  });
+  wireRemoteAgentPanel();
+}
+
+void MainWindow::wireRemoteAgentPanel() {
+  if (!agentRemotePanel_ || !sessionSync_) return;
+  QPointer<RemoteAgentPanel> panel(agentRemotePanel_);
+  agentRemotePanel_->setHistoryHandler([this, panel](const QJsonObject& session, const QString& before, int limit,
+                                                      RemoteAgentPanel::Completion completion) {
+    sessionSync_->requestRemoteHistory(session, before, limit,
+                                       [panel, completion = std::move(completion)](const QJsonObject&,
+                                                                                    const QString& error) {
+      if (panel) completion(error);
+    });
+  });
+  agentRemotePanel_->setCommandHandler([this, panel](const QJsonObject& session, const QJsonObject& payload,
+                                                      RemoteAgentPanel::Completion completion) {
+    sessionSync_->sendRemoteCommand(session, payload,
+                                    [panel, completion = std::move(completion)](const QJsonObject&,
+                                                                                 const QString& error) {
+      if (panel) completion(error);
+    });
+  });
+}
+
 void MainWindow::rebuildAgentPage() {
   if (agentPage_ == nullptr)
     return;
@@ -4080,10 +4133,16 @@ void MainWindow::rebuildAgentPage() {
 
   const QString sessionToRestore =
       agentPanel_ == nullptr ? QString() : agentPanel_->sessionId();
+  const QJsonObject remoteToRestore =
+      agentPanelStack_ && agentRemotePanel_ && agentPanelStack_->currentWidget() == agentRemotePanel_
+          ? agentRemotePanel_->session() : QJsonObject();
   const QList<int> sizesToRestore = agentSplitter->sizes();
 
-  delete agentPanel_;
+  if (agentPanelStack_) delete agentPanelStack_;
+  else delete agentPanel_;
+  agentPanelStack_ = nullptr;
   agentPanel_ = nullptr;
+  agentRemotePanel_ = nullptr;
   delete agentSessions_;
   agentSessions_ = nullptr;
   delete agentController_;
@@ -4191,7 +4250,13 @@ void MainWindow::rebuildAgentPage() {
       },
       this);
   agentSessions_ = new AgentSessionList(*agentController_, agentSplitter);
-  agentPanel_ = new AgentChatPanel(*agentController_, agentSplitter);
+  agentPanelStack_ = new QStackedWidget(agentSplitter);
+  agentPanel_ = new AgentChatPanel(*agentController_, agentPanelStack_);
+  agentRemotePanel_ = new RemoteAgentPanel(agentPanelStack_);
+  agentPanelStack_->addWidget(agentPanel_);
+  agentPanelStack_->addWidget(agentRemotePanel_);
+  agentSessions_->setRemoteSessions(remoteAgentSessions_);
+  wireRemoteAgentPanel();
   const QString accountRoot = accountAgentDirectory(app_.chatState().ownerUserId());
   agentPanel_->setDefaultWorkspaceDirectory(
       accountRoot.isEmpty() ? QString() :
@@ -4229,7 +4294,7 @@ void MainWindow::rebuildAgentPage() {
                                  QStringLiteral("正在连接模型");
   agentPanel_->setModelLabel(modelLabel, modelReady);
   agentSplitter->addWidget(agentSessions_);
-  agentSplitter->addWidget(agentPanel_);
+  agentSplitter->addWidget(agentPanelStack_);
   agentSplitter->setStretchFactor(0, 0);
   agentSplitter->setStretchFactor(1, 1);
   if (sizesToRestore.size() == 2 && sizesToRestore.at(0) > 0 &&
@@ -4241,14 +4306,30 @@ void MainWindow::rebuildAgentPage() {
 
   connect(agentSessions_, &AgentSessionList::selected, agentPanel_,
           [this](const QString &sessionId) {
+            agentPanelStack_->setCurrentWidget(agentPanel_);
             agentPanel_->openSession(sessionId);
           });
+  connect(agentSessions_, &AgentSessionList::remoteSelected, agentRemotePanel_,
+          [this](const QJsonObject& session) {
+            if (!sessionSync_) {
+              showToast(QStringLiteral("设备同步服务尚未连接"), 13, 2500);
+              return;
+            }
+            agentPanelStack_->setCurrentWidget(agentRemotePanel_);
+            agentRemotePanel_->openSession(session);
+          });
   connect(agentSessions_, &AgentSessionList::newSessionRequested, agentPanel_,
-          [this] { agentPanel_->openSession(); });
+          [this] {
+            agentPanelStack_->setCurrentWidget(agentPanel_);
+            agentPanel_->openSession();
+          });
   connect(agentPanel_, &AgentChatPanel::sessionListChanged, agentSessions_,
           [this] {
             agentSessions_->refresh();
-            agentSessions_->setCurrent(agentPanel_->sessionId());
+            if (agentPanelStack_->currentWidget() == agentRemotePanel_)
+              agentSessions_->setCurrentRemote(agentRemotePanel_->session());
+            else
+              agentSessions_->setCurrent(agentPanel_->sessionId());
           });
   connect(agentPanel_, &AgentChatPanel::modelConfigurationRequested, this,
           [this] {
@@ -4259,6 +4340,11 @@ void MainWindow::rebuildAgentPage() {
           &MainWindow::requestAgentModelChange);
   if (!sessionToRestore.isEmpty())
     agentPanel_->openSession(sessionToRestore);
+  if (!remoteToRestore.isEmpty()) {
+    agentPanelStack_->setCurrentWidget(agentRemotePanel_);
+    agentRemotePanel_->openSession(remoteToRestore);
+    agentSessions_->setCurrentRemote(remoteToRestore);
+  }
 }
 
 void MainWindow::requestAgentModelChange(const QString& model) {

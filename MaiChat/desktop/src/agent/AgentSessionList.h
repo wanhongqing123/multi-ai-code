@@ -3,6 +3,8 @@
 // 对外边界：本文件给出 AgentSessionList 的类型和函数声明；参数、返回值和对象生命周期以此为准。
 #pragma once
 
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QString>
 #include <QWidget>
 #include <memory>
@@ -32,13 +34,16 @@ public:
 
     // 从存储重新拉一遍并重画。轮次结束、标题变了、新建会话之后都要调。
     void refresh();
+    void setRemoteSessions(const QJsonArray& sessions);
 
     // 高亮某一项（不发 selected 信号，避免和调用方来回打架）。
     void setCurrent(const QString& sessionId);
+    void setCurrentRemote(const QJsonObject& session);
 
 signals:
     // 用户挑了一个会话。
     void selected(const QString& sessionId);
+    void remoteSelected(const QJsonObject& session);
     // 用户按了"新对话"。**这里不建会话**——建在哪个目录是面板的事，
     // 列表只负责说"用户想开一个新的"。
     void newSessionRequested();

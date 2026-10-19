@@ -315,6 +315,7 @@ int main(int argc, char* argv[]) {
             auth.requestSessionSync(path, method, body, std::move(completion));
         },
         [&window] { return window.activeAgentController(); });
+    window.setSessionSyncCoordinator(&sessionSync);
     if (!smokeMode) sessionSync.start();
     if (!smokeMode) refreshAccountModelKeys();
     remoteIM.connectToService(credential.sdkAppId, credential.userSig);

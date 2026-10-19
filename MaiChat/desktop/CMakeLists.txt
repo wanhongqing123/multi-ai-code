@@ -756,6 +756,8 @@ add_library(maichat_agent
   src/MaiChatTools/DesktopPdfRenderer.cpp
   src/agent/AgentChatPanel.h
   src/agent/AgentChatPanel.cpp
+  src/agent/RemoteAgentPanel.h
+  src/agent/RemoteAgentPanel.cpp
   src/agent/AgentSessionList.h
   src/agent/AgentSessionList.cpp
   src/agent/ReplySuggestionController.h

@@ -42,6 +42,8 @@ DesktopSessionSyncCoordinator::DesktopSessionSyncCoordinator(Requester requester
     if (deviceName_.isEmpty()) deviceName_ = QStringLiteral("Desktop");
     presenceTimer_.setInterval(15'000);
     connect(&presenceTimer_, &QTimer::timeout, this, [this] { publishPresence(); });
+    catalogTimer_.setInterval(15'000);
+    connect(&catalogTimer_, &QTimer::timeout, this, [this] { fetchCatalog(); });
     retryTimer_.setSingleShot(true);
     connect(&retryTimer_, &QTimer::timeout, this, [this] { poll(); });
     snapshotTimer_.setSingleShot(true);
@@ -59,10 +61,104 @@ void DesktopSessionSyncCoordinator::start() {
     if (started_ || !requester_ || !agentProvider_) return;
     started_ = true;
     presenceTimer_.start();
+    catalogTimer_.start();
     QTimer::singleShot(0, this, [this] {
         publishPresence();
+        fetchCatalog();
         poll();
     });
+}
+
+void DesktopSessionSyncCoordinator::setCatalogHandler(CatalogHandler handler) {
+    catalogHandler_ = std::move(handler);
+    if (catalogHandler_) catalogHandler_(remoteSessions_);
+}
+
+void DesktopSessionSyncCoordinator::setPayloadHandler(PayloadHandler handler) {
+    payloadHandler_ = std::move(handler);
+}
+
+void DesktopSessionSyncCoordinator::fetchCatalog() {
+    requester_(QStringLiteral("session-sync/sessions"), "GET", {},
+               [guard = QPointer<DesktopSessionSyncCoordinator>(this)](const QJsonObject& result,
+                                                                        const QString& error) {
+                   if (!guard || !error.isEmpty()) return;
+                   QJsonArray remote;
+                   for (const QJsonValue& value : result.value(QStringLiteral("sessions")).toArray()) {
+                       const QJsonObject entry = value.toObject();
+#if defined(Q_OS_MAC)
+                       constexpr auto ownSlot = "mac";
+#else
+                       constexpr auto ownSlot = "windows";
+#endif
+                       if (entry.value(QStringLiteral("device_slot")).toString() == QLatin1String(ownSlot) &&
+                           entry.value(QStringLiteral("device_id")).toString() == guard->deviceId_)
+                           continue;
+                       remote.append(entry);
+                   }
+                   if (remote == guard->remoteSessions_) return;
+                   guard->remoteSessions_ = remote;
+                   if (guard->catalogHandler_) guard->catalogHandler_(remote);
+               });
+}
+
+QJsonObject DesktopSessionSyncCoordinator::matchingRemote(const QString& slot, const QString& login,
+                                                           const QString& session) const {
+    for (const QJsonValue& value : remoteSessions_) {
+        const QJsonObject entry = value.toObject();
+        if (entry.value(QStringLiteral("device_slot")).toString() == slot &&
+            entry.value(QStringLiteral("login_session_id")).toString() == login &&
+            entry.value(QStringLiteral("id")).toString() == session)
+            return entry;
+    }
+    return {};
+}
+
+void DesktopSessionSyncCoordinator::requestRemoteHistory(const QJsonObject& session, const QString& before, int limit,
+                                                         Completion completion) {
+    if (limit < 1 || limit > 20 || !session.value(QStringLiteral("online")).toBool()) {
+        completion({}, QStringLiteral("所属设备离线或页大小无效"));
+        return;
+    }
+    const QString slot = session.value(QStringLiteral("device_slot")).toString();
+    const QString login = session.value(QStringLiteral("login_session_id")).toString();
+    const QString id = session.value(QStringLiteral("id")).toString();
+    if (matchingRemote(slot, login, id).isEmpty()) {
+        completion({}, QStringLiteral("所属设备登录已变化，请刷新列表"));
+        return;
+    }
+    requester_(QStringLiteral("session-sync/send"), "POST",
+               {{QStringLiteral("to_slot"), slot},
+                {QStringLiteral("to_login_session_id"), login},
+                {QStringLiteral("client_message_id"), newId()},
+                {QStringLiteral("session_id"), id},
+                {QStringLiteral("kind"), QStringLiteral("history_request")},
+                {QStringLiteral("payload"), QJsonObject{{QStringLiteral("before"), before},
+                                                       {QStringLiteral("limit"), limit}}}},
+               std::move(completion));
+}
+
+void DesktopSessionSyncCoordinator::sendRemoteCommand(const QJsonObject& session, const QJsonObject& payload,
+                                                      Completion completion) {
+    if (!session.value(QStringLiteral("online")).toBool()) {
+        completion({}, QStringLiteral("所属设备离线，不能执行操作"));
+        return;
+    }
+    const QString slot = session.value(QStringLiteral("device_slot")).toString();
+    const QString login = session.value(QStringLiteral("login_session_id")).toString();
+    const QString id = session.value(QStringLiteral("id")).toString();
+    if (matchingRemote(slot, login, id).isEmpty()) {
+        completion({}, QStringLiteral("所属设备登录已变化，请刷新列表"));
+        return;
+    }
+    requester_(QStringLiteral("session-sync/send"), "POST",
+               {{QStringLiteral("to_slot"), slot},
+                {QStringLiteral("to_login_session_id"), login},
+                {QStringLiteral("client_message_id"), newId()},
+                {QStringLiteral("session_id"), id},
+                {QStringLiteral("kind"), QStringLiteral("command")},
+                {QStringLiteral("payload"), payload}},
+               std::move(completion));
 }
 
 DesktopSessionSyncHost* DesktopSessionSyncCoordinator::host() {
@@ -129,7 +225,7 @@ void DesktopSessionSyncCoordinator::handleEnvelope(const QJsonObject& envelope) 
     const QString fromLogin = envelope.value(QStringLiteral("from_login_session_id")).toString();
     if (id <= 0 || session.isEmpty() || fromSlot.isEmpty() || fromLogin.isEmpty()) return;
     DesktopSessionSyncHost* current = host();
-    if (!current) return;
+    if (!current && (kind == QStringLiteral("history_request") || kind == QStringLiteral("command"))) return;
     if (kind == QStringLiteral("history_request")) {
         const QJsonObject request = envelope.value(QStringLiteral("payload")).toObject();
         const int limit = qBound(1, request.value(QStringLiteral("limit")).toInt(10), 20);
@@ -147,8 +243,63 @@ void DesktopSessionSyncCoordinator::handleEnvelope(const QJsonObject& envelope) 
                       {QStringLiteral("command_id"), envelope.value(QStringLiteral("client_message_id"))},
                       {QStringLiteral("result"), result}});
         scheduleSnapshot(session);
+    } else if (kind == QStringLiteral("history_page") || kind == QStringLiteral("event")) {
+        handleRemoteChunk(envelope);
     }
     acknowledge(id);
+}
+
+void DesktopSessionSyncCoordinator::handleRemoteChunk(const QJsonObject& envelope) {
+    const QString slot = envelope.value(QStringLiteral("from_slot")).toString();
+    const QString login = envelope.value(QStringLiteral("from_login_session_id")).toString();
+    const QString session = envelope.value(QStringLiteral("session_id")).toString();
+    const QJsonObject remote = matchingRemote(slot, login, session);
+    if (remote.isEmpty()) return;
+    const QJsonObject chunk = envelope.value(QStringLiteral("payload")).toObject();
+    const QString transferId = chunk.value(QStringLiteral("transfer_id")).toString();
+    const int index = chunk.value(QStringLiteral("chunk_index")).toInt(-1);
+    const int count = chunk.value(QStringLiteral("chunk_count")).toInt(-1);
+    const QString digest = chunk.value(QStringLiteral("sha256")).toString();
+    const QString encoded = chunk.value(QStringLiteral("data_base64")).toString();
+    if (transferId.isEmpty() || count < 1 || count > 128 || index < 0 || index >= count ||
+        digest.size() != 64 || encoded.size() > 32 * 1024)
+        return;
+    for (auto it = incoming_.begin(); it != incoming_.end();) {
+        if (QDateTime::currentMSecsSinceEpoch() - it.value().started > 120'000)
+            it = incoming_.erase(it);
+        else
+            ++it;
+    }
+    if (incoming_.size() >= 128 && !incoming_.contains(transferId)) return;
+    Incoming transfer = incoming_.value(transferId);
+    if (transfer.count == 0) {
+        transfer = {slot, login, session, envelope.value(QStringLiteral("kind")).toString(), digest,
+                    count, QDateTime::currentMSecsSinceEpoch(), {}};
+    }
+    if (transfer.ownerSlot != slot || transfer.ownerLogin != login || transfer.sessionId != session ||
+        transfer.kind != envelope.value(QStringLiteral("kind")).toString() ||
+        transfer.digest != digest || transfer.count != count)
+        return;
+    const QByteArray bytes = QByteArray::fromBase64(encoded.toLatin1());
+    if (bytes.size() > 24 * 1024) return;
+    transfer.chunks.insert(index, bytes);
+    if (transfer.chunks.size() < count) {
+        incoming_.insert(transferId, transfer);
+        return;
+    }
+    incoming_.remove(transferId);
+    QByteArray complete;
+    for (int part = 0; part < count; ++part) {
+        if (!transfer.chunks.contains(part)) return;
+        complete.append(transfer.chunks.value(part));
+        if (complete.size() > 3 * 1024 * 1024) return;
+    }
+    const QString actual = QString::fromLatin1(QCryptographicHash::hash(
+        complete, QCryptographicHash::Sha256).toHex());
+    if (actual != digest) return;
+    const QJsonDocument document = QJsonDocument::fromJson(complete);
+    if (!document.isObject()) return;
+    if (payloadHandler_) payloadHandler_(remote, transfer.kind, document.object());
 }
 
 void DesktopSessionSyncCoordinator::acknowledge(int id) {

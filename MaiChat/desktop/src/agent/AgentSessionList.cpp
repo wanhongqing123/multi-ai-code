@@ -27,12 +27,20 @@ QString fromUtf8(const std::string& text) {
     return QString::fromUtf8(text.data(), static_cast<int>(text.size()));
 }
 
+QString remoteKey(const QJsonObject& session) {
+    return session.value(QStringLiteral("device_slot")).toString() + QLatin1Char(':') +
+           session.value(QStringLiteral("device_id")).toString() + QLatin1Char(':') +
+           session.value(QStringLiteral("id")).toString();
+}
+
 }  // namespace
 
 struct AgentSessionList::Runtime {
     AgentController* controller = nullptr;
     QListWidget* list = nullptr;
     QString current;
+    QString currentRemote;
+    QJsonArray remoteSessions;
 };
 
 AgentSessionList::AgentSessionList(AgentController& controller, QWidget* parent)
@@ -80,9 +88,19 @@ AgentSessionList::AgentSessionList(AgentController& controller, QWidget* parent)
     connect(newButton, &QPushButton::clicked, this,
             [this] { emit newSessionRequested(); });
     connect(runtime_->list, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) {
+        if (item->data(Qt::UserRole + 1).toBool()) {
+            const QJsonObject session = item->data(Qt::UserRole + 2).toJsonObject();
+            const QString key = remoteKey(session);
+            if (key.isEmpty() || key == runtime_->currentRemote) return;
+            runtime_->currentRemote = key;
+            runtime_->current.clear();
+            emit remoteSelected(session);
+            return;
+        }
         const QString sessionId = item->data(Qt::UserRole).toString();
-        if (sessionId.isEmpty() || sessionId == runtime_->current) return;
+        if (sessionId.isEmpty() || (sessionId == runtime_->current && runtime_->currentRemote.isEmpty())) return;
         runtime_->current = sessionId;
+        runtime_->currentRemote.clear();
         emit selected(sessionId);
     });
 }
@@ -109,7 +127,28 @@ void AgentSessionList::refresh() {
         font.setPixelSize(UiZoom::s(13));
         item->setFont(font);
         runtime_->list->addItem(item);
-        if (sessionId == runtime_->current) runtime_->list->setCurrentItem(item);
+        if (sessionId == runtime_->current && runtime_->currentRemote.isEmpty())
+            runtime_->list->setCurrentItem(item);
+    }
+    for (const QJsonValue& value : runtime_->remoteSessions) {
+        const QJsonObject session = value.toObject();
+        const QString id = session.value(QStringLiteral("id")).toString();
+        if (id.isEmpty()) continue;
+        QString title = session.value(QStringLiteral("title")).toString();
+        if (title == QStringLiteral("New session")) title = QStringLiteral("新对话");
+        const QString detail = QStringLiteral("%1 · %2")
+                                   .arg(session.value(QStringLiteral("device_name")).toString(),
+                                        session.value(QStringLiteral("online")).toBool()
+                                            ? QStringLiteral("在线") : QStringLiteral("离线"));
+        auto* item = new QListWidgetItem(title + QLatin1Char('\n') + detail);
+        item->setData(Qt::UserRole + 1, true);
+        item->setData(Qt::UserRole + 2, session);
+        item->setToolTip(detail);
+        QFont font = item->font();
+        font.setPixelSize(UiZoom::s(13));
+        item->setFont(font);
+        runtime_->list->addItem(item);
+        if (remoteKey(session) == runtime_->currentRemote) runtime_->list->setCurrentItem(item);
     }
 
     if (runtime_->list->count() == 0) {
@@ -120,12 +159,36 @@ void AgentSessionList::refresh() {
     }
 }
 
+void AgentSessionList::setRemoteSessions(const QJsonArray& sessions) {
+    if (runtime_->remoteSessions == sessions) return;
+    runtime_->remoteSessions = sessions;
+    refresh();
+}
+
 void AgentSessionList::setCurrent(const QString& sessionId) {
     runtime_->current = sessionId;
+    runtime_->currentRemote.clear();
+    if (sessionId.isEmpty()) {
+        runtime_->list->clearSelection();
+        return;
+    }
     for (int row = 0; row < runtime_->list->count(); ++row) {
         QListWidgetItem* item = runtime_->list->item(row);
         if (item->data(Qt::UserRole).toString() != sessionId) continue;
         runtime_->list->setCurrentItem(item);
         return;
+    }
+}
+
+void AgentSessionList::setCurrentRemote(const QJsonObject& session) {
+    runtime_->current.clear();
+    runtime_->currentRemote = remoteKey(session);
+    for (int row = 0; row < runtime_->list->count(); ++row) {
+        QListWidgetItem* item = runtime_->list->item(row);
+        if (item->data(Qt::UserRole + 1).toBool() &&
+            remoteKey(item->data(Qt::UserRole + 2).toJsonObject()) == runtime_->currentRemote) {
+            runtime_->list->setCurrentItem(item);
+            return;
+        }
     }
 }

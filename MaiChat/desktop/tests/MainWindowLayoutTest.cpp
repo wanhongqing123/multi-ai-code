@@ -2013,6 +2013,12 @@ void MainWindowLayoutTest::settingsNavigationShowsAccountAndSdkDefaults() {
     QCOMPARE(accountValue->text(), QStringLiteral("desktop-user"));
     QCOMPARE(nicknameValue->text(), QStringLiteral("昵称测试"));
     QVERIFY(nicknameButton->isEnabled());
+    const QByteArray capture = qgetenv("MAICHAT_CAPTURE_SETTINGS");
+    if (!capture.isEmpty()) {
+        window.show();
+        QCoreApplication::processEvents();
+        QVERIFY(settingsPage->grab().save(QString::fromUtf8(capture)));
+    }
     QCOMPARE(connectionValue->text(), QStringLiteral("未连接"));
     QCOMPARE(sdkAppIdValue->text(), QStringLiteral("1600148979"));
     // 设置页的值应是只读标签而非输入框；导航栏的搜索框是唯一合法的 QLineEdit。

@@ -99,6 +99,10 @@ public:
     void fetchAccountModelKeys(AccountModelKeysCompletion completion);
     using FriendQrCompletion = std::function<void(const QString&, const QByteArray&, const QString&)>;
     void fetchFriendQr(FriendQrCompletion completion);
+    using SessionSyncCompletion =
+        std::function<void(const QJsonObject&, const QString&)>;
+    void requestSessionSync(const QString& path, const QByteArray& method,
+                            const QJsonObject& body, SessionSyncCompletion completion);
     using FriendResolveCompletion = std::function<void(const QString&, const QString&)>;
     void resolveFriendPhone(const QString& phone, FriendResolveCompletion completion);
     void startSessionMonitoring();

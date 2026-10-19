@@ -58,7 +58,7 @@ int stopCancelledTransfer(void* context, curl_off_t, curl_off_t, curl_off_t, cur
 }
 
 bool validRequest(const QUrl& url, const QByteArray& method, const QByteArray& body, const QByteArray& bearer) {
-    if (!url.isValid() || !url.userInfo().isEmpty() || !url.query().isEmpty() || !url.fragment().isEmpty() ||
+    if (!url.isValid() || !url.userInfo().isEmpty() || !url.fragment().isEmpty() ||
         url.toString(QUrl::FullyEncoded).size() > 2048)
         return false;
     const bool production = url.scheme() == QStringLiteral("https") && url.host() == QStringLiteral("ichat.life") &&
@@ -66,7 +66,16 @@ bool validRequest(const QUrl& url, const QByteArray& method, const QByteArray& b
     const bool localTest = url.scheme() == QStringLiteral("http") && url.host() == QStringLiteral("127.0.0.1") &&
                            url.port() > 0 && url.path().startsWith(QStringLiteral("/v1/"));
     if (!production && !localTest) return false;
-    if (url.path().contains(QStringLiteral("..")) || body.size() > kMaximumRequestBytes || bearer.size() > 8192)
+    const bool sessionSync = url.path().contains(QStringLiteral("/v1/session-sync/"));
+    if (!url.query().isEmpty()) {
+        if (!sessionSync || !url.path().endsWith(QStringLiteral("/poll")) ||
+            !url.query().startsWith(QStringLiteral("wait_ms="))) return false;
+        bool validWait = false;
+        const int wait = url.query().mid(8).toInt(&validWait);
+        if (!validWait || wait < 0 || wait > 20000) return false;
+    }
+    const int maximumRequest = sessionSync ? 96 * 1024 : kMaximumRequestBytes;
+    if (url.path().contains(QStringLiteral("..")) || body.size() > maximumRequest || bearer.size() > 8192)
         return false;
     for (char character : bearer) {
         if (character < 33 || character > 126) return false;
@@ -135,7 +144,8 @@ DesktopCurlAuthResult DesktopCurlAuthTransport::perform(const QUrl& url, const Q
     set(CURLOPT_FORBID_REUSE, 1L);
     set(CURLOPT_SSL_SESSIONID_CACHE, 0L);
     set(CURLOPT_CONNECTTIMEOUT_MS, 10000L);
-    set(CURLOPT_TIMEOUT_MS, 15000L);
+    const bool sessionSync = url.path().contains(QStringLiteral("/v1/session-sync/"));
+    set(CURLOPT_TIMEOUT_MS, sessionSync ? 35000L : 15000L);
     set(CURLOPT_NOSIGNAL, 1L);
     set(CURLOPT_SSL_VERIFYPEER, 1L);
     set(CURLOPT_SSL_VERIFYHOST, 2L);

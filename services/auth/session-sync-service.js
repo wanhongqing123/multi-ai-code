@@ -30,7 +30,7 @@ function createSessionSyncService({ db, authorize, now = Date.now }) {
   const pending = db.prepare(`SELECT id,from_slot,from_login_session_id,
     client_message_id,session_id,kind,payload,created_at FROM sync_envelopes
     WHERE account_id=? AND to_slot=? AND to_login_session_id=? AND acked_at IS NULL
-      AND expires_at>? ORDER BY id LIMIT 32`);
+      AND expires_at>? ORDER BY id LIMIT 8`);
 
   function key(accountId, slot, loginSessionId) {
     return `${accountId}:${slot}:${loginSessionId}`;

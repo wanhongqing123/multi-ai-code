@@ -7,6 +7,7 @@
 #include <QCryptographicHash>
 #include <QFile>
 #include <QImage>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QPixmap>
@@ -238,6 +239,14 @@ public:
                                          QDateTime::currentDateTimeUtc()
                                              .addSecs(modelCredentialExpiresIn).toSecsSinceEpoch())}};
                     }
+                } else if (headers.startsWith("get /v1/session-sync/poll?wait_ms=1000 ")) {
+                    ++syncPollCount;
+                    syncBearer = headers.contains("authorization: bearer " + QByteArray(43, 'a'));
+                    response = {{QStringLiteral("messages"), QJsonArray{}}};
+                } else if (headers.startsWith("post /v1/session-sync/send ")) {
+                    ++syncSendCount;
+                    syncBearer = headers.contains("authorization: bearer " + QByteArray(43, 'a'));
+                    response = {{QStringLiteral("id"), 7}};
                 } else {
                     status = 404;
                 }
@@ -314,6 +323,9 @@ public:
     bool missingGlmKey = false;
     bool invalidMainModelShape = false;
     int bailianCredentialRequestCount = 0;
+    int syncPollCount = 0;
+    int syncSendCount = 0;
+    bool syncBearer = false;
     bool modelAccessDenied = false;
     int modelCredentialExpiresIn = 300;
     bool invalidBailianKey = false;
@@ -354,6 +366,7 @@ private slots:
     void fetchesAccountModelKeysThroughAccountSession();
     void refusesMalformedTemporaryModelCredentials();
     void retriesStoredSessionAfterTransientRestoreFailure();
+    void sessionSyncRequestsReuseMaiChatAccountAndAllowBoundedPoll();
     void revokesLateApprovedClaimBeforeReplacingQr();
     void waitsForLateClaimBeforeClosing();
     void cancelAfterApprovalRevokesAdoptedSession();
@@ -524,6 +537,38 @@ void LoginDialogTest::updatesMaiChatNicknameAndAllowsClearingIt() {
     auth.updateNickname(QStringLiteral("工具调用昵称"), {});
     QTRY_COMPARE_WITH_TIMEOUT(server.profileUpdateCount, 3, 5000);
     QTRY_COMPARE_WITH_TIMEOUT(auth.nickname(), QStringLiteral("工具调用昵称"), 5000);
+}
+
+void LoginDialogTest::sessionSyncRequestsReuseMaiChatAccountAndAllowBoundedPoll() {
+    FakeQrServer server;
+    DesktopAuthClient auth(nullptr, server.url(), false);
+    bool loggedIn = false;
+    auth.loginWithPassword(QStringLiteral("test_account"),
+        QStringLiteral("test-account-password-123456"),
+        [&loggedIn](bool ok, const QString&) { loggedIn = ok; });
+    QTRY_VERIFY_WITH_TIMEOUT(loggedIn, 5000);
+    bool polled = false;
+    auth.requestSessionSync(QStringLiteral("session-sync/poll?wait_ms=1000"), "GET", {},
+        [&polled](const QJsonObject& body, const QString& error) {
+            polled = error.isEmpty() && body.value(QStringLiteral("messages")).isArray();
+        });
+    QTRY_VERIFY_WITH_TIMEOUT(polled, 5000);
+    QCOMPARE(server.syncPollCount, 1);
+    QVERIFY(server.syncBearer);
+    bool sent = false;
+    auth.requestSessionSync(QStringLiteral("session-sync/send"), "POST",
+        {{QStringLiteral("kind"), QStringLiteral("command")}},
+        [&sent](const QJsonObject& body, const QString& error) {
+            sent = error.isEmpty() && body.value(QStringLiteral("id")).toInt() == 7;
+        });
+    QTRY_VERIFY_WITH_TIMEOUT(sent, 5000);
+    QCOMPARE(server.syncSendCount, 1);
+    const auto cancelled = std::make_shared<std::atomic_bool>(false);
+    const DesktopCurlAuthResult invalid = DesktopCurlAuthTransport::perform(
+        server.url().resolved(QUrl(QStringLiteral("session-sync/poll?wait_ms=20001"))),
+        "GET", {}, QByteArray(43, 'a'), cancelled);
+    QVERIFY(!invalid.error.isEmpty());
+    QCOMPARE(server.syncPollCount, 1);
 }
 
 void LoginDialogTest::displaysServerQrAndSendsMatchingVerifier() {

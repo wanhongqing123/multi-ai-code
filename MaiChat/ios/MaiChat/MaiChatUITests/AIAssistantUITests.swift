@@ -4,6 +4,33 @@
 import XCTest
 
 final class AIAssistantUITests: XCTestCase {
+    @MainActor func testConnectedDeviceShowsProductionSessionDirectory() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("此用例只验收已连接 iPhone 的正式账号路径")
+        #else
+        let app = XCUIApplication()
+        app.launch()
+        let launch = XCTAttachment(screenshot: app.screenshot())
+        launch.name = "production-iphone-launch"
+        launch.lifetime = .keepAlways
+        add(launch)
+        guard app.buttons["创作中心"].waitForExistence(timeout: 30) else {
+            XCTFail("iPhone 尚未进入登录后的 MaiChat 主页面")
+            return
+        }
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.375, dy: 0.93)).tap()
+        XCTAssertTrue(app.buttons["对话列表"].waitForExistence(timeout: 20))
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.72, dy: 0.5))
+        start.press(forDuration: 0.05, thenDragTo: end)
+        XCTAssertTrue(app.staticTexts["对话"].waitForExistence(timeout: 5))
+        let catalog = XCTAttachment(screenshot: app.screenshot())
+        catalog.name = "production-iphone-session-directory"
+        catalog.lifetime = .keepAlways
+        add(catalog)
+        #endif
+    }
+
     @MainActor func testNormalAppReadsAndControlsLocalFakeMacSession() async throws {
         let fixture = URL(string: "http://127.0.0.1:18190/v1/session-sync/sessions")!
         let probe = try? await URLSession.shared.data(from: fixture)

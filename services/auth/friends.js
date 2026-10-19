@@ -10,14 +10,14 @@ function createFriendService({ db, now, normalizePhone, lookupTimes }) {
   function resolve(query) {
     if (typeof query !== 'string' || query.length > 64) return null;
     const phone = normalizePhone(query);
-    return phone ? db.prepare(`SELECT id,account_id,im_user_id FROM users
+    return phone ? db.prepare(`SELECT id,account_id,nickname,im_user_id FROM users
       WHERE phone_e164=? AND disabled_at IS NULL`).get(phone) :
-      db.prepare(`SELECT id,account_id,im_user_id FROM users
+      db.prepare(`SELECT id,account_id,nickname,im_user_id FROM users
         WHERE account_id=? AND disabled_at IS NULL`).get(query);
   }
 
   function listFriends(ownerId) {
-    const rows = db.prepare(`SELECT users.account_id,users.im_user_id,
+    const rows = db.prepare(`SELECT users.account_id,users.nickname,users.im_user_id,
       friendships.created_at,friend_im_sync.desired AS pending_im_action
       FROM friendships JOIN users ON users.id=CASE
         WHEN friendships.left_user_id=? THEN friendships.right_user_id
@@ -30,12 +30,12 @@ function createFriendService({ db, now, normalizePhone, lookupTimes }) {
   }
 
   function listRequests(ownerId) {
-    const incoming = db.prepare(`SELECT friend_requests.id,users.account_id,
+    const incoming = db.prepare(`SELECT friend_requests.id,users.account_id,users.nickname,
       users.im_user_id,friend_requests.created_at FROM friend_requests
       JOIN users ON users.id=friend_requests.from_user_id
       WHERE friend_requests.to_user_id=? AND friend_requests.status='pending'
         AND users.disabled_at IS NULL ORDER BY friend_requests.created_at DESC`).all(ownerId);
-    const outgoing = db.prepare(`SELECT friend_requests.id,users.account_id,
+    const outgoing = db.prepare(`SELECT friend_requests.id,users.account_id,users.nickname,
       users.im_user_id,friend_requests.created_at FROM friend_requests
       JOIN users ON users.id=friend_requests.to_user_id
       WHERE friend_requests.from_user_id=? AND friend_requests.status='pending'
@@ -126,7 +126,8 @@ function createFriendService({ db, now, normalizePhone, lookupTimes }) {
       if (!peer) return json(404, { error: 'MaiChat account not found' });
       if (peer.id === session.user_id)
         return json(400, { error: 'Cannot add your own account' });
-      return json(200, { account_id: peer.account_id, im_user_id: peer.im_user_id });
+      return json(200, { account_id: peer.account_id, nickname: peer.nickname,
+        im_user_id: peer.im_user_id });
     }
     if (method === 'POST' && path === '/v1/friends/requests')
       return requestFriend(session.user_id, body?.account);

@@ -25,6 +25,19 @@ function normalizePhone(input) {
   return /^1[3-9][0-9]{9}$/.test(domestic) ? `+86${domestic}` : '';
 }
 
+function normalizeNickname(input) {
+  if (typeof input !== 'string') return null;
+  const nickname = input.trim().normalize('NFC');
+  if ([...nickname].length > 32 || Buffer.byteLength(nickname, 'utf8') > 120 ||
+      /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(nickname)) return null;
+  return nickname;
+}
+
+function publicUser(user) {
+  return { id: user.account_id, im_user_id: user.im_user_id,
+    nickname: user.nickname ?? null };
+}
+
 function json(statusCode, value) {
   return { statusCode, body: value };
 }
@@ -173,7 +186,7 @@ function createAuthService(options) {
       expires_in: ACCESS_LIFETIME / 1000,
       device_slot: device.device_slot,
       device_platform: device.device_platform,
-      user: { id: user.account_id, im_user_id: user.im_user_id }
+      user: publicUser(user)
     };
   }
 
@@ -181,7 +194,8 @@ function createAuthService(options) {
     const raw = headers?.authorization || headers?.Authorization || '';
     if (!/^Bearer [A-Za-z0-9_-]{43}$/.test(raw)) return null;
     const token = raw.slice(7);
-    const row = db.prepare(`SELECT sessions.*,users.account_id,users.phone_e164,users.im_user_id,
+    const row = db.prepare(`SELECT sessions.*,users.account_id,users.nickname,
+      users.phone_e164,users.im_user_id,
       users.disabled_at FROM sessions JOIN users ON users.id=sessions.user_id
       WHERE access_hash=?`).get(digest(token));
     if (rejectLegacySession(row)) return null;
@@ -630,6 +644,7 @@ function createAuthService(options) {
         .run(now(), now(), row.id);
       db.prepare(`UPDATE sessions SET revoked_at=?,revoked_reason='account_disabled'
         WHERE user_id=? AND revoked_at IS NULL`).run(now(), row.id);
+      db.prepare('DELETE FROM profile_im_sync WHERE user_id=?').run(row.id);
       db.prepare(`UPDATE friend_requests SET status='rejected',decided_at=?
         WHERE status='pending' AND (from_user_id=? OR to_user_id=?)`)
         .run(now(), row.id, row.id);
@@ -717,7 +732,8 @@ function createAuthService(options) {
           WHERE id=?`).run(now(), previous.id);
         return json(401, { error: 'Invalid session' });
       }
-      const row = db.prepare(`SELECT sessions.*,users.account_id,users.im_user_id,users.disabled_at
+      const row = db.prepare(`SELECT sessions.*,users.account_id,users.nickname,
+        users.im_user_id,users.disabled_at
         FROM sessions JOIN users ON users.id=sessions.user_id WHERE refresh_hash=?`).get(hash);
       if (rejectLegacySession(row)) return deviceSlotRequiredError(401);
       if (row?.revoked_reason === 'replaced')
@@ -733,7 +749,7 @@ function createAuthService(options) {
       return json(200, { access_token: accessToken, refresh_token: refreshToken,
         expires_in: ACCESS_LIFETIME / 1000, device_slot: row.device_slot,
         device_platform: row.device_platform,
-        user: { id: row.account_id, im_user_id: row.im_user_id } });
+        user: publicUser(row) });
     })();
   }
 
@@ -769,7 +785,7 @@ function createAuthService(options) {
     const protectedRoute =
       (method === 'GET' && path.startsWith('/v1/auth/desktop/request/')) ||
       (method === 'POST' && ['/v1/auth/desktop/approve',
-        '/v1/auth/desktop/deny', '/v1/auth/password/set',
+        '/v1/auth/desktop/deny', '/v1/auth/password/set', '/v1/auth/profile',
         '/v1/auth/logout', '/v1/friend/resolve'].includes(path)) ||
       (method === 'GET' && ['/v1/auth/me', '/v1/im/credential',
         '/v1/media/authorize',
@@ -784,6 +800,26 @@ function createAuthService(options) {
       return decideDesktopRequest(request, session, false);
     if (method === 'POST' && path === '/v1/auth/password/set')
       return setPassword(request, session);
+    if (method === 'POST' && path === '/v1/auth/profile') {
+      const nickname = normalizeNickname(request.nickname);
+      if (nickname === null) return json(400, { error: 'Invalid nickname' });
+      return db.transaction(() => {
+        const user = db.prepare(`SELECT id,account_id,im_user_id,nickname,disabled_at
+          FROM users WHERE id=?`).get(session.user_id);
+        if (!user || user.disabled_at)
+          return json(401, { error: 'Authentication required' });
+        const value = nickname || null;
+        db.prepare('UPDATE users SET nickname=?,updated_at=? WHERE id=?')
+          .run(value, now(), user.id);
+        db.prepare(`INSERT INTO profile_im_sync(user_id,desired_nickname,updated_at)
+          VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET
+          desired_nickname=excluded.desired_nickname,updated_at=excluded.updated_at,
+          attempts=0,last_error=NULL,revision=profile_im_sync.revision+1`)
+          .run(user.id, nickname, now());
+        return json(200, { user: publicUser({ ...user, nickname: value }),
+          pending_im_sync: true });
+      })();
+    }
     if (method === 'POST' && path === '/v1/auth/logout') {
       if (!session) return json(401, { error: 'Authentication required' });
       db.prepare(`UPDATE sessions SET revoked_at=?,revoked_reason='logout'
@@ -792,7 +828,7 @@ function createAuthService(options) {
     }
     if (method === 'GET' && path === '/v1/auth/me') {
       if (!session) return json(401, { error: 'Authentication required' });
-      return json(200, { user: { id: session.account_id, im_user_id: session.im_user_id,
+      return json(200, { user: { ...publicUser(session),
         phone_masked: session.phone_e164 ?
           `${session.phone_e164.slice(0, 5)}****${session.phone_e164.slice(-4)}` : null },
         device_slot: session.device_slot, device_platform: session.device_platform });

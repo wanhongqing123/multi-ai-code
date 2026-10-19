@@ -19,6 +19,7 @@ Node 服务只监听 `127.0.0.1:9100`。验证码、密码哈希、登录会话�
 | `POST /v1/auth/refresh` | `{refresh_token}`；轮换访问令牌与刷新令牌 |
 | `POST /v1/auth/logout` | Bearer 会话；撤销当前会话 |
 | `GET /v1/auth/me` | Bearer 会话；查询当前账号与脱敏手机号 |
+| `POST /v1/auth/profile` | 有效 Bearer 会话，传 `{nickname}`；设置自己的 MaiChat 昵称，空字符串清空。最多 32 个 Unicode 字符且不超过 120 字节；结果排队同步到腾讯 IM。 |
 | `POST /v1/auth/desktop/request` | 桌面端提交 `{platform:"mac"或"windows",code_challenge}`，返回 `request_id`、`qr_uri`、`qr_png_base64`、`display_code`、`expires_in:120` |
 | `GET /v1/auth/desktop/request/{request_id}` | 有效移动端 Bearer；首次查询把 `pending` 标记为 `scanned`，返回 `{platform,display_code,status,expires_in}` |
 | `POST /v1/auth/desktop/approve` | 有效移动端 Bearer + `{request_id}`；确认展示码后批准桌面登录 |
@@ -32,11 +33,11 @@ Node 服务只监听 `127.0.0.1:9100`。验证码、密码哈希、登录会话�
 | `GET /v1/media/authorize` | 有效 Bearer 会话；供素材服务核验该账号可否登记素材或取得 OSS 上传签名，不返回密钥 |
 | `POST /v1/asr/realtime-url` | 有效 Bearer 会话且空 JSON 请求体；返回一次性 `voice_id`、5 分钟有效的腾讯实时语音识别 `url` 与 Unix 秒 `expires_at`。每账号每分钟最多签发 10 次，未配置返回 503，超过频率返回 429；音频由 App 直连腾讯，不经过账号服务。 |
 | `GET /v1/friend/my-qr` | 有效 Bearer 会话；将 MaiChat `account_id` 编入好友二维码，不含手机号或凭据。 |
-| `POST /v1/friends/resolve` | 有效 Bearer 会话，传 `{account}`（MaiChat ID 或精确手机号）；返回 MaiChat `account_id` 与当前 `im_user_id`；每账号每小时最多 20 次。 |
+| `POST /v1/friends/resolve` | 有效 Bearer 会话，传 `{account}`（MaiChat ID 或精确手机号）；返回 MaiChat `account_id`、昵称与当前 `im_user_id`；每账号每小时最多 20 次。 |
 | `POST /v1/friends/requests` | 有效 Bearer 会话，传 `{account}`；创建待确认的 MaiChat 好友申请，同一发起人每小时最多 20 次。 |
 | `GET /v1/friends/requests` | 有效 Bearer 会话；返回待处理的 `incoming` 与 `outgoing`。 |
 | `POST /v1/friends/requests/{id}/accept`、`/reject` | 接收方同意或拒绝申请；同意后 MaiChat 关系立即生效，腾讯 IM 同步排队。 |
-| `GET /v1/friends` | 有效 Bearer 会话；返回 MaiChat 已接受好友及当前 IM 映射，不从腾讯列表构建。 |
+| `GET /v1/friends` | 有效 Bearer 会话；返回 MaiChat 已接受好友的账号、昵称及当前 IM 映射，不从腾讯列表构建。 |
 | `POST /v1/friends/remove` | 有效 Bearer 会话，传 `{account}`；删除 MaiChat 好友关系，异步删除腾讯双向关系。聊天历史不删除。 |
 | `POST /v1/friend/resolve` | 旧客户端过渡接口，仅按手机号返回 IM ID；新客户端不得使用。 |
 
@@ -55,6 +56,14 @@ Node 服务只监听 `127.0.0.1:9100`。验证码、密码哈希、登录会话�
 `node import-friend-mirror.js --run` 一次性导入互为好友的已注册账号。单向关系不会
 自动升级为双向好友。导入后停用旧的 `maichat-friend-mirror.timer`，后续不再让腾讯列表
 覆盖 MaiChat 主记录。导入有不可重复标记，删除好友后不会从旧镜像重新出现。
+
+## 昵称主记录
+
+`users.nickname` 是可空的 MaiChat 账号资料；未设置时 App 展示 MaiChat ID。登录、刷新、
+`auth/me` 与好友接口读同一列。用户修改或清空昵称时先原子保存 MaiChat 账号库，再写入
+`profile_im_sync`；服务端每 5 秒把相同值投影到腾讯 IM 的 `Tag_Profile_IM_Nick`。
+失败保留队列重试，写入期间用户再次修改昵称时旧同步结果不能删除新任务。
+腾讯 IM 昵称不回写 MaiChat 账号库，也不用于账号身份或好友关系主键。
 
 ### 原有镜像的范围
 

@@ -17,6 +17,7 @@ function openStore(filename) {
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       account_id TEXT UNIQUE,
+      nickname TEXT,
       phone_e164 TEXT UNIQUE,
       im_user_id TEXT NOT NULL UNIQUE,
       password_hash TEXT,
@@ -166,6 +167,14 @@ function openStore(filename) {
       PRIMARY KEY(left_user_id,right_user_id),
       CHECK(left_user_id < right_user_id)
     );
+    CREATE TABLE IF NOT EXISTS profile_im_sync (
+      user_id TEXT PRIMARY KEY REFERENCES users(id),
+      desired_nickname TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT,
+      revision INTEGER NOT NULL DEFAULT 1
+    );
     CREATE TABLE IF NOT EXISTS admin_audit (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       action TEXT NOT NULL,
@@ -186,6 +195,7 @@ function openStore(filename) {
         db.exec(`CREATE TABLE users_nullable_phone (
           id TEXT PRIMARY KEY,
           account_id TEXT UNIQUE,
+          nickname TEXT,
           phone_e164 TEXT UNIQUE,
           im_user_id TEXT NOT NULL UNIQUE,
           password_hash TEXT,
@@ -193,7 +203,7 @@ function openStore(filename) {
           updated_at INTEGER NOT NULL,
           disabled_at INTEGER
         );
-        INSERT INTO users_nullable_phone SELECT id,NULL,phone_e164,im_user_id,
+        INSERT INTO users_nullable_phone SELECT id,NULL,NULL,phone_e164,im_user_id,
           password_hash,created_at,updated_at,disabled_at FROM users;
         DROP TABLE users;
         ALTER TABLE users_nullable_phone RENAME TO users;`);
@@ -206,6 +216,7 @@ function openStore(filename) {
   }
   const userColumns = new Set(db.pragma('table_info(users)').map(column => column.name));
   if (!userColumns.has('account_id')) db.exec('ALTER TABLE users ADD COLUMN account_id TEXT');
+  if (!userColumns.has('nickname')) db.exec('ALTER TABLE users ADD COLUMN nickname TEXT');
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_account_id ON users(account_id)');
   db.transaction(() => {
     const legacy = db.prepare('SELECT id FROM users WHERE account_id IS NULL').all();

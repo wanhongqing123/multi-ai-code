@@ -11,6 +11,8 @@ const { createAccountModelKeyIssuer } = require('./account-model-keys');
 const { createAsrRealtimeUrlIssuer } = require('./asr-realtime-url');
 const { createAdminServer } = require('./admin-server');
 const { createTencentFriendWriter, syncPendingFriendActions } = require('./tim-friend-sync');
+const { createTencentProfileWriter, syncPendingProfileActions } =
+  require('./tim-profile-sync');
 const { createTencentAccountProvisioner } = require('./tim-account-provision');
 
 const MAX_BODY_BYTES = 4096;
@@ -94,6 +96,11 @@ function start(env = process.env) {
     adminUser: env.MAICHAT_IM_ADMIN_USER || 'administrator',
     origin: env.MAICHAT_IM_REST_ORIGIN || 'https://console.tim.qq.com'
   });
+  const profileWriter = createTencentProfileWriter({
+    sdkAppId: Number(env.MAICHAT_IM_SDK_APP_ID), imSecret: env.MAICHAT_IM_SECRET_KEY,
+    adminUser: env.MAICHAT_IM_ADMIN_USER || 'administrator',
+    origin: env.MAICHAT_IM_REST_ORIGIN || 'https://console.tim.qq.com'
+  });
   const port = Number(env.MAICHAT_AUTH_PORT || 9100);
   if (!Number.isInteger(port) || port < 1 || port > 65535)
     throw new Error('Invalid auth port');
@@ -111,8 +118,19 @@ function start(env = process.env) {
     finally { friendSyncRunning = false; }
   }, 5_000);
   friendSync.unref();
+  let profileSyncRunning = false;
+  const profileSync = setInterval(async () => {
+    if (profileSyncRunning) return;
+    profileSyncRunning = true;
+    try { await syncPendingProfileActions(db, profileWriter); }
+    catch { process.stderr.write('MaiChat profile IM sync failed\n'); }
+    finally { profileSyncRunning = false; }
+  }, 5_000);
+  profileSync.unref();
   const server = createServer(service);
-  server.on('close', () => { clearInterval(maintenance); clearInterval(friendSync); });
+  server.on('close', () => {
+    clearInterval(maintenance); clearInterval(friendSync); clearInterval(profileSync);
+  });
   server.listen(port, '127.0.0.1');
   if (env.MAICHAT_AUTH_ADMIN_SECRET) {
     const adminPort = Number(env.MAICHAT_AUTH_ADMIN_PORT || 9101);

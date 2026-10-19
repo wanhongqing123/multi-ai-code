@@ -163,6 +163,7 @@ test('Session directory and pending envelopes survive a service restart', async 
     service = createSessionSyncService({ db, authorize });
     const sessions = await call('phone-token', 'GET', '/v1/session-sync/sessions');
     assert.equal(sessions.body.sessions[0].title, 'A project');
+    assert.equal(sessions.body.sessions[0].online, false);
     const received = await call('mac-token', 'GET', '/v1/session-sync/poll');
     assert.equal(received.body.messages[0].payload.text, 'Check the build');
   } finally {

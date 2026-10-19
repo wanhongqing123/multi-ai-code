@@ -67,6 +67,8 @@ function openSessionSyncStore(filename) {
     CREATE INDEX IF NOT EXISTS sync_message_receipts_age
       ON sync_message_receipts(created_at);
   `);
+  // 进程重启后，旧心跳不能证明设备仍连着新进程；等待它重新上报。
+  db.prepare('UPDATE sync_devices SET last_seen=0').run();
   return db;
 }
 

@@ -4,6 +4,69 @@
 import XCTest
 
 final class AIAssistantUITests: XCTestCase {
+    @MainActor func testNormalAppReadsAndControlsLocalFakeMacSession() async throws {
+        let fixture = URL(string: "http://127.0.0.1:18190/v1/session-sync/sessions")!
+        let probe = try? await URLSession.shared.data(from: fixture)
+        guard (probe?.1 as? HTTPURLResponse)?.statusCode == 401 else {
+            throw XCTSkip("需要本机无付费 Session 同步服务")
+        }
+        let app = XCUIApplication()
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] = "local sync UI test passphrase"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18190"
+        app.launch()
+        let creationCenter = app.buttons["创作中心"]
+        guard creationCenter.waitForExistence(timeout: 30) else {
+            XCTFail("测试账号未进入 MaiChat 主页面")
+            return
+        }
+        // iOS 26 的底栏图标偶尔给出 {-1,-1} 的辅助功能命中点；点真实底栏位置。
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.375, dy: 0.93)).tap()
+        let conversations = app.buttons["对话列表"]
+        guard conversations.waitForExistence(timeout: 20) else {
+            XCTFail("未打开创作中心")
+            return
+        }
+        let swipeStart = app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5))
+        let swipeEnd = app.coordinate(withNormalizedOffset: CGVector(dx: 0.72, dy: 0.5))
+        swipeStart.press(forDuration: 0.05, thenDragTo: swipeEnd)
+        XCTAssertTrue(app.staticTexts["对话"].waitForExistence(timeout: 5))
+        let remote = app.buttons["ai-remote-conversation-mac:localmacfixture:ses_mock_mac"]
+        guard remote.waitForExistence(timeout: 30) else {
+            XCTFail("本机假 Mac 会话未出现在列表")
+            return
+        }
+        XCTAssertTrue(remote.label.contains("测试 Mac · 在线"))
+        remote.tap()
+        let loading = XCTAttachment(screenshot: app.screenshot())
+        loading.name = "normal-app-remote-mac-opening"
+        loading.lifetime = .keepAlways
+        add(loading)
+        let history = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "这条历史来自本机假 Mac Session")
+        ).firstMatch
+        guard history.waitForExistence(timeout: 30) else {
+            XCTFail("所属设备历史未返回")
+            return
+        }
+        let opened = XCTAttachment(screenshot: app.screenshot())
+        opened.name = "normal-app-remote-mac-history"
+        opened.lifetime = .keepAlways
+        add(opened)
+
+        let composer = app.textViews["ai-composer"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        composer.tap()
+        composer.typeText("从 iPhone 请求本机假 Mac")
+        let send = app.buttons["ai-send-draft"]
+        XCTAssertTrue(send.waitForExistence(timeout: 10))
+        send.tap()
+        let echoed = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "从 iPhone 请求本机假 Mac")
+        ).firstMatch
+        XCTAssertTrue(echoed.waitForExistence(timeout: 30))
+    }
+
     func testNormalAppKeepsConversationPageVisibleAcrossNavigation() throws {
         let environment = ProcessInfo.processInfo.environment
         guard let phone = environment["MAICHAT_LOCAL_UI_PHONE"],

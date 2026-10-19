@@ -228,6 +228,12 @@ actor MaiChatAuthClient {
     private let baseURL = URL(string: "https://ichat.life/api/v1/")!
     #endif
     private let refreshStore = KeychainSecretStore(account: "maichat-account-refresh-token")
+    #if DEBUG && targetEnvironment(simulator)
+    private var localTestRefreshToken = ""
+    private var usesLocalTestServer: Bool {
+        ProcessInfo.processInfo.environment["MAICHAT_LOCAL_UI_PHONE"] != nil
+    }
+    #endif
     private var accessToken: String?
     private var accessExpiresAt = Date.distantPast
     private var refreshTask: Task<MaiChatAuthSession, Error>?
@@ -454,7 +460,7 @@ actor MaiChatAuthClient {
     }
 
     func credentialIfAvailable(expectedUserID: String) async throws -> MaiChatIMCredential? {
-        guard accessToken != nil || !refreshStore.readSecretKey().isEmpty else { return nil }
+        guard accessToken != nil || !storedRefreshToken().isEmpty else { return nil }
         let token = try await currentAccessToken()
         let credential: MaiChatIMCredential
         do {
@@ -525,7 +531,7 @@ actor MaiChatAuthClient {
     }
 
     func seedanceCredentialIfAvailable() async throws -> MaiChatSeedanceCredential? {
-        guard accessToken != nil || !refreshStore.readSecretKey().isEmpty else { return nil }
+        guard accessToken != nil || !storedRefreshToken().isEmpty else { return nil }
         let token = try await currentAccessToken()
         do {
             return try await request("model/seedance-credential", method: "GET", bearer: token)
@@ -538,7 +544,7 @@ actor MaiChatAuthClient {
     }
 
     func bailianCredentialIfAvailable() async throws -> MaiChatBailianCredential? {
-        guard accessToken != nil || !refreshStore.readSecretKey().isEmpty else { return nil }
+        guard accessToken != nil || !storedRefreshToken().isEmpty else { return nil }
         let token = try await currentAccessToken()
         do {
             return try await request("model/bailian-credential", method: "GET", bearer: token)
@@ -551,7 +557,7 @@ actor MaiChatAuthClient {
     }
 
     func accountModelKeysIfAvailable() async throws -> MaiChatAccountModelKeys? {
-        guard accessToken != nil || !refreshStore.readSecretKey().isEmpty else { return nil }
+        guard accessToken != nil || !storedRefreshToken().isEmpty else { return nil }
         let expectedSessionVersion = sessionVersion
         let token = try await currentAccessToken()
         let issued: MaiChatAccountModelKeys
@@ -569,7 +575,7 @@ actor MaiChatAuthClient {
     }
 
     func mediaServiceAccessIfAvailable() async throws -> MaiChatMediaServiceAccess? {
-        guard accessToken != nil || !refreshStore.readSecretKey().isEmpty else { return nil }
+        guard accessToken != nil || !storedRefreshToken().isEmpty else { return nil }
         let expectedSessionVersion = sessionVersion
         let token = try await currentAccessToken()
         guard sessionVersion == expectedSessionVersion,
@@ -590,7 +596,7 @@ actor MaiChatAuthClient {
         refreshTask = nil
         accessToken = nil
         accessExpiresAt = .distantPast
-        try? refreshStore.saveSecretKey("")
+        try? saveRefreshToken("")
         return token
     }
 
@@ -601,8 +607,25 @@ actor MaiChatAuthClient {
         )
     }
 
+    private func storedRefreshToken() -> String {
+        #if DEBUG && targetEnvironment(simulator)
+        if usesLocalTestServer { return localTestRefreshToken }
+        #endif
+        return refreshStore.readSecretKey()
+    }
+
+    private func saveRefreshToken(_ token: String) throws {
+        #if DEBUG && targetEnvironment(simulator)
+        if usesLocalTestServer {
+            localTestRefreshToken = token
+            return
+        }
+        #endif
+        try refreshStore.saveSecretKey(token)
+    }
+
     private func adopt(_ session: MaiChatAuthSession) throws {
-        try refreshStore.saveSecretKey(session.refreshToken)
+        try saveRefreshToken(session.refreshToken)
         accessToken = session.accessToken
         accessExpiresAt = Date().addingTimeInterval(TimeInterval(session.expiresIn - 30))
     }
@@ -615,7 +638,7 @@ actor MaiChatAuthClient {
             guard sessionVersion == version else { throw MaiChatAuthError.sessionExpired }
             return session.accessToken
         }
-        let refreshToken = refreshStore.readSecretKey()
+        let refreshToken = storedRefreshToken()
         guard !refreshToken.isEmpty else { throw MaiChatAuthError.sessionExpired }
         let version = sessionVersion
         // 多个 IM 操作同时需要凭据时只能刷新一次；旧令牌被重复使用会撤销会话。
@@ -633,7 +656,7 @@ actor MaiChatAuthClient {
         } catch MaiChatAuthError.requestFailed("Invalid session") {
             guard sessionVersion == version else { throw MaiChatAuthError.sessionExpired }
             accessToken = nil
-            try? refreshStore.saveSecretKey("")
+            try? saveRefreshToken("")
             throw MaiChatAuthError.sessionExpired
         } catch {
             // 临时网络失败保留刷新令牌，下次连接可继续重试。
@@ -660,16 +683,36 @@ actor MaiChatAuthClient {
             components?.queryItems = [URLQueryItem(name: "wait_ms", value: String(waitMilliseconds))]
         }
         guard let url = components?.url else { throw MaiChatAuthError.invalidServerResponse }
+        var responseData = Data()
+        var statusCode = 0
+        #if DEBUG && targetEnvironment(simulator)
+        if url.scheme == "http" {
+            // 本机 UI 测试使用账号客户端已有的 loopback curl 通道；正式设备只走 HTTPS。
+            (responseData, statusCode) = try await Self.performCurlRequest(
+                url: url.absoluteString, method: method, bearer: token,
+                body: body, caBundlePath: "")
+        } else {
+            let response = try await MaiChatHttpClient.request(
+                url: url, method: method, bearer: token,
+                contentType: method == "POST" ? "application/json" : "", body: body,
+                maximumResponseBytes: 1024 * 1024,
+                timeoutMilliseconds: max(30_000, waitMilliseconds + 10_000))
+            responseData = response.body
+            statusCode = response.statusCode
+        }
+        #else
         let response = try await MaiChatHttpClient.request(
             url: url, method: method, bearer: token,
             contentType: method == "POST" ? "application/json" : "", body: body,
             maximumResponseBytes: 1024 * 1024,
-            timeoutMilliseconds: max(30_000, waitMilliseconds + 10_000)
-        )
-        guard (200..<300).contains(response.statusCode) else {
+            timeoutMilliseconds: max(30_000, waitMilliseconds + 10_000))
+        responseData = response.body
+        statusCode = response.statusCode
+        #endif
+        guard (200..<300).contains(statusCode) else {
             let serverError = try? JSONDecoder().decode(
-                MaiChatAuthServerError.self, from: response.body)
-            if response.statusCode == 401 {
+                MaiChatAuthServerError.self, from: responseData)
+            if statusCode == 401 {
                 guard sessionVersion == requestedSessionVersion else {
                     throw MaiChatAuthError.sessionExpired
                 }
@@ -689,9 +732,9 @@ actor MaiChatAuthClient {
                 throw MaiChatAuthError.sessionExpired
             }
             throw MaiChatAuthError.requestFailed(serverError?.error ??
-                "设备同步服务暂时不可用（\(response.statusCode)）")
+                "设备同步服务暂时不可用（\(statusCode)）")
         }
-        return response.body
+        return responseData
     }
 
     private func request<T: Decodable & Sendable>(

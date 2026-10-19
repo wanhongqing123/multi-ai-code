@@ -827,6 +827,7 @@ final class AIAssistantModel: ObservableObject {
     @Published var settings = AIModelSettings()
     @Published var configured = false
     @Published var error = ""
+    @Published private(set) var remoteStatus = ""
     @Published var ready = false
     @Published var historyLoaded = false
     @Published private(set) var hasOlderMessages = false
@@ -1086,8 +1087,8 @@ final class AIAssistantModel: ObservableObject {
         guard hostStartup == nil else { return }
         hostStartup = Task { @MainActor [weak self] in
             guard let self else { return }
-            self.startRemotePolling()
             await self.prepareFirstPage()
+            if self.ready { self.startRemotePolling() }
             self.hostStartup = nil
         }
     }
@@ -1143,7 +1144,8 @@ final class AIAssistantModel: ObservableObject {
         remotePoll = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
-                guard AIMobileHostToolProvider.shared.appState?.hasUnifiedAccount == true else {
+                guard AIMobileHostToolProvider.shared.appState?.hasUnifiedAccount == true,
+                      self.ready else {
                     try? await Task.sleep(for: .seconds(2))
                     continue
                 }
@@ -1186,27 +1188,34 @@ final class AIAssistantModel: ObservableObject {
                     for envelope in envelopes {
                         await self.handleRemoteEnvelope(envelope)
                     }
-                    let timedOut = self.pendingRemoteCommands.filter {
-                        Date().timeIntervalSince($0.value) > 30
-                    }
-                    if !timedOut.isEmpty {
-                        for id in timedOut.keys { self.pendingRemoteCommands.removeValue(forKey: id) }
-                        self.showTransientError(
-                            "所属设备是否执行了操作尚未确定，请先查看会话记录，不要直接重复发送",
-                            duration: .seconds(12))
-                    }
-                    if self.pendingRemoteSelection != nil,
-                       Date().timeIntervalSince(self.pendingRemoteSelectionStarted) > 20 {
-                        self.pendingRemoteSelection = nil
-                        self.showTransientError("读取所属设备会话超时，请重新选择")
-                    }
+                    self.expireRemoteRequests()
                 } catch {
+                    logAIHistoryEvent("session-sync failed: \(error.localizedDescription)")
+                    self.expireRemoteRequests()
                     if self.selectedRemote != nil {
                         self.showTransientError(error.localizedDescription, duration: .seconds(8))
                     }
                     try? await Task.sleep(for: .seconds(2))
                 }
             }
+        }
+    }
+
+    private func expireRemoteRequests() {
+        let timedOut = pendingRemoteCommands.filter {
+            Date().timeIntervalSince($0.value) > 30
+        }
+        if !timedOut.isEmpty {
+            for id in timedOut.keys { pendingRemoteCommands.removeValue(forKey: id) }
+            remoteStatus = ""
+            showTransientError(
+                "所属设备是否执行了操作尚未确定，请先查看会话记录，不要直接重复发送",
+                duration: .seconds(12))
+        }
+        if pendingRemoteSelection != nil,
+           Date().timeIntervalSince(pendingRemoteSelectionStarted) > 20 {
+            pendingRemoteSelection = nil
+            showTransientError("读取所属设备会话超时，请重新选择")
         }
     }
 
@@ -1217,6 +1226,7 @@ final class AIAssistantModel: ObservableObject {
     }
 
     func selectRemoteConversation(_ remote: AIRemoteSession) async {
+        logAIHistoryEvent("remote-select-request slot=\(remote.deviceSlot) online=\(remoteIsOnline(remote))")
         guard remoteIsOnline(remote) else {
             showTransientError("所属设备离线，暂时无法读取这段会话")
             return
@@ -1235,11 +1245,13 @@ final class AIAssistantModel: ObservableObject {
             lastRemoteHistoryRequest = Date()
         } catch {
             pendingRemoteSelection = nil
+            logAIHistoryEvent("remote-select-error \(error.localizedDescription)")
             showTransientError(error.localizedDescription, duration: .seconds(8))
         }
     }
 
     private func handleRemoteEnvelope(_ envelope: AIRemoteSessionTransport.Envelope) async {
+        logAIHistoryEvent("remote-envelope kind=\(envelope.kind) slot=\(envelope.fromSlot)")
         defer { Task { try? await remoteTransport.acknowledge(envelope.id) } }
         if envelope.kind == "history_request" {
             await answerRemoteHistoryRequest(envelope)
@@ -1293,11 +1305,13 @@ final class AIAssistantModel: ObservableObject {
         if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            object["type"] as? String == "command_result" {
             if let id = object["command_id"] as? String,
-               pendingRemoteCommands.removeValue(forKey: id) != nil,
-               let result = object["result"] as? [String: Any],
-               result["ok"] as? Bool != true {
-                showTransientError(result["error"] as? String ?? "所属设备未执行操作",
-                                   duration: .seconds(8))
+               pendingRemoteCommands.removeValue(forKey: id) != nil {
+                remoteStatus = pendingRemoteCommands.isEmpty ? "" : "等待所属设备确认操作…"
+                if let result = object["result"] as? [String: Any],
+                   result["ok"] as? Bool != true {
+                    showTransientError(result["error"] as? String ?? "所属设备未执行操作",
+                                       duration: .seconds(8))
+                }
             }
             return
         }
@@ -1694,7 +1708,7 @@ final class AIAssistantModel: ObservableObject {
                 let id = try await remoteTransport.send(to: remote, kind: "command",
                                                         payload: ["action": "prompt", "text": text])
                 pendingRemoteCommands[id] = Date()
-                showTransientError("已送达 \(remote.deviceName)，等待设备确认执行", duration: .seconds(8))
+                remoteStatus = "已送达 \(remote.deviceName)，等待设备确认执行"
                 return true
             } catch {
                 showTransientError(error.localizedDescription, duration: .seconds(8))
@@ -1786,6 +1800,7 @@ final class AIAssistantModel: ObservableObject {
                 let id = try await remoteTransport.send(to: remote, kind: "command",
                                                         payload: payload)
                 pendingRemoteCommands[id] = Date()
+                remoteStatus = "已送达 \(remote.deviceName)，等待设备确认执行"
             } catch { showTransientError(error.localizedDescription, duration: .seconds(8)) }
             return
         }

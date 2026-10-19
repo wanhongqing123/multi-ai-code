@@ -751,6 +751,8 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 NSLocalizedDescriptionKey: "保存登录账号失败，请重试"
             ])
         }
+        // 用户仍在 IM 页面时也让已登录的创作 Session 保持可发现和可接收远端操作。
+        AIAssistantModel.shared.startSessionSyncForAccount()
         // 账号已经落地后领取主聊天 Key；失败不撤销 IM 登录，进入创作中心时可重试。
         _ = try? await AICloudCredentialSync.refreshAccountModelKeysIfAvailable()
         if wasConnected && previousUserID == session.user.imUserId {

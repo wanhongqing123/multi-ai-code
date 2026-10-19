@@ -813,6 +813,7 @@ final class AIAssistantModel: ObservableObject {
         shared.stopRemoteSync()
         shared.initialPreparation?.cancel()
         shared.appearingTask?.cancel()
+        shared.hostStartup?.cancel()
         shared.transientErrorTask?.cancel()
         shared = AIAssistantModel()
     }
@@ -856,6 +857,7 @@ final class AIAssistantModel: ObservableObject {
     private var transientErrorTask: Task<Void, Never>?
     private var lastBackendError = ""
     private var initialPreparation: Task<Void, Never>?
+    private var hostStartup: Task<Void, Never>?
     private var appearingTask: Task<Void, Never>?
     private var pendingInitialPage: (session: String, newestID: String)?
     private var loadingOlderMessages = false
@@ -1024,6 +1026,7 @@ final class AIAssistantModel: ObservableObject {
     }
 
     func prepareFirstPage() async {
+        if ready && pendingInitialPage != nil { return }
         if historyLoaded {
             logAIHistoryEvent("prepare skip selected=\(selected) count=\(messages.count)")
             return
@@ -1078,6 +1081,16 @@ final class AIAssistantModel: ObservableObject {
             appearingTask = nil
         }
     }
+
+    func startSessionSyncForAccount() {
+        guard hostStartup == nil else { return }
+        hostStartup = Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.startRemotePolling()
+            await self.prepareFirstPage()
+            self.hostStartup = nil
+        }
+    }
     func disappear() {
         visible = false
         composerTyping = false
@@ -1130,8 +1143,7 @@ final class AIAssistantModel: ObservableObject {
         remotePoll = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
-                guard AIMobileHostToolProvider.shared.appState?.hasUnifiedAccount == true,
-                      self.ready else {
+                guard AIMobileHostToolProvider.shared.appState?.hasUnifiedAccount == true else {
                     try? await Task.sleep(for: .seconds(2))
                     continue
                 }

@@ -122,7 +122,7 @@ private slots:
     void sendsMultilineTextWithoutFlatteningReturns();
     void rendersSentMessageFromTopWithMetadata();
     void rendersRelativeMessageDates();
-    void contactsNavigationShowsContactsAndOpensChat();
+    void contactsNavigationShowsProfileBeforeChat();
     void composerDraftAndQuoteStayWithTheirContact();
     void attachmentDraftStaysWithItsContact();
     void contactsCurrentSelectionDoesNotLeaveContactsPage();
@@ -1708,10 +1708,17 @@ void MainWindowLayoutTest::rendersRelativeMessageDates() {
     QVERIFY(actualTimes.contains(olderTime.toString(QStringLiteral("M 月 d 日 HH:mm"))));
 }
 
-void MainWindowLayoutTest::contactsNavigationShowsContactsAndOpensChat() {
+void MainWindowLayoutTest::contactsNavigationShowsProfileBeforeChat() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
     app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+    RemoteIMApplication::AccountFriendOperations operations;
+    operations.list = [](auto completion) {
+        completion({RemoteIMApplication::AccountFriend{
+            QStringLiteral("m_friend"), QStringLiteral("好友昵称"),
+            QStringLiteral("phone-user")}}, {});
+    };
+    app.setAccountFriendOperations(std::move(operations));
 
     MainWindow window(app);
     auto* contactsNavButton = window.findChild<QPushButton*>(QStringLiteral("contactsNavButton"));
@@ -1731,6 +1738,18 @@ void MainWindowLayoutTest::contactsNavigationShowsContactsAndOpensChat() {
 
     const QRect itemRect = contactsList->visualItemRect(contactsList->item(0));
     QTest::mouseClick(contactsList->viewport(), Qt::LeftButton, Qt::NoModifier, itemRect.center());
+    auto* profileStack = window.findChild<QStackedWidget*>(QStringLiteral("contactProfileStack"));
+    auto* profileName = window.findChild<QLabel*>(QStringLiteral("contactProfileName"));
+    auto* profileId = window.findChild<QLabel*>(QStringLiteral("contactProfileAccountId"));
+    auto* message = window.findChild<QPushButton*>(QStringLiteral("contactProfileMessageButton"));
+    QVERIFY(profileStack && profileName && profileId && message);
+    QCOMPARE(contentStack->currentWidget(), contactsPage);
+    QCOMPARE(profileStack->currentIndex(), 1);
+    QCOMPARE(profileName->text(), QStringLiteral("好友昵称"));
+    QCOMPARE(profileId->text(), QStringLiteral("m_friend"));
+    const QByteArray capture = qgetenv("MAICHAT_CAPTURE_CONTACT_PROFILE");
+    if (!capture.isEmpty()) QVERIFY(profileStack->grab().save(QString::fromUtf8(capture)));
+    message->click();
     QCOMPARE(app.chatState().selectedPeerId(), QStringLiteral("phone-user"));
     auto* messagesPage = window.findChild<QWidget*>(QStringLiteral("messagesPage"));
     QVERIFY(messagesPage != nullptr);

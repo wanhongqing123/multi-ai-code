@@ -110,6 +110,7 @@ private:
     void refreshSelectedConversation();
     void refreshContacts();
     void refreshContactDirectory();
+    void refreshContactProfile();
     QList<RemoteIMContact> acceptedContacts() const;
     // 通讯录分组：表头和联系人共用 contactsList_，表头是一种特殊行。
     QListWidgetItem* makeContactItem(const RemoteIMContact& contact);
@@ -326,6 +327,13 @@ private:
     QPointer<QWidget> videoDialog_;
     QWidget* messagesPage_ = nullptr;
     QWidget* contactsPage_ = nullptr;
+    QStackedWidget* contactProfileStack_ = nullptr;
+    QLabel* contactProfileAvatar_ = nullptr;
+    QLabel* contactProfileName_ = nullptr;
+    QLabel* contactProfileId_ = nullptr;
+    QPushButton* contactProfileMessageButton_ = nullptr;
+    QPushButton* contactProfileDeleteButton_ = nullptr;
+    QString selectedContactProfileUserId_;
     QWidget* settingsPage_ = nullptr;
     QListWidget* conversationList_ = nullptr;
     QListWidget* contactsList_ = nullptr;

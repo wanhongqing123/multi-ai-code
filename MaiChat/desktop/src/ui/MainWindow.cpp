@@ -2522,16 +2522,18 @@ void MainWindow::buildUi() {
   contactsList_->setItemDelegate(new ContactListDelegate(contactsList_));
   contactsDirectoryLayout->addWidget(contactsList_, 1);
 
-  auto *contactHintPane = new QWidget(contactsPage_);
+  contactProfileStack_ = new QStackedWidget(contactsPage_);
+  contactProfileStack_->setObjectName(QStringLiteral("contactProfileStack"));
+  auto *contactHintPane = new QWidget(contactProfileStack_);
   contactHintPane->setObjectName(QStringLiteral("contactHintPane"));
   auto *contactHintLayout = new QVBoxLayout(contactHintPane);
   contactHintLayout->setContentsMargins(36, 36, 36, 36);
   contactHintLayout->setSpacing(10);
   auto *contactHintTitle =
-      new QLabel(QStringLiteral("选择联系人开始会话"), contactHintPane);
+      new QLabel(QStringLiteral("选择联系人查看资料"), contactHintPane);
   contactHintTitle->setObjectName(QStringLiteral("contactHintTitle"));
   auto *contactHintSubtitle = new QLabel(
-      QStringLiteral("点击左侧联系人后会切回消息页，并打开对应聊天窗口。"),
+      QStringLiteral("点击左侧联系人查看资料，再从资料页发消息。"),
       contactHintPane);
   contactHintSubtitle->setObjectName(QStringLiteral("contactHintSubtitle"));
   contactHintLayout->addStretch(1);
@@ -2539,8 +2541,72 @@ void MainWindow::buildUi() {
   contactHintLayout->addWidget(contactHintSubtitle, 0, Qt::AlignHCenter);
   contactHintLayout->addStretch(1);
 
+  auto *contactProfilePane = new QWidget(contactProfileStack_);
+  contactProfilePane->setObjectName(QStringLiteral("contactProfilePane"));
+  auto *profileLayout = new QVBoxLayout(contactProfilePane);
+  profileLayout->setContentsMargins(UiZoom::s(40), UiZoom::s(38),
+                                    UiZoom::s(40), UiZoom::s(38));
+  profileLayout->setSpacing(UiZoom::s(18));
+  contactProfileAvatar_ = new AccountAvatarLabel(contactProfilePane);
+  contactProfileAvatar_->setObjectName(QStringLiteral("contactProfileAvatar"));
+  contactProfileAvatar_->setFixedSize(UiZoom::s(88), UiZoom::s(88));
+  contactProfileAvatar_->setProperty("avatarRequestsEnabled", true);
+  profileLayout->addWidget(contactProfileAvatar_, 0, Qt::AlignHCenter);
+  contactProfileName_ = new QLabel(contactProfilePane);
+  contactProfileName_->setObjectName(QStringLiteral("contactProfileName"));
+  contactProfileName_->setAlignment(Qt::AlignCenter);
+  contactProfileName_->setWordWrap(true);
+  profileLayout->addWidget(contactProfileName_);
+
+  auto *accountCard = new QWidget(contactProfilePane);
+  accountCard->setObjectName(QStringLiteral("contactProfileAccountCard"));
+  auto *accountLayout = new QVBoxLayout(accountCard);
+  accountLayout->setContentsMargins(UiZoom::s(18), UiZoom::s(14),
+                                    UiZoom::s(18), UiZoom::s(14));
+  auto *accountTitle = new QLabel(QStringLiteral("MaiChat ID"), accountCard);
+  accountTitle->setObjectName(QStringLiteral("contactProfileAccountTitle"));
+  accountLayout->addWidget(accountTitle);
+  auto *accountLine = new QHBoxLayout;
+  contactProfileId_ = new QLabel(accountCard);
+  contactProfileId_->setObjectName(QStringLiteral("contactProfileAccountId"));
+  contactProfileId_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  accountLine->addWidget(contactProfileId_, 1);
+  auto *copyAccount = new QPushButton(QStringLiteral("复制"), accountCard);
+  copyAccount->setObjectName(QStringLiteral("contactProfileCopyButton"));
+  connect(copyAccount, &QPushButton::clicked, this, [this] {
+    if (contactProfileId_ && contactProfileId_->isEnabled())
+      QApplication::clipboard()->setText(contactProfileId_->text());
+  });
+  accountLine->addWidget(copyAccount);
+  accountLayout->addLayout(accountLine);
+  profileLayout->addWidget(accountCard);
+
+  contactProfileMessageButton_ = new QPushButton(QStringLiteral("发消息"), contactProfilePane);
+  contactProfileMessageButton_->setObjectName(QStringLiteral("contactProfileMessageButton"));
+  connect(contactProfileMessageButton_, &QPushButton::clicked, this, [this] {
+    if (selectedContactProfileUserId_.isEmpty()) return;
+    app_.selectPeer(selectedContactProfileUserId_);
+    showMessagesPage();
+  });
+  profileLayout->addWidget(contactProfileMessageButton_);
+  contactProfileDeleteButton_ = new QPushButton(QStringLiteral("删除好友"), contactProfilePane);
+  contactProfileDeleteButton_->setObjectName(QStringLiteral("contactProfileDeleteButton"));
+  connect(contactProfileDeleteButton_, &QPushButton::clicked, this, [this] {
+    if (selectedContactProfileUserId_.isEmpty()) return;
+    const QString name = contactProfileName_->text();
+    if (AppMessageDialog::confirm(this, QStringLiteral("删除好友"),
+          QStringLiteral("确定将“%1”移出好友列表吗？聊天历史会保留。").arg(name),
+          QStringLiteral("删除"), /*destructive=*/true))
+      app_.deleteContact(selectedContactProfileUserId_);
+  });
+  profileLayout->addWidget(contactProfileDeleteButton_);
+  profileLayout->addStretch(1);
+  contactProfileStack_->addWidget(contactHintPane);
+  contactProfileStack_->addWidget(contactProfilePane);
+  contactProfileStack_->setCurrentWidget(contactHintPane);
+
   contactsPageLayout->addWidget(contactsDirectoryPane);
-  contactsPageLayout->addWidget(contactHintPane, 1);
+  contactsPageLayout->addWidget(contactProfileStack_, 1);
 
   settingsPage_ = new QWidget(contentStack_);
   settingsPage_->setObjectName(QStringLiteral("settingsPage"));
@@ -2875,8 +2941,29 @@ void MainWindow::applyStyle() {
             background: #f8fafc;
             border-right: 1px solid #dae4f0;
         }
-        #contactHintPane {
+        #contactHintPane, #contactProfilePane, #contactProfileStack {
             background: #ffffff;
+        }
+        #contactProfileName {
+            color: #172033;
+            font-size: 22px;
+            font-weight: 600;
+        }
+        #contactProfileAccountCard {
+            background: #f8fafc;
+            border: 1px solid #dae4f0;
+            border-radius: 12px;
+        }
+        #contactProfileAccountTitle { color: #66758d; font-size: 12px; }
+        #contactProfileAccountId { color: #172033; font-size: 14px; }
+        #contactProfileCopyButton { color: #0985d7; border: 0; background: transparent; }
+        #contactProfileMessageButton {
+            background: #078ce3; color: #ffffff; border: 0;
+            border-radius: 12px; min-height: 44px; font-weight: 600;
+        }
+        #contactProfileDeleteButton {
+            background: #ffffff; color: #dc3535; border: 1px solid #dae4f0;
+            border-radius: 12px; min-height: 44px;
         }
         #contactsList {
             background: transparent;
@@ -3288,7 +3375,7 @@ void MainWindow::bindSignals() {
                 highlightMessage(hitId);
             });
           });
-  auto openContactConversation = [this](QListWidgetItem *item) {
+  auto openContactProfile = [this](QListWidgetItem *item) {
     if (!item)
       return;
     if (item->data(IsGroupHeaderRole).toBool()) {
@@ -3299,13 +3386,13 @@ void MainWindow::bindSignals() {
     const QString userId = item->data(Qt::UserRole).toString();
     if (userId.isEmpty())
       return;
-    app_.selectPeer(userId);
-    showMessagesPage();
+    selectedContactProfileUserId_ = userId;
+    refreshContactProfile();
   };
   connect(contactsList_, &QListWidget::itemClicked, this,
-          openContactConversation);
+          openContactProfile);
   connect(contactsList_, &QListWidget::itemActivated, this,
-          openContactConversation);
+          openContactProfile);
 }
 
 void MainWindow::refresh() {
@@ -3703,6 +3790,31 @@ void MainWindow::refreshContactDirectory() {
   // 列表被重建过，隐藏状态跟着没了；搜索词还在框里，这里补回过滤，
   // 否则来一条消息触发刷新，搜索结果就会突然变回全部联系人。
   applyContactFilter();
+  refreshContactProfile();
+}
+
+void MainWindow::refreshContactProfile() {
+  if (!contactProfileStack_) return;
+  const auto contacts = acceptedContacts();
+  const auto match = std::find_if(contacts.cbegin(), contacts.cend(),
+      [this](const RemoteIMContact &contact) {
+        return contact.userId == selectedContactProfileUserId_;
+      });
+  if (selectedContactProfileUserId_.isEmpty() || match == contacts.cend()) {
+    selectedContactProfileUserId_.clear();
+    contactProfileStack_->setCurrentIndex(0);
+    return;
+  }
+  const QString name = match->displayName.isEmpty() ? match->userId : match->displayName;
+  contactProfileName_->setText(name);
+  static_cast<AccountAvatarLabel *>(contactProfileAvatar_)->setProfile(*match);
+  const QString accountId = app_.maiChatAccountForImId(match->userId);
+  contactProfileId_->setText(accountId.isEmpty() ? QStringLiteral("正在读取账号") : accountId);
+  contactProfileId_->setEnabled(!accountId.isEmpty());
+  if (auto *copy = contactProfileStack_->findChild<QPushButton *>(
+          QStringLiteral("contactProfileCopyButton")))
+    copy->setEnabled(!accountId.isEmpty());
+  contactProfileStack_->setCurrentIndex(1);
 }
 
 QList<RemoteIMContact> MainWindow::acceptedContacts() const {

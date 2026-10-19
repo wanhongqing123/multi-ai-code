@@ -14,6 +14,18 @@ function validPassword(password) {
 
 async function hashPassword(password) {
   if (!validPassword(password)) throw new Error('Password must be 15-128 characters');
+  return derivePasswordHash(password);
+}
+
+async function hashImportedTestPassword(password) {
+  // One-time administrator migration of user-owned IM test identities only.
+  if (typeof password !== 'string' || [...password].length < 6 ||
+      [...password].length > 128 || Buffer.byteLength(password, 'utf8') > 512)
+    throw new Error('Imported test password must be 6-128 characters');
+  return derivePasswordHash(password);
+}
+
+async function derivePasswordHash(password) {
   const salt = randomBytes(16);
   const hash = await scrypt(password, salt, 32, COST);
   return `scrypt$${COST.N}$${COST.r}$${COST.p}$${salt.toString('base64url')}$` +
@@ -37,4 +49,4 @@ async function verifyPassword(password, encoded) {
   return timingSafeEqual(actual, expected);
 }
 
-module.exports = { validPassword, hashPassword, verifyPassword };
+module.exports = { validPassword, hashPassword, hashImportedTestPassword, verifyPassword };

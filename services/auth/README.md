@@ -19,7 +19,7 @@ Node 服务只监听 `127.0.0.1:9100`。验证码、密码哈希、登录会话�
 | `POST /v1/auth/refresh` | `{refresh_token}`；轮换访问令牌与刷新令牌 |
 | `POST /v1/auth/logout` | Bearer 会话；撤销当前会话 |
 | `GET /v1/auth/me` | Bearer 会话；查询当前账号与脱敏手机号 |
-| `POST /v1/auth/profile` | 有效 Bearer 会话，传 `{nickname}`；设置自己的 MaiChat 昵称，空字符串清空。最多 32 个 Unicode 字符且不超过 120 字节；结果排队同步到腾讯 IM。 |
+| `POST /v1/auth/profile` | 有效 Bearer 会话，传 `{nickname}`；设置自己的 MaiChat 昵称，空字符串清空。最多 40 个 Unicode 字符且不超过 120 字节；结果排队同步到腾讯 IM。 |
 | `POST /v1/auth/desktop/request` | 桌面端提交 `{platform:"mac"或"windows",code_challenge}`，返回 `request_id`、`qr_uri`、`qr_png_base64`、`display_code`、`expires_in:120` |
 | `GET /v1/auth/desktop/request/{request_id}` | 有效移动端 Bearer；首次查询把 `pending` 标记为 `scanned`，返回 `{platform,display_code,status,expires_in}` |
 | `POST /v1/auth/desktop/approve` | 有效移动端 Bearer + `{request_id}`；确认展示码后批准桌面登录 |
@@ -92,6 +92,15 @@ systemd 监控。只映射账号库中已存在的好友，未注册的外部 IM
 scrypt 策略。创建前服务端通过腾讯 `account_check` 确认该 IM ID 尚未被其他人占用，
 再用 `account_import` 建立 IM 账号；腾讯不可用时拒绝创建，不接管已有 IM ID。
 页面不经 Nginx 对公网提供，创建和停用留 `admin_audit` 记录。
+
+旧版 App 曾在本机缓存尚未接入 MaiChat 账号体系的腾讯 IM 联系人。经账号所有者核实
+归属后，可用 `import-cached-test-contacts.js` 一次性将这些 ID 绑定为同名 MaiChat 测试账号，
+并建立经核对的 MaiChat 好友关系。迁移文件需逐项列出 `im_user_id` 与预期腾讯状态；
+先用 `--dry-run` 对照当前账号库和腾讯 `account_check`，备份数据库后才运行 `--run`。
+脚本不会接管已存在的 MaiChat 账号，只对腾讯尚未注册的 ID 执行 `account_import`；
+每个迁入账号的昵称为 `测试-{MaiChat ID}`，好友和昵称变更进入原有 IM 同步队列。
+迁移密码从 `MAICHAT_IMPORT_PASSWORD` 读取，不作为命令行参数或日志输出。
+仅此受控迁移允许 6～128 字符的密码；管理员页面创建新测试号仍要求至少 15 字符。
 
 用户主键和腾讯 IM UserID 与手机号分离，换号不改变 IM 身份。首次登录前如需
 沿用旧 IM UserID，必须由管理员**独立核实归属**后在服务器上执行

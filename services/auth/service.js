@@ -28,7 +28,7 @@ function normalizePhone(input) {
 function normalizeNickname(input) {
   if (typeof input !== 'string') return null;
   const nickname = input.trim().normalize('NFC');
-  if ([...nickname].length > 32 || Buffer.byteLength(nickname, 'utf8') > 120 ||
+  if ([...nickname].length > 40 || Buffer.byteLength(nickname, 'utf8') > 120 ||
       /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(nickname)) return null;
   return nickname;
 }

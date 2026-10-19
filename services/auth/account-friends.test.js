@@ -212,8 +212,10 @@ test('manual test ID is not bound if an unrelated Tencent IM account already exi
       return { ok: true, text: async () => JSON.stringify({ ActionStatus: 'OK', ErrorCode: 0,
         ResultItem: [{ UserID: 'test_taken', ResultCode: 0, AccountStatus: 'Imported' }] }) };
     } });
+  assert.equal(await provision.checkStatus('test_taken'), 'Imported');
   assert.equal(await provision('test_taken'), false);
-  assert.deepEqual(paths, ['/v4/im_open_login_svc/account_check']);
+  assert.deepEqual(paths, [
+    '/v4/im_open_login_svc/account_check', '/v4/im_open_login_svc/account_check']);
   const setup = fixture();
   const service = createAuthService({ db: setup.db,
     sms: { async send() {} }, secret: randomBytes(32).toString('hex'),

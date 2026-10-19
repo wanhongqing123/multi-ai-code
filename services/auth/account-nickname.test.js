@@ -72,7 +72,7 @@ test('nickname rejects invalid values and clearing it keeps the stable account I
   const setup = fixture();
   await setup.service.createTestAccount('test_alice', 'nickname-test-password-123456');
   const alice = await login(setup, 'test_alice', 'ios_phone');
-  for (const nickname of [null, 123, 'a'.repeat(33), 'a\nb', 'a\u0000b']) {
+  for (const nickname of [null, 123, 'a'.repeat(41), 'a\nb', 'a\u0000b']) {
     assert.equal((await setup.call('POST', '/v1/auth/profile',
       { nickname }, alice.access_token)).statusCode, 400);
   }

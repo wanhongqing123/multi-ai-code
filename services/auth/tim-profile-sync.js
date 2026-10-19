@@ -12,7 +12,7 @@ function createTencentProfileWriter({ sdkAppId, imSecret, adminUser = 'administr
     throw new Error('IM profile writer configuration is invalid');
   return async ({ imUserId, nickname }) => {
     if (typeof imUserId !== 'string' || !/^[A-Za-z0-9_-]{1,32}$/.test(imUserId) ||
-        typeof nickname !== 'string' || [...nickname].length > 32 ||
+        typeof nickname !== 'string' || [...nickname].length > 40 ||
         Buffer.byteLength(nickname, 'utf8') > 120)
       throw new Error('Invalid IM profile operation');
     const url = new URL('/v4/profile/portrait_set', origin);

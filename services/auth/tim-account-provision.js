@@ -27,7 +27,7 @@ function createTencentAccountProvisioner({ sdkAppId, imSecret, adminUser = 'admi
       throw new Error(`IM error ${result.ErrorCode ?? 'unknown'}`);
     return result;
   }
-  return async accountId => {
+  async function checkStatus(accountId) {
     if (typeof accountId !== 'string' || !/^[a-z][a-z0-9_-]{2,31}$/.test(accountId))
       throw new Error('Invalid test IM ID');
     const checked = await call('/v4/im_open_login_svc/account_check',
@@ -36,11 +36,17 @@ function createTencentAccountProvisioner({ sdkAppId, imSecret, adminUser = 'admi
       checked.ResultItem[0] : null;
     if (!item || item.UserID !== accountId || item.ResultCode !== 0)
       throw new Error('Invalid IM account check');
-    if (item.AccountStatus === 'Imported') return false;
-    if (item.AccountStatus !== 'NotImported') throw new Error('Unknown IM account status');
+    if (!['Imported', 'NotImported'].includes(item.AccountStatus))
+      throw new Error('Unknown IM account status');
+    return item.AccountStatus;
+  }
+  const provision = async accountId => {
+    if (await checkStatus(accountId) === 'Imported') return false;
     await call('/v4/im_open_login_svc/account_import', { UserID: accountId });
     return true;
   };
+  provision.checkStatus = checkStatus;
+  return provision;
 }
 
 module.exports = { createTencentAccountProvisioner };

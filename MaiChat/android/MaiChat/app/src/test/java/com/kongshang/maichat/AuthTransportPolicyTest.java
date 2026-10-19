@@ -41,6 +41,23 @@ public final class AuthTransportPolicyTest {
             account, "GET", request, ""));
     }
 
+    @Test public void sessionSyncAllowsOnlyBoundedPollAndMessagePayloads() throws Exception {
+        URL poll = new URL("https://ichat.life/api/v1/session-sync/poll?wait_ms=10000");
+        MaiChatAuthTransport.validateRequest(poll, "GET", null, "account-token");
+        URL send = new URL("https://ichat.life/api/v1/session-sync/send");
+        MaiChatAuthTransport.validateRequest(send, "POST", new byte[64 * 1024],
+            "account-token");
+        assertThrows(IOException.class, () -> MaiChatAuthTransport.validateRequest(
+            send, "POST", new byte[96 * 1024 + 1], "account-token"));
+        for (String url : new String[] {
+                "https://ichat.life/api/v1/session-sync/poll?wait_ms=20001",
+                "https://ichat.life/api/v1/session-sync/poll?wait_ms=1000&token=secret",
+                "https://ichat.life/api/v1/session-sync/send?wait_ms=1" }) {
+            assertThrows(IOException.class, () -> MaiChatAuthTransport.validateRequest(
+                new URL(url), "GET", null, "account-token"));
+        }
+    }
+
     @Test public void usesSelectedSystemProxyInsteadOfSilentlyConnectingDirect() throws Exception {
         ProxySelector original = ProxySelector.getDefault();
         Proxy proxy = new Proxy(Proxy.Type.HTTP,

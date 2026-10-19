@@ -17,7 +17,7 @@ namespace {
 
 constexpr size_t kMaxBodyBytes = 1024 * 1024;
 constexpr size_t kMaxHeaderBytes = 16 * 1024;
-constexpr size_t kMaxRequestBytes = 32 * 1024;
+constexpr size_t kMaxRequestBytes = 96 * 1024;
 constexpr size_t kMaxCaBytes = 2 * 1024 * 1024;
 constexpr size_t kMaxRedirectLocationBytes = 2048;
 
@@ -403,8 +403,11 @@ extern "C" JNIEXPORT jobject JNICALL Java_com_kongshang_maichat_MaiChatAuthTrans
             throwIOException(env, "账号网络请求数据无效");
             return nullptr;
         }
+        RequestOptions options;
+        if (url.find("/v1/session-sync/") != std::string::npos)
+            options.totalTimeoutMs = 35000;
         const RequestResult result = performCurl(url, method, request, bearer, ca,
-                                                 proxyType, proxyHost, proxyPort, {});
+                                                 proxyType, proxyHost, proxyPort, options);
         return makeAuthResult(env, static_cast<jint>(result.status), result.body,
                               result.code, result.failure);
     } catch (const std::bad_alloc&) {

@@ -632,6 +632,21 @@ public final class MaiChatAuthClient {
         }
     }
 
+    /** Session 同步沿用当前 MaiChat 登录态；模型与本地工具仍由所属设备执行。 */
+    public synchronized JSONObject sessionSyncRequest(String route, JSONObject body, int waitMs)
+        throws Exception {
+        if (route == null || waitMs < 0 || waitMs > 20000 ||
+            !(route.equals("presence") || route.equals("sessions") || route.equals("poll")
+                || route.equals("send") || route.equals("ack")) ||
+            (!route.equals("poll") && waitMs != 0))
+            throw new IOException("设备同步请求参数无效");
+        boolean get = route.equals("sessions") || route.equals("poll");
+        String path = "session-sync/" + route +
+            (route.equals("poll") ? "?wait_ms=" + waitMs : "");
+        return authenticatedRequest(path, get ? "GET" : "POST",
+            get ? null : (body == null ? new JSONObject() : body));
+    }
+
     public synchronized void validateSession() throws Exception {
         JSONObject user = authenticatedRequest("auth/me", "GET", null).getJSONObject("user");
         preferences.edit().putString(STORED_ACCOUNT_ID, user.getString("id"))

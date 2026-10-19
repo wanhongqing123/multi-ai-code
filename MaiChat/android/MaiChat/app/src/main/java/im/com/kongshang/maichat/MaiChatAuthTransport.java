@@ -17,6 +17,7 @@ final class MaiChatAuthTransport {
     private static final String LOG_TAG = "MaiChatAuthNetwork";
     private static final int MAX_URL_LENGTH = 2048;
     private static final int MAX_BODY_BYTES = 32 * 1024;
+    private static final int MAX_SYNC_BODY_BYTES = 96 * 1024;
     private static final int MAX_BEARER_LENGTH = 8192;
     private static final int FAILURE_TIMEOUT = 1;
     private static final int FAILURE_CERTIFICATE = 2;
@@ -100,7 +101,7 @@ final class MaiChatAuthTransport {
     static void validateRequest(URL url, String method, byte[] body, String bearer)
         throws IOException {
         if (url == null || url.toExternalForm().length() > MAX_URL_LENGTH
-            || url.getQuery() != null || url.getRef() != null || url.getUserInfo() != null)
+            || url.getRef() != null || url.getUserInfo() != null)
             throw new IOException("登录服务地址无效");
         boolean production = "https".equals(url.getProtocol())
             && "ichat.life".equalsIgnoreCase(url.getHost())
@@ -111,8 +112,17 @@ final class MaiChatAuthTransport {
             && url.getPort() == 18190 && url.getPath().startsWith("/v1/");
         if ((!production && !localTest) || url.getPath().contains(".."))
             throw new IOException("登录服务地址无效");
+        boolean sessionSync = url.getPath().contains("/v1/session-sync/");
+        if (url.getQuery() != null) {
+            String query = url.getQuery();
+            if (!sessionSync || !url.getPath().endsWith("/poll")
+                || !query.matches("wait_ms=(0|[1-9][0-9]{0,4})")
+                || Integer.parseInt(query.substring("wait_ms=".length())) > 20000)
+                throw new IOException("登录服务地址无效");
+        }
+        int maximumBody = sessionSync ? MAX_SYNC_BODY_BYTES : MAX_BODY_BYTES;
         if (!("GET".equals(method) && body == null)
-            && !("POST".equals(method) && body != null && body.length <= MAX_BODY_BYTES))
+            && !("POST".equals(method) && body != null && body.length <= maximumBody))
             throw new IOException("登录请求数据无效");
         if (bearer == null || bearer.length() > MAX_BEARER_LENGTH)
             throw new IOException("登录凭据无效");

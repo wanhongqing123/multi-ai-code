@@ -87,7 +87,30 @@ QJsonObject DesktopSessionSyncHost::historyPage(const QString& sessionId, const 
         controller_.agent().listMessagesPage(sessionId.toStdString(), beforeId.toStdString(), size_t(limit));
     for (const MaiMessage& message : page)
         messages.append(serializeMessage(message, controller_.agent().isBusy(session.id)));
-    return {{QStringLiteral("ok"), true}, {QStringLiteral("messages"), messages}};
+    QJsonArray permissions;
+    for (const MaiPermissionRequest& request : controller_.agent().listPendingPermissions()) {
+        if (request.sessionId != session.id) continue;
+        permissions.append(QJsonObject{
+            {QStringLiteral("id"), text(request.id)},
+            {QStringLiteral("tool"), text(request.toolName)},
+            {QStringLiteral("input"), text(request.arguments)},
+            {QStringLiteral("allowForSession"), request.allowForSession},
+            {QStringLiteral("rememberOnApproval"), request.rememberOnApproval},
+            {QStringLiteral("fileCount"), int(request.approvalKeys.size())}});
+    }
+    QJsonArray questions;
+    for (const MaiQuestionRequest& request : controller_.agent().listPendingQuestions()) {
+        if (request.sessionId != session.id) continue;
+        QJsonArray options;
+        for (const std::string& option : request.options) options.append(text(option));
+        questions.append(QJsonObject{{QStringLiteral("id"), text(request.id)},
+                                     {QStringLiteral("question"), text(request.question)},
+                                     {QStringLiteral("options"), options}});
+    }
+    return {{QStringLiteral("ok"), true},
+            {QStringLiteral("messages"), messages},
+            {QStringLiteral("permissions"), permissions},
+            {QStringLiteral("questions"), questions}};
 }
 
 QJsonObject DesktopSessionSyncHost::applyCommand(const QString& sessionId, const QJsonObject& payload) {

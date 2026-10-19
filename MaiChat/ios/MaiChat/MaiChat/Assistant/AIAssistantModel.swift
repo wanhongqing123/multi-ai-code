@@ -255,6 +255,161 @@ struct AISession: Codable, Identifiable, Sendable, Equatable {
     let busy: Bool
     var displayTitle: String { title == "New session" ? "新对话" : title }
 }
+
+struct AIRemoteSession: Decodable, Identifiable, Sendable, Equatable {
+    let sessionID: String
+    let title: String
+    let busy: Bool
+    let deviceSlot: String
+    let deviceName: String
+    let deviceID: String
+    let loginSessionID: String
+    let online: Bool
+
+    var id: String { "\(deviceSlot):\(deviceID):\(sessionID)" }
+    var displayTitle: String { title == "New session" ? "新对话" : title }
+
+    enum CodingKeys: String, CodingKey {
+        case sessionID = "id"
+        case title, busy, online
+        case deviceSlot = "device_slot"
+        case deviceName = "device_name"
+        case deviceID = "device_id"
+        case loginSessionID = "login_session_id"
+    }
+}
+
+private actor AIRemoteSessionTransport {
+    private struct Catalog: Decodable { let sessions: [AIRemoteSession] }
+    private struct Inbox: Decodable { let messages: [Envelope] }
+    struct Envelope: Decodable, Sendable {
+        let id: Int
+        let kind: String
+        let sessionID: String
+        let clientMessageID: String
+        let fromSlot: String
+        let fromLoginSessionID: String
+        let payload: Payload
+
+        enum CodingKeys: String, CodingKey {
+            case id, kind, payload
+            case sessionID = "session_id"
+            case clientMessageID = "client_message_id"
+            case fromSlot = "from_slot"
+            case fromLoginSessionID = "from_login_session_id"
+        }
+    }
+    struct Payload: Decodable, Sendable {
+        let transferID: String?
+        let chunkIndex: Int?
+        let chunkCount: Int?
+        let sha256: String?
+        let dataBase64: String?
+        let before: String?
+        let limit: Int?
+        let action: String?
+        let text: String?
+        let requestID: String?
+        let decision: String?
+        let title: String?
+
+        enum CodingKeys: String, CodingKey {
+            case transferID = "transfer_id"
+            case chunkIndex = "chunk_index"
+            case chunkCount = "chunk_count"
+            case sha256
+            case dataBase64 = "data_base64"
+            case before, limit, action, text, decision, title
+            case requestID = "id"
+        }
+    }
+
+    private func request(_ route: MaiChatSessionSyncRoute,
+                         body: [String: Any] = [:], wait: Int = 0) async throws -> Data {
+        let data = body.isEmpty ? Data() : try JSONSerialization.data(withJSONObject: body)
+        return try await MaiChatAuthClient.shared.sessionSyncRequest(
+            route, body: data, waitMilliseconds: wait)
+    }
+
+    func catalog() async throws -> [AIRemoteSession] {
+        try JSONDecoder().decode(Catalog.self, from: await request(.sessions)).sessions
+    }
+
+    func presence(deviceID: String, name: String, sessions: [AISession]) async throws {
+        let updated = Int64(Date().timeIntervalSince1970 * 1_000)
+        let entries: [[String: Any]] = sessions.prefix(200).enumerated().map { index, item in
+            let safeTitle = String(String(item.title.prefix(120)).unicodeScalars.filter {
+                !CharacterSet.controlCharacters.contains($0)
+            })
+            return ["id": item.id, "title": safeTitle,
+                    "busy": item.busy, "updated_at": updated - Int64(index)]
+        }
+        _ = try await request(.presence, body: [
+            "device_id": deviceID, "name": name, "sessions": entries
+        ])
+    }
+
+    func poll() async throws -> [Envelope] {
+        try JSONDecoder().decode(Inbox.self, from: await request(.poll, wait: 10_000)).messages
+    }
+
+    func send(to session: AIRemoteSession, kind: String,
+              payload: [String: Any]) async throws -> String {
+        try await send(toSlot: session.deviceSlot, toLogin: session.loginSessionID,
+                       sessionID: session.sessionID, kind: kind, payload: payload)
+    }
+
+    func send(toSlot: String, toLogin: String, sessionID: String,
+              kind: String, payload: [String: Any]) async throws -> String {
+        let messageID = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+        _ = try await request(.send, body: [
+            "to_slot": toSlot,
+            "to_login_session_id": toLogin,
+            "client_message_id": messageID,
+            "session_id": sessionID,
+            "kind": kind,
+            "payload": payload
+        ])
+        return messageID
+    }
+
+    func sendPayload(to envelope: Envelope, kind: String,
+                     value: [String: Any]) async throws {
+        let data = try JSONSerialization.data(withJSONObject: value)
+        let chunkSize = 24 * 1024
+        let count = max(1, (data.count + chunkSize - 1) / chunkSize)
+        guard count <= 128 else { throw AIBackendError(message: "跨设备会话内容过大") }
+        let transferID = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        for index in 0..<count {
+            let start = index * chunkSize
+            let end = min(start + chunkSize, data.count)
+            _ = try await send(toSlot: envelope.fromSlot,
+                               toLogin: envelope.fromLoginSessionID,
+                               sessionID: envelope.sessionID, kind: kind,
+                               payload: ["transfer_id": transferID,
+                                         "chunk_index": index,
+                                         "chunk_count": count,
+                                         "sha256": digest,
+                                         "data_base64": data[start..<end].base64EncodedString()])
+        }
+    }
+
+    func acknowledge(_ id: Int) async throws {
+        _ = try await request(.ack, body: ["ids": [id]])
+    }
+}
+
+private struct AIRemoteTransfer {
+    let sessionID: String
+    let fromSlot: String
+    let fromLoginSessionID: String
+    let kind: String
+    let count: Int
+    let sha256: String
+    var chunks: [Int: Data] = [:]
+    var started = Date()
+}
 struct AIPart: Codable, Identifiable, Sendable, Equatable {
     let id: String
     let kind: String
@@ -655,12 +810,15 @@ final class AIAssistantModel: ObservableObject {
 
     static func resetForAccountSwitch() {
         shared.disappear()
+        shared.stopRemoteSync()
         shared.initialPreparation?.cancel()
         shared.appearingTask?.cancel()
         shared.transientErrorTask?.cancel()
         shared = AIAssistantModel()
     }
     @Published var sessions: [AISession] = []
+    @Published private(set) var remoteSessions: [AIRemoteSession] = []
+    @Published private(set) var selectedRemote: AIRemoteSession?
     @Published var messages: [AIMessage] = []
     @Published var permissions: [AIPermission] = []
     @Published var questions: [AIQuestion] = []
@@ -685,7 +843,16 @@ final class AIAssistantModel: ObservableObject {
     private var createdEmptyDraftSessions: [UUID: String] = [:]
     private var deletedDraftSessions: Set<String> = []
     private let backend = AIAssistantBackend()
+    private let remoteTransport = AIRemoteSessionTransport()
     private var poll: Task<Void, Never>?
+    private var remotePoll: Task<Void, Never>?
+    @Published private(set) var pendingRemoteSelection: AIRemoteSession?
+    private var pendingRemoteSelectionStarted = Date.distantPast
+    private var remoteTransfers: [String: AIRemoteTransfer] = [:]
+    private var pendingRemoteCommands: [String: Date] = [:]
+    private var pendingRemoteOlderPage = false
+    private var lastRemotePresence = Date.distantPast
+    private var lastRemoteHistoryRequest = Date.distantPast
     private var transientErrorTask: Task<Void, Never>?
     private var lastBackendError = ""
     private var initialPreparation: Task<Void, Never>?
@@ -699,7 +866,15 @@ final class AIAssistantModel: ObservableObject {
     #if targetEnvironment(simulator)
     private var sessionSwitchUITest = false
     #endif
-    var busy: Bool { sessions.first { $0.id == selected }?.busy == true }
+    var busy: Bool {
+        if let selectedRemote {
+            return remoteSessions.first {
+                $0.id == selectedRemote.id &&
+                $0.loginSessionID == selectedRemote.loginSessionID
+            }?.busy == true
+        }
+        return sessions.first { $0.id == selected }?.busy == true
+    }
     var hasEmptyDraft: Bool {
         !attachments(for: "").isEmpty ||
             !(drafts[""] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -768,6 +943,10 @@ final class AIAssistantModel: ObservableObject {
         sessions = ["A", "B", "C"].map {
             AISession(id: "switch-\($0)", title: "对话 \($0)", busy: false)
         }
+        remoteSessions = [AIRemoteSession(
+            sessionID: "remote-demo", title: "Mac 上的编译任务", busy: false,
+            deviceSlot: "mac", deviceName: "工作 Mac", deviceID: "fixturemac",
+            loginSessionID: "fixturelogin", online: false)]
         selected = "switch-A"
         messages = sessionSwitchUITestMessages("A")
         ready = true
@@ -895,10 +1074,21 @@ final class AIAssistantModel: ObservableObject {
                 await refresh(force: true)
             }
             startPolling()
+            startRemotePolling()
             appearingTask = nil
         }
     }
-    func disappear() { visible = false; composerTyping = false; poll?.cancel(); poll = nil }
+    func disappear() {
+        visible = false
+        composerTyping = false
+        poll?.cancel()
+        poll = nil
+    }
+
+    private func stopRemoteSync() {
+        remotePoll?.cancel()
+        remotePoll = nil
+    }
     func setPageActive(_ active: Bool) {
         pageActive = active
         if active && poll == nil && ready { appear() }
@@ -921,7 +1111,301 @@ final class AIAssistantModel: ObservableObject {
             }
         }
     }
+
+    private var syncDeviceSlot: String {
+        UIDevice.current.userInterfaceIdiom == .pad ? "tablet" : "ios_phone"
+    }
+
+    private var syncDeviceID: String {
+        let key = "maichat-session-sync-device-id"
+        if let saved = UserDefaults.standard.string(forKey: key),
+           saved.count == 32, saved.allSatisfy({ $0.isHexDigit }) { return saved }
+        let created = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+        UserDefaults.standard.set(created, forKey: key)
+        return created
+    }
+
+    private func startRemotePolling() {
+        guard remotePoll == nil else { return }
+        remotePoll = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                guard AIMobileHostToolProvider.shared.appState?.hasUnifiedAccount == true,
+                      self.ready else {
+                    try? await Task.sleep(for: .seconds(2))
+                    continue
+                }
+                do {
+                    if Date().timeIntervalSince(self.lastRemotePresence) >= 15 {
+                        if (!self.visible || self.selectedRemote != nil),
+                           let summary = try? await self.backend.snapshot(
+                               session: "", limit: 0, force: true),
+                           let localSessions = summary.sessions {
+                            self.sessions = localSessions
+                        }
+                        let name = String(String(UIDevice.current.name.prefix(40))
+                            .unicodeScalars.filter {
+                                !CharacterSet.controlCharacters.contains($0)
+                            })
+                        try await self.remoteTransport.presence(
+                            deviceID: self.syncDeviceID,
+                            name: name.isEmpty ? "iPhone" : name,
+                            sessions: self.sessions
+                        )
+                        let catalog = try await self.remoteTransport.catalog()
+                        self.remoteSessions = catalog.filter { $0.deviceSlot != self.syncDeviceSlot }
+                        if let selected = self.selectedRemote,
+                           let updated = self.remoteSessions.first(where: {
+                               $0.id == selected.id &&
+                               $0.loginSessionID == selected.loginSessionID
+                           }) {
+                            self.selectedRemote = updated
+                        }
+                        self.lastRemotePresence = Date()
+                    }
+                    if let remote = self.selectedRemote,
+                       self.remoteIsOnline(remote),
+                       Date().timeIntervalSince(self.lastRemoteHistoryRequest) >= 5 {
+                        _ = try await self.remoteTransport.send(
+                            to: remote, kind: "history_request", payload: ["limit": 10])
+                        self.lastRemoteHistoryRequest = Date()
+                    }
+                    let envelopes = try await self.remoteTransport.poll()
+                    for envelope in envelopes {
+                        await self.handleRemoteEnvelope(envelope)
+                    }
+                    let timedOut = self.pendingRemoteCommands.filter {
+                        Date().timeIntervalSince($0.value) > 30
+                    }
+                    if !timedOut.isEmpty {
+                        for id in timedOut.keys { self.pendingRemoteCommands.removeValue(forKey: id) }
+                        self.showTransientError(
+                            "所属设备是否执行了操作尚未确定，请先查看会话记录，不要直接重复发送",
+                            duration: .seconds(12))
+                    }
+                    if self.pendingRemoteSelection != nil,
+                       Date().timeIntervalSince(self.pendingRemoteSelectionStarted) > 20 {
+                        self.pendingRemoteSelection = nil
+                        self.showTransientError("读取所属设备会话超时，请重新选择")
+                    }
+                } catch {
+                    if self.selectedRemote != nil {
+                        self.showTransientError(error.localizedDescription, duration: .seconds(8))
+                    }
+                    try? await Task.sleep(for: .seconds(2))
+                }
+            }
+        }
+    }
+
+    private func remoteIsOnline(_ remote: AIRemoteSession) -> Bool {
+        remoteSessions.contains {
+            $0.id == remote.id && $0.loginSessionID == remote.loginSessionID && $0.online
+        }
+    }
+
+    func selectRemoteConversation(_ remote: AIRemoteSession) async {
+        guard remoteIsOnline(remote) else {
+            showTransientError("所属设备离线，暂时无法读取这段会话")
+            return
+        }
+        if selectedRemote?.id == remote.id &&
+            selectedRemote?.loginSessionID == remote.loginSessionID {
+            scrollRequest += 1
+            return
+        }
+        selectionGeneration &+= 1
+        pendingRemoteSelection = remote
+        pendingRemoteSelectionStarted = Date()
+        do {
+            _ = try await remoteTransport.send(to: remote, kind: "history_request",
+                                               payload: ["limit": Self.recentMessageCount])
+            lastRemoteHistoryRequest = Date()
+        } catch {
+            pendingRemoteSelection = nil
+            showTransientError(error.localizedDescription, duration: .seconds(8))
+        }
+    }
+
+    private func handleRemoteEnvelope(_ envelope: AIRemoteSessionTransport.Envelope) async {
+        defer { Task { try? await remoteTransport.acknowledge(envelope.id) } }
+        if envelope.kind == "history_request" {
+            await answerRemoteHistoryRequest(envelope)
+            return
+        }
+        if envelope.kind == "command" {
+            await applyRemoteCommand(envelope)
+            return
+        }
+        guard envelope.kind == "history_page" || envelope.kind == "event",
+              let transferID = envelope.payload.transferID,
+              let index = envelope.payload.chunkIndex,
+              let count = envelope.payload.chunkCount,
+              let digest = envelope.payload.sha256,
+              let encoded = envelope.payload.dataBase64,
+              (1...128).contains(count), (0..<count).contains(index),
+              let chunk = Data(base64Encoded: encoded), chunk.count <= 24 * 1024 else { return }
+        remoteTransfers = remoteTransfers.filter {
+            Date().timeIntervalSince($0.value.started) < 120
+        }
+        var transfer = remoteTransfers[transferID] ?? AIRemoteTransfer(
+            sessionID: envelope.sessionID, fromSlot: envelope.fromSlot,
+            fromLoginSessionID: envelope.fromLoginSessionID,
+            kind: envelope.kind, count: count, sha256: digest)
+        guard transfer.sessionID == envelope.sessionID,
+              transfer.fromSlot == envelope.fromSlot,
+              transfer.fromLoginSessionID == envelope.fromLoginSessionID,
+              transfer.kind == envelope.kind, transfer.count == count,
+              transfer.sha256 == digest else { return }
+        transfer.chunks[index] = chunk
+        if transfer.chunks.count < count {
+            remoteTransfers[transferID] = transfer
+            return
+        }
+        remoteTransfers.removeValue(forKey: transferID)
+        let data = (0..<count).reduce(into: Data()) { result, part in
+            if let bytes = transfer.chunks[part] { result.append(bytes) }
+        }
+        guard data.count <= 3 * 1024 * 1024,
+              SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() == digest
+        else { return }
+        await applyRemotePayload(data, envelope: envelope)
+    }
+
+    private func applyRemotePayload(_ data: Data,
+                                    envelope: AIRemoteSessionTransport.Envelope) async {
+        let source = pendingRemoteSelection ?? selectedRemote
+        guard let source, source.sessionID == envelope.sessionID,
+              source.deviceSlot == envelope.fromSlot,
+              source.loginSessionID == envelope.fromLoginSessionID else { return }
+        if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           object["type"] as? String == "command_result" {
+            if let id = object["command_id"] as? String,
+               pendingRemoteCommands.removeValue(forKey: id) != nil,
+               let result = object["result"] as? [String: Any],
+               result["ok"] as? Bool != true {
+                showTransientError(result["error"] as? String ?? "所属设备未执行操作",
+                                   duration: .seconds(8))
+            }
+            return
+        }
+        guard let page = try? JSONDecoder().decode(AIResponse.self, from: data),
+              page.ok, let received = page.messages else { return }
+        let displayMessages = received.map(remoteDisplayMessage)
+        if pendingRemoteSelection?.id == source.id {
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                selectedRemote = source
+                pendingRemoteSelection = nil
+                selected = source.sessionID
+                messages = Array(displayMessages.reversed())
+                permissions = page.permissions ?? []
+                questions = page.questions ?? []
+                quotedMessage = nil
+                visibleMessageLimit = Self.recentMessageCount
+                historyLoaded = true
+                hasOlderMessages = received.count == Self.recentMessageCount
+                scrollRequest += 1
+            }
+        } else if selectedRemote?.id == source.id {
+            mergeMessages(displayMessages)
+            if let permissions = page.permissions { self.permissions = permissions }
+            if let questions = page.questions { self.questions = questions }
+            if pendingRemoteOlderPage && envelope.kind == "history_page" {
+                visibleMessageLimit += received.count
+                hasOlderMessages = received.count == Self.olderPageCount
+                pendingRemoteOlderPage = false
+            }
+        }
+    }
+
+    private func remoteDisplayMessage(_ message: AIMessage) -> AIMessage {
+        var parts: [AIPart] = []
+        for original in message.parts {
+            var part = original
+            if part.kind == "image" || part.kind == "video" {
+                // 所属设备的相对路径不能在本机工作区解析，否则可能显示同名的其他文件。
+                part.path = nil
+                parts.append(part)
+                parts.append(AIPart(
+                    id: part.id + "-remote-placeholder", kind: "text",
+                    text: part.kind == "image" ? "[图片在所属设备，暂不可跨设备预览]" :
+                        "[视频在所属设备，暂不可跨设备预览]",
+                    tool: nil, input: nil, output: nil, error: nil, state: nil,
+                    path: nil, mimeType: nil))
+            } else {
+                parts.append(part)
+            }
+        }
+        return AIMessage(id: message.id, role: message.role,
+                         created: message.created, completed: message.completed,
+                         active: message.active, parts: parts).withoutReasoningText()
+    }
+
+    private func answerRemoteHistoryRequest(_ envelope: AIRemoteSessionTransport.Envelope) async {
+        guard sessions.contains(where: { $0.id == envelope.sessionID }) else { return }
+        do {
+            let page = try await backend.messagesPage(
+                session: envelope.sessionID,
+                beforeId: envelope.payload.before ?? "",
+                limit: min(max(envelope.payload.limit ?? 10, 1), 20))
+            let state = try await backend.snapshot(session: envelope.sessionID,
+                                                   limit: 0, force: true)
+            let safePage = page.map { message -> AIMessage in
+                let parts = message.parts.map { original -> AIPart in
+                    var part = original
+                    if part.kind == "image" || part.kind == "video" { part.path = nil }
+                    return part
+                }
+                return AIMessage(id: message.id, role: message.role,
+                                 created: message.created, completed: message.completed,
+                                 active: message.active, parts: parts)
+            }
+            let encoded = try JSONEncoder().encode(safePage)
+            let messages = try JSONSerialization.jsonObject(with: encoded)
+            try await remoteTransport.sendPayload(to: envelope, kind: "history_page",
+                                                  value: ["ok": true, "messages": messages,
+                                                          "permissions": try JSONSerialization.jsonObject(
+                                                              with: JSONEncoder().encode(state.permissions ?? [])),
+                                                          "questions": try JSONSerialization.jsonObject(
+                                                              with: JSONEncoder().encode(state.questions ?? []))])
+            if visible && selectedRemote == nil { await refresh(force: true) }
+        } catch { /* The requester can retry a read without executing a model operation. */ }
+    }
+
+    private func applyRemoteCommand(_ envelope: AIRemoteSessionTransport.Envelope) async {
+        guard sessions.contains(where: { $0.id == envelope.sessionID }) else { return }
+        var result: [String: Any] = ["ok": true]
+        do {
+            switch envelope.payload.action {
+            case "prompt":
+                guard let text = envelope.payload.text, !text.isEmpty,
+                      text.utf8.count <= 16 * 1024 else {
+                    throw AIBackendError(message: "消息为空或过长")
+                }
+                _ = try await backend.send(session: envelope.sessionID, text: text,
+                                           images: [], videos: [], quoteMessageId: "")
+            case "stop":
+                _ = try await backend.request("stop", values: ["session": envelope.sessionID])
+            case "permission", "answer", "rename":
+                var values = ["session": envelope.sessionID]
+                if let id = envelope.payload.requestID { values["id"] = id }
+                if let decision = envelope.payload.decision { values["decision"] = decision }
+                if let text = envelope.payload.text { values["text"] = text }
+                if let title = envelope.payload.title { values["title"] = title }
+                _ = try await backend.request(envelope.payload.action ?? "", values: values)
+            default:
+                throw AIBackendError(message: "不支持的远端操作")
+            }
+        } catch { result = ["ok": false, "error": error.localizedDescription] }
+        try? await remoteTransport.sendPayload(
+            to: envelope, kind: "event",
+            value: ["type": "command_result", "command_id": envelope.clientMessageID,
+                    "result": result])
+    }
     private func refresh(force: Bool) async {
+        if selectedRemote != nil { return }
         try? await AICloudCredentialSync.refreshSeedanceIfNeeded()
         try? await AICloudCredentialSync.refreshBailianIfNeeded()
         let target = selected
@@ -1051,6 +1535,18 @@ final class AIAssistantModel: ObservableObject {
         loadingOlderMessages = true
         defer { loadingOlderMessages = false }
         let session = selected
+        if let remote = selectedRemote {
+            pendingRemoteOlderPage = true
+            do {
+                _ = try await remoteTransport.send(to: remote, kind: "history_request",
+                                                   payload: ["before": oldest,
+                                                             "limit": Self.olderPageCount])
+            } catch {
+                pendingRemoteOlderPage = false
+                showTransientError(error.localizedDescription, duration: .seconds(8))
+            }
+            return
+        }
         do {
             let page = try await backend.messagesPage(session: session,
                                                       beforeId: oldest,
@@ -1085,8 +1581,11 @@ final class AIAssistantModel: ObservableObject {
     /// 打开指定会话：先读取目标最近一页，再在无动画事务中替换可见消息。
     /// 读取期间保留原会话；并发切换通过代次丢弃过时结果，失败时不清空旧画面。
     func selectConversation(_ id: String) async {
+        pendingRemoteSelection = nil
         if id.isEmpty {
             selectionGeneration &+= 1
+            selectedRemote = nil
+            pendingRemoteSelection = nil
             selected = ""
             messages = []
             permissions = []
@@ -1110,7 +1609,7 @@ final class AIAssistantModel: ObservableObject {
             return
         }
         #endif
-        if id == selected {
+        if id == selected && selectedRemote == nil {
             scrollRequest += 1
             return
         }
@@ -1125,6 +1624,8 @@ final class AIAssistantModel: ObservableObject {
             var transaction = Transaction(animation: nil)
             transaction.disablesAnimations = true
             withTransaction(transaction) {
+                selectedRemote = nil
+                pendingRemoteSelection = nil
                 selected = id
                 messages = Array(page.reversed()).map { $0.withoutReasoningText() }
                 visibleMessageLimit = Self.recentMessageCount
@@ -1167,6 +1668,27 @@ final class AIAssistantModel: ObservableObject {
     /// 提交文本及附件，并在核心落库后合并新快照、请求界面定位最新消息。
     /// 输入不合法或任务忙碌时不改动草稿；新建会话也必须保持一个可见的加载状态。
     func sendMessage(_ text: String, expectedSession: String? = nil) async -> Bool {
+        if let remote = selectedRemote {
+            guard expectedSession == nil || expectedSession == remote.sessionID,
+                  remoteIsOnline(remote), !busy, !isSubmitting,
+                  !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+            guard attachments(for: remote.sessionID).isEmpty, quotedMessage == nil else {
+                showTransientError("跨设备暂只支持文字消息，请移除附件或引用后重试")
+                return false
+            }
+            isSubmitting = true
+            defer { isSubmitting = false }
+            do {
+                let id = try await remoteTransport.send(to: remote, kind: "command",
+                                                        payload: ["action": "prompt", "text": text])
+                pendingRemoteCommands[id] = Date()
+                showTransientError("已送达 \(remote.deviceName)，等待设备确认执行", duration: .seconds(8))
+                return true
+            } catch {
+                showTransientError(error.localizedDescription, duration: .seconds(8))
+                return false
+            }
+        }
         guard configured else {
             error = "请先登录已开通模型服务的账号"
             return false
@@ -1237,6 +1759,24 @@ final class AIAssistantModel: ObservableObject {
     }
 
     func action(_ op: String, values: [String: String] = [:]) async {
+        if let remote = selectedRemote {
+            guard remoteIsOnline(remote) else {
+                showTransientError("所属设备离线，无法执行操作")
+                return
+            }
+            guard ["stop", "permission", "answer", "rename"].contains(op) else {
+                showTransientError("此操作暂不支持跨设备执行")
+                return
+            }
+            var payload: [String: Any] = values
+            payload["action"] = op
+            do {
+                let id = try await remoteTransport.send(to: remote, kind: "command",
+                                                        payload: payload)
+                pendingRemoteCommands[id] = Date()
+            } catch { showTransientError(error.localizedDescription, duration: .seconds(8)) }
+            return
+        }
         if (op == "delete" || op == "clear") && (isSubmitting || isCreatingConversation) {
             return
         }

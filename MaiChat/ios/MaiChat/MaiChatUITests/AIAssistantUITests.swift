@@ -262,6 +262,27 @@ final class AIAssistantUITests: XCTestCase {
         }
     }
 
+    func testRemoteSessionShowsOwnerAndPreservesCurrentConversationWhenOffline() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--ai-session-switch-ui-test"]
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        app.buttons["对话列表"].tap()
+        let remote = app.buttons["ai-remote-conversation-mac:fixturemac:remote-demo"]
+        XCTAssertTrue(remote.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["工作 Mac · 离线"].exists)
+        let list = XCTAttachment(screenshot: app.screenshot())
+        list.name = "remote-session-device-and-offline-state"
+        list.lifetime = .keepAlways
+        add(list)
+        remote.tap()
+        XCTAssertTrue(app.staticTexts["所属设备离线，暂时无法读取这段会话"]
+            .waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "A 历史消息 79")
+        ).firstMatch.exists)
+    }
+
     func testMediaDraftStaysTogetherAcrossConversationSwitches() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--ai-ui-test", "--ai-media-draft-ui-test"]

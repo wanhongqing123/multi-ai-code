@@ -43,6 +43,8 @@ void DesktopSessionSyncHostTest::appliesRemotePromptToTheExistingLocalSession() 
                 .toBool());
     const QJsonObject page = host.historyPage(sessionId, {}, 20);
     QVERIFY(page.value(QStringLiteral("ok")).toBool());
+    QVERIFY(page.value(QStringLiteral("permissions")).isArray());
+    QVERIFY(page.value(QStringLiteral("questions")).isArray());
     const QJsonArray messages = page.value(QStringLiteral("messages")).toArray();
     QVERIFY(!messages.isEmpty());
     bool sawPrompt = false;

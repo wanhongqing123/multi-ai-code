@@ -99,6 +99,17 @@ struct AIAssistantView: View {
                         ProgressView("正在打开创作中心")
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
+                        if let pending = model.pendingRemoteSelection {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                Text("正在读取 \(pending.deviceName) 的对话…")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .accessibilityIdentifier("ai-remote-session-loading")
+                        }
                         AIAssistantMessageList(
                             model: model,
                             focusController: composerFocusController,
@@ -149,8 +160,10 @@ struct AIAssistantView: View {
                 AIActionPanel(
                     selectedModel: model.settings.model,
                     selectedPolicy: model.settings.policy,
-                    canChangeSettings: model.configured && !model.busy && !model.isSubmitting,
-                    canClear: !model.busy && !model.selected.isEmpty,
+                    canChangeSettings: model.selectedRemote == nil && model.configured &&
+                        !model.busy && !model.isSubmitting,
+                    canClear: model.selectedRemote == nil && !model.busy &&
+                        !model.selected.isEmpty,
                     selectModel: { selected in
                         guard selected != model.settings.model else { return }
                         var next = model.settings
@@ -418,6 +431,37 @@ struct AIAssistantView: View {
                     }
                     .padding(.horizontal, 14).padding(.vertical, 8)
                     .background(session.id == model.selected ? Color.blue.opacity(0.08) : Color.clear,
+                                in: RoundedRectangle(cornerRadius: 12))
+                }
+                ForEach(model.remoteSessions) { session in
+                    Button {
+                        closeSessionDrawer()
+                        Task { await model.selectRemoteConversation(session) }
+                    } label: {
+                        HStack(spacing: 10) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(session.displayTitle)
+                                    .font(ChatTypography.conversationTitle)
+                                    .lineLimit(2)
+                                Text("\(session.deviceName) · \(session.online ? "在线" : "离线")")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 12)
+                            if session.online && session.busy { ProgressView() }
+                            else if model.selectedRemote?.id == session.id {
+                                Image(systemName: "checkmark").foregroundStyle(Color.blue)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.primary)
+                    .accessibilityIdentifier("ai-remote-conversation-\(session.id)")
+                    .padding(.horizontal, 14).padding(.vertical, 8)
+                    .background(model.selectedRemote?.id == session.id
+                                ? Color.blue.opacity(0.08) : Color.clear,
                                 in: RoundedRectangle(cornerRadius: 12))
                 }
                 }.padding(.horizontal, 16)
@@ -2462,6 +2506,8 @@ private struct AIComposer: View, Equatable {
                     composerEditMenuState = nil
                     if snapshot.busy {
                         Task { await model.action("stop") }
+                    } else if model.selectedRemote != nil {
+                        model.showTransientError("跨设备会话暂只支持文字消息")
                     } else if isAttachmentPanelPresented {
                         isAttachmentPanelPresented = false
                     } else {

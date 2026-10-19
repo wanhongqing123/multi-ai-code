@@ -37,3 +37,9 @@
 - 另用本机 Debug 证书签了隔离候选：`.cache/android-candidate/MaiChat-Android-v2.2.2-3da73b68-local.apk`，158845288 B，SHA-256 `4bd95418977838bbc0f640ee2cbea0b9ed8f2caf5ac8adfd75321cc18911e320`。证书与 OPPO 已安装 2.2.1 发布证书不同，不能直接覆盖安装并保留数据；此候选尚未安装到原包名。
 - 为避免触碰原版数据，以独立包名 `com.kongshang.maichat.isolated` 在 OPPO PKD130 / Android 15 / 4 KB 页面真机安装 Debug 版。同一 App 私有目录中，`DownloadPublishInstrumentedTest` 的本地 HTTP 下载与通用文件发布 2/2 PASS，并断言 C++ 两条路径确实回调 Java；重复目标未覆盖。隔离版冷启动进入手机号登录页。随后卸载测试 App 与测试包、清理临时 UI dump；原版 `com.kongshang.maichat` 仍是 2.2.1 (221)，数据未清除。
 - 待完成：取得原发布签名密钥后覆盖安装，或获得用户明确允许清除旧版数据后安装本机签名包；之后才可在原账号会话里复测既有供应商视频任务的真实下载。当前真机本地 fixture 通过不等于旧版 App 已修复，也不证明云任务当前状态。
+
+## OPPO 安装结果（2026-10-19）
+
+- 用户明确允许卸载旧版并清除 MaiChat 本机数据。Windows 从 `cef97b3b7cd7ae18e102c415e9d2383ea6fb8d39` 重建、以本机 Debug 证书签名的优化 Release APK 为 `MaiChat-Android-v2.2.2-cef97b3b-local.apk`，158845288 B，SHA-256 `4bd95418977838bbc0f640ee2cbea0b9ed8f2caf5ac8adfd75321cc18911e320`。包内 versionName=2.2.2、versionCode=222，包含 arm64-v8a 与 armeabi-v7a。
+- 安装前设备是 OPPO PKD130 / Android 15 / 4 KB 页面，原包为 2.2.1 (221)。`adb uninstall com.kongshang.maichat` 与新包 `adb install` 均返回 Success；设备包管理器回读 `2.2.2 (222)`。从设备实际安装路径拉回 `base.apk`，SHA-256 与本地候选逐字节一致。冷启动 `Status: ok`，实际截图显示手机号登录页；进程 PID 在启动后保持稳定，同 PID 的近期日志未匹配到 Java/native fatal。
+- 安装前已用独立包名在同一 OPPO 上跑 App 私有目录本地 HTTP 与通用发布 instrumentation 2/2 PASS；测试包已卸载。正式 2.2.2 清除了原账号本机数据，用户需重新登录。原供应商视频任务记录无法在此手机上继续复测；没有创建新的付费任务，因此真实供应商视频完成后的下载仍标为未验证。

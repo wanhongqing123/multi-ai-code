@@ -7,7 +7,10 @@
 #include <QPushButton>
 #include <QSlider>
 #include <QLabel>
+#include <QMouseEvent>
 #include <QScreen>
+#include <QSplitter>
+#include <QSplitterHandle>
 #include <QStackedWidget>
 #include <QWidget>
 #include <QtTest>
@@ -100,6 +103,24 @@ void MaiFfplayVideoDialogTest::mainWindowDocksSamePlayerAcrossNavigationAndFulls
     QTRY_VERIFY_WITH_TIMEOUT(visiblePixels(), 2000);
     QTRY_COMPARE(player->pos(), slot->mapToGlobal(QPoint(0, 0)));
     QCOMPARE(player->size(), slot->size());
+    QVERIFY2(slot->width() * 4 >= slot->height() * 5,
+             "Desktop video dock must open as a landscape viewport");
+    auto* dockSplitter = window.findChild<QSplitter*>(QStringLiteral("videoContentSplitter"));
+    QVERIFY(dockSplitter && dockSplitter->handle(1)->isVisible());
+    auto* resizeHandle = dockSplitter->handle(1);
+    const int originalWidth = slot->width();
+    const QPoint handleCenter = resizeHandle->rect().center();
+    const QPoint finish = handleCenter - QPoint(40, 0);
+    QTest::mousePress(resizeHandle, Qt::LeftButton, Qt::NoModifier, handleCenter);
+    QMouseEvent move(QEvent::MouseMove, QPointF(finish),
+                     QPointF(resizeHandle->mapToGlobal(finish)),
+                     Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(resizeHandle, &move);
+    QTest::mouseRelease(resizeHandle, Qt::LeftButton, Qt::NoModifier, finish);
+    QTRY_VERIFY2(slot->width() < originalWidth,
+                 qPrintable(QStringLiteral("before=%1 after=%2")
+                     .arg(originalWidth).arg(slot->width())));
+    QTRY_COMPARE(player->size(), slot->size());
     const QByteArray capture = qgetenv("MAICHAT_TEST_CAPTURE_PATH");
     if (!capture.isEmpty()) {
         QTest::qWait(200);

@@ -156,6 +156,8 @@ private slots:
     void authoritativeApprovalResolutionOverridesLateSentDecision();
     void copiesOriginalMarkdownFromMessageContextMenu();
     void addContactButtonRemainsVisibleWithoutSearch();
+    void conversationHeaderNamesActions();
+    void selfAvatarOpensProfileSettings();
     void navigationTextIsLeftAlignedAndContactsDoNotShowMessagePreview();
     void sectionTitleFollowsSelectedNavigation();
     void visibleContactsNavigationSwitchesMiddlePane();
@@ -2882,6 +2884,56 @@ void MainWindowLayoutTest::addContactButtonRemainsVisibleWithoutSearch() {
     QVERIFY(contactsSearch->isHidden());
 }
 
+void MainWindowLayoutTest::conversationHeaderNamesActions() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+    MainWindow window(app);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    auto* pane = window.findChild<QWidget*>(QStringLiteral("conversationPane"));
+    auto* title = window.findChild<QLabel*>(QStringLiteral("conversationSectionTitle"));
+    auto* requests = window.findChild<QPushButton*>(QStringLiteral("friendRequestsButton"));
+    auto* add = window.findChild<QPushButton*>(QStringLiteral("addConversationButton"));
+    QVERIFY(pane && title && requests && add);
+    QCOMPARE(title->text(), QStringLiteral("消息"));
+    QVERIFY(title->mapTo(pane, QPoint()).x() < requests->mapTo(pane, QPoint()).x());
+    QVERIFY(requests->mapTo(pane, QPoint()).x() < add->mapTo(pane, QPoint()).x());
+    const QByteArray capture = qgetenv("MAICHAT_CAPTURE_CONVERSATION_HEADER");
+    if (!capture.isEmpty()) QVERIFY(pane->grab().save(QString::fromUtf8(capture)));
+}
+
+void MainWindowLayoutTest::selfAvatarOpensProfileSettings() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+    MainWindow window(app);
+    window.setMaiChatAccountIdProvider([] { return QStringLiteral("m_desktop"); });
+    window.setMaiChatNicknameProvider([] { return QStringLiteral("我的昵称"); });
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    auto* avatarButton = window.findChild<QPushButton*>(QStringLiteral("navLogoContainer"));
+    auto* profileCard = window.findChild<QWidget*>(QStringLiteral("selfProfileCard"));
+    auto* profileAvatar = window.findChild<QLabel*>(QStringLiteral("selfProfileAvatar"));
+    auto* profileName = window.findChild<QLabel*>(QStringLiteral("selfProfileName"));
+    auto* profileId = window.findChild<QLabel*>(QStringLiteral("selfProfileId"));
+    auto* stack = window.findChild<QStackedWidget*>(QStringLiteral("contentStack"));
+    auto* settingsPage = window.findChild<QWidget*>(QStringLiteral("settingsPage"));
+    QVERIFY(avatarButton && profileCard && profileAvatar && profileName && profileId);
+    QVERIFY(stack && settingsPage);
+    QCOMPARE(app.chatState().selectedPeerId(), QStringLiteral("phone-user"));
+    QTest::mouseClick(avatarButton, Qt::LeftButton);
+    QCOMPARE(stack->currentWidget(), settingsPage);
+    QCOMPARE(profileName->text(), QStringLiteral("我的昵称"));
+    QCOMPARE(profileId->text(), QStringLiteral("MaiChat ID  m_desktop"));
+    QVERIFY(!profileAvatar->pixmap(Qt::ReturnByValue).isNull());
+    QCOMPARE(app.chatState().selectedPeerId(), QStringLiteral("phone-user"));
+    const QByteArray capture = qgetenv("MAICHAT_CAPTURE_SELF_PROFILE");
+    if (!capture.isEmpty()) QVERIFY(settingsPage->grab().save(QString::fromUtf8(capture)));
+}
+
 void MainWindowLayoutTest::navigationTextIsLeftAlignedAndContactsDoNotShowMessagePreview() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
@@ -2921,6 +2973,7 @@ void MainWindowLayoutTest::sectionTitleFollowsSelectedNavigation() {
     }
 
     auto* messagesTitle = window.findChild<QLabel*>(QStringLiteral("messagesSectionTitle"));
+    auto* conversationTitle = window.findChild<QLabel*>(QStringLiteral("conversationSectionTitle"));
     auto* contactsTitle = window.findChild<QLabel*>(QStringLiteral("contactsSectionTitle"));
     auto* contactsNavButton = window.findChild<QPushButton*>(QStringLiteral("contactsNavButton"));
     auto* contentStack = window.findChild<QStackedWidget*>(QStringLiteral("contentStack"));
@@ -2928,8 +2981,10 @@ void MainWindowLayoutTest::sectionTitleFollowsSelectedNavigation() {
     auto* conversationList = window.findChild<QListWidget*>(QStringLiteral("conversationList"));
     auto* contactsList = window.findChild<QListWidget*>(QStringLiteral("contactsList"));
 
-    // 导航图标已经取代旧标题；手动搜索入口也不再显示。
-    QVERIFY2(messagesTitle == nullptr, "消息页的标题应当已被搜索行取代");
+    // 旧标题和搜索框已移除；会话栏保留紧凑的「消息」标题。
+    QVERIFY(messagesTitle == nullptr);
+    QVERIFY(conversationTitle != nullptr);
+    QCOMPARE(conversationTitle->text(), QStringLiteral("消息"));
     QVERIFY2(contactsTitle == nullptr, "通讯录页的标题应当已被搜索框取代");
     for (QLabel* label : labels) {
         QVERIFY2(label->text() != QStringLiteral("通讯录"), "不该再有「通讯录」这行标题文字");

@@ -1832,6 +1832,8 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
   if (watched == videoDockSlot_ &&
       (event->type() == QEvent::Resize || event->type() == QEvent::Move))
     QTimer::singleShot(0, this, [this] { syncVideoDock(); });
+  if (watched == videoDockPane_ && event->type() == QEvent::Resize)
+    QTimer::singleShot(0, this, [this] { syncVideoDock(); });
   if (watched == videoDialog_ &&
       (event->type() == QEvent::WindowStateChange || event->type() == QEvent::Show ||
        event->type() == QEvent::Hide))
@@ -2015,15 +2017,47 @@ void MainWindow::buildUi() {
   auto *contentLayout = new QHBoxLayout(contentArea);
   contentLayout->setContentsMargins(0, 0, 0, 0);
   contentLayout->setSpacing(0);
-  videoDockSlot_ = new QWidget(contentArea);
+  videoContentSplitter_ = new QSplitter(Qt::Horizontal, contentArea);
+  videoContentSplitter_->setObjectName(QStringLiteral("videoContentSplitter"));
+  videoContentSplitter_->setChildrenCollapsible(false);
+  videoContentSplitter_->setHandleWidth(UiZoom::s(7));
+  videoContentSplitter_->setStyleSheet(QStringLiteral(
+      "QSplitter::handle { background: #dbe4ef; }"
+      "QSplitter::handle:hover { background: #9dc7e8; }"));
+  contentLayout->addWidget(videoContentSplitter_);
+  videoDockPane_ = new QWidget(videoContentSplitter_);
+  videoDockPane_->setObjectName(QStringLiteral("videoDockPane"));
+  videoDockPane_->setStyleSheet(QStringLiteral("background:#f8fafc;"));
+  videoDockPane_->installEventFilter(this);
+  auto *videoPaneLayout = new QVBoxLayout(videoDockPane_);
+  videoPaneLayout->setContentsMargins(0, 0, 0, 0);
+  videoPaneLayout->setSpacing(0);
+  videoDockSlot_ = new QWidget(videoDockPane_);
   videoDockSlot_->setObjectName(QStringLiteral("videoDockSlot"));
   videoDockSlot_->setStyleSheet(QStringLiteral("background:#080c14;"));
   videoDockSlot_->installEventFilter(this);
   videoDockSlot_->hide();
-  contentLayout->addWidget(videoDockSlot_);
-  contentStack_ = new QStackedWidget(contentArea);
+  videoPaneLayout->addWidget(videoDockSlot_, 0, Qt::AlignTop);
+  videoPaneLayout->addStretch(1);
+  videoContentSplitter_->addWidget(videoDockPane_);
+  videoDockPane_->hide();
+  contentStack_ = new QStackedWidget(videoContentSplitter_);
   contentStack_->setObjectName(QStringLiteral("contentStack"));
-  contentLayout->addWidget(contentStack_, 1);
+  videoContentSplitter_->addWidget(contentStack_);
+  videoContentSplitter_->setStretchFactor(0, 0);
+  videoContentSplitter_->setStretchFactor(1, 1);
+  videoContentSplitter_->handle(1)->setToolTip(QStringLiteral("拖动调整播放器大小"));
+  connect(videoContentSplitter_, &QSplitter::splitterMoved, this,
+          [this] {
+            const int extent = videoContentSplitter_->sizes().value(0);
+            if (extent > 0) {
+              if (videoContentSplitter_->orientation() == Qt::Horizontal)
+                videoDockHorizontalExtent_ = extent;
+              else
+                videoDockVerticalExtent_ = extent;
+            }
+            syncVideoDock();
+          });
 
   messagesPage_ = new QWidget(contentStack_);
   messagesPage_->setObjectName(QStringLiteral("messagesPage"));
@@ -2047,9 +2081,13 @@ void MainWindow::buildUi() {
   navLayout->setContentsMargins(8, 0, 8, 12);
   navLayout->setSpacing(8);
 
-  auto *logoContainer = new QWidget(navRail_);
+  selfProfileButton_ = new QPushButton(navRail_);
+  auto *logoContainer = selfProfileButton_;
   logoContainer->setObjectName(QStringLiteral("navLogoContainer"));
   logoContainer->setFixedSize(UiZoom::s(44), UiZoom::s(44));
+  logoContainer->setCursor(Qt::PointingHandCursor);
+  logoContainer->setToolTip(QStringLiteral("查看我的资料"));
+  logoContainer->setAccessibleName(QStringLiteral("查看我的资料"));
 
   auto *logo = new AccountAvatarLabel(logoContainer);
   logo->setObjectName(QStringLiteral("navLogo"));
@@ -2057,6 +2095,7 @@ void MainWindow::buildUi() {
   logo->setFixedSize(UiZoom::s(34), UiZoom::s(34));
   logo->move(UiZoom::s(5), UiZoom::s(5));
   logo->setProfile(app_.selfProfile());
+  logo->setAttribute(Qt::WA_TransparentForMouseEvents);
 
   statusLabel_ = new QLabel(logoContainer);
   statusLabel_->setObjectName(QStringLiteral("connectionStatusDot"));
@@ -2067,6 +2106,7 @@ void MainWindow::buildUi() {
   statusLabel_->move(UiZoom::s(30), UiZoom::s(6));
   statusLabel_->setScaledContents(false);
   statusLabel_->setAccessibleName(QStringLiteral("IM 连接状态"));
+  statusLabel_->setAttribute(Qt::WA_TransparentForMouseEvents);
   // 头像独占一行居中；「添加联系人」已移到会话栏的搜索框旁边（微信式）。
   navLayout->addWidget(logoContainer, 0, Qt::AlignHCenter);
   navLayout->addSpacing(UiZoom::s(6));
@@ -2128,6 +2168,8 @@ void MainWindow::buildUi() {
   auto *conversationHeader = new QHBoxLayout();
   conversationHeader->setContentsMargins(0, 0, 16, 0);
   conversationHeader->setSpacing(8);
+  auto *conversationTitle = new QLabel(QStringLiteral("消息"), conversationPane);
+  conversationTitle->setObjectName(QStringLiteral("conversationSectionTitle"));
   navSearchInput_ = new QLineEdit(conversationPane);
   navSearchInput_->setObjectName(QStringLiteral("globalSearchBox"));
   navSearchInput_->setPlaceholderText(QStringLiteral("搜索消息 (Ctrl+F)"));
@@ -2143,12 +2185,11 @@ void MainWindow::buildUi() {
   addContactButton_->setIconSize(QSize(kNavIconPixels, kNavIconPixels));
   addContactButton_->setToolTip(QStringLiteral("添加联系人"));
   addContactButton_->setCursor(Qt::PointingHandCursor);
-  friendRequestsButton_ = new QPushButton(QStringLiteral("申请"), conversationPane);
+  friendRequestsButton_ = new QPushButton(QStringLiteral("好友申请"), conversationPane);
   friendRequestsButton_->setObjectName(QStringLiteral("friendRequestsButton"));
   friendRequestsButton_->setToolTip(QStringLiteral("查看好友申请"));
   friendRequestsButton_->setCursor(Qt::PointingHandCursor);
-  friendRequestsButton_->setStyleSheet(QStringLiteral(
-      "QPushButton#friendRequestsButton { color: #2688c9; border: 0; background: transparent; }"));
+  conversationHeader->addWidget(conversationTitle);
   conversationHeader->addStretch(1);
   conversationHeader->addWidget(friendRequestsButton_, 0);
   conversationHeader->addWidget(addContactButton_, 0);
@@ -2637,6 +2678,28 @@ void MainWindow::buildUi() {
                  settingsContent);
   settingsSubtitle->setObjectName(QStringLiteral("settingsSubtitle"));
 
+  auto *profileCard = new QWidget(settingsContent);
+  profileCard->setObjectName(QStringLiteral("selfProfileCard"));
+  auto *selfProfileLayout = new QHBoxLayout(profileCard);
+  selfProfileLayout->setContentsMargins(UiZoom::s(18), UiZoom::s(16),
+                                       UiZoom::s(18), UiZoom::s(16));
+  selfProfileLayout->setSpacing(UiZoom::s(16));
+  settingsProfileAvatar_ = new AccountAvatarLabel(profileCard);
+  settingsProfileAvatar_->setObjectName(QStringLiteral("selfProfileAvatar"));
+  settingsProfileAvatar_->setFixedSize(UiZoom::s(60), UiZoom::s(60));
+  selfProfileLayout->addWidget(settingsProfileAvatar_);
+  auto *profileText = new QWidget(profileCard);
+  auto *profileTextLayout = new QVBoxLayout(profileText);
+  profileTextLayout->setContentsMargins(0, 0, 0, 0);
+  profileTextLayout->setSpacing(UiZoom::s(5));
+  settingsProfileName_ = new QLabel(profileText);
+  settingsProfileName_->setObjectName(QStringLiteral("selfProfileName"));
+  settingsProfileId_ = new QLabel(profileText);
+  settingsProfileId_->setObjectName(QStringLiteral("selfProfileId"));
+  profileTextLayout->addWidget(settingsProfileName_);
+  profileTextLayout->addWidget(settingsProfileId_);
+  selfProfileLayout->addWidget(profileText, 1);
+
   auto *settingsPanel = new QWidget(settingsContent);
   settingsPanel->setObjectName(QStringLiteral("settingsPanel"));
   auto *settingsPanelLayout = new QVBoxLayout(settingsPanel);
@@ -2747,6 +2810,7 @@ void MainWindow::buildUi() {
 
   settingsLayout->addWidget(settingsTitle);
   settingsLayout->addWidget(settingsSubtitle);
+  settingsLayout->addWidget(profileCard);
   settingsLayout->addWidget(settingsPanel);
   settingsLayout->addSpacing(UiZoom::s(24));
   settingsLayout->addWidget(buildRemoteDesktopSettingsPanel(settingsContent));
@@ -2891,10 +2955,32 @@ void MainWindow::applyStyle() {
             border: 0;
             background: transparent;
         }
+        #navLogoContainer {
+            border: 0;
+            border-radius: 10px;
+            padding: 0;
+            background: transparent;
+        }
+        #navLogoContainer:hover { background: #e9eef5; }
         #conversationPane {
             background: #f8fafc;
             border: 0;
         }
+        #conversationSectionTitle {
+            color: #172033;
+            font-size: 17px;
+            font-weight: 600;
+        }
+        #friendRequestsButton {
+            min-height: 30px;
+            border: 1px solid #d8e5f1;
+            border-radius: 8px;
+            background: #ffffff;
+            color: #45627f;
+            font-size: 12px;
+            padding: 0 10px;
+        }
+        #friendRequestsButton:hover { background: #e9f2fb; }
         #pageTitle {
             color: #101828;
             font-size: 16px;
@@ -3023,6 +3109,13 @@ void MainWindow::applyStyle() {
             color: #667085;
             font-size: 13px;
         }
+        #selfProfileCard {
+            background: #ffffff;
+            border: 1px solid #dae4f0;
+            border-radius: 12px;
+        }
+        #selfProfileName { color: #172033; font-size: 20px; font-weight: 600; }
+        #selfProfileId { color: #66758d; font-size: 13px; }
         #settingsPanel {
             background: #ffffff;
             border: 1px solid #dae4f0;
@@ -3281,6 +3374,8 @@ void MainWindow::bindSignals() {
   connect(remoteNavButton_, &QPushButton::clicked, this,
           [this] { showRemotePage(); });
   connect(settingsNavButton_, &QPushButton::clicked, this,
+          [this] { showSettingsPage(); });
+  connect(selfProfileButton_, &QPushButton::clicked, this,
           [this] { showSettingsPage(); });
   connect(agentNavButton_, &QPushButton::clicked, this,
           [this] { showAgentPage(); });
@@ -3868,11 +3963,16 @@ void MainWindow::toggleContactGroupCollapsed(const QString &groupName) {
 }
 
 void MainWindow::refreshSettings() {
-  settingsAccountValue_->setText(maiChatAccountIdProvider_ ?
-      maiChatAccountIdProvider_() : app_.chatState().ownerUserId());
+  const QString accountId = maiChatAccountIdProvider_ ?
+      maiChatAccountIdProvider_() : app_.chatState().ownerUserId();
+  settingsAccountValue_->setText(accountId);
   const QString nickname = maiChatNicknameProvider_ ? maiChatNicknameProvider_().trimmed() :
       QString();
   settingsNicknameValue_->setText(nickname.isEmpty() ? QStringLiteral("未设置") : nickname);
+  const QString profileName = nickname.isEmpty() ? app_.selfProfile().displayName : nickname;
+  settingsProfileName_->setText(profileName.isEmpty() ? accountId : profileName);
+  settingsProfileId_->setText(QStringLiteral("MaiChat ID  ") + accountId);
+  static_cast<AccountAvatarLabel *>(settingsProfileAvatar_)->setProfile(app_.selfProfile());
   settingsConnectionValue_->setText(
       app_.isConnected() ? QStringLiteral("已连接") : QStringLiteral("未连接"));
   settingsSdkAppIdValue_->setText(
@@ -5312,6 +5412,7 @@ bool MainWindow::openDockedVideo(const QString &path, const QStringList &playlis
   videoDialog_ = dialog;
   connect(dialog, &QObject::destroyed, this, [this] {
     if (!videoDialog_ && videoDockSlot_) videoDockSlot_->hide();
+    if (!videoDialog_ && videoDockPane_) videoDockPane_->hide();
   });
   dialog->show();
   dialog->raise();
@@ -5328,30 +5429,42 @@ bool MainWindow::openDockedVideo(const QString &path, const QStringList &playlis
 }
 
 void MainWindow::syncVideoDock() {
-  if (!videoDockSlot_) return;
+  if (!videoDockSlot_ || !videoDockPane_ || !videoContentSplitter_) return;
   if (!videoDialog_ || !videoDialog_->isVisible() || videoDialog_->isFullScreen()) {
     videoDockSlot_->hide();
+    videoDockPane_->hide();
     return;
   }
-  QWidget *area = videoDockSlot_->parentWidget();
-  auto *layout = qobject_cast<QBoxLayout *>(area ? area->layout() : nullptr);
-  if (!area || !layout) return;
+  QWidget *area = videoContentSplitter_->parentWidget();
+  if (!area) return;
   const bool vertical = area->width() < UiZoom::s(1100);
-  const auto direction = vertical ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight;
-  if (layout->direction() != direction) layout->setDirection(direction);
-  if (vertical) {
-    videoDockSlot_->setMinimumWidth(0);
-    videoDockSlot_->setMaximumWidth(QWIDGETSIZE_MAX);
-    const int height = qMin(qMax(area->height() / 2, UiZoom::s(240)),
-                            qMax(0, area->height() - UiZoom::s(300)));
-    videoDockSlot_->setFixedHeight(height);
-  } else {
-    videoDockSlot_->setMinimumHeight(0);
-    videoDockSlot_->setMaximumHeight(QWIDGETSIZE_MAX);
-    const int width = qMin(area->width() * 52 / 100,
-                           qMax(0, area->width() - UiZoom::s(640)));
-    videoDockSlot_->setFixedWidth(width);
+  const Qt::Orientation orientation = vertical ? Qt::Vertical : Qt::Horizontal;
+  const bool orientationChanged = videoContentSplitter_->orientation() != orientation;
+  const bool wasHidden = videoDockPane_->isHidden();
+  if (orientationChanged) videoContentSplitter_->setOrientation(orientation);
+  if (wasHidden) videoDockPane_->show();
+  if (orientationChanged || wasHidden) {
+    const int extent = vertical ? area->height() : area->width();
+    const int maximum = vertical ? qMax(0, extent - UiZoom::s(300))
+                                 : qMax(0, extent - UiZoom::s(640));
+    const int initial = vertical
+        ? qMin(extent / 2, qMax(0, extent - UiZoom::s(300)))
+        : qMin(extent * 52 / 100, qMax(0, extent - UiZoom::s(640)));
+    const int previous = vertical ? videoDockVerticalExtent_ : videoDockHorizontalExtent_;
+    const int requested = previous > 0 ? qMin(previous, maximum) : initial;
+    videoContentSplitter_->setSizes({requested, qMax(0, extent - requested)});
   }
+  const int width = videoDockPane_->width();
+#if defined(Q_OS_MAC)
+  const int chromeHeight = 0;
+#else
+  const int chromeHeight = UiZoom::s(105);
+#endif
+  const int height = qMin(width * 9 / 16 + chromeHeight,
+                          qMax(0, videoDockPane_->height() - UiZoom::s(8)));
+  videoDockSlot_->setMinimumWidth(0);
+  videoDockSlot_->setMaximumWidth(QWIDGETSIZE_MAX);
+  videoDockSlot_->setFixedHeight(height);
   videoDockSlot_->show();
   if (videoDockSlot_->width() > 0 && videoDockSlot_->height() > 0)
     videoDialog_->setGeometry(QRect(videoDockSlot_->mapToGlobal(QPoint(0, 0)),

@@ -13,6 +13,7 @@
 #include <QMainWindow>
 #include <QMutex>
 #include <QPair>
+#include <QPoint>
 #include <QPointer>
 #include <QPushButton>
 #include <QScrollArea>
@@ -44,11 +45,11 @@ class QMimeData;
 class QMenu;
 class QResizeEvent;
 class QShowEvent;
+class QSplitter;
 class QSplitterHandle;
 class QLineEdit;
 class QHBoxLayout;
 class QListWidgetItem;
-class QPoint;
 class QSystemTrayIcon;
 class QTimer;
 class QImage;
@@ -306,6 +307,7 @@ private:
     RemoteDiagnosticsController* diagnostics_ = nullptr;
     QLabel* diagnosticsStatusLabel_ = nullptr;
     QPushButton* moreButton_ = nullptr;
+    QPushButton* selfProfileButton_ = nullptr;
     QWidget* navRail_ = nullptr;
     QLineEdit* navSearchInput_ = nullptr;
     QLineEdit* contactsSearchInput_ = nullptr;
@@ -324,6 +326,10 @@ private:
     QPushButton* settingsNavButton_ = nullptr;
     QStackedWidget* contentStack_ = nullptr;
     QWidget* videoDockSlot_ = nullptr;
+    QWidget* videoDockPane_ = nullptr;
+    QSplitter* videoContentSplitter_ = nullptr;
+    int videoDockHorizontalExtent_ = 0;
+    int videoDockVerticalExtent_ = 0;
     QPointer<QWidget> videoDialog_;
     QWidget* messagesPage_ = nullptr;
     QWidget* contactsPage_ = nullptr;
@@ -335,6 +341,9 @@ private:
     QPushButton* contactProfileDeleteButton_ = nullptr;
     QString selectedContactProfileUserId_;
     QWidget* settingsPage_ = nullptr;
+    QLabel* settingsProfileAvatar_ = nullptr;
+    QLabel* settingsProfileName_ = nullptr;
+    QLabel* settingsProfileId_ = nullptr;
     QListWidget* conversationList_ = nullptr;
     QListWidget* contactsList_ = nullptr;
     QLabel* titleLabel_ = nullptr;

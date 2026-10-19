@@ -2,6 +2,7 @@
 'use strict';
 
 const fs = require('node:fs');
+const { createHash } = require('node:crypto');
 const Database = require('better-sqlite3');
 const { openStore } = require('./store');
 const { validAccountId } = require('./account-id');
@@ -31,7 +32,9 @@ function ownerForManifest(db, manifest) {
     WHERE account_id=?`).get(manifest.owner_account_id);
   if (!owner || owner.disabled_at || owner.im_user_id !== manifest.owner_im_user_id)
     throw new Error('Owner account does not match the manifest');
-  const marker = `cached_test_contacts_20261019_${owner.account_id}`;
+  const batch = createHash('sha256').update(manifest.contacts
+    .map(contact => contact.im_user_id).sort().join('\n')).digest('hex').slice(0, 16);
+  const marker = `cached_test_contacts_20261019_${owner.account_id}_${batch}`;
   if (db.prepare('SELECT 1 FROM account_migrations WHERE name=?').get(marker))
     throw new Error('Cached contacts were already imported');
   return { owner, marker };

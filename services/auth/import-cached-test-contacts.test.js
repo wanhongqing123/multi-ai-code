@@ -67,6 +67,10 @@ test('migration keeps existing IM IDs and makes cached contacts visible as MaiCh
   assert.equal((await service.createTestAccount('test_new', 'short1')).statusCode, 400);
   await assert.rejects(importCachedTestContacts(setup.db, setup.manifest, setup.options),
     /already imported/);
+  setup.manifest.contacts = [{ im_user_id: 'test_gamma', expected_status: 'Imported' }];
+  setup.statuses.test_gamma = 'Imported';
+  await importCachedTestContacts(setup.db, setup.manifest, setup.options);
+  assert.equal(setup.db.prepare('SELECT COUNT(*) AS n FROM friendships').get().n, 3);
   setup.db.close();
 });
 

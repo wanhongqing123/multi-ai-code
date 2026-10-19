@@ -41,9 +41,11 @@ function createServer(service) {
         path: request.url, body, headers: request.headers });
       response.writeHead(result.statusCode);
       response.end(JSON.stringify(result.body));
-    } catch {
-      if (!response.headersSent) response.writeHead(500);
-      response.end(JSON.stringify({ error: 'Internal service error' }));
+    } catch (error) {
+      if (!response.headersSent)
+        response.writeHead(error?.code === 'AUTH_UNAVAILABLE' ? 503 : 500);
+      response.end(JSON.stringify({ error: error?.code === 'AUTH_UNAVAILABLE'
+        ? 'Account service is unavailable' : 'Internal service error' }));
     }
   });
 }
@@ -58,11 +60,16 @@ function createAccountAuthorizer(origin, fetcher = fetch) {
         headers: { Authorization: bearer }, redirect: 'error',
         signal: AbortSignal.timeout(5000)
       });
-      if (response.status !== 200) return null;
+      if (response.status === 401) return null;
+      if (response.status !== 200) throw new Error('Account service is unavailable');
       const body = await response.json();
       return { accountId: body.user?.id, slot: body.device_slot,
         loginSessionId: body.login_session_id };
-    } catch { return null; }
+    } catch {
+      const error = new Error('Account service is unavailable');
+      error.code = 'AUTH_UNAVAILABLE';
+      throw error;
+    }
   };
 }
 

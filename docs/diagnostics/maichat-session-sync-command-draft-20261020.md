@@ -19,6 +19,8 @@
 - iOS 的 `onChange` 从当前模型读取恢复文本，并处理回执与发送回调交错的顺序。
   Android 同样为回执与发送回调保存恢复代次；Mac/Windows 面板收到拒绝或
   等待超时时恢复原文本。
+- Android 在上一条远端命令未确认期间暂不允许再次提交文字。确认、超时或送达
+  未知后才重新开放输入动作，避免回执进入网络线程与页面线程之间时生成新命令 ID。
 - 同一正常 iOS App 用例红转绿：
   `MaiChatUITests/AIAssistantUITests/testNormalAppReadsAndControlsLocalFakeMacSession`
   读取假 Mac 历史、正常发送消息、再触发拒绝并检查原文仍在输入框。

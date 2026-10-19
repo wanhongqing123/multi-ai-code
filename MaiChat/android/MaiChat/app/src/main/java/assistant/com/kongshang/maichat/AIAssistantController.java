@@ -53,11 +53,13 @@ public final class AIAssistantController {
         final JSONObject remoteSession;
         final String selected, baseUrl, model, policy, error, syncStatus, restoreDraft;
         final int restoreGeneration;
+        final boolean remoteCommandPending;
         final boolean ready;
         final int messageHash, messageLength;
         State(JSONObject data, JSONObject remoteSession, String selected, String baseUrl,
               String model, String policy, String error, String syncStatus,
-              String restoreDraft, int restoreGeneration, boolean ready) {
+              String restoreDraft, int restoreGeneration, boolean remoteCommandPending,
+              boolean ready) {
             this.data = data;
             this.remoteSession = remoteSession;
             this.selected = selected;
@@ -68,6 +70,7 @@ public final class AIAssistantController {
             this.syncStatus = syncStatus;
             this.restoreDraft = restoreDraft;
             this.restoreGeneration = restoreGeneration;
+            this.remoteCommandPending = remoteCommandPending;
             this.ready = ready;
             // 在工作线程计算可见消息指纹，UI 只在正文或工具状态变化时重绑列表。
             JSONArray messages = data.optJSONArray("messages");
@@ -163,7 +166,7 @@ public final class AIAssistantController {
     static final String DEEPSEEK_URL = "https://api.deepseek.com";
     static final String DEFAULT_MODEL = "deepseek-flash";
     volatile State state = new State(new JSONObject(), null, "", DEEPSEEK_URL,
-        DEFAULT_MODEL, "on-request", "", "", "", 0, false);
+        DEFAULT_MODEL, "on-request", "", "", "", 0, false, false);
     private long handle;
     private File root;
     private File rvmModelFile;
@@ -644,7 +647,8 @@ public final class AIAssistantController {
             ? "正在读取 " + pendingRemoteSelection.optString("device_name") + " 的对话…"
             : selectedRemote == null ? "" : remoteCommandStatus;
         State next = new State(visible, selectedRemote, shown, baseUrl, model, policy,
-            error, status, remoteRestoreDraft, remoteRestoreGeneration, ready);
+            error, status, remoteRestoreDraft, remoteRestoreGeneration,
+            selectedRemote != null && !pendingRemoteCommandIds.isEmpty(), ready);
         state = next;
         Listener target = listener;
         if (target != null)
@@ -851,6 +855,13 @@ public final class AIAssistantController {
                 }
             }
             if (pendingRemoteSelection != null) {
+                if (!sameRemote(selectedRemote, pendingRemoteSelection)) {
+                    pendingRemoteCommandIds.clear();
+                    remoteDeliveryPendingIds.clear();
+                    pendingRemoteDraftById.clear();
+                    remoteCommandResultsById.clear();
+                    remoteCommandStatus = "";
+                }
                 selectedRemote = pendingRemoteSelection;
                 pendingRemoteSelection = null;
                 remoteSelectionGeneration++;
@@ -1024,6 +1035,12 @@ public final class AIAssistantController {
         java.util.List<ImportedFile> intendedAttachments = new java.util.ArrayList<>(attachments);
         worker.post(() -> {
             if (selectedRemote != null && intendedSession.equals(selectedRemote.optString("id"))) {
+                if (!pendingRemoteCommandIds.isEmpty()) {
+                    error = "请等待所属设备确认上一条消息";
+                    publishState();
+                    main.post(() -> completion.accept(false));
+                    return;
+                }
                 if (sessionSync == null || !selectedRemote.optBoolean("online") ||
                     !intendedAttachments.isEmpty() || !quotedMessageId.isEmpty() ||
                     text.trim().isEmpty()) {

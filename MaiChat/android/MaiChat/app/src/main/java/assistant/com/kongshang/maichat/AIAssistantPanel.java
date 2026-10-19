@@ -487,6 +487,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             || !currentAttachments().isEmpty();
         boolean canSubmit = state != null && state.ready && !busy && !submitting
             && !navigationPending && pendingMediaImports.getOrDefault(selected, 0) == 0 && hasDraft
+            && !state.remoteCommandPending
             && (state.remoteSession == null || state.remoteSession.optBoolean("online"));
         send.setVisibility(!voiceMode && hasDraft && !busy ? VISIBLE : GONE);
         send.setEnabled(canSubmit);

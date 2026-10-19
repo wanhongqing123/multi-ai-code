@@ -2944,6 +2944,45 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         });
     }
 
+    private void showNicknameDialog() {
+        EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setHint("昵称");
+        input.setText(session.nickname());
+        input.setSelection(input.length());
+        FrameLayout wrapper = new FrameLayout(this);
+        wrapper.setPadding(dp(20), dp(8), dp(20), 0);
+        wrapper.addView(input, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+        AlertDialog dialog = new AlertDialog.Builder(this)
+            .setTitle("修改昵称")
+            .setView(wrapper)
+            .setNegativeButton("取消", null)
+            .setPositiveButton("保存", null)
+            .create();
+        dialog.setOnShowListener(ignored -> {
+            Button save = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+            save.setOnClickListener(view -> {
+                String value = input.getText().toString().trim();
+                if (value.codePointCount(0, value.length()) > 32
+                    || value.getBytes(StandardCharsets.UTF_8).length > 120) {
+                    input.setError("昵称最多 32 个字符，且不能超过 120 字节");
+                    return;
+                }
+                save.setEnabled(false);
+                session.setNickname(value, error -> {
+                    if (!dialog.isShowing()) return;
+                    save.setEnabled(true);
+                    if (error != null) { input.setError(error); return; }
+                    dialog.dismiss();
+                    render();
+                });
+            });
+        });
+        allowKeyboardLocation = false;
+        dialog.show();
+    }
+
     private void renderSettings() {
         ScrollView scroll = new ScrollView(this);
         LinearLayout page = new LinearLayout(this);
@@ -2954,13 +2993,19 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
 
         String accountId = session.accountId();
         String accountLabel = compactAccountId(accountId);
+        String nickname = session.nickname();
         LinearLayout accountSection = settingsSection("账号", new String[][]{
+            {"昵称", nickname.isEmpty() ? "未设置  ›" : nickname + "  ›"},
             {"登录账号", accountLabel + "  复制"}
         });
         page.addView(accountSection, matchWrap());
-        View accountCard = accountSection.getChildAt(1);
-        accountCard.setContentDescription("登录账号 " + accountLabel + "，点击复制完整账号 ID");
-        accountCard.setOnClickListener(view -> {
+        ViewGroup accountCard = (ViewGroup) accountSection.getChildAt(1);
+        View nicknameRow = accountCard.getChildAt(0);
+        nicknameRow.setContentDescription("昵称 " + (nickname.isEmpty() ? "未设置" : nickname));
+        nicknameRow.setOnClickListener(view -> showNicknameDialog());
+        View accountRow = accountCard.getChildAt(1);
+        accountRow.setContentDescription("登录账号 " + accountLabel + "，点击复制完整账号 ID");
+        accountRow.setOnClickListener(view -> {
             ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
             clipboard.setPrimaryClip(ClipData.newPlainText("MaiChat account ID", accountId));
             toast("完整账号 ID 已复制");

@@ -16,6 +16,22 @@ import Vision
 
 @MainActor
 extension AIMobileHostToolProvider {
+    func setNickname(
+        appState: RemoteIMAppState,
+        arguments: [String: Any]
+    ) async -> AIMaiChatHostToolExecution {
+        guard let nickname = arguments["nickname"] as? String else {
+            return .failure(code: "invalid_input", message: "nickname is required")
+        }
+        do {
+            try await appState.setMaiChatNickname(nickname)
+            return Self.jsonSuccess(["nickname": appState.maiChatNickname,
+                                     "account_id": appState.maiChatAccountID])
+        } catch {
+            return .failure(code: "internal", message: error.localizedDescription)
+        }
+    }
+
     func requestFriend(
         appState: RemoteIMAppState,
         arguments: [String: Any]

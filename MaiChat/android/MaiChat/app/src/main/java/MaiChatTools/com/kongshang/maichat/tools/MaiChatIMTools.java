@@ -48,6 +48,7 @@ final class MaiChatIMTools {
         switch (tool) {
             case "maichat_list_contacts": return hostListContacts(arguments);
             case "maichat_request_friend": return hostRequestFriend(arguments);
+            case "maichat_set_nickname": return hostSetNickname(arguments);
             case "maichat_list_conversations": return hostListConversations(arguments);
             case "maichat_get_messages": return hostGetMessages(arguments);
             case "maichat_search_messages": return hostSearchMessages(arguments);
@@ -87,6 +88,18 @@ final class MaiChatIMTools {
             throw new IllegalArgumentException("不能添加自己为好友");
         session.addContact(account);
         return new JSONObject().put("queued", true).put("account", account);
+    }
+
+    private JSONObject hostSetNickname(JSONObject arguments) throws JSONException {
+        Object raw = arguments.opt("nickname");
+        if (!(raw instanceof String))
+            throw new IllegalArgumentException("nickname 必须是字符串");
+        String nickname = ((String) raw).trim();
+        if (nickname.codePointCount(0, nickname.length()) > 32
+            || nickname.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 120)
+            throw new IllegalArgumentException("昵称最多 32 个字符且不能超过 120 字节");
+        session.setNickname(nickname, error -> {});
+        return new JSONObject().put("queued", true).put("nickname", nickname);
     }
 
     private JSONObject hostListConversations(JSONObject arguments) throws JSONException {

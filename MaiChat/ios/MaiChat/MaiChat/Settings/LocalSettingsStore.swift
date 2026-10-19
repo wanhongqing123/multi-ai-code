@@ -8,6 +8,7 @@ struct StoredRemoteIMSettings: Codable, Equatable, Sendable {
     var sdkAppID: Int?
     var masterUserID: String
     var maiChatAccountID: String
+    var maiChatNickname: String
     var selfAvatarURL: String?
     var friendUserIDs: [String]
     var slaveUserIDs: [String]
@@ -20,6 +21,7 @@ struct StoredRemoteIMSettings: Codable, Equatable, Sendable {
         sdkAppID: nil,
         masterUserID: "",
         maiChatAccountID: "",
+        maiChatNickname: "",
         selfAvatarURL: nil,
         friendUserIDs: [],
         slaveUserIDs: [],
@@ -33,6 +35,7 @@ struct StoredRemoteIMSettings: Codable, Equatable, Sendable {
         sdkAppID: Int?,
         masterUserID: String,
         maiChatAccountID: String = "",
+        maiChatNickname: String = "",
         selfAvatarURL: String? = nil,
         friendUserIDs: [String] = [],
         slaveUserIDs: [String] = [],
@@ -44,6 +47,7 @@ struct StoredRemoteIMSettings: Codable, Equatable, Sendable {
         self.sdkAppID = sdkAppID
         self.masterUserID = masterUserID
         self.maiChatAccountID = maiChatAccountID
+        self.maiChatNickname = maiChatNickname
         self.selfAvatarURL = selfAvatarURL
         self.friendUserIDs = friendUserIDs
         self.slaveUserIDs = slaveUserIDs
@@ -59,6 +63,9 @@ struct StoredRemoteIMSettings: Codable, Equatable, Sendable {
         self.masterUserID = try container.decodeIfPresent(String.self, forKey: .masterUserID) ?? ""
         self.maiChatAccountID = try container.decodeIfPresent(
             String.self, forKey: .maiChatAccountID
+        ) ?? ""
+        self.maiChatNickname = try container.decodeIfPresent(
+            String.self, forKey: .maiChatNickname
         ) ?? ""
         self.selfAvatarURL = try container.decodeIfPresent(String.self, forKey: .selfAvatarURL)
         self.friendUserIDs = try container.decodeIfPresent([String].self, forKey: .friendUserIDs) ?? []

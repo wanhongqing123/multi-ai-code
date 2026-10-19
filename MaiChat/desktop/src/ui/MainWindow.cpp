@@ -2581,6 +2581,8 @@ void MainWindow::buildUi() {
 
   settingsAccountValue_ = new QLabel(settingsPanel);
   settingsAccountValue_->setObjectName(QStringLiteral("settingsAccountValue"));
+  settingsNicknameValue_ = new QLabel(settingsPanel);
+  settingsNicknameValue_->setObjectName(QStringLiteral("settingsNicknameValue"));
   settingsConnectionValue_ = new QLabel(settingsPanel);
   settingsConnectionValue_->setObjectName(
       QStringLiteral("settingsConnectionValue"));
@@ -2595,7 +2597,53 @@ void MainWindow::buildUi() {
 
   settingsPanelLayout->addWidget(
       createSettingsRow(QStringLiteral("当前账号"), settingsAccountValue_,
-                        QStringLiteral("用于登录桌面端 IM 的账号 ID。")));
+                        QStringLiteral("MaiChat 账号 ID；与昵称分别显示。")));
+  auto* nicknameRow = createSettingsRow(
+      QStringLiteral("昵称"), settingsNicknameValue_,
+      QStringLiteral("MaiChat 账号的昵称；留空时显示 MaiChat ID。"));
+  settingsNicknameButton_ = new QPushButton(QStringLiteral("修改"), nicknameRow);
+  settingsNicknameButton_->setObjectName(QStringLiteral("settingsNicknameButton"));
+  settingsNicknameButton_->setProperty("settingsRowButton", true);
+  settingsNicknameButton_->setEnabled(false);
+  qobject_cast<QHBoxLayout*>(nicknameRow->layout())->addWidget(settingsNicknameButton_);
+  connect(settingsNicknameButton_, &QPushButton::clicked, this, [this] {
+    if (!maiChatNicknameUpdater_) return;
+    AppTextInputDialog::Options options;
+    options.title = QStringLiteral("修改昵称");
+    options.description = QStringLiteral("最多 32 个字符；留空后显示 MaiChat ID。");
+    options.placeholder = QStringLiteral("昵称");
+    options.initialText = nicknameDraftPending_ ? pendingNicknameDraft_ :
+        (maiChatNicknameProvider_ ? maiChatNicknameProvider_() : QString());
+    options.confirmText = QStringLiteral("保存");
+    bool accepted = false;
+    const QString nickname = AppTextInputDialog::getText(this, options, &accepted).trimmed();
+    if (!accepted) return;
+    if (nickname.toUcs4().size() > 32 || nickname.toUtf8().size() > 120) {
+      pendingNicknameDraft_ = nickname;
+      nicknameDraftPending_ = true;
+      AppMessageDialog::show(this, AppMessageDialog::Kind::Warning,
+                             QStringLiteral("昵称格式不符合要求"),
+                             QStringLiteral("昵称最多 32 个字符，且不能超过 120 字节。"));
+      return;
+    }
+    pendingNicknameDraft_ = nickname;
+    nicknameDraftPending_ = true;
+    settingsNicknameButton_->setEnabled(false);
+    QPointer<MainWindow> self(this);
+    maiChatNicknameUpdater_(nickname, [self](bool ok, const QString& error) {
+      if (!self) return;
+      self->settingsNicknameButton_->setEnabled(true);
+      if (!ok) {
+        AppMessageDialog::show(self, AppMessageDialog::Kind::Warning,
+                               QStringLiteral("昵称保存失败"), error);
+        return;
+      }
+      self->nicknameDraftPending_ = false;
+      self->pendingNicknameDraft_.clear();
+      self->refreshSettings();
+    });
+  });
+  settingsPanelLayout->addWidget(nicknameRow);
   settingsPanelLayout->addWidget(
       createSettingsRow(QStringLiteral("连接状态"), settingsConnectionValue_,
                         QStringLiteral("显示当前 SDK 登录状态。")));
@@ -3710,6 +3758,9 @@ void MainWindow::toggleContactGroupCollapsed(const QString &groupName) {
 void MainWindow::refreshSettings() {
   settingsAccountValue_->setText(maiChatAccountIdProvider_ ?
       maiChatAccountIdProvider_() : app_.chatState().ownerUserId());
+  const QString nickname = maiChatNicknameProvider_ ? maiChatNicknameProvider_().trimmed() :
+      QString();
+  settingsNicknameValue_->setText(nickname.isEmpty() ? QStringLiteral("未设置") : nickname);
   settingsConnectionValue_->setText(
       app_.isConnected() ? QStringLiteral("已连接") : QStringLiteral("未连接"));
   settingsSdkAppIdValue_->setText(
@@ -3794,6 +3845,17 @@ void MainWindow::setFriendQrProvider(std::function<void(FriendQrCompletion)> pro
 void MainWindow::setMaiChatAccountIdProvider(std::function<QString()> provider) {
   maiChatAccountIdProvider_ = std::move(provider);
   refreshSettings();
+}
+
+void MainWindow::setMaiChatNicknameProvider(std::function<QString()> provider) {
+  maiChatNicknameProvider_ = std::move(provider);
+  refreshSettings();
+}
+
+void MainWindow::setMaiChatNicknameUpdater(
+    std::function<void(const QString&, RemoteIMCompletion)> updater) {
+  maiChatNicknameUpdater_ = std::move(updater);
+  if (settingsNicknameButton_) settingsNicknameButton_->setEnabled(bool(maiChatNicknameUpdater_));
 }
 
 void MainWindow::rebuildAgentPage() {

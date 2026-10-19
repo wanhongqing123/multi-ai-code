@@ -1987,6 +1987,8 @@ void MainWindowLayoutTest::settingsNavigationShowsAccountAndSdkDefaults() {
     app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
 
     MainWindow window(app);
+    window.setMaiChatNicknameProvider([] { return QStringLiteral("昵称测试"); });
+    window.setMaiChatNicknameUpdater([](const QString&, RemoteIMCompletion) {});
     auto* settingsNavButton = window.findChild<QPushButton*>(QStringLiteral("settingsNavButton"));
     QVERIFY(settingsNavButton != nullptr);
 
@@ -1995,15 +1997,22 @@ void MainWindowLayoutTest::settingsNavigationShowsAccountAndSdkDefaults() {
     auto* settingsPage = window.findChild<QWidget*>(QStringLiteral("settingsPage"));
     auto* contentStack = window.findChild<QStackedWidget*>(QStringLiteral("contentStack"));
     auto* accountValue = window.findChild<QLabel*>(QStringLiteral("settingsAccountValue"));
+    auto* nicknameValue = window.findChild<QLabel*>(QStringLiteral("settingsNicknameValue"));
+    auto* nicknameButton = window.findChild<QPushButton*>(
+        QStringLiteral("settingsNicknameButton"));
     auto* connectionValue = window.findChild<QLabel*>(QStringLiteral("settingsConnectionValue"));
     auto* sdkAppIdValue = window.findChild<QLabel*>(QStringLiteral("settingsSdkAppIdValue"));
     QVERIFY(settingsPage != nullptr);
     QVERIFY(contentStack != nullptr);
     QCOMPARE(contentStack->currentWidget(), settingsPage);
     QVERIFY(accountValue != nullptr);
+    QVERIFY(nicknameValue != nullptr);
+    QVERIFY(nicknameButton != nullptr);
     QVERIFY(connectionValue != nullptr);
     QVERIFY(sdkAppIdValue != nullptr);
     QCOMPARE(accountValue->text(), QStringLiteral("desktop-user"));
+    QCOMPARE(nicknameValue->text(), QStringLiteral("昵称测试"));
+    QVERIFY(nicknameButton->isEnabled());
     QCOMPARE(connectionValue->text(), QStringLiteral("未连接"));
     QCOMPARE(sdkAppIdValue->text(), QStringLiteral("1600148979"));
     // 设置页的值应是只读标签而非输入框；导航栏的搜索框是唯一合法的 QLineEdit。

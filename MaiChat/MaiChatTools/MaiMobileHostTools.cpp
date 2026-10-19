@@ -201,6 +201,12 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
         "The recipient must accept.",
         R"({"type":"object","properties":{"account":{"type":"string"}},"required":["account"]})",
         true);
+    add("maichat_set_nickname",
+        "Set or clear the current MaiChat account nickname. Empty string clears it. "
+        "Requires user approval.",
+        R"({"type":"object","properties":{"nickname":{"type":"string","maxLength":32}},)"
+            R"("required":["nickname"]})",
+        true);
     add("maichat_list_conversations",
         "List MaiChat conversations ordered by latest message, including unread counts.",
         // 会话按最新消息排序；limit 只限制返回条数，未读数来自会话记录。

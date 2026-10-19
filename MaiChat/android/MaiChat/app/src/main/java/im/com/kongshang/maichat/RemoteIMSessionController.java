@@ -80,6 +80,7 @@ public final class RemoteIMSessionController {
     private final java.util.Set<String> acceptedFriendUserIds = new java.util.HashSet<>();
     private final java.util.Set<String> pendingFriendSyncUserIds = new java.util.HashSet<>();
     private final Map<String, String> friendAccountByIm = new HashMap<>();
+    private final Map<String, String> friendDisplayByIm = new HashMap<>();
     private final Map<String, String> friendRequestIdByIm = new HashMap<>();
     private interface IOAction { void run() throws Exception; }
 
@@ -99,7 +100,12 @@ public final class RemoteIMSessionController {
             int generation = accountGeneration;
             ioExecutor.execute(() -> {
                 try {
+                    String previousNickname = authClient.nickname();
                     authClient.validateSession();
+                    if (!previousNickname.equals(authClient.nickname()))
+                        runOnMain(() -> {
+                            if (generation == accountGeneration) notifyStateChanged();
+                        });
                 } catch (Exception failure) {
                     if (authClient.hasSession()) return;
                     runOnMain(() -> {
@@ -217,6 +223,7 @@ public final class RemoteIMSessionController {
         acceptedFriendUserIds.clear();
         pendingFriendSyncUserIds.clear();
         friendAccountByIm.clear();
+        friendDisplayByIm.clear();
         friendRequestIdByIm.clear();
         chatState = new ChatState(next.requiresLogin() ? FALLBACK_OWNER_USER_ID : next.loginUserId());
         unreadByUserId.clear(); presenceByUserId.clear(); hasEarlierByUserId.clear();
@@ -309,6 +316,30 @@ public final class RemoteIMSessionController {
 
     public String accountId() {
         return productionMode ? authClient.accountId() : settings.loginUserId();
+    }
+
+    public String nickname() {
+        return productionMode ? authClient.nickname() : "";
+    }
+
+    public void setNickname(String nickname, AccountCompletion completion) {
+        if (requiresLogin() || !productionMode) {
+            completion.onFinished("请先登录 MaiChat 账号");
+            return;
+        }
+        int generation = accountGeneration;
+        ioExecutor.execute(() -> {
+            String error = null;
+            try { authClient.updateNickname(nickname); }
+            catch (Exception failure) { error = failure.getMessage(); }
+            String result = error;
+            runOnMain(() -> {
+                if (generation != accountGeneration || destroyed) return;
+                if (result == null) notifyStateChanged();
+                else reportError(result);
+                completion.onFinished(result);
+            });
+        });
     }
 
     public String friendAccountId(String imUserId) {
@@ -588,17 +619,28 @@ public final class RemoteIMSessionController {
                     acceptedFriendUserIds.clear();
                     pendingFriendSyncUserIds.clear();
                     friendAccountByIm.clear();
+                    friendDisplayByIm.clear();
                     for (MaiChatAuthClient.FriendInfo friend : friends) {
                         String userId = friend.imUserId;
                         if (userId == null || userId.isEmpty()) continue;
                         acceptedFriendUserIds.add(userId);
                         if (friend.pendingImSync) pendingFriendSyncUserIds.add(userId);
                         friendAccountByIm.put(userId, friend.accountId);
+                        String displayName = friend.nickname.isEmpty()
+                            ? friend.accountId : friend.nickname;
+                        friendDisplayByIm.put(userId, displayName);
                         RemoteIMContact existing = null;
                         for (RemoteIMContact contact : chatState.contacts())
                             if (userId.equals(contact.userId())) { existing = contact; break; }
-                        if (existing != null && !userId.equals(existing.displayName())) continue;
-                        RemoteIMContact contact = new RemoteIMContact(userId, friend.accountId);
+                        if (existing != null) {
+                            if (!displayName.equals(existing.displayName())) {
+                                RemoteIMContact updated = chatState.setContactDisplayName(
+                                    userId, displayName);
+                                if (updated != null) persistContact(updated);
+                            }
+                            continue;
+                        }
+                        RemoteIMContact contact = new RemoteIMContact(userId, displayName);
                         chatState.upsertContact(contact);
                         persistContact(contact);
                         added.add(userId);
@@ -633,7 +675,8 @@ public final class RemoteIMSessionController {
                     for (MaiChatAuthClient.FriendRequestInfo request : requests) {
                         friendRequestIdByIm.put(request.imUserId, request.id);
                         display.add(new RemoteIMFriendRequest(request.imUserId,
-                            request.accountId, "", ""));
+                            request.nickname.isEmpty() ? request.accountId : request.nickname,
+                            "", ""));
                     }
                     completion.accept(display, null);
                 });
@@ -693,6 +736,7 @@ public final class RemoteIMSessionController {
                 acceptedFriendUserIds.remove(cleanUserId);
                 pendingFriendSyncUserIds.remove(cleanUserId);
                 friendAccountByIm.remove(cleanUserId);
+                friendDisplayByIm.remove(cleanUserId);
                 // 好友列表立即移除，但历史会话与消息仍保留。
                 notifyStateChanged();
             });
@@ -1745,7 +1789,10 @@ public final class RemoteIMSessionController {
             runOnMain(() -> {
                 for (RemoteIMContact contact : contacts) {
                     chatState.upsertContact(contact);
-                    persistContact(contact);
+                    String accountName = friendDisplayByIm.get(contact.userId());
+                    RemoteIMContact current = accountName == null ? contact :
+                        chatState.setContactDisplayName(contact.userId(), accountName);
+                    persistContact(current == null ? contact : current);
                     if (connectionState == TencentIMClient.ConnectionState.CONNECTED)
                         AvatarImageLoader.prefetch(contact.avatarUrl());
                 }

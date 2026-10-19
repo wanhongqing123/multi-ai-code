@@ -19,6 +19,7 @@ class MaiChatHostToolsTest : public QObject {
 
 private slots:
   void registersMaiChatReadAndWriteTools();
+  void nicknameToolUsesTheAccountUpdater();
   void readsContactsMessagesSearchAndUnreadState();
   void sendsAndRepliesOnlyThroughApprovalGatedTools();
   void sendsAgentImageAsPersistentMediaMessage();
@@ -31,7 +32,8 @@ void MaiChatHostToolsTest::registersMaiChatReadAndWriteTools() {
   registerMaiChatHostTools(registry, app);
 
   for (const char *name :
-       {"maichat_list_contacts", "maichat_request_friend", "maichat_list_conversations",
+       {"maichat_list_contacts", "maichat_request_friend", "maichat_set_nickname",
+        "maichat_list_conversations",
         "maichat_get_messages", "maichat_search_messages",
         "maichat_get_unread_summary", "maichat_send_text", "maichat_send_media",
         "maichat_reply_message", "maichat_broadcast_text"}) {
@@ -39,6 +41,8 @@ void MaiChatHostToolsTest::registersMaiChatReadAndWriteTools() {
   }
   QVERIFY(!registry.find("maichat_list_contacts")->requiresApproval("{}"));
   QVERIFY(registry.find("maichat_request_friend")->requiresApproval("{}"));
+  QVERIFY(registry.find("maichat_set_nickname")->requiresApproval("{}"));
+  QVERIFY(registry.find("maichat_set_nickname")->requiresPerCallApproval("{}"));
   QVERIFY(registry.find("maichat_send_text")->requiresApproval("{}"));
   QVERIFY(registry.find("maichat_send_media")->requiresApproval("{}"));
   QVERIFY(registry.find("maichat_reply_message")->requiresApproval("{}"));
@@ -53,6 +57,25 @@ void MaiChatHostToolsTest::registersMaiChatReadAndWriteTools() {
               ->requiresPerCallApproval("{}"));
   QVERIFY(registry.find("maichat_broadcast_text")
               ->requiresPerCallApproval("{}"));
+}
+
+void MaiChatHostToolsTest::nicknameToolUsesTheAccountUpdater() {
+  RemoteIMApplication app(QStringLiteral("owner"),
+                          std::make_unique<FakeRemoteIMClient>());
+  QString updated;
+  app.setNicknameUpdater([&updated](const QString& nickname, RemoteIMCompletion completion) {
+    updated = nickname;
+    if (completion) completion(true, {});
+  });
+  MaiToolRegistry registry;
+  registerMaiChatHostTools(registry, app);
+  MaiToolContext context;
+  const auto result = registry.find("maichat_set_nickname")
+                          ->execute(R"({"nickname":" 小王 "})", context);
+  QVERIFY(!result.hasError());
+  QCOMPARE(updated, QStringLiteral("小王"));
+  QVERIFY(QString::fromStdString(result.output()).contains(QStringLiteral("queued")));
+  QVERIFY(registry.find("maichat_set_nickname")->execute("{}", context).hasError());
 }
 
 void MaiChatHostToolsTest::sendsAgentImageAsPersistentMediaMessage() {

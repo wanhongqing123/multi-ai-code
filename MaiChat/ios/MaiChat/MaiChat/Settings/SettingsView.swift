@@ -29,6 +29,7 @@ struct SettingsView: View {
                         }
                         .padding(.vertical, 16)
                     }
+                    .accessibilityIdentifier("personal-profile-entry")
                 }
                 Section {
                     NavigationLink {
@@ -84,7 +85,13 @@ private struct PersonalProfileView: View {
                     .padding(.vertical, 4)
                 }
                 .disabled(isSaving || appState.connectionState != .connected)
-                LabeledContent("名字", value: appState.selfDisplayName())
+                NavigationLink {
+                    AccountNicknameView()
+                } label: {
+                    LabeledContent("昵称", value: appState.maiChatNickname.isEmpty
+                                   ? "未设置" : appState.maiChatNickname)
+                }
+                .accessibilityIdentifier("account-nickname-entry")
                 LabeledContent("账号", value: appState.maiChatAccountID)
                 NavigationLink {
                     FriendQRShareView(userID: appState.maiChatAccountID)
@@ -136,6 +143,57 @@ private struct PersonalProfileView: View {
                 _ = await appState.uploadSelfAvatar(fileURL: fileURL)
             } catch {
                 appState.showTransientError(error.localizedDescription)
+            }
+        }
+    }
+}
+
+private struct AccountNicknameView: View {
+    @EnvironmentObject private var appState: RemoteIMAppState
+    @Environment(\.dismiss) private var dismiss
+    @State private var nickname = ""
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("昵称", text: $nickname)
+                    .accessibilityIdentifier("account-nickname-input")
+            } footer: {
+                Text("最多 32 个字符；留空后显示 MaiChat ID。")
+            }
+            if let errorMessage {
+                Text(errorMessage).foregroundStyle(.red)
+            }
+        }
+        .navigationTitle("修改昵称")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("保存") { saveNickname() }
+                    .disabled(isSaving || nickname.trimmingCharacters(
+                        in: .whitespacesAndNewlines) == appState.maiChatNickname)
+            }
+        }
+        .onAppear { nickname = appState.maiChatNickname }
+    }
+
+    private func saveNickname() {
+        let value = nickname.trimmingCharacters(in: .whitespacesAndNewlines)
+            .precomposedStringWithCanonicalMapping
+        guard value.unicodeScalars.count <= 32, value.utf8.count <= 120 else {
+            errorMessage = "昵称最多 32 个字符，且不能超过 120 字节"
+            return
+        }
+        isSaving = true
+        errorMessage = nil
+        Task { @MainActor in
+            defer { isSaving = false }
+            do {
+                try await appState.setMaiChatNickname(value)
+                dismiss()
+            } catch {
+                errorMessage = error.localizedDescription
             }
         }
     }

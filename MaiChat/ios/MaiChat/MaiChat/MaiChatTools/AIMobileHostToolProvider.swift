@@ -129,6 +129,8 @@ final class AIMobileHostToolProvider {
             return Self.listContacts(appState: appState, arguments: arguments)
         case "maichat_request_friend":
             return await requestFriend(appState: appState, arguments: arguments)
+        case "maichat_set_nickname":
+            return await setNickname(appState: appState, arguments: arguments)
         case "maichat_list_conversations":
             return Self.listConversations(appState: appState, arguments: arguments)
         case "maichat_get_messages":

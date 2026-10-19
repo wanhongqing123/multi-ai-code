@@ -74,7 +74,8 @@ void RemoteIMApplicationTest::maiChatFriendListFiltersHistoryAndDeletionKeepsMes
     RemoteIMApplication::AccountFriendOperations operations;
     operations.list = [](auto completion) {
         completion({RemoteIMApplication::AccountFriend{
-            QStringLiteral("m_friend"), QStringLiteral("friend-im")}}, {});
+            QStringLiteral("m_friend"), QStringLiteral("好友昵称"),
+            QStringLiteral("friend-im")}}, {});
     };
     QString requestedAccount;
     operations.send = [&requestedAccount](const QString& account, RemoteIMCompletion completion) {
@@ -87,6 +88,10 @@ void RemoteIMApplicationTest::maiChatFriendListFiltersHistoryAndDeletionKeepsMes
     };
     app.setAccountFriendOperations(std::move(operations));
     QTRY_VERIFY(app.isAcceptedFriend(QStringLiteral("friend-im")));
+    QCOMPARE(app.chatState().contacts().first().displayName, QStringLiteral("好友昵称"));
+    emit fake->contactsReceived({RemoteIMContact{
+        QStringLiteral("friend-im"), QStringLiteral("旧 IM 昵称")}});
+    QCOMPARE(app.chatState().contacts().first().displayName, QStringLiteral("好友昵称"));
     QVERIFY(!app.isAcceptedFriend(QStringLiteral("ghost-im")));
     app.requestFriend(QStringLiteral("m_other"), {});
     QCOMPARE(requestedAccount, QStringLiteral("m_other"));

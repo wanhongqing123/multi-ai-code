@@ -147,6 +147,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     @Published var sdkAppIDText = ""
     @Published var masterUserID = ""
     @Published var maiChatAccountID = ""
+    @Published var maiChatNickname = ""
     @Published var newContactUserID = ""
     @Published var newContactRelation: RemoteIMContactRelation = .friend
     @Published var errorMessage: String?
@@ -162,6 +163,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     @Published private(set) var acceptedFriendIMIDs: Set<String> = []
     @Published private(set) var pendingFriendSyncIMIDs: Set<String> = []
     private var friendAccountByIMID: [String: String] = [:]
+    private var friendDisplayByIMID: [String: String] = [:]
     private var friendRequestIDByIMID: [String: String] = [:]
 
     func maiChatAccountId(forIMUserID userID: String) -> String {
@@ -169,8 +171,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     }
 
     func selfDisplayName() -> String {
-        let name = profile(for: masterUserID).displayName
-        guard name == masterUserID else { return name }
+        if !maiChatNickname.isEmpty { return maiChatNickname }
         return maiChatAccountID.isEmpty ? "MaiChat ID 待同步" : maiChatAccountID
     }
     @Published private(set) var unreadCountByUserID: [String: Int] = [:] {
@@ -260,6 +261,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         self.sdkAppIDText = settings.sdkAppID.map(String.init) ?? ""
         self.masterUserID = settings.masterUserID
         self.maiChatAccountID = hasAccountSession ? settings.maiChatAccountID : ""
+        self.maiChatNickname = hasAccountSession ? settings.maiChatNickname : ""
         self.chatHistorySDKAppID = settings.sdkAppID
         if hasAccountSession {
             // 升级时只把旧 AI 数据库归属给当前已验证的手机号账号。
@@ -378,17 +380,20 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     }
 
     func profile(for userID: String) -> RemoteIMUserProfile {
+        let accountName = userID == masterUserID && hasUnifiedAccount
+            ? selfDisplayName() : friendDisplayByIMID[userID]
         if let profile = userProfileByUserID[userID] {
-            return profile
+            return RemoteIMUserProfile(userID: userID,
+                displayName: accountName ?? profile.displayName, avatarURL: profile.avatarURL)
         }
         if let contact = chatState.contacts.first(where: { $0.userID == userID }) {
             return RemoteIMUserProfile(
-                userID: contact.userID,
-                displayName: contact.displayName,
+                userID: contact.userID, displayName: accountName ?? contact.displayName,
                 avatarURL: contact.avatarURL
             )
         }
-        return RemoteIMUserProfile(userID: userID, displayName: userID, avatarURL: nil)
+        return RemoteIMUserProfile(userID: userID,
+            displayName: accountName ?? userID, avatarURL: nil)
     }
 
     func setSelfAvatar(url: String) async -> Bool {
@@ -557,6 +562,18 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         try await accountAuth.setPassword(password)
     }
 
+    func setMaiChatNickname(_ nickname: String) async throws {
+        guard hasUnifiedAccount else { throw MaiChatAuthError.sessionExpired }
+        let identity = remoteDiagnosticsIdentity
+        let user = try await accountAuth.updateNickname(nickname)
+        guard remoteDiagnosticsIdentity == identity,
+              user.imUserId == masterUserID else {
+            throw MaiChatAuthError.identityMismatch
+        }
+        maiChatNickname = user.nickname ?? ""
+        _ = settingsStore.saveImmediately(currentStoredSettings())
+    }
+
     func resetAccountPassword(
         phone: String, challengeId: String, code: String,
         newPassword: String, ageConfirmed: Bool
@@ -590,8 +607,9 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 expectedUserID: expectedUserID
             )
             guard hasUnifiedAccount, masterUserID == expectedUserID else { return }
-            if maiChatAccountID != user.id {
+            if maiChatAccountID != user.id || maiChatNickname != (user.nickname ?? "") {
                 maiChatAccountID = user.id
+                maiChatNickname = user.nickname ?? ""
                 _ = settingsStore.saveImmediately(currentStoredSettings())
             }
         } catch MaiChatAuthError.sessionReplaced, MaiChatAuthError.deviceSlotRequired {
@@ -681,9 +699,11 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         await disconnect()
         masterUserID = ""
         maiChatAccountID = ""
+        maiChatNickname = ""
         acceptedFriendIMIDs = []
         pendingFriendSyncIMIDs = []
         friendAccountByIMID = [:]
+        friendDisplayByIMID = [:]
         friendRequestIDByIMID = [:]
         sdkAppIDText = ""
         hasUnifiedAccount = false
@@ -719,6 +739,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         }
         masterUserID = session.user.imUserId
         maiChatAccountID = session.user.id
+        maiChatNickname = session.user.nickname ?? ""
         sdkAppIDText = String(credential.sdkAppId)
         accountInvalidationReason = nil
         errorMessage = nil
@@ -766,6 +787,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 avatarURL: contact.avatarURL
             ))
         })
+        friendDisplayByIMID = [:]
         if !userID.isEmpty, let avatarURL = saved?.selfAvatarURL, !avatarURL.isEmpty {
             userProfileByUserID[userID] = RemoteIMUserProfile(
                 userID: userID, displayName: userID, avatarURL: avatarURL
@@ -1082,7 +1104,8 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 requests.map { ($0.imUserId, $0.id) })
             pendingFriendRequests = requests.map { request in
                 RemoteIMFriendRequest(userID: request.imUserId,
-                    displayName: request.accountId, avatarURL: nil, message: "")
+                    displayName: request.nickname ?? request.accountId,
+                    avatarURL: nil, message: "")
             }
         } catch {
             if remoteDiagnosticsIdentity == identity {
@@ -1103,19 +1126,22 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             }.map(\.imUserId))
             friendAccountByIMID = Dictionary(uniqueKeysWithValues:
                 friends.map { ($0.imUserId, $0.accountId) })
+            friendDisplayByIMID = Dictionary(uniqueKeysWithValues:
+                friends.map { ($0.imUserId, $0.nickname ?? $0.accountId) })
             var added: [String] = []
+            var changed = false
             for friend in friends {
                 let userID = friend.imUserId
                 let existing = chatState.contacts.first(where: { $0.userID == userID })
-                guard existing == nil || existing?.displayName == userID else { continue }
+                let displayName = friend.nickname ?? friend.accountId
+                guard existing == nil || existing?.displayName != displayName else { continue }
                 try chatState.upsertContact(userID: userID, relation: .friend,
-                    displayName: friend.accountId)
-                added.append(userID)
+                    displayName: displayName)
+                changed = true
+                if existing == nil { added.append(userID) }
             }
-            if !added.isEmpty {
-                settingsStore.save(currentStoredSettings())
-                await refreshProfiles(userIDs: added)
-            }
+            if changed { settingsStore.save(currentStoredSettings()) }
+            if !added.isEmpty { await refreshProfiles(userIDs: added) }
         } catch {
             logIM(level: .warning, event: "friend-list-refresh-failed")
             showTransientError("获取好友列表失败，请稍后重试")
@@ -1192,6 +1218,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         acceptedFriendIMIDs.remove(cleanUserID)
         pendingFriendSyncIMIDs.remove(cleanUserID)
         friendAccountByIMID.removeValue(forKey: cleanUserID)
+        friendDisplayByIMID.removeValue(forKey: cleanUserID)
         if newContactUserID.trimmingCharacters(in: .whitespacesAndNewlines) == cleanUserID {
             newContactUserID = ""
         }
@@ -2540,6 +2567,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             sdkAppID: Int(sdkAppIDText.trimmingCharacters(in: .whitespacesAndNewlines)),
             masterUserID: masterUserID.trimmingCharacters(in: .whitespacesAndNewlines),
             maiChatAccountID: hasUnifiedAccount ? maiChatAccountID : "",
+            maiChatNickname: hasUnifiedAccount ? maiChatNickname : "",
             selfAvatarURL: userProfileByUserID[masterUserID]?.avatarURL,
             friendUserIDs: chatState.contacts
                 .map(\.userID),
@@ -2572,11 +2600,13 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             settings.contactGroups = []
             settings.unreadCountByUserID = [:]
             settings.maiChatAccountID = ""
+            settings.maiChatNickname = ""
             settings.selfAvatarURL = nil
         }
         settings.sdkAppID = currentSDKAppID()
         settings.masterUserID = cleanMasterUserID
         settings.maiChatAccountID = maiChatAccountID
+        settings.maiChatNickname = maiChatNickname
         settings.selfAvatarURL = userProfileByUserID[cleanMasterUserID]?.avatarURL
         settings.reconnectOnLaunch = value
         settingsStore.save(settings)
@@ -2971,15 +3001,16 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             for profile in profiles {
                 let cachedSelfAvatar = profile.userID == masterUserID
                     ? nextProfiles[profile.userID]?.avatarURL : nil
+                let displayName = friendDisplayByIMID[profile.userID] ?? profile.displayName
                 nextProfiles[profile.userID] = RemoteIMUserProfile(
-                    userID: profile.userID, displayName: profile.displayName,
+                    userID: profile.userID, displayName: displayName,
                     avatarURL: profile.avatarURL ?? cachedSelfAvatar
                 )
                 if let contact = nextChatState.contacts.first(where: { $0.userID == profile.userID }) {
                     try nextChatState.upsertContact(
                         userID: profile.userID,
                         relation: contact.relation,
-                        displayName: profile.displayName,
+                        displayName: displayName,
                         avatarURL: profile.avatarURL
                     )
                 }

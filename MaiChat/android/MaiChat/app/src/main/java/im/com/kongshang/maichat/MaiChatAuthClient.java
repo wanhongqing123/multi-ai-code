@@ -81,11 +81,13 @@ public final class MaiChatAuthClient {
 
     public static final class FriendInfo {
         public final String accountId;
+        public final String nickname;
         public final String imUserId;
         public final boolean pendingImSync;
 
-        FriendInfo(String accountId, String imUserId, boolean pendingImSync) {
+        FriendInfo(String accountId, String nickname, String imUserId, boolean pendingImSync) {
             this.accountId = accountId;
+            this.nickname = nickname;
             this.imUserId = imUserId;
             this.pendingImSync = pendingImSync;
         }
@@ -94,11 +96,13 @@ public final class MaiChatAuthClient {
     public static final class FriendRequestInfo {
         public final String id;
         public final String accountId;
+        public final String nickname;
         public final String imUserId;
 
-        FriendRequestInfo(String id, String accountId, String imUserId) {
+        FriendRequestInfo(String id, String accountId, String nickname, String imUserId) {
             this.id = id;
             this.accountId = accountId;
+            this.nickname = nickname;
             this.imUserId = imUserId;
         }
     }
@@ -200,6 +204,7 @@ public final class MaiChatAuthClient {
     private static final String KEY_ALIAS = "MaiChat.PhoneAuth.Refresh";
     private static final String STORED_REFRESH = "refresh";
     private static final String STORED_ACCOUNT_ID = "account_id";
+    private static final String STORED_NICKNAME = "nickname";
     private final SharedPreferences preferences;
     private String accessToken = "";
     private long accessExpiresAt;
@@ -220,12 +225,30 @@ public final class MaiChatAuthClient {
         return preferences.getString(STORED_ACCOUNT_ID, "");
     }
 
+    public String nickname() {
+        return preferences.getString(STORED_NICKNAME, "");
+    }
+
     public synchronized String refreshAccountId() throws Exception {
         JSONObject response = authenticatedRequest("auth/me", "GET", null);
         String id = response.getJSONObject("user").getString("id");
         if (id.isEmpty()) throw new IOException("MaiChat 账号 ID 不可用");
-        preferences.edit().putString(STORED_ACCOUNT_ID, id).apply();
+        preferences.edit().putString(STORED_ACCOUNT_ID, id)
+            .putString(STORED_NICKNAME, nicknameFromUser(response.getJSONObject("user"))).apply();
         return id;
+    }
+
+    public synchronized String updateNickname(String nickname) throws Exception {
+        JSONObject response = authenticatedRequest("auth/profile", "POST",
+            new JSONObject().put("nickname", nickname));
+        JSONObject user = response.getJSONObject("user");
+        String value = nicknameFromUser(user);
+        preferences.edit().putString(STORED_NICKNAME, value).apply();
+        return value;
+    }
+
+    private static String nicknameFromUser(JSONObject user) {
+        return user.isNull("nickname") ? "" : user.optString("nickname", "");
     }
 
     private JSONObject addDevice(JSONObject body) throws Exception {
@@ -386,7 +409,8 @@ public final class MaiChatAuthClient {
         List<FriendInfo> result = new ArrayList<>();
         for (int index = 0; index < array.length(); index++) {
             JSONObject row = array.getJSONObject(index);
-            result.add(new FriendInfo(row.getString("account_id"), row.getString("im_user_id"),
+            result.add(new FriendInfo(row.getString("account_id"), nicknameFromUser(row),
+                row.getString("im_user_id"),
                 "add".equals(row.optString("pending_im_action"))));
         }
         return result;
@@ -399,6 +423,7 @@ public final class MaiChatAuthClient {
         for (int index = 0; index < array.length(); index++) {
             JSONObject row = array.getJSONObject(index);
             result.add(new FriendRequestInfo(row.getString("id"), row.getString("account_id"),
+                nicknameFromUser(row),
                 row.getString("im_user_id")));
         }
         return result;
@@ -548,7 +573,8 @@ public final class MaiChatAuthClient {
     private void clearLocalSession() {
         accessToken = "";
         accessExpiresAt = 0;
-        preferences.edit().remove(STORED_REFRESH).remove(STORED_ACCOUNT_ID).commit();
+        preferences.edit().remove(STORED_REFRESH).remove(STORED_ACCOUNT_ID)
+            .remove(STORED_NICKNAME).commit();
     }
 
     private String adopt(JSONObject session) throws Exception {
@@ -563,7 +589,8 @@ public final class MaiChatAuthClient {
         accessToken = access;
         accessExpiresAt = System.currentTimeMillis()
             + Math.max(0, session.getLong("expires_in") - 30) * 1000;
-        preferences.edit().putString(STORED_ACCOUNT_ID, accountId).apply();
+        preferences.edit().putString(STORED_ACCOUNT_ID, accountId)
+            .putString(STORED_NICKNAME, nicknameFromUser(user)).apply();
         return userId;
     }
 
@@ -606,7 +633,9 @@ public final class MaiChatAuthClient {
     }
 
     public synchronized void validateSession() throws Exception {
-        authenticatedRequest("auth/me", "GET", null);
+        JSONObject user = authenticatedRequest("auth/me", "GET", null).getJSONObject("user");
+        preferences.edit().putString(STORED_ACCOUNT_ID, user.getString("id"))
+            .putString(STORED_NICKNAME, nicknameFromUser(user)).apply();
     }
 
     private void handleSessionTerminated(SessionTerminatedException failure) {
@@ -714,6 +743,7 @@ public final class MaiChatAuthClient {
             case "Phone or password is incorrect": return "手机号或密码错误";
             case "Account or password is incorrect": return "账号或密码错误";
             case "Invalid login request": return "账号或密码格式不正确";
+            case "Invalid nickname": return "昵称格式不符合要求";
             case "Please wait before trying again": return "登录尝试过多，请稍后再试";
             case "Authentication required": return "登录已过期，请重新登录";
             case "Invalid session": return "登录已过期，请重新登录";

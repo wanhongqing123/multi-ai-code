@@ -28,6 +28,7 @@ public:
     int unreadCount(const QString& peerId) const;
 
     void upsertContact(const RemoteIMContact& contact);
+    bool setContactDisplayName(const QString& userId, const QString& displayName);
 
     // ---- 联系人分组（本地概念，不跨端同步）----
     // 「未分组」不在列表里：它是「没有分组」的显示名，不是一个真的分组。

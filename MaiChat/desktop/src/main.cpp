@@ -197,13 +197,23 @@ int main(int argc, char* argv[]) {
         auth.fetchFriendQr(std::move(completion));
     });
     window.setMaiChatAccountIdProvider([&auth] { return auth.maiChatAccountId(); });
+    window.setMaiChatNicknameProvider([&auth] { return auth.nickname(); });
+    remoteIM.setNicknameUpdater([&auth](const QString& nickname,
+                                        RemoteIMCompletion completion) {
+        auth.updateNickname(nickname, std::move(completion));
+    });
+    window.setMaiChatNicknameUpdater([&remoteIM](const QString& nickname,
+                                                  RemoteIMCompletion completion) {
+        remoteIM.updateNickname(nickname, std::move(completion));
+    });
     RemoteIMApplication::AccountFriendOperations friendOperations;
     friendOperations.list = [&auth](auto completion) {
         auth.fetchFriends([completion](const QList<DesktopFriend>& friends,
                                        const QString& error) {
             QList<RemoteIMApplication::AccountFriend> mapped;
             for (const DesktopFriend& friendAccount : friends)
-                mapped.append({friendAccount.accountId, friendAccount.imUserId});
+                mapped.append({friendAccount.accountId, friendAccount.nickname,
+                               friendAccount.imUserId});
             completion(mapped, error);
         });
     };
@@ -212,7 +222,8 @@ int main(int argc, char* argv[]) {
                                               const QString& error) {
             QList<RemoteIMApplication::AccountFriendRequest> mapped;
             for (const DesktopFriendRequest& request : requests)
-                mapped.append({request.id, request.accountId, request.imUserId});
+                mapped.append({request.id, request.accountId, request.nickname,
+                               request.imUserId});
             completion(mapped, error);
         });
     };

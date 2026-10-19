@@ -76,6 +76,18 @@ public final class ChatState {
         contacts.add(contact.withGroupName(groupName));
     }
 
+    public RemoteIMContact setContactDisplayName(String userId, String displayName) {
+        for (int index = 0; index < contacts.size(); index += 1) {
+            RemoteIMContact current = contacts.get(index);
+            if (!current.userId().equals(userId)) continue;
+            RemoteIMContact updated = new RemoteIMContact(userId, displayName,
+                current.avatarUrl(), current.groupName());
+            contacts.set(index, updated);
+            return updated;
+        }
+        return null;
+    }
+
     public boolean addContactGroup(String name) {
         String cleanName = ContactGroups.normalize(name);
         if (!ContactGroups.isAcceptableName(cleanName) || contactGroups.contains(cleanName)) return false;

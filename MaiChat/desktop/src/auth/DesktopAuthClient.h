@@ -42,12 +42,14 @@ struct DesktopImCredential {
 
 struct DesktopFriend {
     QString accountId;
+    QString nickname;
     QString imUserId;
 };
 
 struct DesktopFriendRequest {
     QString id;
     QString accountId;
+    QString nickname;
     QString imUserId;
 };
 
@@ -80,6 +82,7 @@ public:
     void adoptApprovedSession(const QJsonObject& session, Completion completion);
     void loginWithPassword(const QString& accountId, const QString& password,
                            Completion completion);
+    void updateNickname(const QString& nickname, Completion completion);
     using FriendsCompletion =
         std::function<void(const QList<DesktopFriend>&, const QString&)>;
     using FriendRequestsCompletion =
@@ -109,6 +112,7 @@ public:
     DesktopImCredential imCredential() const { return imCredential_; }
     QString authenticatedUserId() const { return userId_; }
     QString maiChatAccountId() const { return accountId_; }
+    QString nickname() const { return nickname_; }
     void setCredentialUpdatedHandler(std::function<void(const DesktopImCredential&)> handler);
     void setSessionInvalidatedHandler(std::function<void(const QString&)> handler);
 
@@ -148,6 +152,7 @@ private:
     QString refreshToken_;
     QString userId_;
     QString accountId_;
+    QString nickname_;
     QDateTime accessExpiresAt_;
     DesktopImCredential imCredential_;
     QTimer refreshTimer_;

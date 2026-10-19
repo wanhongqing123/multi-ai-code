@@ -82,6 +82,9 @@ public:
     void setMediaServiceAccessProvider(std::function<QPair<QString, QString>()> provider);
     void setFriendQrProvider(std::function<void(FriendQrCompletion)> provider);
     void setMaiChatAccountIdProvider(std::function<QString()> provider);
+    void setMaiChatNicknameProvider(std::function<QString()> provider);
+    void setMaiChatNicknameUpdater(
+        std::function<void(const QString&, RemoteIMCompletion)> updater);
     bool openDockedVideo(const QString& path, const QStringList& playlist = {});
 
     // 把 IM 收/发的文件附件从本地缓存拷贝到 targetPath（存在则覆盖）。
@@ -285,6 +288,10 @@ private:
     std::function<QPair<QString, QString>()> mediaServiceAccessProvider_;
     std::function<void(FriendQrCompletion)> friendQrProvider_;
     std::function<QString()> maiChatAccountIdProvider_;
+    std::function<QString()> maiChatNicknameProvider_;
+    std::function<void(const QString&, RemoteIMCompletion)> maiChatNicknameUpdater_;
+    QString pendingNicknameDraft_;
+    bool nicknameDraftPending_ = false;
     QHash<QString, QString> modelApiKeys_;
     struct ModelKeyState {
         QMutex mutex;
@@ -359,6 +366,8 @@ private:
     QCheckBox* remoteDesktopControlToggle_ = nullptr;
     QLabel* remoteDesktopProxyValue_ = nullptr;
     QLabel* settingsAccountValue_ = nullptr;
+    QLabel* settingsNicknameValue_ = nullptr;
+    QPushButton* settingsNicknameButton_ = nullptr;
     QLabel* settingsConnectionValue_ = nullptr;
     QLabel* settingsSdkAppIdValue_ = nullptr;
     QPushButton* settingsLogoutButton_ = nullptr;

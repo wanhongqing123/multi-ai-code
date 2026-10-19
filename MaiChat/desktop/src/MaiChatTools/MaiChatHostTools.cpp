@@ -34,6 +34,7 @@ namespace {
 enum class HostToolKind {
   ListContacts,
   RequestFriend,
+  SetNickname,
   ListConversations,
   GetMessages,
   SearchMessages,
@@ -173,6 +174,8 @@ public:
         return listContacts(app, arguments);
       case HostToolKind::RequestFriend:
         return requestFriend(app, arguments);
+      case HostToolKind::SetNickname:
+        return setNickname(app, arguments);
       case HostToolKind::ListConversations:
         return listConversations(app, arguments);
       case HostToolKind::GetMessages:
@@ -211,6 +214,20 @@ private:
     app.requestFriend(account, account);
     return jsonResult(QJsonObject{{QStringLiteral("queued"), true},
                                   {QStringLiteral("account"), account}});
+  }
+
+  MaiToolResult setNickname(RemoteIMApplication &app,
+                            const QJsonObject &arguments) const {
+    const QJsonValue value = arguments.value(QStringLiteral("nickname"));
+    if (!value.isString()) return invalidInput(QStringLiteral("nickname must be a string"));
+    const QString nickname = value.toString().trimmed();
+    if (nickname.toUcs4().size() > 32 || nickname.toUtf8().size() > 120)
+      return invalidInput(QStringLiteral("nickname is too long"));
+    if (!app.updateNickname(nickname, {}))
+      return MaiToolResult::failure(MaiErrorCode::NotConfigured,
+                                    "MaiChat account profile is unavailable");
+    return jsonResult(QJsonObject{{QStringLiteral("queued"), true},
+                                  {QStringLiteral("nickname"), nickname}});
   }
 
   // 校验联系人、媒体类型与本地文件，再通过宿主 IM 发送对应附件。
@@ -542,6 +559,12 @@ void registerMaiChatHostTools(MaiToolRegistry &registry,
           "Send a MaiChat friend request by phone or account ID. Requires user approval. "
           "The recipient must accept.",
           R"({"type":"object","properties":{"account":{"type":"string"}},"required":["account"]})",
+          app, true);
+  addTool(registry, HostToolKind::SetNickname, "maichat_set_nickname",
+          "Set or clear the current MaiChat account nickname. Empty string clears it. "
+          "Requires user approval.",
+          R"({"type":"object","properties":{"nickname":{"type":"string","maxLength":32}})"
+          R"(,"required":["nickname"]})",
           app, true);
   addTool(
       registry, HostToolKind::ListConversations, "maichat_list_conversations",

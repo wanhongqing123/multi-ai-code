@@ -59,6 +59,65 @@ final class SocialLoginUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["登录账号"].waitForExistence(timeout: 10))
     }
 
+    @MainActor func testLiveNicknameEditSurvivesRelaunch() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let accountId = environment["MAICHAT_TEST_A_ID"],
+              let password = environment["MAICHAT_TEST_A_PASSWORD"] else {
+            throw XCTSkip("需要临时测试账号")
+        }
+        let app = XCUIApplication()
+        app.launch()
+        let field = app.textFields["account-phone"]
+        XCTAssertTrue(field.waitForExistence(timeout: 20))
+        app.buttons["密码登录"].tap()
+        field.tap()
+        field.typeText(accountId)
+        let passwordField = app.secureTextFields["输入登录密码"]
+        passwordField.tap()
+        passwordField.typeText(password)
+        app.buttons["account-minimum-age"].tap()
+        app.buttons["account-agreement"].tap()
+        app.buttons["account-submit"].tap()
+        XCTAssertTrue(app.buttons["我"].waitForExistence(timeout: 30))
+        openPersonalProfile(in: app)
+        let edit = app.buttons["account-nickname-entry"]
+        XCTAssertTrue(edit.waitForExistence(timeout: 10))
+        edit.tap()
+        let input = app.textFields["account-nickname-input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 10))
+        input.tap()
+        input.typeText("昵称测试")
+        app.buttons["保存"].tap()
+        let nickname = app.staticTexts.matching(NSPredicate(
+            format: "label CONTAINS %@", "昵称测试"
+        )).firstMatch
+        XCTAssertTrue(nickname.waitForExistence(timeout: 15))
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "maichat-nickname-after-edit"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.buttons["我"].waitForExistence(timeout: 30))
+        openPersonalProfile(in: app)
+        XCTAssertTrue(nickname.waitForExistence(timeout: 15))
+    }
+
+    @MainActor private func openPersonalProfile(in app: XCUIApplication) {
+        for _ in 0..<8 {
+            if app.buttons["以后"].isHittable { app.buttons["以后"].tap() }
+            if app.buttons["稍后"].isHittable { app.buttons["稍后"].tap() }
+            let profile = app.buttons["personal-profile-entry"]
+            if profile.isHittable {
+                profile.tap()
+                return
+            }
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.925)).tap()
+        }
+        XCTFail("个人资料入口不可用")
+    }
+
     @MainActor func testLiveFriendRequestUsesMaiChatAccountId() throws {
         guard let friendId = ProcessInfo.processInfo.environment["MAICHAT_TEST_B_ID"] else {
             throw XCTSkip("需要第二个临时测试账号")

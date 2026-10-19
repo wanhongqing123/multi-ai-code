@@ -23,11 +23,13 @@ class RemoteIMApplication final : public QObject {
 public:
     struct AccountFriend {
         QString accountId;
+        QString nickname;
         QString imUserId;
     };
     struct AccountFriendRequest {
         QString id;
         QString accountId;
+        QString nickname;
         QString imUserId;
     };
     struct AccountFriendOperations {
@@ -67,6 +69,9 @@ public:
         std::function<void(const QString&, FriendAccountResolution)>;
     void setFriendAccountResolver(FriendAccountResolver resolver);
     void setAccountFriendOperations(AccountFriendOperations operations);
+    void setNicknameUpdater(
+        std::function<void(const QString&, RemoteIMCompletion)> updater);
+    bool updateNickname(const QString& nickname, RemoteIMCompletion completion);
     const QSet<QString>& acceptedFriendIds() const { return acceptedFriendIds_; }
     bool isAcceptedFriend(const QString& imUserId) const {
         return !accountFriendOperations_.list || acceptedFriendIds_.contains(imUserId);
@@ -152,8 +157,10 @@ private:
     void requestFriendById(const QString& userId, const QString& displayName);
     FriendAccountResolver friendAccountResolver_;
     AccountFriendOperations accountFriendOperations_;
+    std::function<void(const QString&, RemoteIMCompletion)> nicknameUpdater_;
     QSet<QString> acceptedFriendIds_;
     QHash<QString, QString> friendAccountByImId_;
+    QHash<QString, QString> friendDisplayByImId_;
     QHash<QString, QString> requestIdByImId_;
     void sendDiagnosticTo(const QString& peerId, const QString& text, const QString& path,
                           std::function<void(bool)> completion);

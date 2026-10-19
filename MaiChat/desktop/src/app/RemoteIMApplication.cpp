@@ -302,6 +302,21 @@ void RemoteIMApplication::setAccountFriendOperations(AccountFriendOperations ope
     refreshFriendList();
 }
 
+void RemoteIMApplication::setNicknameUpdater(
+    std::function<void(const QString&, RemoteIMCompletion)> updater) {
+    nicknameUpdater_ = std::move(updater);
+}
+
+bool RemoteIMApplication::updateNickname(const QString& nickname,
+                                         RemoteIMCompletion completion) {
+    if (!nicknameUpdater_) {
+        if (completion) completion(false, QStringLiteral("MaiChat 账号资料不可用"));
+        return false;
+    }
+    nicknameUpdater_(nickname, std::move(completion));
+    return true;
+}
+
 void RemoteIMApplication::requestFriendById(const QString& userId,
                                             const QString& displayName) {
     Q_UNUSED(displayName);
@@ -333,11 +348,15 @@ void RemoteIMApplication::refreshFriendList() {
                 if (!self) return;
                 self->acceptedFriendIds_.clear();
                 self->friendAccountByImId_.clear();
+                self->friendDisplayByImId_.clear();
                 for (const AccountFriend& friendAccount : friends) {
                     if (friendAccount.imUserId.isEmpty() || friendAccount.accountId.isEmpty()) continue;
                     self->acceptedFriendIds_.insert(friendAccount.imUserId);
                     self->friendAccountByImId_.insert(friendAccount.imUserId,
                                                      friendAccount.accountId);
+                    const QString displayName = friendAccount.nickname.trimmed().isEmpty() ?
+                        friendAccount.accountId : friendAccount.nickname.trimmed();
+                    self->friendDisplayByImId_.insert(friendAccount.imUserId, displayName);
                     bool exists = false;
                     RemoteIMContact current;
                     for (const RemoteIMContact& contact : self->state_.contacts()) {
@@ -347,12 +366,11 @@ void RemoteIMApplication::refreshFriendList() {
                             break;
                         }
                     }
-                    if (!exists || current.displayName == friendAccount.imUserId) {
-                        if (!exists) current.userId = friendAccount.imUserId;
-                        current.displayName = friendAccount.accountId;
-                        self->state_.upsertContact(current);
-                        if (self->database_) self->database_->upsertContact(current);
-                    }
+                    if (!exists) current.userId = friendAccount.imUserId;
+                    current.displayName = displayName;
+                    self->state_.upsertContact(current);
+                    self->state_.setContactDisplayName(current.userId, displayName);
+                    if (self->database_) self->database_->upsertContact(current);
                 }
                 emit self->stateChanged();
             }, Qt::AutoConnection);
@@ -375,7 +393,8 @@ void RemoteIMApplication::friendRequests(RemoteIMFriendRequestsCompletion comple
                 for (const AccountFriendRequest& request : requests) {
                     self->requestIdByImId_.insert(request.imUserId, request.id);
                     display.append(RemoteIMFriendRequest{request.imUserId,
-                        request.accountId, {}, {}});
+                        request.nickname.trimmed().isEmpty() ? request.accountId :
+                            request.nickname.trimmed(), {}, {}});
                 }
                 if (completion) completion(error.isEmpty(), error, display);
             }, Qt::AutoConnection);
@@ -447,6 +466,7 @@ void RemoteIMApplication::deleteContact(const QString& userId) {
             if (!ok) { emit self->errorMessage(error); return; }
             self->acceptedFriendIds_.remove(cleanUserId);
             self->friendAccountByImId_.remove(cleanUserId);
+            self->friendDisplayByImId_.remove(cleanUserId);
             // 本地会话和历史不属于好友关系，删除好友时保留。
             emit self->stateChanged();
         });
@@ -953,8 +973,13 @@ void RemoteIMApplication::bindClientSignals() {
     connect(client_.get(), &RemoteIMClient::contactsReceived, this, [this](const QList<RemoteIMContact>& contacts) {
         const bool shouldSelectFirstContact = state_.selectedPeerId().isEmpty();
         for (const RemoteIMContact& contact : contacts) {
-            state_.upsertContact(contact);
-            if (database_) database_->upsertContact(contact);
+            RemoteIMContact current = contact;
+            const QString accountName = friendDisplayByImId_.value(contact.userId);
+            if (!accountName.isEmpty()) current.displayName = accountName;
+            state_.upsertContact(current);
+            if (!accountName.isEmpty())
+                state_.setContactDisplayName(current.userId, accountName);
+            if (database_) database_->upsertContact(current);
         }
         if (shouldSelectFirstContact && !contacts.isEmpty()) {
             state_.selectPeer(contacts.first().userId);

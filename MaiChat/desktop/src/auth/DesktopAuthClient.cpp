@@ -140,6 +140,8 @@ void DesktopAuthClient::request(const QString& path, const QByteArray& method, c
 
 QString DesktopAuthClient::responseError(const HttpResult& result) const {
     if (result.status == 429) return QStringLiteral("请求太频繁，请稍后再试");
+    if (result.body.value(QStringLiteral("error")).toString() ==
+        QStringLiteral("Invalid nickname")) return QStringLiteral("昵称格式不符合要求");
     if (result.status == 401 &&
         result.body.value(QStringLiteral("code")).toString() == QStringLiteral("SESSION_REPLACED"))
         return QStringLiteral("此电脑的登录已被另一台设备替换，请重新扫码登录");
@@ -156,6 +158,8 @@ bool DesktopAuthClient::adoptSession(const QJsonObject& body, QString* error) {
                                .value(QStringLiteral("im_user_id")).toString();
     const QString accountId = body.value(QStringLiteral("user")).toObject()
                                   .value(QStringLiteral("id")).toString();
+    const QString nickname = body.value(QStringLiteral("user")).toObject()
+                                 .value(QStringLiteral("nickname")).toString();
     const QString slot = body.value(QStringLiteral("device_slot")).toString();
     const int expiresIn = body.value(QStringLiteral("expires_in")).toInt();
     if (!validToken(access) || !validToken(refresh) || userId.isEmpty() ||
@@ -169,6 +173,7 @@ bool DesktopAuthClient::adoptSession(const QJsonObject& body, QString* error) {
     if (!userId_.isEmpty() && userId_ != userId) clearModelCredentials();
     userId_ = userId;
     accountId_ = accountId;
+    nickname_ = nickname;
     accessExpiresAt_ = QDateTime::currentDateTimeUtc().addSecs(expiresIn);
     {
         QMutexLocker lock(&accountAccess_->mutex);
@@ -218,6 +223,7 @@ void DesktopAuthClient::clearLocalSession() {
     refreshToken_.clear();
     userId_.clear();
     accountId_.clear();
+    nickname_.clear();
     imCredential_ = {};
     clearModelCredentials();
 }
@@ -488,7 +494,10 @@ void DesktopAuthClient::checkSessionNow() {
         if (checkedUserId != userId_ ||
             result.body.value(QStringLiteral("device_slot")).toString() != platformName()) {
             invalidateSession(QStringLiteral("账号身份校验失败，请重新扫码登录"));
+            return;
         }
+        nickname_ = result.body.value(QStringLiteral("user")).toObject()
+                        .value(QStringLiteral("nickname")).toString();
     });
 }
 
@@ -662,6 +671,25 @@ void DesktopAuthClient::loginWithPassword(const QString& accountId,
     });
 }
 
+void DesktopAuthClient::updateNickname(const QString& nickname, Completion completion) {
+    authorizedRequest(QStringLiteral("auth/profile"), "POST",
+        {{QStringLiteral("nickname"), nickname}},
+        [this, completion = std::move(completion)](const HttpResult& result) {
+        if (result.status != 200) {
+            if (completion) completion(false, responseError(result));
+            return;
+        }
+        const QJsonObject user = result.body.value(QStringLiteral("user")).toObject();
+        if (user.value(QStringLiteral("id")).toString() != accountId_ ||
+            user.value(QStringLiteral("im_user_id")).toString() != userId_) {
+            if (completion) completion(false, QStringLiteral("账号身份校验失败，请重新登录"));
+            return;
+        }
+        nickname_ = user.value(QStringLiteral("nickname")).toString();
+        if (completion) completion(true, {});
+    });
+}
+
 void DesktopAuthClient::authorizedRequest(const QString& path, const QByteArray& method,
     const QJsonObject& body, std::function<void(const HttpResult&)> completion,
     bool retryAfterUnauthorized) {
@@ -705,6 +733,7 @@ void DesktopAuthClient::fetchFriends(FriendsCompletion completion) {
         for (const QJsonValue& value : result.body.value(QStringLiteral("friends")).toArray()) {
             const QJsonObject row = value.toObject();
             DesktopFriend friendAccount{row.value(QStringLiteral("account_id")).toString(),
+                row.value(QStringLiteral("nickname")).toString(),
                 row.value(QStringLiteral("im_user_id")).toString()};
             if (friendAccount.accountId.isEmpty() || friendAccount.imUserId.isEmpty()) {
                 completion({}, QStringLiteral("好友列表数据无效"));
@@ -728,6 +757,7 @@ void DesktopAuthClient::fetchFriendRequests(FriendRequestsCompletion completion)
             const QJsonObject row = value.toObject();
             DesktopFriendRequest request{row.value(QStringLiteral("id")).toString(),
                 row.value(QStringLiteral("account_id")).toString(),
+                row.value(QStringLiteral("nickname")).toString(),
                 row.value(QStringLiteral("im_user_id")).toString()};
             if (!validRequestId(request.id) || request.accountId.isEmpty() ||
                 request.imUserId.isEmpty()) {

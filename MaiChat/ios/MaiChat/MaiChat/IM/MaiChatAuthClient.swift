@@ -19,6 +19,7 @@ struct MaiChatAuthChallenge: Decodable, Sendable {
 struct MaiChatAuthUser: Decodable, Sendable {
     let id: String
     let imUserId: String
+    let nickname: String?
 }
 
 struct MaiChatAuthSession: Decodable, Sendable {
@@ -30,6 +31,7 @@ struct MaiChatAuthSession: Decodable, Sendable {
 
 struct MaiChatFriend: Decodable, Sendable {
     let accountId: String
+    let nickname: String?
     let imUserId: String
     let createdAt: Int64
     let pendingImAction: String?
@@ -38,6 +40,7 @@ struct MaiChatFriend: Decodable, Sendable {
 struct MaiChatFriendRequest: Decodable, Sendable {
     let id: String
     let accountId: String
+    let nickname: String?
     let imUserId: String
     let createdAt: Int64
 }
@@ -397,6 +400,14 @@ actor MaiChatAuthClient {
         guard !account.user.id.isEmpty else {
             throw MaiChatAuthError.invalidServerResponse
         }
+        return account.user
+    }
+
+    func updateNickname(_ nickname: String) async throws -> MaiChatAuthUser {
+        let token = try await currentAccessToken()
+        let account: MaiChatCurrentAccount = try await request(
+            "auth/profile", method: "POST", body: ["nickname": nickname], bearer: token
+        )
         return account.user
     }
 

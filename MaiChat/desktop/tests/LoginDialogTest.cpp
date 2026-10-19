@@ -123,6 +123,13 @@ public:
                     response = status == 200 ? approvedSession() :
                         QJsonObject{{QStringLiteral("error"),
                                      QStringLiteral("Account or password is incorrect")}};
+                } else if (headers.startsWith("post /v1/auth/profile ")) {
+                    ++profileUpdateCount;
+                    profileNickname = body.value(QStringLiteral("nickname")).toString();
+                    response = {{QStringLiteral("user"), QJsonObject{
+                        {QStringLiteral("id"), QStringLiteral("m-auth-test")},
+                        {QStringLiteral("nickname"), profileNickname},
+                        {QStringLiteral("im_user_id"), QStringLiteral("im-auth-test")}}}};
                 } else if (headers.startsWith("post /v1/auth/refresh ")) {
                     ++refreshCount;
                     validRefreshToken = body.value(QStringLiteral("refresh_token")).toString() ==
@@ -135,6 +142,7 @@ public:
                                     {QStringLiteral("device_slot"), testPlatformName()},
                                     {QStringLiteral("user"), QJsonObject{
                                         {QStringLiteral("id"), QStringLiteral("m-auth-test")},
+                                        {QStringLiteral("nickname"), profileNickname},
                                         {QStringLiteral("im_user_id"), QStringLiteral("im-auth-test")}}}};
                     } else {
                         response = {{QStringLiteral("error"), QStringLiteral("temporary network failure")}};
@@ -163,6 +171,7 @@ public:
                     if (status == 200) {
                         response = {{QStringLiteral("user"), QJsonObject{
                                         {QStringLiteral("id"), QStringLiteral("m-auth-test")},
+                                        {QStringLiteral("nickname"), profileNickname},
                                         {QStringLiteral("im_user_id"), QStringLiteral("im-auth-test")}}},
                                     {QStringLiteral("device_slot"), testPlatformName()}};
                     } else if (status == 401) {
@@ -256,6 +265,7 @@ public:
                 {QStringLiteral("device_slot"), testPlatformName()},
                 {QStringLiteral("user"), QJsonObject{
                     {QStringLiteral("id"), QStringLiteral("m-auth-test")},
+                    {QStringLiteral("nickname"), profileNickname},
                     {QStringLiteral("im_user_id"), QStringLiteral("im-auth-test")}}}};
     }
     void approveDeferredClaim() {
@@ -282,6 +292,8 @@ public:
     int initialAccessExpiresIn = 900;
     int refreshCount = 0;
     int passwordLoginCount = 0;
+    int profileUpdateCount = 0;
+    QString profileNickname;
     QString passwordLoginAccount;
     bool passwordLoginAgeConfirmed = false;
     int refreshStatus = 200;
@@ -326,6 +338,7 @@ private slots:
     void usesCompactDesktopSize();
     void showsQrAndMaiChatPasswordLoginHierarchy();
     void accountPasswordLoginUsesServerSignedCredential();
+    void updatesMaiChatNicknameAndAllowsClearingIt();
     void displaysServerQrAndSendsMatchingVerifier();
     void replacingQrCancelsPreviousRequest();
     void approvedQrUsesServerSignedCredential();
@@ -480,6 +493,37 @@ void LoginDialogTest::accountPasswordLoginUsesServerSignedCredential() {
     QVERIFY(server.passwordLoginAgeConfirmed);
     QCOMPARE(auth.maiChatAccountId(), QStringLiteral("m-auth-test"));
     QCOMPARE(auth.authenticatedUserId(), QStringLiteral("im-auth-test"));
+}
+
+void LoginDialogTest::updatesMaiChatNicknameAndAllowsClearingIt() {
+    FakeQrServer server;
+    DesktopAuthClient auth(nullptr, server.url(), false);
+    bool loggedIn = false;
+    auth.loginWithPassword(QStringLiteral("test_account"),
+        QStringLiteral("test-account-password-123456"),
+        [&loggedIn](bool ok, const QString&) { loggedIn = ok; });
+    QTRY_VERIFY_WITH_TIMEOUT(loggedIn, 5000);
+    bool updated = false;
+    QString error;
+    auth.updateNickname(QStringLiteral("昵称测试"),
+        [&updated, &error](bool ok, const QString& result) {
+            updated = ok;
+            error = result;
+        });
+    QTRY_VERIFY_WITH_TIMEOUT(updated, 5000);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(server.profileUpdateCount, 1);
+    QCOMPARE(server.profileNickname, QStringLiteral("昵称测试"));
+    QCOMPARE(auth.nickname(), QStringLiteral("昵称测试"));
+    bool cleared = false;
+    auth.updateNickname({}, [&cleared](bool ok, const QString&) { cleared = ok; });
+    QTRY_VERIFY_WITH_TIMEOUT(cleared, 5000);
+    QCOMPARE(server.profileUpdateCount, 2);
+    QVERIFY(server.profileNickname.isEmpty());
+    QVERIFY(auth.nickname().isEmpty());
+    auth.updateNickname(QStringLiteral("工具调用昵称"), {});
+    QTRY_COMPARE_WITH_TIMEOUT(server.profileUpdateCount, 3, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(auth.nickname(), QStringLiteral("工具调用昵称"), 5000);
 }
 
 void LoginDialogTest::displaysServerQrAndSendsMatchingVerifier() {

@@ -48,6 +48,17 @@ void ChatState::upsertContact(const RemoteIMContact& contact) {
                                      ContactGroups::normalize(contact.groupName)});
 }
 
+bool ChatState::setContactDisplayName(const QString& userId, const QString& displayName) {
+    const QString cleanUserId = clean(userId);
+    const QString cleanName = clean(displayName).isEmpty() ? cleanUserId : clean(displayName);
+    for (RemoteIMContact& contact : contacts_) {
+        if (contact.userId != cleanUserId) continue;
+        contact.displayName = cleanName;
+        return true;
+    }
+    return false;
+}
+
 QStringList ChatState::contactGroups() const { return contactGroups_; }
 
 void ChatState::setContactGroups(const QStringList& groups) { contactGroups_ = groups; }

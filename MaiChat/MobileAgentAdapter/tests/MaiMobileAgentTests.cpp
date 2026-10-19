@@ -143,7 +143,8 @@ int main() {
                   "GitHub-Flavored Markdown") != std::string::npos);
         // 移动端不能向模型宣称可以执行桌面 shell。
         bool hasCreateFile = false, hasCreateDirectory = false, hasDeleteFile = false, hasViewImage = false,
-             hasMaiChatContacts = false, hasMaiChatRequestFriend = false, hasMaiChatSend = false,
+             hasMaiChatContacts = false, hasMaiChatRequestFriend = false,
+             hasMaiChatNickname = false, hasMaiChatSend = false,
              hasMaiChatBroadcast = false, hasGeneratePdf = false,
              hasMobilePhotos = false, hasMobileAlbums = false, hasMobilePhotoRead = false,
              hasMobilePhotoOriginal = false, hasMobileMediaOriginal = false, hasMobilePhotoSave = false,
@@ -161,6 +162,7 @@ int main() {
             if (tool["function"]["name"] == "generate_pdf") hasGeneratePdf = true;
             if (tool["function"]["name"] == "maichat_list_contacts") hasMaiChatContacts = true;
             if (tool["function"]["name"] == "maichat_request_friend") hasMaiChatRequestFriend = true;
+            if (tool["function"]["name"] == "maichat_set_nickname") hasMaiChatNickname = true;
             if (tool["function"]["name"] == "maichat_send_text") hasMaiChatSend = true;
             if (tool["function"]["name"] == "maichat_send_media") hasMaiChatMedia = true;
             if (tool["function"]["name"] == "agent_send_media") hasAgentMedia = true;
@@ -201,6 +203,7 @@ int main() {
         CHECK(hasGeneratePdf);
         CHECK(hasMaiChatContacts);
         CHECK(hasMaiChatRequestFriend);
+        CHECK(hasMaiChatNickname);
         CHECK(hasMaiChatSend);
         CHECK(hasMaiChatMedia);
         CHECK(hasAgentMedia);

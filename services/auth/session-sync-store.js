@@ -45,6 +45,7 @@ function openSessionSyncStore(filename) {
       payload TEXT NOT NULL,
       created_at INTEGER NOT NULL,
       expires_at INTEGER NOT NULL,
+      delivered_at INTEGER,
       acked_at INTEGER,
       UNIQUE(account_id, from_slot, from_login_session_id, client_message_id)
     );
@@ -67,6 +68,9 @@ function openSessionSyncStore(filename) {
     CREATE INDEX IF NOT EXISTS sync_message_receipts_age
       ON sync_message_receipts(created_at);
   `);
+  const envelopeColumns = new Set(db.pragma('table_info(sync_envelopes)').map(row => row.name));
+  if (!envelopeColumns.has('delivered_at'))
+    db.exec('ALTER TABLE sync_envelopes ADD COLUMN delivered_at INTEGER');
   // 进程重启后，旧心跳不能证明设备仍连着新进程；等待它重新上报。
   db.prepare('UPDATE sync_devices SET last_seen=0').run();
   return db;

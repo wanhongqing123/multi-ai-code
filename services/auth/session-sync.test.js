@@ -68,10 +68,24 @@ test('only the same account can list and address its active device sessions', as
     assert.equal(received.body.messages.length, 1);
     assert.equal(received.body.messages[0].payload.text, 'Continue building');
     assert.equal(received.body.messages[0].from_slot, 'ios_phone');
+    assert.deepEqual((await setup.call('mac-token', 'GET',
+      '/v1/session-sync/poll')).body.messages, []);
     assert.equal((await setup.call('mac-token', 'POST', '/v1/session-sync/ack',
       { ids: [sent.body.id] })).statusCode, 200);
     assert.deepEqual((await setup.call('mac-token', 'GET',
       '/v1/session-sync/poll')).body.messages, []);
+    const event = await setup.call('mac-token', 'POST', '/v1/session-sync/send', {
+      to_slot: 'ios_phone', to_login_session_id: 'phone-login',
+      client_message_id: 'event-1', session_id: 'ses_mac_1',
+      kind: 'event', payload: { message_id: 'msg_1', text: 'Build completed' }
+    });
+    assert.equal(event.statusCode, 200);
+    assert.equal((await setup.call('phone-token', 'GET',
+      '/v1/session-sync/poll')).body.messages.length, 1);
+    assert.equal((await setup.call('phone-token', 'GET',
+      '/v1/session-sync/poll')).body.messages.length, 1);
+    await setup.call('phone-token', 'POST', '/v1/session-sync/ack',
+      { ids: [event.body.id] });
     setup.advance(61_000);
     const afterAck = await setup.call('phone-token', 'POST', '/v1/session-sync/send', {
       to_slot: 'mac', to_login_session_id: 'mac-login-1',

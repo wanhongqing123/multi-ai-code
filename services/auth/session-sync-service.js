@@ -30,7 +30,8 @@ function createSessionSyncService({ db, authorize, now = Date.now }) {
   const pending = db.prepare(`SELECT id,from_slot,from_login_session_id,
     client_message_id,session_id,kind,payload,created_at FROM sync_envelopes
     WHERE account_id=? AND to_slot=? AND to_login_session_id=? AND acked_at IS NULL
-      AND expires_at>? ORDER BY id LIMIT 8`);
+      AND expires_at>? AND (kind!='command' OR delivered_at IS NULL)
+    ORDER BY id LIMIT 8`);
 
   function key(accountId, slot, loginSessionId) {
     return `${accountId}:${slot}:${loginSessionId}`;
@@ -45,10 +46,15 @@ function createSessionSyncService({ db, authorize, now = Date.now }) {
     const row = device.get(principal.accountId, principal.slot);
     return row && row.login_session_id === principal.loginSessionId;
   }
-  function readPending(principal) {
-    return pending.all(principal.accountId, principal.slot, principal.loginSessionId, now())
-      .map(row => ({ ...row, payload: JSON.parse(row.payload) }));
-  }
+  const readPending = db.transaction(principal => {
+    const rows = pending.all(principal.accountId, principal.slot,
+      principal.loginSessionId, now());
+    const markCommand = db.prepare(`UPDATE sync_envelopes SET delivered_at=?
+      WHERE id=? AND delivered_at IS NULL`);
+    for (const row of rows)
+      if (row.kind === 'command') markCommand.run(now(), row.id);
+    return rows.map(row => ({ ...row, payload: JSON.parse(row.payload) }));
+  });
   function cleanup() {
     db.prepare('DELETE FROM sync_envelopes WHERE expires_at<=? OR acked_at<=?')
       .run(now(), now() - 60_000);

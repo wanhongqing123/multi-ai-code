@@ -23,6 +23,10 @@ Node 服务只监听 `127.0.0.1:9100`。验证码、密码哈希、登录会话�
 | `POST send` | 给同账号指定设备的指定 Session 送一条有唯一 ID 的操作或可见事件 |
 | `POST ack` | 确认收件，服务随后清理临时正文；收据保留 30 天防重复提交 |
 
+每条设备消息的 JSON 载荷最多 64 KiB，请求体最多 96 KiB；长历史由所属设备分页发送，
+大文件另按需分块。`send` 的 200 只表示临时信箱已接收，客户端仍须等待所属设备的
+执行确认。服务重启后所有设备先显示离线，直到重新上报心跳。
+
 见 [完整产品流程与验收边界](../../docs/design/maichat-multidevice-session-sync-20261019.md)。
 部署时在同一 ECS 上为 `maichatsync` 创建独立的可写目录
 `/var/lib/maichat-session-sync`，安装同目录提供的 systemd、Nginx 与环境文件示例；

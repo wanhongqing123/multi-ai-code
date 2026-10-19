@@ -56,6 +56,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     private final ImageButton voiceModeButton, attachmentOrStopButton;
     private final Button voiceHoldButton;
     private final TextView error;
+    private final TextView syncStatus;
     private final LatestMessageList list;
     private final LinearLayout pending;
     private final LinearLayout attachmentSection, attachmentTray, attachmentPanel;
@@ -177,6 +178,11 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         pending = column();
         pending.setPadding(dp(12), 0, dp(12), 0);
         addView(pending, matchWrap());
+        syncStatus = text("", 12, MaiChatTheme.BLUE);
+        syncStatus.setPadding(dp(16), dp(8), dp(16), dp(8));
+        syncStatus.setBackgroundColor(MaiChatTheme.BLUE_SOFT);
+        syncStatus.setVisibility(GONE);
+        addView(syncStatus, matchWrap());
         error = text("", 12, Color.rgb(183, 45, 45));
         error.setPadding(dp(14), dp(5), dp(14), dp(5));
         error.setTextIsSelectable(true);
@@ -314,6 +320,8 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             v -> {
                 if (state != null && state.busy())
                     controller.action("stop", value("session", selected), null);
+                else if (state != null && state.remoteSession != null)
+                    Toast.makeText(activity, "跨设备会话暂只支持文字消息", Toast.LENGTH_SHORT).show();
                 else
                     setAttachmentPanelVisible(!attachmentPanelVisible);
             });
@@ -392,6 +400,8 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             pendingLatestSession = selected;
         }
         state = next;
+        syncStatus.setText(next.syncStatus);
+        syncStatus.setVisibility(next.syncStatus.isEmpty() ? GONE : VISIBLE);
         error.setText(next.error);
         error.setVisibility(next.error.isEmpty() ? GONE : VISIBLE);
         updateSend();
@@ -471,7 +481,8 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         boolean hasDraft = !composer.getText().toString().trim().isEmpty()
             || !currentAttachments().isEmpty();
         boolean canSubmit = state != null && state.ready && !busy && !submitting
-            && !navigationPending && pendingMediaImports.getOrDefault(selected, 0) == 0 && hasDraft;
+            && !navigationPending && pendingMediaImports.getOrDefault(selected, 0) == 0 && hasDraft
+            && (state.remoteSession == null || state.remoteSession.optBoolean("online"));
         send.setVisibility(!voiceMode && hasDraft && !busy ? VISIBLE : GONE);
         send.setEnabled(canSubmit);
         attachmentOrStopButton.setImageResource(busy ? R.drawable.ic_ai_stop : R.drawable.ic_ai_add);
@@ -533,7 +544,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             return;
         }
         if (pendingMediaImports.getOrDefault(selected, 0) > 0) return;
-        if (!state.data.optBoolean("configured")) {
+        if (state.remoteSession == null && !state.data.optBoolean("configured")) {
             retryMainModelConnection();
             return;
         }
@@ -1348,10 +1359,16 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             String id = session.optString("id");
             String title = session.optString("title");
             if (title.equals("New session")) title = "新对话";
-            String detail = session.optBoolean("busy") ? "正在处理" : "";
-            sessionList.addView(sessionDrawerRow(title, detail, id.equals(selected), v -> {
+            boolean remote = session.has("device_slot");
+            String detail = remote ? session.optString("device_name") + " · " +
+                (session.optBoolean("online") ? "在线" : "离线") :
+                session.optBoolean("busy") ? "正在处理" : "";
+            boolean chosen = id.equals(selected) &&
+                (remote == (state.remoteSession != null));
+            sessionList.addView(sessionDrawerRow(title, detail, chosen, v -> {
                 popup.dismiss();
-                requestConversation(id);
+                if (remote) requestRemoteConversation(session);
+                else requestConversation(id);
             }), matchWrap());
         }
         popup.showAtLocation(this, Gravity.START | Gravity.TOP, 0, 0);
@@ -1374,6 +1391,14 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         updateSend();
         controller.select(target, success -> finishNavigation(generation));
     }
+    private void requestRemoteConversation(JSONObject remote) {
+        if (submitting || navigationPending) return;
+        following = true;
+        navigationPending = true;
+        int generation = ++navigationGeneration;
+        updateSend();
+        controller.selectRemote(remote, success -> finishNavigation(generation));
+    }
     private void finishNavigation(int generation) {
         if (navigationGeneration != generation) return;
         navigationPending = false;
@@ -1388,6 +1413,13 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         PopupWindow popup = new PopupWindow(panel, dp(264), LayoutParams.WRAP_CONTENT, true);
         popup.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
         popup.setOutsideTouchable(true);
+        if (state.remoteSession != null) {
+            panel.addView(actionPanelRow("所属设备", state.remoteSession.optString("device_name"),
+                MaiChatTheme.TEXT, v -> popup.dismiss()), matchWrap());
+            popup.setElevation(dp(14));
+            popup.showAsDropDown(anchor, anchor.getWidth() - dp(264), dp(6));
+            return;
+        }
         String modelValue = state.model.isEmpty() ? AIAssistantController.DEFAULT_MODEL : state.model;
         panel.addView(actionPanelRow("模型", modelValue, MaiChatTheme.TEXT, v -> {
             popup.dismiss();

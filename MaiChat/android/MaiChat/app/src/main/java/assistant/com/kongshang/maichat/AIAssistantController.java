@@ -33,7 +33,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -48,17 +50,20 @@ public final class AIAssistantController {
     }
     static final class State {
         final JSONObject data;
-        final String selected, baseUrl, model, policy, error;
+        final JSONObject remoteSession;
+        final String selected, baseUrl, model, policy, error, syncStatus;
         final boolean ready;
         final int messageHash, messageLength;
-        State(JSONObject data, String selected, String baseUrl, String model, String policy, String error,
-            boolean ready) {
+        State(JSONObject data, JSONObject remoteSession, String selected, String baseUrl,
+              String model, String policy, String error, String syncStatus, boolean ready) {
             this.data = data;
+            this.remoteSession = remoteSession;
             this.selected = selected;
             this.baseUrl = baseUrl;
             this.model = model;
             this.policy = policy;
             this.error = error;
+            this.syncStatus = syncStatus;
             this.ready = ready;
             // 在工作线程计算可见消息指纹，UI 只在正文或工具状态变化时重绑列表。
             JSONArray messages = data.optJSONArray("messages");
@@ -67,6 +72,7 @@ public final class AIAssistantController {
             this.messageLength = encoded.length();
         }
         boolean busy() {
+            if (remoteSession != null) return remoteSession.optBoolean("busy");
             JSONArray sessions = data.optJSONArray("sessions");
             if (sessions != null)
                 for (int i = 0; i < sessions.length(); i++) {
@@ -145,14 +151,15 @@ public final class AIAssistantController {
     private final String testEndpoint;
     private final String accountUserId;
     private final MaiChatAuthClient accountAuth;
+    private final AndroidSessionSyncCoordinator sessionSync;
     private volatile Listener listener;
     private volatile HostToolHandler hostToolHandler;
     static final String GLM_CHAT_URL = "https://open.bigmodel.cn/api/coding/paas/v4";
     static final String GLM_RESPONSES_URL = "https://open.bigmodel.cn/api/v1";
     static final String DEEPSEEK_URL = "https://api.deepseek.com";
     static final String DEFAULT_MODEL = "deepseek-flash";
-    volatile State state = new State(new JSONObject(), "", DEEPSEEK_URL,
-        DEFAULT_MODEL, "on-request", "", false);
+    volatile State state = new State(new JSONObject(), null, "", DEEPSEEK_URL,
+        DEFAULT_MODEL, "on-request", "", "", false);
     private long handle;
     private File root;
     private File rvmModelFile;
@@ -168,9 +175,18 @@ public final class AIAssistantController {
     private long nextWanRefreshAt;
     private volatile String wanWorkspaceId = "";
     private volatile String miniMaxApiKey = "";
-    private JSONObject data = new JSONObject();
+    private volatile JSONObject data = new JSONObject();
+    private JSONArray remoteSessions = new JSONArray();
+    private JSONObject selectedRemote;
+    private JSONObject pendingRemoteSelection;
+    private int remoteSelectionGeneration;
+    private JSONObject remoteData = new JSONObject();
+    private String remoteCommandStatus = "";
+    private int pendingRemoteCommands;
+    private int remoteCommandGeneration;
     private final Map<String, JSONArray> mediaMentionCache = new HashMap<>();
-    private boolean ready, closed;
+    private boolean ready;
+    private volatile boolean closed;
     private final Runnable poll = new Runnable() {
         @Override
         public void run() {
@@ -195,6 +211,9 @@ public final class AIAssistantController {
         thread.start();
         worker = new Handler(thread.getLooper());
         worker.post(this::initialize);
+        sessionSync = testEndpoint == null && !accountUserId.isEmpty()
+            ? new AndroidSessionSyncCoordinator(this.context, this, accountAuth) : null;
+        if (sessionSync != null) sessionSync.start();
     }
     void setListener(Listener next) {
         listener = next;
@@ -603,7 +622,21 @@ public final class AIAssistantController {
         }
     }
     private void publishState() {
-        State next = new State(data, selected, baseUrl, model, policy, error, ready);
+        JSONObject visible = selectedRemote == null ? data : remoteData;
+        String shown = selectedRemote == null ? selected : selectedRemote.optString("id");
+        try {
+            visible = new JSONObject(visible.toString());
+            JSONArray combined = new JSONArray();
+            JSONArray local = data.optJSONArray("sessions");
+            if (local != null) for (int i = 0; i < local.length(); i++) combined.put(local.get(i));
+            for (int i = 0; i < remoteSessions.length(); i++) combined.put(remoteSessions.get(i));
+            visible.put("sessions", combined);
+        } catch (Exception ignored) { visible = data; }
+        String status = pendingRemoteSelection != null
+            ? "正在读取 " + pendingRemoteSelection.optString("device_name") + " 的对话…"
+            : selectedRemote == null ? "" : remoteCommandStatus;
+        State next = new State(visible, selectedRemote, shown, baseUrl, model, policy,
+            error, status, ready);
         state = next;
         Listener target = listener;
         if (target != null)
@@ -612,6 +645,248 @@ public final class AIAssistantController {
                     target.onState(next);
             });
     }
+
+    JSONArray localSessionsForSync() {
+        if (listener == null && state.ready && !closed) {
+            CompletableFuture<JSONArray> updated = new CompletableFuture<>();
+            worker.post(() -> {
+                try {
+                    JSONObject snapshot = invokeNativeAgent(new JSONObject().put("op", "snapshot")
+                        .put("session", "").put("messageLimit", 0).put("force", true));
+                    JSONArray sessions = snapshot.optJSONArray("sessions");
+                    JSONObject next = new JSONObject(data.toString());
+                    next.put("sessions", sessions == null ? new JSONArray() : sessions);
+                    data = next;
+                    publishState();
+                    updated.complete(sessions == null ? new JSONArray() : sessions);
+                } catch (Exception failure) {
+                    updated.completeExceptionally(failure);
+                }
+            });
+            try { return new JSONArray(updated.get(3, TimeUnit.SECONDS).toString()); }
+            catch (Exception ignored) { /* Fall back to the last published Session list. */ }
+        }
+        JSONArray sessions = data.optJSONArray("sessions");
+        if (sessions == null) return new JSONArray();
+        try { return new JSONArray(sessions.toString()); }
+        catch (Exception ignored) { return new JSONArray(); }
+    }
+
+    private static boolean sameRemote(JSONObject first, JSONObject second) {
+        return first != null && second != null &&
+            first.optString("device_slot").equals(second.optString("device_slot")) &&
+            first.optString("login_session_id").equals(second.optString("login_session_id")) &&
+            first.optString("id").equals(second.optString("id"));
+    }
+
+    void acceptRemoteCatalog(JSONArray entries, String ownSlot) {
+        worker.post(() -> {
+            JSONArray next = new JSONArray();
+            if (entries != null) for (int i = 0; i < entries.length(); i++) {
+                JSONObject entry = entries.optJSONObject(i);
+                if (entry != null && !ownSlot.equals(entry.optString("device_slot")))
+                    next.put(entry);
+            }
+            remoteSessions = next;
+            if (selectedRemote != null) {
+                JSONObject updated = null;
+                for (int i = 0; i < next.length(); i++) {
+                    JSONObject entry = next.optJSONObject(i);
+                    if (sameRemote(selectedRemote, entry)) { updated = entry; break; }
+                }
+                if (updated != null) selectedRemote = updated;
+                else try { selectedRemote = new JSONObject(selectedRemote.toString()).put("online", false); }
+                     catch (Exception ignored) { /* Keep the prior offline view. */ }
+            }
+            publishState();
+        });
+    }
+
+    void markRemoteCatalogOffline() {
+        worker.post(() -> {
+            boolean changed = false;
+            for (int i = 0; i < remoteSessions.length(); i++) {
+                JSONObject session = remoteSessions.optJSONObject(i);
+                if (session == null || !session.optBoolean("online")) continue;
+                try { session.put("online", false); changed = true; }
+                catch (Exception ignored) { /* Already decoded JSON. */ }
+            }
+            if (selectedRemote != null && selectedRemote.optBoolean("online")) {
+                try { selectedRemote.put("online", false); changed = true; }
+                catch (Exception ignored) { /* Already decoded JSON. */ }
+            }
+            if (changed) publishState();
+        });
+    }
+
+    void historyForSync(String sessionId, String before, int limit, Consumer<JSONObject> completion) {
+        worker.post(() -> {
+            JSONObject result;
+            try {
+                if (closed) throw new IOException("账号已切换");
+                if (!hasLocalSession(sessionId)) throw new IOException("本机会话不存在");
+                result = invokeNativeAgent(new JSONObject().put("op", "messages_page")
+                    .put("session", sessionId).put("before", before)
+                    .put("limit", Math.max(1, Math.min(20, limit))));
+                JSONArray messages = result.optJSONArray("messages");
+                if (messages != null) for (int i = 0; i < messages.length(); i++) {
+                    JSONObject message = messages.optJSONObject(i);
+                    if (message == null) continue;
+                    JSONArray parts = message.optJSONArray("parts");
+                    if (parts == null) continue;
+                    for (int j = 0; j < parts.length(); j++) {
+                        JSONObject part = parts.optJSONObject(j);
+                        if (part != null && (part.optString("kind").equals("image") ||
+                            part.optString("kind").equals("video"))) part.remove("path");
+                    }
+                }
+                JSONObject state = invokeNativeAgent(new JSONObject().put("op", "snapshot")
+                    .put("session", sessionId).put("messageLimit", 0).put("force", true));
+                result.put("permissions", state.optJSONArray("permissions") == null
+                    ? new JSONArray() : state.optJSONArray("permissions"));
+                result.put("questions", state.optJSONArray("questions") == null
+                    ? new JSONArray() : state.optJSONArray("questions"));
+                if (listener != null) refresh(true);
+            } catch (Exception failure) {
+                result = new JSONObject();
+                try { result.put("ok", false).put("error", safeMessage(failure)); }
+                catch (Exception ignored) { /* JSONObject has no external input here. */ }
+            }
+            completion.accept(result);
+        });
+    }
+
+    private boolean hasLocalSession(String sessionId) {
+        JSONArray sessions = data.optJSONArray("sessions");
+        if (sessions == null) return false;
+        for (int i = 0; i < sessions.length(); i++) {
+            JSONObject entry = sessions.optJSONObject(i);
+            if (entry != null && sessionId.equals(entry.optString("id"))) return true;
+        }
+        return false;
+    }
+
+    void commandForSync(String sessionId, JSONObject action, Consumer<JSONObject> completion) {
+        worker.post(() -> {
+            JSONObject result = new JSONObject();
+            try {
+                if (closed) throw new IOException("账号已切换");
+                if (!hasLocalSession(sessionId)) throw new IOException("本机会话不存在");
+                if (action == null) throw new IOException("远端操作无效");
+                String operation = action.optString("action");
+                JSONObject request = new JSONObject(action.toString()).put("op", operation)
+                    .put("session", sessionId);
+                if (operation.equals("prompt")) {
+                    String text = action.optString("text");
+                    if (text.isEmpty() || text.getBytes(StandardCharsets.UTF_8).length > 16 * 1024)
+                        throw new IOException("消息为空或过长");
+                    request.put("op", "send").put("images", new JSONArray())
+                        .put("videos", new JSONArray()).put("quoteMessageId", "");
+                } else if (!operation.equals("stop") && !operation.equals("permission") &&
+                    !operation.equals("answer") && !operation.equals("rename")) {
+                    throw new IOException("不支持的远端操作");
+                }
+                invokeNativeAgent(request);
+                result.put("ok", true);
+                refresh(true);
+            } catch (Exception failure) {
+                try { result.put("ok", false).put("error", safeMessage(failure)); }
+                catch (Exception ignored) { /* JSONObject has no external input here. */ }
+            }
+            completion.accept(result);
+        });
+    }
+
+    void acceptRemotePayload(JSONObject envelope, JSONObject payload) {
+        worker.post(() -> {
+            JSONObject owner = pendingRemoteSelection != null ? pendingRemoteSelection : selectedRemote;
+            if (owner == null || !owner.optString("id").equals(envelope.optString("session_id")) ||
+                !owner.optString("device_slot").equals(envelope.optString("from_slot")) ||
+                !owner.optString("login_session_id").equals(envelope.optString("from_login_session_id")))
+                return;
+            if (payload.optString("type").equals("command_result")) {
+                JSONObject result = payload.optJSONObject("result");
+                pendingRemoteCommands = Math.max(0, pendingRemoteCommands - 1);
+                if (pendingRemoteCommands == 0) remoteCommandStatus = "";
+                if (result != null && !result.optBoolean("ok")) error = result.optString("error");
+                else error = "";
+                publishState();
+                return;
+            }
+            JSONArray received = payload.optJSONArray("messages");
+            if (!payload.optBoolean("ok") || received == null) return;
+            for (int i = 0; i < received.length(); i++) {
+                JSONObject message = received.optJSONObject(i);
+                JSONArray parts = message == null ? null : message.optJSONArray("parts");
+                if (parts == null) continue;
+                int originalCount = parts.length();
+                for (int j = 0; j < originalCount; j++) {
+                    JSONObject part = parts.optJSONObject(j);
+                    if (part == null) continue;
+                    String kind = part.optString("kind");
+                    if (!kind.equals("image") && !kind.equals("video")) continue;
+                    part.remove("path");
+                    try {
+                        parts.put(new JSONObject().put("id", part.optString("id") + "-remote-placeholder")
+                            .put("kind", "text").put("text", kind.equals("image")
+                                ? "[图片在所属设备，暂不可跨设备预览]" :
+                                  "[视频在所属设备，暂不可跨设备预览]"));
+                    } catch (Exception ignored) { /* Already decoded JSON. */ }
+                }
+            }
+            if (pendingRemoteSelection != null) {
+                selectedRemote = pendingRemoteSelection;
+                pendingRemoteSelection = null;
+                remoteSelectionGeneration++;
+                remoteData = payload;
+                Map<String, JSONObject> ordered = new java.util.TreeMap<>();
+                for (int i = 0; i < received.length(); i++) {
+                    JSONObject message = received.optJSONObject(i);
+                    if (message != null) ordered.put(message.optString("id"), message);
+                }
+                JSONArray chronological = new JSONArray();
+                for (JSONObject message : ordered.values()) chronological.put(message);
+                try { remoteData.put("messages", chronological); }
+                catch (Exception ignored) { /* Already decoded JSON. */ }
+            } else {
+                Map<String, JSONObject> merged = new java.util.TreeMap<>();
+                JSONArray current = remoteData.optJSONArray("messages");
+                if (current != null) for (int i = 0; i < current.length(); i++) {
+                    JSONObject message = current.optJSONObject(i);
+                    if (message != null) merged.put(message.optString("id"), message);
+                }
+                for (int i = 0; i < received.length(); i++) {
+                    JSONObject message = received.optJSONObject(i);
+                    if (message != null) merged.put(message.optString("id"), message);
+                }
+                JSONArray combined = new JSONArray();
+                for (JSONObject message : merged.values()) combined.put(message);
+                try {
+                    remoteData.put("messages", combined);
+                    if (payload.has("permissions"))
+                        remoteData.put("permissions", payload.optJSONArray("permissions"));
+                    if (payload.has("questions"))
+                        remoteData.put("questions", payload.optJSONArray("questions"));
+                } catch (Exception ignored) { /* Already decoded JSON. */ }
+            }
+            error = "";
+            publishState();
+        });
+    }
+
+    private void noteRemoteCommandAccepted(JSONObject destination) {
+        pendingRemoteCommands++;
+        remoteCommandStatus = "已送达所属设备，等待确认执行";
+        int generation = ++remoteCommandGeneration;
+        worker.postDelayed(() -> {
+            if (generation != remoteCommandGeneration || pendingRemoteCommands == 0 ||
+                !sameRemote(selectedRemote, destination)) return;
+            pendingRemoteCommands = 0;
+            remoteCommandStatus = "";
+            error = "所属设备是否执行了操作尚未确定，请先查看会话记录，不要直接重复发送";
+            publishState();
+        }, 30000);
+    }
     void select(String id) {
         select(id, null);
     }
@@ -619,6 +894,11 @@ public final class AIAssistantController {
         worker.post(() -> {
             boolean success = false;
             try {
+                selectedRemote = null;
+                pendingRemoteSelection = null;
+                remoteSelectionGeneration++;
+                pendingRemoteCommands = 0;
+                remoteCommandStatus = "";
                 selected = id;
                 error = "";
                 refresh(true);
@@ -630,6 +910,43 @@ public final class AIAssistantController {
             if (completion != null) {
                 boolean result = success;
                 main.post(() -> completion.accept(result));
+            }
+        });
+    }
+    void selectRemote(JSONObject remote, Consumer<Boolean> completion) {
+        worker.post(() -> {
+            if (sessionSync == null || !remote.optBoolean("online")) {
+                error = "所属设备离线，暂时无法读取这段会话";
+                publishState();
+                main.post(() -> completion.accept(false));
+                return;
+            }
+            pendingRemoteSelection = remote;
+            int generation = ++remoteSelectionGeneration;
+            publishState();
+            worker.postDelayed(() -> {
+                if (generation != remoteSelectionGeneration || pendingRemoteSelection == null) return;
+                pendingRemoteSelection = null;
+                error = "读取所属设备会话超时，请重新选择";
+                publishState();
+            }, 20000);
+            try {
+                JSONObject request = new JSONObject().put("limit", 10);
+                sessionSync.sendToRemote(remote, "history_request", request, failure -> {
+                    worker.post(() -> {
+                        if (!failure.isEmpty() && sameRemote(pendingRemoteSelection, remote)) {
+                            pendingRemoteSelection = null;
+                            error = failure;
+                            publishState();
+                        }
+                        main.post(() -> completion.accept(failure.isEmpty()));
+                    });
+                });
+            } catch (Exception failure) {
+                pendingRemoteSelection = null;
+                error = safeMessage(failure);
+                publishState();
+                main.post(() -> completion.accept(false));
             }
         });
     }
@@ -670,6 +987,33 @@ public final class AIAssistantController {
               String quotedMessageId, Consumer<Boolean> completion) {
         java.util.List<ImportedFile> intendedAttachments = new java.util.ArrayList<>(attachments);
         worker.post(() -> {
+            if (selectedRemote != null && intendedSession.equals(selectedRemote.optString("id"))) {
+                if (sessionSync == null || !selectedRemote.optBoolean("online") ||
+                    !intendedAttachments.isEmpty() || !quotedMessageId.isEmpty() ||
+                    text.trim().isEmpty()) {
+                    error = "远端设备离线，或消息包含暂不支持的附件/引用";
+                    publishState();
+                    main.post(() -> completion.accept(false));
+                    return;
+                }
+                JSONObject destination = selectedRemote;
+                try {
+                    JSONObject request = new JSONObject().put("action", "prompt").put("text", text);
+                    sessionSync.sendToRemote(destination, "command", request, failure -> {
+                        worker.post(() -> {
+                            error = failure;
+                            if (failure.isEmpty()) noteRemoteCommandAccepted(destination);
+                            publishState();
+                            main.post(() -> completion.accept(failure.isEmpty()));
+                        });
+                    });
+                } catch (Exception failure) {
+                    error = safeMessage(failure);
+                    publishState();
+                    main.post(() -> completion.accept(false));
+                }
+                return;
+            }
             boolean success = false;
             try {
                 refreshSeedanceCredential(true);
@@ -712,6 +1056,35 @@ public final class AIAssistantController {
                                   Consumer<Boolean> settled) {
         String target = values.optString("session", state.selected);
         worker.post(() -> {
+            if (selectedRemote != null && !operation.equals("create")) {
+                if (sessionSync == null || !selectedRemote.optBoolean("online") ||
+                    !(operation.equals("stop") || operation.equals("permission") ||
+                      operation.equals("answer") || operation.equals("rename"))) {
+                    error = "所属设备离线或不支持此操作";
+                    publishState();
+                    if (settled != null) main.post(() -> settled.accept(false));
+                    return;
+                }
+                JSONObject destination = selectedRemote;
+                try {
+                    JSONObject request = new JSONObject(values.toString()).put("action", operation);
+                    sessionSync.sendToRemote(destination, "command", request, failure -> {
+                        worker.post(() -> {
+                            error = failure;
+                            if (failure.isEmpty()) noteRemoteCommandAccepted(destination);
+                            publishState();
+                            if (settled != null) main.post(() -> settled.accept(failure.isEmpty()));
+                            if (failure.isEmpty() && completion != null) main.post(completion);
+                        });
+                    });
+                } catch (Exception failure) {
+                    error = safeMessage(failure);
+                    publishState();
+                    if (settled != null) main.post(() -> settled.accept(false));
+                }
+                return;
+            }
+            if (operation.equals("create")) selectedRemote = null;
             boolean success = false;
             try {
                 JSONObject request =
@@ -1198,9 +1571,10 @@ public final class AIAssistantController {
         SystemCertificateBundle.writeCurrentPem(new File(root, "trusted-roots.pem"));
     }
     void close() {
+        closed = true;
+        if (sessionSync != null) sessionSync.close();
         listener = null;
         worker.post(() -> {
-            closed = true;
             worker.removeCallbacks(poll);
             if (handle != 0)
                 nativeDestroy(handle);

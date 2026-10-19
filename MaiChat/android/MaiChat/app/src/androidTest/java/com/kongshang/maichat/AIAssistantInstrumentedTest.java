@@ -201,6 +201,38 @@ public class AIAssistantInstrumentedTest {
         }
     }
 
+    @Test public void remoteSessionShowsOwnerAndFailedOpenKeepsDraft() throws Exception {
+        Context app = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Intent launch = new Intent(app, AIAssistantTestActivity.class)
+            .putExtra("model_url", "http://127.0.0.1:18190");
+        try (ActivityScenario<AIAssistantTestActivity> scenario = ActivityScenario.launch(launch)) {
+            await(scenario, panel -> panel.controller.state.ready);
+            scenario.onActivity(activity -> {
+                activity.panel.composer.setText("保留本机草稿");
+                try {
+                    activity.panel.controller.acceptRemoteCatalog(new org.json.JSONArray().put(
+                        new JSONObject().put("id", "ses_remote_fixture")
+                            .put("title", "Mac 编译任务").put("device_slot", "mac")
+                            .put("device_name", "工作 Mac").put("device_id", "fixture-mac")
+                            .put("login_session_id", "fixture-login").put("online", true)
+                            .put("busy", false)), "android_phone");
+                } catch (Exception failure) { throw new AssertionError(failure); }
+            });
+            await(scenario, panel -> panel.controller.state.data.toString().contains("ses_remote_fixture"));
+            scenario.onActivity(activity -> {
+                View sidebar = findDescription(activity.panel, "对话列表");
+                assertNotNull(sidebar);
+                assertTrue(sidebar.performClick());
+            });
+            AccessibilityNodeInfo row = awaitSystemText("工作 Mac", 5000);
+            assertNotNull("远端设备名和在线状态应在会话列表显示", row);
+            assertTrue(clickNodeOrParent(row));
+            await(scenario, panel -> !panel.controller.state.error.isEmpty());
+            scenario.onActivity(activity ->
+                assertEquals("保留本机草稿", activity.panel.composer.getText().toString()));
+        }
+    }
+
     @Test public void keyboardSendActionSubmitsTheDraft() throws Exception {
         Context app = InstrumentationRegistry.getInstrumentation().getTargetContext();
         Intent launch = new Intent(app, AIAssistantTestActivity.class)

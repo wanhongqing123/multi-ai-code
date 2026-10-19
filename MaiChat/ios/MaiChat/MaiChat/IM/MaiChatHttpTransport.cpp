@@ -22,7 +22,7 @@ struct MaiChatHttpCancellation {
 namespace {
 
 constexpr size_t kMaximumUrlBytes = 4096;
-constexpr size_t kMaximumJsonRequestBytes = 32 * 1024;
+constexpr size_t kMaximumJsonRequestBytes = 96 * 1024;
 constexpr size_t kMaximumAvatarRequestBytes = 2 * 1000 * 1000;
 constexpr size_t kMaximumSupportedResponseBytes = 4 * 1024 * 1024;
 constexpr size_t kMaximumHeaderBytes = 16 * 1024;

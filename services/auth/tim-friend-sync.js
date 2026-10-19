@@ -54,12 +54,14 @@ function createTencentFriendWriter({ sdkAppId, imSecret, adminUser = 'administra
   };
 }
 
-async function syncPendingFriendActions(db, writer, limit = 50) {
+async function syncPendingFriendActions(db, writer, limit = 50, now = Date.now) {
+  const current = now();
   const rows = db.prepare(`SELECT friend_im_sync.*,left_user.im_user_id AS left_im_id,
     right_user.im_user_id AS right_im_id FROM friend_im_sync
     JOIN users AS left_user ON left_user.id=friend_im_sync.left_user_id
     JOIN users AS right_user ON right_user.id=friend_im_sync.right_user_id
-    ORDER BY updated_at LIMIT ?`).all(limit);
+    WHERE friend_im_sync.retry_after IS NULL OR friend_im_sync.retry_after<=?
+    ORDER BY updated_at LIMIT ?`).all(current, limit);
   let completed = 0;
   for (const row of rows) {
     try {
@@ -70,9 +72,10 @@ async function syncPendingFriendActions(db, writer, limit = 50) {
     } catch (error) {
       const safeError = /^HTTP [0-9]{3}$|^IM error [0-9]+$/.test(error.message) ?
         error.message : 'IM sync unavailable';
-      db.prepare(`UPDATE friend_im_sync SET attempts=attempts+1,last_error=?
+      const retryAfter = safeError === 'IM error 30010' ? current + 6 * 60 * 60 * 1000 : null;
+      db.prepare(`UPDATE friend_im_sync SET attempts=attempts+1,last_error=?,retry_after=?
         WHERE left_user_id=? AND right_user_id=? AND revision=?`)
-        .run(safeError, row.left_user_id, row.right_user_id, row.revision);
+        .run(safeError, retryAfter, row.left_user_id, row.right_user_id, row.revision);
     }
   }
   return { pending: rows.length - completed, completed };

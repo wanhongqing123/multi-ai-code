@@ -133,6 +133,39 @@ test('IM writer failure keeps the MaiChat relation and retries without losing th
   setup.db.close();
 });
 
+test('Tencent friend capacity defers retries without blocking a later delete', async () => {
+  const setup = fixture();
+  await setup.service.createTestAccount('test_one', 'test-one-secret-123456');
+  await setup.service.createTestAccount('test_two', 'test-two-secret-123456');
+  const login = async (account, password) => (await setup.call('POST',
+    '/v1/auth/password/login', { account_id: account, password,
+      age_confirmed_14_plus: true, device_slot: 'ios_phone' })).body.access_token;
+  const first = await login('test_one', 'test-one-secret-123456');
+  const second = await login('test_two', 'test-two-secret-123456');
+  const request = await setup.call('POST', '/v1/friends/requests',
+    { account: 'test_two' }, first);
+  await setup.call('POST', `/v1/friends/requests/${request.body.request_id}/accept`, {}, second);
+  let attempts = 0;
+  await syncPendingFriendActions(setup.db, async () => {
+    attempts++;
+    throw new Error('IM error 30010');
+  }, 50, () => 1000);
+  const pending = setup.db.prepare('SELECT last_error,retry_after FROM friend_im_sync').get();
+  assert.equal(pending.last_error, 'IM error 30010');
+  assert.equal(pending.retry_after, 1000 + 6 * 60 * 60 * 1000);
+  await syncPendingFriendActions(setup.db, async () => { attempts++; }, 50, () => 2000);
+  assert.equal(attempts, 1);
+  assert.equal((await setup.call('GET', '/v1/friends', {}, first)).body.friends.length, 1);
+  await setup.call('POST', '/v1/friends/remove', { account: 'test_two' }, first);
+  assert.equal(setup.db.prepare('SELECT desired,retry_after FROM friend_im_sync').get().desired,
+    'delete');
+  assert.equal(setup.db.prepare('SELECT retry_after FROM friend_im_sync').get().retry_after, null);
+  await syncPendingFriendActions(setup.db, async () => { attempts++; }, 50, () => 2000);
+  assert.equal(attempts, 2);
+  assert.equal(setup.db.prepare('SELECT COUNT(*) AS n FROM friend_im_sync').get().n, 0);
+  setup.db.close();
+});
+
 test('Tencent writer applies a confirmed relation with admin REST payload only', async () => {
   const requests = [];
   const writer = createTencentFriendWriter({ sdkAppId: 123456789,

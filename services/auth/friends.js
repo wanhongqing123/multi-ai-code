@@ -84,7 +84,7 @@ function createFriendService({ db, now, normalizePhone, lookupTimes }) {
           VALUES(?,?,?)`).run(left, right, now());
         db.prepare(`INSERT INTO friend_im_sync(left_user_id,right_user_id,desired,updated_at)
           VALUES(?,?,'add',?) ON CONFLICT(left_user_id,right_user_id) DO UPDATE SET
-          desired='add',updated_at=excluded.updated_at,attempts=0,last_error=NULL,
+          desired='add',updated_at=excluded.updated_at,attempts=0,last_error=NULL,retry_after=NULL,
           revision=friend_im_sync.revision+1`)
           .run(left, right, now());
       }
@@ -104,7 +104,7 @@ function createFriendService({ db, now, normalizePhone, lookupTimes }) {
       if (!removed) return json(404, { error: 'Friend not found' });
       db.prepare(`INSERT INTO friend_im_sync(left_user_id,right_user_id,desired,updated_at)
         VALUES(?,?,'delete',?) ON CONFLICT(left_user_id,right_user_id) DO UPDATE SET
-        desired='delete',updated_at=excluded.updated_at,attempts=0,last_error=NULL,
+        desired='delete',updated_at=excluded.updated_at,attempts=0,last_error=NULL,retry_after=NULL,
         revision=friend_im_sync.revision+1`)
         .run(left, right, now());
       return json(200, { deleted: true });

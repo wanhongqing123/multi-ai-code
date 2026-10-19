@@ -655,7 +655,7 @@ function createAuthService(options) {
           .run(relation.left_user_id, relation.right_user_id);
         db.prepare(`INSERT INTO friend_im_sync(left_user_id,right_user_id,desired,updated_at)
           VALUES(?,?,'delete',?) ON CONFLICT(left_user_id,right_user_id) DO UPDATE SET
-          desired='delete',updated_at=excluded.updated_at,attempts=0,last_error=NULL,
+          desired='delete',updated_at=excluded.updated_at,attempts=0,last_error=NULL,retry_after=NULL,
           revision=friend_im_sync.revision+1`)
           .run(relation.left_user_id, relation.right_user_id, now());
       }

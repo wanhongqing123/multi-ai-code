@@ -163,6 +163,7 @@ function openStore(filename) {
       updated_at INTEGER NOT NULL,
       attempts INTEGER NOT NULL DEFAULT 0,
       last_error TEXT,
+      retry_after INTEGER,
       revision INTEGER NOT NULL DEFAULT 1,
       PRIMARY KEY(left_user_id,right_user_id),
       CHECK(left_user_id < right_user_id)
@@ -228,6 +229,8 @@ function openStore(filename) {
     .map(column => column.name));
   if (!syncColumns.has('revision'))
     db.exec('ALTER TABLE friend_im_sync ADD COLUMN revision INTEGER NOT NULL DEFAULT 1');
+  if (!syncColumns.has('retry_after'))
+    db.exec('ALTER TABLE friend_im_sync ADD COLUMN retry_after INTEGER');
   const sessionColumns = new Set(db.prepare('PRAGMA table_info(sessions)')
     .all().map(column => column.name));
   if (!sessionColumns.has('revoked_reason'))

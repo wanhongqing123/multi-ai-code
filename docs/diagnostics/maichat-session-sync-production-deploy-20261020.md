@@ -44,10 +44,15 @@
 - 热重载后一瞬曾由旧 Nginx worker 返回 404；再次经相同路径检查稳定为 401。
   同步服务首次 `systemctl is-active` 已为 active 时，进程仍未完成 bind，首个
   `/health` 连接失败；稍后重试为 200，日志无崩溃。
+- OPPO PKD130 上以 `0f8d30eb` 源码的独立包名隔离 App 登录测试账号，创作中心
+  看到了生产假 Mac 在线 Session；打开后精确读到假 Mac 经生产同步服务返回的
+  固定历史文字。未发消息或模型请求。测试后隔离 App 登出并卸载，现用 MaiChat
+  2.2.2(222) 的设备 APK 哈希与测试前一致。假 Mac fixture 也已停止并清空
+  Session 目录；服务器回读该测试账号活跃会话数和 fixture Session 数均为 0。
 
 ## 尚未验证
 
-- 客户端之间的真实 Session 与工具操作尚未跨网络走通。iOS 新包已保留数据安装，
+- 真实所属设备上的 Session 与工具操作尚未跨网络走通。iOS 新包已保留数据安装，
   自动启动被设备锁屏拒绝，需解锁后继续；当前 Mac 正在运行的旧版 App 未替换。
 - Mac 与 Windows 直连 `ichat.life:443` 的 SNI TLS 握手在网络路径上仍出现 reset；
   服务器本机 Nginx HTTPS 路由和无 SNI 的 IP 对照可用，不能据此推断所有客户端

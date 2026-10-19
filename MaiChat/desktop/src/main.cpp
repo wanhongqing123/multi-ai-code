@@ -16,6 +16,7 @@
 
 #include "app/RemoteIMApplication.h"
 #include "auth/DesktopAuthClient.h"
+#include "agent/DesktopSessionSyncCoordinator.h"
 #include "auth/SecureRefreshTokenStore.h"
 #include "logging/AppLog.h"
 #include "platform/DesktopRemoteIMClientFactory.h"
@@ -308,6 +309,13 @@ int main(int argc, char* argv[]) {
     };
     window.setModelKeyRefreshHandler(refreshAccountModelKeys);
     window.show();
+    DesktopSessionSyncCoordinator sessionSync(
+        [&auth](const QString& path, const QByteArray& method, const QJsonObject& body,
+                DesktopSessionSyncCoordinator::Completion completion) {
+            auth.requestSessionSync(path, method, body, std::move(completion));
+        },
+        [&window] { return window.activeAgentController(); });
+    if (!smokeMode) sessionSync.start();
     if (!smokeMode) refreshAccountModelKeys();
     remoteIM.connectToService(credential.sdkAppId, credential.userSig);
     auth.startSessionMonitoring();

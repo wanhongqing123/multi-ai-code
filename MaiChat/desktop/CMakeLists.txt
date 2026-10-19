@@ -748,6 +748,8 @@ add_library(maichat_agent
   src/agent/AgentController.cpp
   src/agent/DesktopSessionSyncHost.h
   src/agent/DesktopSessionSyncHost.cpp
+  src/agent/DesktopSessionSyncCoordinator.h
+  src/agent/DesktopSessionSyncCoordinator.cpp
   src/agent/DesktopAccountModelClient.h
   src/agent/DesktopAccountModelClient.cpp
   src/MaiChatTools/DesktopPdfRenderer.h

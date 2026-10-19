@@ -28,6 +28,7 @@ function openSessionSyncStore(filename) {
       session_id TEXT NOT NULL,
       title TEXT NOT NULL,
       updated_at INTEGER NOT NULL,
+      busy INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY(account_id, slot, session_id)
     );
     CREATE INDEX IF NOT EXISTS sync_sessions_account_updated
@@ -71,6 +72,9 @@ function openSessionSyncStore(filename) {
   const envelopeColumns = new Set(db.pragma('table_info(sync_envelopes)').map(row => row.name));
   if (!envelopeColumns.has('delivered_at'))
     db.exec('ALTER TABLE sync_envelopes ADD COLUMN delivered_at INTEGER');
+  const sessionColumns = new Set(db.pragma('table_info(sync_sessions)').map(row => row.name));
+  if (!sessionColumns.has('busy'))
+    db.exec('ALTER TABLE sync_sessions ADD COLUMN busy INTEGER NOT NULL DEFAULT 0');
   // 进程重启后，旧心跳不能证明设备仍连着新进程；等待它重新上报。
   db.prepare('UPDATE sync_devices SET last_seen=0').run();
   return db;

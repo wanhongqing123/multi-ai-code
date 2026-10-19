@@ -92,9 +92,10 @@ function createSessionSyncService({ db, authorize, now = Date.now }) {
     db.prepare('DELETE FROM sync_sessions WHERE account_id=? AND slot=?')
       .run(principal.accountId, principal.slot);
     const insert = db.prepare(`INSERT INTO sync_sessions(account_id,slot,login_session_id,
-      session_id,title,updated_at) VALUES(?,?,?,?,?,?)`);
+      session_id,title,updated_at,busy) VALUES(?,?,?,?,?,?,?)`);
     for (const session of body.sessions) insert.run(principal.accountId, principal.slot,
-      principal.loginSessionId, session.id, session.title, session.updated_at);
+      principal.loginSessionId, session.id, session.title, session.updated_at,
+      session.busy === true ? 1 : 0);
     return previous?.login_session_id;
   });
 
@@ -133,7 +134,8 @@ function createSessionSyncService({ db, authorize, now = Date.now }) {
           body.sessions.length > MAX_SESSIONS ||
           body.sessions.some(session => !validId(session?.id) ||
             !validTitle(session?.title) || !Number.isSafeInteger(session?.updated_at) ||
-            session.updated_at < 0))
+            session.updated_at < 0 ||
+            (session.busy !== undefined && typeof session.busy !== 'boolean')))
         return reply(400, { error: 'Invalid device presence' });
       if (new Set(body.sessions.map(session => session.id)).size !== body.sessions.length)
         return reply(400, { error: 'Duplicate Session ID' });
@@ -144,14 +146,14 @@ function createSessionSyncService({ db, authorize, now = Date.now }) {
     }
     if (method === 'GET' && url.pathname === '/v1/session-sync/sessions') {
       const rows = db.prepare(`SELECT sessions.session_id AS id,sessions.title,
-        sessions.updated_at,sessions.slot AS device_slot,devices.name AS device_name,
+        sessions.updated_at,sessions.busy,sessions.slot AS device_slot,devices.name AS device_name,
         devices.device_id,devices.login_session_id,devices.last_seen
         FROM sync_sessions AS sessions JOIN sync_devices AS devices
         ON devices.account_id=sessions.account_id AND devices.slot=sessions.slot
         WHERE sessions.account_id=? ORDER BY sessions.updated_at DESC`)
         .all(principal.accountId);
       return reply(200, { sessions: rows.map(({ last_seen, ...row }) => ({ ...row,
-        online: last_seen > now() - ONLINE_TIMEOUT_MS })) });
+        busy: row.busy === 1, online: last_seen > now() - ONLINE_TIMEOUT_MS })) });
     }
     if (method === 'GET' && url.pathname === '/v1/session-sync/poll') {
       const waitMs = Number(url.searchParams.get('wait_ms') || 0);

@@ -22,7 +22,8 @@ function fixture() {
   const call = (token, method, path, body = {}) => service.handle({
     method, path, body, headers: token ? { authorization: `Bearer ${token}` } : {}
   });
-  const macSessions = [{ id: 'ses_mac_1', title: 'Build project', updated_at: current }];
+  const macSessions = [{ id: 'ses_mac_1', title: 'Build project', updated_at: current,
+    busy: true }];
   const macPresence = (token = 'mac-token') => call(token, 'POST',
     '/v1/session-sync/presence', { device_id: 'mac-install-1',
       name: 'Office Mac', sessions: macSessions });
@@ -44,6 +45,7 @@ test('only the same account can list and address its active device sessions', as
     assert.equal(listed.body.sessions.length, 1);
     assert.equal(listed.body.sessions[0].title, 'Build project');
     assert.equal(listed.body.sessions[0].online, true);
+    assert.equal(listed.body.sessions[0].busy, true);
     assert.deepEqual((await setup.call('other-token', 'GET',
       '/v1/session-sync/sessions')).body.sessions, []);
     assert.equal((await setup.call('other-token', 'POST', '/v1/session-sync/send', {

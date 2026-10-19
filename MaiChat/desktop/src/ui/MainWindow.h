@@ -86,6 +86,7 @@ public:
     void setMaiChatNicknameProvider(std::function<QString()> provider);
     void setMaiChatNicknameUpdater(
         std::function<void(const QString&, RemoteIMCompletion)> updater);
+    AgentController* activeAgentController() const { return agentController_; }
     bool openDockedVideo(const QString& path, const QStringList& playlist = {});
 
     // 把 IM 收/发的文件附件从本地缓存拷贝到 targetPath（存在则覆盖）。

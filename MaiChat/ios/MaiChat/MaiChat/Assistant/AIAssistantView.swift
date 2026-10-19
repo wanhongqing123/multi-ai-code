@@ -151,7 +151,9 @@ struct AIAssistantView: View {
                             quotedMessage: model.quotedMessage,
                             attachmentPanelPresented: isAttachmentPanelPresented,
                             attachments: model.attachments(for: model.selected),
-                            workspacePath: model.workspacePath
+                            workspacePath: model.workspacePath,
+                            remoteRestoreText: model.remoteRestoreText,
+                            remoteRestoreGeneration: model.remoteRestoreGeneration
                         ),
                         focusController: composerFocusController,
                         transcriptionPresentation: transcriptionPresentation,
@@ -2296,6 +2298,8 @@ private struct AIComposerSnapshot: Equatable {
     let attachmentPanelPresented: Bool
     let attachments: [AIImportedFile]
     let workspacePath: String
+    let remoteRestoreText: String
+    let remoteRestoreGeneration: Int
 }
 
 private struct AIComposer: View, Equatable {
@@ -2672,6 +2676,11 @@ private struct AIComposer: View, Equatable {
                 if storageSession != selected { draft = model.drafts[selected] ?? "" }
                 if !snapshot.attachments.isEmpty { isVoiceMode = false }
             }
+            .onChange(of: snapshot.remoteRestoreGeneration) { _ in
+                guard model.selectedRemote != nil, draftSession == model.selected,
+                      draft.isEmpty, !model.remoteRestoreText.isEmpty else { return }
+                draft = model.remoteRestoreText
+            }
             .onChange(of: draft) { value in
                 if let session = draftStorageSession { model.drafts[session] = value }
             }
@@ -2942,6 +2951,7 @@ private struct AIComposer: View, Equatable {
         let sent = submittedText ?? draft
         let sourceSession = draftSession
         let sourceTarget = draftImportTarget
+        let restorationGeneration = model.remoteRestoreGeneration
         Task {
             guard await model.sendMessage(sent, expectedSession: sourceSession) else { return }
             let destination: String? = sourceSession.isEmpty
@@ -2951,6 +2961,10 @@ private struct AIComposer: View, Equatable {
             if model.drafts[sourceSession] == sent { model.drafts.removeValue(forKey: sourceSession) }
             if let destination, model.drafts[destination] == sent {
                 model.drafts.removeValue(forKey: destination)
+            }
+            if model.remoteRestoreGeneration != restorationGeneration,
+               model.remoteRestoreText == sent, draft.isEmpty {
+                draft = sent
             }
         }
     }

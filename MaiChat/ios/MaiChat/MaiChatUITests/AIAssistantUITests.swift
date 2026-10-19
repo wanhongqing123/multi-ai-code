@@ -65,6 +65,17 @@ final class AIAssistantUITests: XCTestCase {
             NSPredicate(format: "label CONTAINS %@", "从 iPhone 请求本机假 Mac")
         ).firstMatch
         XCTAssertTrue(echoed.waitForExistence(timeout: 30))
+
+        composer.tap()
+        composer.typeText("请拒绝此操作")
+        XCTAssertTrue(send.waitForExistence(timeout: 10))
+        send.tap()
+        XCTAssertTrue(app.staticTexts["所属设备拒绝了操作"].waitForExistence(timeout: 30))
+        XCTAssertEqual(composer.value as? String, "请拒绝此操作")
+        let rejected = XCTAttachment(screenshot: app.screenshot())
+        rejected.name = "normal-app-remote-rejection-restores-draft"
+        rejected.lifetime = .keepAlways
+        add(rejected)
     }
 
     func testNormalAppKeepsConversationPageVisibleAcrossNavigation() throws {

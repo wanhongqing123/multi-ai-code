@@ -89,6 +89,8 @@ private:
     QSet<QString> pendingSnapshotSessions_;
     QHash<QString, Subscriber> subscribers_;
     QHash<QString, Incoming> incoming_;
+    QHash<QString, QString> retryIdByFingerprint_;
+    QHash<QString, QString> fingerprintByCommandId_;
     QJsonArray remoteSessions_;
     CatalogHandler catalogHandler_;
     PayloadHandler payloadHandler_;

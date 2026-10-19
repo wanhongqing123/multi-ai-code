@@ -326,7 +326,8 @@ private actor AIRemoteSessionTransport {
 
     private func request(_ route: MaiChatSessionSyncRoute,
                          body: [String: Any] = [:], wait: Int = 0) async throws -> Data {
-        let data = body.isEmpty ? Data() : try JSONSerialization.data(withJSONObject: body)
+        let data = body.isEmpty ? Data() :
+            try JSONSerialization.data(withJSONObject: body, options: .sortedKeys)
         return try await MaiChatAuthClient.shared.sessionSyncRequest(
             route, body: data, waitMilliseconds: wait)
     }
@@ -354,23 +355,33 @@ private actor AIRemoteSessionTransport {
     }
 
     func send(to session: AIRemoteSession, kind: String,
-              payload: [String: Any]) async throws -> String {
+              payload: [String: Any], messageID: String? = nil) async throws -> String {
         try await send(toSlot: session.deviceSlot, toLogin: session.loginSessionID,
-                       sessionID: session.sessionID, kind: kind, payload: payload)
+                       sessionID: session.sessionID, kind: kind, payload: payload,
+                       messageID: messageID)
+    }
+
+    func sendCommand(to session: AIRemoteSession, encodedPayload: Data,
+                     messageID: String) async throws {
+        guard let payload = try JSONSerialization.jsonObject(with: encodedPayload) as? [String: Any] else {
+            throw AIBackendError(message: "跨设备命令格式错误")
+        }
+        _ = try await send(to: session, kind: "command", payload: payload,
+                           messageID: messageID)
     }
 
     func send(toSlot: String, toLogin: String, sessionID: String,
-              kind: String, payload: [String: Any]) async throws -> String {
-        let messageID = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+              kind: String, payload: [String: Any], messageID: String? = nil) async throws -> String {
+        let id = messageID ?? UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         _ = try await request(.send, body: [
             "to_slot": toSlot,
             "to_login_session_id": toLogin,
-            "client_message_id": messageID,
+            "client_message_id": id,
             "session_id": sessionID,
             "kind": kind,
             "payload": payload
         ])
-        return messageID
+        return id
     }
 
     func sendPayload(to envelope: Envelope, kind: String,
@@ -828,6 +839,8 @@ final class AIAssistantModel: ObservableObject {
     @Published var configured = false
     @Published var error = ""
     @Published private(set) var remoteStatus = ""
+    @Published private(set) var remoteRestoreText = ""
+    @Published private(set) var remoteRestoreGeneration = 0
     @Published var ready = false
     @Published var historyLoaded = false
     @Published private(set) var hasOlderMessages = false
@@ -852,6 +865,11 @@ final class AIAssistantModel: ObservableObject {
     private var pendingRemoteSelectionStarted = Date.distantPast
     private var remoteTransfers: [String: AIRemoteTransfer] = [:]
     private var pendingRemoteCommands: [String: Date] = [:]
+    private var remoteRetryIDByFingerprint: [String: String] = [:]
+    private var remoteFingerprintByCommandID: [String: String] = [:]
+    private var remoteDraftByCommandID: [String: String] = [:]
+    private var remoteResultByCommandID: [String: Bool] = [:]
+    private var remoteDeliveryPendingIDs: Set<String> = []
     private var pendingRemoteOlderPage = false
     private var lastRemotePresence = Date.distantPast
     private var lastRemoteHistoryRequest = Date.distantPast
@@ -1206,7 +1224,13 @@ final class AIAssistantModel: ObservableObject {
             Date().timeIntervalSince($0.value) > 30
         }
         if !timedOut.isEmpty {
-            for id in timedOut.keys { pendingRemoteCommands.removeValue(forKey: id) }
+            for id in timedOut.keys {
+                pendingRemoteCommands.removeValue(forKey: id)
+                if let draft = remoteDraftByCommandID.removeValue(forKey: id), !draft.isEmpty {
+                    remoteRestoreText = draft
+                    remoteRestoreGeneration += 1
+                }
+            }
             remoteStatus = ""
             showTransientError(
                 "所属设备是否执行了操作尚未确定，请先查看会话记录，不要直接重复发送",
@@ -1306,9 +1330,20 @@ final class AIAssistantModel: ObservableObject {
            object["type"] as? String == "command_result" {
             if let id = object["command_id"] as? String,
                pendingRemoteCommands.removeValue(forKey: id) != nil {
+                let pendingDraft = remoteDraftByCommandID.removeValue(forKey: id)
+                let result = object["result"] as? [String: Any]
+                if remoteDeliveryPendingIDs.contains(id) {
+                    remoteResultByCommandID[id] = result?["ok"] as? Bool == true
+                }
+                if let fingerprint = remoteFingerprintByCommandID.removeValue(forKey: id) {
+                    remoteRetryIDByFingerprint.removeValue(forKey: fingerprint)
+                }
                 remoteStatus = pendingRemoteCommands.isEmpty ? "" : "等待所属设备确认操作…"
-                if let result = object["result"] as? [String: Any],
-                   result["ok"] as? Bool != true {
+                if let result, result["ok"] as? Bool != true {
+                    if let pendingDraft, !pendingDraft.isEmpty {
+                        remoteRestoreText = pendingDraft
+                        remoteRestoreGeneration += 1
+                    }
                     showTransientError(result["error"] as? String ?? "所属设备未执行操作",
                                        duration: .seconds(8))
                 }
@@ -1691,6 +1726,32 @@ final class AIAssistantModel: ObservableObject {
             drafts[session] = textDraft
         }
     }
+
+    private func enqueueRemoteCommand(to remote: AIRemoteSession,
+                                      payload: [String: Any]) async throws -> String {
+        let encoded = try JSONSerialization.data(withJSONObject: payload, options: .sortedKeys)
+        let digest = SHA256.hash(data: encoded).map { String(format: "%02x", $0) }.joined()
+        let fingerprint = [remote.deviceSlot, remote.loginSessionID,
+                           remote.sessionID, digest].joined(separator: ":")
+        let id = remoteRetryIDByFingerprint[fingerprint] ??
+            UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+        remoteRetryIDByFingerprint[fingerprint] = id
+        pendingRemoteCommands[id] = Date()
+        remoteFingerprintByCommandID[id] = fingerprint
+        remoteDeliveryPendingIDs.insert(id)
+        defer { remoteDeliveryPendingIDs.remove(id) }
+        if payload["action"] as? String == "prompt",
+           let text = payload["text"] as? String {
+            remoteDraftByCommandID[id] = text
+        }
+        do {
+            try await remoteTransport.sendCommand(to: remote, encodedPayload: encoded,
+                                                  messageID: id)
+        } catch {
+            if remoteResultByCommandID[id] == nil { throw error }
+        }
+        return id
+    }
     /// 提交文本及附件，并在核心落库后合并新快照、请求界面定位最新消息。
     /// 输入不合法或任务忙碌时不改动草稿；新建会话也必须保持一个可见的加载状态。
     func sendMessage(_ text: String, expectedSession: String? = nil) async -> Bool {
@@ -1705,13 +1766,16 @@ final class AIAssistantModel: ObservableObject {
             isSubmitting = true
             defer { isSubmitting = false }
             do {
-                let id = try await remoteTransport.send(to: remote, kind: "command",
-                                                        payload: ["action": "prompt", "text": text])
-                pendingRemoteCommands[id] = Date()
+                let id = try await enqueueRemoteCommand(
+                    to: remote, payload: ["action": "prompt", "text": text])
+                if let confirmed = remoteResultByCommandID.removeValue(forKey: id) {
+                    return confirmed
+                }
                 remoteStatus = "已送达 \(remote.deviceName)，等待设备确认执行"
                 return true
             } catch {
-                showTransientError(error.localizedDescription, duration: .seconds(8))
+                showTransientError("送达状态未知；再次发送相同内容会复用操作编号。\n" +
+                    error.localizedDescription, duration: .seconds(8))
                 return false
             }
         }
@@ -1797,11 +1861,14 @@ final class AIAssistantModel: ObservableObject {
             var payload: [String: Any] = values
             payload["action"] = op
             do {
-                let id = try await remoteTransport.send(to: remote, kind: "command",
-                                                        payload: payload)
-                pendingRemoteCommands[id] = Date()
-                remoteStatus = "已送达 \(remote.deviceName)，等待设备确认执行"
-            } catch { showTransientError(error.localizedDescription, duration: .seconds(8)) }
+                let id = try await enqueueRemoteCommand(to: remote, payload: payload)
+                if remoteResultByCommandID.removeValue(forKey: id) == nil {
+                    remoteStatus = "已送达 \(remote.deviceName)，等待设备确认执行"
+                }
+            } catch {
+                showTransientError("送达状态未知；重试会复用操作编号。\n" +
+                    error.localizedDescription, duration: .seconds(8))
+            }
             return
         }
         if (op == "delete" || op == "clear") && (isSubmitting || isCreatingConversation) {

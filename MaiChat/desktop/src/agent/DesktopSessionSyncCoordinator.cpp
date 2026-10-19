@@ -151,10 +151,20 @@ void DesktopSessionSyncCoordinator::sendRemoteCommand(const QJsonObject& session
         completion({}, QStringLiteral("所属设备登录已变化，请刷新列表"));
         return;
     }
+    const QByteArray fingerprintData = slot.toUtf8() + '\n' + login.toUtf8() + '\n' + id.toUtf8() + '\n' +
+        QJsonDocument(payload).toJson(QJsonDocument::Compact);
+    const QString fingerprint = QString::fromLatin1(QCryptographicHash::hash(
+        fingerprintData, QCryptographicHash::Sha256).toHex());
+    QString commandId = retryIdByFingerprint_.value(fingerprint);
+    if (commandId.isEmpty()) {
+        commandId = newId();
+        retryIdByFingerprint_.insert(fingerprint, commandId);
+        fingerprintByCommandId_.insert(commandId, fingerprint);
+    }
     requester_(QStringLiteral("session-sync/send"), "POST",
                {{QStringLiteral("to_slot"), slot},
                 {QStringLiteral("to_login_session_id"), login},
-                {QStringLiteral("client_message_id"), newId()},
+                {QStringLiteral("client_message_id"), commandId},
                 {QStringLiteral("session_id"), id},
                 {QStringLiteral("kind"), QStringLiteral("command")},
                 {QStringLiteral("payload"), payload}},
@@ -299,6 +309,11 @@ void DesktopSessionSyncCoordinator::handleRemoteChunk(const QJsonObject& envelop
     if (actual != digest) return;
     const QJsonDocument document = QJsonDocument::fromJson(complete);
     if (!document.isObject()) return;
+    if (document.object().value(QStringLiteral("type")).toString() == QStringLiteral("command_result")) {
+        const QString commandId = document.object().value(QStringLiteral("command_id")).toString();
+        const QString fingerprint = fingerprintByCommandId_.take(commandId);
+        if (!fingerprint.isEmpty()) retryIdByFingerprint_.remove(fingerprint);
+    }
     if (payloadHandler_) payloadHandler_(remote, transfer.kind, document.object());
 }
 

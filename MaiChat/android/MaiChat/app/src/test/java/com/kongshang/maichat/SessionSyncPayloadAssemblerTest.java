@@ -42,4 +42,19 @@ public class SessionSyncPayloadAssemblerTest {
         assertNull(assembler.accept(envelope(body, "0".repeat(64), 0, "mac", "tampered")));
         assertNull(assembler.accept(envelope(body, "0".repeat(64), 1, "mac", "tampered")));
     }
+
+    @Test public void commandFingerprintIsStableAndSeparatesDifferentTexts() throws Exception {
+        JSONObject remote = new JSONObject().put("device_slot", "mac")
+            .put("login_session_id", "owner-login").put("id", "ses_remote");
+        JSONObject first = new JSONObject().put("action", "prompt")
+            .put("text", "第一行\n第二行");
+        JSONObject reordered = new JSONObject().put("text", "第一行\n第二行")
+            .put("action", "prompt");
+        JSONObject different = new JSONObject().put("action", "prompt")
+            .put("text", "第一行\n第三行");
+        assertEquals(AndroidSessionSyncCoordinator.fingerprint(remote, first),
+            AndroidSessionSyncCoordinator.fingerprint(remote, reordered));
+        assertNotEquals(AndroidSessionSyncCoordinator.fingerprint(remote, first),
+            AndroidSessionSyncCoordinator.fingerprint(remote, different));
+    }
 }

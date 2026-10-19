@@ -63,6 +63,13 @@ async function fakeMacLoop() {
         await sendPayload(envelope, 'history_page', { ok: true, messages });
       } else if (envelope.kind === 'command' && envelope.payload.action === 'prompt') {
         const text = envelope.payload.text;
+        if (text === '请拒绝此操作') {
+          await sendPayload(envelope, 'event', { type: 'command_result',
+            command_id: envelope.client_message_id,
+            result: { ok: false, error: '所属设备拒绝了操作' } });
+          await call(macToken, 'POST', '/v1/session-sync/ack', { ids: [envelope.id] });
+          continue;
+        }
         const id = String(messages.length + 1).padStart(4, '0');
         messages.push({ id: `msg_${id}`, role: 'user', created: messages.length + 1,
           completed: messages.length + 2, active: false,

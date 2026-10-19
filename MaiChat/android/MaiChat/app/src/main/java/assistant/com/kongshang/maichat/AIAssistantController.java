@@ -51,11 +51,13 @@ public final class AIAssistantController {
     static final class State {
         final JSONObject data;
         final JSONObject remoteSession;
-        final String selected, baseUrl, model, policy, error, syncStatus;
+        final String selected, baseUrl, model, policy, error, syncStatus, restoreDraft;
+        final int restoreGeneration;
         final boolean ready;
         final int messageHash, messageLength;
         State(JSONObject data, JSONObject remoteSession, String selected, String baseUrl,
-              String model, String policy, String error, String syncStatus, boolean ready) {
+              String model, String policy, String error, String syncStatus,
+              String restoreDraft, int restoreGeneration, boolean ready) {
             this.data = data;
             this.remoteSession = remoteSession;
             this.selected = selected;
@@ -64,6 +66,8 @@ public final class AIAssistantController {
             this.policy = policy;
             this.error = error;
             this.syncStatus = syncStatus;
+            this.restoreDraft = restoreDraft;
+            this.restoreGeneration = restoreGeneration;
             this.ready = ready;
             // 在工作线程计算可见消息指纹，UI 只在正文或工具状态变化时重绑列表。
             JSONArray messages = data.optJSONArray("messages");
@@ -159,7 +163,7 @@ public final class AIAssistantController {
     static final String DEEPSEEK_URL = "https://api.deepseek.com";
     static final String DEFAULT_MODEL = "deepseek-flash";
     volatile State state = new State(new JSONObject(), null, "", DEEPSEEK_URL,
-        DEFAULT_MODEL, "on-request", "", "", false);
+        DEFAULT_MODEL, "on-request", "", "", "", 0, false);
     private long handle;
     private File root;
     private File rvmModelFile;
@@ -182,8 +186,12 @@ public final class AIAssistantController {
     private int remoteSelectionGeneration;
     private JSONObject remoteData = new JSONObject();
     private String remoteCommandStatus = "";
-    private int pendingRemoteCommands;
-    private int remoteCommandGeneration;
+    private String remoteRestoreDraft = "";
+    private int remoteRestoreGeneration;
+    private final Set<String> pendingRemoteCommandIds = new HashSet<>();
+    private final Set<String> remoteDeliveryPendingIds = new HashSet<>();
+    private final Map<String, String> pendingRemoteDraftById = new HashMap<>();
+    private final Map<String, Boolean> remoteCommandResultsById = new HashMap<>();
     private final Map<String, JSONArray> mediaMentionCache = new HashMap<>();
     private boolean ready;
     private volatile boolean closed;
@@ -636,7 +644,7 @@ public final class AIAssistantController {
             ? "正在读取 " + pendingRemoteSelection.optString("device_name") + " 的对话…"
             : selectedRemote == null ? "" : remoteCommandStatus;
         State next = new State(visible, selectedRemote, shown, baseUrl, model, policy,
-            error, status, ready);
+            error, status, remoteRestoreDraft, remoteRestoreGeneration, ready);
         state = next;
         Listener target = listener;
         if (target != null)
@@ -806,9 +814,17 @@ public final class AIAssistantController {
                 return;
             if (payload.optString("type").equals("command_result")) {
                 JSONObject result = payload.optJSONObject("result");
-                pendingRemoteCommands = Math.max(0, pendingRemoteCommands - 1);
-                if (pendingRemoteCommands == 0) remoteCommandStatus = "";
-                if (result != null && !result.optBoolean("ok")) error = result.optString("error");
+                String id = payload.optString("command_id");
+                boolean ok = result != null && result.optBoolean("ok");
+                if (remoteDeliveryPendingIds.contains(id)) remoteCommandResultsById.put(id, ok);
+                pendingRemoteCommandIds.remove(id);
+                String draft = pendingRemoteDraftById.remove(id);
+                if (!ok && draft != null) {
+                    remoteRestoreDraft = draft;
+                    remoteRestoreGeneration++;
+                }
+                if (pendingRemoteCommandIds.isEmpty()) remoteCommandStatus = "";
+                if (!ok) error = result == null ? "所属设备未执行操作" : result.optString("error");
                 else error = "";
                 publishState();
                 return;
@@ -874,18 +890,35 @@ public final class AIAssistantController {
         });
     }
 
-    private void noteRemoteCommandAccepted(JSONObject destination) {
-        pendingRemoteCommands++;
-        remoteCommandStatus = "已送达所属设备，等待确认执行";
-        int generation = ++remoteCommandGeneration;
+    private void beginRemoteCommand(String id, String draft) {
+        pendingRemoteCommandIds.add(id);
+        remoteDeliveryPendingIds.add(id);
+        if (draft != null && !draft.isEmpty()) pendingRemoteDraftById.put(id, draft);
+        remoteCommandStatus = "正在送达所属设备…";
         worker.postDelayed(() -> {
-            if (generation != remoteCommandGeneration || pendingRemoteCommands == 0 ||
-                !sameRemote(selectedRemote, destination)) return;
-            pendingRemoteCommands = 0;
-            remoteCommandStatus = "";
+            if (!pendingRemoteCommandIds.remove(id)) return;
+            String saved = pendingRemoteDraftById.remove(id);
+            if (saved != null) {
+                remoteRestoreDraft = saved;
+                remoteRestoreGeneration++;
+            }
+            if (pendingRemoteCommandIds.isEmpty()) remoteCommandStatus = "";
             error = "所属设备是否执行了操作尚未确定，请先查看会话记录，不要直接重复发送";
             publishState();
         }, 30000);
+    }
+
+    private boolean settleRemoteDelivery(String id, String failure) {
+        remoteDeliveryPendingIds.remove(id);
+        Boolean confirmed = remoteCommandResultsById.remove(id);
+        if (confirmed != null) return confirmed;
+        if (failure.isEmpty()) return true;
+        pendingRemoteCommandIds.remove(id);
+        pendingRemoteDraftById.remove(id);
+        if (pendingRemoteCommandIds.isEmpty()) remoteCommandStatus = "";
+        error = "送达状态未知；再次发送相同内容会复用操作编号。" + failure;
+        publishState();
+        return false;
     }
     void select(String id) {
         select(id, null);
@@ -897,7 +930,10 @@ public final class AIAssistantController {
                 selectedRemote = null;
                 pendingRemoteSelection = null;
                 remoteSelectionGeneration++;
-                pendingRemoteCommands = 0;
+                pendingRemoteCommandIds.clear();
+                remoteDeliveryPendingIds.clear();
+                pendingRemoteDraftById.clear();
+                remoteCommandResultsById.clear();
                 remoteCommandStatus = "";
                 selected = id;
                 error = "";
@@ -932,7 +968,7 @@ public final class AIAssistantController {
             }, 20000);
             try {
                 JSONObject request = new JSONObject().put("limit", 10);
-                sessionSync.sendToRemote(remote, "history_request", request, failure -> {
+                sessionSync.sendToRemote(remote, "history_request", request, (messageId, failure) -> {
                     worker.post(() -> {
                         if (!failure.isEmpty() && sameRemote(pendingRemoteSelection, remote)) {
                             pendingRemoteSelection = null;
@@ -999,14 +1035,25 @@ public final class AIAssistantController {
                 JSONObject destination = selectedRemote;
                 try {
                     JSONObject request = new JSONObject().put("action", "prompt").put("text", text);
-                    sessionSync.sendToRemote(destination, "command", request, failure -> {
+                    String id = sessionSync.sendToRemote(destination, "command", request,
+                        (messageId, failure) -> {
                         worker.post(() -> {
-                            error = failure;
-                            if (failure.isEmpty()) noteRemoteCommandAccepted(destination);
+                            if (!sameRemote(selectedRemote, destination)) {
+                                main.post(() -> completion.accept(false));
+                                return;
+                            }
+                            boolean resultArrived = remoteCommandResultsById.containsKey(messageId);
+                            boolean accepted = settleRemoteDelivery(messageId, failure);
+                            if (failure.isEmpty() && !resultArrived) {
+                                error = "";
+                                remoteCommandStatus = "已送达所属设备，等待确认执行";
+                            }
                             publishState();
-                            main.post(() -> completion.accept(failure.isEmpty()));
+                            main.post(() -> completion.accept(accepted));
                         });
                     });
+                    beginRemoteCommand(id, text);
+                    publishState();
                 } catch (Exception failure) {
                     error = safeMessage(failure);
                     publishState();
@@ -1068,15 +1115,26 @@ public final class AIAssistantController {
                 JSONObject destination = selectedRemote;
                 try {
                     JSONObject request = new JSONObject(values.toString()).put("action", operation);
-                    sessionSync.sendToRemote(destination, "command", request, failure -> {
+                    String id = sessionSync.sendToRemote(destination, "command", request,
+                        (messageId, failure) -> {
                         worker.post(() -> {
-                            error = failure;
-                            if (failure.isEmpty()) noteRemoteCommandAccepted(destination);
+                            if (!sameRemote(selectedRemote, destination)) {
+                                if (settled != null) main.post(() -> settled.accept(false));
+                                return;
+                            }
+                            boolean resultArrived = remoteCommandResultsById.containsKey(messageId);
+                            boolean accepted = settleRemoteDelivery(messageId, failure);
+                            if (failure.isEmpty() && !resultArrived) {
+                                error = "";
+                                remoteCommandStatus = "已送达所属设备，等待确认执行";
+                            }
                             publishState();
-                            if (settled != null) main.post(() -> settled.accept(failure.isEmpty()));
-                            if (failure.isEmpty() && completion != null) main.post(completion);
+                            if (settled != null) main.post(() -> settled.accept(accepted));
+                            if (accepted && completion != null) main.post(completion);
                         });
                     });
+                    beginRemoteCommand(id, "");
+                    publishState();
                 } catch (Exception failure) {
                     error = safeMessage(failure);
                     publishState();

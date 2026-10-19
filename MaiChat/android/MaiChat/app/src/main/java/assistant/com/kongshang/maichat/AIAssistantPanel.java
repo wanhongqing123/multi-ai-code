@@ -68,6 +68,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     private String selected = "", pendingSignature = "";
     private String renderedMessagesSession = "", pendingLatestSession = "";
     private int renderedMessageHash, renderedMessageLength, renderedVisibleLimit = -1;
+    private int lastRemoteRestoreGeneration;
     private final Map<String, String> drafts = new HashMap<>();
     private final Map<String, List<AIAssistantController.ImportedFile>> attachments = new HashMap<>();
     private final Map<String, Integer> pendingMediaImports = new HashMap<>();
@@ -400,6 +401,10 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             pendingLatestSession = selected;
         }
         state = next;
+        if (next.restoreGeneration != lastRemoteRestoreGeneration &&
+            next.remoteSession != null && !next.restoreDraft.isEmpty() &&
+            composer.getText().toString().isEmpty()) composer.setText(next.restoreDraft);
+        lastRemoteRestoreGeneration = next.restoreGeneration;
         syncStatus.setText(next.syncStatus);
         syncStatus.setVisibility(next.syncStatus.isEmpty() ? GONE : VISIBLE);
         error.setText(next.error);
@@ -558,6 +563,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             return;
         }
         String submittedText = source;
+        int restorationGeneration = state.restoreGeneration;
         String quotedMessageId = quotedMessage != null && quoteSession.equals(origin)
             ? quotedMessage.optString("id") : "";
         submitting = true;
@@ -574,6 +580,12 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 if (selected.equals(target) && composer.getText().toString().equals(submittedText))
                     composer.setText("");
                 if (submittedText.equals(drafts.get(target))) drafts.put(target, "");
+                if (state != null && state.restoreGeneration != restorationGeneration &&
+                    selected.equals(target) && submittedText.equals(state.restoreDraft) &&
+                    composer.getText().toString().isEmpty()) {
+                    composer.setText(submittedText);
+                    drafts.put(target, submittedText);
+                }
                 if (!quotedMessageId.isEmpty() && selected.equals(target) &&
                     quotedMessage != null && quotedMessageId.equals(quotedMessage.optString("id"))) {
                     quotedMessage = null;

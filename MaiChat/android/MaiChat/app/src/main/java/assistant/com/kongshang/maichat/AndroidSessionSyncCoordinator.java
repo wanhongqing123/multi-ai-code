@@ -10,13 +10,15 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Consumer;
+import java.util.function.BiConsumer;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -30,6 +32,8 @@ final class AndroidSessionSyncCoordinator {
     private final String deviceName;
     private final ExecutorService outbound = Executors.newSingleThreadExecutor();
     private final SessionSyncPayloadAssembler incoming = new SessionSyncPayloadAssembler();
+    private final Map<String, String> retryIdByFingerprint = new ConcurrentHashMap<>();
+    private final Map<String, String> fingerprintByCommandId = new ConcurrentHashMap<>();
     private volatile boolean closed;
     private Thread listener;
     private long lastPresence;
@@ -165,29 +169,62 @@ final class AndroidSessionSyncCoordinator {
 
     private void acceptChunk(JSONObject envelope) throws Exception {
         JSONObject completed = incoming.accept(envelope);
-        if (completed != null) controller.acceptRemotePayload(envelope, completed);
+        if (completed == null) return;
+        if (completed.optString("type").equals("command_result")) {
+            String id = completed.optString("command_id");
+            String fingerprint = fingerprintByCommandId.remove(id);
+            if (fingerprint != null) retryIdByFingerprint.remove(fingerprint);
+        }
+        controller.acceptRemotePayload(envelope, completed);
     }
 
     private JSONObject send(String toSlot, String toLogin, String session, String kind,
                             JSONObject payload) throws Exception {
+        return send(toSlot, toLogin, session, kind, payload, newId());
+    }
+
+    private JSONObject send(String toSlot, String toLogin, String session, String kind,
+                            JSONObject payload, String messageId) throws Exception {
         return auth.sessionSyncRequest("send", new JSONObject()
             .put("to_slot", toSlot).put("to_login_session_id", toLogin)
-            .put("client_message_id", newId()).put("session_id", session)
+            .put("client_message_id", messageId).put("session_id", session)
             .put("kind", kind).put("payload", payload), 0);
     }
 
-    void sendToRemote(JSONObject remote, String kind, JSONObject payload, Consumer<String> completion) {
-        if (closed) { completion.accept("同步服务已停止"); return; }
+    static String fingerprint(JSONObject remote, JSONObject action) throws Exception {
+        StringBuilder canonical = new StringBuilder();
+        for (String value : new String[] {remote.optString("device_slot"),
+            remote.optString("login_session_id"), remote.optString("id"),
+            action.optString("action"), action.optString("text"),
+            action.optString("id"), action.optString("decision"), action.optString("title")})
+            canonical.append(value.length()).append(':').append(value);
+        return hex(MessageDigest.getInstance("SHA-256").digest(
+            canonical.toString().getBytes(StandardCharsets.UTF_8)));
+    }
+
+    String sendToRemote(JSONObject remote, String kind, JSONObject payload,
+                        BiConsumer<String, String> completion) throws Exception {
+        String id = newId();
+        if (kind.equals("command")) {
+            String key = fingerprint(remote, payload);
+            id = retryIdByFingerprint.computeIfAbsent(key, ignored -> newId());
+            fingerprintByCommandId.put(id, key);
+        }
+        final String messageId = id;
+        if (closed) { completion.accept(messageId, "同步服务已停止"); return messageId; }
         try {
             outbound.execute(() -> {
                 String error = "";
                 try {
                     if (closed) throw new IllegalStateException("同步服务已停止");
                     send(remote.optString("device_slot"), remote.optString("login_session_id"),
-                        remote.optString("id"), kind, payload);
+                        remote.optString("id"), kind, payload, messageId);
                 } catch (Exception failure) { error = failure.getMessage(); }
-                completion.accept(error == null ? "设备同步失败" : error);
+                completion.accept(messageId, error == null ? "设备同步失败" : error);
             });
-        } catch (RejectedExecutionException stopped) { completion.accept("同步服务已停止"); }
+        } catch (RejectedExecutionException stopped) {
+            completion.accept(messageId, "同步服务已停止");
+        }
+        return messageId;
     }
 }

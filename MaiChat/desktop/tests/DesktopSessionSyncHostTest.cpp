@@ -249,6 +249,12 @@ void DesktopSessionSyncHostTest::coordinatorReadsRemoteHistoryWithVerifiedChunks
     QCOMPARE(sentCommand.value(QStringLiteral("to_slot")).toString(), QStringLiteral("ios_phone"));
     QCOMPARE(sentCommand.value(QStringLiteral("payload")).toObject()
                  .value(QStringLiteral("text")).toString(), QStringLiteral("继续"));
+    const QString firstCommandId = sentCommand.value(QStringLiteral("client_message_id")).toString();
+    coordinator.sendRemoteCommand(catalog.first().toObject(),
+                                  {{QStringLiteral("action"), QStringLiteral("prompt")},
+                                   {QStringLiteral("text"), QStringLiteral("继续")}},
+                                  [&](const QJsonObject&, const QString& value) { error = value; });
+    QCOMPARE(sentCommand.value(QStringLiteral("client_message_id")).toString(), firstCommandId);
 }
 
 void DesktopSessionSyncHostTest::remotePanelShowsHistoryAndRoutesTextToOwner() {
@@ -294,6 +300,30 @@ void DesktopSessionSyncHostTest::remotePanelShowsHistoryAndRoutesTextToOwner() {
     QCOMPARE(sent.value(QStringLiteral("action")).toString(), QStringLiteral("prompt"));
     QCOMPARE(sent.value(QStringLiteral("text")).toString(), QStringLiteral("继续本机任务"));
     QCOMPARE(composer->toPlainText(), QString());
+    panel.receivePayload(remote, QStringLiteral("event"),
+                         {{QStringLiteral("type"), QStringLiteral("command_result")},
+                          {QStringLiteral("result"), QJsonObject{{QStringLiteral("ok"), true}}}});
+    composer->setPlainText(QStringLiteral("请保留草稿"));
+    QTest::mouseClick(send, Qt::LeftButton);
+    QCOMPARE(composer->toPlainText(), QString());
+    panel.receivePayload(remote, QStringLiteral("event"),
+                         {{QStringLiteral("type"), QStringLiteral("command_result")},
+                          {QStringLiteral("result"), QJsonObject{{QStringLiteral("ok"), false},
+                                                                   {QStringLiteral("error"),
+                                                                    QStringLiteral("所属设备拒绝")}}}});
+    QCOMPARE(composer->toPlainText(), QStringLiteral("请保留草稿"));
+    panel.setCommandHandler([&](const QJsonObject&, const QJsonObject&,
+                                RemoteAgentPanel::Completion completion) {
+        panel.receivePayload(remote, QStringLiteral("event"),
+                             {{QStringLiteral("type"), QStringLiteral("command_result")},
+                              {QStringLiteral("result"), QJsonObject{{QStringLiteral("ok"), false},
+                                                                       {QStringLiteral("error"),
+                                                                        QStringLiteral("立即拒绝")}}}});
+        completion({});
+    });
+    composer->setPlainText(QStringLiteral("快速拒绝也保留"));
+    QTest::mouseClick(send, Qt::LeftButton);
+    QCOMPARE(composer->toPlainText(), QStringLiteral("快速拒绝也保留"));
     if (qEnvironmentVariableIsSet("MAICHAT_REMOTE_PANEL_SCREENSHOT"))
         QVERIFY(panel.grab().save(qEnvironmentVariable("MAICHAT_REMOTE_PANEL_SCREENSHOT")));
 }

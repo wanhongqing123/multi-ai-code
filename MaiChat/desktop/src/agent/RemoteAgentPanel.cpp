@@ -67,7 +67,9 @@ struct RemoteAgentPanel::Runtime {
     QMap<QString, QString> rendered;
     QHash<QString, QString> drafts;
     QString oldest;
+    QString pendingDraft;
     bool pendingCommand = false;
+    bool lastCommandRejected = false;
     CommandHandler command;
     HistoryHandler history;
 };
@@ -147,6 +149,10 @@ RemoteAgentPanel::RemoteAgentPanel(QWidget* parent) : QWidget(parent), runtime_(
     connect(&runtime_->commandTimeout, &QTimer::timeout, this, [this] {
         if (!runtime_->pendingCommand) return;
         runtime_->pendingCommand = false;
+        runtime_->lastCommandRejected = false;
+        if (runtime_->editor->toPlainText().isEmpty() && !runtime_->pendingDraft.isEmpty())
+            runtime_->editor->setPlainText(runtime_->pendingDraft);
+        runtime_->pendingDraft.clear();
         showStatus(QStringLiteral("是否执行成功尚未确定，请先查看所属设备的会话记录，不要直接重复发送"), true);
         updateControls();
     });
@@ -172,6 +178,8 @@ void RemoteAgentPanel::openSession(const QJsonObject& remote) {
         runtime_->oldest.clear();
         runtime_->older->hide();
         runtime_->pendingCommand = false;
+        runtime_->lastCommandRejected = false;
+        runtime_->pendingDraft.clear();
         runtime_->commandTimeout.stop();
     }
     runtime_->session = remote;
@@ -203,16 +211,20 @@ void RemoteAgentPanel::sendAction(const QJsonObject& action, bool clearDraft) {
     if (!runtime_->command || runtime_->pendingCommand) return;
     const QJsonObject current = runtime_->session;
     runtime_->pendingCommand = true;
+    runtime_->lastCommandRejected = false;
+    runtime_->pendingDraft = clearDraft ? runtime_->editor->toPlainText() : QString();
     updateControls();
     runtime_->command(current, action, [this, current, clearDraft](const QString& error) {
         if (sessionKey(current) != sessionKey(runtime_->session)) return;
         if (!error.isEmpty()) {
             runtime_->pendingCommand = false;
+            runtime_->pendingDraft.clear();
             showStatus(error, true);
             updateControls();
             return;
         }
-        if (clearDraft) runtime_->editor->clear();
+        if (clearDraft && !runtime_->lastCommandRejected) runtime_->editor->clear();
+        if (!runtime_->pendingCommand) return;
         showStatus(QStringLiteral("已送达所属设备，等待确认执行"));
         runtime_->commandTimeout.start();
     });
@@ -235,6 +247,11 @@ void RemoteAgentPanel::receivePayload(const QJsonObject& remote, const QString& 
         runtime_->pendingCommand = false;
         runtime_->commandTimeout.stop();
         const QJsonObject result = payload.value(QStringLiteral("result")).toObject();
+        runtime_->lastCommandRejected = !result.value(QStringLiteral("ok")).toBool();
+        if (runtime_->lastCommandRejected && runtime_->editor->toPlainText().isEmpty() &&
+            !runtime_->pendingDraft.isEmpty())
+            runtime_->editor->setPlainText(runtime_->pendingDraft);
+        runtime_->pendingDraft.clear();
         showStatus(result.value(QStringLiteral("ok")).toBool()
                        ? QStringLiteral("所属设备已接受操作")
                        : result.value(QStringLiteral("error")).toString(),

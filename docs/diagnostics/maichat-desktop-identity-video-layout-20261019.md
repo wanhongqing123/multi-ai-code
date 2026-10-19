@@ -22,4 +22,5 @@
 - Windows Release 主程序增量重链成功；隔离数据目录运行 `maichat.exe --smoke` 退出码 0。
 - 原生 Windows Qt 下 `MaiFfplayVideoDialogTest`、`main_window_layout_test` 完整 CTest 2/2 通过；单独的视频用例实际显示画面，拖动后播放器尺寸改变。我查看了视频、会话栏及本人资料截图。
 - `npm run check:line-width` 与 `git diff --check` 通过。
-- macOS 原生 Qt 实画面和拖动尚待同提交验证；Windows 当前已安装版以及既有 Desktop 2.2.3 Release 均未替换，不能把源码修复等同于用户已更新。
+- macOS arm64 同提交原生 Qt 增量构建、两项 CTest、隔离 `--smoke` 均通过；Mac 协作者查看了会话栏、本人资料、真实视频帧和拖动截图，并验证全屏往返、导航及关闭。宽窗的视频栏下方仍有明显的浅色留白，这是 `videoPaneLayout` 顶部对齐及剩余空间布局的结果，不是播放器内部黑边；后续视觉迭代需单独决定如何利用这块空间。
+- Windows 当前已安装版以及既有 Desktop 2.2.3 Release 均未替换，不能把源码修复等同于用户已更新。

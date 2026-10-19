@@ -831,7 +831,8 @@ function createAuthService(options) {
       return json(200, { user: { ...publicUser(session),
         phone_masked: session.phone_e164 ?
           `${session.phone_e164.slice(0, 5)}****${session.phone_e164.slice(-4)}` : null },
-        device_slot: session.device_slot, device_platform: session.device_platform });
+        device_slot: session.device_slot, device_platform: session.device_platform,
+        login_session_id: session.id });
     }
     if (method === 'GET' && path === '/v1/friend/my-qr') {
       if (!session) return json(401, { error: 'Authentication required' });

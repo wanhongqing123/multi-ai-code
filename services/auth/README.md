@@ -4,6 +4,30 @@
 Node 服务只监听 `127.0.0.1:9100`。验证码、密码哈希、登录会话与腾讯 IM UserSig
 均在服务端处理。客户端只获得自己的短期会话凭据和 UserSig，不获得 IM 签名密钥。
 
+## 多端 Session 同步服务（开发中）
+
+`session-sync-server.js` 是独立进程，默认只监听 `127.0.0.1:9102`，每次请求
+通过本机 `/v1/auth/me` 核验现有 MaiChat Bearer 会话。账号服务的 `auth/me`
+增加稳定的 `login_session_id`；访问令牌刷新时该 ID 不变，同名额重新登录时改变。
+同步服务持久化同账号设备和 Session 目录，临时保存待确认设备消息和不含正文的
+去重收据。完整可执行历史仍在创建 Session 的设备，模型请求由该设备直连供应商。
+当前仅实现服务器路由协议，尚无客户端接入或线上部署。
+
+协议入口均在 `/api/v1/session-sync/`，需要 MaiChat Bearer：
+
+| 方法与路径 | 用途 |
+|---|---|
+| `POST presence` | 当前设备报告安装实例、设备名与本地根 Session 快照；建议每 15 秒更新 |
+| `GET sessions` | 列出同账号各设备的 Session，45 秒无心跳标记离线 |
+| `GET poll?wait_ms=20000` | 等待发给当前登录设备的消息；收到后由客户端明确确认 |
+| `POST send` | 给同账号指定设备的指定 Session 送一条有唯一 ID 的操作或可见事件 |
+| `POST ack` | 确认收件，服务随后清理临时正文；收据保留 30 天防重复提交 |
+
+见 [完整产品流程与验收边界](../../docs/design/maichat-multidevice-session-sync-20261019.md)。
+部署时在同一 ECS 上为 `maichatsync` 创建独立的可写目录
+`/var/lib/maichat-session-sync`，安装同目录提供的 systemd、Nginx 与环境文件示例；
+先更新账号服务，再启动同步服务。`/health` 仅表示进程可响应，不代表有在线设备。
+
 ## 当前接口
 
 | 方法与路径 | 功能 |

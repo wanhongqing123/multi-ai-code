@@ -70,6 +70,29 @@ async function requestDesktop(setup, platform) {
   return { proof, request };
 }
 
+test('auth/me identifies the active device login across token refresh', async () => {
+  const setup = fixture();
+  const first = await signInWithSms(setup);
+  const firstMe = await setup.call('GET', '/v1/auth/me', {}, first.body.access_token);
+  assert.equal(firstMe.statusCode, 200);
+  assert.match(firstMe.body.login_session_id,
+    /^[0-9a-f]{8}-[0-9a-f-]{27,}$/);
+  const refreshed = await setup.call('POST', '/v1/auth/refresh', {
+    refresh_token: first.body.refresh_token
+  });
+  assert.equal(refreshed.statusCode, 200);
+  const refreshedMe = await setup.call('GET', '/v1/auth/me', {},
+    refreshed.body.access_token);
+  assert.equal(refreshedMe.body.login_session_id, firstMe.body.login_session_id);
+  setup.advance(60_001);
+  const second = await signInWithSms(setup);
+  const secondMe = await setup.call('GET', '/v1/auth/me', {}, second.body.access_token);
+  assert.notEqual(secondMe.body.login_session_id, firstMe.body.login_session_id);
+  assert.equal((await setup.call('GET', '/v1/auth/me', {},
+    refreshed.body.access_token)).statusCode, 401);
+  setup.db.close();
+});
+
 test('every valid phone can receive a real SMS challenge without an allowlist', async () => {
   const setup = fixture();
   const path = '/v1/auth/sms/challenge';

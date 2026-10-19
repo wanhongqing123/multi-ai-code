@@ -316,6 +316,8 @@ private struct ContactList: View {
     @Binding var movingContact: RemoteIMContact?
     @Binding var groupActionName: String?
     @State private var collapsedGroups = Set<String>()
+    @State private var profileContact: RemoteIMContact?
+    @State private var profilePresented = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -378,6 +380,20 @@ private struct ContactList: View {
             .background(RemoteIMStyle.panelBackground)
         }
         .background(RemoteIMStyle.panelBackground)
+        .navigationDestination(isPresented: $profilePresented) {
+            if let contact = profileContact {
+                FriendProfileView(userID: contact.userID, onMessage: {
+                    let current = appState.chatState.contacts.first {
+                        $0.userID == contact.userID
+                    } ?? contact
+                    appState.selectContact(current)
+                    activeContact = current
+                    selectedTab = .messages
+                }, onDeleted: {
+                    if activeContact?.userID == contact.userID { activeContact = nil }
+                })
+            }
+        }
     }
 
     private var contactListItems: [RemoteIMContactListItem] {
@@ -430,9 +446,8 @@ private struct ContactList: View {
 
     private func contactButton(_ contact: RemoteIMContact, grouped: Bool) -> some View {
         Button {
-            appState.selectContact(contact)
-            activeContact = contact
-            selectedTab = .messages
+            profileContact = contact
+            profilePresented = true
         } label: {
             VStack(alignment: .leading, spacing: 1) {
                 ContactRow(
@@ -450,6 +465,7 @@ private struct ContactList: View {
             }
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("friend-profile-\(contact.userID)")
         .listRowInsets(EdgeInsets(
             top: 5,
             leading: grouped ? 30 : 16,
@@ -479,6 +495,83 @@ private struct ContactList: View {
         }
     }
 
+}
+
+private struct FriendProfileView: View {
+    @EnvironmentObject private var appState: RemoteIMAppState
+    @Environment(\.dismiss) private var dismiss
+    let userID: String
+    let onMessage: () -> Void
+    let onDeleted: () -> Void
+    @State private var showsDeleteConfirmation = false
+    @State private var isDeleting = false
+
+    var body: some View {
+        let profile = appState.profile(for: userID)
+        let accountID = appState.maiChatAccountId(forIMUserID: userID)
+        ScrollView {
+            VStack(spacing: 24) {
+                RemoteIMContactAvatar(
+                    contact: RemoteIMContact(userID: userID,
+                        displayName: profile.displayName, avatarURL: profile.avatarURL),
+                    isSelected: false, presenceStatus: .unknown, size: 88
+                )
+                Text(profile.displayName)
+                    .font(.title2.weight(.semibold))
+                    .foregroundStyle(RemoteIMStyle.textPrimary)
+                    .multilineTextAlignment(.center)
+                    .accessibilityIdentifier("friend-profile-nickname")
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("MaiChat ID")
+                        .font(.caption)
+                        .foregroundStyle(RemoteIMStyle.textSecondary)
+                    HStack {
+                        Text(accountID.isEmpty ? "正在读取账号" : accountID)
+                            .font(.subheadline.monospaced())
+                            .textSelection(.enabled)
+                            .accessibilityIdentifier("friend-profile-account-id")
+                        Spacer(minLength: 8)
+                        if !accountID.isEmpty {
+                            Button("复制") { UIPasteboard.general.string = accountID }
+                        }
+                    }
+                }
+                .padding(18)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RemoteIMStyle.panelBackground,
+                    in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+                Button(action: onMessage) {
+                    Text("发消息").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("friend-profile-message")
+
+                Button("删除好友", role: .destructive) {
+                    showsDeleteConfirmation = true
+                }
+                .disabled(isDeleting)
+                .accessibilityIdentifier("friend-profile-delete")
+            }
+            .padding(24)
+        }
+        .background(RemoteIMStyle.pageBackground.ignoresSafeArea())
+        .navigationTitle("好友资料")
+        .navigationBarTitleDisplayMode(.inline)
+        .confirmationDialog("确定删除这位好友？", isPresented: $showsDeleteConfirmation) {
+            Button("删除好友", role: .destructive) {
+                isDeleting = true
+                Task {
+                    let deleted = await appState.deleteContact(userID: userID)
+                    isDeleting = false
+                    if deleted { onDeleted(); dismiss() }
+                }
+            }
+        } message: {
+            Text("删除后不再显示在通讯录，已有聊天记录会保留。")
+        }
+        .task { await appState.refreshAcceptedFriends() }
+    }
 }
 
 struct ContactGroupActionDialog: View {

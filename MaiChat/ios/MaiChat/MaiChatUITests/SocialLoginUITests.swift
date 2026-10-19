@@ -166,6 +166,44 @@ final class SocialLoginUITests: XCTestCase {
         XCTAssertFalse(friend.waitForExistence(timeout: 5))
     }
 
+    @MainActor func testLiveFriendProfileOpensBeforeChat() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let accountId = environment["MAICHAT_TEST_A_ID"],
+              let password = environment["MAICHAT_TEST_A_PASSWORD"],
+              let friendId = environment["MAICHAT_TEST_B_ID"] else {
+            throw XCTSkip("需要两个已建立好友关系的测试账号")
+        }
+        let app = XCUIApplication()
+        app.launch()
+        let field = app.textFields["account-phone"]
+        XCTAssertTrue(field.waitForExistence(timeout: 20))
+        app.buttons["密码登录"].tap()
+        field.tap()
+        field.typeText(accountId)
+        let passwordField = app.secureTextFields["输入登录密码"]
+        passwordField.tap()
+        passwordField.typeText(password)
+        app.buttons["account-minimum-age"].tap()
+        app.buttons["account-agreement"].tap()
+        app.buttons["account-submit"].tap()
+        let contacts = app.buttons["通讯录"]
+        XCTAssertTrue(contacts.waitForExistence(timeout: 30))
+        if app.buttons["以后"].waitForExistence(timeout: 3) { app.buttons["以后"].tap() }
+        if app.buttons["稍后"].waitForExistence(timeout: 5) { app.buttons["稍后"].tap() }
+        contacts.tap()
+        let friend = app.buttons["friend-profile-\(friendId)"]
+        XCTAssertTrue(friend.waitForExistence(timeout: 30))
+        friend.tap()
+        XCTAssertTrue(app.staticTexts["好友资料"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["friend-profile-account-id"].exists)
+        let profileScreenshot = XCTAttachment(screenshot: app.screenshot())
+        profileScreenshot.name = "maichat-friend-profile"
+        profileScreenshot.lifetime = .keepAlways
+        add(profileScreenshot)
+        app.buttons["friend-profile-message"].tap()
+        XCTAssertTrue(app.textViews["message-composer-text-view"].waitForExistence(timeout: 10))
+    }
+
     @MainActor func testAccountPasswordModeAcceptsMaiChatId() throws {
         let app = XCUIApplication()
         app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = ""

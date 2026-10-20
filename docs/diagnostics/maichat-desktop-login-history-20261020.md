@@ -30,3 +30,12 @@
 - Mac 原生 Qt：横线像素回归修前 `#dbe4ef` 失败、修后通过；登录／设置／远端面板的截图已人工查看。`desktop_session_sync_host_test`、`login_dialog_test`、`main_window_layout_test` 完整 CTest 3/3 通过，分别覆盖 9 项 Host 用例和相关 UI 旧路径。
 - iOS ARM 模拟器正常 App 编译通过；Android JDK 17 Debug Java 编译与 `testDebugUnitTest` 通过。`npm run check:line-width` 与 `git diff --check` 通过。
 - 当前用户 Mac 仍运行已发布 2.2.6，未被本轮构建替换；iPhone 在尝试后续真机验证时显示 unavailable。新代码尚未在用户安装版、Windows 原生版本或真实 iPhone→Mac 新版组合上验收，也未发布新 Release。生产队列中的旧临时历史分块按服务端 10 分钟 TTL 自行过期，本轮未删除用户数据。
+
+## 后续本机安装与钥匙串修正
+
+- 本地先安装 Desktop 2.2.7 后，用户再次看到 `com.maichat.desktop.auth` 的钥匙串授权窗。它不是扫码界面的必要步骤；原因是打包脚本使用 `codesign --sign -` 临时签名，更新后的程序不能稳定继承旧钥匙串项的应用授权。用户明确指出已有扫码登录，不需要为恢复旧登录读取钥匙串。
+- 提交 `7a97dab3` 将 Desktop 账号令牌存储的生产默认值改为只在运行内存中保留；启动不再读取、更新或删除该账号钥匙串项，也停止启动时删除旧模型令牌项。关闭 App 后需要重新扫码或用 MaiChat 账号密码登录。登录页移除重复的产品名和扫码说明，右上角切换入口保留。`defaultDesktopLoginStartsQrWithoutStoredToken` 在本机 HTTP 替身上验证默认路径直接请求二维码，不请求刷新令牌；扫码／密码画面已人工查看。
+- Desktop 2.2.8 Mac 候选来自 `7a97dab3`：DMG 141,767,841 B，SHA-256 `ad77e3b40770c6bb6060acadf7fbbc5d9bf7eb240c159cfc9703e18a8f7b95b3`。包内 2.2.8，`codesign --verify --deep --strict` 通过，暂存 App `--smoke` 退出 0。用户正常退出旧版后，`/Applications/MaiChat.app` 保留数据安装为 2.2.8；安装后可执行文件 SHA-256 `4774d1c043bae4a1ecf930feab86aad3806f69ba1ca418be2a21395efa6642c3` 与暂存包一致，进程从该路径启动。旧 2.2.6 和 2.2.7 App 留有独立回退副本。
+- iOS 2.2.3 (93) 从 `d05650ad` 版本配置和 `f0898f7e` 的历史精简代码构建；Apple Development: xiaojing he 证书、Team `VLFG56JT33`、自动选取的 `iOS Team Provisioning Profile: *` 签名验证通过。iPhone 14 Pro Max 保留数据安装成功，设备回读 2.2.3 (93)，冷启动后生产同步服务只读查询该 iPhone 在线。
+- 2.2.8 Mac 版尚待用户登录后与 iPhone 93 联调；Windows 原生构建、包与正式 GitHub Release 均未完成。本机屏幕抓取工具返回 `could not create image from display`，因此新安装版是否出现系统弹窗以用户现场观察为准；代码与本机登录测试证明新版默认启动不会调用旧账号钥匙串存储。
+- 16:45 后再次只读核对：`/Applications/MaiChat.app` 的运行进程仍在，包内版本 2.2.8；生产同步服务中同账号 `mac` 与 `ios_phone` 两个名额均有 45 秒内上报，未确认的未过期历史分块数为 0。这证明两端 WSS 在线，不等于已验收真实历史翻页或发送命令。用户正在本地联调，未由排障流程提交模型任务。

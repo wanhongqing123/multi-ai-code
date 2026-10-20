@@ -2,6 +2,7 @@
 #include "agent/RemoteAgentPanel.h"
 
 #include <QDateTime>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QJsonArray>
@@ -129,20 +130,23 @@ RemoteAgentPanel::RemoteAgentPanel(QWidget* parent) : QWidget(parent), runtime_(
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
     auto* header = new QWidget(this);
+    header->setObjectName(QStringLiteral("remoteAgentHeader"));
     header->setFixedHeight(UiZoom::s(54));
-    header->setStyleSheet(QStringLiteral("border-bottom:1px solid #e2e8f0;"));
-    auto* headerLayout = new QHBoxLayout(header);
-    headerLayout->setContentsMargins(UiZoom::s(18), 0, UiZoom::s(18), 0);
+    header->setStyleSheet(QStringLiteral(
+        "QWidget#remoteAgentHeader{border-bottom:1px solid #e2e8f0;}"));
+    auto* headerLayout = new QGridLayout(header);
+    headerLayout->setContentsMargins(UiZoom::s(16), 0, UiZoom::s(16), 0);
+    headerLayout->setColumnStretch(0, 1);
+    headerLayout->setColumnStretch(2, 1);
     auto* title = new QLabel(QStringLiteral("创作中心"), header);
     QFont titleFont = title->font();
     titleFont.setPixelSize(UiZoom::s(18));
     titleFont.setBold(true);
     title->setFont(titleFont);
-    headerLayout->addWidget(title);
-    headerLayout->addStretch();
+    headerLayout->addWidget(title, 0, 1, Qt::AlignCenter);
     runtime_->device = new QLabel(header);
     runtime_->device->setStyleSheet(QStringLiteral("color:#667085;"));
-    headerLayout->addWidget(runtime_->device);
+    headerLayout->addWidget(runtime_->device, 0, 2, Qt::AlignRight | Qt::AlignVCenter);
     layout->addWidget(header);
 
     runtime_->older = new QPushButton(QStringLiteral("查看更早消息"), this);
@@ -150,7 +154,9 @@ RemoteAgentPanel::RemoteAgentPanel(QWidget* parent) : QWidget(parent), runtime_(
     runtime_->older->hide();
     layout->addWidget(runtime_->older);
     runtime_->view = new MarkdownView(this);
-    runtime_->view->setMaxContentWidth(UiZoom::s(900));
+    MarkdownTheme conversationTheme = MarkdownTheme::standard(UiZoom::factor());
+    conversationTheme.viewMargin = UiZoom::s(48);
+    runtime_->view->setTheme(conversationTheme);
     layout->addWidget(runtime_->view, 1);
     runtime_->requests = new QWidget(this);
     runtime_->requestsLayout = new QVBoxLayout(runtime_->requests);

@@ -8,9 +8,11 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
+#include <QPainter>
 #include <QPushButton>
 #include <QScrollBar>
 #include <QSet>
+#include <QStyledItemDelegate>
 #include <QVBoxLayout>
 
 #include "agent/AgentController.h"
@@ -22,9 +24,105 @@ namespace {
 const char* const kInk = "#172033";
 const char* const kInkFaint = "#98a2b3";
 const char* const kLine = "#e2e8f0";
-const char* const kLineSoft = "#f1f5f9";
 const char* const kAccent = "#0b67b7";
 const char* const kAccentWash = "#edf8ff";
+
+class SessionItemDelegate final : public QStyledItemDelegate {
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+
+    void paint(QPainter* painter, const QStyleOptionViewItem& option,
+               const QModelIndex& index) const override {
+        painter->save();
+        painter->setRenderHint(QPainter::Antialiasing);
+        const bool header = !index.data(Qt::UserRole + 3).toString().isEmpty();
+        if (header) {
+            const QRect card = option.rect.adjusted(UiZoom::s(7), UiZoom::s(3),
+                                                     -UiZoom::s(7), -UiZoom::s(3));
+            painter->setPen(Qt::NoPen);
+            painter->setBrush(QColor(QStringLiteral("#eaf1f7")));
+            painter->drawRoundedRect(card, UiZoom::s(7), UiZoom::s(7));
+            const bool collapsed = index.data(Qt::UserRole + 8).toBool();
+            const int arrowX = card.left() + UiZoom::s(14);
+            const int centerY = card.center().y();
+            painter->setPen(QPen(QColor(QStringLiteral("#587187")), UiZoom::s(2)));
+            if (collapsed) {
+                painter->drawLine(arrowX - UiZoom::s(2), centerY - UiZoom::s(3),
+                                  arrowX + UiZoom::s(2), centerY);
+                painter->drawLine(arrowX + UiZoom::s(2), centerY,
+                                  arrowX - UiZoom::s(2), centerY + UiZoom::s(3));
+            } else {
+                painter->drawLine(arrowX - UiZoom::s(3), centerY - UiZoom::s(2),
+                                  arrowX, centerY + UiZoom::s(2));
+                painter->drawLine(arrowX, centerY + UiZoom::s(2),
+                                  arrowX + UiZoom::s(3), centerY - UiZoom::s(2));
+            }
+            const int count = index.data(Qt::UserRole + 5).toInt();
+            const bool remote = index.data(Qt::UserRole + 7).toBool();
+            const int countWidth = UiZoom::s(count >= 10 ? 26 : 22);
+            const QRect badge(card.right() - countWidth - UiZoom::s(8),
+                              centerY - UiZoom::s(10), countWidth, UiZoom::s(20));
+            painter->setPen(Qt::NoPen);
+            painter->setBrush(QColor(QStringLiteral("#dbe7f1")));
+            painter->drawRoundedRect(badge, UiZoom::s(10), UiZoom::s(10));
+            QFont font = option.font;
+            font.setPixelSize(UiZoom::s(11));
+            font.setBold(true);
+            painter->setFont(font);
+            painter->setPen(QColor(QStringLiteral("#516a82")));
+            painter->drawText(badge, Qt::AlignCenter, QString::number(count));
+            int textRight = badge.left() - UiZoom::s(8);
+            if (remote) {
+                const bool online = index.data(Qt::UserRole + 6).toBool();
+                const QRect status(textRight - UiZoom::s(38), card.top(),
+                                   UiZoom::s(38), card.height());
+                painter->setPen(online ? QColor(QStringLiteral("#2b8060")) :
+                                         QColor(QStringLiteral("#98a2b3")));
+                font.setPixelSize(UiZoom::s(10));
+                font.setBold(false);
+                painter->setFont(font);
+                painter->drawText(status, Qt::AlignVCenter | Qt::AlignRight,
+                                  online ? QStringLiteral("在线") : QStringLiteral("离线"));
+                textRight = status.left() - UiZoom::s(5);
+            }
+            const QRect title(card.left() + UiZoom::s(28), card.top(),
+                              textRight - card.left() - UiZoom::s(28), card.height());
+            font.setPixelSize(UiZoom::s(12));
+            font.setBold(true);
+            painter->setFont(font);
+            painter->setPen(QColor(QStringLiteral("#344e67")));
+            painter->drawText(title, Qt::AlignVCenter | Qt::AlignLeft,
+                              painter->fontMetrics().elidedText(
+                                  index.data(Qt::UserRole + 4).toString(), Qt::ElideRight,
+                                  title.width()));
+        } else {
+            const bool selected = option.state & QStyle::State_Selected;
+            const bool hovered = option.state & QStyle::State_MouseOver;
+            const QRect row = option.rect.adjusted(UiZoom::s(30), UiZoom::s(2),
+                                                   -UiZoom::s(7), -UiZoom::s(2));
+            painter->setPen(Qt::NoPen);
+            if (selected || hovered) {
+                painter->setBrush(QColor(selected ? QStringLiteral("#dff1fc") :
+                                             QStringLiteral("#f0f5f9")));
+                painter->drawRoundedRect(row, UiZoom::s(7), UiZoom::s(7));
+            }
+            painter->setPen(QPen(QColor(QStringLiteral("#dbe5ed")), UiZoom::s(1)));
+            const int railX = option.rect.left() + UiZoom::s(22);
+            painter->drawLine(railX, option.rect.top(), railX, option.rect.bottom());
+            QFont font = option.font;
+            font.setPixelSize(UiZoom::s(13));
+            font.setBold(selected);
+            painter->setFont(font);
+            painter->setPen(QColor(selected ? QStringLiteral("#0b466f") :
+                                       QStringLiteral("#26384b")));
+            const QRect title = row.adjusted(UiZoom::s(11), 0, -UiZoom::s(9), 0);
+            painter->drawText(title, Qt::AlignVCenter | Qt::AlignLeft,
+                              painter->fontMetrics().elidedText(index.data().toString(),
+                                                                 Qt::ElideRight, title.width()));
+        }
+        painter->restore();
+    }
+};
 
 QString fromUtf8(const std::string& text) {
     return QString::fromUtf8(text.data(), static_cast<int>(text.size()));
@@ -79,9 +177,11 @@ struct AgentSessionList::Runtime {
 AgentSessionList::AgentSessionList(AgentController& controller, QWidget* parent)
     : QWidget(parent), runtime_(std::make_unique<Runtime>()) {
     runtime_->controller = &controller;
+    setObjectName(QStringLiteral("agentSessionList"));
     setMinimumWidth(UiZoom::s(210));
     setStyleSheet(UiZoom::scaleQss(
-        QStringLiteral("QWidget{background:#fafbfd;border-right:1px solid %1;}").arg(kLine)));
+        QStringLiteral("QWidget#agentSessionList{background:#fafbfd;"
+                       "border-right:1px solid %1;}").arg(kLine)));
 
     auto* column = new QVBoxLayout(this);
     column->setContentsMargins(0, 0, 0, 0);
@@ -110,12 +210,11 @@ AgentSessionList::AgentSessionList(AgentController& controller, QWidget* parent)
     runtime_->list->setFrameShape(QFrame::NoFrame);
     runtime_->list->setSelectionMode(QAbstractItemView::SingleSelection);
     runtime_->list->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    runtime_->list->setStyleSheet(UiZoom::scaleQss(
-        QStringLiteral("QListWidget{background:transparent;border:none;outline:none;}"
-                       "QListWidget::item{padding:8px 12px;border-bottom:1px solid %1;}"
-                       "QListWidget::item:selected{background:%2;color:%3;}"
-                       "QListWidget::item:hover{background:#eef2f7;}")
-            .arg(kLineSoft, kAccentWash, kInk)));
+    runtime_->list->setItemDelegate(new SessionItemDelegate(runtime_->list));
+    runtime_->list->setMouseTracking(true);
+    runtime_->list->setStyleSheet(QStringLiteral(
+        "QListWidget{background:transparent;border:none;outline:none;}"
+        "QListWidget::item{background:transparent;}"));
     column->addWidget(runtime_->list, 1);
 
     connect(newButton, &QPushButton::clicked, this,
@@ -150,20 +249,19 @@ AgentSessionList::~AgentSessionList() = default;
 void AgentSessionList::refresh() {
     const int scroll = runtime_->list->verticalScrollBar()->value();
     runtime_->list->clear();
-    const auto addHeader = [this](const QString& key, const QString& label, int count) {
+    const auto addHeader = [this](const QString& key, const QString& label,
+                                  int count, bool remote, bool online = false) {
         const bool collapsed = runtime_->collapsedDevices.contains(key);
         auto* item = new QListWidgetItem(
-            QStringLiteral("%1  %2  ·  %3").arg(collapsed ? QStringLiteral("›") :
-                                                       QStringLiteral("⌄"), label).arg(count));
+            QStringLiteral("%1 · %2").arg(label).arg(count));
         item->setData(Qt::UserRole + 3, key);
+        item->setData(Qt::UserRole + 4, label);
+        item->setData(Qt::UserRole + 5, count);
+        item->setData(Qt::UserRole + 6, online);
+        item->setData(Qt::UserRole + 7, remote);
+        item->setData(Qt::UserRole + 8, collapsed);
         item->setFlags(Qt::ItemIsEnabled);
-        item->setForeground(QColor(QStringLiteral("#52677d")));
-        item->setBackground(QColor(QStringLiteral("#eef3f8")));
-        item->setSizeHint(QSize(0, UiZoom::s(34)));
-        QFont font = item->font();
-        font.setPixelSize(UiZoom::s(12));
-        font.setBold(true);
-        item->setFont(font);
+        item->setSizeHint(QSize(0, UiZoom::s(42)));
         runtime_->list->addItem(item);
     };
     // listSessions 已经按 updated 倒序，最近动过的在最上面——和 IM 那边的会话列表一致。
@@ -171,9 +269,9 @@ void AgentSessionList::refresh() {
     const QString localGroup = QStringLiteral("local");
     if (!localSessions.empty()) {
 #ifdef Q_OS_WIN
-        addHeader(localGroup, QStringLiteral("这台 Windows 电脑"), int(localSessions.size()));
+        addHeader(localGroup, QStringLiteral("这台 Windows 电脑"), int(localSessions.size()), false);
 #else
-        addHeader(localGroup, QStringLiteral("这台 Mac"), int(localSessions.size()));
+        addHeader(localGroup, QStringLiteral("这台 Mac"), int(localSessions.size()), false);
 #endif
     }
     if (!runtime_->collapsedDevices.contains(localGroup)) {
@@ -188,9 +286,7 @@ void AgentSessionList::refresh() {
             item->setData(Qt::UserRole, sessionId);
             // 工作目录留在 tooltip，避免几十条会话都变成两行。
             item->setToolTip(directory);
-            QFont font = item->font();
-            font.setPixelSize(UiZoom::s(13));
-            item->setFont(font);
+            item->setSizeHint(QSize(0, UiZoom::s(42)));
             runtime_->list->addItem(item);
             if (sessionId == runtime_->current && runtime_->currentRemote.isEmpty())
                 runtime_->list->setCurrentItem(item);
@@ -218,8 +314,7 @@ void AgentSessionList::refresh() {
         QString label = group.label;
         if (labelTotals.value(group.label) > 1)
             label += QStringLiteral("（设备 %1）").arg(++labelNumbers[group.label]);
-        label += group.online ? QStringLiteral(" · 在线") : QStringLiteral(" · 离线");
-        addHeader(group.key, label, group.sessions.size());
+        addHeader(group.key, label, group.sessions.size(), true, group.online);
         if (runtime_->collapsedDevices.contains(group.key)) continue;
         for (const QJsonObject& session : group.sessions) {
             QString title = session.value(QStringLiteral("title")).toString();
@@ -228,9 +323,7 @@ void AgentSessionList::refresh() {
             item->setData(Qt::UserRole + 1, true);
             item->setData(Qt::UserRole + 2, session);
             item->setToolTip(label);
-            QFont font = item->font();
-            font.setPixelSize(UiZoom::s(13));
-            item->setFont(font);
+            item->setSizeHint(QSize(0, UiZoom::s(42)));
             runtime_->list->addItem(item);
             if (remoteKey(session) == runtime_->currentRemote) runtime_->list->setCurrentItem(item);
         }

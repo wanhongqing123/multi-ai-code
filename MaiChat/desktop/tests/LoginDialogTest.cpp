@@ -439,9 +439,9 @@ void LoginDialogTest::usesCompactDesktopSize() {
     }
     QVERIFY2(dialog.width() <= 560, "Login window is wider than the QR flow needs");
     QVERIFY2(dialog.height() <= 760, "Login window exceeds the two login modes");
-    auto* cancel = dialog.findChild<QPushButton*>(QStringLiteral("loginCancelButton"));
-    QVERIFY(cancel != nullptr);
-    QVERIFY(dialog.rect().contains(cancel->mapTo(&dialog, cancel->rect().bottomRight())));
+    auto* qr = dialog.findChild<QLabel*>(QStringLiteral("loginQr"));
+    QVERIFY(qr != nullptr);
+    QVERIFY(dialog.rect().contains(qr->mapTo(&dialog, qr->rect().bottomRight())));
 }
 
 void LoginDialogTest::defaultDesktopLoginStartsQrWithoutStoredToken() {
@@ -464,7 +464,6 @@ void LoginDialogTest::showsQrAndMaiChatPasswordLoginHierarchy() {
     auto* qr = dialog.findChild<QLabel*>(QStringLiteral("loginQr"));
     auto* status = dialog.findChild<QLabel*>(QStringLiteral("loginStatus"));
     auto* retryButton = dialog.findChild<QPushButton*>(QStringLiteral("loginRetryButton"));
-    auto* cancelButton = dialog.findChild<QPushButton*>(QStringLiteral("loginCancelButton"));
     auto* modeButton = dialog.findChild<QPushButton*>(QStringLiteral("loginModeButton"));
     auto* qrPane = dialog.findChild<QWidget*>(QStringLiteral("loginQrPane"));
     auto* passwordPane = dialog.findChild<QWidget*>(QStringLiteral("loginPasswordPane"));
@@ -474,7 +473,6 @@ void LoginDialogTest::showsQrAndMaiChatPasswordLoginHierarchy() {
     QVERIFY(qr != nullptr);
     QVERIFY(status != nullptr);
     QVERIFY(retryButton != nullptr);
-    QVERIFY(cancelButton != nullptr);
     QVERIFY(modeButton && qrPane && passwordPane);
     QVERIFY(dialog.findChild<QWidget*>(QStringLiteral("introPane")) == nullptr);
     QCOMPARE(dialog.windowTitle(), QStringLiteral("MaiChat"));
@@ -485,8 +483,8 @@ void LoginDialogTest::showsQrAndMaiChatPasswordLoginHierarchy() {
     QCOMPARE(status->text(), QStringLiteral("正在生成二维码"));
     QCOMPARE(qr->text(), status->text());
     QVERIFY(!status->isVisible());
-    QVERIFY(!retryButton->isEnabled());
-    QCOMPARE(cancelButton->text(), QStringLiteral("取消"));
+    QVERIFY(!retryButton->isVisible());
+    QVERIFY(dialog.findChild<QPushButton*>(QStringLiteral("loginCancelButton")) == nullptr);
     QCOMPARE(modeButton->text(), QStringLiteral("账号密码登录"));
     QVERIFY(qrPane->isVisible());
     QVERIFY(!passwordPane->isVisible());
@@ -608,7 +606,8 @@ void LoginDialogTest::displaysServerQrAndSendsMatchingVerifier() {
     auto* code = dialog.findChild<QLabel*>(QStringLiteral("loginCode"));
     auto* qr = dialog.findChild<QLabel*>(QStringLiteral("loginQr"));
     auto* detail = dialog.findChild<QLabel*>(QStringLiteral("loginDetail"));
-    auto* cancel = dialog.findChild<QPushButton*>(QStringLiteral("loginCancelButton"));
+    auto* retry = dialog.findChild<QPushButton*>(QStringLiteral("loginRetryButton"));
+    auto* countdown = dialog.findChild<QLabel*>(QStringLiteral("loginCountdown"));
     QSignalSpy rejected(&dialog, &QDialog::rejected);
 
     dialog.show();
@@ -618,11 +617,14 @@ void LoginDialogTest::displaysServerQrAndSendsMatchingVerifier() {
     QCOMPARE(server.challenge.size(), 43);
     QCOMPARE(code->text(), QStringLiteral("核对码  123456"));
     QVERIFY(!qr->pixmap(Qt::ReturnByValue).isNull());
+    QVERIFY(!status->isVisible());
     QVERIFY(!detail->isVisible());
+    QVERIFY(!countdown->isVisible());
+    QVERIFY(!retry->isVisible());
     if (qEnvironmentVariableIsSet("MAICHAT_CAPTURE_QR_LOGIN"))
         dialog.grab().save(qEnvironmentVariable("MAICHAT_CAPTURE_QR_LOGIN"));
     QTRY_VERIFY_WITH_TIMEOUT(server.verifierValid, 5000);
-    QTest::mouseClick(cancel, Qt::LeftButton);
+    dialog.reject();
     QTRY_COMPARE_WITH_TIMEOUT(rejected.size(), 1, 5000);
     QCOMPARE(server.cancelRequestCount, 1);
     QVERIFY(server.cancelHadProof);
@@ -633,13 +635,14 @@ void LoginDialogTest::replacingQrCancelsPreviousRequest() {
     DesktopAuthClient auth(nullptr, server.url(), false);
     LoginDialog dialog(&auth);
     auto* status = dialog.findChild<QLabel*>(QStringLiteral("loginStatus"));
-    auto* replace = dialog.findChild<QPushButton*>(QStringLiteral("loginRetryButton"));
+    auto* mode = dialog.findChild<QPushButton*>(QStringLiteral("loginModeButton"));
     dialog.show();
     dialog.start();
     QTRY_COMPARE_WITH_TIMEOUT(status->text(), QStringLiteral("等待手机扫码并确认"), 5000);
-    replace->click();
+    mode->click();
     QTRY_VERIFY_WITH_TIMEOUT(server.cancelRequestCount >= 1, 5000);
     QVERIFY(server.cancelHadProof);
+    mode->click();
     QTRY_COMPARE_WITH_TIMEOUT(status->text(), QStringLiteral("等待手机扫码并确认"), 5000);
     dialog.reject();
     QTRY_VERIFY_WITH_TIMEOUT(server.cancelRequestCount >= 2, 5000);
@@ -1026,13 +1029,14 @@ void LoginDialogTest::revokesLateApprovedClaimBeforeReplacingQr() {
     DesktopAuthClient auth(nullptr, server.url(), false);
     LoginDialog dialog(&auth);
     auto* status = dialog.findChild<QLabel*>(QStringLiteral("loginStatus"));
-    auto* replace = dialog.findChild<QPushButton*>(QStringLiteral("loginRetryButton"));
+    auto* mode = dialog.findChild<QPushButton*>(QStringLiteral("loginModeButton"));
     dialog.show();
     dialog.start();
     QTRY_COMPARE_WITH_TIMEOUT(status->text(), QStringLiteral("等待手机扫码并确认"), 5000);
     QTRY_VERIFY_WITH_TIMEOUT(server.deferredClaimSocket != nullptr, 5000);
 
-    replace->click();
+    mode->click();
+    mode->click();
     QCOMPARE(server.qrRequestCount, 1);
     server.approveDeferredClaim();
     QTRY_COMPARE_WITH_TIMEOUT(server.logoutRequestCount, 1, 5000);

@@ -38,8 +38,8 @@ LoginDialog::LoginDialog(DesktopAuthClient* auth, QWidget* parent)
 void LoginDialog::buildUi() {
     setWindowTitle(QStringLiteral("MaiChat"));
     setModal(true);
-    setMinimumSize(480, 520);
-    resize(520, 560);
+    setMinimumSize(480, 440);
+    resize(520, 480);
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(24, 24, 24, 24);
     auto* modeRow = new QHBoxLayout;
@@ -86,16 +86,13 @@ void LoginDialog::buildUi() {
     qrPaneLayout->addSpacing(10);
     codeLabel_ = makeLabel({}, QStringLiteral("loginCode"), qrPane_);
     qrPaneLayout->addWidget(codeLabel_);
-    qrPaneLayout->addSpacing(5);
     statusLabel_ = makeLabel({}, QStringLiteral("loginStatus"), qrPane_);
     qrPaneLayout->addWidget(statusLabel_);
-    qrPaneLayout->addSpacing(4);
     detailLabel_ = makeLabel({}, QStringLiteral("loginDetail"), qrPane_);
     detailLabel_->setWordWrap(true);
     qrPaneLayout->addWidget(detailLabel_);
     countdownLabel_ = makeLabel({}, QStringLiteral("loginCountdown"), qrPane_);
     qrPaneLayout->addWidget(countdownLabel_);
-    qrPaneLayout->addSpacing(10);
     retryButton_ = new QPushButton(QStringLiteral("更换二维码"), qrPane_);
     retryButton_->setObjectName(QStringLiteral("loginRetryButton"));
     retryButton_->setFixedHeight(42);
@@ -140,19 +137,12 @@ void LoginDialog::buildUi() {
     passwordLayout->addWidget(legal);
     layout->addWidget(passwordPane_);
     passwordPane_->hide();
-    layout->addSpacing(14);
-    auto* cancelButton = new QPushButton(QStringLiteral("取消"), panel);
-    cancelButton->setObjectName(QStringLiteral("loginCancelButton"));
-    cancelButton->setFixedHeight(30);
-    cancelButton->setCursor(Qt::PointingHandCursor);
-    layout->addWidget(cancelButton);
     root->addWidget(panel, 0, Qt::AlignHCenter);
     root->addStretch();
     connect(modeButton_, &QPushButton::clicked, this, &LoginDialog::toggleLoginMode);
     connect(retryButton_, &QPushButton::clicked, this, &LoginDialog::retry);
     connect(passwordButton_, &QPushButton::clicked, this, &LoginDialog::loginWithPassword);
     connect(passwordInput_, &QLineEdit::returnPressed, this, &LoginDialog::loginWithPassword);
-    connect(cancelButton, &QPushButton::clicked, this, &LoginDialog::reject);
 }
 
 void LoginDialog::applyStyle() {
@@ -173,14 +163,9 @@ void LoginDialog::applyStyle() {
             border-radius: 9px; padding: 8px 12px; min-height: 24px; background: #ffffff; }
         #accountLoginButton { background: #e8f3ff; color: #0871ba; border: 0;
             border-radius: 9px; font-size: 14px; font-weight: 600; }
-        #loginRetryButton { border: 0; border-radius: 10px; background: #2f81f7;
-                            color: #ffffff; font-size: 14px; font-weight: 700; }
-        #loginRetryButton:hover { background: #256fe0; }
-        #loginRetryButton:pressed { background: #1f63cf; }
-        #loginRetryButton:disabled { background: #eef1f5; color: #aab4c3; }
-        #loginCancelButton { border: 0; background: transparent; color: #64748b;
-                             font-size: 13px; }
-        #loginCancelButton:hover { color: #0f172a; }
+        #loginRetryButton { border: 1px solid #d9e2ed; border-radius: 9px;
+                            background: #ffffff; color: #0871ba; font-size: 13px; }
+        #loginRetryButton:hover { background: #f0f7ff; }
     )"));
 }
 
@@ -189,7 +174,9 @@ void LoginDialog::applyStyle() {
 void LoginDialog::setState(State state, const QString& detail) {
     state_ = state;
     QString status, hint = detail, action = QStringLiteral("更换二维码");
-    bool enabled = true;
+    const bool canRetry = state == State::RestoreError || state == State::Expired ||
+        state == State::Denied || state == State::ApprovalRevoked ||
+        state == State::NetworkError || state == State::CredentialError;
     const bool showQr = !request_.qrPng.isEmpty() && !request_.verifier.isEmpty() &&
         (state == State::Waiting || state == State::Scanned ||
          state == State::NetworkError);
@@ -197,7 +184,6 @@ void LoginDialog::setState(State state, const QString& detail) {
     case State::Restoring:
         status = QStringLiteral("正在恢复登录");
         hint.clear();
-        enabled = false;
         break;
     case State::RestoreError:
         status = QStringLiteral("恢复登录失败");
@@ -207,7 +193,6 @@ void LoginDialog::setState(State state, const QString& detail) {
     case State::Loading:
         status = QStringLiteral("正在生成二维码");
         hint.clear();
-        enabled = false;
         break;
     case State::Waiting:
         status = QStringLiteral("等待手机扫码并确认");
@@ -240,7 +225,6 @@ void LoginDialog::setState(State state, const QString& detail) {
     case State::Connecting:
         status = QStringLiteral("登录成功，正在连接");
         hint.clear();
-        enabled = false;
         break;
     case State::CredentialError:
         status = QStringLiteral("连接聊天服务失败");
@@ -249,11 +233,12 @@ void LoginDialog::setState(State state, const QString& detail) {
         break;
     }
     statusLabel_->setText(status);
-    statusLabel_->setVisible(showQr);
+    statusLabel_->setVisible(showQr && state != State::Waiting);
     detailLabel_->setText(hint);
     detailLabel_->setVisible(!hint.isEmpty());
     retryButton_->setText(action);
-    retryButton_->setEnabled(enabled);
+    retryButton_->setVisible(canRetry);
+    retryButton_->setEnabled(canRetry);
     modeButton_->setEnabled(state != State::Restoring && state != State::Connecting &&
                             !passwordInFlight_);
     if (showQr) {
@@ -267,7 +252,9 @@ void LoginDialog::setState(State state, const QString& detail) {
         qrLabel_->setText(status);
     }
     codeLabel_->setText(showQr ? QStringLiteral("核对码  %1").arg(request_.displayCode) : QString());
-    countdownLabel_->setVisible(showQr && !expiresAt_.isNull());
+    codeLabel_->setVisible(showQr);
+    countdownLabel_->setVisible(showQr && !expiresAt_.isNull() &&
+                                QDateTime::currentDateTimeUtc().secsTo(expiresAt_) <= 20);
 }
 
 void LoginDialog::start() {
@@ -411,6 +398,7 @@ void LoginDialog::updateCountdown() {
         return;
     }
     countdownLabel_->setText(QStringLiteral("%1 秒后过期").arg(remaining));
+    countdownLabel_->setVisible(!passwordMode_ && remaining <= 20);
 }
 
 // 同一时刻只发送一条 claim。generation 保证更换二维码或取消登录后，

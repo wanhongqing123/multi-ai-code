@@ -40,3 +40,12 @@
 - 2.2.8 Mac 版尚待用户登录后与 iPhone 93 联调；Windows 原生构建、包与正式 GitHub Release 均未完成。本机屏幕抓取工具返回 `could not create image from display`，因此新安装版是否出现系统弹窗以用户现场观察为准；代码与本机登录测试证明新版默认启动不会调用旧账号钥匙串存储。
 - 16:45 后再次只读核对：`/Applications/MaiChat.app` 的运行进程仍在，包内版本 2.2.8；生产同步服务中同账号 `mac` 与 `ios_phone` 两个名额均有 45 秒内上报，未确认的未过期历史分块数为 0。这证明两端 WSS 在线，不等于已验收真实历史翻页或发送命令。用户正在本地联调，未由排障流程提交模型任务。
 - 联调期间的下一次只读查询显示，最近 5 分钟 Mac→iPhone 有 2 条 `history_request`，iPhone→Mac 有 2 条 `history_page`，回包 JSON 合计 7,814 B，四条均已确认。它证明真实两端历史读取完成了一次请求／回包／ACK 往返，并且本次没有出现先前持续堆积的大量分块；仅凭服务端元数据仍不能判断用户看到的具体页面排版。
+
+## 设备分组、远端排版与扫码页精简
+
+- 17:01 前后，用户在已安装的 Mac Desktop 2.2.9 上给出实画面：左栏虽按“这台 Mac / iPhone 14 Pro Max”分组，设备标题和子会话仍是普通列表行；切换到 iPhone Session 后，远端顶栏标题靠左且正文两侧留白明显多于本机 Session。登录二维码下方同时出现核对码、扫码等待、倒计时、大型换码按钮和取消按钮。
+- 直接代码原因：`AgentSessionList` 为所有行复用同一 `QListWidget::item` 样式，只靠文字缩进表达组层级；`RemoteAgentPanel` 对阅读列设置固定最大宽度 900px，而本机 `AgentChatPanel` 用 48px 页面边距与窗口剩余宽度；远端标题用左对齐布局。`LoginDialog` 在 Waiting 状态仍保留倒计时、重试和取消控件。
+- 调整：左栏用一个列表绘制器显示独立的设备标题卡、在线状态、数量、子会话层级和局部选中态，点击分组折叠的逻辑保持原样。远端阅读列改用与本机会话相同的 Markdown 主题和 48px 边距，顶栏标题居中；标题下边线样式只作用于顶栏容器。扫码正常等待时仅显示二维码和核对码；扫码后才显示手机确认提示，临近到期才显示剩余时间，出错或过期才显示重试；关闭窗口仍执行取消请求和撤销晚到授权。
+- iOS 2.2.3 (94) 已保留数据安装到 iPhone 14 Pro Max，设备回读版本、启动与生产同步在线均核对；Mac Desktop 2.2.9 已保留数据安装并从 `/Applications/MaiChat.app` 启动。上述新的 UI 调整尚未包含在这两个已安装产物中，需以新 Mac 构建再做实画面验证。
+- Desktop 产品提交 `8e2dc2b7`、版本提交 `5a3ce0e5`（2.2.10）。Mac 原生 `desktop_session_sync_host_test`、`login_dialog_test`、`main_window_layout_test` 3/3 通过；源码最终二维码路径重新编译后，扫码核对与远端消息路径的定向测试也通过。已亲看原生截图：等待扫码仅显示二维码和核对码，设备列表的分组卡与选中区域不再铺满整列，远端顶栏无子标签下划线且正文两侧留白与本机相同。`npm run check:line-width` 和 `git diff --check` 通过。
+- Mac 2.2.10 候选 DMG 从精确 `5a3ce0e5` 打包：`MaiChat-macos-arm64-v2.2.10-20261020-5a3ce0e5.dmg`，141,761,717 B，SHA-256 `30b692278a4ebc34d84a77cc2cef3a92daf958705dcb378a254fa422dede7663`。包内版本 2.2.10，`codesign --verify --deep --strict` 通过，暂存 App `--smoke` 退出 0，日志核对实际路径、版本与 `supportsSsl=true`。用户 Mac 上仍有 2.2.9 进程；待其正常退出后才能保留数据替换安装版并验收真实登录与会话切换。Windows 原生重链和正式 Release 不在这次本地验收之内。

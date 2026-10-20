@@ -49,3 +49,13 @@
 - iOS 2.2.3 (94) 已保留数据安装到 iPhone 14 Pro Max，设备回读版本、启动与生产同步在线均核对；Mac Desktop 2.2.9 已保留数据安装并从 `/Applications/MaiChat.app` 启动。上述新的 UI 调整尚未包含在这两个已安装产物中，需以新 Mac 构建再做实画面验证。
 - Desktop 产品提交 `8e2dc2b7`、版本提交 `5a3ce0e5`（2.2.10）。Mac 原生 `desktop_session_sync_host_test`、`login_dialog_test`、`main_window_layout_test` 3/3 通过；源码最终二维码路径重新编译后，扫码核对与远端消息路径的定向测试也通过。已亲看原生截图：等待扫码仅显示二维码和核对码，设备列表的分组卡与选中区域不再铺满整列，远端顶栏无子标签下划线且正文两侧留白与本机相同。`npm run check:line-width` 和 `git diff --check` 通过。
 - Mac 2.2.10 候选 DMG 从精确 `5a3ce0e5` 打包：`MaiChat-macos-arm64-v2.2.10-20261020-5a3ce0e5.dmg`，141,761,717 B，SHA-256 `30b692278a4ebc34d84a77cc2cef3a92daf958705dcb378a254fa422dede7663`。包内版本 2.2.10，`codesign --verify --deep --strict` 通过，暂存 App `--smoke` 退出 0，日志核对实际路径、版本与 `supportsSsl=true`。用户 Mac 上仍有 2.2.9 进程；待其正常退出后才能保留数据替换安装版并验收真实登录与会话切换。Windows 原生重链和正式 Release 不在这次本地验收之内。
+
+## 发布草稿时发现的顶栏裁切
+
+- Windows 从 `5a3ce0e5` 重链并做原生截图后，远端会话顶栏右侧只显示“测试 iPh”；Mac 900px 原生截图也呈现同样裁切。该截图是稳定的可见回归，不是历史内容或网络状态造成的。GitHub 2.2.10 草稿在未公开状态，Windows 已撤回这一源码的 EXE/ZIP，Mac DMG 也必须替换。
+- 原因是 `RemoteAgentPanel` 在固定高度顶栏的 `QGridLayout` 右侧放动态设备长名，窄窗时列布局未给文字足够空间；顶栏设备名又与左侧分组标题重复。原先把边线挂在顶栏容器上还会被填满横向空间的子部件盖住，形成断线。
+- 产品修复 `6bfb1b8e`：顶栏只保留居中的“创作中心”，设备名/在线状态继续由左侧设备分组显示；底线改为独立 1px 布局行。Mac 同样宽度截图已人工复核，右侧不再有被截文字，底线连续，正文和输入区保持原位。后续正式发布资产应全部从该精确提交重新构建。
+- 最终 `6bfb1b8e` 的 Mac 原生三项相关 CTest 3/3 PASS；Windows VS2019/Qt 同三项 3/3 PASS，900px 假数据截图也确认顶栏文字完整、底线连续。两端独立暂存版 `--smoke` 均退出 0，版本 2.2.10、OpenSSL 可用。Windows 安装器未运行，现装 App 未替换。
+- Mac 第一次重封装在 `hdiutil attach` 返回 16，未生成公开资产；确认没有残留挂载后同一冻结源码重试成功。最终 DMG `MaiChat-macos-arm64-v2.2.10-20261020-6bfb1b8e.dmg` 为 141,761,557 B，SHA-256 `7bef5ec110077f3bd05d5a5f033eeb72f5644f1eee9e63b90cf8e20a3e068773`；实际只读挂载后核对包内版本 2.2.10、可执行文件 SHA-256 `ef0e6f00b447add13df49bb79f40c76f753b3681488f7812288787eaa5e1c1e8` 与暂存一致，深度签名校验通过。GitHub 草稿已替换旧 DMG 并回读 state=uploaded、size/digest 一致。
+- Windows 最终 EXE `MaiChat-Setup-win64-v2.2.10-6bfb1b8e.exe` 为 112,610,312 B / SHA-256 `9a79f8b381c60f8a1b9d3b7e25162fe569f2eab926004fb72043ce123b19cc88`；ZIP `MaiChat-win64-v2.2.10-20261020-6bfb1b8e.zip` 为 139,460,113 B / SHA-256 `9def5b313260e04267beb345a5e3f1b609480bb9b4cb4fe2240ad7bf78a51fb6`。这两份由 Windows 端原生生成并本地复核，远端资产完整回读待上传后确认。
+- 发布后独立公开回读：`maichat-desktop-2.2.10` 为非草稿且是 `/releases/latest`，tag 和 target 都指向 `6bfb1b8e0fff1812b9f139c891aba25f5de89cc1`。Mac DMG、Windows EXE/ZIP 与许可 4/4 资产均为 uploaded，远端大小和 SHA-256 与本地记录及正文一致；旧 `5a3ce0e5` 资产为 0。公开地址为 `https://github.com/wanhongqing123/multi-ai-code/releases/tag/maichat-desktop-2.2.10`。发布并未替换当前使用中的 Mac 或 Windows App，真实账号跨设备执行也不属于这次包的验收结论。

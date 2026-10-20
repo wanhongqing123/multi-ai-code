@@ -52,9 +52,38 @@
 | `package-lock.json` | `96da4536f77a1a0e18266f1e991d318a832f87dd2b018066b6b02a5bc229ca6e` |
 | Nginx `ichat.conf` | `2aa829d7d960eaa17fad6df80e75ad318f83085cd9496a36afa12f51bed9f9ca` |
 
+## 客户端版本与真机回归
+
+- [Desktop 2.2.6](https://github.com/wanhongqing123/multi-ai-code/releases/tag/maichat-desktop-2.2.6)
+  从产品源码 `83c87c5ba97291d71c6a1ee1a14e67a8d2f5a876` 发布为 Latest。
+  Mac DMG、Windows EXE/ZIP 的公开资产大小与 SHA-256 均和本地记录相同；
+  Mac 共用 C++ 客户端经生产公网 WSS 实际完成有效账号 101 和空目录上报 200，
+  随后退出。Windows 的 OpenSSL curl 直连无凭据路由 3/3 返回 401；同机系统
+  Schannel curl 在 TLS 阶段 reset。Windows 产品使用内嵌 OpenSSL；正式 Windows
+  App 的有效账号跨设备操作还未实测。两端现用安装目录没有被替换。
+- [Android 2.2.3](https://github.com/wanhongqing123/multi-ai-code/releases/tag/maichat-android-2.2.3)
+  的最终签名 APK 来自 `2397b385e04ae03fbf594bc057def2c333722363`，
+  159805729 B、SHA-256
+  `8032b4333c0cb976be95cee695a0b18bc5656502efcd1f4ddf7cf82013f194eb`。
+  OPPO PKD130 已保留数据原位安装，设备回拉 `base.apk` 哈希一致；生产 WSS
+  假 Mac 目录和历史可读。首次候选发现展开侧栏视图不会随推送刷新，修复后
+  同一真机保持侧栏展开，上线原位出现、清理原位消失、草稿保留，见
+  `docs/diagnostics/maichat-android-session-drawer-live-20261020.md`。
+- 两个 GitHub Release 都附 `MaiChat-SessionSync-ThirdPartyLicenses.txt`，
+  8880 B、SHA-256
+  `b619ca34d2fec98799d4f87fb1096bbdd7f80ee52899046661a089587ac0a56a`，
+  完整重现 WebSocket++ 与独立 Asio 的许可文本。
+- iOS 2.2.3 (91) 已在模拟器通过正常 App 的假 Mac 历史与无付费文字流程，
+  并用用户设备的开发描述文件签成真机 App；本地开发 IPA SHA-256
+  `ec7b59d758c08b7d92132fc49326a4aaef9fbb9120f3fe55eaa2b5725d60990c`。
+  `codesign --verify --deep --strict` 通过。iPhone 在 Xcode 中持续为
+  `unavailable`，因此尚未安装或做 iOS 真机生产 WSS 验收；该私有设备描述文件
+  不适合公开发布，且有效期至 2026-10-24。
+
 ## 尚未验证
 
-生产环境尚未由升级后的两台真实产品设备互相控制同一所属设备 Session；已发布
-Desktop 2.2.5 和移动端旧包仍使用旧 HTTP 路径。当前源码版本号也尚未上调或
-打成新的产品包，不能把服务端上线或本机模拟器测试当作四端交付。跨设备媒体、
-离线历史缓存等原方案未完成项亦未因改用 WebSocket 而自动具备。
+生产环境尚未由升级后的两台真实产品设备对同一个真实所属设备 Session 完成
+查看、发操作、执行结果的全链路验收；Android 真机读到的是无付费假 Mac 的
+固定历史。iOS 真机安装等待设备重新连接。跨设备媒体、离线历史缓存等原方案
+未完成项亦未因改用 WebSocket 而自动具备。旧客户端在过渡期仍使用服务端
+保留的 HTTPS 接口。

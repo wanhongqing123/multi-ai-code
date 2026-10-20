@@ -1341,11 +1341,12 @@ final class AIAssistantModel: ObservableObject {
     }
 
     func startSessionSyncForAccount() {
+        startRemotePolling()
         guard hostStartup == nil else { return }
         hostStartup = Task { @MainActor [weak self] in
             guard let self else { return }
             await self.prepareFirstPage()
-            if self.ready { self.startRemotePolling() }
+            if self.ready { self.lastRemotePresence = .distantPast }
             self.hostStartup = nil
         }
     }
@@ -1415,14 +1416,13 @@ final class AIAssistantModel: ObservableObject {
                 Task { @MainActor [weak self] in self?.applyRemoteCatalog(catalog) }
             }
             while !Task.isCancelled {
-                guard AIMobileHostToolProvider.shared.appState?.hasUnifiedAccount == true,
-                      self.ready else {
+                guard AIMobileHostToolProvider.shared.appState?.hasUnifiedAccount == true else {
                     try? await Task.sleep(for: .seconds(2))
                     continue
                 }
                 do {
                     if Date().timeIntervalSince(self.lastRemotePresence) >= 15 {
-                        if (!self.visible || self.selectedRemote != nil),
+                        if self.ready, (!self.visible || self.selectedRemote != nil),
                            let summary = try? await self.backend.snapshot(
                                session: "", limit: 0, force: true),
                            let localSessions = summary.sessions {
@@ -1435,7 +1435,7 @@ final class AIAssistantModel: ObservableObject {
                         try await self.remoteTransport.presence(
                             deviceID: self.syncDeviceID,
                             name: name.isEmpty ? "iPhone" : name,
-                            sessions: self.sessions
+                            sessions: self.ready ? self.sessions : []
                         )
                         self.lastRemotePresence = Date()
                     }

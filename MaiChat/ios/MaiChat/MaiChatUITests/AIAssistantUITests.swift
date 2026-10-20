@@ -109,6 +109,74 @@ final class AIAssistantUITests: XCTestCase {
         add(rejected)
     }
 
+    @MainActor func testProductionWebSocketReadsFakeMacHistory() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let account = environment["MAICHAT_PROD_SYNC_TEST_ACCOUNT"],
+              let password = environment["MAICHAT_PROD_SYNC_TEST_PASSWORD"] else {
+            throw XCTSkip("需要无付费生产测试账号和假 Mac Session")
+        }
+        let app = XCUIApplication()
+        app.launchEnvironment["MAICHAT_PROD_SYNC_TEST_ACCOUNT"] = account
+        app.launch()
+        let accountField = app.textFields["account-phone"]
+        XCTAssertTrue(accountField.waitForExistence(timeout: 20), "请用隔离模拟器运行生产账号测试")
+        app.buttons["密码登录"].tap()
+        accountField.tap()
+        accountField.typeText(account)
+        let passwordField = app.secureTextFields["输入登录密码"]
+        passwordField.tap()
+        passwordField.typeText(password)
+        app.buttons["account-minimum-age"].tap()
+        app.buttons["account-agreement"].tap()
+        app.buttons["account-submit"].tap()
+        let creationCenter = app.buttons["创作中心"]
+        guard creationCenter.waitForExistence(timeout: 30) else {
+            XCTFail("生产测试账号未进入 MaiChat 主页面")
+            return
+        }
+        let temporaryIMError = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "IM 操作失败")
+        ).firstMatch
+        if temporaryIMError.exists { temporaryIMError.tap() }
+        creationCenter.tap()
+        let entered = XCTAttachment(screenshot: app.screenshot())
+        entered.name = "production-wss-iphone-simulator-after-tab"
+        entered.lifetime = .keepAlways
+        add(entered)
+        guard app.buttons["对话列表"].waitForExistence(timeout: 20) else {
+            XCTFail("生产账号未进入创作中心")
+            return
+        }
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.72, dy: 0.5))
+        start.press(forDuration: 0.05, thenDragTo: end)
+        let remote = app.buttons["ai-remote-conversation-mac:prodwsfakemac:ses_prod_ws_qa"]
+        guard remote.waitForExistence(timeout: 30) else {
+            XCTFail("生产假 Mac Session 未出现在目录")
+            return
+        }
+        XCTAssertTrue(remote.label.contains("生产验收假 Mac · 在线"))
+        let directory = XCTAttachment(screenshot: app.screenshot())
+        directory.name = "production-wss-iphone-simulator-directory"
+        directory.lifetime = .keepAlways
+        add(directory)
+        remote.tap()
+        let history = app.staticTexts.matching(NSPredicate(
+            format: "label CONTAINS %@", "这条历史来自生产 WebSocket 的无付费假 Mac"
+        )).firstMatch
+        XCTAssertTrue(history.waitForExistence(timeout: 30))
+        let opened = XCTAttachment(screenshot: app.screenshot())
+        opened.name = "production-wss-iphone-simulator-history"
+        opened.lifetime = .keepAlways
+        add(opened)
+
+        app.buttons["返回主页面"].tap()
+        app.buttons["我"].tap()
+        app.buttons["设置"].tap()
+        app.buttons["切换账号"].tap()
+        XCTAssertTrue(accountField.waitForExistence(timeout: 15))
+    }
+
     func testNormalAppKeepsConversationPageVisibleAcrossNavigation() throws {
         let environment = ProcessInfo.processInfo.environment
         guard let phone = environment["MAICHAT_LOCAL_UI_PHONE"],

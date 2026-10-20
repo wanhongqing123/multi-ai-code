@@ -217,6 +217,11 @@ private final class MaiChatBootstrap: ObservableObject {
             )
             AIMobileHostToolProvider.shared.appState = state
             appState = state
+            if state.hasUnifiedAccount {
+                await MainActor.run {
+                    AIAssistantModel.shared.startSessionSyncForAccount()
+                }
+            }
         } catch {
             if !Task.isCancelled { errorMessage = error.localizedDescription }
         }

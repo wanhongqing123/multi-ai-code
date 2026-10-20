@@ -225,6 +225,10 @@ actor MaiChatAuthClient {
     private var usesLocalTestServer: Bool {
         ProcessInfo.processInfo.environment["MAICHAT_LOCAL_UI_PHONE"] != nil
     }
+    private var usesEphemeralTestStore: Bool {
+        usesLocalTestServer ||
+            ProcessInfo.processInfo.environment["MAICHAT_PROD_SYNC_TEST_ACCOUNT"] != nil
+    }
     #endif
     private var accessToken: String?
     private var accessExpiresAt = Date.distantPast
@@ -601,14 +605,14 @@ actor MaiChatAuthClient {
 
     private func storedRefreshToken() -> String {
         #if DEBUG && targetEnvironment(simulator)
-        if usesLocalTestServer { return localTestRefreshToken }
+        if usesEphemeralTestStore { return localTestRefreshToken }
         #endif
         return refreshStore.readSecretKey()
     }
 
     private func saveRefreshToken(_ token: String) throws {
         #if DEBUG && targetEnvironment(simulator)
-        if usesLocalTestServer {
+        if usesEphemeralTestStore {
             localTestRefreshToken = token
             return
         }

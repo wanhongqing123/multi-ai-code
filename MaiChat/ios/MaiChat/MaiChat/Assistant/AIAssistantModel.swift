@@ -1648,6 +1648,33 @@ final class AIAssistantModel: ObservableObject {
                          active: message.active, parts: parts).withoutReasoningText()
     }
 
+    private func remoteHistoryMessage(_ message: AIMessage) -> AIMessage {
+        var remainingText = 8 * 1024
+        let parts = message.parts.compactMap { original -> AIPart? in
+            var part = original
+            switch part.kind {
+            case "text":
+                guard remainingText > 0, let source = part.text else { return nil }
+                let excerpt = String(source.prefix(min(remainingText, 4096)))
+                remainingText -= excerpt.count
+                part.text = excerpt.count < source.count ?
+                    excerpt + "\n[后续内容请在所属设备查看]" : excerpt
+            case "tool":
+                part.input = nil
+                part.output = nil
+                part.error = nil
+            case "image", "video":
+                part.path = nil
+            default:
+                return nil
+            }
+            return part
+        }
+        return AIMessage(id: message.id, role: message.role,
+                         created: message.created, completed: message.completed,
+                         active: message.active, parts: parts)
+    }
+
     private func answerRemoteHistoryRequest(_ envelope: AIRemoteSessionTransport.Envelope) async {
         guard sessions.contains(where: { $0.id == envelope.sessionID }) else { return }
         do {
@@ -1657,16 +1684,7 @@ final class AIAssistantModel: ObservableObject {
                 limit: min(max(envelope.payload.limit ?? 10, 1), 20))
             let state = try await backend.snapshot(session: envelope.sessionID,
                                                    limit: 0, force: true)
-            let safePage = page.map { message -> AIMessage in
-                let parts = message.parts.map { original -> AIPart in
-                    var part = original
-                    if part.kind == "image" || part.kind == "video" { part.path = nil }
-                    return part
-                }
-                return AIMessage(id: message.id, role: message.role,
-                                 created: message.created, completed: message.completed,
-                                 active: message.active, parts: parts)
-            }
+            let safePage = page.map(remoteHistoryMessage)
             let encoded = try JSONEncoder().encode(safePage)
             let messages = try JSONSerialization.jsonObject(with: encoded)
             try await remoteTransport.sendPayload(to: envelope, kind: "history_page",
@@ -1675,8 +1693,11 @@ final class AIAssistantModel: ObservableObject {
                                                               with: JSONEncoder().encode(state.permissions ?? [])),
                                                           "questions": try JSONSerialization.jsonObject(
                                                               with: JSONEncoder().encode(state.questions ?? []))])
-            if visible && selectedRemote == nil { await refresh(force: true) }
-        } catch { /* The requester can retry a read without executing a model operation. */ }
+        } catch {
+            try? await remoteTransport.sendPayload(to: envelope, kind: "history_page",
+                                                   value: ["ok": false,
+                                                           "error": "所属设备无法读取这段会话"])
+        }
     }
 
     private func applyRemoteCommand(_ envelope: AIRemoteSessionTransport.Envelope) async {

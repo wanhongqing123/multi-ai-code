@@ -17,6 +17,7 @@
 #include "agent/DesktopSessionSyncHost.h"
 #include "agent/RemoteAgentPanel.h"
 #include "markdown/MarkdownView.h"
+#include "ui/ComposerTextEdit.h"
 
 class DesktopSessionSyncHostTest : public QObject {
     Q_OBJECT
@@ -27,6 +28,7 @@ private slots:
     void coordinatorRoutesPhoneCommandToTheExistingDesktopSession();
     void coordinatorReadsRemoteHistoryWithVerifiedChunks();
     void remotePanelShowsHistoryAndRoutesTextToOwner();
+    void remotePanelDoesNotRepeatPendingHistory();
     void sessionListKeepsLocalAndRemoteSelectionsSeparate();
 };
 
@@ -239,11 +241,17 @@ void DesktopSessionSyncHostTest::coordinatorReadsRemoteHistoryWithVerifiedChunks
     QCOMPARE(sentCommand.value(QStringLiteral("payload")).toObject()
                  .value(QStringLiteral("text")).toString(), QStringLiteral("继续"));
     const QString firstCommandId = sentCommand.value(QStringLiteral("client_message_id")).toString();
+    bool retryFinished = false;
     coordinator.sendRemoteCommand(catalog.first().toObject(),
                                   {{QStringLiteral("action"), QStringLiteral("prompt")},
                                    {QStringLiteral("text"), QStringLiteral("继续")}},
-                                  [&](const QJsonObject&, const QString& value) { error = value; });
+                                  [&](const QJsonObject&, const QString& value) {
+                                      error = value;
+                                      retryFinished = true;
+                                  });
     QCOMPARE(sentCommand.value(QStringLiteral("client_message_id")).toString(), firstCommandId);
+    QTRY_VERIFY_WITH_TIMEOUT(retryFinished, 5000);
+    QVERIFY(error.isEmpty());
 }
 
 void DesktopSessionSyncHostTest::remotePanelShowsHistoryAndRoutesTextToOwner() {
@@ -282,9 +290,14 @@ void DesktopSessionSyncHostTest::remotePanelShowsHistoryAndRoutesTextToOwner() {
     QVERIFY(transcript->contains(QStringLiteral("msg_1")));
     auto* composer = panel.findChild<QTextEdit*>(QStringLiteral("remoteAgentComposer"));
     QVERIFY(composer != nullptr);
+    QVERIFY(dynamic_cast<ComposerTextEdit*>(composer) != nullptr);
     composer->setPlainText(QStringLiteral("继续本机任务"));
     auto* send = panel.findChild<QPushButton*>(QStringLiteral("remoteAgentSendButton"));
     QVERIFY(send != nullptr && send->isEnabled());
+    QCOMPARE(send->parentWidget(), composer);
+    QVERIFY(!send->icon().isNull());
+    auto* attachment = panel.findChild<QPushButton*>(QStringLiteral("remoteAgentAttachButton"));
+    QVERIFY(attachment && !attachment->isEnabled());
     QTest::mouseClick(send, Qt::LeftButton);
     QCOMPARE(sent.value(QStringLiteral("action")).toString(), QStringLiteral("prompt"));
     QCOMPARE(sent.value(QStringLiteral("text")).toString(), QStringLiteral("继续本机任务"));
@@ -325,6 +338,26 @@ void DesktopSessionSyncHostTest::remotePanelShowsHistoryAndRoutesTextToOwner() {
     QCOMPARE(composer->toPlainText(), QString());
     if (qEnvironmentVariableIsSet("MAICHAT_REMOTE_PANEL_SCREENSHOT"))
         QVERIFY(panel.grab().save(qEnvironmentVariable("MAICHAT_REMOTE_PANEL_SCREENSHOT")));
+}
+
+void DesktopSessionSyncHostTest::remotePanelDoesNotRepeatPendingHistory() {
+    RemoteAgentPanel panel;
+    const QJsonObject remote{{QStringLiteral("id"), QStringLiteral("ses_remote")},
+                             {QStringLiteral("device_slot"), QStringLiteral("ios_phone")},
+                             {QStringLiteral("login_session_id"), QStringLiteral("phone_login")},
+                             {QStringLiteral("online"), true}};
+    int requests = 0;
+    panel.setHistoryHandler([&](const QJsonObject&, const QString&, int limit,
+                                RemoteAgentPanel::Completion completion) {
+        ++requests;
+        QCOMPARE(limit, 10);
+        completion({});
+    });
+    panel.show();
+    panel.openSession(remote);
+    QCOMPARE(requests, 1);
+    QTest::qWait(5500);
+    QCOMPARE(requests, 1);
 }
 
 void DesktopSessionSyncHostTest::sessionListKeepsLocalAndRemoteSelectionsSeparate() {

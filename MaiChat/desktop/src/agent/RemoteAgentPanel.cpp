@@ -3,16 +3,22 @@
 
 #include <QDateTime>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QJsonArray>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMap>
+#include <QMimeData>
+#include <QPainter>
+#include <QPixmap>
+#include <QPointer>
 #include <QPushButton>
-#include <QTextEdit>
 #include <QTimer>
 #include <QVBoxLayout>
 
 #include "markdown/MarkdownView.h"
+#include "ui/ComposerTextEdit.h"
 #include "ui/UiZoom.h"
 
 namespace {
@@ -49,6 +55,40 @@ QString messageText(const QJsonObject& message) {
     return text.join(QStringLiteral("\n\n"));
 }
 
+QIcon actionIcon(bool stop, const QColor& color) {
+    QPixmap pixmap(48, 48);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(QPen(color, 4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    if (stop) {
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(color);
+        painter.drawRoundedRect(QRectF(14, 14, 20, 20), 3, 3);
+    } else {
+        painter.drawLine(QPointF(24, 38), QPointF(24, 10));
+        painter.drawLine(QPointF(13, 21), QPointF(24, 10));
+        painter.drawLine(QPointF(35, 21), QPointF(24, 10));
+    }
+    return QIcon(pixmap);
+}
+
+class RemotePromptEdit final : public ComposerTextEdit {
+public:
+    explicit RemotePromptEdit(QWidget* parent) : ComposerTextEdit(parent) {}
+    std::function<void()> submit;
+
+protected:
+    void keyPressEvent(QKeyEvent* event) override {
+        const bool enter = event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter;
+        if (enter && !(event->modifiers() & Qt::ShiftModifier)) {
+            if (submit) submit();
+            return;
+        }
+        ComposerTextEdit::keyPressEvent(event);
+    }
+};
+
 }  // namespace
 
 struct RemoteAgentPanel::Runtime {
@@ -56,12 +96,13 @@ struct RemoteAgentPanel::Runtime {
     QLabel* device = nullptr;
     QLabel* status = nullptr;
     MarkdownView* view = nullptr;
-    QTextEdit* editor = nullptr;
+    RemotePromptEdit* editor = nullptr;
     QPushButton* send = nullptr;
     QPushButton* older = nullptr;
     QWidget* requests = nullptr;
     QVBoxLayout* requestsLayout = nullptr;
     QTimer refresh;
+    QTimer historyTimeout;
     QTimer commandTimeout;
     QMap<QString, QJsonObject> messages;
     QMap<QString, QString> rendered;
@@ -70,6 +111,8 @@ struct RemoteAgentPanel::Runtime {
     QString pendingDraft;
     bool pendingCommand = false;
     bool lastCommandRejected = false;
+    bool historyInFlight = false;
+    quint64 historyGeneration = 0;
     CommandHandler command;
     HistoryHandler history;
 };
@@ -115,35 +158,64 @@ RemoteAgentPanel::RemoteAgentPanel(QWidget* parent) : QWidget(parent), runtime_(
     runtime_->status->hide();
     layout->addWidget(runtime_->status);
     auto* composer = new QWidget(this);
-    auto* composerLayout = new QHBoxLayout(composer);
-    composerLayout->setContentsMargins(UiZoom::s(16), UiZoom::s(10), UiZoom::s(16), UiZoom::s(10));
-    runtime_->editor = new QTextEdit(composer);
+    composer->setObjectName(QStringLiteral("remoteAgentComposerPanel"));
+    auto* composerLayout = new QVBoxLayout(composer);
+    composerLayout->setContentsMargins(UiZoom::s(12), UiZoom::s(2),
+                                       UiZoom::s(12), UiZoom::s(8));
+    runtime_->editor = new RemotePromptEdit(composer);
     runtime_->editor->setObjectName(QStringLiteral("remoteAgentComposer"));
     runtime_->editor->setAcceptRichText(false);
     runtime_->editor->setPlaceholderText(QStringLiteral("向所属设备发送消息…"));
-    runtime_->editor->setFixedHeight(UiZoom::s(100));
-    runtime_->editor->setStyleSheet(QStringLiteral(
-        "QTextEdit{border:1px solid #cbd5e1;border-radius:10px;padding:10px;color:#172033;}"));
+    runtime_->editor->setFixedHeight(UiZoom::s(136));
+    runtime_->editor->setStyleSheet(UiZoom::scaleQss(QStringLiteral(
+        "QTextEdit#remoteAgentComposer{border:1px solid #d1d5db;border-radius:14px;"
+        "background:#ffffff;color:#172033;padding:10px 52px 10px 13px;}"
+        "QTextEdit#remoteAgentComposer:focus{border-color:#b5bbc4;}")));
+    QFont editorFont = runtime_->editor->font();
+    editorFont.setPixelSize(UiZoom::s(14));
+    runtime_->editor->setFont(editorFont);
+    runtime_->editor->setMimeHandler([](const QMimeData* mime) {
+        return mime && (mime->hasImage() || mime->hasUrls());
+    });
+    runtime_->editor->submit = [this] { sendOrStop(); };
+    auto* attachment = new QPushButton(QStringLiteral("+"), runtime_->editor);
+    attachment->setObjectName(QStringLiteral("remoteAgentAttachButton"));
+    attachment->setAccessibleName(QStringLiteral("跨设备暂不支持附件"));
+    attachment->setToolTip(attachment->accessibleName());
+    attachment->setFixedSize(UiZoom::s(36), UiZoom::s(36));
+    attachment->setStyleSheet(QStringLiteral(
+        "QPushButton{border:0;border-radius:18px;background:#f1f5f9;"
+        "color:#94a3b8;font-size:24px;}"));
+    attachment->setEnabled(false);
+    runtime_->editor->setLeadingAction(attachment);
     composerLayout->addWidget(runtime_->editor, 1);
-    runtime_->send = new QPushButton(QStringLiteral("发送"), composer);
+    runtime_->send = new QPushButton(runtime_->editor);
     runtime_->send->setObjectName(QStringLiteral("remoteAgentSendButton"));
-    runtime_->send->setFixedSize(UiZoom::s(64), UiZoom::s(40));
-    runtime_->send->setStyleSheet(QStringLiteral(
-        "QPushButton{background:#0b67b7;color:white;border-radius:8px;}"
-        "QPushButton:disabled{background:#e2e8f0;color:#98a2b3;}"));
-    composerLayout->addWidget(runtime_->send, 0, Qt::AlignBottom);
+    runtime_->send->setCursor(Qt::PointingHandCursor);
+    runtime_->send->setFixedSize(UiZoom::s(36), UiZoom::s(36));
+    runtime_->send->setIconSize(QSize(UiZoom::s(18), UiZoom::s(18)));
+    runtime_->editor->setCornerAction(runtime_->send);
     layout->addWidget(composer);
     connect(runtime_->send, &QPushButton::clicked, this, [this] { sendOrStop(); });
     connect(runtime_->editor, &QTextEdit::textChanged, this, [this] { updateControls(); });
     connect(runtime_->older, &QPushButton::clicked, this, [this] {
-        if (!runtime_->history || runtime_->oldest.isEmpty()) return;
-        const QJsonObject current = runtime_->session;
-        runtime_->history(current, runtime_->oldest, 20, [this, current](const QString& error) {
-            if (!error.isEmpty() && sessionKey(current) == sessionKey(runtime_->session)) showStatus(error, true);
-        });
+        if (!runtime_->oldest.isEmpty()) requestHistory(runtime_->oldest, 20);
     });
-    runtime_->refresh.setInterval(5000);
-    connect(&runtime_->refresh, &QTimer::timeout, this, [this] { refreshHistory(); });
+    runtime_->refresh.setInterval(30'000);
+    connect(&runtime_->refresh, &QTimer::timeout, this, [this] {
+        if (isVisible()) refreshHistory();
+    });
+    runtime_->historyTimeout.setSingleShot(true);
+    runtime_->historyTimeout.setInterval(30'000);
+    connect(&runtime_->historyTimeout, &QTimer::timeout, this, [this] {
+        if (!runtime_->historyInFlight) return;
+        runtime_->historyInFlight = false;
+        runtime_->older->setEnabled(true);
+        if (runtime_->messages.isEmpty()) {
+            runtime_->refresh.stop();
+            showStatus(QStringLiteral("会话读取超时，可重新进入会话重试"), true);
+        }
+    });
     runtime_->commandTimeout.setSingleShot(true);
     runtime_->commandTimeout.setInterval(30'000);
     connect(&runtime_->commandTimeout, &QTimer::timeout, this, [this] {
@@ -170,6 +242,9 @@ void RemoteAgentPanel::openSession(const QJsonObject& remote) {
     const QString previous = sessionKey(runtime_->session);
     const QString next = sessionKey(remote);
     if (previous != next) {
+        ++runtime_->historyGeneration;
+        runtime_->historyInFlight = false;
+        runtime_->historyTimeout.stop();
         if (!previous.isEmpty()) runtime_->drafts.insert(previous, runtime_->editor->toPlainText());
         runtime_->editor->setPlainText(runtime_->drafts.value(next));
         runtime_->messages.clear();
@@ -185,25 +260,46 @@ void RemoteAgentPanel::openSession(const QJsonObject& remote) {
     runtime_->session = remote;
     runtime_->refresh.start();
     updateControls();
+    if (previous == next && !runtime_->messages.isEmpty()) return;
     showStatus(remote.value(QStringLiteral("online")).toBool()
                    ? QStringLiteral("正在读取所属设备的会话…")
                    : QStringLiteral("所属设备离线；输入保留为草稿"));
-    refreshHistory();
+    requestHistory({}, 10);
 }
 
 void RemoteAgentPanel::updateSession(const QJsonObject& remote) {
     if (sessionKey(remote) != sessionKey(runtime_->session)) return;
     runtime_->session = remote;
     updateControls();
-    if (!remote.value(QStringLiteral("online")).toBool())
+    if (!remote.value(QStringLiteral("online")).toBool()) {
+        runtime_->historyInFlight = false;
+        runtime_->historyTimeout.stop();
+        runtime_->older->setEnabled(true);
         showStatus(QStringLiteral("所属设备离线；输入保留为草稿"));
+    }
 }
 
 void RemoteAgentPanel::refreshHistory() {
-    if (!runtime_->history || !runtime_->session.value(QStringLiteral("online")).toBool()) return;
+    requestHistory({}, 1);
+}
+
+void RemoteAgentPanel::requestHistory(const QString& before, int limit) {
+    if (!runtime_->history || runtime_->historyInFlight ||
+        !runtime_->session.value(QStringLiteral("online")).toBool()) return;
+    runtime_->historyInFlight = true;
+    runtime_->older->setEnabled(false);
+    runtime_->historyTimeout.start();
     const QJsonObject current = runtime_->session;
-    runtime_->history(current, {}, 10, [this, current](const QString& error) {
-        if (!error.isEmpty() && sessionKey(current) == sessionKey(runtime_->session)) showStatus(error, true);
+    const quint64 generation = ++runtime_->historyGeneration;
+    QPointer<RemoteAgentPanel> guard(this);
+    runtime_->history(current, before, limit, [guard, current, generation](const QString& error) {
+        if (!guard || generation != guard->runtime_->historyGeneration ||
+            sessionKey(current) != sessionKey(guard->runtime_->session) ||
+            error.isEmpty() || !guard->runtime_->historyInFlight) return;
+        guard->runtime_->historyInFlight = false;
+        guard->runtime_->historyTimeout.stop();
+        guard->runtime_->older->setEnabled(true);
+        if (guard->runtime_->messages.isEmpty()) guard->showStatus(error, true);
     });
 }
 
@@ -262,7 +358,17 @@ void RemoteAgentPanel::receivePayload(const QJsonObject& remote, const QString& 
         updateControls();
         return;
     }
-    if (!payload.value(QStringLiteral("ok")).toBool()) return;
+    if (kind == QStringLiteral("history_page")) {
+        runtime_->historyInFlight = false;
+        runtime_->historyTimeout.stop();
+        runtime_->older->setEnabled(true);
+    }
+    if (!payload.value(QStringLiteral("ok")).toBool()) {
+        if (kind == QStringLiteral("history_page"))
+            showStatus(payload.value(QStringLiteral("error")).toString(
+                           QStringLiteral("所属设备无法读取这段会话")), true);
+        return;
+    }
     const QJsonArray received = payload.value(QStringLiteral("messages")).toArray();
     for (const QJsonValue& value : received) {
         const QJsonObject message = value.toObject();
@@ -271,8 +377,11 @@ void RemoteAgentPanel::receivePayload(const QJsonObject& remote, const QString& 
     }
     if (!received.isEmpty() && kind == QStringLiteral("history_page")) {
         const QString oldest = received.last().toObject().value(QStringLiteral("id")).toString();
-        if (runtime_->oldest.isEmpty() || oldest < runtime_->oldest) runtime_->oldest = oldest;
-        runtime_->older->setVisible(received.size() >= 10);
+        const bool initial = runtime_->oldest.isEmpty();
+        if (initial || oldest < runtime_->oldest) {
+            runtime_->oldest = oldest;
+            runtime_->older->setVisible(received.size() >= (initial ? 10 : 20));
+        }
     }
     renderMessages();
     renderRequests(payload);
@@ -359,7 +468,20 @@ void RemoteAgentPanel::updateControls() {
     runtime_->device->setText(QStringLiteral("%1 · %2")
         .arg(runtime_->session.value(QStringLiteral("device_name")).toString(),
              online ? QStringLiteral("在线") : QStringLiteral("离线")));
-    runtime_->send->setText(busy ? QStringLiteral("停止") : QStringLiteral("发送"));
+    runtime_->send->setText({});
+    runtime_->send->setIcon(actionIcon(busy, busy ? QColor(QStringLiteral("#c24131")) :
+                                                QColor(Qt::white)));
+    runtime_->send->setToolTip(busy ? QStringLiteral("停止所属设备任务") :
+                                     QStringLiteral("发送到所属设备"));
+    runtime_->send->setAccessibleName(runtime_->send->toolTip());
+    runtime_->send->setStyleSheet(UiZoom::scaleQss(
+        busy ? QStringLiteral("QPushButton#remoteAgentSendButton{background:#fff5f3;"
+                              "border:1px solid #f0c3bd;border-radius:18px;padding:0;}"
+                              "QPushButton#remoteAgentSendButton:hover{background:#fee4e2;}")
+             : QStringLiteral("QPushButton#remoteAgentSendButton{background:#0b67b7;"
+                              "border:none;border-radius:18px;padding:0;}"
+                              "QPushButton#remoteAgentSendButton:hover{background:#095a9f;}"
+                              "QPushButton#remoteAgentSendButton:disabled{background:#b8d3e8;}")));
     runtime_->send->setEnabled(online && !runtime_->pendingCommand &&
                                (busy || !runtime_->editor->toPlainText().trimmed().isEmpty()));
 }

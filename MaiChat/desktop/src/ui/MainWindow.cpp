@@ -105,7 +105,6 @@
 #include <qt_windows.h>
 #endif
 
-#include "im/RemoteIMCredentialDefaults.h"
 #include "im/VideoFileMetadata.h"
 #include "markdown/MarkdownDocument.h"
 #include "markdown/MarkdownLabel.h"
@@ -130,7 +129,6 @@
 #include <QSvgRenderer>
 #include <QSystemTrayIcon>
 
-#include "im/RemoteIMCredentialDefaults.h"
 #include "remote/TrtcEngine.h"
 #include "ui/RemoteDesktopConsentDialog.h"
 #include "ui/RemoteDesktopProxyDialog.h"
@@ -2024,8 +2022,8 @@ void MainWindow::buildUi() {
   videoContentSplitter_->setChildrenCollapsible(false);
   videoContentSplitter_->setHandleWidth(UiZoom::s(7));
   videoContentSplitter_->setStyleSheet(QStringLiteral(
-      "QSplitter::handle { background: #dbe4ef; }"
-      "QSplitter::handle:hover { background: #9dc7e8; }"));
+      "QSplitter#videoContentSplitter::handle { background: #dbe4ef; }"
+      "QSplitter#videoContentSplitter::handle:hover { background: #9dc7e8; }"));
   contentLayout->addWidget(videoContentSplitter_);
   videoDockPane_ = new QWidget(videoContentSplitter_);
   videoDockPane_->setObjectName(QStringLiteral("videoDockPane"));
@@ -2676,7 +2674,7 @@ void MainWindow::buildUi() {
   auto *settingsTitle = new QLabel(QStringLiteral("设置"), settingsContent);
   settingsTitle->setObjectName(QStringLiteral("pageTitle"));
   auto *settingsSubtitle =
-      new QLabel(QStringLiteral("桌面端通过手机确认登录，并使用服务端签发的聊天凭据。"),
+      new QLabel(QStringLiteral("管理 MaiChat 账号和这台电脑的登录。"),
                  settingsContent);
   settingsSubtitle->setObjectName(QStringLiteral("settingsSubtitle"));
 
@@ -2714,18 +2712,6 @@ void MainWindow::buildUi() {
   settingsAccountValue_->setObjectName(QStringLiteral("settingsAccountValue"));
   settingsNicknameValue_ = new QLabel(settingsPanel);
   settingsNicknameValue_->setObjectName(QStringLiteral("settingsNicknameValue"));
-  settingsConnectionValue_ = new QLabel(settingsPanel);
-  settingsConnectionValue_->setObjectName(
-      QStringLiteral("settingsConnectionValue"));
-  settingsSdkAppIdValue_ = new QLabel(settingsPanel);
-  settingsSdkAppIdValue_->setObjectName(
-      QStringLiteral("settingsSdkAppIdValue"));
-  auto *signatureValue = new QLabel(QStringLiteral("服务端签发"), settingsPanel);
-  signatureValue->setObjectName(QStringLiteral("settingsSignatureValue"));
-  settingsAgentModelValue_ = new QLabel(settingsPanel);
-  settingsAgentModelValue_->setObjectName(
-      QStringLiteral("settingsAgentModelValue"));
-
   settingsPanelLayout->addWidget(
       createSettingsRow(QStringLiteral("当前账号"), settingsAccountValue_,
                         QStringLiteral("MaiChat 账号 ID；与昵称分别显示。")));
@@ -2775,23 +2761,10 @@ void MainWindow::buildUi() {
     });
   });
   settingsPanelLayout->addWidget(nicknameRow);
-  settingsPanelLayout->addWidget(
-      createSettingsRow(QStringLiteral("连接状态"), settingsConnectionValue_,
-                        QStringLiteral("显示当前 SDK 登录状态。")));
-  settingsPanelLayout->addWidget(
-      createSettingsRow(QStringLiteral("SDK AppID"), settingsSdkAppIdValue_,
-                        QStringLiteral("由账号服务提供。")));
-  settingsPanelLayout->addWidget(createSettingsRow(
-      QStringLiteral("登录签名"), signatureValue,
-      QStringLiteral("由账号服务签发，仅在运行期间使用。")));
-  auto *agentSettingsRow = createSettingsRow(
-      QStringLiteral("创作中心模型"), settingsAgentModelValue_,
-      QStringLiteral("在创作中心右上角的更多菜单切换，凭据由账号自动更新。"));
-  settingsPanelLayout->addWidget(agentSettingsRow);
   auto *logoutValue = new QLabel(QStringLiteral("当前电脑"), settingsPanel);
   auto *logoutRow = createSettingsRow(
       QStringLiteral("桌面登录"), logoutValue,
-      QStringLiteral("退出后此电脑需要重新用手机扫码登录。"));
+      QStringLiteral("退出后可用手机扫码或 MaiChat 账号密码重新登录。"));
   settingsLogoutButton_ = new QPushButton(QStringLiteral("退出登录 / 切换账号"), logoutRow);
   settingsLogoutButton_->setObjectName(QStringLiteral("settingsLogoutButton"));
   settingsLogoutButton_->setProperty("settingsRowButton", true);
@@ -2802,7 +2775,7 @@ void MainWindow::buildUi() {
     if (!logoutHandler_) return;
     if (!AppMessageDialog::confirm(
             this, QStringLiteral("退出登录"),
-            QStringLiteral("将撤销此电脑的登录并关闭 MaiChat。下次打开可用手机扫码登录。"),
+            QStringLiteral("将撤销此电脑的登录并关闭 MaiChat。下次打开可重新登录。"),
             QStringLiteral("退出登录"), true))
       return;
     settingsLogoutButton_->setEnabled(false);
@@ -3164,7 +3137,7 @@ void MainWindow::applyStyle() {
             color: #667085;
             font-size: 12px;
         }
-        #settingsAccountValue, #settingsConnectionValue, #settingsSdkAppIdValue, #settingsSignatureValue {
+        #settingsAccountValue {
             color: #172033;
             font-size: 14px;
             font-weight: 500;
@@ -3975,20 +3948,6 @@ void MainWindow::refreshSettings() {
   settingsProfileName_->setText(profileName.isEmpty() ? accountId : profileName);
   settingsProfileId_->setText(QStringLiteral("MaiChat ID  ") + accountId);
   static_cast<AccountAvatarLabel *>(settingsProfileAvatar_)->setProfile(app_.selfProfile());
-  settingsConnectionValue_->setText(
-      app_.isConnected() ? QStringLiteral("已连接") : QStringLiteral("未连接"));
-  settingsSdkAppIdValue_->setText(
-      QString::number(imSdkAppId_ > 0 ? imSdkAppId_ : RemoteIMCredentialDefaults::sdkAppId));
-  const AgentController::ModelConfig model = loadAgentModelConfig(modelApiKeys_);
-  if (!modelKeyError_.isEmpty()) {
-    settingsAgentModelValue_->setText(modelKeyError_);
-    return;
-  }
-  settingsAgentModelValue_->setText(
-      model.baseUrl.isEmpty() || model.apiKey.isEmpty()
-          ? (modelApiKeys_.isEmpty() ? QStringLiteral("正在连接模型") :
-             QStringLiteral("当前模型未开通"))
-          : QStringLiteral("%1 · 已配置").arg(model.modelName));
 }
 
 void MainWindow::setAccountModelKeys(QHash<QString, QString> keys,

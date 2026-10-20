@@ -113,6 +113,7 @@ private slots:
     void compactSplittersKeepDragTargets();
     void composerResizeHandleAlignsWithEditorBorder_data();
     void composerResizeHandleAlignsWithEditorBorder();
+    void composerResizeHandleBlendsIntoCanvas();
     void composerResizeCursorClearsAfterPointerLeaves();
     void composerResizeKeepsLatestMessageVisible();
     void rendersEmptyConversationState();
@@ -126,7 +127,7 @@ private slots:
     void composerDraftAndQuoteStayWithTheirContact();
     void attachmentDraftStaysWithItsContact();
     void contactsCurrentSelectionDoesNotLeaveContactsPage();
-    void settingsNavigationShowsAccountAndSdkDefaults();
+    void settingsNavigationShowsAccountWithoutDiagnostics();
     void settingsLogoutRequiresConfirmationAndCallsHandler();
     void agentSettingsUseInlineActionsWithoutModelDialog();
     void agentModelSwitchKeepsConversationAndRefreshesAccountKeys();
@@ -1788,6 +1789,26 @@ void MainWindowLayoutTest::composerResizeHandleAlignsWithEditorBorder() {
     QCOMPARE(editorOnScreen.center().x(), handleOnScreen.center().x());
 }
 
+void MainWindowLayoutTest::composerResizeHandleBlendsIntoCanvas() {
+    RemoteIMApplication app(QStringLiteral("desktop-user"),
+                            std::make_unique<FakeRemoteIMClient>());
+    MainWindow window(app);
+    window.resize(1400, 900);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto* splitter = window.findChild<QSplitter*>(QStringLiteral("messageComposerSplitter"));
+    QVERIFY(splitter != nullptr);
+    QSplitterHandle* handle = splitter->handle(1);
+    QVERIFY(handle != nullptr);
+    const QImage image = window.grab().toImage();
+    const qreal scale = image.devicePixelRatio();
+    const QPoint center = handle->mapTo(&window, handle->rect().center());
+    const QColor color = image.pixelColor(qRound(center.x() * scale),
+                                          qRound(center.y() * scale));
+    QVERIFY2(color.red() >= 250 && color.green() >= 250 && color.blue() >= 250,
+             qPrintable(QStringLiteral("Composer divider is visible: %1").arg(color.name())));
+}
+
 void MainWindowLayoutTest::composerResizeCursorClearsAfterPointerLeaves() {
     RemoteIMApplication app(QStringLiteral("desktop-user"),
                             std::make_unique<FakeRemoteIMClient>());
@@ -2002,7 +2023,7 @@ void MainWindowLayoutTest::contactsCurrentSelectionDoesNotLeaveContactsPage() {
     QCOMPARE(contentStack->currentWidget(), contactsPage);
 }
 
-void MainWindowLayoutTest::settingsNavigationShowsAccountAndSdkDefaults() {
+void MainWindowLayoutTest::settingsNavigationShowsAccountWithoutDiagnostics() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
     app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
@@ -2021,16 +2042,12 @@ void MainWindowLayoutTest::settingsNavigationShowsAccountAndSdkDefaults() {
     auto* nicknameValue = window.findChild<QLabel*>(QStringLiteral("settingsNicknameValue"));
     auto* nicknameButton = window.findChild<QPushButton*>(
         QStringLiteral("settingsNicknameButton"));
-    auto* connectionValue = window.findChild<QLabel*>(QStringLiteral("settingsConnectionValue"));
-    auto* sdkAppIdValue = window.findChild<QLabel*>(QStringLiteral("settingsSdkAppIdValue"));
     QVERIFY(settingsPage != nullptr);
     QVERIFY(contentStack != nullptr);
     QCOMPARE(contentStack->currentWidget(), settingsPage);
     QVERIFY(accountValue != nullptr);
     QVERIFY(nicknameValue != nullptr);
     QVERIFY(nicknameButton != nullptr);
-    QVERIFY(connectionValue != nullptr);
-    QVERIFY(sdkAppIdValue != nullptr);
     QCOMPARE(accountValue->text(), QStringLiteral("desktop-user"));
     QCOMPARE(nicknameValue->text(), QStringLiteral("昵称测试"));
     QVERIFY(nicknameButton->isEnabled());
@@ -2040,8 +2057,10 @@ void MainWindowLayoutTest::settingsNavigationShowsAccountAndSdkDefaults() {
         QCoreApplication::processEvents();
         QVERIFY(settingsPage->grab().save(QString::fromUtf8(capture)));
     }
-    QCOMPARE(connectionValue->text(), QStringLiteral("未连接"));
-    QCOMPARE(sdkAppIdValue->text(), QStringLiteral("1600148979"));
+    for (const char* name : {"settingsConnectionValue", "settingsSdkAppIdValue",
+                             "settingsSignatureValue", "settingsAgentModelValue"}) {
+        QVERIFY(settingsPage->findChild<QLabel*>(QString::fromLatin1(name)) == nullptr);
+    }
     // 设置页的值应是只读标签而非输入框；导航栏的搜索框是唯一合法的 QLineEdit。
     QVERIFY(settingsPage->findChildren<QLineEdit*>().isEmpty());
 }
@@ -2222,14 +2241,11 @@ void MainWindowLayoutTest::agentAccountKeysUpdateModelWithoutSavingSecrets() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
     MainWindow window(app);
-    auto* status = window.findChild<QLabel*>(QStringLiteral("settingsAgentModelValue"));
-    QVERIFY(status != nullptr);
 
     const QHash<QString, QString> accountKeys = {
         {QStringLiteral("glm"), QString(40, QLatin1Char('G'))},
         {QStringLiteral("deepseek"), QString(40, QLatin1Char('D'))}};
     window.setAccountModelKeys(accountKeys);
-    QCOMPARE(status->text(), QStringLiteral("glm-5.3 · 已配置"));
     auto* chip = window.findChild<QPushButton*>(QStringLiteral("agentModelChip"));
     QVERIFY(chip != nullptr);
     QCOMPARE(chip->text(), QStringLiteral("glm-5.3"));
@@ -2246,7 +2262,6 @@ void MainWindowLayoutTest::agentAccountKeysUpdateModelWithoutSavingSecrets() {
     QVERIFY(!settings.contains(QStringLiteral("agent/cloudServiceToken")));
 
     window.setAccountModelKeys({}, QStringLiteral("连接暂时失败"));
-    QVERIFY(status->text().contains(QStringLiteral("连接暂时失败")));
     chip = window.findChild<QPushButton*>(QStringLiteral("agentModelChip"));
     QVERIFY(chip != nullptr);
     QCOMPARE(chip->text(), QStringLiteral("模型连接失败"));
@@ -2268,10 +2283,8 @@ void MainWindowLayoutTest::agentPartialKeysRequireExplicitModelSelection() {
     MainWindow window(app);
     window.setAccountModelKeys({{QStringLiteral("deepseek"),
                              QString(40, QLatin1Char('D'))}});
-    auto* status = window.findChild<QLabel*>(QStringLiteral("settingsAgentModelValue"));
     auto* chip = window.findChild<QPushButton*>(QStringLiteral("agentModelChip"));
-    QVERIFY(status && chip);
-    QCOMPARE(status->text(), QStringLiteral("当前模型未开通"));
+    QVERIFY(chip);
     QCOMPARE(chip->text(), QStringLiteral("模型未开通"));
     QVERIFY(!chip->isEnabled());
     auto* panel = window.findChild<AgentChatPanel*>();
@@ -2289,7 +2302,8 @@ void MainWindowLayoutTest::agentPartialKeysRequireExplicitModelSelection() {
         QStringLiteral("agentModelOption-deepseek-flash"));
     QVERIFY(option);
     QTest::mouseClick(option, Qt::LeftButton);
-    QCOMPARE(status->text(), QStringLiteral("deepseek-flash · 已配置"));
+    QCOMPARE(chip->text(), QStringLiteral("deepseek-flash"));
+    QVERIFY(chip->isEnabled());
     QCOMPARE(window.findChild<AgentChatPanel*>(), panel);
     QVERIFY(window.findChild<QDialog*>(QStringLiteral("agentModelDialog")) == nullptr);
     settings.sync();
@@ -2384,9 +2398,9 @@ void MainWindowLayoutTest::agentSettingsIgnoresLegacyTokenStoreFailure() {
     MainWindow window(app);
     window.setAccountModelKeys({{QStringLiteral("glm"), QString(40, QLatin1Char('G'))},
                              {QStringLiteral("deepseek"), QString(40, QLatin1Char('D'))}});
-    auto* value = window.findChild<QLabel*>(QStringLiteral("settingsAgentModelValue"));
-    QVERIFY(value != nullptr);
-    QCOMPARE(value->text(), QStringLiteral("glm-5.3 · 已配置"));
+    auto* chip = window.findChild<QPushButton*>(QStringLiteral("agentModelChip"));
+    QVERIFY(chip);
+    QCOMPARE(chip->text(), QStringLiteral("glm-5.3"));
     QVERIFY(window.findChild<QPushButton*>(QStringLiteral("settingsAgentModelButton")) == nullptr);
     QVERIFY(window.findChild<QDialog*>(QStringLiteral("agentModelDialog")) == nullptr);
 }

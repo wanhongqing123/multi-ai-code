@@ -395,10 +395,7 @@ private:
     QLabel* settingsAccountValue_ = nullptr;
     QLabel* settingsNicknameValue_ = nullptr;
     QPushButton* settingsNicknameButton_ = nullptr;
-    QLabel* settingsConnectionValue_ = nullptr;
-    QLabel* settingsSdkAppIdValue_ = nullptr;
     QPushButton* settingsLogoutButton_ = nullptr;
-    QLabel* settingsAgentModelValue_ = nullptr;
     QScrollArea* messageScroll_ = nullptr;
     QSplitterHandle* messageComposerHandle_ = nullptr;
     QMetaObject::Connection composerResizeRangeConn_;

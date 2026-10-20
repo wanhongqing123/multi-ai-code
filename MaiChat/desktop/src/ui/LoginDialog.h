@@ -13,6 +13,7 @@ class QLabel;
 class QPushButton;
 class QLineEdit;
 class QCheckBox;
+class QWidget;
 
 class LoginDialog final : public QDialog {
     Q_OBJECT
@@ -34,6 +35,7 @@ private:
     void updateCountdown();
     void retry();
     void loginWithPassword();
+    void toggleLoginMode();
     void finishCancellation();
     void cancelRequest(const DesktopLoginRequest& request);
     void revokeUnwantedClaim(const QJsonObject& session);
@@ -58,10 +60,16 @@ private:
     QLabel* detailLabel_ = nullptr;
     QLabel* codeLabel_ = nullptr;
     QLabel* countdownLabel_ = nullptr;
+    QLabel* subtitleLabel_ = nullptr;
+    QLabel* passwordErrorLabel_ = nullptr;
     QPushButton* retryButton_ = nullptr;
     QPushButton* passwordButton_ = nullptr;
+    QPushButton* modeButton_ = nullptr;
+    QWidget* qrPane_ = nullptr;
+    QWidget* passwordPane_ = nullptr;
     QLineEdit* accountInput_ = nullptr;
     QLineEdit* passwordInput_ = nullptr;
     QCheckBox* agreementCheck_ = nullptr;
     bool passwordInFlight_ = false;
+    bool passwordMode_ = false;
 };

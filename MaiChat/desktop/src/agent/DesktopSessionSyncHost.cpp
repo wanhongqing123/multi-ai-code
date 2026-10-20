@@ -21,16 +21,14 @@ QJsonObject serializePart(const MaiMessagePart& part) {
     QJsonObject value{{QStringLiteral("id"), text(part.id)}};
     if (const auto* body = std::get_if<MaiTextPart>(&part.body)) {
         value.insert(QStringLiteral("kind"), QStringLiteral("text"));
-        value.insert(QStringLiteral("text"), text(body->text));
-    } else if (const auto* body = std::get_if<MaiReasoningPart>(&part.body)) {
+        const QString content = text(body->text);
+        value.insert(QStringLiteral("text"), content.size() > 4096 ?
+            content.left(4096) + QStringLiteral("\n[后续内容请在所属设备查看]") : content);
+    } else if (std::holds_alternative<MaiReasoningPart>(part.body)) {
         value.insert(QStringLiteral("kind"), QStringLiteral("reasoning"));
-        value.insert(QStringLiteral("text"), text(body->text));
     } else if (const auto* body = std::get_if<MaiToolPart>(&part.body)) {
         value.insert(QStringLiteral("kind"), QStringLiteral("tool"));
         value.insert(QStringLiteral("tool"), text(body->tool));
-        value.insert(QStringLiteral("input"), text(body->input));
-        value.insert(QStringLiteral("output"), text(body->output));
-        value.insert(QStringLiteral("error"), text(body->error));
         value.insert(QStringLiteral("state"), QString::fromLatin1(maiToolStateToString(body->state)));
     } else if (const auto* body = std::get_if<MaiImagePart>(&part.body)) {
         value.insert(QStringLiteral("kind"), QStringLiteral("image"));

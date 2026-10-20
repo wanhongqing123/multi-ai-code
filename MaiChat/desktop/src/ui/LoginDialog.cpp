@@ -1,12 +1,13 @@
-// 文件作用：桌面端扫码登录窗口，呈现二维码、核对码、倒计时和明确的登录结果状态。
+// 文件作用：桌面端登录窗口，在扫码和账号密码登录之间切换。
 // 类型关系：LoginDialog 继承 QDialog，使用 DesktopAuthClient 执行网络请求和凭据获取。
-// 对外边界：窗口只持有本次扫码 verifier；关闭或更换二维码后废弃旧请求，不提供手输账号入口。
+// 对外边界：切换或关闭扫码页时废弃旧 verifier，不接受过期的异步登录结果。
 // 直接依赖：Qt Widgets、DesktopAuthClient 和现有 MaiChat 视觉资源。
 #include "ui/LoginDialog.h"
 
 #include <QLabel>
 #include <QLineEdit>
 #include <QCheckBox>
+#include <QHBoxLayout>
 #include <QPixmap>
 #include <QPointer>
 #include <QPushButton>
@@ -33,15 +34,21 @@ LoginDialog::LoginDialog(DesktopAuthClient* auth, QWidget* parent)
     connect(&pollTimer_, &QTimer::timeout, this, &LoginDialog::pollClaim);
 }
 
-// 登录页保持原产品的居中白底结构。二维码、核对码与状态始终留在同一面板，
-// 网络回调只更新内容，不销毁窗口重建，因此等待和失败切换不会出现空帧。
+// 两种登录表单留在同一面板中，切换时只改变可见性，不重建已输入的内容。
 void LoginDialog::buildUi() {
     setWindowTitle(QStringLiteral("MaiChat"));
     setModal(true);
-    setMinimumSize(480, 705);
-    resize(520, 730);
+    setMinimumSize(480, 550);
+    resize(520, 610);
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(24, 24, 24, 24);
+    auto* modeRow = new QHBoxLayout;
+    modeRow->addStretch();
+    modeButton_ = new QPushButton(QStringLiteral("账号密码登录"), this);
+    modeButton_->setObjectName(QStringLiteral("loginModeButton"));
+    modeButton_->setCursor(Qt::PointingHandCursor);
+    modeRow->addWidget(modeButton_);
+    root->addLayout(modeRow);
     root->addStretch();
     auto* panel = new QWidget(this);
     panel->setObjectName(QStringLiteral("loginPanel"));
@@ -63,11 +70,17 @@ void LoginDialog::buildUi() {
     layout->addWidget(makeLabel(QStringLiteral("MaiChat"),
                                 QStringLiteral("welcomeTitle"), panel));
     layout->addSpacing(4);
-    layout->addWidget(makeLabel(QStringLiteral("使用手机扫码登录"),
-                                QStringLiteral("loginSubtitle"), panel));
+    subtitleLabel_ = makeLabel(QStringLiteral("使用手机扫码登录"),
+                               QStringLiteral("loginSubtitle"), panel);
+    layout->addWidget(subtitleLabel_);
     layout->addSpacing(14);
 
-    auto* frame = new QWidget(panel);
+    qrPane_ = new QWidget(panel);
+    qrPane_->setObjectName(QStringLiteral("loginQrPane"));
+    auto* qrPaneLayout = new QVBoxLayout(qrPane_);
+    qrPaneLayout->setContentsMargins(0, 0, 0, 0);
+    qrPaneLayout->setSpacing(0);
+    auto* frame = new QWidget(qrPane_);
     frame->setObjectName(QStringLiteral("qrFrame"));
     frame->setFixedSize(220, 220);
     auto* qrLayout = new QVBoxLayout(frame);
@@ -76,56 +89,65 @@ void LoginDialog::buildUi() {
                          QStringLiteral("loginQr"), frame);
     qrLabel_->setFixedSize(192, 192);
     qrLayout->addWidget(qrLabel_);
-    layout->addWidget(frame, 0, Qt::AlignHCenter);
-    layout->addSpacing(10);
-    codeLabel_ = makeLabel({}, QStringLiteral("loginCode"), panel);
-    layout->addWidget(codeLabel_);
-    layout->addSpacing(5);
-    statusLabel_ = makeLabel({}, QStringLiteral("loginStatus"), panel);
-    layout->addWidget(statusLabel_);
-    layout->addSpacing(4);
-    detailLabel_ = makeLabel({}, QStringLiteral("loginDetail"), panel);
+    qrPaneLayout->addWidget(frame, 0, Qt::AlignHCenter);
+    qrPaneLayout->addSpacing(10);
+    codeLabel_ = makeLabel({}, QStringLiteral("loginCode"), qrPane_);
+    qrPaneLayout->addWidget(codeLabel_);
+    qrPaneLayout->addSpacing(5);
+    statusLabel_ = makeLabel({}, QStringLiteral("loginStatus"), qrPane_);
+    qrPaneLayout->addWidget(statusLabel_);
+    qrPaneLayout->addSpacing(4);
+    detailLabel_ = makeLabel({}, QStringLiteral("loginDetail"), qrPane_);
     detailLabel_->setWordWrap(true);
-    layout->addWidget(detailLabel_);
-    countdownLabel_ = makeLabel({}, QStringLiteral("loginCountdown"), panel);
-    layout->addWidget(countdownLabel_);
-    layout->addSpacing(10);
-    retryButton_ = new QPushButton(QStringLiteral("更换二维码"), panel);
+    qrPaneLayout->addWidget(detailLabel_);
+    countdownLabel_ = makeLabel({}, QStringLiteral("loginCountdown"), qrPane_);
+    qrPaneLayout->addWidget(countdownLabel_);
+    qrPaneLayout->addSpacing(10);
+    retryButton_ = new QPushButton(QStringLiteral("更换二维码"), qrPane_);
     retryButton_->setObjectName(QStringLiteral("loginRetryButton"));
     retryButton_->setFixedHeight(42);
     retryButton_->setCursor(Qt::PointingHandCursor);
-    layout->addWidget(retryButton_);
-    layout->addSpacing(14);
-    layout->addWidget(makeLabel(QStringLiteral("或使用 MaiChat 账号密码登录"),
-                                QStringLiteral("accountLoginTitle"), panel));
-    layout->addSpacing(8);
-    accountInput_ = new QLineEdit(panel);
+    qrPaneLayout->addWidget(retryButton_);
+    layout->addWidget(qrPane_);
+
+    passwordPane_ = new QWidget(panel);
+    passwordPane_->setObjectName(QStringLiteral("loginPasswordPane"));
+    auto* passwordLayout = new QVBoxLayout(passwordPane_);
+    passwordLayout->setContentsMargins(0, 0, 0, 0);
+    passwordLayout->setSpacing(0);
+    accountInput_ = new QLineEdit(passwordPane_);
     accountInput_->setObjectName(QStringLiteral("accountLoginId"));
     accountInput_->setPlaceholderText(QStringLiteral("MaiChat 账号 ID"));
     accountInput_->setMaxLength(36);
-    layout->addWidget(accountInput_);
-    layout->addSpacing(7);
-    passwordInput_ = new QLineEdit(panel);
+    passwordLayout->addWidget(accountInput_);
+    passwordLayout->addSpacing(7);
+    passwordInput_ = new QLineEdit(passwordPane_);
     passwordInput_->setObjectName(QStringLiteral("accountLoginPassword"));
     passwordInput_->setPlaceholderText(QStringLiteral("密码"));
     passwordInput_->setEchoMode(QLineEdit::Password);
-    layout->addWidget(passwordInput_);
-    layout->addSpacing(8);
-    passwordButton_ = new QPushButton(QStringLiteral("账号密码登录"), panel);
+    passwordLayout->addWidget(passwordInput_);
+    passwordLayout->addSpacing(8);
+    passwordButton_ = new QPushButton(QStringLiteral("账号密码登录"), passwordPane_);
     passwordButton_->setObjectName(QStringLiteral("accountLoginButton"));
     passwordButton_->setFixedHeight(42);
-    layout->addWidget(passwordButton_);
-    layout->addSpacing(8);
-    agreementCheck_ = new QCheckBox(QStringLiteral("我已年满 14 周岁，并同意下方协议"), panel);
+    passwordLayout->addWidget(passwordButton_);
+    passwordErrorLabel_ = makeLabel({}, QStringLiteral("accountLoginError"), passwordPane_);
+    passwordErrorLabel_->setWordWrap(true);
+    passwordLayout->addWidget(passwordErrorLabel_);
+    passwordErrorLabel_->hide();
+    passwordLayout->addSpacing(12);
+    agreementCheck_ = new QCheckBox(QStringLiteral("我已年满 14 周岁，并同意下方协议"), passwordPane_);
     agreementCheck_->setObjectName(QStringLiteral("accountLoginAgreement"));
-    layout->addWidget(agreementCheck_);
+    passwordLayout->addWidget(agreementCheck_);
     auto* legal = makeLabel(QStringLiteral(
         "<a href='https://ichat.life/legal/terms.html'>用户协议</a> · "
         "<a href='https://ichat.life/legal/privacy.html'>隐私政策</a>"),
-        QStringLiteral("accountLoginLegal"), panel);
+        QStringLiteral("accountLoginLegal"), passwordPane_);
     legal->setOpenExternalLinks(true);
-    layout->addWidget(legal);
-    layout->addSpacing(6);
+    passwordLayout->addWidget(legal);
+    layout->addWidget(passwordPane_);
+    passwordPane_->hide();
+    layout->addSpacing(14);
     auto* cancelButton = new QPushButton(QStringLiteral("取消"), panel);
     cancelButton->setObjectName(QStringLiteral("loginCancelButton"));
     cancelButton->setFixedHeight(30);
@@ -133,6 +155,7 @@ void LoginDialog::buildUi() {
     layout->addWidget(cancelButton);
     root->addWidget(panel, 0, Qt::AlignHCenter);
     root->addStretch();
+    connect(modeButton_, &QPushButton::clicked, this, &LoginDialog::toggleLoginMode);
     connect(retryButton_, &QPushButton::clicked, this, &LoginDialog::retry);
     connect(passwordButton_, &QPushButton::clicked, this, &LoginDialog::loginWithPassword);
     connect(passwordInput_, &QLineEdit::returnPressed, this, &LoginDialog::loginWithPassword);
@@ -142,7 +165,10 @@ void LoginDialog::buildUi() {
 void LoginDialog::applyStyle() {
     setStyleSheet(QStringLiteral(R"(
         LoginDialog { background: #ffffff; }
-        #loginPanel, #loginLogo { background: transparent; }
+        #loginPanel, #loginLogo, #loginQrPane, #loginPasswordPane { background: transparent; }
+        #loginModeButton { background: transparent; border: 0; color: #0871ba;
+            font-size: 13px; padding: 6px 8px; }
+        #loginModeButton:hover { color: #005b9a; }
         #welcomeTitle { color: #0f172a; font-size: 20px; font-weight: 700; }
         #loginSubtitle { color: #64748b; font-size: 13px; }
         #qrFrame { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; }
@@ -150,7 +176,7 @@ void LoginDialog::applyStyle() {
         #loginCode { color: #334155; font-size: 15px; font-weight: 600; }
         #loginStatus { color: #0f172a; font-size: 15px; font-weight: 600; }
         #loginDetail, #loginCountdown { color: #64748b; font-size: 12px; }
-        #accountLoginTitle { color: #64748b; font-size: 13px; }
+        #accountLoginError { color: #d64242; font-size: 12px; }
         #accountLoginAgreement, #accountLoginLegal { color: #64748b; font-size: 12px; }
         #accountLoginId, #accountLoginPassword { border: 1px solid #d9e2ed;
             border-radius: 9px; padding: 8px 12px; min-height: 24px; background: #ffffff; }
@@ -237,6 +263,8 @@ void LoginDialog::setState(State state, const QString& detail) {
     detailLabel_->setVisible(!hint.isEmpty());
     retryButton_->setText(action);
     retryButton_->setEnabled(enabled);
+    modeButton_->setEnabled(state != State::Restoring && state != State::Connecting &&
+                            !passwordInFlight_);
     if (showQr) {
         QPixmap pixmap;
         pixmap.loadFromData(request_.qrPng, "PNG");
@@ -263,27 +291,59 @@ void LoginDialog::start() {
     });
 }
 
+void LoginDialog::toggleLoginMode() {
+    if (closing_ || passwordInFlight_ || state_ == State::Restoring ||
+        state_ == State::Connecting) return;
+    passwordMode_ = !passwordMode_;
+    qrPane_->setVisible(!passwordMode_);
+    passwordPane_->setVisible(passwordMode_);
+    subtitleLabel_->setText(passwordMode_ ? QStringLiteral("使用 MaiChat 账号密码登录") :
+                                            QStringLiteral("使用手机扫码登录"));
+    modeButton_->setText(passwordMode_ ? QStringLiteral("扫码登录") :
+                                        QStringLiteral("账号密码登录"));
+    passwordErrorLabel_->clear();
+    passwordErrorLabel_->hide();
+    if (!passwordMode_) {
+        requestQr();
+        return;
+    }
+    ++generation_;
+    qrRestartPending_ = false;
+    pollInFlight_ = false;
+    countdownTimer_.stop();
+    pollTimer_.stop();
+    const DesktopLoginRequest previous = request_;
+    request_ = {};
+    expiresAt_ = {};
+    cancelRequest(previous);
+    accountInput_->setFocus(Qt::OtherFocusReason);
+}
+
 void LoginDialog::loginWithPassword() {
-    if (!auth_ || closing_ || passwordInFlight_) return;
+    if (!auth_ || closing_ || passwordInFlight_ || !passwordMode_) return;
     const QString accountId = accountInput_->text().trimmed();
     const QString password = passwordInput_->text();
     if (accountId.isEmpty() || password.isEmpty()) {
-        setState(State::NetworkError, QStringLiteral("请输入 MaiChat 账号和密码"));
+        passwordErrorLabel_->setText(QStringLiteral("请输入 MaiChat 账号和密码"));
+        passwordErrorLabel_->show();
         return;
     }
     if (!agreementCheck_->isChecked()) {
-        setState(State::NetworkError, QStringLiteral("请先确认年龄并同意协议"));
+        passwordErrorLabel_->setText(QStringLiteral("请先确认年龄并同意协议"));
+        passwordErrorLabel_->show();
         return;
     }
     passwordInFlight_ = true;
     passwordButton_->setEnabled(false);
+    passwordButton_->setText(QStringLiteral("正在登录…"));
+    modeButton_->setEnabled(false);
+    passwordErrorLabel_->hide();
     const quint64 generation = ++generation_;
     const DesktopLoginRequest previous = request_;
     request_ = {};
     countdownTimer_.stop();
     pollTimer_.stop();
     cancelRequest(previous);
-    setState(State::Connecting);
     QPointer<LoginDialog> self(this);
     DesktopAuthClient* auth = auth_;
     auth_->loginWithPassword(accountId, password,
@@ -295,12 +355,18 @@ void LoginDialog::loginWithPassword() {
         self->passwordInFlight_ = false;
         self->passwordInput_->clear();
         self->passwordButton_->setEnabled(true);
+        self->passwordButton_->setText(QStringLiteral("账号密码登录"));
+        self->modeButton_->setEnabled(true);
         if (self->closing_ || generation != self->generation_) {
             if (ok) auth->logout({});
             return;
         }
         if (ok) self->accept();
-        else self->setState(State::NetworkError, error);
+        else {
+            self->passwordErrorLabel_->setText(error.isEmpty() ?
+                QStringLiteral("登录失败，请重试") : error);
+            self->passwordErrorLabel_->show();
+        }
     });
 }
 

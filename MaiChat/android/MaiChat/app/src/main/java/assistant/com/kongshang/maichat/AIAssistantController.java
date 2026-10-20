@@ -746,10 +746,28 @@ public final class AIAssistantController {
                     if (message == null) continue;
                     JSONArray parts = message.optJSONArray("parts");
                     if (parts == null) continue;
+                    int remainingText = 8192;
                     for (int j = 0; j < parts.length(); j++) {
                         JSONObject part = parts.optJSONObject(j);
-                        if (part != null && (part.optString("kind").equals("image") ||
-                            part.optString("kind").equals("video"))) part.remove("path");
+                        if (part == null) continue;
+                        part.remove("path");
+                        String kind = part.optString("kind");
+                        if (kind.equals("text")) {
+                            String source = part.optString("text");
+                            int count = source.codePointCount(0, source.length());
+                            int excerptCount = Math.min(remainingText, Math.min(count, 4096));
+                            if (excerptCount == 0) { part.remove("text"); continue; }
+                            String excerpt = source.substring(0, source.offsetByCodePoints(0, excerptCount));
+                            remainingText -= excerptCount;
+                            part.put("text", count > excerptCount ?
+                                excerpt + "\n[后续内容请在所属设备查看]" : excerpt);
+                        } else if (kind.equals("tool")) {
+                            part.remove("input");
+                            part.remove("output");
+                            part.remove("error");
+                        } else if (kind.equals("reasoning")) {
+                            part.remove("text");
+                        }
                     }
                 }
                 JSONObject state = invokeNativeAgent(new JSONObject().put("op", "snapshot")

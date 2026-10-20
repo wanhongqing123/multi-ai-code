@@ -135,10 +135,12 @@ void DesktopSessionSyncChannel::request(const QString& path, const QByteArray& m
         failed({}, QStringLiteral("设备同步连接中断"));
         return;
     }
-    QTimer::singleShot(15000, this, [this, id] {
+    const bool historyRead = body.value(QStringLiteral("kind")) == QStringLiteral("history_request");
+    QTimer::singleShot(15000, this, [this, id, historyRead] {
         if (!pending_.contains(id)) return;
         const Completion expired = pending_.take(id);
-        expired({}, QStringLiteral("操作状态未知，请先查看所属设备会话记录"));
+        expired({}, historyRead ? QStringLiteral("会话读取超时，请稍后重试") :
+                                   QStringLiteral("操作状态未知，请先查看所属设备会话记录"));
     });
 }
 

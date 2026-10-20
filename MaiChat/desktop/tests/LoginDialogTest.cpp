@@ -338,6 +338,7 @@ private slots:
     void liveProductionQrCreationAndCancellation();
     void usesCompactDesktopSize();
     void showsQrAndMaiChatPasswordLoginHierarchy();
+    void switchingToPasswordCancelsQrAndKeepsAccountDraft();
     void accountPasswordLoginUsesServerSignedCredential();
     void updatesMaiChatNicknameAndAllowsClearingIt();
     void displaysServerQrAndSendsMatchingVerifier();
@@ -383,7 +384,10 @@ void LoginDialogTest::liveProductionAccountPasswordLogin() {
     auto* secret = dialog.findChild<QLineEdit*>(QStringLiteral("accountLoginPassword"));
     auto* agreement = dialog.findChild<QCheckBox*>(QStringLiteral("accountLoginAgreement"));
     auto* submit = dialog.findChild<QPushButton*>(QStringLiteral("accountLoginButton"));
+    auto* mode = dialog.findChild<QPushButton*>(QStringLiteral("loginModeButton"));
     QVERIFY(account && secret && agreement && submit);
+    QVERIFY(mode);
+    mode->click();
     account->setText(accountId);
     secret->setText(password);
     agreement->setChecked(true);
@@ -441,6 +445,8 @@ void LoginDialogTest::usesCompactDesktopSize() {
 
 void LoginDialogTest::showsQrAndMaiChatPasswordLoginHierarchy() {
     LoginDialog dialog;
+    dialog.show();
+    QCoreApplication::processEvents();
 
     auto* loginPanel = dialog.findChild<QWidget*>(QStringLiteral("loginPanel"));
     auto* logo = dialog.findChild<QLabel*>(QStringLiteral("loginLogo"));
@@ -449,6 +455,9 @@ void LoginDialogTest::showsQrAndMaiChatPasswordLoginHierarchy() {
     auto* status = dialog.findChild<QLabel*>(QStringLiteral("loginStatus"));
     auto* retryButton = dialog.findChild<QPushButton*>(QStringLiteral("loginRetryButton"));
     auto* cancelButton = dialog.findChild<QPushButton*>(QStringLiteral("loginCancelButton"));
+    auto* modeButton = dialog.findChild<QPushButton*>(QStringLiteral("loginModeButton"));
+    auto* qrPane = dialog.findChild<QWidget*>(QStringLiteral("loginQrPane"));
+    auto* passwordPane = dialog.findChild<QWidget*>(QStringLiteral("loginPasswordPane"));
 
     QVERIFY(loginPanel != nullptr);
     QVERIFY(logo != nullptr);
@@ -457,6 +466,7 @@ void LoginDialogTest::showsQrAndMaiChatPasswordLoginHierarchy() {
     QVERIFY(status != nullptr);
     QVERIFY(retryButton != nullptr);
     QVERIFY(cancelButton != nullptr);
+    QVERIFY(modeButton && qrPane && passwordPane);
     QVERIFY(dialog.findChild<QWidget*>(QStringLiteral("introPane")) == nullptr);
     QCOMPARE(dialog.windowTitle(), QStringLiteral("MaiChat"));
     const QPixmap logoPixmap = logo->pixmap(Qt::ReturnByValue);
@@ -467,9 +477,22 @@ void LoginDialogTest::showsQrAndMaiChatPasswordLoginHierarchy() {
     QVERIFY(!status->isVisible());
     QVERIFY(!retryButton->isEnabled());
     QCOMPARE(cancelButton->text(), QStringLiteral("取消"));
+    QCOMPARE(modeButton->text(), QStringLiteral("账号密码登录"));
+    QVERIFY(qrPane->isVisible());
+    QVERIFY(!passwordPane->isVisible());
     QVERIFY(dialog.findChild<QLineEdit*>(QStringLiteral("accountLoginId")) != nullptr);
     QVERIFY(dialog.findChild<QLineEdit*>(QStringLiteral("accountLoginPassword")) != nullptr);
     QVERIFY(dialog.findChild<QPushButton*>(QStringLiteral("accountLoginButton")) != nullptr);
+    modeButton->click();
+    QCOMPARE(modeButton->text(), QStringLiteral("扫码登录"));
+    QVERIFY(!qrPane->isVisible());
+    QVERIFY(passwordPane->isVisible());
+    if (qEnvironmentVariableIsSet("MAICHAT_CAPTURE_PASSWORD_LOGIN"))
+        QVERIFY(dialog.grab().save(qEnvironmentVariable("MAICHAT_CAPTURE_PASSWORD_LOGIN")));
+    modeButton->click();
+    QCOMPARE(modeButton->text(), QStringLiteral("账号密码登录"));
+    QVERIFY(qrPane->isVisible());
+    QVERIFY(!passwordPane->isVisible());
 }
 
 void LoginDialogTest::accountPasswordLoginUsesServerSignedCredential() {
@@ -481,7 +504,10 @@ void LoginDialogTest::accountPasswordLoginUsesServerSignedCredential() {
     auto* password = dialog.findChild<QLineEdit*>(QStringLiteral("accountLoginPassword"));
     auto* agreement = dialog.findChild<QCheckBox*>(QStringLiteral("accountLoginAgreement"));
     auto* submit = dialog.findChild<QPushButton*>(QStringLiteral("accountLoginButton"));
+    auto* mode = dialog.findChild<QPushButton*>(QStringLiteral("loginModeButton"));
     QVERIFY(account && password && agreement && submit);
+    QVERIFY(mode);
+    mode->click();
     account->setText(QStringLiteral("test_account"));
     password->setText(QStringLiteral("test-account-password-123456"));
     QSignalSpy accepted(&dialog, &QDialog::accepted);
@@ -495,6 +521,28 @@ void LoginDialogTest::accountPasswordLoginUsesServerSignedCredential() {
     QVERIFY(server.passwordLoginAgeConfirmed);
     QCOMPARE(auth.maiChatAccountId(), QStringLiteral("m-auth-test"));
     QCOMPARE(auth.authenticatedUserId(), QStringLiteral("im-auth-test"));
+}
+
+void LoginDialogTest::switchingToPasswordCancelsQrAndKeepsAccountDraft() {
+    FakeQrServer server;
+    DesktopAuthClient auth(nullptr, server.url(), false);
+    LoginDialog dialog(&auth);
+    dialog.show();
+    dialog.start();
+    QTRY_COMPARE_WITH_TIMEOUT(server.qrRequestCount, 1, 5000);
+    auto* status = dialog.findChild<QLabel*>(QStringLiteral("loginStatus"));
+    QVERIFY(status);
+    QTRY_COMPARE_WITH_TIMEOUT(status->text(), QStringLiteral("等待手机扫码并确认"), 5000);
+    auto* mode = dialog.findChild<QPushButton*>(QStringLiteral("loginModeButton"));
+    auto* account = dialog.findChild<QLineEdit*>(QStringLiteral("accountLoginId"));
+    QVERIFY(mode && account);
+    mode->click();
+    QTRY_COMPARE_WITH_TIMEOUT(server.cancelRequestCount, 1, 5000);
+    account->setText(QStringLiteral("test_account"));
+    mode->click();
+    QTRY_COMPARE_WITH_TIMEOUT(server.qrRequestCount, 2, 5000);
+    mode->click();
+    QCOMPARE(account->text(), QStringLiteral("test_account"));
 }
 
 void LoginDialogTest::updatesMaiChatNicknameAndAllowsClearingIt() {

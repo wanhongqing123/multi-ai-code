@@ -27,6 +27,7 @@ private:
     struct Runtime;
     std::unique_ptr<Runtime> runtime_;
     void refreshHistory();
+    void requestHistory(const QString& before, int limit);
     void sendOrStop();
     void sendAction(const QJsonObject& action, bool clearDraft);
     void renderMessages();

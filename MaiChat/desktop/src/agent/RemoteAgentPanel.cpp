@@ -2,7 +2,6 @@
 #include "agent/RemoteAgentPanel.h"
 
 #include <QDateTime>
-#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QJsonArray>
@@ -94,7 +93,6 @@ protected:
 
 struct RemoteAgentPanel::Runtime {
     QJsonObject session;
-    QLabel* device = nullptr;
     QLabel* status = nullptr;
     QLabel* thinking = nullptr;
     MarkdownView* view = nullptr;
@@ -131,23 +129,26 @@ RemoteAgentPanel::RemoteAgentPanel(QWidget* parent) : QWidget(parent), runtime_(
     layout->setSpacing(0);
     auto* header = new QWidget(this);
     header->setObjectName(QStringLiteral("remoteAgentHeader"));
-    header->setFixedHeight(UiZoom::s(54));
-    header->setStyleSheet(QStringLiteral(
-        "QWidget#remoteAgentHeader{border-bottom:1px solid #e2e8f0;}"));
-    auto* headerLayout = new QGridLayout(header);
+    header->setFixedHeight(UiZoom::s(53));
+    auto* headerLayout = new QHBoxLayout(header);
     headerLayout->setContentsMargins(UiZoom::s(16), 0, UiZoom::s(16), 0);
-    headerLayout->setColumnStretch(0, 1);
-    headerLayout->setColumnStretch(2, 1);
+    headerLayout->addSpacing(UiZoom::s(34));
     auto* title = new QLabel(QStringLiteral("创作中心"), header);
+    title->setObjectName(QStringLiteral("remoteAgentHeaderTitle"));
     QFont titleFont = title->font();
     titleFont.setPixelSize(UiZoom::s(18));
     titleFont.setBold(true);
     title->setFont(titleFont);
-    headerLayout->addWidget(title, 0, 1, Qt::AlignCenter);
-    runtime_->device = new QLabel(header);
-    runtime_->device->setStyleSheet(QStringLiteral("color:#667085;"));
-    headerLayout->addWidget(runtime_->device, 0, 2, Qt::AlignRight | Qt::AlignVCenter);
+    title->setAlignment(Qt::AlignCenter);
+    headerLayout->addWidget(title, 1);
+    headerLayout->addSpacing(UiZoom::s(34));
     layout->addWidget(header);
+    auto* divider = new QWidget(this);
+    divider->setObjectName(QStringLiteral("remoteAgentHeaderDivider"));
+    divider->setFixedHeight(qMax(1, UiZoom::s(1)));
+    divider->setStyleSheet(QStringLiteral(
+        "QWidget#remoteAgentHeaderDivider{background:#e2e8f0;}"));
+    layout->addWidget(divider);
 
     runtime_->older = new QPushButton(QStringLiteral("查看更早消息"), this);
     runtime_->older->setFlat(true);
@@ -543,9 +544,6 @@ void RemoteAgentPanel::renderRequests(const QJsonObject& payload) {
 void RemoteAgentPanel::updateControls() {
     const bool online = runtime_->session.value(QStringLiteral("online")).toBool();
     const bool busy = runtime_->session.value(QStringLiteral("busy")).toBool();
-    runtime_->device->setText(QStringLiteral("%1 · %2")
-        .arg(runtime_->session.value(QStringLiteral("device_name")).toString(),
-             online ? QStringLiteral("在线") : QStringLiteral("离线")));
     runtime_->send->setText({});
     runtime_->send->setIcon(actionIcon(busy, busy ? QColor(QStringLiteral("#c24131")) :
                                                 QColor(Qt::white)));

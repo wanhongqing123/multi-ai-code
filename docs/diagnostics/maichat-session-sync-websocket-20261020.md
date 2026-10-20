@@ -23,7 +23,9 @@
   WSS 结果。
 - Android Debug APK 的 arm64 与 armeabi-v7a 原生构建、Debug/Release Java、
   146 项单测通过。本机 Android 37 模拟器通过 JNI 到带测试 CA 的 WSS 实际握手；
-  远端会话打开失败保留草稿的设备测试也通过。未操作 house 的 OPPO 真机。
+  远端会话打开失败保留草稿的设备测试也通过。随后用无活跃会话的已导入测试账号，
+  同一模拟器经正式系统 CA 和生产域名完成 JNI/WSS 登录握手 1/1；测试账号随即
+  退出为 200。未操作 house 的 OPPO 真机，也未在 Android 模拟器发送模型请求。
 - Windows 从同一源码用 VS2019/Qt 5.15.2 增量重链主程序及相关测试成功；
   Session 宿主与登录测试 CTest 2/2 通过。现装 Windows App 未替换。
 

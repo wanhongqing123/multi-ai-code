@@ -9,9 +9,11 @@ import android.os.Bundle;
 import android.util.Base64;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
+import java.io.File;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -22,11 +24,21 @@ public class MaiSessionSyncSocketInstrumentedTest {
         Bundle arguments = InstrumentationRegistry.getArguments();
         String token = arguments.getString("syncToken", "");
         String certificateBase64 = arguments.getString("syncCertificate", "");
+        boolean production = "1".equals(arguments.getString("syncProduction", ""));
         Assume.assumeTrue("Local WSS fixture credentials are required",
-            !token.isEmpty() && !certificateBase64.isEmpty());
-        String certificate = new String(Base64.decode(certificateBase64, Base64.DEFAULT),
-            StandardCharsets.UTF_8);
+            !token.isEmpty() && (production || !certificateBase64.isEmpty()));
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        String certificate;
+        if (production) {
+            File roots = new File(context.getCacheDir(), "session-sync-test-roots.pem");
+            try {
+                SystemCertificateBundle.writeCurrentPem(roots);
+                certificate = new String(Files.readAllBytes(roots.toPath()), StandardCharsets.UTF_8);
+            } finally { roots.delete(); }
+        } else {
+            certificate = new String(Base64.decode(certificateBase64, Base64.DEFAULT),
+                StandardCharsets.UTF_8);
+        }
         System.loadLibrary("maichat_agent");
         AndroidSessionSyncCoordinator coordinator =
             new AndroidSessionSyncCoordinator(context, null, null);
@@ -44,7 +56,8 @@ public class MaiSessionSyncSocketInstrumentedTest {
         handleField.setLong(coordinator, handle);
         try {
             assertTrue((boolean) start.invoke(coordinator, handle,
-                "wss://10.0.2.2:18191/v1/session-sync/ws", token, certificate, ""));
+                production ? "wss://ichat.life/api/v1/session-sync/ws" :
+                    "wss://10.0.2.2:18191/v1/session-sync/ws", token, certificate, ""));
             long deadline = System.currentTimeMillis() + 10000;
             while (System.currentTimeMillis() < deadline &&
                    !connectedField.getBoolean(coordinator)) Thread.sleep(100);

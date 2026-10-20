@@ -66,7 +66,7 @@ public:
 
     explicit DesktopAuthClient(QObject* parent = nullptr,
                                QUrl baseUrl = QUrl(QStringLiteral("https://ichat.life/api/v1/")),
-                               bool useSecureStore = true);
+                               bool useSecureStore = false);
     ~DesktopAuthClient() override;
 
     void restore(Completion completion);

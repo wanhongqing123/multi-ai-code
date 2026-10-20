@@ -60,7 +60,6 @@ private:
     QLabel* detailLabel_ = nullptr;
     QLabel* codeLabel_ = nullptr;
     QLabel* countdownLabel_ = nullptr;
-    QLabel* subtitleLabel_ = nullptr;
     QLabel* passwordErrorLabel_ = nullptr;
     QPushButton* retryButton_ = nullptr;
     QPushButton* passwordButton_ = nullptr;

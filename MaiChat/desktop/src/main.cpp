@@ -18,7 +18,6 @@
 #include "auth/DesktopAuthClient.h"
 #include "agent/DesktopSessionSyncCoordinator.h"
 #include "agent/DesktopSessionSyncChannel.h"
-#include "auth/SecureRefreshTokenStore.h"
 #include "logging/AppLog.h"
 #include "platform/DesktopRemoteIMClientFactory.h"
 #include "storage/LocalMessageDatabase.h"
@@ -100,8 +99,6 @@ int main(int argc, char* argv[]) {
                                 "agent/cloudServiceTokenMigrationFailed"})
             settings.remove(QLatin1String(key));
         settings.sync();
-        SecureRefreshTokenStore(QStringLiteral("com.maichat.desktop.model"),
-                                QStringLiteral("cloud_service_token")).remove();
     }
 #ifdef MAICHAT_VERSION
     QApplication::setApplicationVersion(QStringLiteral(MAICHAT_VERSION));

@@ -38,8 +38,8 @@ LoginDialog::LoginDialog(DesktopAuthClient* auth, QWidget* parent)
 void LoginDialog::buildUi() {
     setWindowTitle(QStringLiteral("MaiChat"));
     setModal(true);
-    setMinimumSize(480, 550);
-    resize(520, 610);
+    setMinimumSize(480, 520);
+    resize(520, 560);
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(24, 24, 24, 24);
     auto* modeRow = new QHBoxLayout;
@@ -66,14 +66,7 @@ void LoginDialog::buildUi() {
     logoPixmap.setDevicePixelRatio(dpr);
     logo->setPixmap(logoPixmap);
     layout->addWidget(logo, 0, Qt::AlignHCenter);
-    layout->addSpacing(8);
-    layout->addWidget(makeLabel(QStringLiteral("MaiChat"),
-                                QStringLiteral("welcomeTitle"), panel));
-    layout->addSpacing(4);
-    subtitleLabel_ = makeLabel(QStringLiteral("使用手机扫码登录"),
-                               QStringLiteral("loginSubtitle"), panel);
-    layout->addWidget(subtitleLabel_);
-    layout->addSpacing(14);
+    layout->addSpacing(20);
 
     qrPane_ = new QWidget(panel);
     qrPane_->setObjectName(QStringLiteral("loginQrPane"));
@@ -169,8 +162,6 @@ void LoginDialog::applyStyle() {
         #loginModeButton { background: transparent; border: 0; color: #0871ba;
             font-size: 13px; padding: 6px 8px; }
         #loginModeButton:hover { color: #005b9a; }
-        #welcomeTitle { color: #0f172a; font-size: 20px; font-weight: 700; }
-        #loginSubtitle { color: #64748b; font-size: 13px; }
         #qrFrame { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; }
         #loginQr { color: #64748b; font-size: 14px; border: 0; }
         #loginCode { color: #334155; font-size: 15px; font-weight: 600; }
@@ -297,8 +288,6 @@ void LoginDialog::toggleLoginMode() {
     passwordMode_ = !passwordMode_;
     qrPane_->setVisible(!passwordMode_);
     passwordPane_->setVisible(passwordMode_);
-    subtitleLabel_->setText(passwordMode_ ? QStringLiteral("使用 MaiChat 账号密码登录") :
-                                            QStringLiteral("使用手机扫码登录"));
     modeButton_->setText(passwordMode_ ? QStringLiteral("扫码登录") :
                                         QStringLiteral("账号密码登录"));
     passwordErrorLabel_->clear();

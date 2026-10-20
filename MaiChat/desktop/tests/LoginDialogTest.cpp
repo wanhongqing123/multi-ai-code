@@ -337,6 +337,7 @@ private slots:
     void liveProductionMainModelKeyGate();
     void liveProductionQrCreationAndCancellation();
     void usesCompactDesktopSize();
+    void defaultDesktopLoginStartsQrWithoutStoredToken();
     void showsQrAndMaiChatPasswordLoginHierarchy();
     void switchingToPasswordCancelsQrAndKeepsAccountDraft();
     void accountPasswordLoginUsesServerSignedCredential();
@@ -443,6 +444,16 @@ void LoginDialogTest::usesCompactDesktopSize() {
     QVERIFY(dialog.rect().contains(cancel->mapTo(&dialog, cancel->rect().bottomRight())));
 }
 
+void LoginDialogTest::defaultDesktopLoginStartsQrWithoutStoredToken() {
+    FakeQrServer server;
+    DesktopAuthClient auth(nullptr, server.url());
+    LoginDialog dialog(&auth);
+    dialog.show();
+    dialog.start();
+    QTRY_COMPARE_WITH_TIMEOUT(server.qrRequestCount, 1, 5000);
+    QCOMPARE(server.refreshCount, 0);
+}
+
 void LoginDialogTest::showsQrAndMaiChatPasswordLoginHierarchy() {
     LoginDialog dialog;
     dialog.show();
@@ -450,7 +461,6 @@ void LoginDialogTest::showsQrAndMaiChatPasswordLoginHierarchy() {
 
     auto* loginPanel = dialog.findChild<QWidget*>(QStringLiteral("loginPanel"));
     auto* logo = dialog.findChild<QLabel*>(QStringLiteral("loginLogo"));
-    auto* title = dialog.findChild<QLabel*>(QStringLiteral("welcomeTitle"));
     auto* qr = dialog.findChild<QLabel*>(QStringLiteral("loginQr"));
     auto* status = dialog.findChild<QLabel*>(QStringLiteral("loginStatus"));
     auto* retryButton = dialog.findChild<QPushButton*>(QStringLiteral("loginRetryButton"));
@@ -461,7 +471,6 @@ void LoginDialogTest::showsQrAndMaiChatPasswordLoginHierarchy() {
 
     QVERIFY(loginPanel != nullptr);
     QVERIFY(logo != nullptr);
-    QVERIFY(title != nullptr);
     QVERIFY(qr != nullptr);
     QVERIFY(status != nullptr);
     QVERIFY(retryButton != nullptr);
@@ -471,7 +480,8 @@ void LoginDialogTest::showsQrAndMaiChatPasswordLoginHierarchy() {
     QCOMPARE(dialog.windowTitle(), QStringLiteral("MaiChat"));
     const QPixmap logoPixmap = logo->pixmap(Qt::ReturnByValue);
     QVERIFY(!logoPixmap.isNull());
-    QCOMPARE(title->text(), QStringLiteral("MaiChat"));
+    QVERIFY(dialog.findChild<QLabel*>(QStringLiteral("welcomeTitle")) == nullptr);
+    QVERIFY(dialog.findChild<QLabel*>(QStringLiteral("loginSubtitle")) == nullptr);
     QCOMPARE(status->text(), QStringLiteral("正在生成二维码"));
     QCOMPARE(qr->text(), status->text());
     QVERIFY(!status->isVisible());

@@ -73,17 +73,21 @@
   8880 B、SHA-256
   `b619ca34d2fec98799d4f87fb1096bbdd7f80ee52899046661a089587ac0a56a`，
   完整重现 WebSocket++ 与独立 Asio 的许可文本。
-- iOS 2.2.3 (91) 已在模拟器通过正常 App 的假 Mac 历史与无付费文字流程，
-  并用用户设备的开发描述文件签成真机 App；本地开发 IPA SHA-256
-  `ec7b59d758c08b7d92132fc49326a4aaef9fbb9120f3fe55eaa2b5725d60990c`。
-  `codesign --verify --deep --strict` 通过。iPhone 在 Xcode 中持续为
-  `unavailable`，因此尚未安装或做 iOS 真机生产 WSS 验收；该私有设备描述文件
-  不适合公开发布，且有效期至 2026-10-24。
+- iOS 2.2.3 (91) 已保留数据安装到用户 iPhone。按正确的对外 MaiChat ID
+  查询生产同步库，创作中心前台 iPhone WSS 在线、最近上报约 5–11 秒且
+  目录有 12 个本机会话。独立模拟器的正常 App 还通过生产账号 WSS
+  假 Mac 目录和固定历史的只读测试。用户要求冷启动恢复登录就连接，
+  补丁见 `docs/diagnostics/maichat-ios-session-websocket-restore-20261020.md`。
+  修复版 iOS 2.2.3 (92) 已签名，本地开发 IPA SHA-256
+  `251dc8399f79e05dfd1fb74ae2c8252852ca53b05616236fbdda6b833e0c92ac`；
+  iPhone 再次显示 `unavailable`，暂未安装修复版。该私有设备描述文件
+  不适合公开发布，有效期至 2026-10-24。
 
 ## 尚未验证
 
 生产环境尚未由升级后的两台真实产品设备对同一个真实所属设备 Session 完成
 查看、发操作、执行结果的全链路验收；Android 真机读到的是无付费假 Mac 的
-固定历史。iOS 真机安装等待设备重新连接。跨设备媒体、离线历史缓存等原方案
+固定历史。iOS 2.2.3 (92) 的冷启动真机验收等待设备重新连接。
+跨设备媒体、离线历史缓存等原方案
 未完成项亦未因改用 WebSocket 而自动具备。旧客户端在过渡期仍使用服务端
 保留的 HTTPS 接口。

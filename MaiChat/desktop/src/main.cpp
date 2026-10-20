@@ -92,13 +92,17 @@ int main(int argc, char* argv[]) {
     // 与其它应用的数据树分开。
     QApplication::setApplicationName(QStringLiteral("Desktop IM"));
     QApplication::setOrganizationName(QStringLiteral("MaiChat"));
-    QSettings settings;
-    for (const char* key : {"agent/cloudServiceUrl", "agent/cloudServiceToken",
-                            "agent/cloudServiceTokenMigrationFailed"})
-        settings.remove(QLatin1String(key));
-    settings.sync();
-    SecureRefreshTokenStore(QStringLiteral("com.maichat.desktop.model"),
-                            QStringLiteral("cloud_service_token")).remove();
+    const QStringList arguments = QCoreApplication::arguments();
+    const bool smokeMode = arguments.contains(QStringLiteral("--smoke"));
+    if (!smokeMode) {
+        QSettings settings;
+        for (const char* key : {"agent/cloudServiceUrl", "agent/cloudServiceToken",
+                                "agent/cloudServiceTokenMigrationFailed"})
+            settings.remove(QLatin1String(key));
+        settings.sync();
+        SecureRefreshTokenStore(QStringLiteral("com.maichat.desktop.model"),
+                                QStringLiteral("cloud_service_token")).remove();
+    }
 #ifdef MAICHAT_VERSION
     QApplication::setApplicationVersion(QStringLiteral(MAICHAT_VERSION));
 #endif
@@ -171,8 +175,6 @@ int main(int argc, char* argv[]) {
     appFont.setPixelSize(13);
     app.setFont(appFont);
 
-    const QStringList arguments = QCoreApplication::arguments();
-    const bool smokeMode = arguments.contains(QStringLiteral("--smoke"));
     DesktopAuthClient auth;
     LoginDialog loginDialog(&auth);
     if (smokeMode) QTimer::singleShot(300, &loginDialog, &QDialog::reject);

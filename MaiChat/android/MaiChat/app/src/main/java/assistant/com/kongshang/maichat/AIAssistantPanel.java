@@ -82,6 +82,10 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     private File pendingCameraFile;
     private String pendingMediaSession, pendingFileSession, pendingCameraSession, submittingSession = "";
     private String firstSentSession = "";
+    private PopupWindow sessionDrawerPopup;
+    private LinearLayout sessionDrawerList;
+    private ScrollView sessionDrawerScroll;
+    private String sessionDrawerSignature = "";
     private JSONObject quotedMessage;
     private String quoteSession = "";
     private boolean navigationPending;
@@ -364,6 +368,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     }
     void setForeground(boolean value) {
         visibleToUser = value;
+        if (!value && sessionDrawerPopup != null) sessionDrawerPopup.dismiss();
         if (!value && voiceRecording) finishVoice(true);
         if (!value) updateHostVoiceOverlay(false, "");
         removeCallbacks(elapsed);
@@ -414,6 +419,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         updateQuote();
         updateMessages();
         updatePending();
+        refreshSessionDrawer();
     }
     private void updateMessages() {
         if (state == null)
@@ -1321,13 +1327,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     private void sessions() {
         if (submitting || navigationPending) return;
         if (state == null) return;
-        JSONArray items = state.data.optJSONArray("sessions");
-        if (items == null) return;
-        // 尚未发送的空白会话也要能从列表返回，否则创建新对话会让草稿失去入口。
-        boolean blankDraft = !attachments.getOrDefault("", Collections.emptyList()).isEmpty()
-            || pendingMediaImports.getOrDefault("", 0) > 0
-            || !(selected.isEmpty() ? composer.getText().toString()
-                : drafts.getOrDefault("", "")).trim().isEmpty();
+        if (sessionDrawerPopup != null && sessionDrawerPopup.isShowing()) return;
         FrameLayout overlay = new FrameLayout(activity);
         overlay.setBackgroundColor(Color.argb(42, 0, 0, 0));
         LinearLayout drawer = column();
@@ -1361,9 +1361,54 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             popup.dismiss();
             requestNewConversation();
         });
+        sessionDrawerPopup = popup;
+        sessionDrawerList = sessionList;
+        sessionDrawerScroll = scroll;
+        sessionDrawerSignature = "";
+        popup.setOnDismissListener(() -> {
+            if (sessionDrawerPopup != popup) return;
+            sessionDrawerPopup = null;
+            sessionDrawerList = null;
+            sessionDrawerScroll = null;
+            sessionDrawerSignature = "";
+        });
+        refreshSessionDrawer();
+        popup.showAtLocation(this, Gravity.START | Gravity.TOP, 0, 0);
+        drawer.setTranslationX(-drawerWidth);
+        drawer.animate().translationX(0).setDuration(180).start();
+    }
+
+    private void refreshSessionDrawer() {
+        if (sessionDrawerList == null || sessionDrawerScroll == null || state == null) return;
+        JSONArray items = state.data.optJSONArray("sessions");
+        if (items == null) return;
+        // 尚未发送的空白会话也要能从列表返回，否则创建新对话会让草稿失去入口。
+        boolean blankDraft = !attachments.getOrDefault("", Collections.emptyList()).isEmpty()
+            || pendingMediaImports.getOrDefault("", 0) > 0
+            || !(selected.isEmpty() ? composer.getText().toString()
+                : drafts.getOrDefault("", "")).trim().isEmpty();
+        StringBuilder signature = new StringBuilder().append(blankDraft).append('|')
+            .append(selected).append('|').append(state.remoteSession != null);
+        for (int i = 0; i < items.length(); i++) {
+            JSONObject item = items.optJSONObject(i);
+            if (item == null) continue;
+            signature.append('\u001f').append(item.optString("id"))
+                .append('\u001f').append(item.optString("title"))
+                .append('\u001f').append(item.optString("device_slot"))
+                .append('\u001f').append(item.optString("device_id"))
+                .append('\u001f').append(item.optString("login_session_id"))
+                .append('\u001f').append(item.optString("device_name"))
+                .append('\u001f').append(item.optBoolean("online"))
+                .append('\u001f').append(item.optBoolean("busy"));
+        }
+        String nextSignature = signature.toString();
+        if (nextSignature.equals(sessionDrawerSignature)) return;
+        sessionDrawerSignature = nextSignature;
+        int scrollY = sessionDrawerScroll.getScrollY();
+        sessionDrawerList.removeAllViews();
         if (blankDraft)
-            sessionList.addView(sessionDrawerRow("未发送草稿", "", selected.isEmpty(), v -> {
-                popup.dismiss();
+            sessionDrawerList.addView(sessionDrawerRow("未发送草稿", "", selected.isEmpty(), v -> {
+                sessionDrawerPopup.dismiss();
                 requestConversation("");
             }), matchWrap());
         for (int i = 0; i < items.length(); i++) {
@@ -1378,15 +1423,16 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 session.optBoolean("busy") ? "正在处理" : "";
             boolean chosen = id.equals(selected) &&
                 (remote == (state.remoteSession != null));
-            sessionList.addView(sessionDrawerRow(title, detail, chosen, v -> {
-                popup.dismiss();
+            sessionDrawerList.addView(sessionDrawerRow(title, detail, chosen, v -> {
+                sessionDrawerPopup.dismiss();
                 if (remote) requestRemoteConversation(session);
                 else requestConversation(id);
             }), matchWrap());
         }
-        popup.showAtLocation(this, Gravity.START | Gravity.TOP, 0, 0);
-        drawer.setTranslationX(-drawerWidth);
-        drawer.animate().translationX(0).setDuration(180).start();
+        ScrollView scroll = sessionDrawerScroll;
+        scroll.post(() -> {
+            if (sessionDrawerScroll == scroll) scroll.scrollTo(0, scrollY);
+        });
     }
     private void requestNewConversation() {
         if (submitting || navigationPending) return;

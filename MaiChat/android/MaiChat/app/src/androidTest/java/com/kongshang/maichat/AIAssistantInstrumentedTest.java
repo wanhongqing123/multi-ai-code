@@ -233,6 +233,41 @@ public class AIAssistantInstrumentedTest {
         }
     }
 
+    @Test public void openSessionDrawerTracksRemoteCatalogPushes() throws Exception {
+        Context app = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Intent launch = new Intent(app, AIAssistantTestActivity.class)
+            .putExtra("model_url", "http://127.0.0.1:18190");
+        try (ActivityScenario<AIAssistantTestActivity> scenario = ActivityScenario.launch(launch)) {
+            await(scenario, panel -> panel.controller.state.ready);
+            scenario.onActivity(activity -> {
+                AIAssistantPanel panel = activity.panel;
+                panel.composer.setText("保留草稿");
+                assertTrue(findDescription(panel, "对话列表").performClick());
+            });
+            assertNotNull(awaitSystemText("对话", 3000));
+            scenario.onActivity(activity -> {
+                try {
+                    activity.panel.controller.acceptRemoteCatalog(new org.json.JSONArray().put(
+                        new JSONObject().put("id", "ses_push_fixture")
+                            .put("title", "Mac 推送任务").put("device_slot", "mac")
+                            .put("device_name", "工作 Mac").put("device_id", "fixture-mac")
+                            .put("login_session_id", "fixture-login").put("online", true)
+                            .put("busy", false)), "android_phone");
+                } catch (Exception failure) { throw new AssertionError(failure); }
+            });
+            await(scenario, panel -> panel.controller.state.data.toString().contains("ses_push_fixture"));
+            assertNotNull("展开中的侧栏须显示新推送的 Session",
+                awaitSystemText("工作 Mac", 3000));
+            scenario.onActivity(activity ->
+                activity.panel.controller.acceptRemoteCatalog(new org.json.JSONArray(), "android_phone"));
+            await(scenario, panel -> !panel.controller.state.data.toString().contains("ses_push_fixture"));
+            assertNull("展开中的侧栏须移除已清空的 Session",
+                awaitSystemText("工作 Mac", 1000));
+            scenario.onActivity(activity ->
+                assertEquals("保留草稿", activity.panel.composer.getText().toString()));
+        }
+    }
+
     @Test public void keyboardSendActionSubmitsTheDraft() throws Exception {
         Context app = InstrumentationRegistry.getInstrumentation().getTargetContext();
         Intent launch = new Intent(app, AIAssistantTestActivity.class)

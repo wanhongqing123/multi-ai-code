@@ -1,8 +1,10 @@
 // 文件作用：验证远端操作只落到所属桌面 Agent，会话快照不泄漏本机媒体路径。
 #include <QJsonArray>
 #include <QCryptographicHash>
+#include <QDateTime>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLabel>
 #include <QListWidget>
 #include <QPushButton>
 #include <QQueue>
@@ -29,7 +31,9 @@ private slots:
     void coordinatorReadsRemoteHistoryWithVerifiedChunks();
     void remotePanelShowsHistoryAndRoutesTextToOwner();
     void remotePanelDoesNotRepeatPendingHistory();
+    void remotePanelRefreshesOnlyLatestMessage();
     void sessionListKeepsLocalAndRemoteSelectionsSeparate();
+    void sessionListSeparatesDevicesWithTheSameModel();
 };
 
 void DesktopSessionSyncHostTest::appliesRemotePromptToTheExistingLocalSession() {
@@ -305,6 +309,28 @@ void DesktopSessionSyncHostTest::remotePanelShowsHistoryAndRoutesTextToOwner() {
     panel.receivePayload(remote, QStringLiteral("event"),
                          {{QStringLiteral("type"), QStringLiteral("command_result")},
                           {QStringLiteral("result"), QJsonObject{{QStringLiteral("ok"), true}}}});
+    QVERIFY(transcript->contains(QStringLiteral("remote-thinking")));
+    auto* status = panel.findChild<QLabel*>(QStringLiteral("remoteAgentStatus"));
+    QVERIFY(status && !status->isVisible());
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    const QJsonObject active{{QStringLiteral("id"), QStringLiteral("msg_new")},
+                             {QStringLiteral("role"), QStringLiteral("assistant")},
+                             {QStringLiteral("created"), double(now)},
+                             {QStringLiteral("active"), true},
+                             {QStringLiteral("parts"), QJsonArray{}}};
+    panel.receivePayload(remote, QStringLiteral("history_page"),
+                         {{QStringLiteral("ok"), true},
+                          {QStringLiteral("messages"), QJsonArray{active}}});
+    QVERIFY(transcript->contains(QStringLiteral("remote-thinking")));
+    QJsonObject completed = active;
+    completed.insert(QStringLiteral("active"), false);
+    completed.insert(QStringLiteral("parts"), QJsonArray{QJsonObject{
+        {QStringLiteral("kind"), QStringLiteral("text")},
+        {QStringLiteral("text"), QStringLiteral("已完成")}}});
+    panel.receivePayload(remote, QStringLiteral("history_page"),
+                         {{QStringLiteral("ok"), true},
+                          {QStringLiteral("messages"), QJsonArray{completed}}});
+    QVERIFY(!transcript->contains(QStringLiteral("remote-thinking")));
     composer->setPlainText(QStringLiteral("请保留草稿"));
     QTest::mouseClick(send, Qt::LeftButton);
     QCOMPARE(composer->toPlainText(), QString());
@@ -360,6 +386,28 @@ void DesktopSessionSyncHostTest::remotePanelDoesNotRepeatPendingHistory() {
     QCOMPARE(requests, 1);
 }
 
+void DesktopSessionSyncHostTest::remotePanelRefreshesOnlyLatestMessage() {
+    RemoteAgentPanel panel;
+    const QJsonObject remote{{QStringLiteral("id"), QStringLiteral("ses_remote")},
+                             {QStringLiteral("device_slot"), QStringLiteral("ios_phone")},
+                             {QStringLiteral("login_session_id"), QStringLiteral("phone_login")},
+                             {QStringLiteral("online"), true}};
+    QList<int> limits;
+    panel.setHistoryHandler([&](const QJsonObject&, const QString&, int limit,
+                                RemoteAgentPanel::Completion completion) {
+        limits.append(limit);
+        panel.receivePayload(remote, QStringLiteral("history_page"),
+                             {{QStringLiteral("ok"), true},
+                              {QStringLiteral("messages"), QJsonArray{}}});
+        completion({});
+    });
+    panel.show();
+    panel.openSession(remote);
+    QCOMPARE(limits, QList<int>{10});
+    QTRY_COMPARE_WITH_TIMEOUT(limits.size(), 2, 6500);
+    QCOMPARE(limits, (QList<int>{10, 1}));
+}
+
 void DesktopSessionSyncHostTest::sessionListKeepsLocalAndRemoteSelectionsSeparate() {
     AgentController::ModelConfig model;
     AgentController controller(model, {});
@@ -371,24 +419,55 @@ void DesktopSessionSyncHostTest::sessionListKeepsLocalAndRemoteSelectionsSeparat
         {QStringLiteral("id"), QStringLiteral("ses_remote")},
         {QStringLiteral("title"), QStringLiteral("远端会话")},
         {QStringLiteral("device_slot"), QStringLiteral("ios_phone")},
-        {QStringLiteral("device_name"), QStringLiteral("iPhone")},
+        {QStringLiteral("device_name"), QStringLiteral("iPhone 14 Pro Max")},
         {QStringLiteral("device_id"), QStringLiteral("phone-install")},
         {QStringLiteral("login_session_id"), QStringLiteral("phone-login")},
         {QStringLiteral("online"), true}}});
     sessions.show();
     auto* list = sessions.findChild<QListWidget*>();
     QVERIFY(list != nullptr);
-    QCOMPARE(list->count(), 2);
+    QCOMPARE(list->count(), 4);
+    QVERIFY(list->item(0)->text().contains(QStringLiteral("这台")));
+    QVERIFY(list->item(2)->text().contains(QStringLiteral("iPhone 14 Pro Max")));
     QSignalSpy localSelection(&sessions, &AgentSessionList::selected);
     QSignalSpy remoteSelection(&sessions, &AgentSessionList::remoteSelected);
-    QTest::mouseClick(list->viewport(), Qt::LeftButton, {}, list->visualItemRect(list->item(1)).center());
+    QTest::mouseClick(list->viewport(), Qt::LeftButton, {}, list->visualItemRect(list->item(2)).center());
+    QCOMPARE(remoteSelection.size(), 0);
+    QCOMPARE(list->count(), 3);
+    QTest::mouseClick(list->viewport(), Qt::LeftButton, {}, list->visualItemRect(list->item(2)).center());
+    QCOMPARE(list->count(), 4);
+    if (qEnvironmentVariableIsSet("MAICHAT_SESSION_GROUP_SCREENSHOT"))
+        QVERIFY(sessions.grab().save(qEnvironmentVariable("MAICHAT_SESSION_GROUP_SCREENSHOT")));
+    QTest::mouseClick(list->viewport(), Qt::LeftButton, {}, list->visualItemRect(list->item(3)).center());
     QCOMPARE(remoteSelection.size(), 1);
     QCOMPARE(localSelection.size(), 0);
     QCOMPARE(remoteSelection.takeFirst().first().toJsonObject().value(QStringLiteral("id")).toString(),
              QStringLiteral("ses_remote"));
-    QTest::mouseClick(list->viewport(), Qt::LeftButton, {}, list->visualItemRect(list->item(0)).center());
+    QTest::mouseClick(list->viewport(), Qt::LeftButton, {}, list->visualItemRect(list->item(1)).center());
     QCOMPARE(localSelection.size(), 1);
     QCOMPARE(localSelection.takeFirst().first().toString(), local);
+}
+
+void DesktopSessionSyncHostTest::sessionListSeparatesDevicesWithTheSameModel() {
+    AgentController controller(AgentController::ModelConfig{}, {});
+    AgentSessionList sessions(controller);
+    QJsonArray remote;
+    for (const QString& id : {QStringLiteral("phone_one"), QStringLiteral("phone_two")}) {
+        remote.append(QJsonObject{{QStringLiteral("id"), id},
+                                  {QStringLiteral("title"), QStringLiteral("同型号会话")},
+                                  {QStringLiteral("device_slot"), QStringLiteral("ios_phone")},
+                                  {QStringLiteral("device_name"), QStringLiteral("iPhone 14 Pro Max")},
+                                  {QStringLiteral("device_id"), id},
+                                  {QStringLiteral("login_session_id"), QStringLiteral("login_phone")},
+                                  {QStringLiteral("online"), true}});
+    }
+    sessions.setRemoteSessions(remote);
+    sessions.show();
+    auto* list = sessions.findChild<QListWidget*>();
+    QVERIFY(list);
+    QCOMPARE(list->count(), 4);
+    QVERIFY(list->item(0)->text().contains(QStringLiteral("设备 1")));
+    QVERIFY(list->item(2)->text().contains(QStringLiteral("设备 2")));
 }
 
 QTEST_MAIN(DesktopSessionSyncHostTest)

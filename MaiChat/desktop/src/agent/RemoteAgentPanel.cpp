@@ -95,6 +95,7 @@ struct RemoteAgentPanel::Runtime {
     QJsonObject session;
     QLabel* device = nullptr;
     QLabel* status = nullptr;
+    QLabel* thinking = nullptr;
     MarkdownView* view = nullptr;
     RemotePromptEdit* editor = nullptr;
     QPushButton* send = nullptr;
@@ -113,6 +114,10 @@ struct RemoteAgentPanel::Runtime {
     bool lastCommandRejected = false;
     bool historyInFlight = false;
     quint64 historyGeneration = 0;
+    bool awaitingResponse = false;
+    bool observedBusy = false;
+    qint64 commandSentAt = 0;
+    QString pendingAction;
     CommandHandler command;
     HistoryHandler history;
 };
@@ -153,6 +158,7 @@ RemoteAgentPanel::RemoteAgentPanel(QWidget* parent) : QWidget(parent), runtime_(
     runtime_->requests->hide();
     layout->addWidget(runtime_->requests);
     runtime_->status = new QLabel(this);
+    runtime_->status->setObjectName(QStringLiteral("remoteAgentStatus"));
     runtime_->status->setWordWrap(true);
     runtime_->status->setContentsMargins(UiZoom::s(16), UiZoom::s(6), UiZoom::s(16), UiZoom::s(6));
     runtime_->status->hide();
@@ -201,7 +207,7 @@ RemoteAgentPanel::RemoteAgentPanel(QWidget* parent) : QWidget(parent), runtime_(
     connect(runtime_->older, &QPushButton::clicked, this, [this] {
         if (!runtime_->oldest.isEmpty()) requestHistory(runtime_->oldest, 20);
     });
-    runtime_->refresh.setInterval(30'000);
+    runtime_->refresh.setInterval(5000);
     connect(&runtime_->refresh, &QTimer::timeout, this, [this] {
         if (isVisible()) refreshHistory();
     });
@@ -222,6 +228,9 @@ RemoteAgentPanel::RemoteAgentPanel(QWidget* parent) : QWidget(parent), runtime_(
         if (!runtime_->pendingCommand) return;
         runtime_->pendingCommand = false;
         runtime_->lastCommandRejected = false;
+        runtime_->awaitingResponse = false;
+        runtime_->pendingAction.clear();
+        updateThinking();
         if (runtime_->editor->toPlainText().isEmpty() && !runtime_->pendingDraft.isEmpty())
             runtime_->editor->setPlainText(runtime_->pendingDraft);
         runtime_->pendingDraft.clear();
@@ -250,11 +259,15 @@ void RemoteAgentPanel::openSession(const QJsonObject& remote) {
         runtime_->messages.clear();
         runtime_->rendered.clear();
         runtime_->view->clear();
+        runtime_->thinking = nullptr;
         runtime_->oldest.clear();
         runtime_->older->hide();
         runtime_->pendingCommand = false;
         runtime_->lastCommandRejected = false;
         runtime_->pendingDraft.clear();
+        runtime_->awaitingResponse = false;
+        runtime_->observedBusy = false;
+        runtime_->pendingAction.clear();
         runtime_->commandTimeout.stop();
     }
     runtime_->session = remote;
@@ -271,6 +284,13 @@ void RemoteAgentPanel::updateSession(const QJsonObject& remote) {
     if (sessionKey(remote) != sessionKey(runtime_->session)) return;
     runtime_->session = remote;
     updateControls();
+    if (remote.value(QStringLiteral("busy")).toBool() && runtime_->awaitingResponse)
+        runtime_->observedBusy = true;
+    if (!remote.value(QStringLiteral("busy")).toBool() && runtime_->observedBusy) {
+        runtime_->awaitingResponse = false;
+        runtime_->observedBusy = false;
+    }
+    updateThinking();
     if (!remote.value(QStringLiteral("online")).toBool()) {
         runtime_->historyInFlight = false;
         runtime_->historyTimeout.stop();
@@ -308,6 +328,9 @@ void RemoteAgentPanel::sendAction(const QJsonObject& action, bool clearDraft) {
     const QJsonObject current = runtime_->session;
     runtime_->pendingCommand = true;
     runtime_->lastCommandRejected = false;
+    runtime_->pendingAction = action.value(QStringLiteral("action")).toString();
+    runtime_->commandSentAt = QDateTime::currentMSecsSinceEpoch();
+    if (runtime_->pendingAction != QStringLiteral("prompt")) runtime_->awaitingResponse = false;
     runtime_->pendingDraft = clearDraft ? runtime_->editor->toPlainText() : QString();
     updateControls();
     runtime_->command(current, action, [this, current, clearDraft](const QString& error) {
@@ -315,6 +338,9 @@ void RemoteAgentPanel::sendAction(const QJsonObject& action, bool clearDraft) {
         if (!error.isEmpty()) {
             runtime_->pendingCommand = false;
             runtime_->pendingDraft.clear();
+            runtime_->pendingAction.clear();
+            runtime_->awaitingResponse = false;
+            updateThinking();
             showStatus(error, true);
             updateControls();
             return;
@@ -344,6 +370,10 @@ void RemoteAgentPanel::receivePayload(const QJsonObject& remote, const QString& 
         runtime_->commandTimeout.stop();
         const QJsonObject result = payload.value(QStringLiteral("result")).toObject();
         runtime_->lastCommandRejected = !result.value(QStringLiteral("ok")).toBool();
+        runtime_->awaitingResponse = !runtime_->lastCommandRejected &&
+            runtime_->pendingAction == QStringLiteral("prompt");
+        runtime_->observedBusy = false;
+        runtime_->pendingAction.clear();
         if (!runtime_->lastCommandRejected && !runtime_->pendingDraft.isEmpty() &&
             runtime_->editor->toPlainText() == runtime_->pendingDraft)
             runtime_->editor->clear();
@@ -351,10 +381,10 @@ void RemoteAgentPanel::receivePayload(const QJsonObject& remote, const QString& 
             !runtime_->pendingDraft.isEmpty())
             runtime_->editor->setPlainText(runtime_->pendingDraft);
         runtime_->pendingDraft.clear();
-        showStatus(result.value(QStringLiteral("ok")).toBool()
-                       ? QStringLiteral("所属设备已接受操作")
-                       : result.value(QStringLiteral("error")).toString(),
-                   !result.value(QStringLiteral("ok")).toBool());
+        showStatus(runtime_->lastCommandRejected ?
+                       result.value(QStringLiteral("error")).toString() : QString(),
+                   runtime_->lastCommandRejected);
+        updateThinking();
         updateControls();
         return;
     }
@@ -374,6 +404,12 @@ void RemoteAgentPanel::receivePayload(const QJsonObject& remote, const QString& 
         const QJsonObject message = value.toObject();
         const QString id = message.value(QStringLiteral("id")).toString();
         if (!id.isEmpty()) runtime_->messages.insert(id, message);
+        if (runtime_->awaitingResponse &&
+            message.value(QStringLiteral("role")).toString() == QStringLiteral("assistant") &&
+            message.value(QStringLiteral("created")).toVariant().toLongLong() >=
+                runtime_->commandSentAt - 1000 &&
+            (!message.value(QStringLiteral("active")).toBool() || !messageText(message).isEmpty()))
+            runtime_->awaitingResponse = false;
     }
     if (!received.isEmpty() && kind == QStringLiteral("history_page")) {
         const QString oldest = received.last().toObject().value(QStringLiteral("id")).toString();
@@ -393,6 +429,19 @@ void RemoteAgentPanel::renderMessages() {
     const bool followedLatest = runtime_->view->isAtBottom();
     bool prepend = !runtime_->rendered.isEmpty() && !ids.isEmpty() &&
                    ids.first() < runtime_->rendered.firstKey();
+    bool contentChanged = prepend;
+    for (const QString& id : ids) {
+        const QString content = messageText(runtime_->messages.value(id));
+        if (!content.isEmpty() && runtime_->rendered.value(id) != content) {
+            contentChanged = true;
+            break;
+        }
+    }
+    if (runtime_->thinking && contentChanged) {
+        runtime_->thinking->hide();
+        runtime_->view->removeItem(QStringLiteral("remote-thinking"));
+        runtime_->thinking = nullptr;
+    }
     if (prepend) {
         runtime_->view->clear();
         runtime_->rendered.clear();
@@ -409,7 +458,30 @@ void RemoteAgentPanel::renderMessages() {
         runtime_->rendered.insert(id, content);
     }
     runtime_->view->endBatchUpdates();
+    updateThinking();
     if (!prepend && followedLatest) runtime_->view->scrollToBottom();
+}
+
+void RemoteAgentPanel::updateThinking() {
+    const QJsonObject last = runtime_->messages.isEmpty() ? QJsonObject{} : runtime_->messages.last();
+    const bool assistantActive = last.value(QStringLiteral("role")).toString() == QStringLiteral("assistant") &&
+        last.value(QStringLiteral("active")).toBool();
+    const bool visibleAnswer = assistantActive && !messageText(last).trimmed().isEmpty();
+    const bool show = (runtime_->awaitingResponse || runtime_->session.value(QStringLiteral("busy")).toBool() ||
+                       assistantActive) && !visibleAnswer;
+    if (show && !runtime_->thinking) {
+        const bool followedLatest = runtime_->view->isAtBottom();
+        runtime_->thinking = new QLabel(QStringLiteral("正在思考…"));
+        runtime_->thinking->setObjectName(QStringLiteral("remoteThinkingIndicator"));
+        runtime_->thinking->setStyleSheet(QStringLiteral("color:#98a2b3;background:transparent;font-size:12px;"));
+        runtime_->thinking->setContentsMargins(0, UiZoom::s(2), 0, UiZoom::s(2));
+        runtime_->view->addWidget(QStringLiteral("remote-thinking"), runtime_->thinking);
+        if (followedLatest) runtime_->view->scrollToBottom();
+    } else if (!show && runtime_->thinking) {
+        runtime_->thinking->hide();
+        runtime_->view->removeItem(QStringLiteral("remote-thinking"));
+        runtime_->thinking = nullptr;
+    }
 }
 
 void RemoteAgentPanel::renderRequests(const QJsonObject& payload) {
@@ -490,5 +562,5 @@ void RemoteAgentPanel::showStatus(const QString& message, bool failure) {
     runtime_->status->setText(message);
     runtime_->status->setVisible(!message.isEmpty());
     runtime_->status->setStyleSheet(failure ? QStringLiteral("color:#b42318;background:#fff5f3;")
-                                            : QStringLiteral("color:#0b67b7;background:#edf8ff;"));
+                                            : QStringLiteral("color:#667085;background:transparent;font-size:12px;"));
 }

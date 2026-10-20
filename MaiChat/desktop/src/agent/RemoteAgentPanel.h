@@ -31,6 +31,7 @@ private:
     void sendOrStop();
     void sendAction(const QJsonObject& action, bool clearDraft);
     void renderMessages();
+    void updateThinking();
     void renderRequests(const QJsonObject& payload);
     void updateControls();
     void showStatus(const QString& message, bool failure = false);

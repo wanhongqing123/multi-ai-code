@@ -20,6 +20,25 @@ func logAIHistoryEvent(_ message: @autoclosure () -> String) {
     #endif
 }
 
+@MainActor private func aiSyncDeviceDisplayName() -> String {
+    var system = utsname()
+    _ = uname(&system)
+    let identifier = withUnsafeBytes(of: &system.machine) { bytes in
+        String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
+    }
+    let model: String
+    switch identifier {
+    case "iPhone15,2": model = "iPhone 14 Pro"
+    case "iPhone15,3": model = "iPhone 14 Pro Max"
+    default:
+        model = identifier.hasPrefix("iPhone") || identifier.hasPrefix("iPad") ?
+            "\(UIDevice.current.model)（\(identifier)）" : UIDevice.current.model
+    }
+    let name = UIDevice.current.name.trimmingCharacters(in: .whitespacesAndNewlines)
+    if name.isEmpty || name == UIDevice.current.model || name == model { return model }
+    return String("\(model) · \(name)".prefix(40))
+}
+
 struct AIModelSettings: Codable, Sendable, Equatable {
     static let glmResponsesUrl = "https://open.bigmodel.cn/api/v1"
     static let deepSeekUrl = "https://api.deepseek.com"
@@ -1428,7 +1447,7 @@ final class AIAssistantModel: ObservableObject {
                            let localSessions = summary.sessions {
                             self.sessions = localSessions
                         }
-                        let name = String(String(UIDevice.current.name.prefix(40))
+                        let name = String(String(aiSyncDeviceDisplayName().prefix(40))
                             .unicodeScalars.filter {
                                 !CharacterSet.controlCharacters.contains($0)
                             })

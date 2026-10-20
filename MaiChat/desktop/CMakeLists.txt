@@ -750,6 +750,10 @@ add_library(maichat_agent
   src/agent/DesktopSessionSyncHost.cpp
   src/agent/DesktopSessionSyncCoordinator.h
   src/agent/DesktopSessionSyncCoordinator.cpp
+  src/agent/DesktopSessionSyncChannel.h
+  src/agent/DesktopSessionSyncChannel.cpp
+  ../SessionSync/MaiSessionSyncSocket.h
+  ../SessionSync/MaiSessionSyncSocket.cpp
   src/agent/DesktopAccountModelClient.h
   src/agent/DesktopAccountModelClient.cpp
   src/MaiChatTools/DesktopPdfRenderer.h
@@ -772,10 +776,19 @@ elseif(WIN32)
     src/agent/MaiDesktopGpu.h src/agent/MaiDesktopGpuWindows.cpp)
   target_link_libraries(maichat_agent PRIVATE dxgi)
 endif()
-target_include_directories(maichat_agent PUBLIC src)
-target_include_directories(maichat_agent PRIVATE ../Media)
-target_link_libraries(maichat_agent PUBLIC Qt5::Core Qt5::Widgets Qt5::Multimedia Qt5::Concurrent
+target_include_directories(maichat_agent PUBLIC src ../SessionSync)
+target_include_directories(maichat_agent PRIVATE ../Media
+  ../../MaiAgent/third_party/websocketpp
+  ../../MaiAgent/third_party/asio/asio/include
+  ${OPENSSL_INCLUDE_DIR}
+  ../../MaiAgent/third_party/openssl/include)
+target_compile_definitions(maichat_agent PRIVATE ASIO_STANDALONE _WEBSOCKETPP_CPP11_STRICT_)
+target_link_libraries(maichat_agent PUBLIC Qt5::Core Qt5::Network Qt5::Widgets Qt5::Multimedia Qt5::Concurrent
   maiagent maichat_markdown maichat_pdf_preview)
+target_link_libraries(maichat_agent PRIVATE ${OPENSSL_SSL_LIBRARY} ${OPENSSL_CRYPTO_LIBRARY})
+if(WIN32)
+  target_link_libraries(maichat_agent PRIVATE ws2_32 mswsock)
+endif()
 if(TARGET maiagent_embedded_fftools OR TARGET maichat_ffmpeg_tools)
   target_include_directories(maichat_agent PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/ffmpeg/fftools")

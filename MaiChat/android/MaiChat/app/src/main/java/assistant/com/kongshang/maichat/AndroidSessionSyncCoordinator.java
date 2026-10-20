@@ -6,17 +6,25 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Build;
 import android.util.Log;
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.Proxy;
+import java.net.ProxySelector;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 import org.json.JSONArray;
@@ -32,11 +40,23 @@ final class AndroidSessionSyncCoordinator {
     private final String deviceName;
     private final ExecutorService outbound = Executors.newSingleThreadExecutor();
     private final SessionSyncPayloadAssembler incoming = new SessionSyncPayloadAssembler();
+    private final BlockingQueue<JSONObject> mailbox = new LinkedBlockingQueue<>(1000);
+    private final Map<String, CompletableFuture<JSONObject>> responses = new ConcurrentHashMap<>();
     private final Map<String, String> retryIdByFingerprint = new ConcurrentHashMap<>();
     private final Map<String, String> fingerprintByCommandId = new ConcurrentHashMap<>();
+    private final Object socketLock = new Object();
     private volatile boolean closed;
+    private volatile boolean connected;
+    private volatile long socketHandle;
     private Thread listener;
     private long lastPresence;
+
+    private native long nativeCreate();
+    private native boolean nativeStart(long handle, String url, String bearer,
+                                       String caPem, String proxyUrl);
+    private native boolean nativeSend(long handle, byte[] frame);
+    private native boolean nativeUpdateBearer(long handle, String bearer);
+    private native void nativeDestroy(long handle);
 
     AndroidSessionSyncCoordinator(Context context, AIAssistantController controller,
                                   MaiChatAuthClient auth) {
@@ -67,6 +87,13 @@ final class AndroidSessionSyncCoordinator {
         closed = true;
         if (listener != null) listener.interrupt();
         outbound.shutdownNow();
+        long handle;
+        synchronized (socketLock) {
+            handle = socketHandle;
+            socketHandle = 0;
+        }
+        if (handle != 0) nativeDestroy(handle);
+        failResponses("设备同步连接已关闭");
     }
 
     private static String newId() { return UUID.randomUUID().toString().replace("-", ""); }
@@ -77,11 +104,114 @@ final class AndroidSessionSyncCoordinator {
         return result.toString();
     }
 
+    private void failResponses(String message) {
+        for (CompletableFuture<JSONObject> response : responses.values())
+            response.completeExceptionally(new IOException(message));
+        responses.clear();
+    }
+
+    private void onNativeSocketEvent(int event, byte[] bytes) {
+        if (closed) return;
+        if (event == 1) { connected = true; return; }
+        if (event == 2 || event == 4) {
+            connected = false;
+            failResponses("设备同步连接中断");
+            controller.markRemoteCatalogOffline();
+            return;
+        }
+        if (event != 3 || bytes == null) return;
+        try {
+            JSONObject frame = new JSONObject(new String(bytes, StandardCharsets.UTF_8));
+            String kind = frame.optString("type");
+            if (kind.equals("response")) {
+                CompletableFuture<JSONObject> response = responses.remove(frame.optString("id"));
+                if (response != null) response.complete(frame);
+            } else if (kind.equals("catalog")) {
+                controller.acceptRemoteCatalog(frame.optJSONArray("sessions"), slot);
+            } else if (kind.equals("inbox")) {
+                JSONArray messages = frame.optJSONArray("messages");
+                if (messages != null) for (int i = 0; i < messages.length(); i++) {
+                    JSONObject message = messages.optJSONObject(i);
+                    if (message != null && !mailbox.offer(message))
+                        Log.w(TAG, "Device sync inbox is full");
+                }
+            }
+        } catch (Exception failure) { Log.w(TAG, "Invalid device sync frame"); }
+    }
+
+    private JSONObject request(String operation, JSONObject body, int timeoutMs) throws Exception {
+        if (!connected) throw new IOException("所属设备同步连接尚未建立");
+        String id = newId();
+        CompletableFuture<JSONObject> future = new CompletableFuture<>();
+        responses.put(id, future);
+        JSONObject frame = new JSONObject().put("id", id).put("op", operation)
+            .put("body", body == null ? new JSONObject() : body);
+        byte[] bytes = frame.toString().getBytes(StandardCharsets.UTF_8);
+        boolean sent;
+        synchronized (socketLock) {
+            sent = socketHandle != 0 && nativeSend(socketHandle, bytes);
+        }
+        if (!sent) {
+            responses.remove(id);
+            throw new IOException("设备同步连接中断");
+        }
+        try {
+            JSONObject response = future.get(timeoutMs, TimeUnit.MILLISECONDS);
+            if (response.optInt("status") != 200) {
+                JSONObject result = response.optJSONObject("body");
+                throw new IOException(result == null ? "设备同步请求失败" :
+                    result.optString("error", "设备同步请求失败"));
+            }
+            JSONObject result = response.optJSONObject("body");
+            return result == null ? new JSONObject() : result;
+        } finally { responses.remove(id); }
+    }
+
+    private String systemProxy() throws IOException {
+        ProxySelector selector = ProxySelector.getDefault();
+        if (selector == null) return "";
+        java.util.List<Proxy> proxies = selector.select(URI.create("https://ichat.life/"));
+        if (proxies == null || proxies.isEmpty() || proxies.get(0).type() == Proxy.Type.DIRECT)
+            return "";
+        Proxy proxy = proxies.get(0);
+        if (proxy.type() != Proxy.Type.HTTP || !(proxy.address() instanceof InetSocketAddress))
+            throw new IOException("当前网络代理不支持设备同步");
+        InetSocketAddress address = (InetSocketAddress) proxy.address();
+        String host = address.getHostString();
+        if (host.contains(":")) host = "[" + host + "]";
+        return "http://" + host + ":" + address.getPort() + "/";
+    }
+
     private void listen() {
         while (!closed) {
             try {
                 if (!controller.state.ready) {
                     Thread.sleep(2000);
+                    continue;
+                }
+                if (socketHandle == 0) {
+                    String token = auth.sessionSyncAccessToken();
+                    String certificate = controller.sessionSyncCertificatePem();
+                    String proxy = systemProxy();
+                    synchronized (socketLock) {
+                        if (closed) return;
+                        long handle = nativeCreate();
+                        if (handle == 0) throw new IOException("设备同步连接初始化失败");
+                        if (!nativeStart(handle, "wss://ichat.life/api/v1/session-sync/ws",
+                            token, certificate, proxy)) {
+                            nativeDestroy(handle);
+                            throw new IOException("设备同步连接启动失败");
+                        }
+                        socketHandle = handle;
+                    }
+                }
+                if (!connected) {
+                    String refreshed = auth.sessionSyncAccessToken();
+                    synchronized (socketLock) {
+                        if (socketHandle != 0)
+                            nativeUpdateBearer(socketHandle, refreshed);
+                    }
+                    Thread.sleep(1500);
                     continue;
                 }
                 if (System.currentTimeMillis() - lastPresence >= 15000) {
@@ -95,19 +225,18 @@ final class AndroidSessionSyncCoordinator {
                             .put("busy", session.optBoolean("busy"))
                             .put("updated_at", System.currentTimeMillis() - i));
                     }
-                    auth.sessionSyncRequest("presence", new JSONObject().put("device_id", deviceId)
+                    String refreshed = auth.sessionSyncAccessToken();
+                    synchronized (socketLock) {
+                        if (socketHandle != 0)
+                            nativeUpdateBearer(socketHandle, refreshed);
+                    }
+                    request("presence", new JSONObject().put("device_id", deviceId)
                         .put("name", deviceName.isEmpty() ? "Android" : deviceName)
-                        .put("sessions", entries), 0);
-                    JSONObject catalog = auth.sessionSyncRequest("sessions", null, 0);
-                    controller.acceptRemoteCatalog(catalog.optJSONArray("sessions"), slot);
+                        .put("sessions", entries), 15000);
                     lastPresence = System.currentTimeMillis();
                 }
-                JSONArray messages = auth.sessionSyncRequest("poll", null, 10000)
-                    .optJSONArray("messages");
-                if (messages != null) for (int i = 0; i < messages.length(); i++) {
-                    JSONObject envelope = messages.optJSONObject(i);
-                    if (envelope != null) handle(envelope);
-                }
+                JSONObject envelope = mailbox.poll(1000, TimeUnit.MILLISECONDS);
+                if (envelope != null) handle(envelope);
             } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
                 return;
@@ -145,8 +274,8 @@ final class AndroidSessionSyncCoordinator {
         } else if (kind.equals("event") || kind.equals("history_page")) {
             acceptChunk(envelope);
         }
-        auth.sessionSyncRequest("ack", new JSONObject().put("ids",
-            new JSONArray().put(envelope.optLong("id"))), 0);
+        request("ack", new JSONObject().put("ids",
+            new JSONArray().put(envelope.optLong("id"))), 15000);
     }
 
     private void sendPayload(JSONObject envelope, String kind, JSONObject value) throws Exception {
@@ -185,10 +314,10 @@ final class AndroidSessionSyncCoordinator {
 
     private JSONObject send(String toSlot, String toLogin, String session, String kind,
                             JSONObject payload, String messageId) throws Exception {
-        return auth.sessionSyncRequest("send", new JSONObject()
+        return request("send", new JSONObject()
             .put("to_slot", toSlot).put("to_login_session_id", toLogin)
             .put("client_message_id", messageId).put("session_id", session)
-            .put("kind", kind).put("payload", payload), 0);
+            .put("kind", kind).put("payload", payload), 15000);
     }
 
     static String fingerprint(JSONObject remote, JSONObject action) throws Exception {

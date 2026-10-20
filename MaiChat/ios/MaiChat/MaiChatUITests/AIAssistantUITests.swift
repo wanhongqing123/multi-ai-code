@@ -37,10 +37,14 @@ final class AIAssistantUITests: XCTestCase {
         guard (probe?.1 as? HTTPURLResponse)?.statusCode == 401 else {
             throw XCTSkip("需要本机无付费 Session 同步服务")
         }
+        let certificateURL = URL(string: "http://127.0.0.1:18190/test/cert")!
+        let (certificate, certificateResponse) = try await URLSession.shared.data(from: certificateURL)
+        XCTAssertEqual((certificateResponse as? HTTPURLResponse)?.statusCode, 200)
         let app = XCUIApplication()
         app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
         app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] = "local sync UI test passphrase"
         app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18190"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_CA_BASE64"] = certificate.base64EncodedString()
         app.launch()
         let creationCenter = app.buttons["创作中心"]
         guard creationCenter.waitForExistence(timeout: 30) else {

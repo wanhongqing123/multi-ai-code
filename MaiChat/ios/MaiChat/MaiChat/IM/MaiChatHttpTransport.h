@@ -31,6 +31,10 @@ void maiChatHttpPerform(const char* url, const char* method, const char* bearer,
                         long timeoutMilliseconds, const char* caBundlePath,
                         MaiChatHttpCancellation* cancellation, MaiChatHttpResult* result);
 void maiChatHttpFreeResult(MaiChatHttpResult* result);
+// Resolves the current iOS system route for an HTTPS URL. An empty result means
+// direct access; a nonempty result is an HTTP CONNECT proxy URL. Unsupported
+// proxy types and failed resolution return 0 instead of silently going direct.
+int maiChatHttpProxyForURL(const char* url, char* result, size_t resultCapacity);
 
 #ifdef __cplusplus
 }

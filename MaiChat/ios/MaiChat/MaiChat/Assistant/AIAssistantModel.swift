@@ -279,6 +279,34 @@ struct AIRemoteSession: Decodable, Identifiable, Sendable, Equatable {
     }
 }
 
+private final class AIRemoteSocketSink: @unchecked Sendable {
+    private let lock = NSLock()
+    private weak var transport: AIRemoteSessionTransport?
+
+    init(_ transport: AIRemoteSessionTransport) { self.transport = transport }
+
+    func deliver(event: Int32, data: Data) {
+        lock.lock()
+        let target = transport
+        lock.unlock()
+        if let target { Task { await target.receive(event: event, data: data) } }
+    }
+
+    func invalidate() {
+        lock.lock()
+        transport = nil
+        lock.unlock()
+    }
+}
+
+private func aiRemoteSocketEvent(_ context: UnsafeMutableRawPointer?, _ event: Int32,
+                                 _ bytes: UnsafePointer<CChar>?, _ length: Int) {
+    guard let context else { return }
+    let sink = Unmanaged<AIRemoteSocketSink>.fromOpaque(context).takeUnretainedValue()
+    let data = bytes.map { Data(bytes: $0, count: length) } ?? Data()
+    sink.deliver(event: event, data: data)
+}
+
 private actor AIRemoteSessionTransport {
     private struct Catalog: Decodable { let sessions: [AIRemoteSession] }
     private struct Inbox: Decodable { let messages: [Envelope] }
@@ -324,16 +352,191 @@ private actor AIRemoteSessionTransport {
         }
     }
 
-    private func request(_ route: MaiChatSessionSyncRoute,
-                         body: [String: Any] = [:], wait: Int = 0) async throws -> Data {
-        let data = body.isEmpty ? Data() :
-            try JSONSerialization.data(withJSONObject: body, options: .sortedKeys)
-        return try await MaiChatAuthClient.shared.sessionSyncRequest(
-            route, body: data, waitMilliseconds: wait)
+    private var socket: OpaquePointer?
+    private var socketSink: AIRemoteSocketSink?
+    private var connected = false
+    private var connectionWaiters: [CheckedContinuation<Void, any Error>] = []
+    private var responses: [String: CheckedContinuation<Data, any Error>] = [:]
+    private var waitingInbox: CheckedContinuation<[Envelope], any Error>?
+    private var inbox: [Envelope] = []
+    private var cachedCatalog: [AIRemoteSession] = []
+    private var catalogHandler: (@Sendable ([AIRemoteSession]) -> Void)?
+
+    func setCatalogHandler(_ handler: @escaping @Sendable ([AIRemoteSession]) -> Void) {
+        catalogHandler = handler
+        if !cachedCatalog.isEmpty { handler(cachedCatalog) }
+    }
+
+    func receive(event: Int32, data: Data) {
+        guard socket != nil else { return }
+        if event == 1 {
+            connected = true
+            let waiters = connectionWaiters
+            connectionWaiters.removeAll()
+            waiters.forEach { $0.resume() }
+            return
+        }
+        if event == 2 || event == 4 {
+            connected = false
+            let failure = AIBackendError(message: "设备同步连接中断")
+            let waiters = connectionWaiters
+            connectionWaiters.removeAll()
+            waiters.forEach { $0.resume(throwing: failure) }
+            let pending = responses
+            responses.removeAll()
+            pending.values.forEach { $0.resume(throwing: failure) }
+            waitingInbox?.resume(throwing: failure)
+            waitingInbox = nil
+            return
+        }
+        guard event == 3,
+              let frame = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let type = frame["type"] as? String else { return }
+        if type == "response", let id = frame["id"] as? String,
+           let continuation = responses.removeValue(forKey: id) {
+            let body = frame["body"] as? [String: Any] ?? [:]
+            let status = frame["status"] as? Int ?? 0
+            if status != 200 {
+                continuation.resume(throwing: AIBackendError(
+                    message: body["error"] as? String ?? "设备同步请求失败"))
+            } else {
+                do { continuation.resume(returning: try JSONSerialization.data(withJSONObject: body)) }
+                catch { continuation.resume(throwing: error) }
+            }
+        } else if type == "catalog", let catalog = try? JSONDecoder().decode(Catalog.self, from: data) {
+            cachedCatalog = catalog.sessions
+            catalogHandler?(catalog.sessions)
+        } else if type == "inbox", let batch = try? JSONDecoder().decode(Inbox.self, from: data) {
+            if let continuation = waitingInbox {
+                waitingInbox = nil
+                continuation.resume(returning: batch.messages)
+            } else { inbox.append(contentsOf: batch.messages) }
+        }
+    }
+
+    private func connect() async throws {
+        let token = try await MaiChatAuthClient.shared.sessionSyncAccessToken()
+        if let socket {
+            guard token.withCString({ maiSessionSyncUpdateBearer(socket, $0) }) == 1 else {
+                throw AIBackendError(message: "设备同步凭据更新失败")
+            }
+        } else {
+            let url = await MaiChatAuthClient.shared.sessionSyncSocketURL().absoluteString
+            let certificate: String
+            #if DEBUG && targetEnvironment(simulator)
+            if ProcessInfo.processInfo.environment["MAICHAT_LOCAL_UI_PHONE"] != nil,
+               let encoded = ProcessInfo.processInfo.environment["MAICHAT_LOCAL_UI_CA_BASE64"],
+               let data = Data(base64Encoded: encoded),
+               let localCertificate = String(data: data, encoding: .utf8) {
+                certificate = localCertificate
+            } else {
+                guard let certificateURL = Bundle.main.url(
+                    forResource: "cacert", withExtension: "pem", subdirectory: "MaiAgentCertificates"
+                ), let bundled = try? String(contentsOf: certificateURL, encoding: .utf8) else {
+                    throw AIBackendError(message: "设备同步证书不可用")
+                }
+                certificate = bundled
+            }
+            #else
+            guard let certificateURL = Bundle.main.url(
+                forResource: "cacert", withExtension: "pem", subdirectory: "MaiAgentCertificates"
+            ), let bundled = try? String(contentsOf: certificateURL, encoding: .utf8) else {
+                throw AIBackendError(message: "设备同步证书不可用")
+            }
+            certificate = bundled
+            #endif
+            let lookup = url.replacingOccurrences(of: "wss://", with: "https://")
+                .replacingOccurrences(of: "ws://", with: "http://")
+            var proxyBytes = [CChar](repeating: 0, count: 512)
+            let capacity = proxyBytes.count
+            let proxyFound: Bool
+            #if DEBUG && targetEnvironment(simulator)
+            if ProcessInfo.processInfo.environment["MAICHAT_LOCAL_UI_PHONE"] != nil {
+                proxyFound = true
+            } else {
+                proxyFound = lookup.withCString {
+                    maiChatHttpProxyForURL($0, &proxyBytes, capacity)
+                } == 1
+            }
+            #else
+            proxyFound = lookup.withCString {
+                maiChatHttpProxyForURL($0, &proxyBytes, capacity)
+            } == 1
+            #endif
+            guard proxyFound else {
+                throw AIBackendError(message: "当前网络代理不支持设备同步")
+            }
+            let proxy = String(cString: proxyBytes)
+            let sink = AIRemoteSocketSink(self)
+            guard let created = maiSessionSyncCreate(aiRemoteSocketEvent,
+                Unmanaged.passUnretained(sink).toOpaque()) else {
+                throw AIBackendError(message: "设备同步连接初始化失败")
+            }
+            let started = url.withCString { address in
+                token.withCString { bearer in
+                    certificate.withCString { pem in
+                        proxy.withCString { route in
+                            maiSessionSyncStart(created, address, bearer, pem, route)
+                        }
+                    }
+                }
+            }
+            guard started == 1 else {
+                maiSessionSyncDestroy(created)
+                throw AIBackendError(message: "设备同步连接启动失败")
+            }
+            socket = created
+            socketSink = sink
+        }
+        if connected { return }
+        try await withCheckedThrowingContinuation { continuation in
+            connectionWaiters.append(continuation)
+            Task {
+                try? await Task.sleep(for: .seconds(10))
+                self.expireConnectionWaiters()
+            }
+        }
+    }
+
+    private func expireConnectionWaiters() {
+        guard !connected, !connectionWaiters.isEmpty else { return }
+        let waiters = connectionWaiters
+        connectionWaiters.removeAll()
+        let failure = AIBackendError(message: "设备同步连接超时")
+        waiters.forEach { $0.resume(throwing: failure) }
+    }
+
+    private func expireResponse(_ id: String) {
+        responses.removeValue(forKey: id)?.resume(
+            throwing: AIBackendError(message: "设备同步操作状态未知，请先查看会话记录"))
+    }
+
+    private func request(_ operation: String, body: [String: Any] = [:]) async throws -> Data {
+        try await connect()
+        let id = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+        let frame: [String: Any] = ["id": id, "op": operation, "body": body]
+        let data = try JSONSerialization.data(withJSONObject: frame, options: .sortedKeys)
+        guard let socket else { throw AIBackendError(message: "设备同步连接已关闭") }
+        return try await withCheckedThrowingContinuation { continuation in
+            responses[id] = continuation
+            let sent = data.withUnsafeBytes { bytes in
+                maiSessionSyncSend(socket, bytes.baseAddress?.assumingMemoryBound(to: CChar.self), data.count)
+            }
+            if sent != 1 {
+                responses.removeValue(forKey: id)?.resume(
+                    throwing: AIBackendError(message: "设备同步连接中断"))
+                return
+            }
+            Task {
+                try? await Task.sleep(for: .seconds(15))
+                self.expireResponse(id)
+            }
+        }
     }
 
     func catalog() async throws -> [AIRemoteSession] {
-        try JSONDecoder().decode(Catalog.self, from: await request(.sessions)).sessions
+        try await connect()
+        return cachedCatalog
     }
 
     func presence(deviceID: String, name: String, sessions: [AISession]) async throws {
@@ -345,13 +548,30 @@ private actor AIRemoteSessionTransport {
             return ["id": item.id, "title": safeTitle,
                     "busy": item.busy, "updated_at": updated - Int64(index)]
         }
-        _ = try await request(.presence, body: [
+        _ = try await request("presence", body: [
             "device_id": deviceID, "name": name, "sessions": entries
         ])
     }
 
     func poll() async throws -> [Envelope] {
-        try JSONDecoder().decode(Inbox.self, from: await request(.poll, wait: 10_000)).messages
+        try await connect()
+        if !inbox.isEmpty {
+            let messages = inbox
+            inbox.removeAll()
+            return messages
+        }
+        return try await withCheckedThrowingContinuation { continuation in
+            waitingInbox = continuation
+            Task {
+                try? await Task.sleep(for: .seconds(10))
+                self.finishIdlePoll()
+            }
+        }
+    }
+
+    private func finishIdlePoll() {
+        waitingInbox?.resume(returning: [])
+        waitingInbox = nil
     }
 
     func send(to session: AIRemoteSession, kind: String,
@@ -373,7 +593,7 @@ private actor AIRemoteSessionTransport {
     func send(toSlot: String, toLogin: String, sessionID: String,
               kind: String, payload: [String: Any], messageID: String? = nil) async throws -> String {
         let id = messageID ?? UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
-        _ = try await request(.send, body: [
+        _ = try await request("send", body: [
             "to_slot": toSlot,
             "to_login_session_id": toLogin,
             "client_message_id": id,
@@ -407,7 +627,26 @@ private actor AIRemoteSessionTransport {
     }
 
     func acknowledge(_ id: Int) async throws {
-        _ = try await request(.ack, body: ["ids": [id]])
+        _ = try await request("ack", body: ["ids": [id]])
+    }
+
+    func stop() {
+        socketSink?.invalidate()
+        if let socket { maiSessionSyncDestroy(socket) }
+        socket = nil
+        socketSink = nil
+        connected = false
+        let failure = AIBackendError(message: "设备同步连接已关闭")
+        let waiters = connectionWaiters
+        connectionWaiters.removeAll()
+        waiters.forEach { $0.resume(throwing: failure) }
+        let pending = responses
+        responses.removeAll()
+        pending.values.forEach { $0.resume(throwing: failure) }
+        waitingInbox?.resume(throwing: failure)
+        waitingInbox = nil
+        inbox.removeAll()
+        cachedCatalog.removeAll()
     }
 }
 
@@ -1120,6 +1359,7 @@ final class AIAssistantModel: ObservableObject {
     private func stopRemoteSync() {
         remotePoll?.cancel()
         remotePoll = nil
+        Task { await remoteTransport.stop() }
     }
     func setPageActive(_ active: Bool) {
         pageActive = active
@@ -1157,11 +1397,24 @@ final class AIAssistantModel: ObservableObject {
         return created
     }
 
+    private func applyRemoteCatalog(_ catalog: [AIRemoteSession]) {
+        remoteSessions = catalog.filter { $0.deviceSlot != syncDeviceSlot }
+        if let selected = selectedRemote,
+           let updated = remoteSessions.first(where: {
+               $0.id == selected.id && $0.loginSessionID == selected.loginSessionID
+           }) {
+            selectedRemote = updated
+        }
+    }
+
     private func startRemotePolling() {
         guard remotePoll == nil else { return }
         remotePoll = Task { [weak self] in
+            guard let self else { return }
+            await self.remoteTransport.setCatalogHandler { [weak self] catalog in
+                Task { @MainActor [weak self] in self?.applyRemoteCatalog(catalog) }
+            }
             while !Task.isCancelled {
-                guard let self else { return }
                 guard AIMobileHostToolProvider.shared.appState?.hasUnifiedAccount == true,
                       self.ready else {
                     try? await Task.sleep(for: .seconds(2))
@@ -1184,15 +1437,6 @@ final class AIAssistantModel: ObservableObject {
                             name: name.isEmpty ? "iPhone" : name,
                             sessions: self.sessions
                         )
-                        let catalog = try await self.remoteTransport.catalog()
-                        self.remoteSessions = catalog.filter { $0.deviceSlot != self.syncDeviceSlot }
-                        if let selected = self.selectedRemote,
-                           let updated = self.remoteSessions.first(where: {
-                               $0.id == selected.id &&
-                               $0.loginSessionID == selected.loginSessionID
-                           }) {
-                            self.selectedRemote = updated
-                        }
                         self.lastRemotePresence = Date()
                     }
                     if let remote = self.selectedRemote,

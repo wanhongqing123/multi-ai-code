@@ -16,7 +16,6 @@ namespace {
 constexpr size_t kMaximumResponseBytes = 1024 * 1024;
 constexpr size_t kMaximumHeaderBytes = 16 * 1024;
 constexpr size_t kMaximumRequestBytes = 32 * 1024;
-constexpr size_t kMaximumSessionSyncRequestBytes = 96 * 1024;
 constexpr long kConnectTimeoutMilliseconds = 10 * 1000;
 constexpr long kTotalTimeoutMilliseconds = 30 * 1000;
 constexpr long kReadStallTimeoutSeconds = 20;
@@ -89,31 +88,11 @@ bool isValidRequest(const char* url, const char* method, const char* bearer, con
         std::strncmp(url, kLocalBase, sizeof(kLocalBase) - 1) == 0 && std::strstr(url, "/v1/") != nullptr;
     if (!secure && !localHttp) return false;
     const char* query = std::strchr(url, '?');
-    bool localSyncPoll = false;
-    if (localHttp && query != nullptr) {
-        constexpr char kPollPath[] = "/v1/session-sync/poll?wait_ms=";
-        const char* path = std::strstr(url, kPollPath);
-        if (path != nullptr && path + sizeof(kPollPath) - 1 == query + 9 &&
-            std::strcmp(method, "GET") == 0) {
-            int wait = 0;
-            const char* digit = query + 9;
-            localSyncPoll = *digit != '\0';
-            for (; *digit != '\0' && localSyncPoll; ++digit) {
-                if (*digit < '0' || *digit > '9') localSyncPoll = false;
-                else {
-                    wait = wait * 10 + *digit - '0';
-                    if (wait > 20000) localSyncPoll = false;
-                }
-            }
-        }
-    }
     if (std::strlen(url) > 2048 || std::strstr(url, "..") != nullptr ||
-        std::strpbrk(url, "#@") != nullptr || (query != nullptr && !localSyncPoll))
+        std::strpbrk(url, "#@") != nullptr || query != nullptr)
         return false;
     if (secure && (caBundlePath == nullptr || caBundlePath[0] == '\0')) return false;
-    const bool sessionSync = std::strstr(url, "/v1/session-sync/") != nullptr;
-    if (bodyLength > (sessionSync ? kMaximumSessionSyncRequestBytes : kMaximumRequestBytes) ||
-        (bodyLength > 0 && body == nullptr)) return false;
+    if (bodyLength > kMaximumRequestBytes || (bodyLength > 0 && body == nullptr)) return false;
     if (std::strcmp(method, "GET") == 0) return body == nullptr && bodyLength == 0;
     return std::strcmp(method, "POST") == 0;
 }

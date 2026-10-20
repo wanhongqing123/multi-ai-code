@@ -17,6 +17,7 @@
 #include "app/RemoteIMApplication.h"
 #include "auth/DesktopAuthClient.h"
 #include "agent/DesktopSessionSyncCoordinator.h"
+#include "agent/DesktopSessionSyncChannel.h"
 #include "auth/SecureRefreshTokenStore.h"
 #include "logging/AppLog.h"
 #include "platform/DesktopRemoteIMClientFactory.h"
@@ -309,14 +310,27 @@ int main(int argc, char* argv[]) {
     };
     window.setModelKeyRefreshHandler(refreshAccountModelKeys);
     window.show();
+    DesktopSessionSyncChannel sessionChannel(auth.sessionSyncSocketUrl(),
+                                             auth.sessionSyncAccessTokenProvider());
     DesktopSessionSyncCoordinator sessionSync(
-        [&auth](const QString& path, const QByteArray& method, const QJsonObject& body,
+        [&sessionChannel](const QString& path, const QByteArray& method, const QJsonObject& body,
                 DesktopSessionSyncCoordinator::Completion completion) {
-            auth.requestSessionSync(path, method, body, std::move(completion));
+            sessionChannel.request(path, method, body, std::move(completion));
         },
         [&window] { return window.activeAgentController(); });
+    sessionChannel.setCatalogHandler([&sessionSync](const QJsonArray& sessions) {
+        sessionSync.acceptCatalog(sessions);
+    });
+    sessionChannel.setInboxHandler([&sessionSync](const QJsonArray& messages) {
+        sessionSync.acceptInbox(messages);
+    });
+    sessionChannel.setConnectedHandler([&sessionSync] { sessionSync.connectionReady(); });
+    sessionChannel.setDisconnectedHandler([&sessionSync] { sessionSync.connectionLost(); });
     window.setSessionSyncCoordinator(&sessionSync);
-    if (!smokeMode) sessionSync.start();
+    if (!smokeMode) {
+        sessionSync.start();
+        sessionChannel.start();
+    }
     if (!smokeMode) refreshAccountModelKeys();
     remoteIM.connectToService(credential.sdkAppId, credential.userSig);
     auth.startSessionMonitoring();

@@ -20,6 +20,13 @@
 | `opencv/` | https://github.com/opencv/opencv | 4.14.0（完整源码） |
 | `simde/` | https://github.com/simd-everywhere/simde | 0.8.2（OBS 使用的头文件与许可文件） |
 | `md4c/` | https://github.com/mity/md4c | release-0.5.2（MIT，供 PDF 与桌面 Markdown 共用） |
+| `websocketpp/` | https://github.com/zaphoyd/websocketpp | 0.8.2（BSD-3-Clause，MaiChat 多端 Session 通道） |
+| `asio/` | https://github.com/chriskohlhoff/asio | asio-1-30-2（Boost Software License 1.0，WebSocket++ 独立 Asio 传输） |
+
+WebSocket++ 使用 `ASIO_STANDALONE` 和 C++17，不要求完整 Boost。上游
+Asio 1.38.2 已移除 WebSocket++ 0.8.2 使用的 `io_service`，因此固定到
+在当前 Clang 与 OpenSSL 构建下通过 TLS 客户端编译检查的 1.30.2。具体
+来源与发布包校验见各目录的 `MAI_UPSTREAM.md`。
 
 OpenCV 4.14.0 来自官方 tag 源码包
 `https://github.com/opencv/opencv/archive/refs/tags/4.14.0.tar.gz`，SHA-256 为

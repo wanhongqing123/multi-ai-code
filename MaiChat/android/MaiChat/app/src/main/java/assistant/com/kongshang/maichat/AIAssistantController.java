@@ -1647,6 +1647,13 @@ public final class AIAssistantController {
     private void exportSystemCertificates() throws Exception {
         SystemCertificateBundle.writeCurrentPem(new File(root, "trusted-roots.pem"));
     }
+    String sessionSyncCertificatePem() throws Exception {
+        if (root == null) throw new IOException("设备同步证书尚未准备好");
+        byte[] bytes = Files.readAllBytes(new File(root, "trusted-roots.pem").toPath());
+        if (bytes.length == 0 || bytes.length > 1024 * 1024)
+            throw new IOException("设备同步证书无效");
+        return new String(bytes, StandardCharsets.UTF_8);
+    }
     void close() {
         closed = true;
         if (sessionSync != null) sessionSync.close();

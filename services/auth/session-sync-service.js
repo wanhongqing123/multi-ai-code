@@ -24,6 +24,8 @@ function validTitle(value) {
 function createSessionSyncService({ db, authorize, now = Date.now }) {
   if (!db || typeof authorize !== 'function') throw new Error('Sync service needs a store and auth');
   const waiters = new Map();
+  const mailboxes = new Map();
+  const catalogs = new Map();
   const device = db.prepare('SELECT * FROM sync_devices WHERE account_id=? AND slot=?');
   const currentSession = db.prepare(`SELECT 1 FROM sync_sessions
     WHERE account_id=? AND slot=? AND login_session_id=? AND session_id=?`);
@@ -41,6 +43,31 @@ function createSessionSyncService({ db, authorize, now = Date.now }) {
     const callbacks = waiters.get(target);
     waiters.delete(target);
     if (callbacks) for (const callback of callbacks) callback();
+    for (const callback of mailboxes.get(target) || []) callback();
+  }
+  function publishCatalog(accountId) {
+    for (const callback of catalogs.get(accountId) || []) callback();
+  }
+  function subscribe(principal, onMailbox, onCatalog) {
+    const target = key(principal.accountId, principal.slot, principal.loginSessionId);
+    const mailboxListeners = mailboxes.get(target) || new Set();
+    const catalogListeners = catalogs.get(principal.accountId) || new Set();
+    mailboxListeners.add(onMailbox);
+    catalogListeners.add(onCatalog);
+    mailboxes.set(target, mailboxListeners);
+    catalogs.set(principal.accountId, catalogListeners);
+    return () => {
+      mailboxListeners.delete(onMailbox);
+      catalogListeners.delete(onCatalog);
+      if (!mailboxListeners.size) mailboxes.delete(target);
+      if (!catalogListeners.size) catalogs.delete(principal.accountId);
+    };
+  }
+  function markDisconnected(principal) {
+    const changed = db.prepare(`UPDATE sync_devices SET last_seen=0
+      WHERE account_id=? AND slot=? AND login_session_id=? AND last_seen!=0`).run(
+      principal.accountId, principal.slot, principal.loginSessionId);
+    if (changed.changes) publishCatalog(principal.accountId);
   }
   function isCurrent(principal) {
     const row = device.get(principal.accountId, principal.slot);
@@ -142,6 +169,7 @@ function createSessionSyncService({ db, authorize, now = Date.now }) {
       const previousLogin = updatePresence(principal, body);
       if (previousLogin && previousLogin !== principal.loginSessionId)
         wake(principal.accountId, principal.slot, previousLogin);
+      publishCatalog(principal.accountId);
       return reply(200, { online: true, login_session_id: principal.loginSessionId });
     }
     if (method === 'GET' && url.pathname === '/v1/session-sync/sessions') {
@@ -215,7 +243,7 @@ function createSessionSyncService({ db, authorize, now = Date.now }) {
     return reply(404, { error: 'Not found' });
   }
 
-  return { handle, cleanup };
+  return { handle, cleanup, subscribe, markDisconnected };
 }
 
 module.exports = { createSessionSyncService };

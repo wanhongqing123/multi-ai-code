@@ -3,14 +3,20 @@
 // Local simulator fixture: one MaiChat test account and a fake Mac Session.
 // It never calls a model or reaches Tencent IM. Bind only to loopback.
 const http = require('node:http');
+const https = require('node:https');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const { randomUUID, createHash } = require('node:crypto');
 const { openStore } = require('./store');
 const { createAuthService } = require('./service');
 const { openSessionSyncStore } = require('./session-sync-store');
 const { createSessionSyncService } = require('./session-sync-service');
-const { createAccountAuthorizer } = require('./session-sync-server');
+const { attachWebSocket, createAccountAuthorizer } = require('./session-sync-server');
 
 const port = 18190;
+const socketPort = 18191;
 const accountID = 'sync-ui-test';
 const password = 'local sync UI test passphrase';
 const sessionID = 'ses_mock_mac';
@@ -84,6 +90,17 @@ async function fakeMacLoop() {
 }
 
 async function start() {
+  const certificateDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'maichat-sync-ui-'));
+  const certificatePath = path.join(certificateDirectory, 'localhost.pem');
+  const keyPath = path.join(certificateDirectory, 'localhost.key');
+  execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-sha256', '-nodes',
+    '-keyout', keyPath, '-out', certificatePath, '-days', '1',
+    '-subj', '/CN=localhost',
+    '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1,IP:10.0.2.2'],
+  { stdio: 'ignore' });
+  const certificate = fs.readFileSync(certificatePath);
+  const key = fs.readFileSync(keyPath);
+  fs.rmSync(certificateDirectory, { recursive: true, force: true });
   const created = await auth.createTestAccount(accountID, password);
   if (created.statusCode !== 201) throw new Error('Could not create local test account');
   const login = await auth.handle({ method: 'POST', path: '/v1/auth/password/login',
@@ -92,6 +109,11 @@ async function start() {
   if (login.statusCode !== 200) throw new Error('Could not log in fake Mac');
   macToken = login.body.access_token;
   const server = http.createServer(async (request, response) => {
+    if (request.url === '/test/cert') {
+      response.writeHead(200, { 'Content-Type': 'application/x-pem-file' });
+      response.end(certificate);
+      return;
+    }
     if (request.url === '/test/status') {
       const devices = syncDb.prepare('SELECT slot,last_seen FROM sync_devices').all();
       const envelopes = syncDb.prepare(
@@ -119,6 +141,13 @@ async function start() {
     response.end(JSON.stringify(result.body));
   });
   await new Promise(resolve => server.listen(port, '127.0.0.1', resolve));
+  const socketServer = attachWebSocket(
+    https.createServer({ key, cert: certificate }, (_request, response) => {
+      response.writeHead(404);
+      response.end();
+    }), sync, createAccountAuthorizer(`http://127.0.0.1:${port}`)
+  );
+  await new Promise(resolve => socketServer.listen(socketPort, '127.0.0.1', resolve));
   const present = await call(macToken, 'POST', '/v1/session-sync/presence', {
     device_id: 'localmacfixture', name: '测试 Mac',
     sessions: [{ id: sessionID, title: 'Mac 本地测试任务',
@@ -131,7 +160,7 @@ async function start() {
       updated_at: Date.now(), busy: false }]
   }), 15_000);
   fakeMacLoop().catch(error => { process.stderr.write(`${error.message}\n`); process.exitCode = 1; });
-  process.stdout.write(`Local Session sync fixture listening on 127.0.0.1:${port}\n`);
+  process.stdout.write(`Local Session sync fixture HTTP ${port}, WSS ${socketPort}\n`);
 }
 
 start().catch(error => { process.stderr.write(`${error.message}\n`); process.exitCode = 1; });

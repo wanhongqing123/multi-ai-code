@@ -29,14 +29,6 @@ struct MaiChatAuthSession: Decodable, Sendable {
     let user: MaiChatAuthUser
 }
 
-enum MaiChatSessionSyncRoute: String, Sendable {
-    case presence
-    case sessions
-    case poll
-    case send
-    case ack
-}
-
 struct MaiChatFriend: Decodable, Sendable {
     let accountId: String
     let nickname: String?
@@ -664,77 +656,22 @@ actor MaiChatAuthClient {
         }
     }
 
-    /// 与账号请求共用登录态；会话同步仍由所属设备执行，不在服务端调用模型。
-    func sessionSyncRequest(
-        _ route: MaiChatSessionSyncRoute, body: Data = Data(), waitMilliseconds: Int = 0
-    ) async throws -> Data {
-        guard (0...20_000).contains(waitMilliseconds),
-              route == .poll || waitMilliseconds == 0 else {
-            throw MaiChatAuthError.invalidServerResponse
-        }
-        let requestedSessionVersion = sessionVersion
-        let token = try await currentAccessToken()
-        let method = route == .sessions || route == .poll ? "GET" : "POST"
-        var components = URLComponents(
-            url: baseURL.appendingPathComponent("session-sync")
-                .appendingPathComponent(route.rawValue), resolvingAgainstBaseURL: false
-        )
-        if route == .poll {
-            components?.queryItems = [URLQueryItem(name: "wait_ms", value: String(waitMilliseconds))]
-        }
-        guard let url = components?.url else { throw MaiChatAuthError.invalidServerResponse }
-        var responseData = Data()
-        var statusCode = 0
+    func sessionSyncAccessToken() async throws -> String {
+        try await currentAccessToken()
+    }
+
+    func sessionSyncSocketURL() -> URL {
         #if DEBUG && targetEnvironment(simulator)
-        if url.scheme == "http" {
-            // 本机 UI 测试使用账号客户端已有的 loopback curl 通道；正式设备只走 HTTPS。
-            (responseData, statusCode) = try await Self.performCurlRequest(
-                url: url.absoluteString, method: method, bearer: token,
-                body: body, caBundlePath: "")
-        } else {
-            let response = try await MaiChatHttpClient.request(
-                url: url, method: method, bearer: token,
-                contentType: method == "POST" ? "application/json" : "", body: body,
-                maximumResponseBytes: 1024 * 1024,
-                timeoutMilliseconds: max(30_000, waitMilliseconds + 10_000))
-            responseData = response.body
-            statusCode = response.statusCode
+        if usesLocalTestServer {
+            return URL(string: "wss://localhost:18191/v1/session-sync/ws")!
         }
-        #else
-        let response = try await MaiChatHttpClient.request(
-            url: url, method: method, bearer: token,
-            contentType: method == "POST" ? "application/json" : "", body: body,
-            maximumResponseBytes: 1024 * 1024,
-            timeoutMilliseconds: max(30_000, waitMilliseconds + 10_000))
-        responseData = response.body
-        statusCode = response.statusCode
         #endif
-        guard (200..<300).contains(statusCode) else {
-            let serverError = try? JSONDecoder().decode(
-                MaiChatAuthServerError.self, from: responseData)
-            if statusCode == 401 {
-                guard sessionVersion == requestedSessionVersion else {
-                    throw MaiChatAuthError.sessionExpired
-                }
-                if serverError?.code == "SESSION_REPLACED" ||
-                    serverError?.code == "DEVICE_SLOT_REQUIRED" {
-                    _ = discardLocalSession()
-                    let replaced = serverError?.code == "SESSION_REPLACED"
-                    await MainActor.run {
-                        NotificationCenter.default.post(
-                            name: replaced ? .maiChatAccountSessionReplaced :
-                                .maiChatAccountDeviceSlotRequired, object: nil
-                        )
-                    }
-                    throw replaced ? MaiChatAuthError.sessionReplaced :
-                        MaiChatAuthError.deviceSlotRequired
-                }
-                throw MaiChatAuthError.sessionExpired
-            }
-            throw MaiChatAuthError.requestFailed(serverError?.error ??
-                "设备同步服务暂时不可用（\(statusCode)）")
-        }
-        return responseData
+        var components = URLComponents(
+            url: baseURL.appendingPathComponent("session-sync/ws"),
+            resolvingAgainstBaseURL: false
+        )!
+        components.scheme = baseURL.scheme == "https" ? "wss" : "ws"
+        return components.url!
     }
 
     private func request<T: Decodable & Sendable>(

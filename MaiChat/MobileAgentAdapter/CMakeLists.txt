@@ -234,6 +234,8 @@ if(TARGET maiagent_graphics)
 endif()
 add_library(maichat_mobile STATIC
   MaiMobileAgent.cpp
+  ../SessionSync/MaiSessionSyncSocket.cpp
+  ../SessionSync/MaiSessionSyncC.cpp
   ../Media/MaiGraphicsPresenter.cpp
   ../Media/MaiVideoPlayback.cpp
   ../Media/MaiVideoColorParameters.cpp
@@ -252,9 +254,14 @@ add_dependencies(maichat_mobile maichat_ffmpeg_build)
 target_include_directories(maichat_mobile PRIVATE "${ffmpeg_build}/install/include")
 target_include_directories(maichat_mobile PRIVATE
   "${ffmpeg_source}/fftools")
-target_include_directories(maichat_mobile PUBLIC . ../MaiChatTools ../Media
-  PRIVATE ../../MaiAgent/third_party/nlohmann)
+target_include_directories(maichat_mobile PUBLIC . ../MaiChatTools ../Media ../SessionSync
+  PRIVATE ../../MaiAgent/third_party/nlohmann
+    ../../MaiAgent/third_party/websocketpp
+    ../../MaiAgent/third_party/asio/asio/include
+    ${MAI_OPENSSL_INCLUDE_DIR})
+target_compile_definitions(maichat_mobile PRIVATE ASIO_STANDALONE _WEBSOCKETPP_CPP11_STRICT_)
 target_link_libraries(maichat_mobile PRIVATE maiagent
+  ${MAI_OPENSSL_SSL_TARGET} ${MAI_OPENSSL_CRYPTO_TARGET}
   maiagent_cv_video_analysis
   maichat_ffmpeg_tools
   maichat_ffmpeg_avdevice maichat_ffmpeg_avfilter maichat_ffmpeg_avformat

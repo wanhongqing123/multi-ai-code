@@ -632,33 +632,8 @@ public final class MaiChatAuthClient {
         }
     }
 
-    /** Session 同步沿用当前 MaiChat 登录态；模型与本地工具仍由所属设备执行。 */
-    public JSONObject sessionSyncRequest(String route, JSONObject body, int waitMs)
-        throws Exception {
-        if (route == null || waitMs < 0 || waitMs > 20000 ||
-            !(route.equals("presence") || route.equals("sessions") || route.equals("poll")
-                || route.equals("send") || route.equals("ack")) ||
-            (!route.equals("poll") && waitMs != 0))
-            throw new IOException("设备同步请求参数无效");
-        boolean get = route.equals("sessions") || route.equals("poll");
-        String path = "session-sync/" + route +
-            (route.equals("poll") ? "?wait_ms=" + waitMs : "");
-        if (route.equals("poll")) {
-            // 长轮询最多 20 秒，不能持有账号客户端的锁阻塞登出和凭据续期。
-            String bearer;
-            synchronized (this) { bearer = currentAccessToken(); }
-            try { return request(path, "GET", null, bearer); }
-            catch (SessionTerminatedException failure) {
-                synchronized (this) {
-                    if (bearer.equals(accessToken)) handleSessionTerminated(failure);
-                }
-                throw failure;
-            }
-        }
-        synchronized (this) {
-            return authenticatedRequest(path, get ? "GET" : "POST",
-                get ? null : (body == null ? new JSONObject() : body));
-        }
+    synchronized String sessionSyncAccessToken() throws Exception {
+        return currentAccessToken();
     }
 
     public synchronized void validateSession() throws Exception {

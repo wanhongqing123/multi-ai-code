@@ -32,6 +32,10 @@ public:
     ~DesktopSessionSyncCoordinator() override;
 
     void start();
+    void connectionReady();
+    void connectionLost();
+    void acceptCatalog(const QJsonArray& sessions);
+    void acceptInbox(const QJsonArray& messages);
     void setCatalogHandler(CatalogHandler handler);
     void setPayloadHandler(PayloadHandler handler);
     void requestRemoteHistory(const QJsonObject& session, const QString& before, int limit, Completion completion);
@@ -64,8 +68,6 @@ private:
 
     DesktopSessionSyncHost* host();
     void publishPresence();
-    void fetchCatalog();
-    void poll();
     void handleEnvelope(const QJsonObject& envelope);
     void acknowledge(int id);
     void handleRemoteChunk(const QJsonObject& envelope);
@@ -81,8 +83,6 @@ private:
     QPointer<AgentController> agent_;
     std::unique_ptr<DesktopSessionSyncHost> host_;
     QTimer presenceTimer_;
-    QTimer catalogTimer_;
-    QTimer retryTimer_;
     QTimer snapshotTimer_;
     QString deviceId_;
     QString deviceName_;
@@ -96,6 +96,5 @@ private:
     PayloadHandler payloadHandler_;
     QQueue<Outgoing> outbound_;
     bool started_ = false;
-    bool polling_ = false;
     bool sending_ = false;
 };

@@ -722,19 +722,19 @@ void DesktopAuthClient::authorizedRequest(const QString& path, const QByteArray&
     });
 }
 
-void DesktopAuthClient::requestSessionSync(const QString& path, const QByteArray& method,
-                                           const QJsonObject& body,
-                                           SessionSyncCompletion completion) {
-    if (!path.startsWith(QStringLiteral("session-sync/")) ||
-        (method != "GET" && method != "POST")) {
-        completion({}, QStringLiteral("设备同步请求参数无效"));
-        return;
-    }
-    authorizedRequest(path, method, body,
-        [this, completion = std::move(completion)](const HttpResult& result) {
-            completion(result.status == 200 ? result.body : QJsonObject{},
-                       result.status == 200 ? QString() : responseError(result));
-        });
+QUrl DesktopAuthClient::sessionSyncSocketUrl() const {
+    QUrl url = baseUrl_.resolved(QUrl(QStringLiteral("session-sync/ws")));
+    url.setScheme(url.scheme() == QStringLiteral("https") ? QStringLiteral("wss") : QStringLiteral("ws"));
+    return url;
+}
+
+std::function<QString()> DesktopAuthClient::sessionSyncAccessTokenProvider() const {
+    const auto cache = accountAccess_;
+    return [cache] {
+        QMutexLocker lock(&cache->mutex);
+        return cache->expiresAt > QDateTime::currentSecsSinceEpoch() + 30 ?
+            cache->token : QString();
+    };
 }
 
 void DesktopAuthClient::fetchFriends(FriendsCompletion completion) {

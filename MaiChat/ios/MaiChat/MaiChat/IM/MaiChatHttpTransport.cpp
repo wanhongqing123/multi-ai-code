@@ -332,6 +332,17 @@ extern "C" void maiChatHttpPerform(const char* url, const char* method, const ch
     }
 }
 
+extern "C" int maiChatHttpProxyForURL(const char* url, char* result, size_t resultCapacity) {
+    if (url == nullptr || result == nullptr || resultCapacity == 0) return 0;
+    result[0] = '\0';
+    maiChatNetwork::SystemProxy route;
+    if (!maiChatNetwork::selectSystemProxy(url, &route)) return 0;
+    if (route.direct) return 1;
+    if (route.type != CURLPROXY_HTTP) return 0;
+    const int count = std::snprintf(result, resultCapacity, "http://%s:%ld/", route.host, route.port);
+    return count > 0 && static_cast<size_t>(count) < resultCapacity ? 1 : 0;
+}
+
 extern "C" void maiChatHttpFreeResult(MaiChatHttpResult* result) {
     if (result == nullptr) return;
     std::free(result->responseBody);

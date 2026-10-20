@@ -10,3 +10,4 @@
 #include "Media/MaiFfplayIosBridge.h"
 #include "IM/MaiChatAuthTransport.h"
 #include "IM/MaiChatHttpTransport.h"
+#include "../../../SessionSync/MaiSessionSyncC.h"

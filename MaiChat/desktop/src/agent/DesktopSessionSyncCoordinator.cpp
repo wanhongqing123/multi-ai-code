@@ -42,10 +42,6 @@ DesktopSessionSyncCoordinator::DesktopSessionSyncCoordinator(Requester requester
     if (deviceName_.isEmpty()) deviceName_ = QStringLiteral("Desktop");
     presenceTimer_.setInterval(15'000);
     connect(&presenceTimer_, &QTimer::timeout, this, [this] { publishPresence(); });
-    catalogTimer_.setInterval(15'000);
-    connect(&catalogTimer_, &QTimer::timeout, this, [this] { fetchCatalog(); });
-    retryTimer_.setSingleShot(true);
-    connect(&retryTimer_, &QTimer::timeout, this, [this] { poll(); });
     snapshotTimer_.setSingleShot(true);
     snapshotTimer_.setInterval(300);
     connect(&snapshotTimer_, &QTimer::timeout, this, [this] {
@@ -61,12 +57,22 @@ void DesktopSessionSyncCoordinator::start() {
     if (started_ || !requester_ || !agentProvider_) return;
     started_ = true;
     presenceTimer_.start();
-    catalogTimer_.start();
-    QTimer::singleShot(0, this, [this] {
-        publishPresence();
-        fetchCatalog();
-        poll();
-    });
+}
+
+void DesktopSessionSyncCoordinator::connectionReady() {
+    if (started_) publishPresence();
+}
+
+void DesktopSessionSyncCoordinator::connectionLost() {
+    QJsonArray offline;
+    for (const QJsonValue& value : remoteSessions_) {
+        QJsonObject entry = value.toObject();
+        entry.insert(QStringLiteral("online"), false);
+        offline.append(entry);
+    }
+    if (offline == remoteSessions_) return;
+    remoteSessions_ = offline;
+    if (catalogHandler_) catalogHandler_(offline);
 }
 
 void DesktopSessionSyncCoordinator::setCatalogHandler(CatalogHandler handler) {
@@ -78,28 +84,26 @@ void DesktopSessionSyncCoordinator::setPayloadHandler(PayloadHandler handler) {
     payloadHandler_ = std::move(handler);
 }
 
-void DesktopSessionSyncCoordinator::fetchCatalog() {
-    requester_(QStringLiteral("session-sync/sessions"), "GET", {},
-               [guard = QPointer<DesktopSessionSyncCoordinator>(this)](const QJsonObject& result,
-                                                                        const QString& error) {
-                   if (!guard || !error.isEmpty()) return;
-                   QJsonArray remote;
-                   for (const QJsonValue& value : result.value(QStringLiteral("sessions")).toArray()) {
-                       const QJsonObject entry = value.toObject();
+void DesktopSessionSyncCoordinator::acceptCatalog(const QJsonArray& sessions) {
+    QJsonArray remote;
+    for (const QJsonValue& value : sessions) {
+        const QJsonObject entry = value.toObject();
 #if defined(Q_OS_MAC)
-                       constexpr auto ownSlot = "mac";
+        constexpr auto ownSlot = "mac";
 #else
-                       constexpr auto ownSlot = "windows";
+        constexpr auto ownSlot = "windows";
 #endif
-                       if (entry.value(QStringLiteral("device_slot")).toString() == QLatin1String(ownSlot) &&
-                           entry.value(QStringLiteral("device_id")).toString() == guard->deviceId_)
-                           continue;
-                       remote.append(entry);
-                   }
-                   if (remote == guard->remoteSessions_) return;
-                   guard->remoteSessions_ = remote;
-                   if (guard->catalogHandler_) guard->catalogHandler_(remote);
-               });
+        if (entry.value(QStringLiteral("device_slot")).toString() == QLatin1String(ownSlot) &&
+            entry.value(QStringLiteral("device_id")).toString() == deviceId_) continue;
+        remote.append(entry);
+    }
+    if (remote == remoteSessions_) return;
+    remoteSessions_ = remote;
+    if (catalogHandler_) catalogHandler_(remote);
+}
+
+void DesktopSessionSyncCoordinator::acceptInbox(const QJsonArray& messages) {
+    for (const QJsonValue& message : messages) handleEnvelope(message.toObject());
 }
 
 QJsonObject DesktopSessionSyncCoordinator::matchingRemote(const QString& slot, const QString& login,
@@ -207,24 +211,6 @@ void DesktopSessionSyncCoordinator::publishPresence() {
                 {QStringLiteral("name"), deviceName_},
                 {QStringLiteral("sessions"), current->rootSessions()}},
                [](const QJsonObject&, const QString&) {});
-}
-
-void DesktopSessionSyncCoordinator::poll() {
-    if (!started_ || polling_) return;
-    polling_ = true;
-    QPointer<DesktopSessionSyncCoordinator> guard(this);
-    requester_(QStringLiteral("session-sync/poll?wait_ms=10000"), "GET", {},
-               [guard](const QJsonObject& result, const QString& error) {
-                   if (!guard) return;
-                   guard->polling_ = false;
-                   if (!error.isEmpty()) {
-                       guard->retryTimer_.start(2000);
-                       return;
-                   }
-                   const QJsonArray messages = result.value(QStringLiteral("messages")).toArray();
-                   for (const QJsonValue& message : messages) guard->handleEnvelope(message.toObject());
-                   guard->retryTimer_.start(messages.isEmpty() ? 250 : 0);
-               });
 }
 
 void DesktopSessionSyncCoordinator::handleEnvelope(const QJsonObject& envelope) {

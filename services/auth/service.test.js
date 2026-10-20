@@ -11,6 +11,7 @@ const { generatePngQrCode } = require('@juit/qrcode');
 const Database = require('better-sqlite3');
 const { openStore } = require('./store');
 const { createAuthService } = require('./service');
+const { completeAccountDeletion } = require('./account-deletion');
 const { bindLegacy } = require('./bind-legacy');
 
 function fixture(extra = {}) {
@@ -42,7 +43,8 @@ function fixture(extra = {}) {
       ? { ...body, age_confirmed_14_plus: true } : body,
     token
   );
-  return { db, messages, call, rawCall, advance(milliseconds) { current += milliseconds; } };
+  return { db, service, messages, call, rawCall,
+    advance(milliseconds) { current += milliseconds; } };
 }
 
 function desktopProof() {
@@ -69,6 +71,137 @@ async function requestDesktop(setup, platform) {
   assert.equal(request.statusCode, 200);
   return { proof, request };
 }
+
+test('account deletion requires fresh confirmation and immediately revokes every login', async () => {
+  const setup = fixture();
+  const alice = await signInWithSms(setup, '13900000001');
+  const bob = await signInWithSms(setup, '13900000002');
+  const user = setup.db.prepare('SELECT id,account_id FROM users WHERE phone_e164=?')
+    .get('+8613900000001');
+  const other = setup.db.prepare('SELECT id FROM users WHERE phone_e164=?')
+    .get('+8613900000002');
+  const [left, right] = [user.id, other.id].sort();
+  setup.db.prepare(`INSERT INTO friendships(left_user_id,right_user_id,created_at)
+    VALUES(?,?,?)`).run(left, right, 1);
+  assert.equal((await setup.call('GET', '/v1/auth/account/deletion/options', {},
+    alice.body.access_token)).body.phone_masked, '+8613****0001');
+  assert.equal((await setup.call('POST', '/v1/auth/account/deletion/challenge')).statusCode, 401);
+  const challenge = await setup.call('POST', '/v1/auth/account/deletion/challenge', {},
+    alice.body.access_token);
+  assert.equal(challenge.statusCode, 200);
+  const request = { confirm_account_id: user.account_id,
+    challenge_id: challenge.body.challenge_id, code: setup.messages.at(-1).code };
+  assert.equal((await setup.call('POST', '/v1/auth/account/deletion',
+    { ...request, confirm_account_id: other.id }, alice.body.access_token)).statusCode, 400);
+  assert.equal((await setup.call('POST', '/v1/auth/account/deletion',
+    { ...request, code: '000000' }, alice.body.access_token)).statusCode, 401);
+  const deleted = await setup.call('POST', '/v1/auth/account/deletion', request,
+    alice.body.access_token);
+  assert.equal(deleted.statusCode, 202);
+  assert.match(deleted.body.request_id, /^[0-9a-f-]{36}$/);
+  assert.match(deleted.body.receipt_token, /^[A-Za-z0-9_-]{43}$/);
+  assert.equal((await setup.call('POST', '/v1/auth/account/deletion/status', {
+    request_id: deleted.body.request_id, receipt_token: 'wrong'
+  })).statusCode, 400);
+  assert.equal((await setup.call('POST', '/v1/auth/account/deletion/status', {
+    request_id: deleted.body.request_id,
+    receipt_token: randomBytes(32).toString('base64url')
+  })).statusCode, 404);
+  const status = await setup.call('POST', '/v1/auth/account/deletion/status', {
+    request_id: deleted.body.request_id, receipt_token: deleted.body.receipt_token
+  });
+  assert.equal(status.body.status, 'pending');
+  const oldAccess = await setup.call('GET', '/v1/auth/me', {}, alice.body.access_token);
+  assert.equal(oldAccess.statusCode, 401);
+  assert.equal(oldAccess.body.code, 'ACCOUNT_DELETION');
+  const oldRefresh = await setup.call('POST', '/v1/auth/refresh',
+    { refresh_token: alice.body.refresh_token });
+  assert.equal(oldRefresh.statusCode, 401);
+  assert.equal(oldRefresh.body.code, 'ACCOUNT_DELETION');
+  assert.equal((await setup.call('GET', '/v1/auth/me', {}, bob.body.access_token)).statusCode, 200);
+  assert.equal(setup.db.prepare('SELECT COUNT(*) AS count FROM friendships').get().count, 0);
+  assert.equal(setup.db.prepare('SELECT desired FROM friend_im_sync').get().desired, 'delete');
+  assert.equal(setup.db.prepare('SELECT status FROM account_deletion_requests').get().status,
+    'pending');
+  assert.equal(setup.db.pragma('foreign_key_check').length, 0);
+  setup.db.close();
+});
+
+test('password-only test account can request deletion without a phone', async () => {
+  const setup = fixture();
+  assert.equal((await setup.service.createTestAccount('review_account',
+    'review-password-123456789')).statusCode, 201);
+  const login = await setup.call('POST', '/v1/auth/password/login', {
+    account_id: 'review_account', password: 'review-password-123456789',
+    device_slot: 'ios_phone'
+  });
+  assert.equal(login.statusCode, 200);
+  const token = login.body.access_token;
+  const options = await setup.call('GET', '/v1/auth/account/deletion/options', {}, token);
+  assert.deepEqual([options.body.phone_masked, options.body.has_password], [null, true]);
+  assert.equal((await setup.call('POST', '/v1/auth/account/deletion/challenge', {}, token))
+    .statusCode, 400);
+  assert.equal((await setup.call('POST', '/v1/auth/account/deletion', {
+    confirm_account_id: 'review_account', password: 'wrong-password'
+  }, token)).statusCode, 401);
+  const deletion = await setup.call('POST', '/v1/auth/account/deletion', {
+    confirm_account_id: 'review_account', password: 'review-password-123456789'
+  }, token);
+  assert.equal(deletion.statusCode, 202);
+  assert.equal((await setup.call('GET', '/v1/auth/me', {}, token)).statusCode, 401);
+  const evidence = { operator: 'review_operator',
+    tencent_im_deleted: true, session_sync_deleted: true,
+    oss_and_ark_assets_reviewed: true, shared_content_reviewed: true,
+    records: {
+      tencent_im_deleted: 'Tencent delete receipt reviewed',
+      session_sync_deleted: 'Sync rows deleted and counted',
+      oss_and_ark_assets_reviewed: 'OSS and Ark inventory reviewed',
+      shared_content_reviewed: 'Shared content reviewed by operator'
+    } };
+  assert.throws(() => completeAccountDeletion(setup.db, deletion.body.request_id,
+    { ...evidence, session_sync_deleted: false },
+    'test-only-auth-hmac-key-keep-on-server-123456'));
+  const completed = completeAccountDeletion(setup.db, deletion.body.request_id,
+    evidence, 'test-only-auth-hmac-key-keep-on-server-123456');
+  assert.equal(completed.status, 'completed');
+  const completionStatus = await setup.call('POST', '/v1/auth/account/deletion/status', {
+    request_id: deletion.body.request_id, receipt_token: deletion.body.receipt_token
+  });
+  assert.equal(completionStatus.body.status, 'completed');
+  assert.equal(completionStatus.body.completed_at, completed.completed_at);
+  assert.equal(setup.db.prepare('SELECT COUNT(*) AS count FROM users').get().count, 0);
+  const receipt = setup.db.prepare('SELECT * FROM account_deletion_requests').get();
+  assert.equal(receipt.account_id, null);
+  assert.equal(receipt.im_user_id, null);
+  assert.equal(receipt.status, 'completed');
+  assert.equal(setup.db.pragma('foreign_key_check').length, 0);
+  setup.db.close();
+});
+
+test('a signed-in user can report an offensive message without exposing a public report route', async () => {
+  const setup = fixture();
+  const alice = await signInWithSms(setup, '13900000001');
+  const bob = await signInWithSms(setup, '13900000002');
+  const body = { target_im_user_id: bob.body.user.im_user_id,
+    message_id: 'message-123', reason: 'harassment',
+    content_excerpt: 'Insulting message', details: 'Repeated unwanted messages' };
+  assert.equal((await setup.call('POST', '/v1/safety/reports', body)).statusCode, 401);
+  const report = await setup.call('POST', '/v1/safety/reports', body,
+    alice.body.access_token);
+  assert.equal(report.statusCode, 201);
+  assert.match(report.body.report_id, /^[0-9a-f-]{36}$/);
+  assert.equal((await setup.call('POST', '/v1/safety/reports', body,
+    alice.body.access_token)).body.report_id, report.body.report_id);
+  assert.equal((await setup.call('POST', '/v1/safety/reports',
+    { ...body, target_im_user_id: alice.body.user.im_user_id },
+    alice.body.access_token)).statusCode, 400);
+  const own = await setup.call('GET', '/v1/safety/reports', {}, alice.body.access_token);
+  assert.equal(own.body.reports.length, 1);
+  assert.equal(own.body.reports[0].status, 'pending');
+  assert.equal(setup.db.prepare('SELECT content_excerpt FROM safety_reports').get()
+    .content_excerpt, 'Insulting message');
+  setup.db.close();
+});
 
 test('auth/me identifies the active device login across token refresh', async () => {
   const setup = fixture();
@@ -188,7 +321,7 @@ test('media signing requires a signed-in account', async () => {
   assert.equal((await allowed.call('GET', path)).statusCode, 401);
   const signedIn = await signInWithSms(allowed);
   assert.deepEqual((await allowed.call('GET', path, {}, signedIn.body.access_token)).body,
-    { allowed: true });
+    { allowed: true, account_id: signedIn.body.user.id });
   allowed.db.close();
 
 });

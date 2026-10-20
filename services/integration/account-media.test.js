@@ -40,14 +40,18 @@ test('account bearer authorizes OSS signing and logout revokes it', async () => 
         assert.equal(url, 'http://127.0.0.1:9100/v1/media/authorize');
         const bearer = options.headers.Authorization.slice('Bearer '.length);
         const result = await call('GET', '/v1/media/authorize', {}, bearer);
-        return { status: result.statusCode };
+        return { status: result.statusCode,
+          json: async () => result.body };
       }
     });
     const event = bearer => ({ rawPath: '/sign-upload', httpMethod: 'POST',
       headers: { Authorization: `Bearer ${bearer}` },
       body: JSON.stringify({ filename: 'clip.mp4', size_bytes: 1024,
         purpose: 'ark_asset_input' }) });
-    assert.equal((await media(event(token))).statusCode, 200);
+    const signed = await media(event(token));
+    assert.equal(signed.statusCode, 200);
+    assert.match(JSON.parse(signed.body).object_key,
+      new RegExp(`^ark-asset-inputs/${signedIn.body.user.id}/`));
     await call('POST', '/v1/auth/logout', {}, token);
     assert.equal((await media(event(token))).statusCode, 401);
   } finally { db.close(); }

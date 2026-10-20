@@ -97,6 +97,27 @@ enum AIAssistantWorkspaceLocator {
         try FileManager.default.createDirectory(at: account, withIntermediateDirectories: true)
         return account
     }
+
+    static func removeWorkspace(for userID: String) throws {
+        guard !userID.isEmpty else { return }
+        let base = try baseDirectory()
+        let marker = base.appendingPathComponent("legacy-owner-user-id.txt")
+        if let owner = try? String(contentsOf: marker, encoding: .utf8), owner == userID {
+            for item in try FileManager.default.contentsOfDirectory(
+                at: base, includingPropertiesForKeys: nil
+            ) where item.lastPathComponent != "Accounts" && item.lastPathComponent != "Guest" {
+                try FileManager.default.removeItem(at: item)
+            }
+            return
+        }
+        let digest = SHA256.hash(data: Data(userID.utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        let account = base.appendingPathComponent("Accounts", isDirectory: true)
+            .appendingPathComponent(digest, isDirectory: true)
+        if FileManager.default.fileExists(atPath: account.path) {
+            try FileManager.default.removeItem(at: account)
+        }
+    }
 }
 
 final class AICloudCredentialStore: @unchecked Sendable {

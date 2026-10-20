@@ -326,6 +326,68 @@ final class LocalChatHistoryStore {
         LocalChatHistoryPersistence(baseDirectoryURL: baseDirectoryURL)
     }
 
+    func purgeAccount(ownerUserID: String, sdkAppID: Int? = nil) throws {
+        let owner = ownerUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !owner.isEmpty else { return }
+        var ownedPaths = Set<String>()
+        var otherPaths = Set<String>()
+        var legacySDKIDs = Set<String>()
+        legacySDKIDs.insert(accountKey(for: sdkAppID))
+        try withDatabase { database in
+            let listing = try prepare(database, sql: """
+                SELECT sdk_app_id,owner_user_id,voice_attachment,image_attachment,
+                       file_attachment,video_attachment FROM messages
+                """)
+            defer { sqlite3_finalize(listing) }
+            while true {
+                let result = sqlite3_step(listing)
+                if result == SQLITE_DONE { break }
+                guard result == SQLITE_ROW else { throw databaseError(database) }
+                let isOwner = textColumn(listing, at: 1) == owner
+                if isOwner { legacySDKIDs.insert(textColumn(listing, at: 0)) }
+                var paths = Set<String>()
+                for column in 2 ... 5 {
+                    guard let raw = optionalTextColumn(listing, at: Int32(column)),
+                          let data = raw.data(using: .utf8),
+                          let value = try? JSONSerialization.jsonObject(with: data)
+                              as? [String: Any] else { continue }
+                    for key in ["localFilePath", "localPath", "coverPath"] {
+                        if let path = value[key] as? String, !path.isEmpty {
+                            paths.insert(path)
+                        }
+                    }
+                }
+                if isOwner { ownedPaths.formUnion(paths) }
+                else { otherPaths.formUnion(paths) }
+            }
+            try execute(database, sql: "BEGIN IMMEDIATE TRANSACTION")
+            do {
+                let deletion = try prepare(database,
+                    sql: "DELETE FROM messages WHERE owner_user_id=?")
+                defer { sqlite3_finalize(deletion) }
+                try bindText(owner, to: deletion, at: 1, database: database)
+                guard sqlite3_step(deletion) == SQLITE_DONE else {
+                    throw databaseError(database)
+                }
+                try execute(database, sql: "COMMIT")
+            } catch {
+                try? execute(database, sql: "ROLLBACK")
+                throw error
+            }
+        }
+        for path in ownedPaths.subtracting(otherPaths) {
+            for category in RemoteIMMediaStorage.Category.allCases {
+                let resolved = RemoteIMMediaStorage.resolvedPath(from: path, category: category)
+                if !resolved.isEmpty { try? fileManager.removeItem(atPath: resolved) }
+            }
+        }
+        for rawSDKID in legacySDKIDs {
+            try? fileManager.removeItem(at: legacyFileURL(
+                sdkAppID: Int(rawSDKID), ownerUserID: owner
+            ))
+        }
+    }
+
     /// 按稳定游标读取单个会话的有界历史页。
     /// 先迁移旧数据，再以时间和消息标识共同排序；缺少账号、联系人或有效页长时返回空页。
     func loadConversationPage(
@@ -1284,6 +1346,10 @@ actor LocalChatHistoryPersistence {
 
     init(baseDirectoryURL: URL) {
         self.store = LocalChatHistoryStore(baseDirectoryURL: baseDirectoryURL)
+    }
+
+    func purgeAccount(ownerUserID: String, sdkAppID: Int?) throws {
+        try store.purgeAccount(ownerUserID: ownerUserID, sdkAppID: sdkAppID)
     }
 
     func loadConversationPage(

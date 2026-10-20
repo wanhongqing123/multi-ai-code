@@ -24,7 +24,7 @@
     <true/>
   </dict>
   <key>NSMicrophoneUsageDescription</key>
-  <string>用于录制远程 IM 语音消息。</string>
+  <string>用于发送语音消息，或在聊天与创作中心把录制的语音发送给腾讯云进行实时转文字。</string>
   <key>NSPhotoLibraryUsageDescription</key>
   <string>用于在授权后让创作中心读取系统图库照片和视频、处理媒体并保存新作品，也用于发送远程 IM 媒体消息。</string>
   <key>NSPhotoLibraryAddUsageDescription</key>

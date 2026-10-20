@@ -186,6 +186,39 @@ function openStore(filename) {
       name TEXT PRIMARY KEY,
       applied_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS account_deletion_requests (
+      id TEXT PRIMARY KEY,
+      user_id TEXT UNIQUE REFERENCES users(id),
+      account_id TEXT,
+      im_user_id TEXT,
+      phone_e164 TEXT,
+      requested_at INTEGER NOT NULL,
+      due_at INTEGER NOT NULL,
+      receipt_hash TEXT UNIQUE,
+      status TEXT NOT NULL CHECK(status IN ('pending','completed')),
+      completed_at INTEGER,
+      completion_note TEXT
+    );
+    CREATE INDEX IF NOT EXISTS account_deletion_requests_status
+      ON account_deletion_requests(status,due_at);
+    CREATE TABLE IF NOT EXISTS safety_reports (
+      id TEXT PRIMARY KEY,
+      reporter_user_id TEXT NOT NULL REFERENCES users(id),
+      target_user_id TEXT NOT NULL REFERENCES users(id),
+      message_id TEXT,
+      content_excerpt TEXT,
+      reason TEXT NOT NULL CHECK(reason IN
+        ('spam','harassment','sexual','violence','other')),
+      details TEXT,
+      status TEXT NOT NULL CHECK(status IN ('pending','resolved')),
+      created_at INTEGER NOT NULL,
+      reviewed_at INTEGER,
+      resolution TEXT
+    );
+    CREATE INDEX IF NOT EXISTS safety_reports_pending
+      ON safety_reports(status,created_at);
+    CREATE INDEX IF NOT EXISTS safety_reports_reporter
+      ON safety_reports(reporter_user_id,created_at DESC);
   `);
   const phoneColumn = db.prepare('PRAGMA table_info(users)').all()
     .find(column => column.name === 'phone_e164');
@@ -216,6 +249,12 @@ function openStore(filename) {
       throw new Error('User table migration failed foreign key validation');
   }
   const userColumns = new Set(db.pragma('table_info(users)').map(column => column.name));
+  const deletionColumns = new Set(db.pragma('table_info(account_deletion_requests)')
+    .map(column => column.name));
+  if (!deletionColumns.has('receipt_hash'))
+    db.exec('ALTER TABLE account_deletion_requests ADD COLUMN receipt_hash TEXT');
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS account_deletion_receipt_hash
+    ON account_deletion_requests(receipt_hash)`);
   if (!userColumns.has('account_id')) db.exec('ALTER TABLE users ADD COLUMN account_id TEXT');
   if (!userColumns.has('nickname')) db.exec('ALTER TABLE users ADD COLUMN nickname TEXT');
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_account_id ON users(account_id)');

@@ -15,6 +15,7 @@
 		0B2637847F5454F182126805 /* ComposerDraftState.swift in Sources */ = {isa = PBXBuildFile; fileRef = C846ED66C1F881705954E761 /* ComposerDraftState.swift */; };
 		0C3D673C246BAE33893EFDCD /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0075BCCB2188B8EB8E6F11FA /* RootView.swift */; };
 		10E63571389FF61C9869CE9E /* AIAssistantModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24AF3608C85D5AE5D045283D /* AIAssistantModel.swift */; };
+		1505F33A923B571D5EF10FAD /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 3FE9276ACB6564FDA4876587 /* PrivacyInfo.xcprivacy */; };
 		17D2334D14B8A1F571A7D69B /* AppDiagnosticLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A47E3BD08877657A12C0C35 /* AppDiagnosticLog.swift */; };
 		194E338FF3D0DE993B165814 /* AIAssistantUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89FDF5DC4F6DB91F2A1B3FD5 /* AIAssistantUITests.swift */; };
 		D153C2A4F2F5D6211CEB78B6 /* DesktopLoginUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D2095160132FC761449A82F /* DesktopLoginUITests.swift */; };
@@ -152,6 +153,7 @@
 		2FE19F9A1D05D98FE499F66B /* KeychainSecretStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainSecretStore.swift; sourceTree = "<group>"; };
 		34435FC46F139141F33B8DBF /* RemoteDesktopSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDesktopSession.swift; sourceTree = "<group>"; };
 		3C5A4C74E12DC407146E1EBF /* MessageBubbleLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageBubbleLayout.swift; sourceTree = "<group>"; };
+		3FE9276ACB6564FDA4876587 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		3DB45DCE47588055159BF5EB /* Pods-MaiChat.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-MaiChat.debug.xcconfig"; path = "Target Support Files/Pods-MaiChat/Pods-MaiChat.debug.xcconfig"; sourceTree = "<group>"; };
 		42DFDC3E438CDFE0E82AB8E9 /* MaiChatTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = MaiChatTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		4E3D9F697A1737B461CCB2EB /* MaiChatUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = MaiChatUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -238,6 +240,7 @@
 				A6457534DA0479F3AD712C60 /* Assets.xcassets */,
 				AE6737BFED0DFE1A50F676EE /* Info.plist */,
 				B50DFFBE34DBDEC32CFF76D2 /* MaiChat-Bridging-Header.h */,
+				3FE9276ACB6564FDA4876587 /* PrivacyInfo.xcprivacy */,
 				D7BFB0C5DFF14022A866E543 /* App */,
 				ABA51FC98F02C0ADF6BF7626 /* Assistant */,
 				705E67BE604383D52BABE2D5 /* Chat */,
@@ -643,6 +646,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				DEBCE768E14C523F47FC7CC5 /* Assets.xcassets in Resources */,
+				1505F33A923B571D5EF10FAD /* PrivacyInfo.xcprivacy in Resources */,
 				2A55E61AA07338C31386DE07 /* ffplay-sample.mp4 in Resources */,
 				CEEE01E212AB430DA101F002 /* ffplay-seek-sample.mp4 in Resources */,
 			);

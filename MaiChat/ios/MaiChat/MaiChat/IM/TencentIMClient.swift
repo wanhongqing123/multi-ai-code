@@ -642,6 +642,59 @@ final class TencentIMClient:
         }
     }
 
+    func blockUser(userID: String) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            Self.sdkQueue.async {
+                V2TIMManager.sharedInstance().addToBlackList(userIDList: [userID], succ: { results in
+                    if let failure = results?.first(where: { $0.resultCode != 0 }) {
+                        continuation.resume(throwing: RemoteIMClientError.operationFailed(
+                            code: Int32(failure.resultCode),
+                            description: failure.resultInfo ?? "block user failed"
+                        ))
+                    } else { continuation.resume() }
+                }, fail: { code, description in
+                    continuation.resume(throwing: RemoteIMClientError.operationFailed(
+                        code: code, description: description ?? "block user failed"
+                    ))
+                })
+            }
+        }
+    }
+
+    func unblockUser(userID: String) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            Self.sdkQueue.async {
+                V2TIMManager.sharedInstance().deleteFromBlackList(userIDList: [userID],
+                    succ: { results in
+                        if let failure = results?.first(where: { $0.resultCode != 0 }) {
+                            continuation.resume(throwing: RemoteIMClientError.operationFailed(
+                                code: Int32(failure.resultCode),
+                                description: failure.resultInfo ?? "unblock user failed"
+                            ))
+                        } else { continuation.resume() }
+                    }, fail: { code, description in
+                        continuation.resume(throwing: RemoteIMClientError.operationFailed(
+                            code: code, description: description ?? "unblock user failed"
+                        ))
+                    })
+            }
+        }
+    }
+
+    func blockedUserIDs() async throws -> [String] {
+        try await withCheckedThrowingContinuation { continuation in
+            Self.sdkQueue.async {
+                V2TIMManager.sharedInstance().getBlackList(succ: { users in
+                    continuation.resume(returning: users?.compactMap { $0.userID } ?? [])
+                }, fail: { code, description in
+                    continuation.resume(throwing: RemoteIMClientError.operationFailed(
+                        code: code, description: description ?? "get blocked users failed"
+                    ))
+                })
+            }
+        }
+    }
+
     func deleteContact(userID: String) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             V2TIMManager.sharedInstance().deleteFromFriendList(

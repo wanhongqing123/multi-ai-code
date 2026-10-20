@@ -186,6 +186,8 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     @Published private(set) var userProfileByUserID: [String: RemoteIMUserProfile] = [:]
     @Published private(set) var downloadingVideoKeys = Set<String>()
     @Published private(set) var mediaFileRevision: UInt64 = 0
+    @Published private(set) var accountDeletionReceipt: MaiChatAccountDeletionReceipt?
+    @Published private(set) var blockedIMUserIDs: Set<String> = []
     @Published private(set) var activityByUserID: [String: RemoteIMActivitySignal] = [:]
 
     let remoteDesktop: RemoteDesktopSession
@@ -244,7 +246,8 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
 
         var settings = loadedSettings
         let debugRequestedAutoConnect = Self.applyDebugLaunchOverrides(settings: &settings)
-        let hasAccountSession = !KeychainSecretStore(
+        let pendingDeletion = settingsStore.pendingAccountDeletionUserID() != nil
+        let hasAccountSession = !pendingDeletion && !KeychainSecretStore(
             account: "maichat-account-refresh-token"
         ).readSecretKey().isEmpty
         let hasRestorableAccount = RemoteIMLoginCredentialPolicy.shouldRestoreSavedSession(
@@ -263,6 +266,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         self.maiChatAccountID = hasAccountSession ? settings.maiChatAccountID : ""
         self.maiChatNickname = hasAccountSession ? settings.maiChatNickname : ""
         self.chatHistorySDKAppID = settings.sdkAppID
+        self.accountDeletionReceipt = settingsStore.loadDeletionReceipt()
         if hasAccountSession {
             // 升级时只把旧 AI 数据库归属给当前已验证的手机号账号。
             try? AIAssistantWorkspaceLocator.claimLegacyWorkspace(for: settings.masterUserID)
@@ -352,8 +356,20 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 await self?.handleAccountSessionInvalidation(.deviceSlotRequired)
             }
         }
+        let accountDeletionToken = NotificationCenter.default.addObserver(
+            forName: .maiChatAccountDeletion, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                await self?.handleAccountSessionInvalidation(.accountDeleted)
+            }
+        }
         accountInvalidationObservers = AccountInvalidationObservers(
-            tokens: [sessionReplacedToken, deviceSlotToken])
+            tokens: [sessionReplacedToken, deviceSlotToken, accountDeletionToken])
+        if let pendingOwner = settingsStore.pendingAccountDeletionUserID() {
+            Task { [weak self] in
+                await self?.purgeDeletedAccountData(ownerUserID: pendingOwner)
+            }
+        }
         Task { [weak self] in
             await self?.loadConversationSummariesForCurrentAccount()
         }
@@ -669,7 +685,84 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         return true
     }
 
+    func accountDeletionOptions() async throws -> MaiChatAccountDeletionOptions {
+        try await accountAuth.accountDeletionOptions()
+    }
+
+    func requestAccountDeletionCode() async throws -> MaiChatAuthChallenge {
+        try await accountAuth.requestAccountDeletionCode()
+    }
+
+    func submitAccountDeletion(password: String?, challengeID: String?,
+                               code: String?) async throws -> MaiChatAccountDeletionReceipt {
+        let owner = masterUserID
+        let receipt = try await accountAuth.requestAccountDeletion(
+            accountID: maiChatAccountID, password: password,
+            challengeID: challengeID, code: code
+        )
+        guard receipt.status == "pending" else { throw MaiChatAuthError.invalidServerResponse }
+        accountDeletionReceipt = receipt
+        settingsStore.saveDeletionReceipt(receipt)
+        settingsStore.markAccountDeletionPending(owner)
+        _ = await accountAuth.discardLocalSession()
+        await purgeDeletedAccountData(ownerUserID: owner)
+        return receipt
+    }
+
+    func dismissAccountDeletionReceipt() {
+        accountDeletionReceipt = nil
+        settingsStore.clearDeletionReceipt()
+    }
+
+    func refreshAccountDeletionStatus() async throws {
+        guard let receipt = accountDeletionReceipt, receipt.status == "pending" else { return }
+        let status = try await accountAuth.accountDeletionStatus(receipt)
+        guard status.requestId == receipt.requestId else {
+            throw MaiChatAuthError.invalidServerResponse
+        }
+        let updated = MaiChatAccountDeletionReceipt(
+            requestId: receipt.requestId, status: status.status,
+            dueAt: status.dueAt, supportEmail: status.supportEmail,
+            receiptToken: receipt.receiptToken, completedAt: status.completedAt
+        )
+        accountDeletionReceipt = updated
+        settingsStore.saveDeletionReceipt(updated)
+    }
+
+    private func purgeDeletedAccountData(ownerUserID: String) async {
+        guard !ownerUserID.isEmpty else { return }
+        let historyAppID = chatHistorySDKAppID
+        stopAllActivity()
+        await disconnect()
+        _ = await flushHistoryPersistence()
+        pendingHistoryMutations.removeAll()
+        AIAssistantModel.resetForAccountSwitch()
+        do {
+            try await historyPersistence.purgeAccount(
+                ownerUserID: ownerUserID, sdkAppID: historyAppID
+            )
+            try AIAssistantWorkspaceLocator.removeWorkspace(for: ownerUserID)
+            settingsStore.removeAccountSnapshot(ownerUserID)
+            await clearLocalAccountPresentation()
+            settingsStore.clearPendingAccountDeletion()
+        } catch {
+            await clearLocalAccountPresentation()
+            errorMessage = "本机账号数据清理未完成；下次启动会继续清理。"
+        }
+    }
+
     private func handleAccountSessionInvalidation(_ reason: MaiChatAuthError) async {
+        if case .accountDeleted = reason {
+            let owner = masterUserID.isEmpty
+                ? settingsStore.pendingAccountDeletionUserID() ?? "" : masterUserID
+            if !owner.isEmpty {
+                settingsStore.markAccountDeletionPending(owner)
+                _ = await accountAuth.discardLocalSession()
+                await purgeDeletedAccountData(ownerUserID: owner)
+            }
+            accountInvalidationReason = reason
+            return
+        }
         // 专用 401 比并发请求产生的普通“会话过期”更准确，退出期间保留它。
         switch reason {
         case .deviceSlotRequired, .sessionReplaced:
@@ -702,6 +795,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         maiChatNickname = ""
         acceptedFriendIMIDs = []
         pendingFriendSyncIMIDs = []
+        blockedIMUserIDs = []
         friendAccountByIMID = [:]
         friendDisplayByIMID = [:]
         friendRequestIDByIMID = [:]
@@ -1226,6 +1320,48 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         }
         errorMessage = nil
         return true
+    }
+
+    func refreshBlockedUsers() async {
+        do { blockedIMUserIDs = Set(try await client.blockedUserIDs()) }
+        catch { errorMessage = error.localizedDescription }
+    }
+
+    func blockUser(_ userID: String) async -> Bool {
+        do {
+            try await client.blockUser(userID: userID)
+            blockedIMUserIDs.insert(userID)
+            errorMessage = nil
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    func unblockUser(_ userID: String) async -> Bool {
+        do {
+            try await client.unblockUser(userID: userID)
+            blockedIMUserIDs.remove(userID)
+            errorMessage = nil
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    func submitSafetyReport(targetIMUserID: String, messageID: String?,
+                            excerpt: String?, reason: String, details: String) async throws
+        -> MaiChatSafetyReportReceipt {
+        try await accountAuth.submitSafetyReport(
+            targetIMUserID: targetIMUserID, messageID: messageID,
+            excerpt: excerpt, reason: reason, details: details
+        )
+    }
+
+    func safetyReports() async throws -> [MaiChatSafetyReport] {
+        try await accountAuth.safetyReports()
     }
 
     func clearHistory(with userID: String) async -> Bool {

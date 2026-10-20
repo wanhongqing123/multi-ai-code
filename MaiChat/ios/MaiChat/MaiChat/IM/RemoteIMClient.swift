@@ -179,6 +179,9 @@ protocol RemoteIMClient: AnyObject {
     func sendFile(to userID: String, file: RemoteIMFile, origin: RemoteIMMessageOrigin) async throws
         -> RemoteIMSendReceipt
     func deleteContact(userID: String) async throws
+    func blockUser(userID: String) async throws
+    func unblockUser(userID: String) async throws
+    func blockedUserIDs() async throws -> [String]
     func clearHistory(userID: String) async throws
     func refreshUserProfiles(userIDs: [String]) async throws -> [RemoteIMUserProfile]
     func setSelfAvatar(url: String) async throws
@@ -193,6 +196,16 @@ protocol RemoteIMClient: AnyObject {
 }
 
 extension RemoteIMClient {
+    func blockUser(userID: String) async throws {
+        throw RemoteIMClientError.sdkNotIntegrated
+    }
+
+    func unblockUser(userID: String) async throws {
+        throw RemoteIMClientError.sdkNotIntegrated
+    }
+
+    func blockedUserIDs() async throws -> [String] { [] }
+
     func friendUserIDs() async throws -> [String] { [] }
     func requestFriend(userID: String) async throws {
         throw RemoteIMClientError.sdkNotIntegrated

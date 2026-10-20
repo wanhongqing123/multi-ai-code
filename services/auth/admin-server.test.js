@@ -33,6 +33,29 @@ test('local admin page requires authentication and same-origin POST', async () =
       .get('test_admin').im_user_id, 'test_admin');
     const html = await (await fetch(base, { headers: { authorization } })).text();
     assert.equal(html.includes('admin-password-123456789'), false);
+    assert.equal((await service.createTestAccount('report_target',
+      'report-target-password-123456')).statusCode, 201);
+    const login = await service.handle({ method: 'POST', path: '/v1/auth/password/login',
+      body: { account_id: 'test_admin', password: 'admin-password-123456789',
+        age_confirmed_14_plus: true, device_slot: 'ios_phone' },
+      ip: '192.0.2.1', headers: {} });
+    assert.equal(login.statusCode, 200);
+    const reported = await service.handle({ method: 'POST', path: '/v1/safety/reports',
+      body: { target_im_user_id: 'report_target', reason: 'spam' },
+      ip: '192.0.2.1',
+      headers: { authorization: `Bearer ${login.body.access_token}` } });
+    assert.equal(reported.statusCode, 201);
+    const pending = await (await fetch(base, { headers: { authorization } })).text();
+    assert.match(pending, /report_target/);
+    const resolution = new URLSearchParams({ report_id: reported.body.report_id,
+      resolution: 'Reviewed and action taken' });
+    assert.equal((await fetch(`${base}/resolve-report`, { method: 'POST',
+      headers: { authorization, 'content-type': 'application/x-www-form-urlencoded',
+        origin: base }, body: resolution })).status, 200);
+    const own = await service.handle({ method: 'GET', path: '/v1/safety/reports',
+      body: {}, ip: '192.0.2.1',
+      headers: { authorization: `Bearer ${login.body.access_token}` } });
+    assert.equal(own.body.reports[0].status, 'resolved');
   } finally {
     await new Promise(resolve => server.close(resolve));
     db.close();

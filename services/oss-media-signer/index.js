@@ -94,7 +94,11 @@ function createHandler(options = {}) {
         method: 'GET', redirect: 'error',
         headers: { Authorization: bearer }, signal: AbortSignal.timeout(5000)
       });
-      return response.status === 200;
+      if (response.status !== 200) return false;
+      const granted = await response.json();
+      return granted?.allowed === true &&
+        /^[a-z][a-z0-9_-]{2,31}$/.test(granted.account_id || '')
+        ? granted.account_id : false;
     } catch { return false; }
   });
   let client;
@@ -112,7 +116,7 @@ function createHandler(options = {}) {
     if (method === 'GET' && route === '/portrait-auth-callback')
       return portraitCallbackResponse();
     if (method === 'GET' && route.startsWith('/avatars/')) {
-      if (!/^\/avatars\/\d{4}-\d{2}-\d{2}\/[a-f0-9-]{36}\.(jpg|jpeg|png)$/.test(route))
+      if (!/^\/avatars\/(?:[a-z][a-z0-9_-]{2,31}\/)?\d{4}-\d{2}-\d{2}\/[a-f0-9-]{36}\.(jpg|jpeg|png)$/.test(route))
         return jsonResponse(404, { error: 'Not found' });
       if (!env.MAICHAT_OSS_BUCKET || !/^oss-[a-z0-9-]+$/.test(env.MAICHAT_OSS_REGION || '') ||
           !env.ALIBABA_CLOUD_ACCESS_KEY_ID || !env.ALIBABA_CLOUD_ACCESS_KEY_SECRET)
@@ -138,7 +142,8 @@ function createHandler(options = {}) {
     if (method !== 'POST' || !mediaRoute)
       return jsonResponse(404, { error: 'Not found' });
 
-    if (!await authorizeMediaRequest(event.headers))
+    const accountId = await authorizeMediaRequest(event.headers);
+    if (!accountId)
       return jsonResponse(401, { error: 'Account media access is required' });
 
     const body = requestBody(event);
@@ -269,7 +274,9 @@ function createHandler(options = {}) {
       const objectId = newID();
       if (purpose === 'im_avatar' && !/^[a-f0-9-]{36}$/.test(objectId))
         throw new Error('Invalid avatar object ID');
-      const objectKey = `${prefix}/${currentTime().toISOString().slice(0, 10)}/${objectId}${extension}`;
+      const ownerPrefix = typeof accountId === 'string' &&
+        /^[a-z][a-z0-9_-]{2,31}$/.test(accountId) ? `${accountId}/` : '';
+      const objectKey = `${prefix}/${ownerPrefix}${currentTime().toISOString().slice(0, 10)}/${objectId}${extension}`;
       const contentType = image ? (extension === '.png' ? 'image/png' : 'image/jpeg')
         : video ? (extension === '.mov' ? 'video/quicktime' : 'video/mp4')
           : DOCUMENT_TYPES[extension];

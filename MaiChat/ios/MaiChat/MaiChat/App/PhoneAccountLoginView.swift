@@ -20,6 +20,7 @@ struct PhoneAccountLoginView: View {
     @State private var socialBinding: MaiChatSocialBindingIntent?
     @State private var didInjectSocialCredential = false
     @State private var isSocialLoggingIn = false
+    @State private var refreshingDeletionStatus = false
 
     private let accent = Color(red: 42 / 255, green: 211 / 255, blue: 142 / 255)
     private let termsURL = URL(string: "https://ichat.life/legal/terms.html")!
@@ -37,7 +38,10 @@ struct PhoneAccountLoginView: View {
                 phoneLoginContent
             }
         }
-        .task { await injectLocalSocialCredentialIfNeeded() }
+        .task {
+            await injectLocalSocialCredentialIfNeeded()
+            await refreshDeletionStatus()
+        }
     }
 
     private var phoneLoginContent: some View {
@@ -62,6 +66,36 @@ struct PhoneAccountLoginView: View {
                     }
                     .foregroundStyle(.primary)
                     .id("account-login-top")
+                    if let receipt = appState.accountDeletionReceipt {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(receipt.status == "completed" ? "账号注销已完成" :
+                                    "注销申请已提交")
+                                .font(.headline)
+                            Text("申请编号：\(receipt.requestId)")
+                                .font(.footnote.monospaced())
+                                .textSelection(.enabled)
+                            if receipt.status == "pending" {
+                                Text("预计完成日：" + Date(timeIntervalSince1970:
+                                    Double(receipt.dueAt) / 1_000)
+                                    .formatted(date: .abbreviated, time: .omitted))
+                                    .font(.footnote)
+                                Button(refreshingDeletionStatus ? "查询中…" : "查询进度") {
+                                    Task { await refreshDeletionStatus() }
+                                }
+                                .disabled(refreshingDeletionStatus)
+                            } else {
+                                Button("知道了") { appState.dismissAccountDeletionReceipt() }
+                            }
+                            Text("如需帮助，请联系 \(receipt.supportEmail)。")
+                                .font(.footnote)
+                        }
+                        .frame(maxWidth: 470, alignment: .leading)
+                        .padding(16)
+                        .background(Color(.secondarySystemBackground),
+                                    in: RoundedRectangle(cornerRadius: 16))
+                        .padding(.horizontal, 28)
+                        .accessibilityIdentifier("account-deletion-receipt")
+                    }
                     Color.clear.frame(height: max(60, geometry.size.height * 0.16))
                     Image(uiImage: Self.applicationIcon)
                         .resizable()
@@ -202,6 +236,15 @@ struct PhoneAccountLoginView: View {
             }
         }
         .background(Color.white.ignoresSafeArea())
+    }
+
+    @MainActor
+    private func refreshDeletionStatus() async {
+        guard !refreshingDeletionStatus else { return }
+        refreshingDeletionStatus = true
+        defer { refreshingDeletionStatus = false }
+        do { try await appState.refreshAccountDeletionStatus() }
+        catch { errorMessage = error.localizedDescription }
     }
 
     private var canSubmit: Bool {

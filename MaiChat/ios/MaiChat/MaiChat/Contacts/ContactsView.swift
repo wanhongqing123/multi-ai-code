@@ -504,7 +504,10 @@ private struct FriendProfileView: View {
     let onMessage: () -> Void
     let onDeleted: () -> Void
     @State private var showsDeleteConfirmation = false
+    @State private var showsBlockConfirmation = false
+    @State private var showsReport = false
     @State private var isDeleting = false
+    @State private var isBlocking = false
 
     var body: some View {
         let profile = appState.profile(for: userID)
@@ -552,6 +555,25 @@ private struct FriendProfileView: View {
                 }
                 .disabled(isDeleting)
                 .accessibilityIdentifier("friend-profile-delete")
+
+                Button("举报此用户") { showsReport = true }
+                    .accessibilityIdentifier("friend-profile-report")
+                if appState.blockedIMUserIDs.contains(userID) {
+                    Button("解除屏蔽") {
+                        Task {
+                            isBlocking = true
+                            _ = await appState.unblockUser(userID)
+                            isBlocking = false
+                        }
+                    }
+                    .disabled(isBlocking)
+                } else {
+                    Button("屏蔽此用户", role: .destructive) {
+                        showsBlockConfirmation = true
+                    }
+                    .disabled(isBlocking)
+                    .accessibilityIdentifier("friend-profile-block")
+                }
             }
             .padding(24)
         }
@@ -570,7 +592,99 @@ private struct FriendProfileView: View {
         } message: {
             Text("删除后不再显示在通讯录，已有聊天记录会保留。")
         }
-        .task { await appState.refreshAcceptedFriends() }
+        .confirmationDialog("屏蔽后将不再收到对方的 IM 消息", isPresented: $showsBlockConfirmation) {
+            Button("屏蔽此用户", role: .destructive) {
+                Task {
+                    isBlocking = true
+                    _ = await appState.blockUser(userID)
+                    isBlocking = false
+                }
+            }
+        }
+        .sheet(isPresented: $showsReport) {
+            NavigationStack {
+                SafetyReportView(targetIMUserID: userID, messageID: nil, excerpt: nil)
+            }
+        }
+        .task {
+            await appState.refreshAcceptedFriends()
+            await appState.refreshBlockedUsers()
+        }
+    }
+}
+
+struct SafetyReportView: View {
+    @EnvironmentObject private var appState: RemoteIMAppState
+    @Environment(\.dismiss) private var dismiss
+    let targetIMUserID: String
+    let messageID: String?
+    let excerpt: String?
+    @State private var reason = "harassment"
+    @State private var details = ""
+    @State private var isSending = false
+    @State private var receipt: MaiChatSafetyReportReceipt?
+    @State private var errorMessage: String?
+
+    var body: some View {
+        Form {
+            if let receipt {
+                Section {
+                    Label("举报已提交", systemImage: "checkmark.circle.fill")
+                    Text("编号：\(receipt.reportId)").textSelection(.enabled)
+                    Text("可在“设置 → 我的举报”查看处理状态。")
+                    Button("完成") { dismiss() }
+                }
+            } else {
+                Section("举报原因") {
+                    Picker("原因", selection: $reason) {
+                        Text("骚扰辱骂").tag("harassment")
+                        Text("垃圾信息").tag("spam")
+                        Text("色情内容").tag("sexual")
+                        Text("暴力威胁").tag("violence")
+                        Text("其他").tag("other")
+                    }
+                }
+                if let excerpt, !excerpt.isEmpty {
+                    Section("将提交的消息文字") {
+                        Text(String(excerpt.prefix(200)))
+                            .font(.footnote)
+                            .textSelection(.enabled)
+                    }
+                }
+                Section("补充说明") {
+                    TextField("可以补充情况（选填）", text: $details, axis: .vertical)
+                        .lineLimit(3 ... 5)
+                }
+                if let errorMessage { Text(errorMessage).foregroundStyle(.red) }
+                Section {
+                    Button(isSending ? "提交中…" : "提交举报") {
+                        Task { await submit() }
+                    }
+                    .disabled(isSending)
+                    .accessibilityIdentifier("safety-report-submit")
+                } footer: {
+                    Text("举报会发送所选消息的文字摘要、消息编号和补充说明；不会自动上传附件。")
+                }
+            }
+        }
+        .navigationTitle("举报")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("关闭") { dismiss() }
+            }
+        }
+    }
+
+    private func submit() async {
+        isSending = true
+        defer { isSending = false }
+        do {
+            receipt = try await appState.submitSafetyReport(
+                targetIMUserID: targetIMUserID, messageID: messageID,
+                excerpt: excerpt, reason: reason, details: details
+            )
+            errorMessage = nil
+        } catch { errorMessage = error.localizedDescription }
     }
 }
 

@@ -115,14 +115,18 @@ test('media signing checks the account bearer with the auth service', async () =
       ++checks;
       assert.equal(url, 'http://127.0.0.1:9100/v1/media/authorize');
       assert.equal(options.headers.Authorization, `Bearer ${accountToken}`);
-      return { status: 200 };
+      return { status: 200,
+        json: async () => ({ allowed: true, account_id: 'test_account' }) };
     },
     makeClient: () => ({ signatureUrlV4: async () => 'https://example.com/signed' }) });
   const body = { filename: 'photo.jpg', size_bytes: 100,
     purpose: 'ark_asset_input' };
   assert.equal((await handle(request(body, 'wrong'))).statusCode, 401);
   assert.equal(checks, 0);
-  assert.equal((await handle(request(body, accountToken))).statusCode, 200);
+  const signed = await handle(request(body, accountToken));
+  assert.equal(signed.statusCode, 200);
+  assert.equal(JSON.parse(signed.body).object_key,
+    'ark-asset-inputs/test_account/2026-10-08/account-file.jpg');
   assert.equal(checks, 1);
 });
 

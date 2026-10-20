@@ -253,6 +253,12 @@ private struct AccountSettingsView: View {
                     NavigationLink("设置或修改登录密码") {
                         AccountPasswordView()
                     }
+                    NavigationLink {
+                        AccountDeletionView()
+                    } label: {
+                        Text("注销账号").foregroundStyle(.red)
+                    }
+                    .accessibilityIdentifier("account-deletion-entry")
                 }
             }
 
@@ -271,6 +277,13 @@ private struct AccountSettingsView: View {
                 }
             }
 
+            Section("隐私与支持") {
+                Link("隐私政策", destination: URL(string: "https://ichat.life/legal/privacy.html")!)
+                Link("用户协议", destination: URL(string: "https://ichat.life/legal/terms.html")!)
+                Link("联系我们", destination: URL(string: "mailto:1925271463@kongshang.com")!)
+                NavigationLink("我的举报") { SafetyReportsView() }
+            }
+
         }
     }
 
@@ -280,6 +293,165 @@ private struct AccountSettingsView: View {
         return userID.isEmpty ? "MaiChat ID 待同步" : userID
     }
 
+}
+
+private struct AccountDeletionView: View {
+    @EnvironmentObject private var appState: RemoteIMAppState
+    @State private var options: MaiChatAccountDeletionOptions?
+    @State private var accountID = ""
+    @State private var password = ""
+    @State private var code = ""
+    @State private var challengeID: String?
+    @State private var usePassword = false
+    @State private var isBusy = false
+    @State private var showConfirmation = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        Form {
+            Section {
+                Text("提交后立即停用 MaiChat 账号并撤销账号登录。好友关系、云端会话和可识别素材会进入清理流程；依法必须保留的记录按期限处理。")
+                    .font(.footnote)
+                if let options {
+                    Text("预计在 \(options.processingDays) 天内完成。完成后不能恢复账号及资料。")
+                        .font(.footnote)
+                }
+            }
+            Section("确认身份") {
+                if options == nil { ProgressView() }
+                if let options {
+                    if options.hasPassword && options.phoneMasked != nil {
+                        Picker("确认方式", selection: $usePassword) {
+                            Text("登录密码").tag(true)
+                            Text("短信验证码").tag(false)
+                        }
+                        .pickerStyle(.segmented)
+                    }
+                    if usePassword {
+                        SecureField("输入登录密码", text: $password)
+                            .textContentType(.password)
+                    } else if let phone = options.phoneMasked {
+                        LabeledContent("已绑定手机号", value: phone)
+                        HStack {
+                            TextField("输入 6 位验证码", text: $code)
+                                .keyboardType(.numberPad)
+                                .textContentType(.oneTimeCode)
+                            Button(challengeID == nil ? "获取验证码" : "重新获取") {
+                                Task { await requestCode() }
+                            }
+                            .disabled(isBusy)
+                        }
+                    }
+                }
+            }
+            Section("确认 MaiChat ID") {
+                Text(appState.maiChatAccountID)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("account-deletion-current-id")
+                TextField("输入上方 MaiChat ID", text: $accountID)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .accessibilityIdentifier("account-deletion-confirm-id")
+            }
+            if let errorMessage { Text(errorMessage).foregroundStyle(.red) }
+            Section {
+                Button("提交注销申请", role: .destructive) {
+                    showConfirmation = true
+                }
+                .disabled(!canSubmit)
+                .accessibilityIdentifier("account-deletion-submit")
+            }
+        }
+        .navigationTitle("注销账号")
+        .task { await loadOptions() }
+        .confirmationDialog("确认永久注销这个账号？", isPresented: $showConfirmation) {
+            Button("确认提交", role: .destructive) { Task { await submit() } }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("提交后立即停止账号使用，并开始清理关联数据。")
+        }
+    }
+
+    private var canSubmit: Bool {
+        guard let options, !isBusy,
+              accountID == appState.maiChatAccountID else { return false }
+        return usePassword ? !password.isEmpty :
+            options.phoneMasked != nil && challengeID != nil && code.count == 6
+    }
+
+    private func loadOptions() async {
+        guard options == nil else { return }
+        do {
+            let loaded = try await appState.accountDeletionOptions()
+            options = loaded
+            usePassword = loaded.hasPassword
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func requestCode() async {
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            let challenge = try await appState.requestAccountDeletionCode()
+            challengeID = challenge.challengeId
+            code = ""
+            errorMessage = nil
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func submit() async {
+        guard canSubmit else { return }
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            _ = try await appState.submitAccountDeletion(
+                password: usePassword ? password : nil,
+                challengeID: usePassword ? nil : challengeID,
+                code: usePassword ? nil : code
+            )
+            password = ""
+            code = ""
+            errorMessage = nil
+        } catch { errorMessage = error.localizedDescription }
+    }
+}
+
+private struct SafetyReportsView: View {
+    @EnvironmentObject private var appState: RemoteIMAppState
+    @State private var reports: [MaiChatSafetyReport] = []
+    @State private var errorMessage: String?
+
+    var body: some View {
+        List {
+            if reports.isEmpty && errorMessage == nil {
+                Label("暂无举报记录", systemImage: "checkmark.shield")
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(reports) { report in
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(report.status == "resolved" ? "已处理" : "处理中")
+                        .font(.headline)
+                    Text(report.resolution ?? "我们会尽快核查并处理。")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Text("编号：\(report.id)")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if let errorMessage { Text(errorMessage).foregroundStyle(.red) }
+        }
+        .navigationTitle("我的举报")
+        .task { await refresh() }
+        .refreshable { await refresh() }
+    }
+
+    private func refresh() async {
+        do {
+            reports = try await appState.safetyReports()
+            errorMessage = nil
+        } catch { errorMessage = error.localizedDescription }
+    }
 }
 
 private struct AccountPasswordView: View {

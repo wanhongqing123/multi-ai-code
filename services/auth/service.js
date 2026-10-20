@@ -212,6 +212,9 @@ function createAuthService(options) {
       if (row?.revoked_reason === 'replaced')
         return json(401, { error: 'Session replaced by another device',
           code: 'SESSION_REPLACED' });
+      if (row?.revoked_reason === 'account_deletion')
+        return json(401, { error: 'Account deletion was requested',
+          code: 'ACCOUNT_DELETION' });
     }
     return json(401, { error: 'Authentication required' });
   }
@@ -371,10 +374,11 @@ function createAuthService(options) {
     })();
   }
 
-  async function sendChallenge(body, ip) {
+  async function sendChallenge(body, ip, allowDeletion = false) {
     const phone = normalizePhone(body?.phone);
     const purpose = body?.purpose || 'login';
-    if (!phone || !['login', 'reset', 'social_bind'].includes(purpose))
+    if (!phone || !['login', 'reset', 'social_bind',
+      ...(allowDeletion ? ['delete_account'] : [])].includes(purpose))
       return json(400, { error: 'Invalid phone or purpose' });
     // 当前没有监护人认证链路；验证码发出前也要求用户确认已满 14 周岁。
     if (body?.age_confirmed_14_plus !== true)
@@ -383,8 +387,9 @@ function createAuthService(options) {
     const hashedIp = ipHash(ip);
     const current = now();
     // 所有格式合法的手机号都能收码；先按手机号、来源 IP 和重发间隔限频。
-    const newest = db.prepare(`SELECT created_at FROM sms_challenges WHERE phone_hash=?
-      ORDER BY created_at DESC LIMIT 1`).get(hashedPhone);
+    const newest = db.prepare(`SELECT created_at FROM sms_challenges
+      WHERE phone_hash=? AND purpose=? ORDER BY created_at DESC LIMIT 1`)
+      .get(hashedPhone, purpose);
     const phoneDaily = db.prepare(`SELECT COUNT(*) AS count FROM sms_challenges
       WHERE phone_hash=? AND created_at>?`).get(hashedPhone, current - DAY).count;
     const ipDaily = db.prepare(`SELECT COUNT(*) AS count FROM sms_challenges
@@ -691,6 +696,150 @@ function createAuthService(options) {
     })();
   }
 
+  function deletionOptions(session) {
+    const user = db.prepare('SELECT phone_e164,password_hash FROM users WHERE id=?')
+      .get(session.user_id);
+    if (!user) return json(401, { error: 'Authentication required' });
+    const phone = user.phone_e164;
+    return json(200, { has_password: !!user.password_hash,
+      phone_masked: phone ? `${phone.slice(0, 5)}****${phone.slice(-4)}` : null,
+      processing_days: 30 });
+  }
+
+  async function requestDeletionChallenge(session, ip) {
+    const user = db.prepare('SELECT phone_e164 FROM users WHERE id=? AND disabled_at IS NULL')
+      .get(session.user_id);
+    if (!user) return json(401, { error: 'Authentication required' });
+    if (!user.phone_e164)
+      return json(400, { error: 'This account uses password confirmation' });
+    return sendChallenge({ phone: user.phone_e164, purpose: 'delete_account',
+      age_confirmed_14_plus: true }, ip, true);
+  }
+
+  async function requestAccountDeletion(body, session, ip) {
+    if (body?.confirm_account_id !== session.account_id)
+      return json(400, { error: 'Confirm the current MaiChat account ID' });
+    const user = db.prepare('SELECT * FROM users WHERE id=? AND disabled_at IS NULL')
+      .get(session.user_id);
+    if (!user) return json(401, { error: 'Authentication required' });
+    if (typeof body.password === 'string' && user.password_hash) {
+      const failureHash = keyedHash(`account-delete:${user.id}`);
+      const failures = db.prepare(`SELECT COUNT(*) AS count FROM password_failures
+        WHERE (phone_hash=? OR ip_hash=?) AND created_at>?`)
+        .get(failureHash, ipHash(ip), now() - 15 * MINUTE).count;
+      if (failures >= 5) return json(429, { error: 'Please wait before trying again' });
+      if (!await verifyPassword(body.password, user.password_hash)) {
+        db.prepare('INSERT INTO password_failures(phone_hash,ip_hash,created_at) VALUES(?,?,?)')
+          .run(failureHash, ipHash(ip), now());
+        return json(401, { error: 'Account confirmation failed' });
+      }
+    } else if (user.phone_e164 &&
+               typeof body.challenge_id === 'string' && typeof body.code === 'string') {
+      const phone = db.transaction(() => consumeChallenge({ phone: user.phone_e164,
+        challenge_id: body.challenge_id, code: body.code }, 'delete_account'))();
+      if (phone !== user.phone_e164)
+        return json(401, { error: 'Account confirmation failed' });
+    } else {
+      return json(400, { error: 'Password or SMS confirmation is required' });
+    }
+    return db.transaction(() => {
+      const active = db.prepare('SELECT * FROM users WHERE id=? AND disabled_at IS NULL')
+        .get(session.user_id);
+      if (!active) return json(401, { error: 'Authentication required' });
+      const requestedAt = now();
+      const dueAt = requestedAt + 30 * DAY;
+      const id = randomUUID();
+      const receiptToken = randomToken();
+      db.prepare(`INSERT INTO account_deletion_requests
+        (id,user_id,account_id,im_user_id,phone_e164,requested_at,due_at,
+          receipt_hash,status)
+        VALUES(?,?,?,?,?,?,?,?,'pending')`).run(id, active.id, active.account_id,
+        active.im_user_id, active.phone_e164, requestedAt, dueAt, digest(receiptToken));
+      db.prepare('UPDATE users SET disabled_at=?,updated_at=? WHERE id=?')
+        .run(requestedAt, requestedAt, active.id);
+      db.prepare(`UPDATE sessions SET revoked_at=?,revoked_reason='account_deletion'
+        WHERE user_id=? AND revoked_at IS NULL`).run(requestedAt, active.id);
+      db.prepare(`UPDATE friend_requests SET status='rejected',decided_at=?
+        WHERE status='pending' AND (from_user_id=? OR to_user_id=?)`)
+        .run(requestedAt, active.id, active.id);
+      const relationships = db.prepare(`SELECT left_user_id,right_user_id FROM friendships
+        WHERE left_user_id=? OR right_user_id=?`).all(active.id, active.id);
+      for (const relation of relationships) {
+        db.prepare('DELETE FROM friendships WHERE left_user_id=? AND right_user_id=?')
+          .run(relation.left_user_id, relation.right_user_id);
+        db.prepare(`INSERT INTO friend_im_sync(left_user_id,right_user_id,desired,updated_at)
+          VALUES(?,?,'delete',?) ON CONFLICT(left_user_id,right_user_id) DO UPDATE SET
+          desired='delete',updated_at=excluded.updated_at,attempts=0,
+          last_error=NULL,retry_after=NULL,revision=friend_im_sync.revision+1`)
+          .run(relation.left_user_id, relation.right_user_id, requestedAt);
+      }
+      db.prepare('DELETE FROM profile_im_sync WHERE user_id=?').run(active.id);
+      arkCredentials.delete(active.id);
+      bailianCredentials.delete(active.id);
+      asrIssuanceTimes.delete(active.id);
+      friendLookupTimes.delete(active.id);
+      return json(202, { request_id: id, status: 'pending', due_at: dueAt,
+        receipt_token: receiptToken, support_email: '1925271463@kongshang.com' });
+    })();
+  }
+
+  function accountDeletionStatus(body) {
+    if (typeof body?.request_id !== 'string' ||
+        !/^[0-9a-f-]{36}$/.test(body.request_id) ||
+        !validBase64Url32(body.receipt_token))
+      return json(400, { error: 'Invalid deletion receipt' });
+    const row = db.prepare(`SELECT status,due_at,completed_at FROM account_deletion_requests
+      WHERE id=? AND receipt_hash=?`).get(body.request_id, digest(body.receipt_token));
+    if (!row) return json(404, { error: 'Deletion receipt not found' });
+    return json(200, { request_id: body.request_id, status: row.status,
+      due_at: row.due_at, completed_at: row.completed_at,
+      support_email: '1925271463@kongshang.com' });
+  }
+
+  function submitSafetyReport(body, session) {
+    const targetId = body?.target_im_user_id;
+    const reason = body?.reason;
+    const messageId = body?.message_id ?? null;
+    const excerpt = body?.content_excerpt ?? null;
+    const details = body?.details ?? null;
+    const safeText = (value, limit) => value === null ||
+      (typeof value === 'string' && Buffer.byteLength(value, 'utf8') <= limit &&
+        !/[\u0000-\u001f\u007f-\u009f]/u.test(value));
+    if (typeof targetId !== 'string' || targetId.length > 64 ||
+        !/^[A-Za-z0-9_-]+$/.test(targetId) ||
+        !['spam', 'harassment', 'sexual', 'violence', 'other'].includes(reason) ||
+        !safeText(messageId, 128) || !safeText(excerpt, 2048) ||
+        !safeText(details, 1024))
+      return json(400, { error: 'Invalid report' });
+    const target = db.prepare('SELECT id FROM users WHERE im_user_id=?').get(targetId);
+    if (!target || target.id === session.user_id)
+      return json(400, { error: 'Invalid reported account' });
+    return db.transaction(() => {
+      const count = db.prepare(`SELECT COUNT(*) AS count FROM safety_reports
+        WHERE reporter_user_id=? AND created_at>?`)
+        .get(session.user_id, now() - DAY).count;
+      if (count >= 10) return json(429, { error: 'Too many reports' });
+      const existing = db.prepare(`SELECT id FROM safety_reports WHERE reporter_user_id=?
+        AND target_user_id=? AND message_id IS ? AND reason=? AND created_at>?
+        ORDER BY created_at DESC LIMIT 1`).get(session.user_id, target.id,
+        messageId, reason, now() - DAY);
+      if (existing) return json(200, { report_id: existing.id, status: 'pending' });
+      const id = randomUUID();
+      db.prepare(`INSERT INTO safety_reports(id,reporter_user_id,target_user_id,
+        message_id,content_excerpt,reason,details,status,created_at)
+        VALUES(?,?,?,?,?,?,?,'pending',?)`).run(id, session.user_id,
+        target.id, messageId, excerpt, reason, details, now());
+      return json(201, { report_id: id, status: 'pending' });
+    })();
+  }
+
+  function ownSafetyReports(session) {
+    const reports = db.prepare(`SELECT id,reason,status,created_at,reviewed_at,resolution
+      FROM safety_reports WHERE reporter_user_id=? ORDER BY created_at DESC LIMIT 50`)
+      .all(session.user_id);
+    return json(200, { reports });
+  }
+
   async function resetPassword(body) {
     if (body?.age_confirmed_14_plus !== true)
       return json(403, { error: 'Minimum age confirmation required' });
@@ -727,6 +876,9 @@ function createAuthService(options) {
       if (previous?.revoked_reason === 'replaced')
         return json(401, { error: 'Session replaced by another device',
           code: 'SESSION_REPLACED' });
+      if (previous?.revoked_reason === 'account_deletion')
+        return json(401, { error: 'Account deletion was requested',
+          code: 'ACCOUNT_DELETION' });
       if (previous && !previous.revoked_at) {
         db.prepare(`UPDATE sessions SET revoked_at=?,revoked_reason='refresh_replay'
           WHERE id=?`).run(now(), previous.id);
@@ -739,6 +891,9 @@ function createAuthService(options) {
       if (row?.revoked_reason === 'replaced')
         return json(401, { error: 'Session replaced by another device',
           code: 'SESSION_REPLACED' });
+      if (row?.revoked_reason === 'account_deletion')
+        return json(401, { error: 'Account deletion was requested',
+          code: 'ACCOUNT_DELETION' });
       if (!row || row.revoked_at || row.disabled_at || row.refresh_expires_at <= now())
         return json(401, { error: 'Invalid session' });
       const accessToken = randomToken();
@@ -770,6 +925,8 @@ function createAuthService(options) {
     if (method === 'POST' && path === '/v1/auth/password/reset')
       return resetPassword(request);
     if (method === 'POST' && path === '/v1/auth/refresh') return refresh(request);
+    if (method === 'POST' && path === '/v1/auth/account/deletion/status')
+      return accountDeletionStatus(request);
     if (method === 'POST' && path === '/v1/auth/desktop/request')
       return createDesktopRequest(request, ip);
     if (method === 'POST' && path === '/v1/auth/desktop/cancel')
@@ -784,9 +941,13 @@ function createAuthService(options) {
     }
     const protectedRoute =
       (method === 'GET' && path.startsWith('/v1/auth/desktop/request/')) ||
+      (method === 'GET' && ['/v1/auth/account/deletion/options',
+        '/v1/safety/reports'].includes(path)) ||
       (method === 'POST' && ['/v1/auth/desktop/approve',
         '/v1/auth/desktop/deny', '/v1/auth/password/set', '/v1/auth/profile',
-        '/v1/auth/logout', '/v1/friend/resolve'].includes(path)) ||
+        '/v1/auth/logout', '/v1/friend/resolve',
+        '/v1/auth/account/deletion/challenge',
+        '/v1/auth/account/deletion', '/v1/safety/reports'].includes(path)) ||
       (method === 'GET' && ['/v1/auth/me', '/v1/im/credential',
         '/v1/media/authorize',
         '/v1/model/seedance-credential', '/v1/model/bailian-credential',
@@ -800,6 +961,16 @@ function createAuthService(options) {
       return decideDesktopRequest(request, session, false);
     if (method === 'POST' && path === '/v1/auth/password/set')
       return setPassword(request, session);
+    if (method === 'GET' && path === '/v1/auth/account/deletion/options')
+      return deletionOptions(session);
+    if (method === 'POST' && path === '/v1/auth/account/deletion/challenge')
+      return requestDeletionChallenge(session, ip);
+    if (method === 'POST' && path === '/v1/auth/account/deletion')
+      return requestAccountDeletion(request, session, ip);
+    if (method === 'POST' && path === '/v1/safety/reports')
+      return submitSafetyReport(request, session);
+    if (method === 'GET' && path === '/v1/safety/reports')
+      return ownSafetyReports(session);
     if (method === 'POST' && path === '/v1/auth/profile') {
       const nickname = normalizeNickname(request.nickname);
       if (nickname === null) return json(400, { error: 'Invalid nickname' });
@@ -869,7 +1040,7 @@ function createAuthService(options) {
     }
     if (method === 'GET' && path === '/v1/media/authorize') {
       if (!session) return json(401, { error: 'Authentication required' });
-      return json(200, { allowed: true });
+      return json(200, { allowed: true, account_id: session.account_id });
     }
     if (method === 'GET' && path === '/v1/model/api-keys') {
       if (!session) return json(401, { error: 'Authentication required' });

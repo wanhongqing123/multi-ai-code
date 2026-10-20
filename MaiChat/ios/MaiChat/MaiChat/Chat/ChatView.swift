@@ -1546,6 +1546,7 @@ private struct ChatDetailView: View {
     @State private var messageActionTarget: PresentedMessageActions?
     @State private var selectingMessageID: UUID?
     @State private var forwardingMessage: RemoteIMMessage?
+    @State private var reportingMessage: RemoteIMMessage?
     @State private var screenshotCandidate: RemoteIMScreenshotCandidate?
     @State private var isSendingScreenshot = false
     @State private var screenshotTask: Task<Void, Never>?
@@ -1639,6 +1640,11 @@ private struct ChatDetailView: View {
                         )
                         self.messageActionTarget = nil
                         selectingMessageID = nil
+                    },
+                    canReport: messageActionTarget.message.direction == .incoming,
+                    report: {
+                        reportingMessage = messageActionTarget.message
+                        self.messageActionTarget = nil
                     }
                 )
                 .transition(.opacity)
@@ -1686,6 +1692,15 @@ private struct ChatDetailView: View {
                                           close: closeImagePreview,
                                           navigate: navigateImagePreview)
         }
+        .sheet(item: $reportingMessage) { message in
+            NavigationStack {
+                SafetyReportView(
+                    targetIMUserID: contact.userID,
+                    messageID: message.remoteID ?? message.id.uuidString,
+                    excerpt: message.text.isEmpty ? nil : message.text
+                )
+            }
+        }
         .animation(.easeOut(duration: 0.18), value: messageActionTarget?.id)
         .animation(.easeOut(duration: 0.18), value: forwardingMessage?.id)
         .onAppear {
@@ -1709,6 +1724,7 @@ private struct ChatDetailView: View {
             messageActionTarget = nil
             selectingMessageID = nil
             forwardingMessage = nil
+            reportingMessage = nil
             screenshotTask?.cancel()
             screenshotDismissTask?.cancel()
             discardScreenshot()
@@ -3527,6 +3543,8 @@ private struct MessageActionDialog: View {
     let selectCopy: () -> Void
     let forward: () -> Void
     let copyAll: () -> Void
+    let canReport: Bool
+    let report: () -> Void
 
     var body: some View {
         GeometryReader { geometry in
@@ -3574,6 +3592,13 @@ private struct MessageActionDialog: View {
                             systemImage: "doc.on.doc",
                             action: copyAll
                         )
+                        if canReport {
+                            actionButton(
+                                title: "举报",
+                                systemImage: "exclamationmark.bubble",
+                                action: report
+                            )
+                        }
                     }
                     .frame(width: panelWidth, height: 74)
                     .background(

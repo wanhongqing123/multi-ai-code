@@ -6,6 +6,83 @@ final class DesktopLoginUITests: XCTestCase {
         let qrUri: String
     }
 
+    func testPrivacyAndDeletionEntries() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let phone = environment["MAICHAT_LOCAL_UI_PHONE"],
+              let password = environment["MAICHAT_LOCAL_UI_PASSWORD"] else {
+            throw XCTSkip("需要本机测试账号")
+        }
+        let app = launchAccountApp(phone: phone, password: password)
+        XCTAssertTrue(app.buttons["我"].waitForExistence(timeout: 30))
+        if app.buttons["稍后"].exists { app.buttons["稍后"].tap() }
+        tapMeTab(in: app)
+        let settings = app.buttons["设置"]
+        if !settings.waitForExistence(timeout: 2) {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.955)).tap()
+        }
+        XCTAssertTrue(settings.waitForExistence(timeout: 10))
+        settings.tap()
+        dismissLocalIMError(in: app)
+        let deletion = app.buttons["account-deletion-entry"]
+        if !deletion.isHittable { app.swipeUp() }
+        XCTAssertTrue(deletion.waitForExistence(timeout: 10))
+        deletion.tap()
+        XCTAssertTrue(app.textFields["account-deletion-confirm-id"]
+            .waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["account-deletion-submit"].exists)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "account-deletion-confirmation"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    func testLocalAccountDeletionShowsReceipt() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let phone = environment["MAICHAT_LOCAL_UI_PHONE"],
+              let password = environment["MAICHAT_LOCAL_UI_PASSWORD"] else {
+            throw XCTSkip("需要本机测试账号")
+        }
+        let app = launchAccountApp(phone: phone, password: password)
+        XCTAssertTrue(app.buttons["我"].waitForExistence(timeout: 30))
+        if app.buttons["稍后"].exists { app.buttons["稍后"].tap() }
+        tapMeTab(in: app)
+        let settings = app.buttons["设置"]
+        if !settings.waitForExistence(timeout: 2) {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.955)).tap()
+        }
+        XCTAssertTrue(settings.waitForExistence(timeout: 10))
+        settings.tap()
+        dismissLocalIMError(in: app)
+        let deletion = app.buttons["account-deletion-entry"]
+        if !deletion.isHittable { app.swipeUp() }
+        XCTAssertTrue(deletion.waitForExistence(timeout: 10))
+        deletion.tap()
+        let accountID = app.staticTexts["account-deletion-current-id"].label
+        XCTAssertFalse(accountID.isEmpty)
+        let idField = app.textFields["account-deletion-confirm-id"]
+        idField.tap()
+        idField.typeText(accountID)
+        app.swipeDown()
+        let passwordField = app.secureTextFields["输入登录密码"]
+        XCTAssertTrue(passwordField.waitForExistence(timeout: 10))
+        passwordField.tap()
+        passwordField.typeText(password + "\n")
+        let submit = app.buttons["account-deletion-submit"]
+        for _ in 0..<3 where !submit.exists {
+            app.collectionViews.firstMatch.swipeUp()
+        }
+        XCTAssertTrue(submit.waitForExistence(timeout: 5))
+        submit.tap()
+        XCTAssertTrue(app.buttons["确认提交"].waitForExistence(timeout: 5))
+        app.buttons["确认提交"].tap()
+        XCTAssertTrue(app.staticTexts["注销申请已提交"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.staticTexts["查询进度"].exists || app.buttons["查询进度"].exists)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "account-deletion-receipt"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
     func testDesktopLoginScannerEntry() throws {
         let environment = ProcessInfo.processInfo.environment
         guard let phone = environment["MAICHAT_LOCAL_UI_PHONE"],

@@ -8,12 +8,54 @@ extension Notification.Name {
     static let maiChatAccountSessionReplaced = Notification.Name("MaiChatAccountSessionReplaced")
     static let maiChatAccountDeviceSlotRequired =
         Notification.Name("MaiChatAccountDeviceSlotRequired")
+    static let maiChatAccountDeletion = Notification.Name("MaiChatAccountDeletion")
 }
 
 struct MaiChatAuthChallenge: Decodable, Sendable {
     let challengeId: String
     let expiresIn: Int
     let resendAfter: Int
+}
+
+struct MaiChatAccountDeletionOptions: Decodable, Sendable {
+    let hasPassword: Bool
+    let phoneMasked: String?
+    let processingDays: Int
+}
+
+struct MaiChatAccountDeletionReceipt: Codable, Sendable {
+    let requestId: String
+    let status: String
+    let dueAt: Int64
+    let supportEmail: String
+    let receiptToken: String
+    let completedAt: Int64?
+}
+
+struct MaiChatAccountDeletionStatus: Decodable, Sendable {
+    let requestId: String
+    let status: String
+    let dueAt: Int64
+    let completedAt: Int64?
+    let supportEmail: String
+}
+
+struct MaiChatSafetyReportReceipt: Decodable, Sendable {
+    let reportId: String
+    let status: String
+}
+
+struct MaiChatSafetyReport: Decodable, Sendable, Identifiable {
+    let id: String
+    let reason: String
+    let status: String
+    let createdAt: Int64
+    let reviewedAt: Int64?
+    let resolution: String?
+}
+
+private struct MaiChatSafetyReportList: Decodable, Sendable {
+    let reports: [MaiChatSafetyReport]
 }
 
 struct MaiChatAuthUser: Decodable, Sendable {
@@ -154,6 +196,7 @@ enum MaiChatAuthError: LocalizedError {
     case sessionExpired
     case sessionReplaced
     case deviceSlotRequired
+    case accountDeleted
     case identityMismatch
     case desktopCodeMismatch
     case desktopRequestUnavailable
@@ -188,11 +231,17 @@ enum MaiChatAuthError: LocalizedError {
                 "Cannot add your own account": "不能添加自己为好友",
                 "MaiChat account not found": "这个手机号尚未注册 MaiChat",
                 "Friend lookup requests are too frequent": "查找好友过于频繁，请稍后再试",
+                "Confirm the current MaiChat account ID": "请确认当前 MaiChat 账号 ID",
+                "Password or SMS confirmation is required": "请用密码或短信验证码确认",
+                "Account confirmation failed": "账号确认失败，请检查密码或验证码",
+                "This account uses password confirmation": "请用登录密码确认",
+                "Too many reports": "举报过于频繁，请稍后再试",
             ]
             return translations[message] ?? message
         case .sessionExpired: return "登录已过期，请重新用手机号登录"
         case .sessionReplaced: return "账号已在另一台同类设备登录，请重新登录"
         case .deviceSlotRequired: return "请更新 App 后重新登录"
+        case .accountDeleted: return "账号注销申请已提交，本机数据将被清理"
         case .identityMismatch: return "当前 IM 账号与手机号账号不一致，请重新登录"
         case .desktopCodeMismatch: return "电脑上的验证码与此请求不一致，请重新扫码"
         case .desktopRequestUnavailable: return "这次电脑登录请求已处理，请刷新二维码后重试"
@@ -526,6 +575,61 @@ actor MaiChatAuthClient {
         guard result.deleted else { throw MaiChatAuthError.invalidServerResponse }
     }
 
+    func accountDeletionOptions() async throws -> MaiChatAccountDeletionOptions {
+        let token = try await currentAccessToken()
+        return try await request("auth/account/deletion/options", method: "GET", bearer: token)
+    }
+
+    func requestAccountDeletionCode() async throws -> MaiChatAuthChallenge {
+        let token = try await currentAccessToken()
+        return try await request("auth/account/deletion/challenge", method: "POST",
+                                 body: [:], bearer: token)
+    }
+
+    func requestAccountDeletion(accountID: String, password: String?,
+                                challengeID: String?, code: String?) async throws
+        -> MaiChatAccountDeletionReceipt {
+        let token = try await currentAccessToken()
+        var body: [String: Any] = ["confirm_account_id": accountID]
+        if let password, !password.isEmpty { body["password"] = password }
+        if let challengeID, let code, !challengeID.isEmpty, !code.isEmpty {
+            body["challenge_id"] = challengeID
+            body["code"] = code
+        }
+        return try await request("auth/account/deletion", method: "POST",
+                                 body: body, bearer: token)
+    }
+
+    func accountDeletionStatus(_ receipt: MaiChatAccountDeletionReceipt) async throws
+        -> MaiChatAccountDeletionStatus {
+        try await request("auth/account/deletion/status", method: "POST",
+                          body: ["request_id": receipt.requestId,
+                                 "receipt_token": receipt.receiptToken])
+    }
+
+    func submitSafetyReport(targetIMUserID: String, messageID: String?,
+                            excerpt: String?, reason: String, details: String) async throws
+        -> MaiChatSafetyReportReceipt {
+        let token = try await currentAccessToken()
+        var body: [String: Any] = ["target_im_user_id": targetIMUserID,
+                                   "reason": reason]
+        if let messageID, !messageID.isEmpty { body["message_id"] = messageID }
+        if let excerpt, !excerpt.isEmpty {
+            body["content_excerpt"] = String(excerpt.prefix(500))
+                .replacingOccurrences(of: "\n", with: " ")
+        }
+        if !details.isEmpty { body["details"] = String(details.prefix(300)) }
+        return try await request("safety/reports", method: "POST",
+                                 body: body, bearer: token)
+    }
+
+    func safetyReports() async throws -> [MaiChatSafetyReport] {
+        let token = try await currentAccessToken()
+        let result: MaiChatSafetyReportList = try await request(
+            "safety/reports", method: "GET", bearer: token)
+        return result.reports
+    }
+
     func seedanceCredentialIfAvailable() async throws -> MaiChatSeedanceCredential? {
         guard accessToken != nil || !storedRefreshToken().isEmpty else { return nil }
         let token = try await currentAccessToken()
@@ -726,21 +830,25 @@ actor MaiChatAuthClient {
             let serverError = try? JSONDecoder().decode(MaiChatAuthServerError.self, from: data)
             if statusCode == 401,
                serverError?.code == "SESSION_REPLACED" ||
-               serverError?.code == "DEVICE_SLOT_REQUIRED" {
+               serverError?.code == "DEVICE_SLOT_REQUIRED" ||
+               serverError?.code == "ACCOUNT_DELETION" {
                 guard sessionVersion == requestedSessionVersion else {
                     throw MaiChatAuthError.sessionExpired
                 }
                 _ = discardLocalSession()
                 let replaced = serverError?.code == "SESSION_REPLACED"
+                let deleted = serverError?.code == "ACCOUNT_DELETION"
                 await MainActor.run {
                     NotificationCenter.default.post(
-                        name: replaced ? .maiChatAccountSessionReplaced :
-                            .maiChatAccountDeviceSlotRequired,
+                        name: deleted ? .maiChatAccountDeletion :
+                            replaced ? .maiChatAccountSessionReplaced :
+                                .maiChatAccountDeviceSlotRequired,
                         object: nil
                     )
                 }
-                throw replaced ? MaiChatAuthError.sessionReplaced :
-                    MaiChatAuthError.deviceSlotRequired
+                throw deleted ? MaiChatAuthError.accountDeleted :
+                    replaced ? MaiChatAuthError.sessionReplaced :
+                        MaiChatAuthError.deviceSlotRequired
             }
             throw MaiChatAuthError.requestFailed(serverError?.error ??
                 "登录服务暂时不可用（\(statusCode)）")

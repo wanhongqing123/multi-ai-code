@@ -90,6 +90,8 @@ final class LocalSettingsStore: @unchecked Sendable {
     private static let writes = DispatchQueue(label: "MaiChat.SettingsWrites", qos: .utility)
     private let defaults: UserDefaults
     private let key = "maichat_settings"
+    private let pendingDeletionKey = "maichat_pending_account_deletion"
+    private let deletionReceiptKey = "maichat_account_deletion_receipt"
     private let lock = NSLock()
     private var cached: StoredRemoteIMSettings?
     private var revision = 0
@@ -101,6 +103,7 @@ final class LocalSettingsStore: @unchecked Sendable {
     init(defaults: UserDefaults = .standard) { self.defaults = defaults }
 
     func load() -> StoredRemoteIMSettings {
+        if pendingAccountDeletionUserID() != nil { return .empty }
         lock.lock(); let existing = cached; lock.unlock()
         if let existing { return existing }
         let loaded = defaults.data(forKey: key).flatMap {
@@ -158,5 +161,44 @@ final class LocalSettingsStore: @unchecked Sendable {
               let settings = try? JSONDecoder().decode(StoredRemoteIMSettings.self, from: data),
               settings.masterUserID == userID else { return nil }
         return settings
+    }
+
+    func removeAccountSnapshot(_ userID: String) {
+        guard !userID.isEmpty else { return }
+        Self.writes.sync {
+            defaults.removeObject(forKey: accountKey(userID))
+        }
+    }
+
+    func pendingAccountDeletionUserID() -> String? {
+        defaults.string(forKey: pendingDeletionKey).flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    func markAccountDeletionPending(_ userID: String) {
+        guard !userID.isEmpty else { return }
+        lock.lock(); cached = .empty; revision &+= 1; lock.unlock()
+        Self.writes.sync { defaults.set(userID, forKey: pendingDeletionKey) }
+    }
+
+    func clearPendingAccountDeletion() {
+        Self.writes.sync { defaults.removeObject(forKey: pendingDeletionKey) }
+    }
+
+    func saveDeletionReceipt(_ receipt: MaiChatAccountDeletionReceipt) {
+        Self.writes.sync {
+            if let data = try? JSONEncoder().encode(receipt) {
+                defaults.set(data, forKey: deletionReceiptKey)
+            }
+        }
+    }
+
+    func loadDeletionReceipt() -> MaiChatAccountDeletionReceipt? {
+        defaults.data(forKey: deletionReceiptKey).flatMap {
+            try? JSONDecoder().decode(MaiChatAccountDeletionReceipt.self, from: $0)
+        }
+    }
+
+    func clearDeletionReceipt() {
+        Self.writes.sync { defaults.removeObject(forKey: deletionReceiptKey) }
     }
 }

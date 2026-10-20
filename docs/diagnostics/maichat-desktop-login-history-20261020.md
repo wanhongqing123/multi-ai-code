@@ -39,3 +39,4 @@
 - iOS 2.2.3 (93) 从 `d05650ad` 版本配置和 `f0898f7e` 的历史精简代码构建；Apple Development: xiaojing he 证书、Team `VLFG56JT33`、自动选取的 `iOS Team Provisioning Profile: *` 签名验证通过。iPhone 14 Pro Max 保留数据安装成功，设备回读 2.2.3 (93)，冷启动后生产同步服务只读查询该 iPhone 在线。
 - 2.2.8 Mac 版尚待用户登录后与 iPhone 93 联调；Windows 原生构建、包与正式 GitHub Release 均未完成。本机屏幕抓取工具返回 `could not create image from display`，因此新安装版是否出现系统弹窗以用户现场观察为准；代码与本机登录测试证明新版默认启动不会调用旧账号钥匙串存储。
 - 16:45 后再次只读核对：`/Applications/MaiChat.app` 的运行进程仍在，包内版本 2.2.8；生产同步服务中同账号 `mac` 与 `ios_phone` 两个名额均有 45 秒内上报，未确认的未过期历史分块数为 0。这证明两端 WSS 在线，不等于已验收真实历史翻页或发送命令。用户正在本地联调，未由排障流程提交模型任务。
+- 联调期间的下一次只读查询显示，最近 5 分钟 Mac→iPhone 有 2 条 `history_request`，iPhone→Mac 有 2 条 `history_page`，回包 JSON 合计 7,814 B，四条均已确认。它证明真实两端历史读取完成了一次请求／回包／ACK 往返，并且本次没有出现先前持续堆积的大量分块；仅凭服务端元数据仍不能判断用户看到的具体页面排版。

@@ -127,17 +127,6 @@ struct AIAssistantView: View {
                             Button { model.error = "" } label: { Image(systemName: "xmark") }
                         }.foregroundStyle(.red).padding(12).background(Color.red.opacity(0.05))
                     }
-                    if model.selectedRemote != nil, !model.remoteStatus.isEmpty {
-                        HStack(spacing: 8) {
-                            Image(systemName: "clock")
-                            Text(model.remoteStatus).font(.caption)
-                            Spacer(minLength: 0)
-                        }
-                        .foregroundStyle(Color.blue)
-                        .padding(.horizontal, 16).padding(.vertical, 8)
-                        .background(Color.blue.opacity(0.06))
-                        .accessibilityIdentifier("ai-remote-command-status")
-                    }
                     // 输入栏使用独立草稿和焦点状态；转写悬浮层由窗口顶层呈现，
                     // 不把转写卡片高度写回消息滚动视口。
                     AIComposer(

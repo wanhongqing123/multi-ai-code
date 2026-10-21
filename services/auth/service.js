@@ -12,7 +12,7 @@ const { validAccountId, newAccountId } = require('./account-id');
 
 const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
-const ACCESS_LIFETIME = 15 * MINUTE;
+const ACCESS_LIFETIME = DAY;
 const REFRESH_LIFETIME = 30 * DAY;
 const DESKTOP_REQUEST_LIFETIME = 2 * MINUTE;
 const SOCIAL_BIND_LIFETIME = 10 * MINUTE;

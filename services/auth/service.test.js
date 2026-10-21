@@ -226,6 +226,28 @@ test('auth/me identifies the active device login across token refresh', async ()
   setup.db.close();
 });
 
+test('access token lasts 24 hours while logout still revokes it immediately', async () => {
+  const setup = fixture();
+  const signedIn = await signInWithSms(setup);
+  assert.equal(signedIn.body.expires_in, 24 * 60 * 60);
+  setup.advance(24 * 60 * 60 * 1000 - 1);
+  assert.equal((await setup.call('GET', '/v1/auth/me', {},
+    signedIn.body.access_token)).statusCode, 200);
+  setup.advance(1);
+  assert.equal((await setup.call('GET', '/v1/auth/me', {},
+    signedIn.body.access_token)).statusCode, 401);
+  const refreshed = await setup.call('POST', '/v1/auth/refresh', {
+    refresh_token: signedIn.body.refresh_token
+  });
+  assert.equal(refreshed.statusCode, 200);
+  assert.equal(refreshed.body.expires_in, 24 * 60 * 60);
+  assert.equal((await setup.call('POST', '/v1/auth/logout', {},
+    refreshed.body.access_token)).statusCode, 200);
+  assert.equal((await setup.call('GET', '/v1/auth/me', {},
+    refreshed.body.access_token)).statusCode, 401);
+  setup.db.close();
+});
+
 test('every valid phone can receive a real SMS challenge without an allowlist', async () => {
   const setup = fixture();
   const path = '/v1/auth/sms/challenge';

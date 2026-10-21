@@ -152,3 +152,43 @@ test('WebSocket upgrade requires an authenticated account', async () => {
     db.close();
   }
 });
+
+test('WebSocket refreshes its bearer without dropping the device connection', async () => {
+  const db = openSessionSyncStore(':memory:');
+  const original = 'a'.repeat(43);
+  const renewed = 'b'.repeat(43);
+  const anotherAccount = 'c'.repeat(43);
+  const principal = { accountId: 'alice', slot: 'ios_phone',
+    loginSessionId: 'phone-login' };
+  const principals = new Map([[original, principal], [renewed, principal],
+    [anotherAccount, { ...principal, accountId: 'bob' }]]);
+  const authorize = async headers => principals.get(headers.authorization?.slice(7)) || null;
+  const server = createServer(createSessionSyncService({ db, authorize }), authorize);
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const client = connected(`ws://127.0.0.1:${server.address().port}/v1/session-sync/ws`, original);
+  try {
+    await once(client.socket, 'open');
+    assert.equal((await client.request('presence', 'presence', {
+      device_id: 'phone-install', name: 'iPhone', sessions: []
+    })).status, 200);
+    principals.delete(original);
+    assert.equal((await client.request('refresh', 'reauth', {
+      access_token: renewed
+    })).status, 200);
+    assert.equal((await client.request('catalog', 'catalog')).status, 200);
+    assert.equal(client.socket.readyState, WebSocket.OPEN);
+    const closed = once(client.socket, 'close');
+    client.socket.send(JSON.stringify({ id: 'wrong-account', op: 'reauth',
+      body: { access_token: anotherAccount } }));
+    assert.equal((await closed)[0], 1008);
+  } finally {
+    if (client.socket.readyState !== WebSocket.CLOSED) {
+      const closed = once(client.socket, 'close');
+      client.socket.terminate();
+      await closed;
+    }
+    await new Promise(resolve => server.close(resolve));
+    db.close();
+  }
+});

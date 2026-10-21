@@ -80,7 +80,7 @@ function attachWebSocket(server, service, authorize = async () => null) {
     let pushAgain = false;
     let windowStarted = Date.now();
     let framesInWindow = 0;
-    const headers = request.headers;
+    const headers = { ...request.headers };
     const call = (method, path, body = {}) => service.handle({ method, path, body, headers });
     async function pushCatalog() {
       if (socket.readyState !== WebSocket.OPEN) return;
@@ -142,9 +142,32 @@ function attachWebSocket(server, service, authorize = async () => null) {
         const id = frame?.id;
         const op = frame?.op;
         if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(id) ||
-            !['presence', 'catalog', 'send', 'ack'].includes(op) ||
+            !['presence', 'catalog', 'send', 'ack', 'reauth'].includes(op) ||
             !frame.body || typeof frame.body !== 'object' || Array.isArray(frame.body)) {
           socket.close(1008, 'Invalid device request');
+          return;
+        }
+        if (op === 'reauth') {
+          const token = frame.body.access_token;
+          if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(token)) {
+            socket.close(1008, 'Invalid reauthorization');
+            return;
+          }
+          let next;
+          try { next = await authorize({ authorization: `Bearer ${token}` }); }
+          catch {
+            send(socket, { type: 'response', id, status: 503,
+              body: { error: 'Account service is unavailable' } });
+            return;
+          }
+          if (!next || next.accountId !== principal.accountId ||
+              next.slot !== principal.slot ||
+              next.loginSessionId !== principal.loginSessionId) {
+            socket.close(1008, 'Device login replaced');
+            return;
+          }
+          headers.authorization = `Bearer ${token}`;
+          send(socket, { type: 'response', id, status: 200, body: {} });
           return;
         }
         if (!announced && op !== 'presence') {

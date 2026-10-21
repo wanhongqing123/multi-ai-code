@@ -395,6 +395,8 @@ private actor AIRemoteSessionTransport {
     private var socket: OpaquePointer?
     private var socketSink: AIRemoteSocketSink?
     private var connected = false
+    private var authorizedBearer: String?
+    private var reauthTask: Task<Void, Error>?
     private var connectionWaiters: [CheckedContinuation<Void, any Error>] = []
     private var responses: [String: CheckedContinuation<Data, any Error>] = [:]
     private var waitingInbox: CheckedContinuation<[Envelope], any Error>?
@@ -418,6 +420,7 @@ private actor AIRemoteSessionTransport {
         }
         if event == 2 || event == 4 {
             connected = false
+            authorizedBearer = nil
             let failure = AIBackendError(message: "设备同步连接中断")
             let waiters = connectionWaiters
             connectionWaiters.removeAll()
@@ -527,15 +530,33 @@ private actor AIRemoteSessionTransport {
             }
             socket = created
             socketSink = sink
+            authorizedBearer = token
         }
-        if connected { return }
-        try await withCheckedThrowingContinuation { continuation in
-            connectionWaiters.append(continuation)
-            Task {
-                try? await Task.sleep(for: .seconds(10))
-                self.expireConnectionWaiters()
+        if !connected {
+            try await withCheckedThrowingContinuation { continuation in
+                connectionWaiters.append(continuation)
+                Task {
+                    try? await Task.sleep(for: .seconds(10))
+                    self.expireConnectionWaiters()
+                }
             }
         }
+        try await reauthorizeIfNeeded(token)
+    }
+
+    private func reauthorizeIfNeeded(_ token: String) async throws {
+        guard authorizedBearer != token else { return }
+        if let reauthTask {
+            try await reauthTask.value
+            return
+        }
+        let task = Task { [self] in
+            _ = try await requestConnected("reauth", body: ["access_token": token])
+        }
+        reauthTask = task
+        defer { reauthTask = nil }
+        try await task.value
+        authorizedBearer = token
     }
 
     private func expireConnectionWaiters() {
@@ -553,6 +574,11 @@ private actor AIRemoteSessionTransport {
 
     private func request(_ operation: String, body: [String: Any] = [:]) async throws -> Data {
         try await connect()
+        return try await requestConnected(operation, body: body)
+    }
+
+    private func requestConnected(_ operation: String,
+                                  body: [String: Any] = [:]) async throws -> Data {
         let id = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         let frame: [String: Any] = ["id": id, "op": operation, "body": body]
         let data = try JSONSerialization.data(withJSONObject: frame, options: .sortedKeys)
@@ -676,6 +702,7 @@ private actor AIRemoteSessionTransport {
         socket = nil
         socketSink = nil
         connected = false
+        authorizedBearer = nil
         let failure = AIBackendError(message: "设备同步连接已关闭")
         let waiters = connectionWaiters
         connectionWaiters.removeAll()
@@ -1117,7 +1144,6 @@ final class AIAssistantModel: ObservableObject {
     @Published var settings = AIModelSettings()
     @Published var configured = false
     @Published var error = ""
-    @Published private(set) var remoteStatus = ""
     @Published private(set) var remoteRestoreText = ""
     @Published private(set) var remoteRestoreGeneration = 0
     @Published var ready = false
@@ -1494,9 +1520,6 @@ final class AIAssistantModel: ObservableObject {
                 } catch {
                     logAIHistoryEvent("session-sync failed: \(error.localizedDescription)")
                     self.expireRemoteRequests()
-                    if self.selectedRemote != nil {
-                        self.showTransientError(error.localizedDescription, duration: .seconds(8))
-                    }
                     try? await Task.sleep(for: .seconds(2))
                 }
             }
@@ -1515,7 +1538,6 @@ final class AIAssistantModel: ObservableObject {
                     remoteRestoreGeneration += 1
                 }
             }
-            remoteStatus = ""
             showTransientError(
                 "所属设备是否执行了操作尚未确定，请先查看会话记录，不要直接重复发送",
                 duration: .seconds(12))
@@ -1622,7 +1644,6 @@ final class AIAssistantModel: ObservableObject {
                 if let fingerprint = remoteFingerprintByCommandID.removeValue(forKey: id) {
                     remoteRetryIDByFingerprint.removeValue(forKey: fingerprint)
                 }
-                remoteStatus = pendingRemoteCommands.isEmpty ? "" : "等待所属设备确认操作…"
                 if let result, result["ok"] as? Bool != true {
                     if let pendingDraft, !pendingDraft.isEmpty {
                         remoteRestoreText = pendingDraft
@@ -2079,7 +2100,6 @@ final class AIAssistantModel: ObservableObject {
                 if let confirmed = remoteResultByCommandID.removeValue(forKey: id) {
                     return confirmed
                 }
-                remoteStatus = "已送达 \(remote.deviceName)，等待设备确认执行"
                 return true
             } catch {
                 showTransientError("送达状态未知；再次发送相同内容会复用操作编号。\n" +
@@ -2170,9 +2190,7 @@ final class AIAssistantModel: ObservableObject {
             payload["action"] = op
             do {
                 let id = try await enqueueRemoteCommand(to: remote, payload: payload)
-                if remoteResultByCommandID.removeValue(forKey: id) == nil {
-                    remoteStatus = "已送达 \(remote.deviceName)，等待设备确认执行"
-                }
+                _ = remoteResultByCommandID.removeValue(forKey: id)
             } catch {
                 showTransientError("送达状态未知；重试会复用操作编号。\n" +
                     error.localizedDescription, duration: .seconds(8))

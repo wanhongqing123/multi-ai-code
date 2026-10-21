@@ -2,7 +2,7 @@
 // 本进程不下发模型 Key，也不处理模型生成请求或素材文件字节。
 'use strict';
 
-const { randomUUID } = require('node:crypto');
+const { randomUUID, timingSafeEqual } = require('node:crypto');
 const path = require('node:path');
 
 const MAX_VIDEO_BYTES = 200_000_000;
@@ -25,12 +25,14 @@ const DOCUMENT_TYPES = Object.freeze({
 const UPLOAD_TTL_SECONDS = 15 * 60;
 const READ_TTL_SECONDS = 24 * 60 * 60;
 const AVATAR_READ_TTL_SECONDS = 5 * 60;
+const CIRCLE_READ_TTL_SECONDS = 60;
 const MAX_AVATAR_BYTES = 2_000_000;
 const UPLOAD_PURPOSES = Object.freeze({
   ark_asset_input: Object.freeze({ prefix: 'ark-asset-inputs', types: ['image', 'video'] }),
   im_avatar: Object.freeze({ prefix: 'avatars', types: ['image'] }),
   kling_input: Object.freeze({ prefix: 'kling-inputs', types: ['image', 'video'] }),
   minimax_input: Object.freeze({ prefix: 'minimax-inputs', types: ['image', 'video'] }),
+  video_circle: Object.freeze({ prefix: 'video-circle', types: ['video'] }),
   seedream_input: Object.freeze({ prefix: 'seedream-inputs', types: ['image'] }),
   wan_input: Object.freeze({ prefix: 'wan-inputs', types: ['image', 'video', 'document'] })
 });
@@ -103,6 +105,31 @@ function createHandler(options = {}) {
   });
   let client;
 
+  function storageClient() {
+    if (!client) client = makeClient({
+      accessKeyId: env.ALIBABA_CLOUD_ACCESS_KEY_ID,
+      accessKeySecret: env.ALIBABA_CLOUD_ACCESS_KEY_SECRET,
+      bucket: env.MAICHAT_OSS_BUCKET,
+      region: env.MAICHAT_OSS_REGION,
+      authorizationV4: true,
+      secure: true
+    });
+    return client;
+  }
+
+  function validCircleKey(key, accountId = '') {
+    return typeof key === 'string' &&
+      /^video-circle\/[a-z][a-z0-9_-]{2,31}\/\d{4}-\d{2}-\d{2}\/[a-f0-9-]{36}\.mp4$/.test(key) &&
+      (!accountId || key.startsWith(`video-circle/${accountId}/`));
+  }
+
+  function internalCircleRequest(headers) {
+    const expected = env.MAICHAT_VIDEO_CIRCLE_INTERNAL_KEY || '';
+    const supplied = headerValue(headers, 'x-maichat-video-circle-key');
+    return expected.length >= 32 && supplied.length === expected.length &&
+      timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));
+  }
+
   return async function handle(eventInput) {
     let event;
     try {
@@ -113,6 +140,48 @@ function createHandler(options = {}) {
     }
     const method = event?.requestContext?.http?.method || event?.httpMethod || event?.method;
     const route = event?.rawPath || event?.path || '/sign-upload';
+    const circleAction = ['/video-circle/verify', '/video-circle/read',
+      '/video-circle/delete'].find(suffix => route.endsWith(suffix));
+    if (circleAction) {
+      if (method !== 'POST' || env.MAICHAT_VIDEO_CIRCLE_ENABLED !== '1')
+        return jsonResponse(404, { error: 'Not found' });
+      if (!internalCircleRequest(event.headers))
+        return jsonResponse(403, { error: 'Internal authorization required' });
+      const body = requestBody(event);
+      const key = body?.object_key;
+      if (!validCircleKey(key)) return jsonResponse(400, { error: 'Invalid circle object' });
+      if (!env.MAICHAT_OSS_BUCKET || !/^oss-[a-z0-9-]+$/.test(env.MAICHAT_OSS_REGION || '') ||
+          !env.ALIBABA_CLOUD_ACCESS_KEY_ID || !env.ALIBABA_CLOUD_ACCESS_KEY_SECRET)
+        return jsonResponse(503, { error: 'Storage signer is not configured' });
+      try {
+        const storage = storageClient();
+        if (circleAction === '/video-circle/verify') {
+          const accountId = body?.account_id;
+          const expectedBytes = body?.expected_bytes;
+          if (typeof accountId !== 'string' || !validCircleKey(key, accountId) ||
+              !Number.isSafeInteger(expectedBytes) || expectedBytes < 1 ||
+              expectedBytes > MAX_VIDEO_BYTES)
+            return jsonResponse(400, { error: 'Invalid circle upload verification' });
+          const head = await storage.head(key);
+          const headers = head?.res?.headers || head?.headers || {};
+          const bytes = Number(headers['content-length']);
+          const type = headers['content-type'];
+          return jsonResponse(200, { exists: bytes === expectedBytes && type === 'video/mp4',
+            size_bytes: bytes, content_type: type });
+        }
+        if (circleAction === '/video-circle/read') {
+          const url = await storage.signatureUrlV4(
+            'GET', CIRCLE_READ_TTL_SECONDS, { headers: {} }, key);
+          if (!url.startsWith('https://')) throw new Error('Invalid signed read URL');
+          return jsonResponse(200, { read_url: url,
+            read_expires_in: CIRCLE_READ_TTL_SECONDS });
+        }
+        await storage.delete(key);
+        return jsonResponse(200, { deleted: true });
+      } catch {
+        return jsonResponse(502, { error: 'Circle storage operation failed' });
+      }
+    }
     if (method === 'GET' && route === '/portrait-auth-callback')
       return portraitCallbackResponse();
     if (method === 'GET' && route.startsWith('/avatars/')) {
@@ -260,6 +329,13 @@ function createHandler(options = {}) {
       return jsonResponse(400, { error: 'Invalid upload purpose for this file type' });
     if (purpose === 'im_avatar' && size > MAX_AVATAR_BYTES)
       return jsonResponse(400, { error: 'Avatar is too large' });
+    if (purpose === 'video_circle' && extension !== '.mp4')
+      return jsonResponse(400, { error: 'Video circle requires MP4' });
+    if (purpose === 'video_circle' &&
+        (env.MAICHAT_VIDEO_CIRCLE_ENABLED !== '1' ||
+         (env.MAICHAT_VIDEO_CIRCLE_INTERNAL_KEY || '').length < 32 ||
+         !/^[a-z][a-z0-9_-]{2,31}$/.test(accountId)))
+      return jsonResponse(503, { error: 'Video circle is not available' });
     const prefix = UPLOAD_PURPOSES[purpose].prefix;
 
     try {
@@ -274,28 +350,32 @@ function createHandler(options = {}) {
       const objectId = newID();
       if (purpose === 'im_avatar' && !/^[a-f0-9-]{36}$/.test(objectId))
         throw new Error('Invalid avatar object ID');
+      if (purpose === 'video_circle' && !/^[a-f0-9-]{36}$/.test(objectId))
+        throw new Error('Invalid circle object ID');
       const ownerPrefix = typeof accountId === 'string' &&
         /^[a-z][a-z0-9_-]{2,31}$/.test(accountId) ? `${accountId}/` : '';
       const objectKey = `${prefix}/${ownerPrefix}${currentTime().toISOString().slice(0, 10)}/${objectId}${extension}`;
       const contentType = image ? (extension === '.png' ? 'image/png' : 'image/jpeg')
         : video ? (extension === '.mov' ? 'video/quicktime' : 'video/mp4')
           : DOCUMENT_TYPES[extension];
-      const uploadHeaders = { 'Content-Type': contentType };
+      const uploadHeaders = { 'Content-Type': contentType,
+        ...(purpose === 'video_circle' ? { 'x-oss-forbid-overwrite': 'true' } : {}) };
       const uploadUrl = await client.signatureUrlV4(
         'PUT', UPLOAD_TTL_SECONDS, { headers: uploadHeaders }, objectKey);
-      const readUrl = await client.signatureUrlV4(
+      const readUrl = purpose === 'video_circle' ? null : await client.signatureUrlV4(
         'GET', READ_TTL_SECONDS, { headers: {} }, objectKey);
-      if (!uploadUrl.startsWith('https://') || !readUrl.startsWith('https://'))
+      if (!uploadUrl.startsWith('https://') ||
+          (readUrl !== null && !readUrl.startsWith('https://')))
         throw new Error('OSS signer returned a non-HTTPS URL');
       return jsonResponse(200, {
         upload_url: uploadUrl,
         upload_headers: uploadHeaders,
-        read_url: readUrl,
+        ...(readUrl ? { read_url: readUrl } : {}),
         ...(purpose === 'im_avatar' ? {
           avatar_url: `https://ichat.life/maichat/${objectKey}` } : {}),
         object_key: objectKey,
         upload_expires_in: UPLOAD_TTL_SECONDS,
-        read_expires_in: READ_TTL_SECONDS
+        ...(readUrl ? { read_expires_in: READ_TTL_SECONDS } : {})
       });
     } catch {
       return jsonResponse(502, { error: 'Could not sign the media upload' });

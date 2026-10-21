@@ -58,6 +58,81 @@ test('signs a private Ark video PUT and temporary GET for a random object key', 
   assert.ok(!result.body.includes('test-secret'));
 });
 
+test('circle uploads are isolated, disabled by default, and never receive a long read URL', async () => {
+  const id = '123e4567-e89b-42d3-a456-426614174000';
+  const calls = [];
+  const handle = createProductionHandler({
+    env: { ...env, MAICHAT_VIDEO_CIRCLE_ENABLED: '1',
+      MAICHAT_VIDEO_CIRCLE_INTERNAL_KEY: 'circle-test-internal-key-at-least-32-characters' },
+    authorizeMediaRequest: async () => 'author',
+    newID: () => id,
+    currentTime: () => new Date('2026-10-22T00:00:00Z'),
+    makeClient: () => ({ signatureUrlV4: async (...args) => {
+      calls.push(args);
+      return `https://private.example/${args[3]}?signed=${args[0]}`;
+    } })
+  });
+  const signed = await handle(request({ filename: 'clip.mp4', size_bytes: 1000,
+    purpose: 'video_circle' }));
+  assert.equal(signed.statusCode, 200);
+  const body = JSON.parse(signed.body);
+  assert.equal(body.object_key, `video-circle/author/2026-10-22/${id}.mp4`);
+  assert.equal(body.read_url, undefined);
+  assert.equal(body.upload_headers['x-oss-forbid-overwrite'], 'true');
+  assert.equal(calls[0][2].headers['x-oss-forbid-overwrite'], 'true');
+  assert.deepEqual(calls.map(call => call[0]), ['PUT']);
+  assert.equal((await handle(request({ filename: 'clip.mov', size_bytes: 1000,
+    purpose: 'video_circle' }))).statusCode, 400);
+  const disabled = createProductionHandler({ env, authorizeMediaRequest: async () => 'author',
+    makeClient: () => { throw new Error('must not sign'); } });
+  assert.equal((await disabled(request({ filename: 'clip.mp4', size_bytes: 1000,
+    purpose: 'video_circle' }))).statusCode, 503);
+  const withoutInternalKey = createProductionHandler({
+    env: { ...env, MAICHAT_VIDEO_CIRCLE_ENABLED: '1' },
+    authorizeMediaRequest: async () => 'author',
+    makeClient: () => { throw new Error('must not sign'); }
+  });
+  assert.equal((await withoutInternalKey(request({ filename: 'clip.mp4',
+    size_bytes: 1000, purpose: 'video_circle' }))).statusCode, 503);
+});
+
+test('circle internal verification, read, and delete require a secret and exact owner key', async () => {
+  const secret = 'circle-test-internal-key-at-least-32-characters';
+  const key = 'video-circle/author/2026-10-22/123e4567-e89b-42d3-a456-426614174000.mp4';
+  const deleted = [];
+  const handle = createProductionHandler({
+    env: { ...env, MAICHAT_VIDEO_CIRCLE_ENABLED: '1',
+      MAICHAT_VIDEO_CIRCLE_INTERNAL_KEY: secret },
+    makeClient: () => ({
+      head: async name => { assert.equal(name, key); return {
+        res: { headers: { 'content-length': '1000', 'content-type': 'video/mp4' } } };
+      },
+      signatureUrlV4: async (method, ttl, _options, name) => {
+        assert.deepEqual([method,ttl,name], ['GET',60,key]);
+        return `https://private.example/${name}?signed=short`;
+      },
+      delete: async name => { deleted.push(name); }
+    })
+  });
+  const internal = (suffix, body, supplied = secret) => ({
+    rawPath: `/video-circle/${suffix}`, httpMethod: 'POST',
+    headers: { 'X-MaiChat-Video-Circle-Key': supplied }, body: JSON.stringify(body)
+  });
+  assert.equal((await handle(internal('verify', {
+    account_id: 'author', object_key: key, expected_bytes: 1000 }, 'wrong'))).statusCode, 403);
+  assert.equal((await handle(internal('verify', {
+    account_id: 'viewer', object_key: key, expected_bytes: 1000 }))).statusCode, 400);
+  const verified = await handle(internal('verify', {
+    account_id: 'author', object_key: key, expected_bytes: 1000 }));
+  assert.deepEqual(JSON.parse(verified.body), {
+    exists: true, size_bytes: 1000, content_type: 'video/mp4'
+  });
+  const read = await handle(internal('read', { object_key: key }));
+  assert.equal(JSON.parse(read.body).read_expires_in, 60);
+  assert.equal((await handle(internal('delete', { object_key: key }))).statusCode, 200);
+  assert.deepEqual(deleted, [key]);
+});
+
 test('signs avatar upload and exposes a stable URL that redirects to private OSS', async () => {
   const id = '123e4567-e89b-42d3-a456-426614174000';
   const calls = [];

@@ -219,6 +219,53 @@ function openStore(filename) {
       ON safety_reports(status,created_at);
     CREATE INDEX IF NOT EXISTS safety_reports_reporter
       ON safety_reports(reporter_user_id,created_at DESC);
+    CREATE TABLE IF NOT EXISTS video_circle_posts (
+      id TEXT PRIMARY KEY,
+      author_user_id TEXT NOT NULL REFERENCES users(id),
+      title TEXT NOT NULL,
+      object_key TEXT NOT NULL UNIQUE,
+      source_tool TEXT NOT NULL,
+      source_task_id TEXT NOT NULL,
+      size_bytes INTEGER NOT NULL,
+      content_type TEXT NOT NULL,
+      duration_ms INTEGER NOT NULL,
+      status TEXT NOT NULL CHECK(status IN
+        ('pending','approved','rejected','hidden','withdrawn')),
+      created_at INTEGER NOT NULL,
+      reviewed_at INTEGER,
+      published_at INTEGER,
+      withdrawn_at INTEGER,
+      reviewer TEXT,
+      review_reason TEXT,
+      cleanup_pending INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS video_circle_posts_feed
+      ON video_circle_posts(status,published_at DESC,id DESC);
+    CREATE INDEX IF NOT EXISTS video_circle_posts_author
+      ON video_circle_posts(author_user_id,created_at DESC);
+    CREATE TABLE IF NOT EXISTS video_circle_blocks (
+      viewer_user_id TEXT NOT NULL REFERENCES users(id),
+      author_user_id TEXT NOT NULL REFERENCES users(id),
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY(viewer_user_id,author_user_id),
+      CHECK(viewer_user_id <> author_user_id)
+    );
+    CREATE TABLE IF NOT EXISTS video_circle_reports (
+      id TEXT PRIMARY KEY,
+      post_id TEXT NOT NULL REFERENCES video_circle_posts(id),
+      reporter_user_id TEXT NOT NULL REFERENCES users(id),
+      reason TEXT NOT NULL CHECK(reason IN
+        ('spam','harassment','sexual','violence','copyright','other')),
+      details TEXT,
+      status TEXT NOT NULL CHECK(status IN ('pending','resolved')),
+      created_at INTEGER NOT NULL,
+      reviewed_at INTEGER,
+      reviewer TEXT,
+      resolution TEXT,
+      UNIQUE(post_id,reporter_user_id)
+    );
+    CREATE INDEX IF NOT EXISTS video_circle_reports_pending
+      ON video_circle_reports(status,created_at);
   `);
   const phoneColumn = db.prepare('PRAGMA table_info(users)').all()
     .find(column => column.name === 'phone_e164');

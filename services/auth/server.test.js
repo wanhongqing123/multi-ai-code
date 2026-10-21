@@ -5,7 +5,8 @@ const { createHash, randomBytes } = require('node:crypto');
 const test = require('node:test');
 const { createAuthService } = require('./service');
 const { openStore } = require('./store');
-const { createServer, requireDeviceSlotFromEnv } = require('./server');
+const { createServer, start, requireDeviceSlotFromEnv,
+  videoCircleFromEnv } = require('./server');
 
 test('device slot cutover flag defaults off and rejects ambiguous values', () => {
   assert.equal(requireDeviceSlotFromEnv(undefined), false);
@@ -13,6 +14,38 @@ test('device slot cutover flag defaults off and rejects ambiguous values', () =>
   assert.equal(requireDeviceSlotFromEnv('0'), false);
   assert.equal(requireDeviceSlotFromEnv('1'), true);
   assert.throws(() => requireDeviceSlotFromEnv('true'), /must be 0 or 1/);
+});
+
+test('video circle signer is off by default and only calls loopback with its internal key', async () => {
+  assert.equal(videoCircleFromEnv({}), null);
+  assert.equal(videoCircleFromEnv({ MAICHAT_VIDEO_CIRCLE_ENABLED: '0' }), null);
+  assert.throws(() => videoCircleFromEnv({ MAICHAT_VIDEO_CIRCLE_ENABLED: '1' }),
+    /internal signer/);
+  const calls = [];
+  const secret = 'circle-test-internal-key-at-least-32-characters';
+  const connector = videoCircleFromEnv({ MAICHAT_VIDEO_CIRCLE_ENABLED: '1',
+    MAICHAT_VIDEO_CIRCLE_INTERNAL_KEY: secret, MAICHAT_MEDIA_PORT: '9000' },
+  async (url, options) => {
+    calls.push({ url, options });
+    return { status: 200, json: async () => ({ exists: true, size_bytes: 12,
+      content_type: 'video/mp4', read_url: 'https://private.example/short', deleted: true }) };
+  });
+  assert.equal((await connector.verifyUpload('author', 'video-circle/author/id.mp4', 12)).exists,
+    true);
+  assert.equal(await connector.signRead('video-circle/author/id.mp4'),
+    'https://private.example/short');
+  await connector.deleteObject('video-circle/author/id.mp4');
+  assert.deepEqual(calls.map(call => call.url), [
+    'http://127.0.0.1:9000/video-circle/verify',
+    'http://127.0.0.1:9000/video-circle/read',
+    'http://127.0.0.1:9000/video-circle/delete'
+  ]);
+  assert.ok(calls.every(call => call.options.headers['X-MaiChat-Video-Circle-Key'] === secret));
+});
+
+test('video circle cannot start without a protected review server', () => {
+  assert.throws(() => start({ MAICHAT_VIDEO_CIRCLE_ENABLED: '1' }),
+    /authenticated admin review server/);
 });
 
 test('HTTP adapter rejects oversized and invalid requests without invoking auth', async () => {

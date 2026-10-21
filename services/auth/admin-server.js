@@ -19,7 +19,7 @@ function authenticated(header, secret) {
   return timingSafeEqual(actual, expected);
 }
 
-function page(db, message = '') {
+function page(db, videoCircle, message = '') {
   const accounts = db.prepare(`SELECT id,created_at,disabled_at FROM users
     WHERE phone_e164 IS NULL ORDER BY created_at DESC`).all();
   const rows = accounts.map(account => `<tr><td>${escapeHtml(account.id)}</td><td>` +
@@ -49,6 +49,51 @@ function page(db, message = '') {
       <input type="hidden" name="report_id" value="${escapeHtml(report.id)}">
       <input name="resolution" required maxlength="200" placeholder="给举报人的处理说明">
       <button type="submit">标记已处理</button></form></td></tr>`).join('');
+  const circleRows = videoCircle?.pendingReview().map(post => `<tr>
+    <td>${escapeHtml(post.title)}<br>${escapeHtml(post.author_id)}</td>
+    <td>${escapeHtml(post.source_tool)} · ${escapeHtml(post.source_task_id)}<br>
+    ${escapeHtml(String(post.duration_ms))} ms / ${escapeHtml(String(post.size_bytes))} B</td>
+    <td><a href="/video-circle/preview/${escapeHtml(post.id)}" target="_blank"
+      rel="noreferrer">预览视频</a></td>
+    <td><form method="post" action="/video-circle/review">
+      <input type="hidden" name="post_id" value="${escapeHtml(post.id)}">
+      <select name="decision"><option value="approve">批准公开</option>
+        <option value="reject">拒绝</option></select>
+      <label><input type="checkbox" name="checked" value="yes" required>
+        已检查画面、AI 标识、标题与来源</label>
+      <input name="reason" maxlength="80" placeholder="拒绝时填写原因">
+      <button type="submit">提交复核</button></form></td></tr>`).join('') || '';
+  const circlePublishedRows = videoCircle?.publishedReview().map(post => `<tr>
+    <td>${escapeHtml(post.title)}<br>${escapeHtml(post.author_id)}</td>
+    <td><a href="/video-circle/preview/${escapeHtml(post.id)}" target="_blank"
+      rel="noreferrer">预览视频</a></td>
+    <td><form method="post" action="/video-circle/hide">
+      <input type="hidden" name="post_id" value="${escapeHtml(post.id)}">
+      <input name="reason" required maxlength="80" placeholder="下架原因">
+      <button type="submit">下架</button></form></td></tr>`).join('') || '';
+  const circleReportRows = videoCircle?.pendingReports().map(report => `<tr>
+    <td>${escapeHtml(report.title)}<br>${escapeHtml(report.reporter_id)}</td>
+    <td>${escapeHtml(report.reason)}<br>${escapeHtml(report.details || '')}</td>
+    <td><form method="post" action="/video-circle/resolve-report">
+      <input type="hidden" name="report_id" value="${escapeHtml(report.id)}">
+      <input name="resolution" required maxlength="80" placeholder="处理结果">
+      <button type="submit">标记已处理</button></form></td></tr>`).join('') || '';
+  const circleCleanupRows = videoCircle?.pendingCleanup().map(post => `<tr>
+    <td>${escapeHtml(post.title)}<br>${escapeHtml(post.author_id)}</td>
+    <td>${escapeHtml(post.status)}</td>
+    <td><form method="post" action="/video-circle/retry-cleanup">
+      <input type="hidden" name="post_id" value="${escapeHtml(post.id)}">
+      <button type="submit">重试删除对象</button></form></td></tr>`).join('') || '';
+  const circleSection = videoCircle ? `<h2>AI 视频圈 · 待审核</h2>
+    <p>仅经 SSH 转发访问；批准前须实际播放并检查内容与 AI 标识。</p>
+    <table><tr><th>作品／作者</th><th>来源／规格</th><th>预览</th><th>操作</th></tr>
+    ${circleRows || '<tr><td colspan="4">暂无待审核视频</td></tr>'}</table>
+    <h2>公开视频</h2><table><tr><th>作品</th><th>预览</th><th>操作</th></tr>
+    ${circlePublishedRows || '<tr><td colspan="3">暂无公开视频</td></tr>'}</table>
+    <h2>视频举报</h2><table><tr><th>作品／举报人</th><th>原因</th><th>处理</th></tr>
+    ${circleReportRows || '<tr><td colspan="3">暂无待处理举报</td></tr>'}</table>
+    <h2>待清理视频对象</h2><table><tr><th>作品／作者</th><th>状态</th><th>操作</th></tr>
+    ${circleCleanupRows || '<tr><td colspan="3">暂无待清理对象</td></tr>'}</table>` : '';
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>MaiChat 测试账号</title><style>
@@ -71,6 +116,7 @@ function page(db, message = '') {
     <h2>待处理举报</h2><table><tr><th>举报编号</th><th>双方账号</th>
     <th>原因</th><th>内容摘要</th><th>处理</th></tr>
     ${reportRows || '<tr><td colspan="5">暂无待处理举报</td></tr>'}</table>
+    ${circleSection}
     </body></html>`;
 }
 
@@ -90,7 +136,16 @@ function createAdminServer({ db, service, secret }) {
     }
     if (request.method === 'GET' && request.url === '/') {
       response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      response.end(page(db));
+      response.end(page(db, service.videoCircleAdmin));
+      return;
+    }
+    if (request.method === 'GET' && /^\/video-circle\/preview\/[0-9a-f-]{36}$/.test(request.url) &&
+        service.videoCircleAdmin) {
+      const id = request.url.slice('/video-circle/preview/'.length);
+      const preview = await service.videoCircleAdmin.adminPreview(id);
+      response.writeHead(preview.statusCode, preview.headers ||
+        { 'Content-Type': 'application/json; charset=utf-8' });
+      response.end(preview.statusCode === 302 ? '' : JSON.stringify(preview.body));
       return;
     }
     const origin = request.headers.origin;
@@ -98,7 +153,9 @@ function createAdminServer({ db, service, secret }) {
     let originUrl;
     try { originUrl = new URL(origin); } catch { originUrl = null; }
     if (request.method !== 'POST' ||
-        !['/create', '/disable', '/resolve-report'].includes(request.url) ||
+        !['/create', '/disable', '/resolve-report', '/video-circle/review',
+          '/video-circle/hide', '/video-circle/resolve-report',
+          '/video-circle/retry-cleanup'].includes(request.url) ||
         !originUrl || !host || originUrl.host !== host ||
         !['127.0.0.1', 'localhost'].includes(originUrl.hostname) ||
         originUrl.protocol !== 'http:' ||
@@ -126,7 +183,7 @@ function createAdminServer({ db, service, secret }) {
       result = await service.createTestAccount(accountId, form.get('password'));
     } else if (request.url === '/disable') {
       result = service.disableTestAccount(accountId);
-    } else {
+    } else if (request.url === '/resolve-report') {
       const reportId = form.get('report_id');
       const resolution = form.get('resolution')?.trim();
       if (!/^[0-9a-f-]{36}$/.test(reportId || '') || !resolution ||
@@ -140,10 +197,27 @@ function createAdminServer({ db, service, secret }) {
         result = changed ? { statusCode: 200, body: {} } :
           { statusCode: 404, body: { error: 'Pending report not found' } };
       }
+    } else if (!service.videoCircleAdmin) {
+      result = { statusCode: 404, body: { error: 'Video circle is unavailable' } };
+    } else if (request.url === '/video-circle/review') {
+      const decision = form.get('decision');
+      const reason = form.get('reason')?.trim() || '';
+      result = form.get('checked') === 'yes' ?
+        await service.videoCircleAdmin.review(form.get('post_id'), decision, 'admin', reason) :
+        { statusCode: 400, body: { error: 'Watch and check the video before review' } };
+    } else if (request.url === '/video-circle/hide') {
+      result = await service.videoCircleAdmin.hide(form.get('post_id'), 'admin',
+        form.get('reason')?.trim() || '');
+    } else if (request.url === '/video-circle/retry-cleanup') {
+      result = await service.videoCircleAdmin.retryCleanup(form.get('post_id'));
+    } else {
+      result = service.videoCircleAdmin.resolveReport(form.get('report_id'), 'admin',
+        form.get('resolution')?.trim() || '');
     }
     response.writeHead(result.statusCode < 400 ? 200 : result.statusCode,
       { 'Content-Type': 'text/html; charset=utf-8' });
-    response.end(page(db, result.statusCode < 400 ? '操作成功' : result.body.error));
+    response.end(page(db, service.videoCircleAdmin,
+      result.statusCode < 400 ? '操作成功' : result.body.error));
     } catch {
       if (!response.headersSent) response.writeHead(500);
       response.end('Admin operation failed');

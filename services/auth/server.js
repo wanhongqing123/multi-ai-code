@@ -23,6 +23,37 @@ function requireDeviceSlotFromEnv(value) {
   throw new Error('MAICHAT_AUTH_REQUIRE_DEVICE_SLOT must be 0 or 1');
 }
 
+function videoCircleFromEnv(env, fetcher = fetch) {
+  if (env.MAICHAT_VIDEO_CIRCLE_ENABLED === undefined ||
+      env.MAICHAT_VIDEO_CIRCLE_ENABLED === '0') return null;
+  if (env.MAICHAT_VIDEO_CIRCLE_ENABLED !== '1')
+    throw new Error('MAICHAT_VIDEO_CIRCLE_ENABLED must be 0 or 1');
+  const secret = env.MAICHAT_VIDEO_CIRCLE_INTERNAL_KEY || '';
+  const port = Number(env.MAICHAT_MEDIA_PORT || 9000);
+  if (secret.length < 32 || !Number.isInteger(port) || port < 1 || port > 65535)
+    throw new Error('Video circle internal signer is not configured');
+  const request = async (action, body) => {
+    const response = await fetcher(`http://127.0.0.1:${port}/video-circle/${action}`, {
+      method: 'POST', redirect: 'error', signal: AbortSignal.timeout(5000),
+      headers: { 'Content-Type': 'application/json',
+        'X-MaiChat-Video-Circle-Key': secret }, body: JSON.stringify(body)
+    });
+    if (response.status !== 200) throw new Error('Video circle signer rejected the request');
+    return response.json();
+  };
+  return {
+    verifyUpload: async (accountId, objectKey, bytes) =>
+      request('verify', { account_id: accountId, object_key: objectKey,
+        expected_bytes: bytes }),
+    signRead: async objectKey =>
+      (await request('read', { object_key: objectKey })).read_url,
+    deleteObject: async objectKey => {
+      const reply = await request('delete', { object_key: objectKey });
+      if (reply.deleted !== true) throw new Error('Video object was not deleted');
+    }
+  };
+}
+
 function createServer(service) {
   return http.createServer(async (request, response) => {
     response.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -53,13 +84,15 @@ function createServer(service) {
           return;
         }
       }
-      const path = new URL(request.url, 'http://localhost').pathname;
+      const url = new URL(request.url, 'http://localhost');
+      const path = url.pathname;
       // 本进程只监听 loopback。Nginx 必须覆盖 X-Real-IP，不能透传客户端自填值。
       const ip = request.headers['x-real-ip'] || request.socket.remoteAddress;
       const result = await service.handle({ method: request.method, path, body,
-                                            headers: request.headers, ip });
-      response.writeHead(result.statusCode);
-      response.end(JSON.stringify(result.body));
+                                            headers: request.headers, ip,
+                                            query: url.searchParams });
+      response.writeHead(result.statusCode, result.headers || {});
+      response.end(result.statusCode === 302 ? '' : JSON.stringify(result.body));
     } catch {
       if (!response.headersSent) response.writeHead(500);
       response.end(JSON.stringify({ error: 'Internal service error' }));
@@ -69,6 +102,9 @@ function createServer(service) {
 
 function start(env = process.env) {
   const requireDeviceSlot = requireDeviceSlotFromEnv(env.MAICHAT_AUTH_REQUIRE_DEVICE_SLOT);
+  if (env.MAICHAT_VIDEO_CIRCLE_ENABLED === '1' &&
+      (!env.MAICHAT_AUTH_ADMIN_SECRET || env.MAICHAT_AUTH_ADMIN_SECRET.length < 32))
+    throw new Error('Video circle requires an authenticated admin review server');
   if (!env.MAICHAT_AUTH_DB_PATH || !env.MAICHAT_AUTH_HMAC_KEY ||
       !env.MAICHAT_IM_SECRET_KEY || !env.MAICHAT_IM_SDK_APP_ID)
     throw new Error('Auth database or server signing secrets are missing');
@@ -77,6 +113,7 @@ function start(env = process.env) {
   const service = createAuthService({
     db, sms, secret: env.MAICHAT_AUTH_HMAC_KEY,
     imSecret: env.MAICHAT_IM_SECRET_KEY,
+    videoCircle: videoCircleFromEnv(env),
     issueArkCredential: createArkCredentialIssuer(env),
     issueBailianCredential: createBailianCredentialIssuer(env),
     issueAccountModelKeys: createAccountModelKeyIssuer(env),
@@ -146,4 +183,4 @@ function start(env = process.env) {
 
 if (require.main === module) start();
 
-module.exports = { createServer, start, requireDeviceSlotFromEnv };
+module.exports = { createServer, start, requireDeviceSlotFromEnv, videoCircleFromEnv };

@@ -8,6 +8,7 @@ const { generatePngQrCode } = require('@juit/qrcode');
 const { createUserSig } = require('./usersig');
 const { hashPassword, validPassword, verifyPassword } = require('./password');
 const { createFriendService } = require('./friends');
+const { createVideoCircleService } = require('./video-circle-service');
 const { validAccountId, newAccountId } = require('./account-id');
 
 const MINUTE = 60_000;
@@ -112,6 +113,8 @@ function createAuthService(options) {
   const dummyHash = hashPassword('unregistered-account-dummy-password');
   const friends = createFriendService({ db, now, normalizePhone,
     lookupTimes: friendLookupTimes });
+  const videoCircle = options.videoCircle ? createVideoCircleService({
+    db, now, ...options.videoCircle }) : null;
   let nextCleanupAt = 0;
 
   function deviceSlotRequiredError(statusCode) {
@@ -742,7 +745,7 @@ function createAuthService(options) {
     } else {
       return json(400, { error: 'Password or SMS confirmation is required' });
     }
-    return db.transaction(() => {
+    const deletion = db.transaction(() => {
       const active = db.prepare('SELECT * FROM users WHERE id=? AND disabled_at IS NULL')
         .get(session.user_id);
       if (!active) return json(401, { error: 'Authentication required' });
@@ -757,6 +760,9 @@ function createAuthService(options) {
         active.im_user_id, active.phone_e164, requestedAt, dueAt, digest(receiptToken));
       db.prepare('UPDATE users SET disabled_at=?,updated_at=? WHERE id=?')
         .run(requestedAt, requestedAt, active.id);
+      db.prepare(`UPDATE video_circle_posts SET status='withdrawn',withdrawn_at=?,
+        cleanup_pending=1 WHERE author_user_id=? AND status<>'withdrawn'`)
+        .run(requestedAt, active.id);
       db.prepare(`UPDATE sessions SET revoked_at=?,revoked_reason='account_deletion'
         WHERE user_id=? AND revoked_at IS NULL`).run(requestedAt, active.id);
       db.prepare(`UPDATE friend_requests SET status='rejected',decided_at=?
@@ -781,6 +787,11 @@ function createAuthService(options) {
       return json(202, { request_id: id, status: 'pending', due_at: dueAt,
         receipt_token: receiptToken, support_email: '1925271463@kongshang.com' });
     })();
+    if (deletion.statusCode === 202 && videoCircle) {
+      const cleanup = await videoCircle.cleanupAccount(session.user_id);
+      return json(202, { ...deletion.body, video_cleanup_pending: cleanup.pending > 0 });
+    }
+    return deletion;
   }
 
   function accountDeletionStatus(body) {
@@ -908,7 +919,7 @@ function createAuthService(options) {
     })();
   }
 
-  async function handle({ method, path, body, headers, ip }) {
+  async function handle({ method, path, body, headers, ip, query }) {
     cleanupExpiredRecords();
     const request = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
     if (method === 'POST' && path === '/v1/auth/sms/challenge')
@@ -934,6 +945,11 @@ function createAuthService(options) {
     if (method === 'POST' && path === '/v1/auth/desktop/claim')
       return claimDesktopRequest(request);
     const session = authenticate(headers);
+    if (path.startsWith('/v1/video-circle/')) {
+      if (!videoCircle) return json(404, { error: 'Not found' });
+      if (!session) return authenticationFailure(headers);
+      return videoCircle.handle(method, path, request, session, query);
+    }
     if (path.startsWith('/v1/friends')) {
       if (!session) return authenticationFailure(headers);
       return friends.handle(method, path, request, session) ||
@@ -1129,7 +1145,7 @@ function createAuthService(options) {
   }
 
   return { handle, normalizePhone, authenticate, cleanupExpiredRecords,
-    createTestAccount, disableTestAccount };
+    createTestAccount, disableTestAccount, videoCircleAdmin: videoCircle };
 }
 
 module.exports = { createAuthService, normalizePhone };

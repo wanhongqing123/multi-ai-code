@@ -7,6 +7,24 @@
 `asset://<ID>` 交给 Seedance；签名 GET 链接仅供方舟导入素材使用。文件字节不经过
 签名服务或腾讯 IM 云文件服务。真实 Bucket 的导入过程仍需实盘验证。
 
+## AI 视频圈专用签名（默认关闭）
+
+`MAICHAT_VIDEO_CIRCLE_ENABLED=1` 且账号鉴权成功后，`POST /sign-upload` 的
+`purpose=video_circle` 才为 MP4 签发专用 `video-circle/<账号>/...` 私有对象的
+15 分钟 PUT 链接，**不返回普通素材的 24 小时读取链接**。账号服务在 loopback
+使用 `MAICHAT_VIDEO_CIRCLE_INTERNAL_KEY` 调用 `POST /video-circle/verify`、
+`/video-circle/read`、`/video-circle/delete`；分别核对对象 HEAD 信息、签发
+60 秒 GET URL、删除撤回或下架对象。视频字节由客户端直接上传到 OSS，播放
+由客户端直接读取 OSS，签名服务只处理控制信息。
+
+启用前需给专用 RAM 身份补 `video-circle/*` 的 `oss:PutObject`、`oss:GetObject`、
+`oss:DeleteObject` 权限；HeadObject 使用 `oss:GetObject`。视频圈上传要求
+`x-oss-forbid-overwrite: true`，必须保持 Bucket 版本控制为未开启状态，并在真实 OSS
+核对重复 PUT 返回 409。完成管理员值班与真实 OSS 回归后才可启用。
+OSS 官方说明见 [PutObject 防覆盖请求头](https://help.aliyun.com/zh/oss/developer-reference/putobject)
+和 [HeadObject 权限](https://help.aliyun.com/zh/oss/developer-reference/headobject/)。
+当前普通素材的既有前缀、签名有效期和路由不变；默认开关为关闭。
+
 ## 阿里云侧准备
 
 1. 创建**私有** OSS Bucket。当前目标是 `maichat-ai-video-resource`，地域

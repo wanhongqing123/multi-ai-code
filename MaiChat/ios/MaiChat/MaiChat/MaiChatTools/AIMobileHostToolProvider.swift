@@ -7,6 +7,7 @@ import Darwin
 import CoreImage
 import ImageIO
 import Metal
+import MessageUI
 import MaiChatCore
 import Photos
 import SwiftUI
@@ -33,6 +34,7 @@ final class AIMobileHostToolProvider {
     static let shared = AIMobileHostToolProvider()
 
     weak var appState: RemoteIMAppState?
+    private var smsDelegate: AITextMessageDelegate?
 
     /// 校验 Agent 工具名与参数，再分派到对应 iOS 宿主能力。
     /// 所有失败分支返回明确错误码；播放器和媒体工具不得把仅受理误报为完成。
@@ -47,6 +49,8 @@ final class AIMobileHostToolProvider {
         case "mobile_get_location": return await getCurrentLocation()
         case "mobile_list_contacts": return await listSystemContacts(arguments)
         case "mobile_get_contact": return await getSystemContact(arguments)
+        case "mobile_dial_phone": return await dialPhone(arguments)
+        case "mobile_compose_sms": return composeSMS(arguments)
         case "mobile_decode_text": return decodeLegacyText(arguments)
         case "generate_pdf": return generatePDF(arguments)
         case "mobile_list_photos": return await listPhotos(arguments)
@@ -167,6 +171,81 @@ final class AIMobileHostToolProvider {
         (arguments[key] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 
+    /// 保留号码中的数字与可选国际区号；拒绝扩展号、URL 和拨号控制字符。
+    static func normalizedPhoneNumber(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              trimmed.unicodeScalars.allSatisfy({
+                  CharacterSet(charactersIn: "+0123456789 ()-").contains($0)
+              }) else { return nil }
+        let number = trimmed.replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "(", with: "")
+            .replacingOccurrences(of: ")", with: "")
+            .replacingOccurrences(of: "-", with: "")
+        let digits = number.hasPrefix("+") ? String(number.dropFirst()) : number
+        guard (3...15).contains(digits.utf8.count),
+              digits.utf8.allSatisfy({ $0 >= 48 && $0 <= 57 }) else { return nil }
+        return number
+    }
+
+    /// 只打开系统拨号确认。open 返回成功不代表用户确认或通话接通。
+    func dialPhone(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
+        guard let number = Self.normalizedPhoneNumber(Self.string(arguments, key: "phone_number")),
+              let url = URL(string: "tel:\(number)") else {
+            return .failure(code: "invalid_input", message: "A valid phone number is required")
+        }
+        guard UIApplication.shared.applicationState == .active,
+              UIApplication.shared.canOpenURL(url) else {
+            return .failure(code: "unavailable", message: "Phone dialing is unavailable on this device")
+        }
+        let opened = await withCheckedContinuation { continuation in
+            UIApplication.shared.open(url) { continuation.resume(returning: $0) }
+        }
+        guard opened else {
+            return .failure(code: "unavailable", message: "Could not open the Phone confirmation")
+        }
+        return Self.jsonSuccess(["status": "phone_confirmation_opened", "phone_number": number])
+    }
+
+    /// 只预填系统短信编辑器；发送或取消始终由用户在系统界面决定。
+    func composeSMS(_ arguments: [String: Any]) -> AIMaiChatHostToolExecution {
+        guard let recipients = arguments["recipients"] as? [String],
+              (1...10).contains(recipients.count),
+              let body = arguments["body"] as? String,
+              !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              body.utf8.count <= 4_000 else {
+            return .failure(code: "invalid_input", message: "Recipients and message body are required")
+        }
+        let numbers = recipients.compactMap(Self.normalizedPhoneNumber)
+        guard numbers.count == recipients.count else {
+            return .failure(code: "invalid_input", message: "A recipient phone number is invalid")
+        }
+        guard UIApplication.shared.applicationState == .active,
+              MFMessageComposeViewController.canSendText(),
+              smsDelegate == nil,
+              let presenter = activePresenter() else {
+            return .failure(code: "unavailable", message: "SMS composer is unavailable on this device")
+        }
+        let composer = MFMessageComposeViewController()
+        composer.recipients = numbers
+        composer.body = body
+        let delegate = AITextMessageDelegate { [weak self] in self?.smsDelegate = nil }
+        smsDelegate = delegate
+        composer.messageComposeDelegate = delegate
+        presenter.present(composer, animated: true)
+        return Self.jsonSuccess(["status": "sms_composer_opened", "recipients": numbers])
+    }
+
+    private func activePresenter() -> UIViewController? {
+        guard let scene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first(where: { $0.activationState == .foregroundActive }),
+              let window = scene.windows.first(where: { $0.isKeyWindow }),
+              var view = window.rootViewController else { return nil }
+        while let presented = view.presentedViewController { view = presented }
+        return view
+    }
+
     private func exportDiagnostics() async -> AIMaiChatHostToolExecution {
         let workspacePath = AIAssistantModel.shared.workspacePath
         guard !workspacePath.isEmpty else {
@@ -227,6 +306,18 @@ final class AIMobileHostToolProvider {
     }
 
 
+}
+
+@MainActor
+private final class AITextMessageDelegate: NSObject, @preconcurrency MFMessageComposeViewControllerDelegate {
+    private let onFinish: () -> Void
+
+    init(onFinish: @escaping () -> Void) { self.onFinish = onFinish }
+
+    func messageComposeViewController(_ controller: MFMessageComposeViewController,
+                                      didFinishWith result: MessageComposeResult) {
+        controller.dismiss(animated: true) { self.onFinish() }
+    }
 }
 
 final class AIMaiChatHostToolCallbackContext: @unchecked Sendable {}

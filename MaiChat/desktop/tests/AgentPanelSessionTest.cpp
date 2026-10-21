@@ -774,8 +774,8 @@ void AgentPanelSessionTest::newSessionOffersWorkspaceChoice() {
     QVERIFY(more->menu() == nullptr);
     auto* actionPanel = harness.panel->findChild<QWidget*>(QStringLiteral("agentActionPanel"));
     QVERIFY(actionPanel != nullptr);
-    QCOMPARE(workspace->parentWidget(), actionPanel);
-    QCOMPARE(openWorkspace->parentWidget(), actionPanel);
+    QCOMPARE(workspace->parentWidget(), openWorkspace->parentWidget());
+    QCOMPARE(workspace->parentWidget()->parentWidget(), actionPanel);
     QVERIFY(!workspace->isVisible());
     more->click();
     QTRY_VERIFY(workspace->isVisible());
@@ -787,7 +787,8 @@ void AgentPanelSessionTest::newSessionOffersWorkspaceChoice() {
     QVERIFY(workspace->toolTip().contains(
         QDir::toNativeSeparators(QString::fromStdString(session.directory))));
     QVERIFY(!workspace->text().startsWith(QStringLiteral("工作目录 ·")));
-    QCOMPARE(openWorkspace->text(), QStringLiteral("打开文件夹"));
+    QCOMPARE(openWorkspace->accessibleName(), QStringLiteral("打开当前工作目录"));
+    QVERIFY(openWorkspace->width() < workspace->width());
     auto* modelSection = actionPanel->findChild<QPushButton*>(QStringLiteral("agentModelSection"));
     QVERIFY(modelSection != nullptr);
     QVERIFY(modelSection->accessibleName().startsWith(QStringLiteral("模型：")));

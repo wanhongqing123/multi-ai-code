@@ -321,6 +321,23 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
         "Requires contacts permission and returns only name, phone numbers, and email addresses.",
         // id 来自 mobile_list_contacts，不接受随意构造的联系人字段组合。
         R"({"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":false})");
+#if defined(__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__)
+    // iOS 公开接口只允许打开系统确认界面；工具返回值不能表示已拨通或已送达。
+    add("mobile_dial_phone",
+        "Open iOS Phone confirmation for one number only when the user explicitly asks to call. "
+        "Requires per-call approval. Opening the confirmation does not mean the call was placed.",
+        R"({"type":"object","properties":{"phone_number":{"type":"string","minLength":3,)"
+            R"("maxLength":32}},"required":["phone_number"],"additionalProperties":false})",
+        true);
+    add("mobile_compose_sms",
+        "Open the iOS Messages composer with recipients and body only when the user explicitly "
+        "asks to send an SMS. Requires per-call approval; the user reviews and taps Send. "
+        "A returned composer_opened status never means the message was sent or delivered.",
+        R"({"type":"object","properties":{"recipients":{"type":"array","items":{"type":"string"},)"
+            R"("minItems":1,"maxItems":10},"body":{"type":"string","minLength":1,)"
+            R"("maxLength":2000}},"required":["recipients","body"],"additionalProperties":false})",
+        true);
+#endif
     // 会话内视频预览和 IM 视频消息走同一个播放器；控制指令只操作当前打开的实例。
     // 创作中心打开视频时播放器固定在上半屏，下半屏继续输入自然语言控制当前视频。
     add("maichat_play_video",

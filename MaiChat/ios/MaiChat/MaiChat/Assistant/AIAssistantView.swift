@@ -393,30 +393,27 @@ struct AIAssistantView: View {
                 else { collapsedSessionDevices.insert(id) }
             }
         } label: {
-            HStack(spacing: 9) {
+            HStack(spacing: 8) {
                 Image(systemName: collapsed ? "chevron.right" : "chevron.down")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: 10, weight: .semibold))
+                    .frame(width: 14)
                 Text(title)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: 12, weight: .semibold))
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 4)
                 if let status {
-                    Text(status)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(online == true ? Color.green : Color.secondary)
+                    HStack(spacing: 4) {
+                        Circle().fill(online == true ? RemoteIMStyle.green : Color.gray)
+                            .frame(width: 5, height: 5)
+                        Text(status).font(.system(size: 11))
+                    }
                 }
-                Text("\(count)")
-                    .font(.system(size: 11, weight: .semibold))
-                    .frame(minWidth: 20)
-                    .padding(.horizontal, 5).padding(.vertical, 4)
-                    .background(Color.blue.opacity(0.07), in: Capsule())
+                if count > 0 { Text("\(count)").font(.system(size: 11)) }
             }
-            .foregroundStyle(Color.primary)
-            .padding(.horizontal, 12).frame(height: 42)
-            .background(Color.blue.opacity(0.08),
-                        in: RoundedRectangle(cornerRadius: 11))
-            .contentShape(RoundedRectangle(cornerRadius: 11))
+            .foregroundStyle(RemoteIMStyle.textSecondary)
+            .padding(.horizontal, 12).frame(height: 34)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(title)，\(status ?? "本机")，\(count) 个对话")
@@ -438,9 +435,9 @@ struct AIAssistantView: View {
                 }
             }
             .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
-            .padding(.horizontal, 12)
+            .padding(.leading, 34).padding(.trailing, 12)
             .background(model.selected.isEmpty && model.selectedRemote == nil
-                        ? Color.blue.opacity(0.08) : Color.clear,
+                        ? RemoteIMStyle.blueSoft : Color.clear,
                         in: RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
@@ -490,8 +487,8 @@ struct AIAssistantView: View {
             .accessibilityLabel("更多操作：\(session.displayTitle)")
         }
         .foregroundStyle(Color.primary)
-        .padding(.leading, 12).padding(.trailing, 4)
-        .background(selected ? Color.blue.opacity(0.08) : Color.clear,
+        .padding(.leading, 34).padding(.trailing, 4)
+        .background(selected ? RemoteIMStyle.blueSoft : Color.clear,
                     in: RoundedRectangle(cornerRadius: 10))
     }
 
@@ -516,8 +513,8 @@ struct AIAssistantView: View {
                 else if selected { Image(systemName: "checkmark").foregroundStyle(Color.blue) }
             }
             .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
-            .padding(.horizontal, 12)
-            .background(selected ? Color.blue.opacity(0.08) : Color.clear,
+            .padding(.leading, 34).padding(.trailing, 12)
+            .background(selected ? RemoteIMStyle.blueSoft : Color.clear,
                         in: RoundedRectangle(cornerRadius: 10))
             .contentShape(Rectangle())
         }
@@ -539,19 +536,32 @@ struct AIAssistantView: View {
     /// 横屏固定侧栏、竖屏抽屉共用同一列表，删除操作必须确认目标已选中。
     private func sessionList(wideLayout: Bool) -> some View {
         VStack(spacing: 0) {
-            HStack {
+            HStack(spacing: 16) {
                 Text("对话").font(.system(size: 20, weight: .bold))
                 Spacer()
+                Button {
+                    closeSessionDrawer()
+                    Task { await model.create() }
+                } label: {
+                    Image(systemName: "square.and.pencil")
+                        .font(.system(size: 18, weight: .medium))
+                        .frame(width: 32, height: 32)
+                }
+                .disabled(model.isSubmitting || model.isCreatingConversation)
+                .accessibilityLabel("新对话")
                 Button(wideLayout ? "收起" : "完成") {
                     if wideLayout { showsWideSidebar = false }
                     else { closeSessionDrawer() }
                 }
-                    .font(.system(size: 14, weight: .semibold)).buttonStyle(.plain)
-            }.padding(.horizontal, 20).padding(.vertical, 18)
-            Divider().overlay(Color.black.opacity(0.06))
+                .font(.system(size: 14, weight: .medium))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(RemoteIMStyle.textPrimary)
+            .padding(.horizontal, 20).frame(height: 60)
+            Divider().overlay(RemoteIMStyle.border)
             ScrollView {
-                LazyVStack(spacing: 12) {
-                    VStack(spacing: 5) {
+                LazyVStack(spacing: 16) {
+                    VStack(spacing: 2) {
                         sessionDeviceHeader(
                             UIDevice.current.userInterfaceIdiom == .pad
                                 ? "这台 iPad" : "这台 iPhone",
@@ -566,13 +576,16 @@ struct AIAssistantView: View {
                                     localSessionRow(session)
                                 }
                             }
-                            .padding(4)
-                            .background(Color(uiColor: .secondarySystemGroupedBackground),
-                                        in: RoundedRectangle(cornerRadius: 12))
+                        } else if !collapsedSessionDevices.contains("local") {
+                            Text("暂无本机对话")
+                                .font(.system(size: 13))
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                .padding(.leading, 34)
                         }
                     }
                     ForEach(remoteDeviceGroups) { group in
-                        VStack(spacing: 5) {
+                        VStack(spacing: 2) {
                             sessionDeviceHeader(group.name, id: group.id,
                                                 count: group.sessions.count, online: group.online)
                             if !collapsedSessionDevices.contains(group.id) {
@@ -581,31 +594,13 @@ struct AIAssistantView: View {
                                         remoteSessionRow(session)
                                     }
                                 }
-                                .padding(4)
-                                .background(Color(uiColor: .secondarySystemGroupedBackground),
-                                            in: RoundedRectangle(cornerRadius: 12))
                             }
                         }
                     }
                 }
-                .padding(.horizontal, 12).padding(.vertical, 12)
+                .padding(.horizontal, 12).padding(.vertical, 16)
             }
-            .background(Color(uiColor: .systemGroupedBackground))
-            HStack {
-                Button {
-                    closeSessionDrawer()
-                    Task { await model.create() }
-                } label: {
-                    HStack(spacing: 9) {
-                        Image(systemName: "square.and.pencil").font(.system(size: 14, weight: .semibold))
-                        Text("新对话").font(.system(size: 14, weight: .semibold))
-                    }.foregroundStyle(Color.white).padding(.horizontal, 16).frame(height: 42)
-                        .background(Color.primary, in: Capsule())
-                }
-                .buttonStyle(.plain)
-                .disabled(model.isSubmitting || model.isCreatingConversation)
-                Spacer()
-            }.padding(16).overlay(alignment: .top) { Divider().overlay(Color.black.opacity(0.06)) }
+            .background(Color(uiColor: .systemBackground))
         }
         .background(Color(uiColor: .systemBackground))
         .accessibilityIdentifier("ai-session-drawer")
@@ -708,7 +703,11 @@ private struct AIAssistantMessageList: View {
                     .padding(.horizontal, 24)
                     .padding(.top, 18)
                     .padding(.bottom, 24)
-                    .frame(minHeight: geometry.size.height, alignment: .bottom)
+                    .frame(
+                        minHeight: geometry.size.height,
+                        alignment: model.messages.isEmpty && model.historyLoaded &&
+                            model.permissions.isEmpty && model.questions.isEmpty ? .center : .bottom
+                    )
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(alignment: .bottom) {
                         MessageScrollPositionReader(
@@ -878,14 +877,33 @@ private struct AIAssistantMessageList: View {
     }
 
     private var welcome: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "sparkles").font(.largeTitle).foregroundStyle(.blue)
-            Text("有什么可以帮你？").font(.title3.bold())
-            Text("可以聊天、分析文本和处理导入的文件。")
-                .font(.subheadline).foregroundStyle(.secondary)
+        VStack(alignment: .center, spacing: 0) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 24, weight: .medium))
+                .foregroundStyle(RemoteIMStyle.blue)
+                .frame(width: 48, height: 48)
+                .background(RemoteIMStyle.blueSoft, in: RoundedRectangle(cornerRadius: 15))
+            Text("从这里开始创作")
+                .font(.system(size: 25, weight: .bold))
+                .foregroundStyle(RemoteIMStyle.textPrimary)
+                .padding(.top, 18)
+
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10),
+                                GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                welcomeFeature("AI 问答", icon: "text.bubble")
+                welcomeFeature("图片创作", icon: "photo")
+                welcomeFeature("视频创作", icon: "play.rectangle")
+                welcomeFeature("文件处理", icon: "doc.text")
+                welcomeFeature("相册管理", icon: "photo.on.rectangle")
+                welcomeFeature("MaiChat 消息", icon: "bubble.left.and.bubble.right")
+                welcomeFeature("联系人", icon: "person.2")
+                welcomeFeature("电话与短信", icon: "phone.arrow.up.right")
+            }
+            .padding(.top, 28)
             if !model.configured {
                 Text("登录后会自动连接主聊天模型")
                     .font(.footnote).foregroundStyle(.secondary)
+                    .padding(.top, 18)
                 Button("重试连接") {
                     Task {
                         _ = try? await AICloudCredentialSync.refreshAccountModelKeysIfAvailable()
@@ -895,10 +913,30 @@ private struct AIAssistantMessageList: View {
                     .buttonStyle(.plain).font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(Color.white).padding(.horizontal, 16).frame(height: 38)
                     .background(Color.blue, in: RoundedRectangle(cornerRadius: 10))
+                    .padding(.top, 10)
             }
         }
+        .frame(maxWidth: 520)
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 70)
+        .padding(.vertical, 26)
+        .accessibilityIdentifier("ai-welcome")
+    }
+
+    private func welcomeFeature(_ title: String, icon: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 17, weight: .medium))
+                .foregroundStyle(RemoteIMStyle.blue)
+                .frame(width: 22)
+            Text(title).font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(RemoteIMStyle.textPrimary)
+        }
+        .frame(maxWidth: .infinity, minHeight: 58)
+        .background(Color(uiColor: .secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 13))
+        .overlay(RoundedRectangle(cornerRadius: 13)
+            .stroke(RemoteIMStyle.border.opacity(0.6), lineWidth: 0.5))
+        .accessibilityElement(children: .combine)
     }
 }
 

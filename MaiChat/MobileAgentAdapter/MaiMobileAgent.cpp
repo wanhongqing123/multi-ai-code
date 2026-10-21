@@ -218,6 +218,11 @@ constexpr auto kMarkdownBaseInstructions =
     "text exposed by the model in Simplified Chinese. Preserve code, paths, "
     "commands, and quoted tool output in their original form. "
     "Do not invent model quality, policy, or price claims. "
+    "On iOS, mobile_dial_phone only opens the Phone confirmation and "
+    "mobile_compose_sms only opens the Messages composer. Use either only when "
+    "the user explicitly asks. Never claim a call connected or an SMS was "
+    "sent or delivered based on an opened status; the user decides in the "
+    "system interface. "
     // 付费调用前展示人物、场景和规格；闸门是最终确认，不能悄悄改时长或分辨率。
     "Before calling delegate or revise on any paid image or video generation "
     "specialist, "

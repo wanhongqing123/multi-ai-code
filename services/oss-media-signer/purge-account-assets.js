@@ -4,11 +4,12 @@
 const PREFIXES = ['ark-asset-inputs', 'avatars', 'kling-inputs',
   'minimax-inputs', 'seedream-inputs', 'wan-inputs'];
 
-async function purgeAccountAssets(client, accountId, execute = false) {
+async function purgeAccountAssets(client, accountId, execute = false,
+                                  includeVideoCircle = false) {
   if (typeof accountId !== 'string' || !/^[a-z][a-z0-9_-]{2,31}$/.test(accountId))
     throw new Error('Invalid MaiChat account ID');
   const result = {};
-  for (const root of PREFIXES) {
+  for (const root of includeVideoCircle ? [...PREFIXES, 'video-circle'] : PREFIXES) {
     const prefix = `${root}/${accountId}/`;
     let marker;
     let count = 0;
@@ -32,19 +33,24 @@ async function purgeAccountAssets(client, accountId, execute = false) {
 }
 
 async function main(args = process.argv.slice(2), env = process.env) {
-  const execute = args[0] === '--execute';
-  const accountId = execute ? args[1] : args[0];
-  const confirmed = execute ? args[2] : accountId;
-  if (args.length !== (execute ? 3 : 1) || accountId !== confirmed ||
+  const includeVideoCircle = args.includes('--include-video-circle');
+  const filtered = args.filter(argument => argument !== '--include-video-circle');
+  const execute = filtered[0] === '--execute';
+  const accountId = execute ? filtered[1] : filtered[0];
+  const confirmed = execute ? filtered[2] : accountId;
+  if (filtered.length !== (execute ? 3 : 1) ||
+      args.length !== filtered.length + (includeVideoCircle ? 1 : 0) ||
+      accountId !== confirmed ||
       !env.MAICHAT_OSS_BUCKET || !env.MAICHAT_OSS_REGION ||
       !env.ALIBABA_CLOUD_ACCESS_KEY_ID || !env.ALIBABA_CLOUD_ACCESS_KEY_SECRET)
-    throw new Error('Use [--execute] <account-id> [same-account-id] with OSS credentials');
+    throw new Error('Use [--include-video-circle] [--execute] <account-id> ' +
+      '[same-account-id] with OSS credentials');
   const OSS = require('ali-oss');
   const client = new OSS({ accessKeyId: env.ALIBABA_CLOUD_ACCESS_KEY_ID,
     accessKeySecret: env.ALIBABA_CLOUD_ACCESS_KEY_SECRET,
     bucket: env.MAICHAT_OSS_BUCKET, region: env.MAICHAT_OSS_REGION,
     authorizationV4: true, secure: true });
-  const result = await purgeAccountAssets(client, accountId, execute);
+  const result = await purgeAccountAssets(client, accountId, execute, includeVideoCircle);
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 

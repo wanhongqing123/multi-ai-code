@@ -24,6 +24,8 @@
 OSS 官方说明见 [PutObject 防覆盖请求头](https://help.aliyun.com/zh/oss/developer-reference/putobject)
 和 [HeadObject 权限](https://help.aliyun.com/zh/oss/developer-reference/headobject/)。
 当前普通素材的既有前缀、签名有效期和路由不变；默认开关为关闭。
+已有账号素材清理命令扫描视频圈对象时需显式加 `--include-video-circle`，先只读
+预览，再用 `--execute <账号> <同一账号>` 执行；该前缀还需 OSS 列举权限。
 
 ## 阿里云侧准备
 

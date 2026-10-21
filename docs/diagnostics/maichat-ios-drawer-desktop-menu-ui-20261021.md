@@ -24,3 +24,9 @@
 - 第二轮 Mac Qt Release 的 `agent_panel_session_test` 与 `main_window_layout_test` 2/2 通过；重链主程序 `--smoke` 退出 0，日志版本 2.2.12、OpenSSL 支持 SSL。紧凑菜单截图已亲看，目录名不会被右侧打开按钮截断。
 - iOS Release 2.2.3 (98) 真机构建签名校验通过，原位安装并启动连接的 iPhone 14 Pro Max，`devicectl` 回读已装 Bundle ID、版本 98 和新安装路径。真机画面是否已截图复验以最终验收记录为准。
 - 用户提供的 2.2.3 (98) 真机抽屉与空态截图证明第一轮代码已在真实设备运行，并揭示对齐与文案密度问题。第二轮缩进后，iPhone 17 Pro 模拟器连本地假 Mac 的同一正常 App 用例再次通过，截图里远端会话标题与设备标题起点一致；2.2.3 (99) 已原位安装并启动真机。最终八类短标题的 2.2.3 (101) 模拟器截图已亲看，布局没有裁切。2.2.3 (101) Release 使用 Apple Development 签名，通过深度签名校验并原位安装到 iPhone 14 Pro Max；设备回读版本 101、Bundle ID `com.kongshang.maichat`、实际安装路径 `/private/var/containers/Bundle/Application/7D485BFA-FA20-4238-8C23-C68274452D13/MaiChat.app/`，随后成功启动。101 版真机画面尚未由开发者直接抓取；本机 `idevicescreenshot` 的 screenshotr 服务返回 Invalid service，不能把模拟器截图记成真机视觉验收。
+
+## 最终提交与分发
+
+- UI 第二轮与 iOS 电话／短信系统确认工具一同提交为 `a8474c0cee0d649f48554580d099d8d93b327e1a` 并推送 `main`。电话／短信工具的真机包已安装，但没有实际拨号或发送短信；空态中的“电话与短信”仅介绍能力，并非可点击快捷入口。
+- Mac Desktop 2.2.12 从该精确提交重链、截图检查并打包；本机 Qt 定向 CTest 2/2、暂存 `--smoke`、DMG 签名／校验／挂载回读通过。Windows 同提交 VS2019/Qt 定向 CTest 5/5、暂存 `--smoke` 与菜单截图通过。四项资产在 [GitHub Release 2.2.12](https://github.com/wanhongqing123/multi-ai-code/releases/tag/maichat-desktop-2.2.12) 发布后，以无凭据 API 回读 `draft=false`、tag/target 精确提交、4/4 资产 `uploaded`、字节数和 SHA-256 均匹配；未替换现装 Desktop App。
+- Android 隔离 Debug 包在 OpenJDK 17 下构建成功并安装到模拟器；16 KB 页面兼容提示显示已有第三方／媒体库不完全对齐，在兼容模式下进入正常登录页。未用该包登录真实账号或执行付费工具。

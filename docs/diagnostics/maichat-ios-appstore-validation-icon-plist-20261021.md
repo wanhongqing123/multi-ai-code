@@ -37,9 +37,10 @@
 - 对新归档执行 Xcode `method=validation` 的苹果上传验证，退出码为 0，日志
   `Validated MaiChat`、`EXPORT SUCCEEDED`；旧错误码 `90717` 与 `90183`
   未再出现。验证过程中有若干第三方框架缺 dSYM 的符号上传警告，未阻止验证。
-- 新归档另存于 Xcode Organizer 的 `2026-10-21/MaiChat 10-21-26, 2.42 PM
-  build95.xcarchive`，旧 `94` 归档未覆盖。此处验证的是二进制，未上传 App Store
-  Connect 构建记录。
+- 新归档还直接重建到 Xcode Organizer 标准目录的 `2026-10-21/MaiChat
+  10-21-26, 3.11 PM.xcarchive`；旧 `94` 归档未覆盖。先前手工复制的非标准命名
+  归档未被已打开的 Organizer 列出，已清理。此处验证的是二进制，未上传 App
+  Store Connect 构建记录。
 
 ## 未验证边界
 

@@ -28,6 +28,17 @@ final class AIAssistantUITests: XCTestCase {
         catalog.name = "production-iphone-session-directory"
         catalog.lifetime = .keepAlways
         add(catalog)
+        XCTAssertTrue(app.buttons["ai-session-device-local"].exists)
+        let drawer = app.scrollViews["ai-session-drawer"]
+        let macGroup = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "ai-session-device-mac:"
+        )).firstMatch
+        for _ in 0..<8 where !macGroup.isHittable { drawer.swipeUp() }
+        XCTAssertTrue(macGroup.waitForExistence(timeout: 10))
+        let grouped = XCTAttachment(screenshot: app.screenshot())
+        grouped.name = "production-iphone-device-groups"
+        grouped.lifetime = .keepAlways
+        add(grouped)
         #endif
     }
 
@@ -63,11 +74,23 @@ final class AIAssistantUITests: XCTestCase {
         swipeStart.press(forDuration: 0.05, thenDragTo: swipeEnd)
         XCTAssertTrue(app.staticTexts["对话"].waitForExistence(timeout: 5))
         let remote = app.buttons["ai-remote-conversation-mac:localmacfixture:ses_mock_mac"]
+        let remoteDevice = app.buttons["ai-session-device-mac:localmacfixture"]
+        XCTAssertTrue(remoteDevice.waitForExistence(timeout: 30))
+        XCTAssertTrue(remoteDevice.label.contains("测试 Mac"))
+        XCTAssertTrue(remoteDevice.label.contains("在线"))
         guard remote.waitForExistence(timeout: 30) else {
             XCTFail("本机假 Mac 会话未出现在列表")
             return
         }
-        XCTAssertTrue(remote.label.contains("测试 Mac · 在线"))
+        XCTAssertTrue(app.buttons["ai-session-device-local"].exists)
+        let grouped = XCTAttachment(screenshot: app.screenshot())
+        grouped.name = "normal-app-device-grouped-drawer"
+        grouped.lifetime = .keepAlways
+        add(grouped)
+        remoteDevice.tap()
+        XCTAssertFalse(remote.waitForExistence(timeout: 1))
+        remoteDevice.tap()
+        XCTAssertTrue(remote.waitForExistence(timeout: 5))
         remote.tap()
         let loading = XCTAttachment(screenshot: app.screenshot())
         loading.name = "normal-app-remote-mac-opening"
@@ -151,11 +174,14 @@ final class AIAssistantUITests: XCTestCase {
         let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.72, dy: 0.5))
         start.press(forDuration: 0.05, thenDragTo: end)
         let remote = app.buttons["ai-remote-conversation-mac:prodwsfakemac:ses_prod_ws_qa"]
+        let remoteDevice = app.buttons["ai-session-device-mac:prodwsfakemac"]
+        XCTAssertTrue(remoteDevice.waitForExistence(timeout: 30))
+        XCTAssertTrue(remoteDevice.label.contains("生产验收假 Mac"))
+        XCTAssertTrue(remoteDevice.label.contains("在线"))
         guard remote.waitForExistence(timeout: 30) else {
             XCTFail("生产假 Mac Session 未出现在目录")
             return
         }
-        XCTAssertTrue(remote.label.contains("生产验收假 Mac · 在线"))
         let directory = XCTAttachment(screenshot: app.screenshot())
         directory.name = "production-wss-iphone-simulator-directory"
         directory.lifetime = .keepAlways
@@ -443,7 +469,7 @@ final class AIAssistantUITests: XCTestCase {
         app.buttons["对话列表"].tap()
         let remote = app.buttons["ai-remote-conversation-mac:fixturemac:remote-demo"]
         XCTAssertTrue(remote.waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["工作 Mac · 离线"].exists)
+        XCTAssertTrue(app.buttons["ai-session-device-mac:fixturemac"].label.contains("离线"))
         let list = XCTAttachment(screenshot: app.screenshot())
         list.name = "remote-session-device-and-offline-state"
         list.lifetime = .keepAlways

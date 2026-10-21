@@ -786,6 +786,11 @@ void AgentPanelSessionTest::newSessionOffersWorkspaceChoice() {
     QVERIFY(harness.controller->agent().getSession(harness.mine.toStdString(), session));
     QVERIFY(workspace->toolTip().contains(
         QDir::toNativeSeparators(QString::fromStdString(session.directory))));
+    QVERIFY(!workspace->text().startsWith(QStringLiteral("工作目录 ·")));
+    QCOMPARE(openWorkspace->text(), QStringLiteral("打开文件夹"));
+    auto* modelSection = actionPanel->findChild<QPushButton*>(QStringLiteral("agentModelSection"));
+    QVERIFY(modelSection != nullptr);
+    QVERIFY(modelSection->accessibleName().startsWith(QStringLiteral("模型：")));
 }
 
 void AgentPanelSessionTest::chosenWorkspaceCreatesIndependentSession() {

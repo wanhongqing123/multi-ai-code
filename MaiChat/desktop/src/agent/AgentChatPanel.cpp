@@ -1005,6 +1005,8 @@ struct AgentChatPanel::Runtime {
     QPushButton* modelChip = nullptr;
     QPushButton* modelSection = nullptr;
     QPushButton* policySection = nullptr;
+    QLabel* modelSectionValue = nullptr;
+    QLabel* policySectionValue = nullptr;
     QPushButton* moreButton = nullptr;
     QWidget* actionPanel = nullptr;
     QWidget* modelOptions = nullptr;
@@ -1319,25 +1321,76 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     auto* actionPanel = new QFrame(this, Qt::Popup | Qt::FramelessWindowHint);
     runtime_->actionPanel = actionPanel;
     actionPanel->setObjectName(QStringLiteral("agentActionPanel"));
-    actionPanel->setFixedWidth(UiZoom::s(264));
+    actionPanel->setFixedWidth(UiZoom::s(284));
     actionPanel->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
-        QFrame#agentActionPanel { background:#ffffff; border:1px solid #dbe5f0; border-radius:14px; }
-        QPushButton { background:transparent; border:0; color:#172033; text-align:left;
-                      padding:0 14px; font-size:13px; }
-        QPushButton:hover { background:#eef6ff; }
+        QFrame#agentActionPanel { background:#ffffff; border:1px solid #dbe5f0; border-radius:12px; }
+        QFrame#agentActionPanel QPushButton { background:transparent; border:0; color:#24334a;
+                                             text-align:left; padding:0 12px; font-size:13px;
+                                             border-radius:7px; }
+        QFrame#agentActionPanel QPushButton:hover { background:#eef6ff; }
+        QFrame#agentActionPanel QPushButton#agentChooseWorkspaceButton {
+            background:#f6f9fd; border:1px solid #dfeaf5; color:#24334a; font-weight:600;
+        }
+        QFrame#agentActionPanel QPushButton#agentChooseWorkspaceButton:hover {
+            background:#eaf4ff; border-color:#c6ddf5;
+        }
+        QFrame#agentActionPanel QPushButton#agentOpenWorkspaceButton { color:#53627a; }
+        QFrame#agentActionPanel QPushButton#agentClearConversation { color:#c0362c; }
+        QFrame#agentActionPanel QPushButton#agentClearConversation:hover { background:#fff1f0; }
         QPushButton:disabled { color:#98a2b3; }
     )")));
     auto* actionLayout = new QVBoxLayout(actionPanel);
-    actionLayout->setContentsMargins(0, UiZoom::s(5), 0, UiZoom::s(5));
-    actionLayout->setSpacing(0);
-    auto* modelSection = new QPushButton(QStringLiteral("模型\n未配置"), actionPanel);
+    actionLayout->setContentsMargins(UiZoom::s(8), UiZoom::s(8), UiZoom::s(8), UiZoom::s(8));
+    actionLayout->setSpacing(UiZoom::s(2));
+    auto addCaption = [actionPanel, actionLayout](const QString& title) {
+        auto* caption = new QLabel(title, actionPanel);
+        caption->setObjectName(QStringLiteral("agentActionCaption"));
+        caption->setFixedHeight(UiZoom::s(24));
+        caption->setContentsMargins(UiZoom::s(12), 0, 0, 0);
+        caption->setStyleSheet(UiZoom::scaleQss(
+            QStringLiteral("QLabel{color:#667085;font-size:11px;font-weight:600;}")));
+        actionLayout->addWidget(caption);
+    };
+    auto makeSummary = [actionPanel](const QString& name, const QString& title,
+                                     const QString& initial, QLabel** currentValue) {
+        auto* row = new QPushButton(actionPanel);
+        row->setObjectName(name);
+        row->setAccessibleName(title + QStringLiteral("：") + initial);
+        row->setCursor(Qt::PointingHandCursor);
+        row->setFixedHeight(UiZoom::s(46));
+        auto* layout = new QHBoxLayout(row);
+        layout->setContentsMargins(UiZoom::s(12), 0, UiZoom::s(12), 0);
+        layout->setSpacing(UiZoom::s(8));
+        auto* label = new QLabel(title, row);
+        label->setStyleSheet(UiZoom::scaleQss(
+            QStringLiteral("QLabel{color:#667085;font-size:12px;}")));
+        label->setAttribute(Qt::WA_TransparentForMouseEvents);
+        layout->addWidget(label);
+        auto* value = new QLabel(initial, row);
+        value->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        value->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+        value->setStyleSheet(UiZoom::scaleQss(
+            QStringLiteral("QLabel{color:#172033;font-size:13px;font-weight:600;}")));
+        value->setAttribute(Qt::WA_TransparentForMouseEvents);
+        layout->addWidget(value, 1);
+        auto* arrow = new QLabel(QStringLiteral("›"), row);
+        arrow->setStyleSheet(UiZoom::scaleQss(
+            QStringLiteral("QLabel{color:#98a2b3;font-size:18px;}")));
+        arrow->setAttribute(Qt::WA_TransparentForMouseEvents);
+        layout->addWidget(arrow);
+        *currentValue = value;
+        return row;
+    };
+    addCaption(QStringLiteral("当前对话"));
+    auto* modelSection = makeSummary(QStringLiteral("agentModelSection"),
+                                     QStringLiteral("模型"), QStringLiteral("未配置"),
+                                     &runtime_->modelSectionValue);
     runtime_->modelSection = modelSection;
-    modelSection->setObjectName(QStringLiteral("agentModelSection"));
-    modelSection->setFixedHeight(UiZoom::s(52));
     actionLayout->addWidget(modelSection);
     auto* modelOptions = new QWidget(actionPanel);
     runtime_->modelOptions = modelOptions;
-    modelOptions->setStyleSheet(QStringLiteral("background:#f5f7fa;"));
+    modelOptions->setStyleSheet(UiZoom::scaleQss(
+        QStringLiteral("background:#f5f8fc;border-radius:8px;")));
     auto* modelOptionsLayout = new QVBoxLayout(modelOptions);
     modelOptionsLayout->setContentsMargins(0, UiZoom::s(4), 0, UiZoom::s(4));
     modelOptionsLayout->setSpacing(0);
@@ -1349,7 +1402,7 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
         option->setProperty("modelName", name);
         option->setFixedHeight(UiZoom::s(38));
         option->setStyleSheet(UiZoom::scaleQss(QStringLiteral(
-            "QPushButton{padding-left:44px;text-align:left;background:#f5f7fa;}"
+            "QPushButton{padding-left:24px;text-align:left;background:#f5f8fc;}"
             "QPushButton:hover{background:#e8f2fc;}")));
         modelOptionsLayout->addWidget(option);
         runtime_->modelOptionButtons.append(option);
@@ -1361,14 +1414,15 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     actionLayout->addWidget(modelOptions);
     modelOptions->hide();
 
-    auto* policySection = new QPushButton(QStringLiteral("操作权限\n请求批准"), actionPanel);
+    auto* policySection = makeSummary(QStringLiteral("agentPolicySection"),
+                                      QStringLiteral("操作权限"), QStringLiteral("请求批准"),
+                                      &runtime_->policySectionValue);
     runtime_->policySection = policySection;
-    policySection->setObjectName(QStringLiteral("agentPolicySection"));
-    policySection->setFixedHeight(UiZoom::s(52));
     actionLayout->addWidget(policySection);
     auto* policyOptions = new QWidget(actionPanel);
     runtime_->policyOptions = policyOptions;
-    policyOptions->setStyleSheet(QStringLiteral("background:#f5f7fa;"));
+    policyOptions->setStyleSheet(UiZoom::scaleQss(
+        QStringLiteral("background:#f5f8fc;border-radius:8px;")));
     auto* policyOptionsLayout = new QVBoxLayout(policyOptions);
     policyOptionsLayout->setContentsMargins(0, UiZoom::s(4), 0, UiZoom::s(4));
     policyOptionsLayout->setSpacing(0);
@@ -1382,7 +1436,7 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
         option->setProperty("policyValue", static_cast<int>(choice.second));
         option->setFixedHeight(UiZoom::s(38));
         option->setStyleSheet(UiZoom::scaleQss(QStringLiteral(
-            "QPushButton{padding-left:44px;text-align:left;background:#f5f7fa;}"
+            "QPushButton{padding-left:24px;text-align:left;background:#f5f8fc;}"
             "QPushButton:hover{background:#e8f2fc;}")));
         policyOptionsLayout->addWidget(option);
         runtime_->policyOptionButtons.append(option);
@@ -1393,13 +1447,18 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     }
     actionLayout->addWidget(policyOptions);
     policyOptions->hide();
+    auto* sectionDivider = new QFrame(actionPanel);
+    sectionDivider->setFrameShape(QFrame::HLine);
+    sectionDivider->setStyleSheet(QStringLiteral("color:#e2e8f0;"));
+    actionLayout->addWidget(sectionDivider);
+    addCaption(QStringLiteral("工作目录"));
     auto* divider = new QFrame(actionPanel);
     divider->setFrameShape(QFrame::HLine);
     divider->setStyleSheet(QStringLiteral("color:#e2e8f0;"));
     actionLayout->addWidget(divider);
-    auto* clearButton = new QPushButton(QStringLiteral("清空当前对话"), actionPanel);
+    auto* clearButton = new QPushButton(QStringLiteral("清空对话"), actionPanel);
     clearButton->setObjectName(QStringLiteral("agentClearConversation"));
-    clearButton->setFixedHeight(UiZoom::s(44));
+    clearButton->setFixedHeight(UiZoom::s(40));
     actionLayout->addWidget(clearButton);
     connect(clearButton, &QPushButton::clicked, this, [this, actionPanel] {
         actionPanel->hide();
@@ -1459,7 +1518,7 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     runtime_->chooseWorkspace->setCursor(Qt::PointingHandCursor);
     runtime_->chooseWorkspace->setIcon(style()->standardIcon(QStyle::SP_DirIcon));
     runtime_->chooseWorkspace->setIconSize(QSize(UiZoom::s(16), UiZoom::s(16)));
-    runtime_->chooseWorkspace->setFixedSize(UiZoom::s(244), UiZoom::s(44));
+    runtime_->chooseWorkspace->setFixedHeight(UiZoom::s(42));
     runtime_->chooseWorkspace->setToolTip(QStringLiteral("选择工作目录并新建对话"));
     actionLayout->insertWidget(actionLayout->indexOf(divider), runtime_->chooseWorkspace);
     connect(runtime_->chooseWorkspace, &QPushButton::clicked, this, [this] {
@@ -1472,10 +1531,11 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
                                                                    initial, QFileDialog::ShowDirsOnly);
         if (!selected.isEmpty()) openSessionInDirectory(selected);
     });
-    auto* openWorkspace = new QPushButton(QStringLiteral("打开当前工作目录"), actionPanel);
+    auto* openWorkspace = new QPushButton(QStringLiteral("打开文件夹"), actionPanel);
     openWorkspace->setObjectName(QStringLiteral("agentOpenWorkspaceButton"));
     openWorkspace->setCursor(Qt::PointingHandCursor);
-    openWorkspace->setFixedSize(UiZoom::s(244), UiZoom::s(44));
+    openWorkspace->setFixedHeight(UiZoom::s(38));
+    openWorkspace->setAccessibleName(QStringLiteral("打开当前工作目录"));
     actionLayout->insertWidget(actionLayout->indexOf(divider), openWorkspace);
     connect(openWorkspace, &QPushButton::clicked, this, [this] {
         runtime_->actionPanel->hide();
@@ -1627,8 +1687,9 @@ void AgentChatPanel::setModelLabel(const QString& model, bool configured) {
     runtime_->modelConfigured = configured &&
         model != QStringLiteral("未配置模型") && !model.trimmed().isEmpty();
     runtime_->modelChip->setEnabled(runtime_->modelConfigured && !runtime_->running);
+    if (runtime_->modelSectionValue) runtime_->modelSectionValue->setText(model);
     if (runtime_->modelSection)
-        runtime_->modelSection->setText(QStringLiteral("模型\n%1").arg(model));
+        runtime_->modelSection->setAccessibleName(QStringLiteral("模型：%1").arg(model));
     for (QPushButton* option : runtime_->modelOptionButtons) {
         const QString name = option->property("modelName").toString();
         option->setText(name + (name == model ? QStringLiteral("  ✓") : QString()));
@@ -1711,9 +1772,11 @@ void AgentChatPanel::updateApprovalPolicyUi() {
         runtime_->hint->setText(QStringLiteral("请求批准"));
         runtime_->hint->setToolTip(QStringLiteral("文件变更、访问网络或执行高风险命令前会询问；可单独授权文件。"));
     }
+    if (runtime_->policySectionValue)
+        runtime_->policySectionValue->setText(runtime_->hint->text());
     if (runtime_->policySection)
-        runtime_->policySection->setText(
-            QStringLiteral("操作权限\n%1").arg(runtime_->hint->text()));
+        runtime_->policySection->setAccessibleName(
+            QStringLiteral("操作权限：%1").arg(runtime_->hint->text()));
     for (QPushButton* option : runtime_->policyOptionButtons) {
         const bool selected = option->property("policyValue").toInt() ==
                               static_cast<int>(policy);
@@ -1761,9 +1824,8 @@ void AgentChatPanel::openSession(const QString& sessionId) {
         const QString directory = QDir::toNativeSeparators(fromUtf8(session.directory));
         QString name = QFileInfo(directory).fileName();
         if (name.isEmpty()) name = directory;
-        const QString label = QStringLiteral("工作目录 · %1").arg(name);
         runtime_->chooseWorkspace->setText(runtime_->chooseWorkspace->fontMetrics().elidedText(
-            label, Qt::ElideMiddle, runtime_->chooseWorkspace->width() - UiZoom::s(40)));
+            name, Qt::ElideMiddle, runtime_->actionPanel->width() - UiZoom::s(72)));
         runtime_->chooseWorkspace->setToolTip(
             QStringLiteral("当前工作目录：%1\n点击选择目录并新建对话").arg(directory));
     }

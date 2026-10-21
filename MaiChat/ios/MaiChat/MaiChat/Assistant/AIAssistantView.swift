@@ -15,6 +15,13 @@ private enum AIImagePreviewLayout {
     static let coordinateSpaceName = "ai-assistant-image-preview-space"
 }
 
+private struct AIRemoteDeviceGroup: Identifiable {
+    let id: String
+    let name: String
+    var online: Bool
+    var sessions: [AIRemoteSession]
+}
+
 struct AIAssistantView: View {
     let isActive: Bool
     let onExit: (() -> Void)?
@@ -26,6 +33,7 @@ struct AIAssistantView: View {
     @State private var sessionDrawerOffset: CGFloat = 0
     @State private var sessionDrawerWidth: CGFloat = 320
     @State private var showsWideSidebar = true
+    @State private var collapsedSessionDevices: Set<String> = []
     @State private var isAttachmentPanelPresented = false
     @State private var composerFocusController = AIComposerFocusController()
     @State private var transcriptionPresentation = VoiceTranscriptionPresentation()
@@ -356,6 +364,177 @@ struct AIAssistantView: View {
         }
     }
 
+    private var remoteDeviceGroups: [AIRemoteDeviceGroup] {
+        var groups: [AIRemoteDeviceGroup] = []
+        var positions: [String: Int] = [:]
+        for session in model.remoteSessions {
+            let key = "\(session.deviceSlot):\(session.deviceID)"
+            if let position = positions[key] {
+                groups[position].sessions.append(session)
+                groups[position].online = groups[position].online || session.online
+            } else {
+                positions[key] = groups.count
+                groups.append(AIRemoteDeviceGroup(
+                    id: key, name: session.deviceName,
+                    online: session.online, sessions: [session]
+                ))
+            }
+        }
+        return groups
+    }
+
+    private func sessionDeviceHeader(_ title: String, id: String,
+                                     count: Int, online: Bool? = nil) -> some View {
+        let collapsed = collapsedSessionDevices.contains(id)
+        let status = online.map { $0 ? "在线" : "离线" }
+        return Button {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                if collapsed { collapsedSessionDevices.remove(id) }
+                else { collapsedSessionDevices.insert(id) }
+            }
+        } label: {
+            HStack(spacing: 9) {
+                Image(systemName: collapsed ? "chevron.right" : "chevron.down")
+                    .font(.system(size: 12, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 4)
+                if let status {
+                    Text(status)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(online == true ? Color.green : Color.secondary)
+                }
+                Text("\(count)")
+                    .font(.system(size: 11, weight: .semibold))
+                    .frame(minWidth: 20)
+                    .padding(.horizontal, 5).padding(.vertical, 4)
+                    .background(Color.blue.opacity(0.07), in: Capsule())
+            }
+            .foregroundStyle(Color.primary)
+            .padding(.horizontal, 12).frame(height: 42)
+            .background(Color.blue.opacity(0.08),
+                        in: RoundedRectangle(cornerRadius: 11))
+            .contentShape(RoundedRectangle(cornerRadius: 11))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(title)，\(status ?? "本机")，\(count) 个对话")
+        .accessibilityIdentifier("ai-session-device-\(id)")
+    }
+
+    private func emptyDraftRow() -> some View {
+        Button {
+            closeSessionDrawer()
+            Task { await model.selectConversation("") }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "square.and.pencil")
+                    .font(.system(size: 14)).foregroundStyle(Color.blue)
+                Text("未发送草稿").font(.system(size: 15, weight: .medium))
+                Spacer(minLength: 8)
+                if model.selected.isEmpty && model.selectedRemote == nil {
+                    Image(systemName: "checkmark").foregroundStyle(Color.blue)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+            .padding(.horizontal, 12)
+            .background(model.selected.isEmpty && model.selectedRemote == nil
+                        ? Color.blue.opacity(0.08) : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(Color.primary)
+        .accessibilityIdentifier("ai-conversation-empty-draft")
+    }
+
+    private func localSessionRow(_ session: AISession) -> some View {
+        let selected = model.selectedRemote == nil && session.id == model.selected
+        return HStack(spacing: 4) {
+            Button {
+                closeSessionDrawer()
+                Task { await model.selectConversation(session.id) }
+            } label: {
+                HStack(spacing: 8) {
+                    Text(session.displayTitle)
+                        .font(.system(size: 15, weight: selected ? .semibold : .medium))
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    if session.busy { ProgressView().controlSize(.small) }
+                    else if selected { Image(systemName: "checkmark").foregroundStyle(Color.blue) }
+                }
+                .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("ai-conversation-\(session.id)")
+            Menu {
+                Button(role: .destructive) {
+                    Task {
+                        guard !model.isSubmitting, !model.isCreatingConversation else { return }
+                        await model.selectConversation(session.id)
+                        guard model.selected == session.id,
+                              !model.isSubmitting, !model.isCreatingConversation else { return }
+                        await model.action("delete")
+                    }
+                } label: {
+                    Label("删除对话", systemImage: "trash")
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 36, height: 44)
+            }
+            .disabled(session.busy || model.isSubmitting || model.isCreatingConversation)
+            .accessibilityLabel("更多操作：\(session.displayTitle)")
+        }
+        .foregroundStyle(Color.primary)
+        .padding(.leading, 12).padding(.trailing, 4)
+        .background(selected ? Color.blue.opacity(0.08) : Color.clear,
+                    in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func remoteSessionRow(_ session: AIRemoteSession) -> some View {
+        let selected = model.selectedRemote?.id == session.id
+        return Button {
+            closeSessionDrawer()
+            Task { await model.selectRemoteConversation(session) }
+        } label: {
+            HStack(spacing: 8) {
+                Text(session.displayTitle)
+                    .font(.system(size: 15, weight: selected ? .semibold : .medium))
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                if let updatedAt = session.updatedAt, updatedAt > 0 {
+                    Text(remoteUpdatedLabel(updatedAt))
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                if session.online && session.busy { ProgressView().controlSize(.small) }
+                else if selected { Image(systemName: "checkmark").foregroundStyle(Color.blue) }
+            }
+            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+            .padding(.horizontal, 12)
+            .background(selected ? Color.blue.opacity(0.08) : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 10))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(Color.primary)
+        .opacity(session.online ? 1 : 0.55)
+        .disabled(!session.online)
+        .accessibilityIdentifier("ai-remote-conversation-\(session.id)")
+    }
+
+    private func remoteUpdatedLabel(_ milliseconds: Int64) -> String {
+        let date = Date(timeIntervalSince1970: Double(milliseconds) / 1000)
+        return Calendar.current.isDateInToday(date)
+            ? date.formatted(date: .omitted, time: .shortened)
+            : date.formatted(.dateTime.month().day())
+    }
+
     /// 显示已存在的会话入口，并把点击操作交给模型先读取目标页再切换。
     /// 横屏固定侧栏、竖屏抽屉共用同一列表，删除操作必须确认目标已选中。
     private func sessionList(wideLayout: Bool) -> some View {
@@ -371,103 +550,47 @@ struct AIAssistantView: View {
             }.padding(.horizontal, 20).padding(.vertical, 18)
             Divider().overlay(Color.black.opacity(0.06))
             ScrollView {
-                LazyVStack(spacing: 8) {
-                if model.hasEmptyDraft {
-                    Button {
-                        closeSessionDrawer()
-                        Task { await model.selectConversation("") }
-                    } label: {
-                        HStack {
-                            Label("未发送草稿", systemImage: "square.and.pencil")
-                                .font(ChatTypography.conversationTitle)
-                            Spacer(minLength: 12)
-                            if model.selected.isEmpty {
-                                Image(systemName: "checkmark").foregroundStyle(Color.blue)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Color.primary)
-                    .accessibilityIdentifier("ai-conversation-empty-draft")
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(model.selected.isEmpty ? Color.blue.opacity(0.08) : Color.clear,
-                                in: RoundedRectangle(cornerRadius: 12))
-                }
-                ForEach(model.sessions) { session in
-                    HStack(spacing: 8) {
-                        Button {
-                            closeSessionDrawer()
-                            Task { await model.selectConversation(session.id) }
-                        } label: {
-                            HStack {
-                            Text(session.displayTitle).font(ChatTypography.conversationTitle).lineLimit(2)
-                                Spacer(minLength: 12)
-                                if session.busy { ProgressView() }
-                                else if session.id == model.selected {
-                                    Image(systemName: "checkmark").foregroundStyle(Color.blue)
+                LazyVStack(spacing: 12) {
+                    VStack(spacing: 5) {
+                        sessionDeviceHeader(
+                            UIDevice.current.userInterfaceIdiom == .pad
+                                ? "这台 iPad" : "这台 iPhone",
+                            id: "local",
+                            count: model.sessions.count + (model.hasEmptyDraft ? 1 : 0)
+                        )
+                        if !collapsedSessionDevices.contains("local"),
+                           model.hasEmptyDraft || !model.sessions.isEmpty {
+                            VStack(spacing: 0) {
+                                if model.hasEmptyDraft { emptyDraftRow() }
+                                ForEach(model.sessions) { session in
+                                    localSessionRow(session)
                                 }
                             }
-                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                            .contentShape(Rectangle())
+                            .padding(4)
+                            .background(Color(uiColor: .secondarySystemGroupedBackground),
+                                        in: RoundedRectangle(cornerRadius: 12))
                         }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(Color.primary)
-                        .accessibilityIdentifier("ai-conversation-\(session.id)")
-                        if !session.busy && !model.isSubmitting && !model.isCreatingConversation {
-                            Button {
-                                Task {
-                                    guard !model.isSubmitting, !model.isCreatingConversation else { return }
-                                    await model.selectConversation(session.id)
-                                    guard model.selected == session.id,
-                                          !model.isSubmitting, !model.isCreatingConversation else { return }
-                                    await model.action("delete")
+                    }
+                    ForEach(remoteDeviceGroups) { group in
+                        VStack(spacing: 5) {
+                            sessionDeviceHeader(group.name, id: group.id,
+                                                count: group.sessions.count, online: group.online)
+                            if !collapsedSessionDevices.contains(group.id) {
+                                VStack(spacing: 0) {
+                                    ForEach(group.sessions) { session in
+                                        remoteSessionRow(session)
+                                    }
                                 }
-                            } label: {
-                                Image(systemName: "trash").foregroundStyle(Color.secondary)
-                                    .frame(width: 44, height: 44)
-                            }.buttonStyle(.plain).accessibilityLabel("删除 \(session.displayTitle)")
-                        }
-                    }
-                    .padding(.horizontal, 14).padding(.vertical, 8)
-                    .background(session.id == model.selected ? Color.blue.opacity(0.08) : Color.clear,
-                                in: RoundedRectangle(cornerRadius: 12))
-                }
-                ForEach(model.remoteSessions) { session in
-                    Button {
-                        closeSessionDrawer()
-                        Task { await model.selectRemoteConversation(session) }
-                    } label: {
-                        HStack(spacing: 10) {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(session.displayTitle)
-                                    .font(ChatTypography.conversationTitle)
-                                    .lineLimit(2)
-                                Text("\(session.deviceName) · \(session.online ? "在线" : "离线")")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer(minLength: 12)
-                            if session.online && session.busy { ProgressView() }
-                            else if model.selectedRemote?.id == session.id {
-                                Image(systemName: "checkmark").foregroundStyle(Color.blue)
+                                .padding(4)
+                                .background(Color(uiColor: .secondarySystemGroupedBackground),
+                                            in: RoundedRectangle(cornerRadius: 12))
                             }
                         }
-                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Color.primary)
-                    .accessibilityIdentifier("ai-remote-conversation-\(session.id)")
-                    .padding(.horizontal, 14).padding(.vertical, 8)
-                    .background(model.selectedRemote?.id == session.id
-                                ? Color.blue.opacity(0.08) : Color.clear,
-                                in: RoundedRectangle(cornerRadius: 12))
                 }
-                }.padding(.horizontal, 16)
+                .padding(.horizontal, 12).padding(.vertical, 12)
             }
+            .background(Color(uiColor: .systemGroupedBackground))
             HStack {
                 Button {
                     closeSessionDrawer()

@@ -299,6 +299,7 @@ struct AISession: Codable, Identifiable, Sendable, Equatable {
 struct AIRemoteSession: Decodable, Identifiable, Sendable, Equatable {
     let sessionID: String
     let title: String
+    let updatedAt: Int64?
     let busy: Bool
     let deviceSlot: String
     let deviceName: String
@@ -312,6 +313,7 @@ struct AIRemoteSession: Decodable, Identifiable, Sendable, Equatable {
     enum CodingKeys: String, CodingKey {
         case sessionID = "id"
         case title, busy, online
+        case updatedAt = "updated_at"
         case deviceSlot = "device_slot"
         case deviceName = "device_name"
         case deviceID = "device_id"
@@ -1270,7 +1272,7 @@ final class AIAssistantModel: ObservableObject {
             AISession(id: "switch-\($0)", title: "对话 \($0)", busy: false)
         }
         remoteSessions = [AIRemoteSession(
-            sessionID: "remote-demo", title: "Mac 上的编译任务", busy: false,
+            sessionID: "remote-demo", title: "Mac 上的编译任务", updatedAt: nil, busy: false,
             deviceSlot: "mac", deviceName: "工作 Mac", deviceID: "fixturemac",
             loginSessionID: "fixturelogin", online: false)]
         selected = "switch-A"

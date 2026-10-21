@@ -40,8 +40,11 @@
 - 新归档还直接重建到 Xcode Organizer 标准目录的 `2026-10-21/MaiChat
   10-21-26, 3.11 PM.xcarchive`；旧 `94` 归档未覆盖。先前手工复制的非标准命名
   归档未被已打开的 Organizer 列出，已清理。随后用户的 Organizer 截图显示
-  `2.2.3 (95)` 状态为 `Uploaded to Apple`，证明 Xcode 上传已完成；仍需在
-  App Store Connect 的 TestFlight 构建列表确认苹果处理状态。
+  `2.2.3 (95)` 状态为 `Uploaded to Apple`。归档的 `Distributions` 回执进一步
+  记录 `adamId=6825208391`、`teamID=VLFG56JT33`、`uploadedBuildNumber=95`；
+  `uploadEvent` 为 2026-10-21 07:21:03 UTC、`state=success`、错误数 0。
+  这与用户正在查看的 App Store Connect 应用 ID 相同；仍需在 TestFlight
+  构建列表确认苹果处理状态。
 
 ## 未验证边界
 
@@ -49,4 +52,5 @@
   与审核资料仍需各自验收；本修复不代表 App 已提交审核。Xcode 导出和验证日志
   另有 `No provider associated with App Store Connect user` 配置查询警告，
   未阻止本次发行导出与验证；后续 Xcode Organizer 的绿色上传状态证明该构建
-  传输成功，但 App Store Connect 处理完成、构建选用与 App Review 尚未验证。
+  传输成功且目标应用 ID 正确，但 App Store Connect 处理完成、构建选用与
+  App Review 尚未验证。用户在 15:42 左右的 TestFlight 截图仍显示无构建。

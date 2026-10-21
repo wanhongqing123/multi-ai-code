@@ -14,6 +14,7 @@
 #include "MaiFilePath.h"
 #include "MaiFileSystem.h"
 #include "MaiPathGuard.h"
+#include "MaiSpecialistTask.h"
 
 namespace {
 
@@ -91,26 +92,29 @@ public:
         return "Attach an existing image, video, or audio file from this Agent workspace to the "
                "current AI conversation as a persistent playable media card. This is the way to "
                "deliver a processed media result to the user in the AI chat. It never sends to an "
-               "IM contact and does not accept peer_id.";
+               "IM contact and does not accept peer_id. For a completed generated video, include "
+               "its specialist source_task_id; it must own exactly this output file.";
     }
     std::string parametersSchema() const override {
         // file_path 指向当前工作区已有成品；type 必须与 image/video/audio 实际类型一致。
-        // caption 是可选说明，最长 1000 字符，不能把文件路径当作最终交付。
+        // caption 是可选说明；视频生成任务 ID 必须在当前会话中核验。
         return R"({"type":"object","properties":{"file_path":{"type":"string"},)"
-            R"("type":{"type":"string","enum":["image","video","audio"]},)"
-            R"("caption":{"type":"string","maxLength":1000}},"required":["file_path","type"],)"
-            R"("additionalProperties":false})";
+               R"("type":{"type":"string","enum":["image","video","audio"]},)"
+               R"("caption":{"type":"string","maxLength":1000},)"
+               R"("source_task_id":{"type":"string"}},"required":["file_path","type"],)"
+               R"("additionalProperties":false})";
     }
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const Json request = Json::parse(raw, nullptr, false);
-        if (!request.is_object() || request.size() < 2 || request.size() > 3 ||
+        if (!request.is_object() || request.size() < 2 || request.size() > 4 ||
             !request.contains("file_path") || !request["file_path"].is_string() ||
             !request.contains("type") || !request["type"].is_string() ||
             (request.contains("caption") && !request["caption"].is_string()))
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,
                                           "file_path and type are required; caption is optional");
         for (auto field = request.begin(); field != request.end(); ++field)
-            if (field.key() != "file_path" && field.key() != "type" && field.key() != "caption")
+            if (field.key() != "file_path" && field.key() != "type" && field.key() != "caption" &&
+                field.key() != "source_task_id")
                 return MaiToolResult::failure(
                     MaiErrorCode::InvalidInput,
                     "agent_send_media accepts no peer_id or extra fields");
@@ -123,13 +127,35 @@ public:
         if (!prepared)
             return MaiToolResult::failure(prepared.error().code(), prepared.error().message());
         const MaiAgentMedia& media = prepared.value();
-        return MaiToolResult::success(Json{
-            {"delivery", "current_ai_session"},
-            {"path", media.relativePath},
-            {"type", media.type},
-            {"mime_type", media.mimeType},
-            {"bytes", media.bytes},
-            {"caption", caption}}.dump());
+        Json delivered = {
+            {"delivery", "current_ai_session"}, {"path", media.relativePath}, {"type", media.type},
+            {"mime_type", media.mimeType},      {"bytes", media.bytes},       {"caption", caption}};
+        if (request.contains("source_task_id")) {
+            if (media.type != "video" || !request["source_task_id"].is_string() ||
+                context.specialistTasks == nullptr || context.sessionId.empty())
+                return MaiToolResult::failure(
+                    MaiErrorCode::InvalidInput,
+                    "source_task_id requires a video task in this session");
+            MaiSpecialistTask task;
+            const std::string taskId = request["source_task_id"].get<std::string>();
+            const std::string resolved = maiResolvePathWithinRoot(context.root, media.relativePath);
+            if (!context.specialistTasks->getSpecialistTask(taskId, context.sessionId, task) ||
+                resolved.empty())
+                return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                              "source_task_id does not own this generated video");
+            const MaiFilePath storedPath =
+                MaiFileSystem::resolve(MaiFilePath::fromUtf8(task.outputPath));
+            if (task.status != MaiSpecialistTaskStatus::Succeeded || storedPath.isEmpty() ||
+                storedPath != MaiFilePath::fromUtf8(resolved) ||
+                (task.specialistName != "wan_video" &&
+                 task.specialistName != "kling_bailian_video" &&
+                 task.specialistName != "minimax_video" && task.specialistName != "seedance_video"))
+                return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                              "source_task_id does not own this generated video");
+            delivered["source_task_id"] = task.id;
+            delivered["source_tool"] = task.specialistName;
+        }
+        return MaiToolResult::success(delivered.dump());
     }
 };
 

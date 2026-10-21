@@ -129,6 +129,26 @@ test('withdrawal during read signing never returns a fresh playback link', async
   assert.equal((await play).statusCode, 404);
 });
 
+test('failed object deletion hides a video and leaves a retryable cleanup item', async () => {
+  const f = fixture();
+  const created = await f.service.handle('POST', '/v1/video-circle/posts', f.post, f.owner);
+  f.advance();
+  await f.service.review(created.body.post_id, 'approve', 'admin');
+  const unavailableStorage = createVideoCircleService({ db: f.db,
+    deleteObject: async () => { throw new Error('OSS unavailable'); } });
+  const withdrawn = await unavailableStorage.handle('POST',
+    `/v1/video-circle/posts/${created.body.post_id}/withdraw`, {}, f.owner);
+  assert.equal(withdrawn.statusCode, 202);
+  assert.equal(withdrawn.body.cleanup_pending, true);
+  assert.equal((await f.service.handle('GET',
+    `/v1/video-circle/posts/${created.body.post_id}/play-link`, {}, f.viewer))
+    .statusCode, 404);
+  assert.equal(f.service.pendingCleanup().length, 1);
+  assert.equal((await f.service.retryCleanup(created.body.post_id)).statusCode, 200);
+  assert.deepEqual(f.removed, [f.key]);
+  assert.deepEqual(f.service.pendingCleanup(), []);
+});
+
 test('rejection requires a reason and resolved reports record the reviewer', async () => {
   const f = fixture();
   const created = await f.service.handle('POST', '/v1/video-circle/posts', f.post, f.owner);

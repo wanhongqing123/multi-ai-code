@@ -39,12 +39,14 @@
   未再出现。验证过程中有若干第三方框架缺 dSYM 的符号上传警告，未阻止验证。
 - 新归档还直接重建到 Xcode Organizer 标准目录的 `2026-10-21/MaiChat
   10-21-26, 3.11 PM.xcarchive`；旧 `94` 归档未覆盖。先前手工复制的非标准命名
-  归档未被已打开的 Organizer 列出，已清理。此处验证的是二进制，未上传 App
-  Store Connect 构建记录。
+  归档未被已打开的 Organizer 列出，已清理。随后用户的 Organizer 截图显示
+  `2.2.3 (95)` 状态为 `Uploaded to Apple`，证明 Xcode 上传已完成；仍需在
+  App Store Connect 的 TestFlight 构建列表确认苹果处理状态。
 
 ## 未验证边界
 
 - 这次只针对苹果报告的两条二进制验证错误。App Store 内容审核、后端上线
   与审核资料仍需各自验收；本修复不代表 App 已提交审核。Xcode 导出和验证日志
   另有 `No provider associated with App Store Connect user` 配置查询警告，
-  未阻止本次发行导出与验证，不能据此证明正式上传接口也已打通。
+  未阻止本次发行导出与验证；后续 Xcode Organizer 的绿色上传状态证明该构建
+  传输成功，但 App Store Connect 处理完成、构建选用与 App Review 尚未验证。

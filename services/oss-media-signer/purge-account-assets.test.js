@@ -8,6 +8,7 @@ test('account asset purge only touches keys below the exact owner prefix', async
   const deleted = [];
   const client = {
     async list(options) {
+      assert.equal(Object.hasOwn(options, 'marker'), false);
       return { objects: options.prefix === 'avatars/test_account/' ?
         [{ name: 'avatars/test_account/2026-10-20/photo.jpg' }] : [] };
     },

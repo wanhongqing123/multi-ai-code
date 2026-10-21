@@ -79,6 +79,37 @@ Android 模拟器完成 JNI/WSS 握手及远端会话界面测试；Mac 和 Wind
 
 接口经 Nginx 对外使用 `/api/v1/...`；服务内部路由仍为 `/v1/...`。
 
+## 注销与举报运营处理
+
+已登录用户通过 `GET /v1/auth/account/deletion/options` 查看确认方式，使用
+`POST /v1/auth/account/deletion/challenge` 获取手机号验证码（有手机号时），再以
+`POST /v1/auth/account/deletion` 提交账号 ID 和密码或验证码。提交成功立即停用账号、
+撤销账号服务会话，返回申请编号和收据令牌；无需登录的
+`POST /v1/auth/account/deletion/status` 使用两者查询处理状态。处理期限为 30 天。
+已登录用户使用 `POST /v1/safety/reports` 举报账号或消息，并可用
+`GET /v1/safety/reports` 查看自己提交的举报。仅经 SSH 转发访问的管理页列出待处理
+注销与举报，管理员在核查后填写举报处理结果。**管理页没有自动通知**，运营人员需
+每天检查待处理项及到期时间。
+
+注销申请的后台清理是人工核查流程，不因 HTTP 返回 `202` 而自动完成：
+
+1. 在服务端加载账号服务环境，执行 `node complete-account-deletion.js --list`，
+   根据申请编号核对当前账号。先备份账号库与设备同步库。
+2. 分别对同一申请编号运行 `node purge-tencent-account.js <申请编号>` 和
+   `node purge-session-sync-account.js <申请编号>` 预检；核对后用各自的
+   `--execute <申请编号>` 执行。后者还需要设备同步库路径环境变量。
+3. 在素材服务环境中对该 MaiChat ID 运行 `node purge-account-assets.js <账号>`
+   预检，再用 `--execute <账号> <同一账号>` 清理本服务能归属的 OSS 对象。旧版未带
+   账号前缀的对象无法靠此脚本识别，必须结合申请人的素材记录人工核查；Ark
+   私有素材及已发送给其他用户的内容也须逐项核查。
+4. 将腾讯 IM、设备同步、OSS 与 Ark、共享内容四项结果和操作人记录到权限为
+   `0600` 的证据 JSON，确认各项完成后执行
+   `node complete-account-deletion.js --complete <申请编号> <证据文件>`。完成前不得
+   填写未核实的证据。最后通过收据查询接口回读 `completed`。
+
+以上脚本均为服务端操作入口；普通 App 不直接调用清理命令。未清理完毕的申请保留
+`pending`，不得仅为满足期限而标记完成。相关测试账号也遵循同一流程。
+
 ## 好友关系主记录与旧镜像导入
 
 `friend_requests` 和 `friendships` 是 MaiChat 的申请及好友主记录，好友以用户内部主键关联；

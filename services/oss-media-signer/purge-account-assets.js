@@ -13,7 +13,8 @@ async function purgeAccountAssets(client, accountId, execute = false) {
     let marker;
     let count = 0;
     while (true) {
-      const page = await client.list({ prefix, marker, 'max-keys': 1000 });
+      const page = await client.list({ prefix,
+        ...(marker ? { marker } : {}), 'max-keys': 1000 });
       const keys = (page.objects || []).map(object => object.name);
       if (keys.some(key => !key.startsWith(prefix)))
         throw new Error('OSS returned an object outside the requested account prefix');

@@ -2,7 +2,7 @@
 # 平台 SDK 和可选媒体能力由配置阶段检查；真实编译命令可导出给 clangd。
 cmake_minimum_required(VERSION 3.21)
 # C 用于 MaiAgent/third_party/md4c（Markdown 解析，纯 C 实现）。
-project(MaiChatDesktop VERSION 2.2.10 LANGUAGES C CXX)
+project(MaiChatDesktop VERSION 2.2.11 LANGUAGES C CXX)
 if(MSVC AND CMAKE_CL_SHOWINCLUDES_PREFIX MATCHES "^娉")
   # Some CMake/VS2019 locale combinations double-decode /showIncludes. Ninja then
   # records no header dependencies, so changing a public header leaves stale objects.
@@ -919,6 +919,14 @@ add_executable(desktop_session_sync_host_test tests/DesktopSessionSyncHostTest.c
 target_link_libraries(desktop_session_sync_host_test PRIVATE remote_im_desktop_ui
   remote_im_desktop_app remote_im_core maichat_agent maichat_markdown Qt5::Widgets Qt5::Test)
 add_test(NAME desktop_session_sync_host_test COMMAND desktop_session_sync_host_test)
+add_executable(desktop_session_sync_channel_test
+  tests/DesktopSessionSyncChannelTest.cpp)
+target_include_directories(desktop_session_sync_channel_test PRIVATE
+  ${OPENSSL_INCLUDE_DIR} ../../MaiAgent/third_party/openssl/include)
+target_link_libraries(desktop_session_sync_channel_test PRIVATE maichat_agent
+  remote_im_desktop_app Qt5::Network Qt5::Test ${OPENSSL_CRYPTO_LIBRARY})
+add_test(NAME desktop_session_sync_channel_test COMMAND desktop_session_sync_channel_test
+  -o "${CMAKE_CURRENT_BINARY_DIR}/desktop_session_sync_channel_test.txt,txt")
 if(TARGET maiagent_cv_video_analysis)
   target_compile_definitions(agent_controller_test PRIVATE MAICHAT_TEST_CV_VIDEO_ANALYSIS=1)
 endif()

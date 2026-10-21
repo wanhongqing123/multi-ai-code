@@ -31,7 +31,13 @@ if (-not (Test-Path -LiteralPath $qtTestDll)) {
 
 # Every desktop test must enter through this script. Launching a test executable directly on
 # Windows can omit Qt's bin directory and display a blocking system error dialog for Qt5Test.dll.
-$env:PATH = "$qtBin;$env:PATH"
+$qtSslDir = Join-Path $desktopRoot 'vendor\openssl\win64'
+foreach ($name in 'libssl-1_1-x64.dll', 'libcrypto-1_1-x64.dll') {
+    if (-not (Test-Path -LiteralPath (Join-Path $qtSslDir $name))) {
+        throw "Qt SSL test runtime not found: $name"
+    }
+}
+$env:PATH = "$qtBin;$qtSslDir;$env:PATH"
 
 # Missing runtime DLLs and native crashes must be reported to the console, never as a modal system
 # dialog that blocks an unattended test run.

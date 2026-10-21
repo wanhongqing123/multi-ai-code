@@ -37,25 +37,14 @@ QString proxyForUrl(const QUrl& socketUrl) {
 
 }  // namespace
 
-DesktopSessionSyncChannel::DesktopSessionSyncChannel(QUrl url, std::function<QString()> bearerProvider, QObject* parent)
-    : QObject(parent), url_(std::move(url)), bearerProvider_(std::move(bearerProvider)) {
+DesktopSessionSyncChannel::DesktopSessionSyncChannel(QUrl url, std::function<QString()> bearerProvider,
+                                                     QObject* parent, QByteArray trustedCaPem)
+    : QObject(parent), url_(std::move(url)), bearerProvider_(std::move(bearerProvider)),
+      trustedCaPem_(std::move(trustedCaPem)) {
     retryTimer_.setInterval(2000);
     connect(&retryTimer_, &QTimer::timeout, this, [this] { startWhenReady(); });
     tokenTimer_.setInterval(10000);
-    connect(&tokenTimer_, &QTimer::timeout, this, [this] {
-        if (!socket_ || !bearerProvider_) return;
-        const QByteArray token = bearerProvider_().toUtf8();
-        if (token.isEmpty()) {
-            ++generation_;
-            socket_->stop();
-            socket_.reset();
-            connected_ = false;
-            failPending(QStringLiteral("账号登录已失效"));
-            if (disconnectedHandler_) disconnectedHandler_();
-            return;
-        }
-        socket_->updateBearer(token.toStdString());
-    });
+    connect(&tokenTimer_, &QTimer::timeout, this, [this] { refreshBearerNow(); });
 }
 
 DesktopSessionSyncChannel::~DesktopSessionSyncChannel() {
@@ -86,18 +75,76 @@ void DesktopSessionSyncChannel::start() {
     startWhenReady();
 }
 
+void DesktopSessionSyncChannel::refreshBearerNow() {
+    if (!socket_ || !bearerProvider_) return;
+    const QByteArray token = bearerProvider_().toUtf8();
+    if (token.isEmpty()) {
+        resetConnection(QStringLiteral("账号登录已失效"));
+        return;
+    }
+    if (!socket_->updateBearer(token.toStdString())) {
+        resetConnection(QStringLiteral("账号登录已失效"));
+        return;
+    }
+    if (connected_ && pendingReauthId_.isEmpty() && token != authorizedBearer_)
+        sendReauthorization(token);
+}
+
+void DesktopSessionSyncChannel::sendReauthorization(const QByteArray& token) {
+    pendingReauthId_ = QUuid::createUuid().toString(QUuid::WithoutBraces).remove(QLatin1Char('-'));
+    pendingReauthBearer_ = token;
+    const QJsonObject frame{
+        {QStringLiteral("id"), pendingReauthId_},
+        {QStringLiteral("op"), QStringLiteral("reauth")},
+        {QStringLiteral("body"), QJsonObject{
+            {QStringLiteral("access_token"), QString::fromUtf8(token)}}}};
+    const QByteArray bytes = QJsonDocument(frame).toJson(QJsonDocument::Compact);
+    if (!socket_->send(bytes.toStdString())) {
+        resetConnection(QStringLiteral("设备同步续权失败"));
+        return;
+    }
+    const quint64 generation = generation_;
+    const QString id = pendingReauthId_;
+    QTimer::singleShot(15000, this, [this, generation, id] {
+        if (generation == generation_ && pendingReauthId_ == id)
+            resetConnection(QStringLiteral("设备同步续权超时"));
+    });
+}
+
+void DesktopSessionSyncChannel::resetConnection(const QString& error) {
+    ++generation_;
+    if (socket_) {
+        socket_->stop();
+        socket_.reset();
+    }
+    connected_ = false;
+    connectingBearer_.clear();
+    authorizedBearer_.clear();
+    pendingReauthBearer_.clear();
+    pendingReauthId_.clear();
+    failPending(error);
+    if (disconnectedHandler_) disconnectedHandler_();
+}
+
 void DesktopSessionSyncChannel::startWhenReady() {
     if (socket_ || !bearerProvider_) return;
     const QByteArray token = bearerProvider_().toUtf8();
     if (token.isEmpty() || url_.scheme() != QStringLiteral("wss")) return;
     const QString proxy = proxyForUrl(url_);
     if (proxy == QStringLiteral("unsupported")) return;
-    Q_INIT_RESOURCE(AuthCertificates);
-    QFile certificates(QStringLiteral(":/maichat/auth/cacert.pem"));
-    if (!certificates.open(QIODevice::ReadOnly)) return;
-    const QByteArray ca = certificates.readAll();
+    QByteArray ca = trustedCaPem_;
+    if (ca.isEmpty()) {
+        Q_INIT_RESOURCE(AuthCertificates);
+        QFile certificates(QStringLiteral(":/maichat/auth/cacert.pem"));
+        if (!certificates.open(QIODevice::ReadOnly)) return;
+        ca = certificates.readAll();
+    }
     QPointer<DesktopSessionSyncChannel> guard(this);
     const quint64 generation = ++generation_;
+    connectingBearer_ = token;
+    authorizedBearer_.clear();
+    pendingReauthBearer_.clear();
+    pendingReauthId_.clear();
     socket_ = std::make_unique<MaiSessionSyncSocket>(
         [guard, generation](MaiSessionSyncSocket::Event event, const std::string& detail) {
             if (!guard) return;
@@ -111,14 +158,26 @@ void DesktopSessionSyncChannel::startWhenReady() {
         });
     const MaiSessionSyncSocket::Configuration settings{url_.toString(QUrl::FullyEncoded).toStdString(),
                                                        token.toStdString(), ca.toStdString(), proxy.toStdString()};
-    if (!socket_->start(settings)) socket_.reset();
+    if (!socket_->start(settings)) {
+        socket_.reset();
+        connectingBearer_.clear();
+    }
 }
 
 void DesktopSessionSyncChannel::request(const QString& path, const QByteArray& method, const QJsonObject& body,
                                         Completion completion) {
     const QString operation = requestOperation(path, method);
-    if (operation.isEmpty() || !connected_ || !socket_) {
+    if (operation.isEmpty()) {
         completion({}, QStringLiteral("设备同步连接尚未建立"));
+        return;
+    }
+    if (connected_ && socket_) refreshBearerNow();
+    if (!connected_ || !socket_) {
+        completion({}, QStringLiteral("设备同步连接尚未建立"));
+        return;
+    }
+    if (!pendingReauthId_.isEmpty()) {
+        completion({}, QStringLiteral("账号正在续权，请稍后重试"));
         return;
     }
     const QString id = QUuid::createUuid().toString(QUuid::WithoutBraces).remove(QLatin1Char('-'));
@@ -147,13 +206,14 @@ void DesktopSessionSyncChannel::request(const QString& path, const QByteArray& m
 void DesktopSessionSyncChannel::consume(MaiSessionSyncSocket::Event event, const QByteArray& bytes) {
     if (event == MaiSessionSyncSocket::Event::Connected) {
         connected_ = true;
+        authorizedBearer_ = connectingBearer_;
+        connectingBearer_.clear();
         if (connectedHandler_) connectedHandler_();
+        refreshBearerNow();
         return;
     }
     if (event == MaiSessionSyncSocket::Event::Disconnected || event == MaiSessionSyncSocket::Event::Error) {
-        connected_ = false;
-        failPending(QStringLiteral("设备同步连接中断"));
-        if (disconnectedHandler_) disconnectedHandler_();
+        resetConnection(QStringLiteral("设备同步连接中断"));
         return;
     }
     if (event != MaiSessionSyncSocket::Event::Message) return;
@@ -167,6 +227,17 @@ void DesktopSessionSyncChannel::consume(MaiSessionSyncSocket::Event event, const
         if (inboxHandler_) inboxHandler_(frame.value(QStringLiteral("messages")).toArray());
     } else if (type == QStringLiteral("response")) {
         const QString id = frame.value(QStringLiteral("id")).toString();
+        if (id == pendingReauthId_ && !id.isEmpty()) {
+            if (frame.value(QStringLiteral("status")).toInt() != 200) {
+                resetConnection(QStringLiteral("设备同步续权失败"));
+                return;
+            }
+            authorizedBearer_ = pendingReauthBearer_;
+            pendingReauthBearer_.clear();
+            pendingReauthId_.clear();
+            refreshBearerNow();
+            return;
+        }
         if (!pending_.contains(id)) return;
         const Completion completion = pending_.take(id);
         const QJsonObject body = frame.value(QStringLiteral("body")).toObject();

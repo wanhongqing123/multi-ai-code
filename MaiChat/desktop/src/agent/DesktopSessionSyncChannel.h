@@ -21,7 +21,8 @@ public:
     using InboxHandler = std::function<void(const QJsonArray&)>;
     using StateHandler = std::function<void()>;
 
-    DesktopSessionSyncChannel(QUrl url, std::function<QString()> bearerProvider, QObject* parent = nullptr);
+    DesktopSessionSyncChannel(QUrl url, std::function<QString()> bearerProvider,
+                              QObject* parent = nullptr, QByteArray trustedCaPem = {});
     ~DesktopSessionSyncChannel() override;
 
     void setCatalogHandler(CatalogHandler handler);
@@ -29,15 +30,19 @@ public:
     void setConnectedHandler(StateHandler handler);
     void setDisconnectedHandler(StateHandler handler);
     void start();
+    void refreshBearerNow();
     void request(const QString& path, const QByteArray& method, const QJsonObject& body, Completion completion);
 
 private:
     void startWhenReady();
+    void sendReauthorization(const QByteArray& token);
+    void resetConnection(const QString& error);
     void consume(MaiSessionSyncSocket::Event event, const QByteArray& bytes);
     void failPending(const QString& error);
 
     QUrl url_;
     std::function<QString()> bearerProvider_;
+    QByteArray trustedCaPem_;
     std::unique_ptr<MaiSessionSyncSocket> socket_;
     QTimer retryTimer_;
     QTimer tokenTimer_;
@@ -49,4 +54,8 @@ private:
     bool started_ = false;
     bool connected_ = false;
     quint64 generation_ = 0;
+    QByteArray connectingBearer_;
+    QByteArray authorizedBearer_;
+    QByteArray pendingReauthBearer_;
+    QString pendingReauthId_;
 };

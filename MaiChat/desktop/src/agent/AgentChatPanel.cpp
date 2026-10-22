@@ -3,6 +3,9 @@
 // 直接依赖：MaiPathGuard.h、agent/AgentController.h、markdown/MarkdownView.h、ui/ComposerResizeSplitter.h；实现与这些接口协作。
 #include "agent/AgentChatPanel.h"
 
+#include "ui/DesktopCameraDialog.h"
+#include "ui/DesktopMusicPlayerDialog.h"
+
 #include <QAbstractTextDocumentLayout>
 #include <QAction>
 #include <QDateTime>
@@ -1201,15 +1204,19 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     };
     auto* attachMedia = new QPushButton(QStringLiteral("+"), runtime_->editor);
     attachMedia->setObjectName(QStringLiteral("agentAttachMediaButton"));
-    attachMedia->setAccessibleName(QStringLiteral("添加图片或视频"));
-    attachMedia->setToolTip(QStringLiteral("添加图片或视频"));
+    attachMedia->setAccessibleName(QStringLiteral("添加媒体"));
+    attachMedia->setToolTip(QStringLiteral("添加媒体"));
     attachMedia->setCursor(Qt::PointingHandCursor);
     attachMedia->setFixedSize(UiZoom::s(36), UiZoom::s(36));
     attachMedia->setStyleSheet(QStringLiteral(
         "QPushButton{border:0;border-radius:18px;background:#eef6ff;color:#0b67b7;font-size:24px;}"
-        "QPushButton:hover{background:#dceeff;}"));
+        "QPushButton:hover{background:#dceeff;}"
+        "QPushButton::menu-indicator{image:none;width:0px;}"));
     runtime_->editor->setLeadingAction(attachMedia);
-    connect(attachMedia, &QPushButton::clicked, this, [this] {
+    auto* attachMenu = new QMenu(attachMedia);
+    applyAgentMenuStyle(attachMenu);
+    auto* fromFile = attachMenu->addAction(QStringLiteral("选择图片或视频"));
+    connect(fromFile, &QAction::triggered, this, [this] {
         const QStringList paths = QFileDialog::getOpenFileNames(
             this, QStringLiteral("添加图片或视频"),
             QStandardPaths::writableLocation(QStandardPaths::PicturesLocation),
@@ -1220,6 +1227,33 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
             else insertComposerImageFile(path);
         }
     });
+    auto* takePhoto = attachMenu->addAction(QStringLiteral("打开摄像头拍照"));
+    connect(takePhoto, &QAction::triggered, this, [this] {
+        MaiSession session;
+        if (!runtime_->controller->agent().getSession(toUtf8(runtime_->sessionId), session) ||
+            session.directory.empty()) {
+            QMessageBox::warning(this, QStringLiteral("拍照失败"),
+                                 QStringLiteral("当前会话没有可写工作目录"));
+            return;
+        }
+        QString error;
+        const QString image = DesktopCameraDialog::capturePhoto(
+            this, fromUtf8(session.directory), &error);
+        if (!image.isEmpty()) insertComposerImageFile(image);
+        else if (!error.isEmpty()) QMessageBox::warning(this, QStringLiteral("拍照失败"), error);
+    });
+    auto* playMusic = attachMenu->addAction(QStringLiteral("播放本地音乐"));
+    connect(playMusic, &QAction::triggered, this, [this] {
+        const QString path = QFileDialog::getOpenFileName(
+            this, QStringLiteral("选择本地音乐"),
+            QStandardPaths::writableLocation(QStandardPaths::MusicLocation),
+            QStringLiteral("音频文件 (*.mp3 *.m4a *.wav)"));
+        if (path.isEmpty()) return;
+        QString error;
+        if (!DesktopMusicPlayerDialog::openFile(this, path, &error))
+            QMessageBox::warning(this, QStringLiteral("播放失败"), error);
+    });
+    attachMedia->setMenu(attachMenu);
     composerLayout->addWidget(runtime_->editor, 1);
 
     runtime_->modelChip = new QPushButton(head);

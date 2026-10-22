@@ -24,6 +24,7 @@
 #include <QUrl>
 #include <QtTest>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -1163,7 +1164,14 @@ void AgentPanelSessionTest::pastedVideoDraftSurvivesSessionSwitchAndReachesModel
     panel.openSession(sessionId);
     auto* editor = panel.findChild<QTextEdit*>(QStringLiteral("agentPromptEditor"));
     QVERIFY(editor);
-    QVERIFY(panel.findChild<QPushButton*>(QStringLiteral("agentAttachMediaButton")));
+    auto* attach = panel.findChild<QPushButton*>(QStringLiteral("agentAttachMediaButton"));
+    QVERIFY(attach);
+    QVERIFY(attach->menu());
+    const auto actions = attach->menu()->actions();
+    QVERIFY(std::any_of(actions.cbegin(), actions.cend(),
+        [](const QAction* action) { return action->text() == QStringLiteral("打开摄像头拍照"); }));
+    QVERIFY(std::any_of(actions.cbegin(), actions.cend(),
+        [](const QAction* action) { return action->text() == QStringLiteral("播放本地音乐"); }));
     auto* mime = new QMimeData;
     mime->setUrls({QUrl::fromLocalFile(videoPath)});
     QApplication::clipboard()->setMimeData(mime);

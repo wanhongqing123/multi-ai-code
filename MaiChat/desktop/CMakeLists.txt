@@ -496,6 +496,10 @@ add_library(remote_im_desktop_ui
   src/ui/ImagePreviewDialog.cpp
   src/ui/VideoPreviewDialog.h
   src/ui/VideoPreviewDialog.cpp
+  src/ui/DesktopCameraDialog.h
+  src/ui/DesktopCameraDialog.cpp
+  src/ui/DesktopMusicPlayerDialog.h
+  src/ui/DesktopMusicPlayerDialog.cpp
   src/ui/RemoteDesktopConsentDialog.h
   src/ui/RemoteDesktopConsentDialog.cpp
   src/ui/RemoteDesktopProxyDialog.h
@@ -676,6 +680,7 @@ if(APPLE)
     MACOSX_BUNDLE_ICON_FILE "AppIcon.icns"
     MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
     MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+    MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/resources/macos/Info.plist.in"
   )
   if(MAICHAT_TRTC_AVAILABLE)
     set_target_properties(maichat PROPERTIES
@@ -942,6 +947,10 @@ target_compile_definitions(agent_panel_session_test PRIVATE
 # UiZoom 在 remote_im_desktop_ui 里，而 AgentChatPanel 用它做缩放，所以要一起链。
 target_link_libraries(agent_panel_session_test PRIVATE remote_im_desktop_ui remote_im_desktop_app
   remote_im_core maichat_agent maichat_markdown Qt5::Widgets Qt5::Test)
+
+add_executable(desktop_music_player_dialog_test tests/DesktopMusicPlayerDialogTest.cpp)
+target_link_libraries(desktop_music_player_dialog_test PRIVATE
+  remote_im_desktop_ui Qt5::Widgets Qt5::Multimedia Qt5::Test)
 
 add_executable(desktop_pdf_renderer_test tests/DesktopPdfRendererTest.cpp)
 target_link_libraries(desktop_pdf_renderer_test PRIVATE maichat_agent Qt5::Widgets Qt5::Test)
@@ -1377,6 +1386,7 @@ add_test(NAME markdown_view_test COMMAND markdown_view_test)
 add_test(NAME markdown_label_test COMMAND markdown_label_test)
 add_test(NAME agent_controller_test COMMAND agent_controller_test)
 add_test(NAME agent_panel_session_test COMMAND agent_panel_session_test)
+add_test(NAME desktop_music_player_dialog_test COMMAND desktop_music_player_dialog_test)
 add_test(NAME desktop_pdf_renderer_test COMMAND desktop_pdf_renderer_test)
 add_test(NAME pdf_preview_dialog_test COMMAND pdf_preview_dialog_test)
 if(WIN32 AND MAICHAT_ENABLE_FFMPEG)

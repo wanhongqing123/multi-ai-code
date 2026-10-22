@@ -3,11 +3,14 @@
 #include "MaiChatTools/DesktopMediaTools.h"
 
 #include <QFileInfo>
+#include <QFileDialog>
+#include <QDir>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QMetaObject>
 #include <QPointer>
+#include <QStandardPaths>
 #include <QThread>
 #include <QWidget>
 
@@ -18,6 +21,8 @@
 #include <string>
 
 #include "MaiTool.h"
+#include "ui/DesktopCameraDialog.h"
+#include "ui/DesktopMusicPlayerDialog.h"
 #include "ui/MaiFfplayVideoDialog.h"
 #include "ui/MainWindow.h"
 
@@ -96,6 +101,111 @@ public:
                 .toJson(QJsonDocument::Compact).toStdString());
     }
 
+private:
+    QPointer<QWidget> window_;
+};
+
+class DesktopTakePhotoTool final : public MaiTool {
+public:
+    explicit DesktopTakePhotoTool(QWidget* window) : window_(window) {}
+    std::string name() const override { return "maichat_take_photo"; }
+    std::string description() const override {
+        return "Open the desktop camera preview and wait for the user to press the shutter. "
+               "Save a new JPEG in the Agent workspace; cancel creates no photo.";
+    }
+    std::string parametersSchema() const override {
+        return R"({"type":"object","properties":{},"additionalProperties":false})";
+    }
+    bool requiresApproval(const std::string&) const override { return true; }
+    bool requiresPerCallApproval(const std::string&) const override { return true; }
+    MaiToolResult execute(const std::string&, const MaiToolContext& context) override {
+        if (window_.isNull())
+            return MaiToolResult::failure(MaiErrorCode::NotConfigured,
+                                          "MaiChat window is closed");
+        const std::string resolved = context.resolvePath(".");
+        if (resolved.empty())
+            return invalid("an accessible Agent workspace is required");
+        const QString directory = QString::fromUtf8(resolved.data(), static_cast<int>(resolved.size()));
+        QString photo;
+        QString error;
+        const auto capture = [&] {
+            if (!window_.isNull())
+                photo = DesktopCameraDialog::capturePhoto(window_.data(), directory, &error);
+        };
+        if (QThread::currentThread() == window_->thread()) capture();
+        else if (!QMetaObject::invokeMethod(window_.data(), capture, Qt::BlockingQueuedConnection))
+            return MaiToolResult::failure(MaiErrorCode::Internal,
+                                          "cannot dispatch camera to MaiChat UI");
+        if (!error.isEmpty())
+            return MaiToolResult::failure(MaiErrorCode::Internal, error.toStdString());
+        if (photo.isEmpty())
+            return MaiToolResult::failure(MaiErrorCode::Canceled, "photo capture was canceled");
+        const QString relative = QDir(directory).relativeFilePath(photo);
+        return MaiToolResult::success(
+            QJsonDocument(QJsonObject{{QStringLiteral("path"), relative},
+                                      {QStringLiteral("mime_type"), QStringLiteral("image/jpeg")}})
+                .toJson(QJsonDocument::Compact).toStdString());
+    }
+private:
+    QPointer<QWidget> window_;
+};
+
+class DesktopPlayLocalMusicTool final : public MaiTool {
+public:
+    explicit DesktopPlayLocalMusicTool(QWidget* window) : window_(window) {}
+    std::string name() const override { return "maichat_play_local_music"; }
+    std::string description() const override {
+        return "Open an in-app player for a local MP3, M4A, or WAV. Provide a path in the "
+               "Agent workspace, or omit path to let the user choose a file. Never scan the "
+               "user's Music directory without the file picker.";
+    }
+    std::string parametersSchema() const override {
+        return R"({"type":"object","properties":{"path":{"type":"string"}},)"
+            R"("additionalProperties":false})";
+    }
+    bool requiresApproval(const std::string&) const override { return true; }
+    bool requiresPerCallApproval(const std::string&) const override { return true; }
+    MaiToolResult execute(const std::string& argumentsJson,
+                          const MaiToolContext& context) override {
+        if (window_.isNull())
+            return MaiToolResult::failure(MaiErrorCode::NotConfigured,
+                                          "MaiChat window is closed");
+        const QJsonObject arguments = parseArguments(argumentsJson);
+        QString chosen;
+        if (arguments.contains(QStringLiteral("path"))) {
+            const QJsonValue value = arguments.value(QStringLiteral("path"));
+            if (!value.isString() || value.toString().trimmed().isEmpty())
+                return invalid("path must be a local audio file");
+            const QByteArray bytes = value.toString().trimmed().toUtf8();
+            const std::string resolved = context.resolvePath(
+                std::string(bytes.constData(), static_cast<size_t>(bytes.size())));
+            if (resolved.empty()) return invalid("audio path is outside the accessible workspace");
+            chosen = QString::fromUtf8(resolved.data(), static_cast<int>(resolved.size()));
+        }
+        QString error;
+        bool opened = false;
+        const auto show = [&] {
+            if (window_.isNull()) return;
+            if (chosen.isEmpty())
+                chosen = QFileDialog::getOpenFileName(window_.data(), QStringLiteral("选择本地音乐"),
+                    QStandardPaths::writableLocation(QStandardPaths::MusicLocation),
+                    QStringLiteral("音频文件 (*.mp3 *.m4a *.wav)"));
+            if (!chosen.isEmpty())
+                opened = DesktopMusicPlayerDialog::openFile(window_.data(), chosen, &error);
+        };
+        if (QThread::currentThread() == window_->thread()) show();
+        else if (!QMetaObject::invokeMethod(window_.data(), show, Qt::BlockingQueuedConnection))
+            return MaiToolResult::failure(MaiErrorCode::Internal,
+                                          "cannot dispatch music player to MaiChat UI");
+        if (!error.isEmpty())
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput, error.toStdString());
+        if (!opened)
+            return MaiToolResult::failure(MaiErrorCode::Canceled, "music selection was canceled");
+        return MaiToolResult::success(
+            QJsonDocument(QJsonObject{{QStringLiteral("opened"), true},
+                                      {QStringLiteral("file_name"), QFileInfo(chosen).fileName()}})
+                .toJson(QJsonDocument::Compact).toStdString());
+    }
 private:
     QPointer<QWidget> window_;
 };
@@ -186,5 +296,7 @@ private:
 
 void registerDesktopMediaTools(MaiToolRegistry& registry, QWidget* window) {
     registry.add(std::make_unique<DesktopPlayVideoTool>(window));
+    registry.add(std::make_unique<DesktopTakePhotoTool>(window));
+    registry.add(std::make_unique<DesktopPlayLocalMusicTool>(window));
     registry.add(std::make_unique<DesktopVideoCommandTool>(window));
 }

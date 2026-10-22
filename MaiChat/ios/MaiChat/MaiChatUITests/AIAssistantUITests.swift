@@ -962,7 +962,8 @@ final class AIAssistantUITests: XCTestCase {
         editor.typeText("UI composer check")
         app.buttons["对话列表"].tap()
         XCTAssertTrue(app.staticTexts["对话"].waitForExistence(timeout: 3))
-        app.buttons["完成"].tap()
+        XCTAssertFalse(app.buttons["完成"].exists)
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.96, dy: 0.5)).tap()
         let capture = XCTAttachment(screenshot: app.screenshot())
         capture.name = "ios-ai-assistant"
         capture.lifetime = .keepAlways
@@ -1094,6 +1095,10 @@ final class AIAssistantUITests: XCTestCase {
 
         let drawer = app.descendants(matching: .any).matching(identifier: "ai-session-drawer").firstMatch
         XCTAssertTrue(drawer.waitForExistence(timeout: 3))
+        let drawerCapture = XCTAttachment(screenshot: app.screenshot())
+        drawerCapture.name = "conversation-drawer-without-done-button"
+        drawerCapture.lifetime = .keepAlways
+        add(drawerCapture)
         drawer.swipeLeft()
         XCTAssertEqual(waitUntilNotHittable(app.buttons["新对话"]), .completed)
 
@@ -1106,7 +1111,8 @@ final class AIAssistantUITests: XCTestCase {
         XCTAssertEqual(waitUntilNotHittable(app.buttons["新对话"]), .completed)
 
         app.buttons["对话列表"].tap()
-        app.buttons["完成"].tap()
+        XCTAssertFalse(app.buttons["完成"].exists)
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.96, dy: 0.5)).tap()
         XCTAssertEqual(waitUntilNotHittable(app.buttons["新对话"]), .completed)
     }
 

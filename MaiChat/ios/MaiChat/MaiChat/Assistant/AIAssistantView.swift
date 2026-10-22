@@ -549,11 +549,10 @@ struct AIAssistantView: View {
                 }
                 .disabled(model.isSubmitting || model.isCreatingConversation)
                 .accessibilityLabel("新对话")
-                Button(wideLayout ? "收起" : "完成") {
-                    if wideLayout { showsWideSidebar = false }
-                    else { closeSessionDrawer() }
+                if wideLayout {
+                    Button("收起") { showsWideSidebar = false }
+                        .font(.system(size: 14, weight: .medium))
                 }
-                .font(.system(size: 14, weight: .medium))
             }
             .buttonStyle(.plain)
             .foregroundStyle(RemoteIMStyle.textPrimary)

@@ -325,18 +325,18 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
     // iOS 公开接口只允许打开系统确认界面；工具返回值不能表示已拨通或已送达。
     add("mobile_dial_phone",
         "Open iOS Phone confirmation for one number only when the user explicitly asks to call. "
-        "Requires per-call approval. Opening the confirmation does not mean the call was placed.",
+        "The user confirms the call in iOS. Opening the confirmation does not mean the call was placed.",
         R"({"type":"object","properties":{"phone_number":{"type":"string","minLength":3,)"
             R"("maxLength":32}},"required":["phone_number"],"additionalProperties":false})",
-        true);
+        false);
     add("mobile_compose_sms",
         "Open the iOS Messages composer with recipients and body only when the user explicitly "
-        "asks to send an SMS. Requires per-call approval; the user reviews and taps Send. "
+        "asks to send an SMS. The user reviews and taps Send in the system composer. "
         "A returned composer_opened status never means the message was sent or delivered.",
         R"({"type":"object","properties":{"recipients":{"type":"array","items":{"type":"string"},)"
             R"("minItems":1,"maxItems":10},"body":{"type":"string","minLength":1,)"
             R"("maxLength":2000}},"required":["recipients","body"],"additionalProperties":false})",
-        true);
+        false);
 #endif
     // 会话内视频预览和 IM 视频消息走同一个播放器；控制指令只操作当前打开的实例。
     // 创作中心打开视频时播放器固定在上半屏，下半屏继续输入自然语言控制当前视频。
@@ -382,7 +382,7 @@ void registerMobilePhotoTools(MaiToolRegistry& tools,
         "Open the device camera preview and wait for the user to take a photo. Save a new JPEG "
         "in the current Agent workspace. Cancel creates no file and never sends a message.",
         R"({"type":"object","properties":{},"additionalProperties":false})",
-        dispatcher, true));
+        dispatcher, false));
     tools.add(std::make_unique<MaiMobileHostTool>(
         "mobile_play_local_music",
         "Play an MP3, M4A, or WAV with MaiChat's FFplay music player. Provide a relative "
@@ -391,7 +391,7 @@ void registerMobilePhotoTools(MaiToolRegistry& tools,
         "Never scan the device music library without user selection.",
         R"({"type":"object","properties":{"path":{"type":"string"}},)"
             R"("additionalProperties":false})",
-        dispatcher, true));
+        dispatcher, false));
     // 相册工作流：先授权并列出素材；预览用有界 JPEG，任何编辑/转码都先导出原文件。
     // 处理工具创建新文件；只有用户需要加入相册时再调用保存工具，原素材始终保留。
     tools.add(std::make_unique<MaiMobileHostTool>(

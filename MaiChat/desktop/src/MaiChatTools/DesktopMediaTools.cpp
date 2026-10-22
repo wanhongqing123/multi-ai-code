@@ -116,8 +116,8 @@ public:
     std::string parametersSchema() const override {
         return R"({"type":"object","properties":{},"additionalProperties":false})";
     }
-    bool requiresApproval(const std::string&) const override { return true; }
-    bool requiresPerCallApproval(const std::string&) const override { return true; }
+    bool requiresApproval(const std::string&) const override { return false; }
+    bool requiresPerCallApproval(const std::string&) const override { return false; }
     MaiToolResult execute(const std::string&, const MaiToolContext& context) override {
         if (window_.isNull())
             return MaiToolResult::failure(MaiErrorCode::NotConfigured,
@@ -163,8 +163,8 @@ public:
         return R"({"type":"object","properties":{"path":{"type":"string"}},)"
             R"("additionalProperties":false})";
     }
-    bool requiresApproval(const std::string&) const override { return true; }
-    bool requiresPerCallApproval(const std::string&) const override { return true; }
+    bool requiresApproval(const std::string&) const override { return false; }
+    bool requiresPerCallApproval(const std::string&) const override { return false; }
     MaiToolResult execute(const std::string& argumentsJson,
                           const MaiToolContext& context) override {
         if (window_.isNull())

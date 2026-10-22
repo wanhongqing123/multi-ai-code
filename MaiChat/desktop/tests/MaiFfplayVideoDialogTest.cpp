@@ -74,14 +74,14 @@ void MaiFfplayVideoDialogTest::opensAtRequestedSourceTime() {
     QVERIFY(openTool != nullptr);
     MaiTool* cameraTool = registry.find("maichat_take_photo");
     QVERIFY(cameraTool != nullptr);
-    QVERIFY(cameraTool->requiresApproval("{}"));
-    QVERIFY(cameraTool->requiresPerCallApproval("{}"));
+    QVERIFY(!cameraTool->requiresApproval("{}"));
+    QVERIFY(!cameraTool->requiresPerCallApproval("{}"));
     MaiToolContext emptyContext;
     QVERIFY(cameraTool->execute("{}", emptyContext).hasError());
     MaiTool* musicTool = registry.find("maichat_play_local_music");
     QVERIFY(musicTool != nullptr);
-    QVERIFY(musicTool->requiresApproval("{}"));
-    QVERIFY(musicTool->requiresPerCallApproval("{}"));
+    QVERIFY(!musicTool->requiresApproval("{}"));
+    QVERIFY(!musicTool->requiresPerCallApproval("{}"));
     QVERIFY(musicTool->execute(R"({"path":"song.mp3"})", emptyContext).hasError());
     QVERIFY(QString::fromStdString(openTool->parametersSchema()).contains(
         QStringLiteral("start_seconds")));

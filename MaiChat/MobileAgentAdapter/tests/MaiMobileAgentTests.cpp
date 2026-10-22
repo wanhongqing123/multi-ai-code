@@ -293,6 +293,24 @@ int main() {
                                  "text/event-stream");
             return;
         }
+        if (input == "camera-open") {
+            Json invocation = {
+                {"index", 0}, {"id", "call_camera_open"}, {"type", "function"},
+                {"function", {{"name", "mobile_take_photo"}, {"arguments", "{}"}}}};
+            response.set_content(frame({{"tool_calls", Json::array({invocation})}}, "tool_calls") +
+                                     "data: [DONE]\n\n",
+                                 "text/event-stream");
+            return;
+        }
+        if (input == "music-open") {
+            Json invocation = {
+                {"index", 0}, {"id", "call_music_open"}, {"type", "function"},
+                {"function", {{"name", "mobile_play_local_music"}, {"arguments", "{}"}}}};
+            response.set_content(frame({{"tool_calls", Json::array({invocation})}}, "tool_calls") +
+                                     "data: [DONE]\n\n",
+                                 "text/event-stream");
+            return;
+        }
         if (input == "photo-add") {
             Json invocation = {
                 {"index", 0}, {"id", "call_photo_add"}, {"type", "function"},
@@ -439,6 +457,16 @@ int main() {
         CHECK(photoPreviewed["permissions"].empty());
         CHECK(hostProbe.calls == initialHostCalls + (kPhotoAlbumTool == nullptr ? 4 : 5));
         CHECK(hostProbe.lastTool == "mobile_preview_image");
+        CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "camera-open"}})["ok"] == true);
+        const auto cameraDone = wait([](const Json& s) { return s["busy"] == false; });
+        CHECK(cameraDone["permissions"].empty());
+        CHECK(hostProbe.lastTool == "mobile_take_photo");
+        CHECK(hostProbe.calls == initialHostCalls + (kPhotoAlbumTool == nullptr ? 5 : 6));
+        CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "music-open"}})["ok"] == true);
+        const auto musicDone = wait([](const Json& s) { return s["busy"] == false; });
+        CHECK(musicDone["permissions"].empty());
+        CHECK(hostProbe.lastTool == "mobile_play_local_music");
+        CHECK(hostProbe.calls == initialHostCalls + (kPhotoAlbumTool == nullptr ? 6 : 7));
         CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "hello"}})["ok"] == true);
         CHECK(call(agent, config)["ok"] == false);  // 工作中不能销毁并换配置。
         auto partial = wait([](const Json& s) {

@@ -34,12 +34,14 @@ static volatile LONG64 sPositionUs;
 static volatile LONG64 sDurationUs;
 static volatile LONG64 sPendingSeekUs = -1;
 static volatile LONG sPaused;
+static volatile LONG sPendingPauseToggles;
 static volatile LONG sPlaybackSpeedPercent = 100;
 #define MAI_STATUS_STORE64(field, value) InterlockedExchange64(&(field), (value))
 #define MAI_STATUS_LOAD64(field) InterlockedCompareExchange64(&(field), 0, 0)
 #define MAI_STATUS_EXCHANGE64(field, value) InterlockedExchange64(&(field), (value))
 #define MAI_STATUS_STORE(field, value) InterlockedExchange(&(field), (value))
 #define MAI_STATUS_LOAD(field) InterlockedCompareExchange(&(field), 0, 0)
+#define MAI_STATUS_EXCHANGE(field, value) InterlockedExchange(&(field), (value))
 #else
 static atomic_flag sRunning = ATOMIC_FLAG_INIT;
 static atomic_int sPlaybackActive;
@@ -47,12 +49,14 @@ static atomic_int_fast64_t sPositionUs;
 static atomic_int_fast64_t sDurationUs;
 static atomic_int_fast64_t sPendingSeekUs = -1;
 static atomic_int sPaused;
+static atomic_int sPendingPauseToggles;
 static atomic_int sPlaybackSpeedPercent = 100;
 #define MAI_STATUS_STORE64(field, value) atomic_store(&(field), (value))
 #define MAI_STATUS_LOAD64(field) atomic_load(&(field))
 #define MAI_STATUS_EXCHANGE64(field, value) atomic_exchange(&(field), (value))
 #define MAI_STATUS_STORE(field, value) atomic_store(&(field), (value))
 #define MAI_STATUS_LOAD(field) atomic_load(&(field))
+#define MAI_STATUS_EXCHANGE(field, value) atomic_exchange(&(field), (value))
 #endif
 static MAI_FFPLAY_THREAD_LOCAL jmp_buf sExitPoint;
 static MAI_FFPLAY_THREAD_LOCAL int sExitReady;
@@ -105,6 +109,8 @@ static int maiFfplayPeepEventsWithStatus(VideoState* state,
                                         Uint32 min_type, Uint32 max_type)
 {
     if (state && state->ic) {
+        const int pauseToggles = MAI_STATUS_EXCHANGE(sPendingPauseToggles, 0);
+        for (int index = 0; index < pauseToggles; ++index) toggle_pause(state);
         const int64_t length = state->ic->duration;
         if (state->audio_stream >= 0) {
             if (sObservedAudioSerial >= 0 &&
@@ -236,6 +242,7 @@ int maiFfplayRun(const MaiFfplayHost* host, int argc, char** argv)
     MAI_STATUS_STORE64(sPendingSeekUs, -1);
     sObservedAudioSerial = -1;
     MAI_STATUS_STORE(sPaused, 0);
+    MAI_STATUS_STORE(sPendingPauseToggles, 0);
     MAI_STATUS_STORE(sPlaybackActive, 1);
     maiFfplayBindHost(host);
     sExitReady = 1;
@@ -252,6 +259,7 @@ int maiFfplayRun(const MaiFfplayHost* host, int argc, char** argv)
     maiFfplayBindHost(NULL);
     MAI_STATUS_STORE(sPlaybackActive, 0);
     MAI_STATUS_STORE64(sPendingSeekUs, -1);
+    MAI_STATUS_STORE(sPendingPauseToggles, 0);
 #if defined(_WIN32)
     InterlockedExchange(&sRunning, 0);
 #else
@@ -346,6 +354,17 @@ int maiFfplaySendCommand(const char* command)
         return SDL_PushEvent(&event) > 0 ? 1 : 0;
     }
     return -1;
+}
+
+int maiFfplayRequestPauseToggle(void)
+{
+    if (!MAI_STATUS_LOAD(sPlaybackActive)) return 0;
+#if defined(_WIN32)
+    InterlockedIncrement(&sPendingPauseToggles);
+#else
+    atomic_fetch_add(&sPendingPauseToggles, 1);
+#endif
+    return 1;
 }
 
 int maiFfplaySeekAbsoluteUs(int64_t position_us)

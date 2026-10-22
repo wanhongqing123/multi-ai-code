@@ -4,10 +4,12 @@
 
 #include <atomic>
 #include <chrono>
+#include <climits>
 #include <string>
 #include <thread>
 
 #include "MaiFfplayEntry.h"
+#include "MaiFfplayAudioSession.h"
 #include "MaiGraphicsPresenter.h"
 
 namespace {
@@ -124,4 +126,63 @@ Java_com_kongshang_maichat_MaiFfplayVideoView_nativeDestroy(
     }
     if (session->worker.joinable()) session->worker.join();
     delete session;
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_kongshang_maichat_MaiFfplayAudioSession_nativeOpen(
+    JNIEnv* env, jclass, jstring path) {
+    if (!path) return 0;
+    const char* value = env->GetStringUTFChars(path, nullptr);
+    if (!value) return 0;
+    auto* session = maiFfplayAudioStart(value);
+    env->ReleaseStringUTFChars(path, value);
+    return reinterpret_cast<jlong>(session);
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_kongshang_maichat_MaiFfplayAudioSession_nativeCommand(
+    JNIEnv* env, jclass, jlong handle, jstring command) {
+    if (!handle || !command) return JNI_FALSE;
+    const char* value = env->GetStringUTFChars(command, nullptr);
+    if (!value) return JNI_FALSE;
+    const int accepted = maiFfplayAudioCommand(
+        reinterpret_cast<MaiFfplayAudioSession*>(handle), value);
+    env->ReleaseStringUTFChars(command, value);
+    return accepted == 1 ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_kongshang_maichat_MaiFfplayAudioSession_nativeSeek(
+    JNIEnv*, jclass, jlong handle, jlong positionUs) {
+    return handle && maiFfplayAudioSeekAbsoluteUs(
+        reinterpret_cast<MaiFfplayAudioSession*>(handle), positionUs) == 1
+        ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jlongArray JNICALL
+Java_com_kongshang_maichat_MaiFfplayAudioSession_nativeStatus(
+    JNIEnv* env, jclass, jlong handle) {
+    if (!handle) return nullptr;
+    MaiFfplayPlaybackStatus status{};
+    if (maiFfplayAudioStatus(reinterpret_cast<MaiFfplayAudioSession*>(handle),
+                             &status) != 1) return nullptr;
+    const jlong values[] = {status.position_us, status.duration_us,
+                            status.running, status.paused, status.speed_percent};
+    jlongArray result = env->NewLongArray(5);
+    if (result) env->SetLongArrayRegion(result, 0, 5, values);
+    return result;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_kongshang_maichat_MaiFfplayAudioSession_nativeFinished(
+    JNIEnv*, jclass, jlong handle) {
+    int code = 0;
+    return handle && maiFfplayAudioFinished(
+        reinterpret_cast<MaiFfplayAudioSession*>(handle), &code) == 1 ? code : INT_MIN;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_kongshang_maichat_MaiFfplayAudioSession_nativeClose(
+    JNIEnv*, jclass, jlong handle) {
+    maiFfplayAudioStop(reinterpret_cast<MaiFfplayAudioSession*>(handle));
 }

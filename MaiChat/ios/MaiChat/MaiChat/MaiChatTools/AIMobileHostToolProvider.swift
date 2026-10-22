@@ -218,7 +218,7 @@ final class AIMobileHostToolProvider {
         switch error {
         case .unavailable: return "unavailable"
         case .canceled: return "canceled"
-        case .permissionDenied: return "permission_denied"
+        case .permissionDenied, .musicLibraryDenied: return "permission_denied"
         case .failed: return "internal"
         }
     }

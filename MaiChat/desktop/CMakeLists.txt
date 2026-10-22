@@ -949,6 +949,7 @@ target_link_libraries(agent_panel_session_test PRIVATE remote_im_desktop_ui remo
   remote_im_core maichat_agent maichat_markdown Qt5::Widgets Qt5::Test)
 
 add_executable(desktop_music_player_dialog_test tests/DesktopMusicPlayerDialogTest.cpp)
+target_include_directories(desktop_music_player_dialog_test PRIVATE ../Media/FfplayCompat)
 target_link_libraries(desktop_music_player_dialog_test PRIVATE
   remote_im_desktop_ui Qt5::Widgets Qt5::Multimedia Qt5::Test)
 
@@ -971,6 +972,7 @@ target_link_libraries(MaiFfplayAudioTempoTests PRIVATE SoundTouch)
 add_test(NAME MaiFfplayAudioTempoTests COMMAND MaiFfplayAudioTempoTests)
 set(maichat_ffplay_common_sources
   ../Media/FfplayCompat/MaiFfplayEntry.c
+  ../Media/FfplayCompat/MaiFfplayAudioSession.cpp
   ../Media/FfplayCompat/MaiFfplayAudioTempo.cpp
   ../Media/FfplayCompat/MaiFfplayThreading.cpp
   ../Media/FfplayCompat/MaiFfplayRenderer.cpp
@@ -1387,6 +1389,13 @@ add_test(NAME markdown_label_test COMMAND markdown_label_test)
 add_test(NAME agent_controller_test COMMAND agent_controller_test)
 add_test(NAME agent_panel_session_test COMMAND agent_panel_session_test)
 add_test(NAME desktop_music_player_dialog_test COMMAND desktop_music_player_dialog_test)
+if(TARGET maichat_ffplay_hosted)
+  target_compile_definitions(desktop_music_player_dialog_test PRIVATE MAICHAT_HAS_FFPLAY=1)
+  add_executable(MaiFfplayAudioSessionTest tests/MaiFfplayAudioSessionTest.cpp)
+  target_include_directories(MaiFfplayAudioSessionTest PRIVATE ../Media/FfplayCompat)
+  target_link_libraries(MaiFfplayAudioSessionTest PRIVATE maichat_ffplay_hosted Qt5::Test)
+  add_test(NAME MaiFfplayAudioSessionTest COMMAND MaiFfplayAudioSessionTest)
+endif()
 add_test(NAME desktop_pdf_renderer_test COMMAND desktop_pdf_renderer_test)
 add_test(NAME pdf_preview_dialog_test COMMAND pdf_preview_dialog_test)
 if(WIN32 AND MAICHAT_ENABLE_FFMPEG)

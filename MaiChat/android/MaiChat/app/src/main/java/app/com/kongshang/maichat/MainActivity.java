@@ -577,6 +577,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             else toast("没有相机权限，无法拍照");
         } else if (requestCode == AIAssistantPanel.REQUEST_CAMERA_PERMISSION && aiAssistant != null) {
             aiAssistant.onCameraPermission(granted);
+        } else if (requestCode == AIAssistantPanel.REQUEST_MUSIC_PERMISSION && aiAssistant != null) {
+            aiAssistant.handleMusicPermission(granted);
         } else if (requestCode == AIAssistantPanel.REQUEST_AUDIO_PERMISSION && aiAssistant != null) {
             aiAssistant.onAudioPermission(granted);
         } else if (requestCode == REQUEST_POST_NOTIFICATIONS && !granted) {

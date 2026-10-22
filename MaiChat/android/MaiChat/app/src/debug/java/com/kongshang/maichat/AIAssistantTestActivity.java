@@ -38,5 +38,8 @@ public final class AIAssistantTestActivity extends Activity {
         if (requestCode == AIAssistantPanel.REQUEST_CAMERA_PERMISSION)
             panel.onCameraPermission(grantResults.length > 0 &&
                 grantResults[0] == PackageManager.PERMISSION_GRANTED);
+        if (requestCode == AIAssistantPanel.REQUEST_MUSIC_PERMISSION)
+            panel.handleMusicPermission(grantResults.length > 0 &&
+                grantResults[0] == PackageManager.PERMISSION_GRANTED);
     }
 }

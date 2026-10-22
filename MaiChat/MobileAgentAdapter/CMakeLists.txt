@@ -288,6 +288,7 @@ if(ANDROID OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
   set_target_properties(SoundTouch PROPERTIES POSITION_INDEPENDENT_CODE ON)
   add_library(maichat_ffplay_hosted SHARED
     ../Media/FfplayCompat/MaiFfplayEntry.c
+    ../Media/FfplayCompat/MaiFfplayAudioSession.cpp
     ../Media/FfplayCompat/MaiFfplayAudioTempo.cpp
     ../Media/FfplayCompat/MaiFfplayThreading.cpp
     ../Media/FfplayCompat/MaiFfplayRenderer.cpp

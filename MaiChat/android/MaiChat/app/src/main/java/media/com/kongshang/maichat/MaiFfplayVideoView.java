@@ -255,6 +255,7 @@ public final class MaiFfplayVideoView extends FrameLayout {
 
     private void start(long viewId) {
         if (playbackHandle != 0 || videoPath == null || videoPath.isEmpty()) return;
+        LocalMusicPlayer.closeActive();
         graphicsViewId = viewId;
         MaiFfplayVideoView previous = active.get();
         if (previous != null && previous != this) previous.stop();

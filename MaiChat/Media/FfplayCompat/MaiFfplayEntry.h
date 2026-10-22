@@ -20,6 +20,8 @@ MAI_FFPLAY_EXPORT void maiFfplayRequestQuit(void);
 // 将 Agent/MaiChat 指令映射到 ffplay 现有控制逻辑。
 // 入队返回 1，播放器未运行返回 0，未知指令返回 -1。
 MAI_FFPLAY_EXPORT int maiFfplaySendCommand(const char* command);
+// 音频 -nodisp 模式没有视频窗口；由 FFplay 事件线程直接切换暂停状态。
+MAI_FFPLAY_EXPORT int maiFfplayRequestPauseToggle(void);
 // 请求源媒体的绝对时间戳，由 ffplay 播放线程直接执行，
 // 不根据窗口宽度伪造鼠标点击事件。
 MAI_FFPLAY_EXPORT int maiFfplaySeekAbsoluteUs(int64_t position_us);

@@ -53,8 +53,14 @@ public class AIAssistantInstrumentedTest {
         try (ActivityScenario<AIAssistantTestActivity> scenario =
                  ActivityScenario.launch(AIAssistantTestActivity.class)) {
             scenario.onActivity(activity -> assertTrue(activity.panel.playLocalMusic(music)));
-            assertNotNull(awaitSystemText("本地音乐", 3_000));
-            assertNotNull(awaitSystemText("暂停", 5_000));
+            assertNotNull(awaitSystemText("正在播放 · 本地文件", 3_000));
+            AccessibilityNodeInfo pause = awaitExactSystemText("暂停", 5_000);
+            assertNotNull(pause);
+            assertTrue(clickNodeOrParent(pause));
+            AccessibilityNodeInfo resume = awaitExactSystemText("播放", 3_000);
+            assertNotNull(resume);
+            assertTrue(clickNodeOrParent(resume));
+            assertNotNull(awaitExactSystemText("暂停", 3_000));
             scenario.onActivity(activity -> activity.panel.closeLocalMusic());
         } finally {
             music.delete();
@@ -148,6 +154,19 @@ public class AIAssistantInstrumentedTest {
                 java.util.List<AccessibilityNodeInfo> matches = root.findAccessibilityNodeInfosByText(text);
                 if (!matches.isEmpty()) return matches.get(0);
             }
+            Thread.sleep(50);
+        }
+        return null;
+    }
+    private AccessibilityNodeInfo awaitExactSystemText(String text, long timeoutMilliseconds)
+            throws InterruptedException {
+        long deadline = System.currentTimeMillis() + timeoutMilliseconds;
+        while (System.currentTimeMillis() < deadline) {
+            AccessibilityNodeInfo root = InstrumentationRegistry.getInstrumentation()
+                .getUiAutomation().getRootInActiveWindow();
+            if (root != null)
+                for (AccessibilityNodeInfo node : root.findAccessibilityNodeInfosByText(text))
+                    if (node.getText() != null && text.contentEquals(node.getText())) return node;
             Thread.sleep(50);
         }
         return null;

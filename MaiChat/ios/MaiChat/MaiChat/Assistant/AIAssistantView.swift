@@ -5,8 +5,10 @@
 import AVFoundation
 import CoreTransferable
 import MaiChatCore
+import MediaPlayer
 import Photos
 import PhotosUI
+import StoreKit
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
@@ -2471,6 +2473,10 @@ private struct AIComposer: View, Equatable {
     @ObservedObject private var music = MaiLocalMusicPlayer.shared
     @ObservedObject private var localMediaRequests = AIMobileLocalMediaRequests.shared
     @State private var importingMusic = false
+    @State private var showingMusicSource = false
+    @State private var showingMusicLibrary = false
+    @State private var musicLibrarySelectionReceived = false
+    @State private var requestingMusicLibraryAuthorization = false
     @State private var showingMusic = false
     @State private var musicSelectionReceived = false
     @State private var musicPickerAgentRequestID: UUID?
@@ -2744,7 +2750,7 @@ private struct AIComposer: View, Equatable {
                         isAttachmentPanelPresented = false
                         musicSelectionReceived = false
                         musicPickerAgentRequestID = nil
-                        importingMusic = true
+                        showingMusicSource = true
                     },
                     showsVoiceInput: false
                 )
@@ -2817,6 +2823,63 @@ private struct AIComposer: View, Equatable {
                     model.showTransientError(error.localizedDescription)
                 }
             }
+            .confirmationDialog("选择音乐来源", isPresented: $showingMusicSource) {
+                Button("系统音乐库") {
+                    requestingMusicLibraryAuthorization = true
+                    Task { await openMusicLibrary() }
+                }
+                Button("选择文件") { importingMusic = true }
+                Button("取消", role: .cancel) { localMediaRequests.failMusic(.canceled) }
+            }
+            .sheet(isPresented: $showingMusicLibrary) {
+                MaiSystemMusicPicker(onPick: { item in
+                    musicLibrarySelectionReceived = true
+                    showingMusicLibrary = false
+                    let agentRequestID = musicPickerAgentRequestID
+                    musicPickerAgentRequestID = nil
+                    Task {
+                        do {
+                            if let agentRequestID,
+                               localMediaRequests.musicRequestID != agentRequestID { return }
+                            if item.hasProtectedAsset || item.isCloudItem || item.assetURL == nil {
+                                showingMusic = true
+                                try await music.openAppleMusicItem(item)
+                            } else {
+                                do {
+                                    let exported = try await music.exportLibraryItem(item)
+                                    if let agentRequestID,
+                                       localMediaRequests.musicRequestID != agentRequestID {
+                                        try? FileManager.default.removeItem(at: exported)
+                                        return
+                                    }
+                                    try music.openLocalFile(exported,
+                                                            title: item.title ?? "音乐库歌曲",
+                                                            ownsCopy: true,
+                                                            artist: item.artist ?? "",
+                                                            sourceName: "系统音乐库 · FFplay")
+                                } catch {
+                                    showingMusic = true
+                                    try await music.openAppleMusicItem(item)
+                                }
+                            }
+                            if let agentRequestID,
+                               localMediaRequests.musicRequestID != agentRequestID {
+                                music.stop()
+                                return
+                            }
+                            showingMusic = true
+                            localMediaRequests.finishMusic(fileName: item.title ?? "音乐库歌曲")
+                        } catch {
+                            if showingMusic { music.reportError(error.localizedDescription) }
+                            localMediaRequests.failMusic(.failed)
+                            model.showTransientError(error.localizedDescription)
+                        }
+                    }
+                }, onCancel: {
+                    showingMusicLibrary = false
+                    localMediaRequests.failMusic(.canceled)
+                })
+            }
             .sheet(isPresented: $showingMusic) {
                 MaiLocalMusicPlayerView(music: music)
             }
@@ -2828,7 +2891,22 @@ private struct AIComposer: View, Equatable {
                 guard request != nil else { return }
                 musicSelectionReceived = false
                 musicPickerAgentRequestID = request
-                importingMusic = true
+                showingMusicSource = true
+            }
+            .onChange(of: showingMusicSource) { presented in
+                guard !presented, localMediaRequests.musicRequestID != nil else { return }
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                    if !showingMusicSource && !importingMusic && !showingMusicLibrary &&
+                       !requestingMusicLibraryAuthorization {
+                        localMediaRequests.failMusic(.canceled)
+                    }
+                }
+            }
+            .onChange(of: showingMusicLibrary) { presented in
+                guard !presented, !musicLibrarySelectionReceived,
+                      localMediaRequests.musicRequestID != nil else { return }
+                localMediaRequests.failMusic(.canceled)
             }
             .onChange(of: localMediaRequests.musicPresentationID) { request in
                 if request != nil { showingMusic = true }
@@ -2958,6 +3036,25 @@ private struct AIComposer: View, Equatable {
         }
         cameraTarget = nil
         isCameraPresented = true
+    }
+
+    private func openMusicLibrary() async {
+        defer { requestingMusicLibraryAuthorization = false }
+        var access = MPMediaLibrary.authorizationStatus()
+        if access == .notDetermined {
+            access = await withCheckedContinuation { continuation in
+                MPMediaLibrary.requestAuthorization { result in
+                    continuation.resume(returning: result)
+                }
+            }
+        }
+        guard access == .authorized || access == .restricted else {
+            localMediaRequests.failMusic(.musicLibraryDenied)
+            model.showTransientError("请在系统设置中允许访问媒体与 Apple Music")
+            return
+        }
+        musicLibrarySelectionReceived = false
+        showingMusicLibrary = true
     }
 
     private func requestCameraPermission() async -> Bool {
@@ -3772,18 +3869,64 @@ private struct AIQuestionCard: View {
     }
 }
 
+private struct MaiSystemMusicPicker: UIViewControllerRepresentable {
+    let onPick: (MPMediaItem) -> Void
+    let onCancel: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(onPick: onPick, onCancel: onCancel) }
+
+    func makeUIViewController(context: Context) -> MPMediaPickerController {
+        let picker = MPMediaPickerController(mediaTypes: .music)
+        picker.delegate = context.coordinator
+        picker.allowsPickingMultipleItems = false
+        picker.showsCloudItems = true
+        picker.showsItemsWithProtectedAssets = true
+        picker.prompt = "从音乐资料库选择歌曲"
+        return picker
+    }
+
+    func updateUIViewController(_ controller: MPMediaPickerController, context: Context) {}
+
+    final class Coordinator: NSObject, MPMediaPickerControllerDelegate {
+        let onPick: (MPMediaItem) -> Void
+        let onCancel: () -> Void
+
+        init(onPick: @escaping (MPMediaItem) -> Void, onCancel: @escaping () -> Void) {
+            self.onPick = onPick
+            self.onCancel = onCancel
+        }
+
+        func mediaPicker(_ mediaPicker: MPMediaPickerController,
+                         didPickMediaItems mediaItemCollection: MPMediaItemCollection) {
+            if let item = mediaItemCollection.items.first { onPick(item) }
+            else { onCancel() }
+        }
+
+        func mediaPickerDidCancel(_ mediaPicker: MPMediaPickerController) { onCancel() }
+    }
+}
+
 @MainActor
 final class MaiLocalMusicPlayer: ObservableObject {
     static let shared = MaiLocalMusicPlayer()
 
     @Published private(set) var title = ""
+    @Published private(set) var artist = ""
+    @Published private(set) var sourceName = "本地文件"
     @Published private(set) var duration: Double = 0
     @Published private(set) var position: Double = 0
     @Published private(set) var isPlaying = false
+    @Published private(set) var isLoading = false
+    @Published private(set) var errorMessage = ""
 
-    private var player: AVAudioPlayer?
+    private var session: OpaquePointer?
+    private var systemPlayer: MPMusicPlayerController?
+    private var currentLibraryItem: MPMediaItem?
     private var timer: Timer?
     private var stagedFile: URL?
+    private var currentFile: URL?
+    private var playGeneration = 0
+    private var loadingStartedAt = 0.0
 
     func openPickedFile(_ source: URL) async throws {
         let name = source.lastPathComponent
@@ -3822,56 +3965,181 @@ final class MaiLocalMusicPlayer: ObservableObject {
         }
     }
 
-    func openLocalFile(_ file: URL, title name: String? = nil,
-                       ownsCopy: Bool = false) throws {
-        let next = try AVAudioPlayer(contentsOf: file)
-        next.prepareToPlay()
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playback, mode: .default)
-        try session.setActive(true)
-        let previous = player
-        let wasPlaying = previous?.isPlaying == true
-        previous?.pause()
-        guard next.play() else {
-            if wasPlaying { _ = previous?.play() }
-            throw AIBackendError(message: "音乐播放失败")
+    func exportLibraryItem(_ item: MPMediaItem) async throws -> URL {
+        guard !item.hasProtectedAsset, !item.isCloudItem,
+              let source = item.assetURL else {
+            throw AIBackendError(message: "这首歌受保护或只在云端，无法交给 FFplay 播放")
         }
-        timer?.invalidate()
-        previous?.stop()
-        if let stagedFile, stagedFile != file { try? FileManager.default.removeItem(at: stagedFile) }
-        player = next
-        stagedFile = ownsCopy ? file : nil
-        title = name ?? file.lastPathComponent
-        duration = next.duration
+        let asset = AVURLAsset(url: source)
+        guard let exporter = AVAssetExportSession(asset: asset,
+                                                  presetName: AVAssetExportPresetPassthrough) else {
+            throw AIBackendError(message: "无法读取这首音乐库歌曲")
+        }
+        let fileType: AVFileType
+        let suffix: String
+        if exporter.supportedFileTypes.contains(.m4a) {
+            fileType = .m4a
+            suffix = "m4a"
+        } else if exporter.supportedFileTypes.contains(.mov) {
+            fileType = .mov
+            suffix = "mov"
+        } else {
+            throw AIBackendError(message: "此歌曲无法导出供 FFplay 播放")
+        }
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MaiChatLocalMusic", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let file = directory.appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension(suffix)
+        exporter.outputURL = file
+        exporter.outputFileType = fileType
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            exporter.exportAsynchronously { continuation.resume() }
+        }
+        guard exporter.status == .completed,
+              let bytes = (try? file.resourceValues(forKeys: [.fileSizeKey]))?.fileSize,
+              bytes > 0, bytes <= 200_000_000 else {
+            try? FileManager.default.removeItem(at: file)
+            throw AIBackendError(message: "音乐库歌曲导出失败或超过 200 MB")
+        }
+        return file
+    }
+
+    func openAppleMusicItem(_ item: MPMediaItem) async throws {
+        var authorization = SKCloudServiceController.authorizationStatus()
+        if authorization == .notDetermined {
+            authorization = await withCheckedContinuation { continuation in
+                SKCloudServiceController.requestAuthorization { result in
+                    continuation.resume(returning: result)
+                }
+            }
+        }
+        guard authorization == .authorized else {
+            throw AIBackendError(message: "请允许 MaiChat 访问 Apple Music")
+        }
+        if let video = MaiFfplayMobilePlayer.active {
+            video.stop()
+            video.close()
+        }
+        stop()
+        if let stagedFile { try? FileManager.default.removeItem(at: stagedFile) }
+        stagedFile = nil
+        currentFile = nil
+        currentLibraryItem = item
+        title = item.title ?? "Apple Music 歌曲"
+        artist = item.artist ?? ""
+        sourceName = "Apple Music · 系统播放"
+        duration = max(0, item.playbackDuration)
         position = 0
-        isPlaying = true
+        isLoading = true
+        errorMessage = ""
+        loadingStartedAt = ProcessInfo.processInfo.systemUptime
+        let requestGeneration = playGeneration
+        let player = MPMusicPlayerController.applicationQueuePlayer
+        systemPlayer = player
+        player.setQueue(with: MPMediaItemCollection(items: [item]))
+        try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<Void, Error>) in
+            player.prepareToPlay { error in
+                if let error { continuation.resume(throwing: error) }
+                else { continuation.resume() }
+            }
+        }
+        guard playGeneration == requestGeneration, systemPlayer === player else {
+            throw AIMobileLocalMediaRequestError.canceled
+        }
+        player.play()
+        startTimer()
+    }
+
+    func openLocalFile(_ file: URL, title name: String? = nil,
+                       ownsCopy: Bool = false, artist: String = "",
+                       sourceName: String = "本地文件") throws {
+        guard file.isFileURL, FileManager.default.fileExists(atPath: file.path) else {
+            throw AIBackendError(message: "音乐文件已移动或删除")
+        }
+        if let video = MaiFfplayMobilePlayer.active {
+            video.stop()
+            video.close()
+        }
+        let audioSession = AVAudioSession.sharedInstance()
+        try audioSession.setCategory(.playback, mode: .default)
+        try audioSession.setActive(true)
+        stop()
+        currentLibraryItem = nil
+        if let stagedFile, stagedFile != file { try? FileManager.default.removeItem(at: stagedFile) }
+        let started = file.path.withCString { maiFfplayAudioStart($0) }
+        guard let started else { throw AIBackendError(message: "FFplay 音频播放器无法启动") }
+        session = started
+        stagedFile = ownsCopy ? file : nil
+        currentFile = file
+        title = name ?? file.lastPathComponent
+        self.artist = artist
+        self.sourceName = sourceName
+        duration = 0
+        position = 0
+        isLoading = true
+        errorMessage = ""
         startTimer()
     }
 
     func toggle() {
-        guard let player else { return }
-        if player.isPlaying { player.pause(); isPlaying = false }
-        else {
-            if player.currentTime >= player.duration { player.currentTime = 0 }
-            isPlaying = player.play()
-            if isPlaying { startTimer() }
+        if let systemPlayer {
+            if systemPlayer.playbackState == .playing { systemPlayer.pause(); isPlaying = false }
+            else { systemPlayer.play(); isPlaying = true }
+            return
         }
-        refreshPosition()
+        if let currentLibraryItem {
+            Task {
+                do { try await openAppleMusicItem(currentLibraryItem) }
+                catch { errorMessage = error.localizedDescription }
+            }
+            return
+        }
+        if let session {
+            var code: Int32 = 0
+            if maiFfplayAudioFinished(session, &code) == 0,
+               maiFfplayAudioCommand(session, "pause") == 1 {
+                isPlaying.toggle()
+                return
+            }
+        }
+        if let currentFile {
+            do {
+                try openLocalFile(currentFile, title: title, ownsCopy: stagedFile == currentFile,
+                                  artist: artist, sourceName: sourceName)
+            } catch { errorMessage = error.localizedDescription }
+        }
     }
 
     func seek(to seconds: Double) {
-        guard let player, seconds.isFinite else { return }
-        player.currentTime = min(max(0, seconds), player.duration)
-        refreshPosition()
+        if let systemPlayer, seconds.isFinite, duration > 0 {
+            systemPlayer.currentPlaybackTime = min(max(0, seconds), duration)
+            position = seconds
+            return
+        }
+        guard let session, seconds.isFinite, duration > 0 else { return }
+        let target = Int64(min(max(0, seconds), duration) * 1_000_000)
+        if maiFfplayAudioSeekAbsoluteUs(session, target) == 1 { position = seconds }
     }
 
     func stop() {
-        player?.stop()
-        player?.currentTime = 0
-        isPlaying = false
-        position = 0
+        playGeneration += 1
         timer?.invalidate()
         timer = nil
+        if let session { maiFfplayAudioStop(session) }
+        session = nil
+        systemPlayer?.stop()
+        systemPlayer = nil
+        isPlaying = false
+        isLoading = false
+        position = 0
+    }
+
+    func reportError(_ message: String) {
+        isLoading = false
+        isPlaying = false
+        errorMessage = message
     }
 
     private func startTimer() {
@@ -3882,11 +4150,32 @@ final class MaiLocalMusicPlayer: ObservableObject {
     }
 
     private func refreshPosition() {
-        guard let player else { return }
-        position = player.currentTime
-        if isPlaying && !player.isPlaying {
+        if let systemPlayer {
+            let playbackTime = systemPlayer.currentPlaybackTime
+            if playbackTime.isFinite { position = min(duration, max(0, playbackTime)) }
+            isPlaying = systemPlayer.playbackState == .playing
+            if isPlaying { isLoading = false }
+            else if isLoading && ProcessInfo.processInfo.systemUptime - loadingStartedAt > 15 {
+                isLoading = false
+                errorMessage = "Apple Music 暂时无法播放，请检查网络或订阅状态"
+            }
+            return
+        }
+        guard let session else { return }
+        var state = MaiFfplayPlaybackStatus()
+        if maiFfplayAudioStatus(session, &state) == 1, state.duration_us > 0 {
+            duration = Double(state.duration_us) / 1_000_000
+            position = min(duration, max(0, Double(state.position_us) / 1_000_000))
+            isPlaying = state.paused == 0
+            isLoading = false
+            return
+        }
+        var code: Int32 = 0
+        if maiFfplayAudioFinished(session, &code) == 1 {
             isPlaying = false
-            position = player.duration
+            isLoading = false
+            if code != 0 { errorMessage = "此音乐无法用 FFplay 播放" }
+            else { position = duration }
             timer?.invalidate()
             timer = nil
         }
@@ -3899,9 +4188,32 @@ private struct MaiLocalMusicPlayerView: View {
     @State private var isScrubbing = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            Text("本地音乐").font(.title2.bold())
-            Text(music.title).font(.headline).lineLimit(2)
+        VStack(spacing: 16) {
+            HStack {
+                Text("正在播放").font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(music.sourceName).font(.caption).foregroundStyle(.secondary)
+            }
+            Image(systemName: "music.note")
+                .font(.system(size: 44, weight: .light))
+                .foregroundStyle(.white)
+                .frame(width: 108, height: 108)
+                .background(LinearGradient(colors: [Color(red: 0.16, green: 0.57, blue: 0.94),
+                                                    Color(red: 0.37, green: 0.31, blue: 0.76)],
+                                           startPoint: .topLeading, endPoint: .bottomTrailing),
+                            in: RoundedRectangle(cornerRadius: 27))
+                .accessibilityHidden(true)
+            Text(music.title)
+                .font(.system(size: 19, weight: .semibold))
+                .lineLimit(2).multilineTextAlignment(.center)
+            if !music.artist.isEmpty {
+                Text(music.artist).font(.subheadline).foregroundStyle(.secondary)
+            }
+            if music.isLoading { ProgressView("正在载入…").font(.caption) }
+            if !music.errorMessage.isEmpty {
+                Text(music.errorMessage).font(.caption).foregroundStyle(.red)
+            }
             Slider(value: Binding(
                 get: { isScrubbing ? scrubPosition : music.position },
                 set: { scrubPosition = $0 }
@@ -3922,7 +4234,8 @@ private struct MaiLocalMusicPlayerView: View {
             Spacer(minLength: 0)
         }
         .padding(24)
-        .presentationDetents([.height(300)])
+        .presentationDetents([.height(440)])
+        .onDisappear { music.stop() }
     }
 
     private func clock(_ seconds: Double) -> String {
@@ -3935,6 +4248,7 @@ enum AIMobileLocalMediaRequestError: LocalizedError, Sendable {
     case unavailable
     case canceled
     case permissionDenied
+    case musicLibraryDenied
     case failed
 
     var errorDescription: String? {
@@ -3942,6 +4256,7 @@ enum AIMobileLocalMediaRequestError: LocalizedError, Sendable {
         case .unavailable: return "请先打开创作中心"
         case .canceled: return "已取消操作"
         case .permissionDenied: return "没有摄像头权限"
+        case .musicLibraryDenied: return "没有系统音乐库权限"
         case .failed: return "媒体操作失败"
         }
     }

@@ -918,6 +918,7 @@ struct MaiFfplayVideoScreen: UIViewControllerRepresentable {
     }
 
     func makeUIViewController(context _: Context) -> MaiFfplayVideoController {
+        MaiLocalMusicPlayer.shared.stop()
         let controller = MaiFfplayVideoController(
             path: path, startSeconds: startSeconds,
             entryDirection: entryDirection, navigate: navigate,

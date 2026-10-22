@@ -155,7 +155,7 @@ public:
     explicit DesktopPlayLocalMusicTool(QWidget* window) : window_(window) {}
     std::string name() const override { return "maichat_play_local_music"; }
     std::string description() const override {
-        return "Open an in-app player for a local MP3, M4A, or WAV. Provide a path in the "
+        return "Open MaiChat's FFplay music player for a local MP3, M4A, or WAV. Provide a path in the "
                "Agent workspace, or omit path to let the user choose a file. Never scan the "
                "user's Music directory without the file picker.";
     }

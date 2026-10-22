@@ -7,6 +7,7 @@
 #include "../../../Media/MaiGraphicsPresenter.h"
 #include "../../../Media/MaiImageDecode.h"
 #include "../../../Media/FfplayCompat/MaiFfplayEntry.h"
+#include "../../../Media/FfplayCompat/MaiFfplayAudioSession.h"
 #include "Media/MaiFfplayIosBridge.h"
 #include "IM/MaiChatAuthTransport.h"
 #include "IM/MaiChatHttpTransport.h"

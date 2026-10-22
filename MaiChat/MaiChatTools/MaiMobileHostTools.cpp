@@ -385,8 +385,9 @@ void registerMobilePhotoTools(MaiToolRegistry& tools,
         dispatcher, true));
     tools.add(std::make_unique<MaiMobileHostTool>(
         "mobile_play_local_music",
-        "Play an MP3, M4A, or WAV in the visible MaiChat local music player. Provide a relative "
-        "workspace path, or omit it so the user selects a file using the system picker. "
+        "Play an MP3, M4A, or WAV with MaiChat's FFplay music player. Provide a relative "
+        "workspace path, or omit it so the user chooses the system music library or a file. "
+        "Protected Apple Music songs use Apple's system player in the same MaiChat UI. "
         "Never scan the device music library without user selection.",
         R"({"type":"object","properties":{"path":{"type":"string"}},)"
             R"("additionalProperties":false})",

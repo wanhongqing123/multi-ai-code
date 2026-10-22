@@ -11,7 +11,9 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.ContentValues;
+import android.content.ContentUris;
 import android.content.Intent;
+import android.database.Cursor;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.media.MediaMetadataRetriever;
@@ -52,6 +54,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     static final int REQUEST_CAMERA = 7109;
     static final int REQUEST_CAMERA_PERMISSION = 7110;
     static final int REQUEST_MUSIC = 7111;
+    static final int REQUEST_MUSIC_PERMISSION = 7112;
     private final Activity activity;
     final AIAssistantController controller;
     private final LocalMusicPlayer localMusicPlayer;
@@ -360,7 +363,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             R.drawable.ic_ai_file, "文件", "导入文本文件", v -> openTextFilePicker()),
             new LayoutParams(0, dp(64), 1));
         attachmentPanel.addView(attachmentAction(
-            R.drawable.ic_ai_music, "音乐", "播放本地音乐", v -> openMusicPicker()),
+            R.drawable.ic_ai_music, "音乐", "播放本地音乐", v -> showMusicSourceChooser()),
             new LayoutParams(0, dp(64), 1));
         attachmentPanel.setVisibility(GONE);
         composerArea.addView(attachmentPanel, matchWrap());
@@ -815,6 +818,17 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             .setType("audio/*").addCategory(Intent.CATEGORY_OPENABLE);
         activity.startActivityForResult(intent, REQUEST_MUSIC);
     }
+    private void showMusicSourceChooser() {
+        hideAttachmentPanel();
+        new AlertDialog.Builder(activity).setTitle("选择音乐来源")
+            .setItems(new String[] {"系统音乐库", "选择文件"}, (dialog, choice) -> {
+                if (choice == 0) openSystemMusicLibrary();
+                else openMusicPicker();
+            })
+            .setOnCancelListener(dialog -> {
+                finishAgentMusic(null);
+            }).show();
+    }
     void selectMusicForAgent(Consumer<String> completed) {
         if (agentMusicRequestActive || pendingAgentMusic != null || completed == null) {
             if (completed != null) completed.accept(null);
@@ -822,7 +836,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         }
         pendingAgentMusic = completed;
         agentMusicRequestActive = true;
-        openMusicPicker();
+        showMusicSourceChooser();
     }
     void takePhotoForAgent(Consumer<String> completed) {
         if (agentCameraRequestActive || pendingCameraFile != null || completed == null) {
@@ -847,9 +861,127 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         String segment = uri.getLastPathSegment();
         return segment == null || segment.isEmpty() ? "本地音乐" : segment;
     }
+    private static final class MusicEntry {
+        final Uri uri;
+        final String title, artist;
+        MusicEntry(Uri uri, String title, String artist) {
+            this.uri = uri; this.title = title; this.artist = artist;
+        }
+    }
+    private void openSystemMusicLibrary() {
+        String permission = Build.VERSION.SDK_INT >= 33 ? Manifest.permission.READ_MEDIA_AUDIO
+            : Manifest.permission.READ_EXTERNAL_STORAGE;
+        if (activity.checkSelfPermission(permission)
+            != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            activity.requestPermissions(new String[] {permission}, REQUEST_MUSIC_PERMISSION);
+            return;
+        }
+        queryMusicLibrary();
+    }
+    void handleMusicPermission(boolean granted) {
+        if (granted) queryMusicLibrary();
+        else {
+            Toast.makeText(activity, "没有音乐库权限", Toast.LENGTH_LONG).show();
+            finishAgentMusic(null);
+        }
+    }
+    private void queryMusicLibrary() {
+        new Thread(() -> {
+            List<MusicEntry> songs = new ArrayList<>();
+            String[] columns = {MediaStore.Audio.Media._ID, MediaStore.Audio.Media.TITLE,
+                MediaStore.Audio.Media.ARTIST};
+            try (Cursor cursor = activity.getContentResolver().query(
+                     MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, columns,
+                     MediaStore.Audio.Media.IS_MUSIC + " != 0", null,
+                     MediaStore.Audio.Media.TITLE + " COLLATE NOCASE ASC")) {
+                if (cursor != null) while (cursor.moveToNext() && songs.size() < 3000) {
+                    long id = cursor.getLong(0);
+                    String title = cursor.getString(1);
+                    String artist = cursor.getString(2);
+                    songs.add(new MusicEntry(ContentUris.withAppendedId(
+                        MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id),
+                        title == null || title.isEmpty() ? "未命名歌曲" : title,
+                        artist == null || MediaStore.UNKNOWN_STRING.equals(artist) ? "" : artist));
+                }
+            } catch (Exception ignored) { songs.clear(); }
+            activity.runOnUiThread(() -> showMusicLibrary(songs));
+        }, "MaiChatMusicLibrary").start();
+    }
+    private void showMusicLibrary(List<MusicEntry> songs) {
+        if (activity.isFinishing()) { finishAgentMusic(null); return; }
+        if (agentMusicRequestActive && pendingAgentMusic == null) {
+            agentMusicRequestActive = false;
+            return;
+        }
+        if (songs.isEmpty()) {
+            Toast.makeText(activity, "音乐库暂无可访问的本地歌曲", Toast.LENGTH_LONG).show();
+            finishAgentMusic(null);
+            return;
+        }
+        LinearLayout content = new LinearLayout(activity);
+        content.setOrientation(VERTICAL);
+        content.setPadding(dp(18), dp(4), dp(18), dp(12));
+        EditText search = new EditText(activity);
+        search.setSingleLine(true);
+        search.setHint("搜索歌曲或歌手");
+        content.addView(search, new LayoutParams(-1, dp(52)));
+        ListView list = new ListView(activity);
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(activity,
+            android.R.layout.simple_list_item_1, new ArrayList<>());
+        list.setAdapter(adapter);
+        content.addView(list, new LayoutParams(-1,
+            dp(Math.min(340, Math.max(80, songs.size() * 56)))));
+        List<MusicEntry> visible = new ArrayList<>();
+        Consumer<String> filter = term -> {
+            String needle = term.trim().toLowerCase(Locale.ROOT);
+            visible.clear();
+            adapter.clear();
+            for (MusicEntry song : songs) {
+                if (!needle.isEmpty() && !song.title.toLowerCase(Locale.ROOT).contains(needle)
+                    && !song.artist.toLowerCase(Locale.ROOT).contains(needle)) continue;
+                visible.add(song);
+                adapter.add(song.artist.isEmpty() ? song.title : song.title + " · " + song.artist);
+            }
+            adapter.notifyDataSetChanged();
+        };
+        filter.accept("");
+        search.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                filter.accept(s.toString());
+            }
+            @Override public void afterTextChanged(Editable s) {}
+        });
+        AlertDialog dialog = new AlertDialog.Builder(activity).setTitle("系统音乐库")
+            .setView(content).setNegativeButton("取消", (d, which) -> finishAgentMusic(null))
+            .create();
+        dialog.setOnCancelListener(d -> finishAgentMusic(null));
+        list.setOnItemClickListener((parent, row, position, id) -> {
+            MusicEntry song = visible.get(position);
+            dialog.dismiss();
+            if (!agentMusicRequestActive || pendingAgentMusic != null)
+                playChosenMusic(song.uri, song.title, "系统音乐库", agentMusicRequestActive);
+            else agentMusicRequestActive = false;
+        });
+        dialog.show();
+    }
+    private void playChosenMusic(Uri uri, String name, String origin, boolean forAgent) {
+        localMusicPlayer.open(uri, name, origin, opened -> {
+            if (!opened) Toast.makeText(activity, "所选音乐无法播放", Toast.LENGTH_LONG).show();
+            if (forAgent) finishAgentMusic(opened ? name : null);
+        });
+    }
+    private void finishAgentMusic(String name) {
+        Consumer<String> completed = pendingAgentMusic;
+        pendingAgentMusic = null;
+        agentMusicRequestActive = false;
+        if (completed != null) completed.accept(name);
+    }
     void cancelAgentPhotoRequest() { pendingAgentCamera = null; }
-    void cancelAgentMusicRequest() { pendingAgentMusic = null; }
-    boolean playLocalMusic(Uri uri, String name) { return localMusicPlayer.open(uri, name); }
+    void cancelAgentMusicRequest() {
+        pendingAgentMusic = null;
+        if (agentMusicRequestActive) localMusicPlayer.close();
+    }
     boolean playLocalMusic(File file) { return localMusicPlayer.open(file); }
     void closeLocalMusic() { localMusicPlayer.close(); }
     void cancelPendingAgentLocalMedia() {
@@ -868,16 +1000,11 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     boolean handleActivityResult(int requestCode, Intent data) {
         if (requestCode == REQUEST_MUSIC) {
             boolean forAgent = agentMusicRequestActive;
-            agentMusicRequestActive = false;
             Uri uri = data == null ? null : data.getData();
             String name = uri == null ? null : musicName(uri);
-            boolean opened = uri != null && (!forAgent || pendingAgentMusic != null)
-                && playLocalMusic(uri, name);
-            Consumer<String> completed = pendingAgentMusic;
-            pendingAgentMusic = null;
-            if (completed != null) completed.accept(opened ? name : null);
-            if (uri != null && !opened && (!forAgent || completed != null))
-                Toast.makeText(activity, "所选音乐无法播放", Toast.LENGTH_LONG).show();
+            if (uri != null && (!forAgent || pendingAgentMusic != null))
+                playChosenMusic(uri, name, "本地文件", forAgent);
+            else if (forAgent && pendingAgentMusic == null) agentMusicRequestActive = false;
             return true;
         }
         if (requestCode == REQUEST_FILE) {

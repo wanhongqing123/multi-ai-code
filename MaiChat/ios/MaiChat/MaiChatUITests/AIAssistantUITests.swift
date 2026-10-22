@@ -1029,6 +1029,10 @@ final class AIAssistantUITests: XCTestCase {
         let music = app.buttons["音乐"]
         XCTAssertTrue(music.waitForExistence(timeout: 3))
         music.tap()
+        XCTAssertTrue(app.buttons["系统音乐库"].waitForExistence(timeout: 3))
+        let chooseFile = app.buttons["选择文件"]
+        XCTAssertTrue(chooseFile.waitForExistence(timeout: 3))
+        chooseFile.tap()
         let englishCancel = app.buttons["Cancel"]
         let chineseCancel = app.buttons["取消"]
         XCTAssertTrue(englishCancel.waitForExistence(timeout: 8) ||

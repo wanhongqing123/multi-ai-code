@@ -2,6 +2,7 @@
 // 主要入口：setForwardAction、forwardVideo、saveCopy、activeDialog。
 // 直接依赖：MaiGraphicsPresenter.h；实现与这些接口协作。
 #include "ui/MaiFfplayVideoDialog.h"
+#include "ui/DesktopMusicPlayerDialog.h"
 
 #include <QCloseEvent>
 #include <QComboBox>
@@ -462,6 +463,7 @@ bool MaiFfplayVideoDialog::startPlayback() {
         return false;
     }
     errorLabel_->hide();
+    DesktopMusicPlayerDialog::closeActive();
     if (!sActiveDialog.isNull() && sActiveDialog != this) sActiveDialog->close();
     const QString backend = bundledResource(
         QStringLiteral("/../Frameworks/libmaiagent_obs_metal.so"));

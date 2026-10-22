@@ -20,6 +20,8 @@
   <true/>
   <key>NSCameraUsageDescription</key>
   <string>用于拍摄照片、发送远程 IM 图片消息，以及扫描电脑登录二维码。</string>
+  <key>NSAppleMusicUsageDescription</key>
+  <string>仅在你选择系统音乐库歌曲时访问并播放 Apple Music 曲库中的已下载或云端歌曲。</string>
   <key>NSAppTransportSecurity</key>
   <dict>
     <key>NSAllowsLocalNetworking</key>

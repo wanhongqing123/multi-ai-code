@@ -2,9 +2,10 @@
 #include <QApplication>
 #include <QDataStream>
 #include <QFile>
-#include <QMediaPlayer>
+#include <QLabel>
 #include <QPointer>
 #include <QPushButton>
+#include <QSlider>
 #include <QTemporaryDir>
 #include <QtTest>
 
@@ -17,6 +18,9 @@ private slots:
 };
 
 void DesktopMusicPlayerDialogTest::playsLocalFileAndStopsOnClose() {
+#if !defined(MAICHAT_HAS_FFPLAY)
+    QSKIP("FFplay audio is unavailable in this build");
+#endif
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
     QString error;
@@ -29,7 +33,7 @@ void DesktopMusicPlayerDialogTest::playsLocalFileAndStopsOnClose() {
     QVERIFY(file.open(QIODevice::WriteOnly));
     QDataStream stream(&file);
     stream.setByteOrder(QDataStream::LittleEndian);
-    constexpr quint32 samples = 8'000;
+    constexpr quint32 samples = 24'000;
     constexpr quint32 bytes = samples * 2;
     stream.writeRawData("RIFF", 4);
     stream << quint32(36 + bytes);
@@ -47,15 +51,17 @@ void DesktopMusicPlayerDialogTest::playsLocalFileAndStopsOnClose() {
     for (QWidget* widget : QApplication::topLevelWidgets())
         if (widget->objectName() == QStringLiteral("desktopMusicPlayer")) dialog = widget;
     QVERIFY(dialog);
-    auto* player = dialog->findChild<QMediaPlayer*>();
-    QVERIFY(player);
-    QTRY_VERIFY_WITH_TIMEOUT(player->duration() >= 900, 3000);
+    auto* progress = dialog->findChild<QSlider*>(QStringLiteral("desktopMusicProgress"));
+    QVERIFY(progress);
+    QTRY_VERIFY_WITH_TIMEOUT(progress->value() > 0, 3000);
+    const QString screenshot = qEnvironmentVariable("MAICHAT_MUSIC_SCREENSHOT");
+    if (!screenshot.isEmpty()) QVERIFY(dialog->grab().save(screenshot));
     auto* toggle = dialog->findChild<QPushButton*>(QStringLiteral("desktopMusicPlayPause"));
     QVERIFY(toggle);
     toggle->click();
-    QTRY_COMPARE(player->state(), QMediaPlayer::PausedState);
+    QTRY_COMPARE(toggle->text(), QStringLiteral("播放"));
     toggle->click();
-    QTRY_COMPARE(player->state(), QMediaPlayer::PlayingState);
+    QTRY_COMPARE(toggle->text(), QStringLiteral("暂停"));
     dialog->close();
     QTRY_VERIFY(dialog.isNull());
 }

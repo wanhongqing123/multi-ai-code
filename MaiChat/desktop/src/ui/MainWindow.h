@@ -22,6 +22,7 @@
 #include <QTextEdit>
 #include <QTextDocumentFragment>
 #include <QVBoxLayout>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <vector>
@@ -91,7 +92,8 @@ public:
         std::function<void(const QString&, RemoteIMCompletion)> updater);
     AgentController* activeAgentController() const { return agentController_; }
     void setSessionSyncCoordinator(DesktopSessionSyncCoordinator* coordinator);
-    bool openDockedVideo(const QString& path, const QStringList& playlist = {});
+    bool openDockedVideo(const QString& path, const QStringList& playlist = {},
+                         int64_t startPositionUs = 0);
 
     // 把 IM 收/发的文件附件从本地缓存拷贝到 targetPath（存在则覆盖）。
     // 纯文件操作、不弹 UI，供右键「保存到本地」与单测复用；失败时经

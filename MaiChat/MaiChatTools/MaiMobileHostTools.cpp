@@ -241,7 +241,7 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
         true);
     add("maichat_send_media",
         "Send an accessible Agent workspace image or video as a persistent media bubble, "
-        "or audio as a file card. The optional caption follows as a text message. "
+        "or audio as a file card. The optional caption stays in the same media message. "
         "Requires user approval.",
         // file_path 指 Agent 可访问媒体；type 为 image/video/audio；caption 另发文本。
         R"({"type":"object","properties":{"peer_id":{"type":"string"},"file_path":{"type":"string"},)"

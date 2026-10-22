@@ -5,11 +5,15 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonValue>
 #include <QMetaObject>
 #include <QPointer>
 #include <QThread>
 #include <QWidget>
 
+#include <cmath>
+#include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 
@@ -32,11 +36,13 @@ public:
     explicit DesktopPlayVideoTool(QWidget* window) : window_(window) {}
     std::string name() const override { return "maichat_play_video"; }
     std::string description() const override {
-        return "Open a local video in MaiChat's FFplay/Graphics player. The Agent and IM "
-               "message video use the same player. Relative paths start in the Agent workspace.";
+        return "Open a local video in MaiChat's FFplay/Graphics player at optional "
+               "start_seconds of source-media time. The Agent and IM message video use the "
+               "same player. Relative paths start in the Agent workspace.";
     }
     std::string parametersSchema() const override {
-        return R"({"type":"object","properties":{"path":{"type":"string"}},"required":["path"],)"
+        return R"({"type":"object","properties":{"path":{"type":"string"},)"
+            R"("start_seconds":{"type":"number","minimum":0}},"required":["path"],)"
             R"("additionalProperties":false})";
     }
     MaiToolResult execute(const std::string& argumentsJson,
@@ -44,6 +50,16 @@ public:
         const QJsonObject arguments = parseArguments(argumentsJson);
         const QString requested = arguments.value(QStringLiteral("path")).toString().trimmed();
         if (requested.isEmpty()) return invalid("path is required");
+        double startSeconds = 0;
+        if (arguments.contains(QStringLiteral("start_seconds"))) {
+            const QJsonValue value = arguments.value(QStringLiteral("start_seconds"));
+            if (!value.isDouble()) return invalid("start_seconds must be a nonnegative source-media time");
+            startSeconds = value.toDouble();
+            if (!std::isfinite(startSeconds) || startSeconds < 0 ||
+                startSeconds > static_cast<double>(std::numeric_limits<int64_t>::max()) / 1'000'000)
+                return invalid("start_seconds must be a nonnegative source-media time");
+        }
+        const int64_t startPositionUs = static_cast<int64_t>(startSeconds * 1'000'000);
         const QByteArray bytes = requested.toUtf8();
         const std::string resolved = context.resolvePath(
             std::string(bytes.constData(), static_cast<size_t>(bytes.size())));
@@ -57,11 +73,11 @@ public:
         const auto show = [&] {
             if (window_.isNull()) return;
             if (auto* mainWindow = dynamic_cast<MainWindow*>(window_.data())) {
-                opened = mainWindow->openDockedVideo(path);
+                opened = mainWindow->openDockedVideo(path, {}, startPositionUs);
                 return;
             }
             if (auto existing = MaiFfplayVideoDialog::activeDialog()) existing->close();
-            auto* dialog = new MaiFfplayVideoDialog(path, window_.data());
+            auto* dialog = new MaiFfplayVideoDialog(path, window_.data(), startPositionUs);
             dialog->setAttribute(Qt::WA_DeleteOnClose);
             dialog->show();
             opened = dialog->isStarted();
@@ -74,7 +90,10 @@ public:
         if (!opened)
             return MaiToolResult::failure(MaiErrorCode::Internal,
                                           "FFplay or Graphics could not open the video player");
-        return MaiToolResult::success(R"({"opened":true})");
+        return MaiToolResult::success(
+            QJsonDocument(QJsonObject{{QStringLiteral("opened"), true},
+                                      {QStringLiteral("start_seconds"), startSeconds}})
+                .toJson(QJsonDocument::Compact).toStdString());
     }
 
 private:

@@ -28,7 +28,8 @@ class MaiFfplayVideoDialog final : public QDialog {
     Q_OBJECT
 
 public:
-    explicit MaiFfplayVideoDialog(const QString& path, QWidget* parent = nullptr);
+    explicit MaiFfplayVideoDialog(const QString& path, QWidget* parent = nullptr,
+                                  int64_t startPositionUs = 0);
     ~MaiFfplayVideoDialog() override;
 
     static QPointer<MaiFfplayVideoDialog> activeDialog();

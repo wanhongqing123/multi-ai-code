@@ -416,7 +416,7 @@ final class LocalChatHistoryStore {
                 sql: """
                 SELECT id, remote_id, from_user, to_user, text, direction, status, created_at,
                        voice_attachment, image_attachment, file_attachment, video_attachment,
-                       approval_request, approval_decision, caption_above, quote
+                       approval_request, approval_decision, caption_above, quote, media_caption
                 FROM messages
                 WHERE sdk_app_id = ? AND owner_user_id = ?
                   AND peer_user_id = ?
@@ -485,7 +485,7 @@ final class LocalChatHistoryStore {
                 sql: """
                 SELECT id, remote_id, from_user, to_user, text, direction, status, created_at,
                        voice_attachment, image_attachment, file_attachment, video_attachment,
-                       approval_request, approval_decision, caption_above, quote
+                       approval_request, approval_decision, caption_above, quote, media_caption
                 FROM messages
                 WHERE sdk_app_id = ? AND owner_user_id = ? AND peer_user_id = ?
                 ORDER BY created_at DESC, id DESC
@@ -543,7 +543,7 @@ final class LocalChatHistoryStore {
                 sql: """
                 SELECT id, remote_id, from_user, to_user, text, direction, status, created_at,
                        voice_attachment, image_attachment, file_attachment, video_attachment,
-                       approval_request, approval_decision, caption_above, quote,
+                       approval_request, approval_decision, caption_above, quote, media_caption,
                        CASE
                            WHEN peer_user_id IS NULL OR peer_user_id = '' THEN
                                CASE WHEN from_user = owner_user_id THEN to_user ELSE from_user END
@@ -568,7 +568,7 @@ final class LocalChatHistoryStore {
             while true {
                 switch sqlite3_step(statement) {
                 case SQLITE_ROW:
-                    let peerUserID = textColumn(statement, at: 16)
+                    let peerUserID = textColumn(statement, at: 17)
                         .trimmingCharacters(in: .whitespacesAndNewlines)
                     if !peerUserID.isEmpty, let message = decodeMessage(from: statement) {
                         hits.append(LocalChatHistorySearchHit(
@@ -640,7 +640,7 @@ final class LocalChatHistoryStore {
                 sql: """
                 SELECT id, remote_id, from_user, to_user, text, direction, status, created_at,
                        voice_attachment, image_attachment, file_attachment, video_attachment,
-                       approval_request, approval_decision, caption_above, quote
+                       approval_request, approval_decision, caption_above, quote, media_caption
                 FROM messages
                 WHERE sdk_app_id = ? AND owner_user_id = ?
                   AND peer_user_id = ? AND remote_id = ?
@@ -794,6 +794,7 @@ final class LocalChatHistoryStore {
                   approval_decision = excluded.approval_decision,
                   caption_above = excluded.caption_above,
                   quote = excluded.quote,
+                  media_caption = excluded.media_caption,
                   peer_user_id = excluded.peer_user_id
               """
             : "DO NOTHING"
@@ -804,8 +805,9 @@ final class LocalChatHistoryStore {
                 sdk_app_id, owner_user_id, id, remote_id, from_user, to_user, text,
                 direction, status, created_at,
                 voice_attachment, image_attachment, file_attachment, video_attachment,
-                approval_request, approval_decision, caption_above, quote, peer_user_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                approval_request, approval_decision, caption_above, quote,
+                media_caption, peer_user_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(sdk_app_id, owner_user_id, id) \(conflictClause)
             """
         )
@@ -887,10 +889,11 @@ final class LocalChatHistoryStore {
             try bindOptionalJSON(message.approvalDecision, to: statement, at: 16, database: database)
             sqlite3_bind_int(statement, 17, message.captionAbove ? 1 : 0)
             try bindOptionalJSON(message.quote, to: statement, at: 18, database: database)
+            try bindOptionalText(message.mediaCaption, to: statement, at: 19, database: database)
             let peerUserID = message.fromUserID == ownerUserID
                 ? message.toUserID
                 : message.fromUserID
-            try bindText(peerUserID, to: statement, at: 19, database: database)
+            try bindText(peerUserID, to: statement, at: 20, database: database)
             guard sqlite3_step(statement) == SQLITE_DONE else {
                 throw databaseError(database)
             }
@@ -987,6 +990,7 @@ final class LocalChatHistoryStore {
             fromUserID: textColumn(statement, at: 2),
             toUserID: textColumn(statement, at: 3),
             text: textColumn(statement, at: 4),
+            mediaCaption: optionalTextColumn(statement, at: 16),
             captionAbove: sqlite3_column_int(statement, 14) != 0,
             quote: decodeOptionalJSON(
                 RemoteIMQuote.self,
@@ -1058,6 +1062,7 @@ final class LocalChatHistoryStore {
                 approval_decision TEXT,
                 caption_above INTEGER NOT NULL DEFAULT 0,
                 quote TEXT,
+                media_caption TEXT,
                 peer_user_id TEXT,
                 PRIMARY KEY (sdk_app_id, owner_user_id, id)
             )
@@ -1086,6 +1091,9 @@ final class LocalChatHistoryStore {
         }
         if try !columnExists("quote", in: "messages", database: database) {
             try execute(database, sql: "ALTER TABLE messages ADD COLUMN quote TEXT")
+        }
+        if try !columnExists("media_caption", in: "messages", database: database) {
+            try execute(database, sql: "ALTER TABLE messages ADD COLUMN media_caption TEXT")
         }
         if previousSchemaVersion < 3 {
             try execute(
@@ -1121,8 +1129,8 @@ final class LocalChatHistoryStore {
             ON messages(sdk_app_id, owner_user_id, peer_user_id, created_at DESC, id DESC)
             """
         )
-        if previousSchemaVersion < 7 {
-            try execute(database, sql: "PRAGMA user_version = 7")
+        if previousSchemaVersion < 8 {
+            try execute(database, sql: "PRAGMA user_version = 8")
         }
     }
 

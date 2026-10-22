@@ -172,11 +172,14 @@ protocol RemoteIMClient: AnyObject {
     ) async throws -> RemoteIMSendReceipt
     func sendVoice(to userID: String, recording: RemoteIMVoiceRecording, origin: RemoteIMMessageOrigin) async throws
         -> RemoteIMSendReceipt
-    func sendImage(to userID: String, image: RemoteIMImageFile, origin: RemoteIMMessageOrigin) async throws
+    func sendImage(to userID: String, image: RemoteIMImageFile, caption: String?,
+                   captionAbove: Bool, origin: RemoteIMMessageOrigin) async throws
         -> RemoteIMSendReceipt
-    func sendVideo(to userID: String, video: RemoteIMVideoFile, origin: RemoteIMMessageOrigin) async throws
+    func sendVideo(to userID: String, video: RemoteIMVideoFile, caption: String?,
+                   captionAbove: Bool, origin: RemoteIMMessageOrigin) async throws
         -> RemoteIMSendReceipt
-    func sendFile(to userID: String, file: RemoteIMFile, origin: RemoteIMMessageOrigin) async throws
+    func sendFile(to userID: String, file: RemoteIMFile, caption: String?,
+                  captionAbove: Bool, origin: RemoteIMMessageOrigin) async throws
         -> RemoteIMSendReceipt
     func deleteContact(userID: String) async throws
     func blockUser(userID: String) async throws
@@ -245,14 +248,17 @@ extension RemoteIMClient {
     }
 
     func sendImage(to userID: String, image: RemoteIMImageFile) async throws -> RemoteIMSendReceipt {
-        try await sendImage(to: userID, image: image, origin: .human)
+        try await sendImage(to: userID, image: image, caption: nil,
+                            captionAbove: false, origin: .human)
     }
 
     func sendVideo(to userID: String, video: RemoteIMVideoFile) async throws -> RemoteIMSendReceipt {
-        try await sendVideo(to: userID, video: video, origin: .human)
+        try await sendVideo(to: userID, video: video, caption: nil,
+                            captionAbove: false, origin: .human)
     }
 
     func sendFile(to userID: String, file: RemoteIMFile) async throws -> RemoteIMSendReceipt {
-        try await sendFile(to: userID, file: file, origin: .human)
+        try await sendFile(to: userID, file: file, caption: nil,
+                           captionAbove: false, origin: .human)
     }
 }

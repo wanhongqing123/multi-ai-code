@@ -425,12 +425,15 @@ final class TencentIMClient:
         )
     }
 
-        func sendImage(to userID: String, image: RemoteIMImageFile, origin: RemoteIMMessageOrigin) async throws
+        func sendImage(to userID: String, image: RemoteIMImageFile, caption: String?,
+                       captionAbove: Bool, origin: RemoteIMMessageOrigin) async throws
             -> RemoteIMSendReceipt
         {
             guard
                 let message = try await Self.makeMessage({
-                    V2TIMManager.sharedInstance().createImageMessage(imagePath: image.fileURL.path)
+                    let message = V2TIMManager.sharedInstance().createImageMessage(
+                        imagePath: image.fileURL.path)
+                    return Self.attachCaption(caption, to: message, firstElem: message?.imageElem)
                 })
             else {
                 Self.logMessageCreateFailure(kind: "image", peerUserID: userID)
@@ -441,6 +444,9 @@ final class TencentIMClient:
             to: userID,
             kind: "image",
             origin: origin,
+            cloudMetadata: RemoteIMCloudMetadata(origin: origin,
+                captionAbove: captionAbove &&
+                    caption?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false),
             metadata: [
                 "width": image.width.map(String.init) ?? "unknown",
                 "height": image.height.map(String.init) ?? "unknown",
@@ -450,15 +456,18 @@ final class TencentIMClient:
         )
     }
 
-        func sendVideo(to userID: String, video: RemoteIMVideoFile, origin: RemoteIMMessageOrigin) async throws
+        func sendVideo(to userID: String, video: RemoteIMVideoFile, caption: String?,
+                       captionAbove: Bool, origin: RemoteIMMessageOrigin) async throws
             -> RemoteIMSendReceipt
         {
-            guard let message = try await Self.makeMessage({ V2TIMManager.sharedInstance().createVideoMessage(
-            videoFilePath: video.fileURL.path,
-            type: video.fileType,
-            duration: Int32(clamping: video.durationSeconds),
-            snapshotPath: video.coverFileURL.path
-        ) }) else {
+            guard let message = try await Self.makeMessage({
+                let message = V2TIMManager.sharedInstance().createVideoMessage(
+                    videoFilePath: video.fileURL.path,
+                    type: video.fileType,
+                    duration: Int32(clamping: video.durationSeconds),
+                    snapshotPath: video.coverFileURL.path)
+                return Self.attachCaption(caption, to: message, firstElem: message?.videoElem)
+            }) else {
             Self.logMessageCreateFailure(kind: "video", peerUserID: userID)
             throw RemoteIMClientError.operationFailed(code: -1, description: "create video message failed")
         }
@@ -467,6 +476,9 @@ final class TencentIMClient:
             to: userID,
             kind: "video",
             origin: origin,
+            cloudMetadata: RemoteIMCloudMetadata(origin: origin,
+                captionAbove: captionAbove &&
+                    caption?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false),
             metadata: [
                 "duration_seconds": String(video.durationSeconds),
                 "width": String(video.width),
@@ -477,13 +489,15 @@ final class TencentIMClient:
         )
     }
 
-        func sendFile(to userID: String, file: RemoteIMFile, origin: RemoteIMMessageOrigin) async throws
+        func sendFile(to userID: String, file: RemoteIMFile, caption: String?,
+                      captionAbove: Bool, origin: RemoteIMMessageOrigin) async throws
             -> RemoteIMSendReceipt
         {
-            guard let message = try await Self.makeMessage({ V2TIMManager.sharedInstance().createFileMessage(
-            filePath: file.fileURL.path,
-            fileName: file.fileName
-        ) }) else {
+            guard let message = try await Self.makeMessage({
+                let message = V2TIMManager.sharedInstance().createFileMessage(
+                    filePath: file.fileURL.path, fileName: file.fileName)
+                return Self.attachCaption(caption, to: message, firstElem: message?.fileElem)
+            }) else {
             Self.logMessageCreateFailure(kind: "file", peerUserID: userID)
             throw RemoteIMClientError.operationFailed(code: -1, description: "create file message failed")
         }
@@ -492,6 +506,9 @@ final class TencentIMClient:
             to: userID,
             kind: "file",
             origin: origin,
+            cloudMetadata: RemoteIMCloudMetadata(origin: origin,
+                captionAbove: captionAbove &&
+                    caption?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false),
             metadata: [
                 "bytes": file.sizeBytes.map(String.init) ?? "unknown",
                 "mime_type": file.mimeType,
@@ -757,6 +774,19 @@ final class TencentIMClient:
                 continuation.resume(returning: value.map { PreparedSDKMessage(value: $0, account: account) })
             }
         }
+    }
+
+    /// 在 SDK 创建的媒体消息后追加文本元素；两者共用同一个云端消息 ID。
+    private nonisolated static func attachCaption(
+        _ caption: String?, to message: V2TIMMessage?, firstElem: V2TIMElem?
+    ) -> V2TIMMessage? {
+        guard let cleanCaption = caption?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !cleanCaption.isEmpty else { return message }
+        guard let message, let firstElem else { return nil }
+        let text = V2TIMTextElem()
+        text.text = cleanCaption
+        firstElem.appendElem(elem: text)
+        return message
     }
 
     /// 按消息类型提交腾讯 IM 发送请求并回传稳定结果。
@@ -1947,17 +1977,20 @@ final class TencentIMClient: RemoteIMClient {
         { throw RemoteIMClientError.sdkNotIntegrated
     }
 
-        func sendImage(to userID: String, image: RemoteIMImageFile, origin: RemoteIMMessageOrigin) async throws
+        func sendImage(to userID: String, image: RemoteIMImageFile, caption: String?,
+                       captionAbove: Bool, origin: RemoteIMMessageOrigin) async throws
             -> RemoteIMSendReceipt
         { throw RemoteIMClientError.sdkNotIntegrated
     }
 
-        func sendVideo(to userID: String, video: RemoteIMVideoFile, origin: RemoteIMMessageOrigin) async throws
+        func sendVideo(to userID: String, video: RemoteIMVideoFile, caption: String?,
+                       captionAbove: Bool, origin: RemoteIMMessageOrigin) async throws
             -> RemoteIMSendReceipt
         { throw RemoteIMClientError.sdkNotIntegrated
     }
 
-        func sendFile(to userID: String, file: RemoteIMFile, origin: RemoteIMMessageOrigin) async throws
+        func sendFile(to userID: String, file: RemoteIMFile, caption: String?,
+                      captionAbove: Bool, origin: RemoteIMMessageOrigin) async throws
             -> RemoteIMSendReceipt
         { throw RemoteIMClientError.sdkNotIntegrated
     }

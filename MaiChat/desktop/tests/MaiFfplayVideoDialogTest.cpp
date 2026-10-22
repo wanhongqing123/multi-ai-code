@@ -60,10 +60,49 @@ private slots:
     void exposesSaveAndForwardActions();
     void opensControlsAndClosesVideoPopup_data();
     void opensControlsAndClosesVideoPopup();
+    void opensAtRequestedSourceTime();
     void slowedPlaybackExtendsAudibleOutput();
     void localVideoShowsPixels();
     void mainWindowDocksSamePlayerAcrossNavigationAndFullscreen();
 };
+
+void MaiFfplayVideoDialogTest::opensAtRequestedSourceTime() {
+    QWidget host;
+    MaiToolRegistry registry;
+    registerDesktopMediaTools(registry, &host);
+    MaiTool* openTool = registry.find("maichat_play_video");
+    QVERIFY(openTool != nullptr);
+    QVERIFY(QString::fromStdString(openTool->parametersSchema()).contains(
+        QStringLiteral("start_seconds")));
+    MaiToolContext context;
+    const QFileInfo fixture(QStringLiteral(MAICHAT_FFPLAY_VIDEO_FIXTURE));
+    context.root = fixture.dir().absolutePath().toStdString();
+    QVERIFY(openTool->execute(R"({"path":"unused.mp4","start_seconds":-1})", context)
+                .hasError());
+    QVERIFY(openTool->execute(R"({"path":"unused.mp4","start_seconds":"1"})", context)
+                .hasError());
+    const MaiToolResult opened = openTool->execute(
+        QStringLiteral("{\"path\":\"%1\",\"start_seconds\":1.0}")
+            .arg(fixture.fileName()).toStdString(), context);
+    QVERIFY2(!opened.hasError(), opened.error().message().c_str());
+    const auto result = QJsonDocument::fromJson(QByteArray::fromStdString(opened.output())).object();
+    QCOMPARE(result.value(QStringLiteral("start_seconds")).toDouble(), 1.0);
+    QPointer<MaiFfplayVideoDialog> dialog = MaiFfplayVideoDialog::activeDialog();
+    QVERIFY(dialog);
+    MaiFfplayPlaybackStatus status{};
+    int64_t firstPosition = -1;
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < 4000 && firstPosition < 0) {
+        QCoreApplication::processEvents();
+        if (maiFfplayGetPlaybackStatus(&status) && status.position_us > 0)
+            firstPosition = status.position_us;
+        else QTest::qWait(10);
+    }
+    QVERIFY2(firstPosition >= 500'000, "playback started before the requested source time");
+    dialog->close();
+    QTRY_VERIFY(dialog.isNull());
+}
 
 void MaiFfplayVideoDialogTest::mainWindowDocksSamePlayerAcrossNavigationAndFullscreen() {
     auto client = std::make_unique<FakeRemoteIMClient>();

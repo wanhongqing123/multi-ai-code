@@ -2033,7 +2033,10 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                     width: attachment.width,
                     height: attachment.height,
                     sizeBytes: attachment.sizeBytes
-                )
+                ),
+                caption: message.mediaCaptionForForwarding,
+                captionAbove: message.captionAbove,
+                origin: .human
             )
         }
         if let attachment = message.fileAttachment {
@@ -2044,7 +2047,10 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                     fileName: attachment.fileName,
                     mimeType: attachment.mimeType,
                     sizeBytes: attachment.sizeBytes
-                )
+                ),
+                caption: message.mediaCaptionForForwarding,
+                captionAbove: message.captionAbove,
+                origin: .human
             )
         }
         if let attachment = message.voiceAttachment {
@@ -2069,7 +2075,10 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                     width: attachment.width,
                     height: attachment.height,
                     sizeBytes: attachment.sizeBytes
-                )
+                ),
+                caption: message.mediaCaptionForForwarding,
+                captionAbove: message.captionAbove,
+                origin: .human
             )
         }
         return try await client.sendText(
@@ -2189,7 +2198,8 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     }
 
     @discardableResult
-    func sendImageFile(_ image: RemoteIMImageFile, to recipient: String? = nil) async -> Bool {
+    func sendImageFile(_ image: RemoteIMImageFile, to recipient: String? = nil,
+                       caption: String? = nil, captionAbove: Bool = false) async -> Bool {
         guard let peerID = outgoingRecipient(recipient) else { return false }
 
         let identity = remoteDiagnosticsIdentity
@@ -2200,12 +2210,15 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 width: image.width,
                 height: image.height,
                 sizeBytes: image.sizeBytes,
-                to: peerID
+                to: peerID,
+                caption: caption,
+                captionAbove: captionAbove
             )
             queuedMessageID = message.id
             locallyQueuedMessageID = message.id
             enqueueHistoryUpsert(message)
-            let receipt = try await client.sendImage(to: message.toUserID, image: image)
+            let receipt = try await client.sendImage(to: message.toUserID, image: image,
+                caption: caption, captionAbove: captionAbove, origin: .human)
             guard remoteDiagnosticsIdentity == identity else { return false }
             try chatState.updateMessageDelivery(
                 id: message.id,
@@ -2227,7 +2240,8 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     }
 
     @discardableResult
-    func sendVideoFile(_ video: RemoteIMVideoFile, to recipient: String? = nil) async -> Bool {
+    func sendVideoFile(_ video: RemoteIMVideoFile, to recipient: String? = nil,
+                       caption: String? = nil, captionAbove: Bool = false) async -> Bool {
         guard let peerID = outgoingRecipient(recipient) else { return false }
 
         let identity = remoteDiagnosticsIdentity
@@ -2240,12 +2254,15 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 width: video.width,
                 height: video.height,
                 sizeBytes: video.sizeBytes,
-                to: peerID
+                to: peerID,
+                caption: caption,
+                captionAbove: captionAbove
             )
             queuedMessageID = message.id
             locallyQueuedMessageID = message.id
             enqueueHistoryUpsert(message)
-            let receipt = try await client.sendVideo(to: message.toUserID, video: video)
+            let receipt = try await client.sendVideo(to: message.toUserID, video: video,
+                caption: caption, captionAbove: captionAbove, origin: .human)
             guard remoteDiagnosticsIdentity == identity else { return false }
             try chatState.updateMessageDelivery(
                 id: message.id,
@@ -2267,7 +2284,8 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     }
 
     @discardableResult
-    func sendFile(_ file: RemoteIMFile, to recipient: String? = nil) async -> Bool {
+    func sendFile(_ file: RemoteIMFile, to recipient: String? = nil,
+                  caption: String? = nil, captionAbove: Bool = false) async -> Bool {
         guard let peerID = outgoingRecipient(recipient) else { return false }
 
         let identity = remoteDiagnosticsIdentity
@@ -2278,12 +2296,15 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 fileName: file.fileName,
                 mimeType: file.mimeType,
                 sizeBytes: file.sizeBytes,
-                to: peerID
+                to: peerID,
+                caption: caption,
+                captionAbove: captionAbove
             )
             queuedMessageID = message.id
             locallyQueuedMessageID = message.id
             enqueueHistoryUpsert(message)
-            let receipt = try await client.sendFile(to: message.toUserID, file: file)
+            let receipt = try await client.sendFile(to: message.toUserID, file: file,
+                caption: caption, captionAbove: captionAbove, origin: .human)
             guard remoteDiagnosticsIdentity == identity else { return false }
             try chatState.updateMessageDelivery(
                 id: message.id,

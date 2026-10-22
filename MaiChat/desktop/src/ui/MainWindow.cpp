@@ -5439,11 +5439,12 @@ bool MainWindow::composerTextPrecedesFirstAttachment(
   return !before.trimmed().isEmpty();
 }
 
-bool MainWindow::openDockedVideo(const QString &path, const QStringList &playlist) {
+bool MainWindow::openDockedVideo(const QString &path, const QStringList &playlist,
+                                 int64_t startPositionUs) {
 #if defined(MAICHAT_HAS_FFPLAY)
   if (!videoDockSlot_ || !QFileInfo(path).isFile()) return false;
   if (auto active = MaiFfplayVideoDialog::activeDialog()) active->close();
-  auto *dialog = new MaiFfplayVideoDialog(path, this);
+  auto *dialog = new MaiFfplayVideoDialog(path, this, startPositionUs);
   dialog->setObjectName(QStringLiteral("dockedVideoPlayer"));
   dialog->setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);
   dialog->setMinimumSize(0, 0);
@@ -5469,6 +5470,7 @@ bool MainWindow::openDockedVideo(const QString &path, const QStringList &playlis
 #else
   Q_UNUSED(path);
   Q_UNUSED(playlist);
+  Q_UNUSED(startPositionUs);
   return false;
 #endif
 }

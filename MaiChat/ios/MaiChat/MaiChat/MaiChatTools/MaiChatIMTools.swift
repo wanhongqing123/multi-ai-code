@@ -197,25 +197,23 @@ extension AIMobileHostToolProvider {
             switch kind {
             case "image":
                 let image = try await Self.prepareAgentImage(source)
-                sent = await appState.sendImageFile(image, to: peerID)
+                sent = await appState.sendImageFile(image, to: peerID, caption: caption)
             case "video":
                 let video = try await Self.prepareAgentVideo(source)
-                sent = await appState.sendVideoFile(video, to: peerID)
+                sent = await appState.sendVideoFile(video, to: peerID, caption: caption)
             default:
                 let audio = try await Self.prepareAgentAudio(source)
-                sent = await appState.sendFile(audio, to: peerID)
+                sent = await appState.sendFile(audio, to: peerID, caption: caption)
             }
             guard sent else {
                 return .failure(code: "internal",
                                 message: appState.errorMessage ?? "MaiChat did not send the media")
             }
             let mediaMessageID = appState.locallyQueuedMessageID?.uuidString ?? ""
-            var captionSent = true
-            if !caption.isEmpty { captionSent = await appState.sendText(caption, to: peerID) }
             return Self.jsonSuccess([
                 "sent": true, "peer_id": peerID, "type": kind,
                 "message_kind": kind == "audio" ? "file" : kind,
-                "message_id": mediaMessageID, "caption_sent": captionSent,
+                "message_id": mediaMessageID, "caption_attached": !caption.isEmpty,
             ])
         } catch {
             return .failure(code: "internal", message: error.localizedDescription)

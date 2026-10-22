@@ -87,8 +87,9 @@ QString bundledResource(const QString& relative) {
 }  // namespace
 
 // 构造时一次性连接播放器、进度条和窗口关闭行为；关闭需停止解码与音频后再销毁界面。
-MaiFfplayVideoDialog::MaiFfplayVideoDialog(const QString& path, QWidget* parent)
-    : QDialog(parent), path_(path) {
+MaiFfplayVideoDialog::MaiFfplayVideoDialog(const QString& path, QWidget* parent,
+                                           int64_t startPositionUs)
+    : QDialog(parent), path_(path), startPositionUs_(std::max<int64_t>(0, startPositionUs)) {
     setWindowTitle(QFileInfo(path).fileName());
     setMinimumSize(640, 420);
 #if defined(Q_OS_MAC)

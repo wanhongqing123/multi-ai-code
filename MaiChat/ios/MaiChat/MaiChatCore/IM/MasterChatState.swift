@@ -1221,6 +1221,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
     public let fromUserID: String
     public let toUserID: String
     public var text: String
+    public var mediaCaption: String?
     public var captionAbove: Bool
     public var quote: RemoteIMQuote?
     public let voiceAttachment: RemoteIMVoiceAttachment?
@@ -1239,6 +1240,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
         fromUserID: String,
         toUserID: String,
         text: String,
+        mediaCaption: String? = nil,
         captionAbove: Bool = false,
         quote: RemoteIMQuote? = nil,
         voiceAttachment: RemoteIMVoiceAttachment? = nil,
@@ -1256,6 +1258,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
         self.fromUserID = fromUserID
         self.toUserID = toUserID
         self.text = text
+        self.mediaCaption = mediaCaption
         self.captionAbove = captionAbove
         self.quote = quote
         self.voiceAttachment = voiceAttachment
@@ -1275,6 +1278,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
         case fromUserID
         case toUserID
         case text
+        case mediaCaption
         case captionAbove
         case quote
         case voiceAttachment
@@ -1297,6 +1301,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
         fromUserID = try container.decode(String.self, forKey: .fromUserID)
         toUserID = try container.decode(String.self, forKey: .toUserID)
         text = try container.decode(String.self, forKey: .text)
+        mediaCaption = try container.decodeIfPresent(String.self, forKey: .mediaCaption)
         captionAbove = try container.decodeIfPresent(Bool.self, forKey: .captionAbove) ?? false
         quote = try container.decodeIfPresent(RemoteIMQuote.self, forKey: .quote)
         voiceAttachment = try container.decodeIfPresent(RemoteIMVoiceAttachment.self, forKey: .voiceAttachment)
@@ -1317,6 +1322,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
         try container.encode(fromUserID, forKey: .fromUserID)
         try container.encode(toUserID, forKey: .toUserID)
         try container.encode(text, forKey: .text)
+        try container.encodeIfPresent(mediaCaption, forKey: .mediaCaption)
         if captionAbove {
             try container.encode(true, forKey: .captionAbove)
         }
@@ -1330,6 +1336,19 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
         try container.encode(direction, forKey: .direction)
         try container.encode(status, forKey: .status)
         try container.encode(createdAt, forKey: .createdAt)
+    }
+
+    /// 旧历史只保存 text，新历史另存说明；转发时不把附件占位文字当作说明。
+    public var mediaCaptionForForwarding: String? {
+        guard imageAttachment != nil || videoAttachment != nil || fileAttachment != nil else {
+            return nil
+        }
+        if let mediaCaption, !mediaCaption.isEmpty { return mediaCaption }
+        let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty,
+              !["[图片消息]", "[视频消息]", "[文件消息]"].contains(where: clean.hasPrefix)
+        else { return nil }
+        return clean
     }
 
     public var isVoiceMessage: Bool {
@@ -1904,16 +1923,17 @@ public struct MasterChatState: Equatable {
         let cleanPeerID = peerID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanPeerID.isEmpty else { throw MasterChatStateError.noSelectedPeer }
         let cleanText = source.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let mediaCaption = source.mediaCaptionForForwarding
         let displayText: String
         if source.imageAttachment != nil {
-            displayText = "[图片消息]"
+            displayText = mediaCaption ?? "[图片消息]"
         } else if let file = source.fileAttachment {
-            displayText = Self.fileDisplayText(
+            displayText = mediaCaption ?? Self.fileDisplayText(
                 fileName: file.fileName,
                 filePath: file.localFilePath
             )
         } else if let video = source.videoAttachment {
-            displayText = Self.videoDisplayText(durationSeconds: video.durationSeconds)
+            displayText = mediaCaption ?? Self.videoDisplayText(durationSeconds: video.durationSeconds)
         } else if let voice = source.voiceAttachment {
             displayText = Self.voiceDisplayText(durationSeconds: voice.durationSeconds)
         } else {
@@ -1924,6 +1944,8 @@ public struct MasterChatState: Equatable {
             fromUserID: ownerUserID,
             toUserID: cleanPeerID,
             text: displayText,
+            mediaCaption: mediaCaption,
+            captionAbove: mediaCaption != nil && source.captionAbove,
             voiceAttachment: source.voiceAttachment,
             imageAttachment: source.imageAttachment,
             fileAttachment: source.fileAttachment,
@@ -2001,6 +2023,8 @@ public struct MasterChatState: Equatable {
         height: Int? = nil,
         sizeBytes: Int? = nil,
         to targetPeerID: String? = nil,
+        caption: String? = nil,
+        captionAbove: Bool = false,
         now: Date = Date()
     ) throws -> RemoteIMMessage {
         let cleanFilePath = filePath.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2015,10 +2039,14 @@ public struct MasterChatState: Equatable {
             height: height,
             sizeBytes: sizeBytes
         )
+        let cleanCaption = caption?.trimmingCharacters(in: .whitespacesAndNewlines)
         let message = RemoteIMMessage(
             fromUserID: ownerUserID,
             toUserID: peerID,
-            text: Self.imageDisplayText(filePath: cleanFilePath),
+            text: cleanCaption?.isEmpty == false ? cleanCaption! :
+                Self.imageDisplayText(filePath: cleanFilePath),
+            mediaCaption: cleanCaption?.isEmpty == false ? cleanCaption : nil,
+            captionAbove: cleanCaption?.isEmpty == false && captionAbove,
             imageAttachment: imageAttachment,
             direction: .outgoing,
             status: .pending,
@@ -2037,6 +2065,8 @@ public struct MasterChatState: Equatable {
         height: Int,
         sizeBytes: Int64,
         to targetPeerID: String? = nil,
+        caption: String? = nil,
+        captionAbove: Bool = false,
         now: Date = Date()
     ) throws -> RemoteIMMessage {
         let cleanFilePath = filePath.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2053,10 +2083,14 @@ public struct MasterChatState: Equatable {
             height: height,
             sizeBytes: sizeBytes
         )
+        let cleanCaption = caption?.trimmingCharacters(in: .whitespacesAndNewlines)
         let message = RemoteIMMessage(
             fromUserID: ownerUserID,
             toUserID: peerID,
-            text: Self.videoDisplayText(durationSeconds: videoAttachment.durationSeconds),
+            text: cleanCaption?.isEmpty == false ? cleanCaption! :
+                Self.videoDisplayText(durationSeconds: videoAttachment.durationSeconds),
+            mediaCaption: cleanCaption?.isEmpty == false ? cleanCaption : nil,
+            captionAbove: cleanCaption?.isEmpty == false && captionAbove,
             videoAttachment: videoAttachment,
             direction: .outgoing,
             status: .pending,
@@ -2073,6 +2107,8 @@ public struct MasterChatState: Equatable {
         mimeType: String,
         sizeBytes: Int? = nil,
         to targetPeerID: String? = nil,
+        caption: String? = nil,
+        captionAbove: Bool = false,
         now: Date = Date()
     ) throws -> RemoteIMMessage {
         let cleanFilePath = filePath.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2087,13 +2123,14 @@ public struct MasterChatState: Equatable {
             mimeType: mimeType,
             sizeBytes: sizeBytes
         )
+        let cleanCaption = caption?.trimmingCharacters(in: .whitespacesAndNewlines)
         let message = RemoteIMMessage(
             fromUserID: ownerUserID,
             toUserID: peerID,
-            text: Self.fileDisplayText(
-                fileName: fileAttachment.fileName,
-                filePath: cleanFilePath
-            ),
+            text: cleanCaption?.isEmpty == false ? cleanCaption! :
+                Self.fileDisplayText(fileName: fileAttachment.fileName, filePath: cleanFilePath),
+            mediaCaption: cleanCaption?.isEmpty == false ? cleanCaption : nil,
+            captionAbove: cleanCaption?.isEmpty == false && captionAbove,
             fileAttachment: fileAttachment,
             direction: .outgoing,
             status: .pending,
@@ -2201,6 +2238,7 @@ public struct MasterChatState: Equatable {
             text: cleanCaption?.isEmpty == false
                 ? cleanCaption!
                 : Self.imageDisplayText(filePath: cleanFilePath),
+            mediaCaption: cleanCaption?.isEmpty == false ? cleanCaption : nil,
             captionAbove: cleanCaption?.isEmpty == false && captionAbove,
             quote: quote,
             imageAttachment: imageAttachment,
@@ -2263,6 +2301,7 @@ public struct MasterChatState: Equatable {
             )
             if let cleanCaption, !cleanCaption.isEmpty {
                 messages[index].text = cleanCaption
+                messages[index].mediaCaption = cleanCaption
                 messages[index].captionAbove = captionAbove
             }
             replaceCachedMessage(previous: previousMessage, updated: messages[index])
@@ -2277,6 +2316,7 @@ public struct MasterChatState: Equatable {
             text: cleanCaption?.isEmpty == false
                 ? cleanCaption!
                 : Self.videoDisplayText(durationSeconds: attachment.durationSeconds),
+            mediaCaption: cleanCaption?.isEmpty == false ? cleanCaption : nil,
             captionAbove: cleanCaption?.isEmpty == false && captionAbove,
             quote: quote,
             videoAttachment: attachment,
@@ -2322,6 +2362,7 @@ public struct MasterChatState: Equatable {
             text: cleanCaption?.isEmpty == false
                 ? cleanCaption!
                 : Self.fileDisplayText(fileName: fileAttachment.fileName, filePath: cleanFilePath),
+            mediaCaption: cleanCaption?.isEmpty == false ? cleanCaption : nil,
             captionAbove: cleanCaption?.isEmpty == false && captionAbove,
             quote: quote,
             fileAttachment: fileAttachment,

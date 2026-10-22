@@ -4,6 +4,13 @@
 import XCTest
 @testable import MaiChatCore
 
+// 轻量测试目标编译消息布局，但不链接 App 的诊断服务。
+final class AppDiagnosticLog: @unchecked Sendable {
+    enum Level { case warning }
+    static let shared = AppDiagnosticLog()
+    func record(level: Level, category: String, event: String, fields: [String: String]) {}
+}
+
 final class MasterChatStateTests: XCTestCase {
     func testFriendLinkCarriesOnlyAccountIDAndRejectsOtherQRTypes() throws {
         let userID = "u0123456789abcdef01234567"
@@ -61,6 +68,29 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertEqual([voice, image, video, file].map(\.toUserID), Array(repeating: "peer-a", count: 4))
         XCTAssertTrue(state.messages(with: "peer-b").isEmpty)
         XCTAssertEqual(state.selectedPeerID, "peer-b")
+    }
+
+    func testOutgoingMediaCaptionStaysWithItsAttachmentWhenForwarded() throws {
+        var state = MasterChatState(ownerUserID: "owner")
+        try state.upsertFriend(userID: "alice")
+        try state.upsertFriend(userID: "bob")
+        let image = try state.queueOutgoingImage(
+            filePath: "/tmp/agent-image.png", to: "alice", caption: "  生成的图片  ")
+        let video = try state.queueOutgoingVideo(
+            filePath: "/tmp/agent-video.mp4", coverPath: nil,
+            durationSeconds: 8, width: 1280, height: 720, sizeBytes: 400,
+            to: "alice", caption: "生成的视频")
+        let file = try state.queueOutgoingFile(
+            filePath: "/tmp/agent-audio.mp3", fileName: "agent-audio.mp3",
+            mimeType: "audio/mpeg", to: "alice", caption: "生成的音频")
+        XCTAssertEqual(state.messages(with: "alice").count, 3)
+        XCTAssertEqual([image, video, file].map(\.mediaCaption),
+                       ["生成的图片", "生成的视频", "生成的音频"])
+        let forwarded = try state.queueForwardedMessage(video, to: "bob")
+        XCTAssertEqual(forwarded.text, "生成的视频")
+        XCTAssertEqual(forwarded.mediaCaptionForForwarding, "生成的视频")
+        XCTAssertNotNil(forwarded.videoAttachment)
+        XCTAssertEqual(state.messages(with: "bob").count, 1)
     }
 
     func testGitDiffDisplayPolicyOnlyRecognizesGeneratedHtmlArtifacts() {

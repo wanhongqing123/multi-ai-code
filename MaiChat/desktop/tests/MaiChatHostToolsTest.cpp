@@ -97,8 +97,10 @@ void MaiChatHostToolsTest::sendsAgentImageAsPersistentMediaMessage() {
       R"({"peer_id":"alice","file_path":"picture.png","type":"image","caption":"Processed image"})",
       context);
   QVERIFY2(!sent.hasError(), sent.error().message().c_str());
+  const auto sentBody = QJsonDocument::fromJson(QByteArray::fromStdString(sent.output())).object();
+  QCOMPARE(sentBody.value(QStringLiteral("caption_attached")).toBool(), true);
   const auto messages = app.chatState().messagesWith(QStringLiteral("alice"));
-  QVERIFY(!messages.isEmpty());
+  QCOMPARE(messages.size(), 1);
   QVERIFY(messages.last().hasImage);
   QCOMPARE(messages.last().text, QStringLiteral("Processed image"));
   QVERIFY(QFileInfo(messages.last().image.localPath).isFile());

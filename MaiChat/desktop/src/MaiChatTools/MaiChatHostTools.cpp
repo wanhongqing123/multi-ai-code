@@ -310,6 +310,7 @@ private:
       return jsonResult({{QStringLiteral("queued"), true},
                          {QStringLiteral("peer_id"), peerId},
                          {QStringLiteral("type"), kind},
+                         {QStringLiteral("caption_attached"), !caption.isEmpty()},
                          {QStringLiteral("message_kind"),
                           kind == QStringLiteral("audio") ? QStringLiteral("file") : kind},
                          {QStringLiteral("path"), copiedPath}});

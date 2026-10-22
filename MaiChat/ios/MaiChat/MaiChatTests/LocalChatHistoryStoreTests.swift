@@ -71,6 +71,7 @@ final class LocalChatHistoryStoreTests: XCTestCase {
             fromUserID: "mac-quark-pc",
             toUserID: "ios-master",
             text: "文字在上面",
+            mediaCaption: "文字在上面",
             captionAbove: true,
             imageAttachment: RemoteIMImageAttachment(
                 localFilePath: "/tmp/captioned.png",
@@ -86,6 +87,7 @@ final class LocalChatHistoryStoreTests: XCTestCase {
             conversationMessages(in: store, peerUserID: "mac-quark-pc").first
         )
         XCTAssertEqual(restored.text, "文字在上面")
+        XCTAssertEqual(restored.mediaCaption, "文字在上面")
         XCTAssertTrue(restored.captionAbove)
         XCTAssertNotNil(restored.imageAttachment)
     }
@@ -589,14 +591,15 @@ final class LocalChatHistoryStoreTests: XCTestCase {
         let openedVersionStatement = try XCTUnwrap(versionStatement)
         defer { sqlite3_finalize(openedVersionStatement) }
         XCTAssertEqual(sqlite3_step(openedVersionStatement), SQLITE_ROW)
-        XCTAssertEqual(sqlite3_column_int(openedVersionStatement, 0), 7)
+        XCTAssertEqual(sqlite3_column_int(openedVersionStatement, 0), 8)
 
         var columnStatement: OpaquePointer?
         XCTAssertEqual(
             sqlite3_prepare_v2(
                 migratedDatabase,
                 "SELECT COUNT(*) FROM pragma_table_info('messages') " +
-                    "WHERE name IN ('video_attachment', 'approval_decision', 'caption_above')",
+                    "WHERE name IN ('video_attachment', 'approval_decision', " +
+                    "'caption_above', 'media_caption')",
                 -1,
                 &columnStatement,
                 nil
@@ -606,7 +609,7 @@ final class LocalChatHistoryStoreTests: XCTestCase {
         let openedColumnStatement = try XCTUnwrap(columnStatement)
         defer { sqlite3_finalize(openedColumnStatement) }
         XCTAssertEqual(sqlite3_step(openedColumnStatement), SQLITE_ROW)
-        XCTAssertEqual(sqlite3_column_int(openedColumnStatement, 0), 3)
+        XCTAssertEqual(sqlite3_column_int(openedColumnStatement, 0), 4)
 
         var approvalColumnStatement: OpaquePointer?
         XCTAssertEqual(

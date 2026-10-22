@@ -42,7 +42,7 @@ public class AIAssistantInstrumentedTest {
     public void localMusicPlayerPlaysSelectedWavAndStops() throws Exception {
         Context app = InstrumentationRegistry.getInstrumentation().getTargetContext();
         File music = new File(app.getCacheDir(), "local-music-test-" + UUID.randomUUID() + ".wav");
-        final int dataBytes = 48_000;
+        final int dataBytes = 160_000;
         ByteBuffer wav = ByteBuffer.allocate(44 + dataBytes).order(ByteOrder.LITTLE_ENDIAN);
         wav.put("RIFF".getBytes(StandardCharsets.US_ASCII)).putInt(36 + dataBytes);
         wav.put("WAVEfmt ".getBytes(StandardCharsets.US_ASCII));
@@ -53,7 +53,13 @@ public class AIAssistantInstrumentedTest {
         try (ActivityScenario<AIAssistantTestActivity> scenario =
                  ActivityScenario.launch(AIAssistantTestActivity.class)) {
             scenario.onActivity(activity -> assertTrue(activity.panel.playLocalMusic(music)));
-            assertNotNull(awaitSystemText("正在播放 · 本地文件", 3_000));
+            assertNotNull(awaitSystemText("音乐播放器 · 本地文件", 3_000));
+            AccessibilityNodeInfo back = awaitExactSystemText("返回聊天", 5_000);
+            assertNotNull(back);
+            assertTrue(clickNodeOrParent(back));
+            AccessibilityNodeInfo reopen = awaitExactSystemText("播放器", 3_000);
+            assertNotNull(reopen);
+            assertTrue(clickNodeOrParent(reopen));
             AccessibilityNodeInfo pause = awaitExactSystemText("暂停", 5_000);
             assertNotNull(pause);
             assertTrue(clickNodeOrParent(pause));

@@ -58,6 +58,8 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     private final Activity activity;
     final AIAssistantController controller;
     private final LocalMusicPlayer localMusicPlayer;
+    private final LinearLayout musicMiniBar;
+    private final TextView musicMiniTitle;
     final EditText composer;
     final ImageButton send;
     private final ImageButton voiceModeButton, attachmentOrStopButton;
@@ -130,7 +132,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         super(activity);
         this.activity = activity;
         this.controller = controller;
-        this.localMusicPlayer = new LocalMusicPlayer(activity);
+        this.localMusicPlayer = new LocalMusicPlayer(activity, this::refreshMusicMiniBar);
         this.voiceRecorder = voiceRecorder;
         this.speechRecognizer = speechRecognizer;
         setOrientation(VERTICAL);
@@ -347,6 +349,30 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         LayoutParams sendParams = new LayoutParams(dp(44), dp(44));
         sendParams.setMargins(dp(8), 0, 0, 0);
         inputRow.addView(send, sendParams);
+        musicMiniBar = row();
+        musicMiniBar.setGravity(Gravity.CENTER_VERTICAL);
+        musicMiniBar.setPadding(dp(12), 0, dp(6), 0);
+        musicMiniBar.setBackground(MaiChatTheme.rounded(
+            Color.rgb(232, 244, 252), 11, activity));
+        TextView note = text("♫", 19, MaiChatTheme.BLUE);
+        musicMiniBar.addView(note, new LayoutParams(dp(28), dp(38)));
+        musicMiniTitle = text("", 13, MaiChatTheme.TEXT);
+        musicMiniTitle.setSingleLine(true);
+        musicMiniTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        musicMiniBar.addView(musicMiniTitle, new LayoutParams(0, dp(38), 1));
+        Button reopenMusic = button("播放器", "打开音乐播放器",
+            v -> localMusicPlayer.reopen());
+        reopenMusic.setTextColor(MaiChatTheme.BLUE);
+        reopenMusic.setBackgroundColor(Color.TRANSPARENT);
+        musicMiniBar.addView(reopenMusic, new LayoutParams(dp(74), dp(38)));
+        Button stopMusic = button("×", "停止音乐", v -> localMusicPlayer.close());
+        stopMusic.setTextColor(MaiChatTheme.SECONDARY);
+        stopMusic.setBackgroundColor(Color.TRANSPARENT);
+        musicMiniBar.addView(stopMusic, new LayoutParams(dp(34), dp(38)));
+        musicMiniBar.setVisibility(GONE);
+        LayoutParams musicBarSize = matchWrap();
+        musicBarSize.setMargins(dp(16), dp(6), dp(16), 0);
+        composerArea.addView(musicMiniBar, musicBarSize);
         composerArea.addView(inputRow, matchWrap());
 
         attachmentPanel = row();
@@ -984,6 +1010,12 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     }
     boolean playLocalMusic(File file) { return localMusicPlayer.open(file); }
     void closeLocalMusic() { localMusicPlayer.close(); }
+    private void refreshMusicMiniBar() {
+        if (musicMiniBar == null) return;
+        boolean visible = localMusicPlayer.isActive();
+        musicMiniBar.setVisibility(visible ? VISIBLE : GONE);
+        if (visible) musicMiniTitle.setText(localMusicPlayer.displayName());
+    }
     void cancelPendingAgentLocalMedia() {
         Consumer<String> photo = pendingAgentCamera;
         Consumer<String> music = pendingAgentMusic;
@@ -1878,7 +1910,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                     LayoutParams headingParams = matchWrap();
                     headingParams.setMargins(0, dp(14), 0, 0);
                     welcome.addView(heading, headingParams);
-                    TextView detail = text("问答、拍照、图片视频、文件与本地音乐。", 16,
+                    TextView detail = text("问答、拍照、图片视频、文件与音乐播放。", 16,
                         MaiChatTheme.SECONDARY);
                     detail.setGravity(Gravity.CENTER);
                     LayoutParams detailParams = matchWrap();

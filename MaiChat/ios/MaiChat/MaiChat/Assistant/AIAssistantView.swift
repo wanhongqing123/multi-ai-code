@@ -896,7 +896,7 @@ private struct AIAssistantMessageList: View {
                 welcomeFeature("视频创作", icon: "play.rectangle")
                 welcomeFeature("文件处理", icon: "doc.text")
                 welcomeFeature("拍照", icon: "camera")
-                welcomeFeature("本地音乐", icon: "music.note")
+                welcomeFeature("音乐播放", icon: "music.note")
                 welcomeFeature("相册管理", icon: "photo.on.rectangle")
                 welcomeFeature("MaiChat 消息", icon: "bubble.left.and.bubble.right")
                 welcomeFeature("联系人", icon: "person.2")
@@ -2572,6 +2572,28 @@ private struct AIComposer: View, Equatable {
                 .padding(.top, 10)
                 .accessibilityIdentifier("ai-pending-attachments")
             }
+            if music.isPlaying || music.isLoading {
+                HStack(spacing: 10) {
+                    Image(systemName: "music.note")
+                        .foregroundStyle(RemoteIMStyle.blue)
+                    Text(music.title.isEmpty ? "正在载入音乐…" : music.title)
+                        .font(.system(size: 13, weight: .medium))
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    Button("播放器") { showingMusic = true }
+                        .font(.system(size: 12, weight: .semibold))
+                    Button { music.stop() } label: {
+                        Image(systemName: "xmark")
+                    }
+                    .accessibilityLabel("停止音乐")
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 14).frame(height: 40)
+                .background(RemoteIMStyle.blueSoft,
+                            in: RoundedRectangle(cornerRadius: 11))
+                .padding(.horizontal, 16)
+                .accessibilityIdentifier("ai-music-mini-player")
+            }
             HStack(alignment: .bottom, spacing: 8) {
                 Button {
                     composerEditMenuState = nil
@@ -2925,6 +2947,13 @@ private struct AIComposer: View, Equatable {
                 Task { await importSelectedMedia(items, to: target) }
             }
             .onAppear {
+                #if targetEnvironment(simulator)
+                if ProcessInfo.processInfo.arguments.contains("--ai-music-mini-ui-test"),
+                   let sample = Bundle.main.url(forResource: "ffplay-seek-sample",
+                                                withExtension: "mp4") {
+                    try? music.openLocalFile(sample, title: "测试音乐")
+                }
+                #endif
                 localMediaRequests.presenterActive = true
                 draftSession = snapshot.selected
                 draftImportTarget = draftSession.isEmpty ? model.importTarget() : nil
@@ -2947,6 +2976,7 @@ private struct AIComposer: View, Equatable {
                 }
             }
             .onDisappear {
+                music.stop()
                 if isCameraPresented || importingMusic {
                     localMediaRequests.presenterActive = false
                 } else {
@@ -4235,7 +4265,6 @@ private struct MaiLocalMusicPlayerView: View {
         }
         .padding(24)
         .presentationDetents([.height(440)])
-        .onDisappear { music.stop() }
     }
 
     private func clock(_ seconds: Double) -> String {

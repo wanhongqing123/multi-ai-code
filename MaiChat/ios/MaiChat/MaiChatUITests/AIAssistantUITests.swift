@@ -1066,6 +1066,24 @@ final class AIAssistantUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["测试静音音乐"].exists)
     }
 
+    func testMusicMiniPlayerKeepsChatAvailable() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--ai-music-mini-ui-test"]
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        let mini = app.descendants(matching: .any)
+            .matching(identifier: "ai-music-mini-player").firstMatch
+        XCTAssertTrue(mini.waitForExistence(timeout: 15))
+        XCTAssertTrue(app.descendants(matching: .any)
+            .matching(identifier: "ai-composer").firstMatch.exists)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "creative-center-music-mini-player"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        app.buttons["播放器"].tap()
+        XCTAssertTrue(app.staticTexts["测试音乐"].waitForExistence(timeout: 5))
+    }
+
     func testModelChipOffersTextAndVisionModels() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--ai-ui-test"]

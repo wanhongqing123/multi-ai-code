@@ -23,6 +23,7 @@ import java.util.function.Consumer;
 final class LocalMusicPlayer {
     private static WeakReference<LocalMusicPlayer> active = new WeakReference<>(null);
     private final Activity activity;
+    private final Runnable onStateChanged;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable progressTick = this::refresh;
     private MaiFfplayAudioSession session;
@@ -31,10 +32,24 @@ final class LocalMusicPlayer {
     private TextView time, status, title;
     private Button toggle;
     private File currentFile, stagedFile;
+    private String displayName = "", originName = "";
     private long generation;
     private boolean playing, seeking;
 
-    LocalMusicPlayer(Activity activity) { this.activity = activity; }
+    LocalMusicPlayer(Activity activity, Runnable onStateChanged) {
+        this.activity = activity;
+        this.onStateChanged = onStateChanged;
+    }
+
+    boolean isActive() {
+        return session != null && session.finishedCode() == Integer.MIN_VALUE;
+    }
+
+    String displayName() { return displayName; }
+
+    void reopen() {
+        if (session != null && dialog == null) createDialog();
+    }
 
     static void closeActive() {
         LocalMusicPlayer player = active.get();
@@ -92,12 +107,18 @@ final class LocalMusicPlayer {
 
     private void showPlayer(String name, String origin) {
         close();
+        displayName = name == null || name.trim().isEmpty() ? "音乐" : name.trim();
+        originName = origin;
+        createDialog();
+    }
+
+    private void createDialog() {
         LinearLayout body = new LinearLayout(activity);
         body.setOrientation(LinearLayout.VERTICAL);
         body.setGravity(Gravity.CENTER_HORIZONTAL);
         body.setPadding(dp(22), dp(18), dp(22), dp(10));
         TextView source = new TextView(activity);
-        source.setText("正在播放 · " + origin);
+        source.setText("音乐播放器 · " + originName);
         source.setTextColor(MaiChatTheme.SECONDARY);
         source.setTextSize(13);
         body.addView(source, new LinearLayout.LayoutParams(-1, -2));
@@ -114,7 +135,7 @@ final class LocalMusicPlayer {
         coverSize.setMargins(0, dp(20), 0, dp(16));
         body.addView(artwork, coverSize);
         title = new TextView(activity);
-        title.setText(name == null || name.trim().isEmpty() ? "音乐" : name.trim());
+        title.setText(displayName);
         title.setTextColor(MaiChatTheme.TEXT);
         title.setTextSize(18);
         title.setTypeface(MaiChatTypography.semibold());
@@ -155,8 +176,14 @@ final class LocalMusicPlayer {
         controlsSize.setMargins(0, dp(16), 0, 0);
         body.addView(controls, controlsSize);
         dialog = new AlertDialog.Builder(activity).setView(body)
-            .setNegativeButton("关闭", (d, which) -> close()).create();
-        dialog.setOnDismissListener(ignored -> close());
+            .setNegativeButton("返回聊天", (d, which) -> {}).create();
+        AlertDialog presented = dialog;
+        dialog.setOnDismissListener(ignored -> {
+            if (dialog != presented) return;
+            dialog = null;
+            if (session == null) close();
+            else onStateChanged.run();
+        });
         dialog.show();
         active = new WeakReference<>(this);
         toggle.setOnClickListener(view -> {
@@ -183,6 +210,7 @@ final class LocalMusicPlayer {
                     session.seek((long) (state[1] * (bar.getProgress() / 1000.0)));
             }
         });
+        if (session != null) refresh();
     }
 
     private boolean setFile(File file) {
@@ -201,29 +229,35 @@ final class LocalMusicPlayer {
         toggle.setText("暂停");
         playing = true;
         handler.post(progressTick);
+        onStateChanged.run();
         return true;
     }
 
     private void refresh() {
-        if (session == null || dialog == null || !dialog.isShowing()) return;
+        if (session == null) return;
         long[] state = session.status();
         if (state != null && state.length >= 4 && state[1] > 0) {
             long position = Math.max(0, Math.min(state[0], state[1]));
-            if (!seeking) progress.setProgress((int) (position * 1000 / state[1]));
-            progress.setEnabled(true);
-            time.setText(clock(position) + " / " + clock(state[1]));
-            status.setText("");
+            if (dialog != null) {
+                if (!seeking) progress.setProgress((int) (position * 1000 / state[1]));
+                progress.setEnabled(true);
+                time.setText(clock(position) + " / " + clock(state[1]));
+                status.setText("");
+            }
             playing = state[3] == 0;
-            toggle.setText(playing ? "暂停" : "播放");
+            if (dialog != null) toggle.setText(playing ? "暂停" : "播放");
         } else {
             int code = session.finishedCode();
             if (code != Integer.MIN_VALUE) {
-                toggle.setText("重播");
+                if (dialog != null) toggle.setText("重播");
                 playing = false;
-                if (code != 0) status.setText("这首歌无法用 FFplay 播放");
+                if (code != 0 && dialog != null)
+                    status.setText("这首歌无法用 FFplay 播放");
+                onStateChanged.run();
                 return;
             }
         }
+        onStateChanged.run();
         handler.removeCallbacks(progressTick);
         handler.postDelayed(progressTick, 250);
     }
@@ -232,6 +266,7 @@ final class LocalMusicPlayer {
         handler.removeCallbacks(progressTick);
         if (session != null) { session.close(); session = null; }
         playing = false;
+        onStateChanged.run();
     }
 
     void close() {
@@ -243,6 +278,7 @@ final class LocalMusicPlayer {
         dialog = null;
         if (previous != null && previous.isShowing()) previous.dismiss();
         if (active.get() == this) active.clear();
+        onStateChanged.run();
     }
 
     private static String clock(long microseconds) {

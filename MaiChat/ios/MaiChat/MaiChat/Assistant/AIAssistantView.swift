@@ -894,6 +894,8 @@ private struct AIAssistantMessageList: View {
                 welcomeFeature("图片创作", icon: "photo")
                 welcomeFeature("视频创作", icon: "play.rectangle")
                 welcomeFeature("文件处理", icon: "doc.text")
+                welcomeFeature("拍照", icon: "camera")
+                welcomeFeature("本地音乐", icon: "music.note")
                 welcomeFeature("相册管理", icon: "photo.on.rectangle")
                 welcomeFeature("MaiChat 消息", icon: "bubble.left.and.bubble.right")
                 welcomeFeature("联系人", icon: "person.2")

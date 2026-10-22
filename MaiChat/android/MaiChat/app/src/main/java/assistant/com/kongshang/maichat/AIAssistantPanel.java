@@ -1751,7 +1751,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                     LayoutParams headingParams = matchWrap();
                     headingParams.setMargins(0, dp(14), 0, 0);
                     welcome.addView(heading, headingParams);
-                    TextView detail = text("可以聊天、分析文本和处理导入的文件。", 16,
+                    TextView detail = text("问答、拍照、图片视频、文件与本地音乐。", 16,
                         MaiChatTheme.SECONDARY);
                     detail.setGravity(Gravity.CENTER);
                     LayoutParams detailParams = matchWrap();

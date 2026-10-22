@@ -45,6 +45,49 @@ final class AIMobileHostToolProvider {
 
         switch name {
         case "mobile_export_diagnostics": return await exportDiagnostics()
+        case "mobile_take_photo":
+            do {
+                let model = AIAssistantModel.shared
+                let path = try await AIMobileLocalMediaRequests.shared.requestCamera(
+                    in: model.selected, workspacePath: model.workspacePath)
+                return Self.jsonSuccess(["path": path, "mime_type": "image/jpeg"])
+            } catch let error as AIMobileLocalMediaRequestError {
+                return .failure(code: Self.localMediaErrorCode(error),
+                                message: error.localizedDescription)
+            } catch {
+                return .failure(code: "internal", message: error.localizedDescription)
+            }
+        case "mobile_play_local_music":
+            let path = Self.string(arguments, key: "path")
+            if path.isEmpty {
+                do {
+                    let fileName = try await AIMobileLocalMediaRequests.shared.requestMusicSelection()
+                    return Self.jsonSuccess(["opened": true, "file_name": fileName])
+                } catch let error as AIMobileLocalMediaRequestError {
+                    return .failure(code: Self.localMediaErrorCode(error),
+                                    message: error.localizedDescription)
+                } catch {
+                    return .failure(code: "internal", message: error.localizedDescription)
+                }
+            }
+            let workspace = URL(fileURLWithPath: AIAssistantModel.shared.workspacePath,
+                                isDirectory: true).resolvingSymlinksInPath()
+            guard AIMobileLocalMediaRequests.shared.presenterActive,
+                  !AIAssistantModel.shared.workspacePath.isEmpty,
+                  ["mp3", "m4a", "wav"].contains(URL(fileURLWithPath: path).pathExtension.lowercased()),
+                  let file = AIAssistantPathPolicy.resolve(
+                    path, workspacePath: AIAssistantModel.shared.workspacePath),
+                  file.resolvingSymlinksInPath().path.hasPrefix(workspace.path + "/"),
+                  FileManager.default.fileExists(atPath: file.path) else {
+                return .failure(code: "invalid_input", message: "select an accessible MP3, M4A, or WAV")
+            }
+            do {
+                try MaiLocalMusicPlayer.shared.openLocalFile(file)
+                AIMobileLocalMediaRequests.shared.showMusic()
+                return Self.jsonSuccess(["opened": true, "file_name": file.lastPathComponent])
+            } catch {
+                return .failure(code: "unavailable", message: error.localizedDescription)
+            }
         case "mobile_request_permission": return await requestSystemPermission(arguments)
         case "mobile_get_location": return await getCurrentLocation()
         case "mobile_list_contacts": return await listSystemContacts(arguments)
@@ -169,6 +212,15 @@ final class AIMobileHostToolProvider {
 
     static func string(_ arguments: [String: Any], key: String) -> String {
         (arguments[key] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private static func localMediaErrorCode(_ error: AIMobileLocalMediaRequestError) -> String {
+        switch error {
+        case .unavailable: return "unavailable"
+        case .canceled: return "canceled"
+        case .permissionDenied: return "permission_denied"
+        case .failed: return "internal"
+        }
     }
 
     /// 保留号码中的数字与可选国际区号；拒绝扩展号、URL 和拨号控制字符。

@@ -152,7 +152,7 @@ int main() {
              hasFaceDetection = false, hasPersonSegmentation = false, hasMobilePhotoAlbumWrite = false,
              hasPermissionRequest = false, hasSceneDetect = false, hasMotionDetect = false, hasDownloadFile = false,
              hasLocation = false, hasMaiChatMedia = false, hasVideoMatting = false, hasAgentMedia = false,
-             hasSeedance = false, hasSeedream = false;
+             hasSeedance = false, hasSeedream = false, hasCamera = false, hasLocalMusic = false;
         for (const auto& tool : body["tools"]) {
             CHECK(tool["function"]["name"] != "shell");
             if (tool["function"]["name"] == "file_create") hasCreateFile = true;
@@ -172,6 +172,8 @@ int main() {
             if (tool["function"]["name"] == "maichat_broadcast_text")
                 hasMaiChatBroadcast = true;
             if (tool["function"]["name"] == "mobile_list_photos") hasMobilePhotos = true;
+            if (tool["function"]["name"] == "mobile_take_photo") hasCamera = true;
+            if (tool["function"]["name"] == "mobile_play_local_music") hasLocalMusic = true;
             if (tool["function"]["name"] == "mobile_list_albums") hasMobileAlbums = true;
             if (tool["function"]["name"] == "mobile_read_photo") hasMobilePhotoRead = true;
             if (tool["function"]["name"] == "mobile_export_photo_original")
@@ -207,6 +209,8 @@ int main() {
         CHECK(hasMaiChatSend);
         CHECK(hasMaiChatMedia);
         CHECK(hasAgentMedia);
+        CHECK(hasCamera);
+        CHECK(hasLocalMusic);
         CHECK(!hasSeedance);
         CHECK(!hasSeedream);
         CHECK(hasDownloadFile);
@@ -383,6 +387,7 @@ int main() {
         CHECK(suggestions["natural"] == "好的");
         CHECK(suggestions["casual"] == "收到 😄");
         CHECK(suggestions["professional"] == "已收到，我会尽快处理。");
+        const int initialHostCalls = hostProbe.calls.load();
         std::string session = call(agent, {{"op", "create"}}).at("id");
         auto snapshot = [&] {
             return call(agent, {{"op", "snapshot"}, {"session", session}, {"force", true}});
@@ -399,7 +404,7 @@ int main() {
               true);
         const auto hostPermission =
             wait([](const Json& s) { return !s["permissions"].empty(); });
-        CHECK(hostProbe.calls == 0);
+        CHECK(hostProbe.calls == initialHostCalls);
         CHECK(hostPermission["permissions"][0]["tool"] == "maichat_send_text");
         CHECK(hostPermission["permissions"][0]["allowForSession"] == false);
         CHECK(call(agent,
@@ -407,32 +412,32 @@ int main() {
                     {"id", hostPermission["permissions"][0]["id"]},
                     {"decision", "approved"}})["ok"] == true);
         wait([](const Json& s) { return s["busy"] == false; });
-        CHECK(hostProbe.calls == 1);
+        CHECK(hostProbe.calls == initialHostCalls + 1);
         CHECK(hostProbe.lastTool == "maichat_send_text");
         CHECK(Json::parse(hostProbe.lastArguments)["peer_id"] == "alice");
         if (kPhotoAlbumTool != nullptr) {
             CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "photo-add"}})["ok"] == true);
             const auto photoDone = wait([](const Json& s) { return s["busy"] == false; });
             CHECK(photoDone["permissions"].empty());
-            CHECK(hostProbe.calls == 2);
+            CHECK(hostProbe.calls == initialHostCalls + 2);
             CHECK(hostProbe.lastTool == kPhotoAlbumTool);
         }
         CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "photo-save"}})["ok"] == true);
         const auto photoSaved = wait([](const Json& s) { return s["busy"] == false; });
         CHECK(photoSaved["permissions"].empty());
-        CHECK(hostProbe.calls == (kPhotoAlbumTool == nullptr ? 2 : 3));
+        CHECK(hostProbe.calls == initialHostCalls + (kPhotoAlbumTool == nullptr ? 2 : 3));
         CHECK(hostProbe.lastTool == "mobile_save_image");
         CHECK(Json::parse(hostProbe.lastArguments)["path"] == "created.png");
         CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "photo-transform"}})["ok"] == true);
         const auto photoTransformed = wait([](const Json& s) { return s["busy"] == false; });
         CHECK(photoTransformed["permissions"].empty());
-        CHECK(hostProbe.calls == (kPhotoAlbumTool == nullptr ? 3 : 4));
+        CHECK(hostProbe.calls == initialHostCalls + (kPhotoAlbumTool == nullptr ? 3 : 4));
         CHECK(hostProbe.lastTool == "mobile_transform_image");
         CHECK(Json::parse(hostProbe.lastArguments)["operation"] == "beautify");
         CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "photo-preview"}})["ok"] == true);
         const auto photoPreviewed = wait([](const Json& s) { return s["busy"] == false; });
         CHECK(photoPreviewed["permissions"].empty());
-        CHECK(hostProbe.calls == (kPhotoAlbumTool == nullptr ? 4 : 5));
+        CHECK(hostProbe.calls == initialHostCalls + (kPhotoAlbumTool == nullptr ? 4 : 5));
         CHECK(hostProbe.lastTool == "mobile_preview_image");
         CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "hello"}})["ok"] == true);
         CHECK(call(agent, config)["ok"] == false);  // 工作中不能销毁并换配置。

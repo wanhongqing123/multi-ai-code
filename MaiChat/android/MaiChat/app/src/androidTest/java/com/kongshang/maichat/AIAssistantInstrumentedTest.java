@@ -39,6 +39,29 @@ import org.junit.runner.RunWith;
 @RunWith(AndroidJUnit4.class)
 public class AIAssistantInstrumentedTest {
     @Test
+    public void localMusicPlayerPlaysSelectedWavAndStops() throws Exception {
+        Context app = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        File music = new File(app.getCacheDir(), "local-music-test-" + UUID.randomUUID() + ".wav");
+        final int dataBytes = 48_000;
+        ByteBuffer wav = ByteBuffer.allocate(44 + dataBytes).order(ByteOrder.LITTLE_ENDIAN);
+        wav.put("RIFF".getBytes(StandardCharsets.US_ASCII)).putInt(36 + dataBytes);
+        wav.put("WAVEfmt ".getBytes(StandardCharsets.US_ASCII));
+        wav.putInt(16).putShort((short) 1).putShort((short) 1);
+        wav.putInt(8_000).putInt(16_000).putShort((short) 2).putShort((short) 16);
+        wav.put("data".getBytes(StandardCharsets.US_ASCII)).putInt(dataBytes);
+        try (FileOutputStream output = new FileOutputStream(music)) { output.write(wav.array()); }
+        try (ActivityScenario<AIAssistantTestActivity> scenario =
+                 ActivityScenario.launch(AIAssistantTestActivity.class)) {
+            scenario.onActivity(activity -> assertTrue(activity.panel.playLocalMusic(music)));
+            assertNotNull(awaitSystemText("本地音乐", 3_000));
+            assertNotNull(awaitSystemText("暂停", 5_000));
+            scenario.onActivity(activity -> activity.panel.closeLocalMusic());
+        } finally {
+            music.delete();
+        }
+    }
+
+    @Test
     public void bundledRvmProcessesVideoWithOriginalAudio() throws Exception {
         Context app = InstrumentationRegistry.getInstrumentation().getTargetContext();
         Context tests = InstrumentationRegistry.getInstrumentation().getContext();

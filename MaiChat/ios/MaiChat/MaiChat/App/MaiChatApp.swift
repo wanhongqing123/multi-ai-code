@@ -278,6 +278,8 @@ struct MaiChatApp: App {
                         AISessionSwitchUITestRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--ai-media-draft-ui-test") {
                         AIMediaDraftUITestRoot()
+                    } else if ProcessInfo.processInfo.arguments.contains("--ai-local-music-ui-test") {
+                        AILocalMusicUITestRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--ai-stream-typing-ui-test") {
                         AIStreamTypingUITestRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--voice-conversation-preview") {

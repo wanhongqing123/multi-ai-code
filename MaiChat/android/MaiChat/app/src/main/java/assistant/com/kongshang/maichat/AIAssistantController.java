@@ -1464,6 +1464,14 @@ public final class AIAssistantController {
         try { return resolveAppFile(relativePath); }
         catch (IOException | IllegalArgumentException error) { return null; }
     }
+    public File workspaceMusicForHost(String relativePath) throws Exception {
+        if (root == null) throw new IllegalStateException("AI 工作目录尚未准备好");
+        File workspace = new File(root, "Workspace");
+        File file = AIAssistantPathPolicy.resolve(workspace, workspace, relativePath);
+        if (!file.isFile() || !file.canRead())
+            throw new IllegalArgumentException("音乐文件不在 Agent 工作目录或不可读取");
+        return file;
+    }
     void discardComposerMedia(ImportedFile file) {
         if (file == null) return;
         worker.post(() -> {

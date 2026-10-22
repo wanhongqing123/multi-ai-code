@@ -2467,6 +2467,12 @@ private struct AIComposer: View, Equatable {
     )
     @State private var draft = ""
     @State private var importing = false
+    @ObservedObject private var music = MaiLocalMusicPlayer.shared
+    @ObservedObject private var localMediaRequests = AIMobileLocalMediaRequests.shared
+    @State private var importingMusic = false
+    @State private var showingMusic = false
+    @State private var musicSelectionReceived = false
+    @State private var musicPickerAgentRequestID: UUID?
     @State private var isPhotoPickerPresented = false
     @State private var isCameraPresented = false
     @State private var selectedMediaItems: [PhotosPickerItem] = []
@@ -2733,6 +2739,12 @@ private struct AIComposer: View, Equatable {
                     },
                     openVoiceInput: {},
                     suggestReply: nil,
+                    openMusic: {
+                        isAttachmentPanelPresented = false
+                        musicSelectionReceived = false
+                        musicPickerAgentRequestID = nil
+                        importingMusic = true
+                    },
                     showsVoiceInput: false
                 )
                 .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -2753,10 +2765,17 @@ private struct AIComposer: View, Equatable {
                 RemoteIMCameraPicker(
                     onCapture: { image in
                         isCameraPresented = false
+                        if localMediaRequests.cameraRequestID != nil {
+                            Task { await importCapturedImageForTool(image) }
+                            return
+                        }
                         guard let target = cameraTarget else { return }
                         Task { await importCapturedImage(image, to: target) }
                     },
-                    onCancel: { isCameraPresented = false }
+                    onCancel: {
+                        isCameraPresented = false
+                        localMediaRequests.failCamera(.canceled)
+                    }
                 )
                 .ignoresSafeArea()
             }
@@ -2772,12 +2791,62 @@ private struct AIComposer: View, Equatable {
                     Task { await importSelectedFile(url, to: target) }
                 }
             }
+            .fileImporter(isPresented: $importingMusic,
+                          allowedContentTypes: [.audio]) { result in
+                let agentRequestID = musicPickerAgentRequestID
+                musicPickerAgentRequestID = nil
+                if let agentRequestID,
+                   localMediaRequests.musicRequestID != agentRequestID { return }
+                switch result {
+                case .success(let url):
+                    musicSelectionReceived = true
+                    Task {
+                        do {
+                            try await music.openPickedFile(url)
+                            showingMusic = true
+                            localMediaRequests.finishMusic(fileName: url.lastPathComponent)
+                        } catch {
+                            localMediaRequests.failMusic(.failed)
+                            model.showTransientError(error.localizedDescription)
+                        }
+                    }
+                case .failure(let error):
+                    musicSelectionReceived = true
+                    localMediaRequests.failMusic(.canceled)
+                    model.showTransientError(error.localizedDescription)
+                }
+            }
+            .sheet(isPresented: $showingMusic) {
+                MaiLocalMusicPlayerView(music: music)
+            }
+            .onChange(of: localMediaRequests.cameraRequestID) { request in
+                guard request != nil else { return }
+                Task { await openToolCamera() }
+            }
+            .onChange(of: localMediaRequests.musicRequestID) { request in
+                guard request != nil else { return }
+                musicSelectionReceived = false
+                musicPickerAgentRequestID = request
+                importingMusic = true
+            }
+            .onChange(of: localMediaRequests.musicPresentationID) { request in
+                if request != nil { showingMusic = true }
+            }
+            .onChange(of: importingMusic) { presented in
+                guard !presented, !musicSelectionReceived,
+                      localMediaRequests.musicRequestID != nil else { return }
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                    if !musicSelectionReceived { localMediaRequests.failMusic(.canceled) }
+                }
+            }
             .onChange(of: selectedMediaItems) { items in
                 guard !items.isEmpty else { return }
                 guard let target = libraryTarget else { return }
                 Task { await importSelectedMedia(items, to: target) }
             }
             .onAppear {
+                localMediaRequests.presenterActive = true
                 draftSession = snapshot.selected
                 draftImportTarget = draftSession.isEmpty ? model.importTarget() : nil
                 draft = model.drafts[draftSession] ?? ""
@@ -2799,6 +2868,11 @@ private struct AIComposer: View, Equatable {
                 }
             }
             .onDisappear {
+                if isCameraPresented || importingMusic {
+                    localMediaRequests.presenterActive = false
+                } else {
+                    localMediaRequests.deactivate()
+                }
                 if let session = draftStorageSession { model.drafts[session] = draft }
                 voiceStartTask?.cancel()
                 voiceStartTask = nil
@@ -2868,6 +2942,20 @@ private struct AIComposer: View, Equatable {
             return
         }
         cameraTarget = target
+        isCameraPresented = true
+    }
+
+    private func openToolCamera() async {
+        guard model.selected == localMediaRequests.cameraSessionID,
+              UIImagePickerController.isSourceTypeAvailable(.camera) else {
+            localMediaRequests.failCamera(.unavailable)
+            return
+        }
+        guard await requestCameraPermission() else {
+            localMediaRequests.failCamera(.permissionDenied)
+            return
+        }
+        cameraTarget = nil
         isCameraPresented = true
     }
 
@@ -2976,6 +3064,35 @@ private struct AIComposer: View, Equatable {
             }
         } catch {
             model.showTransientError("拍摄图片导入失败")
+        }
+    }
+
+    private func importCapturedImageForTool(_ image: UIImage) async {
+        guard let requestID = localMediaRequests.cameraRequestID,
+              let data = image.jpegData(compressionQuality: 0.9),
+              !data.isEmpty, data.count <= 20 * 1024 * 1024 else {
+            localMediaRequests.failCamera(.failed)
+            return
+        }
+        let workspacePath = localMediaRequests.cameraWorkspacePath
+        do {
+            let file = try await RemoteIMBackgroundWork.file { () -> URL in
+                let directory = URL(fileURLWithPath: workspacePath, isDirectory: true)
+                guard FileManager.default.fileExists(atPath: directory.path) else {
+                    throw AIBackendError(message: "创作中心工作目录不可用")
+                }
+                let target = directory.appendingPathComponent("camera-\(UUID().uuidString).jpg")
+                try data.write(to: target, options: .atomic)
+                return target
+            }
+            guard localMediaRequests.cameraRequestID == requestID else {
+                try? FileManager.default.removeItem(at: file)
+                return
+            }
+            localMediaRequests.finishCamera(path: file.lastPathComponent)
+        } catch {
+            localMediaRequests.failCamera(.failed)
+            model.showTransientError(error.localizedDescription)
         }
     }
 
@@ -3653,3 +3770,303 @@ private struct AIQuestionCard: View {
         Task { await model.action("answer", values: ["id": question.id, "text": text]) }
     }
 }
+
+@MainActor
+final class MaiLocalMusicPlayer: ObservableObject {
+    static let shared = MaiLocalMusicPlayer()
+
+    @Published private(set) var title = ""
+    @Published private(set) var duration: Double = 0
+    @Published private(set) var position: Double = 0
+    @Published private(set) var isPlaying = false
+
+    private var player: AVAudioPlayer?
+    private var timer: Timer?
+    private var stagedFile: URL?
+
+    func openPickedFile(_ source: URL) async throws {
+        let name = source.lastPathComponent
+        let copied = try await RemoteIMBackgroundWork.file { () -> URL in
+            let kind = source.pathExtension.lowercased()
+            guard ["mp3", "m4a", "wav"].contains(kind) else {
+                throw AIBackendError(message: "请选择 MP3、M4A 或 WAV 音乐文件")
+            }
+            let scoped = source.startAccessingSecurityScopedResource()
+            defer { if scoped { source.stopAccessingSecurityScopedResource() } }
+            let sourceBytes = (try? source.resourceValues(forKeys: [.fileSizeKey]))?.fileSize
+            if let sourceBytes, sourceBytes > 200_000_000 {
+                throw AIBackendError(message: "音乐文件超过 200 MB")
+            }
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("MaiChatLocalMusic", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory,
+                                                    withIntermediateDirectories: true)
+            let target = directory.appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension(kind)
+            try FileManager.default.copyItem(at: source, to: target)
+            let bytes = (try target.resourceValues(forKeys: [.fileSizeKey])).fileSize ?? 0
+            guard bytes > 0 && bytes <= 200_000_000 else {
+                try? FileManager.default.removeItem(at: target)
+                throw AIBackendError(message: "音乐文件为空或超过 200 MB")
+            }
+            return target
+        }
+        do {
+            try Task.checkCancellation()
+            try openLocalFile(copied, title: name, ownsCopy: true)
+        }
+        catch {
+            try? FileManager.default.removeItem(at: copied)
+            throw error
+        }
+    }
+
+    func openLocalFile(_ file: URL, title name: String? = nil,
+                       ownsCopy: Bool = false) throws {
+        let next = try AVAudioPlayer(contentsOf: file)
+        next.prepareToPlay()
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playback, mode: .default)
+        try session.setActive(true)
+        let previous = player
+        let wasPlaying = previous?.isPlaying == true
+        previous?.pause()
+        guard next.play() else {
+            if wasPlaying { _ = previous?.play() }
+            throw AIBackendError(message: "音乐播放失败")
+        }
+        timer?.invalidate()
+        previous?.stop()
+        if let stagedFile, stagedFile != file { try? FileManager.default.removeItem(at: stagedFile) }
+        player = next
+        stagedFile = ownsCopy ? file : nil
+        title = name ?? file.lastPathComponent
+        duration = next.duration
+        position = 0
+        isPlaying = true
+        startTimer()
+    }
+
+    func toggle() {
+        guard let player else { return }
+        if player.isPlaying { player.pause(); isPlaying = false }
+        else {
+            if player.currentTime >= player.duration { player.currentTime = 0 }
+            isPlaying = player.play()
+            if isPlaying { startTimer() }
+        }
+        refreshPosition()
+    }
+
+    func seek(to seconds: Double) {
+        guard let player, seconds.isFinite else { return }
+        player.currentTime = min(max(0, seconds), player.duration)
+        refreshPosition()
+    }
+
+    func stop() {
+        player?.stop()
+        player?.currentTime = 0
+        isPlaying = false
+        position = 0
+        timer?.invalidate()
+        timer = nil
+    }
+
+    private func startTimer() {
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.refreshPosition() }
+        }
+    }
+
+    private func refreshPosition() {
+        guard let player else { return }
+        position = player.currentTime
+        if isPlaying && !player.isPlaying {
+            isPlaying = false
+            position = player.duration
+            timer?.invalidate()
+            timer = nil
+        }
+    }
+}
+
+private struct MaiLocalMusicPlayerView: View {
+    @ObservedObject var music: MaiLocalMusicPlayer
+    @State private var scrubPosition: Double = 0
+    @State private var isScrubbing = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            Text("本地音乐").font(.title2.bold())
+            Text(music.title).font(.headline).lineLimit(2)
+            Slider(value: Binding(
+                get: { isScrubbing ? scrubPosition : music.position },
+                set: { scrubPosition = $0 }
+            ), in: 0...max(1, music.duration), onEditingChanged: { editing in
+                isScrubbing = editing
+                if !editing { music.seek(to: scrubPosition) }
+            })
+            HStack {
+                Text(clock(music.position))
+                Spacer()
+                Text(clock(music.duration))
+            }.font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 24) {
+                Button(music.isPlaying ? "暂停" : "播放") { music.toggle() }
+                    .buttonStyle(.borderedProminent)
+                Button("停止") { music.stop() }.buttonStyle(.bordered)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(24)
+        .presentationDetents([.height(300)])
+    }
+
+    private func clock(_ seconds: Double) -> String {
+        let total = Int(max(0, seconds))
+        return "\(total / 60):" + String(format: "%02d", total % 60)
+    }
+}
+
+enum AIMobileLocalMediaRequestError: LocalizedError, Sendable {
+    case unavailable
+    case canceled
+    case permissionDenied
+    case failed
+
+    var errorDescription: String? {
+        switch self {
+        case .unavailable: return "请先打开创作中心"
+        case .canceled: return "已取消操作"
+        case .permissionDenied: return "没有摄像头权限"
+        case .failed: return "媒体操作失败"
+        }
+    }
+}
+
+@MainActor
+final class AIMobileLocalMediaRequests: ObservableObject {
+    static let shared = AIMobileLocalMediaRequests()
+
+    @Published private(set) var cameraRequestID: UUID?
+    @Published private(set) var musicRequestID: UUID?
+    @Published private(set) var musicPresentationID: UUID?
+    private(set) var cameraSessionID = ""
+    private(set) var cameraWorkspacePath = ""
+    var presenterActive = false
+    private var cameraCompletion: CheckedContinuation<String, Error>?
+    private var musicCompletion: CheckedContinuation<String, Error>?
+
+    func requestCamera(in sessionID: String, workspacePath: String) async throws -> String {
+        guard presenterActive, UIApplication.shared.applicationState == .active,
+              cameraCompletion == nil, !workspacePath.isEmpty else {
+            throw AIMobileLocalMediaRequestError.unavailable
+        }
+        return try await withCheckedThrowingContinuation { continuation in
+            cameraCompletion = continuation
+            cameraSessionID = sessionID
+            cameraWorkspacePath = workspacePath
+            let id = UUID()
+            cameraRequestID = id
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 120_000_000_000)
+                if cameraRequestID == id { failCamera(.canceled) }
+            }
+        }
+    }
+
+    func finishCamera(path: String) {
+        guard let completion = cameraCompletion else { return }
+        cameraCompletion = nil
+        cameraRequestID = nil
+        cameraSessionID = ""
+        cameraWorkspacePath = ""
+        completion.resume(returning: path)
+    }
+
+    func failCamera(_ error: AIMobileLocalMediaRequestError) {
+        guard let completion = cameraCompletion else { return }
+        cameraCompletion = nil
+        cameraRequestID = nil
+        cameraSessionID = ""
+        cameraWorkspacePath = ""
+        completion.resume(throwing: error)
+    }
+
+    func requestMusicSelection() async throws -> String {
+        guard presenterActive, UIApplication.shared.applicationState == .active,
+              musicCompletion == nil else { throw AIMobileLocalMediaRequestError.unavailable }
+        return try await withCheckedThrowingContinuation { continuation in
+            musicCompletion = continuation
+            let id = UUID()
+            musicRequestID = id
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 120_000_000_000)
+                if musicRequestID == id { failMusic(.canceled) }
+            }
+        }
+    }
+
+    func finishMusic(fileName: String) {
+        guard let completion = musicCompletion else { return }
+        musicCompletion = nil
+        musicRequestID = nil
+        completion.resume(returning: fileName)
+    }
+
+    func failMusic(_ error: AIMobileLocalMediaRequestError) {
+        guard let completion = musicCompletion else { return }
+        musicCompletion = nil
+        musicRequestID = nil
+        completion.resume(throwing: error)
+    }
+
+    func showMusic() { musicPresentationID = UUID() }
+
+    func deactivate() {
+        presenterActive = false
+        failCamera(.canceled)
+        failMusic(.canceled)
+    }
+}
+
+#if targetEnvironment(simulator)
+struct AILocalMusicUITestRoot: View {
+    @ObservedObject private var music = MaiLocalMusicPlayer.shared
+    @State private var showing = false
+
+    var body: some View {
+        Button("测试本地音乐") {
+            do {
+                let file = try makeSilentWav()
+                try music.openLocalFile(file, title: "测试静音音乐")
+                showing = true
+            } catch { assertionFailure(error.localizedDescription) }
+        }
+        .sheet(isPresented: $showing) { MaiLocalMusicPlayerView(music: music) }
+    }
+
+    private func makeSilentWav() throws -> URL {
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("maichat-local-music-ui-test.wav")
+        let sampleBytes = 160_000
+        var data = Data("RIFF".utf8)
+        func append<T: FixedWidthInteger>(_ value: T) {
+            var littleEndian = value.littleEndian
+            withUnsafeBytes(of: &littleEndian) { data.append(contentsOf: $0) }
+        }
+        append(UInt32(36 + sampleBytes))
+        data.append(contentsOf: "WAVEfmt ".utf8)
+        append(UInt32(16)); append(UInt16(1)); append(UInt16(1))
+        append(UInt32(8_000)); append(UInt32(16_000))
+        append(UInt16(2)); append(UInt16(16))
+        data.append(contentsOf: "data".utf8)
+        append(UInt32(sampleBytes))
+        data.append(Data(repeating: 0, count: sampleBytes))
+        try data.write(to: file, options: .atomic)
+        return file
+    }
+}
+#endif

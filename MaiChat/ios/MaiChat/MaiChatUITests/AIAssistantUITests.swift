@@ -1001,7 +1001,12 @@ final class AIAssistantUITests: XCTestCase {
         XCTAssertTrue(app.buttons["相册"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.buttons["拍摄"].isHittable)
         XCTAssertTrue(app.buttons["文件"].isHittable)
+        XCTAssertTrue(app.buttons["音乐"].isHittable)
         XCTAssertFalse(app.buttons["语音输入"].exists)
+        let musicEntry = XCTAttachment(screenshot: app.screenshot())
+        musicEntry.name = "creative-center-local-music-entry"
+        musicEntry.lifetime = .keepAlways
+        add(musicEntry)
 
         app.buttons["收起更多功能"].tap()
         XCTAssertEqual(waitUntilNotHittable(app.buttons["相册"]), .completed)
@@ -1010,6 +1015,50 @@ final class AIAssistantUITests: XCTestCase {
         XCTAssertTrue(app.buttons["相册"].waitForExistence(timeout: 3))
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.88, dy: 0.42)).tap()
         XCTAssertEqual(waitUntilNotHittable(app.buttons["相册"]), .completed)
+    }
+
+    func testLocalMusicOpensSystemFilePicker() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test"]
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        let more = app.buttons["展开更多功能"]
+        XCTAssertTrue(more.waitForExistence(timeout: 15))
+        more.tap()
+        let music = app.buttons["音乐"]
+        XCTAssertTrue(music.waitForExistence(timeout: 3))
+        music.tap()
+        let englishCancel = app.buttons["Cancel"]
+        let chineseCancel = app.buttons["取消"]
+        XCTAssertTrue(englishCancel.waitForExistence(timeout: 8) ||
+                      chineseCancel.waitForExistence(timeout: 2))
+        let picker = XCTAttachment(screenshot: app.screenshot())
+        picker.name = "creative-center-system-music-picker"
+        picker.lifetime = .keepAlways
+        add(picker)
+        let cancel = englishCancel.isHittable ? englishCancel : chineseCancel
+        XCTAssertTrue(cancel.isHittable)
+        cancel.tap()
+        XCTAssertTrue(more.waitForExistence(timeout: 5))
+    }
+
+    func testLocalMusicPlayerControlsSilentWav() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--ai-local-music-ui-test"]
+        app.launch()
+        let start = app.buttons["测试本地音乐"]
+        XCTAssertTrue(start.waitForExistence(timeout: 10))
+        start.tap()
+        XCTAssertTrue(app.staticTexts["测试静音音乐"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["暂停"].waitForExistence(timeout: 5))
+        let playing = XCTAttachment(screenshot: app.screenshot())
+        playing.name = "creative-center-local-music-playing"
+        playing.lifetime = .keepAlways
+        add(playing)
+        app.buttons["暂停"].tap()
+        XCTAssertTrue(app.buttons["播放"].waitForExistence(timeout: 3))
+        app.buttons["停止"].tap()
+        XCTAssertTrue(app.staticTexts["测试静音音乐"].exists)
     }
 
     func testModelChipOffersTextAndVisionModels() throws {

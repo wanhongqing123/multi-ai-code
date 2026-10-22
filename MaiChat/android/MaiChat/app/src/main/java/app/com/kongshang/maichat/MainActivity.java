@@ -97,6 +97,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -354,6 +355,33 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         return activityInForeground && !destroyed;
     }
 
+    public boolean playLocalMusicFileForAgent(File file) {
+        return isHostToolForeground() && activeTab == RemoteIMTab.ASSISTANT &&
+            aiAssistant != null && aiAssistant.playLocalMusic(file);
+    }
+
+    public void selectLocalMusicForAgent(Consumer<String> completed) {
+        if (!isHostToolForeground() || activeTab != RemoteIMTab.ASSISTANT || aiAssistant == null) {
+            completed.accept(null); return;
+        }
+        aiAssistant.selectMusicForAgent(completed);
+    }
+
+    public void takePhotoForAgent(Consumer<String> completed) {
+        if (!isHostToolForeground() || activeTab != RemoteIMTab.ASSISTANT || aiAssistant == null) {
+            completed.accept(null); return;
+        }
+        aiAssistant.takePhotoForAgent(completed);
+    }
+
+    public void cancelAgentPhotoRequest() {
+        if (aiAssistant != null) aiAssistant.cancelAgentPhotoRequest();
+    }
+
+    public void cancelAgentMusicRequest() {
+        if (aiAssistant != null) aiAssistant.cancelAgentMusicRequest();
+    }
+
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
@@ -369,6 +397,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         pendingGalleryAction = null;
         if (videoDialog != null) videoDialog.dismiss();
         if (imageDialog != null) imageDialog.dismiss();
+        if (aiAssistant != null) aiAssistant.cancelPendingAgentLocalMedia();
+        if (aiAssistant != null) aiAssistant.closeLocalMusic();
         if (maiChatHostTools != null) maiChatHostTools.onDestroy();
         AIAssistantController.shared(this).setHostToolHandler(null);
         if (swipeBack != null) swipeBack.dispose();

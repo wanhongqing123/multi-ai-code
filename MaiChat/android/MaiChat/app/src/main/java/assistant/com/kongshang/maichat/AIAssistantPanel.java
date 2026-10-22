@@ -20,6 +20,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.provider.OpenableColumns;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.Gravity;
@@ -39,6 +40,7 @@ import java.net.URLConnection;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.util.*;
+import java.util.function.Consumer;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -49,8 +51,10 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     static final int REQUEST_IMAGE = 7108;
     static final int REQUEST_CAMERA = 7109;
     static final int REQUEST_CAMERA_PERMISSION = 7110;
+    static final int REQUEST_MUSIC = 7111;
     private final Activity activity;
     final AIAssistantController controller;
+    private final LocalMusicPlayer localMusicPlayer;
     final EditText composer;
     final ImageButton send;
     private final ImageButton voiceModeButton, attachmentOrStopButton;
@@ -80,6 +84,8 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     private final Button older;
     private boolean visibleToUser = true;
     private File pendingCameraFile;
+    private Consumer<String> pendingAgentCamera, pendingAgentMusic;
+    private boolean agentCameraRequestActive, agentMusicRequestActive;
     private String pendingMediaSession, pendingFileSession, pendingCameraSession, submittingSession = "";
     private String firstSentSession = "";
     private PopupWindow sessionDrawerPopup;
@@ -121,6 +127,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         super(activity);
         this.activity = activity;
         this.controller = controller;
+        this.localMusicPlayer = new LocalMusicPlayer(activity);
         this.voiceRecorder = voiceRecorder;
         this.speechRecognizer = speechRecognizer;
         setOrientation(VERTICAL);
@@ -351,6 +358,9 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             }), new LayoutParams(0, dp(64), 1));
         attachmentPanel.addView(attachmentAction(
             R.drawable.ic_ai_file, "文件", "导入文本文件", v -> openTextFilePicker()),
+            new LayoutParams(0, dp(64), 1));
+        attachmentPanel.addView(attachmentAction(
+            R.drawable.ic_ai_music, "音乐", "播放本地音乐", v -> openMusicPicker()),
             new LayoutParams(0, dp(64), 1));
         attachmentPanel.setVisibility(GONE);
         composerArea.addView(attachmentPanel, matchWrap());
@@ -799,8 +809,77 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             .setType("text/*").addCategory(Intent.CATEGORY_OPENABLE);
         activity.startActivityForResult(intent, REQUEST_FILE);
     }
+    private void openMusicPicker() {
+        hideAttachmentPanel();
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT)
+            .setType("audio/*").addCategory(Intent.CATEGORY_OPENABLE);
+        activity.startActivityForResult(intent, REQUEST_MUSIC);
+    }
+    void selectMusicForAgent(Consumer<String> completed) {
+        if (agentMusicRequestActive || pendingAgentMusic != null || completed == null) {
+            if (completed != null) completed.accept(null);
+            return;
+        }
+        pendingAgentMusic = completed;
+        agentMusicRequestActive = true;
+        openMusicPicker();
+    }
+    void takePhotoForAgent(Consumer<String> completed) {
+        if (agentCameraRequestActive || pendingCameraFile != null || completed == null) {
+            if (completed != null) completed.accept(null);
+            return;
+        }
+        pendingAgentCamera = completed;
+        agentCameraRequestActive = true;
+        if (activity.checkSelfPermission(Manifest.permission.CAMERA)
+            == android.content.pm.PackageManager.PERMISSION_GRANTED) openCamera();
+        else activity.requestPermissions(new String[] {Manifest.permission.CAMERA},
+            REQUEST_CAMERA_PERMISSION);
+    }
+    private String musicName(Uri uri) {
+        try (android.database.Cursor cursor = activity.getContentResolver().query(uri,
+                 new String[] {OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                String name = cursor.getString(0);
+                if (name != null && !name.trim().isEmpty()) return name.trim();
+            }
+        } catch (Exception ignored) { /* keep a safe fallback name */ }
+        String segment = uri.getLastPathSegment();
+        return segment == null || segment.isEmpty() ? "本地音乐" : segment;
+    }
+    void cancelAgentPhotoRequest() { pendingAgentCamera = null; }
+    void cancelAgentMusicRequest() { pendingAgentMusic = null; }
+    boolean playLocalMusic(Uri uri, String name) { return localMusicPlayer.open(uri, name); }
+    boolean playLocalMusic(File file) { return localMusicPlayer.open(file); }
+    void closeLocalMusic() { localMusicPlayer.close(); }
+    void cancelPendingAgentLocalMedia() {
+        Consumer<String> photo = pendingAgentCamera;
+        Consumer<String> music = pendingAgentMusic;
+        pendingAgentCamera = null;
+        pendingAgentMusic = null;
+        agentCameraRequestActive = false;
+        agentMusicRequestActive = false;
+        if (photo != null) photo.accept(null);
+        if (music != null) music.accept(null);
+        if (pendingCameraFile != null) pendingCameraFile.delete();
+        pendingCameraFile = null;
+    }
     // 系统选择器返回后按启动时的会话归档，避免导入期间切换对话造成错发。
     boolean handleActivityResult(int requestCode, Intent data) {
+        if (requestCode == REQUEST_MUSIC) {
+            boolean forAgent = agentMusicRequestActive;
+            agentMusicRequestActive = false;
+            Uri uri = data == null ? null : data.getData();
+            String name = uri == null ? null : musicName(uri);
+            boolean opened = uri != null && (!forAgent || pendingAgentMusic != null)
+                && playLocalMusic(uri, name);
+            Consumer<String> completed = pendingAgentMusic;
+            pendingAgentMusic = null;
+            if (completed != null) completed.accept(opened ? name : null);
+            if (uri != null && !opened && (!forAgent || completed != null))
+                Toast.makeText(activity, "所选音乐无法播放", Toast.LENGTH_LONG).show();
+            return true;
+        }
         if (requestCode == REQUEST_FILE) {
             String target = pendingFileSession == null ? selected : pendingFileSession;
             pendingFileSession = null;
@@ -836,6 +915,17 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             String target = pendingCameraSession == null ? selected : pendingCameraSession;
             pendingCameraFile = null;
             pendingCameraSession = null;
+            if (agentCameraRequestActive) {
+                agentCameraRequestActive = false;
+                Consumer<String> agentResult = pendingAgentCamera;
+                pendingAgentCamera = null;
+                if (agentResult == null) { if (file != null) file.delete(); return true; }
+                if (file != null)
+                    controller.importCameraFile(file, imported ->
+                        agentResult.accept(imported == null ? null : imported.relativePath));
+                else agentResult.accept(null);
+                return true;
+            }
             if (file != null) {
                 beginMediaImport(target);
                 controller.importCameraFile(file, imported -> {
@@ -848,6 +938,12 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         return false;
     }
     void handleActivityCancelled(int requestCode) {
+        if (requestCode == REQUEST_MUSIC) agentMusicRequestActive = false;
+        if (requestCode == REQUEST_MUSIC && pendingAgentMusic != null) {
+            Consumer<String> completed = pendingAgentMusic;
+            pendingAgentMusic = null;
+            completed.accept(null);
+        }
         if (requestCode == REQUEST_FILE) pendingFileSession = null;
         if (requestCode == REQUEST_IMAGE) pendingMediaSession = null;
         if (requestCode == REQUEST_CAMERA && pendingCameraFile != null) {
@@ -855,6 +951,12 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             pendingCameraFile = null;
         }
         if (requestCode == REQUEST_CAMERA) pendingCameraSession = null;
+        if (requestCode == REQUEST_CAMERA) agentCameraRequestActive = false;
+        if (requestCode == REQUEST_CAMERA && pendingAgentCamera != null) {
+            Consumer<String> completed = pendingAgentCamera;
+            pendingAgentCamera = null;
+            completed.accept(null);
+        }
     }
     private void beginMediaImport(String target) {
         pendingMediaImports.put(target, pendingMediaImports.getOrDefault(target, 0) + 1);
@@ -870,6 +972,12 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         if (granted) openCamera();
         else {
             pendingCameraSession = null;
+            agentCameraRequestActive = false;
+            if (pendingAgentCamera != null) {
+                Consumer<String> completed = pendingAgentCamera;
+                pendingAgentCamera = null;
+                completed.accept(null);
+            }
             Toast.makeText(activity, "没有相机权限，无法拍照", Toast.LENGTH_LONG).show();
         }
     }
@@ -890,15 +998,41 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             REQUEST_CAMERA_PERMISSION);
     }
     private void openCamera() {
+        final boolean forAgent = agentCameraRequestActive;
         controller.prepareCameraFile(file -> {
-            if (file == null) { pendingCameraSession = null; return; }
+            if (forAgent && (!agentCameraRequestActive || pendingAgentCamera == null)) {
+                if (file != null) file.delete();
+                return;
+            }
+            if (file == null) {
+                pendingCameraSession = null;
+                agentCameraRequestActive = false;
+                if (pendingAgentCamera != null) {
+                    Consumer<String> completed = pendingAgentCamera;
+                    pendingAgentCamera = null;
+                    completed.accept(null);
+                }
+                return;
+            }
             pendingCameraFile = file;
             Uri output = FileProvider.getUriForFile(activity,
                 activity.getPackageName() + ".files", file);
             Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE)
                 .putExtra(MediaStore.EXTRA_OUTPUT, output)
                 .addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            activity.startActivityForResult(intent, REQUEST_CAMERA);
+            try { activity.startActivityForResult(intent, REQUEST_CAMERA); }
+            catch (android.content.ActivityNotFoundException missing) {
+                file.delete();
+                pendingCameraFile = null;
+                pendingCameraSession = null;
+                agentCameraRequestActive = false;
+                if (pendingAgentCamera != null) {
+                    Consumer<String> completed = pendingAgentCamera;
+                    pendingAgentCamera = null;
+                    completed.accept(null);
+                }
+                Toast.makeText(activity, "没有可用的拍照应用", Toast.LENGTH_LONG).show();
+            }
         });
     }
     private void modelMenu() {

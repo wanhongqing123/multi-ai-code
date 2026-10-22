@@ -5831,12 +5831,13 @@ struct ComposerAttachmentPanel: View {
     let openFile: () -> Void
     let openVoiceInput: () -> Void
     let suggestReply: (() -> Void)?
+    var openMusic: (() -> Void)? = nil
     var showsVoiceInput = true
 
     private var columns: [GridItem] {
         Array(
             repeating: GridItem(.flexible(), spacing: 12, alignment: .top),
-            count: showsVoiceInput ? 4 : 3
+            count: showsVoiceInput || openMusic != nil ? 4 : 3
         )
     }
 
@@ -5868,6 +5869,14 @@ struct ComposerAttachmentPanel: View {
                 enabled: canSendFile,
                 action: openFile
             )
+            if let openMusic {
+                actionButton(
+                    title: "音乐",
+                    systemImage: "music.note",
+                    enabled: true,
+                    action: openMusic
+                )
+            }
             if showsVoiceInput {
                 actionButton(
                     title: "语音输入",
@@ -5922,6 +5931,7 @@ struct ComposerAttachmentPanel: View {
         case "photo": return Color(red: 0.06, green: 0.56, blue: 0.88)
         case "camera.fill": return Color(red: 0.08, green: 0.65, blue: 0.49)
         case "doc.fill": return Color(red: 0.91, green: 0.56, blue: 0.23)
+        case "music.note": return Color(red: 0.66, green: 0.38, blue: 0.86)
         case "mic.fill": return Color(red: 0.04, green: 0.63, blue: 0.72)
         default: return RemoteIMStyle.blue
         }

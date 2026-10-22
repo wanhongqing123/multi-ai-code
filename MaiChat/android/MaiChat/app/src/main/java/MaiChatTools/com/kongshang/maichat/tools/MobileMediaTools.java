@@ -10,6 +10,9 @@ import java.io.File;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
+import java.util.Locale;
 import org.json.JSONObject;
 
 /** Agent commands operate the same ffplay popup used by IM video messages. */
@@ -19,6 +22,28 @@ final class MobileMediaTools {
     MobileMediaTools(MainActivity activity) { this.activity = activity; }
 
     JSONObject execute(String tool, JSONObject arguments) throws Exception {
+        if (tool.equals("mobile_take_photo")) {
+            String path = awaitUserSelection(activity::takePhotoForAgent,
+                activity::cancelAgentPhotoRequest);
+            if (path == null) throw new IllegalStateException("用户取消拍照或照片保存失败");
+            return new JSONObject().put("path", path).put("mime_type", "image/jpeg");
+        }
+        if (tool.equals("mobile_play_local_music")) {
+            String path = arguments.optString("path", "").trim();
+            if (path.isEmpty()) {
+                String name = awaitUserSelection(activity::selectLocalMusicForAgent,
+                    activity::cancelAgentMusicRequest);
+                if (name == null) throw new IllegalStateException("用户取消选音乐或文件无法播放");
+                return new JSONObject().put("opened", true).put("file_name", name);
+            }
+            String extension = path.substring(path.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT);
+            if (!extension.equals("mp3") && !extension.equals("m4a") && !extension.equals("wav"))
+                throw new IllegalArgumentException("音乐只支持 MP3、M4A 或 WAV");
+            File file = AIAssistantController.shared(activity).workspaceMusicForHost(path);
+            if (!onUi(() -> activity.playLocalMusicFileForAgent(file)))
+                throw new IllegalStateException("本地音乐无法播放");
+            return new JSONObject().put("opened", true).put("file_name", file.getName());
+        }
         if (tool.equals("maichat_play_video")) {
             String path = arguments.optString("path", "").trim();
             double startSeconds = arguments.optDouble("start_seconds", 0);
@@ -48,6 +73,23 @@ final class MobileMediaTools {
         if (!onUi(() -> activity.commandAgentVideo(action, percent, speed, seconds)))
             throw new IllegalStateException("播放命令不可用或没有打开的视频");
         return new JSONObject().put("accepted", true);
+    }
+
+    private String awaitUserSelection(Consumer<Consumer<String>> launch,
+                                      Runnable onTimeout) throws Exception {
+        if (Looper.myLooper() == Looper.getMainLooper())
+            throw new IllegalStateException("用户选择器不能阻塞 UI 线程");
+        CountDownLatch finished = new CountDownLatch(1);
+        AtomicReference<String> result = new AtomicReference<>();
+        activity.runOnUiThread(() -> launch.accept(value -> {
+            result.set(value);
+            finished.countDown();
+        }));
+        if (!finished.await(120, TimeUnit.SECONDS)) {
+            activity.runOnUiThread(onTimeout);
+            throw new IllegalStateException("等待用户选择超时");
+        }
+        return result.get();
     }
 
     private boolean onUi(java.util.concurrent.Callable<Boolean> action) throws Exception {

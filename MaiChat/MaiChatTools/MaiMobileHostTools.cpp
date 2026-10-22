@@ -377,6 +377,20 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
 // Schema 限定操作和范围，模型不能凭工具参数请求任意原生调用。
 void registerMobilePhotoTools(MaiToolRegistry& tools,
                               const std::shared_ptr<MaiMobileHostDispatcher>& dispatcher) {
+    tools.add(std::make_unique<MaiMobileHostTool>(
+        "mobile_take_photo",
+        "Open the device camera preview and wait for the user to take a photo. Save a new JPEG "
+        "in the current Agent workspace. Cancel creates no file and never sends a message.",
+        R"({"type":"object","properties":{},"additionalProperties":false})",
+        dispatcher, true));
+    tools.add(std::make_unique<MaiMobileHostTool>(
+        "mobile_play_local_music",
+        "Play an MP3, M4A, or WAV in the visible MaiChat local music player. Provide a relative "
+        "workspace path, or omit it so the user selects a file using the system picker. "
+        "Never scan the device music library without user selection.",
+        R"({"type":"object","properties":{"path":{"type":"string"}},)"
+            R"("additionalProperties":false})",
+        dispatcher, true));
     // 相册工作流：先授权并列出素材；预览用有界 JPEG，任何编辑/转码都先导出原文件。
     // 处理工具创建新文件；只有用户需要加入相册时再调用保存工具，原素材始终保留。
     tools.add(std::make_unique<MaiMobileHostTool>(

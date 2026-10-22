@@ -56,7 +56,8 @@ public final class MaiChatHostTools {
         if (tool.equals("mobile_read_sms")) return telephony.readSms(arguments);
         if (tool.equals("mobile_ssh_password") || tool.equals("mobile_ssh_trust_host"))
             return ssh.execute(tool, arguments);
-        if (tool.equals("maichat_play_video") || tool.equals("maichat_video_command"))
+        if (tool.equals("maichat_play_video") || tool.equals("maichat_video_command") ||
+            tool.equals("mobile_take_photo") || tool.equals("mobile_play_local_music"))
             return media.execute(tool, arguments);
         if (tool.startsWith("mobile_")) return photos.execute(tool, arguments);
         return im.execute(tool, arguments);

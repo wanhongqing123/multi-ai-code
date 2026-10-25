@@ -3,7 +3,8 @@
 - 时间与平台：2026-10-25，Windows 源码构建，OPPO PKD130 / Android 15 真机。
 - 用户现象：希望 Agent 在已获系统授权后按明确指令拨号，不要每次再由 MaiChat 确认。
 - 修复前提交：`8ac971d3104ae447f965e8fb6ea0c0d479e4f248`。
-- 修复提交：`acbdbff78e83f02d21d4259e2b4bfd9ee9ba43d9`。
+- 修复提交：`acbdbff78e83f02d21d4259e2b4bfd9ee9ba43d9`；真机安全拨号
+  捕获补充：`fb417263a70cbeaadfd24db7b29ecfa9e606362b`。
 
 ## 复现步骤
 
@@ -41,10 +42,11 @@ iOS 的系统电话确认保持原样。
   Debug、AndroidTest 打包及 Release Java 编译通过。`npm run check:line-width` 与
   `git diff --check` 通过。
 - OPPO 隔离测试包上的交互设备用例 1/1 通过：仅获通讯录权限时通话权限仍为
-  `granted=false`；首次通话权限请求显示 Android 系统授权框，授权后再次请求
-  返回已授权且 `prompted=false`。测试没有发起实际电话。
+  `granted=false`；首个拨号请求显示 Android 系统授权框，授权后测试捕获到
+  `ACTION_CALL` 与正确号码，第二次拨号无需再弹权限框。测试将最终系统拨号接口
+  替换为捕获器，没有发起实际电话。
 - 最终隔离测试包 SHA-256 为
-  `064356ad0630b05e8d4a6b63eccbea24e00043d8d5be9435d52b36b8466218bd`；
+  `fd4aeed93fd71b9bc2a802d2128b9631d2e62af2e884b256edc477e21ede2bc1`；
   包内 `CALL_PHONE` 和非必需 telephony 声明已核对，OPPO 安装文件哈希一致，
   启动到登录页。独立测试包和测试权限已随卸载清理；用户原 MaiChat APK 哈希
   仍为 `8032b4333c0cb976be95cee695a0b18bc5656502efcd1f4ddf7cf82013f194eb`。

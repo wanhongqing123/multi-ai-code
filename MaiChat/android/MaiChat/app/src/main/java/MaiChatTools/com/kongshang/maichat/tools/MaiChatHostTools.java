@@ -25,7 +25,7 @@ public final class MaiChatHostTools {
         this.photos = new MobilePhotoTools(activity);
         this.permissions = new MobilePermissionTools(activity, photos);
         this.contacts = new MobileContactsTools(activity);
-        this.telephony = new MobileTelephonyTools(activity);
+        this.telephony = new MobileTelephonyTools(activity, permissions);
         this.media = new MobileMediaTools(activity);
         this.im = new MaiChatIMTools(activity, session);
         this.ssh = new MobileSshTools(activity);
@@ -53,6 +53,7 @@ public final class MaiChatHostTools {
         if (tool.equals("mobile_list_contacts")) return contacts.list(arguments);
         if (tool.equals("mobile_get_contact")) return contacts.get(arguments);
         if (tool.equals("mobile_get_phone_number")) return telephony.getPhoneNumber();
+        if (tool.equals("mobile_dial_phone")) return telephony.dial(arguments);
         if (tool.equals("mobile_read_sms")) return telephony.readSms(arguments);
         if (tool.equals("mobile_ssh_password") || tool.equals("mobile_ssh_trust_host"))
             return ssh.execute(tool, arguments);

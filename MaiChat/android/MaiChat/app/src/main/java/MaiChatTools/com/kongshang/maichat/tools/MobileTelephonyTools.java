@@ -4,9 +4,12 @@
 package com.kongshang.maichat.tools;
 
 import android.Manifest;
+import android.content.ActivityNotFoundException;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
+import android.net.Uri;
 import android.os.Build;
 import android.provider.Telephony;
 import android.telephony.SubscriptionManager;
@@ -15,12 +18,99 @@ import com.kongshang.maichat.MainActivity;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-/** Reads only the telephony data explicitly authorized for the foreground app. */
+/** Reads authorized telephony data and places user-requested calls. */
 final class MobileTelephonyTools {
-    private final MainActivity activity;
+    interface PhoneCallHost {
+        boolean isForeground();
+        boolean hasTelephony();
+        boolean hasCallPermission();
+        boolean requestCallPermission() throws Exception;
+        void startCall(Intent intent);
+    }
 
-    MobileTelephonyTools(MainActivity activity) {
+    private final MainActivity activity;
+    private final PhoneCallHost phoneCallHost;
+
+    MobileTelephonyTools(MainActivity activity, MobilePermissionTools permissions) {
         this.activity = activity;
+        this.phoneCallHost = new PhoneCallHost() {
+            @Override public boolean isForeground() {
+                return activity.isHostToolForeground();
+            }
+            @Override public boolean hasTelephony() {
+                return activity.getPackageManager().hasSystemFeature(
+                    PackageManager.FEATURE_TELEPHONY);
+            }
+            @Override public boolean hasCallPermission() {
+                return activity.checkSelfPermission(Manifest.permission.CALL_PHONE)
+                    == PackageManager.PERMISSION_GRANTED;
+            }
+            @Override public boolean requestCallPermission() throws Exception {
+                JSONObject result = permissions.request(
+                    new JSONObject().put("permission", "phone_call"));
+                return "granted".equals(result.optString("status"));
+            }
+            @Override public void startCall(Intent intent) {
+                activity.startActivity(intent);
+            }
+        };
+    }
+
+    MobileTelephonyTools(PhoneCallHost host) {
+        this.activity = null;
+        this.phoneCallHost = host;
+    }
+
+    JSONObject dial(JSONObject arguments) throws Exception {
+        String number = normalizePhoneNumber(arguments.optString("phone_number", ""));
+        if (number == null) return new JSONObject().put("code", "invalid_input")
+            .put("message", "A valid phone number is required.");
+        if (!phoneCallHost.isForeground())
+            return unavailable("Open MaiChat before placing a phone call.");
+        if (!phoneCallHost.hasTelephony())
+            return unavailable("This device cannot place phone calls.");
+        // READ_CONTACTS exposes numbers but never grants Android's direct-call permission.
+        if (!phoneCallHost.hasCallPermission()) {
+            if (!phoneCallHost.requestCallPermission() || !phoneCallHost.hasCallPermission())
+                return callPermissionDenied();
+        }
+        if (!phoneCallHost.isForeground())
+            return unavailable("Open MaiChat before placing a phone call.");
+        Intent intent = new Intent(Intent.ACTION_CALL, Uri.fromParts("tel", number, null));
+        try {
+            phoneCallHost.startCall(intent);
+        } catch (SecurityException denied) {
+            return callPermissionDenied();
+        } catch (ActivityNotFoundException unavailable) {
+            return unavailable("No phone app can place this call.");
+        }
+        return new JSONObject().put("status", "call_requested")
+            .put("phone_number", number);
+    }
+
+    private static String normalizePhoneNumber(String raw) {
+        String text = raw == null ? "" : raw.trim();
+        if (text.length() > 32) return null;
+        StringBuilder number = new StringBuilder();
+        int digits = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char value = text.charAt(i);
+            if (value >= '0' && value <= '9') {
+                number.append(value);
+                digits++;
+            } else if (value == '+' && number.length() == 0) {
+                number.append(value);
+            } else if (value != ' ' && value != '-' && value != '(' && value != ')') {
+                return null;
+            }
+        }
+        return digits >= 3 && digits <= 15 ? number.toString() : null;
+    }
+
+    private static JSONObject callPermissionDenied() throws Exception {
+        return new JSONObject().put("code", "permission_denied")
+            .put("permission", "phone_call").put("settings_required", false)
+            .put("message", "CALL_PHONE was not granted. Do not retry without a new user request.");
     }
 
     JSONObject getPhoneNumber() throws Exception {

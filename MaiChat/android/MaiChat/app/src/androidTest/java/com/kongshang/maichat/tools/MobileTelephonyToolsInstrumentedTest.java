@@ -16,6 +16,9 @@ import android.content.pm.PackageManager;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
 import com.kongshang.maichat.MainActivity;
+import java.lang.reflect.Field;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
 import org.json.JSONObject;
 import org.junit.Test;
 import org.junit.Assume;
@@ -23,6 +26,48 @@ import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public final class MobileTelephonyToolsInstrumentedTest {
+    // Run with -e interactiveCallPermission true and approve only the OS prompts.
+    @Test public void contactsGrantDoesNotReplacePhoneCallGrant() throws Exception {
+        Assume.assumeTrue("true".equals(InstrumentationRegistry.getArguments()
+            .getString("interactiveCallPermission")));
+        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Assume.assumeTrue(context.checkSelfPermission(Manifest.permission.READ_CONTACTS)
+            != PackageManager.PERMISSION_GRANTED);
+        Assume.assumeTrue(context.checkSelfPermission(Manifest.permission.CALL_PHONE)
+            != PackageManager.PERMISSION_GRANTED);
+        MainActivity activity = (MainActivity) InstrumentationRegistry.getInstrumentation()
+            .startActivitySync(new Intent(context, MainActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        try {
+            Field field = MainActivity.class.getDeclaredField("maiChatHostTools");
+            field.setAccessible(true);
+            MaiChatHostTools tools = (MaiChatHostTools) field.get(activity);
+            JSONObject contacts = requestPermission(tools, "contacts");
+            assertEquals("granted", contacts.getString("status"));
+            assertEquals(PackageManager.PERMISSION_GRANTED,
+                context.checkSelfPermission(Manifest.permission.READ_CONTACTS));
+            assertNotEquals(PackageManager.PERMISSION_GRANTED,
+                context.checkSelfPermission(Manifest.permission.CALL_PHONE));
+
+            JSONObject first = requestPermission(tools, "phone_call");
+            JSONObject second = requestPermission(tools, "phone_call");
+            assertEquals("granted", first.getString("status"));
+            assertEquals(true, first.getBoolean("prompted"));
+            assertEquals("granted", second.getString("status"));
+            assertEquals(false, second.getBoolean("prompted"));
+        } finally {
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(activity::finish);
+        }
+    }
+
+    private static JSONObject requestPermission(MaiChatHostTools tools, String permission)
+            throws Exception {
+        FutureTask<JSONObject> request = new FutureTask<>(() -> (JSONObject) tools.execute(
+            "mobile_request_permission", new JSONObject().put("permission", permission)));
+        new Thread(request, "phone-permission-test").start();
+        return request.get(125, TimeUnit.SECONDS);
+    }
+
     @Test public void grantedSmsPermissionReadsABoundedInboxResult() throws Exception {
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         Assume.assumeTrue(context.checkSelfPermission(Manifest.permission.READ_SMS)
@@ -31,7 +76,9 @@ public final class MobileTelephonyToolsInstrumentedTest {
             .startActivitySync(new Intent(context, MainActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         try {
-            JSONObject result = new MobileTelephonyTools(activity).readSms(
+            MobilePermissionTools permissions = new MobilePermissionTools(activity,
+                new MobilePhotoTools(activity));
+            JSONObject result = new MobileTelephonyTools(activity, permissions).readSms(
                 new JSONObject().put("limit", 1));
             assertTrue(result.toString(), result.has("messages"));
             assertTrue(result.getJSONArray("messages").length() <= 1);
@@ -58,7 +105,9 @@ public final class MobileTelephonyToolsInstrumentedTest {
             .startActivitySync(new Intent(context, MainActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         try {
-            MobileTelephonyTools tools = new MobileTelephonyTools(activity);
+            MobilePermissionTools permissions = new MobilePermissionTools(activity,
+                new MobilePhotoTools(activity));
+            MobileTelephonyTools tools = new MobileTelephonyTools(activity, permissions);
             assertEquals("permission_denied", tools.getPhoneNumber().getString("code"));
             assertEquals("permission_denied", tools.readSms(new JSONObject()).getString("code"));
 

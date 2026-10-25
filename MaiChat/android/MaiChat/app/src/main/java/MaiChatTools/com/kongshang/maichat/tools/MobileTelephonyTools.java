@@ -15,6 +15,7 @@ import android.provider.Telephony;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
 import com.kongshang.maichat.MainActivity;
+import java.util.function.Consumer;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -32,6 +33,11 @@ final class MobileTelephonyTools {
     private final PhoneCallHost phoneCallHost;
 
     MobileTelephonyTools(MainActivity activity, MobilePermissionTools permissions) {
+        this(activity, permissions, activity::startActivity);
+    }
+
+    MobileTelephonyTools(MainActivity activity, MobilePermissionTools permissions,
+                         Consumer<Intent> callStarter) {
         this.activity = activity;
         this.phoneCallHost = new PhoneCallHost() {
             @Override public boolean isForeground() {
@@ -51,7 +57,7 @@ final class MobileTelephonyTools {
                 return "granted".equals(result.optString("status"));
             }
             @Override public void startCall(Intent intent) {
-                activity.startActivity(intent);
+                callStarter.accept(intent);
             }
         };
     }
